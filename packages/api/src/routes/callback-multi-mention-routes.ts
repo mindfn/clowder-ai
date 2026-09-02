@@ -45,6 +45,7 @@ import {
   resolveFreshnessDescriptorProvider,
 } from '../domains/cats/services/freshness/RuntimeCapabilityDescriptor.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
@@ -290,12 +291,13 @@ async function resolveMultiMentionSourceMessage(
     input.threadId,
     `message-lifecycle-response:${input.invocationId}`,
   );
+  const from = source ? messageFrom(source) : null;
   if (
     !source ||
     source.threadId !== input.threadId ||
     source.userId !== input.userId ||
-    source.from?.kind !== 'agent' ||
-    source.from.catId !== input.callerCatId ||
+    from?.kind !== 'agent' ||
+    from.catId !== input.callerCatId ||
     source.lifecycle?.kind !== 'response' ||
     source.lifecycle.invocationId !== input.invocationId ||
     source.deliveryStatus === 'canceled' ||
@@ -611,7 +613,7 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
           // #1200 codex R12 P1: system-generated messages (persisted error badges)
           // are display-only — route-helpers.ts:744-745 excludes them from freshness.
           // All 4 freshness filter sites now consistent.
-          if (msg.userId === 'system') return false;
+          if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
           if (msg.origin === 'briefing') return false;
           // Play-mode visibility:
           if (needsFreshnessPlayFilter) {

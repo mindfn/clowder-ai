@@ -48,6 +48,7 @@ import type { GameDriver } from '../domains/cats/services/game/GameDriver.js';
 import { GameOrchestrator } from '../domains/cats/services/game/GameOrchestrator.js';
 import { WerewolfLobby } from '../domains/cats/services/game/werewolf/WerewolfLobby.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IGameStore } from '../domains/cats/services/stores/ports/GameStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
@@ -62,7 +63,6 @@ import {
 import {
   getTimelineOrderTime,
   isInternalNonQuotableParent,
-  isSystemUserMessage,
   resolveVisibleReplyParent,
 } from '../domains/cats/services/stores/visibility.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
@@ -1048,106 +1048,101 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       summary?: { id: string; topic: string; conclusions: string[]; openQuestions: string[]; createdBy: string };
       [key: string]: unknown;
     };
-    const chatItems: TimelineItem[] = page.map((m) => ({
-      id: m.id,
-      type: (m.from?.kind === 'agent'
-        ? 'assistant'
-        : m.from?.kind === 'external' || m.from?.kind === 'plugin'
-          ? 'connector'
-          : m.from?.kind === 'system'
-            ? m.source
-              ? 'connector'
-              : 'system'
-            : m.from?.kind === 'user'
-              ? 'user'
-              : m.catId
-                ? isSystemUserMessage(m)
-                  ? 'system'
-                  : 'assistant'
-                : m.source
-                  ? 'connector'
-                  : isSystemUserMessage(m)
-                    ? 'system'
-                    : 'user') as TimelineItem['type'],
-      ...(m.from ? { from: m.from } : {}),
-      catId: m.catId,
-      content: m.content,
-      ...(m.lifecycle ? { lifecycle: m.lifecycle } : {}),
-      ...(m.lifecycle?.kind === 'delivery_failure' ? { variant: 'error' } : {}),
-      ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
-      ...(m.toolEvents ? { toolEvents: m.toolEvents } : {}),
-      ...(m.metadata ? { metadata: m.metadata } : {}),
-      ...(m.origin ? { origin: m.origin } : {}),
-      ...(m.thinking ? { thinking: m.thinking } : {}),
-      ...(m.extra?.rich ||
-      m.extra?.routingWarnings ||
-      isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId) ||
-      m.extra?.coordination ||
-      m.extra?.isExplicitPost ||
-      m.extra?.stream ||
-      m.extra?.targetCats ||
-      m.extra?.messageBundle ||
-      m.extra?.scheduler ||
-      m.extra?.systemKind ||
-      m.extra?.a2aRouting ||
-      m.extra?.freshness ||
-      m.extra?.supplement ||
-      m.extra?.causal ||
-      m.extra?.turnExecution ||
-      m.extra?.auxiliaryTurnExecutions ||
-      supplementProjectionByOriginal.has(m.id) ||
-      m.queueCustody ||
-      m.recall ||
-      m.extra?.recovery
-        ? {
-            extra: {
-              ...(m.extra?.rich ? { rich: m.extra.rich } : {}),
-              ...(m.extra?.routingWarnings ? { routingWarnings: m.extra.routingWarnings } : {}),
-              ...(isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId)
-                ? { crossPost: m.extra!.crossPost! }
-                : {}),
-              ...(m.extra?.coordination ? { coordination: m.extra.coordination } : {}),
-              ...(m.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
-              ...(m.extra?.stream ? { stream: m.extra.stream } : {}),
-              ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
-              ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),
-              ...(m.extra?.scheduler ? { scheduler: m.extra.scheduler } : {}),
-              ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
-              ...(m.extra?.a2aRouting ? { a2aRouting: m.extra.a2aRouting } : {}),
-              ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
-              ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),
-              ...(m.extra?.causal ? { causal: m.extra.causal } : {}),
-              ...(m.extra?.turnExecution ? { turnExecution: m.extra.turnExecution } : {}),
-              ...(m.extra?.auxiliaryTurnExecutions ? { auxiliaryTurnExecutions: m.extra.auxiliaryTurnExecutions } : {}),
-              ...(supplementProjectionByOriginal.has(m.id)
-                ? { freshnessSupplement: supplementProjectionByOriginal.get(m.id) }
-                : {}),
-              ...(m.queueCustody ? { queueReceipt: projectQueueReceipt(m.queueCustody) } : {}),
-              ...(m.recall ? { recall: m.recall } : {}),
-              ...(m.extra?.recovery ? { recovery: projectRecoveryForHistory(m.extra.recovery) } : {}),
-            },
-          }
-        : {}),
-      ...(m.visibility ? { visibility: m.visibility } : {}),
-      ...(m.whisperTo ? { whisperTo: m.whisperTo } : {}),
-      ...(m.revealedAt ? { revealedAt: m.revealedAt } : {}),
-      ...(m.deliveredAt ? { deliveredAt: m.deliveredAt } : {}),
-      ...(m.timelineOrderAt !== undefined ? { timelineOrderAt: m.timelineOrderAt } : {}),
-      ...(m.source
-        ? {
-            source: {
-              connector: m.source.connector,
-              label: m.source.label,
-              icon: m.source.icon,
-              ...(m.source.url ? { url: m.source.url } : {}),
-              ...(m.source.meta ? { meta: m.source.meta } : {}),
-              ...(m.source.sender ? { sender: m.source.sender } : {}),
-            },
-          }
-        : {}),
-      ...(m.replyTo ? { replyTo: m.replyTo } : {}),
-      timestamp: m.timestamp,
-    }));
+    const chatItems: TimelineItem[] = page.map((m) => {
+      const from = messageFrom(m);
+      const type: TimelineItem['type'] =
+        from.kind === 'agent'
+          ? 'assistant'
+          : from.kind === 'external' || from.kind === 'plugin' || (from.kind === 'system' && Boolean(m.source))
+            ? 'connector'
+            : from.kind === 'system'
+              ? 'system'
+              : 'user';
+      return {
+        id: m.id,
+        type,
+        from,
+        catId: m.catId,
+        content: m.content,
+        ...(m.lifecycle ? { lifecycle: m.lifecycle } : {}),
+        ...(m.lifecycle?.kind === 'delivery_failure' ? { variant: 'error' } : {}),
+        ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
+        ...(m.toolEvents ? { toolEvents: m.toolEvents } : {}),
+        ...(m.metadata ? { metadata: m.metadata } : {}),
+        ...(m.origin ? { origin: m.origin } : {}),
+        ...(m.thinking ? { thinking: m.thinking } : {}),
+        ...(m.extra?.rich ||
+        m.extra?.routingWarnings ||
+        isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId) ||
+        m.extra?.coordination ||
+        m.extra?.isExplicitPost ||
+        m.extra?.stream ||
+        m.extra?.targetCats ||
+        m.extra?.messageBundle ||
+        m.extra?.scheduler ||
+        m.extra?.systemKind ||
+        m.extra?.a2aRouting ||
+        m.extra?.freshness ||
+        m.extra?.supplement ||
+        m.extra?.causal ||
+        m.extra?.turnExecution ||
+        m.extra?.auxiliaryTurnExecutions ||
+        supplementProjectionByOriginal.has(m.id) ||
+        m.queueCustody ||
+        m.recall ||
+        m.extra?.recovery
+          ? {
+              extra: {
+                ...(m.extra?.rich ? { rich: m.extra.rich } : {}),
+                ...(m.extra?.routingWarnings ? { routingWarnings: m.extra.routingWarnings } : {}),
+                ...(isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId)
+                  ? { crossPost: m.extra!.crossPost! }
+                  : {}),
+                ...(m.extra?.coordination ? { coordination: m.extra.coordination } : {}),
+                ...(m.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
+                ...(m.extra?.stream ? { stream: m.extra.stream } : {}),
+                ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
+                ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),
+                ...(m.extra?.scheduler ? { scheduler: m.extra.scheduler } : {}),
+                ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
+                ...(m.extra?.a2aRouting ? { a2aRouting: m.extra.a2aRouting } : {}),
+                ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
+                ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),
+                ...(m.extra?.causal ? { causal: m.extra.causal } : {}),
+                ...(m.extra?.turnExecution ? { turnExecution: m.extra.turnExecution } : {}),
+                ...(m.extra?.auxiliaryTurnExecutions
+                  ? { auxiliaryTurnExecutions: m.extra.auxiliaryTurnExecutions }
+                  : {}),
+                ...(supplementProjectionByOriginal.has(m.id)
+                  ? { freshnessSupplement: supplementProjectionByOriginal.get(m.id) }
+                  : {}),
+                ...(m.queueCustody ? { queueReceipt: projectQueueReceipt(m.queueCustody) } : {}),
+                ...(m.recall ? { recall: m.recall } : {}),
+                ...(m.extra?.recovery ? { recovery: projectRecoveryForHistory(m.extra.recovery) } : {}),
+              },
+            }
+          : {}),
+        ...(m.visibility ? { visibility: m.visibility } : {}),
+        ...(m.whisperTo ? { whisperTo: m.whisperTo } : {}),
+        ...(m.revealedAt ? { revealedAt: m.revealedAt } : {}),
+        ...(m.deliveredAt ? { deliveredAt: m.deliveredAt } : {}),
+        ...(m.timelineOrderAt !== undefined ? { timelineOrderAt: m.timelineOrderAt } : {}),
+        ...(m.source
+          ? {
+              source: {
+                connector: m.source.connector,
+                label: m.source.label,
+                icon: m.source.icon,
+                ...(m.source.url ? { url: m.source.url } : {}),
+                ...(m.source.meta ? { meta: m.source.meta } : {}),
+                ...(m.source.sender ? { sender: m.source.sender } : {}),
+              },
+            }
+          : {}),
+        ...(m.replyTo ? { replyTo: m.replyTo } : {}),
+        timestamp: m.timestamp,
+      };
+    });
 
     // F121: Hydrate reply previews for messages with replyTo
     const replyItems = chatItems.filter((item) => item.replyTo);

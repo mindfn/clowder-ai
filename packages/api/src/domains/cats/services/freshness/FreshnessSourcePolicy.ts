@@ -1,4 +1,5 @@
 import { isCrossThreadProvenance, type MessageFrom } from '@cat-cafe/shared';
+import { messageFrom } from '../stores/message-from.js';
 
 export interface FreshnessSourceMessage {
   threadId?: string;
@@ -33,7 +34,8 @@ export function isFreshnessSelfSourceMessage(
   catId: string,
   targetThreadId: string,
 ): boolean {
-  const authorCatId = message.from?.kind === 'agent' ? message.from.catId : message.catId;
+  const from = messageFrom(message as unknown as Parameters<typeof messageFrom>[0]);
+  const authorCatId = from.kind === 'agent' ? from.catId : null;
   return authorCatId === catId && !hasCrossThreadFreshnessProvenance(message, targetThreadId);
 }
 
@@ -57,7 +59,8 @@ export async function isFreshnessSelfSourceQueueEntry(
   );
   for (const messageId of messageIds) {
     const message = await messageStore.getById(messageId);
-    const authorCatId = message?.from?.kind === 'agent' ? message.from.catId : message?.catId;
+    const from = message ? messageFrom(message as unknown as Parameters<typeof messageFrom>[0]) : null;
+    const authorCatId = from?.kind === 'agent' ? from.catId : null;
     if (message && authorCatId === catId && hasCrossThreadFreshnessProvenance(message, targetThreadId)) {
       return false;
     }

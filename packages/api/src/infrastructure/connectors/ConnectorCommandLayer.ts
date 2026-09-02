@@ -1,4 +1,5 @@
 import { type MessageFrom, normalizeCatId, parseCommand } from '@cat-cafe/shared';
+import { messageFrom } from '../../domains/cats/services/stores/message-from.js';
 import type { CommandRegistry } from '../commands/CommandRegistry.js';
 import type { IConnectorPermissionStore } from './ConnectorPermissionStore.js';
 import type { IConnectorThreadBindingStore } from './ConnectorThreadBindingStore.js';
@@ -426,9 +427,7 @@ export class ConnectorCommandLayer {
     }
 
     type Msg = Awaited<ReturnType<NonNullable<typeof this.deps.messageStore>['getByThreadBefore']>>[number];
-    const SYSTEM_UIDS = new Set(['system', 'scheduler']);
-    const isUserMsg = (m: Msg): boolean =>
-      m.from ? m.from.kind === 'user' : m.catId === null && !SYSTEM_UIDS.has(m.userId ?? '');
+    const isUserMsg = (m: Msg): boolean => messageFrom(m as Parameters<typeof messageFrom>[0]).kind === 'user';
     const splitRounds = (msgs: Msg[]): Msg[][] => {
       const result: Msg[][] = [];
       let cur: Msg[] = [];
@@ -462,15 +461,14 @@ export class ConnectorCommandLayer {
     const TOTAL_BUDGET = PLATFORM_BUDGET[connectorId] ?? 2000;
     const roster = this.deps.catRoster;
     const resolveSender = (msg: Msg): string => {
-      const authorCatId = msg.from?.kind === 'agent' ? msg.from.catId : msg.catId;
-      if (authorCatId) {
-        const display = roster?.[authorCatId]?.displayName;
-        return `🐱 ${display ?? authorCatId}`;
+      const from = messageFrom(msg as Parameters<typeof messageFrom>[0]);
+      if (from.kind === 'agent') {
+        const display = roster?.[from.catId]?.displayName;
+        return `🐱 ${display ?? from.catId}`;
       }
-      if (msg.from?.kind === 'system' || (!msg.from && SYSTEM_UIDS.has(msg.userId ?? ''))) return '🔔 系统';
-      if (msg.from?.kind === 'external')
-        return `🔗 ${msg.from.sender?.name ?? msg.from.sender?.id ?? msg.from.connectorId}`;
-      if (msg.from?.kind === 'plugin') return `🔌 ${msg.from.instanceId}`;
+      if (from.kind === 'system') return '🔔 系统';
+      if (from.kind === 'external') return `🔗 ${from.sender?.name ?? from.sender?.id ?? from.connectorId}`;
+      if (from.kind === 'plugin') return `🔌 ${from.instanceId}`;
       return '👤 你';
     };
 

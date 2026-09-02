@@ -8,6 +8,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
@@ -171,13 +172,7 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
         const isEdited = isLast && editedContent !== undefined;
         const content = isEdited ? editedContent : src.content;
 
-        // Copy the canonical sender identity. Legacy rows without MessageFrom
-        // cannot be branched safely because nullable catId/source are not an
-        // authorship authority.
-        if (!isEdited && !src.from) {
-          throw new Error(`Cannot branch legacy message ${src.id}: canonical MessageFrom is missing`);
-        }
-        const from = isEdited ? ({ kind: 'user', userId } as const) : src.from!;
+        const from = isEdited ? ({ kind: 'user', userId } as const) : messageFrom(src);
         const pluginMessage = from.kind === 'plugin' ? src.extra?.pluginMessage : undefined;
         if (from.kind === 'plugin' && !pluginMessage) {
           throw new Error(`Cannot branch plugin message ${src.id}: canonical plugin payload is missing`);

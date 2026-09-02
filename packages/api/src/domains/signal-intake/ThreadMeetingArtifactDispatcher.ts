@@ -9,6 +9,7 @@ import {
 import type { InvocationQueue } from '../cats/services/agents/invocation/InvocationQueue.js';
 import { createInitialQueuedMessageCustody } from '../cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../cats/services/agents/invocation/QueueProcessor.js';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import { buildAsrPersonMemoryDynamicScenes } from './AsrPersonMemorySceneBuilder.js';
 import type { MeetingArtifactDispatcher, MeetingPresentationRetryReceipt } from './MeetingIntakeActionService.js';
@@ -208,7 +209,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     if (
       !source ||
       source.userId !== input.intake.ownerId ||
-      (source.from ? source.from.kind !== 'user' : source.catId !== null) ||
+      messageFrom(source).kind !== 'user' ||
       source.threadId !== threadId ||
       source.deletedAt !== undefined ||
       source._tombstone ||
@@ -266,7 +267,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       if (
         !carrier.success ||
         existing.userId !== input.intake.ownerId ||
-        (existing.from ? existing.from.kind !== 'system' : existing.catId !== null) ||
+        messageFrom(existing).kind !== 'system' ||
         existing.threadId !== threadId ||
         existing.deletedAt !== undefined ||
         existing._tombstone ||

@@ -153,6 +153,7 @@ import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
+import { messageFrom } from '../../stores/message-from.js';
 import {
   type AppendMessageInput,
   commitLifecycleResponseFromAppendInput,
@@ -3342,7 +3343,7 @@ export async function* routeSerial(
           cursorStore: deps.deliveryCursorStore!,
           messageStore: deps.messageStore,
           messageFilter: (msg: Record<string, unknown>) => {
-            if (msg.userId === 'system') return false;
+            if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
             if (msg.origin === 'briefing') return false;
             const viewer =
               (thinkingMode ?? 'play') === 'play'

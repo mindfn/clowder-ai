@@ -30,6 +30,7 @@ import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import { cursorFor, parseCursor } from '../cursor.js';
+import { messageFrom } from '../message-from.js';
 import {
   getTimelineOrderTime,
   isDurableOwnerReadEvidence,
@@ -498,8 +499,11 @@ export function assertMessageFromConsistent(
   }
 }
 
-export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'from' | 'userId' | 'provenance'>): boolean {
-  return msg.from?.kind === 'user' && msg.from.userId === msg.userId && msg.provenance?.observation === 'original';
+export function isAuthenticatedOperatorMessage(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'source' | 'sourceParseFailure' | 'origin' | 'provenance'>,
+): boolean {
+  const from = messageFrom(msg);
+  return from.kind === 'user' && from.userId === msg.userId && msg.provenance?.observation === 'original';
 }
 
 export type MessageAppendListener = (message: StoredMessage) => void;
@@ -1263,9 +1267,7 @@ export function prepareLifecycleAppendRejection(
 export function lifecycleInputIdentityForStoredMessage(
   message: StoredMessage,
 ): Pick<LifecycleInputDispatchPatch, 'orderKey' | 'producerInvocationId'> {
-  if (!message.from) {
-    throw new Error(`lifecycle identity requires canonical MessageFrom: ${message.id}`);
-  }
+  messageFrom(message);
   if (message.lifecycle) {
     return {
       orderKey: message.lifecycle.orderKey,
@@ -1815,7 +1817,7 @@ function redactRecalledMessage(message: StoredMessage, recall: MessageRecallMark
 }
 
 function isRecallableOwnerMessage(message: StoredMessage): boolean {
-  if ((message.from ? message.from.kind !== 'user' : message.catId !== null) || message._tombstone) return false;
+  if (messageFrom(message).kind !== 'user' || message._tombstone) return false;
   return (
     Boolean(message.queueCustody) && (message.deliveryStatus === 'queued' || message.deliveryStatus === 'delivered')
   );
@@ -2852,7 +2854,7 @@ export class MessageStore {
       const queuedInputReplayed = source.deliveryStatus === 'delivered' && source.lifecycle?.kind === 'input';
       const publicWakeReplayed =
         source.deliveryStatus === undefined &&
-        (source.from ? source.from.kind === 'agent' : source.catId !== null) &&
+        messageFrom(source).kind === 'agent' &&
         source.lifecycle?.kind !== 'delivery_failure' &&
         source.lifecycle?.dispatchRefs !== undefined &&
         (input.failedTargets ?? input.requestedTargets).every((targetId) =>
@@ -2879,7 +2881,7 @@ export class MessageStore {
     const isQueuedInput = source.deliveryStatus === 'queued';
     const isPublicAgentWake =
       source.deliveryStatus === undefined &&
-      (source.from ? source.from.kind === 'agent' : source.catId !== null && source.catId !== ('system' as CatId)) &&
+      messageFrom(source).kind === 'agent' &&
       source.visibility !== 'whisper' &&
       source.lifecycle?.kind !== 'delivery_failure';
     const failedTargets = input.failedTargets ?? input.requestedTargets;
@@ -3100,7 +3102,7 @@ export class MessageStore {
     const publicWakeSource =
       msg.deliveryStatus !== 'queued' &&
       msg.deliveryStatus !== 'canceled' &&
-      (msg.from ? msg.from.kind === 'agent' : msg.catId !== null && msg.catId !== ('system' as CatId)) &&
+      messageFrom(msg).kind === 'agent' &&
       msg.visibility !== 'whisper' &&
       !msg.recall &&
       !msg._tombstone;
@@ -3138,7 +3140,7 @@ export class MessageStore {
     const publicWakeSource =
       msg.deliveryStatus !== 'queued' &&
       msg.deliveryStatus !== 'canceled' &&
-      (msg.from ? msg.from.kind === 'agent' : msg.catId !== null && msg.catId !== ('system' as CatId)) &&
+      messageFrom(msg).kind === 'agent' &&
       msg.visibility !== 'whisper' &&
       !msg.recall &&
       !msg._tombstone;
@@ -3181,7 +3183,7 @@ export class MessageStore {
       input.deliveredAt === undefined &&
       (msg.deliveryStatus === 'delivered' ||
         (msg.deliveryStatus === undefined &&
-          (msg.from ? msg.from.kind === 'agent' : msg.catId !== null && msg.catId !== ('system' as CatId)) &&
+          messageFrom(msg).kind === 'agent' &&
           (msg.lifecycle?.kind === 'input' || msg.lifecycle?.kind === 'response')));
     if (msg.deliveryStatus !== 'queued' && !isExposedRecallSettlement && !isAdmittedHistorySettlement) {
       throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
@@ -3343,7 +3345,8 @@ export async function hydrateCrossThreadReplyHint(
     ?.coordination;
   const coordination = trigger.extra?.coordination ?? legacyCoordination;
   if (!hasCrossThreadProvenance && !coordination) return null;
-  const senderCatId = trigger.from?.kind === 'agent' ? trigger.from.catId : trigger.catId;
+  const triggerFrom = messageFrom(trigger);
+  const senderCatId = triggerFrom.kind === 'agent' ? triggerFrom.catId : null;
   if (!senderCatId) return null;
   return {
     sourceThreadId: hasCrossThreadProvenance && crossPost?.sourceThreadId ? crossPost.sourceThreadId : trigger.threadId,

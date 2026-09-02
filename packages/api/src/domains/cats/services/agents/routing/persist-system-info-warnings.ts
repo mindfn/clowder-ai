@@ -1,5 +1,6 @@
 import { type CloudBridgeOutboundReceiptV1, createCatId, isCloudBridgeOutboundReceiptV1 } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import { messageFrom } from '../../stores/message-from.js';
 import type { IMessageStore } from '../../stores/ports/MessageStore.js';
 import { resolveVisibleReplyParent } from '../../stores/visibility.js';
 import type { PersistenceContext } from './route-helpers.js';
@@ -178,10 +179,11 @@ async function validateOutboundReceipt(args: {
   });
   if (!source) return undefined;
 
+  const from = messageFrom(source);
   const senderMatches =
     receipt.sourceSender.kind === 'user'
-      ? (source.from ? source.from.kind === 'user' : source.catId === null) && source.userId === receipt.sourceSender.id
-      : (source.from?.kind === 'agent' ? source.from.catId : source.catId) === createCatId(receipt.sourceSender.id);
+      ? from.kind === 'user' && from.userId === receipt.sourceSender.id
+      : from.kind === 'agent' && from.catId === createCatId(receipt.sourceSender.id);
   if (!senderMatches) return undefined;
   if (receipt.sourceSender.invocationId) {
     const storedInvocationIds = new Set(

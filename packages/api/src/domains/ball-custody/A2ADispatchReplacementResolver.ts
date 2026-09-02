@@ -1,4 +1,5 @@
 import type { BallCustodyEvent, CrossThreadCoordination } from '@cat-cafe/shared';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 
 export interface A2ADispatchHandoffSource {
@@ -154,7 +155,9 @@ async function describeReplacement(
   const sourceMessageId = event.sourceEventId.startsWith('route:') ? event.sourceEventId.slice('route:'.length) : '';
   if (!sourceMessageId) return base;
   const message = await readReplacementMessage(messageStore, sourceMessageId, threadId, log);
-  if (!message || message.threadId !== threadId || message.catId !== event.payload.fromCatId) return base;
+  if (!message || message.threadId !== threadId) return base;
+  const from = messageFrom(message);
+  if (from.kind !== 'agent' || from.catId !== event.payload.fromCatId) return base;
   return {
     ...base,
     sourceMessageId,
@@ -193,10 +196,10 @@ function isVerifiedReplacementMessage(
   fromCatId: string | undefined,
   toCatId: string,
 ): message is StoredMessage {
+  if (!message || message.threadId !== threadId) return false;
+  const from = messageFrom(message);
   return Boolean(
-    message &&
-      message.threadId === threadId &&
-      (!fromCatId || message.catId === fromCatId) &&
+    (!fromCatId || (from.kind === 'agent' && from.catId === fromCatId)) &&
       (message.mentions.some((candidate) => candidate === toCatId) || message.extra?.targetCats?.includes(toCatId)),
   );
 }

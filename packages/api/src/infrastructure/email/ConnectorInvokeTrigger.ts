@@ -15,6 +15,7 @@ import {
   type QueuedMessageCustodyCoordinator,
 } from '../../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../../domains/cats/services/agents/invocation/QueueProcessor.js';
+import { messageFrom } from '../../domains/cats/services/stores/message-from.js';
 import {
   type IMessageStore,
   initializeQueueCustodyWithLifecycleRetry,
@@ -113,11 +114,9 @@ export class ConnectorInvokeTrigger {
     }
 
     const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
-    if (!sourceMessage.from) {
-      throw new Error(`connector Queue ingress requires canonical MessageFrom: ${input.messageId}`);
-    }
+    const from = messageFrom(sourceMessage);
     const result = invocationQueue.enqueue({
-      from: structuredClone(sourceMessage.from),
+      from: structuredClone(from),
       threadId: input.threadId,
       userId: input.userId,
       kind: 'conversation_input',

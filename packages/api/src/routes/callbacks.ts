@@ -96,6 +96,7 @@ import type { AgentRouter } from '../domains/cats/services/index.js';
 import type { EventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IRuntimeSessionStore } from '../domains/cats/services/runtime-session/RuntimeSessionStore.js';
 import { compareCursors, cursorFor } from '../domains/cats/services/stores/cursor.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IBacklogStore } from '../domains/cats/services/stores/ports/BacklogStore.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
@@ -2586,7 +2587,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           if (!isDelivered(msg as unknown as Parameters<typeof isDelivered>[0])) return false;
           // #1200 codex R11 P1: system-generated messages (persisted error badges)
           // are display-only — route-helpers.ts:744-745 excludes them from freshness.
-          if (msg.userId === 'system') return false;
+          if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
           if (msg.origin === 'briefing') return false;
           // Play-mode privacy visibility. `origin` is transport provenance;
           // persisted cat speech remains freshness-relevant.
@@ -3913,9 +3914,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       // F148 Phase E (AC-E2): briefing messages are non-routing, never enter cat context
       if (item.origin === 'briefing') return false;
       if (filterCatId) {
+        const from = messageFrom(item);
         if (filterCatId === 'user') {
-          if (item.from ? item.from.kind !== 'user' : item.catId !== null) return false;
-        } else if (item.from?.kind === 'agent' ? item.from.catId !== filterCatId : item.catId !== filterCatId) {
+          if (from.kind !== 'user') return false;
+        } else if (from.kind !== 'agent' || from.catId !== filterCatId) {
           return false;
         }
       }
@@ -3941,9 +3943,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const isFreshnessRelevant = (item: Awaited<ReturnType<typeof messageStore.getByThread>>[number]): boolean => {
       if (item.deletedAt) return false;
       if (!isDelivered(item)) return false;
-      if (item.from ? item.from.kind === 'system' : item.userId === 'system') return false;
+      if (messageFrom(item).kind === 'system') return false;
       if (item.origin === 'briefing') return false;
-      const authorCatId = item.from?.kind === 'agent' ? item.from.catId : item.catId;
+      const itemFrom = messageFrom(item);
+      const authorCatId = itemFrom.kind === 'agent' ? itemFrom.catId : null;
       if (!item.extra?.crossPost && authorCatId !== null && authorCatId === principalCatId) return false;
       if (needsPlayFilter && !canViewMessage(item, viewer)) return false;
       return true;
@@ -6273,7 +6276,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         if (!isDelivered(msg as unknown as Parameters<typeof isDelivered>[0])) return false;
         // #1200 codex R11 P1: system-generated messages (persisted error badges)
         // are display-only — route-helpers.ts:744-745 excludes them from freshness.
-        if (msg.userId === 'system') return false;
+        if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
         if (msg.origin === 'briefing') return false;
         if (needsPlayFilter) {
           if (!canViewMessage(msg as unknown as Parameters<typeof canViewMessage>[0], freshnessViewer)) return false;

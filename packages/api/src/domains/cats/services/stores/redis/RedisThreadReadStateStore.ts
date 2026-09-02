@@ -4,6 +4,7 @@
  */
 
 import { type RedisClient, VISIBILITY_RESOLVE_SEQ_LUA } from '@cat-cafe/shared/utils';
+import { messageFrom } from '../message-from.js';
 import type { IMessageStore } from '../ports/MessageStore.js';
 import type {
   IThreadReadStateStore,
@@ -285,9 +286,7 @@ export class RedisThreadReadStateStore implements IThreadReadStateStore {
       });
       // Exclude the authenticated user's own messages. MessageFrom is the
       // identity authority; catId/source are retained only for legacy rows.
-      const relevant = unreadMessages.filter(
-        (m) => !m.deletedAt && (m.from ? m.from.kind !== 'user' : m.catId !== null || !!m.source),
-      );
+      const relevant = unreadMessages.filter((m) => !m.deletedAt && messageFrom(m).kind !== 'user');
       const unreadCount = relevant.length;
       const hasUserMention = relevant.some((m) => !!m.mentionsUser);
 

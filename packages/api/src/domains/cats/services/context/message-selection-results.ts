@@ -1,4 +1,5 @@
 import type { RichBlock } from '@cat-cafe/shared';
+import { messageFrom } from '../stores/message-from.js';
 import type { StoredMessage } from '../stores/ports/MessageStore.js';
 import type {
   MessageSelectionTombstone,
@@ -7,8 +8,7 @@ import type {
 } from './message-selection-types.js';
 
 function fromFor(message: StoredMessage): NonNullable<StoredMessage['from']> {
-  if (!message.from) throw new Error(`message selection source ${message.id} has no canonical MessageFrom`);
-  return structuredClone(message.from);
+  return structuredClone(messageFrom(message));
 }
 
 export function tombstone(messageId: string, reason: MessageSelectionTombstoneReason): MessageSelectionTombstone {

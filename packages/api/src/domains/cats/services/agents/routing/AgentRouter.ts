@@ -38,6 +38,7 @@ import { SessionManager } from '../../session/SessionManager.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { TranscriptReader } from '../../session/TranscriptReader.js';
 import type { TranscriptWriter } from '../../session/TranscriptWriter.js';
+import { messageFrom } from '../../stores/message-from.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import { type IMessageStore, routedProvenance, type StoredMessage } from '../../stores/ports/MessageStore.js';
@@ -46,7 +47,7 @@ import type { ITaskStore } from '../../stores/ports/TaskStore.js';
 import type { IThreadStore, ThreadRoutingPolicyV1, ThreadRoutingScope } from '../../stores/ports/ThreadStore.js';
 import { DEFAULT_THREAD_ID } from '../../stores/ports/ThreadStore.js';
 import type { IWorkflowSopStore } from '../../stores/ports/WorkflowSopStore.js';
-import { getTimelineOrderTime, SYSTEM_USER_IDS } from '../../stores/visibility.js';
+import { getTimelineOrderTime } from '../../stores/visibility.js';
 import type { AgentMessage, AgentService } from '../../types.js';
 import type { InvocationRegistry } from '../invocation/InvocationRegistry.js';
 import {
@@ -811,7 +812,7 @@ export class AgentRouter {
    * from a thread using Z5-style reverse-iterate paging, then run keyword detection.
    * Shared by both route() and routeExecution() (cloud P1 fix).
    *
-   * Uses SYSTEM_USER_IDS (not just 'system') to exclude scheduler/connector noise (cloud P2 fix).
+   * Uses MessageFrom to exclude scheduler/connector noise (cloud P2 fix).
    */
   private async collectAndDetectTextFrustration(
     threadId: string,
@@ -848,8 +849,7 @@ export class AgentRouter {
       }
       for (let i = batch.length - 1; i >= 0 && userMsgs.length < TEXT_FRUSTRATION_WINDOW; i--) {
         const m = batch[i]!;
-        // Cloud P2 fix: exclude all system users (scheduler, system, etc.), not just 'system'
-        if (m.from ? m.from.kind === 'user' : !m.catId && !SYSTEM_USER_IDS.has(m.userId ?? '')) {
+        if (messageFrom(m as StoredMessage).kind === 'user') {
           userMsgs.push(typeof m.content === 'string' ? m.content : '');
         }
       }
@@ -1084,14 +1084,9 @@ export class AgentRouter {
 
       for (let i = page.length - 1; i >= 0; i -= 1) {
         const m = page[i] as StoredMessage;
-        // F194 Phase Z5 R5 + R6 (cloud Codex round-1+2 P1): system-authored notices 不算 user message。
-        // R5 只排除了 'system'；R6 改用 visibility.ts 的 SYSTEM_USER_IDS（含 scheduler + system + 未来扩展）
-        // — 与 message store 的 isSystemUserMessage 同口径，scheduler 触发的通知一并排除。
+        // MessageFrom keeps scheduler/system notices out of the user count.
         // 否则一串 system/scheduler notice 会塞满 USER count limit，把真正的 user @ 挤出窗口外。
-        const userIdStr = typeof m?.userId === 'string' ? m.userId : null;
-        const isUserMessage = m.from
-          ? m.from.kind === 'user'
-          : userIdStr != null && !SYSTEM_USER_IDS.has(userIdStr) && m?.catId == null;
+        const isUserMessage = messageFrom(m).kind === 'user';
         if (!isUserMessage) continue;
         // F194 Phase Z5 R8 (cloud Codex round-4 P1) + R9 (砚砚 R8 P1): 1h cutoff 在 isUserMessage 之后
         // 判断，且用 effectiveOrderTime（与 cursor 同口径）。Redis markDelivered 把 thread zset score

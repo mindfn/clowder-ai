@@ -11,6 +11,7 @@ import type {
   RetryCustodyTransition,
 } from '../../../../ball-custody/WaitContinuationRetryCommitter.js';
 import type { RetryAuthorityFailureReason } from '../../../../ball-custody/WaitContinuationRetryPreflight.js';
+import { messageFrom } from '../../stores/message-from.js';
 import {
   type IMessageStore,
   isTimelinePublished,
@@ -44,10 +45,7 @@ interface CoordinatorDeps {
 }
 
 function requireCanonicalMessageFrom(message: StoredMessage): NonNullable<StoredMessage['from']> {
-  if (!message.from) {
-    throw new Error(`Queue recovery requires canonical MessageFrom: ${message.id}`);
-  }
-  return structuredClone(message.from);
+  return structuredClone(messageFrom(message));
 }
 
 export interface RetireActionSuccessorQueueCustodyResult {

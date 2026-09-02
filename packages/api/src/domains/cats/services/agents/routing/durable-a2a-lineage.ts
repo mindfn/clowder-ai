@@ -1,4 +1,5 @@
 import type { CatId } from '@cat-cafe/shared';
+import { messageFrom } from '../../stores/message-from.js';
 import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { CallerActivity } from './WorklistRegistry.js';
 import { isSubstantiveTool } from './WorklistRegistry.js';
@@ -55,7 +56,8 @@ export async function readDurableA2ALineage(
   while (cursorId && newestFirst.length < MAX_CAUSAL_SCAN && !visited.has(cursorId)) {
     visited.add(cursorId);
     const message = await store.getById(cursorId);
-    const authorCatId = message?.from?.kind === 'agent' ? message.from.catId : message?.catId;
+    const from = message ? messageFrom(message) : null;
+    const authorCatId = from?.kind === 'agent' ? from.catId : null;
     if (!message || message.lifecycle?.kind !== 'response' || !authorCatId) break;
     newestFirst.push({
       from: authorCatId as CatId,

@@ -19,6 +19,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import { cursorFor, parseCursor } from '../cursor.js';
+import { messageFrom } from '../message-from.js';
 import type {
   AdvanceLifecycleInputDispatchResult,
   AppendMessageInput,
@@ -2771,7 +2772,7 @@ export class RedisMessageStore {
       const queuedInputReplayed = source.deliveryStatus === 'delivered' && source.lifecycle?.kind === 'input';
       const publicWakeReplayed =
         source.deliveryStatus === undefined &&
-        (source.from ? source.from.kind === 'agent' : source.catId !== null) &&
+        messageFrom(source).kind === 'agent' &&
         (input.failedTargets ?? input.requestedTargets).every((targetId) =>
           source.lifecycle?.dispatchRefs?.some(
             (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === existingFailure.id,
@@ -2791,7 +2792,7 @@ export class RedisMessageStore {
     const isQueuedInput = source.deliveryStatus === 'queued';
     const isPublicAgentWake =
       source.deliveryStatus === undefined &&
-      (source.from ? source.from.kind === 'agent' : source.catId !== null && source.catId !== ('system' as CatId)) &&
+      messageFrom(source).kind === 'agent' &&
       source.visibility !== 'whisper' &&
       source.lifecycle?.kind !== 'delivery_failure';
 
@@ -2908,7 +2909,7 @@ export class RedisMessageStore {
       inputMessage.deliveryStatus === 'delivered' && inputMessage.lifecycle?.kind === 'input';
     const publicWakeCommitted =
       inputMessage.deliveryStatus === undefined &&
-      (inputMessage.from ? inputMessage.from.kind === 'agent' : inputMessage.catId !== null) &&
+      messageFrom(inputMessage).kind === 'agent' &&
       failedTargets.every((targetId) =>
         inputMessage.lifecycle?.dispatchRefs?.some(
           (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === failureMessage.id,

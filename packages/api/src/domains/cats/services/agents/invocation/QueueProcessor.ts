@@ -65,6 +65,7 @@ import {
 } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { shouldMarkDecisionNotification } from '../../push/decision-notification-policy.js';
 import type { PushPayload } from '../../push/PushNotificationService.js';
+import { messageFrom } from '../../stores/message-from.js';
 import type { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type {
   InvocationActionLeaseCarrier,
@@ -3872,7 +3873,6 @@ export class QueueProcessor {
     const previousCarrier = current?.carrierByTargetCatId?.[catId];
     if (
       !message ||
-      !message.from ||
       !current ||
       (current.ownerUserId ?? message.userId) !== userId ||
       (previousCarrier?.entryId ?? current.entryId) !== previousEntryId ||
@@ -3887,7 +3887,7 @@ export class QueueProcessor {
 
     const admissionId = `retry:${sourceMessageId}:${catId}:${expectedAttemptId}`;
     const enqueue = this.deps.queue.enqueue({
-      from: structuredClone(message.from),
+      from: structuredClone(messageFrom(message)),
       threadId,
       userId,
       kind: 'message_wake',

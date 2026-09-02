@@ -4,6 +4,7 @@ import {
   type WaitContinuationCarrierV1,
   type WaitOwnerFence,
 } from '@cat-cafe/shared';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStoreContract.js';
 import { isSystemUserMessage } from '../cats/services/stores/visibility.js';
@@ -54,7 +55,7 @@ export function resolveRetryAuthorityMessageSubject(
   input: WaitContinuationRetryPreflightInput,
 ): RetryAuthorityMessageSubject {
   if (
-    (input.message.from ? input.message.from.kind === 'user' : input.message.catId === null && !input.message.source) &&
+    messageFrom(input.message).kind === 'user' &&
     !input.message.sourceParseFailure &&
     !isSystemUserMessage(input.message) &&
     input.message.userId === input.requestingUserId

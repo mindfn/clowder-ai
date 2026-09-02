@@ -1,4 +1,5 @@
 import type { DispatchProposal } from '@cat-cafe/shared';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import type { ActionSuccessorDispatchFailureReason } from './action-successor-state-machine.js';
 
@@ -17,11 +18,12 @@ export function classifyApprovedActionCarrier(
   message: StoredMessage,
 ): ApprovedActionCarrierClassification {
   const targetCats = proposal.targetCats;
+  const from = messageFrom(message);
   const sourceMatches =
     message.threadId === proposal.targetThreadId &&
     message.userId === proposal.ownerUserId &&
-    message.from?.kind === 'agent' &&
-    message.from.catId === proposal.senderCatId &&
+    from.kind === 'agent' &&
+    from.catId === proposal.senderCatId &&
     message.content === proposal.content &&
     message.origin === 'callback' &&
     message.replyTo === proposal.replyTo &&

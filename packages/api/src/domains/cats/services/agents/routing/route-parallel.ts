@@ -61,6 +61,7 @@ import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
+import { messageFrom } from '../../stores/message-from.js';
 import type { AppendMessageInput, StoredToolEvent } from '../../stores/ports/MessageStore.js';
 import { commitLifecycleResponseFromAppendInput } from '../../stores/ports/MessageStore.js';
 import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
@@ -208,7 +209,11 @@ export async function* routeParallel(
       cursorStore: deps.deliveryCursorStore!,
       messageStore: deps.messageStore,
       messageFilter: (raw: Record<string, unknown>) => {
-        if (raw.userId === 'system' || raw.origin === 'briefing') return false;
+        if (
+          messageFrom(raw as unknown as Parameters<typeof messageFrom>[0]).kind === 'system' ||
+          raw.origin === 'briefing'
+        )
+          return false;
         const viewer =
           thinkingMode === 'play' ? ({ type: 'cat' as const, catId } as const) : ({ type: 'user' as const } as const);
         if (

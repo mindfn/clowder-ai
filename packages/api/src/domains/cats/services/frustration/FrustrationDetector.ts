@@ -12,6 +12,7 @@
 
 import type { CliDiagnostics, FrustrationSignalType, RichBlock } from '@cat-cafe/shared';
 import type { SocketManager } from '../../../../infrastructure/websocket/index.js';
+import { messageFrom } from '../stores/message-from.js';
 import type { IFrustrationIssueStore } from '../stores/ports/FrustrationIssueStore.js';
 import type { IMessageStore } from '../stores/ports/MessageStore.js';
 
@@ -269,13 +270,14 @@ export async function evaluate(
   let recentMessages: Array<{ role: 'user' | 'cat' | 'system'; content: string; timestamp: number }> = [];
   try {
     const messages = await deps.messageStore.getByThread(threadId, CONTEXT_MESSAGE_COUNT);
-    recentMessages = (messages as Array<{ catId?: string; userId?: string; content?: string; timestamp: number }>).map(
-      (m) => ({
-        role: (m.catId ? 'cat' : m.userId === 'system' ? 'system' : 'user') as 'user' | 'cat' | 'system',
-        content: typeof m.content === 'string' ? m.content.slice(0, 500) : '',
+    recentMessages = messages.map((m) => {
+      const from = messageFrom(m);
+      return {
+        role: (from.kind === 'agent' ? 'cat' : from.kind === 'system' ? 'system' : 'user') as 'user' | 'cat' | 'system',
+        content: m.content.slice(0, 500),
         timestamp: m.timestamp,
-      }),
-    );
+      };
+    });
   } catch {
     // Non-blocking: proceed without context if messageStore fails
   }

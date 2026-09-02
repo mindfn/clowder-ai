@@ -35,6 +35,7 @@ import {
   withSurfaceShape,
 } from '../../session/context-surface-projection.js';
 import { cursorFor } from '../../stores/cursor.js';
+import { messageFrom } from '../../stores/message-from.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type {
@@ -198,15 +199,15 @@ export async function hydrateVisibleA2ATriggerPromptMessage(
     log.warn({ err, threadId, catId: catId as string }, 'A2A trigger hydration failed');
     return undefined;
   }
+  if (!message) return undefined;
+  const from = messageFrom(message);
   if (
-    !message ||
     message.threadId !== threadId ||
     message.deletedAt ||
     message._tombstone ||
-    (!message.from && message.userId === 'system') ||
     message.origin === 'briefing' ||
-    (message.from ? message.from.kind !== 'agent' : message.catId === null) ||
-    (message.from?.kind === 'agent' ? message.from.catId === catId : message.catId === catId) ||
+    from.kind !== 'agent' ||
+    from.catId === catId ||
     !isTimelinePublished(message)
   ) {
     return undefined;
@@ -1416,7 +1417,7 @@ export async function assembleIncrementalContext(
   const sameRouteBoundaryCap = resolveSameRouteBoundaryCap(unseen, cursor, playMode, options);
   const relevant = unseen.filter((m) => {
     // System-generated messages (persisted error badges) are display-only — never enter prompt
-    if (m.from ? m.from.kind === 'system' : m.userId === 'system') return false;
+    if (messageFrom(m).kind === 'system') return false;
     // F148 Phase E: briefing messages are non-routing — never enter incremental context (AC-E2)
     if (m.origin === 'briefing') return false;
     if (isSameRouteOutputWithheld(m, playMode, options)) return false;
@@ -1425,7 +1426,8 @@ export async function assembleIncrementalContext(
     // Exclude own messages (only include user messages and other cats' messages).
     // F052: only distinct source/target provenance earns the same-cat cross-post exemption.
     const isActualCrossPost = isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId);
-    const authorCatId = m.from?.kind === 'agent' ? m.from.catId : m.catId;
+    const from = messageFrom(m);
+    const authorCatId = from.kind === 'agent' ? from.catId : null;
     if (!isActualCrossPost && authorCatId !== null && authorCatId === catId) return false;
     // `origin` describes the transport that persisted a message, not whether its
     // visible body is private thinking. Persisted unread speech therefore follows
@@ -1450,10 +1452,7 @@ export async function assembleIncrementalContext(
   // F148 Phase F (KD-7): Navigation context — injected on ALL paths (cold + warm)
   // P1 fix: extract baton from unseen (pre-stream-filter) so cat→cat @ mentions via stream are visible
   const batonCandidates = unseen.filter(
-    (m) =>
-      (m.from ? m.from.kind !== 'system' : m.userId !== 'system' || m.catId !== null) &&
-      m.origin !== 'briefing' &&
-      canViewMessage(m, viewer),
+    (m) => messageFrom(m).kind !== 'system' && m.origin !== 'briefing' && canViewMessage(m, viewer),
   );
   const baton = extractBatonContext(batonCandidates, catId);
   let activeTasks: import('./navigation-context.js').TaskSummary[] = [];
@@ -1855,7 +1854,7 @@ async function assembleSmartWindowContext(
   const compositeQueryTerms = [threadTitle, currentMsgText]
     .concat(
       burst
-        .filter((m) => (m.from ? m.from.kind === 'user' : m.catId === null && m.userId !== 'system'))
+        .filter((m) => messageFrom(m).kind === 'user')
         .slice(-2)
         .map((m) => stripStructuralEnvelope(m.content).slice(0, 200)),
     )
@@ -1928,9 +1927,7 @@ async function assembleSmartWindowContext(
 
   // 3.8 Evidence recall (fail-open) — must run before coverage map so hints are populated
   const currentMsg = currentUserMessageId ? burst.find((m) => m.id === currentUserMessageId) : undefined;
-  const nonSystemRecent = burst
-    .filter((m) => (m.from ? m.from.kind === 'user' : m.catId === null && m.userId !== 'system'))
-    .slice(-2);
+  const nonSystemRecent = burst.filter((m) => messageFrom(m).kind === 'user').slice(-2);
   const recalledEvidence = usesLegacyRecall
     ? await recallEvidenceWithProvenance(
         deps.evidenceStore,

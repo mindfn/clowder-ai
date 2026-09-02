@@ -9,6 +9,7 @@
 import { catRegistry, isCrossThreadProvenance } from '@cat-cafe/shared';
 import { estimateTokens } from '../../../../utils/token-counter.js';
 import { formatPromptTime } from '../format-time.js';
+import { messageFrom } from '../stores/message-from.js';
 import { isDelivered, type StoredMessage } from '../stores/ports/MessageStore.js';
 
 export interface ContextAssemblerOptions {
@@ -96,19 +97,18 @@ export function getSourceDisplayName(source: { label: string; sender?: { id: str
 
 function getMessageSenderName(msg: StoredMessage): string {
   if (msg.source) return getSourceDisplayName(msg.source);
-  switch (msg.from?.kind) {
+  const from = messageFrom(msg);
+  switch (from.kind) {
     case 'user':
       return 'co-creator';
     case 'agent':
-      return getSenderName(msg.from.catId);
+      return getSenderName(from.catId);
     case 'external':
-      return sanitizeDisplaySegment(msg.from.sender?.name ?? msg.from.sender?.id ?? msg.from.connectorId);
+      return sanitizeDisplaySegment(from.sender?.name ?? from.sender?.id ?? from.connectorId);
     case 'plugin':
-      return sanitizeDisplaySegment(msg.from.instanceId);
+      return sanitizeDisplaySegment(from.instanceId);
     case 'system':
-      return sanitizeDisplaySegment(msg.from.service);
-    default:
-      return getSenderName(msg.catId);
+      return sanitizeDisplaySegment(from.service);
   }
 }
 
@@ -194,13 +194,15 @@ export function assembleContext(messages: StoredMessage[], options?: ContextAsse
   // Only filter agent messages starting with [错误] — user messages are legit.
   // All 6 known contaminated records start with [错误] (no partial-text-before-error exists
   // in practice, since stream_idle_stall means zero text was produced before the error).
-  const deliveredMessages = messages.filter(
-    (m) =>
+  const deliveredMessages = messages.filter((m) => {
+    const from = messageFrom(m);
+    return (
       isDelivered(m) &&
-      (m.from ? m.from.kind !== 'system' : m.userId !== 'system') &&
+      from.kind !== 'system' &&
       m.origin !== 'briefing' &&
-      !((m.from?.kind === 'agent' || (!m.from && m.catId)) && m.content?.startsWith('[错误]')),
-  );
+      !(from.kind === 'agent' && m.content?.startsWith('[错误]'))
+    );
+  });
 
   if (deliveredMessages.length === 0) {
     return { contextText: '', messageCount: 0, estimatedTokens: 0 };

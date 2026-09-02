@@ -16,6 +16,7 @@ import type { CatId, MessageFrom, PublishedFreshnessAnnotation } from '@cat-cafe
 import { freshnessGateForward, freshnessGateHeld } from '../../../../infrastructure/telemetry/instruments.js';
 import { getSourceDisplayName } from '../context/ContextAssembler.js';
 import { cursorFor } from '../stores/cursor.js';
+import { messageFrom } from '../stores/message-from.js';
 import type { DeliveryCursorStore } from '../stores/ports/DeliveryCursorStore.js';
 import type { ThreadMessageReadOptions } from '../stores/ports/MessageStore.js';
 import type { FreshnessAttentionEventLog } from './FreshnessAttentionEventLog.js';
@@ -217,11 +218,12 @@ const MAX_PAGINATION_ROUNDS = 5; // 5 × 20 = 100 max raw messages before fail-o
 
 export function getFreshnessSenderLabel(msg: Pick<FreshnessReadableMessage, 'from' | 'catId' | 'source'>): string {
   if (msg.source) return getSourceDisplayName(msg.source);
-  if (msg.from?.kind === 'agent') return msg.from.catId;
-  if (msg.from?.kind === 'external') return msg.from.sender?.name ?? msg.from.sender?.id ?? msg.from.connectorId;
-  if (msg.from?.kind === 'plugin') return msg.from.instanceId;
-  if (msg.from?.kind === 'system') return msg.from.service;
-  return msg.catId ?? 'user';
+  const from = messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]);
+  if (from.kind === 'agent') return from.catId;
+  if (from.kind === 'external') return from.sender?.name ?? from.sender?.id ?? from.connectorId;
+  if (from.kind === 'plugin') return from.instanceId;
+  if (from.kind === 'system') return from.service;
+  return 'user';
 }
 
 export function getQueuedFreshnessSenderLabel(entry: { from: MessageFrom; sourceCategory?: string }): string {
@@ -274,13 +276,15 @@ export async function isExpectedA2AReplyForCat(
   catId: string,
   messageStore: Pick<FreshnessMessageReader, 'getById'>,
 ): Promise<boolean> {
-  const replyCatId = msg.from?.kind === 'agent' ? msg.from.catId : msg.catId;
+  const from = messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]);
+  const replyCatId = from.kind === 'agent' ? from.catId : null;
   if (!msg.replyTo || !replyCatId || replyCatId === catId) return false;
   if (typeof messageStore.getById !== 'function') return false;
 
   const parent = await messageStore.getById(msg.replyTo);
   if (!parent) return false;
-  const parentCatId = parent.from?.kind === 'agent' ? parent.from.catId : parent.catId;
+  const parentFrom = messageFrom(parent as unknown as Parameters<typeof messageFrom>[0]);
+  const parentCatId = parentFrom.kind === 'agent' ? parentFrom.catId : null;
   if (parentCatId !== catId) return false;
   return Array.isArray(parent.mentions) && parent.mentions.includes(replyCatId);
 }

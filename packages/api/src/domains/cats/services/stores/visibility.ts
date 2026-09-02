@@ -4,6 +4,7 @@
  */
 
 import { type CatId, isSelectableManagedHoldConnectorSource } from '@cat-cafe/shared';
+import { messageFrom } from './message-from.js';
 import type { IMessageStore, StoredMessage, ThreadMessageReadOptions } from './ports/MessageStore.js';
 
 /**
@@ -18,9 +19,10 @@ export const SYSTEM_USER_IDS: ReadonlySet<string> = new Set(['scheduler', 'syste
  * Historical writes use `catId: 'system'`; newer display-only badges (for example
  * persisted ACP errors) use `catId: null`. Both must bypass per-user filtering.
  */
-export function isSystemUserMessage(msg: Pick<StoredMessage, 'from' | 'userId' | 'catId'>): boolean {
-  if (msg.from) return msg.from.kind === 'system';
-  return SYSTEM_USER_IDS.has(msg.userId) && (msg.catId === 'system' || msg.catId === null);
+export function isSystemUserMessage(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'source' | 'sourceParseFailure' | 'origin'>,
+): boolean {
+  return messageFrom(msg).kind === 'system';
 }
 
 /**
@@ -47,8 +49,7 @@ type ManagedHoldConnectorVisibilityMessage = Pick<
 
 /** Classify the protected scheduler namespace before evaluating publication authority. */
 export function isManagedHoldConnectorMessage(msg: ManagedHoldConnectorVisibilityMessage): boolean {
-  const systemAuthored = msg.from ? msg.from.kind === 'system' : msg.userId === 'scheduler' && msg.catId === null;
-  return systemAuthored && msg.source?.connector === 'hold-ball';
+  return messageFrom(msg).kind === 'system' && msg.source?.connector === 'hold-ball';
 }
 
 export function isOwnerVisibleManagedHoldConnector(
@@ -105,7 +106,7 @@ export function isDurableOwnerReadEvidence(msg: StoredMessage): boolean {
 export function hasDurableQueueBodyExposure(msg: StoredMessage, catId: CatId): boolean {
   return (
     msg.deliveryStatus === 'queued' &&
-    (msg.from ? msg.from.kind !== 'agent' : msg.catId === null) &&
+    messageFrom(msg).kind !== 'agent' &&
     (msg.queueCustody?.bodyExposures ?? []).some((exposure) => exposure.targetCatId === catId)
   );
 }
@@ -164,14 +165,7 @@ function isDeliveredMessage(message: StoredMessage): boolean {
 }
 
 function isRealCatSpeech(message: StoredMessage): boolean {
-  if (message.from) return message.from.kind === 'agent' && message.origin !== 'briefing';
-  return (
-    message.catId !== null &&
-    message.catId !== 'system' &&
-    message.userId !== 'system' &&
-    message.userId !== 'scheduler' &&
-    message.origin !== 'briefing'
-  );
+  return messageFrom(message).kind === 'agent' && message.origin !== 'briefing';
 }
 
 function isQueuedCatTimelineMessage(message: StoredMessage): boolean {
@@ -184,12 +178,7 @@ function isQueuedCatTimelineMessage(message: StoredMessage): boolean {
  * learn an undelivered body merely because the browser can render its receipt.
  */
 function isQueuedUserTimelineMessage(message: StoredMessage): boolean {
-  if (
-    message.deliveryStatus !== 'queued' ||
-    (message.from ? message.from.kind !== 'user' : message.catId !== null || message.source !== undefined) ||
-    (!message.from && (message.userId === 'system' || message.userId === 'scheduler')) ||
-    message.origin === 'briefing'
-  ) {
+  if (message.deliveryStatus !== 'queued' || messageFrom(message).kind !== 'user' || message.origin === 'briefing') {
     return false;
   }
   return message.queueCustody !== undefined;
@@ -198,7 +187,7 @@ function isQueuedUserTimelineMessage(message: StoredMessage): boolean {
 function isOwnerVisibleRecalledUserMessage(message: StoredMessage): boolean {
   return (
     message.deliveryStatus === 'canceled' &&
-    (message.from ? message.from.kind === 'user' : message.catId === null) &&
+    messageFrom(message).kind === 'user' &&
     message._tombstone === true &&
     message.recall?.exposure === 'seen'
   );
@@ -268,8 +257,10 @@ export function canQuoteInPublicReply(parent: StoredMessage): boolean {
  * POST /api/messages replyTo validation, and the get-message route — so no path can
  * forget the exclusion (the "fetch + gate" invariant in this file's header).
  */
-export function isInternalNonQuotableParent(msg: Pick<StoredMessage, 'userId' | 'origin'>): boolean {
-  return msg.userId === 'system' || msg.origin === 'briefing';
+export function isInternalNonQuotableParent(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'source' | 'sourceParseFailure' | 'origin'>,
+): boolean {
+  return messageFrom(msg).kind === 'system' || msg.origin === 'briefing';
 }
 
 export function isEligibleReplyParent(parent: StoredMessage, opts: ReplyParentEligibilityOptions): boolean {

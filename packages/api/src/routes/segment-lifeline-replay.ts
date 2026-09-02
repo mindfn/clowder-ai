@@ -21,6 +21,7 @@ import type {
   SegmentReplayResponse,
 } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
@@ -155,8 +156,9 @@ function mapGuardEvent(event: GuardRejectionEvent): SegmentReplayResponse['guard
 }
 
 function deriveMessageRole(msg: StoredMessage): ReplaySurroundingMessage['role'] {
-  if (msg.from?.kind === 'system') return 'system';
-  if (msg.from?.kind === 'agent') return 'assistant';
+  const from = messageFrom(msg);
+  if (from.kind === 'system') return 'system';
+  if (from.kind === 'agent') return 'assistant';
   return 'user';
 }
 
@@ -220,7 +222,7 @@ function isMessageVisible(msg: StoredMessage, threadId: string, userId: string):
   if (msg._tombstone || msg.deletedAt != null) return false;
   if (msg.threadId !== threadId) return false;
   // Owner scope: same user, or system messages that are not user-scoped.
-  if (msg.userId !== userId && msg.from?.kind !== 'system') return false;
+  if (msg.userId !== userId && messageFrom(msg).kind !== 'system') return false;
   return true;
 }
 
