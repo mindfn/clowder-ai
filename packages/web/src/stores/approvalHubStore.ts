@@ -33,7 +33,7 @@ const DEFAULT_ENDPOINT_BASE = '/api/dispatch-proposals';
 function resolveEndpoint(
   featureId: ApprovalFeatureId | undefined,
   proposalId: string,
-  action: 'approve' | 'reject',
+  action: 'approve' | 'skip' | 'reject',
 ): string {
   const base = (featureId && approvalFeatureMeta(featureId).decisionEndpointBase) ?? DEFAULT_ENDPOINT_BASE;
   return `${base}/${proposalId}/${action}`;
@@ -70,6 +70,20 @@ const ENTITY_RESOLUTION_ACTION_LABELS: Record<EntityConflictResolutionRequest['a
 function decisionErrorMessage(body: DecisionErrorBody, fallback: string): string {
   const summary = body.message ?? body.error ?? fallback;
   return body.detail ? `${summary}: ${body.detail}` : summary;
+}
+
+function isHarnessGovernanceItem(item: ApprovalItem | undefined): boolean {
+  return item?.sourceFeatureId === 'F257' && item.decisionMode === 'approve-skip-reject';
+}
+
+function harnessDecidingState(action: 'approve' | 'skip' | 'reject'): 'approving' | 'skipping' | 'rejecting' {
+  if (action === 'approve') return 'approving';
+  if (action === 'skip') return 'skipping';
+  return 'rejecting';
+}
+
+function caughtErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function stablePersonMemoryDecisionId(
@@ -109,18 +123,18 @@ interface ApprovalHubState {
   isLoading: boolean;
   isOpen: boolean;
   error: string | null;
-  /** Map of proposalId → 'approving' | 'rejecting' for optimistic UI feedback */
-  deciding: Record<string, 'approving' | 'rejecting' | 'resolving' | 'deferring' | 'withdrawing'>;
+  /** Per-proposal optimistic UI feedback. */
+  deciding: Record<string, 'approving' | 'skipping' | 'rejecting' | 'resolving' | 'deferring' | 'withdrawing'>;
   /** AC-D5: Set of selected proposalIds for batch operations */
   selectedIds: Set<string>;
   /** AC-D5: Results of the last batch operation (cleared on next batch) */
   batchResults: BatchItemResult[];
-  /** F246 Phase F: Settled (approved|rejected) history items */
+  /** F246 Phase F: settled approval history items. */
   settledItems: SettledApprovalItem[];
   settledIsLoading: boolean;
   settledError: string | null;
   fetchPending: () => Promise<void>;
-  /** F246 Phase F: fetch settled history (approved|rejected proposals) */
+  /** F246 Phase F: fetch settled approval history. */
   fetchSettled: (limit?: number) => Promise<void>;
   open: () => void;
   close: () => void;
@@ -129,6 +143,12 @@ interface ApprovalHubState {
   approveProposal: (proposalId: string) => Promise<void>;
   /** F246 Phase B: reject an inlineApprovable dispatch proposal */
   rejectProposal: (proposalId: string, feedback?: HumanDispositionFeedbackInput) => Promise<boolean>;
+  /** F257: decide a three-way Harness governance card with an operator note. */
+  decideHarnessGovernance: (
+    proposalId: string,
+    action: 'approve' | 'skip' | 'reject',
+    note?: string,
+  ) => Promise<boolean>;
   /** F276: approve an exact subset of the proposal's remaining drafts. */
   approvePersonMemory: (proposalId: string, selectedDraftIds: string[]) => Promise<void>;
   /** F276: keep a proposal owner-visible without authorizing recall or materialization. */
@@ -267,6 +287,45 @@ export const useApprovalHubStore = create<ApprovalHubState>((set, get) => ({
       set((s) => ({
         error: err instanceof Error ? err.message : 'Reject failed',
         deciding: withoutDecision(s.deciding, proposalId),
+      }));
+      return false;
+    }
+  },
+
+  decideHarnessGovernance: async (proposalId, action, note) => {
+    const item = get().items.find((candidate) => candidate.proposalId === proposalId);
+    if (!isHarnessGovernanceItem(item)) {
+      set({ error: 'Three-way decision is only available for Harness governance proposals' });
+      return false;
+    }
+    const trimmedNote = note?.trim() ?? '';
+    if (action === 'reject' && !trimmedNote) {
+      set({ error: '拒绝时必须填写理由' });
+      return false;
+    }
+    const deciding = harnessDecidingState(action);
+    set((state) => ({ deciding: { ...state.deciding, [proposalId]: deciding }, error: null }));
+    try {
+      const res = await apiFetch(resolveEndpoint('F257', proposalId, action), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: trimmedNote }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as DecisionErrorBody;
+        throw new Error(decisionErrorMessage(data, `${action} failed: ${res.status}`));
+      }
+      set((state) => ({
+        items: state.items.filter((candidate) => candidate.proposalId !== proposalId),
+        count: Math.max(0, state.count - 1),
+        deciding: withoutDecision(state.deciding, proposalId),
+        error: null,
+      }));
+      return true;
+    } catch (err) {
+      set((state) => ({
+        error: caughtErrorMessage(err, `${action} failed`),
+        deciding: withoutDecision(state.deciding, proposalId),
       }));
       return false;
     }
