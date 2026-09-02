@@ -110,15 +110,10 @@ export function receiptTargetStateLabel(
   if (target.state === 'queued') return scope === 'cross_thread_delivery' ? '已送达' : '未读 · 排队中';
   if (target.state === 'notified') return scope === 'cross_thread_delivery' ? '已送达' : '已提醒 · 尚未读取';
   if (target.state === 'interrupted') return '运行因服务重启中断 · 未自动重试';
-  if (target.state === 'cancelled') return '执行已停止 · 可重试';
-  if (target.state === 'failed') {
-    const retry = target.retryable === false ? '' : ' · 可重试';
-    return target.invocationId ? `执行失败${retry}` : `唤醒失败${retry}`;
-  }
+  if (target.state === 'cancelled') return '执行已停止';
+  if (target.state === 'failed') return target.invocationId ? '执行失败' : '唤醒失败';
   if (target.state === 'steering') return 'Steer 中';
-  if (target.state === 'withdrawn') {
-    return target.retryable === false ? '通知未送达 · 关联事项已结束' : '已撤出待处理 · 历史保留';
-  }
+  if (target.state === 'withdrawn') return '通知未送达 · 关联事项已结束';
   if (target.outcome?.disposition === 'responded') return '已由回复明确处理';
   if (target.outcome?.disposition === 'completed_with_turn') {
     if (target.outcome.evidenceRef.kind === 'turn_execution' && !hasLoadedLineage) {

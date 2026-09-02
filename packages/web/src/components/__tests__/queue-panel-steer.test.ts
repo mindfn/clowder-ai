@@ -256,7 +256,7 @@ describe('QueuePanel steer (F047)', () => {
   it('closes a stale Steer confirmation and refreshes Queue truth after a 409', async () => {
     vi.mocked(apiFetch)
       .mockResolvedValueOnce(
-        response({ code: 'STEER_STATE_CHANGED', error: 'Steer 状态已变化，请重试' }, 409) as Response,
+        response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中，无法 steer' }, 409) as Response,
       )
       .mockResolvedValueOnce(response({ queue: [], paused: false }) as Response);
     useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });

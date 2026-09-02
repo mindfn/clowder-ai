@@ -27,7 +27,6 @@ import {
 } from '../domains/cats/services/agents/invocation/active-execution-service.js';
 import {
   type InvocationQueue,
-  isOrdinaryQueueTargetEligible,
   isSystemPinnedQueueEntry,
   type QueueEntry,
   queueEntryMessageIds,
@@ -803,18 +802,13 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // separate drag/move interaction and is never accepted as a Steer mode.
       const requestedTargetCatId = parseResult.data.targetCatId;
       const targetCats = queueEntryTargetCats(entry);
-      if (!requestedTargetCatId && targetCats.length === 0) {
+      const steerCatId = requestedTargetCatId ?? targetCats[0];
+      if (!steerCatId) {
         reply.status(400);
         return { error: '请选择当前对话中的成员', code: 'STEER_TARGET_REQUIRED' };
       }
-      const steerCatId =
-        requestedTargetCatId ?? targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
-      if (!steerCatId) {
-        reply.status(409);
-        return { error: 'Steer 状态已变化，请重试', code: 'STEER_STATE_CHANGED' };
-      }
       const targetInThread = guard.thread.participants.includes(steerCatId as CatId);
-      const targetMatchesEntry = targetCats.length === 0 || isOrdinaryQueueTargetEligible(entry, steerCatId);
+      const targetMatchesEntry = targetCats.length === 0 || targetCats.includes(steerCatId);
       if (!targetInThread || !targetMatchesEntry) {
         reply.status(400);
         return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_STEER_TARGET' };

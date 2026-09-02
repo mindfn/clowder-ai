@@ -64,7 +64,6 @@ function projectTarget(entry: QueueLedgerEntry): QueueReceiptTarget | null {
     ...(exposure ? { seenAt: exposure.seenAt } : {}),
     ...(state === 'withdrawn' && entry.terminalAt !== undefined ? { withdrawnAt: entry.terminalAt } : {}),
     attempts: [attempt],
-    retryable: false,
   };
 }
 

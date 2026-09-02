@@ -143,7 +143,9 @@ operator experience：
 
 #### 重试与默认信息密度
 
-- 只有 `failed` 的 terminal response 气泡提供重试入口；成功、取消、中断和 source 头像不提供重试。
+- terminal response 气泡只表达本次执行的完成、失败、取消或中断，不把历史 attempt 伪装成仍可执行的
+  retry token。用户要重做时发送新的消息或发起明确的新动作，由生产者生成新的 source 与 Queue row；
+  任何终态都不原位复活旧 Queue 工单。
 - 默认界面不展示“普通执行”“查看本轮”“正文读取时间”“处理完成时间”、attempt aggregate 或独立
   “处理回执”区块。回复引用与头像三态已经完整覆盖用户需要理解的事实。
 
@@ -169,7 +171,7 @@ legacy 路径。若规范化后仍没有唯一事实，就 fail closed，而不�
 4. **INV-C4 — 无空气泡**：processing 不产生 response placeholder；正文或 terminal 才能让气泡出现。
 5. **INV-C5 — 单一终局**：一个成员一次 execution 只有一个原位 terminal response，不附加第二条状态消息。
 6. **INV-C6 — 成功静默**：成功只有静止头像与正常回复；失败/取消只复用 terminal 轨迹提示，不加头像 badge。
-7. **INV-C7 — 重试归失败气泡**：只有 failed response 气泡可重试。
+7. **INV-C7 — 终态不复活**：failed/cancelled/interrupted response 只保留终态证据；重做来自新的用户意图。
 8. **INV-C8 — 无展示 fallback**：legacy 只在 READ 边界规范化；渲染层不以 fallback 或 kind/scope 分支补事实。
 
 ### Phase D: 队列内核收敛（normative，2026-09-02）
@@ -253,7 +255,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-C3: 每个 dispatch-result response 都带 exact `messageRef`；completed response 可作为下一跳 source
 - [x] AC-C4: processing 不创建空气泡、假 `Thinking...` 或状态 system row；terminal 只有一个原位 response 气泡
 - [x] AC-C5: 成功不加 badge/文案；失败与取消复用 terminal 轨迹提示，头像不加结果符号
-- [x] AC-C6: 只有 failed response 气泡提供重试；旧 dock、时间戳、“普通执行”“查看本轮”全部删除
+- [x] AC-C6: terminal response 不提供旧 Queue attempt 的原位重试；旧 dock、时间戳、“普通执行”“查看本轮”全部删除
 - [x] AC-C7: React 渲染层没有 `primary_trigger`、author/kind/scope/channel 分叉或 legacy receipt fallback
 - [x] AC-C8: F5 hydration 与 live socket 对同一 source/target lifecycle 产生相同头像、引用与 terminal 投影
 
@@ -267,6 +269,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-D6: terminal work 从 active order 移除但保留 receipt/idempotency tombstone；失败、取消、中断均不回队
 - [x] AC-D7: 前缀批处理不拼正文；每条持久 Message 以独立 prompt message、原顺序进入同一次 invocation
 - [x] AC-D8: Redis hydrate 对旧/损坏 row fail closed；启动恢复、fan-out、并发 claim 与 terminal replay 有真 Redis 覆盖
+- [x] AC-D9: terminal row 不可复活；旧 Message-custody Gate 5 retry bridge 退役，重做必须由新用户意图产生新 source
 
 ## Scope Boundary
 
@@ -302,7 +305,7 @@ Why: Queue custody 仍归 dispatch，时间线投影与 receipt 合并仍归 bub
 | KD-5 | owner timeline publication 与 cat delivery 分成两个 typed read option | F264 receipt 必须让operator持续看见原消息；复用全局 `isTimelinePublished` 会把未投递正文泄给猫 | 2026-07-21 |
 | KD-6 | Phase C 以 actual dispatch facts 建立单一 UI projection，不按消息来源分类 | user/cat/connector/GitHub 通知都可能成为 source；分类例外会再次制造多套生命周期 | 2026-08-31 |
 | KD-7 | 删除旧 dock/占位/fallback，而不是继续收敛到 dock | dock 自身表达了第二套 receipt 模型，且增加用户无需理解的时间、执行类型与跳转信息 | 2026-08-31 |
-| KD-8 | 成功静默、终态头像统一静止；结果只由 canonical terminal response 表达 | 头像只回答“谁在处理/处理过”，不复制 outcome；失败重试归 failed bubble | 2026-08-31 |
+| KD-8 | 成功静默、终态头像统一静止；结果只由 canonical terminal response 表达 | 头像只回答“谁在处理/处理过”，不复制 outcome；终态不携带旧 Queue attempt 的 retry 能力 | 2026-08-31 |
 
 ## Review Gate
 

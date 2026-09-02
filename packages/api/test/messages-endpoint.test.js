@@ -437,7 +437,6 @@ describe('GET /api/messages', () => {
               seenAt: 1600,
             },
           ],
-          retryable: false,
         },
       ],
       reminderAttempts: [],

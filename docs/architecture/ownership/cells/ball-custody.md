@@ -25,7 +25,6 @@ code_anchors:
   - packages/api/src/domains/ball-custody/turn-custody-wake-provenance.ts
   - packages/api/src/domains/ball-custody/wait-state-machine.ts
   - packages/api/src/domains/ball-custody/wait-continuation-carrier.ts
-  - packages/api/src/domains/ball-custody/WaitContinuationRetryPreflight.ts
   - packages/api/src/domains/github-signals/GitHubWaitLifecycleService.ts
   - packages/shared/src/types/github-wait.ts
   - packages/shared/src/types/wait-termination.ts
@@ -67,7 +66,6 @@ doc_anchors:
   - docs/features/F233-ball-custody-observability.md
   - docs/features/F254-side-effect-freshness-gate.md
   - docs/features/F280-unified-wait-contract.md
-  - feature-specs/2026-08-12-1291-gate5-retry-revalidation.md
   - feature-discussions/2026-07-29-f280-unified-wait-contract/README.md
   - docs/decisions/041-freshness-catch-closure-output-commit.md
   - docs/decisions/042-glass-box-delivery-semantics.md
@@ -76,11 +74,10 @@ doc_anchors:
   - feature-specs/2026-07-09-f254-phase-e-catch-closure.md
   - feature-specs/2026-06-14-f233-phase-b-ball-custody-event-stream.md
   - feature-specs/2026-07-16-f177-f254-f264-child-execution-truth.md
-static_scan_hints: [ActionSuccessorLease, ActionSuccessorLeaseStore, ActionSuccessorAdmissionService, ActionSubjectTruthResolver, ActionTerminalPredicateCatalog, ActionSuccessorCompletionService, terminalPredicate, completionCandidate, completionCandidates, preflightOutput, continueFreshRevision, claimOrigin, predecessorCatId, returnToPredecessor, returnDeliveryState, actionGeneration, HoldAccessRole, resolveHoldAccess, scheduleMutationAuditStore, AwaitState, WaitOwnerFence, WaitOutcomeV1, WaitContinuationCarrierV1, WaitContinuationRetryPreflight, RetryAuthorityDecision, waitContinuationCarrier, awaitGeneration, expiresAt, matchedPredicate, BallCustodyEvent, BallCustodyProjection, BallCustodyEventLog, BallCustodyIngest, ball-custody-events, buildHandedEvent, ball.dispatch_dispositioned, dispatch_handled_continuation, ball-custody-state-machine, ball-custody-projector, ballcustody:events, ballcustody:projection, blockedSinceAt, ProbeScheduler, WakeSender, FreshnessAttentionEventLog, FreshnessInvocationStateStore, FreshnessNoticeService, FreshnessReinvokeDecider, FreshnessClosureAggregate, FreshnessSupplementAggregate, FreshnessSupplementStateMachine, FreshnessClosureStore, FreshnessClosureLegacyMigrationState, MigrateLegacyFreshnessClosureInput, legacy_migrated, FreshnessOutputCommitCoordinator, FreshnessRelevancePolicy, same_user_wave_sibling_reply, coveredTriggerMessageIds, causal, triggerMessageId, freshnessClosureId, freshnessSupplementId, seenCursor]
+static_scan_hints: [ActionSuccessorLease, ActionSuccessorLeaseStore, ActionSuccessorAdmissionService, ActionSubjectTruthResolver, ActionTerminalPredicateCatalog, ActionSuccessorCompletionService, terminalPredicate, completionCandidate, completionCandidates, preflightOutput, continueFreshRevision, claimOrigin, predecessorCatId, returnToPredecessor, returnDeliveryState, actionGeneration, HoldAccessRole, resolveHoldAccess, scheduleMutationAuditStore, AwaitState, WaitOwnerFence, WaitOutcomeV1, WaitContinuationCarrierV1, waitContinuationCarrier, awaitGeneration, expiresAt, matchedPredicate, BallCustodyEvent, BallCustodyProjection, BallCustodyEventLog, BallCustodyIngest, ball-custody-events, buildHandedEvent, ball.dispatch_dispositioned, dispatch_handled_continuation, ball-custody-state-machine, ball-custody-projector, ballcustody:events, ballcustody:projection, blockedSinceAt, ProbeScheduler, WakeSender, FreshnessAttentionEventLog, FreshnessInvocationStateStore, FreshnessNoticeService, FreshnessReinvokeDecider, FreshnessClosureAggregate, FreshnessSupplementAggregate, FreshnessSupplementStateMachine, FreshnessClosureStore, FreshnessClosureLegacyMigrationState, MigrateLegacyFreshnessClosureInput, legacy_migrated, FreshnessOutputCommitCoordinator, FreshnessRelevancePolicy, same_user_wave_sibling_reply, coveredTriggerMessageIds, causal, triggerMessageId, freshnessClosureId, freshnessSupplementId, seenCursor]
 cited_by:
   - {feature: F167-hold-rescue-authorization, date: 2026-08-18, delta: verified trigger principal, exact-thread collaborator, and configured operator become distinct hold access roles; collaborators retain rescue cancel but receive only a safe lifecycle summary, while exact task deletion and actor/owner audit commit atomically through the existing scheduler store}
   - {feature: F295, date: 2026-08-13, delta: active managed-command receipts are projected as cancelable executions without becoming a new lifecycle ledger; DELETE is fenced by exact taskId so an old hold bubble cannot cancel its replacement}
-  - {feature: F280-Gate-5, date: 2026-08-12, delta: explicit retry reads the stored wait carrier for UX preflight, then atomically compares the raw Task/action-lease witness and Message custody revisions in the same commit that appends the attempt; stale witnesses and legacy unattributed agent work fail closed}
   - {feature: F280-Gate-4, date: 2026-08-12, delta: a consumed wait outcome retains its exact owner fence and publishes one immutable wait/outcome/fence carrier in the server-authored github-wait message; Queue and Invocation are projections, not new authority}
   - {feature: F167-post-disposition-continuation, date: 2026-08-11, delta: the wake-scoped stop decision preserves handled vs completed plus exact event identity; handled may expose a bounded continuation witness only when the disposition tool settled and the provider ended without post-tool progress}
   - {feature: F167-Phase-T-readiness, date: 2026-07-23, delta: first live shadow disagreements bind explicit A2A wakes to the existing thread-ball dispatch only after durable ball.handed evidence, preserve exact hold-ball identity, and retain generic or missing provenance as unknown_legacy}
@@ -148,14 +145,10 @@ liability, not an invitation to reconstruct authority. Lifecycle recovery CAS-di
 outcome as `legacy_unfenced`, publishes no connector message, and continues the task sweep. Mutable task
 fields cannot supply or mint the missing fence.
 
-Gate 5 retry authority is a read-only preflight over that immutable carrier and current canonical
-owners. A containing-task wait must still match its exact task, outcome, generation, thread, user, and
-holder; an action-successor wait must additionally pass the existing lease `preflightOutput` for the
-same generation and holder. The route check is advisory for an early 409: the same read is repeated
-inside the custody entry lock immediately before the attempt CAS, and only that mutation-boundary
-decision may authorize the retry. Neither decision revives the wait, mints a lease, persists
-retryability, or lets Queue state substitute for authority. Historical agent/connector messages without
-attributable canonical provenance remain non-executable.
+ADR-043 retired the Gate 5 Message-custody retry bridge. A consumed wait carrier is immutable terminal
+provenance, not a retry token; a terminal Queue row never returns to active order. If a user wants the
+work performed again, a new explicit intent must create a new producer source and Queue row. Historical
+agent/connector messages without attributable canonical provenance remain non-executable.
 
 ## Use This When
 
@@ -172,7 +165,7 @@ attributable canonical provenance remain non-executable.
 - 改 F280 canonical wait cancellation、termination replay/conflict、execution-projection recovery，
   或 owner-authenticated cancel route。
 - 改 F280 wait outcome 到 connector message / Queue / Invocation 的 exact carrier 投影。
-- 改 F280 wait/action-backed explicit retry 的 current-authority preflight 或 fail-closed reason。
+- 改 F280 terminal wait carrier 与新用户意图之间的边界；旧 carrier 不得复活 wait 或 Queue attempt。
 - 值班简报 / feat 轨迹消费球权 projection。
 - 接入 ProbeScheduler / WakeSender（Phase B 后续 Task：blocked task 探针 + best-effort 唤醒）。
 
@@ -199,11 +192,9 @@ attributable canonical provenance remain non-executable.
 - Wait continuation carrier 只能从已消费 outcome 的 exact owner fence 派生，并由
   server-authored `github-wait` message 单点持久化。Queue、Invocation 与 stop-gate 只复制和核对
   `(waitId, outcomeId, ownerFence)`；畸形或分叉 projection 必须在 provider start 前失败。
-- Explicit retry 必须先从 stored message 解析 carrier，再对 TaskStore / ActionSuccessorLeaseStore
-  做 read-only current-authority preflight；custody mutation 必须由 ball-custody committer 在同一个
-  Redis Lua 中比较 Task/action-lease raw witness、subject-terminal truth 与全部 Message custody revision，
-  并追加 attempt。只有 durable winner 才能 reopen Queue；拒绝结果不能写 Queue/custody，也不能
-  回退到 generic connector。
+- Terminal wait carrier 只能作为历史 provenance。重做必须来自新的用户意图并获得新的 producer
+  source；不得从 stored message、mutable task 或旧 action lease 推导 retry authority，也不得让
+  terminal Queue row 重回 active order。
 - User cancel 必须先在 Redis 原子提交 canonical termination event + producer entry +
   content-free F281 receipt/index，成功后才清理 SQLite runner projection；public body 不得提供
   owner/cat/subject/source。event 不保存 feedback why，changed feedback replay 必须冲突。

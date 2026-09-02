@@ -123,6 +123,16 @@ Steer 只需在条目上留 2 个标量：`steerRequestedAt?: number`（UI「Ste
 
 `freshnessRequiredFrontierMessageId` **纯写不读，直接删**（全仓 5 处 src 命中：1 声明 + 1 类型 + 1 透传 + 2 写入，零读点）。
 
+### D7 — terminal row 不复活；重做是新的用户意图
+
+`handled / failed / interrupted / cancelled / withdrawn` 都是一次 Queue 工单的不可逆终态。历史上的
+`WaitContinuationRetryPreflight` / `WaitContinuationRetryCommitter` 依赖 Message 内的
+`queueCustody` 镜像，把失败 attempt 原位重新塞回 Queue；单账本切换后这条路径必须退役，否则
+terminal tombstone 会重新变成可执行状态，并再次制造 Message/Queue 双写。
+
+用户若要重做失败事项，应发送新的消息或执行明确的新动作，由生产者产生新的持久 source 与 Queue row；
+旧 response、receipt 与 wait carrier 只保留原 attempt 的终态证据，不能充当 retry token。
+
 ## 不会简化的部分（诚实边界）
 
 `prestartRetirement` **不消失**。窗口是 `invocationRecordStore.create`（QueueProcessor.ts:4873）→ `invocationTracker.startAll`（:5419），中间 **546 行异步**（freshness 预检、前缀吸收、session 准入）。这个「已 processing 但 tracker 里还没有」的空档由 **I/O 本身**造成，不是内存队列造成的，进不了 Lua。
@@ -137,7 +147,7 @@ Steer 只需在条目上留 2 个标量：`steerRequestedAt?: number`（UI「Ste
 ## 预期结果
 
 - 持久 `QueueLedgerEntry` 顶层约 **20 个字段**，变化大的执行参数和回执分别收进 `payload` / `execution` / `delivery`；13 个 by-cat map 全部退化为单目标条目的标量
-- 删除模块：`QueuedMessageCustodyStartupReconciler` + `StartupQueueEntry` + `CarrierProjection`（436 行）、`queue-entry-settlement.ts`（49 行）、`convergeZombieQueue.ts`（87 行）、`exactSteerBatch` 预留 Map 与三段式 API
+- 删除模块：`QueuedMessageCustodyStartupReconciler` + `StartupQueueEntry` + `CarrierProjection`（436 行）、`queue-entry-settlement.ts`（49 行）、`convergeZombieQueue.ts`（87 行）、`exactSteerBatch` 预留 Map 与三段式 API，以及依赖 Message custody 复活 terminal attempt 的 Gate 5 retry bridge
 - `QueueProcessor` 中的同步/CAS/rollback/restore 大部分消失
 
 ## 迁移

@@ -189,8 +189,6 @@ export interface QueueReceiptTarget {
   outcome?: QueueTargetOutcome;
   /** Append-only target-local delivery history. Missing only on legacy receipts. */
   attempts?: QueueTargetAttempt[];
-  /** False when no durable retry is possible or the fenced business action is already terminal. */
-  retryable?: boolean;
 }
 
 export interface QueueMessageReceipt {

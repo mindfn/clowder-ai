@@ -232,7 +232,6 @@ function hasValidReceiptTargetOptionals(candidate: UnknownRecord): boolean {
     isOptionalNumber(candidate.awakenedAt) &&
     isOptionalNumber(candidate.seenAt) &&
     isOptionalNumber(candidate.withdrawnAt) &&
-    (candidate.retryable === undefined || typeof candidate.retryable === 'boolean') &&
     (candidate.attempts === undefined || Array.isArray(candidate.attempts))
   );
 }
@@ -269,7 +268,6 @@ function buildReceiptTarget(candidate: UnknownRecord, nested: NormalizedReceiptT
   if (candidate.withdrawnAt !== undefined) target.withdrawnAt = candidate.withdrawnAt as number;
   if (nested.outcome) target.outcome = nested.outcome;
   if (nested.attempts) target.attempts = nested.attempts;
-  if (candidate.retryable !== undefined) target.retryable = candidate.retryable as boolean;
   return target;
 }
 

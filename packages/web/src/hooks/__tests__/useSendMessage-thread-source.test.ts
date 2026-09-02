@@ -310,7 +310,7 @@ describe('useSendMessage canonical Queue ingress', () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 409,
-        json: async () => ({ error: 'Steer 状态已变化，请重试' }),
+        json: async () => ({ error: '条目正在处理中，无法 steer' }),
       });
 
     await act(async () => {
@@ -326,7 +326,7 @@ describe('useSendMessage canonical Queue ingress', () => {
     expect(accepted).toEqual([true]);
     expect(mockAddMessageToThread).toHaveBeenCalledWith(
       'thread-route',
-      expect.objectContaining({ content: expect.stringContaining('Steer 状态已变化') }),
+      expect.objectContaining({ content: expect.stringContaining('条目正在处理中') }),
     );
   });
 
