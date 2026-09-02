@@ -26,7 +26,7 @@ import {
   normalizeSopDefinitionId,
   resolveWorkflowSopSkill,
 } from '@cat-cafe/shared';
-import type { FastifyBaseLogger, FastifyPluginAsync, FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { getOwnerUserId } from '../config/cat-config-loader.js';
 import { resolveFrontendBaseUrl } from '../config/frontend-origin.js';
@@ -5119,28 +5119,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     threadStore,
   });
 
-  // #1392 AC-7 (reply_and_wait): when the external reply is already posted, a failed
-  // tracking INSTALL must be a LOUD, specific `reply_succeeded_tracking_not_armed`
-  // partial status — never a generic 409/422/503 that could make the caller re-post.
-  // Ordinary (non-reply) callers get the generic error unchanged.
-  const armFailure = (
-    reply: FastifyReply,
-    replyAlreadySent: boolean,
-    statusCode: number,
-    errorMsg: string,
-  ): { status: string; reason: string; registerError: { statusCode: number; error: string } } | { error: string } => {
-    if (replyAlreadySent) {
-      reply.status(200);
-      return {
-        status: 'reply_succeeded_tracking_not_armed',
-        reason: errorMsg,
-        registerError: { statusCode, error: errorMsg },
-      };
-    }
-    reply.status(statusCode);
-    return { error: errorMsg };
-  };
-
   const registerPrTrackingSchema = z
     .object({
       repoFullName: z
@@ -5154,8 +5132,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       expiresAt: z.number().int().positive().optional(),
       // #1392 AC-1: default true (auto-renew each generation, re-armed to match only newer events); explicit false ⇒ single-fire.
       autoRenew: z.boolean().optional(),
-      // #1392 AC-7 (reply_and_wait): true ⇒ a failed install returns the loud partial status.
-      replyAlreadySent: z.boolean().optional(),
     })
     .strict();
 
@@ -5184,8 +5160,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const { repoFullName, prNumber, when, nextStep, expiresAt, autoRenew: autoRenewInput } = parsed.data;
     // #1392 AC-1: new registrations default to auto-renew; explicit false ⇒ single-fire.
     const autoRenew = autoRenewInput ?? true;
-    // #1392 AC-7 (reply_and_wait): a post-reply install failure becomes the loud partial status.
-    const replyAlreadySent = parsed.data.replyAlreadySent === true;
     if (expiresAt !== undefined && expiresAt <= Date.now()) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
@@ -5273,7 +5247,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       try {
         snapshot = await fetchPrWaitBaseline(repoFullName, prNumber, when);
       } catch {
-        return armFailure(reply, replyAlreadySent, 503, 'PR wait baseline unavailable — try again later');
+        reply.status(503);
+        return { error: 'PR wait baseline unavailable — try again later' };
       }
 
       const triggerCommentIds = when.flatMap((predicate) =>
@@ -5360,7 +5335,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         automationState: replacement,
       });
       if (!installed) {
-        return armFailure(reply, replyAlreadySent, 409, 'PR wait changed concurrently — retry registration');
+        reply.status(409);
+        return { error: 'PR wait changed concurrently — retry registration' };
       }
       if (supersededOutcome) {
         await opts.waitLifecycleHolder?.current?.recordOutcomeEvent(installed, supersededOutcome);
@@ -5374,15 +5350,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       };
     } catch (error) {
       if (isSubjectOwnershipConflictError(error)) {
-        return armFailure(
-          reply,
-          replyAlreadySent,
-          409,
-          `PR ${repoFullName}#${prNumber} already registered by another user`,
-        );
+        reply.status(409);
+        return { error: `PR ${repoFullName}#${prNumber} already registered by another user` };
       }
       if (isManagedWorkBindingConflictError(error)) {
-        return armFailure(reply, replyAlreadySent, 409, 'PR tracking task is already bound to different managed work');
+        reply.status(409);
+        return { error: 'PR tracking task is already bound to different managed work' };
       }
       throw error;
     }
@@ -5402,8 +5375,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       expiresAt: z.number().int().positive().optional(),
       // #1392 AC-1: default true (auto-renew each generation, re-armed to match only newer events); explicit false ⇒ single-fire.
       autoRenew: z.boolean().optional(),
-      // #1392 AC-7 (reply_and_wait): true ⇒ a failed install returns the loud partial status.
-      replyAlreadySent: z.boolean().optional(),
     })
     .strict();
 
@@ -5431,8 +5402,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const { repoFullName, issueNumber, when, nextStep, expiresAt, autoRenew: autoRenewInput } = parsed.data;
     // #1392 AC-1: new registrations default to auto-renew; explicit false ⇒ single-fire.
     const autoRenew = autoRenewInput ?? true;
-    // #1392 AC-7 (reply_and_wait): a post-reply install failure becomes the loud partial status.
-    const replyAlreadySent = parsed.data.replyAlreadySent === true;
     if (expiresAt !== undefined && expiresAt <= Date.now()) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
@@ -5525,7 +5494,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       try {
         snapshot = await fetchIssueWaitBaseline(repoFullName, issueNumber);
       } catch {
-        return armFailure(reply, replyAlreadySent, 503, 'Issue wait baseline unavailable — try again later');
+        reply.status(503);
+        return { error: 'Issue wait baseline unavailable — try again later' };
       }
 
       const taskInput = {
@@ -5581,7 +5551,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         automationState: replacement,
       });
       if (!installed) {
-        return armFailure(reply, replyAlreadySent, 409, 'Issue wait changed concurrently — retry registration');
+        reply.status(409);
+        return { error: 'Issue wait changed concurrently — retry registration' };
       }
       if (supersededOutcome) {
         await opts.waitLifecycleHolder?.current?.recordOutcomeEvent(installed, supersededOutcome);
@@ -5590,20 +5561,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return { status: 'ok', threadId: record.threadId, task: installed, await: awaitState };
     } catch (error) {
       if (isSubjectOwnershipConflictError(error)) {
-        return armFailure(
-          reply,
-          replyAlreadySent,
-          409,
-          `Issue ${repoFullName}#${issueNumber} already registered by another user`,
-        );
+        reply.status(409);
+        return { error: `Issue ${repoFullName}#${issueNumber} already registered by another user` };
       }
       if (isManagedWorkBindingConflictError(error)) {
-        return armFailure(
-          reply,
-          replyAlreadySent,
-          409,
-          'Issue tracking task is already bound to different managed work',
-        );
+        reply.status(409);
+        return { error: 'Issue tracking task is already bound to different managed work' };
       }
       throw error;
     }
@@ -5616,7 +5579,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   // the EXISTING register tool remains the sole durable install.
   const previewGitHubTrackingSchema = z
     .object({
-      intent: z.enum(['wait_for_author_update', 'wait_for_reviewer_response', 'reply_and_wait']),
+      intent: z.enum(['wait_for_author_update', 'wait_for_reviewer_response']),
       subject: z
         .object({
           kind: z.enum(['pr', 'issue']),
@@ -5627,8 +5590,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           number: z.number().int().positive(),
         })
         .strict(),
-      // Exact caller-supplied logins. Required for reply_and_wait; optional adds
-      // for reviewer_response; ignored for author_update.
+      // Exact caller-supplied logins. Optional adds for reviewer_response;
+      // ignored for author_update.
       additionalLogins: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
       // #1392 AC-7 P2-A: wait_for_reviewer_response only — exact replacement of the
       // auto-resolved audience; the executable narrow path when resolution overflows >20.
@@ -5637,7 +5600,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       // Named `nextStep` to match the register tool's field (no thenable footgun).
       nextStep: z.string().trim().min(1).max(500).optional(),
       expiresAt: z.number().int().positive().optional(),
-      replyAlreadySent: z.boolean().optional(),
     })
     .strict();
 
@@ -5651,8 +5613,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const record = requireCallbackAuth(request, reply);
     if (!record) return;
 
-    const { intent, subject, additionalLogins, overrideLogins, autoRenew, nextStep, expiresAt, replyAlreadySent } =
-      parsed.data;
+    const { intent, subject, additionalLogins, overrideLogins, autoRenew, nextStep, expiresAt } = parsed.data;
     if (expiresAt !== undefined && expiresAt <= Date.now()) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
@@ -5666,13 +5627,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(autoRenew !== undefined ? { autoRenew } : {}),
       ...(nextStep !== undefined ? { nextStep } : {}),
       ...(expiresAt !== undefined ? { expiresAt } : {}),
-      ...(replyAlreadySent !== undefined ? { replyAlreadySent } : {}),
     };
-
-    // reply_and_wait names its exact audience — no GitHub read, no auth boundary needed.
-    if (intent === 'reply_and_wait') {
-      return buildTrackingPreview(input, null);
-    }
 
     const reader = opts.fetchGitHubTrackingAudience;
     if (!reader) {

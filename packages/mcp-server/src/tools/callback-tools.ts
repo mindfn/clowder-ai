@@ -1755,12 +1755,6 @@ export const registerPrTrackingInputSchema = {
     .describe(
       'Default true: auto-renew each generation, re-armed to match only newer events. Set false for single-fire.',
     ),
-  replyAlreadySent: z
-    .boolean()
-    .optional()
-    .describe(
-      '#1392 AC-7 reply_and_wait: when true, a failed install returns the explicit reply_succeeded_tracking_not_armed partial status (never a generic 4xx/5xx), so you never re-post.',
-    ),
 };
 
 export async function handleRegisterPrTracking(input: {
@@ -1778,7 +1772,6 @@ export async function handleRegisterPrTracking(input: {
   nextStep: string;
   expiresAt?: number;
   autoRenew?: boolean;
-  replyAlreadySent?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -1795,7 +1788,6 @@ export async function handleRegisterPrTracking(input: {
           nextStep: input.nextStep,
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
-          ...(input.replyAlreadySent !== undefined ? { replyAlreadySent: input.replyAlreadySent } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1840,12 +1832,6 @@ export const registerIssueTrackingInputSchema = {
     .optional()
     .describe('Optional Unix timestamp in milliseconds when responsibility expires (omitted ⇒ no deadline).'),
   autoRenew: z.boolean().optional().describe('Default true: auto-renew each generation. Set false for single-fire.'),
-  replyAlreadySent: z
-    .boolean()
-    .optional()
-    .describe(
-      '#1392 AC-7 reply_and_wait: when true, a failed install returns the explicit reply_succeeded_tracking_not_armed partial status (never a generic 4xx/5xx).',
-    ),
 };
 
 export async function handleRegisterIssueTracking(input: {
@@ -1855,7 +1841,6 @@ export async function handleRegisterIssueTracking(input: {
   nextStep: string;
   expiresAt?: number;
   autoRenew?: boolean;
-  replyAlreadySent?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1870,7 +1855,6 @@ export async function handleRegisterIssueTracking(input: {
           nextStep: input.nextStep,
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
-          ...(input.replyAlreadySent !== undefined ? { replyAlreadySent: input.replyAlreadySent } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1885,12 +1869,11 @@ export async function handleRegisterIssueTracking(input: {
 // anything is registered; it never freezes a baseline or writes the TaskStore.
 export const previewGitHubTrackingInputSchema = {
   intent: z
-    .enum(['wait_for_author_update', 'wait_for_reviewer_response', 'reply_and_wait'])
+    .enum(['wait_for_author_update', 'wait_for_reviewer_response'])
     .describe(
       'Closed typed journey (no free text). ' +
         'wait_for_author_update: wait for the PR/issue author to push a new HEAD (PR) or comment. ' +
-        'wait_for_reviewer_response: wait for requested reviewers ∪ prior review authors (PR) or assignees (issue). ' +
-        'reply_and_wait: you replied to specific people — wait for THEIR reply (always single-fire).',
+        'wait_for_reviewer_response: wait for requested reviewers ∪ prior review authors (PR) or assignees (issue).',
     ),
   subject: z
     .object({
@@ -1905,7 +1888,7 @@ export const previewGitHubTrackingInputSchema = {
     .superRefine(caseInsensitiveUniqueLogins)
     .optional()
     .describe(
-      'Exact GitHub logins. REQUIRED for reply_and_wait (who you replied to); optional extra reviewers for ' +
+      'Exact GitHub logins. Optional extra reviewers for ' +
         'wait_for_reviewer_response (also acknowledges any unresolvable requested team); ignored for wait_for_author_update.',
     ),
   overrideLogins: z
@@ -1917,10 +1900,7 @@ export const previewGitHubTrackingInputSchema = {
       'wait_for_reviewer_response only: EXACT replacement of the auto-resolved reviewer audience. ' +
         'Use this to narrow when auto-resolution overflows >20 — additionalLogins can only union, never shrink.',
     ),
-  autoRenew: z
-    .boolean()
-    .optional()
-    .describe('Default true for author/reviewer journeys. reply_and_wait is always single-fire (this is ignored).'),
+  autoRenew: z.boolean().optional().describe('Default true. Set false for single-fire.'),
   nextStep: z
     .string()
     .trim()
@@ -1936,24 +1916,16 @@ export const previewGitHubTrackingInputSchema = {
     .positive()
     .optional()
     .describe('Optional absolute deadline (Unix ms). Shown as-is; never defaulted.'),
-  replyAlreadySent: z
-    .boolean()
-    .optional()
-    .describe(
-      'reply_and_wait only: set true if you already posted your external reply. If tracking cannot be armed, ' +
-        'the status is the explicit reply_succeeded_tracking_not_armed (never a generic error) so you never re-post.',
-    ),
 };
 
 export async function handlePreviewGitHubTracking(input: {
-  intent: 'wait_for_author_update' | 'wait_for_reviewer_response' | 'reply_and_wait';
+  intent: 'wait_for_author_update' | 'wait_for_reviewer_response';
   subject: { kind: 'pr' | 'issue'; repoFullName: string; number: number };
   additionalLogins?: string[];
   overrideLogins?: string[];
   autoRenew?: boolean;
   nextStep?: string;
   expiresAt?: number;
-  replyAlreadySent?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1969,7 +1941,6 @@ export async function handlePreviewGitHubTracking(input: {
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
           ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-          ...(input.replyAlreadySent !== undefined ? { replyAlreadySent: input.replyAlreadySent } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -3583,12 +3554,11 @@ export const callbackTools = [
     description:
       'Preview (transparent expansion, ZERO side effects) a typed PR/issue tracking journey before you register it. ' +
       'Use when: you want the exact `when + then + optional expiresAt` for a common journey without hand-building predicates — ' +
-      'wait_for_author_update, wait_for_reviewer_response, or reply_and_wait. ' +
+      'wait_for_author_update or wait_for_reviewer_response. ' +
       'Output: resolves the exact audience from GitHub (PR author / requested reviewers ∪ prior review authors / issue assignees), ' +
       'shows the register-ready payload (status "register_ready" with `expanded.args` you feed AS-IS to register_pr_tracking / register_issue_tracking), ' +
       'or fails closed ("needs_input") with the unresolved teams / reason. It NEVER freezes a baseline or writes the TaskStore (baselineFrozen:false). ' +
-      'GOTCHA: reply_and_wait is single-fire and REQUIRES exact additionalLogins; if you already replied, set replyAlreadySent to get the explicit ' +
-      'reply_succeeded_tracking_not_armed status on failure. This does NOT install tracking — call the register tool with expanded.args to install.',
+      'This does NOT install tracking — call the register tool with expanded.args to install.',
     inputSchema: previewGitHubTrackingInputSchema,
     handler: handlePreviewGitHubTracking,
     governance: {

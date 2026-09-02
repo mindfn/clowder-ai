@@ -18,7 +18,7 @@ import type { GitHubIssueWaitPredicate, GitHubPrWaitPredicate } from '@cat-cafe/
  */
 
 /** Closed set of typed journeys. No free text. */
-export type GitHubTrackingPreviewIntent = 'wait_for_author_update' | 'wait_for_reviewer_response' | 'reply_and_wait';
+export type GitHubTrackingPreviewIntent = 'wait_for_author_update' | 'wait_for_reviewer_response';
 
 export interface GitHubTrackingPreviewSubject {
   readonly kind: 'pr' | 'issue';
@@ -33,7 +33,6 @@ export interface GitHubTrackingPreviewInput {
    * Caller-supplied EXACT logins.
    * - `wait_for_reviewer_response`: unioned with resolved reviewers, and their
    *   presence is the caller's explicit acknowledgement of any unresolved team.
-   * - `reply_and_wait`: the REQUIRED exact audience (there is no auto-resolution).
    * - `wait_for_author_update`: not part of the semantics (the author is resolved).
    */
   readonly additionalLogins?: readonly string[];
@@ -45,7 +44,7 @@ export interface GitHubTrackingPreviewInput {
    * additionalLogins can only UNION (never narrow), so it cannot fix an overflow.
    */
   readonly overrideLogins?: readonly string[];
-  /** author_update / reviewer_response only. reply_and_wait is FIXED single-fire. Default true. */
+  /** author_update / reviewer_response. Default true. */
   readonly autoRenew?: boolean;
   /**
    * Visible continuation suggestion; overrides the default. Named `nextStep` to
@@ -55,13 +54,6 @@ export interface GitHubTrackingPreviewInput {
   readonly nextStep?: string;
   /** Passed through as-is; shown but not defaulted. */
   readonly expiresAt?: number;
-  /**
-   * reply_and_wait choreography: the caller has already posted their external
-   * reply. When expansion cannot arm tracking, the result is the explicit
-   * `reply_succeeded_tracking_not_armed` status instead of a generic failure so
-   * the caller never re-posts their comment.
-   */
-  readonly replyAlreadySent?: boolean;
 }
 
 /** Pre-fetched GitHub reads for a PR subject (route resolves these; the core stays pure). */
@@ -112,12 +104,6 @@ export type RegisterPrTrackingArgs = {
   readonly nextStep: string;
   readonly autoRenew: boolean;
   readonly expiresAt?: number;
-  /**
-   * reply_and_wait only: carried through so the caller can feed `expanded.args`
-   * to the register tool AS-IS — a post-reply install failure then surfaces the
-   * loud `reply_succeeded_tracking_not_armed` partial status with no manual step.
-   */
-  readonly replyAlreadySent?: boolean;
 };
 
 export type RegisterIssueTrackingArgs = {
@@ -127,8 +113,6 @@ export type RegisterIssueTrackingArgs = {
   readonly nextStep: string;
   readonly autoRenew: boolean;
   readonly expiresAt?: number;
-  /** reply_and_wait only: carried so `expanded.args` feeds register AS-IS (see PR variant). */
-  readonly replyAlreadySent?: boolean;
 };
 
 export interface ExpandedRegistration {
@@ -136,7 +120,7 @@ export interface ExpandedRegistration {
   readonly args: RegisterPrTrackingArgs | RegisterIssueTrackingArgs;
 }
 
-export type GitHubTrackingPreviewStatus = 'register_ready' | 'needs_input' | 'reply_succeeded_tracking_not_armed';
+export type GitHubTrackingPreviewStatus = 'register_ready' | 'needs_input';
 
 export interface GitHubTrackingPreviewResult {
   readonly status: GitHubTrackingPreviewStatus;
@@ -175,8 +159,6 @@ function defaultContinuation(intent: GitHubTrackingPreviewIntent): string {
       return "Read the author's update and continue the review.";
     case 'wait_for_reviewer_response':
       return "Read the reviewer's response and address it.";
-    case 'reply_and_wait':
-      return 'Read their reply and continue the conversation.';
   }
 }
 
@@ -231,10 +213,6 @@ function collectIssueSources(
  */
 function collectSources(input: GitHubTrackingPreviewInput, audience: GitHubTrackingAudience | null): CollectedSources {
   const callerLogins = dedupeLogins(input.additionalLogins ?? []);
-  if (input.intent === 'reply_and_wait') {
-    // No auto-resolution: the caller names the exact audience they replied to.
-    return { sources: callerLogins.length > 0 ? [{ source: 'caller_input', logins: callerLogins }] : [], teams: [] };
-  }
   // wait_for_reviewer_response exact override: replace the auto-resolved audience
   // entirely (bypass auto-resolution, additionalLogins, and requested teams). This
   // is the only NARROW path — additionalLogins can only union, never shrink an
@@ -264,17 +242,13 @@ function buildWhenPredicates(
       // Author "updates" by pushing a new HEAD or by commenting.
       return [{ kind: 'pr_head_changed' }, { kind: 'pr_conversation_comment_added', authorLogins: logins }];
     }
-    if (input.intent === 'wait_for_reviewer_response') {
-      // A reviewer "responds" via a FORMAL review — approve / request-changes,
-      // even with no body → pr_review_decision_changed — OR a conversation comment
-      // scoped to the resolved reviewer audience. sol (#1392 AC-7 review, P1):
-      // pr_review_decision_changed catches the bodyless decision; NOT
-      // pr_review_result_available, which belongs to the exact Codex review-result
-      // chain and is not the reviewer-response signal.
-      return [{ kind: 'pr_review_decision_changed' }, { kind: 'pr_conversation_comment_added', authorLogins: logins }];
-    }
-    // reply_and_wait: exact comment predicate ONLY — no structural arm.
-    return [{ kind: 'pr_conversation_comment_added', authorLogins: logins }];
+    // wait_for_reviewer_response: a reviewer "responds" via a FORMAL review —
+    // approve / request-changes, even with no body → pr_review_decision_changed —
+    // OR a conversation comment scoped to the resolved reviewer audience. sol
+    // (#1392 AC-7 review, P1): pr_review_decision_changed catches the bodyless
+    // decision; NOT pr_review_result_available, which belongs to the exact Codex
+    // review-result chain and is not the reviewer-response signal.
+    return [{ kind: 'pr_review_decision_changed' }, { kind: 'pr_conversation_comment_added', authorLogins: logins }];
   }
   // Issue subjects: the only audience-scoped predicate is issue_comment_added
   // (issues have no review-decision concept).
@@ -282,7 +256,6 @@ function buildWhenPredicates(
 }
 
 function resolveAutoRenew(input: GitHubTrackingPreviewInput): boolean {
-  if (input.intent === 'reply_and_wait') return false; // FIXED single-fire.
   return input.autoRenew ?? true;
 }
 
@@ -293,11 +266,6 @@ function buildExpanded(
   const nextStep = input.nextStep ?? defaultContinuation(input.intent);
   const autoRenew = resolveAutoRenew(input);
   const expiresAtPart = input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {};
-  // reply_and_wait choreography: carry replyAlreadySent INTO expanded.args so the caller
-  // feeds it to register AS-IS — a post-reply install failure then surfaces the loud
-  // partial status with no manual re-add step.
-  const replyPart =
-    input.intent === 'reply_and_wait' && input.replyAlreadySent === true ? { replyAlreadySent: true } : {};
   if (input.subject.kind === 'pr') {
     return {
       registerTool: 'register_pr_tracking',
@@ -308,7 +276,6 @@ function buildExpanded(
         nextStep,
         autoRenew,
         ...expiresAtPart,
-        ...replyPart,
       },
     };
   }
@@ -321,16 +288,14 @@ function buildExpanded(
       nextStep,
       autoRenew,
       ...expiresAtPart,
-      ...replyPart,
     },
   };
 }
 
 /**
- * Pure expansion. Given the typed intent and the pre-fetched GitHub audience
- * (null for reply_and_wait, which needs no reads), produce a transparent preview
- * result that either carries a register-ready `expanded` payload or fails closed
- * with `needs_input` / `reply_succeeded_tracking_not_armed`.
+ * Pure expansion. Given the typed intent and the pre-fetched GitHub audience,
+ * produce a transparent preview result that either carries a register-ready
+ * `expanded` payload or fails closed with `needs_input`.
  */
 export function buildTrackingPreview(
   input: GitHubTrackingPreviewInput,
@@ -348,18 +313,9 @@ export function buildTrackingPreview(
   const empty = authorLogins.length === 0;
 
   const notArmed = (reason: string): GitHubTrackingPreviewResult => {
-    // reply_and_wait after an external reply: surface the loud, specific status.
-    const status: GitHubTrackingPreviewStatus =
-      input.intent === 'reply_and_wait' && input.replyAlreadySent === true
-        ? 'reply_succeeded_tracking_not_armed'
-        : 'needs_input';
-    const preface =
-      status === 'reply_succeeded_tracking_not_armed'
-        ? `Your reply on ${label} is posted, but tracking was NOT armed: `
-        : `Cannot arm tracking for ${label}: `;
     return {
-      status,
-      humanSummary: preface + reason,
+      status: 'needs_input',
+      humanSummary: `Cannot arm tracking for ${label}: ${reason}`,
       resolvedAudience: {
         authorLogins,
         sources,
@@ -379,11 +335,7 @@ export function buildTrackingPreview(
     );
   }
   if (empty) {
-    const detail =
-      input.intent === 'reply_and_wait'
-        ? 'reply_and_wait requires at least one exact login in additionalLogins.'
-        : 'no exact audience could be resolved. Add exact logins in additionalLogins.';
-    return notArmed(detail);
+    return notArmed('no exact audience could be resolved. Add exact logins in additionalLogins.');
   }
   if (tooMany) {
     return notArmed(

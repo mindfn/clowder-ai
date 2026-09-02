@@ -4,12 +4,10 @@
  * Two layers:
  *  (A) Pure expansion (buildTrackingPreview): every typed intent × pr/issue,
  *      audience provenance, and the fail-closed gate (empty / >20 / unresolved
- *      team). Proves expanded.args passes the canonical register predicate
- *      schema and that reply_and_wait is FIXED single-fire.
+ *      team). Proves expanded.args passes the canonical register predicate schema.
  *  (B) Live route (POST /api/callbacks/preview-github-tracking) via Fastify
- *      inject: callback auth, GitHub-read wiring, the reply_succeeded_tracking_
- *      not_armed status, and the hard invariant that preview writes NO TaskStore
- *      and freezes NO baseline.
+ *      inject: callback auth, GitHub-read wiring, and the hard invariant that
+ *      preview writes NO TaskStore and freezes NO baseline.
  */
 
 import assert from 'node:assert/strict';
@@ -74,14 +72,6 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
     assert.deepEqual(sourceKinds, ['requested_reviewers', 'prior_review_authors', 'caller_input']);
   });
 
-  test('reply_and_wait (PR) stays comment-ONLY — no decision arm (unlike reviewer_response)', () => {
-    const result = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'] },
-      null,
-    );
-    assert.deepEqual(result.expanded.args.when, [{ kind: 'pr_conversation_comment_added', authorLogins: ['fred'] }]);
-  });
-
   test('P2-A overrideLogins: exact replacement narrows an overflow to register_ready', () => {
     const many = Array.from({ length: 21 }, (_, i) => `rev${i}`);
     const overflow = buildTrackingPreview(
@@ -120,51 +110,6 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
     );
     assert.equal(result.status, 'register_ready');
     assert.deepEqual(result.expanded.args.when, [{ kind: 'issue_comment_added', authorLogins: ['zoe', 'amy'] }]);
-  });
-
-  test('reply_and_wait (PR): exact comment predicate, FIXED single-fire even if autoRenew:true requested', () => {
-    const result = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'], autoRenew: true },
-      null,
-    );
-    assert.equal(result.status, 'register_ready');
-    assert.deepEqual(result.expanded.args.when, [{ kind: 'pr_conversation_comment_added', authorLogins: ['fred'] }]);
-    assert.equal(result.expanded.args.autoRenew, false);
-  });
-
-  test('reply_and_wait (Issue): exact comment predicate, single-fire', () => {
-    const result = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: issueSubject(), additionalLogins: ['gina'] },
-      null,
-    );
-    assert.equal(result.status, 'register_ready');
-    assert.deepEqual(result.expanded.args.when, [{ kind: 'issue_comment_added', authorLogins: ['gina'] }]);
-    assert.equal(result.expanded.args.autoRenew, false);
-  });
-
-  test('replyAlreadySent is carried into expanded.args for reply_and_wait (PR+Issue), and ONLY then', () => {
-    const prSet = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'], replyAlreadySent: true },
-      null,
-    );
-    assert.equal(prSet.expanded.args.replyAlreadySent, true);
-    const issueSet = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: issueSubject(), additionalLogins: ['gina'], replyAlreadySent: true },
-      null,
-    );
-    assert.equal(issueSet.expanded.args.replyAlreadySent, true);
-    // Not set ⇒ absent from args.
-    const unset = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'] },
-      null,
-    );
-    assert.equal('replyAlreadySent' in unset.expanded.args, false);
-    // reply_and_wait-only: never leaks into author/reviewer intents even if passed.
-    const authorUpdate = buildTrackingPreview(
-      { intent: 'wait_for_author_update', subject: prSubject(), replyAlreadySent: true },
-      { author: 'alice', requestedUsers: [], requestedTeams: [], priorReviewAuthors: [] },
-    );
-    assert.equal('replyAlreadySent' in authorUpdate.expanded.args, false);
   });
 
   test('fail-closed: unresolved team + no caller logins ⇒ needs_input, no expanded', () => {
@@ -212,18 +157,6 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
     assert.match(result.humanSummary, /21 logins/);
   });
 
-  test('reply_and_wait: empty logins + replyAlreadySent ⇒ reply_succeeded_tracking_not_armed (never generic error)', () => {
-    const armed = buildTrackingPreview(
-      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: [], replyAlreadySent: true },
-      null,
-    );
-    assert.equal(armed.status, 'reply_succeeded_tracking_not_armed');
-    assert.equal(armed.expanded, undefined);
-    // Without the reply-sent flag it is a plain needs_input.
-    const unsent = buildTrackingPreview({ intent: 'reply_and_wait', subject: prSubject(), additionalLogins: [] }, null);
-    assert.equal(unsent.status, 'needs_input');
-  });
-
   test('expiresAt is passed through as-is; then overrides the default continuation', () => {
     const at = Date.now() + 3_600_000;
     const withExtras = buildTrackingPreview(
@@ -252,7 +185,6 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
         { intent: 'wait_for_reviewer_response', subject: prSubject(), additionalLogins: ['erin'] },
         { author: 'alice', requestedUsers: ['carol'], requestedTeams: [], priorReviewAuthors: ['dave'] },
       ),
-      buildTrackingPreview({ intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'] }, null),
     ];
     for (const c of prCases) {
       assert.equal(c.status, 'register_ready');
@@ -263,7 +195,6 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
         { intent: 'wait_for_author_update', subject: issueSubject() },
         { author: 'bob', assignees: [] },
       ),
-      buildTrackingPreview({ intent: 'reply_and_wait', subject: issueSubject(), additionalLogins: ['gina'] }, null),
     ];
     for (const c of issueCases) {
       assert.equal(c.status, 'register_ready');
@@ -351,45 +282,6 @@ describe('#1392 AC-7 live route — POST /api/callbacks/preview-github-tracking'
     assert.equal(taskStore.getBySubject('pr:owner/repo#7'), null);
   });
 
-  test('reply_and_wait needs no GitHub read and writes no TaskStore', async () => {
-    const app = await createApp(); // no reader injected — reply_and_wait must not need it
-    const headers = await authHeaders();
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/callbacks/preview-github-tracking',
-      headers,
-      payload: {
-        intent: 'reply_and_wait',
-        subject: { kind: 'pr', repoFullName: 'owner/repo', number: 7 },
-        additionalLogins: ['fred'],
-      },
-    });
-    assert.equal(response.statusCode, 200);
-    const body = JSON.parse(response.body);
-    assert.equal(body.status, 'register_ready');
-    assert.equal(body.expanded.args.autoRenew, false);
-    assert.equal(taskStore.size, 0);
-  });
-
-  test('reply_and_wait after an external reply fails LOUD, not generic, when it cannot arm', async () => {
-    const app = await createApp();
-    const headers = await authHeaders();
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/callbacks/preview-github-tracking',
-      headers,
-      payload: {
-        intent: 'reply_and_wait',
-        subject: { kind: 'issue', repoFullName: 'owner/repo', number: 42 },
-        additionalLogins: [],
-        replyAlreadySent: true,
-      },
-    });
-    assert.equal(response.statusCode, 200);
-    assert.equal(JSON.parse(response.body).status, 'reply_succeeded_tracking_not_armed');
-    assert.equal(taskStore.size, 0);
-  });
-
   test('missing GitHub reader for a read-requiring intent ⇒ 503 (never degrades to anyone)', async () => {
     const app = await createApp(); // no reader
     const headers = await authHeaders();
@@ -429,7 +321,7 @@ describe('#1392 AC-7 live route — POST /api/callbacks/preview-github-tracking'
       url: '/api/callbacks/preview-github-tracking',
       headers,
       payload: {
-        intent: 'reply_and_wait',
+        intent: 'wait_for_reviewer_response',
         subject: { kind: 'pr', repoFullName: 'owner/repo', number: 7 },
         additionalLogins: ['fred'],
         expiresAt: Date.now() - 1000,
@@ -441,7 +333,7 @@ describe('#1392 AC-7 live route — POST /api/callbacks/preview-github-tracking'
       method: 'POST',
       url: '/api/callbacks/preview-github-tracking',
       payload: {
-        intent: 'reply_and_wait',
+        intent: 'wait_for_reviewer_response',
         subject: { kind: 'pr', repoFullName: 'owner/repo', number: 7 },
         additionalLogins: ['fred'],
       },
