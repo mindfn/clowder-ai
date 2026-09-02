@@ -5,66 +5,124 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Roadmap — plate study</title>
 <style>
+  /* Plate palette is derived from the Clowder site tokens (styles.css), not from the
+     reference: cream / stone in light, the site's slate ground in dark. The engraving
+     grammar is what carries over — the line simply inverts with the theme. */
   :root {
-    --paper: #e7dcc6;
-    --ink: #1f1710;
-    --accent: #1b3a5c;
+    --plate-paper: #faf6f1;
+    --plate-ink: #2b2422;
+    --plate-grain: #b3a598;
+    --plate-spark: #ffffff;
+    --plate-bloom: rgba(192, 107, 78, 0.07);
+    --plate-accent: #c06b4e;
+    --plate-muted: #78716c;
+    --fam-memory: #3b7fc4;
+    --fam-harness: #1f9a72;
+    --fam-capability: #c06b4e;
+    --fam-life: #b8860b;
     --serif: "Didot", "Bodoni 72", "Playfair Display", "Iowan Old Style", Georgia, serif;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  html.dark {
+    --plate-paper: #0f172a;
+    --plate-ink: #dbe3ee;
+    --plate-grain: #1e293b;
+    --plate-spark: #8fa3bd;
+    --plate-bloom: rgba(96, 165, 250, 0.07);
+    --plate-accent: #d4896f;
+    --plate-muted: #94a3b8;
+    --fam-memory: #60a5fa;
+    --fam-harness: #34d399;
+    --fam-capability: #d4896f;
+    --fam-life: #fbbf24;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--paper);
-    color: var(--ink);
+    background: var(--plate-paper);
+    color: var(--plate-ink);
     font-family: var(--serif);
     -webkit-font-smoothing: antialiased;
+    transition: background-color 0.35s, color 0.35s;
   }
-  .sheet { position: relative; width: min(1200px, 96vw); margin: 0 auto; }
-  canvas { display: block; width: 100%; height: auto; }
+  .bar {
+    position: fixed; inset: 0 0 auto 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.9rem 1.6rem;
+    font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--plate-accent);
+  }
+  .bar button {
+    font: inherit; letter-spacing: inherit; text-transform: inherit;
+    color: var(--plate-ink); background: none; cursor: pointer;
+    border: 1px solid currentColor; border-radius: 999px; padding: 0.35rem 0.9rem; opacity: 0.7;
+  }
+  .story { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 2rem; padding: 0 2rem; max-width: 96rem; margin: 0 auto; }
+  .stage { position: sticky; top: 0; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  /* The plate keeps its sheet proportion and fits the viewport height, the way a plate sits
+     on a table rather than being cropped by the window. */
+  .sheet { position: relative; height: 92vh; aspect-ratio: 1200 / 1380; max-width: 100%; }
+  canvas { display: block; width: 100%; height: 100%; }
   .overlay { position: absolute; inset: 0; pointer-events: none; }
-  .at { position: absolute; transform: translateY(-50%); }
-  .eyebrow {
-    font-family: var(--mono);
-    font-size: 0.62rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--accent);
+  .at { position: absolute; transform: translateY(-50%); opacity: 0; transition: opacity 0.5s ease; }
+  .at.on { opacity: 1; }
+  .eyebrow { font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--plate-accent); }
+  .part { font-size: 0.82rem; line-height: 1.18; letter-spacing: -0.005em; }
+  .part .n { font-family: var(--mono); font-size: 0.55rem; letter-spacing: 0.16em; display: block; opacity: 0.62; }
+  .part--memory { color: var(--fam-memory); }
+  .part--harness { color: var(--fam-harness); }
+  .part--capability { color: var(--fam-capability); }
+  .part--life { color: var(--fam-life); }
+  .head { position: absolute; left: 6%; right: 6%; top: 4.4%; display: flex; align-items: baseline; justify-content: space-between; gap: 2rem; }
+  .head h1 { font-size: clamp(1.2rem, 1.9vw, 1.9rem); font-weight: 400; line-height: 1; margin: 0.3rem 0 0; }
+  .legend { position: absolute; left: 0; right: 0; bottom: 5.4%; text-align: center; }
+  .legend div { display: inline-block; font-family: var(--mono); font-size: 0.55rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0.85rem; opacity: 0.78; }
+  .caption { position: absolute; left: 0; right: 0; bottom: 2.6%; text-align: center; font-style: italic; font-size: 0.76rem; opacity: 0.66; }
+  .track { padding: 42vh 0 46vh; }
+  .beat { min-height: 88vh; display: flex; flex-direction: column; justify-content: center; max-width: 34ch; opacity: 0.25; transition: opacity 0.4s ease; }
+  .beat.on { opacity: 1; }
+  .beat h2 { font-size: clamp(1.6rem, 2.6vw, 2.5rem); font-weight: 400; line-height: 1.04; margin: 0.5rem 0 0; }
+  .beat p { font-size: 0.95rem; line-height: 1.6; opacity: 0.8; margin: 1rem 0 0; }
+  @media (max-width: 900px) {
+    /* Narrow screens size the sheet by width, not height, or the plate overflows the column. */
+    .story { grid-template-columns: 1fr; padding: 0 1rem; }
+    .stage { height: auto; top: 0; padding: 3.2rem 0 0.6rem; background: var(--plate-paper); z-index: 5; }
+    .sheet { height: auto; width: 100%; }
+    .part { font-size: 0.6rem; }
+    .part .n { font-size: 0.45rem; }
+    .head h1 { font-size: 0.86rem; }
+    .eyebrow { font-size: 0.46rem; }
+    .legend div { font-size: 0.44rem; margin: 0 0.4rem; }
+    .caption { font-size: 0.52rem; }
+    .track { padding: 1rem 0 30vh; }
+    .beat { min-height: 62vh; max-width: none; }
   }
-  .part { font-size: 1.02rem; letter-spacing: 0.01em; line-height: 1.15; }
-  .part .n { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.18em; opacity: 0.62; display: block; }
-  .head { position: absolute; left: 7.5%; right: 7.5%; top: 5.2%; display: flex; align-items: baseline; justify-content: space-between; gap: 2rem; }
-  .head h1 { font-size: clamp(1.5rem, 2.5vw, 2.3rem); font-weight: 400; line-height: 1; margin: 0.3rem 0 0; letter-spacing: -0.005em; }
-  .deck { position: absolute; left: 7.5%; bottom: 8.5%; width: 30%; }
-  .deck p { font-size: 0.86rem; line-height: 1.55; opacity: 0.78; margin: 0.5rem 0 0; }
-  .plateno { position: absolute; right: 7.5%; top: 5.6%; text-align: right; }
-  .legend { position: absolute; right: 7.5%; bottom: 8.5%; text-align: right; }
-  .legend div { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.42rem; opacity: 0.8; }
-  .caption { position: absolute; left: 0; right: 0; bottom: 3.2%; text-align: center; font-style: italic; font-size: 0.82rem; opacity: 0.72; }
 </style>
 </head>
 <body>
-  <div class="sheet">
-    <canvas id="plate"></canvas>
-    <div class="overlay" id="overlay">
-      <div class="head">
-        <div>
-          <div class="eyebrow">Clowder AI · Roadmap</div>
-          <h1>A system that grows, drawn as one.</h1>
+  <div class="bar"><span>Clowder AI · Roadmap · plate study</span><button id="theme">Theme</button></div>
+  <div class="story">
+    <div class="stage">
+      <div class="sheet">
+        <canvas id="plate"></canvas>
+        <div class="overlay" id="overlay">
+          <div class="head">
+            <div>
+              <div class="eyebrow">Clowder AI · Roadmap</div>
+              <h1>A system that grows, drawn as one.</h1>
+            </div>
+            <div class="eyebrow">Plate I</div>
+          </div>
+          <div class="legend at" id="legend">
+            <div>● Shipped</div>
+            <div>◍ Growing</div>
+            <div>○ Planned</div>
+          </div>
+          <div class="caption">Clowder AI — specimen of the working system, drawn 2026</div>
         </div>
-        <div class="eyebrow">Plate I</div>
       </div>
-      <div class="deck">
-        <div class="eyebrow">Reading the plate</div>
-        <p>Four roots hold it up. Four limbs carry what it can do. Every fruit is one shipped, growing or planned capability — read from the roadmap, not decoration.</p>
-      </div>
-      <div class="legend">
-        <div>● Shipped</div>
-        <div>◍ Growing</div>
-        <div>○ Planned</div>
-      </div>
-      <div class="caption">Clowder AI — specimen of the working system, drawn 2026</div>
     </div>
+    <div class="track" id="track"></div>
   </div>
   <script src="lib/roadmap-tree-data.js"></script>
   <script src="lib/roadmap-plate.js"></script>
@@ -73,72 +131,149 @@
     (() => {
       const data = window.ClowderRoadmapTree;
       const P = window.ClowderRoadmapPlate;
-      const scene = window.ClowderRoadmapPlateScene.render(document.getElementById('plate'), data);
-      const { ctx } = scene;
-      const [W, H] = scene.size;
+      const canvas = document.getElementById('plate');
       const overlay = document.getElementById('overlay');
+      const track = document.getElementById('track');
+      let scene = null;
+      let labels = [];
 
-      // Leader lines: hairline out of the specimen to the margin, the way a plate labels its parts.
-      function leader(anchor, side, y) {
-        const mx = side < 0 ? 118 : W - 118;
+      const BEATS = [
+        { at: 0.14, title: 'It starts underground.', body: 'Four roots — identity, authority, truth, safety. Nothing above them can outgrow them.' },
+        { at: 0.34, title: 'One trunk.', body: 'A single shared spine: one home, one memory, one set of rules the whole system lives by.' },
+        { at: 0.5, title: 'Memory & Continuity', body: 'What the cats keep, guard, retrieve and recall on their own.', limb: 'memory' },
+        { at: 0.58, title: 'Harness Metabolism', body: 'Friction becomes a more reliable next time: experience seen, attributed, then fixed.', limb: 'harness' },
+        { at: 0.7, title: 'Pluggable Capability', body: 'New models, senses and hands enter through declared boundaries and stay under audit.', limb: 'capability' },
+        { at: 0.78, title: 'Shared Life', body: 'Not a tool that answers — a household that keeps going between the answers.', limb: 'life' },
+        { at: 0.95, title: 'Still growing.', body: 'Every fruit on this plate is one entry in the roadmap. The drawing is a function of the data: when the roadmap grows, so does the tree.' },
+      ];
+
+      for (const beat of BEATS) {
+        const el = document.createElement('section');
+        el.className = 'beat';
+        el.dataset.at = beat.at;
+        el.innerHTML = `<div class="eyebrow">${beat.limb ? 'Limb' : 'Chapter'}</div><h2>${beat.title}</h2><p>${beat.body}</p>`;
+        track.appendChild(el);
+      }
+      const beatEls = [...track.children];
+
+      function readTheme() {
+        const cs = getComputedStyle(document.documentElement);
+        P.setTheme({
+          ink: cs.getPropertyValue('--plate-ink').trim(),
+          paper: cs.getPropertyValue('--plate-paper').trim(),
+          grain: cs.getPropertyValue('--plate-grain').trim(),
+          spark: cs.getPropertyValue('--plate-spark').trim(),
+          bloom: cs.getPropertyValue('--plate-bloom').trim(),
+        });
+      }
+
+      function leaders(ctx, W, list) {
         ctx.save();
-        ctx.strokeStyle = P.INK;
-        ctx.globalAlpha = 0.72;
         ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        ctx.moveTo(anchor.x, anchor.y);
-        ctx.lineTo(side < 0 ? mx + 42 : mx - 42, y);
-        ctx.lineTo(mx, y);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(anchor.x, anchor.y, 2.2, 0, Math.PI * 2);
-        ctx.fillStyle = P.INK;
-        ctx.fill();
+        ctx.globalAlpha = 0.7;
+        for (const l of list) {
+          ctx.strokeStyle = l.colour;
+          ctx.fillStyle = l.colour;
+          const mx = l.side < 0 ? 172 : W - 172;
+          ctx.beginPath();
+          ctx.moveTo(l.anchor.x, l.anchor.y);
+          ctx.lineTo(l.side < 0 ? mx + 42 : mx - 42, l.y);
+          ctx.lineTo(mx, l.y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(l.anchor.x, l.anchor.y, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       }
 
-      function place(text, index, x, y, side) {
-        const el = document.createElement('div');
-        el.className = 'at part';
-        el.innerHTML = `<span class="n">${index}</span>${text}`;
-        el.style.left = side < 0 ? '0' : `${(x / W) * 100}%`;
-        if (side < 0) el.style.width = `${(x / W) * 100}%`;
-        else el.style.right = '0';
-        el.style.textAlign = side < 0 ? 'right' : 'left';
-        el.style.paddingLeft = side < 0 ? '0' : '10px';
-        el.style.paddingRight = side < 0 ? '10px' : '0';
+      function place(el, x, y, side, W, H) {
         el.style.top = `${(y / H) * 100}%`;
-        overlay.appendChild(el);
+        el.style.textAlign = side < 0 ? 'right' : 'left';
+        if (side < 0) { el.style.left = '2.4%'; el.style.width = `${(x / W) * 100 - 3.4}%`; el.style.paddingRight = '9px'; }
+        else { el.style.right = '2.4%'; el.style.left = `${(x / W) * 100 + 1}%`; el.style.paddingLeft = '9px'; }
       }
 
-      let figure = 1;
-      const rows = { '-1': [455, 640], 1: [430, 620] };
-      scene.limbs.forEach((limb) => {
-        const list = rows[limb.side];
-        const y = list.shift();
-        leader(limb.anchor, limb.side, y);
-        place(limb.label.en, `Fig. ${figure++}`, limb.side < 0 ? 118 : W - 118, y, limb.side);
-      });
+      function build() {
+        overlay.querySelectorAll('.at.part').forEach((n) => n.remove());
+        readTheme();
+        scene = window.ClowderRoadmapPlateScene.render(canvas, data);
+        const [W, H] = scene.size;
+        const cs = getComputedStyle(document.documentElement);
+        labels = [];
+        const rows = { '-1': [470, 662], 1: [444, 640] };
+        let figure = 1;
+        scene.limbs.forEach((limb) => {
+          const y = rows[limb.side].shift();
+          const el = document.createElement('div');
+          el.className = `at part part--${limb.id}`;
+          el.innerHTML = `<span class="n">Fig. ${figure++}</span>${limb.label.en}`;
+          place(el, limb.side < 0 ? 172 : W - 172, y, limb.side, W, H);
+          overlay.appendChild(el);
+          labels.push({ ...limb, y, el, colour: cs.getPropertyValue(`--fam-${limb.id}`).trim(), from: limb.done });
+        });
+        let n = 1;
+        scene.roots.forEach((root, i) => {
+          const side = i < 2 ? -1 : 1;
+          const y = 1112 + (i % 2) * 76;
+          const el = document.createElement('div');
+          el.className = 'at part';
+          el.innerHTML = `<span class="n">Root ${n++}</span>${root.label.en}`;
+          place(el, side < 0 ? 172 : W - 172, y, side, W, H);
+          overlay.appendChild(el);
+          labels.push({ anchor: root.tip, side, y, el, colour: P.theme.ink, from: 0.26 });
+        });
 
-      let rootNo = 1;
-      scene.roots.forEach((root, i) => {
-        const side = i < 2 ? -1 : 1;
-        const y = 1190 + (i % 2) * 78;
-        leader(root.tip, side, y);
-        place(root.label.en, `Root ${rootNo++}`, side < 0 ? 118 : W - 118, y, side);
-      });
-
-      // The canon cats, screened into the same printed medium rather than pasted on top.
-      const CATS = [
-        { id: 'siamese', x: 300, h: 108 },
-        { id: 'ragdoll', x: 742, h: 96 },
-        { id: 'maine', x: 828, h: 116 },
-      ];
-      for (const cat of CATS) {
-        const img = new Image();
-        img.onload = () => P.halftone(ctx, img, cat.x, scene.ground - cat.h, cat.h, 3);
-        img.src = `assets/roadmap/cats/${cat.id}-sit.png`;
+        for (const cat of [
+          { id: 'siamese', x: 300, h: 108 },
+          { id: 'ragdoll', x: 742, h: 96 },
+          { id: 'maine', x: 828, h: 116 },
+        ]) {
+          const img = new Image();
+          img.onload = () => {
+            P.halftone(scene.catsCtx, img, cat.x, scene.ground - cat.h, cat.h, 3);
+            draw();
+          };
+          img.src = `assets/roadmap/cats/${cat.id}-sit.png`;
+        }
       }
+
+      let progress = 0;
+      function draw() {
+        if (!scene) return;
+        scene.compose(progress);
+        const [W] = scene.size;
+        leaders(scene.viewCtx, W, labels.filter((l) => progress >= l.from));
+        for (const l of labels) l.el.classList.toggle('on', progress >= l.from);
+        document.getElementById('legend').classList.toggle('on', progress > 0.5);
+      }
+
+      function measure() {
+        const r = track.getBoundingClientRect();
+        const span = r.height - window.innerHeight;
+        progress = span > 0 ? Math.max(0, Math.min(1, -r.top / span)) : 0;
+        const focus = window.innerHeight * 0.5;
+        beatEls.forEach((el) => {
+          const b = el.getBoundingClientRect();
+          el.classList.toggle('on', b.top <= focus && b.bottom > focus);
+        });
+        draw();
+      }
+
+      let pending = false;
+      addEventListener('scroll', () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; measure(); });
+      }, { passive: true });
+      addEventListener('resize', () => { build(); measure(); });
+      document.getElementById('theme').addEventListener('click', () => {
+        document.documentElement.classList.toggle('dark');
+        build();
+        measure();
+      });
+      build();
+      measure();
     })();
   </script>
 </body>

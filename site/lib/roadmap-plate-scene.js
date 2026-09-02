@@ -8,8 +8,8 @@
 (function attachRoadmapPlateScene(global) {
   const P = global.ClowderRoadmapPlate;
   const W = 1200;
-  const H = 1560;
-  const GROUND = 1015;
+  const H = 1380;
+  const GROUND = 958;
   const CX = 600;
   const D = Math.PI / 180;
 
@@ -30,28 +30,28 @@
   }
 
   function paper(ctx, rng) {
-    ctx.fillStyle = P.PAPER;
+    ctx.fillStyle = P.PAPER();
     ctx.fillRect(0, 0, W, H);
     for (let i = 0; i < 12; i += 1) {
       const x = rng() * W;
       const y = rng() * H;
       const r = 18 + rng() * 70;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, 'rgba(132,102,58,0.10)');
-      g.addColorStop(1, 'rgba(132,102,58,0)');
+      g.addColorStop(0, P.theme.bloom);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g;
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
     for (let i = 0; i < 5200; i += 1) {
       ctx.globalAlpha = 0.03 + rng() * 0.07;
-      ctx.fillStyle = rng() > 0.32 ? '#6b573a' : '#fffaf0';
+      ctx.fillStyle = rng() > 0.32 ? P.theme.grain : P.theme.spark;
       ctx.fillRect(rng() * W, rng() * H, 1, 1);
     }
     ctx.globalAlpha = 1;
   }
 
   function soil(ctx, rng) {
-    ctx.strokeStyle = P.INK;
+    ctx.strokeStyle = P.INK();
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.moveTo(96, GROUND);
@@ -60,7 +60,7 @@
     ctx.lineWidth = 0.7;
     for (let i = 0; i < 210; i += 1) {
       const x = 96 + rng() * (W - 192);
-      const y = GROUND + 4 + rng() ** 1.5 * 300;
+      const y = GROUND + 4 + rng() ** 1.5 * 290;
       const len = 7 + rng() * 13;
       ctx.globalAlpha = 0.4 * (1 - (y - GROUND) / 340);
       ctx.beginPath();
@@ -142,7 +142,7 @@
         sprigs(ctx, rng, pointAt(l2.pts, 0.45 + rng() * 0.3), spec.angle + turn - 44 * spec.side, 26, 0.95, 3);
       });
       P.carve(ctx, rng, l1.pts);
-      limbs.push({ id: spec.id, spec, path: l1, tips, label: branch.label });
+      limbs.push({ id: spec.id, spec, path: l1, tips, label: branch.label, base: { x: base.x, y: base.y } });
     }
     P.carve(ctx, rng, trunk.pts);
     P.stipple(ctx, rng, CX, GROUND - 4, 34, 340, 0.5);
@@ -202,7 +202,7 @@
   }
 
   function furniture(ctx) {
-    ctx.strokeStyle = P.INK;
+    ctx.strokeStyle = P.INK();
     ctx.globalAlpha = 0.85;
     ctx.lineWidth = 1.4;
     ctx.strokeRect(46, 46, W - 92, H - 92);
@@ -211,31 +211,112 @@
     ctx.globalAlpha = 1;
   }
 
+  const ease = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : 1 - (1 - t) ** 2.4);
+  const seg = (p, a, b) => Math.max(0, Math.min(1, (p - a) / (b - a)));
+
+  // Growth order is the story: roots, then trunk, then the lower limbs, then the upper ones.
+  const PHASE = {
+    memory: [0.32, 0.5],
+    harness: [0.4, 0.58],
+    capability: [0.5, 0.7],
+    life: [0.58, 0.78],
+  };
+
+  function surface(dpr) {
+    const c = document.createElement('canvas');
+    c.width = W * dpr;
+    c.height = H * dpr;
+    const ctx = c.getContext('2d');
+    ctx.scale(dpr, dpr);
+    return { canvas: c, ctx };
+  }
+
+  /**
+   * Draws the plate once into offscreen layers and returns compose(progress), which
+   * re-reveals them through growing clip regions — the engraving draws itself outward
+   * from the collar and from each limb's fork rather than fading in.
+   */
   function render(canvas, data, opts) {
     const dpr = Math.min(2, global.devicePixelRatio || 1);
     canvas.width = W * dpr;
     canvas.height = H * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
+    const view = canvas.getContext('2d');
+    view.scale(dpr, dpr);
+
+    const sheet = surface(dpr);
+    paper(sheet.ctx, P.mulberry32(((opts && opts.seed) || 20260902) ^ 0x9e3779b9));
+    furniture(sheet.ctx);
+
+    const art = surface(dpr);
     const rng = P.mulberry32((opts && opts.seed) || 20260902);
-    paper(ctx, rng);
-    furniture(ctx);
-    soil(ctx, rng);
-    const rootAnchors = roots(ctx, rng, data);
-    const { limbs } = build(ctx, rng, data);
-    canopy(ctx, rng, limbs);
+    soil(art.ctx, rng);
+    const rootAnchors = roots(art.ctx, rng, data);
+    const { limbs } = build(art.ctx, rng, data);
+    canopy(art.ctx, rng, limbs);
     for (const limb of limbs) {
-      for (const tip of limb.tips) P.fruit(ctx, tip.x, tip.y - 2, 6, tip.status);
+      for (const tip of limb.tips) P.fruit(art.ctx, tip.x, tip.y - 2, 6, tip.status);
     }
+
+    const cats = surface(dpr);
+
+    function compose(p) {
+      view.clearRect(0, 0, W, H);
+      view.drawImage(sheet.canvas, 0, 0, W, H);
+
+      const rRoot = ease(seg(p, 0.02, 0.26)) * 700;
+      if (rRoot > 1) {
+        view.save();
+        view.beginPath();
+        view.rect(0, GROUND - 2, W, H - GROUND + 2);
+        view.clip();
+        view.beginPath();
+        view.arc(CX, GROUND, rRoot, 0, Math.PI * 2);
+        view.clip();
+        view.drawImage(art.canvas, 0, 0, W, H);
+        view.restore();
+      }
+
+      const hTrunk = ease(seg(p, 0.2, 0.4)) * 470;
+      const revealAbove = (shape) => {
+        view.save();
+        view.beginPath();
+        view.rect(0, 0, W, GROUND + 3);
+        view.clip();
+        view.beginPath();
+        shape();
+        view.clip();
+        view.drawImage(art.canvas, 0, 0, W, H);
+        view.restore();
+      };
+      if (hTrunk > 1) revealAbove(() => view.rect(CX - 82, GROUND - hTrunk, 164, hTrunk + 6));
+      for (const limb of limbs) {
+        const [a, b] = PHASE[limb.id] || [0.4, 0.7];
+        const r = ease(seg(p, a, b)) * 560;
+        if (r > 1) revealAbove(() => view.arc(limb.base.x, limb.base.y, r, 0, Math.PI * 2));
+      }
+
+      const catAlpha = seg(p, 0.78, 0.92);
+      if (catAlpha > 0) {
+        view.save();
+        view.globalAlpha = catAlpha;
+        view.drawImage(cats.canvas, 0, 0, W, H);
+        view.restore();
+      }
+    }
+
     return {
       size: [W, H],
       ground: GROUND,
+      compose,
+      viewCtx: view,
+      catsCtx: cats.ctx,
+      phase: PHASE,
       limbs: limbs.map((l) => {
         const outer = l.tips.reduce((a, b) => (l.spec.side < 0 ? (a.x < b.x ? a : b) : a.x > b.x ? a : b));
-        return { id: l.id, label: l.label, side: l.spec.side, anchor: outer };
+        return { id: l.id, label: l.label, side: l.spec.side, anchor: outer, done: (PHASE[l.id] || [0, 1])[1] };
       }),
       roots: rootAnchors,
-      ctx,
+      ctx: art.ctx,
     };
   }
 

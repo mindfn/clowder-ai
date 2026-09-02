@@ -9,8 +9,20 @@
  * Everything is deterministic from the data plus one seed.
  */
 (function attachRoadmapPlate(global) {
-  const INK = '#1f1710';
-  const PAPER = '#e7dcc6';
+  // The plate is a two-tone system — substrate and line — so it inverts with the site theme
+  // instead of carrying its own palette.
+  const theme = {
+    ink: '#292524',
+    paper: '#faf6f1',
+    grain: '#8a7a6a',
+    spark: '#ffffff',
+    bloom: 'rgba(192,107,78,0.08)',
+  };
+  const INK = () => theme.ink;
+  const PAPER = () => theme.paper;
+  function setTheme(next) {
+    Object.assign(theme, next);
+  }
 
   function mulberry32(seed) {
     let a = seed >>> 0;
@@ -66,7 +78,7 @@
   /** Thin wood is one stroke, not a filled shape: a ribbon that narrow turns into a wedge. */
   function twig(ctx, pts) {
     ctx.save();
-    ctx.strokeStyle = INK;
+    ctx.strokeStyle = INK();
     ctx.lineCap = 'round';
     for (let i = 0; i < pts.length - 1; i += 1) {
       ctx.lineWidth = Math.max(0.4, (pts[i].w + pts[i + 1].w) * 0.62);
@@ -85,12 +97,12 @@
       return;
     }
     ribbon(ctx, pts);
-    ctx.fillStyle = INK;
+    ctx.fillStyle = INK();
     ctx.fill();
     if (pts[0].w < 5) return;
     ctx.save();
     ctx.clip();
-    ctx.strokeStyle = PAPER;
+    ctx.strokeStyle = PAPER();
     ctx.lineCap = 'round';
     // Bark is broken lines of uneven weight, not a comb: a continuous ruled stripe reads as metal.
     const lines = Math.max(3, Math.round(pts[0].w / 1.5));
@@ -120,7 +132,7 @@
 
   /** Tonal mass without a single drawn leaf: density of dots, thinning outward. */
   function stipple(ctx, rng, cx, cy, radius, count, alpha) {
-    ctx.fillStyle = INK;
+    ctx.fillStyle = INK();
     for (let i = 0; i < count; i += 1) {
       const t = rng() ** 0.62;
       const a = rng() * Math.PI * 2;
@@ -139,21 +151,21 @@
   function fruit(ctx, x, y, r, status) {
     ctx.save();
     // Clear a little paper around each mark so maturity stays readable inside the stipple.
-    ctx.fillStyle = PAPER;
+    ctx.fillStyle = PAPER();
     ctx.globalAlpha = 0.9;
     ctx.beginPath();
     ctx.arc(x, y, r + 3.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = INK;
-    ctx.fillStyle = INK;
+    ctx.strokeStyle = INK();
+    ctx.fillStyle = INK();
     ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     if (status === 'ripe') {
       ctx.fill();
       ctx.globalAlpha = 0.55;
-      ctx.strokeStyle = PAPER;
+      ctx.strokeStyle = PAPER();
       ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.arc(x - r * 0.3, y - r * 0.34, r * 0.42, Math.PI * 0.75, Math.PI * 1.6);
@@ -187,7 +199,7 @@
     const octx = off.getContext('2d', { willReadFrequently: true });
     octx.drawImage(img, 0, 0, off.width, off.height);
     const px = octx.getImageData(0, 0, off.width, off.height).data;
-    ctx.fillStyle = INK;
+    ctx.fillStyle = INK();
     for (let cy = 0; cy < off.height; cy += cell) {
       for (let cx = 0; cx < off.width; cx += cell) {
         let sum = 0;
@@ -211,5 +223,18 @@
     }
   }
 
-  global.ClowderRoadmapPlate = { INK, PAPER, mulberry32, limbPath, carve, twig, stipple, fruit, halftone, lerp };
+  global.ClowderRoadmapPlate = {
+    theme,
+    INK,
+    PAPER,
+    setTheme,
+    mulberry32,
+    limbPath,
+    carve,
+    twig,
+    stipple,
+    fruit,
+    halftone,
+    lerp,
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
