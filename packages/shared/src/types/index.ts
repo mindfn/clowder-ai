@@ -640,6 +640,10 @@ export {
   type WaitOwnerFence,
 } from './github-wait.js';
 export type {
+  CycleEvaluationStatus,
+  CycleRecord,
+  CycleTriggerRoute,
+  CycleWindow,
   EvaluationSnapshot,
   EvaluationUnitRef,
   MetricComparisonMeasurement,

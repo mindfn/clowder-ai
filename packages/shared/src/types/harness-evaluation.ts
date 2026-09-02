@@ -1,4 +1,4 @@
-import type { TraceEpisode, TraceEpisodeRef } from './injection-trace.js';
+import type { TraceEpisodeRef } from './injection-trace.js';
 import type { SegmentVerdict } from './segment-lifecycle.js';
 
 export type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
@@ -112,6 +112,43 @@ export interface ObjectiveVerdictDecision {
   targetSegmentIds: string[];
 }
 
+export type CycleEvaluationStatus = 'idle' | 'requested' | 'retriggered' | 'written' | 'stalled';
+export type CycleTriggerRoute = 'cumulative' | 'counterexamples' | 'cadence';
+export interface CycleWindow {
+  start: number;
+  end: number;
+}
+
+/** F257 TC-3/4/10/14: one compact, owner/objective-scoped evaluation cycle. */
+export interface CycleRecord {
+  schemaVersion: 1;
+  cycleId: string;
+  ownerUserId: string;
+  objectiveId: string;
+  version: string;
+  versionContentRef: string;
+  cycleStart: number;
+  cycleEnd?: number;
+  evalStatus: CycleEvaluationStatus;
+  windows: CycleWindow[];
+  triggeredBy?: CycleTriggerRoute[];
+  evaluation?: {
+    metrics: Array<{ id: string; conclusion: string; evidenceRefs: string[] }>;
+    overall: 'complete' | 'partial' | 'insufficient_evidence';
+    writtenAt: number;
+    by: string;
+  };
+  governance?: { decision: 'keep' | 'rollback' | 'evolve'; reason: string; writtenAt: number };
+  approval?: {
+    cardId?: string;
+    state: 'pending' | 'approved' | 'skipped' | 'rejected';
+    reason?: string;
+    rejectCount: number;
+    at: number;
+  };
+  closedAt?: number;
+}
+
 /**
  * F257: EvaluationSnapshot is a Unit-scoped frozen view.
  *
@@ -139,13 +176,7 @@ export interface EvaluationSnapshot {
    * same timestamp but a later sequence remain visible to the next run.
    */
   maxAnnotationScore: number;
-  /**
-   * Canonical raw evidence frozen at scheduling time. This corpus is selected
-   * only by owner + Unit segment exposure + half-open time window; annotation
-   * state never controls admission.
-   */
-  traceCorpus: TraceEpisode[];
-  /** Stable projection of traceCorpus used by indexes and audit views. */
+  /** Stable references only; trace bodies stay in the append-only owner pool. */
   episodeRefs: TraceEpisodeRef[];
   annotationIds: string[];
   samples: Array<{

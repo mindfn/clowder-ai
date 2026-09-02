@@ -7,6 +7,12 @@ export interface EvaluationModelDefinition {
   id: string;
   label: string;
   ruleVersion: string;
+  cycleTrigger: {
+    cumulativeThreshold: number;
+    counterexampleThreshold: number;
+    cadenceDays: number;
+    minimumIntervalMs: number;
+  };
   metrics: MetricDefinition[];
 }
 
@@ -78,11 +84,20 @@ const metric = z
     verdictRule,
   })
   .strict();
+const cycleTrigger = z
+  .object({
+    cumulativeThreshold: z.number().int().positive(),
+    counterexampleThreshold: z.number().int().positive(),
+    cadenceDays: z.number().int().positive(),
+    minimumIntervalMs: z.number().int().nonnegative(),
+  })
+  .strict();
 const evaluationModel = z
   .object({
     id: slug,
     label: z.string().trim().min(1),
     ruleVersion: slug,
+    cycleTrigger,
     metrics: z.array(metric).min(1),
   })
   .strict();
