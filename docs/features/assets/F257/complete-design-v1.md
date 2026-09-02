@@ -1,7 +1,7 @@
 ---
 feature: F257
 title: F257 Harness Ledger — 完整方案 v1（从 operator 模型往下推；proposal，待逐节确认）
-status: proposal — 未经 operator 确认前不得据此改代码
+status: CONFIRMED（operator 2026-09-02 07:37）— 实施以本文 §14/§15 为准；把关人 Fable，实现 sol（不满意可换 kimi/ds）
 depends_on: terminal-contract-v1.md（TC-1~13）
 author: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
@@ -35,7 +35,7 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 
 未回写分支（步 5 或 6 超过 T=30 分钟没有回写）：系统投**一条**"你还没回写"的系统 message 重触发；再超过 T 仍无 → 周期记录 `evalStatus:stalled` + 告警到本 thread，**不再重试**，等人处理。
 
-☐ 走查正确
+☑ 走查正确（07:37）
 
 ## 2. 状态：每个 Objective 只有一条"当前周期记录"
 
@@ -68,7 +68,7 @@ CycleRecord {
 - 阈值来自 Objective 的评估模型定义（现有 registry），不在代码里硬编码。
 - **首周期起点**：该 Objective 从未评估过时——池中已有 tracing → 取最早有效 trace 的时间；池中没有（如上游新装）→ 服务启动检查到缺首周期起点时写入当前时间。
 
-☐ 触发口径正确
+☑ 触发口径正确（07:37）
 
 ## 4. 评估 assignment 与回写工具
 
@@ -111,7 +111,7 @@ CycleRecord {
 
 渲染要求：diff 用现有 override versions 的 content 做 before，草案做 after；不在卡内复制 tracing 正文，只给引用。
 
-☐ 三面正确（Eval 面按 operator 07:17 截图样板；提案卡按 §5.1）
+☑ 三面正确（07:37）
 
 ## 6. 现有组件处置表
 
@@ -216,6 +216,32 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 合一后 native 猫与 pipeline 猫的 session-init 段集合完全相同（今天 L1–L7 与 S 系列是两套内容），tracing 段投影随之统一；提供商只保留"写文件投递"这一处差异。
 
 ☑ **已决（operator 07:31）：合并成一条路。** 实施含义：删 `compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 与 manifest 协议；L1–L7 迁为 `assets/prompt-hooks/` 普通段；native 提供商由同一 pipeline 的 session 阶段输出写文件投递
+
+## 14. 实施切片（先删后建；每片一个 PR → `develop_base`；PR 描述逐条映射 TC-#；Fable review；合入重启后 Fable 跑 falsifier，不过不进下一片）
+
+| 片 | 做什么 | 删什么 | Falsifier |
+|---|---|---|---|
+| S0 清场 | 一次性脚本（先 dry-run 打印将清 key）清派生状态：4 个 pending snapshot、81 个 sweep job、drain state、18 个 unit job | — | Redis 只剩 tracing 池、反例标记、已完成 judgment、override 版本链 |
+| S1 触发 + CycleRecord | `CycleRecord` CAS 存储；checker（每 trace 落盘后 + 每小时）：三路 anyOf、per-Objective 阈值、最小间隔、首周期起点、skip 回看 `windows[]` | snapshot corpus、claim/commit/watermark Lua、`if (!semantic)`、drain fence、volume-sweep retry | 阈值满足 → `evalStatus=requested` 且记录 <1 KB；间隔内不重触发 |
+| S2 评估投递 + 回写 | per-Objective thread ensure（默认成员=Settings 全局默认猫，可改）；assignment（目标+窗口+指标+反例引用+读池工具，≤32 KB）；`describe_harness_unit`；`submit_cycle_evaluation`；未回写 30 分钟 → 1 次重触发 → `stalled` + 告警 | UnitSemanticEvaluationCoordinator 的门语义、cursor receipt/digest、sweep 主路径 | F-1、F-3 |
+| S3 governance + 提案卡 | 回写后自动 governance assignment（含历史摘要）；`submit_cycle_governance{decision,reason,v2Draft?}`；卡（§5.1，approve/skip/reject，F276 扩枚举）；approve 执行 override 路由 + registry 重扫 + snapshot 刷新；TC-16 活性提醒 | — | F-5；reject 后必出新卡 |
+| S4 Console | Tracing 两组 + 三路进度 + 周期起点（并入 Fable 的 `fix/f257-tracing-two-groups`）；Eval 指标目录 + verdict 卡；Governance 面 | "待分类"、旧三数字 | F-6 |
+| S5 单一路径 | native 提供商 session-init 由同一 pipeline 输出写文件投递；L1–L7 迁为 `assets/prompt-hooks/` 普通段 | `compile-system-prompt-l0.mjs`、`l0-compiler.ts`、`native-l0-trace.ts`、manifest 协议 | native 猫与 pipeline 猫段 ID 一致；L0 启动零报错；tracing 中无 L 系列独立 ID |
+
+顺序 S0→S1→S2→S3→S4→S5；S4 可与 S3 并行。每片 diff 目标 ≤ 600 行，超了拆。全部通过后：一次真实周期走通截图链 = 完成。
+
+## 15. 把关尺（Fable review 时逐条对照；命中任一条 = changes_requested）
+
+1. 新增任何状态机/子状态（除 `CycleRecord.evalStatus` 五态）
+2. 保留 sweep 作为任何前置或门；保留/新增 receipt、digest、防漂移校验
+3. 复制 tracing 正文到任何派生存储或 assignment
+4. 出现"兼容旧派生数据"分支（旧状态在 S0 清掉，不兼容）
+5. 新增 fallback 层（同文件 ≥3 层触发 Maine Coon 自检）
+6. 新 Lua 脚本不是在替换旧脚本
+7. 单文件 >350 行；一片 PR >600 行且未拆
+8. 只报测试数、不跑真实实例 falsifier 就宣称完成
+9. 任何 TC-# 在 PR 描述里没有映射
+10. base 不是 `develop_base` 或未走 PR
 
 ---
 确认方式：在 thread 回一句"§x 对 / §y 改成…"，或直接改本文件。全部 ☐ 勾完 → 解冻，按 §6 顺序实施：先删后建，不在旧状态机上加固。
