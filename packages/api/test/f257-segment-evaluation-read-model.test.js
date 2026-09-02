@@ -96,6 +96,12 @@ const semanticMetric = {
   evaluator: { kind: 'llm', ruleRef: 'tool-choice-correctness-semantic' },
   trigger: { kind: 'cadence', cadence: 'weekly' },
 };
+const cycleTrigger = {
+  cumulativeThreshold: 200,
+  counterexampleThreshold: 3,
+  cadenceDays: 7,
+  minimumIntervalMs: 7_200_000,
+};
 
 function annotation(index, polarity = 'counterexample', unitId = 'S13') {
   return {
@@ -201,6 +207,7 @@ const catalog = {
         id: 'em-tool-access-correct-use',
         label: '工具可达与正确使用评估',
         ruleVersion: 'v1',
+        cycleTrigger,
         metrics: [countMetric, semanticMetric],
       },
     ],
@@ -234,73 +241,6 @@ const catalog = {
 };
 
 describe('F257 SegmentEvaluationReadModel', () => {
-  test('S13 exposes its Objective, Evaluation Model, metrics, count progress and result window', async () => {
-    const redis = new FakeRedis();
-    const annotations = new TraceAnnotationStore(redis);
-    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
-    await runtime.append(annotation(1));
-    await runtime.append(annotation(2));
-    await runtime.append(annotation(3));
-
-    const view = await new SegmentEvaluationReadModel(runtime).read({
-      ownerUserId: 'owner-1',
-      segmentId: 'S13',
-      startMs: 0,
-      endMs: Date.now() + 1,
-    });
-    assert.equal(view.objectives.length, 1);
-    assert.deepEqual(view.objectives[0].unitRefs, [
-      { unitType: 'segment', unitId: 'S13' },
-      { unitType: 'segment', unitId: 'D11' },
-    ]);
-    assert.deepEqual(
-      {
-        objectiveId: view.objectives[0].objectiveId,
-        evaluationModelId: view.objectives[0].evaluationModelId,
-        metricIds: view.objectives[0].metrics.map((metric) => metric.metricId),
-      },
-      {
-        objectiveId: 'tool-access-correct-use',
-        evaluationModelId: 'em-tool-access-correct-use',
-        metricIds: ['tool-schema-failure-count', 'tool-choice-correctness'],
-      },
-    );
-    const count = view.objectives[0].metrics[0];
-    // Annotations were consumed by the Unit run; collection shows remaining pending
-    // candidates only, while the committed result carries the historical count.
-    assert.equal(count.collection.counterexamples, 0);
-    assert.equal(count.collection.required, 3);
-    assert.equal(count.collection.pendingTowardTrigger, 0);
-    assert.deepEqual(count.latestEvaluation.result.value, { kind: 'counter', count: 3, threshold: 3 });
-    assert.deepEqual(count.latestEvaluation.window, { start: 0, end: count.latestEvaluation.result.evaluatedAt });
-    assert.equal(view.objectives[0].metrics[1].latestEvaluation.result.value.kind, 'semantic');
-    assert.equal(view.objectives[0].latestJudgment.verdict, 'unmeasurable');
-    assert.equal(view.objectives[0].latestJudgment.verdictDecision.schemaVersion, 2);
-  });
-
-  test('shares one Objective Unit result across all member segments while keeping annotation progress local', async () => {
-    const redis = new FakeRedis();
-    const annotations = new TraceAnnotationStore(redis);
-    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3), episode(4, 'D11')]);
-    await runtime.append(annotation(1));
-    await runtime.append(annotation(2));
-    await runtime.append(annotation(3));
-    await runtime.append(annotation(4, 'counterexample', 'D11'));
-
-    const d11 = await new SegmentEvaluationReadModel(runtime).read({
-      ownerUserId: 'owner-1',
-      segmentId: 'D11',
-      startMs: 0,
-      endMs: Date.now() + 1,
-    });
-    const metric = d11.objectives[0].metrics[0];
-    // D11 has one local pending counterexample. The completed judgment is still
-    // visible because S13 and D11 are members of one Objective Unit.
-    assert.equal(metric.collection.counterexamples, 1);
-    assert.equal(metric.collection.pendingTowardTrigger, 1);
-    assert.deepEqual(metric.latestEvaluation.result.value, { kind: 'counter', count: 3, threshold: 3 });
-  });
-
   test('exposes Unit tracing readiness and structured counterexamples without metric buckets', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
@@ -363,12 +303,14 @@ describe('F257 SegmentEvaluationReadModel', () => {
             id: 'em-obj-a',
             label: 'Model A',
             ruleVersion: 'v1',
+            cycleTrigger,
             metrics: [countMetric],
           },
           {
             id: 'em-obj-b',
             label: 'Model B',
             ruleVersion: 'v1',
+            cycleTrigger,
             metrics: [semanticMetric],
           },
         ],
@@ -487,6 +429,7 @@ describe('F257 SegmentEvaluationReadModel', () => {
             id: 'em-o1',
             label: 'Model O1',
             ruleVersion: 'v1',
+            cycleTrigger: { ...cycleTrigger, counterexampleThreshold: 3 },
             metrics: [
               {
                 id: 'cx-o1',
@@ -501,6 +444,7 @@ describe('F257 SegmentEvaluationReadModel', () => {
             id: 'em-o2',
             label: 'Model O2',
             ruleVersion: 'v1',
+            cycleTrigger: { ...cycleTrigger, counterexampleThreshold: 5 },
             metrics: [
               {
                 id: 'cx-o2',

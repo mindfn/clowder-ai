@@ -10,7 +10,7 @@ import type {
 } from '@cat-cafe/shared';
 import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } from '@cat-cafe/shared';
 
-import { metricWindowStartFor, selectCandidates } from './EvaluationScheduler.js';
+import { metricWindowStartFor, selectCandidates } from './evaluation-cohort.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 import {
   distinctIncidents,

@@ -3328,12 +3328,9 @@ async function main(): Promise<void> {
   }
 
   // F257: resolve bootstrapped coordinators for eval-hub route wiring.
-  const {
-    getTraceStore,
-    getSemanticSweepCoordinator,
-    getUnitSemanticEvaluationCoordinator,
-    getObjectiveEvaluationRuntime,
-  } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+  const { getTraceStore, getSemanticSweepCoordinator, getObjectiveEvaluationRuntime } = await import(
+    './domains/prompt-hooks/trace-bootstrap.js'
+  );
 
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
@@ -3351,10 +3348,9 @@ async function main(): Promise<void> {
     lifecycleEventLog: reevalClosureEventLog,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
-    // F257: harness-ledger wiring — snapshot provider + semantic sweep + unit evaluation.
+    // F257: harness-ledger wiring — snapshot provider + optional semantic sweep.
     guardRejectionLog,
     semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
-    unitSemanticEvaluationCoordinator: getUnitSemanticEvaluationCoordinator() ?? undefined,
   });
 
   // F257 Gate 1: register the complete production-owned segment journey.
@@ -5607,14 +5603,12 @@ async function main(): Promise<void> {
     }
   });
 
-  // F257: volume sweep drain retry timer — pre-register cleanup (same pattern as F167).
-  // Timer created after listen; cleanup hook registered here because Fastify rejects
-  // addHook once listening.
-  let volumeSweepDrainTimer: ReturnType<typeof setInterval> | null = null;
+  // F257: hourly CycleRecord checker — cleanup hook must register before listen.
+  let cycleCheckTimer: ReturnType<typeof setInterval> | null = null;
   app.addHook('onClose', async () => {
-    if (volumeSweepDrainTimer) {
-      clearInterval(volumeSweepDrainTimer);
-      volumeSweepDrainTimer = null;
+    if (cycleCheckTimer) {
+      clearInterval(cycleCheckTimer);
+      cycleCheckTimer = null;
     }
   });
 
@@ -6033,49 +6027,25 @@ async function main(): Promise<void> {
   // returns 503 instead of waking the eval cat.
   invokeTriggerHolder.current = invokeTrigger;
 
-  // F257: bind volume-sweep invoke callback + start drain retry timer.
-  // The callback bridges trace volume threshold → handleTriggerNow for eval:harness-ledger.
-  // Late-bound here because invokeTrigger must exist first.
+  // F257 TC-3/15: initialize first cycles and run the cadence route hourly.
   if (redis) {
     try {
-      const { bindVolumeSweepInvoke, drainDueVolumeSweepRetries } = await import(
-        './domains/prompt-hooks/trace-bootstrap.js'
-      );
-      bindVolumeSweepInvoke(async (ownerUserId) => {
-        const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/index.js');
-        const result = await handleTriggerNow(
-          {
-            harnessFeedbackRoot: evalHarnessFeedbackRoot,
-            invokeTriggerProvider: invokeTriggerHolder,
-            messageStore,
-            threadStore,
-            redis: redisClient ?? undefined,
-            guardRejectionLog,
-            semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
-            unitSemanticEvaluationCoordinator: getUnitSemanticEvaluationCoordinator() ?? undefined,
+      const cycleRuntime = getObjectiveEvaluationRuntime();
+      if (cycleRuntime) {
+        await cycleRuntime.initializeCycles(privateUserId, Date.now());
+        cycleCheckTimer = setInterval(
+          () => {
+            cycleRuntime.checkKnownCycleOwners(Date.now()).catch((err) => {
+              app.log.warn({ err }, '[api] F257: hourly cycle check failed (best-effort)');
+            });
           },
-          { domainId: 'eval:harness-ledger', userId: ownerUserId },
+          60 * 60 * 1000,
         );
-        if (!('ok' in result)) return { dispatched: false };
-        if ('skipped' in result) return { dispatched: false };
-        return {
-          dispatched: true,
-          jobId: result.semanticSweepJobId,
-          unitEvaluationJobIds: result.unitEvaluationJobIds,
-        };
-      });
-      app.log.info('[api] F257: volume sweep invoke callback bound');
-
-      // Cadence timer: drain lease-expired volume sweep retries every 30s.
-      const VOLUME_SWEEP_DRAIN_INTERVAL_MS = 30_000;
-      volumeSweepDrainTimer = setInterval(() => {
-        drainDueVolumeSweepRetries().catch((err) => {
-          app.log.warn({ err }, '[api] F257: volume sweep drain retry failed (best-effort)');
-        });
-      }, VOLUME_SWEEP_DRAIN_INTERVAL_MS);
-      volumeSweepDrainTimer.unref();
+        cycleCheckTimer.unref();
+        app.log.info('[api] F257: CycleRecord checker initialized');
+      }
     } catch (err) {
-      app.log.warn(`[api] F257: volume sweep wiring failed (degraded): ${String(err)}`);
+      app.log.warn(`[api] F257: CycleRecord checker failed to initialize (degraded): ${String(err)}`);
     }
   }
 

@@ -9,7 +9,6 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
-import { registerUnitEvaluationCallbackRoutes } from '../infrastructure/harness-eval/evaluation/unit-evaluation-callbacks.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { loadDomains } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
@@ -91,8 +90,6 @@ export interface EvalHubRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257 semantic sweep coordinator for trigger-now judgments. */
   semanticSweepCoordinator?: import('../infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
-  /** F257 frozen Unit semantic evaluation coordinator. */
-  unitSemanticEvaluationCoordinator?: import('../infrastructure/harness-eval/evaluation/UnitSemanticEvaluationCoordinator.js').UnitSemanticEvaluationCoordinator;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -115,9 +112,6 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   }
   if (opts.semanticSweepCoordinator) {
     registerSubmitSemanticSweepRoute(app, opts.semanticSweepCoordinator);
-  }
-  if (opts.unitSemanticEvaluationCoordinator) {
-    registerUnitEvaluationCallbackRoutes(app, opts.unitSemanticEvaluationCoordinator);
   }
   app.get('/api/eval-hub/summary', async (request, reply) => {
     const userId = requireSession(request, reply);

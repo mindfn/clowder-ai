@@ -34,6 +34,7 @@ evaluationModels:
   - id: em-x
     label: X model
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: x-count
         label: X count
@@ -62,6 +63,12 @@ describe('F257 Objective registry v2', () => {
     assert.deepEqual(parsed.registry.evaluationModels[0].metrics[0].trigger, {
       kind: 'distinct-counterexamples',
       threshold: 3,
+    });
+    assert.deepEqual(parsed.registry.evaluationModels[0].cycleTrigger, {
+      cumulativeThreshold: 200,
+      counterexampleThreshold: 3,
+      cadenceDays: 7,
+      minimumIntervalMs: 7_200_000,
     });
     assert.deepEqual(parsed.registry.evaluationModels[0].metrics[0].verdictRule, { kind: 'counter-zero' });
   });
