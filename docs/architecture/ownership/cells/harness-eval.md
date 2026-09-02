@@ -186,7 +186,7 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Keep raw invocation tracing independent from evaluation. Tracing records what happened from invocation start through terminal closure; it does not choose an Objective, Metric, or verdict.
 - Producers only append the unified `TraceAnnotation` schema. `report_harness_signal` creates a pending marker for the authenticated invocation; terminal resolution binds it to the exact episode. Structured rules append the same shape. Unclassified episodes enter a bounded asynchronous semantic sweep.
 - Keep `EvaluationIndexer` deterministic: validate the annotation coordinates against the registry/manifest, deduplicate by incident key, and project query indexes. It must not perform semantic judgment.
-- Keep `EvaluationScheduler` semantic-free: freeze immutable snapshots and trigger evaluators by cadence/threshold only.
+- Keep `EvaluationScheduler` semantic-free: freeze the **time window and references only (never copy trace bodies)** and trigger evaluators by the three-way anyOf (counterexamples / volume / 7-day cadence). Contract: `docs/features/assets/F257/terminal-contract-v1.md`.
 - Keep Metric calculation replayable: code evaluators consume stored facts, LLM evaluators consume frozen evidence with persisted prompt/model metadata, and every outcome appends a `MetricResult` rather than mutating prior facts.
 
 ## Do NOT Unify With
