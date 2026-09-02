@@ -41,12 +41,12 @@ export function bootstrapObjectiveEvaluationRuntime(redis: RedisClient, catalog:
   });
 }
 
-function resolveCycleVersion(catalog: EvaluationCatalog, objectiveId: string) {
+export function resolveCycleVersion(catalog: EvaluationCatalog, objectiveId: string) {
   const registry = getCachedRegistry();
   if (!registry) throw new Error('hook_registry_not_initialized');
   const refs = catalog.manifest.units
     .filter((unit) => unit.objectives.some((objective) => objective.objectiveId === objectiveId))
-    .map((unit) => `${unit.hookId}@${registry.getActiveVersion(unit.hookId)}`)
+    .map((unit) => `${unit.unitId}@${registry.getActiveVersion(unit.unitId)}`)
     .sort();
   if (refs.length === 0) throw new Error(`cycle_objective_has_no_units:${objectiveId}`);
   const versionContentRef = `hook-versions:${refs.join(',')}`;

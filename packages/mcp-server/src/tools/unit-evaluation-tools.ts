@@ -21,6 +21,64 @@ const conclusionSchema = z.discriminatedUnion('kind', [
     howCounted,
   }),
 ]);
+const reason = z.string().trim().min(1).max(8_000);
+const hookManifest = z.object({
+  id: z.string().regex(/^[A-Z]+\\d+$/),
+  name: z.string().trim().min(1).max(200),
+  stage: z.enum(['session-init', 'per-turn']),
+  order: z.number().int().nonnegative(),
+  version: z.literal(1),
+  enabled: z.boolean(),
+  template: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$/),
+  inputs: z.array(identifier).max(32),
+  variables: z
+    .array(
+      z.object({
+        name: identifier,
+        description: z.string().max(500).optional(),
+        placeholder: z.string().max(500).optional(),
+      }),
+    )
+    .max(64)
+    .optional(),
+  disableable: z.boolean(),
+  safetyTier: z.enum(['readonly', 'limited-edit', 'editable']),
+  transparencyTier: z.enum(['visible-by-default', 'opt-in-view', 'debug-only']),
+  governanceTier: z.enum(['immutable', 'human-gated', 'auto-evolve']),
+  userExplanation: z.string().max(2_000).optional(),
+});
+const governanceChange = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('enable'), unitId: identifier, reason }),
+  z.object({ action: z.literal('disable'), unitId: identifier, reason }),
+  z.object({
+    action: z.literal('modify'),
+    unitId: identifier,
+    reason,
+    proposedContent: z
+      .string()
+      .trim()
+      .min(1)
+      .max(128 * 1024),
+  }),
+  z.object({
+    action: z.literal('add'),
+    reason,
+    unit: z.object({
+      unitId: z.string().regex(/^[A-Z]+\\d+$/),
+      assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+      manifest: hookManifest,
+      content: z
+        .string()
+        .trim()
+        .min(1)
+        .max(128 * 1024),
+      objectives: z
+        .array(z.object({ objectiveId: identifier, clauseId: identifier.optional() }))
+        .min(1)
+        .max(16),
+    }),
+  }),
+]);
 
 export const readCycleTracesInputSchema = {
   objectiveId: identifier.describe('Objective id from the cycle assignment.'),
@@ -45,6 +103,21 @@ export const describeHarnessUnitInputSchema = {
   unitId: identifier.describe('Harness unit id attached to the Objective, such as S6 or D5.'),
 };
 
+export const submitCycleGovernanceInputSchema = {
+  objectiveId: identifier.describe('Objective id from the governance assignment.'),
+  cycleId: identifier.describe('Exact CycleRecord id from the governance assignment.'),
+  decision: z.enum(['keep', 'rollback', 'evolve']).describe('Keep, roll back, or evolve the evaluated version.'),
+  reason: reason.describe('Evidence-based reason for the governance decision.'),
+  rollback: z
+    .object({ unitId: identifier, targetVersion: z.number().int().positive() })
+    .optional()
+    .describe('Required only for rollback: one attached unit and a prior immutable version.'),
+  v2Draft: z
+    .object({ changes: z.array(governanceChange).min(1).max(16) })
+    .optional()
+    .describe('Required only for evolve. Merge is disable A plus modify B.'),
+};
+
 interface ReadCycleTracesInput extends Record<string, unknown> {
   objectiveId: string;
   cycleId: string;
@@ -63,6 +136,15 @@ interface DescribeHarnessUnitInput extends Record<string, unknown> {
   unitId: string;
 }
 
+interface SubmitCycleGovernanceInput extends Record<string, unknown> {
+  objectiveId: string;
+  cycleId: string;
+  decision: 'keep' | 'rollback' | 'evolve';
+  reason: string;
+  rollback?: { unitId: string; targetVersion: number };
+  v2Draft?: { changes: z.infer<typeof governanceChange>[] };
+}
+
 export async function handleReadCycleTracesTool(input: ReadCycleTracesInput): Promise<ToolResult> {
   return callbackPost('/api/callbacks/harness-signals/read-cycle-traces', input, { retryDelaysMs: [] });
 }
@@ -73,6 +155,10 @@ export async function handleSubmitCycleEvaluationTool(input: SubmitCycleEvaluati
 
 export async function handleDescribeHarnessUnitTool(input: DescribeHarnessUnitInput): Promise<ToolResult> {
   return callbackPost('/api/callbacks/harness-signals/describe-harness-unit', input, { retryDelaysMs: [] });
+}
+
+export async function handleSubmitCycleGovernanceTool(input: SubmitCycleGovernanceInput): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/harness-signals/submit-cycle-governance', input, { retryDelaysMs: [] });
 }
 
 export const unitEvaluationTools = [
@@ -112,6 +198,19 @@ export const unitEvaluationTools = [
       implementationExport: 'handleDescribeHarnessUnitTool',
       action: 'describe-harness-unit',
       risk: { level: 'read', openWorld: false },
+      runtimeProfiles: ['full'],
+    },
+  }),
+  defineTool({
+    name: 'cat_cafe_submit_cycle_governance',
+    description:
+      'Write keep/rollback/evolve for the exact F257 Objective cycle. rollback/evolve create a human approval card; this tool never applies hook changes directly.',
+    inputSchema: submitCycleGovernanceInputSchema,
+    handler: handleSubmitCycleGovernanceTool,
+    governance: {
+      implementationExport: 'handleSubmitCycleGovernanceTool',
+      action: 'submit-cycle-governance',
+      risk: { level: 'write', openWorld: false },
       runtimeProfiles: ['full'],
     },
   }),
