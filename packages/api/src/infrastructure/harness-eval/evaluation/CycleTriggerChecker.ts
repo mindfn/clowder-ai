@@ -15,6 +15,8 @@ export interface CycleVersionRef {
 }
 
 export class CycleTriggerChecker {
+  private requestedHandler?: (record: CycleRecord) => void;
+
   constructor(
     private readonly deps: {
       catalog: EvaluationCatalog;
@@ -25,6 +27,10 @@ export class CycleTriggerChecker {
       resolveVersion: (objectiveId: string) => CycleVersionRef | Promise<CycleVersionRef>;
     },
   ) {}
+
+  setRequestedHandler(handler: (record: CycleRecord) => void): void {
+    this.requestedHandler = handler;
+  }
 
   async initializeOwner(ownerUserId: string, now: number): Promise<void> {
     await this.deps.objectiveTraces.ensureOwnerBackfilled(ownerUserId, now);
@@ -108,7 +114,10 @@ export class CycleTriggerChecker {
       windows: [...priorSkipWindows(history), window],
       triggeredBy,
     };
-    if (await this.deps.cycles.request(current, requested)) return { status: 'requested', record: requested };
+    if (await this.deps.cycles.request(current, requested)) {
+      this.requestedHandler?.(requested);
+      return { status: 'requested', record: requested };
+    }
     const winner = await this.deps.cycles.current(ownerUserId, objectiveId);
     if (!winner) throw new Error(`cycle_cas_winner_missing:${ownerUserId}:${objectiveId}`);
     return { status: 'active', record: winner };

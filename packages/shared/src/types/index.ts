@@ -453,6 +453,14 @@ export type {
   CrossThreadCoordinationInputPhase,
 } from './cross-thread-coordination.js';
 export { isCrossThreadProvenance } from './cross-thread-coordination.js';
+export type {
+  CycleEvaluationAssignment,
+  CycleEvaluationSubmission,
+  CycleMetricConclusion,
+  CycleMetricEvaluation,
+  CycleTracePage,
+  HarnessUnitDescription,
+} from './cycle-evaluation.js';
 // Deliberate types (4-E 两轮制 - 类型预埋)
 export type {
   DeliberateEvent,

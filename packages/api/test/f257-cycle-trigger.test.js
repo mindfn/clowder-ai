@@ -61,10 +61,28 @@ class FakeRedis {
     ).length;
   }
 
-  async eval(_script, _keyCount, key, expectedCycleId, replacement) {
-    const current = JSON.parse(this.strings.get(key) ?? 'null');
-    if (current?.cycleId !== expectedCycleId || current.evalStatus !== 'idle') return 0;
-    this.strings.set(key, replacement);
+  async eval(
+    _script,
+    _keyCount,
+    currentKey,
+    historyKey,
+    historyIndexKey,
+    expectedCycleId,
+    expectedStatus,
+    replacement,
+    mode,
+    closedAt,
+    next,
+  ) {
+    const current = JSON.parse(this.strings.get(currentKey) ?? 'null');
+    if (current?.cycleId !== expectedCycleId || current.evalStatus !== expectedStatus) return 0;
+    if (mode === 'advance') {
+      this.strings.set(historyKey, replacement);
+      await this.zadd(historyIndexKey, closedAt, expectedCycleId);
+      this.strings.set(currentKey, next);
+    } else {
+      this.strings.set(currentKey, replacement);
+    }
     return 1;
   }
 }

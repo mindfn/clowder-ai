@@ -118,11 +118,21 @@ class FakeRedis {
       await this.zadd(metricIndexKey, createdAt, annotationId);
       return ['created', annotationId, String(sequence)];
     }
-    const [key, expectedCycleId, replacement] = args;
-    const current = JSON.parse(this.strings.get(key) ?? 'null');
-    if (current?.cycleId !== expectedCycleId || current.evalStatus !== 'idle') return 0;
-    this.strings.set(key, replacement);
-    return 1;
+    if (script.includes('@fake-redis-handler: transitionHarnessCycleCurrent')) {
+      const [currentKey, historyKey, historyIndexKey] = args.slice(0, keyCount);
+      const [expectedCycleId, expectedStatus, replacement, mode, closedAt, next] = args.slice(keyCount);
+      const current = JSON.parse(this.strings.get(currentKey) ?? 'null');
+      if (current?.cycleId !== expectedCycleId || current.evalStatus !== expectedStatus) return 0;
+      if (mode === 'advance') {
+        this.strings.set(historyKey, replacement);
+        await this.zadd(historyIndexKey, closedAt, expectedCycleId);
+        this.strings.set(currentKey, next);
+      } else {
+        this.strings.set(currentKey, replacement);
+      }
+      return 1;
+    }
+    throw new Error('unexpected fake Redis script');
   }
 }
 
