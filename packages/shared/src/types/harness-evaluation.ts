@@ -140,6 +140,10 @@ export interface CycleRecord {
   retriggeredAt?: number;
   stalledAlertMessageId?: string;
   stalledAt?: number;
+  governanceAssignmentMessageId?: string;
+  governanceAssignedAt?: number;
+  governanceReminderMessageId?: string;
+  governanceRemindedAt?: number;
   evaluation?: {
     metrics: CycleMetricEvaluation[];
     overall: 'complete' | 'partial' | 'insufficient_evidence';
@@ -154,6 +158,7 @@ export interface CycleRecord {
     rejectCount: number;
     at: number;
   };
+  rejectReasons?: string[];
   closedAt?: number;
 }
 

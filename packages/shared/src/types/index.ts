@@ -678,19 +678,17 @@ export {
   EVALUATION_READINESS_WINDOW_MS,
   EVALUATION_TRACE_VOLUME_THRESHOLD,
 } from './harness-evaluation.js';
-// F257 governance ring: Candidate §3 + content-version decision contract.
+// F257 governance ring: Objective-cycle decision and human-gated proposal.
 export type {
-  Candidate,
-  CandidateApproval,
-  CandidateEvidence,
-  CandidateMechanism,
-  CandidateOriginKind,
-  CandidateProposedAction,
-  CandidateStatus,
-  CandidateType,
-  GovernanceDecisionAction,
-  GovernanceOutcome,
-  JudgmentCommittedEvent,
+  CycleGovernanceAssignment,
+  CycleGovernanceDecision,
+  CycleGovernanceHistorySummary,
+  CycleGovernanceSubmission,
+  HarnessGovernanceChangeDraft,
+  HarnessGovernanceProposal,
+  HarnessGovernanceProposalChange,
+  HarnessGovernanceProposalStatus,
+  HarnessUnitAddDraft,
 } from './harness-governance.js';
 export type {
   HookOverride,

@@ -34,9 +34,11 @@ export async function buildCycleAssignment(
     versionContentRef: record.versionContentRef,
     windows: record.windows,
     ...(priorSkipReasons.length > 0 ? { priorSkipReasons } : {}),
-    ...(record.approval?.state === 'rejected' && record.approval.reason
-      ? { rejectReasons: [record.approval.reason] }
-      : {}),
+    ...(record.rejectReasons?.length
+      ? { rejectReasons: [...record.rejectReasons] }
+      : record.approval?.state === 'rejected' && record.approval.reason
+        ? { rejectReasons: [record.approval.reason] }
+        : {}),
     metrics: model.metrics.map((metric) => ({
       id: metric.id,
       label: metric.label,
