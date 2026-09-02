@@ -957,7 +957,6 @@ async function main(): Promise<void> {
       actionSubjectTruthResolver,
     );
     const projectionRetirement = new actionProjectionRetirementMod.ActionSuccessorProjectionRetirementService({
-      queueCustodyCoordinator,
       invocationQueue,
       taskStore: {
         getBySubject: (subjectKey) => taskStore.getBySubject(subjectKey),

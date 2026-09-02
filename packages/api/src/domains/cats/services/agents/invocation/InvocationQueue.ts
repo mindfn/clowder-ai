@@ -1293,6 +1293,27 @@ export class InvocationQueue {
     return this.removeProcessedAcrossUsersDurable(threadId, entryId);
   }
 
+  /** Terminalize one exact row without manufacturing a rollback path. */
+  async terminalizeEntryDurable(threadId: string, userId: string, entryId: string): Promise<QueueEntry | null> {
+    const snapshot = this.getEntrySnapshot(threadId, userId, entryId);
+    if (!snapshot) return null;
+    if (snapshot.status === 'queued') {
+      const claimed = await this.claimQueuedEntryForWithdrawal(threadId, userId, entryId);
+      if (!claimed) return null;
+      const terminal = await this.commitClaimedWithdrawal(threadId, entryId);
+      if (!terminal) await this.restoreClaimedEntries(threadId, [entryId]);
+      return terminal;
+    }
+    // A reversible claim is projected as processing for legacy readers. Do not
+    // steal another action's in-flight authority.
+    if (this.ledgerClaimIds.has(entryId)) return null;
+    return this.removeProcessedDurable(threadId, userId, entryId);
+  }
+
+  async getDurableEntry(threadId: string, entryId: string): Promise<QueueLedgerEntry | null> {
+    return this.ledgerStore.get(threadId, entryId);
+  }
+
   /**
    * A restarted host cannot still own provider execution. Persist every stale
    * processing row as terminal before exposing the remaining Queue for drain.
@@ -1401,15 +1422,14 @@ export class InvocationQueue {
     return q.splice(idx, 1)[0] ?? null;
   }
 
-  /** Retire every process-local carrier for one persisted action fence. */
-  retireActionSuccessorFence(fence: ActionSuccessorFence): ActionSuccessorQueueRetirement[] {
+  /** Retire every durable carrier for one persisted action fence. */
+  async retireActionSuccessorFenceDurable(fence: ActionSuccessorFence): Promise<ActionSuccessorQueueRetirement[]> {
     const retired: ActionSuccessorQueueRetirement[] = [];
-    for (const [scope, queue] of this.queues) {
-      for (let index = queue.length - 1; index >= 0; index -= 1) {
-        const entry = queue[index];
-        if (!entry || !actionSuccessorFencesMatch(entry.actionSuccessorFence, fence)) continue;
-        queue.splice(index, 1);
-        this.originalContents.delete(entry.id);
+    const matches = [...this.queues.values()]
+      .flat()
+      .filter((entry) => actionSuccessorFencesMatch(entry.actionSuccessorFence, fence));
+    for (const entry of matches) {
+      if (await this.terminalizeEntryDurable(entry.threadId, entry.userId, entry.id)) {
         retired.push({
           entryId: entry.id,
           threadId: entry.threadId,
@@ -1417,7 +1437,6 @@ export class InvocationQueue {
           messageIds: exactA2ASourceMessageIds(entry),
         });
       }
-      if (queue.length === 0) this.queues.delete(scope);
     }
     return retired;
   }
