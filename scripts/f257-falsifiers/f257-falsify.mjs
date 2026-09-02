@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { snapshotDerivedKeys } from './checks/derived-keys.mjs';
 import { checkF2, checkF3 } from './checks/f2-f3.mjs';
 import { checkF6 } from './checks/f6.mjs';
+import { checkF4, checkF7 } from './checks/f7-f4.mjs';
 import { checkF8 } from './checks/f8.mjs';
 import { checkUnbound } from './checks/unbound.mjs';
 import { createApiClient } from './lib/api.mjs';
@@ -13,7 +14,7 @@ import { HELP, parseArgs } from './lib/args.mjs';
 import { openRedis } from './lib/redis.mjs';
 import { exitCode, renderTable, summarize } from './lib/report.mjs';
 
-const API_CHECKS = new Set(['F-1', 'F-4', 'F-5', 'F-6']);
+const API_CHECKS = new Set(['F-1', 'F-5', 'F-6']);
 
 async function runBaseline(options, redis) {
   const baseline = await snapshotDerivedKeys(redis, options.keyPrefix);
@@ -34,8 +35,12 @@ export async function runCheck(id, context) {
       return checkF2(context);
     case 'F-3':
       return checkF3(context);
+    case 'F-4':
+      return checkF4(context);
     case 'F-6':
       return checkF6(context);
+    case 'F-7':
+      return checkF7(context);
     case 'F-8':
       return checkF8(context);
     default:

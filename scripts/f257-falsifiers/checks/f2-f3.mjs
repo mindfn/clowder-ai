@@ -1,15 +1,39 @@
-import { memoryUsageBytes } from '../lib/redis.mjs';
+import { memoryUsageBytes, readJsonKey } from '../lib/redis.mjs';
 import { combine, fail, pass, unbound } from '../lib/report.mjs';
 import { collectDrainResidue, diffDerivedKeys, snapshotDerivedKeys } from './derived-keys.mjs';
 
 const KB = 1024;
+// complete-design-v1 §2 CycleRecord schema (S1 adds schemaVersion/cycleId/ownerUserId/objectiveId/triggeredBy).
+const CYCLE_RECORD_FIELDS = new Set([
+  'schemaVersion',
+  'cycleId',
+  'ownerUserId',
+  'objectiveId',
+  'version',
+  'versionContentRef',
+  'cycleStart',
+  'cycleEnd',
+  'evalStatus',
+  'windows',
+  'triggeredBy',
+  'evaluation',
+  'governance',
+  'approval',
+  'closedAt',
+]);
 
 // S1 declares the CycleRecord key template + read face in its commit message; bind here.
 // Until then the size/status parts stay unbound (honest, not green).
 export const CYCLE_RECORD_SURFACE = Object.freeze({
-  bound: false,
-  keyFor: null,
-  note: 'bind after S1: CycleRecord key template ({keyPrefix, ownerUserId, objectiveId}) + read route',
+  bound: true,
+  // S1 @ 9c5a7148b: CycleRecordStore.ts key templates (owner/objective scoped).
+  keyFor: ({ keyPrefix, ownerUserId, objectiveId }) =>
+    `${keyPrefix}harness-cycle-current:${ownerUserId}:${objectiveId}`,
+  historyIndexFor: ({ keyPrefix, ownerUserId, objectiveId }) =>
+    `${keyPrefix}harness-cycle-history-index:${ownerUserId}:${objectiveId}`,
+  historyFor: ({ keyPrefix, ownerUserId, objectiveId, cycleId }) =>
+    `${keyPrefix}harness-cycle-history:${ownerUserId}:${objectiveId}:${cycleId}`,
+  note: 'bound to S1 CycleRecordStore (harness-cycle-current / -history / -history-index)',
 });
 
 export async function checkF2({ redis, keyPrefix, ownerUserId, objectiveId, baseline }) {
@@ -27,9 +51,17 @@ export async function checkF2({ redis, keyPrefix, ownerUserId, objectiveId, base
   }
   const key = CYCLE_RECORD_SURFACE.keyFor({ keyPrefix, ownerUserId, objectiveId });
   const bytes = await memoryUsageBytes(redis, key);
-  if (bytes === null) parts.push(fail('F-2', `CycleRecord missing: ${key}`, { key }));
-  else if (bytes >= 64 * KB) parts.push(fail('F-2', `CycleRecord ${bytes} B ≥ 64 KB`, { key, bytes }));
-  else parts.push(pass('F-2', `CycleRecord ${bytes} B < 64 KB`, { key, bytes }));
+  const record = await readJsonKey(redis, key);
+  if (bytes === null || !record) parts.push(fail('F-2', `CycleRecord missing: ${key}`, { key }));
+  else {
+    const limit = ['idle', 'requested'].includes(record.evalStatus) ? KB : 64 * KB;
+    const bodyFields = Object.keys(record).filter((field) => !CYCLE_RECORD_FIELDS.has(field));
+    if (bytes >= limit)
+      parts.push(fail('F-2', `CycleRecord ${bytes} B ≥ ${limit} B (${record.evalStatus})`, { key, bytes }));
+    else if (bodyFields.length > 0)
+      parts.push(fail('F-2', `CycleRecord carries non-schema fields: ${bodyFields.join(',')}`));
+    else parts.push(pass('F-2', `CycleRecord ${bytes} B (${record.evalStatus}), refs only`, { key, bytes }));
+  }
   return combine('F-2', parts);
 }
 

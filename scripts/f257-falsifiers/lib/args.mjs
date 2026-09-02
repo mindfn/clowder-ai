@@ -2,7 +2,7 @@ import process from 'node:process';
 
 // Contract anchor: docs/features/assets/F257/terminal-contract-v1.md §4 (F-1~F-8).
 export const ALL_CHECKS = Object.freeze(['F-1', 'F-2', 'F-3', 'F-4', 'F-5', 'F-6', 'F-7', 'F-8']);
-const API_CHECKS = new Set(['F-1', 'F-4', 'F-5', 'F-6']);
+const API_CHECKS = new Set(['F-1', 'F-5', 'F-6']);
 
 const VALUE_ARGS = Object.freeze({
   '--api-url': 'apiUrl',
