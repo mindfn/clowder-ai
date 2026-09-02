@@ -169,6 +169,28 @@ for (const objective of catalogResult.catalog.registry.objectives) {
 }
 record('E max CycleRecord size < 1 KB (requested state)', maxBytes < 1024, { maxBytes });
 
+// F: index equivalence — ObjectiveTraceIndex.countWindow must equal the canonical pool scan (old semantics).
+const fStart = T0;
+const fNow = Date.now();
+for (const objectiveId of ['identity-truth', 'tool-access-correct-use']) {
+  const units = catalogResult.catalog.manifest.units.filter((u) =>
+    u.objectives.some((o) => o.objectiveId === objectiveId),
+  );
+  const refs = units.map((u) => ({ unitType: 'segment', unitId: u.unitId }));
+  const segIds = new Set(units.map((u) => u.unitId));
+  const episodes = await runtime.traces.queryUnitWindow(owner, refs, fStart, fNow);
+  const scan = new Set(
+    episodes
+      .filter((e) => e.summary.segments.some((s) => s.status === 'observed' && segIds.has(s.segmentId)))
+      .map((e) => e.terminal.invocationId),
+  ).size;
+  const indexed = await runtime.objectiveTraces.countWindow(owner, objectiveId, fStart, fNow);
+  record(`F index equivalence ${objectiveId} (pool scan == ZCOUNT)`, scan === indexed && indexed > 0, {
+    scan,
+    indexed,
+  });
+}
+
 await redis.quit();
 console.log(
   JSON.stringify({ summary: { pass: results.filter((r) => r.ok).length, fail: results.filter((r) => !r.ok).length } }),
