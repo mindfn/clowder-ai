@@ -20,6 +20,14 @@ const CYCLE_RECORD_FIELDS = new Set([
   'governance',
   'approval',
   'closedAt',
+  // S2 (0a96514fd5614) delivery / bounded-retrigger observability fields (TC-7): ids + timestamps only.
+  'assignmentThreadId',
+  'assignmentMessageId',
+  'assignedAt',
+  'retriggerMessageId',
+  'retriggeredAt',
+  'stalledAlertMessageId',
+  'stalledAt',
 ]);
 
 // S1 declares the CycleRecord key template + read face in its commit message; bind here.
