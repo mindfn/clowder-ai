@@ -45,7 +45,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       }
       const next = (await response.json()) as SegmentLifecycleResponse;
       setLifeline(next);
-      setSelected({ version: next.activeVersion, stage: next.activeStage });
+      setSelected({ version: next.activeVersion, stage: 'tracing' });
     } catch {
       if (requestId === lifelineRequestRef.current) setError('网络错误');
     } finally {
@@ -174,13 +174,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
           )}
           {!loading && !error && lifeline && (
             <>
-              <LifelineChainView
-                chain={lifeline.chain}
-                selected={selected}
-                onSelect={setSelected}
-                activeStage={lifeline.activeStage}
-                actionable={lifeline.actionable}
-              />
+              <LifelineChainView chain={lifeline.chain} selected={selected} onSelect={setSelected} />
               {selectedEpoch && selected?.stage === 'version' && (
                 <VersionContentPreview segmentId={segmentId} epoch={selectedEpoch} />
               )}

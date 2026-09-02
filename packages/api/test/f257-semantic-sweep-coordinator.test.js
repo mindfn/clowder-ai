@@ -406,14 +406,6 @@ describe('F257 semantic sweep coordinator', () => {
     });
     assert.deepEqual(submitted, { selected: 2, classified: 2, annotations: 1 });
     assert.deepEqual([...unclassified], []);
-    const results = await runtime.results.queryMetricWindow(
-      'owner-1',
-      'knowledge-evidence-quality',
-      metric.id,
-      0,
-      Date.now() + 1,
-    );
-    assert.equal(results.length, 0, 'sweep only marks counterexamples; the eval cat writes conclusions in S2');
     const cycle = await runtime.cycles.current('owner-1', 'knowledge-evidence-quality');
     assert.equal(cycle.evalStatus, 'requested');
     assert.deepEqual(cycle.triggeredBy, ['counterexamples']);

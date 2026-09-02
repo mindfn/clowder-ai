@@ -177,13 +177,7 @@ export default function F257ObjectiveEvalShowcase() {
         </p>
       </header>
 
-      <LifelineChainView
-        chain={chain}
-        selected={selected}
-        onSelect={setSelected}
-        activeStage="tracing"
-        actionable={{ stage: null, candidateCount: 0, source: 'candidate-count' }}
-      />
+      <LifelineChainView chain={chain} selected={selected} onSelect={setSelected} />
 
       {selected.stage === 'version' && <VersionContentPreview segmentId="S13" epoch={chain[0]} />}
       {selected.stage === 'tracing' && (

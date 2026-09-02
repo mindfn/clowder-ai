@@ -9,10 +9,8 @@
  * Each badge is clickable — selecting a stage shows its detail in LifelineStageDetail.
  */
 
-import type { ActionableInfo, ActiveStage } from '@cat-cafe/shared';
 import { useCallback } from 'react';
 import { SettingsBadge, SettingsText } from './primitives';
-import { explainVerdict } from './verdict-explanations';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -43,10 +41,6 @@ interface LifelineChainViewProps {
   chain: VersionEpoch[];
   selected: SelectedStage | null;
   onSelect: (stage: SelectedStage) => void;
-  /** 判据①: real loop stage of the ACTIVE version (from the read model). */
-  activeStage: ActiveStage;
-  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
-  actionable: ActionableInfo;
 }
 
 // ── Badge tone mapping ─────────────────────────────────────────
@@ -62,18 +56,11 @@ function tracingTone(epoch: VersionEpoch): BadgeTone {
   return 'emerald';
 }
 
-function evalTone(epoch: VersionEpoch): BadgeTone {
-  if (!epoch.eval || !epoch.eval.verdict) return 'slate';
-  return explainVerdict(epoch.eval.verdict).tone;
+function evalTone(): BadgeTone {
+  return 'slate';
 }
 
-function governanceTone(epoch: VersionEpoch, isActionable: boolean): BadgeTone {
-  // 判据① P1-4: real pending Candidates are the ONLY attention signal —
-  // independent of the synthesized epoch.governance.decision.
-  if (isActionable) return 'amber';
-  if (!epoch.governance || !epoch.governance.decision) return 'slate';
-  if (epoch.governance.decision === 'approved') return 'emerald';
-  // synthesized pending is informational only.
+function governanceTone(): BadgeTone {
   return 'slate';
 }
 
@@ -84,41 +71,6 @@ function tracingLabel(epoch: VersionEpoch): string {
   return `tracing(${epoch.tracing.observationCount})`;
 }
 
-function evalLabel(epoch: VersionEpoch): string {
-  if (!epoch.eval || !epoch.eval.verdict) return 'eval';
-  const ic = epoch.eval.injectionCount;
-  const vc = epoch.eval.violationCount;
-  const rate = ic > 0 ? `${((vc / ic) * 100).toFixed(0)}%` : '';
-  return `eval(${explainVerdict(epoch.eval.verdict).label}${rate ? ` ${rate}` : ''})`;
-}
-
-/** Verdict explanation for the eval badge tooltip (判据③). */
-function evalTitle(epoch: VersionEpoch): string | undefined {
-  if (!epoch.eval || !epoch.eval.verdict) return undefined;
-  return explainVerdict(epoch.eval.verdict).explanation;
-}
-
-function governanceLabel(epoch: VersionEpoch, actionable: ActionableInfo, isActionable: boolean): string {
-  // 判据① P1-4: candidate count comes from the Candidate projection alone —
-  // shown even when epoch.governance is null (e.g. retire-candidate verdict).
-  if (isActionable) return `governance(${actionable.candidateCount} 待审)`;
-  if (!epoch.governance || !epoch.governance.decision) return 'governance';
-  // 判据①: never render synthesized pending as 待处理 — stay neutral (honest gap).
-  if (epoch.governance.decision === 'pending') return 'governance';
-  return `governance(${epoch.governance.decision})`;
-}
-
-/** 判据①: tooltip for the governance badge — honest about what pending means. */
-function governanceTitle(epoch: VersionEpoch, actionable: ActionableInfo, isActionable: boolean): string | undefined {
-  if (isActionable) return `需 operator 决策：${actionable.candidateCount} 个治理候选待审`;
-  if (epoch.governance?.decision !== 'pending') return undefined;
-  // P2-2: verdict-neutral wording — dormant ≠ pass, so never say 评估已通过.
-  if (actionable.source === 'unavailable') {
-    return '评估完成，生命周期位于治理环节；治理候选数据暂不可用，无法判断是否需要 operator 操作';
-  }
-  return '评估完成，当前无治理候选（无需动作）';
-}
-
 // ── Helpers ────────────────────────────────────────────────────
 
 function isSelected(selected: SelectedStage | null, version: number, stage: SelectedStage['stage']): boolean {
@@ -127,7 +79,7 @@ function isSelected(selected: SelectedStage | null, version: number, stage: Sele
 
 // ── Component ──────────────────────────────────────────────────
 
-export function LifelineChainView({ chain, selected, onSelect, activeStage, actionable }: LifelineChainViewProps) {
+export function LifelineChainView({ chain, selected, onSelect }: LifelineChainViewProps) {
   const handleSelect = useCallback(
     (version: number, stage: SelectedStage['stage']) => {
       onSelect({ version, stage });
@@ -156,8 +108,6 @@ export function LifelineChainView({ chain, selected, onSelect, activeStage, acti
             selected={selected}
             onSelect={handleSelect}
             showArrowBefore={idx > 0}
-            activeStage={activeStage}
-            actionable={actionable}
           />
         ))}
       </div>
@@ -172,23 +122,12 @@ function EpochNode({
   selected,
   onSelect,
   showArrowBefore,
-  activeStage,
-  actionable,
 }: {
   epoch: VersionEpoch;
   selected: SelectedStage | null;
   onSelect: (version: number, stage: SelectedStage['stage']) => void;
   showArrowBefore: boolean;
-  activeStage: ActiveStage;
-  actionable: ActionableInfo;
 }) {
-  // 判据①: the loop's real position — only on the ACTIVE version's epoch.
-  const loopAt = (stage: SelectedStage['stage']) => epoch.isActive && activeStage === stage;
-  const loopSuffix = (stage: SelectedStage['stage']) => (loopAt(stage) ? '◈' : undefined);
-  const loopTitle = (stage: SelectedStage['stage']) => (loopAt(stage) ? '当前循环所在阶段' : undefined);
-  // 判据①: actionable ONLY from real pending Candidates on the active epoch.
-  const govActionable = epoch.isActive && actionable.stage === 'governance';
-
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       {showArrowBefore && <Arrow />}
@@ -203,35 +142,29 @@ function EpochNode({
       />
       <Arrow />
 
-      {/* Tracing badge — loop marker when the cycle is (back) at tracing (判据①) */}
+      {/* Stage tabs are navigation only; CycleRecord panels own evaluation state. */}
       <StageBadge
         label={tracingLabel(epoch)}
         tone={tracingTone(epoch)}
         active={isSelected(selected, epoch.version, 'tracing')}
-        suffix={loopSuffix('tracing')}
-        title={loopTitle('tracing')}
         onClick={() => onSelect(epoch.version, 'tracing')}
       />
       <Arrow />
 
-      {/* Eval badge — verdict tone + hover explanation (判据③) */}
+      {/* Eval tab */}
       <StageBadge
-        label={evalLabel(epoch)}
-        tone={evalTone(epoch)}
-        title={evalTitle(epoch)}
+        label="eval"
+        tone={evalTone()}
         active={isSelected(selected, epoch.version, 'eval')}
         onClick={() => onSelect(epoch.version, 'eval')}
       />
       <Arrow />
 
-      {/* Governance badge — actionable only via real Candidates; pending alone is informational (判据①) */}
+      {/* Governance tab */}
       <StageBadge
-        label={governanceLabel(epoch, actionable, govActionable)}
-        tone={governanceTone(epoch, govActionable)}
+        label="governance"
+        tone={governanceTone()}
         active={isSelected(selected, epoch.version, 'governance')}
-        suffix={loopSuffix('governance')}
-        title={governanceTitle(epoch, actionable, govActionable) ?? loopTitle('governance')}
-        actionable={govActionable}
         onClick={() => onSelect(epoch.version, 'governance')}
       />
     </div>

@@ -121,13 +121,7 @@ export default function ShowcaseF257EvalWindow() {
       <section className="rounded-2xl bg-[var(--console-card-bg)] p-[26px]">
         <h2 className="mb-3 text-sm font-semibold text-cafe">Case 1 — 事故现场：tracing(18) vs eval(0)，双坐标同屏</h2>
         <div className="space-y-4">
-          <LifelineChainView
-            chain={[epoch]}
-            selected={selected}
-            onSelect={setSelected}
-            activeStage="tracing"
-            actionable={UNACTIONABLE}
-          />
+          <LifelineChainView chain={[epoch]} selected={selected} onSelect={setSelected} />
           <LifelineStageDetail
             selected={selected}
             chain={[epoch]}

@@ -502,11 +502,6 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     assert.ok('activeVersion' in body);
     assert.ok('currentStatus' in body);
     assert.ok('window' in body);
-    assert.deepEqual(body.evalSource, {
-      status: 'unavailable',
-      source: 'unwired',
-      reason: 'runtime-unwired',
-    });
 
     await app.close();
   });
@@ -522,48 +517,6 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
       url: '/api/segment-lifeline/S-test',
     });
     assert.equal(res.statusCode, 401);
-    await app.close();
-  });
-
-  test('resolver failure is typed unavailable and cannot masquerade as an ordinary no-judgment tracing state', async () => {
-    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
-    const redis = new FakeRedis();
-    const store = new InjectionTraceStore(redis);
-    const app = await buildLifelineApp(store, {
-      resolveEvalJudgments: async () => {
-        throw new Error('objective store unavailable');
-      },
-    });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/segment-lifeline/S-test',
-      headers: SESSION_HEADERS,
-    });
-    assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(res.json().evalSource, {
-      status: 'unavailable',
-      source: 'objective-runtime',
-      reason: 'resolver-failed',
-    });
-    await app.close();
-  });
-
-  test('an available resolver with no judgment remains distinguishable from source failure', async () => {
-    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
-    const redis = new FakeRedis();
-    const app = await buildLifelineApp(new InjectionTraceStore(redis), {
-      resolveEvalJudgments: async () => [],
-    });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/segment-lifeline/S-test',
-      headers: SESSION_HEADERS,
-    });
-    assert.deepEqual(res.json().evalSource, {
-      status: 'available',
-      source: 'objective-runtime',
-      reason: null,
-    });
     await app.close();
   });
 });
