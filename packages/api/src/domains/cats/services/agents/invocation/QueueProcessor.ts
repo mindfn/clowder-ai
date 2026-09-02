@@ -80,7 +80,6 @@ import {
   lifecycleInputIdentityForStoredMessage,
   type StoredMessage,
 } from '../../stores/ports/MessageStore.js';
-import { projectQueueReceipt } from '../../stores/ports/queued-message-receipt.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
 import {
@@ -2035,10 +2034,7 @@ export class QueueProcessor {
             /* best-effort: preview failure must not drop the delivered message */
           }
         }
-        const projectedExtra = {
-          ...(result.extra ?? {}),
-          ...(result.queueCustody ? { queueReceipt: projectQueueReceipt(result.queueCustody) } : {}),
-        };
+        const projectedExtra = result.extra ?? {};
         deliveredMessages.push({
           id: result.id,
           ...(result.from ? { from: result.from } : {}),
@@ -2756,26 +2752,20 @@ export class QueueProcessor {
         throw new Error(`public Queue head has no durable source message: ${claimed.id}`);
       }
       const source = await this.deps.messageStore.getById(claimed.messageId);
-      if (!source?.queueCustody) {
-        throw new Error(`public Queue head has no durable queued custody: ${claimed.id}`);
+      if (!source) {
+        throw new Error(`public Queue head source message is missing: ${claimed.id}`);
       }
       const reason = routingClass === 'targetless' ? 'no_available_target' : 'invalid_explicit_target';
-      const failedTargets =
-        claimed.kind === 'message_wake' ? [...claimed.targetCats] : [...source.queueCustody.allTargetCats];
-      const isPartialFailure = failedTargets.length < source.queueCustody.allTargetCats.length;
+      const failedTargets = [...claimed.targetCats];
       const wakeTargetLabel = failedTargets.length > 0 ? failedTargets.join('、') : '处理成员';
       const content =
         reason === 'no_available_target'
           ? `唤起${wakeTargetLabel}失败：当前没有可用的接收对象。`
-          : isPartialFailure
-            ? `唤起${wakeTargetLabel}失败：部分指定接收对象当前无效。`
-            : `唤起${wakeTargetLabel}失败：指定的接收对象当前无效。`;
+          : `唤起${wakeTargetLabel}失败：指定的接收对象当前无效。`;
       const result = await this.deps.messageStore.commitLifecyclePreAdmissionFailure({
         sourceMessageId: source.id,
         expectedEntryId: claimed.id,
-        expectedQueueCustodyRevision: source.queueCustody.revision,
-        requestedTargets: [...source.queueCustody.allTargetCats],
-        ...(claimed.kind === 'message_wake' ? { failedTargets } : {}),
+        requestedTargets: failedTargets,
         reason,
         content,
         failedAt: Math.max(Date.now(), source.timestamp),
@@ -3176,16 +3166,14 @@ export class QueueProcessor {
       // 1. Create InvocationRecord (before batching — avoid claiming entries on duplicate)
       // Connector-sourced entries use connector-${messageId} to match the direct-execution
       // idempotency path, so retries after queue processing are also caught persistently.
-      const retryAttemptId = targetCats.length === 1 ? entry.queuedAttemptIdByCatId?.[targetCats[0]!] : undefined;
       const source = queueEntrySource(entry);
       const connectorReplayCarrier = source === 'connector' || entry.sourceCategory === 'scheduled';
       const idempotencyKey =
-        retryAttemptId ??
-        (connectorReplayCarrier && messageId
+        connectorReplayCarrier && messageId
           ? `connector-${messageId}`
           : entry.actionSuccessorFence && entry.idempotencyKey
             ? actionSuccessorInvocationIdempotencyKey(entry.idempotencyKey)
-            : `queue-${entry.id}-${entry.processingStartedAt ?? entry.createdAt}`);
+            : `queue-${entry.id}`;
       const actionLeaseCarrier: InvocationActionLeaseCarrier = entry.actionSuccessorFence
         ? {
             kind: 'action_successor',
@@ -3205,10 +3193,7 @@ export class QueueProcessor {
 
       invocationId = createResult.invocationId;
       if (createResult.outcome === 'duplicate') {
-        const replayEligible =
-          Boolean(retryAttemptId) ||
-          (connectorReplayCarrier && Boolean(messageId)) ||
-          Boolean(entry.actionSuccessorFence);
+        const replayEligible = (connectorReplayCarrier && Boolean(messageId)) || Boolean(entry.actionSuccessorFence);
         const existing =
           replayEligible && invocationRecordStore.get ? await invocationRecordStore.get(invocationId) : null;
         if (

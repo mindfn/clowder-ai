@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const processingLifecycle = {
   kind: 'response',
@@ -667,72 +667,45 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     assert.deepEqual(replayed.inputMessage.lifecycle.dispatchRefs, applied.inputMessage.lifecycle.dispatchRefs);
   });
 
-  test('settles only policy-rejected wake targets while preserving accepted target custody', async () => {
+  test('settles one rejected scalar target while preserving the sibling ledger target projection', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const store = new MessageStore();
-    const source = store.append(
+    const queue = new InvocationQueue();
+    const admission = await queue.appendAndEnqueueDurable(
+      store,
       canonicalTestMessageInput({
         userId: 'owner-1',
         threadId: 'thread-1',
-        catId: 'opus',
+        from: { kind: 'user', userId: 'owner-1' },
         content: '@codex @kimi please review',
         mentions: ['codex', 'kimi'],
         timestamp: 90,
+        deliveryStatus: 'queued',
+      }),
+      canonicalTestQueueInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        from: { kind: 'user', userId: 'owner-1' },
+        content: '@codex @kimi please review',
+        targetCats: ['codex', 'kimi'],
       }),
     );
-    const initialized = store.initializeQueueCustody(source.id, {
-      version: 1,
-      entryId: 'fanout:source',
-      revision: 1,
-      ownerUserId: 'owner-1',
-      ownerAuthProvenance: 'strict',
-      intent: 'execute',
-      status: 'queued',
-      allTargetCats: ['codex', 'kimi'],
-      pendingTargetCats: ['codex'],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      targetAttempts: [
-        {
-          id: 'fanout:source:codex:1',
-          targetCatId: 'codex',
-          sequence: 1,
-          state: 'queued',
-          createdAt: 90,
-          updatedAt: 90,
-        },
-        {
-          id: 'fanout:source:kimi:1',
-          targetCatId: 'kimi',
-          sequence: 1,
-          state: 'failed',
-          terminalReason: 'invocation_failed',
-          createdAt: 90,
-          updatedAt: 90,
-        },
-      ],
-      failedByCatIds: ['kimi'],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 90,
-      updatedAt: 90,
-    });
-    assert.equal(initialized.kind, 'initialized');
+    const source = admission.message;
+    const kimiEntry = admission.entries.find((entry) => entry.targetCats[0] === 'kimi');
+    assert.ok(kimiEntry);
 
     const applied = store.commitLifecyclePreAdmissionFailure({
       sourceMessageId: source.id,
-      expectedEntryId: 'fanout:source',
-      expectedQueueCustodyRevision: 1,
-      requestedTargets: ['codex', 'kimi'],
-      failedTargets: ['kimi'],
+      expectedEntryId: kimiEntry.id,
+      requestedTargets: ['kimi'],
       reason: 'invalid_explicit_target',
-      content: '消息未能送达：部分指定接收对象当前无效。',
+      content: '消息未能送达：指定的接收对象当前无效。',
       failedAt: 100,
     });
 
     assert.equal(applied.kind, 'applied');
-    assert.deepEqual(applied.inputMessage.queueCustody.pendingTargetCats, ['codex']);
+    assert.equal(applied.inputMessage.queueCustody, undefined);
     assert.deepEqual(applied.inputMessage.lifecycle.dispatchRefs, [
       { targetId: 'codex', phase: 'assigned' },
       { targetId: 'kimi', phase: 'settled', statusMessageId: applied.failureMessage.id },

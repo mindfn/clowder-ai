@@ -181,7 +181,7 @@ async function processZombie(
         // reconcile may have flipped the record terminal but died before converging the
         // queue, and future sweeps only enumerate *running* records, so this entry would
         // pin the head forever. removeProcessed is idempotent, so retrying is safe.
-        const qc = convergeZombieQueueEntry(deps.invocationQueue, current, zombie, log, deps.onQueueConverged);
+        const qc = await convergeZombieQueueEntry(deps.invocationQueue, current, zombie, log, deps.onQueueConverged);
         log.info(
           { invocationId: zombie.invocationId, currentStatus: current.status, reason: zombie.reason },
           '[reconcile-zombies] skipped (already terminal); re-attempted TaskProgress cleanup',
@@ -242,7 +242,7 @@ async function processZombie(
     );
     // #972: the record is now terminal, so its `processing` queue entry is a corpse
     // pinning the queue head. Converge it or later user work never runs.
-    const qc = convergeZombieQueueEntry(deps.invocationQueue, updated, zombie, log, deps.onQueueConverged);
+    const qc = await convergeZombieQueueEntry(deps.invocationQueue, updated, zombie, log, deps.onQueueConverged);
     let terminalRecoveryErrors = 0;
     if (deps.onReconciledZombie) {
       try {

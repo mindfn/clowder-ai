@@ -1098,6 +1098,24 @@ export class InvocationQueue {
     return this.removeProcessedAcrossUsersDurable(threadId, entryId);
   }
 
+  /**
+   * A restarted host cannot still own provider execution. Persist every stale
+   * processing row as terminal before exposing the remaining Queue for drain.
+   */
+  async terminalizeRestartedProcessing(): Promise<{ terminalized: number; failedEntryIds: string[] }> {
+    const processing = [...this.queues.values()]
+      .flat()
+      .filter((entry) => entry.status === 'processing')
+      .map((entry) => ({ threadId: entry.threadId, id: entry.id }));
+    const failedEntryIds: string[] = [];
+    let terminalized = 0;
+    for (const entry of processing) {
+      if (await this.removeProcessedAcrossUsersDurable(entry.threadId, entry.id)) terminalized += 1;
+      else failedEntryIds.push(entry.id);
+    }
+    return { terminalized, failedEntryIds };
+  }
+
   /** Check if any entry in the thread already carries this messageId (connector retry dedup). */
   hasEntryWithMessageId(threadId: string, messageId: string): boolean {
     return this.findEntryWithMessageId(threadId, messageId) !== null;

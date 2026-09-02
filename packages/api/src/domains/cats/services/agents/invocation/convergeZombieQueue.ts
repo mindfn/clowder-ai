@@ -3,7 +3,7 @@ import type { QueueEntry } from './InvocationQueue.js';
 /** Minimal queue surface needed to converge a dead invocation's stale entry. */
 export interface ZombieQueueConverger {
   list(threadId: string, userId: string): QueueEntry[];
-  removeProcessed(threadId: string, userId: string, entryId: string): QueueEntry | null;
+  removeProcessedAcrossUsersDurable(threadId: string, entryId: string): Promise<QueueEntry | null>;
 }
 
 export type QueueConvergedHandler = (info: { threadId: string; userId: string; removedEntryIds: string[] }) => void;
@@ -33,13 +33,13 @@ interface ZombieQueueLogger {
  * Removal stays exact-id and processing-only; a concurrent replacement tombstone
  * therefore degrades to null without a duplicate broadcast.
  */
-export function convergeZombieQueueEntry(
+export async function convergeZombieQueueEntry(
   queue: ZombieQueueConverger | undefined,
   record: ZombieQueueRecord,
   zombie: ZombieQueueIdentity,
   log: ZombieQueueLogger,
   onQueueConverged: QueueConvergedHandler | undefined,
-): { converged: number; errors: number } {
+): Promise<{ converged: number; errors: number }> {
   if (!queue) return { converged: 0, errors: 0 };
   const messageId = record.userMessageId;
   if (!messageId) return { converged: 0, errors: 0 };
@@ -55,7 +55,7 @@ export function convergeZombieQueueEntry(
 
     const removedEntryIds: string[] = [];
     for (const entry of stale) {
-      if (queue.removeProcessed(record.threadId, record.userId, entry.id)) {
+      if (await queue.removeProcessedAcrossUsersDurable(record.threadId, entry.id)) {
         removedEntryIds.push(entry.id);
         log.info(
           {

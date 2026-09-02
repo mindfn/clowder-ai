@@ -512,7 +512,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
     store.update(parent.invocationId, { status: 'running', userMessageId: 'msg-parent' });
 
     // 2) Its queue entry is claimed -> `processing`. This is the entry that goes stale.
-    queue.enqueue(
+    const parentAdmission = queue.enqueueDurableNow(
       canonicalTestQueueInput({
         kind: 'message_wake',
         ownerAuthProvenance: 'unknown',
@@ -525,11 +525,11 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
         messageId: 'msg-parent',
       }),
     );
-    const claimed = queue.markProcessing('t1', 'u1');
+    const claimed = await queue.markProcessingByIdDurable('t1', parentAdmission.entry.id, 'opus');
     assert.equal(claimed?.messageId, 'msg-parent', 'precondition: parent entry is processing');
 
     // 3) A later USER `@codex` message queues BEHIND the processing entry.
-    queue.enqueue(
+    queue.enqueueDurableNow(
       canonicalTestQueueInput({
         kind: 'conversation_input',
         ownerAuthProvenance: 'unknown',
@@ -594,7 +594,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
       actionLeaseCarrier: { kind: 'none' },
     });
     store.update(parent.invocationId, { status: 'running', userMessageId: 'msg-parent' });
-    queue.enqueue(
+    const parentAdmission = queue.enqueueDurableNow(
       canonicalTestQueueInput({
         kind: 'message_wake',
         ownerAuthProvenance: 'unknown',
@@ -607,16 +607,16 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
         messageId: 'msg-parent',
       }),
     );
-    const claimed = queue.markProcessing('t-race', 'u1');
+    const claimed = await queue.markProcessingByIdDurable('t-race', parentAdmission.entry.id, 'opus');
     assert.ok(claimed);
 
     const queueEvents = [];
     let terminalRecoveryCalls = 0;
     const racingQueue = {
       list: (threadId, userId) => queue.list(threadId, userId),
-      removeProcessed: (threadId, userId, entryId) => {
-        queue.removeProcessed(threadId, userId, entryId); // replacement path wins the race
-        return queue.removeProcessed(threadId, userId, entryId); // sweep exact-id retry loses safely
+      removeProcessedAcrossUsersDurable: async (threadId, entryId) => {
+        await queue.removeProcessedAcrossUsersDurable(threadId, entryId); // replacement path wins the race
+        return queue.removeProcessedAcrossUsersDurable(threadId, entryId); // sweep exact-id retry loses safely
       },
     };
 
@@ -648,7 +648,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
     });
     store.update(parent.invocationId, { status: 'running', userMessageId: 'msg-parent' });
     store.update(parent.invocationId, { status: 'failed', error: 'concurrent-zombie-detected' });
-    queue.enqueue(
+    const parentAdmission = queue.enqueueDurableNow(
       canonicalTestQueueInput({
         kind: 'message_wake',
         ownerAuthProvenance: 'unknown',
@@ -661,7 +661,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
         messageId: 'msg-parent',
       }),
     );
-    const claimed = queue.markProcessing('t-terminal', 'u1');
+    const claimed = await queue.markProcessingByIdDurable('t-terminal', parentAdmission.entry.id, 'opus');
     assert.ok(claimed);
 
     const queueEvents = [];

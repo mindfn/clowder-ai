@@ -88,8 +88,8 @@ import {
   prepareLifecycleAppendRejection,
   prepareLifecycleResponseTerminalMessage,
   preparePublicWakeAppend,
+  prepareQueueLedgerMessageAdmission,
   settleAssignedLifecycleDispatchFailureMetadata,
-  settlePreAdmissionFailureCustody,
 } from '../ports/MessageStore.js';
 import {
   assertQueueCustodyMessageBinding,
@@ -468,8 +468,8 @@ return 1
  *
  * KEYS[1] source message hash (ioredis applies keyPrefix)
  * ARGV: keyPrefix, failureId, threadId, sourceUserId, expectedEntryId,
- * expectedCustodyRevision, requestedTargetsJson, failedAt,
- * sourceLifecycleJson, failureLifecycleJson, failureContent,
+ * failedAt, expectedSourceLifecycleJson, settledSourceLifecycleJson,
+ * failureLifecycleJson, failureContent,
  * failureContentBlocksJson, idempotencyRawKey, ttlSeconds
  *
  * Returns { 1, failureId } on apply, { 2, failureId } on replay, or
@@ -482,22 +482,17 @@ local failureId = ARGV[2]
 local threadId = ARGV[3]
 local sourceUserId = ARGV[4]
 local expectedEntryId = ARGV[5]
-local expectedRevision = tonumber(ARGV[6])
-local expectedTargetsRaw = ARGV[7]
-local failedAt = ARGV[8]
-local sourceLifecycleRaw = ARGV[9]
-local failureLifecycleRaw = ARGV[10]
-local failureContent = ARGV[11]
-local failureContentBlocksRaw = ARGV[12]
-local idempotencyKey = kp .. ARGV[13]
-local ttlSec = tonumber(ARGV[14])
-local sourceMode = ARGV[15]
-local expectedPublicLifecycleRaw = ARGV[16]
-local settledPublicLifecycleRaw = ARGV[17]
-local failedTargetsRaw = ARGV[18]
-local settledCustodyRaw = ARGV[19]
-local failureFromRaw = ARGV[20]
-local failureProvenanceRaw = ARGV[21]
+local failedAt = ARGV[6]
+local expectedSourceLifecycleRaw = ARGV[7]
+local settledSourceLifecycleRaw = ARGV[8]
+local failureLifecycleRaw = ARGV[9]
+local failureContent = ARGV[10]
+local failureContentBlocksRaw = ARGV[11]
+local idempotencyKey = kp .. ARGV[12]
+local ttlSec = tonumber(ARGV[13])
+local sourceMode = ARGV[14]
+local failureFromRaw = ARGV[15]
+local failureProvenanceRaw = ARGV[16]
 
 if redis.call('EXISTS', sourceHash) == 0 then return {-1, ''} end
 if redis.call('HGET', sourceHash, 'threadId') ~= threadId or
@@ -514,10 +509,11 @@ end
 
 local existingVisibility = redis.call('HGET', sourceHash, 'visibilitySeq')
 local existingLifecycle = redis.call('HGET', sourceHash, 'lifecycle')
+if existingLifecycle == false then existingLifecycle = '' end
 if sourceMode == 'queued_input' then
   if redis.call('HGET', sourceHash, 'deliveryStatus') ~= 'queued' then return {-2, ''} end
-  if (existingVisibility and existingVisibility ~= '') or
-     (existingLifecycle and existingLifecycle ~= '') then
+  if (existingVisibility and existingVisibility ~= '') or existingLifecycle ~= expectedSourceLifecycleRaw or
+     settledSourceLifecycleRaw == '' then
     return {-4, ''}
   end
 elseif sourceMode == 'public_wake' then
@@ -526,53 +522,11 @@ elseif sourceMode == 'public_wake' then
   if (deliveryStatus and deliveryStatus ~= '') or
      not existingVisibility or existingVisibility == '' or
      not catId or catId == '' or catId == 'system' or
-     not existingLifecycle or existingLifecycle ~= expectedPublicLifecycleRaw or
-     settledPublicLifecycleRaw == '' then
+     existingLifecycle ~= expectedSourceLifecycleRaw or settledSourceLifecycleRaw == '' then
     return {-4, ''}
   end
 else
   return {-4, ''}
-end
-local custodyRaw = redis.call('HGET', sourceHash, 'queueCustody')
-local custodyRevisionRaw = redis.call('HGET', sourceHash, 'queueCustodyRevision')
-if not custodyRaw or not custodyRevisionRaw then return {-2, ''} end
-local okCustody, custody = pcall(cjson.decode, custodyRaw)
-local okTargets, expectedTargets = pcall(cjson.decode, expectedTargetsRaw)
-local okFailedTargets, failedTargets = pcall(cjson.decode, failedTargetsRaw)
-if not okCustody or type(custody) ~= 'table' or
-   not okTargets or type(expectedTargets) ~= 'table' or
-   not okFailedTargets or type(failedTargets) ~= 'table' or
-   (custody.status ~= 'queued' and not (sourceMode == 'public_wake' and custody.status == 'terminal')) or
-   tonumber(custodyRevisionRaw) ~= expectedRevision or
-   tonumber(custody.revision) ~= expectedRevision then
-  return {-3, ''}
-end
-local actualTargets = custody.allTargetCats
-if type(actualTargets) ~= 'table' or #actualTargets ~= #expectedTargets then return {-3, ''} end
-for index = 1, #expectedTargets do
-  if actualTargets[index] ~= expectedTargets[index] then return {-3, ''} end
-end
-local function contains(list, value)
-  if type(list) ~= 'table' then return false end
-  for index = 1, #list do
-    if list[index] == value then return true end
-  end
-  return false
-end
-for index = 1, #failedTargets do
-  local targetId = failedTargets[index]
-  local carrier = type(custody.carrierByTargetCatId) == 'table' and custody.carrierByTargetCatId[targetId] or nil
-  if custody.entryId ~= expectedEntryId and
-     not contains(custody.failedByCatIds, targetId) and
-     (type(carrier) ~= 'table' or carrier.entryId ~= expectedEntryId) then
-    return {-3, ''}
-  end
-end
-local settledCustody = nil
-if sourceMode == 'public_wake' and settledCustodyRaw ~= '' then
-  local okSettledCustody, decodedSettledCustody = pcall(cjson.decode, settledCustodyRaw)
-  if not okSettledCustody or type(decodedSettledCustody) ~= 'table' then return {-4, ''} end
-  settledCustody = decodedSettledCustody
 end
 
 local failureHash = kp .. 'msg:' .. failureId
@@ -608,19 +562,12 @@ if sourceMode == 'queued_input' then
     'deliveryStatus', 'delivered',
     'deliveredAt', failedAt,
     'timelineOrderAt', failedAt,
-    'lifecycle', sourceLifecycleRaw,
+    'lifecycle', settledSourceLifecycleRaw,
     'visibilitySeq', tostring(sourceSeq))
 else
-  redis.call('HSET', sourceHash, 'lifecycle', settledPublicLifecycleRaw)
+  redis.call('HSET', sourceHash, 'lifecycle', settledSourceLifecycleRaw)
 end
-if sourceMode == 'public_wake' and settledCustodyRaw ~= '' then
-  redis.call('HSET', sourceHash,
-    'queueCustody', settledCustodyRaw,
-    'queueCustodyRevision', tostring(settledCustody.revision))
-  redis.call('HDEL', sourceHash, 'queueCustodyAdmission')
-else
-  redis.call('HDEL', sourceHash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
-end
+redis.call('HDEL', sourceHash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
 
 redis.call('HSET', failureHash,
   'id', failureId,
@@ -1057,7 +1004,14 @@ export class RedisMessageStore {
         throw new Error('Queue admission row must be bound to its exact message identity');
       }
     }
-    const result = await this.appendWithReservedId(input, messageId, { entries, maxQueuedUserEntries });
+    const result = await this.appendWithReservedId(
+      prepareQueueLedgerMessageAdmission(input, messageId, entries),
+      messageId,
+      {
+        entries,
+        maxQueuedUserEntries,
+      },
+    );
     if (result.outcome === 'queue_full') return { outcome: 'full' };
     if (result.outcome === 'queue_conflict') {
       throw new Error(`Queue admission identity conflict for message ${messageId}`);
@@ -2867,15 +2821,17 @@ export class RedisMessageStore {
           failureMessage: existingFailure,
         };
       }
-      const queuedInputReplayed = source.deliveryStatus === 'delivered' && source.lifecycle?.kind === 'input';
+      const targetProjectionReplayed = input.requestedTargets.every((targetId) =>
+        source.lifecycle?.dispatchRefs?.some(
+          (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === existingFailure.id,
+        ),
+      );
+      const queuedInputReplayed =
+        source.deliveryStatus === 'delivered' &&
+        source.lifecycle?.kind === 'input' &&
+        (input.requestedTargets.length === 0 || targetProjectionReplayed);
       const publicWakeReplayed =
-        source.deliveryStatus === undefined &&
-        messageFrom(source).kind === 'agent' &&
-        (input.failedTargets ?? input.requestedTargets).every((targetId) =>
-          source.lifecycle?.dispatchRefs?.some(
-            (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === existingFailure.id,
-          ),
-        );
+        source.deliveryStatus === undefined && messageFrom(source).kind === 'agent' && targetProjectionReplayed;
       if (!queuedInputReplayed && !publicWakeReplayed) {
         return {
           kind: 'conflict',
@@ -2895,36 +2851,28 @@ export class RedisMessageStore {
       source.lifecycle?.kind !== 'delivery_failure';
 
     const uniqueTargets = new Set(input.requestedTargets);
-    const failedTargets = input.failedTargets ?? input.requestedTargets;
-    const uniqueFailedTargets = new Set(failedTargets);
-    const settledCustody = source.queueCustody
-      ? settlePreAdmissionFailureCustody(source.queueCustody, input.expectedEntryId, failedTargets, input.failedAt)
-      : null;
     if (
       !Number.isInteger(input.failedAt) ||
       input.failedAt < source.timestamp ||
       input.requestedTargets.some((target) => typeof target !== 'string' || target.length === 0) ||
       uniqueTargets.size !== input.requestedTargets.length ||
-      failedTargets.some((target) => typeof target !== 'string' || !uniqueTargets.has(target)) ||
-      uniqueFailedTargets.size !== failedTargets.length ||
-      (isPublicAgentWake && failedTargets.length === 0) ||
-      (isQueuedInput && JSON.stringify(failedTargets) !== JSON.stringify(input.requestedTargets)) ||
-      !settledCustody ||
+      input.requestedTargets.length > 1 ||
+      (isPublicAgentWake && input.requestedTargets.length === 0) ||
       (!isQueuedInput && !isPublicAgentWake)
     ) {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
     }
     const inputIdentity = lifecycleInputIdentityForStoredMessage(source);
-    const sourceLifecycle: LifecycleStoredMessageMetadata = {
-      kind: 'input',
-      orderKey: `${input.failedAt}:${source.id}`,
-      ...(inputIdentity.producerInvocationId ? { producerInvocationId: inputIdentity.producerInvocationId } : {}),
-    };
+    const assigned = assignLifecycleDispatchTargetsMetadata(source.lifecycle, inputIdentity, input.requestedTargets);
+    if (assigned.kind === 'conflict') {
+      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
+    }
     const failureId = generateSortableId(input.failedAt);
-    const settledPublicLifecycle = isPublicAgentWake
-      ? settleAssignedLifecycleDispatchFailureMetadata(source.lifecycle, failedTargets, failureId)
-      : undefined;
-    if (isPublicAgentWake && !settledPublicLifecycle) {
+    const settledSourceLifecycle =
+      input.requestedTargets.length === 0
+        ? assigned.lifecycle
+        : settleAssignedLifecycleDispatchFailureMetadata(assigned.lifecycle, input.requestedTargets, failureId);
+    if (!settledSourceLifecycle) {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
     }
     const failureLifecycle: LifecycleStoredMessageMetadata = {
@@ -2933,7 +2881,7 @@ export class RedisMessageStore {
       status: 'failed',
       sourceEntryId: input.expectedEntryId,
       inputMessageId: source.id,
-      requestedTargets: [...failedTargets],
+      requestedTargets: [...input.requestedTargets],
       reason: input.reason,
       createdAt: input.failedAt,
     };
@@ -2948,7 +2896,10 @@ export class RedisMessageStore {
       lifecycle: failureLifecycle,
       idempotencyKey,
     });
-    if (!isLifecycleStoredMessageMetadata(sourceLifecycle) || !isLifecycleStoredMessageMetadata(failureLifecycle)) {
+    if (
+      !isLifecycleStoredMessageMetadata(settledSourceLifecycle) ||
+      !isLifecycleStoredMessageMetadata(failureLifecycle)
+    ) {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
     }
     await this.ensureVisibilityMigrated(source.threadId);
@@ -2961,20 +2912,15 @@ export class RedisMessageStore {
       source.threadId,
       source.userId,
       input.expectedEntryId,
-      String(input.expectedQueueCustodyRevision),
-      JSON.stringify(input.requestedTargets),
       String(input.failedAt),
-      JSON.stringify(sourceLifecycle),
+      source.lifecycle === undefined ? '' : JSON.stringify(source.lifecycle),
+      JSON.stringify(settledSourceLifecycle),
       JSON.stringify(failureLifecycle),
       failureInput.content,
       failureInput.contentBlocks === undefined ? '' : JSON.stringify(failureInput.contentBlocks),
       MessageKeys.idempotency('system', source.threadId, idempotencyKey),
       String(this.ttlSeconds ?? 0),
       isPublicAgentWake ? 'public_wake' : 'queued_input',
-      isPublicAgentWake ? JSON.stringify(source.lifecycle) : '',
-      settledPublicLifecycle ? JSON.stringify(settledPublicLifecycle) : '',
-      JSON.stringify(failedTargets),
-      isPublicAgentWake && settledCustody.status !== 'terminal' ? JSON.stringify(settledCustody) : '',
       JSON.stringify(failureInput.from),
       JSON.stringify(failureInput.provenance),
     )) as [number | string, string];
@@ -2986,7 +2932,7 @@ export class RedisMessageStore {
       throw new Error(`pre-admission failure transaction lost source message: ${source.id}`);
     }
     if (outcome < 0) {
-      const reason = outcome === -2 ? 'not_queued' : outcome === -3 ? 'custody_mismatch' : 'invalid_failure';
+      const reason = outcome === -2 ? 'not_queued' : 'invalid_failure';
       return { kind: 'conflict', reason, inputMessage };
     }
 
@@ -3003,16 +2949,19 @@ export class RedisMessageStore {
         failureMessage,
       };
     }
+    const targetProjectionCommitted = input.requestedTargets.every((targetId) =>
+      inputMessage.lifecycle?.dispatchRefs?.some(
+        (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === failureMessage.id,
+      ),
+    );
     const queuedInputCommitted =
-      inputMessage.deliveryStatus === 'delivered' && inputMessage.lifecycle?.kind === 'input';
+      inputMessage.deliveryStatus === 'delivered' &&
+      inputMessage.lifecycle?.kind === 'input' &&
+      (input.requestedTargets.length === 0 || targetProjectionCommitted);
     const publicWakeCommitted =
       inputMessage.deliveryStatus === undefined &&
       messageFrom(inputMessage).kind === 'agent' &&
-      failedTargets.every((targetId) =>
-        inputMessage.lifecycle?.dispatchRefs?.some(
-          (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === failureMessage.id,
-        ),
-      );
+      targetProjectionCommitted;
     if (!queuedInputCommitted && !publicWakeCommitted) {
       return {
         kind: 'conflict',
