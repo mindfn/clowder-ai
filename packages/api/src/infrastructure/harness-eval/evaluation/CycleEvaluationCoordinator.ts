@@ -19,6 +19,7 @@ export interface CycleEvaluationPrincipal {
 export class CycleEvaluationCoordinator {
   private readonly now: () => number;
   private readonly evidence: CycleEvaluationEvidence;
+  private writtenHandler?: (record: CycleRecord) => void | Promise<void>;
 
   constructor(
     private readonly deps: {
@@ -43,6 +44,10 @@ export class CycleEvaluationCoordinator {
 
   static threadIdFor(objectiveId: string): string {
     return `thread_eval_f257_${objectiveId}`;
+  }
+
+  setWrittenHandler(handler: (record: CycleRecord) => void | Promise<void>): void {
+    this.writtenHandler = handler;
   }
 
   async ensureAssignment(record: CycleRecord): Promise<void> {
@@ -121,6 +126,7 @@ export class CycleEvaluationCoordinator {
     const record = await this.findSubmissionCycle(principal, input.objectiveId, input.cycleId);
     if (record.evaluation) {
       if (sameSubmission(record.evaluation, input, principal.catId)) {
+        await this.notifyWritten(record);
         return { outcome: 'already_written', cycleId: record.cycleId, evalStatus: 'written' };
       }
       throw new Error(`cycle_evaluation_conflict:${record.cycleId}`);
@@ -144,6 +150,7 @@ export class CycleEvaluationCoordinator {
       if (next)
         return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written', nextCycleId: next.cycleId };
     } else if (await this.deps.runtime.cycles.transition(record, { ...record, evalStatus: 'written', evaluation })) {
+      await this.notifyWritten({ ...record, evalStatus: 'written', evaluation });
       return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written' };
     }
     const stored =
@@ -205,10 +212,7 @@ export class CycleEvaluationCoordinator {
     });
   }
 
-  private async ensureObjectiveThread(
-    objectiveId: string,
-    ownerUserId: string,
-  ): Promise<{ threadId: string; catId: CatId }> {
+  async ensureObjectiveThread(objectiveId: string, ownerUserId: string): Promise<{ threadId: string; catId: CatId }> {
     const objective = this.deps.runtime.catalog.registry.objectives.find((item) => item.id === objectiveId);
     if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
     const threadId = CycleEvaluationCoordinator.threadIdFor(objectiveId);
@@ -231,12 +235,12 @@ export class CycleEvaluationCoordinator {
     return { threadId, catId };
   }
 
-  private async deliverAndWake(
+  async deliverAndWake(
     record: CycleRecord,
     threadId: string,
     catId: CatId,
     content: string,
-    kind: 'assignment' | 'retrigger',
+    kind: string,
   ): Promise<string> {
     const messageId = await this.deps.deliver({
       threadId,
@@ -258,7 +262,21 @@ export class CycleEvaluationCoordinator {
   }
 
   private idempotencyKey(record: CycleRecord, kind: string): string {
-    return `f257-cycle:${record.ownerUserId}:${record.cycleId}:${kind}`;
+    // Reject deliberately re-evaluates the same frozen window under the same
+    // cycleId. The rejection count is therefore the delivery generation: it
+    // deduplicates retries within one attempt without hiding the next
+    // assignment (and its operator-provided rejection reason).
+    const generation = record.approval?.rejectCount ?? 0;
+    return `f257-cycle:${record.ownerUserId}:${record.cycleId}:${kind}:g${generation}`;
+  }
+
+  private async notifyWritten(record: CycleRecord): Promise<void> {
+    if (!this.writtenHandler) return;
+    try {
+      await this.writtenHandler(record);
+    } catch (error) {
+      this.deps.log?.warn({ err: error, cycleId: record.cycleId }, '[F257] governance assignment delivery failed');
+    }
   }
 
   private async requireActiveCycle(
