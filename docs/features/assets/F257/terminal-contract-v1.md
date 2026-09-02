@@ -5,7 +5,7 @@ status: authoritative
 supersedes:
   - feature-specs/2026-08-04-f257-objective-eval-redesign.md §0 / §2.4 中"冻结 raw corpus"的表述
   - F257-harness-ledger.md KD-21 中"触发时冻结 raw corpus"的表述
-source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 09-02 04:50 / 09-02 06:09（thread_mrdip0u5aw4ysi97）
+source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32（thread_mrdip0u5aw4ysi97）
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
@@ -35,11 +35,13 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | TC-6 | 评估必须**调工具回写 eval 状态**（每指标结论 + 整体结论） | 只在对话里说结论 |
 | TC-7 | 未回写 → 系统可观察 → **一条系统 message 重触发一次**（有界） | 无限续租/重试；同一 job 滚动上千代 |
 | TC-8 | 回写后**自动进入 governance**：再次触发同一评估 thread → 保持 / 回退 / 演进 | 停在 eval；需要人手动进 governance |
-| TC-9 | 仅"回退 / 演进"发审批卡；operator 点了（或跳过）都进入下一周期 | 保持也发卡；卡未点则整体停摆 |
-| TC-10 | **跳过（含数据不足）不改周期起点**；否则新起点 = 本周期终点 | insufficient_evidence 推进了起点（现状） |
+| TC-9 | 仅"回退 / 演进"发**提案卡**（evolve 时含评估猫直接写的 v2 草案）；三选一 **approve / skip / reject**：approve、skip 进入下一周期；reject 附理由对同窗重评估，不进入下一周期 | 保持也发卡；卡未点则整体停摆；reject 无理由；reject 自动进下一周期 |
+| TC-10 | 周期起点**始终刷新** = 本周期终点；skip / insufficient_evidence 不停住起点，而是让**下次评估逆序回看并纳入连续 skip 周期的时间窗**（连续 k 次 skip → 合并 k+1 个窗口） | skip 后起点不动导致累计触发立即重触发；下次评估只看本周期忽略前序 skip 数据 |
 | TC-11 | v1/v2/v3 的**评估**各自只看本版本时间窗，不做跨版本对比；**governance** 以本周期结论判断 keep/rollback/evolve，历史周期结论在同一 Objective thread 中天然可见、可参考 | 把"与上一版比较"当作当前版本的闭环条件 |
 | TC-12 | Console：Tracing 面只有两组——**周期内反例 / 周期内累计**，触发条件带进度（x/阈值、y/200、7 天）；无"待分类" | 出现全局管道数字；名词与数值口径不一致 |
 | TC-13 | Semantic Sweep（后台批量打标）若保留，只是**可选的反例发现器**，绝不能是主路径的一环或前置门 | "sweep 未清空就不评 Unit" |
+| TC-14 | tracing 是自管的**不可变只增**数据：每周期只记录 时间窗、指标、结论、起始版本内容指针；**不需要 cursor receipt / evidence digest** | 为防"源漂移"复制或摘要正文 |
+| TC-15 | 首周期起点：池中已有 tracing → 最早有效 trace 时间；没有 → 服务启动检查到缺失时写当前时间 | 首周期永远 not-ready；或从 0 起算 |
 
 ## 3. 现实现偏离台账（2026-09-02 运行实例实查，全部只读取证）
 
@@ -48,7 +50,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | D-1 | snapshot 内嵌整份 corpus | D1 pending snapshot 6,148,472 bytes（200 episode 正文） | TC-4 | sol | open |
 | D-2 | sweep 预分类层是主路径前置门 `if (!semantic)` | 1240 待分类永远清不空 → D1 阈值满足后 9 天无评估 | TC-3/5/13 | sol（A 刀进行中） | open |
 | D-3 | 未回写 → 无限续租 | drain state generation 1899、in_flight 8 天 | TC-7 | sol（C 刀需按 TC-7 收缩） | open |
-| D-4 | insufficient_evidence 仍推进 completed-window-end | Lua 无条件 `SET KEYS[6] ARGV[5]` | TC-10 | sol | open |
+| D-4 | ~~insufficient_evidence 不该推进起点~~ → 按 06:32 修正：起点始终刷新是对的；**缺的是 skip 回看取数**（连续 skip 周期合并进下次评估窗口）与 skip 理由存档 | 现无 skip 状态与回看逻辑 | TC-10 | sol | open（球 D-4 的 why 已被本行取代） |
 | D-5 | judgment 写完后无 governance 自动进入 | 代码仅一行注释；opus blocked 球 | TC-8/9 | 交互契约先由 Fable 起草，operator 确认后实现 | open |
 | D-6 | 评估猫 invocation 被 F299 recorder `sourceRefs.max(64)` 打断（上游 #1390，8/25 入 base） | 域 thread 每 10 分钟重派 + `too_big` 报错 | 止血项 | sol（B 刀） | open |
 | D-7 | Console 仍有"待分类"，两组命名不对 | `SegmentTraceTheater.tsx` L54/65/100 | TC-12 | Fable（分支 `fix/f257-tracing-two-groups`） | open |

@@ -20,9 +20,16 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 | 5 | 评估猫按窗读池（反例优先，其余按需翻），对每个指标给结论，**调工具回写**：`submit_cycle_evaluation{objective, cycleId, metrics:[{id, conclusion, evidenceRefs}], overall}` → 周期记录 `evalStatus:written` | 评估猫 | 回写即真相 |
 | 6 | 回写成功 → **系统自动**向同一 thread 再投一条 governance assignment：附上第 5 步结论，要求三选一 **keep / rollback / evolve** + 理由 → 评估猫回写 `submit_cycle_governance{decision, reason}` | 系统 → 评估猫 | 同一 thread，同一猫 |
 | 7a | decision = keep → 周期收束：`cycleClosedAt:now`；**下一周期起点 = 本周期终点**；回到步 1 | 系统 | — |
-| 7b | decision = rollback / evolve → 生成**审批卡**（objective、当前版本、决策、理由、按钮：批准 / 驳回 / 跳过） | 系统 → operator | 卡 |
-| 8 | operator 批准 → 执行版本动作（rollback = 激活上一版；evolve = 生成 v2 草案交编辑/直接激活由卡决定）；驳回 = 等同 keep；**跳过 = 周期起点不动**（可能数据不够）。三者之后都进入下一周期 | operator → 系统 | override 版本链 |
+| 7b | decision = rollback / evolve → 生成**提案卡**：evolve 时评估猫**直接给出 v2 草案**（只改 overlay 层，可回退）；卡含 objective、当前版本、决策、理由、v2 草案 diff；按钮三选一：**approve / skip（可附理由）/ reject（必须附理由）** | 系统 → operator | 卡 |
+| 8 | **approve** → 执行（rollback = 激活上一版；evolve = 激活 v2 草案）→ 进入下一周期。**skip**（评估可能有偏但暂无纠正办法 / 数据不够）→ 不执行，进入下一周期，理由存档供下次参考。**reject** → 不进入下一周期：拒绝理由作为约束追加进 assignment，**对同一窗口重新评估**（见 §1.1）。**周期起点始终刷新** = 本周期终点（否则累计触发会立即再触发）；skip 的影响不在起点，而在下次评估的取数范围（见 §1.1） | operator → 系统 | override 版本链 |
 | 9 | v2 周期与 v1 完全同流程；**评估阶段只看 v2 时间窗，不做跨版本对比**；**governance 阶段以本周期结论为依据判断 keep/rollback/evolve**——同一 Objective 始终在同一系统 thread，历史周期的评估结论天然在上下文里、高相关，可参考，但"与上一版比较"**不是**闭环条件 | — | — |
+
+### 1.1 skip 的取数规则（operator 06:32 修正，替代原"跳过不改起点"）
+
+- 周期**始终**按 `新起点 = 本周期终点` 刷新，不因 skip 停住。
+- 评估拉数据时**逆序回看**前序周期状态：若前一个周期是 skip（含 insufficient_evidence），把它的时间窗一并纳入；连续 k 个 skip → 本次评估窗口 = 本周期 + 前 k 个 skip 周期（如连续 3 次 skip，第 4 次综合前 3 个周期的 tracing）。遇到第一个非 skip 周期即停止回看。
+- assignment 因此携带 `windows:[{start,end}...]`（≥1 段）与各 skip 周期存档的理由。
+- reject 重评估：同一 `windows`，assignment 追加 `rejectReasons:[...]`；**同一周期最多 2 次 reject**，第 3 次自动转 skip 进入下一周期（防人猫分歧死循环——见 §11 我的判断）。
 
 未回写分支（步 5 或 6 超过 T=30 分钟没有回写）：系统投**一条**"你还没回写"的系统 message 重触发；再超过 T 仍无 → 周期记录 `evalStatus:stalled` + 告警到本 thread，**不再重试**，等人处理。
 
@@ -37,12 +44,14 @@ CycleRecord {
   evalStatus: idle|requested|retriggered|written|stalled,
   evaluation?: { metrics:[{id,conclusion,evidenceRefs}], overall, writtenAt, by },
   governance?: { decision: keep|rollback|evolve, reason, writtenAt },
-  approval?:   { cardId, state: pending|approved|rejected|skipped, at },
+  approval?:   { cardId, state: pending|approved|skipped|rejected, reason?, rejectCount, at },
+  versionContentRef,                    // 起始版本的内容指针 = overlay 版本（天然存在，不复制内容）
+  windows,                              // 本次评估实际取数窗口（含回看的 skip 周期）
   closedAt?
 }
 ```
 - 历史周期 append-only 存档（生命线按 version+cycle 展示）。
-- **删除**：snapshot 内嵌 corpus、pending/claim/commit 三段 Lua、Unit job / cursor receipt 作为**门**的角色、drain fence、sweep 状态机（见 §8）。
+- **删除**：snapshot 内嵌 corpus、pending/claim/commit 三段 Lua、Unit job、**cursor receipt / evidence digest（tracing 不可变且只增，不需要防漂移回执——operator 06:32）**、drain fence、sweep 状态机（见 §6）。
 - 保留：tracing 池、反例标记、override 版本链、Console 路由。
 
 ☐ 状态足够且不多余
@@ -53,15 +62,16 @@ CycleRecord {
 - 三路 anyOf 口径：`累计 = 池中 terminalAt ∈ [cycleStart, now) 且 summary.segments 含该 Objective 任一段且 status=observed 的 episode 数`；`反例 = 同窗内 polarity=counterexample 的去重 incidentKey 数`；`cadence = now − cycleStart ≥ 7d 且累计 ≥ 1`。
 - 幂等/并发：**同一 Objective 严格串行**（`evalStatus ∈ {requested, retriggered}` 时不重复开启；CAS 写周期记录）；**不同 Objective 各自 thread、各自周期，可并发互不冲突**。
 - 阈值来自 Objective 的评估模型定义（现有 registry），不在代码里硬编码。
+- **首周期起点**：该 Objective 从未评估过时——池中已有 tracing → 取最早有效 trace 的时间；池中没有（如上游新装）→ 服务启动检查到缺首周期起点时写入当前时间。
 
 ☐ 触发口径正确
 
 ## 4. 评估 assignment 与回写工具
 
-- assignment 固定结构（≤ 32 KB）：`{objective:{id, statement /*评估目标，必填*/}, version, window, metrics:[{id,label,evaluator,ruleRef}], counterexamples:[{invocationId, incidentKey, rationale?}] (引用), readPoolTool: "cat_cafe_read_cycle_traces(objective, cursor?)"}`；投递到该 Objective 专属 thread，由默认成员评估。
+- assignment 固定结构（≤ 32 KB）：`{objective:{id, statement /*评估目标，必填*/}, version, versionContentRef, windows:[{start,end}] /*含回看的 skip 周期*/, priorSkipReasons?, rejectReasons?, metrics:[{id,label,evaluator,ruleRef}], counterexamples:[{invocationId, incidentKey, rationale?}] (引用), readPoolTool: "cat_cafe_read_cycle_traces(objective, cursor?)"}`；投递到该 Objective 专属 thread，由默认成员评估。
 - 读池工具按窗分页返回 episode 摘要（段状态、input/output 截断、工具调用首尾），评估猫自行决定翻多少；**不预先分类、不等任何 sweep**。
 - 回写工具 `cat_cafe_submit_cycle_evaluation`：一个指标一条结论（结论类型沿用 judgment-schema-v2：count / rate-badness / semantic-label），整体 overall 三态 complete / partial / insufficient_evidence。
-- insufficient_evidence = "数据不够" → 走 §1 步 8 的**跳过**语义：周期起点不动，直接进入下一周期检查。
+- insufficient_evidence = "数据不够" → 等同 **skip**：进入下一周期，下次评估按 §1.1 回看纳入本窗口。
 
 ☐ assignment/回写契约正确（评估猫：**不指定，thread 默认成员**——operator 06:09 已决）
 
@@ -79,7 +89,8 @@ CycleRecord {
 |---|---|---|
 | `EvaluationSnapshot.traceCorpus`（6 MB/个） | **删** | TC-4 |
 | pending / claim / commit Lua、watermark 三件套 | **删**，由 CycleRecord CAS 取代 | 状态过多 |
-| UnitSemanticEvaluationCoordinator + JobStore + cursor receipt | **降级**为 §4 读池工具的实现（分页 + 可选 digest 审计）；不再是门 | 保留可追溯，不阻塞 |
+| UnitSemanticEvaluationCoordinator + JobStore | **降级**为 §4 读池工具的分页实现；不再是门 | — |
+| cursor receipt / evidence digest（防源漂移） | **删**——tracing 是我们自管的不可变只增数据，无漂移可防 | operator 06:32 |
 | Semantic Sweep（批量打标）+ drain fence + volume-sweep retry | **移出主路径，默认关闭**；若保留，只作为后台"反例发现器"，写入反例标记后即退出 | TC-13 |
 | trigger-now `if (!semantic)` | **删** | TC-3/13 |
 | F299 recorder `sourceRefs.max(64)` | 上游止血：assignment 引用 ≤ 64 或聚合为一个 source map | 与本方案无关但必须 |
@@ -104,10 +115,10 @@ CycleRecord {
 ## 9. 待 operator 拍板的开放问题
 
 1. ~~评估猫固定为谁？~~ **已决（06:09）：不指定，每个 Objective 一个系统 thread，由其默认成员评估；不合理在 thread 侧改。**
-2. evolve 的 v2 内容由谁写：评估猫直接给 v2 草案，还是只给"演进建议"由人改？
-3. 审批卡"跳过"是否等同"驳回但起点不动"？（本文按是）
-4. 是否保留 cursor receipt（审计出处）——不作为门，只作为可追溯；☐ 保留 / ☐ 不要
-5. 周期起点对首个周期：首条 eligible trace 时间（现状）☐ 维持
+2. ~~evolve 的 v2 内容由谁写~~ **已决（06:32）：评估猫直接给 v2 草案 → 提案卡 → 人 approve / skip / reject（reject 附理由重评估，不自动进下一周期）。**
+3. ~~跳过是否等同驳回但起点不动~~ **已决（06:32，operator 自纠）：起点始终刷新；skip 只影响下次取数——逆序纳入连续 skip 周期。** 见 §1.1
+4. ~~是否保留 cursor receipt~~ **已决（06:32）：不要。每周期只记：时间窗、指标、结论、起始版本内容指针。**
+5. ~~首周期起点~~ **已决（06:32）：有历史 tracing 用最早有效 trace 时间；没有则服务启动时写当前时间。** 见 §3
 
 ## 10. operator 已决记录
 
@@ -117,6 +128,21 @@ CycleRecord {
 | 09-02 06:09 | 评估猫不指定，用 thread 默认成员 | §1 步4、§4、§9 Q1 |
 | 09-02 06:09 | assignment 除指标外必须声明评估目标（同其它 eval 域） | §1 步4、§4 |
 | 09-02 06:09 | 评估不做跨版本对比；governance 以本周期结论判断回退，历史结论作同 thread 上下文可参考 | §1 步9、TC-11 |
+| 09-02 06:32 | evolve：评估猫直接给 v2 草案；提案卡三选一 approve/skip/reject；reject 附理由重评估不进下一周期 | §1 步7b/8、§1.1、TC-9 |
+| 09-02 06:32 | 周期起点始终刷新；skip 通过逆序回看纳入取数窗口（连续 k 次 skip 合并 k+1 个窗口） | §1.1、§2、§4、TC-10 |
+| 09-02 06:32 | 不需要 cursor receipt/digest；周期只记时间窗+指标+结论+起始版本内容指针 | §2、§6、TC-14 |
+| 09-02 06:32 | 首周期起点：最早有效 trace，否则服务启动写当前时间 | §3、TC-15 |
+| 09-02 06:32 | 目标重申：auto 进化，人只在提案审批处判断；规则段按日常对话自动 sunset/合并/调内容 | §11 |
+
+## 11. 我自己的判断（不附和）：这个流程能否闭环
+
+主环（采→触发→评估→回写→governance→提案→下一周期）**能闭环**，而且比现有实现简单得多。我认为还有两处不闭，需要你拍板：
+
+**缺口 A：reject 的终止条件。** reject → 同窗重评估 → 评估猫可能给出同样结论 → 再 reject → 无限。我在 §1.1 写了"同一周期最多 2 次 reject，第 3 次自动转 skip"——这是我的提议，不是你的原话。☐ 同意 / ☐ 改成 __
+
+**缺口 B：evolve 的执行层级。** 规则段的"改内容 / 禁用"是 overlay 级，approve 后系统可直接激活、可回退——闭环成立。但你要的"sunset / 合并 / 新增段"是 **base 级**（pack 版本，KD-20），approve 后不能由系统直接改运行实例，只能生成 PR 交人合入。所以 evolve 提案必须分两类：`overlay`（自动执行）与 `base`（自动生成 PR，人合入后才进入新周期）。不分层的话"合并/sunset"这类进化永远只能停在提案。☐ 同意分两类 / ☐ 你有别的想法
+
+其余我认为成立的点：v2 差了下一周期 governance 会 rollback（自纠）；连续 skip 合并窗口让"数据不够"自然收敛；不需要 receipt 是对的——我们自管的池只增不改，digest 校验是防外部漂移的多余层。
 
 ---
 确认方式：在 thread 回一句"§x 对 / §y 改成…"，或直接改本文件。全部 ☐ 勾完 → 解冻，按 §6 顺序实施：先删后建，不在旧状态机上加固。
