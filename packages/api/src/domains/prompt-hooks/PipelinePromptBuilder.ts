@@ -26,25 +26,11 @@ import { HookRegistry } from './HookRegistry.js';
 import { RESOLVER_MAP } from './resolvers/index.js';
 
 // ---------------------------------------------------------------------------
-// Scope filters — map legacy builder functions to their hook scope.
-//
-// The pipeline executes ALL hooks for a stage (producing full trace events),
-// but prompt output is filtered to match legacy scope for backward compat.
-//
-// Legacy architecture splits 46 hooks across multiple injection points:
-//   buildStaticIdentity → S1-S13 only
-//   buildInvocationContext → D1-D21 only
-//   L0 compiler → L1-L7 (separate channel for native providers)
-//   route-serial/parallel → R1-R2
-//   route-helpers → N1
-//   SessionBootstrap → B1
-//   McpPromptInjector → C1
-//
-// During migration, each legacy function delegates to the pipeline but filters
-// to its own scope. After full migration, filters are removed.
+// Scope filter for the still-split per-turn route assembly. Session-init is no
+// longer filtered: F257 S5 makes its complete HookPipeline result the one prompt
+// source for every provider, with native carriers differing only in transport.
 // ---------------------------------------------------------------------------
 
-const SCOPE_S = /^S\d/; // S1-S13: buildStaticIdentity
 const SCOPE_D = /^D\d/; // D1-D21: buildInvocationContext
 
 // ---------------------------------------------------------------------------
@@ -142,29 +128,22 @@ export function drainCapturedTraces(): { session: PipelineResult | null; turn: P
 
 /**
  * Build session-init prompt via HookPipeline.
- * Equivalent to legacy `buildStaticIdentity()`.
- *
- * Pipeline runs ALL session-init hooks (S+L+B+C) for full trace coverage,
- * but prompt output is scoped to S-prefix hooks only (matching legacy behavior).
- * Full PipelineResult available via `.trace` for observability.
+ * Produces the complete session-init prompt (L+S+B+C) for every provider.
+ * Native carriers receive these exact bytes through their system/developer
+ * channel; other carriers receive them through the message-prepend channel.
  *
  * @returns Assembled prompt string + full trace result.
  */
 export function buildStaticIdentityViaHookPipeline(catId: CatId, options?: StaticIdentityOptions): string {
   const { prompt, trace } = buildStaticIdentityViaHookPipelineWithTrace(catId, options);
   // AC-P2-8: capture for invocation-layer persistence.
-  // #839: capture ALL hooks (L+S+B+C) for full pipeline observability.
-  // Prompt output is still S-scoped (below), but trace records every hook
-  // that fired — per-hook segments are execution truth, not delivery truth.
+  // Capture the exact result that produced the delivered session prompt.
   capturedSessionTrace = trace;
 
   if (options?.annotateSegments) {
     const registry = getCachedRegistry();
-    // Emit markers for ALL S-prefix hooks (fired → with content, skipped/disabled → empty marker = absent).
-    // This matches legacy buildStaticIdentity's `mark()` behavior for parseAnnotatedSegments.
-    const patchMap = new Map(trace.patches.filter((p) => SCOPE_S.test(p.hookId)).map((p) => [p.hookId, p.content]));
-    const scopedEvents = trace.events.filter((ev) => SCOPE_S.test(ev.hookId));
-    return scopedEvents
+    const patchMap = new Map(trace.patches.map((p) => [p.hookId, p.content]));
+    return trace.events
       .map((ev) => {
         const hook = registry?.getHook(ev.hookId);
         const name = hook?.manifest.name ?? ev.hookId;
@@ -185,9 +164,7 @@ export function buildStaticIdentityViaHookPipelineWithTrace(
   const input = assembleForSession(catId, options);
   const pipeline = getPipeline();
   const trace = pipeline.executeStage('session-init', input);
-  // Scope to S-prefix hooks only (legacy buildStaticIdentity scope)
-  const scopedPatches = trace.patches.filter((p) => SCOPE_S.test(p.hookId));
-  const prompt = HookPipeline.assemblePatches(scopedPatches);
+  const prompt = HookPipeline.assemblePatches(trace.patches);
   return { prompt, trace };
 }
 

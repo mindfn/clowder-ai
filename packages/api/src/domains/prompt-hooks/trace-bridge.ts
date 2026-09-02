@@ -10,8 +10,8 @@
  * The pipeline already produces richer per-hook data at drain time;
  * this bridge converts it to the v0 persistence format.
  *
- * When pipeline traces are unavailable (e.g., legacy path or native
- * L0 without pipeline), callers fall back to the existing v0 path.
+ * When pipeline traces are unavailable, no trace is synthesized from a
+ * second prompt assembly path.
  */
 
 import { createHash } from 'node:crypto';
@@ -40,11 +40,10 @@ export interface TraceBridgeMeta {
   catId: string;
   hasNativeL0: boolean;
   /**
-   * F257 #2: the session result is the native L0 compiler's L1-L7 manifest (delivered
-   * via `--system-prompt-file` / native carrier), so the session-stage delivery channel
-   * is `native-l0`, not `pack-only` (which stays correct for actual pack blocks).
+   * The session result was delivered through the provider's native prompt
+   * channel, so the session-stage delivery channel is `native-l0`.
    */
-  sessionFromNativeCompiler?: boolean;
+  sessionViaNativeCarrier?: boolean;
 }
 
 const SURROUNDING_MESSAGE_LIMIT = 20;
@@ -112,7 +111,7 @@ export function buildFromPipeline(
   const sessionChars = sumChars(sessionResult);
   const turnChars = sumChars(turnResult);
 
-  const delivery = buildDelivery(sessionResult, turnResult, meta.hasNativeL0, meta.sessionFromNativeCompiler ?? false);
+  const delivery = buildDelivery(sessionResult, turnResult, meta.hasNativeL0, meta.sessionViaNativeCarrier ?? false);
   const timestamp = Date.now();
 
   // F257 Console 判据④ R2: summary is compact — no full content/templateVars.
@@ -343,17 +342,15 @@ function buildDelivery(
   sessionResult: PipelineResult | null,
   turnResult: PipelineResult | null,
   hasNativeL0: boolean,
-  sessionFromNativeCompiler: boolean,
+  sessionViaNativeCarrier: boolean,
 ): StageDeliveryDecision[] {
-  // F257 #2: L1-L7 sourced from the native compiler manifest → 'native-l0'. Only the
-  // pack-blocks path (no compiler manifest) stays 'pack-only'.
-  const sessionChannel: DeliveryChannel = sessionFromNativeCompiler
+  const sessionChannel: DeliveryChannel = sessionViaNativeCarrier
     ? 'native-l0'
     : hasNativeL0
       ? 'pack-only'
       : 'message-prepend';
-  const sessionReason = sessionFromNativeCompiler
-    ? 'Pipeline bridge: L1-L7 delivered via native L0 compiler artifact'
+  const sessionReason = sessionViaNativeCarrier
+    ? 'Pipeline bridge: session hooks delivered via native carrier'
     : hasNativeL0
       ? 'Pipeline bridge: pack-only for native L0'
       : 'Pipeline bridge: content assembled for message-prepend';

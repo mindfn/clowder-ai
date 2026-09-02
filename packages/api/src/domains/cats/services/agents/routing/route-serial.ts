@@ -140,12 +140,9 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
-// F237: Injection trace (v0 — fire-and-forget observability)
-import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -1294,6 +1291,7 @@ export async function* routeSerial(
         }
       };
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
+      const nativeSessionPrompt = hasNativeL0 ? buildStaticIdentity(catId, { mcpAvailable }) : undefined;
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
         : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
@@ -1508,67 +1506,19 @@ export async function* routeSerial(
         if (traceStore) {
           const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
 
-          if (hasNativeL0) {
-            // R1 P1-1: invoke actual native L0 producer — fetches real manifest via
-            // getL0ManifestViaSubprocess, persists L1-L7 session trace from compiler artifact.
-            // Start early (non-blocking for model path), retain promise for finalization chain.
-            // R2 P1-1: persistNativeL0SessionTrace returns boolean — propagate it
-            // so finalization only runs when a durable summary exists.
-            tracePersistPromise = persistNativeL0SessionTrace({
-              traceStore,
-              catId: catId as string,
-              threadId,
-              turnId: traceTurnId,
-              turnResult: pipelineTurnTrace ?? null,
-              log,
-              ownerUserId: userId,
-              messageAnchorId: currentUserMessageId ?? a2aTriggerMessageId ?? null,
-              messageStore: deps.messageStore,
-            }).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
-              return false;
-            });
-          } else {
-            // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
-            // This fixes the 15/46 segment trace gap where S1-S13, B1, C1 were invisible.
-            const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
-              ...traceMeta,
-              hasNativeL0: false,
-              sessionFromNativeCompiler: false,
-            });
-
-            if (pipelineResult) {
-              tracePersistPromise = traceStore
-                .persist(pipelineResult.summary, pipelineResult.detail)
-                .then(() => true as const)
-                .catch((err) => {
-                  log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
-                  return false as const;
-                });
-            } else {
-              // Fallback: legacy collectTrace (S-prefix only for session, aggregate for turn)
-              const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-              const traceTurnContent = [invocationContext, traceModePrompt, bootstrapContext, mcpInstructions]
-                .filter(Boolean)
-                .join('\n\n---\n\n');
-              const trace = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-                mcpAvailable,
-                packBlocks,
+          const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
+            ...traceMeta,
+            hasNativeL0,
+            sessionViaNativeCarrier: hasNativeL0,
+          });
+          if (pipelineResult) {
+            tracePersistPromise = traceStore
+              .persist(pipelineResult.summary, pipelineResult.detail)
+              .then(() => true as const)
+              .catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
+                return false as const;
               });
-              const summary = buildTraceSummary(trace, traceMeta);
-              const detail = buildTraceDetail(trace, traceMeta);
-              tracePersistPromise = traceStore
-                .persist(summary, detail)
-                .then(() => true as const)
-                .catch((err) => {
-                  log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
-                  return false as const;
-                });
-              // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
-              // the module-global capturedSessionTrace without draining. Clear it so the next
-              // invocation doesn't persist stale session traces.
-              if (deps.injectionTraceStore) drainCapturedTraces();
-            }
           }
         }
       } catch {
@@ -2270,6 +2220,7 @@ export async function* routeSerial(
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(catSignal ? { signal: catSignal } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
+        ...(nativeSessionPrompt ? { nativeSessionPrompt } : {}),
         ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
         continuityCapsule,
         ...(memoryCueOpportunitySeeds.length > 0 ? { memoryCueOpportunitySeeds } : {}),
@@ -3165,6 +3116,7 @@ export async function* routeSerial(
           routeTopology: 'serial',
           ...(catSignal ? { signal: catSignal } : {}),
           ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
+          ...(nativeSessionPrompt ? { nativeSessionPrompt } : {}),
           ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
           continuityCapsule,
           ...(streamReplyTo ? { a2aTriggerMessageId: streamReplyTo } : {}),

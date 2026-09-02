@@ -113,7 +113,6 @@ import {
   closeStaleCodexAppServerPools,
   getOrCreateCodexAppServerPool,
 } from './domains/cats/services/agents/providers/codex-app-server-pool-registry.js';
-import { clearL0Cache, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { createPostCompactContextProjector } from './domains/cats/services/agents/routing/post-compact-context-projector.js';
 import { reconcileFreshnessClosuresAtStartup } from './domains/cats/services/freshness/closure/FreshnessClosureStartupReconciler.js';
@@ -1867,7 +1866,6 @@ async function main(): Promise<void> {
   let router!: AgentRouter;
   const syncAgentRegistry = async (configs: Record<string, CatConfig>) => {
     agentRegistry.reset();
-    clearL0Cache(); // Invalidate stale L0 compilations from previous sync
     const projectRoot = resolveActiveProjectRoot();
     const activeAcpProfileIds = new Set<string>();
     const activeCodexProfileIds = new Set<string>();
@@ -1975,13 +1973,6 @@ async function main(): Promise<void> {
       app.log.warn({ err, profileId }, 'Codex app-server registry sync failed to close stale member pool');
     });
     if (router) router.refreshFromRegistry(agentRegistry);
-
-    // Pre-compile L0 system prompts for all registered cats in parallel.
-    // Avoids per-invocation subprocess overhead and ensures L0 is ready
-    // before the first message — also bypasses Windows NTFS junction
-    // issues that resolve by the time the user actually interacts (#802).
-    const registeredCatIds = Object.keys(configs).filter((id) => agentRegistry.has(id));
-    await warmL0Cache(registeredCatIds, app.log);
   };
   await syncAgentRegistry(catRegistry.getAllConfigs());
 
@@ -3440,9 +3431,6 @@ async function main(): Promise<void> {
       threadStore,
       runtime,
       governance: cycleGovernanceCoordinator,
-      resolvePendingCandidateCount: harnessGovernanceProposalStore
-        ? (ownerUserId, segmentId) => harnessGovernanceProposalStore.countPending(ownerUserId, segmentId)
-        : undefined,
     });
   }
   const { createEvalReleaseTruthResolver } = await import(
