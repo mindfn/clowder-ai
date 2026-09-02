@@ -22,7 +22,7 @@ describe('F280 register_pr_tracking public contract', () => {
         registerPrTrackingInputSchema.when.parse([
           { kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer', 'maintainer'] },
         ]),
-      /authorLogins must be unique/i,
+      /duplicate login \(case-insensitive\)/i,
     );
   });
 
