@@ -19,6 +19,8 @@ intake_source: clowder-ai#575
 >
 > **Fixes**: clowder-ai#564 — urgent connector 消息不再通过 bypass 抢占 A2A 链，改走队列内优先级排序。
 
+> ⚠️ **2026-09-02 局部修订**：priority / position 两级 comparator 与拖拽重排语义**保持有效**；但 reorder 契约改为 `expectedQueueRevision + orderedVisibleEntryIds` 原子整批替换（RFC #1356 §4.1），且「吸走相邻条目」的 `exactSteerBatch` fence 已被 Lua 原子 claim 取代。见 [ADR-043](../decisions/043-queue-durable-single-ledger.md)。
+
 ## Why
 
 clowder-ai#564 现场案例：opus 在 A2A round 2 执行中，CI failure 通知以 `priority: 'urgent'` 到达 → `handleUrgentTrigger()` 直接抢占 → `signal.abort()` → opus 回复中的 `@gpt52` mention 被检测但路由被 `signal.aborted` 门控阻止 → 静默丢弃。用户无任何提示。

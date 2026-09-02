@@ -92,6 +92,8 @@ cited_by:
   - {feature: F264-terminal-consumption, date: 2026-07-31, delta: cross-thread messages bind immutable per-target Queue carriers; exact child creation records awakened separately from body exposure, and only exact-child plus aggregate success may commit a typed Phase T terminal-silent witness into the existing receipt}
   - {feature: F264-author-disposition, date: 2026-08-04, delta: ordinary queued sources persist per-target author disposition with an exact parent exposure fence; next-work remains the default, and an unconsumed current-work request falls back to the same Queue custody instead of leaking into a successor turn}
 ---
+> ⚠️ **队列内核收敛中（2026-09-02）**：队列条目将改为按 thread 独立持久化，`message.queueCustody` 上的 per-target 簿记与 `QueueEntry` 的 13 个镜像字段合并到队列条目本身；Steer 三段式预留收敛为 Lua 原子 claim 两步。本 cell 的 code_anchors 与职责描述在实施完成前反映收敛前状态。设计真相源：[ADR-043](../../../decisions/043-queue-durable-single-ledger.md)。
+
 
 # Dispatch / Queue
 

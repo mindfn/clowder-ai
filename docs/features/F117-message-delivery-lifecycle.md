@@ -172,6 +172,52 @@ legacy 路径。若规范化后仍没有唯一事实，就 fail closed，而不�
 7. **INV-C7 — 重试归失败气泡**：只有 failed response 气泡可重试。
 8. **INV-C8 — 无展示 fallback**：legacy 只在 READ 边界规范化；渲染层不以 fallback 或 kind/scope 分支补事实。
 
+### Phase D: 队列内核收敛（normative，2026-09-02）
+
+> **权威决策**：[ADR-043 — 消息队列 = 独立持久化的有序工单账本](../decisions/043-queue-durable-single-ledger.md)
+> **RFC 依据**：[A2A 消息投递、处理与交接生命周期架构](../architecture/message-delivery-handling-handoff-audit.md)（PR #1356）
+>
+> **本节是队列内核设计的单一真相源。** F039 / F122 / F175 / F047 中与本节冲突的描述以本节为准。
+
+#### D.1 职责边界
+
+```
+message  = 内容 + 粗粒度投递态（deliveryStatus: queued | delivered | canceled，单调）
+queue entry = 投递工单（单目标、持久、有序）
+```
+
+per-target 投递细节归**队列条目**，不再挂在 message 上；队列不再持有任何 message 已经拥有的事实。
+
+#### D.2 根因（实读证据）
+
+1. **队列不持久**：`private queues = new Map<...>()`（`InvocationQueue.ts:263`）。持久的那份是 `message.queueCustody`，被序列化成 JSON 塞进 message 的 Redis hash（`RedisMessageStore.ts:189`）。而 `QueuedMessageCustody` 本身带 `entryId / revision / status: 'queued'|'processing'|'terminal'` —— **它就是一个持久队列条目，只是存错了地方**。
+2. **双写**：`QueueEntry` 上 13 个字段与 `queueCustody` 逐一镜像（`queuedSeenByCatIds ↔ seenByCatIds` 等）。这违反 RFC L1「其他 surface 只能引用或投影，不能复制并裁决同一事实」。
+3. **规模**：队列子系统合计 ≈15,690 行，`QueueProcessor.ts` 单文件 7,004 行（项目硬上限 350 行的 20 倍）。其中绝大部分是维持上述两份一致的机器。
+
+#### D.3 收敛决策（详见 ADR-043）
+
+| # | 决策 |
+|---|---|
+| D1 | 队列条目按 thread 独立持久化；入队即持久化，重启直接反序列化 |
+| D2 | message 只留 `deliveryStatus`；per-target 细节归队列条目 |
+| D3 | fan-out 铺满所有入队来源（现仅用于 `from.kind === 'agent'`），`targetCats` 退化为单目标；13 个 `...ByCatId(s)` map 随之退化为标量 |
+| D4 | 5 个 Lua 脚本保证原子：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix` |
+| D5 | Steer 三段式 → 两步；删 `exactSteerBatch`（见 F047「设计现状」） |
+| D6 | freshness carrier 5 字段是载荷标记非状态机；删纯写不读的 `freshnessRequiredFrontierMessageId` |
+| D7 | `owner` 改判别 union `{kind:'user'} \| {kind:'system'}`；`messageFrom(msg)` resolver 统一 `from` 读取，不做数据回填 |
+| D8 | entry.id 复用来源持久 id，合并 `idempotencyKey` / `continuationKey` |
+
+目标：`QueueEntry` 字段 **43 → 14–16**。收益主要不在字段数，而在镜像消失后死掉的 CAS / reconcile / rollback / startup 重建。
+
+#### D.4 一并修正的实现偏离
+
+- **§6.4 前缀批处理拼正文**：RFC §6.4 明写「一次 dispatch，**不合并消息**」，而 `QueueProcessor.ts:5391` 在做 `content = content + '\n' + be.content`。`mergedMessageIds` 删除的同时必须修正该实现——一次 dispatch 可取多条 entry，但每条消息的身份、正文与顺序保持独立。
+- **裸 userId 伪用户污染**：`SYSTEM_USER_IDS = new Set(['scheduler','system'])`（`visibility.ts:13`）+ 25 处硬编码 `userId: 'system'`。约 109 处站点改走 `messageFrom` / `queueOwner` resolver。
+
+#### D.5 不会简化的部分（诚实边界）
+
+`prestartRetirement` 不消失。窗口是 `invocationRecordStore.create`（`QueueProcessor.ts:4873`）→ `invocationTracker.startAll`（`:5419`），中间 546 行异步（freshness 预检、前缀吸收、session 准入）。该「已 processing 但 tracker 尚无」的空档由 I/O 本身造成，进不了 Lua；它会从 Steer 专用退化为 fan-out 组的通用 `retiringGroupId`。
+
 ## Acceptance Criteria
 
 ### Phase A（后端 — deliveryStatus 真相源） ✅
