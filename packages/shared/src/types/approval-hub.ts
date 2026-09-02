@@ -74,7 +74,12 @@ export type ApprovalNavigation =
 export type ApprovalItemStatus = 'pending' | 'stale';
 
 /** Inline decision affordance. Defaults to approve-reject for backward compatibility. */
-export type ApprovalDecisionMode = 'approve-reject' | 'resume-only' | 'claim-select' | 'meeting-intake';
+export type ApprovalDecisionMode =
+  | 'approve-reject'
+  | 'approve-skip-reject'
+  | 'resume-only'
+  | 'claim-select'
+  | 'meeting-intake';
 
 /** Unified DTO that all producer adapters return. */
 export interface ApprovalItem {
@@ -92,7 +97,7 @@ export interface ApprovalItem {
   createdAt: number;
 }
 
-export type SettledStatus = 'approved' | 'rejected';
+export type SettledStatus = 'approved' | 'skipped' | 'rejected';
 
 export interface SettledApprovalItem extends Omit<ApprovalItem, 'status' | 'expiresAt' | 'inlineApprovable'> {
   status: SettledStatus;
