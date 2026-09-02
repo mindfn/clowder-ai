@@ -85,7 +85,7 @@ CycleRecord {
 | 回写评估结论 | 现有 `cat_cafe_submit_unit_evaluation` 形状（每指标结论 + overall） | 改名/改成 cycle 维度 |
 | **单元能改什么（unit action schema）** | Gate 1 registrar 里 `resolveSegmentManifest`（safetyTier / disableable / allowLocalOverride / hasBackup）+ override store 的 versions/current | 打包成一个只读工具 `describe_harness_unit(unitId)` 返回：允许动作 {enable, disable, modify, add}、当前版本、版本链、内容指针——评估猫据此写 v2 草案，不抓瞎 |
 | 回写 governance 决策 + v2 草案 | 无 | 新 `cat_cafe_submit_cycle_governance{decision, reason, v2Draft?}`（只产提案，不直接改） |
-| **提案卡** | **Eval Hub 现有 verdict 卡**（如 eval:a2a 的"结论 / 现在要做 / 下次看什么 / 指标说明"）+ **F276 审批机制**（approve/reject 带理由） | 加 `skip` 第三动作（待确认 F276 卡是否原生支持；不支持则 skip = reject 的一种带标记形式）；approve 后调现有 override 路由 enable/disable/activateVersion/setContent |
+| **提案卡** | **Eval Hub 现有 verdict 卡**（如 eval:a2a 的"结论 / 现在要做 / 下次看什么 / 指标说明"）+ **F276 审批机制**（approve/reject 带理由） | 加 `skip` 第三动作——**已查实 F276 决策枚举只有 pending/approved/rejected，无原生 skip**；二选一由实现者定：① 新增 proposal kind `harness_evolution`，决策枚举扩为 approved/skipped/rejected（推荐，语义干净）；② 复用现枚举，skip = rejected + `reason.kind='skip'`（改动最小但语义混）；approve 后调现有 override 路由 enable/disable/activateVersion/setContent |
 | 执行动作 | 现有 override HTTP 路由（enable/disable/rollback/versions） | approve 后触发 registry 重扫 + snapshot 刷新（TC-17） |
 | `cat_cafe_submit_semantic_sweep` / `publish_verdict` 的 git 发布 | 前者降级为可选反例发现器；后者 verdict handoff 形状可复用于卡 | — |
 
