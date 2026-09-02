@@ -699,42 +699,18 @@ html.dark .rt-pin--capability {
   stroke-linecap: round;
 }
 
-/* ---------- Cats ---------- */
+/* ---------- Cats (sheet sprites) ---------- */
 .rt-cat {
   transform-box: view-box;
 }
 .rt-cat-body {
   transform-box: fill-box;
   transform-origin: 50% 100%;
+  transition: transform 0.3s ease;
 }
-.rt-cat-tail {
-  fill: none;
-  stroke-width: 7;
-  stroke-linecap: round;
-  transform-box: view-box;
-  transform-origin: 0 0;
-}
-.rt-cat-eye {
-  fill: #1c1917;
-}
-.rt-cat-nose {
-  fill: #d48aa0;
-}
-.rt-cat-whisker {
-  stroke: rgb(0 0 0 / 0.35);
-  stroke-width: 1;
-  fill: none;
-}
-.rt-cat-collar {
-  fill: none;
-  stroke-width: 3;
-  stroke-linecap: round;
-}
-.rt-cat-stripe {
-  fill: none;
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  opacity: 0.6;
+.rt-cat-sprite {
+  image-rendering: auto;
+  filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.18));
 }
 .rt-cat-plank {
   fill: var(--rt-plank);
@@ -742,125 +718,67 @@ html.dark .rt-pin--capability {
   stroke-width: 1;
   display: none;
 }
-.rt-cat-arm,
-.rt-cat-head,
-.rt-cat-leg {
-  transform-box: fill-box;
-}
-.rt-cat-arm {
-  transform-origin: 50% 5%;
-}
-.rt-cat-head {
-  transform-origin: 40% 95%;
-}
-.rt-cat-leg {
-  transform-origin: 50% 5%;
-}
-.rt-cat .rt-cat-tail {
-  animation: rt-tail 3.6s ease-in-out infinite alternate;
-}
-@keyframes rt-tail {
-  from {
-    transform: rotate(-7deg);
-  }
-  to {
-    transform: rotate(9deg);
-  }
+.rt-cat.is-carry .rt-cat-plank {
+  display: block;
 }
 .rt-cat.is-walk .rt-cat-body,
 .rt-cat.is-carry .rt-cat-body,
 .rt-cat.is-climb .rt-cat-body {
-  animation: rt-bob 0.45s ease-in-out infinite alternate;
-}
-.rt-cat.is-walk .rt-cat-leg--front,
-.rt-cat.is-carry .rt-cat-leg--front,
-.rt-cat.is-climb .rt-cat-leg--front {
-  animation: rt-step 0.45s ease-in-out infinite alternate;
-}
-.rt-cat.is-walk .rt-cat-leg--back,
-.rt-cat.is-carry .rt-cat-leg--back,
-.rt-cat.is-climb .rt-cat-leg--back {
-  animation: rt-step 0.45s ease-in-out infinite alternate-reverse;
+  animation: rt-bob 0.42s ease-in-out infinite alternate;
 }
 @keyframes rt-bob {
   from {
-    transform: translateY(0);
+    transform: translateY(0) rotate(-1.5deg);
   }
   to {
-    transform: translateY(-2.5px);
+    transform: translateY(-4px) rotate(1.5deg);
   }
 }
-@keyframes rt-step {
-  from {
-    transform: rotate(-16deg);
-  }
-  to {
-    transform: rotate(16deg);
-  }
-}
-.rt-cat.is-carry .rt-cat-plank {
-  display: block;
-}
-.rt-cat.is-carry .rt-cat-arm {
-  transform: rotate(-95deg);
-}
-.rt-cat.is-dig .rt-cat-arm {
+.rt-cat.is-dig .rt-cat-body {
   animation: rt-dig 0.5s ease-in-out infinite alternate;
-}
-.rt-cat.is-dig .rt-cat-head {
-  transform: rotate(14deg);
 }
 @keyframes rt-dig {
   from {
-    transform: rotate(-40deg);
+    transform: rotate(6deg) translateY(0);
   }
   to {
-    transform: rotate(30deg);
+    transform: rotate(14deg) translateY(3px);
   }
 }
-.rt-cat.is-build .rt-cat-arm {
+.rt-cat.is-build .rt-cat-body {
   animation: rt-hammer 0.55s ease-in-out infinite alternate;
 }
 @keyframes rt-hammer {
   from {
-    transform: rotate(-120deg);
+    transform: rotate(-3deg);
   }
   to {
-    transform: rotate(-60deg);
+    transform: rotate(3deg) translateY(-2px);
   }
 }
-.rt-cat.is-sit .rt-cat-body {
-  transform: scaleY(0.94);
-}
-.rt-cat.is-look .rt-cat-head {
-  transform: rotate(-16deg);
+.rt-cat.is-look .rt-cat-body {
+  transform: rotate(-4deg);
 }
 .rt-cat.is-reach .rt-cat-body {
-  transform: scaleY(1.06);
-}
-.rt-cat.is-reach .rt-cat-arm {
   animation: rt-reach 1.2s ease-in-out infinite alternate;
-}
-.rt-cat.is-reach .rt-cat-head {
-  transform: rotate(-22deg);
 }
 @keyframes rt-reach {
   from {
-    transform: rotate(-150deg);
+    transform: scaleY(1) rotate(-2deg);
   }
   to {
-    transform: rotate(-168deg);
+    transform: scaleY(1.05) rotate(-5deg);
   }
 }
-.rt-cat.is-wave .rt-cat-arm {
+.rt-cat.is-wave .rt-cat-body {
   animation: rt-wave 0.7s ease-in-out infinite alternate;
 }
 @keyframes rt-wave {
   from {
-    transform: rotate(-140deg);
+    transform: rotate(-2deg);
   }
   to {
-    transform: rotate(-175deg);
+    transform: rotate(3deg);
   }
 }
 

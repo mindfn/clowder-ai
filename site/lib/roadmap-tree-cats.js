@@ -19,46 +19,51 @@
     return node;
   }
 
+  /** Sprite cat: one <image> per pose from the canon character sheet, feet anchored at (0,0). */
   function drawCat(cat, parent) {
     const g = el('g', { class: `rt-cat rt-cat--${cat.id}`, 'data-id': cat.id }, parent);
     const body = el('g', { class: 'rt-cat-body' }, g);
-    el('path', { d: 'M-24 -20 C-44 -24 -48 -46 -34 -58', class: 'rt-cat-tail', stroke: cat.point }, body);
-    el(
+    const plank = el(
       'rect',
-      { x: -22, y: -16, width: 9, height: 17, rx: 4, fill: cat.fur, class: 'rt-cat-leg rt-cat-leg--back' },
+      { x: -34, y: -cat.height * 0.62, width: 68, height: 7, rx: 2, class: 'rt-cat-plank' },
       body,
     );
-    el(
-      'rect',
-      { x: -10, y: -16, width: 9, height: 17, rx: 4, fill: cat.point, class: 'rt-cat-leg rt-cat-leg--back' },
-      body,
-    );
-    el('ellipse', { cx: -4, cy: -26, rx: 26, ry: 17, fill: cat.fur }, body);
-    if (cat.id !== 'ragdoll') {
-      for (const x of [-14, -4, 6])
-        el('path', { d: `M${x} -40 q 2 6 0 12`, stroke: cat.point, class: 'rt-cat-stripe' }, body);
+    const sprites = {};
+    for (const [pose, spec] of Object.entries(cat.sprites)) {
+      const h = cat.height * (spec.scale || 1);
+      const w = h * spec.ratio;
+      const img = el(
+        'image',
+        {
+          href: `assets/roadmap/cats/${cat.id}-${pose}.png`,
+          x: fmt(-w / 2),
+          y: fmt(-h),
+          width: fmt(w),
+          height: fmt(h),
+          class: 'rt-cat-sprite',
+        },
+        body,
+      );
+      img.setAttribute('preserveAspectRatio', 'xMidYMax meet');
+      img.style.display = 'none';
+      sprites[pose] = { el: img, face: spec.face };
     }
-    el(
-      'rect',
-      { x: 6, y: -16, width: 9, height: 17, rx: 4, fill: cat.point, class: 'rt-cat-leg rt-cat-leg--front' },
-      body,
-    );
-    const arm = el('g', { class: 'rt-cat-arm' }, body);
-    el('rect', { x: 14, y: -18, width: 9, height: 19, rx: 4, fill: cat.fur }, arm);
-    const plank = el('rect', { x: -30, y: -50, width: 56, height: 6, rx: 2, class: 'rt-cat-plank' }, body);
-    const head = el('g', { class: 'rt-cat-head' }, body);
-    el('path', { d: 'M8 -52 L4 -70 L18 -58 Z', fill: cat.point }, head);
-    el('path', { d: 'M30 -52 L38 -70 L24 -58 Z', fill: cat.point }, head);
-    el('circle', { cx: 20, cy: -46, r: 16, fill: cat.fur }, head);
-    if (cat.id === 'ragdoll')
-      el('path', { d: 'M6 -50 C 10 -60 30 -60 34 -50 C 30 -46 10 -46 6 -50 Z', fill: cat.point, opacity: 0.55 }, head);
-    el('ellipse', { cx: 15, cy: -48, rx: 2.2, ry: 3, class: 'rt-cat-eye' }, head);
-    el('ellipse', { cx: 27, cy: -48, rx: 2.2, ry: 3, class: 'rt-cat-eye' }, head);
-    el('path', { d: 'M21 -42 l-2 2 l4 0 Z', class: 'rt-cat-nose' }, head);
-    el('path', { d: 'M30 -42 l10 -2 M30 -40 l10 2 M12 -42 l-10 -2 M12 -40 l-10 2', class: 'rt-cat-whisker' }, head);
-    el('path', { d: 'M8 -36 Q 20 -28 32 -36', stroke: cat.collar, class: 'rt-cat-collar' }, head);
-    return { el: g, plank };
+    return { el: g, plank, sprites };
   }
+
+  /** Which sheet pose stands in for each choreography pose. */
+  const POSE_SPRITE = {
+    walk: 'walk',
+    carry: 'walk',
+    climb: 'walk',
+    sit: 'sit',
+    look: 'sit',
+    dig: 'sit',
+    stand: 'stand',
+    build: 'build',
+    reach: 'reach',
+    wave: 'reach',
+  };
 
   function drawScaffold(spec, parent) {
     const g = el('g', { class: 'rt-scaffold', 'data-branch': spec.branch }, parent);
@@ -184,7 +189,12 @@
     const POSES = ['walk', 'carry', 'dig', 'stand', 'sit', 'look', 'build', 'climb', 'reach', 'wave'];
 
     function applyCat(cat, s) {
-      cat.el.setAttribute('transform', `translate(${fmt(s.x)} ${fmt(s.y)}) scale(${s.dir} 1)`);
+      const want = POSE_SPRITE[s.pose] || 'sit';
+      const key = cat.sprites[want] ? want : cat.sprites[cat.roles?.[want]] ? cat.roles[want] : 'sit';
+      const sprite = cat.sprites[key];
+      const flip = sprite.face && sprite.face !== s.dir ? -1 : 1;
+      cat.el.setAttribute('transform', `translate(${fmt(s.x)} ${fmt(s.y)}) scale(${flip} 1)`);
+      for (const [name, sp] of Object.entries(cat.sprites)) sp.el.style.display = name === key ? '' : 'none';
       for (const p of POSES) cat.el.classList.toggle(`is-${p}`, s.pose === p);
     }
 

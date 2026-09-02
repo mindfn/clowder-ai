@@ -228,24 +228,49 @@
     { label: t('New Forests', '新森林'), body: t('Seed new communities', '孕育新的共同体') },
   ];
 
+  // Runtime sprites are cut from the canon character sheet (docs/design/roadmap-tree-assets.md §1).
+  // face: 1 = drawn facing right, -1 = facing left, 0 = frontal (never mirrored). ratio = width / height.
+  // roles map choreography poses that have no dedicated file onto a sheet pose.
   const cats = [
     {
       id: 'ragdoll',
       name: t('Ragdoll', '布偶猫'),
       family: 'opus',
-      fur: '#efe6d8',
-      point: '#8f8073',
-      collar: '#60A5FA',
+      height: 96,
+      sprites: {
+        sit: { ratio: 0.86, face: 0, scale: 0.72 },
+        walk: { ratio: 1.38, face: 1, scale: 0.62 },
+        stand: { ratio: 0.53, face: 0 },
+        stand2: { ratio: 0.55, face: 0 },
+      },
+      roles: { reach: 'stand', build: 'stand2' },
     },
     {
-      id: 'mainecoon',
+      id: 'maine',
       name: t('Maine Coon', '缅因猫'),
       family: 'codex',
-      fur: '#8a6a4b',
-      point: '#5a4331',
-      collar: '#34D399',
+      height: 124,
+      sprites: {
+        sit: { ratio: 0.83, face: 0, scale: 0.72 },
+        lie: { ratio: 0.65, face: -1 },
+        stand: { ratio: 0.39, face: 0 },
+        stand2: { ratio: 0.45, face: -1 },
+      },
+      roles: { walk: 'stand', build: 'stand', reach: 'stand2' },
     },
-    { id: 'tabby', name: t('Tabby', '狸花猫'), family: 'gemini', fur: '#c9a06a', point: '#8b6a3e', collar: '#FBBF24' },
+    {
+      id: 'siamese',
+      name: t('Siamese', '暹罗猫'),
+      family: 'gemini',
+      height: 114,
+      sprites: {
+        sit: { ratio: 0.64, face: 0, scale: 0.72 },
+        walk: { ratio: 1.66, face: -1, scale: 0.56 },
+        stand: { ratio: 0.46, face: 0 },
+        stand2: { ratio: 0.41, face: -1 },
+      },
+      roles: { build: 'stand', reach: 'stand2' },
+    },
   ];
 
   const STATUS = ['ripe', 'green', 'bud'];
