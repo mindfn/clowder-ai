@@ -5,7 +5,7 @@ status: authoritative
 supersedes:
   - feature-specs/2026-08-04-f257-objective-eval-redesign.md §0 / §2.4 中"冻结 raw corpus"的表述
   - F257-harness-ledger.md KD-21 中"触发时冻结 raw corpus"的表述
-source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32（thread_mrdip0u5aw4ysi97）
+source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32 / 06:42（thread_mrdip0u5aw4ysi97）
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
@@ -35,12 +35,14 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | TC-6 | 评估必须**调工具回写 eval 状态**（每指标结论 + 整体结论） | 只在对话里说结论 |
 | TC-7 | 未回写 → 系统可观察 → **一条系统 message 重触发一次**（有界） | 无限续租/重试；同一 job 滚动上千代 |
 | TC-8 | 回写后**自动进入 governance**：再次触发同一评估 thread → 保持 / 回退 / 演进 | 停在 eval；需要人手动进 governance |
-| TC-9 | 仅"回退 / 演进"发**提案卡**（evolve 时含评估猫直接写的 v2 草案）；三选一 **approve / skip / reject**：approve、skip 进入下一周期；reject 附理由对同窗重评估，不进入下一周期 | 保持也发卡；卡未点则整体停摆；reject 无理由；reject 自动进下一周期 |
+| TC-9 | 仅"回退 / 演进"发**提案卡**（evolve 时含评估猫直接写的 v2 草案）；三选一 **approve / skip / reject**：approve、skip 进入下一周期；reject 附理由对同窗重评估并**必须产生新提案卡**——终态只有 approve/skip | 保持也发卡；reject 无理由；reject 自动进下一周期；reject 后不再出卡 |
 | TC-10 | 周期起点**始终刷新** = 本周期终点；skip / insufficient_evidence 不停住起点，而是让**下次评估逆序回看并纳入连续 skip 周期的时间窗**（连续 k 次 skip → 合并 k+1 个窗口） | skip 后起点不动导致累计触发立即重触发；下次评估只看本周期忽略前序 skip 数据 |
 | TC-11 | v1/v2/v3 的**评估**各自只看本版本时间窗，不做跨版本对比；**governance** 以本周期结论判断 keep/rollback/evolve，历史周期结论在同一 Objective thread 中天然可见、可参考 | 把"与上一版比较"当作当前版本的闭环条件 |
 | TC-12 | Console：Tracing 面只有两组——**周期内反例 / 周期内累计**，触发条件带进度（x/阈值、y/200、7 天）；无"待分类" | 出现全局管道数字；名词与数值口径不一致 |
 | TC-13 | Semantic Sweep（后台批量打标）若保留，只是**可选的反例发现器**，绝不能是主路径的一环或前置门 | "sweep 未清空就不评 Unit" |
 | TC-14 | tracing 是自管的**不可变只增**数据：每周期只记录 时间窗、指标、结论、起始版本内容指针；**不需要 cursor receipt / evidence digest** | 为防"源漂移"复制或摘要正文 |
+| TC-16 | governance 活性：处于 governance 阶段、预期有提案卡、Objective thread 无成员运行且无挂起外部条件、却无卡 → 系统发一条提醒要求产卡，按天节流 | 无卡时无人知晓；或高频刷屏 |
+| TC-17 | 所有进化动作（禁用/修改/合并=禁用A+改B/新增=放入目录）都是运行时 overlay 或目录扫描动作；approve 后系统重扫 registry 并刷新 snapshot | 把合并/新增做成需人合入的 base 级 PR；新增段要重启才可见 |
 | TC-15 | 首周期起点：池中已有 tracing → 最早有效 trace 时间；没有 → 服务启动检查到缺失时写当前时间 | 首周期永远 not-ready；或从 0 起算 |
 
 ## 3. 现实现偏离台账（2026-09-02 运行实例实查，全部只读取证）
