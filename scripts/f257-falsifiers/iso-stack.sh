@@ -9,6 +9,7 @@ if [[ $# -gt 0 ]]; then shift; fi
 ISO_ROOT="${F257_ISO_ROOT:-/tmp/f257-iso}"
 REDIS_PORT="${F257_ISO_REDIS_PORT:-6378}"
 API_PORT="${F257_ISO_API_PORT:-3122}"
+WEB_PORT="${F257_ISO_WEB_PORT:-5122}"
 OWNER_USER_ID="${F257_ISO_OWNER_USER_ID:-default-user}"
 FORBIDDEN_PORTS="6099 6399 3002 3001 4099"
 
@@ -17,9 +18,10 @@ usage() {
 Usage:
   iso-stack.sh redis-start --seed <dump.rdb>   disposable Redis (default port 6378) from an RDB copy; no AOF, no save
   iso-stack.sh s0 --worktree <dir> [--apply]   S0 cleanup script from <dir> against the disposable Redis (dry-run unless --apply)
-  iso-stack.sh api-start --worktree <dir>      packages/api/dist/index.js from <dir> on the private API port, isolated data dir
+  iso-stack.sh api-start --worktree <dir> [--no-cats]   packages/api/dist/index.js from <dir> on the private API port, isolated data dir;
+                                               --no-cats shims provider CLIs (exit 127) + isolates HOME so no real LLM call can happen
   iso-stack.sh status | stop | help
-Env: F257_ISO_ROOT=/tmp/f257-iso  F257_ISO_REDIS_PORT=6378  F257_ISO_API_PORT=3122  F257_ISO_OWNER_USER_ID=default-user
+Env: F257_ISO_ROOT=/tmp/f257-iso  F257_ISO_REDIS_PORT=6378  F257_ISO_API_PORT=3122  F257_ISO_WEB_PORT=5122  F257_ISO_OWNER_USER_ID=default-user
 USAGE
 }
 
@@ -85,16 +87,28 @@ s0_cleanup() {
 }
 
 api_start() {
-  local worktree
+  local worktree no_cats=false path_prefix="" home_dir="$HOME"
   worktree="$(read_flag_value --worktree "$@")" || { echo "iso-stack: --worktree <dir> required" >&2; exit 2; }
+  for arg in "$@"; do [[ "$arg" == "--no-cats" ]] && no_cats=true; done
   refuse_forbidden_port "$API_PORT"
   refuse_forbidden_port "$REDIS_PORT"
   [[ -f "$worktree/packages/api/dist/index.js" ]] || { echo "iso-stack: build api first ($worktree/packages/api/dist/index.js)" >&2; exit 2; }
-  mkdir -p "$ISO_ROOT/data"
+  mkdir -p "$ISO_ROOT/data" "$ISO_ROOT/home"
+  if [[ "$no_cats" == true ]]; then
+    # Slices before S2 need no cat invocations: shim every provider CLI to exit 127 and hide real credentials (HOME).
+    mkdir -p "$ISO_ROOT/nobin"
+    for cli in claude codex opencode kimi kimi-cli gemini agy antigravity qwen; do
+      printf '#!/usr/bin/env bash\necho "iso-stack --no-cats: %s blocked" >&2\nexit 127\n' "$cli" > "$ISO_ROOT/nobin/$cli"
+      chmod +x "$ISO_ROOT/nobin/$cli"
+    done
+    path_prefix="$ISO_ROOT/nobin:"
+    home_dir="$ISO_ROOT/home"
+  fi
   (
     cd "$worktree/packages/api"
+    PATH="${path_prefix}$PATH" HOME="$home_dir" \
     REDIS_URL="redis://127.0.0.1:$REDIS_PORT" REDIS_PORT="$REDIS_PORT" API_SERVER_PORT="$API_PORT" API_SERVER_HOST=127.0.0.1 \
-    FRONTEND_PORT=0 PREVIEW_GATEWAY_PORT=0 NODE_ENV=production CAT_CAFE_DATA_DIR="$ISO_ROOT/data" \
+    FRONTEND_PORT="$WEB_PORT" PREVIEW_GATEWAY_PORT=0 NODE_ENV=production CAT_CAFE_DATA_DIR="$ISO_ROOT/data" \
     CAT_CAFE_MCP_SERVER_PATH="$worktree/packages/mcp-server/dist/index.js" CAT_CAFE_DEPLOYMENT_ID=f257-iso \
     ANTHROPIC_PROXY_ENABLED=0 ASR_ENABLED=0 TTS_ENABLED=0 LLM_POSTPROCESS_ENABLED=0 EMBED_ENABLED=0 EMBED_MODE=off AUDIO_SERVICE_ENABLED=0 \
     nohup node dist/index.js > "$ISO_ROOT/api.log" 2>&1 &
