@@ -86,7 +86,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     );
   }
 
-  it('always commits strict Queue custody before requesting a drain', async () => {
+  it('atomically commits strict Queue ledger ownership before requesting a drain', async () => {
     const source = appendSource('idle');
 
     const outcome = await trigger.trigger(
@@ -109,8 +109,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
 
     const stored = messageStore.getById(source.id);
     assert.equal(stored?.deliveryStatus, 'queued');
-    assert.equal(stored?.queueCustody?.entryId, entries[0].id);
-    assert.equal(stored?.queueCustody?.ownerAuthProvenance, 'strict');
+    assert.equal(stored?.queueCustody, undefined);
     assert.deepEqual(drains, [source.threadId]);
     assert.equal(
       sockets.userEvents.some((event) => event.event === 'queue_updated'),
@@ -125,7 +124,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
 
     const entry = queue.list(source.threadId, source.userId)[0];
     assert.ok(entry);
-    assert.equal(messageStore.getById(source.id)?.queueCustody?.entryId, entry.id);
+    assert.equal(messageStore.getById(source.id)?.deliveryStatus, 'queued');
     assert.deepEqual(drains, [source.threadId]);
   });
 
@@ -146,7 +145,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     assert.deepEqual(drains, [source.threadId, source.threadId]);
   });
 
-  it('coalesces connector bursts while retaining custody for every exact source message', async () => {
+  it('keeps connector burst messages as independent deterministic ledger rows', async () => {
     const first = appendSource('coalesce-1');
     const second = appendSource('coalesce-2');
     const policy = { sourceCategory: /** @type {const} */ ('review'), coalesceKey: 'pr-42' };
@@ -171,11 +170,15 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     );
 
     const entries = queue.list(first.threadId, first.userId);
-    assert.equal(entries.length, 1);
+    assert.equal(entries.length, 2);
     assert.equal(entries[0].messageId, first.id);
-    assert.deepEqual(entries[0].mergedMessageIds, [second.id]);
-    assert.equal(messageStore.getById(first.id)?.queueCustody?.entryId, entries[0].id);
-    assert.equal(messageStore.getById(second.id)?.queueCustody?.entryId, entries[0].id);
+    assert.equal(entries[1].messageId, second.id);
+    assert.deepEqual(
+      entries.map((entry) => entry.mergedMessageIds),
+      [[], []],
+    );
+    assert.equal(messageStore.getById(first.id)?.deliveryStatus, 'queued');
+    assert.equal(messageStore.getById(second.id)?.deliveryStatus, 'queued');
   });
 
   it('preserves the source MessageFrom and scheduling metadata on the Queue carrier', async () => {
@@ -213,7 +216,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     assert.equal(entry.senderMeta, undefined);
   });
 
-  it('copies the exact wait continuation carrier into Queue custody', async () => {
+  it('copies the exact wait continuation carrier into the Queue ledger', async () => {
     const carrier = {
       v: 1,
       waitId: 'task-pr-7',
@@ -252,7 +255,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     assert.deepEqual(drains, []);
   });
 
-  it('keeps committed Queue custody when drain scheduling fails', async () => {
+  it('keeps committed Queue ledger work when drain scheduling fails', async () => {
     const source = appendSource('drain-failure');
     const failing = new ConnectorInvokeTrigger({
       socketManager: sockets.manager,
@@ -273,6 +276,6 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
 
     const entry = queue.list(source.threadId, source.userId)[0];
     assert.ok(entry);
-    assert.equal(messageStore.getById(source.id)?.queueCustody?.entryId, entry.id);
+    assert.equal(messageStore.getById(source.id)?.deliveryStatus, 'queued');
   });
 });

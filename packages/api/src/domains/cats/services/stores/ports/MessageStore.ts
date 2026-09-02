@@ -1435,6 +1435,13 @@ export interface IMessageStore {
     ledgerStore: QueueLedgerStore,
     maxQueuedUserEntries?: number,
   ): QueueLedgerMessageAdmissionResult | Promise<QueueLedgerMessageAdmissionResult>;
+  /** Atomically bind an already-persisted connector message to its Queue fan-out. */
+  enqueueExistingMessageWithQueueLedgerAdmission(
+    messageId: string,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): QueueLedgerMessageAdmissionResult | Promise<QueueLedgerMessageAdmissionResult>;
   /** Atomically publish Agent speech with its complete durable wake admission. */
   appendWithQueueCustodyAdmission(
     msg: AppendMessageInput,
@@ -1956,6 +1963,37 @@ export class MessageStore {
       if (admitted.outcome === 'enqueued') ledgerStore.removeEnqueuedNow(admitted.entries);
       throw error;
     }
+  }
+
+  enqueueExistingMessageWithQueueLedgerAdmission(
+    messageId: string,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): QueueLedgerMessageAdmissionResult {
+    if (!(ledgerStore instanceof InMemoryQueueLedgerStore)) {
+      throw new Error('memory message admission requires the matching in-memory Queue ledger');
+    }
+    const message = this.messages.find((candidate) => candidate.id === messageId);
+    if (!message) throw new Error(`Queue source message does not exist: ${messageId}`);
+    const admitted = ledgerStore.enqueueNow(entries, maxQueuedUserEntries);
+    if (admitted.outcome === 'full') return { outcome: 'full' };
+    if (admitted.outcome === 'conflict') {
+      throw new Error(`Queue admission identity conflict for existing message ${messageId}`);
+    }
+    if (admitted.outcome === 'replayed') {
+      return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: true };
+    }
+    if (
+      (message.deliveryStatus !== undefined && message.deliveryStatus !== 'queued') ||
+      message.queueCustody ||
+      message.queueCustodyAdmission
+    ) {
+      ledgerStore.removeEnqueuedNow(admitted.entries);
+      throw new Error(`Queue source message already has delivery ownership: ${messageId}`);
+    }
+    message.deliveryStatus = 'queued';
+    return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: false };
   }
 
   private appendWithReservedId(msg: AppendMessageInput, reservedId?: string): StoredMessage {

@@ -5896,7 +5896,6 @@ async function main(): Promise<void> {
     socketManager,
     invocationQueue,
     queueProcessor,
-    queueCustodyCoordinator,
     messageStore,
     log: app.log,
   });

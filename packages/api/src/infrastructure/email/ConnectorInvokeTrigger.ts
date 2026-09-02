@@ -9,18 +9,10 @@ import { type CatId, type MessageContent } from '@cat-cafe/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import { getDefaultCatId } from '../../config/cat-config-loader.js';
 import { waitContinuationCarrierFromStoredMessage } from '../../domains/ball-custody/wait-continuation-carrier.js';
-import type { InvocationQueue, QueueEntry } from '../../domains/cats/services/agents/invocation/InvocationQueue.js';
-import {
-  createInitialQueuedMessageCustody,
-  type QueuedMessageCustodyCoordinator,
-} from '../../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import type { InvocationQueue } from '../../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { QueueProcessor } from '../../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { messageFrom } from '../../domains/cats/services/stores/message-from.js';
-import {
-  type IMessageStore,
-  initializeQueueCustodyWithLifecycleRetry,
-  type StoredMessage,
-} from '../../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredMessage } from '../../domains/cats/services/stores/ports/MessageStore.js';
 import type { SocketManager } from '../../infrastructure/websocket/index.js';
 import { emitQueueUpdated, enrichQueueEntries } from '../../utils/queue-enrichment.js';
 
@@ -30,8 +22,6 @@ export interface ConnectorInvokeTriggerOptions {
   readonly socketManager: SocketManager;
   readonly invocationQueue: InvocationQueue;
   readonly queueProcessor: QueueProcessor;
-  /** Exact queued-source CAS used when recovery replaces an absent carrier. */
-  readonly queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
   readonly messageStore: IMessageStore;
   readonly log: FastifyBaseLogger;
 }
@@ -79,12 +69,10 @@ export class ConnectorInvokeTrigger {
     if (outcome === 'full') return outcome;
 
     const exactEntry = this.opts.invocationQueue.findEntryWithMessageId(threadId, messageId);
-    if (!exactEntry) {
-      throw new Error(`connector Queue admission lost exact source binding for ${messageId}`);
-    }
-    if (await this.isQueueEntryCustodyReady(exactEntry, messageId)) {
-      await this.opts.queueProcessor.requestDrain(threadId);
-    }
+    // A deterministic replay may resolve to a terminal ledger tombstone. It is
+    // successful idempotency, not new work, so there is deliberately no drain.
+    if (!exactEntry) return outcome;
+    await this.opts.queueProcessor.requestDrain(threadId);
     return outcome;
   }
 
@@ -115,7 +103,7 @@ export class ConnectorInvokeTrigger {
 
     const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
     const from = messageFrom(sourceMessage);
-    const result = await invocationQueue.enqueueDurable({
+    const result = await invocationQueue.enqueueExistingMessageDurable(messageStore, input.messageId, {
       from: structuredClone(from),
       threadId: input.threadId,
       userId: input.userId,
@@ -169,40 +157,15 @@ export class ConnectorInvokeTrigger {
     const entry = result.entry
       ? invocationQueue.getEntrySnapshot(input.threadId, input.userId, result.entry.id)
       : undefined;
-    if (!entry) throw new Error(`connector Queue admission did not return an entry for ${input.messageId}`);
-
-    const prepared = await messageStore.prepareQueueAdmission(input.messageId);
-    if (prepared.kind !== 'prepared' && prepared.kind !== 'existing') {
-      if (!result.deduped) invocationQueue.rollbackEnqueue(input.threadId, input.userId, entry.id);
-      throw new Error(`connector source ${input.messageId} could not enter Queue custody: ${prepared.kind}`);
-    }
-
-    const queuedSource = prepared.message;
-    if (!queuedSource.queueCustody) {
-      const initialized = await initializeQueueCustodyWithLifecycleRetry(
-        messageStore,
-        input.messageId,
-        createInitialQueuedMessageCustody(entry),
-      );
-      if (initialized.kind !== 'initialized' && initialized.kind !== 'existing') {
-        throw new Error(`connector Queue custody initialization failed for ${input.messageId}: ${initialized.kind}`);
+    if (!entry) {
+      if (result.deduped) {
+        log.info(
+          { threadId: input.threadId, messageId: input.messageId },
+          '[ConnectorInvokeTrigger] Exact connector source already terminal',
+        );
+        return 'enqueued';
       }
-    } else if (queuedSource.queueCustody.entryId !== entry.id) {
-      if (!this.opts.queueCustodyCoordinator) {
-        if (!result.deduped) invocationQueue.rollbackEnqueue(input.threadId, input.userId, entry.id);
-        throw new Error('Queue custody coordinator unavailable for verified connector replacement');
-      }
-      try {
-        await this.opts.queueCustodyCoordinator.transferEntryCustody(entry, {
-          kind: 'verified',
-          previousEntryId: queuedSource.queueCustody.entryId,
-          replacementEntryId: entry.id,
-          sourceMessageId: input.messageId,
-        });
-      } catch (error) {
-        if (!result.deduped) invocationQueue.rollbackEnqueue(input.threadId, input.userId, entry.id);
-        throw error;
-      }
+      throw new Error(`connector Queue admission did not return an entry for ${input.messageId}`);
     }
 
     await emitQueueUpdated(
@@ -228,25 +191,5 @@ export class ConnectorInvokeTrigger {
     if (sourceMessage.threadId !== expected.threadId || sourceMessage.userId !== expected.userId) {
       throw new Error(`connector source message ${expected.messageId} owner/thread mismatch`);
     }
-  }
-
-  private async isQueueEntryCustodyReady(entry: QueueEntry, sourceMessageId: string): Promise<boolean> {
-    let sourceMessage: StoredMessage | null;
-    try {
-      sourceMessage = await this.opts.messageStore.getById(sourceMessageId);
-    } catch (error) {
-      this.opts.log.warn(
-        { err: error, threadId: entry.threadId, queueEntryId: entry.id, sourceMessageId },
-        '[ConnectorInvokeTrigger] Queue custody readiness lookup failed; deferring drain',
-      );
-      return false;
-    }
-    if (!sourceMessage?.queueCustody) return false;
-    if (sourceMessage.queueCustody.status === 'terminal') return false;
-
-    const targetCarriers = sourceMessage.queueCustody.carrierByTargetCatId;
-    return targetCarriers
-      ? entry.targetCats.every((catId) => targetCarriers[catId]?.entryId === entry.id)
-      : sourceMessage.queueCustody.entryId === entry.id;
   }
 }

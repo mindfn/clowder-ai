@@ -154,6 +154,66 @@ interface QueueAppendOptions {
   maxQueuedUserEntries?: number;
 }
 
+const ENQUEUE_EXISTING_MESSAGE_WITH_LEDGER_LUA = `
+local messageKey = KEYS[1]
+local rowsKey = KEYS[2]
+local orderKey = KEYS[3]
+local messageId = ARGV[1]
+local maxUserSources = tonumber(ARGV[2])
+local count = tonumber(ARGV[3])
+if redis.call('HGET', messageKey, 'id') ~= messageId then return -2 end
+if not count or count < 1 then return redis.error_reply('QUEUE_ADMISSION_EMPTY') end
+
+local incoming = {}
+local existingCount = 0
+local incomingIds = {}
+local incomingUserSources = {}
+for i = 1, count do
+  local raw = ARGV[3 + i]
+  local row = cjson.decode(raw)
+  if row.status ~= 'queued' or row.payload.sourceId ~= messageId or row.payload.messageId ~= messageId then
+    return redis.error_reply('QUEUE_ADMISSION_INVALID_ROW')
+  end
+  if incomingIds[row.id] then return redis.error_reply('QUEUE_ADMISSION_DUPLICATE_ID') end
+  incomingIds[row.id] = true
+  incoming[i] = { id = row.id, raw = raw, row = row }
+  if redis.call('HEXISTS', rowsKey, row.id) == 1 then existingCount = existingCount + 1 end
+  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+end
+if existingCount == count then return 2 end
+if existingCount > 0 then return -1 end
+
+local deliveryStatus = redis.call('HGET', messageKey, 'deliveryStatus')
+local custody = redis.call('HGET', messageKey, 'queueCustody')
+local admission = redis.call('HGET', messageKey, 'queueCustodyAdmission')
+if (deliveryStatus and deliveryStatus ~= '' and deliveryStatus ~= 'queued') or
+   (custody and custody ~= '') or (admission and admission ~= '') then
+  return -3
+end
+
+if maxUserSources and maxUserSources >= 0 then
+  local queuedUserSources = {}
+  local current = redis.call('HVALS', rowsKey)
+  for i = 1, #current do
+    local row = cjson.decode(current[i])
+    if row.status == 'queued' and row.from and row.from.kind == 'user' then
+      queuedUserSources[row.payload.sourceId] = true
+    end
+  end
+  for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
+  local queuedUserCount = 0
+  for _, _ in pairs(queuedUserSources) do queuedUserCount = queuedUserCount + 1 end
+  if queuedUserCount > maxUserSources then return 0 end
+end
+
+redis.call('HSET', messageKey, 'deliveryStatus', 'queued')
+for i = 1, count do
+  redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
+  redis.call('RPUSH', orderKey, incoming[i].id)
+end
+return 1
+`;
+
 const HARD_DELETE_MESSAGE_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HGET', KEYS[1], '_tombstone') == '1' then return 2 end
@@ -1033,6 +1093,66 @@ export class RedisMessageStore {
       message: result.message,
       entries: persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
       deduped: true,
+    };
+  }
+
+  async enqueueExistingMessageWithQueueLedgerAdmission(
+    messageId: string,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): Promise<QueueLedgerMessageAdmissionResult> {
+    if (!(ledgerStore instanceof RedisQueueLedgerStore) || !ledgerStore.usesRedisClient(this.redis)) {
+      throw new Error('Redis message admission requires the matching Redis Queue ledger');
+    }
+    if (entries.length === 0) throw new Error('Queue admission requires at least one row');
+    const threadId = entries[0]?.threadId;
+    for (const entry of entries) {
+      assertQueueLedgerEntry(entry);
+      if (
+        entry.threadId !== threadId ||
+        entry.payload.sourceId !== messageId ||
+        entry.payload.messageId !== messageId
+      ) {
+        throw new Error('Queue admission row must be bound to its exact existing message identity');
+      }
+    }
+    const outcome = Number(
+      await this.redis.eval(
+        ENQUEUE_EXISTING_MESSAGE_WITH_LEDGER_LUA,
+        3,
+        MessageKeys.detail(messageId),
+        QueueLedgerKeys.entries(threadId!),
+        QueueLedgerKeys.order(threadId!),
+        messageId,
+        maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
+        String(entries.length),
+        ...entries.map((entry) => JSON.stringify(entry)),
+      ),
+    );
+    if (outcome === 0) return { outcome: 'full' };
+    if (outcome === -2) throw new Error(`Queue source message does not exist: ${messageId}`);
+    if (outcome === -3) throw new Error(`Queue source message already has delivery ownership: ${messageId}`);
+    if (outcome === -1) throw new Error(`Queue admission identity conflict for existing message ${messageId}`);
+    if (outcome !== 1 && outcome !== 2)
+      throw new Error(`unexpected existing Message/Queue admission result: ${outcome}`);
+    const message = await this.getById(messageId);
+    if (!message) throw new Error(`Queue source message disappeared after admission: ${messageId}`);
+    const persisted =
+      outcome === 1
+        ? entries.map((entry) => structuredClone(entry))
+        : await Promise.all(entries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+    if (
+      persisted.some((entry) => entry === null) ||
+      !persisted.every((entry, index) => queueLedgerAdmissionsMatch(entry!, entries[index]!))
+    ) {
+      throw new Error(`Queue admission identity conflict for replayed existing message ${messageId}`);
+    }
+    return {
+      outcome: 'enqueued',
+      message,
+      entries: persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+      deduped: outcome === 2,
     };
   }
 

@@ -750,6 +750,45 @@ export class InvocationQueue {
     };
   }
 
+  /** Atomically adopt one already-persisted connector message into the ledger. */
+  async enqueueExistingMessageDurable(
+    messageStore: IMessageStore,
+    messageId: string,
+    input: QueueEnqueueInput,
+  ): Promise<EnqueueMessageResult> {
+    const source = await messageStore.getById(messageId);
+    if (
+      !source ||
+      source.threadId !== input.threadId ||
+      source.userId !== input.userId ||
+      source.content !== input.content ||
+      JSON.stringify(source.from) !== JSON.stringify(input.from)
+    ) {
+      throw new Error('existing Queue source does not match its execution work item');
+    }
+    const enqueuedAt = this.nextEnqueuedAt();
+    const rows = this.createLedgerRows(input, messageId, enqueuedAt, messageId);
+    const result = await messageStore.enqueueExistingMessageWithQueueLedgerAdmission(
+      messageId,
+      rows,
+      this.ledgerStore,
+      input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined,
+    );
+    if (result.outcome === 'full') return { outcome: 'full' };
+    const projected = this.cacheLedgerEntries(result.entries);
+    const primary = projected[0];
+    return {
+      outcome: 'enqueued',
+      message: result.message,
+      ...(primary ? { entry: primary } : {}),
+      entries: projected,
+      queuePosition: primary
+        ? this.list(primary.threadId, primary.userId).findIndex((entry) => entry.id === primary.id) + 1
+        : undefined,
+      deduped: result.deduped,
+    };
+  }
+
   private findEntryAcrossUsers(threadId: string, entryId: string): QueueEntry | undefined {
     for (const queue of this.queues.values()) {
       if (!this.queueMatchesThread(queue, threadId)) continue;

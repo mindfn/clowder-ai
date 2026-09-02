@@ -171,4 +171,49 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(await messageStore.getByIdempotencyKey('owner-1', 'thread-redis', 'over-capacity'), null);
     assert.equal((await store.list('thread-redis')).length, 10);
   });
+
+  it('atomically adopts an existing connector message and treats a terminal replay as no new work', async () => {
+    const queue = new InvocationQueue(store);
+    const source = await messageStore.append({
+      from: { kind: 'external', connectorId: 'github' },
+      userId: 'owner-1',
+      content: 'connector event',
+      mentions: ['opus'],
+      timestamp: 100,
+      threadId: 'thread-redis',
+      provenance: { author: 'connector', routed: true, observation: 'original' },
+    });
+    const input = {
+      from: source.from,
+      threadId: source.threadId,
+      userId: source.userId,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      content: source.content,
+      messageId: source.id,
+      targetCats: ['opus'],
+      intent: 'execute',
+      autoExecute: true,
+    };
+
+    const admitted = await queue.enqueueExistingMessageDurable(messageStore, source.id, input);
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.equal(admitted.deduped, false);
+    assert.equal((await messageStore.getById(source.id)).deliveryStatus, 'queued');
+    assert.equal((await store.list(source.threadId)).length, 1);
+
+    const entry = admitted.entry;
+    assert.ok(entry);
+    assert.ok(await queue.markProcessingByIdDurable(source.threadId, entry.id, 'opus'));
+    assert.equal(await queue.commitClaimedProcessing(source.threadId, [entry.id], 200), true);
+    assert.ok(await queue.removeProcessedDurable(source.threadId, source.userId, entry.id));
+    await messageStore.markDelivered(source.id, 201);
+
+    const replay = await queue.enqueueExistingMessageDurable(messageStore, source.id, input);
+    assert.equal(replay.outcome, 'enqueued');
+    assert.equal(replay.deduped, true);
+    assert.equal(replay.entry, undefined);
+    assert.deepEqual(await store.list(source.threadId), []);
+    assert.equal((await store.get(source.threadId, entry.id)).status, 'terminal');
+  });
 });
