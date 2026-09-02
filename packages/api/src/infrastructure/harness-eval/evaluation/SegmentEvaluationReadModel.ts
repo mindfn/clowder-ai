@@ -19,7 +19,10 @@ type ObjectiveProjection = {
 
 /** F257 S4: Console projection whose only cycle truth is CycleRecord. */
 export class SegmentEvaluationReadModel {
-  constructor(private readonly runtime: ObjectiveEvaluationRuntime) {}
+  constructor(
+    private readonly runtime: ObjectiveEvaluationRuntime,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   async read(input: {
     ownerUserId: string;
@@ -74,7 +77,9 @@ export class SegmentEvaluationReadModel {
       this.runtime.cycles.history(input.ownerUserId, objective.id, 8),
     ]);
     const cycleStart = current?.cycleStart ?? input.startMs;
-    const cycleEnd = current?.cycleEnd ?? input.endMs;
+    // An open Objective cycle is live independently of whichever segment
+    // version/query window the operator selected in the lifeline.
+    const cycleEnd = current?.cycleEnd ?? this.now();
     const [cumulativeCount, annotationLists] = await Promise.all([
       this.runtime.objectiveTraces.countWindow(input.ownerUserId, objective.id, cycleStart, cycleEnd),
       Promise.all(

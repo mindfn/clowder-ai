@@ -284,12 +284,6 @@ export interface SegmentLifecycleResponse {
   chain: VersionEpoch[];
   /** Backward-compat status summary. */
   currentStatus: 'idle' | 'tracing' | 'evaluated';
-  /** 判据①: real loop stage of the active version (unmeasurable → tracing). */
-  activeStage: ActiveStage;
-  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
-  actionable: ActionableInfo;
-  /** Distinguishes real no-judgment from an unavailable eval source. */
-  evalSource: LifecycleEvalSource;
   /**
    * The CURRENT lifeline QUERY window [startMs, endMs) — used for tracing
    * observations/guard events. 判据②: distinct coordinate from each epoch's

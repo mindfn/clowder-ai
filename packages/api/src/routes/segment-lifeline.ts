@@ -8,14 +8,7 @@
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
  */
-import type {
-  ActionableInfo,
-  LifecycleEvalSource,
-  LifecycleJudgmentProjection,
-  SafetyTier,
-  SegmentEnablementMatrix,
-  SegmentLifecycleResponse,
-} from '@cat-cafe/shared';
+import type { SafetyTier, SegmentEnablementMatrix, SegmentLifecycleResponse } from '@cat-cafe/shared';
 import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
@@ -25,7 +18,6 @@ import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/Guar
 import {
   attributeGuardEventsToEpochs,
   buildVersionChain,
-  deriveActiveStage,
   deriveCurrentStatus,
   type SegmentObservationInput,
 } from './segment-lifeline-chain.js';
@@ -34,16 +26,6 @@ export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
-  /**
-   * Legacy projection seam retained only for isolated chain consumers. The
-   * production Console does not wire it; /api/segment-evaluation reads CycleRecord.
-   */
-  resolveEvalJudgments?: (
-    ownerUserId: string,
-    segmentId: string,
-    windowStart: number,
-    windowEnd: number,
-  ) => Promise<LifecycleJudgmentProjection[]>;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */
@@ -58,14 +40,6 @@ export interface SegmentLifelineRoutesOptions {
     disableable: boolean;
     hasBackup: boolean;
   } | null;
-  /**
-   * 判据①: resolve the REAL pending governance Candidate count for a segment.
-   * Return null when the Candidate projection is unavailable — the response
-   * then honestly reports source:'unavailable' instead of guessing from the
-   * synthesized governance.pending (the original incident's false signal).
-   * When this option itself is absent, the projection is not wired → unavailable.
-   */
-  resolvePendingCandidateCount?: (ownerUserId: string, segmentId: string) => Promise<number | null>;
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -114,18 +88,13 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const windowStart = now - windowMs;
     const windowEnd = now;
 
-    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd, userId);
-    const actionable = await resolveActionableInfo(userId, segmentId, opts.resolvePendingCandidateCount, request.log);
-
+    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd);
     const response = {
       segmentId,
       segmentName: data.segmentName,
       activeVersion: data.activeEpoch?.version ?? data.manifestVersion,
       chain: data.chain,
       currentStatus: deriveCurrentStatus(data.chain),
-      activeStage: deriveActiveStage(data.activeEpoch),
-      actionable,
-      evalSource: data.evalSource,
       window: { startMs: windowStart, endMs: windowEnd },
       // Retained for backward compat + detail views
       observations: data.observations,
@@ -167,17 +136,15 @@ interface LifelineData {
   overrideState: { enabled: boolean; contentVersion: number | null } | null;
   epochGuardMetrics: Record<number, import('@cat-cafe/shared').GuardMetric[]>;
   enablementMatrix: SegmentEnablementMatrix;
-  evalSource: LifecycleEvalSource;
 }
 
-/** Join trace/override/judgment/guard stores into the lifecycle chain (steps 1-8). */
+/** Join trace, override, and guard stores into the version chain. */
 async function assembleLifelineData(
   traceStore: InjectionTraceStore,
   opts: SegmentLifelineRoutesOptions,
   segmentId: string,
   windowStart: number,
   windowEnd: number,
-  ownerUserId: string,
 ): Promise<LifelineData> {
   // 1. Collect raw observations (full-window scan; detail list capped)
   const { observations, observationInputs, detailCapped } = await collectObservations(
@@ -193,36 +160,17 @@ async function assembleLifelineData(
   // 3. Get current override state for contentVersion
   const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
 
-  // 4. Resolve manifest version. Legacy judgment keys are not read by the
-  // production composition; /api/segment-evaluation owns CycleRecord truth.
+  // 4. Resolve manifest version. /api/segment-evaluation owns CycleRecord truth.
   const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
   const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
 
-  // 5. Build version lifecycle chain (R15: returns timeline for guard attribution)
-  // Explicit legacy consumers may still supply lifecycle projections. The
-  // production composition leaves this unwired and uses CycleRecord panels.
-  let judgmentHistory: LifecycleJudgmentProjection[] = [];
-  let evalSource: LifecycleEvalSource = {
-    status: 'unavailable',
-    source: 'unwired',
-    reason: 'runtime-unwired',
-  };
-  if (opts.resolveEvalJudgments) {
-    try {
-      judgmentHistory = await opts.resolveEvalJudgments(ownerUserId, segmentId, windowStart, windowEnd);
-      evalSource = { status: 'available', source: 'objective-runtime', reason: null };
-    } catch {
-      judgmentHistory = [];
-      evalSource = { status: 'unavailable', source: 'objective-runtime', reason: 'resolver-failed' };
-    }
-  }
-
+  // 5. Build the version/tracing chain. Eval and governance content is rendered
+  // from CycleRecord by /api/segment-evaluation, not synthesized here.
   const { chain, timeline } = buildVersionChain({
     manifestVersion,
     overrideEvents,
     observations: observationInputs,
     currentContentVersion: overrideState?.contentVersion ?? null,
-    judgmentHistory,
   });
 
   // 6. Guard events — still collected for detail view
@@ -246,7 +194,6 @@ async function assembleLifelineData(
     overrideState,
     epochGuardMetrics,
     enablementMatrix,
-    evalSource,
   };
 }
 
@@ -284,40 +231,6 @@ async function buildLifelineEnablementMatrix(
       availableEpochVersions,
     },
   });
-}
-
-/**
- * 判据①: resolve actionable info from the REAL pending Candidate count — fail-safe.
- *
- * The Candidate projection is the ONLY authority for actionability; the
- * synthesized governance.pending is never consulted. Fail-closed to the
- * honest provenance gap: provider absent / throwing / returning an invalid
- * count (non-integer, negative, NaN) → source:'unavailable' with a
- * server-side warning, NEVER a guessed count (P2-3).
- */
-async function resolveActionableInfo(
-  ownerUserId: string,
-  segmentId: string,
-  provider: ((ownerUserId: string, segmentId: string) => Promise<number | null>) | undefined,
-  log: { warn: (obj: object, msg: string) => void },
-): Promise<ActionableInfo> {
-  const unavailable: ActionableInfo = { stage: null, candidateCount: null, source: 'unavailable' };
-  if (!provider) return unavailable;
-
-  let count: number | null;
-  try {
-    count = await provider(ownerUserId, segmentId);
-  } catch (err) {
-    log.warn({ err, segmentId }, 'candidate-count provider threw; degrading to unavailable');
-    return unavailable;
-  }
-
-  if (count == null) return unavailable;
-  if (!Number.isInteger(count) || count < 0) {
-    log.warn({ segmentId, count }, 'candidate-count provider returned invalid count; degrading to unavailable');
-    return unavailable;
-  }
-  return { stage: count > 0 ? 'governance' : null, candidateCount: count, source: 'candidate-count' };
 }
 
 // ── Data collection helpers ──────────────────────────────────

@@ -225,8 +225,6 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
           chain: [makeEpoch()],
           selected: { version: 1, stage: 'eval' },
           onSelect: () => {},
-          activeStage: 'tracing',
-          actionable: { stage: null, candidateCount: null, source: 'unavailable' },
         }),
         createElement(LifelineStageDetail, {
           selected: { version: 1, stage: 'eval' },

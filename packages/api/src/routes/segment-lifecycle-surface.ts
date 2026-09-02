@@ -26,7 +26,6 @@ export interface SegmentLifecycleSurfaceOptions {
   threadStore?: IThreadStore;
   runtime?: ObjectiveEvaluationRuntime;
   governance?: CycleGovernanceCoordinator;
-  resolvePendingCandidateCount?: (ownerUserId: string, segmentId: string) => Promise<number | null>;
 }
 
 /**
@@ -64,7 +63,6 @@ export async function registerSegmentLifecycleSurface(
         hasBackup: overlayPath ? existsSync(`${overlayPath}.bak`) : false,
       };
     },
-    resolvePendingCandidateCount: options.resolvePendingCandidateCount,
   });
   await app.register(segmentEvaluationRoutes, { runtime: options.runtime });
   await app.register(segmentLifelineReplayRoutes, {
