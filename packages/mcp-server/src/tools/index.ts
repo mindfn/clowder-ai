@@ -276,7 +276,11 @@ export {
   submitSemanticSweepTools,
 } from './submit-semantic-sweep-tool.js';
 export {
-  handleRetrieveUnitEvaluationTracesTool,
-  handleSubmitUnitEvaluationTool,
+  describeHarnessUnitInputSchema,
+  handleDescribeHarnessUnitTool,
+  handleReadCycleTracesTool,
+  handleSubmitCycleEvaluationTool,
+  readCycleTracesInputSchema,
+  submitCycleEvaluationInputSchema,
   unitEvaluationTools,
 } from './unit-evaluation-tools.js';

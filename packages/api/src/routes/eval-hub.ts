@@ -9,6 +9,9 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import type { CycleEvaluationCoordinator } from '../infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js';
+import { registerCycleEvaluationCallbackRoutes } from '../infrastructure/harness-eval/evaluation/cycle-evaluation-callbacks.js';
+import type { HarnessUnitDescriber } from '../infrastructure/harness-eval/evaluation/HarnessUnitDescriber.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { loadDomains } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
@@ -90,6 +93,10 @@ export interface EvalHubRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257 semantic sweep coordinator for trigger-now judgments. */
   semanticSweepCoordinator?: import('../infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
+  /** F257 Objective-cycle assignment, trace read, and structured writeback. */
+  cycleEvaluationCoordinator?: CycleEvaluationCoordinator;
+  /** F257 read-only unit action/version schema. */
+  harnessUnitDescriber?: HarnessUnitDescriber;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -112,6 +119,9 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   }
   if (opts.semanticSweepCoordinator) {
     registerSubmitSemanticSweepRoute(app, opts.semanticSweepCoordinator);
+  }
+  if (opts.cycleEvaluationCoordinator && opts.harnessUnitDescriber) {
+    registerCycleEvaluationCallbackRoutes(app, opts.cycleEvaluationCoordinator, opts.harnessUnitDescriber);
   }
   app.get('/api/eval-hub/summary', async (request, reply) => {
     const userId = requireSession(request, reply);
