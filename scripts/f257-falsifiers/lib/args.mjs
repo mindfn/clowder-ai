@@ -15,12 +15,13 @@ const VALUE_ARGS = Object.freeze({
   '--segment-id': 'segmentId',
   '--objective-id': 'objectiveId',
   '--json-out': 'jsonOutPath',
+  '--browser-evidence': 'browserEvidencePath',
 });
 
 export const HELP = `Usage:
   node scripts/f257-falsifiers/f257-falsify.mjs baseline --redis-url <url> --owner-user-id <id> --baseline <file>
   node scripts/f257-falsifiers/f257-falsify.mjs verify --redis-url <url> --api-url <url> --owner-user-id <id> \\
-      --baseline <file> [--checks F-2,F-3,...] [--project-root <dir>] [--segment-id D1] [--objective-id identity-truth] [--json-out <file>]
+      --baseline <file> [--checks F-2,F-3,...] [--project-root <dir>] [--segment-id D1] [--objective-id identity-truth] [--json-out <file>] [--browser-evidence <file>]
 
 Contract: terminal-contract-v1.md §4 (F-1~F-8). Read-only: never writes to Redis or the API.
 A check whose observation surface is not bound yet reports "unbound"; unbound is NOT a pass.
@@ -81,6 +82,7 @@ export function parseArgs(argv, env = process.env) {
     segmentId: 'D1',
     objectiveId: 'identity-truth',
     jsonOutPath: undefined,
+    browserEvidencePath: undefined,
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) index = consumeArg(options, argv, index);
