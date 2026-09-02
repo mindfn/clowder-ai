@@ -5,7 +5,7 @@ status: authoritative
 supersedes:
   - feature-specs/2026-08-04-f257-objective-eval-redesign.md §0 / §2.4 中"冻结 raw corpus"的表述
   - F257-harness-ledger.md KD-21 中"触发时冻结 raw corpus"的表述
-source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 09-02 04:50（thread_mrdip0u5aw4ysi97）
+source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 09-02 04:50 / 09-02 06:09（thread_mrdip0u5aw4ysi97）
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
@@ -31,13 +31,13 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | TC-2 | 结构化反例 / MCP 举报 = 池内**高置信度标记**，仅用于评估时优先阅读 | 把标记当证据准入门；无标记就不评 |
 | TC-3 | 触发三路 anyOf：周期内累计 ≥ 200 / 周期内去重反例 ≥ 阈值 / 距上次评估 ≥ 7 天；**由系统触发** | 需要人点按钮；任一路被其它步骤前置阻塞 |
 | TC-4 | 冻结 = **只冻结时间窗**（start=上次周期终点，end=now）+ 目标/指标/版本引用；**不复制 tracing 数据** | snapshot 内嵌 episode 正文（现状 6 MB/个） |
-| TC-5 | 评估由**固定系统 thread** 的评估猫执行：输入 = 时间窗 + 范围 + 指标；从池子按窗读取，反例优先 | 评估依赖预先分类结果；评估在主请求路径上跑 |
+| TC-5 | 评估在**每个 Objective 专属的系统 thread** 中由其**默认成员**执行（不单独指定评估猫；不合理在 thread 侧改）；跨 Objective 可并发，同 Objective 严格串行；输入 = **评估目标（Objective statement）** + 时间窗 + 范围 + 指标；从池子按窗读取，反例优先 | 全域共用一个评估 thread；评估依赖预先分类结果；评估在主请求路径上跑；assignment 只列指标不声明目标 |
 | TC-6 | 评估必须**调工具回写 eval 状态**（每指标结论 + 整体结论） | 只在对话里说结论 |
 | TC-7 | 未回写 → 系统可观察 → **一条系统 message 重触发一次**（有界） | 无限续租/重试；同一 job 滚动上千代 |
 | TC-8 | 回写后**自动进入 governance**：再次触发同一评估 thread → 保持 / 回退 / 演进 | 停在 eval；需要人手动进 governance |
 | TC-9 | 仅"回退 / 演进"发审批卡；operator 点了（或跳过）都进入下一周期 | 保持也发卡；卡未点则整体停摆 |
 | TC-10 | **跳过（含数据不足）不改周期起点**；否则新起点 = 本周期终点 | insufficient_evidence 推进了起点（现状） |
-| TC-11 | v1/v2/v3 **各自独立评估**，无跨版本对比 | 引入 before/after 对比作为治理前提 |
+| TC-11 | v1/v2/v3 的**评估**各自只看本版本时间窗，不做跨版本对比；**governance** 以本周期结论判断 keep/rollback/evolve，历史周期结论在同一 Objective thread 中天然可见、可参考 | 把"与上一版比较"当作当前版本的闭环条件 |
 | TC-12 | Console：Tracing 面只有两组——**周期内反例 / 周期内累计**，触发条件带进度（x/阈值、y/200、7 天）；无"待分类" | 出现全局管道数字；名词与数值口径不一致 |
 | TC-13 | Semantic Sweep（后台批量打标）若保留，只是**可选的反例发现器**，绝不能是主路径的一环或前置门 | "sweep 未清空就不评 Unit" |
 
