@@ -794,7 +794,7 @@ async function main(): Promise<void> {
   const invocationQueue = new InvocationQueue(
     redis ? new RedisQueueLedgerStore(redis) : new InMemoryQueueLedgerStore(),
   );
-  await invocationQueue.hydrateFromLedger();
+  await invocationQueue.hydrateFromLedger(messageStore);
   const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
   const invocationRecordStore = createInvocationRecordStore(redis);
   const sessionStore = redis ? new SessionStore(redis) : undefined;
@@ -2991,7 +2991,6 @@ async function main(): Promise<void> {
     agentSessionMutex,
     socketManager,
     messageStore, // F117: for marking queued messages as canceled on withdraw/clear
-    queueCustodyCoordinator,
     invocationRecordStore, // F194 Phase B: canonical liveness read source
     draftStore, // F194 Phase B: canonical liveness read source
     turnExecutionStore, // F194/F254: durable running child closes tracker/draft handoff gaps
@@ -3010,7 +3009,6 @@ async function main(): Promise<void> {
     socketManager,
     threadStore,
     invocationQueue,
-    queueCustodyCoordinator,
     queueProcessor,
     indexBuilder: memoryServices.indexBuilder,
   });
@@ -4265,7 +4263,6 @@ async function main(): Promise<void> {
     invocationQueue,
     ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
     ...(actionSuccessorAdmissionService ? { actionSuccessorAdmissionService } : {}),
-    queueCustodyCoordinator,
     indexBuilder: memoryServices.indexBuilder as
       | { markThreadDirty(threadId: string): void; flushDirtyThreads?(): number | Promise<number> }
       | undefined,

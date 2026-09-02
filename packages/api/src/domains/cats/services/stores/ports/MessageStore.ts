@@ -54,7 +54,6 @@ import {
   type QueueCustodyTransitionInput,
   type QueuedMessageCustody,
   queueCustodyAdmissionIntentsMatch,
-  terminalizeRecalledQueueCustody,
 } from './queued-message-custody.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
 import { DEFAULT_THREAD_ID } from './ThreadStore.js';
@@ -145,6 +144,8 @@ export interface RecallMessageToComposerDraftInput {
   expectedDraftRevision: number;
   merge: 'replace' | 'append';
   recalledAt: number;
+  /** Exact read evidence copied from the claimed Queue ledger fan-out. */
+  exposures: readonly import('./queued-message-custody.js').QueueBodyExposure[];
 }
 
 export type RecallMessageToComposerDraftResult =
@@ -1772,9 +1773,7 @@ function redactRecalledMessage(message: StoredMessage, recall: MessageRecallMark
 
 function isRecallableOwnerMessage(message: StoredMessage): boolean {
   if (messageFrom(message).kind !== 'user' || message._tombstone) return false;
-  return (
-    Boolean(message.queueCustody) && (message.deliveryStatus === 'queued' || message.deliveryStatus === 'delivered')
-  );
+  return message.deliveryStatus === 'queued';
 }
 
 function replaceOptionalField<K extends keyof StoredMessage>(
@@ -2219,12 +2218,10 @@ export class MessageStore {
 
     const projection = buildRecallDraft(msg, input, existingDraft, actualDraftRevision);
 
-    const custody = msg.queueCustody;
-    const exactExposures = custody?.bodyExposures ? structuredClone(custody.bodyExposures) : [];
-    const wasExposed = exactExposures.length > 0 || (custody?.seenByCatIds.length ?? 0) > 0;
-    if (custody) {
-      msg.queueCustody = terminalizeRecalledQueueCustody(custody, input.recalledAt);
-    }
+    const exactExposures = structuredClone(input.exposures ?? []);
+    const wasExposed = exactExposures.length > 0;
+    delete msg.queueCustody;
+    delete msg.queueCustodyAdmission;
     redactRecalledMessage(msg, {
       version: 1,
       exposure: wasExposed ? 'seen' : 'none',

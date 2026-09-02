@@ -68,7 +68,6 @@ import { MessageDeliveryService } from '../domains/cats/services/agents/invocati
 import {
   createFanoutQueueEntriesFromAdmission,
   createInitialFanoutQueuedMessageCustody,
-  type QueuedMessageCustodyCoordinator,
 } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
@@ -1000,8 +999,6 @@ export interface CallbackRoutesOptions {
   };
   /** F122B: InvocationQueue for agent-sourced A2A entries */
   invocationQueue?: import('../domains/cats/services/agents/invocation/InvocationQueue.js').InvocationQueue;
-  /** F254: await exact Queue ACK persistence before releasing callback evidence. */
-  queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
   /** F167 Phase S: durable subject/action/slot admission for A2A successor dispatch. */
   actionSuccessorAdmissionService?: import('../domains/ball-custody/ActionSuccessorAdmissionService.js').ActionSuccessorAdmissionService;
   /** F126: Limb node registry for device/hardware capability management */

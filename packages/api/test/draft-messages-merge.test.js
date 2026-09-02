@@ -214,24 +214,6 @@ describe('GET /api/messages — draft merge (#80)', () => {
   });
 
   it('hydrates only exposed recall tombstones and never returns their body', async () => {
-    const custody = (entryId, exposure) => ({
-      version: 1,
-      entryId,
-      revision: 1,
-      intent: 'user_message',
-      status: 'queued',
-      allTargetCats: ['opus'],
-      pendingTargetCats: ['opus'],
-      notifiedByCatIds: [],
-      seenByCatIds: exposure ? ['opus'] : [],
-      seenInvocationIdByCatId: exposure ? { opus: exposure.invocationId } : {},
-      ...(exposure ? { bodyExposures: [exposure] } : {}),
-      failedByCatIds: [],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 100,
-      updatedAt: 100,
-    });
     const hidden = messageStore.append(
       canonicalTestMessageInput({
         userId: 'user-1',
@@ -241,7 +223,6 @@ describe('GET /api/messages — draft merge (#80)', () => {
         timestamp: 1_000,
         threadId: 'thread-1',
         deliveryStatus: 'queued',
-        queueCustody: custody('entry-hidden'),
       }),
     );
     const exposure = { targetCatId: 'opus', invocationId: 'child-read', seenAt: 1_500 };
@@ -254,7 +235,6 @@ describe('GET /api/messages — draft merge (#80)', () => {
         timestamp: 1_100,
         threadId: 'thread-1',
         deliveryStatus: 'queued',
-        queueCustody: custody('entry-exposed', exposure),
       }),
     );
     assert.equal(
@@ -264,6 +244,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
         expectedDraftRevision: 0,
         merge: 'replace',
         recalledAt: 2_000,
+        exposures: [],
       }).kind,
       'recalled',
     );
@@ -274,6 +255,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
         expectedDraftRevision: 1,
         merge: 'replace',
         recalledAt: 2_100,
+        exposures: [exposure],
       }).kind,
       'recalled',
     );

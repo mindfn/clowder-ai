@@ -211,6 +211,10 @@ export type DurableSteerClaimResult =
       reason: 'entry_not_found' | 'entry_processing' | 'entry_ineligible';
     };
 
+export type DurableRecallClaimResult =
+  | { outcome: 'claimed'; entries: QueueEntry[] }
+  | { outcome: 'not_found' | 'processing' };
+
 export interface QueuedHandledResult {
   entryId: string;
   threadId: string;
@@ -641,7 +645,7 @@ export class InvocationQueue {
     return projected;
   }
 
-  async hydrateFromLedger(): Promise<number> {
+  async hydrateFromLedger(messageStore?: Pick<IMessageStore, 'getById'>): Promise<number> {
     this.queues.clear();
     this.ledgerClaimIds.clear();
     let count = 0;
@@ -650,6 +654,12 @@ export class InvocationQueue {
       for (const row of await this.ledgerStore.list(threadId)) {
         if (row.status !== 'claimed' || !row.claimId) {
           rows.push(row);
+          continue;
+        }
+        const source = row.payload.messageId ? await messageStore?.getById(row.payload.messageId) : null;
+        if (source?.recall || (source?.deliveryStatus && source.deliveryStatus !== 'queued')) {
+          const terminal = await this.ledgerStore.commit(threadId, row.id, row.claimId, 'withdrawn', Date.now());
+          if (terminal.outcome === 'updated') rows.push(terminal.entry);
           continue;
         }
         const restored = await this.ledgerStore.restore(threadId, row.id, row.claimId);
@@ -890,6 +900,40 @@ export class InvocationQueue {
     const entry = this.findEntry(threadId, userId, entryId);
     if (!entry || entry.status !== 'queued') return null;
     return this.claimLedgerEntry(entry);
+  }
+
+  /** Freeze the complete scalar fan-out for one owner message before true recall moves its body. */
+  async claimMessageEntriesForRecall(
+    threadId: string,
+    userId: string,
+    messageId: string,
+    claimedAt = Date.now(),
+  ): Promise<DurableRecallClaimResult> {
+    const matches = [...this.queues.values()]
+      .flat()
+      .filter((entry) => entry.threadId === threadId && entry.messageId === messageId);
+    if (matches.length === 0 || matches.some((entry) => entry.userId !== userId)) return { outcome: 'not_found' };
+    if (matches.some((entry) => entry.status !== 'queued')) return { outcome: 'processing' };
+    const claimId = randomUUID();
+    const claimed = await this.ledgerStore.claimPrefix(
+      threadId,
+      matches.map((entry) => entry.id),
+      claimId,
+      claimedAt,
+    );
+    if (claimed.outcome !== 'claimed') {
+      return { outcome: claimed.outcome === 'not_found' ? 'not_found' : 'processing' };
+    }
+    return { outcome: 'claimed', entries: this.cacheLedgerClaim(claimed.entries, claimId, claimedAt) };
+  }
+
+  /** Commit every row frozen by claimMessageEntriesForRecall as terminal. */
+  async commitClaimedRecall(threadId: string, entryIds: readonly string[]): Promise<boolean> {
+    let committedAll = true;
+    for (const entryId of entryIds) {
+      if (!(await this.commitClaimedWithdrawal(threadId, entryId))) committedAll = false;
+    }
+    return committedAll;
   }
 
   /** Remove a withdrawal claim after its source-message terminal write succeeds. */

@@ -35,7 +35,6 @@ import {
   projectLifecycleAppendAction,
   projectLifecycleAppendCapability,
 } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
-import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
@@ -76,8 +75,6 @@ export interface QueueRoutesOptions {
   socketManager: SocketManager;
   /** MessageStore supplies receipt hydration; Queue withdrawal never deletes author history. */
   messageStore?: IMessageStore;
-  /** F254: persist reorder/promote mutations before acknowledging them. */
-  queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
   /** F194 Phase B: canonical liveness read sources (record + draft). When omitted,
    *  GET /queue's activeInvocations falls back to legacy tracker-only enumeration
    *  for backward compat in tests. */

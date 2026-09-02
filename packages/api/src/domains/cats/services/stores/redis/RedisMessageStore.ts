@@ -91,11 +91,7 @@ import {
   prepareQueueLedgerMessageAdmission,
   settleAssignedLifecycleDispatchFailureMetadata,
 } from '../ports/MessageStore.js';
-import {
-  assertQueueCustodyMessageBinding,
-  assertQueueCustodyTransition,
-  terminalizeRecalledQueueCustody,
-} from '../ports/queued-message-custody.js';
+import { assertQueueCustodyMessageBinding, assertQueueCustodyTransition } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
 import {
@@ -756,25 +752,13 @@ if redis.call('HGET', KEYS[1], 'catId') ~= '' or redis.call('HGET', KEYS[1], '_t
   return {-3, 0}
 end
 local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
-if deliveryStatus ~= 'queued' and deliveryStatus ~= 'delivered' then return {-3, 0} end
-local custodyRaw = redis.call('HGET', KEYS[1], 'queueCustody')
-if not custodyRaw or custodyRaw == '' then return {-3, 0} end
+if deliveryStatus ~= 'queued' then return {-3, 0} end
 
 local currentDraftRevision = tonumber(redis.call('HGET', KEYS[2], 'revision') or '0')
 if currentDraftRevision ~= tonumber(ARGV[3]) then return {0, currentDraftRevision} end
 
-local okCustody, custody = pcall(cjson.decode, custodyRaw)
-if not okCustody or type(custody) ~= 'table' then return redis.error_reply('INVALID_QUEUE_CUSTODY') end
-local currentCustodyRevision = tonumber(custody.revision or 0)
-if currentCustodyRevision ~= tonumber(ARGV[6]) then return {3, currentCustodyRevision} end
-local nextCustodyRaw = ARGV[7]
-local okNextCustody, nextCustody = pcall(cjson.decode, nextCustodyRaw)
-if not okNextCustody or type(nextCustody) ~= 'table' then return redis.error_reply('INVALID_NEXT_QUEUE_CUSTODY') end
-if tonumber(nextCustody.revision or 0) ~= currentCustodyRevision + 1 or
-   nextCustody.entryId ~= custody.entryId or nextCustody.status ~= 'terminal' or
-   #(nextCustody.pendingTargetCats or cjson.decode('[]')) ~= 0 then
-  return redis.error_reply('INVALID_NEXT_QUEUE_CUSTODY')
-end
+local okExposures, exposures = pcall(cjson.decode, ARGV[6])
+if not okExposures or type(exposures) ~= 'table' then return redis.error_reply('INVALID_QUEUE_EXPOSURES') end
 local sourceText = redis.call('HGET', KEYS[1], 'content') or ''
 local existingText = redis.call('HGET', KEYS[2], 'text') or ''
 local nextText = sourceText
@@ -799,8 +783,7 @@ local nextReplyTo = ''
 if ARGV[4] == 'append' then nextReplyTo = redis.call('HGET', KEYS[2], 'replyTo') or '' end
 if nextReplyTo == '' then nextReplyTo = redis.call('HGET', KEYS[1], 'replyTo') or '' end
 
-local exposures = custody.bodyExposures or cjson.decode('[]')
-local exposed = #exposures > 0 or #(custody.seenByCatIds or cjson.decode('[]')) > 0
+local exposed = #exposures > 0
 
 local recall = { version = 1, exposure = exposed and 'seen' or 'none', recalledAt = tonumber(ARGV[5]) }
 if #exposures > 0 then recall.exposures = exposures end
@@ -823,8 +806,6 @@ redis.call('HSET', KEYS[1],
   'mentions', '[]',
   'deliveryStatus', 'canceled',
   '_tombstone', '1',
-  'queueCustody', nextCustodyRaw,
-  'queueCustodyRevision', tostring(nextCustody.revision),
   'recall', cjson.encode(recall))
 local messageId = redis.call('HGET', KEYS[1], 'id')
 for keyIndex = 5, #KEYS do
@@ -843,7 +824,7 @@ for _, exposure in ipairs(exposures) do
   if not found then table.insert(ids, messageId) end
   redis.call('HSET', KEYS[4], field, cjson.encode(ids))
 end
-redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo')
+redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo', 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
 if not exposed then
   redis.call('ZREM', KEYS[3], redis.call('HGET', KEYS[1], 'id'))
 end
@@ -1477,57 +1458,48 @@ export class RedisMessageStore {
     if (!Number.isInteger(input.expectedDraftRevision) || input.expectedDraftRevision < 0) {
       throw new RangeError('expected draft revision must be a non-negative integer');
     }
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const beforeRecall = await this.getById(id);
-      const currentCustody = beforeRecall?.queueCustody;
-      const nextCustody = currentCustody
-        ? terminalizeRecalledQueueCustody(currentCustody, input.recalledAt)
-        : undefined;
-      const mentionKeys = [...new Set(beforeRecall?.mentions ?? [])].map((catId) => MessageKeys.mentions(catId));
-      const result = (await this.redis.eval(
-        RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA,
-        4 + mentionKeys.length,
-        MessageKeys.detail(id),
-        MessageKeys.ownerComposerDraft(input.ownerUserId, input.threadId),
-        MessageKeys.threadVisibility(input.threadId),
-        MessageKeys.queueExposureIndex(input.threadId),
-        ...mentionKeys,
-        input.ownerUserId,
-        input.threadId,
-        String(input.expectedDraftRevision),
-        input.merge,
-        String(input.recalledAt),
-        String(currentCustody?.revision ?? -1),
-        nextCustody ? JSON.stringify(nextCustody) : '',
-      )) as [number, number, string?, string?, number?];
-      const outcome = Number(result[0]);
-      if (outcome === 3) continue;
-      if (outcome === -1) return { kind: 'not_found' };
-      if (outcome === -2) return { kind: 'unauthorized' };
-      if (outcome === -3) return { kind: 'not_recallable' };
-      if (outcome === 0) return { kind: 'draft_revision_mismatch', actualRevision: Number(result[1]) };
-      if (outcome === 2) {
-        const message = await this.getById(id);
-        return message ? { kind: 'already_recalled', message } : { kind: 'not_found' };
-      }
-
-      const [message, draft] = await Promise.all([
-        this.getById(id),
-        this.getOwnerComposerDraft(input.ownerUserId, input.threadId),
-      ]);
-      if (!message || !draft) throw new Error('true recall CAS committed but terminal hydration failed');
-      const sourceText = result[2] ?? '';
-      const previousText = result[3] ?? '';
-      const insertedStart = input.merge === 'append' && previousText ? previousText.length + 2 : 0;
-      return {
-        kind: 'recalled',
-        verdict: Number(result[1]) === 1 ? 'exposed' : 'zero_exposure',
-        message,
-        draft,
-        insertedRange: { start: insertedStart, end: insertedStart + sourceText.length },
-      };
+    const beforeRecall = await this.getById(id);
+    const mentionKeys = [...new Set(beforeRecall?.mentions ?? [])].map((catId) => MessageKeys.mentions(catId));
+    const result = (await this.redis.eval(
+      RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA,
+      4 + mentionKeys.length,
+      MessageKeys.detail(id),
+      MessageKeys.ownerComposerDraft(input.ownerUserId, input.threadId),
+      MessageKeys.threadVisibility(input.threadId),
+      MessageKeys.queueExposureIndex(input.threadId),
+      ...mentionKeys,
+      input.ownerUserId,
+      input.threadId,
+      String(input.expectedDraftRevision),
+      input.merge,
+      String(input.recalledAt),
+      JSON.stringify(input.exposures ?? []),
+    )) as [number, number, string?, string?, number?];
+    const outcome = Number(result[0]);
+    if (outcome === -1) return { kind: 'not_found' };
+    if (outcome === -2) return { kind: 'unauthorized' };
+    if (outcome === -3) return { kind: 'not_recallable' };
+    if (outcome === 0) return { kind: 'draft_revision_mismatch', actualRevision: Number(result[1]) };
+    if (outcome === 2) {
+      const message = await this.getById(id);
+      return message ? { kind: 'already_recalled', message } : { kind: 'not_found' };
     }
-    throw new Error('true recall custody CAS retry exhausted');
+
+    const [message, draft] = await Promise.all([
+      this.getById(id),
+      this.getOwnerComposerDraft(input.ownerUserId, input.threadId),
+    ]);
+    if (!message || !draft) throw new Error('true recall CAS committed but terminal hydration failed');
+    const sourceText = result[2] ?? '';
+    const previousText = result[3] ?? '';
+    const insertedStart = input.merge === 'append' && previousText ? previousText.length + 2 : 0;
+    return {
+      kind: 'recalled',
+      verdict: Number(result[1]) === 1 ? 'exposed' : 'zero_exposure',
+      message,
+      draft,
+      insertedRange: { start: insertedStart, end: insertedStart + sourceText.length },
+    };
   }
 
   /**
