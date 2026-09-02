@@ -13,6 +13,7 @@ const CANONICAL_UNIT_IDS = [
   'R2',
   ...Array.from({ length: 13 }, (_, index) => `S${index + 1}`),
 ].sort();
+const unitId = z.string().regex(/^[A-Z]+\d+$/);
 
 const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const objectiveAttachment = z
@@ -23,7 +24,7 @@ const objectiveAttachment = z
   .strict();
 const unit = z
   .object({
-    unitId: z.string().regex(/^(?:B1|C1|D(?:[1-9]|1[0-9]|2[01])|L[1-7]|N1|R[12]|S(?:[1-9]|1[0-3]))$/),
+    unitId,
     hookId: slug,
     unitState: z.enum(['evaluable', 'not-ready']),
     notReadyReason: z.string().trim().min(1).optional(),
@@ -63,38 +64,42 @@ export function parseUnitEvaluationManifest(
     return fail(`invalid unit evaluation manifest: ${details}`);
   }
 
+  const validationError = validateManifest(parsed.data, registry);
+  if (validationError) return fail(validationError);
+  return { ok: true, manifest: parsed.data };
+}
+
+function validateManifest(manifest: UnitEvaluationManifest, registry: ObjectiveRegistry): string | null {
   const objectiveIds = new Set(registry.objectives.map((objective) => objective.id));
   const seenUnits = new Set<string>();
-  for (const definition of parsed.data.units) {
-    if (seenUnits.has(definition.unitId)) return fail(`duplicate unit id "${definition.unitId}"`);
+  for (const definition of manifest.units) {
+    if (seenUnits.has(definition.unitId)) return `duplicate unit id "${definition.unitId}"`;
     seenUnits.add(definition.unitId);
-    if (definition.unitState === 'not-ready' && !definition.notReadyReason) {
-      return fail(`unit "${definition.unitId}" is not-ready but has no notReadyReason`);
-    }
-    if (definition.unitState === 'evaluable' && definition.notReadyReason) {
-      return fail(`unit "${definition.unitId}" is evaluable but has notReadyReason`);
-    }
-    const seenAttachments = new Set<string>();
-    for (const attachment of definition.objectives) {
-      if (!objectiveIds.has(attachment.objectiveId)) {
-        return fail(`unit "${definition.unitId}" references unknown objective "${attachment.objectiveId}"`);
-      }
-      const coordinate = `${attachment.objectiveId}:${attachment.clauseId ?? ''}`;
-      if (seenAttachments.has(coordinate))
-        return fail(`unit "${definition.unitId}" repeats attachment "${coordinate}"`);
-      seenAttachments.add(coordinate);
-    }
+    const unitError = validateUnit(definition, objectiveIds);
+    if (unitError) return unitError;
   }
 
-  const actualUnits = [...seenUnits].sort();
-  if (JSON.stringify(actualUnits) !== JSON.stringify(CANONICAL_UNIT_IDS)) {
-    const missing = CANONICAL_UNIT_IDS.filter((unitId) => !seenUnits.has(unitId));
-    const extra = actualUnits.filter((unitId) => !CANONICAL_UNIT_IDS.includes(unitId));
-    return fail(
-      `manifest must cover canonical 46 units exactly; missing=[${missing.join(',')}], extra=[${extra.join(',')}]`,
-    );
+  const missing = CANONICAL_UNIT_IDS.filter((unitId) => !seenUnits.has(unitId));
+  return missing.length > 0 ? `manifest must cover canonical 46 units; missing=[${missing.join(',')}]` : null;
+}
+
+function validateUnit(definition: UnitEvaluationManifest['units'][number], objectiveIds: Set<string>): string | null {
+  if (definition.unitState === 'not-ready' && !definition.notReadyReason) {
+    return `unit "${definition.unitId}" is not-ready but has no notReadyReason`;
   }
-  return { ok: true, manifest: parsed.data };
+  if (definition.unitState === 'evaluable' && definition.notReadyReason) {
+    return `unit "${definition.unitId}" is evaluable but has notReadyReason`;
+  }
+  const seenAttachments = new Set<string>();
+  for (const attachment of definition.objectives) {
+    if (!objectiveIds.has(attachment.objectiveId)) {
+      return `unit "${definition.unitId}" references unknown objective "${attachment.objectiveId}"`;
+    }
+    const coordinate = `${attachment.objectiveId}:${attachment.clauseId ?? ''}`;
+    if (seenAttachments.has(coordinate)) return `unit "${definition.unitId}" repeats attachment "${coordinate}"`;
+    seenAttachments.add(coordinate);
+  }
+  return null;
 }
 
 export async function loadUnitEvaluationManifest(
