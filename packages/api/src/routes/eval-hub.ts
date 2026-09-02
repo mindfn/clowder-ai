@@ -119,15 +119,6 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   if (opts.unitSemanticEvaluationCoordinator) {
     registerUnitEvaluationCallbackRoutes(app, opts.unitSemanticEvaluationCoordinator);
   }
-  // F257: MCP-layer guard rejection ingest + ledger query surface (AC-B1 dual entry).
-  if (opts.guardRejectionLog) {
-    const { registerCallbackGuardRejectionRoutes } = await import('./callback-guard-rejection-routes.js');
-    registerCallbackGuardRejectionRoutes(app, {
-      guardRejectionLog: opts.guardRejectionLog,
-      threadStore: opts.threadStore,
-    });
-  }
-
   app.get('/api/eval-hub/summary', async (request, reply) => {
     const userId = requireSession(request, reply);
     if (!userId) return;
