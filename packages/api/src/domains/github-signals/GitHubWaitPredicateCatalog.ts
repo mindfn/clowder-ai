@@ -8,6 +8,26 @@ import type {
 } from '@cat-cafe/shared';
 import { z } from 'zod';
 
+// #1392 AC-3: shared positive-allowlist schema — non-empty, case-insensitively unique logins.
+const githubAuthorLoginsSchema = z
+  .array(z.string().trim().min(1).max(100))
+  .min(1)
+  .max(20)
+  .superRefine((authorLogins, ctx) => {
+    const normalized = new Set<string>();
+    for (const [index, authorLogin] of authorLogins.entries()) {
+      const key = authorLogin.toLowerCase();
+      if (normalized.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: 'authorLogins must be unique case-insensitively; example: ["maintainer-login"]',
+        });
+      }
+      normalized.add(key);
+    }
+  });
+
 export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pr_head_changed') }).strict(),
   z
@@ -23,12 +43,25 @@ export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      // #1392 AC-3: required exact positive allowlist (the complete audience).
+      authorLogins: githubAuthorLoginsSchema,
+    })
+    .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
   z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
 ]);
 
 export const githubIssueWaitPredicateSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('issue_comment_added') }).strict(),
+  z
+    .object({
+      kind: z.literal('issue_comment_added'),
+      // #1392 AC-3: optional allowlist; omitted ⇒ any comment author matches.
+      authorLogins: githubAuthorLoginsSchema.optional(),
+    })
+    .strict(),
   z.object({ kind: z.literal('issue_author_commented') }).strict(),
 ]);
 
@@ -84,6 +117,12 @@ export interface GitHubWaitFacts {
     readonly resultTriggerCommentId?: number;
     readonly resultSourceRef?: string;
     readonly resultConversationCommentCursor?: number;
+    // #1392: new PR conversation comments since baseline (for pr_conversation_comment_added).
+    readonly conversationComments?: readonly {
+      readonly id: number;
+      readonly author: string;
+      readonly sourceRef?: string;
+    }[];
     readonly threads?: readonly GitHubReviewThreadBaseline[];
   };
   readonly ci?: {
@@ -195,6 +234,22 @@ export function matchGitHubWaitPredicates(
         }
         break;
       }
+      case 'pr_conversation_comment_added': {
+        // #1392 AC-3 + sol P1: authorLogins is the complete exact audience — a
+        // listed author's comment always matches; it is never self/bot-vetoed here.
+        if (!('headSha' in baseline) || !baseline.review) break;
+        const allowed = new Set(predicate.authorLogins.map((login) => login.toLowerCase()));
+        for (const comment of current.review?.conversationComments ?? []) {
+          if (comment.id <= baseline.review.conversationCommentCursor) continue;
+          if (!allowed.has(comment.author.toLowerCase())) continue;
+          matches.push({
+            kind: predicate.kind,
+            delta: `conversation comment #${comment.id} by ${comment.author}`,
+            ...(comment.sourceRef ? { sourceRef: comment.sourceRef } : {}),
+          });
+        }
+        break;
+      }
       case 'pr_ci_terminal': {
         if (!('headSha' in baseline) || !current.headSha) break;
         const before = baseline.ci;
@@ -235,8 +290,13 @@ export function matchGitHubWaitPredicates(
       }
       case 'issue_comment_added': {
         if (!('issue' in baseline)) break;
+        // #1392 AC-3: optional allowlist; when omitted, any comment author matches.
+        const allowed = predicate.authorLogins
+          ? new Set(predicate.authorLogins.map((login) => login.toLowerCase()))
+          : null;
         for (const comment of current.issue?.comments ?? []) {
           if (comment.id <= baseline.issue.lastCommentCursor) continue;
+          if (allowed && !allowed.has(comment.author.toLowerCase())) continue;
           matches.push({
             kind: predicate.kind,
             delta: `issue comment #${comment.id} added by ${comment.author}`,
