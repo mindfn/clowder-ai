@@ -183,7 +183,7 @@
     const defs = buildDefs(svg, data);
 
     const layers = {};
-    for (const name of ['soil', 'roots', 'ground', 'wood', 'scaffold', 'canopy', 'crown', 'labels', 'cats']) {
+    for (const name of ['soil', 'roots', 'ground', 'raster', 'wood', 'scaffold', 'canopy', 'crown', 'labels', 'cats']) {
       layers[name] = el('g', { class: `rt-layer rt-layer--${name}` }, svg);
     }
     el(
@@ -263,7 +263,33 @@
       item.el.setAttribute('transform', `${item.base} scale(${fmt(s)})`);
     }
 
+    // Illustrated-tree preview (?tree=raster): the painted wood layer replaces the SVG wood so the
+    // composition can be judged in place. 1600x1200 art, trunk base sits on the ground line.
+    let raster = null;
+    if (options.raster) {
+      svg.classList.add('rt-raster');
+      const w = 1000;
+      const h = (w * 1200) / 1600;
+      const clip = el('clipPath', { id: 'rt-clip-raster' }, svg.querySelector('defs'));
+      const circle = el('circle', { cx: V.cx, cy: V.ground, r: 0 }, clip);
+      const img = el(
+        'image',
+        {
+          href: options.raster,
+          x: V.cx - w / 2,
+          y: V.ground - h,
+          width: w,
+          height: h,
+          'clip-path': 'url(#rt-clip-raster)',
+          class: 'rt-raster-wood',
+        },
+        layers.raster,
+      );
+      raster = { img, circle, reach: Math.hypot(w / 2, h) + 20 };
+    }
+
     function update(G) {
+      if (raster) raster.circle.setAttribute('r', fmt(raster.reach * geo.clamp01((G - 2) / 5)));
       for (const node of tree.nodes) growWood(node, geo.progress(node, G));
       for (const leaf of tree.leaves) growSprout(leaf, geo.progress(leaf, G), true);
       for (const fruit of tree.fruits) growSprout(fruit, geo.progress(fruit, G), true);

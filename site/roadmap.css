@@ -939,3 +939,11 @@ html.dark .rt-card-item {
     font-size: 0.98rem;
   }
 }
+
+/* ---------- Illustrated-tree preview (?tree=raster) ---------- */
+.rt-raster .rt-layer--wood,
+.rt-raster .rt-layer--canopy,
+.rt-raster .rt-layer--crown,
+.rt-raster .rt-layer--labels {
+  display: none;
+}

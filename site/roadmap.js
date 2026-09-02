@@ -66,7 +66,9 @@
   document.addEventListener('DOMContentLoaded', () => {
     const svg = document.getElementById('rt-svg');
     const stage = document.getElementById('rt-stage');
-    const render = window.ClowderRoadmapRender.mount(svg, data, { lang: lang() });
+    const rasterTree =
+      new URLSearchParams(location.search).get('tree') === 'raster' ? 'assets/roadmap/tree/tree-wood.png' : null;
+    const render = window.ClowderRoadmapRender.mount(svg, data, { lang: lang(), raster: rasterTree });
     const cats = window.ClowderRoadmapCats.mount(render.layers.cats, render.layers.scaffold, data, render.tree);
     const chapters = Array.from(document.querySelectorAll('.rt-chapter'));
     fillLists();
