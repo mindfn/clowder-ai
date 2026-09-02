@@ -85,8 +85,29 @@ class FakeRedis {
   async zrevrange(key, start, end) {
     return [...(this.zsets.get(key) ?? new Map()).entries()]
       .sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))
-      .slice(start, end + 1)
+      .slice(start, end < 0 ? undefined : end + 1)
       .map(([member]) => member);
+  }
+
+  async eval(script, keyCount, ...args) {
+    if (script.includes('@fake-redis-handler: appendAnnotation')) {
+      const [incidentKey, annotationKey, canonicalKey, sequenceKey, metricIndexKey] = args.slice(0, keyCount);
+      const [annotationId, incidentValue, canonical, createdAt] = args.slice(keyCount);
+      const existing = this.strings.get(incidentKey);
+      if (existing) return ['duplicate', existing];
+      const sequence = Number(this.strings.get(sequenceKey) ?? 0) + 1;
+      this.strings.set(incidentKey, incidentValue);
+      this.strings.set(canonicalKey, canonical);
+      this.strings.set(sequenceKey, String(sequence));
+      this.strings.set(annotationKey, JSON.stringify({ ...JSON.parse(canonical), sequence }));
+      await this.zadd(metricIndexKey, createdAt, annotationId);
+      return ['created', annotationId, String(sequence)];
+    }
+    const [key, expectedCycleId, replacement] = args;
+    const current = JSON.parse(this.strings.get(key) ?? 'null');
+    if (current?.cycleId !== expectedCycleId || current.evalStatus !== 'idle') return 0;
+    this.strings.set(key, replacement);
+    return 1;
   }
 }
 
@@ -97,7 +118,7 @@ function episode(index) {
       threadId: 'thread-source',
       catId: 'cat-subject',
       timestamp: 100 + index,
-      segments: [],
+      segments: [{ segmentId: 'D20', status: 'observed' }],
       delivery: [],
       totalCharCount: 0,
       totalTokenEstimate: 0,
@@ -131,7 +152,20 @@ const metric = {
 const catalog = {
   registry: {
     registryVersion: 2,
-    evaluationModels: [{ id: 'em-evidence', label: 'Evidence', ruleVersion: 'v1', metrics: [metric] }],
+    evaluationModels: [
+      {
+        id: 'em-evidence',
+        label: 'Evidence',
+        ruleVersion: 'v1',
+        cycleTrigger: {
+          cumulativeThreshold: 200,
+          counterexampleThreshold: 1,
+          cadenceDays: 7,
+          minimumIntervalMs: 2 * 60 * 60 * 1000,
+        },
+        metrics: [metric],
+      },
+    ],
     objectives: [
       {
         id: 'knowledge-evidence-quality',
@@ -246,7 +280,15 @@ describe('F257 semantic sweep coordinator', () => {
       },
     };
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations);
+    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
+      traceStore: {
+        async queryUnitWindow(_ownerUserId, _unitRefs, startMs, endMs) {
+          return [...episodes.values()].filter(
+            (item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs,
+          );
+        },
+      },
+    });
     const coordinator = new SemanticSweepCoordinator({
       traceStore,
       jobStore: new SemanticSweepJobStore(redis),
@@ -346,8 +388,10 @@ describe('F257 semantic sweep coordinator', () => {
       0,
       Date.now() + 1,
     );
-    assert.equal(results.length, 1);
-    assert.deepEqual(results[0].value, { kind: 'counter', count: 1, threshold: 1 });
+    assert.equal(results.length, 0, 'sweep only marks counterexamples; the eval cat writes conclusions in S2');
+    const cycle = await runtime.cycles.current('owner-1', 'knowledge-evidence-quality');
+    assert.equal(cycle.evalStatus, 'requested');
+    assert.deepEqual(cycle.triggeredBy, ['counterexamples']);
 
     assert.deepEqual(
       await coordinator.submit(

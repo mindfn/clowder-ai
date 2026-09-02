@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import type { EvalDomainId } from '../domain/eval-domain-registry.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
-import { formatUnitSemanticEvaluationPackets } from '../evaluation/UnitSemanticEvaluationCoordinator.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
@@ -44,10 +43,8 @@ export interface TriggerNowSuccess {
    * `'enqueued'` reach success — `'full'` is converted to 503 (cloud codex R2 P2).
    */
   triggerOutcome: 'dispatched' | 'enqueued';
-  /** F257: jobId from SemanticSweepCoordinator.prepare, for volume drain fencing. */
+  /** Optional Semantic Sweep job bundled as a counterexample-discovery aid. */
   semanticSweepJobId?: string;
-  /** F257: frozen Unit semantic jobs included in this invocation. */
-  unitEvaluationJobIds?: string[];
 }
 
 /**
@@ -138,9 +135,8 @@ export async function handleTriggerNow(
   // No snapshot → 503 (fail-closed for manual trigger).
   let precomputedEvidence: string | undefined;
   let semanticSweepJobId: string | undefined; // F257: for volume drain fencing
-  let unitEvaluationJobIds: string[] | undefined;
   if (input.domainId === 'eval:harness-ledger') {
-    if (!deps.guardRejectionLog && !deps.semanticSweepCoordinator && !deps.unitSemanticEvaluationCoordinator) {
+    if (!deps.guardRejectionLog && !deps.semanticSweepCoordinator) {
       return {
         status: 503,
         error: 'harness_ledger_snapshot_unavailable',
@@ -160,20 +156,6 @@ export async function handleTriggerNow(
         evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
         semanticSweepJobId = semantic.job.jobId;
       }
-      if (!semantic) {
-        const unitPackets = await deps.unitSemanticEvaluationCoordinator?.prepare({
-          ownerUserId: input.userId,
-          evaluatorCatId: effectiveDomain.evalCat.catId,
-          now: Date.now(),
-          initialBatchSize: 3,
-          limitJobs: 1,
-        });
-        if (unitPackets && unitPackets.length > 0) {
-          evidenceParts.push(formatUnitSemanticEvaluationPackets(unitPackets));
-          unitEvaluationJobIds = unitPackets.map((packet) => packet.jobId);
-        }
-      }
-
       let snapshotResult: Awaited<ReturnType<typeof produceHarnessLedgerRunSnapshot>> | null = null;
       if (deps.guardRejectionLog) {
         snapshotResult = await produceHarnessLedgerRunSnapshot({
@@ -186,7 +168,7 @@ export async function handleTriggerNow(
         evidenceParts.unshift(snapshotResult.summary);
       }
 
-      if (snapshotResult?.snapshot.totalEvents === 0 && !semantic && !unitEvaluationJobIds?.length) {
+      if (snapshotResult?.snapshot.totalEvents === 0 && !semantic) {
         return {
           ok: true as const,
           domainId: input.domainId,
@@ -245,9 +227,7 @@ export async function handleTriggerNow(
     };
   }
 
-  const immutableJobIds = [semanticSweepJobId, ...(unitEvaluationJobIds ?? [])]
-    .filter((jobId): jobId is string => typeof jobId === 'string')
-    .sort();
+  const immutableJobIds = [semanticSweepJobId].filter((jobId): jobId is string => typeof jobId === 'string').sort();
   const idempotencyKey =
     immutableJobIds.length > 0
       ? `eval-trigger:${input.domainId}:${createHash('sha256').update(JSON.stringify(immutableJobIds)).digest('hex')}`
@@ -293,6 +273,5 @@ export async function handleTriggerNow(
     invocationTriggered: true,
     triggerOutcome: outcome,
     semanticSweepJobId,
-    unitEvaluationJobIds,
   };
 }

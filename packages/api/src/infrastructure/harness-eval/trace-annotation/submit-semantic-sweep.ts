@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { advanceVolumeSweepDrain, getSemanticSweepCoordinator } from '../../../domains/prompt-hooks/trace-bootstrap.js';
+import { getSemanticSweepCoordinator } from '../../../domains/prompt-hooks/trace-bootstrap.js';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
 import type { SemanticSweepCoordinator } from './SemanticSweepCoordinator.js';
 
@@ -55,14 +55,7 @@ export async function handleSubmitSemanticSweep(
       { ownerUserId: principal.userId, evaluatorCatId: principal.catId },
       parsed.data,
     );
-    const { alreadyCompleted, unitEvaluationReady, ...publicResult } = result;
-    // F257: advance the persistent volume-sweep generation only when this
-    // submission matches its active jobId, then wake the next batch.
-    await advanceVolumeSweepDrain(
-      principal.userId,
-      parsed.data.jobId,
-      !alreadyCompleted && unitEvaluationReady === true,
-    );
+    const { alreadyCompleted: _alreadyCompleted, unitEvaluationReady: _unitEvaluationReady, ...publicResult } = result;
     return { status: 200, body: { outcome: 'accepted', jobId: parsed.data.jobId, ...publicResult } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
