@@ -20,7 +20,6 @@ import {
   requireCapabilityWriteOwner,
   requireLocalCapabilityWriteRequest,
 } from '../config/capabilities/capability-write-guards.js';
-import { clearL0Cache } from '../domains/cats/services/agents/providers/l0-compiler.js';
 import {
   getOverrideStatus,
   getTemplateFileInfo,
@@ -31,6 +30,7 @@ import {
 } from '../domains/cats/services/context/prompt-template-loader.js';
 import { RICH_BLOCK_SHORT } from '../domains/cats/services/context/rich-block-rules.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
+import { resetPipelineSingleton } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { getHookManifest, getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
 
@@ -121,10 +121,8 @@ function atomicCopyFileSync(sourcePath: string, targetPath: string): void {
   }
 }
 
-function invalidateNativeL0CacheForSegment(segmentId: string): void {
-  if (segmentId === 'S6' || /^L[1-7]$/.test(segmentId)) {
-    clearL0Cache();
-  }
+function invalidatePromptPipeline(): void {
+  resetPipelineSingleton();
 }
 
 /** Extract {{NAME}} placeholders from a template source string. */
@@ -228,7 +226,7 @@ function saveOverlay(id: string, content: string, meta: SegmentMeta): OverlaySav
   }
 
   atomicWriteFileSync(localPath, content);
-  invalidateNativeL0CacheForSegment(id);
+  invalidatePromptPipeline();
 
   return { status: 200, saved: true, path: fileInfo.local };
 }
@@ -266,7 +264,7 @@ function restoreOverlay(id: string, meta: SegmentMeta): OverlayRestoreResult {
   }
 
   atomicCopyFileSync(bakPath, localPath);
-  invalidateNativeL0CacheForSegment(id);
+  invalidatePromptPipeline();
 
   return { status: 200, restored: true };
 }
@@ -523,7 +521,7 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
     }
     if (existsSync(localPath)) {
       unlinkSync(localPath);
-      invalidateNativeL0CacheForSegment(id);
+      invalidatePromptPipeline();
       return { segmentId: id, deleted: true };
     }
     return { segmentId: id, deleted: false, reason: 'No override file exists' };

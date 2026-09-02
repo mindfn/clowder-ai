@@ -46,7 +46,7 @@ interface CategoryInfo {
 }
 
 const PREFIX_MAP: Record<string, CategoryInfo> = {
-  L: { category: 'l0-native', consumer: 'l0-compiler', sourceType: 'template' },
+  L: { category: 'session-governance', consumer: 'hook-pipeline', sourceType: 'template' },
   S: { category: 'system-prompt', consumer: 'system-prompt-builder', sourceType: 'template' },
   D: { category: 'dynamic-per-turn', consumer: 'turn-context-builder', sourceType: 'template' },
   R: { category: 'route-assembly', consumer: 'route-assembler', sourceType: 'template' },

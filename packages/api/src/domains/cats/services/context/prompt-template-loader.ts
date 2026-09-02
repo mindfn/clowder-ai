@@ -184,14 +184,14 @@ export interface OverrideStatus {
  *  can be enforced as a fail-closed invariant (F257 Console 判据⑤).
  */
 export const TEMPLATE_FILES: Record<string, { base: string; local: string; variables?: HookVariableDef[] }> = {
-  // ── L0 section templates (compiled by compile-system-prompt-l0.mjs) ──
-  L1: { base: 'l1-parallel-world.md', local: '' },
-  L2: { base: 'l2-carry-over.md', local: '' },
-  L3: { base: 'l3-routing-rules.md', local: '' },
-  L4: { base: 'l4-iron-laws.md', local: '' },
-  L5: { base: 'l5-mcp-tools-index.md', local: '' },
-  L6: { base: 'l6-capability-wakeup.md', local: '' },
-  L7: { base: 'l7-collaboration-philosophy.md', local: '' },
+  // ── Session governance hooks (co-located; no second compiler source) ──
+  L1: { base: '../prompt-hooks/l1-平行世界自我意识/l1-parallel-world.md', local: '' },
+  L2: { base: '../prompt-hooks/l2-客观性-carry-over-段/l2-carry-over.md', local: '' },
+  L3: { base: '../prompt-hooks/l3-传球三选一-路由规则/l3-routing-rules.md', local: '' },
+  L4: { base: '../prompt-hooks/l4-五条铁律/l4-iron-laws.md', local: '' },
+  L5: { base: '../prompt-hooks/l5-mcp-工具-quick-index/l5-mcp-tools-index.md', local: '' },
+  L6: { base: '../prompt-hooks/l6-能力唤醒指南/l6-capability-wakeup.md', local: '' },
+  L7: { base: '../prompt-hooks/l7-协作哲学/l7-collaboration-philosophy.md', local: '' },
   // ── Non-Builder segments (M/C/N/B — migrated to template) ──
   M1: {
     base: 'm1-dispatch-mission.md',

@@ -45,12 +45,9 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
-// F237: Injection trace (v0 — fire-and-forget observability)
-import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -539,6 +536,7 @@ export async function* routeParallel(
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // Staging is injected in invoke-single-cat independently of staticIdentity
       // (Cloud R2 P1 #2237 L1099). See route-serial.ts for the architecture rationale.
+      const nativeSessionPrompt = hasNativeL0 ? buildStaticIdentity(catId, { mcpAvailable }) : undefined;
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
         : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
@@ -724,65 +722,20 @@ export async function* routeParallel(
         if (traceStore && !preTraceSignal?.aborted) {
           const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
 
-          if (hasNativeL0) {
-            // R1 P1-1: invoke actual native L0 producer — fetches real manifest via
-            // getL0ManifestViaSubprocess, persists L1-L7 session trace from compiler artifact.
-            // R2 P1-1: propagate boolean — only finalize when durable summary exists.
-            const persistPromise = persistNativeL0SessionTrace({
-              traceStore,
-              catId: catId as string,
-              threadId,
-              turnId: traceTurnId,
-              turnResult: pipelineTurnTrace ?? null,
-              log,
-              ownerUserId: userId,
-              messageAnchorId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
-              messageStore: deps.messageStore,
-            }).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
-              return false;
-            });
-            catTracePersistPromise.set(catId as string, persistPromise);
-          } else {
-            // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
-            const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
-              ...traceMeta,
-              hasNativeL0: false,
-              sessionFromNativeCompiler: false,
-            });
-
-            if (pipelineResult) {
-              const persistPromise = traceStore
-                .persist(pipelineResult.summary, pipelineResult.detail)
-                .then(() => true as const)
-                .catch((err) => {
-                  log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
-                  return false as const;
-                });
-              catTracePersistPromise.set(catId as string, persistPromise);
-            } else {
-              // Fallback: legacy collectTrace (S-prefix only for session, aggregate for turn)
-              const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-              const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
-                .filter(Boolean)
-                .join('\n\n---\n\n');
-              const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-                mcpAvailable,
-                packBlocks,
+          const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
+            ...traceMeta,
+            hasNativeL0,
+            sessionViaNativeCarrier: hasNativeL0,
+          });
+          if (pipelineResult) {
+            const persistPromise = traceStore
+              .persist(pipelineResult.summary, pipelineResult.detail)
+              .then(() => true as const)
+              .catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
+                return false as const;
               });
-              const summary = buildTraceSummary(collected, traceMeta);
-              const detail = buildTraceDetail(collected, traceMeta);
-              const persistPromise = traceStore
-                .persist(summary, detail)
-                .then(() => true as const)
-                .catch((err) => {
-                  log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
-                  return false as const;
-                });
-              catTracePersistPromise.set(catId as string, persistPromise);
-              // v0 collectTrace re-populates capturedSessionTrace. Clear stale buffer.
-              if (deps.injectionTraceStore) drainCapturedTraces();
-            }
+            catTracePersistPromise.set(catId as string, persistPromise);
           }
         }
       } catch {
@@ -1097,6 +1050,7 @@ export async function* routeParallel(
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(catSignal ? { signal: catSignal } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
+        ...(nativeSessionPrompt ? { nativeSessionPrompt } : {}),
         // F194 Phase Z2 (砚砚 catch 2026-05-09)：parallel route 必须传 parentInvocationId，
         // 与 route-serial.ts:725 对齐。否则 child registry record 缺 parentInvocationId →
         // helper namespace bridge 失效 → ideate/parallel 场景气泡又裂。
