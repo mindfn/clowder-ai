@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
 import { LifelineChainView, type SelectedStage } from './LifelineChainView';
 import { ObjectiveEvaluationPanel } from './ObjectiveEvaluationPanel';
+import { ObjectiveGovernancePanel } from './ObjectiveGovernancePanel';
 import { SettingsBadge, SettingsText } from './primitives';
 import { SegmentTraceTheater } from './SegmentTraceTheater';
 
@@ -67,7 +68,10 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   );
 
   useEffect(() => {
-    if ((selected?.stage !== 'eval' && selected?.stage !== 'tracing') || !selectedWindow) {
+    if (
+      (selected?.stage !== 'eval' && selected?.stage !== 'tracing' && selected?.stage !== 'governance') ||
+      !selectedWindow
+    ) {
       setEvaluation(null);
       setEvaluationError(null);
       setEvaluationLoading(false);
@@ -170,7 +174,6 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
           )}
           {!loading && !error && lifeline && (
             <>
-              <EvalSourceWarning source={lifeline.evalSource} />
               <LifelineChainView
                 chain={lifeline.chain}
                 selected={selected}
@@ -216,7 +219,21 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                 </>
               )}
               {selectedEpoch && selected?.stage === 'governance' && (
-                <GovernanceDetail lifeline={lifeline} epoch={selectedEpoch} />
+                <>
+                  {evaluationLoading && (
+                    <SettingsText as="p" variant="xs" tone="muted">
+                      加载治理周期…
+                    </SettingsText>
+                  )}
+                  {evaluationError && (
+                    <SettingsText as="p" variant="xs" tone="red">
+                      {evaluationError}
+                    </SettingsText>
+                  )}
+                  {!evaluationLoading && !evaluationError && evaluation && (
+                    <ObjectiveGovernancePanel data={evaluation} />
+                  )}
+                </>
               )}
             </>
           )}
@@ -224,19 +241,6 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       </div>
     </div>,
     document.body,
-  );
-}
-
-function EvalSourceWarning({ source }: { source: SegmentLifecycleResponse['evalSource'] }) {
-  if (source.status !== 'unavailable') return null;
-  const message =
-    source.reason === 'resolver-failed'
-      ? '评估真相源暂时不可用；当前 tracing 状态不能解释为“尚无结论”。'
-      : '评估真相源尚未接线；当前 tracing 状态不可作为评估结论。';
-  return (
-    <SettingsText as="p" variant="xs" tone="red">
-      {message}
-    </SettingsText>
   );
 }
 
@@ -323,27 +327,6 @@ export function VersionContentPreview({ segmentId, epoch }: { segmentId: string;
         <pre className="mt-3 max-h-[440px] overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--console-card-bg)] p-4 font-mono text-xs leading-6 text-cafe-secondary">
           {content || '该版本没有可预览内容'}
         </pre>
-      )}
-    </section>
-  );
-}
-
-function GovernanceDetail({ lifeline, epoch }: { lifeline: SegmentLifecycleResponse; epoch: VersionEpoch }) {
-  const isActive = epoch.version === lifeline.activeVersion;
-  const candidateCount = isActive ? lifeline.actionable.candidateCount : null;
-  return (
-    <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-      <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-        v{epoch.version} — Governance
-      </SettingsText>
-      {isActive && lifeline.actionable.stage === 'governance' && candidateCount !== null && candidateCount > 0 ? (
-        <SettingsText as="p" variant="xs" tone="secondary" className="mt-2">
-          有 {candidateCount} 个治理候选等待 operator 决策。
-        </SettingsText>
-      ) : (
-        <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-          当前无治理候选；版本继续 tracing，不阻塞，也不会自动禁用。
-        </SettingsText>
       )}
     </section>
   );
