@@ -64,14 +64,14 @@ describe('PipelinePromptBuilder (AC-P2-6)', () => {
     assert.ok(output.includes('宪宪'), 'Contains nickname');
   });
 
-  it('session prompt scoped to S-prefix hooks only (L-layer filtered out)', () => {
-    const output = ppb.buildStaticIdentityViaHookPipeline('opus', { mcpAvailable: false });
+  it('session prompt includes L1-L7 and S/B/C hooks from one pipeline', () => {
+    const { prompt: output, trace } = ppb.buildStaticIdentityViaHookPipelineWithTrace('opus', { mcpAvailable: false });
     // S9 governance digest contains principles/iron laws (sourced from L1/L4 content)
     assert.ok(output.includes('P1'), 'S9 governance digest contains principles');
-    // L-layer hooks fire in pipeline (for trace) but their content is NOT in
-    // S-prefix output — L1-L7 go through native L0 compiler channel separately.
-    // Verify S-prefix filtering works: output should not contain L-layer markers
-    assert.ok(!output.includes('── [L1]'), 'L1 marker should not appear in S-scoped output');
+    const deliveredIds = new Set(trace.patches.map((patch) => patch.hookId));
+    for (const hookId of ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'S1', 'B1', 'C1']) {
+      assert.ok(deliveredIds.has(hookId), `${hookId} is delivered by the session pipeline`);
+    }
   });
 
   // -- Per-turn delegation -----------------------------------------------------

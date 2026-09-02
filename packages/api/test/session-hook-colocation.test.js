@@ -1,16 +1,8 @@
-/**
- * F237 Phase 2 AC-P2-14a: L0 compiler ↔ pipeline L-hook equivalence.
- *
- * Proves that the L0 compiler's loadL0SectionTemplate() output for L1-L7
- * matches the pipeline's L-hook patch content (whitespace-normalized).
- *
- * When this test passes, the L0 compiler can safely switch to consuming
- * pipeline-produced L-hook content instead of reading template files directly.
- */
+/** F257 S5: L1-L7 manifests, templates, and runtime output share one source. */
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 /** Normalize whitespace for comparison. */
@@ -18,7 +10,6 @@ function normalize(s) {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-/** Strip compiler-only annotation lines (same as L0 compiler's logic). */
 function stripAnnotations(raw) {
   const SEGMENT_LABEL = /^── \[[A-Z]\d+] .+──$/;
   return raw
@@ -31,7 +22,7 @@ function stripAnnotations(raw) {
     .trim();
 }
 
-describe('L0 compiler ↔ pipeline L-hook equivalence (AC-P2-14a)', () => {
+describe('co-located session hooks', () => {
   /** @type {typeof import('../dist/domains/prompt-hooks/HookPipeline.js')} */
   let HookPipelineMod;
   /** @type {typeof import('../dist/domains/prompt-hooks/HookRegistry.js')} */
@@ -47,16 +38,7 @@ describe('L0 compiler ↔ pipeline L-hook equivalence (AC-P2-14a)', () => {
   /** @type {typeof import('@cat-cafe/shared').catRegistry} */
   let catReg;
 
-  /** L0 compiler's mapping of L-section template files. */
-  const L0_SECTIONS = {
-    L1: 'l1-parallel-world.md',
-    L2: 'l2-carry-over.md',
-    L3: 'l3-routing-rules.md',
-    L4: 'l4-iron-laws.md',
-    L5: 'l5-mcp-tools-index.md',
-    L6: 'l6-capability-wakeup.md',
-    L7: 'l7-collaboration-philosophy.md',
-  };
+  const SESSION_HOOK_IDS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'];
 
   before(async () => {
     const shared = await import('@cat-cafe/shared');
@@ -87,7 +69,7 @@ describe('L0 compiler ↔ pipeline L-hook equivalence (AC-P2-14a)', () => {
     catReg?.reset();
   });
 
-  it('L1-L7 pipeline patches match L0 compiler template output', () => {
+  it('L1-L7 pipeline patches come from templates beside their manifests', () => {
     const root = monorepoRoot.findMonorepoRoot();
     const templatesDir = join(root, 'assets', 'prompt-templates');
 
@@ -109,36 +91,37 @@ describe('L0 compiler ↔ pipeline L-hook equivalence (AC-P2-14a)', () => {
       }
     }
 
-    // Compare each L-section
     const mismatches = [];
-    for (const [hookId, templateFile] of Object.entries(L0_SECTIONS)) {
-      const filePath = resolve(templatesDir, templateFile);
-      const l0Content = stripAnnotations(readFileSync(filePath, 'utf-8'));
+    for (const hookId of SESSION_HOOK_IDS) {
+      const hook = registry.getHook(hookId);
+      assert.ok(hook, `${hookId} registered`);
+      assert.equal(dirname(hook.templatePath), hook.dirPath, `${hookId} template is co-located with hook.yaml`);
+      const sourceContent = stripAnnotations(readFileSync(hook.templatePath, 'utf-8'));
       const pipelineContent = pipelinePatches[hookId];
 
       if (!pipelineContent) {
-        mismatches.push(`${hookId}: pipeline patch MISSING (L0 template: ${l0Content.length} chars)`);
+        mismatches.push(`${hookId}: pipeline patch MISSING (${sourceContent.length} source chars)`);
         continue;
       }
 
-      const l0Norm = normalize(l0Content);
+      const sourceNorm = normalize(sourceContent);
       const pipeNorm = normalize(pipelineContent);
 
-      if (l0Norm !== pipeNorm) {
+      if (sourceNorm !== pipeNorm) {
         // Find divergence point
-        const minLen = Math.min(l0Norm.length, pipeNorm.length);
+        const minLen = Math.min(sourceNorm.length, pipeNorm.length);
         let d = 0;
-        while (d < minLen && l0Norm[d] === pipeNorm[d]) d++;
+        while (d < minLen && sourceNorm[d] === pipeNorm[d]) d++;
         mismatches.push(
           `${hookId}: DIVERGE at char ${d}\n` +
-            `  L0:       ${l0Norm.length} chars — ...${l0Norm.slice(Math.max(0, d - 40), d + 40)}...\n` +
+            `  Source:   ${sourceNorm.length} chars — ...${sourceNorm.slice(Math.max(0, d - 40), d + 40)}...\n` +
             `  Pipeline: ${pipeNorm.length} chars — ...${pipeNorm.slice(Math.max(0, d - 40), d + 40)}...`,
         );
       }
     }
 
     if (mismatches.length > 0) {
-      assert.fail(`L0 ↔ pipeline mismatches:\n${mismatches.join('\n')}`);
+      assert.fail(`Hook source ↔ pipeline mismatches:\n${mismatches.join('\n')}`);
     }
 
     // Verify all 7 L-hooks produced output

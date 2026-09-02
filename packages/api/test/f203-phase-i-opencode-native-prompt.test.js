@@ -1,15 +1,15 @@
 /**
- * F203 Phase I — OpenCode (金渐层) Native L0 Guard Tests
+ * F203/F257 — OpenCode native session prompt guard tests
  *
  * Covers AC-I1 through AC-I7:
  * - AC-I2: opencode-config-template outputs `instructions` array
  * - AC-I3: OpenCodeAgentService.injectsL0Natively() → true
- * - AC-I5: golden-chinchilla workflow triggers exist in compiled L0
+ * - AC-I5: golden-chinchilla workflow triggers exist in HookPipeline output
  * - AC-I6: runtime config merge does not break permission/plugin/compaction
- * - AC-I7 ①②: compile + config chain
+ * - AC-I7 ①②: route-owned prompt + config chain
  * - AC-I7 ③: instructions-only config content (no provider block)
  * - AC-I7 ④: OC_INSTRUCTIONS_ONLY_ENV auth preservation signal
- * - AC-I7 ⑤: compile fail-closed (type guard + throwing compiler)
+ * - AC-I7 ⑤: missing route-owned prompt fails closed
  */
 
 import assert from 'node:assert/strict';
@@ -33,13 +33,13 @@ const projectRuntimeInvariantOptions = hasProjectOpenCodeRuntimeFiles
 
 // ── AC-I3: OpenCodeAgentService.injectsL0Natively() ──
 
-describe('F203 Phase I — OpenCodeAgentService L0 marker', () => {
+describe('F203 Phase I — OpenCodeAgentService native marker', () => {
   test('injectsL0Natively() returns true', () => {
     const service = new OpenCodeAgentService({ catId: 'opencode', model: 'anthropic/claude-opus-4-6' });
     assert.strictEqual(
       service.injectsL0Natively(),
       true,
-      'OpenCodeAgentService must declare native L0 injection so route layer uses pack-only',
+      'OpenCodeAgentService must declare native prompt injection so route layer keeps packs separate',
     );
   });
 });
@@ -51,11 +51,11 @@ describe('F203 Phase I — opencode-config-template instructions', () => {
     const config = generateOpenCodeRuntimeConfig({
       providerName: 'anthropic',
       models: ['claude-opus-4-6'],
-      instructions: ['/tmp/l0.md', '/project/OPENCODE.md'],
+      instructions: ['/tmp/session-prompt.md', '/project/OPENCODE.md'],
     });
 
     assert.ok(config.instructions, 'config must have instructions field');
-    assert.deepStrictEqual(config.instructions, ['/tmp/l0.md', '/project/OPENCODE.md']);
+    assert.deepStrictEqual(config.instructions, ['/tmp/session-prompt.md', '/project/OPENCODE.md']);
   });
 
   test('generateOpenCodeRuntimeConfig omits instructions when empty', () => {
@@ -85,14 +85,14 @@ describe('F203 Phase I — opencode-config-template instructions', () => {
       const configPath = await writeOpenCodeRuntimeConfig(tempRoot, 'opencode', 'inv-test-001', {
         providerName: 'anthropic',
         models: ['claude-opus-4-6'],
-        instructions: ['/tmp/compiled-l0.md', '/project/OPENCODE.md'],
+        instructions: ['/tmp/session-prompt.md', '/project/OPENCODE.md'],
       });
 
       assert.ok(existsSync(configPath), 'config file must exist on disk');
       const parsed = JSON.parse(readFileSync(configPath, 'utf8'));
       assert.deepStrictEqual(
         parsed.instructions,
-        ['/tmp/compiled-l0.md', '/project/OPENCODE.md'],
+        ['/tmp/session-prompt.md', '/project/OPENCODE.md'],
         'written config must contain instructions array',
       );
     } finally {
@@ -105,7 +105,7 @@ describe('F203 Phase I — opencode-config-template instructions', () => {
       providerName: 'anthropic',
       models: ['claude-opus-4-6'],
       mcpServerPath: '/path/to/mcp-server.js',
-      instructions: ['/tmp/l0.md'],
+      instructions: ['/tmp/session-prompt.md'],
     });
 
     assert.ok(config.instructions, 'instructions present');
@@ -117,39 +117,38 @@ describe('F203 Phase I — opencode-config-template instructions', () => {
 // ── AC-I5: golden-chinchilla workflow triggers ──
 
 describe('F203 Phase I — golden-chinchilla workflow triggers', () => {
-  // This test uses the compile CLI to verify workflow is not empty
-  test('opencode catId compiles with workflow triggers (not fallback empty)', async () => {
-    const { compileL0 } = await import('../../../scripts/compile-system-prompt-l0.mjs');
-    const l0 = await compileL0({ catId: 'opencode' });
+  test('opencode session hooks include workflow triggers', async () => {
+    const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const prompt = buildStaticIdentity('opencode', { mcpAvailable: true });
 
-    assert.ok(l0.includes('金渐层家族治理'), 'must contain golden-chinchilla governance section');
-    assert.ok(l0.includes('OMOC Sisyphus'), 'must mention OMOC orchestration boundary');
-    assert.ok(!l0.includes('（无 per-breed 触发点配置）'), 'must NOT fall back to empty triggers');
+    assert.ok(prompt.includes('金渐层家族治理'), 'must contain golden-chinchilla governance section');
+    assert.ok(prompt.includes('OMOC Sisyphus'), 'must mention OMOC orchestration boundary');
+    assert.ok(!prompt.includes('（无 per-breed 触发点配置）'), 'must NOT fall back to empty triggers');
   });
 
-  test('opencode L0 contains identity block', async () => {
-    const { compileL0 } = await import('../../../scripts/compile-system-prompt-l0.mjs');
-    const l0 = await compileL0({ catId: 'opencode' });
+  test('opencode session hooks contain identity block', async () => {
+    const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const prompt = buildStaticIdentity('opencode', { mcpAvailable: true });
 
-    assert.ok(l0.includes('金渐层'), 'must contain 金渐层 identity');
-    assert.ok(l0.includes('@opencode'), 'must contain @opencode mention');
+    assert.ok(prompt.includes('金渐层'), 'must contain 金渐层 identity');
+    assert.ok(prompt.includes('OMOC'), 'must contain this cat family boundary');
   });
 
-  test('opencode L0 contains teammate roster', async () => {
-    const { compileL0 } = await import('../../../scripts/compile-system-prompt-l0.mjs');
-    const l0 = await compileL0({ catId: 'opencode' });
+  test('opencode session hooks contain teammate roster', async () => {
+    const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const prompt = buildStaticIdentity('opencode', { mcpAvailable: true });
 
-    assert.ok(l0.includes('队友名册'), 'must contain teammate roster section');
+    assert.ok(prompt.includes('队友名册'), 'must contain teammate roster section');
     // opencode should not list itself in roster
-    assert.ok(!l0.includes('| 金渐层'), 'opencode must not appear in its own roster');
+    assert.ok(!prompt.includes('| 金渐层'), 'opencode must not appear in its own roster');
   });
 
-  test('opencode L0 contains governance', async () => {
-    const { compileL0 } = await import('../../../scripts/compile-system-prompt-l0.mjs');
-    const l0 = await compileL0({ catId: 'opencode' });
+  test('opencode session hooks contain governance', async () => {
+    const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const prompt = buildStaticIdentity('opencode', { mcpAvailable: true });
 
-    assert.ok(l0.includes('家规'), 'must contain governance section');
-    assert.ok(l0.includes('Rule 0'), 'must contain Rule 0');
+    assert.ok(prompt.includes('家规'), 'must contain governance section');
+    assert.ok(prompt.includes('Rule 0'), 'must contain Rule 0');
   });
 });
 
@@ -201,12 +200,12 @@ describe('F203 Phase I — instructions-only config content verification', () =>
     const tempRoot = mkdtempSync(join(tmpdir(), 'f203-i-instr-only-'));
     try {
       const configPath = writeOpenCodeInstructionsOnlyConfig(tempRoot, 'opencode', 'inv-test', [
-        '/tmp/l0.md',
+        '/tmp/session-prompt.md',
         '/project/OPENCODE.md',
       ]);
       const parsed = JSON.parse(readFs(configPath, 'utf8'));
 
-      assert.deepStrictEqual(parsed.instructions, ['/tmp/l0.md', '/project/OPENCODE.md']);
+      assert.deepStrictEqual(parsed.instructions, ['/tmp/session-prompt.md', '/project/OPENCODE.md']);
       assert.strictEqual(parsed.$schema, 'https://opencode.ai/config.json');
       // MUST NOT have provider block — otherwise buildEnv clears auth
       assert.strictEqual(parsed.provider, undefined, 'instructions-only config must NOT have provider');
@@ -228,44 +227,19 @@ describe('F203 Phase I — buildEnv auth preservation (pointer tests)', () => {
   });
 });
 
-describe('F203 Phase I — compile fail-closed (AC-I7 ⑤)', () => {
-  test('throwing l0CompilerFn aborts invocation with fail-closed error', async () => {
-    // This test verifies the fail-closed contract: if L0 compilation fails,
-    // invoke-single-cat must throw, not proceed with a naked invocation.
-    const { hasL0CompilerSeam } = await import('../dist/domains/cats/services/types.js');
-
-    // A service with a deliberately-failing compiler
-    const failingService = {
-      catId: 'opencode',
-      l0CompilerFn: async () => {
-        throw new Error('deliberate L0 compile failure for test');
-      },
-      injectsL0Natively: () => true,
-      async *invoke() {
-        yield { type: 'done', catId: 'opencode', timestamp: Date.now() };
-      },
-    };
-
-    // Verify type guard recognizes the failing service
-    assert.ok(hasL0CompilerSeam(failingService), 'failing service must be recognized by type guard');
-    // Verify the compiler actually throws
-    await assert.rejects(
-      failingService.l0CompilerFn({ catId: 'opencode' }),
-      /deliberate L0 compile failure/,
-      'compiler must throw as expected',
+describe('F257 S5 — native prompt fail-closed', () => {
+  test('missing route-owned prompt is rejected', async () => {
+    const { resolveNativeSessionPrompt } = await import(
+      '../dist/domains/cats/services/agents/providers/native-session-prompt.js'
     );
+    await assert.rejects(resolveNativeSessionPrompt({}, 'opencode'), /HookPipeline session prompt missing/);
   });
 
-  test('hasL0CompilerSeam returns false for services without l0CompilerFn', async () => {
-    const { hasL0CompilerSeam } = await import('../dist/domains/cats/services/types.js');
-
-    const plainService = {
-      catId: 'opencode',
-      async *invoke() {
-        yield { type: 'done', catId: 'opencode', timestamp: Date.now() };
-      },
-    };
-
-    assert.strictEqual(hasL0CompilerSeam(plainService), false);
+  test('exact route-owned bytes pass through unchanged', async () => {
+    const { resolveNativeSessionPrompt } = await import(
+      '../dist/domains/cats/services/agents/providers/native-session-prompt.js'
+    );
+    const prompt = 'route-owned\nHookPipeline bytes';
+    assert.equal(await resolveNativeSessionPrompt({ nativeSessionPrompt: prompt }, 'opencode'), prompt);
   });
 });

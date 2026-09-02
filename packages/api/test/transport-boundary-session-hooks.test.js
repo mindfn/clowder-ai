@@ -1,19 +1,18 @@
 /**
- * F237 Phase 2: Transport boundary (AC-P2-12) + L0 equivalence (AC-P2-14a)
+ * F237/F257: transport boundary + co-located session hook contract.
  *
  * AC-P2-12: Verifies transport assembly (staging/contextHint/missionPrefix/M2)
  * is NOT part of the hook pipeline — these remain in the transport layer.
  *
- * AC-P2-14a: Verifies L0 compiler's L1-L7 template loading produces
- * identical content to HookPipeline's L1-L7 hook execution.
+ * L1-L7 are loaded from their hook directories by HookPipeline.
  */
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { before, describe, it } from 'node:test';
 
-describe('Transport boundary + L0 equivalence', () => {
+describe('Transport boundary + session hook source', () => {
   /** @type {typeof import('../dist/domains/prompt-hooks/HookRegistry.js')} */
   let registryMod;
   /** @type {typeof import('../dist/domains/prompt-hooks/HookPipeline.js')} */
@@ -79,27 +78,19 @@ describe('Transport boundary + L0 equivalence', () => {
     });
   });
 
-  // -- AC-P2-14a: L0 compiled output equivalence ------------------------------
+  // -- F257 S5: co-located session hook output --------------------------------
 
-  describe('L0 compiled output equivalence (AC-P2-14a)', () => {
-    /** L0 section template filenames — same mapping as compile-system-prompt-l0.mjs */
-    const L0_SECTION_FILES = {
-      L1: 'l1-parallel-world.md',
-      L2: 'l2-carry-over.md',
-      L3: 'l3-routing-rules.md',
-      L4: 'l4-iron-laws.md',
-      L5: 'l5-mcp-tools-index.md',
-      L6: 'l6-capability-wakeup.md',
-      L7: 'l7-collaboration-philosophy.md',
-    };
+  describe('session hook source', () => {
+    const SESSION_HOOK_IDS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'];
 
     /**
-     * Strip compiler annotation lines — mirrors loadL0SectionTemplate in
-     * compile-system-prompt-l0.mjs (strips HTML comments + segment labels).
+     * Strip source annotations the template renderer does not emit.
      */
-    function loadL0SectionDirect(filename) {
-      const filePath = resolve(monorepoRoot, 'assets', 'prompt-templates', filename);
-      const raw = readFileSync(filePath, 'utf8');
+    function loadSessionHookDirect(hookId) {
+      const hook = registry.getHook(hookId);
+      assert.ok(hook, `${hookId} registered`);
+      assert.equal(dirname(hook.templatePath), hook.dirPath, `${hookId} template is co-located`);
+      const raw = readFileSync(hook.templatePath, 'utf8');
       return raw
         .split('\n')
         .filter((line) => {
@@ -170,13 +161,13 @@ describe('Transport boundary + L0 equivalence', () => {
       };
     }
 
-    it('L1-L7 pipeline patches match L0 compiler template loading', () => {
+    it('L1-L7 patches match their co-located template source', () => {
       const pipeline = new pipelineMod.HookPipeline(registry, resolversMod.RESOLVER_MAP, templateMod.renderSegment);
       const result = pipeline.executeStage('session-init', makeMinimalInput());
       const patchMap = Object.fromEntries(result.patches.map((p) => [p.hookId, p.content]));
 
-      for (const [hookId, filename] of Object.entries(L0_SECTION_FILES)) {
-        const l0Direct = loadL0SectionDirect(filename);
+      for (const hookId of SESSION_HOOK_IDS) {
+        const sourceDirect = loadSessionHookDirect(hookId);
         const pipelineContent = patchMap[hookId];
 
         assert.ok(pipelineContent, `${hookId} should produce a pipeline patch`);
@@ -184,10 +175,10 @@ describe('Transport boundary + L0 equivalence', () => {
         // Normalize whitespace for comparison (both should produce same content
         // after stripping annotations — pipeline uses renderSegment which also
         // strips comments)
-        const l0Normalized = l0Direct.replace(/\s+/g, ' ').trim();
+        const sourceNormalized = sourceDirect.replace(/\s+/g, ' ').trim();
         const pipelineNormalized = pipelineContent.replace(/\s+/g, ' ').trim();
 
-        assert.equal(pipelineNormalized, l0Normalized, `${hookId} pipeline output should match L0 direct loading`);
+        assert.equal(pipelineNormalized, sourceNormalized, `${hookId} output should match its source`);
       }
     });
 
