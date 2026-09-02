@@ -53,7 +53,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | D-2 | sweep 预分类层是主路径前置门 `if (!semantic)` | 1240 待分类永远清不空 → D1 阈值满足后 9 天无评估 | TC-3/5/13 | sol · §14 S1（删 `if (!semantic)`，sweep 移出主路径） | **S1 done @ `11729f614`** |
 | D-3 | 未回写 → 无限续租 | drain state generation 1899、in_flight 8 天 | TC-7 | sol · §14 S1 删 drain fence（done @ `11729f614`）/ S2 建有界重触发（done @ `0a96514fd5614`：每周期恰 1 次重触发 + 1 次 stalled 告警，隔离栈 7 周期实证） | **S1+S2 done** |
 | D-4 | ~~insufficient_evidence 不该推进起点~~ → 按 06:32 修正：起点始终刷新是对的；**缺的是 skip 回看取数**（连续 skip 周期合并进下次评估窗口）与 skip 理由存档 | 现无 skip 状态与回看逻辑 | TC-10 | sol · §14 S1（skip 回看 `windows[]`；理由存档随 S2 assignment） | **S1 done @ `11729f614`**（F-4 隔离栈实证三窗回看） |
-| D-5 | judgment 写完后无 governance 自动进入 | 代码仅一行注释；opus blocked 球 | TC-8/9 | 契约已确认（complete-design §1 步 6–8、§5.1）；sol · §14 S3 | open → S3 |
+| D-5 | judgment 写完后无 governance 自动进入 | 代码仅一行注释；opus blocked 球 | TC-8/9 | sol · §14 S3：`written` 后自动 governance assignment（含历史摘要）→ `submit_cycle_governance` keep/rollback/evolve → 仅 rollback/evolve 出 F276 卡（approve/skip/reject，reject 必附理由并同窗重评、卡序号递增）；旧 GovernanceWorker/CandidateStore seam 已删 | **S3 done @ `46d941b7c`**（Fable gate：隔离栈 F-5a–h + 真实浏览器五段卡） |
 | D-6 | 评估猫 invocation 被 F299 recorder `sourceRefs.max(64)` 打断（上游 #1390，8/25 入 base） | 域 thread 每 10 分钟重派 + `too_big` 报错 | 止血项 | sol · §14 S2：assignment 反例引用 ≤ 64 且按 32 KB 裁剪，回写 evidenceRefs ≤ 64（`CycleEvaluationContent` / `CycleEvaluationEvidence`） | **S2 done @ `0a96514fd5614`** |
 | D-7 | Console 仍有"待分类"，两组命名不对 | `SegmentTraceTheater.tsx` L54/65/100 | TC-12 | sol · §14 S4；输入 = **只 cherry-pick `88cc67154`**（7 files +41/−46；对 develop_base@635acbc97 dry-run merge 零冲突），**勿 merge 整条 `fix/f257-tracing-two-groups`**（含 485 个 rebuild 前恢复文件） | open → S4 |
 
