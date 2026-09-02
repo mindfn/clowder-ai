@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Roadmap — plate study</title>
+<style>
+  :root {
+    --paper: #e7dcc6;
+    --ink: #1f1710;
+    --accent: #1b3a5c;
+    --serif: "Didot", "Bodoni 72", "Playfair Display", "Iowan Old Style", Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet { position: relative; width: min(1200px, 96vw); margin: 0 auto; }
+  canvas { display: block; width: 100%; height: auto; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .at { position: absolute; transform: translateY(-50%); }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .part { font-size: 1.02rem; letter-spacing: 0.01em; line-height: 1.15; }
+  .part .n { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.18em; opacity: 0.62; display: block; }
+  .head { position: absolute; left: 7.5%; right: 7.5%; top: 5.2%; display: flex; align-items: baseline; justify-content: space-between; gap: 2rem; }
+  .head h1 { font-size: clamp(1.5rem, 2.5vw, 2.3rem); font-weight: 400; line-height: 1; margin: 0.3rem 0 0; letter-spacing: -0.005em; }
+  .deck { position: absolute; left: 7.5%; bottom: 8.5%; width: 30%; }
+  .deck p { font-size: 0.86rem; line-height: 1.55; opacity: 0.78; margin: 0.5rem 0 0; }
+  .plateno { position: absolute; right: 7.5%; top: 5.6%; text-align: right; }
+  .legend { position: absolute; right: 7.5%; bottom: 8.5%; text-align: right; }
+  .legend div { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.42rem; opacity: 0.8; }
+  .caption { position: absolute; left: 0; right: 0; bottom: 3.2%; text-align: center; font-style: italic; font-size: 0.82rem; opacity: 0.72; }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <canvas id="plate"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="head">
+        <div>
+          <div class="eyebrow">Clowder AI · Roadmap</div>
+          <h1>A system that grows, drawn as one.</h1>
+        </div>
+        <div class="eyebrow">Plate I</div>
+      </div>
+      <div class="deck">
+        <div class="eyebrow">Reading the plate</div>
+        <p>Four roots hold it up. Four limbs carry what it can do. Every fruit is one shipped, growing or planned capability — read from the roadmap, not decoration.</p>
+      </div>
+      <div class="legend">
+        <div>● Shipped</div>
+        <div>◍ Growing</div>
+        <div>○ Planned</div>
+      </div>
+      <div class="caption">Clowder AI — specimen of the working system, drawn 2026</div>
+    </div>
+  </div>
+  <script src="lib/roadmap-tree-data.js"></script>
+  <script src="lib/roadmap-plate.js"></script>
+  <script src="lib/roadmap-plate-scene.js"></script>
+  <script>
+    (() => {
+      const data = window.ClowderRoadmapTree;
+      const P = window.ClowderRoadmapPlate;
+      const scene = window.ClowderRoadmapPlateScene.render(document.getElementById('plate'), data);
+      const { ctx } = scene;
+      const [W, H] = scene.size;
+      const overlay = document.getElementById('overlay');
+
+      // Leader lines: hairline out of the specimen to the margin, the way a plate labels its parts.
+      function leader(anchor, side, y) {
+        const mx = side < 0 ? 118 : W - 118;
+        ctx.save();
+        ctx.strokeStyle = P.INK;
+        ctx.globalAlpha = 0.72;
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(anchor.x, anchor.y);
+        ctx.lineTo(side < 0 ? mx + 42 : mx - 42, y);
+        ctx.lineTo(mx, y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(anchor.x, anchor.y, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = P.INK;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function place(text, index, x, y, side) {
+        const el = document.createElement('div');
+        el.className = 'at part';
+        el.innerHTML = `<span class="n">${index}</span>${text}`;
+        el.style.left = side < 0 ? '0' : `${(x / W) * 100}%`;
+        if (side < 0) el.style.width = `${(x / W) * 100}%`;
+        else el.style.right = '0';
+        el.style.textAlign = side < 0 ? 'right' : 'left';
+        el.style.paddingLeft = side < 0 ? '0' : '10px';
+        el.style.paddingRight = side < 0 ? '10px' : '0';
+        el.style.top = `${(y / H) * 100}%`;
+        overlay.appendChild(el);
+      }
+
+      let figure = 1;
+      const rows = { '-1': [455, 640], 1: [430, 620] };
+      scene.limbs.forEach((limb) => {
+        const list = rows[limb.side];
+        const y = list.shift();
+        leader(limb.anchor, limb.side, y);
+        place(limb.label.en, `Fig. ${figure++}`, limb.side < 0 ? 118 : W - 118, y, limb.side);
+      });
+
+      let rootNo = 1;
+      scene.roots.forEach((root, i) => {
+        const side = i < 2 ? -1 : 1;
+        const y = 1190 + (i % 2) * 78;
+        leader(root.tip, side, y);
+        place(root.label.en, `Root ${rootNo++}`, side < 0 ? 118 : W - 118, y, side);
+      });
+
+      // The canon cats, screened into the same printed medium rather than pasted on top.
+      const CATS = [
+        { id: 'siamese', x: 300, h: 108 },
+        { id: 'ragdoll', x: 742, h: 96 },
+        { id: 'maine', x: 828, h: 116 },
+      ];
+      for (const cat of CATS) {
+        const img = new Image();
+        img.onload = () => P.halftone(ctx, img, cat.x, scene.ground - cat.h, cat.h, 3);
+        img.src = `assets/roadmap/cats/${cat.id}-sit.png`;
+      }
+    })();
+  </script>
+</body>
+</html>
