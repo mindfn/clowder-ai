@@ -11,7 +11,7 @@ import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTrace
 import { getCachedRegistry, refreshOverrideSnapshot } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
-import type { CandidateStore } from '../infrastructure/harness-eval/governance/CandidateStore.js';
+import type { CycleGovernanceCoordinator } from '../infrastructure/harness-eval/governance/CycleGovernanceCoordinator.js';
 import { harnessGovernanceCandidateRoutes } from './harness-governance-candidate-routes.js';
 import { promptInjectionOverrideRoutes } from './prompt-injection-overrides.js';
 import { segmentEvaluationRoutes } from './segment-evaluation.js';
@@ -26,10 +26,8 @@ export interface SegmentLifecycleSurfaceOptions {
   messageStore?: IMessageStore;
   threadStore?: IThreadStore;
   runtime?: ObjectiveEvaluationRuntime;
-  candidateStore?: CandidateStore;
+  governance?: CycleGovernanceCoordinator;
   resolvePendingCandidateCount?: (ownerUserId: string, segmentId: string) => Promise<number | null>;
-  notifyCandidateDecision?: (ownerUserId: string, candidateId: string, status: 'approved' | 'rejected') => void;
-  governanceNow?: () => number;
 }
 
 /**
@@ -47,18 +45,7 @@ export async function registerSegmentLifecycleSurface(
     refreshOverrideSnapshot,
   });
   await app.register(harnessGovernanceCandidateRoutes, {
-    candidateStore: options.candidateStore,
-    overrideStore: options.overrideStore,
-    refreshOverrideSnapshot,
-    notifyDecision: options.notifyCandidateDecision,
-    now: options.governanceNow,
-    resolveHookId: (segmentId) => {
-      const unit = options.runtime?.catalog.manifest.units.find((candidate) => candidate.unitId === segmentId);
-      // HookOverrideStore is keyed by HookManifest.id (= canonical unit id,
-      // e.g. D11), not UnitEvaluationManifest.hookId (= asset slug,
-      // e.g. d11-skill-trigger).
-      return unit?.unitId ?? null;
-    },
+    governance: options.governance,
   });
   const evalRuntime = options.runtime;
   await app.register(segmentLifelineRoutes, {

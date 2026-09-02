@@ -246,7 +246,7 @@ import {
 import { fetchLatestIssueCommentCursor } from './infrastructure/github/comment-cursors.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
-import { CandidateStore } from './infrastructure/harness-eval/governance/CandidateStore.js';
+import { HarnessGovernanceProposalStore } from './infrastructure/harness-eval/governance/HarnessGovernanceProposalStore.js';
 import { ensureEvalDomainThreads } from './infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
 import { loadOrCreatePawFeelBundleSnapshotSigner } from './infrastructure/harness-eval/paw-feel-disposition/bundle-snapshot.js';
 import { RedisPawFeelReconciliationCoverageStore } from './infrastructure/harness-eval/paw-feel-disposition/coverage-store.js';
@@ -1123,7 +1123,7 @@ async function main(): Promise<void> {
 
   // F231 AC-C3 / KD-10: Wire profile distillation trigger into session seal lifecycle.
   // The trigger fires on session-seal events (runtime-neutral, not provider Stop hooks).
-  const candidateStore = redis ? new CandidateStore(redis) : undefined;
+  const harnessGovernanceProposalStore = redis ? new HarnessGovernanceProposalStore(redis) : undefined;
   {
     const { ProfileDistillationTrigger } = await import(
       './domains/cats/services/profile/profile-distillation-trigger.js'
@@ -3351,6 +3351,56 @@ async function main(): Promise<void> {
           getRegistry: getPromptHookRegistry,
         })
       : undefined;
+  const cycleGovernanceCoordinator =
+    objectiveEvaluationRuntime && cycleEvaluationCoordinator && harnessGovernanceProposalStore && hookOverrideStore
+      ? await (async () => {
+          const { resetPipelineSingleton, refreshOverrideSnapshot } = await import(
+            './domains/prompt-hooks/PipelinePromptBuilder.js'
+          );
+          const { HarnessGovernanceExecutor } = await import(
+            './infrastructure/harness-eval/governance/HarnessGovernanceExecutor.js'
+          );
+          const { HarnessUnitDirectoryWriter } = await import(
+            './infrastructure/harness-eval/governance/HarnessUnitDirectoryWriter.js'
+          );
+          const executor = new HarnessGovernanceExecutor({
+            catalog: objectiveEvaluationRuntime.catalog,
+            overrideStore: hookOverrideStore,
+            getRegistry: getPromptHookRegistry,
+            unitWriter: new HarnessUnitDirectoryWriter({
+              projectRoot: repoRoot,
+              catalog: objectiveEvaluationRuntime.catalog,
+            }),
+            reloadPipeline: async () => {
+              resetPipelineSingleton();
+              await refreshOverrideSnapshot();
+            },
+          });
+          return new (
+            await import('./infrastructure/harness-eval/governance/CycleGovernanceCoordinator.js')
+          ).CycleGovernanceCoordinator({
+            runtime: objectiveEvaluationRuntime,
+            evaluation: cycleEvaluationCoordinator,
+            proposals: harnessGovernanceProposalStore,
+            executor,
+            isThreadQuiescent: async (threadId, ownerUserId) => {
+              const [thread, running] = await Promise.all([
+                threadStore.get(threadId),
+                invocationRecordStore.listRunningByThread(threadId, ownerUserId),
+              ]);
+              return running.length === 0 && Object.keys(thread?.pendingContinuation ?? {}).length === 0;
+            },
+            notifyProposal: (ownerUserId, proposalId, status) => {
+              socketManager?.emitToUser(ownerUserId, status === 'pending' ? 'proposal_created' : 'proposal_updated', {
+                proposalId,
+                status,
+                sourceFeatureId: 'F257',
+              });
+            },
+            log: app.log,
+          });
+        })()
+      : undefined;
 
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
@@ -3373,6 +3423,7 @@ async function main(): Promise<void> {
     semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
     cycleEvaluationCoordinator,
     harnessUnitDescriber,
+    cycleGovernanceCoordinator,
   });
 
   // F257 Gate 1: register the complete production-owned segment journey.
@@ -3381,57 +3432,6 @@ async function main(): Promise<void> {
   {
     const { registerSegmentLifecycleSurface } = await import('./routes/segment-lifecycle-surface.js');
     const runtime = getObjectiveEvaluationRuntime() ?? undefined;
-    if (runtime && candidateStore) {
-      const { createGovernanceWorker } = await import('./infrastructure/harness-eval/governance/GovernanceWorker.js');
-      const { AnthropicGovernanceDecisionGenerator, SkipGovernanceDecisionGenerator } = await import(
-        './infrastructure/harness-eval/governance/GovernanceDecisionGenerator.js'
-      );
-      const { getCachedRegistry, refreshOverrideSnapshot } = await import(
-        './domains/prompt-hooks/PipelinePromptBuilder.js'
-      );
-      const { readFile } = await import('node:fs/promises');
-      let decisionGenerator = new SkipGovernanceDecisionGenerator();
-      try {
-        const profile = resolveAnthropicRuntimeProfile(findMonorepoRoot(process.cwd()));
-        if (profile.apiKey) {
-          decisionGenerator = new AnthropicGovernanceDecisionGenerator({
-            apiKey: profile.apiKey,
-            ...(profile.baseUrl ? { baseUrl: profile.baseUrl } : {}),
-          });
-        } else {
-          app.log.warn('[F257] Anthropic governance drafter unavailable; decisions fail closed to skip');
-        }
-      } catch (error) {
-        app.log.warn({ err: error }, '[F257] Anthropic governance drafter bootstrap failed; using skip');
-      }
-      runtime.setPostCommitHook(
-        createGovernanceWorker({
-          candidateStore,
-          catalog: runtime.catalog,
-          decisionGenerator,
-          canEditHook: (hookId) => getCachedRegistry()?.getHook(hookId)?.manifest.safetyTier !== 'readonly',
-          resolveSegmentState: async (hookId) => {
-            const registry = getCachedRegistry();
-            const hook = registry?.getHook(hookId);
-            if (!registry || !hook) return null;
-            const currentContent = registry.getContentOverride(hookId) ?? (await readFile(hook.templatePath, 'utf8'));
-            return { currentContent, currentVersion: registry.getActiveVersion(hookId) };
-          },
-          onCandidateCreated: (candidate, ownerUserId) => {
-            socketManager?.emitToUser(ownerUserId, 'proposal_created', {
-              proposalId: candidate.candidateId,
-              status: 'pending',
-              sourceFeatureId: 'F257',
-            });
-          },
-          onError: (error, event) => {
-            app.log.error({ err: error, event }, '[F257] governance worker failed after eval commit');
-          },
-        }),
-      );
-      const ownerUserId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-      if (ownerUserId) await runtime.reconcileLatestJudgments(ownerUserId);
-    }
     await registerSegmentLifecycleSurface(app, {
       traceStore: getTraceStore() ?? undefined,
       guardRejectionLog,
@@ -3439,17 +3439,10 @@ async function main(): Promise<void> {
       messageStore,
       threadStore,
       runtime,
-      candidateStore,
-      resolvePendingCandidateCount: candidateStore
-        ? (ownerUserId, segmentId) => candidateStore.countPending(ownerUserId, segmentId)
+      governance: cycleGovernanceCoordinator,
+      resolvePendingCandidateCount: harnessGovernanceProposalStore
+        ? (ownerUserId, segmentId) => harnessGovernanceProposalStore.countPending(ownerUserId, segmentId)
         : undefined,
-      notifyCandidateDecision: (ownerUserId, candidateId, status) => {
-        socketManager?.emitToUser(ownerUserId, 'proposal_updated', {
-          proposalId: candidateId,
-          status,
-          sourceFeatureId: 'F257',
-        });
-      },
     });
   }
   const { createEvalReleaseTruthResolver } = await import(
@@ -4518,7 +4511,7 @@ async function main(): Promise<void> {
     F221: { adapter: new F221ApprovalAdapter(tasteProposalStore) },
     F225: { adapter: new F225ApprovalAdapter(handoffProposalStore) },
     F231: { adapter: new F231ApprovalAdapter(profileUpdateProposalStore) },
-    F257: { adapter: new F257ApprovalAdapter(candidateStore) },
+    F257: { adapter: new F257ApprovalAdapter(harnessGovernanceProposalStore) },
     F276: { adapter: new F276ApprovalAdapter(personMemoryStore) },
     F292: { adapter: new F292ApprovalAdapter(meetingIntakeStore) },
     F260: {
@@ -6048,6 +6041,7 @@ async function main(): Promise<void> {
       if (cycleRuntime) {
         await cycleRuntime.initializeCycles(privateUserId, Date.now());
         await cycleEvaluationCoordinator?.reconcileKnownCycles(Date.now());
+        await cycleGovernanceCoordinator?.reconcileKnownCycles(Date.now());
         cycleCheckTimer = setInterval(
           () => {
             cycleRuntime.checkKnownCycleOwners(Date.now()).catch((err) => {
@@ -6060,6 +6054,9 @@ async function main(): Promise<void> {
         cycleRecoveryTimer = setInterval(() => {
           cycleEvaluationCoordinator?.reconcileKnownCycles(Date.now()).catch((err) => {
             app.log.warn({ err }, '[api] F257: cycle writeback recovery failed (best-effort)');
+          });
+          cycleGovernanceCoordinator?.reconcileKnownCycles(Date.now()).catch((err) => {
+            app.log.warn({ err }, '[api] F257: governance recovery failed (best-effort)');
           });
         }, 60 * 1000);
         cycleRecoveryTimer.unref();
