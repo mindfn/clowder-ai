@@ -34,6 +34,8 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  * allocation is deferred to DELIVER_WITH_VISIBILITY_LUA.
  *
  * KEYS[1] = hash key (auto-prefixed by ioredis)
+ * KEYS[2] = ADR-043 Queue row hash (combined admission only)
+ * KEYS[3] = ADR-043 Queue order list (combined admission only)
  *
  * ARGV layout (1-indexed):
  *   [1]  keyPrefix
@@ -48,6 +50,7 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  *   [10 .. 9+N]  mention catIds (N = mentionCount)
  *   [10+N]  hashFieldPairCount (string number, M pairs = 2*M values)
  *   [11+N .. 11+N+2*M-1]  hash fields as key1, val1, key2, val2, ...
+ *   [tail] queueMaxUserSources, queueRowCount, ...serializedQueueRows
  *
  * Returns:
  *   - string (existing msgId) → idempotency replay, concurrent winner
@@ -79,6 +82,15 @@ local hsetArgs = {}
 for i = 0, hfPairCount * 2 - 1 do
   hsetArgs[i + 1] = ARGV[hfStart + i]
 end
+local queueMaxIdx = hfStart + hfPairCount * 2
+local queueMaxUserSources = tonumber(ARGV[queueMaxIdx] or '-1')
+local queueRowCount = tonumber(ARGV[queueMaxIdx + 1] or '0')
+local queueRows = {}
+for i = 1, queueRowCount do
+  local raw = ARGV[queueMaxIdx + 1 + i]
+  local row = cjson.decode(raw)
+  queueRows[i] = { id = row.id, raw = raw, row = row }
+end
 
 -- #1210 idempotency: if key points to a live hash, replay (return winner ID).
 -- If key exists but hash vanished, fall through to reclaim atomically.
@@ -87,8 +99,45 @@ if idemKey then
   local existingId = redis.call('GET', idemKey)
   if existingId then
     if redis.call('EXISTS', kp .. 'msg:' .. existingId) == 1 then
+      if queueRowCount > 0 then return {2, existingId} end
       return existingId
     end
+  end
+end
+
+-- ADR-043 Queue preflight. Every rejection happens before the first message
+-- or queue write so Queue-full and identity conflicts cannot create ghosts.
+if queueRowCount > 0 then
+  if #KEYS < 3 or not KEYS[2] or not KEYS[3] then
+    return redis.error_reply('QUEUE_ADMISSION_KEYS_MISSING')
+  end
+  local incomingIds = {}
+  local incomingUserSources = {}
+  for i = 1, queueRowCount do
+    local item = queueRows[i]
+    local row = item.row
+    if not row.id or not row.threadId or row.threadId ~= threadId or row.status ~= 'queued' or
+       not row.payload or row.payload.sourceId ~= msgId or row.payload.messageId ~= msgId then
+      return redis.error_reply('QUEUE_ENQUEUE_INVALID_ROW')
+    end
+    if incomingIds[row.id] then return redis.error_reply('QUEUE_ENQUEUE_DUPLICATE_ID') end
+    incomingIds[row.id] = true
+    if redis.call('HEXISTS', KEYS[2], row.id) == 1 then return {-1, ''} end
+    if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+  end
+  if queueMaxUserSources and queueMaxUserSources >= 0 then
+    local queuedUserSources = {}
+    local current = redis.call('HVALS', KEYS[2])
+    for i = 1, #current do
+      local row = cjson.decode(current[i])
+      if row.status == 'queued' and row.from and row.from.kind == 'user' then
+        queuedUserSources[row.payload.sourceId] = true
+      end
+    end
+    for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
+    local queuedUserCount = 0
+    for _, _ in pairs(queuedUserSources) do queuedUserCount = queuedUserCount + 1 end
+    if queuedUserCount > queueMaxUserSources then return {0, ''} end
   end
 end
 
@@ -158,7 +207,13 @@ if idemKey then
   end
 end
 
--- 7. TTL management (does NOT apply to visibility index or meta)
+-- 7. Queue fan-out commits at the same linearization point as Message.
+for i = 1, queueRowCount do
+  redis.call('HSET', KEYS[2], queueRows[i].id, queueRows[i].raw)
+  redis.call('RPUSH', KEYS[3], queueRows[i].id)
+end
+
+-- 8. TTL management (does NOT apply to visibility index, meta, or Queue)
 if ttlSec > 0 then
   -- EXPIRE on hash
   redis.call('EXPIRE', hash, ttlSec)
@@ -183,6 +238,7 @@ if ttlSec > 0 then
   end
 end
 
+if queueRowCount > 0 then return {1, tostring(seq)} end
 return seq
 `;
 

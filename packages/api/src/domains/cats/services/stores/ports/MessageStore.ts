@@ -27,6 +27,8 @@ import type {
 } from '@cat-cafe/shared';
 import { isCrossThreadProvenance, isLifecycleStoredMessageMetadata, isMessageFrom } from '@cat-cafe/shared';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
+import { InMemoryQueueLedgerStore } from '../../agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import type { QueueLedgerEntry, QueueLedgerStore } from '../../agents/invocation/queue-ledger/QueueLedger.js';
 import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import { cursorFor, parseCursor } from '../cursor.js';
@@ -635,6 +637,17 @@ export function canonicalizeAppendMessageInput(input: AppendMessageInput): Canon
 }
 
 export type QueueCustodyAdmissionFactory = (messageId: string) => QueueCustodyAdmissionIntent;
+
+export type QueueLedgerAdmissionFactory = (messageId: string) => readonly QueueLedgerEntry[];
+
+export type QueueLedgerMessageAdmissionResult =
+  | {
+      outcome: 'enqueued';
+      message: StoredMessage;
+      entries: QueueLedgerEntry[];
+      deduped: boolean;
+    }
+  | { outcome: 'full' };
 
 /**
  * Build the one record that publishes Agent speech and durably records its
@@ -1488,6 +1501,13 @@ export interface IMessageStore {
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
   append(msg: AppendMessageInput): StoredMessage | Promise<StoredMessage>;
+  /** Atomically persist one message and its complete ADR-043 Queue fan-out. */
+  appendWithQueueLedgerAdmission(
+    msg: AppendMessageInput,
+    buildAdmission: QueueLedgerAdmissionFactory,
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): QueueLedgerMessageAdmissionResult | Promise<QueueLedgerMessageAdmissionResult>;
   /** Atomically publish Agent speech with its complete durable wake admission. */
   appendWithQueueCustodyAdmission(
     msg: AppendMessageInput,
@@ -1960,6 +1980,44 @@ export class MessageStore {
   ): StoredMessage {
     const messageId = generateSortableId(msg.timestamp);
     return this.appendWithReservedId(preparePublicWakeAppend(msg, messageId, buildAdmission), messageId);
+  }
+
+  appendWithQueueLedgerAdmission(
+    msg: AppendMessageInput,
+    buildAdmission: QueueLedgerAdmissionFactory,
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): QueueLedgerMessageAdmissionResult {
+    if (!(ledgerStore instanceof InMemoryQueueLedgerStore)) {
+      throw new Error('memory message admission requires the matching in-memory Queue ledger');
+    }
+    const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
+    const existing = msg.idempotencyKey ? this.getByIdempotencyKey(msg.userId, threadId, msg.idempotencyKey) : null;
+    if (existing) {
+      // The process-local InvocationQueue already owns any still-active row;
+      // terminal rows intentionally stay absent on request replay.
+      return { outcome: 'enqueued', message: existing, entries: [], deduped: true };
+    }
+
+    const messageId = generateSortableId(msg.timestamp);
+    const entries = [...buildAdmission(messageId)];
+    const admitted = ledgerStore.enqueueNow(entries, maxQueuedUserEntries);
+    if (admitted.outcome === 'full') return { outcome: 'full' };
+    if (admitted.outcome === 'conflict') {
+      throw new Error(`Queue admission identity conflict for message ${messageId}`);
+    }
+    try {
+      const message = this.appendWithReservedId(msg, messageId);
+      return {
+        outcome: 'enqueued',
+        message,
+        entries: admitted.entries,
+        deduped: admitted.outcome === 'replayed',
+      };
+    } catch (error) {
+      if (admitted.outcome === 'enqueued') ledgerStore.removeEnqueuedNow(admitted.entries);
+      throw error;
+    }
   }
 
   private appendWithReservedId(msg: AppendMessageInput, reservedId?: string): StoredMessage {

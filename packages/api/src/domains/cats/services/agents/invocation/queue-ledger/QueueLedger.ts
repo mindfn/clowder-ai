@@ -102,6 +102,7 @@ export type QueueLedgerCommitMode = 'processing' | 'terminal' | 'withdrawn';
 
 export interface QueueLedgerStore {
   enqueue(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): Promise<QueueLedgerEnqueueResult>;
+  listThreadIds(): Promise<string[]>;
   list(threadId: string): Promise<QueueLedgerEntry[]>;
   get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null>;
   claim(
@@ -129,6 +130,15 @@ export interface QueueLedgerStore {
 
 export function queueOwnerKey(owner: QueueOwner): string {
   return owner.kind === 'user' ? `user:${owner.userId}` : `system:${owner.service}`;
+}
+
+export function queueOwner(entry: { owner?: QueueOwner; userId?: string }): QueueOwner {
+  if (entry.owner) return structuredClone(entry.owner);
+  if (!entry.userId) throw new Error('queue owner is missing');
+  if (entry.userId === 'system' || entry.userId === 'scheduler') {
+    return { kind: 'system', service: entry.userId };
+  }
+  return { kind: 'user', userId: entry.userId };
 }
 
 export function queueEntryId(sourcePersistentId: string, targetCatId?: string): string {
@@ -164,7 +174,6 @@ export function assertQueueLedgerEntry(entry: QueueLedgerEntry): void {
   if (entry.owner.kind === 'user' ? !entry.owner.userId : !entry.owner.service) {
     throw new Error('queue ledger owner is incomplete');
   }
-  if (!entry.payload.content) throw new Error('queue ledger payload content is required');
   if (!Number.isFinite(entry.enqueuedAt) || entry.enqueuedAt < 0) throw new Error('queue ledger enqueuedAt is invalid');
   assertQueueLedgerState(entry);
 }

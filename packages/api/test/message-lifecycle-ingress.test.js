@@ -10,11 +10,32 @@ const { sendMessageSchema } = await import('../dist/routes/messages.schema.js');
 
 function createDependencies(overrides = {}) {
   const invocationQueue = new InvocationQueue();
+  let messageSequence = 0;
+  const messagesByIdempotencyKey = new Map();
+  const append = mock.fn(async (message) => ({ id: `message-${++messageSequence}`, ...message }));
+  const appendWithQueueLedgerAdmission = mock.fn(async (message, buildAdmission, ledgerStore, maxQueued) => {
+    const replay = message.idempotencyKey ? messagesByIdempotencyKey.get(message.idempotencyKey) : null;
+    if (replay) {
+      const expected = buildAdmission(replay.id);
+      const entries = (await Promise.all(expected.map((entry) => ledgerStore.get(entry.threadId, entry.id)))).filter(
+        Boolean,
+      );
+      return { outcome: 'enqueued', message: replay, entries, deduped: true };
+    }
+    const stored = await append(message);
+    const entries = buildAdmission(stored.id);
+    const admitted = await ledgerStore.enqueue(entries, maxQueued);
+    if (admitted.outcome === 'full') return { outcome: 'full' };
+    assert.equal(admitted.outcome, 'enqueued');
+    if (message.idempotencyKey) messagesByIdempotencyKey.set(message.idempotencyKey, stored);
+    return { outcome: 'enqueued', message: stored, entries: admitted.entries, deduped: false };
+  });
   return {
     registry: new InvocationRegistry(),
     invocationQueue,
     messageStore: {
-      append: mock.fn(async (message) => ({ id: 'message-1', ...message })),
+      append,
+      appendWithQueueLedgerAdmission,
       getById: mock.fn(async () => null),
       getByThread: mock.fn(async () => []),
       getByThreadBefore: mock.fn(async () => []),
@@ -292,7 +313,7 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(dependencies.router.routeExecution.mock.calls.length, 0);
   });
 
-  it('keeps an all-idle multi-target input as one Queue entry', async () => {
+  it('fans an all-idle multi-target input into independent scalar Queue rows', async () => {
     dependencies.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
@@ -308,8 +329,12 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const entries = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.equal(entries.length, 1);
-    assert.deepEqual(entries[0].targetCats, ['opus', 'codex']);
+    assert.equal(entries.length, 2);
+    assert.deepEqual(
+      entries.map((entry) => entry.targetCats).sort(([left], [right]) => left.localeCompare(right)),
+      [['codex'], ['opus']],
+    );
+    assert.ok(entries.every((entry) => entry.messageId === entries[0].messageId));
     assert.equal(dependencies.invocationRecordStore.create.mock.calls.length, 0);
   });
 

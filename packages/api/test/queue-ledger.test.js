@@ -5,6 +5,9 @@ const { InMemoryQueueLedgerStore } = await import(
   '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'
 );
 const { queueEntryId } = await import('../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js');
+const { createQueueLedgerAdmission } = await import(
+  '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerAdmission.js'
+);
 
 function row(sourceId, targetCatId, overrides = {}) {
   return {
@@ -30,6 +33,29 @@ describe('ADR-043 queue ledger', () => {
     assert.equal(queueEntryId('message-1', 'opus'), queueEntryId('message-1', 'opus'));
     assert.notEqual(queueEntryId('message-1', 'opus'), queueEntryId('message-1', 'codex'));
     assert.notEqual(queueEntryId('message-1', 'opus'), queueEntryId('message-2', 'opus'));
+  });
+
+  it('fans every resolved target into a scalar row and keeps targetless user work assignable', () => {
+    const base = {
+      sourceId: 'source-1',
+      threadId: 'thread-1',
+      owner: { kind: 'user', userId: 'owner-1' },
+      kind: 'conversation_input',
+      from: { kind: 'user', userId: 'owner-1' },
+      content: 'hello',
+      intent: 'execute',
+      ownerAuthProvenance: 'strict',
+      enqueuedAt: 100,
+    };
+    const fanout = createQueueLedgerAdmission({ ...base, targetCatIds: ['opus', 'codex'] });
+    assert.deepEqual(
+      fanout.map((entry) => entry.target),
+      [
+        { kind: 'cat', catId: 'opus' },
+        { kind: 'cat', catId: 'codex' },
+      ],
+    );
+    assert.deepEqual(createQueueLedgerAdmission({ ...base, targetCatIds: [] })[0].target, { kind: 'unassigned' });
   });
 
   it('atomically fan-outs a source into independent single-target rows', async () => {

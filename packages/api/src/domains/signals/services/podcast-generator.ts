@@ -140,7 +140,7 @@ export async function generateScriptViaThread(
   deps: ThreadInvokeDeps,
 ): Promise<PodcastScript> {
   const prompt = buildScriptPrompt(request);
-  const enqueue = deps.invocationQueue.enqueue({
+  const enqueue = await deps.invocationQueue.enqueueDurable({
     from: { kind: 'system', service: 'podcast-generator' },
     threadId,
     userId: request.requestedBy,

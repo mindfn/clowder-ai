@@ -18,6 +18,13 @@ import { isLifecycleStoredMessageMetadata } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
+import {
+  assertQueueLedgerEntry,
+  type QueueLedgerEntry,
+  type QueueLedgerStore,
+} from '../../agents/invocation/queue-ledger/QueueLedger.js';
+import { QueueLedgerKeys } from '../../agents/invocation/queue-ledger/queue-ledger-keys.js';
+import { RedisQueueLedgerStore } from '../../agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { cursorFor, parseCursor } from '../cursor.js';
 import { messageFrom } from '../message-from.js';
 import type {
@@ -51,6 +58,8 @@ import type {
   QueueCustodyTransitionInput,
   QueueCustodyTransitionResult,
   QueuedMessageCustody,
+  QueueLedgerAdmissionFactory,
+  QueueLedgerMessageAdmissionResult,
   RecallMessageToComposerDraftInput,
   RecallMessageToComposerDraftResult,
   StoredMessage,
@@ -134,6 +143,15 @@ const log = createModuleLogger('redis-message-store');
 
 const DEFAULT_LIMIT = 50;
 const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
+
+type ReservedAppendResult =
+  | { outcome: 'stored'; message: StoredMessage; replayed: boolean }
+  | { outcome: 'queue_full' | 'queue_conflict' };
+
+interface QueueAppendOptions {
+  entries: readonly QueueLedgerEntry[];
+  maxQueuedUserEntries?: number;
+}
 
 const HARD_DELETE_MESSAGE_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
@@ -999,7 +1017,9 @@ export class RedisMessageStore {
   }
 
   async append(input: AppendMessageInput): Promise<StoredMessage> {
-    return this.appendWithReservedId(input);
+    const result = await this.appendWithReservedId(input);
+    if (result.outcome !== 'stored') throw new Error('plain message append returned a Queue admission outcome');
+    return result.message;
   }
 
   async appendWithQueueCustodyAdmission(
@@ -1007,10 +1027,56 @@ export class RedisMessageStore {
     buildAdmission: QueueCustodyAdmissionFactory,
   ): Promise<StoredMessage> {
     const messageId = generateSortableId(input.timestamp);
-    return this.appendWithReservedId(preparePublicWakeAppend(input, messageId, buildAdmission), messageId);
+    const result = await this.appendWithReservedId(
+      preparePublicWakeAppend(input, messageId, buildAdmission),
+      messageId,
+    );
+    if (result.outcome !== 'stored') throw new Error('public wake append returned a Queue admission outcome');
+    return result.message;
   }
 
-  private async appendWithReservedId(input: AppendMessageInput, reservedId?: string): Promise<StoredMessage> {
+  async appendWithQueueLedgerAdmission(
+    input: AppendMessageInput,
+    buildAdmission: QueueLedgerAdmissionFactory,
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): Promise<QueueLedgerMessageAdmissionResult> {
+    if (!(ledgerStore instanceof RedisQueueLedgerStore) || !ledgerStore.usesRedisClient(this.redis)) {
+      throw new Error('Redis message admission requires the matching Redis Queue ledger');
+    }
+    const messageId = generateSortableId(input.timestamp);
+    const entries = [...buildAdmission(messageId)];
+    for (const entry of entries) {
+      assertQueueLedgerEntry(entry);
+      if (
+        entry.threadId !== (input.threadId ?? DEFAULT_THREAD_ID) ||
+        entry.payload.sourceId !== messageId ||
+        entry.payload.messageId !== messageId
+      ) {
+        throw new Error('Queue admission row must be bound to its exact message identity');
+      }
+    }
+    const result = await this.appendWithReservedId(input, messageId, { entries, maxQueuedUserEntries });
+    if (result.outcome === 'queue_full') return { outcome: 'full' };
+    if (result.outcome === 'queue_conflict') {
+      throw new Error(`Queue admission identity conflict for message ${messageId}`);
+    }
+    if (result.outcome !== 'stored') throw new Error('unreachable Queue admission outcome');
+    if (!result.replayed) {
+      return { outcome: 'enqueued', message: result.message, entries, deduped: false };
+    }
+    const replayEntries = [...buildAdmission(result.message.id)];
+    const activeEntries = (
+      await Promise.all(replayEntries.map((entry) => ledgerStore.get(entry.threadId, entry.id)))
+    ).filter((entry): entry is QueueLedgerEntry => entry !== null);
+    return { outcome: 'enqueued', message: result.message, entries: activeEntries, deduped: true };
+  }
+
+  private async appendWithReservedId(
+    input: AppendMessageInput,
+    reservedId?: string,
+    queue?: QueueAppendOptions,
+  ): Promise<ReservedAppendResult> {
     const msg = canonicalizeAppendMessageInput(input);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
@@ -1024,7 +1090,7 @@ export class RedisMessageStore {
       if (existingId) {
         const existingMessage = await this.getById(existingId);
         if (existingMessage) {
-          return existingMessage;
+          return { outcome: 'stored', message: existingMessage, replayed: true };
         }
       }
       // Stale reference: do NOT delete here (avoids a check-then-act race).
@@ -1111,6 +1177,9 @@ export class RedisMessageStore {
       ...mentionCatIds, // [10..9+N] mention catIds
       String(hashFields.length / 2), // [10+N] hashFieldPairCount
       ...hashFields, // [11+N..] hash field pairs
+      queue?.maxQueuedUserEntries === undefined ? '-1' : String(queue.maxQueuedUserEntries),
+      String(queue?.entries.length ?? 0),
+      ...(queue?.entries.map((entry) => JSON.stringify(entry)) ?? []),
     ];
 
     // #1200/#1269: ensure visibility migration is complete BEFORE the append.
@@ -1124,13 +1193,31 @@ export class RedisMessageStore {
     // Lua returns:
     // - string (existing msgId) → idempotency replay, return existing message
     // - number (visibilitySeq) → new message created, seq > 0 for non-queued
-    const result = await this.redis.eval(APPEND_WITH_VISIBILITY_LUA, 1, hashKey, ...argv);
+    const queueKeys = queue ? [QueueLedgerKeys.entries(threadId), QueueLedgerKeys.order(threadId)] : [];
+    const result = await this.redis.eval(APPEND_WITH_VISIBILITY_LUA, queue ? 3 : 1, hashKey, ...queueKeys, ...argv);
+
+    if (queue) {
+      if (!Array.isArray(result)) throw new Error('invalid combined message/Queue admission reply');
+      const outcome = Number(result[0]);
+      if (outcome === 0) return { outcome: 'queue_full' };
+      if (outcome === -1) return { outcome: 'queue_conflict' };
+      if ((outcome !== 1 && outcome !== 2) || typeof result[1] !== 'string') {
+        throw new Error('invalid combined message/Queue admission outcome');
+      }
+      if (outcome === 2) {
+        const existingMessage = await this.getById(result[1]);
+        if (!existingMessage) {
+          throw new Error(`Idempotency winner ${result[1]} vanished before Queue replay hydration`);
+        }
+        return { outcome: 'stored', message: existingMessage, replayed: true };
+      }
+    }
 
     // #1210 idempotency: if Lua returned a string, a concurrent caller won.
     if (typeof result === 'string' && result !== String(0)) {
       const existingMessage = await this.getById(result);
       if (existingMessage) {
-        return existingMessage;
+        return { outcome: 'stored', message: existingMessage, replayed: true };
       }
       // The concurrent winner's hash vanished (deleteByThread / TTL) between the
       // Lua claim and this hydration. Do not fall through to the created path,
@@ -1140,7 +1227,8 @@ export class RedisMessageStore {
 
     // #1200 P2-6: Lua returns allocated visibilitySeq (number) or 0 for queued.
     // Inject into returned message so callers get canonical position without re-read.
-    const seq = typeof result === 'number' ? result : Number(result);
+    const seqValue = queue && Array.isArray(result) ? result[1] : result;
+    const seq = typeof seqValue === 'number' ? seqValue : Number(seqValue);
     if (seq > 0) {
       stored.visibilitySeq = seq;
     }
@@ -1156,7 +1244,7 @@ export class RedisMessageStore {
 
     this.projectRoutingFact(stored);
 
-    return stored;
+    return { outcome: 'stored', message: stored, replayed: false };
   }
 
   private projectRoutingFact(message: StoredMessage): void {

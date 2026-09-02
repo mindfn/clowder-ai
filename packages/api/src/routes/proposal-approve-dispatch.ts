@@ -1,7 +1,6 @@
 import type { CatId, ReportingMode } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
-import { createInitialQueuedMessageCustody } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
@@ -15,7 +14,7 @@ import { admitThreadParticipants } from './thread-participant-admission.js';
 export { enrichWithParentThreadHeader } from './proposal-enrich-header.js';
 
 type ProposalRouter = Pick<AgentRouter, 'resolveTargetsAndIntent'>;
-type ProposalInvocationQueue = Pick<InvocationQueue, 'enqueue' | 'backfillMessageId' | 'rollbackEnqueue'>;
+type ProposalInvocationQueue = Pick<InvocationQueue, 'appendAndEnqueueDurable'>;
 type ProposalQueueProcessor = Pick<QueueProcessor, 'processNext'>;
 
 export interface ProposalInitialMessageDispatchDeps {
@@ -238,19 +237,35 @@ export async function appendApprovedInitialMessage({
     };
   }
 
-  const enqueueResult = invocationQueue.enqueue({
-    from: sourceCatId ? { kind: 'agent', catId: sourceCatId } : { kind: 'user', userId },
+  const from = sourceCatId ? ({ kind: 'agent', catId: sourceCatId } as const) : ({ kind: 'user', userId } as const);
+  const queueInput = {
+    from,
     threadId,
     userId,
-    kind: 'conversation_input',
+    kind: 'conversation_input' as const,
     ownerAuthProvenance,
     idempotencyKey: `proposal-initial:${proposalId}`,
     content,
     targetCats: targetCats as CatId[],
     intent: intentName,
-  });
+  };
+  const enqueueResult = await invocationQueue.appendAndEnqueueDurable(
+    messageStore,
+    {
+      from,
+      userId,
+      content,
+      mentions: [...targetCats],
+      timestamp: Date.now(),
+      threadId,
+      idempotencyKey: `proposal-initial:${proposalId}`,
+      deliveryStatus: 'queued',
+      extra: crossPostExtra,
+    },
+    queueInput,
+  );
 
-  if (enqueueResult.outcome === 'full' || !enqueueResult.entry) {
+  if (enqueueResult.outcome === 'full') {
     const stored = await messageStore.append({
       from: sourceCatId ? { kind: 'agent', catId: sourceCatId } : { kind: 'user', userId },
       userId,
@@ -266,28 +281,7 @@ export async function appendApprovedInitialMessage({
     };
   }
 
-  let storedMessageId = enqueueResult.entry.messageId ?? null;
-  if (!enqueueResult.deduped || !storedMessageId) {
-    try {
-      const stored = await messageStore.append({
-        from: sourceCatId ? { kind: 'agent', catId: sourceCatId } : { kind: 'user', userId },
-        userId,
-        content,
-        mentions: [...targetCats],
-        timestamp: Date.now(),
-        threadId,
-        idempotencyKey: `proposal-initial:${proposalId}`,
-        deliveryStatus: 'queued',
-        queueCustody: createInitialQueuedMessageCustody(enqueueResult.entry),
-        extra: crossPostExtra, // AC-AA5
-      });
-      storedMessageId = stored.id;
-      invocationQueue.backfillMessageId(threadId, userId, enqueueResult.entry.id, stored.id);
-    } catch (err) {
-      invocationQueue.rollbackEnqueue(threadId, userId, enqueueResult.entry.id);
-      throw err;
-    }
-  }
+  const storedMessageId = enqueueResult.message.id;
 
   // F128 owns the final dispatch plan: preferredCats ordering and explicit
   // parallel intent can differ from raw-message mentions. Admit only those
@@ -303,7 +297,7 @@ export async function appendApprovedInitialMessage({
   });
 
   try {
-    const started = await queueProcessor.processNext(threadId, userId);
+    const started = enqueueResult.entry ? await queueProcessor.processNext(threadId, userId) : { started: false };
     if (!started.started) {
       return {
         messageId: storedMessageId,

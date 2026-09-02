@@ -91,7 +91,7 @@ export interface A2ATriggerDeps {
     InvocationQueue,
     // F-coalesce: Guard 2 replaced hasQueuedAgentForCat with findInFlightAgentEntry +
     // coalesceContentIntoQueuedAgent — the old skip-dedup method is no longer referenced here.
-    | 'enqueue'
+    | 'enqueueDurable'
     | 'countAgentEntriesForThread'
     | 'findInFlightAgentEntry'
     | 'coalesceContentIntoQueuedAgent'
@@ -777,7 +777,7 @@ export async function enqueueA2ATargets(
         : persistedQueueTrigger
           ? fanoutQueueCarrierIdempotencyKey(triggerMessageId, catId)
           : undefined;
-      const result = deps.invocationQueue.enqueue({
+      const result = await deps.invocationQueue.enqueueDurable({
         from: { kind: 'agent', catId: fromCatId },
         threadId,
         userId: opts.userId,

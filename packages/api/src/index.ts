@@ -87,6 +87,8 @@ import type {
   RouterLike,
 } from './domains/cats/services/agents/invocation/QueueProcessor.js';
 import { QueueProcessor } from './domains/cats/services/agents/invocation/QueueProcessor.js';
+import { InMemoryQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { RedisQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { reconcileZombies } from './domains/cats/services/agents/invocation/reconcileZombies.js';
 import { SessionContinuationCoordinator } from './domains/cats/services/agents/invocation/SessionContinuationCoordinator.js';
 import { SessionMutex } from './domains/cats/services/agents/invocation/SessionMutex.js';
@@ -789,7 +791,10 @@ async function main(): Promise<void> {
 
   // Queue owners are initialized beside MessageStore so action-terminal
   // convergence can retire their projections at the completion boundary.
-  const invocationQueue = new InvocationQueue();
+  const invocationQueue = new InvocationQueue(
+    redis ? new RedisQueueLedgerStore(redis) : new InMemoryQueueLedgerStore(),
+  );
+  await invocationQueue.hydrateFromLedger();
   const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
   const invocationRecordStore = createInvocationRecordStore(redis);
   const sessionStore = redis ? new SessionStore(redis) : undefined;
@@ -2646,7 +2651,7 @@ async function main(): Promise<void> {
           if (recoveryStatus === 'terminal') return { outcome: 'unavailable' as const };
         }
 
-        const result = invocationQueue.enqueue({
+        const result = await invocationQueue.enqueueDurable({
           from: { kind: 'agent', catId: carrier.callerCatId },
           threadId: carrier.threadId,
           userId: carrier.userId,

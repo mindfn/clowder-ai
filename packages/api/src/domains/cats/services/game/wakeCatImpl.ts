@@ -6,6 +6,7 @@
  * leaking game secrets (e.g. "你是狼人") into the thread chat flow.
  */
 
+import { createHash } from 'node:crypto';
 import type { CatId } from '@cat-cafe/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { InvocationQueue } from '../agents/invocation/InvocationQueue.js';
@@ -32,7 +33,7 @@ export function createWakeCatFn(deps: WakeCatDeps): WakeCatFn {
     const thread = await threadStore.get(threadId);
     const userId = thread?.createdBy ?? 'default-user';
 
-    const result = invocationQueue.enqueue({
+    const result = await invocationQueue.enqueueDurable({
       from: { kind: 'system', service: 'game-orchestrator' },
       threadId,
       userId,
@@ -42,6 +43,7 @@ export function createWakeCatFn(deps: WakeCatDeps): WakeCatFn {
       targetCats: [catId],
       intent: 'execute',
       autoExecute: true,
+      sourceId: `game:${threadId}:${catId}:${createHash('sha256').update(briefing).digest('hex')}`,
     });
 
     if (result.outcome === 'full') {

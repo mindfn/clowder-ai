@@ -23,7 +23,7 @@ for i = 1, count do
     existingCount = existingCount + 1
     if existing ~= raw then return -1 end
   end
-  if row.owner and row.owner.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
   incoming[i] = { id = row.id, raw = raw }
 end
 if existingCount == count then return 2 end
@@ -34,7 +34,7 @@ if maxQueuedUsers and maxQueuedUsers >= 0 then
   local current = redis.call('HVALS', rowsKey)
   for i = 1, #current do
     local row = cjson.decode(current[i])
-    if row.status == 'queued' and row.owner and row.owner.kind == 'user' then
+    if row.status == 'queued' and row.from and row.from.kind == 'user' then
       queuedUserSources[row.payload.sourceId] = true
     end
   end

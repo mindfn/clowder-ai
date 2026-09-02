@@ -38,6 +38,14 @@ function transitionResult(raw: unknown): QueueLedgerTransitionResult {
 export class RedisQueueLedgerStore implements QueueLedgerStore {
   constructor(private readonly redis: RedisClient) {}
 
+  usesRedisClient(redis: RedisClient): boolean {
+    return this.redis === redis;
+  }
+
+  private get keyPrefix(): string {
+    return (this.redis.options as { keyPrefix?: string }).keyPrefix ?? '';
+  }
+
   async enqueue(
     entries: readonly QueueLedgerEntry[],
     maxQueuedUserEntries?: number,
@@ -78,6 +86,27 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
       entries.push(hydrateQueueLedgerEntry(raw));
     }
     return entries;
+  }
+
+  async listThreadIds(): Promise<string[]> {
+    const threadIds = new Set<string>();
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        `${this.keyPrefix}queue:{*}:order`,
+        'COUNT',
+        200,
+      );
+      cursor = nextCursor;
+      for (const key of keys) {
+        const localKey = this.keyPrefix && key.startsWith(this.keyPrefix) ? key.slice(this.keyPrefix.length) : key;
+        const match = /^queue:\{(.+)\}:order$/.exec(localKey);
+        if (match?.[1]) threadIds.add(decodeURIComponent(match[1]));
+      }
+    } while (cursor !== '0');
+    return [...threadIds].sort();
   }
 
   async get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null> {

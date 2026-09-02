@@ -25,15 +25,26 @@ import {
   type ActionSuccessorFence,
   actionSuccessorFencesMatch,
 } from '../../../../ball-custody/ActionSuccessorAdmissionContract.js';
+import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { QueueBodyExposure, QueuePrestartRetirementIntent } from '../../stores/ports/queued-message-custody.js';
 import type { ToolExecutionPolicy } from '../../types.js';
 import { compareLifecycleQueueEntries } from './message-lifecycle-queue-order.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
+import { InMemoryQueueLedgerStore } from './queue-ledger/InMemoryQueueLedgerStore.js';
+import {
+  type QueueLedgerEntry,
+  type QueueLedgerStore,
+  type QueueOwner,
+  queueOwner,
+} from './queue-ledger/QueueLedger.js';
+import { createQueueLedgerAdmission } from './queue-ledger/QueueLedgerAdmission.js';
 
 export interface QueueEntry {
   id: string;
   threadId: string;
   userId: string;
+  /** ADR-043 canonical queue scope. userId remains only until legacy consumers finish migrating. */
+  owner?: QueueOwner;
   /** Canonical RFC #1356 admission shape; private inputs never enter public Queue projections. */
   kind: 'conversation_input' | 'message_wake' | 'private_input';
   /** Internal-only owner authentication provenance; presentation projections must redact it. */
@@ -163,6 +174,43 @@ export interface EnqueueResult {
   deduped?: boolean;
 }
 
+export type EnqueueMessageResult =
+  | { outcome: 'full' }
+  | {
+      outcome: 'enqueued';
+      message: StoredMessage;
+      entry?: QueueEntry;
+      entries: QueueEntry[];
+      queuePosition?: number;
+      deduped: boolean;
+    };
+
+export type QueueEnqueueInput = Omit<
+  QueueEntry,
+  | 'id'
+  | 'status'
+  | 'createdAt'
+  | 'mergedMessageIds'
+  | 'messageId'
+  | 'autoExecute'
+  | 'priority'
+  | 'position'
+  | 'suggestedSkill'
+  | 'ownerAuthProvenance'
+  | 'exactSteerBatch'
+  | 'owner'
+> & {
+  owner?: QueueOwner;
+  sourceId?: string;
+  ownerAuthProvenance: OwnerAuthProvenance;
+  autoExecute?: boolean;
+  priority?: 'urgent' | 'normal';
+  suggestedSkill?: string;
+  messageId?: string | null;
+  /** Defaults true for request replay dedupe; connector coalescing can opt out for in-flight entries. */
+  dedupeProcessing?: boolean;
+};
+
 export interface ExactSteerBatchReservation {
   reservationId: string;
   primaryEntryId: string;
@@ -279,6 +327,8 @@ export class InvocationQueue {
     }
   >();
 
+  constructor(private readonly ledgerStore: QueueLedgerStore = new InMemoryQueueLedgerStore()) {}
+
   private scopeKey(threadId: string, userId: string): string {
     return `${threadId}:${userId}`;
   }
@@ -376,30 +426,7 @@ export class InvocationQueue {
    * 预留队列位。容量检查在此完成。
    * 同源同目标的连续消息自动合并。
    */
-  enqueue(
-    input: Omit<
-      QueueEntry,
-      | 'id'
-      | 'status'
-      | 'createdAt'
-      | 'mergedMessageIds'
-      | 'messageId'
-      | 'autoExecute'
-      | 'priority'
-      | 'position'
-      | 'suggestedSkill'
-      | 'ownerAuthProvenance'
-      | 'exactSteerBatch'
-    > & {
-      ownerAuthProvenance: OwnerAuthProvenance;
-      autoExecute?: boolean;
-      priority?: 'urgent' | 'normal';
-      suggestedSkill?: string;
-      messageId?: string | null;
-      /** Defaults true for request replay dedupe; connector coalescing can opt out for in-flight entries. */
-      dedupeProcessing?: boolean;
-    },
-  ): EnqueueResult {
+  enqueue(input: QueueEnqueueInput): EnqueueResult {
     const { ownerAuthProvenance } = InvocationQueue.requireAdmissionContract(input);
     const key = this.scopeKey(input.threadId, input.userId);
     const q = this.getOrCreate(key);
@@ -449,6 +476,7 @@ export class InvocationQueue {
       id: randomUUID(),
       threadId: input.threadId,
       userId: input.userId,
+      owner: queueOwner(input),
       kind: input.kind,
       ownerAuthProvenance,
       idempotencyKey: input.idempotencyKey,
@@ -485,6 +513,237 @@ export class InvocationQueue {
     q.push(entry);
     this.originalContents.set(entry.id, input.content);
     return { outcome: 'enqueued', entry: { ...entry }, queuePosition: q.length };
+  }
+
+  private static persistentSourceId(input: QueueEnqueueInput): string {
+    const sourceId =
+      input.sourceId ??
+      input.messageId ??
+      input.idempotencyKey ??
+      input.continuationKey ??
+      input.freshnessSupplementId ??
+      input.freshnessClosureId;
+    if (!sourceId) throw new Error('durable Queue admission requires a persistent producer identity');
+    return sourceId;
+  }
+
+  private createLedgerRows(
+    input: QueueEnqueueInput,
+    sourceId: string,
+    enqueuedAt: number,
+    messageId?: string,
+  ): QueueLedgerEntry[] {
+    return createQueueLedgerAdmission({
+      sourceId,
+      threadId: input.threadId,
+      owner: queueOwner(input),
+      kind: input.kind,
+      from: input.from,
+      targetCatIds: input.targetCats,
+      content: input.content,
+      ...(messageId ? { messageId } : {}),
+      ...(input.routingWarnings ? { routingWarnings: input.routingWarnings } : {}),
+      ...(input.authorIntentByCatId ? { authorIntentByCatId: input.authorIntentByCatId } : {}),
+      intent: input.intent,
+      ownerAuthProvenance: input.ownerAuthProvenance,
+      autoExecute: input.autoExecute,
+      priority: input.priority,
+      sourceCategory: input.sourceCategory,
+      a2aParentInvocationId: input.a2aParentInvocationId,
+      freshnessClosureId: input.freshnessClosureId,
+      freshnessSupplementId: input.freshnessSupplementId,
+      freshnessSupplementLineageId: input.freshnessSupplementLineageId,
+      freshnessSupplementSeq: input.freshnessSupplementSeq,
+      readOnlyToolPolicy: input.readOnlyToolPolicy,
+      actionSuccessorFence: input.actionSuccessorFence,
+      waitContinuationCarrier: input.waitContinuationCarrier,
+      suggestedSkill: input.suggestedSkill,
+      callerTraceContext: input.callerTraceContext,
+      a2aTriggerMessageId: input.a2aTriggerMessageId,
+      enqueuedAt,
+    });
+  }
+
+  private static projectLedgerEntry(entry: QueueLedgerEntry): QueueEntry {
+    const targetCatId = entry.target.kind === 'cat' ? entry.target.catId : undefined;
+    const ownerUserId = entry.owner.kind === 'user' ? entry.owner.userId : `system:${entry.owner.service}`;
+    return {
+      id: entry.id,
+      threadId: entry.threadId,
+      userId: ownerUserId,
+      owner: structuredClone(entry.owner),
+      kind: entry.kind,
+      ownerAuthProvenance: entry.execution.ownerAuthProvenance,
+      idempotencyKey: entry.payload.sourceId,
+      content: entry.payload.content,
+      messageId: entry.payload.messageId ?? null,
+      mergedMessageIds: [],
+      from: structuredClone(entry.from),
+      targetCats: targetCatId ? [targetCatId] : [],
+      allTargetCats: targetCatId ? [targetCatId] : [],
+      ...(entry.payload.routingWarnings?.length
+        ? { routingWarnings: entry.payload.routingWarnings.map((warning) => structuredClone(warning)) }
+        : {}),
+      ...(targetCatId && entry.delivery.authorIntent
+        ? { authorIntentByCatId: { [targetCatId]: structuredClone(entry.delivery.authorIntent) } }
+        : {}),
+      ...(targetCatId && entry.delivery.notifiedAt !== undefined ? { queuedNotifiedByCatIds: [targetCatId] } : {}),
+      ...(targetCatId && entry.delivery.awakenedInvocationId
+        ? { queuedAwakenedInvocationIdByCatId: { [targetCatId]: entry.delivery.awakenedInvocationId } }
+        : {}),
+      ...(targetCatId && entry.delivery.awakenedAt !== undefined
+        ? { queuedAwakenedAtByCatId: { [targetCatId]: entry.delivery.awakenedAt } }
+        : {}),
+      ...(targetCatId && entry.delivery.seenAt !== undefined ? { queuedSeenByCatIds: [targetCatId] } : {}),
+      ...(targetCatId && entry.delivery.seenInvocationId
+        ? { queuedSeenInvocationIdByCatId: { [targetCatId]: entry.delivery.seenInvocationId } }
+        : {}),
+      ...(entry.delivery.bodyExposures?.length
+        ? { queuedBodyExposures: entry.delivery.bodyExposures.map((exposure) => structuredClone(exposure)) }
+        : {}),
+      ...(targetCatId && entry.delivery.failedAt !== undefined ? { queuedFailedByCatIds: [targetCatId] } : {}),
+      ...(targetCatId && entry.delivery.failedAt !== undefined
+        ? { queuedFailureAtByCatId: { [targetCatId]: entry.delivery.failedAt } }
+        : {}),
+      ...(targetCatId && entry.delivery.failureReason
+        ? { queuedFailureReasonByCatId: { [targetCatId]: entry.delivery.failureReason } }
+        : {}),
+      ...(targetCatId && entry.delivery.attemptId
+        ? { queuedAttemptIdByCatId: { [targetCatId]: entry.delivery.attemptId } }
+        : {}),
+      ...(targetCatId && entry.delivery.handledAt !== undefined ? { queuedHandledByCatIds: [targetCatId] } : {}),
+      ...(targetCatId && entry.delivery.steerRequestedAt !== undefined
+        ? { steerRequestedByCatIds: [targetCatId] }
+        : {}),
+      ...(targetCatId && entry.delivery.steeredInvocationId
+        ? { steeredInvocationIdByCatId: { [targetCatId]: entry.delivery.steeredInvocationId } }
+        : {}),
+      intent: entry.execution.intent,
+      status: entry.status === 'processing' ? 'processing' : 'queued',
+      createdAt: entry.enqueuedAt,
+      ...(entry.processingStartedAt !== undefined ? { processingStartedAt: entry.processingStartedAt } : {}),
+      autoExecute: entry.execution.autoExecute,
+      ...(entry.execution.a2aParentInvocationId
+        ? { a2aParentInvocationId: entry.execution.a2aParentInvocationId }
+        : {}),
+      priority: entry.priority,
+      ...(entry.sourceCategory ? { sourceCategory: entry.sourceCategory } : {}),
+      ...(entry.execution.freshnessClosureId ? { freshnessClosureId: entry.execution.freshnessClosureId } : {}),
+      ...(entry.execution.freshnessSupplementId
+        ? { freshnessSupplementId: entry.execution.freshnessSupplementId }
+        : {}),
+      ...(entry.execution.freshnessSupplementLineageId
+        ? { freshnessSupplementLineageId: entry.execution.freshnessSupplementLineageId }
+        : {}),
+      ...(entry.execution.freshnessSupplementSeq
+        ? { freshnessSupplementSeq: entry.execution.freshnessSupplementSeq }
+        : {}),
+      ...(entry.execution.readOnlyToolPolicy
+        ? { readOnlyToolPolicy: structuredClone(entry.execution.readOnlyToolPolicy) }
+        : {}),
+      ...(entry.execution.actionSuccessorFence
+        ? { actionSuccessorFence: structuredClone(entry.execution.actionSuccessorFence) }
+        : {}),
+      ...(entry.execution.waitContinuationCarrier
+        ? { waitContinuationCarrier: structuredClone(entry.execution.waitContinuationCarrier) }
+        : {}),
+      ...(entry.position !== undefined ? { position: entry.position } : {}),
+      ...(entry.execution.suggestedSkill ? { suggestedSkill: entry.execution.suggestedSkill } : {}),
+      ...(entry.execution.callerTraceContext
+        ? { callerTraceContext: structuredClone(entry.execution.callerTraceContext) }
+        : {}),
+      ...(entry.execution.a2aTriggerMessageId ? { a2aTriggerMessageId: entry.execution.a2aTriggerMessageId } : {}),
+    };
+  }
+
+  private cacheLedgerEntries(entries: readonly QueueLedgerEntry[]): QueueEntry[] {
+    const projected: QueueEntry[] = [];
+    for (const row of entries) {
+      const entry = InvocationQueue.projectLedgerEntry(row);
+      const queue = this.getOrCreate(this.scopeKey(entry.threadId, entry.userId));
+      const index = queue.findIndex((candidate) => candidate.id === entry.id);
+      if (index >= 0) queue[index] = entry;
+      else queue.push(entry);
+      projected.push({ ...entry });
+    }
+    return projected;
+  }
+
+  async hydrateFromLedger(): Promise<number> {
+    this.queues.clear();
+    let count = 0;
+    for (const threadId of await this.ledgerStore.listThreadIds()) {
+      const rows = await this.ledgerStore.list(threadId);
+      count += this.cacheLedgerEntries(rows).length;
+    }
+    return count;
+  }
+
+  async enqueueDurable(input: QueueEnqueueInput): Promise<EnqueueResult & { entries?: QueueEntry[] }> {
+    const sourceId = InvocationQueue.persistentSourceId(input);
+    const enqueuedAt = this.nextEnqueuedAt();
+    const rows = this.createLedgerRows(input, sourceId, enqueuedAt, input.messageId ?? undefined);
+    const result = await this.ledgerStore.enqueue(rows, input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined);
+    if (result.outcome === 'full') return { outcome: 'full' };
+    if (result.outcome === 'conflict') throw new Error(`Queue admission identity conflict: ${sourceId}`);
+    const entries = this.cacheLedgerEntries(result.entries);
+    const primary = entries[0];
+    return {
+      outcome: 'enqueued',
+      ...(primary ? { entry: primary } : {}),
+      entries,
+      queuePosition: primary
+        ? this.list(primary.threadId, primary.userId).findIndex((entry) => entry.id === primary.id) + 1
+        : undefined,
+      deduped: result.outcome === 'replayed',
+    };
+  }
+
+  /** One storage transaction for a queued Message and its complete Queue fan-out. */
+  async appendAndEnqueueDurable(
+    messageStore: IMessageStore,
+    message: AppendMessageInput,
+    input: QueueEnqueueInput,
+  ): Promise<EnqueueMessageResult> {
+    if (
+      (message.threadId ?? 'default') !== input.threadId ||
+      message.userId !== input.userId ||
+      message.content !== input.content ||
+      JSON.stringify(message.from) !== JSON.stringify(input.from) ||
+      message.deliveryStatus !== 'queued'
+    ) {
+      throw new Error('atomic Queue admission message does not match its execution work item');
+    }
+    const enqueuedAt = this.nextEnqueuedAt();
+    const result = await messageStore.appendWithQueueLedgerAdmission(
+      message,
+      (messageId) => this.createLedgerRows(input, messageId, enqueuedAt, messageId),
+      this.ledgerStore,
+      input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined,
+    );
+    if (result.outcome === 'full') return { outcome: 'full' };
+
+    const projected = this.cacheLedgerEntries(result.entries);
+    const expected = this.createLedgerRows(input, result.message.id, enqueuedAt, result.message.id);
+    const primary =
+      projected[0] ??
+      (() => {
+        const first = expected[0];
+        if (!first) return undefined;
+        const owner = queueOwner(input);
+        const ownerUserId = owner.kind === 'user' ? owner.userId : `system:${owner.service}`;
+        return this.findEntry(input.threadId, ownerUserId, first.id);
+      })();
+    return {
+      outcome: 'enqueued',
+      message: result.message,
+      ...(primary ? { entry: { ...primary } } : {}),
+      entries: projected,
+      queuePosition: primary
+        ? this.list(primary.threadId, primary.userId).findIndex((entry) => entry.id === primary.id) + 1
+        : undefined,
+      deduped: result.deduped,
+    };
   }
 
   /** Check if any entry in the thread already carries this messageId (connector retry dedup). */

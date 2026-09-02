@@ -16,10 +16,7 @@ function equalEntry(a: QueueLedgerEntry, b: QueueLedgerEntry): boolean {
 export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
 
-  async enqueue(
-    entries: readonly QueueLedgerEntry[],
-    maxQueuedUserEntries?: number,
-  ): Promise<QueueLedgerEnqueueResult> {
+  enqueueNow(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): QueueLedgerEnqueueResult {
     if (entries.length === 0) throw new Error('queue ledger enqueue requires at least one row');
     for (const entry of entries) assertQueueLedgerEntry(entry);
     const threadId = entries[0]?.threadId;
@@ -43,11 +40,11 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (maxQueuedUserEntries !== undefined) {
       const queuedUserSources = new Set(
         current
-          .filter((entry) => entry.owner.kind === 'user' && entry.status === 'queued')
+          .filter((entry) => entry.from.kind === 'user' && entry.status === 'queued')
           .map((entry) => entry.payload.sourceId),
       );
       const incomingUserSources = new Set(
-        entries.filter((entry) => entry.owner.kind === 'user').map((entry) => entry.payload.sourceId),
+        entries.filter((entry) => entry.from.kind === 'user').map((entry) => entry.payload.sourceId),
       );
       if (new Set([...queuedUserSources, ...incomingUserSources]).size > maxQueuedUserEntries) {
         return { outcome: 'full', entries: [] };
@@ -59,8 +56,31 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     return { outcome: 'enqueued', entries: inserted.map(cloneQueueLedgerEntry) };
   }
 
+  async enqueue(
+    entries: readonly QueueLedgerEntry[],
+    maxQueuedUserEntries?: number,
+  ): Promise<QueueLedgerEnqueueResult> {
+    return this.enqueueNow(entries, maxQueuedUserEntries);
+  }
+
+  /** Roll back only rows created by the same synchronous memory admission. */
+  removeEnqueuedNow(entries: readonly QueueLedgerEntry[]): void {
+    if (entries.length === 0) return;
+    const threadId = entries[0]?.threadId;
+    const current = threadId ? this.rows.get(threadId) : undefined;
+    if (!current) return;
+    const ids = new Set(entries.map((entry) => entry.id));
+    const remaining = current.filter((entry) => !ids.has(entry.id));
+    if (remaining.length === 0) this.rows.delete(threadId);
+    else this.rows.set(threadId, remaining);
+  }
+
   async list(threadId: string): Promise<QueueLedgerEntry[]> {
     return (this.rows.get(threadId) ?? []).map(cloneQueueLedgerEntry);
+  }
+
+  async listThreadIds(): Promise<string[]> {
+    return [...this.rows.keys()].sort();
   }
 
   async get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null> {

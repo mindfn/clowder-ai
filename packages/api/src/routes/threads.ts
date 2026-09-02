@@ -984,7 +984,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       return { error: 'Freshness retry unavailable' };
     }
     const nextEpoch = closure.retryEpoch + 1;
-    const enqueue = opts.invocationQueue.enqueue({
+    const enqueue = await opts.invocationQueue.enqueueDurable({
       from: { kind: 'agent', catId: closure.catId },
       threadId: id,
       userId,

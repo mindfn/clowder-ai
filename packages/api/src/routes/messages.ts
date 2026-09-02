@@ -30,7 +30,7 @@ import { getThreadLiveInvocations } from '../domains/cats/services/agents/invoca
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
-import { createInitialQueuedMessageCustody } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { resetStreak } from '../domains/cats/services/agents/routing/WorklistRegistry.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
@@ -454,7 +454,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       reply.status(401);
       return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
-    const ownerAuthProvenance = resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
+    const ownerAuthProvenance: OwnerAuthProvenance =
+      resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
 
     // Default to 'default' thread for lobby (prevents global broadcast)
     const resolvedThreadId = threadId ?? 'default';
@@ -773,12 +774,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         projectRoot: opts.projectRoot,
         threadId: resolvedThreadId,
       });
-      // ① Enqueue first (sync, capacity gatekeeper) — messageId is null at this point
-      const enqueueResult = opts.invocationQueue.enqueue({
-        from: { kind: 'user', userId },
+      const queueInput = {
+        from: { kind: 'user' as const, userId },
         threadId: resolvedThreadId,
         userId,
-        kind: 'conversation_input',
+        kind: 'conversation_input' as const,
         ownerAuthProvenance,
         idempotencyKey: resolvedIdempotencyKey,
         content,
@@ -793,7 +793,27 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           resolveCarrierCapability: (catId) => resolveFreshnessCarrierCapabilityOrUndeclared(opts.router, catId),
         }),
         intent: intent.intent,
-      });
+      };
+      const enqueueResult = await opts.invocationQueue.appendAndEnqueueDurable(
+        opts.messageStore,
+        {
+          from: queueInput.from,
+          userId,
+          content,
+          mentions: targetCats,
+          timestamp: Date.now(),
+          threadId: resolvedThreadId,
+          idempotencyKey: resolvedIdempotencyKey,
+          deliveryStatus: 'queued',
+          ...(contentBlocks ? { contentBlocks } : {}),
+          ...(whisperVisibility && whisperRecipients
+            ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
+            : {}),
+          ...(replyTo ? { replyTo } : {}),
+          ...sourcePayloadWrite,
+        },
+        queueInput,
+      );
 
       // Queue full → 429, no message written (no ghost message)
       if (enqueueResult.outcome === 'full') {
@@ -815,54 +835,17 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         };
       }
 
-      let storedUserMessageId: string | null = enqueueResult.entry?.messageId ?? null;
-
-      // ② Persist queued user work. F264 publishes it to the owner's timeline;
-      // deliveryStatus still keeps it out of cat context/mentions until dequeue.
-      // If enqueue returned a deduped active entry, reuse existing messageId and skip append.
-      if (!enqueueResult.deduped) {
-        try {
-          if (!enqueueResult.entry) throw new Error('successful queue admission is missing its entry');
-          const userMessage = await opts.messageStore.append({
-            from: { kind: 'user', userId },
-            userId,
-            content,
-            mentions: targetCats,
-            timestamp: Date.now(),
-            threadId: resolvedThreadId,
-            idempotencyKey: resolvedIdempotencyKey,
-            deliveryStatus: 'queued', // Browser-visible, but not cat-context delivered.
-            queueCustody: createInitialQueuedMessageCustody(enqueueResult.entry),
-            ...(contentBlocks ? { contentBlocks } : {}),
-            ...(whisperVisibility && whisperRecipients
-              ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
-              : {}),
-            ...(replyTo ? { replyTo } : {}),
-            ...sourcePayloadWrite,
-          });
-          storedUserMessageId = userMessage.id;
-
-          // F192 Phase G AC-G12 / F227: detect magic words → Event Memory (queued path)
-          void tryDetectMagicWords(
-            content,
-            resolvedThreadId,
-            targetCats,
-            storedUserMessageId,
-            userId,
-            opts.onMagicWordDetected,
-          );
-
-          const queueEntryId = enqueueResult.entry?.id;
-          if (queueEntryId) {
-            opts.invocationQueue.backfillMessageId(resolvedThreadId, userId, queueEntryId, userMessage.id);
-          }
-        } catch (err) {
-          const queueEntryId = enqueueResult.entry?.id;
-          if (queueEntryId) {
-            opts.invocationQueue.rollbackEnqueue(resolvedThreadId, userId, queueEntryId);
-          }
-          throw err;
-        }
+      const storedUserMessageId = enqueueResult.message?.id ?? null;
+      if (!enqueueResult.deduped && storedUserMessageId) {
+        // F192 Phase G AC-G12 / F227: detect magic words after the atomic admission commits.
+        void tryDetectMagicWords(
+          content,
+          resolvedThreadId,
+          targetCats,
+          storedUserMessageId,
+          userId,
+          opts.onMagicWordDetected,
+        );
       }
 
       if (admittedMessageBundle) await publishAdmittedBundleParticipants();

@@ -115,7 +115,7 @@ export class ConnectorInvokeTrigger {
 
     const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
     const from = messageFrom(sourceMessage);
-    const result = invocationQueue.enqueue({
+    const result = await invocationQueue.enqueueDurable({
       from: structuredClone(from),
       threadId: input.threadId,
       userId: input.userId,
