@@ -89,6 +89,21 @@ class FakeRedis {
       .map(([member]) => member);
   }
 
+  async zrange(key, start, end, withScores) {
+    const entries = [...(this.zsets.get(key) ?? new Map()).entries()]
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .slice(start, end < 0 ? undefined : end + 1);
+    return withScores === 'WITHSCORES'
+      ? entries.flatMap(([member, score]) => [member, String(score)])
+      : entries.map(([member]) => member);
+  }
+
+  async zcount(key, start, end) {
+    return [...(this.zsets.get(key) ?? new Map()).values()].filter(
+      (score) => score >= Number(start) && score <= Number(end),
+    ).length;
+  }
+
   async eval(script, keyCount, ...args) {
     if (script.includes('@fake-redis-handler: appendAnnotation')) {
       const [incidentKey, annotationKey, canonicalKey, sequenceKey, metricIndexKey] = args.slice(0, keyCount);

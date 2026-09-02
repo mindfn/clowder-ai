@@ -1,8 +1,9 @@
-import type { CycleRecord, CycleTriggerRoute, CycleWindow, EvaluationUnitRef, TraceAnnotation } from '@cat-cafe/shared';
+import type { CycleRecord, CycleTriggerRoute, CycleWindow, TraceAnnotation } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { CycleRecordStore, isSkippedCycle } from './CycleRecordStore.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
+import type { ObjectiveTraceIndex } from './ObjectiveTraceIndex.js';
 
 export type CycleCheckResult =
   | { status: 'idle' | 'interval' | 'active'; record: CycleRecord }
@@ -18,13 +19,15 @@ export class CycleTriggerChecker {
     private readonly deps: {
       catalog: EvaluationCatalog;
       cycles: CycleRecordStore;
-      traces: Pick<InjectionTraceStore, 'getEpisodeByInvocationId' | 'queryUnitWindow'>;
+      traces: Pick<InjectionTraceStore, 'getEpisodeByInvocationId'>;
+      objectiveTraces: Pick<ObjectiveTraceIndex, 'countWindow' | 'earliest' | 'ensureOwnerBackfilled' | 'indexEpisode'>;
       annotations: Pick<TraceAnnotationStore, 'queryMetricWindow'>;
       resolveVersion: (objectiveId: string) => CycleVersionRef | Promise<CycleVersionRef>;
     },
   ) {}
 
   async initializeOwner(ownerUserId: string, now: number): Promise<void> {
+    await this.deps.objectiveTraces.ensureOwnerBackfilled(ownerUserId, now);
     for (const objective of this.deps.catalog.registry.objectives) {
       await this.ensureCurrent(ownerUserId, objective.id, now);
     }
@@ -50,14 +53,7 @@ export class CycleTriggerChecker {
   async checkTrace(ownerUserId: string, invocationId: string, now: number): Promise<number> {
     const episode = await this.deps.traces.getEpisodeByInvocationId(invocationId);
     if (!episode || episode.terminal.ownerUserId !== ownerUserId) return 0;
-    const observed = new Set(
-      episode.summary.segments.filter((segment) => segment.status === 'observed').map((segment) => segment.segmentId),
-    );
-    const objectiveIds = new Set(
-      this.deps.catalog.manifest.units
-        .filter((unit) => observed.has(unit.unitId))
-        .flatMap((unit) => unit.objectives.map((objective) => objective.objectiveId)),
-    );
+    const objectiveIds = await this.deps.objectiveTraces.indexEpisode(episode);
     let requested = 0;
     for (const objectiveId of objectiveIds) {
       if ((await this.checkObjective(ownerUserId, objectiveId, now)).status === 'requested') requested++;
@@ -80,17 +76,11 @@ export class CycleTriggerChecker {
       return { status: 'interval', record: current };
     }
 
-    const unitRefs = unitRefsForObjective(this.deps.catalog, objectiveId);
-    const episodes = await this.deps.traces.queryUnitWindow(ownerUserId, unitRefs, current.cycleStart, now);
-    const segmentIds = new Set(unitRefs.map((ref) => ref.unitId));
-    const observedInvocationIds = new Set(
-      episodes
-        .filter((episode) =>
-          episode.summary.segments.some(
-            (segment) => segment.status === 'observed' && segmentIds.has(segment.segmentId),
-          ),
-        )
-        .map((episode) => episode.terminal.invocationId),
+    const observedInvocationCount = await this.deps.objectiveTraces.countWindow(
+      ownerUserId,
+      objectiveId,
+      current.cycleStart,
+      now,
     );
     const counterexamples = await this.distinctCounterexamples(
       ownerUserId,
@@ -100,10 +90,10 @@ export class CycleTriggerChecker {
       now,
     );
     const triggeredBy: CycleTriggerRoute[] = [];
-    if (observedInvocationIds.size >= model.cycleTrigger.cumulativeThreshold) triggeredBy.push('cumulative');
+    if (observedInvocationCount >= model.cycleTrigger.cumulativeThreshold) triggeredBy.push('cumulative');
     if (counterexamples.size >= model.cycleTrigger.counterexampleThreshold) triggeredBy.push('counterexamples');
     if (
-      observedInvocationIds.size > 0 &&
+      observedInvocationCount > 0 &&
       now - current.cycleStart >= model.cycleTrigger.cadenceDays * 24 * 60 * 60 * 1000
     ) {
       triggeredBy.push('cadence');
@@ -127,25 +117,11 @@ export class CycleTriggerChecker {
   private async ensureCurrent(ownerUserId: string, objectiveId: string, now: number): Promise<CycleRecord> {
     const existing = await this.deps.cycles.current(ownerUserId, objectiveId);
     if (existing) return existing;
-    const unitRefs = unitRefsForObjective(this.deps.catalog, objectiveId);
     const legacyStart = await this.deps.cycles.legacyCompletedWindowEnd(ownerUserId, objectiveId);
     if (legacyStart !== null && legacyStart > now) throw new Error(`cycle_start_after_now:${objectiveId}`);
-    const cycleStart = legacyStart ?? (await this.earliestObservedTrace(ownerUserId, unitRefs, now)) ?? now;
+    const cycleStart = legacyStart ?? (await this.deps.objectiveTraces.earliest(ownerUserId, objectiveId, now)) ?? now;
     const version = await this.deps.resolveVersion(objectiveId);
     return this.deps.cycles.initialize(ownerUserId, objectiveId, cycleStart, version);
-  }
-
-  private async earliestObservedTrace(
-    ownerUserId: string,
-    unitRefs: EvaluationUnitRef[],
-    now: number,
-  ): Promise<number | null> {
-    const segmentIds = new Set(unitRefs.map((ref) => ref.unitId));
-    const episodes = await this.deps.traces.queryUnitWindow(ownerUserId, unitRefs, 0, now);
-    const first = episodes.find((episode) =>
-      episode.summary.segments.some((segment) => segment.status === 'observed' && segmentIds.has(segment.segmentId)),
-    );
-    return first?.terminal.terminalAt ?? null;
   }
 
   private async distinctCounterexamples(
@@ -167,18 +143,6 @@ export class CycleTriggerChecker {
         .map((annotation) => annotation.incidentKey),
     );
   }
-}
-
-function unitRefsForObjective(catalog: EvaluationCatalog, objectiveId: string): EvaluationUnitRef[] {
-  return catalog.manifest.units.flatMap((unit) =>
-    unit.objectives
-      .filter((attachment) => attachment.objectiveId === objectiveId)
-      .map((attachment) => ({
-        unitType: 'segment' as const,
-        unitId: unit.unitId,
-        ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
-      })),
-  );
 }
 
 function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {

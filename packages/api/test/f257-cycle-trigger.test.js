@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 
 const { CycleRecordStore } = await import('../dist/infrastructure/harness-eval/evaluation/CycleRecordStore.js');
 const { CycleTriggerChecker } = await import('../dist/infrastructure/harness-eval/evaluation/CycleTriggerChecker.js');
+const { ObjectiveTraceIndex } = await import('../dist/infrastructure/harness-eval/evaluation/ObjectiveTraceIndex.js');
 
 class FakeRedis {
   strings = new Map();
@@ -42,6 +43,22 @@ class FakeRedis {
       .sort((left, right) => right[1] - left[1] || right[0].localeCompare(left[0]))
       .map(([member]) => member);
     return ordered.slice(start, end < 0 ? undefined : end + 1);
+  }
+
+  async zrange(key, start, end, withScores) {
+    const ordered = [...(this.zsets.get(key) ?? new Map()).entries()].sort(
+      (left, right) => left[1] - right[1] || left[0].localeCompare(right[0]),
+    );
+    const selected = ordered.slice(start, end < 0 ? undefined : end + 1);
+    return withScores === 'WITHSCORES'
+      ? selected.flatMap(([member, score]) => [member, String(score)])
+      : selected.map(([member]) => member);
+  }
+
+  async zcount(key, start, end) {
+    return [...(this.zsets.get(key) ?? new Map()).values()].filter(
+      (score) => score >= Number(start) && score <= Number(end),
+    ).length;
   }
 
   async eval(_script, _keyCount, key, expectedCycleId, replacement) {
@@ -108,17 +125,23 @@ function episode(id, terminalAt, status = 'observed') {
 function createHarness({ episodes = [], annotations = [], cycleModel = model(), version = 'v4' } = {}) {
   const redis = new FakeRedis();
   const store = new CycleRecordStore(redis);
-  const checker = new CycleTriggerChecker({
-    catalog: catalog(cycleModel),
-    cycles: store,
-    traces: {
-      async getEpisodeByInvocationId(invocationId) {
-        return episodes.find((item) => item.terminal.invocationId === invocationId) ?? null;
-      },
-      async queryUnitWindow(_owner, _refs, start, end) {
-        return episodes.filter((item) => item.terminal.terminalAt >= start && item.terminal.terminalAt < end);
-      },
+  const evaluationCatalog = catalog(cycleModel);
+  let traceWindowQueries = 0;
+  const traces = {
+    async getEpisodeByInvocationId(invocationId) {
+      return episodes.find((item) => item.terminal.invocationId === invocationId) ?? null;
     },
+    async queryUnitWindow(_owner, _refs, start, end) {
+      traceWindowQueries++;
+      return episodes.filter((item) => item.terminal.terminalAt >= start && item.terminal.terminalAt < end);
+    },
+  };
+  const objectiveTraces = new ObjectiveTraceIndex(redis, evaluationCatalog, traces);
+  const checker = new CycleTriggerChecker({
+    catalog: evaluationCatalog,
+    cycles: store,
+    traces,
+    objectiveTraces,
     annotations: {
       async queryMetricWindow(_owner, _objective, _metric, start, end) {
         return annotations.filter((item) => item.createdAt >= start && item.createdAt < end);
@@ -126,7 +149,7 @@ function createHarness({ episodes = [], annotations = [], cycleModel = model(), 
     },
     resolveVersion: () => ({ version, versionContentRef: `hooks:d1-test@${version}` }),
   });
-  return { redis, store, checker };
+  return { redis, store, checker, traceWindowQueries: () => traceWindowQueries };
 }
 
 function seedHistory(redis, record) {
@@ -142,7 +165,7 @@ function seedHistory(redis, record) {
 
 describe('F257 CycleRecord trigger checker', () => {
   test('initializes the first cycle from now when no valid trace exists', async () => {
-    const { checker, store } = createHarness();
+    const { checker, store } = createHarness({ episodes: [episode('absent-only', 100, 'absent')] });
     const result = await checker.checkObjective('owner-1', 'obj', 5_000);
     const current = await store.current('owner-1', 'obj');
 
@@ -176,6 +199,23 @@ describe('F257 CycleRecord trigger checker', () => {
     assert.equal(current.version, 'v4');
     assert.ok(Buffer.byteLength(serialized) < 1_024, serialized);
     assert.doesNotMatch(serialized, /traceCorpus|invocationId|summary/);
+  });
+
+  test('backfills objective observations once and never rescans the episode window per trace', async () => {
+    const episodes = Array.from({ length: 1_530 }, (_, index) => episode(`old-${index}`, index + 1));
+    const { checker, redis, traceWindowQueries } = createHarness({
+      episodes,
+      cycleModel: model({ cumulativeThreshold: 2_000, cadenceDays: 365 }),
+    });
+
+    await checker.initializeOwner('owner-1', 2_000);
+    assert.equal(traceWindowQueries(), 1);
+    assert.equal(redis.zsets.get('harness-objective-trace:owner-1:obj').size, 1_530);
+
+    episodes.push(episode('latest', 2_001));
+    await checker.checkTrace('owner-1', 'latest', 2_002);
+    assert.equal(traceWindowQueries(), 1, 'per-trace readiness must stay independent of the historical window');
+    assert.equal(redis.zsets.get('harness-objective-trace:owner-1:obj').size, 1_531);
   });
 
   test('deduplicated counterexamples and cadence are independent trigger routes', async () => {
