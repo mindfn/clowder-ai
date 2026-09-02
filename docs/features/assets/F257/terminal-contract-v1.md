@@ -19,7 +19,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 
 系统不断 check：周期内累计 ≥ 200，或周期内反例 ≥ 阈值，或距上次评估满 7 天——任一满足就**冻结一个时间窗**（起点 = 上次评估周期的结束时间，终点 = 现在），**不复制任何 tracing 数据**。然后拉起**固定的评估线程**，告诉它：时间窗、评估范围、指标；它去池子里拿这个时间窗的数据（反例优先）、按指标给出结论、**调工具回写 eval 状态**。如果它没回写，系统能观察到，用一条系统 message 再触发一次。
 
-回写后**自动进入 governance**：再次触发同一评估线程，决定 保持 / 回退 / 演进到下一版。回退或演进 → 给 operator 一张审批卡；点完（或跳过）都进入下一周期。跳过时周期起点不动（可能只是数据不够）；否则新周期起点 = 这次周期的终点。v1、v2、v3 各自独立评估，**没有跨版本对比**——governance 看的就是当前版本这个时间窗的指标结论。
+回写后**自动进入 governance**：再次触发同一评估线程，决定 保持 / 回退 / 演进到下一版。回退或演进 → 给 operator 一张审批卡；点完（或跳过）都进入下一周期。~~跳过时周期起点不动（可能只是数据不够）~~（08-20 原话；**09-02 06:32 operator 自纠 → 以 TC-10 为准：起点始终刷新 = 本周期终点，skip 只改变下次评估的取数窗口**）；新周期起点 = 这次周期的终点。v1、v2、v3 各自独立评估，**没有跨版本对比**——governance 看的就是当前版本这个时间窗的指标结论。
 
 就这一个环，循环。
 
@@ -49,26 +49,31 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 
 | # | 偏离 | 证据 | 违约条款 | Owner | 状态 |
 |---|---|---|---|---|---|
-| D-1 | snapshot 内嵌整份 corpus | D1 pending snapshot 6,148,472 bytes（200 episode 正文） | TC-4 | sol | open |
-| D-2 | sweep 预分类层是主路径前置门 `if (!semantic)` | 1240 待分类永远清不空 → D1 阈值满足后 9 天无评估 | TC-3/5/13 | sol（A 刀进行中） | open |
-| D-3 | 未回写 → 无限续租 | drain state generation 1899、in_flight 8 天 | TC-7 | sol（C 刀需按 TC-7 收缩） | open |
-| D-4 | ~~insufficient_evidence 不该推进起点~~ → 按 06:32 修正：起点始终刷新是对的；**缺的是 skip 回看取数**（连续 skip 周期合并进下次评估窗口）与 skip 理由存档 | 现无 skip 状态与回看逻辑 | TC-10 | sol | open（球 D-4 的 why 已被本行取代） |
-| D-5 | judgment 写完后无 governance 自动进入 | 代码仅一行注释；opus blocked 球 | TC-8/9 | 交互契约先由 Fable 起草，operator 确认后实现 | open |
-| D-6 | 评估猫 invocation 被 F299 recorder `sourceRefs.max(64)` 打断（上游 #1390，8/25 入 base） | 域 thread 每 10 分钟重派 + `too_big` 报错 | 止血项 | sol（B 刀） | open |
-| D-7 | Console 仍有"待分类"，两组命名不对 | `SegmentTraceTheater.tsx` L54/65/100 | TC-12 | Fable（分支 `fix/f257-tracing-two-groups`） | open |
+| D-1 | snapshot 内嵌整份 corpus | D1 pending snapshot 6,148,472 bytes（200 episode 正文） | TC-4 | sol · §14 S1（删 snapshot corpus → CycleRecord） | open → S1 |
+| D-2 | sweep 预分类层是主路径前置门 `if (!semantic)` | 1240 待分类永远清不空 → D1 阈值满足后 9 天无评估 | TC-3/5/13 | sol · §14 S1（删 `if (!semantic)`，sweep 移出主路径） | open → S1 |
+| D-3 | 未回写 → 无限续租 | drain state generation 1899、in_flight 8 天 | TC-7 | sol · §14 S1 删 drain fence / S2 建有界重触发 | open → S1/S2 |
+| D-4 | ~~insufficient_evidence 不该推进起点~~ → 按 06:32 修正：起点始终刷新是对的；**缺的是 skip 回看取数**（连续 skip 周期合并进下次评估窗口）与 skip 理由存档 | 现无 skip 状态与回看逻辑 | TC-10 | sol · §14 S1（skip 回看 `windows[]` + 理由存档） | open → S1 |
+| D-5 | judgment 写完后无 governance 自动进入 | 代码仅一行注释；opus blocked 球 | TC-8/9 | 契约已确认（complete-design §1 步 6–8、§5.1）；sol · §14 S3 | open → S3 |
+| D-6 | 评估猫 invocation 被 F299 recorder `sourceRefs.max(64)` 打断（上游 #1390，8/25 入 base） | 域 thread 每 10 分钟重派 + `too_big` 报错 | 止血项 | sol · §14 S2（assignment 引用 ≤ 64 或聚合为 source map，见 complete-design §6） | open → S2 |
+| D-7 | Console 仍有"待分类"，两组命名不对 | `SegmentTraceTheater.tsx` L54/65/100 | TC-12 | sol · §14 S4；输入 = **只 cherry-pick `88cc67154`**（7 files +41/−46；对 develop_base@635acbc97 dry-run merge 零冲突），**勿 merge 整条 `fix/f257-tracing-two-groups`**（含 485 个 rebuild 前恢复文件） | open → S4 |
 
-台账更新规则：修一条改一条状态，附 PR 号；**不得在对话里声明"已修"而不改本表**。
+台账更新规则：修一条改一条状态，附 PR 号；**不得在对话里声明"已修"而不改本表**。本轮六片合为唯一 PR（§14）：各行在该 PR 合入后统一改 fixed 并附 PR 号。
 
 ## 4. 验收：只认真实运行实例（非作者执行）
 
-| # | Falsifier（跑不过 = 没修好） |
-|---|---|
-| F-1 | 重启后 30 分钟内，某个累计 ≥ 200 的 Unit（如 D1/identity-truth）出现 latestJudgment ≠ null，且两个指标均有结果 |
-| F-2 | 该 Unit 的 pending snapshot 体积 < 64 KB（只含窗口/引用） |
-| F-3 | 评估线程未回写时，系统只重触发 1 次并留记录；drain/lease 状态不出现 generation > 10 |
-| F-4 | 一次 insufficient_evidence 结果后，completed-window-end 不变 |
-| F-5 | judgment 写入后 ≤ 5 分钟，同一评估 thread 出现 governance 决策（保持/回退/演进）；仅回退/演进产生审批卡 |
-| F-6 | Console 段详情页：无"待分类"；两组名词与数值同口径；触发条件显示 x/阈值、y/200、7 天 |
+> 09-02 对齐 `complete-design-v1.md` §14（切片 / 删留）与 06:32 修正（TC-10）：F-4 原文"completed-window-end 不变"与 TC-10 相反，已改；F-2 / F-3 的旧对象（pending snapshot / drain generation）换成 S1 之后的对象；新增 F-7（触发口径，S1 片）与 F-8（单一路径，S5 片）。F-1~F-6 编号不重排。
+> 执行：每片 push 后由 Fable 在**隔离实例**（抛弃式 Redis 装载运行实例 dump 副本 + 该分支 build）跑该片对应的 F；唯一 PR 合入并重启后在**运行实例**全跑 F-1~F-8。脚本 `scripts/f257-falsifiers/`：检查项的观察面尚未绑定时输出 `unbound`，**不算通过**。
+
+| # | Falsifier（跑不过 = 没修好） | 观察面（只读） | 条款 | 切片 |
+|---|---|---|---|---|
+| F-1 | 重启后 30 分钟内，某个周期内累计 ≥ N 的 Objective（如 identity-truth，1436/200）的 CycleRecord 到达 `evalStatus=written`，且 `evaluation.metrics[]` 覆盖该 Objective 全部指标、每条有 conclusion | CycleRecord 读面 + 该 Objective 系统 thread 消息（assignment → 回写工具调用） | TC-3/5/6 | S2 |
+| F-2 | 该 Objective 的 CycleRecord 序列化 < 64 KB（`requested` 态 < 1 KB），不含任何 episode 正文；S0 清场后 Redis 中不再新出现 `harness-evaluation-snapshot:*`（traceCorpus）/ unit job / sweep job / drain 类键 | Redis `MEMORY USAGE` + `SCAN`（只读） | TC-4/14 | S1 |
+| F-3 | 评估 thread 未回写：T=30 分钟后系统恰投 **1** 条重触发消息（`evalStatus=retriggered`）；再 30 分钟仍无 → `stalled` + 本 thread 告警，此后不再重试；Redis 中不存在 drain / lease / generation 类键 | CycleRecord 读面 + thread 消息计数 + Redis SCAN | TC-7 | S2 |
+| F-4 | 一次 insufficient_evidence（= skip）后：周期关闭且**下一周期 `cycleStart` = 本周期 `cycleEnd`**（起点刷新）；下一次 assignment 的 `windows[]` 长度 ≥ 2、包含该 skip 周期窗口，并携带 `priorSkipReasons` | CycleRecord 历史 + 下一次 assignment 消息体 | TC-10 | S1（回看）/ S2（assignment） |
+| F-5 | 评估回写后 ≤ 5 分钟，同一 Objective thread 收到 governance assignment（含历史周期摘要）且 `CycleRecord.governance` 写入；keep 不产卡；rollback / evolve 产卡且卡含 §5.1 五段（含逐段 diff）；reject 附理由后 ≤ 5 分钟出现新卡；approve(evolve) 后 registry 重扫、新版本对下一次 session-init 生效、无需重启 | thread 消息 + 提案卡（F276 store）+ override versions + registry 快照 | TC-8/9/16/17 | S3 |
+| F-6 | Console 段详情页：无"待分类"；Tracing 面两组（周期内反例 n/M、周期内累计 m/N）+ 第三路 d/D 天 + 周期起点，名词与数值同口径；Eval 面平时只列指标目录、无假空态，有评估时显示 verdict 卡；Governance 面显示 decision / 理由 / 卡状态 / 版本链 | 真实浏览器（Playwright）对隔离 / 运行实例 | TC-12 | S4 |
+| F-7 | 触发口径：三路 anyOf——累计 ≥ N、去重反例 ≥ M、cadence ≥ D 天（且累计 ≥ 1）任一满足即 `requested`；N/M/D/最小间隔来自该 Objective 评估模型定义（改定义即改行为，代码无硬编码）；同一 Objective `requested/retriggered` 期间不重复开启；周期关闭后最小间隔（默认 2h）内不再触发；首周期起点 = 最早有效 trace 时间，池空则服务启动写当前时间 | CycleRecord 读面 + 评估模型定义 + 隔离实例可调阈值 / 时钟 | TC-3/15 | S1 |
+| F-8 | 单一路径：native 猫（Claude / Codex）与 pipeline 猫的 session-init 段 ID 集合一致；tracing 中不存在 L1–L7 独立 ID；`compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 与 manifest 协议已删除；native 猫启动零 L0 报错，system-prompt 文件由同一 pipeline 输出 | 代码树 + 启动日志 + tracing 段投影 + 一次真实 native 猫 invocation | complete-design §13 | S5 |
 
 ## 5. 与其它文档的关系
 

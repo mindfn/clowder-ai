@@ -138,7 +138,7 @@ CycleRecord {
 
 ☐ 清理方案——**operator 不裁决**；实现者自决，前提：不删 tracing/反例/已完成 judgment，只清派生状态
 
-## 8. 验收（= terminal-contract §4 F-1~6）+ 一次真实周期走通的截图链（步 2→8）
+## 8. 验收（= terminal-contract §4 F-1~8）+ 一次真实周期走通的截图链（步 2→8）
 
 ☐ 以此为完成定义
 
@@ -222,17 +222,17 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 交付形态：
 - 从 `develop_base` 切一条 feature 分支；S0…S5 **各一个 commit**（commit message 逐条映射 TC-#），每片完成即 push。
 - Fable 在分支上**逐 commit 增量 review**（§15 把关尺），并在**隔离实例**（抛弃式 Redis + 该分支 build，同 Gate 1 做法）跑该片 falsifier；不过则该片返工，不进下一片。
-- 全部六片通过 → 开**唯一 PR**（描述汇总 TC-# 映射 + 六片 falsifier 结果）→ 合入 `develop_base` → 运行实例回流 + 重启 → Fable 在运行实例跑完整 F-1~6 → operator 体验验收。
+- 全部六片通过 → 开**唯一 PR**（描述汇总 TC-# 映射 + 六片 falsifier 结果）→ 合入 `develop_base` → 运行实例回流 + 重启 → Fable 在运行实例跑完整 F-1~8 → operator 体验验收。
 - S0 清场脚本随第一个 commit 进分支，但**只在最终合入后、重启前对运行实例执行一次**（先 dry-run 贴 thread）；开发期间只对隔离实例执行。
 
 | 片 | 做什么 | 删什么 | Falsifier |
 |---|---|---|---|
 | S0 清场 | 一次性脚本（先 dry-run 打印将清 key）清派生状态：4 个 pending snapshot、81 个 sweep job、drain state、18 个 unit job | — | Redis 只剩 tracing 池、反例标记、已完成 judgment、override 版本链 |
-| S1 触发 + CycleRecord | `CycleRecord` CAS 存储；checker（每 trace 落盘后 + 每小时）：三路 anyOf、per-Objective 阈值、最小间隔、首周期起点、skip 回看 `windows[]` | snapshot corpus、claim/commit/watermark Lua、`if (!semantic)`、drain fence、volume-sweep retry | 阈值满足 → `evalStatus=requested` 且记录 <1 KB；间隔内不重触发 |
+| S1 触发 + CycleRecord | `CycleRecord` CAS 存储；checker（每 trace 落盘后 + 每小时）：三路 anyOf、per-Objective 阈值、最小间隔、首周期起点、skip 回看 `windows[]` | snapshot corpus、claim/commit/watermark Lua、`if (!semantic)`、drain fence、volume-sweep retry | F-7 / F-2 / F-4（回看）：阈值满足 → `evalStatus=requested` 且记录 <1 KB；间隔内不重触发 |
 | S2 评估投递 + 回写 | per-Objective thread ensure（默认成员=Settings 全局默认猫，可改）；assignment（目标+窗口+指标+反例引用+读池工具，≤32 KB）；`describe_harness_unit`；`submit_cycle_evaluation`；未回写 30 分钟 → 1 次重触发 → `stalled` + 告警 | UnitSemanticEvaluationCoordinator 的门语义、cursor receipt/digest、sweep 主路径 | F-1、F-3 |
 | S3 governance + 提案卡 | 回写后自动 governance assignment（含历史摘要）；`submit_cycle_governance{decision,reason,v2Draft?}`；卡（§5.1，approve/skip/reject，F276 扩枚举）；approve 执行 override 路由 + registry 重扫 + snapshot 刷新；TC-16 活性提醒 | — | F-5；reject 后必出新卡 |
-| S4 Console | Tracing 两组 + 三路进度 + 周期起点（并入 Fable 的 `fix/f257-tracing-two-groups`）；Eval 指标目录 + verdict 卡；Governance 面 | "待分类"、旧三数字 | F-6 |
-| S5 单一路径 | native 提供商 session-init 由同一 pipeline 输出写文件投递；L1–L7 迁为 `assets/prompt-hooks/` 普通段 | `compile-system-prompt-l0.mjs`、`l0-compiler.ts`、`native-l0-trace.ts`、manifest 协议 | native 猫与 pipeline 猫段 ID 一致；L0 启动零报错；tracing 中无 L 系列独立 ID |
+| S4 Console | Tracing 两组 + 三路进度 + 周期起点（并入 Fable 的 `fix/f257-tracing-two-groups`——**只 cherry-pick `88cc67154`**，勿 merge 整条分支）；Eval 指标目录 + verdict 卡；Governance 面 | "待分类"、旧三数字 | F-6 |
+| S5 单一路径 | native 提供商 session-init 由同一 pipeline 输出写文件投递；L1–L7 迁为 `assets/prompt-hooks/` 普通段 | `compile-system-prompt-l0.mjs`、`l0-compiler.ts`、`native-l0-trace.ts`、manifest 协议 | F-8：native 猫与 pipeline 猫段 ID 一致；L0 启动零报错；tracing 中无 L 系列独立 ID |
 
 顺序 S0→S1→S2→S3→S4→S5；S4 可与 S3 并行。每片 commit 目标 ≤ 600 行，超了拆 commit（不拆 PR）。全部通过后：运行实例一次真实周期走通截图链 = 完成。
 
