@@ -845,6 +845,45 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     expect(mockAddFlatActiveInvocation).toHaveBeenCalledWith('inv-1', 'opus', 'execute', undefined);
     expect(mockAddFlatActiveInvocation).toHaveBeenCalledWith('inv-1-kimi', 'kimi', 'execute', undefined);
     expect(Object.keys(mockActiveInvocations)).toHaveLength(2);
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/threads/thread-A/executions/active', {
+      signal: undefined,
+    });
+  });
+
+  it('message lifecycle changes immediately re-read canonical active execution truth', async () => {
+    const callbacks: SocketCallbacks = { onMessage: vi.fn() };
+    mockStoreCurrentThreadId = 'thread-A';
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+
+    act(() => {
+      simulateServerEvent('message_lifecycle_updated', {
+        threadId: 'thread-A',
+        message: {
+          id: 'response-1',
+          from: { kind: 'agent', catId: 'opus' },
+          catId: 'opus',
+          content: '',
+          timestamp: 100,
+          lifecycle: {
+            kind: 'response',
+            orderKey: '100:turn-1',
+            invocationId: 'turn-1',
+            targetId: 'opus',
+            inputEntryIds: ['entry-1'],
+            inputMessageIds: ['source-1'],
+            status: 'processing',
+            startedAt: 100,
+          },
+        },
+      });
+    });
+    await act(async () => Promise.resolve());
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/threads/thread-A/executions/active', {
+      signal: undefined,
+    });
   });
 
   it('spawn_started on background thread registers thread-scoped exact invocation slots', () => {

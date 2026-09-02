@@ -59,30 +59,37 @@ export function useQueueActionConvergence(threadId: string) {
     [addToast, threadId],
   );
 
-  const handleSteerConfirm = useCallback(async () => {
-    if (!steerEntryId) return;
-    try {
-      const response = await apiFetch(`/api/threads/${threadId}/queue/${steerEntryId}/steer`, { method: 'POST' });
-      if (response.ok) {
-        setSteerEntryId(null);
-        return;
+  const handleSteerConfirm = useCallback(
+    async (targetCatId?: string) => {
+      if (!steerEntryId || !targetCatId) return;
+      try {
+        const response = await apiFetch(`/api/threads/${threadId}/queue/${steerEntryId}/steer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetCatId }),
+        });
+        if (response.ok) {
+          setSteerEntryId(null);
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 409) {
+          setSteerEntryId(null);
+          await refreshQueue();
+        }
+        addToast({
+          type: 'error',
+          title: 'Steer 失败',
+          message: steerFailureMessage(response.status, data?.code, data?.error),
+          threadId,
+          duration: 5000,
+        });
+      } catch {
+        addToast({ type: 'error', title: 'Steer 失败', message: 'Steer 失败，请重试', threadId, duration: 5000 });
       }
-      const data = await response.json().catch(() => ({}));
-      if (response.status === 409) {
-        setSteerEntryId(null);
-        await refreshQueue();
-      }
-      addToast({
-        type: 'error',
-        title: 'Steer 失败',
-        message: steerFailureMessage(response.status, data?.code, data?.error),
-        threadId,
-        duration: 5000,
-      });
-    } catch {
-      addToast({ type: 'error', title: 'Steer 失败', message: 'Steer 失败，请重试', threadId, duration: 5000 });
-    }
-  }, [addToast, refreshQueue, steerEntryId, threadId]);
+    },
+    [addToast, refreshQueue, steerEntryId, threadId],
+  );
 
   return {
     steerEntryId,

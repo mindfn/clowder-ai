@@ -125,6 +125,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const coCreator = useCoCreatorConfig();
   const resolveCatName = useCatNameResolver();
   const rawQueue = useChatStore((s) => s.queue);
+  const thread = useChatStore((s) => s.threads.find((candidate) => candidate.id === threadId));
   const queue = useMemo(() => rawQueue ?? [], [rawQueue]);
   const setQueue = useChatStore((s) => s.setQueue);
   const { activeInvocations, catInvocations } = useThreadLiveness(threadId);
@@ -476,6 +477,19 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const entryIds = visibleEntries.map((e) => e.id);
 
   const selectedSteerEntry = steerEntryId ? (queue.find((e) => e.id === steerEntryId) ?? null) : null;
+  const selectedSteerTargetIds = selectedSteerEntry
+    ? selectedSteerEntry.targetCats.length > 0
+      ? selectedSteerEntry.targetCats
+      : (thread?.participants ?? [])
+    : [];
+  const selectedSteerTargets = selectedSteerTargetIds.map((targetId) => {
+    const appendRuns = selectedSteerEntry?.lifecycleActions?.append?.expectedRuns ?? [];
+    return {
+      id: targetId,
+      label: resolveCatName(targetId),
+      canAppend: appendRuns.length === 1 && appendRuns[0]?.targetId === targetId,
+    };
+  });
 
   return (
     <div
@@ -577,7 +591,17 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       )}
 
       {selectedSteerEntry && selectedSteerEntry.status === 'queued' && (
-        <SteerQueuedEntryModal onCancel={handleSteerCancel} onConfirm={handleSteerConfirm} />
+        <SteerQueuedEntryModal
+          targets={selectedSteerTargets}
+          initialTargetId={selectedSteerTargets[0]?.id}
+          onCancel={handleSteerCancel}
+          onConfirm={handleSteerConfirm}
+          onAppend={(targetId) => {
+            if (selectedSteerTargets.some((target) => target.id === targetId && target.canAppend)) {
+              void handleAppend(selectedSteerEntry);
+            }
+          }}
+        />
       )}
     </div>
   );

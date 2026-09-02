@@ -671,13 +671,32 @@ function ChatMessageContent({
   // Keep the real bubble and pending placeholder on the same visual predicate.
   // Identity/lifecycle metadata alone must not tear down the placeholder before
   // an assistant avatar and frame can actually take over.
-  if (
-    !doesAssistantMessageRenderBubble(message, {
-      currentThreadId: renderThreadId,
-      hasCliBlock,
-      hasCrossThreadSource: Boolean(crossThreadSourceThreadId),
-    })
-  ) {
+  const assistantRenderContext = {
+    currentThreadId: renderThreadId,
+    hasCliBlock,
+    hasCrossThreadSource: Boolean(crossThreadSourceThreadId),
+  };
+  if (!doesAssistantMessageRenderBubble(message, assistantRenderContext)) {
+    const notice = projectEmptyResponseLifecycleNotice(message, assistantRenderContext);
+    if (notice?.tone === 'processing') {
+      return (
+        <div data-message-id={message.id} data-testid="response-lifecycle-tip" className="mb-4 flex items-start gap-2">
+          {catData && message.catId ? <CatAvatar catId={message.catId} size={32} /> : null}
+          <div className="min-w-0 pt-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-semibold" style={{ color: catStyle?.textColor }}>
+                {catStyle?.label ?? message.catId}
+              </span>
+              <span className="text-cafe-muted">{formatTime(message.timestamp)}</span>
+            </div>
+            <output className="mt-1 inline-flex items-center gap-2 text-sm text-cafe-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" aria-hidden="true" />
+              <span>{notice.label}</span>
+            </output>
+          </div>
+        </div>
+      );
+    }
     return null;
   }
 

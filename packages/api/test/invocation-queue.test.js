@@ -329,6 +329,19 @@ describe('InvocationQueue', () => {
       assert.equal(claimed.status, 'processing');
     });
 
+    it('atomically assigns a targetless entry before exposing an exact Steer reservation', () => {
+      const target = queue.enqueue(
+        entry({ content: 'targetless', targetCats: [], ownerAuthProvenance: 'strict' }),
+      ).entry;
+
+      const reserved = queue.reserveExactUserEntry('t1', 'u1', target.id, 'codex');
+
+      assert.equal(reserved.outcome, 'reserved');
+      assert.deepEqual(queue.getEntrySnapshot('t1', 'u1', target.id)?.targetCats, ['codex']);
+      assert.deepEqual(queue.getEntrySnapshot('t1', 'u1', target.id)?.allTargetCats, ['codex']);
+      assert.deepEqual(queue.getEntrySnapshot('t1', 'u1', target.id)?.steerRequestedByCatIds, ['codex']);
+    });
+
     it('marks the complete reservation processing in one dequeue transition', () => {
       const a = queue.enqueue(entry({ content: 'a', ownerAuthProvenance: 'strict' })).entry;
       const b = queue.enqueue(entry({ content: 'b', ownerAuthProvenance: 'strict' })).entry;

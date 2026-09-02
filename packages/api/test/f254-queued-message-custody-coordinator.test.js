@@ -81,6 +81,23 @@ function enqueueRetry(queue, message, targetCatId) {
 }
 
 describe('F254 queued message custody coordinator', () => {
+  test('persists a targetless Steer member selection before cancellation side effects', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const entry = enqueueUser(queue, [], 'strict');
+    const message = appendCustodiedMessage(store, queue, entry);
+    const reserved = queue.reserveExactUserEntry(entry.threadId, entry.userId, entry.id, 'codex');
+    assert.equal(reserved.outcome, 'reserved');
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store });
+
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+
+    const custody = store.getById(message.id).queueCustody;
+    assert.deepEqual(custody.allTargetCats, ['codex']);
+    assert.deepEqual(custody.pendingTargetCats, ['codex']);
+    assert.deepEqual(custody.steerRequestedByCatIds, ['codex']);
+  });
+
   test('PR7 refuses to persist an action fence under a different Queue idempotency identity', () => {
     const queue = new InvocationQueue();
     const entry = queue.enqueue(
@@ -445,16 +462,18 @@ describe('F254 queued message custody coordinator', () => {
   test('retires only the durable Queue target bound to the exact completed action fence', async () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
-    const message = store.append({
-      threadId: 'thread-1',
-      userId: 'user-1',
-      catId: 'fable5',
-      content: 'review exact HEAD',
-      mentions: ['codex-sol'],
-      timestamp: 100,
-      deliveryStatus: 'queued',
-      extra: { crossPost: { sourceThreadId: 'thread-source' } },
-    });
+    const message = store.append(
+      canonicalTestMessageInput({
+        threadId: 'thread-1',
+        userId: 'user-1',
+        catId: 'fable5',
+        content: 'review exact HEAD',
+        mentions: ['codex-sol'],
+        timestamp: 100,
+        deliveryStatus: 'queued',
+        extra: { crossPost: { sourceThreadId: 'thread-source' } },
+      }),
+    );
     const exactFence = {
       leaseId: 'lease-head-a',
       generation: 4,
@@ -463,22 +482,25 @@ describe('F254 queued message custody coordinator', () => {
       invocationLineageRef: 'dispatch:dispatch-head-a',
     };
     const entries = [['codex-sol', exactFence]].map(([catId, actionSuccessorFence]) => {
-      const result = queue.enqueue({
-        ownerAuthProvenance: 'unknown',
-        threadId: 'thread-1',
-        userId: 'user-1',
-        content: message.content,
-        source: 'agent',
-        sourceCategory: 'a2a',
-        targetCats: [catId],
-        intent: 'review',
-        autoExecute: true,
-        callerCatId: 'fable5',
-        a2aParentInvocationId: 'parent-1',
-        a2aTriggerMessageId: message.id,
-        idempotencyKey: `action:${actionSuccessorFence.leaseId}:${actionSuccessorFence.generation}:${catId}`,
-        actionSuccessorFence,
-      });
+      const result = queue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'message_wake',
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          content: message.content,
+          source: 'agent',
+          sourceCategory: 'a2a',
+          targetCats: [catId],
+          intent: 'review',
+          autoExecute: true,
+          callerCatId: 'fable5',
+          a2aParentInvocationId: 'parent-1',
+          a2aTriggerMessageId: message.id,
+          idempotencyKey: `action:${actionSuccessorFence.leaseId}:${actionSuccessorFence.generation}:${catId}`,
+          actionSuccessorFence,
+        }),
+      );
       assert.equal(result.outcome, 'enqueued');
       queue.backfillMessageId('thread-1', 'user-1', result.entry.id, message.id);
       return queue.getEntrySnapshot('thread-1', 'user-1', result.entry.id);

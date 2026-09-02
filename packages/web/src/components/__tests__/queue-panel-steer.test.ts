@@ -99,6 +99,17 @@ describe('QueuePanel steer (F047)', () => {
       activeInvocations: {},
       catInvocations: {},
       targetCats: [],
+      threads: [
+        {
+          id: 'thread-1',
+          projectPath: '/test',
+          title: 'Test thread',
+          createdBy: 'test-user',
+          participants: ['opus', 'codex'],
+          lastActiveAt: NOW,
+          createdAt: NOW,
+        },
+      ],
     });
   });
 
@@ -194,10 +205,30 @@ describe('QueuePanel steer (F047)', () => {
       '/api/threads/thread-1/queue/q1/steer',
       expect.objectContaining({
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetCatId: 'opus' }),
       }),
     );
-    const callArgs = (apiFetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[1] as { body?: string };
-    expect(callArgs.body).toBeUndefined();
+  });
+
+  it('lets a targetless queued message select an exact current-thread member', async () => {
+    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetCats: [] }] });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-q1"]')?.click());
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/steer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: 'codex' }),
+    });
   });
 
   it('offers Append only from the server projection and echoes both exact fences', async () => {
@@ -298,7 +329,11 @@ describe('QueuePanel steer (F047)', () => {
 
     expect(container.querySelector('[data-testid="steer-confirm"]')).toBeNull();
     expect(apiFetch).toHaveBeenCalledTimes(2);
-    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/threads/thread-1/queue/q1/steer', { method: 'POST' });
+    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/threads/thread-1/queue/q1/steer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: 'opus' }),
+    });
     expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/threads/thread-1/queue');
     expect(useChatStore.getState().queue).toEqual([]);
   });
@@ -323,10 +358,9 @@ describe('QueuePanel steer (F047)', () => {
     expect(steerBtn).not.toBeNull();
     act(() => steerBtn?.click());
 
-    expect(container.textContent).toContain('停止目标当前回复');
-    expect(container.textContent).toContain('立即发送这条排队消息');
-    expect(container.textContent).toContain('已经完成的回复仍会保留');
-    expect(container.querySelector('[data-testid="steer-confirm"]')?.textContent).toBe('停止并发送');
+    expect(container.textContent).toContain('opus');
+    expect(container.querySelector('[data-testid="steer-confirm"]')?.textContent).toBe('停止回复并发送');
+    expect(container.textContent).not.toContain('旧回复会被停止');
     expect(container.textContent).not.toContain('提到队首');
   });
 

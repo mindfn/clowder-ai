@@ -41,7 +41,7 @@ import type { QueueProcessor } from '../domains/cats/services/agents/invocation/
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
-import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import type { IThreadStore, Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
 import { buildCancelMessages, type SocketManager } from '../infrastructure/websocket/index.js';
@@ -252,6 +252,7 @@ const moveBodySchema = z.object({
 const steerBodySchema = z
   .object({
     mode: z.literal('immediate').optional(),
+    targetCatId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -357,7 +358,7 @@ async function guardThreadOwnership(
   reply: FastifyReply,
   threadStore: IThreadStore,
   threadId: string,
-): Promise<{ userId: string } | null> {
+): Promise<{ userId: string; thread: Thread } | null> {
   const userId = resolveUserId(request, {});
   if (!userId) {
     reply.status(401);
@@ -379,7 +380,7 @@ async function guardThreadOwnership(
     return null;
   }
 
-  return { userId };
+  return { userId, thread };
 }
 
 export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, opts) => {
@@ -986,10 +987,22 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // Steer has exactly one meaning: cancel the current target invocation and
       // immediately start this same durable queue entry. Reordering remains a
       // separate drag/move interaction and is never accepted as a Steer mode.
-      const steerCatId = entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
+      const requestedTargetCatId = parseResult.data.targetCatId;
+      if (!requestedTargetCatId && entry.targetCats.length === 0) {
+        reply.status(400);
+        return { error: '请选择当前对话中的成员', code: 'STEER_TARGET_REQUIRED' };
+      }
+      const steerCatId =
+        requestedTargetCatId ?? entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
       if (!steerCatId) {
         reply.status(409);
         return { error: 'Steer 状态已变化，请重试', code: 'STEER_STATE_CHANGED' };
+      }
+      const targetInThread = guard.thread.participants.includes(steerCatId as CatId);
+      const targetMatchesEntry = entry.targetCats.length === 0 || isOrdinaryQueueTargetEligible(entry, steerCatId);
+      if (!targetInThread || !targetMatchesEntry) {
+        reply.status(400);
+        return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_STEER_TARGET' };
       }
       // Reserve the entry BEFORE preempting. Preemption cancels a running turn;
       // doing it first meant a losing CAS returned STEER_STATE_CHANGED *after*

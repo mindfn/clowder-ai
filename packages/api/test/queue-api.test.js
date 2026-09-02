@@ -55,6 +55,7 @@ function buildDeps(overrides = {}) {
         id,
         title: 'Test Thread',
         createdBy: 'system', // default: public thread
+        participants: ['opus', 'codex'],
       })),
     },
     invocationQueue,
@@ -954,6 +955,55 @@ describe('Queue Management API', () => {
     ]);
   });
 
+  it('POST /queue/:entryId/steer binds a targetless message to the selected current-thread member', async () => {
+    const queued = enqueueEntry(deps.invocationQueue, {
+      content: 'pick one member',
+      ownerAuthProvenance: 'strict',
+      targetCats: [],
+    });
+    deps.queueProcessor.processNext = mock.fn(async () => ({ started: true, entry: queued.entry }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/steer`,
+      headers: { 'x-cat-cafe-user': 'user-a', 'content-type': 'application/json' },
+      payload: { targetCatId: 'codex' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id)?.targetCats, ['codex']);
+    assert.equal(deps.queueCustodyCoordinator.persistEntry.mock.calls[0].arguments[0].targetCats[0], 'codex');
+  });
+
+  it('POST /queue/:entryId/steer rejects a targetless message without a current-thread member selection', async () => {
+    const queued = enqueueEntry(deps.invocationQueue, { targetCats: [] });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/steer`,
+      headers: { 'x-cat-cafe-user': 'user-a', 'content-type': 'application/json' },
+      payload: {},
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().code, 'STEER_TARGET_REQUIRED');
+  });
+
+  it('POST /queue/:entryId/steer rejects a member outside the current thread before reservation', async () => {
+    const queued = enqueueEntry(deps.invocationQueue, { targetCats: [] });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/steer`,
+      headers: { 'x-cat-cafe-user': 'user-a', 'content-type': 'application/json' },
+      payload: { targetCatId: 'outsider' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().code, 'INVALID_STEER_TARGET');
+    assert.equal(deps.queueCustodyCoordinator.persistEntry.mock.calls.length, 0);
+  });
+
   it('POST /queue/:entryId/steer does not preempt when reservation persistence fails', async () => {
     // Reserving only in memory just moved the split transaction: a rejected
     // durable write would still have landed after the running turn was killed.
@@ -1273,9 +1323,11 @@ describe('Queue Management API', () => {
       { threadId: 't1', userId: 'user-a', catId: 'opus' },
       { preserveHolderExecutionIds: ['inv-active'] },
     ]);
-    // Bugfix: steer must broadcast cancel+done so frontend clears old invocation's "正在回复中"
+    // The durable canceled response owns the visible terminal; transport emits
+    // one done event so the frontend clears the old invocation without a
+    // duplicate centered cancellation notice.
     const broadcastCalls = deps.socketManager.broadcastAgentMessage.mock.calls;
-    assert.ok(broadcastCalls.length >= 2, 'should broadcast system_info + done for canceled invocation');
+    assert.ok(broadcastCalls.length >= 1, 'should broadcast done for canceled invocation');
     const doneCall = broadcastCalls.find((c) => c.arguments[0].type === 'done');
     assert.ok(doneCall, 'should broadcast done event to clear frontend loading state');
     assert.equal(doneCall.arguments[0].isFinal, true);

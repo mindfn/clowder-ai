@@ -24,6 +24,7 @@ import {
 } from './preview-auto-open-delivery';
 import { hydrateQueueActiveInvocationSlots, type QueueActiveInvocationSlot } from './queue-active-invocation-hydration';
 import { normalizeQueueMessageReceiptProjections } from './queue-message-receipt-normalizer';
+import { refreshActiveExecutionProjection } from './useActiveExecutionProjection';
 // F173 Phase E: isInvocationReplaced 检查已下沉到 useAgentMessages.handleAgentMessage
 // dispatch entry，useSocket 不再做 active path drop guard。
 import { reconnectGame } from './useGameReconnect';
@@ -813,6 +814,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
     // F118 D2: spawn_started — earliest per-cat spawning signal (fires before intent_mode).
     socket.on('spawn_started', (data: { threadId: string; targetCats: string[]; invocationId: string }) => {
       void invalidateSidebarProjection();
+      if (data.threadId) void refreshActiveExecutionProjection(data.threadId);
       const storeThread = useChatStore.getState().currentThreadId;
 
       // F173 KD-4 — single-pointer routing (store as truth source). See agent_message comment.
@@ -1089,6 +1091,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           ...(data.message.origin ? { origin: data.message.origin } : {}),
           ...(data.message.replyTo ? { replyTo: data.message.replyTo } : {}),
         });
+        if (lifecycle.kind === 'response') void refreshActiveExecutionProjection(data.threadId);
       },
     );
 

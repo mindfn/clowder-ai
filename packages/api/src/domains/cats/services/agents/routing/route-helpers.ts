@@ -1110,6 +1110,22 @@ export function sanitizeInjectedContent(content: string): string {
   return stripLeakedToolCallPayload(kept.join('\n')).trim();
 }
 
+function projectLifecycleResponsePromptContent(message: StoredMessage, content: string): string {
+  if (content.trim() || message.lifecycle?.kind !== 'response') return content;
+  switch (message.lifecycle.status) {
+    case 'completed':
+      return '已完成，没有返回可显示内容。';
+    case 'failed':
+      return '回复失败。';
+    case 'canceled':
+      return '已停止回复。';
+    case 'interrupted':
+      return '回复已中断。';
+    case 'processing':
+      return content;
+  }
+}
+
 /**
  * Route content blocks to the target cat.
  * All cats receive the full content blocks including images —
@@ -1634,7 +1650,7 @@ export async function assembleIncrementalContext(
     : undefined;
   const lines = capped.map((m) => {
     // F22: Digest rich blocks into compact summaries for context
-    const contentWithDigest = digestRichBlocks(m);
+    const contentWithDigest = projectLifecycleResponsePromptContent(m, digestRichBlocks(m));
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
     const normalized: StoredMessage = cleanContent === m.content ? m : { ...m, content: cleanContent };
     const rendered = formatMessage(normalized, {
@@ -1988,7 +2004,7 @@ async function assembleSmartWindowContext(
         })
     : undefined;
   const burstLines = scrubbedBurst.map((m) => {
-    const contentWithDigest = digestRichBlocks(m);
+    const contentWithDigest = projectLifecycleResponsePromptContent(m, digestRichBlocks(m));
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
     const normalized: StoredMessage = cleanContent === m.content ? m : { ...m, content: cleanContent };
     const rendered = formatMessage(normalized, {

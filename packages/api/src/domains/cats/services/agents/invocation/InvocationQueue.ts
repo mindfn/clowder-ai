@@ -1499,15 +1499,21 @@ export class InvocationQueue {
     targetCatId: string,
   ): ExactUserEntryReservationResult {
     const entry = this.findEntry(threadId, userId, entryId);
+    const assignsTargetlessConversation =
+      entry?.kind === 'conversation_input' && entry.targetCats.length === 0 && !entry.queueCustodyAdmissionId;
     if (
       !entry ||
       entry.status !== 'queued' ||
-      !isOrdinaryQueueTargetEligible(entry, targetCatId) ||
+      (!assignsTargetlessConversation && !isOrdinaryQueueTargetEligible(entry, targetCatId)) ||
       entry.exactSteerBatch ||
       entry.steerRequestedByCatIds?.includes(targetCatId) ||
       isSystemPinnedQueueEntry(entry)
     ) {
       return { outcome: 'rejected', reason: 'state_changed' };
+    }
+    if (assignsTargetlessConversation) {
+      entry.targetCats = [targetCatId];
+      entry.allTargetCats = [targetCatId];
     }
     return {
       outcome: 'reserved',

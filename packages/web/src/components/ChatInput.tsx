@@ -160,10 +160,7 @@ export function ChatInput({
   // Shared with ThreadExecutionBar: both surfaces must answer "can we verify this
   // thread's run state?" identically, or their independent fail-closed choices can
   // combine into a state with no cancel AND no recovery exit.
-  const { canonicalProjectionStale, hasUnverifiedLegacyExecution } = useExecutionRecoveryVerification(
-    threadId,
-    unscopedHasActiveInvocation,
-  );
+  const { hasUnverifiedLegacyExecution } = useExecutionRecoveryVerification(threadId, unscopedHasActiveInvocation);
   const hasActiveInvocation = canonicalExecutions.length > 0 || hasUnverifiedLegacyExecution;
   const stopState: 'available' | 'pending' | 'unavailable' | 'hidden' =
     canonicalExecutions.length === 0 ? (hasUnverifiedLegacyExecution ? 'unavailable' : 'hidden') : projectedCancelState;
@@ -911,37 +908,6 @@ export function ChatInput({
 
   return (
     <div className="relative bg-[var(--console-shell-bg)] safe-area-bottom">
-      {/* F39: Queue status bar — visible when cat is running */}
-      {hasActiveInvocation && (
-        <div data-testid="active-invocation-banner" className="px-4 pt-2 flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-cocreator-primary)] animate-pulse" />
-          <span className="text-xs text-[var(--color-cocreator-primary)] font-medium">
-            {canonicalExecutions.length > 0
-              ? canonicalProjectionStale
-                ? '猫猫正在回复中 · 状态暂不可核对'
-                : '猫猫正在回复中...'
-              : canonicalProjectionStale
-                ? '运行状态暂不可核对'
-                : '正在确认运行状态...'}
-          </span>
-          <span className="text-xs text-cafe-muted flex-1">
-            {displayedDisposition === 'continue_current' ? '当前轮可在安全断点读取' : '继续输入，消息会成为下一件工作'}
-          </span>
-          {stopState !== 'hidden' && (
-            <button
-              type="button"
-              data-testid="banner-cancel-btn"
-              onClick={() => void handleProjectedStop()}
-              disabled={stopState !== 'available'}
-              className="text-xs text-cafe-muted hover:text-cafe-primary transition-colors px-2 py-0.5 rounded-md hover:bg-cafe-surface-elevated flex-shrink-0 disabled:cursor-wait disabled:opacity-50"
-              aria-label="Stop generation"
-            >
-              {stopState === 'pending' ? '正在停止' : stopState === 'available' ? '取消' : '暂不可取消'}
-            </button>
-          )}
-        </div>
-      )}
-
       {dispositionIsMeaningful && (
         <MessageDispositionSelector
           controller={messageDisposition}

@@ -1176,18 +1176,24 @@ export function assertQueueCustodyTransition(
   if (current.receiptScope !== undefined && input.next.receiptScope !== current.receiptScope) {
     throw new Error('queue custody receipt scope is immutable once assigned');
   }
-  const bindsResolvedTargetlessAdmission =
+  const targetlessSelectionBase =
     current.status === 'queued' &&
     current.allTargetCats.length === 0 &&
     current.pendingTargetCats.length === 0 &&
-    input.next.status === 'processing' &&
     input.next.allTargetCats.length > 0 &&
     JSON.stringify(input.next.pendingTargetCats) === JSON.stringify(input.next.allTargetCats) &&
     input.next.entryId === current.entryId &&
     input.replacement === undefined;
+  const bindsResolvedTargetlessAdmission = targetlessSelectionBase && input.next.status === 'processing';
+  const bindsTargetlessSteerSelection =
+    targetlessSelectionBase &&
+    input.next.status === 'queued' &&
+    input.next.allTargetCats.length === 1 &&
+    JSON.stringify(input.next.steerRequestedByCatIds) === JSON.stringify(input.next.allTargetCats);
   if (
     JSON.stringify(input.next.allTargetCats) !== JSON.stringify(current.allTargetCats) &&
-    !bindsResolvedTargetlessAdmission
+    !bindsResolvedTargetlessAdmission &&
+    !bindsTargetlessSteerSelection
   ) {
     throw new Error('queue custody allTargetCats is immutable');
   }

@@ -125,9 +125,7 @@ describe('split-pane canonical execution projection', () => {
   it('keeps stale liveness fail-closed outside the hydrated project', () => {
     renderScenario({ snapshotProject: '/project-a', selectedProject: '/project-b', hydration: 'ready' });
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')?.textContent).toContain(
-      '正在确认运行状态',
-    );
+    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
     expect((container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null)?.disabled).toBe(
       true,
     );
@@ -136,9 +134,7 @@ describe('split-pane canonical execution projection', () => {
   it('marks same-project stale liveness unverifiable when hydration fails', () => {
     renderScenario({ snapshotProject: '/same-project', selectedProject: '/same-project', hydration: 'error' });
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')?.textContent).toContain(
-      '运行状态暂不可核对',
-    );
+    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
     expect((container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null)?.disabled).toBe(
       true,
     );

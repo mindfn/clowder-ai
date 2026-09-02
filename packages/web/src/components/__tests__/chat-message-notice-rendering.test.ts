@@ -222,6 +222,48 @@ describe('ChatMessage notice rendering', () => {
     expect(container.querySelector('[data-testid="notice-bar"]')).toBeFalsy();
   });
 
+  it('renders an admitted empty response as an avatar tip before a real bubble exists', () => {
+    act(() => {
+      root.render(
+        React.createElement(ChatMessage, {
+          getCatById: (() => ({
+            id: 'opus',
+            displayName: '布偶猫',
+            clientId: 'anthropic',
+            defaultModel: 'claude',
+            color: { primary: '#765', secondary: '#ede' },
+            mentionPatterns: [],
+            avatar: '/opus.png',
+            roleDescription: '',
+            personality: '',
+          })) as never,
+          message: {
+            id: 'response-processing',
+            type: 'assistant',
+            catId: 'opus',
+            content: '',
+            timestamp: Date.now(),
+            lifecycle: {
+              kind: 'response',
+              orderKey: '1:turn-1',
+              invocationId: 'turn-1',
+              targetId: 'opus',
+              inputEntryIds: ['entry-1'],
+              inputMessageIds: ['source-1'],
+              status: 'processing',
+              startedAt: 1,
+            },
+          },
+        }),
+      );
+    });
+
+    expect(container.querySelector('[data-testid="response-lifecycle-tip"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="message-bubble"]')).toBeNull();
+    expect(container.textContent).toContain('正在回复');
+    expect(container.textContent).toContain('avatar');
+  });
+
   it.each([
     ['routing-guard', 'routing-guard-failure', '[F167 球权停止门] 当前普通 A2A dispatch 尚未发生可验证状态迁移。'],
     ['a2a-liveness-guard', 'ack-liveness-hint', '[接球提醒] A2A 接球后 invocation 结束前必须完成处置。'],
