@@ -3331,6 +3331,29 @@ async function main(): Promise<void> {
   const { getTraceStore, getSemanticSweepCoordinator, getObjectiveEvaluationRuntime } = await import(
     './domains/prompt-hooks/trace-bootstrap.js'
   );
+  const objectiveEvaluationRuntime = getObjectiveEvaluationRuntime() ?? undefined;
+  const cycleEvaluationCoordinator = objectiveEvaluationRuntime
+    ? new (
+        await import('./infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js')
+      ).CycleEvaluationCoordinator({
+        runtime: objectiveEvaluationRuntime,
+        threadStore,
+        messageStore,
+        deliver: schedulerDeliver,
+        getInvokeTrigger: () => invokeTriggerHolder.get(),
+        getDefaultCatId,
+        log: app.log,
+      })
+    : undefined;
+  const { getCachedRegistry: getPromptHookRegistry } = await import('./domains/prompt-hooks/PipelinePromptBuilder.js');
+  const harnessUnitDescriber =
+    objectiveEvaluationRuntime && hookOverrideStore
+      ? new (await import('./infrastructure/harness-eval/evaluation/HarnessUnitDescriber.js')).HarnessUnitDescriber({
+          catalog: objectiveEvaluationRuntime.catalog,
+          overrideStore: hookOverrideStore,
+          getRegistry: getPromptHookRegistry,
+        })
+      : undefined;
 
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
@@ -3351,6 +3374,8 @@ async function main(): Promise<void> {
     // F257: harness-ledger wiring — snapshot provider + optional semantic sweep.
     guardRejectionLog,
     semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
+    cycleEvaluationCoordinator,
+    harnessUnitDescriber,
   });
 
   // F257 Gate 1: register the complete production-owned segment journey.
@@ -5605,10 +5630,15 @@ async function main(): Promise<void> {
 
   // F257: hourly CycleRecord checker — cleanup hook must register before listen.
   let cycleCheckTimer: ReturnType<typeof setInterval> | null = null;
+  let cycleRecoveryTimer: ReturnType<typeof setInterval> | null = null;
   app.addHook('onClose', async () => {
     if (cycleCheckTimer) {
       clearInterval(cycleCheckTimer);
       cycleCheckTimer = null;
+    }
+    if (cycleRecoveryTimer) {
+      clearInterval(cycleRecoveryTimer);
+      cycleRecoveryTimer = null;
     }
   });
 
@@ -6033,6 +6063,7 @@ async function main(): Promise<void> {
       const cycleRuntime = getObjectiveEvaluationRuntime();
       if (cycleRuntime) {
         await cycleRuntime.initializeCycles(privateUserId, Date.now());
+        await cycleEvaluationCoordinator?.reconcileKnownCycles(Date.now());
         cycleCheckTimer = setInterval(
           () => {
             cycleRuntime.checkKnownCycleOwners(Date.now()).catch((err) => {
@@ -6042,6 +6073,12 @@ async function main(): Promise<void> {
           60 * 60 * 1000,
         );
         cycleCheckTimer.unref();
+        cycleRecoveryTimer = setInterval(() => {
+          cycleEvaluationCoordinator?.reconcileKnownCycles(Date.now()).catch((err) => {
+            app.log.warn({ err }, '[api] F257: cycle writeback recovery failed (best-effort)');
+          });
+        }, 60 * 1000);
+        cycleRecoveryTimer.unref();
         app.log.info('[api] F257: CycleRecord checker initialized');
       }
     } catch (err) {
