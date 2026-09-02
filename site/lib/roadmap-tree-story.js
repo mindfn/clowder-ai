@@ -12,9 +12,10 @@
 
   function cameraFor(chapter, tree, aspect) {
     let box;
+    let anchor = 'center';
     if (chapter === 0) box = { x: 250, y: 560, w: 500, h: 380 };
-    else if (chapter === 1) box = { x: 190, y: 720, w: 620, h: 470 };
-    else if (chapter === 2) box = { x: 180, y: 260, w: 640, h: 700 };
+    else if (chapter === 1) box = { x: 190, y: 640, w: 620, h: 440 };
+    else if (chapter === 2) box = { x: 240, y: 520, w: 520, h: 420 };
     else if (chapter >= 3 && chapter <= 6) {
       const node = tree.nodes.filter((n) => n.kind === 'L1')[chapter - 3];
       const b = node.bbox;
@@ -22,14 +23,22 @@
       box = { x: b.x0 - pad, y: b.y0 - pad - 20, w: b.x1 - b.x0 + pad * 2, h: b.y1 - b.y0 + pad * 2 + 20 };
       box.h = Math.max(box.h, 420);
       box.w = Math.max(box.w, 420);
-    } else if (chapter === 7) box = { x: 170, y: 90, w: 660, h: 560 };
-    else box = { x: 0, y: 40, w: V.w, h: V.h - 110 };
+    } else if (chapter === 7) box = { x: 200, y: 300, w: 600, h: 420 };
+    // Panorama: wide enough for the limb labels, shallow enough that soil stays a band, not a slab.
+    else {
+      // Panorama: the whole crown plus a shallow band of soil, never a slab of it.
+      box = { x: V.w * 0.1, y: V.ground - 580, w: V.w * 0.8, h: 700 };
+      anchor = 'bottom';
+    }
     // Fit the stage aspect so the subject fills the viewport instead of floating.
     const cx = box.x + box.w / 2;
     const cy = box.y + box.h / 2;
+    const bottom = box.y + box.h;
     if (box.w / box.h < aspect) box.w = box.h * aspect;
     else box.h = box.w / aspect;
-    return { x: cx - box.w / 2, y: cy - box.h / 2, w: box.w, h: box.h };
+    // Slack from the aspect fit goes into the sky, never into more soil.
+    const y = anchor === 'bottom' ? bottom - box.h : cy - box.h / 2;
+    return { x: cx - box.w / 2, y, w: box.w, h: box.h };
   }
 
   function init(config) {

@@ -139,16 +139,19 @@
 
   function pinShape(node, parent) {
     const t0 = node.tip;
+    // On the painted tree the outermost twigs already touch the frame, so the label folds back
+    // over the canopy (its halo keeps it readable) instead of running off the stage.
+    const dir = node.pivot ? -node.side : node.side;
     const tip = { x: t0.x + Math.cos(t0.angle) * 30, y: t0.y + Math.sin(t0.angle) * 30 };
-    const dx = node.side * 18;
+    const dx = dir * 18;
     const g = el('g', { class: `rt-pin rt-pin--${node.color}`, 'data-id': node.id }, parent);
     el('line', { x1: fmt(tip.x), y1: fmt(tip.y), x2: fmt(tip.x + dx), y2: fmt(tip.y - 26), class: 'rt-pin-line' }, g);
     const text = el(
       'text',
       {
-        x: fmt(tip.x + dx + node.side * 6),
+        x: fmt(tip.x + dx + dir * 6),
         y: fmt(tip.y - 30),
-        'text-anchor': node.side > 0 ? 'start' : 'end',
+        'text-anchor': dir > 0 ? 'start' : 'end',
         class: 'rt-pin-text',
       },
       g,
@@ -178,6 +181,14 @@
     const options = opts || {};
     const tree = geo.build(data, options.seed);
     const V = geo.VIEW;
+    // Painted-tree layers (docs/design/roadmap-tree-assets.md §4): 1600x1200 artwork whose ground
+    // line sits at image y=900, placed so that row lands on V.ground. With anchors the foliage is
+    // rebound to the painted tree's real twigs before any shape is drawn.
+    const RASTER = { w: 1600, h: 1200, ground: 900 };
+    const rasterScale = V.w / RASTER.w;
+    const rasterTop = V.ground - RASTER.ground * rasterScale;
+    const toView = (x, y) => ({ x: x * rasterScale, y: rasterTop + y * rasterScale });
+    if (options.raster && options.anchors) geo.bindToPainted(tree, options.anchors, toView);
     svg.setAttribute('viewBox', `0 0 ${V.w} ${V.h}`);
     svg.classList.add('rt-svg');
     const defs = buildDefs(svg, data);
@@ -211,8 +222,9 @@
       if (node.kind === 'L1') {
         const group = el('g', { class: `rt-branch rt-branch--${node.color}`, 'data-id': node.id }, layers.canopy);
         const sway = el('g', { class: 'rt-sway' }, group);
-        sway.style.transformOrigin = `${fmt(node.pts[0].x)}px ${fmt(node.pts[0].y)}px`;
-        sway.style.setProperty('--ph', `${(-node.pts[0].y / 120).toFixed(2)}s`);
+        const pivot = node.pivot || node.pts[0];
+        sway.style.transformOrigin = `${fmt(pivot.x)}px ${fmt(pivot.y)}px`;
+        sway.style.setProperty('--ph', `${(-pivot.y / 120).toFixed(2)}s`);
         const wood = el('g', { class: 'rt-branch-wood' }, sway);
         const foliage = el('g', { class: 'rt-branch-foliage' }, sway);
         branchGroups.set(node.id, { wood, foliage });
@@ -263,33 +275,44 @@
       item.el.setAttribute('transform', `${item.base} scale(${fmt(s)})`);
     }
 
-    // Illustrated-tree preview (?tree=raster): the painted wood layer replaces the SVG wood so the
-    // composition can be judged in place. 1600x1200 art, trunk base sits on the ground line.
     let raster = null;
     if (options.raster) {
       svg.classList.add('rt-raster');
-      const w = 1000;
-      const h = (w * 1200) / 1600;
-      const clip = el('clipPath', { id: 'rt-clip-raster' }, svg.querySelector('defs'));
-      const circle = el('circle', { cx: V.cx, cy: V.ground, r: 0 }, clip);
-      const img = el(
-        'image',
-        {
-          href: options.raster,
-          x: V.cx - w / 2,
-          y: V.ground - h,
-          width: w,
-          height: h,
-          'clip-path': 'url(#rt-clip-raster)',
-          class: 'rt-raster-wood',
-        },
-        layers.raster,
-      );
-      raster = { img, circle, reach: Math.hypot(w / 2, h) + 20 };
+      const woodClip = el('clipPath', { id: 'rt-clip-raster' }, defs);
+      const circle = el('circle', { cx: V.cx, cy: V.ground, r: 0 }, woodClip);
+      const rootClip = el('clipPath', { id: 'rt-clip-raster-roots' }, defs);
+      const rootRect = el('rect', { x: 0, y: V.ground - 2, width: V.w, height: 0 }, rootClip);
+      const place = (href, clipId, cls, host) =>
+        el(
+          'image',
+          {
+            href,
+            x: 0,
+            y: fmt(rasterTop),
+            width: V.w,
+            height: fmt(RASTER.h * rasterScale),
+            'clip-path': `url(#${clipId})`,
+            class: cls,
+          },
+          host,
+        );
+      if (options.raster.roots) {
+        place(options.raster.roots, 'rt-clip-raster-roots', 'rt-raster-roots', layers.roots);
+      }
+      place(options.raster.wood, 'rt-clip-raster', 'rt-raster-wood', layers.raster);
+      raster = {
+        circle,
+        rootRect,
+        reach: Math.hypot(V.w / 2, V.ground - rasterTop) + 20,
+        soil: (RASTER.h - RASTER.ground) * rasterScale + 2,
+      };
     }
 
     function update(G) {
-      if (raster) raster.circle.setAttribute('r', fmt(raster.reach * geo.clamp01((G - 2) / 5)));
+      if (raster) {
+        raster.circle.setAttribute('r', fmt(raster.reach * geo.clamp01((G - 2) / 5)));
+        raster.rootRect.setAttribute('height', fmt(raster.soil * geo.clamp01((G - 1) / 0.9)));
+      }
       for (const node of tree.nodes) growWood(node, geo.progress(node, G));
       for (const leaf of tree.leaves) growSprout(leaf, geo.progress(leaf, G), true);
       for (const fruit of tree.fruits) growSprout(fruit, geo.progress(fruit, G), true);

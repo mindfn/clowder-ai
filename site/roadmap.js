@@ -63,13 +63,22 @@
     for (const node of document.querySelectorAll('[data-rt-curated]')) node.textContent = data.curatedAt;
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', async () => {
     const svg = document.getElementById('rt-svg');
     const stage = document.getElementById('rt-stage');
     // Painted tree is the default; ?tree=svg keeps the procedural fallback reachable for comparison.
     const rasterTree =
-      new URLSearchParams(location.search).get('tree') === 'svg' ? null : 'assets/roadmap/tree/tree-wood.png';
-    const render = window.ClowderRoadmapRender.mount(svg, data, { lang: lang(), raster: rasterTree });
+      new URLSearchParams(location.search).get('tree') === 'svg'
+        ? null
+        : { wood: 'assets/roadmap/tree/tree-wood-v2.png', roots: 'assets/roadmap/tree/tree-roots.png' };
+    // Twig anchors are extracted from the artwork itself (site/tools/extract-tree-anchors.mjs) so
+    // fruit and leaves hang on painted branches; without them the painted tree stays bare.
+    const anchors = rasterTree
+      ? await fetch('assets/roadmap/tree/tree-anchors.json')
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)
+      : null;
+    const render = window.ClowderRoadmapRender.mount(svg, data, { lang: lang(), raster: rasterTree, anchors });
     const cats = window.ClowderRoadmapCats.mount(render.layers.cats, render.layers.scaffold, data, render.tree);
     const chapters = Array.from(document.querySelectorAll('.rt-chapter'));
     fillLists();

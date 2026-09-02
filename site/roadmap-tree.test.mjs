@@ -23,7 +23,12 @@ function loadLibs() {
   const sandbox = {};
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  for (const lib of ['lib/roadmap-tree-data.js', 'lib/roadmap-tree-geometry.js', 'lib/roadmap-tree-skeleton.js']) {
+  for (const lib of [
+    'lib/roadmap-tree-data.js',
+    'lib/roadmap-tree-geometry.js',
+    'lib/roadmap-tree-skeleton.js',
+    'lib/roadmap-tree-canopy.js',
+  ]) {
     vm.runInContext(read(lib), sandbox);
   }
   return sandbox;
@@ -143,6 +148,7 @@ describe('roadmap.html invariants', () => {
       'lib/roadmap-tree-data.js',
       'lib/roadmap-tree-geometry.js',
       'lib/roadmap-tree-skeleton.js',
+      'lib/roadmap-tree-canopy.js',
       'lib/roadmap-tree-render.js',
       'lib/roadmap-tree-cats.js',
       'lib/roadmap-tree-story.js',
@@ -165,5 +171,67 @@ describe('roadmap.html invariants', () => {
       /prefers-reduced-motion/,
       'story engine must honour reduced motion',
     );
+  });
+});
+
+describe('painted tree anchors', () => {
+  const anchors = JSON.parse(read('assets/roadmap/tree/tree-anchors.json'));
+  const byId = new Map(anchors.limbs.map((l) => [l.id, l]));
+
+  it('covers every capability branch with enough twigs for its fruit', () => {
+    assert.equal(
+      anchors.limbs
+        .map((l) => l.id)
+        .sort()
+        .join(','),
+      data.branches
+        .map((b) => b.id)
+        .sort()
+        .join(','),
+    );
+    for (const branch of data.branches) {
+      const fruits = branch.limbs.reduce((n, limb) => n + limb.fruits.length, 0);
+      assert.ok(byId.get(branch.id).tips.length >= fruits, `${branch.id}: ${fruits} fruit need as many twigs`);
+    }
+  });
+
+  it('keeps every twig inside the artwork and above the ground line', () => {
+    const [w] = anchors.size;
+    for (const limb of anchors.limbs) {
+      for (const tip of limb.tips) {
+        assert.ok(tip.x >= 0 && tip.x <= w, `${limb.id} tip x out of frame`);
+        assert.ok(tip.y > 0 && tip.y < anchors.ground, `${limb.id} tip must be above the ground line`);
+        assert.ok(Math.abs(Math.hypot(tip.ux, tip.uy) - 1) < 0.02, `${limb.id} tip needs a unit direction`);
+      }
+    }
+  });
+
+  it("hangs each limb's fruit and leaves on that limb's own twigs", () => {
+    const tree = geo.build(data, 20260902);
+    const toView = (x, y) => ({ x: x * 0.625, y: 317.5 + y * 0.625 });
+    geo.bindToPainted(tree, anchors, toView);
+    for (const limb of anchors.limbs) {
+      const tips = limb.tips.map((t) => toView(t.x, t.y));
+      const box = geo.bboxOf(tips);
+      const near = (p, pad) => p.x >= box.x0 - pad && p.x <= box.x1 + pad && p.y >= box.y0 - pad && p.y <= box.y1 + pad;
+      for (const fruit of tree.fruits.filter((f) => f.branch === limb.id)) {
+        assert.ok(near(fruit, 30), `${fruit.id} drifted off the painted ${limb.id} limb`);
+      }
+      const l1 = tree.nodes.find((n) => n.kind === 'L1' && n.data.id === limb.id);
+      for (const leaf of tree.leaves.filter((l) => l.node.startsWith(l1.id))) {
+        assert.ok(near(leaf, 40), `${leaf.id} drifted off the painted ${limb.id} limb`);
+      }
+    }
+  });
+
+  it('gives every fruit its own twig so nothing stacks up', () => {
+    const tree = geo.build(data, 20260902);
+    geo.bindToPainted(tree, anchors, (x, y) => ({ x: x * 0.625, y: 317.5 + y * 0.625 }));
+    for (const branch of data.branches) {
+      const spots = tree.fruits
+        .filter((f) => f.branch === branch.id)
+        .map((f) => `${Math.round(f.x)},${Math.round(f.y)}`);
+      assert.equal(new Set(spots).size, spots.length, `${branch.id} fruit share a twig`);
+    }
   });
 });

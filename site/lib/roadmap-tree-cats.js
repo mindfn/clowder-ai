@@ -91,7 +91,7 @@
   }
 
   function scaffoldSpecFor(node) {
-    const q = geo.pointAt(node.pts, 0.58);
+    const q = node.rasterAnchor || geo.pointAt(node.pts, 0.58);
     const top = q.y + 34;
     const step = 64;
     const levels = Math.max(2, Math.round((V.ground - top) / step));

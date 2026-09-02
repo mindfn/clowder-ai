@@ -60,7 +60,8 @@ html[lang="zh"] [data-rt-lang="en"] {
 /* ---------- Story layout ---------- */
 .rt-story {
   display: grid;
-  grid-template-columns: 3.5rem minmax(0, 1.15fr) minmax(0, 1fr);
+  /* The stage carries a landscape subject, so it takes the wider column. */
+  grid-template-columns: 3.5rem minmax(0, 1.5fr) minmax(0, 1fr);
   gap: 0 1.5rem;
   max-width: 80rem;
   margin: 0 auto;
@@ -140,7 +141,8 @@ html.dark .rt-rail-btn {
 .rt-stage {
   position: sticky;
   top: var(--rt-stage-top);
-  height: calc(100vh - var(--rt-stage-top));
+  /* Cap the height so a tall viewport does not stretch the tree into a keyhole. */
+  height: min(calc(100vh - var(--rt-stage-top)), 44rem);
   border-radius: 1.25rem;
   overflow: hidden;
   isolation: isolate;
@@ -941,9 +943,13 @@ html.dark .rt-card-item {
 }
 
 /* ---------- Illustrated-tree preview (?tree=raster) ---------- */
+/* The painted soil already draws its own horizon; the SVG one would double it. */
+.rt-raster .rt-ground-line,
+.rt-raster .rt-shadow,
 .rt-raster .rt-layer--wood,
-.rt-raster .rt-layer--canopy,
-.rt-raster .rt-layer--crown,
-.rt-raster .rt-layer--labels {
+.rt-raster .rt-branch-wood,
+.rt-raster .rt-layer--crown .rt-wood,
+.rt-raster .rt-layer--roots .rt-wood,
+.rt-raster .rt-soil {
   display: none;
 }
