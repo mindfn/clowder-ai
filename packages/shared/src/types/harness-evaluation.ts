@@ -1,3 +1,4 @@
+import type { CycleMetricEvaluation } from './cycle-evaluation.js';
 import type { TraceEpisodeRef } from './injection-trace.js';
 import type { SegmentVerdict } from './segment-lifecycle.js';
 
@@ -132,8 +133,15 @@ export interface CycleRecord {
   evalStatus: CycleEvaluationStatus;
   windows: CycleWindow[];
   triggeredBy?: CycleTriggerRoute[];
+  assignmentThreadId?: string;
+  assignmentMessageId?: string;
+  assignedAt?: number;
+  retriggerMessageId?: string;
+  retriggeredAt?: number;
+  stalledAlertMessageId?: string;
+  stalledAt?: number;
   evaluation?: {
-    metrics: Array<{ id: string; conclusion: string; evidenceRefs: string[] }>;
+    metrics: CycleMetricEvaluation[];
     overall: 'complete' | 'partial' | 'insufficient_evidence';
     writtenAt: number;
     by: string;

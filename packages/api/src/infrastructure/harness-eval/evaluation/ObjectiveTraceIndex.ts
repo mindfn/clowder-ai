@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { EvaluationUnitRef, TraceEpisode } from '@cat-cafe/shared';
+import type { CycleWindow, EvaluationUnitRef, TraceEpisode } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
@@ -65,6 +65,27 @@ export class ObjectiveTraceIndex {
     await this.ensureOwnerBackfilled(ownerUserId, end);
     if (end <= start) return 0;
     return this.redis.zcount(objectiveTraceKey(ownerUserId, objectiveId), start, end - 1);
+  }
+
+  async invocationIds(ownerUserId: string, objectiveId: string, windows: CycleWindow[]): Promise<string[]> {
+    const latestEnd = windows.reduce((latest, window) => Math.max(latest, window.end), 0);
+    await this.ensureOwnerBackfilled(ownerUserId, latestEnd);
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const window of windows) {
+      if (window.end <= window.start) continue;
+      const ids = await this.redis.zrangebyscore(
+        objectiveTraceKey(ownerUserId, objectiveId),
+        window.start,
+        window.end - 1,
+      );
+      for (const id of ids) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        ordered.push(id);
+      }
+    }
+    return ordered;
   }
 
   async earliest(ownerUserId: string, objectiveId: string, now: number): Promise<number | null> {

@@ -7,6 +7,7 @@ const HISTORY_PREFIX = 'harness-cycle-history:';
 const HISTORY_INDEX_PREFIX = 'harness-cycle-history-index:';
 const OWNER_REGISTRY_KEY = 'harness-cycle-owner-registry';
 const LEGACY_COMPLETED_WINDOW_END_PREFIX = 'harness-unit-run-completed-window-end:';
+export const MAX_CYCLE_RECORD_BYTES = 64 * 1024;
 
 const coordinate = (ownerUserId: string, objectiveId: string) => `${ownerUserId}:${objectiveId}`;
 const currentKey = (ownerUserId: string, objectiveId: string) =>
@@ -16,13 +17,19 @@ const historyKey = (ownerUserId: string, objectiveId: string, cycleId: string) =
 const historyIndexKey = (ownerUserId: string, objectiveId: string) =>
   `${HISTORY_INDEX_PREFIX}${coordinate(ownerUserId, objectiveId)}`;
 
-const CAS_CURRENT_LUA = `
--- @fake-redis-handler: casHarnessCycleCurrent
+const TRANSITION_CURRENT_LUA = `
+-- @fake-redis-handler: transitionHarnessCycleCurrent
 local current = redis.call('GET', KEYS[1])
 if current == false then return 0 end
 local decoded, cycle = pcall(cjson.decode, current)
-if not decoded or cycle.cycleId ~= ARGV[1] or cycle.evalStatus ~= 'idle' then return 0 end
-redis.call('SET', KEYS[1], ARGV[2])
+if not decoded or cycle.cycleId ~= ARGV[1] or cycle.evalStatus ~= ARGV[2] then return 0 end
+if ARGV[4] == 'advance' then
+  redis.call('SET', KEYS[2], ARGV[3])
+  redis.call('ZADD', KEYS[3], ARGV[5], ARGV[1])
+  redis.call('SET', KEYS[1], ARGV[6])
+else
+  redis.call('SET', KEYS[1], ARGV[3])
+end
 return 1
 `;
 
@@ -33,7 +40,26 @@ function cycleId(ownerUserId: string, objectiveId: string, cycleStart: number): 
   return `cycle-${hash}`;
 }
 
+function idleCycle(
+  ownerUserId: string,
+  objectiveId: string,
+  cycleStart: number,
+  version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
+): CycleRecord {
+  return {
+    schemaVersion: 1,
+    cycleId: cycleId(ownerUserId, objectiveId, cycleStart),
+    ownerUserId,
+    objectiveId,
+    ...version,
+    cycleStart,
+    evalStatus: 'idle',
+    windows: [],
+  };
+}
+
 function parseCycle(raw: string, key: string): CycleRecord {
+  if (Buffer.byteLength(raw) > MAX_CYCLE_RECORD_BYTES) throw new Error(`cycle_record_too_large:${key}`);
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -63,6 +89,14 @@ function parseCycle(raw: string, key: string): CycleRecord {
   return record as CycleRecord;
 }
 
+function serializeCycle(record: CycleRecord): string {
+  const serialized = JSON.stringify(record);
+  if (Buffer.byteLength(serialized) > MAX_CYCLE_RECORD_BYTES) {
+    throw new Error(`cycle_record_too_large:${record.cycleId}`);
+  }
+  return serialized;
+}
+
 export class CycleRecordStore {
   constructor(private readonly redis: RedisClient) {}
 
@@ -79,17 +113,8 @@ export class CycleRecordStore {
     version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
   ): Promise<CycleRecord> {
     if (!Number.isFinite(cycleStart) || cycleStart < 0) throw new Error('invalid_cycle_start');
-    const record: CycleRecord = {
-      schemaVersion: 1,
-      cycleId: cycleId(ownerUserId, objectiveId, cycleStart),
-      ownerUserId,
-      objectiveId,
-      ...version,
-      cycleStart,
-      evalStatus: 'idle',
-      windows: [],
-    };
-    await this.redis.set(currentKey(ownerUserId, objectiveId), JSON.stringify(record), 'NX');
+    const record = idleCycle(ownerUserId, objectiveId, cycleStart, version);
+    await this.redis.set(currentKey(ownerUserId, objectiveId), serializeCycle(record), 'NX');
     await this.redis.sadd(OWNER_REGISTRY_KEY, ownerUserId);
     return (await this.current(ownerUserId, objectiveId)) ?? record;
   }
@@ -103,19 +128,79 @@ export class CycleRecordStore {
     ) {
       return false;
     }
-    const serialized = JSON.stringify(requested);
+    return this.transition(expected, requested);
+  }
+
+  async transition(expected: CycleRecord, replacement: CycleRecord): Promise<boolean> {
+    if (
+      expected.ownerUserId !== replacement.ownerUserId ||
+      expected.objectiveId !== replacement.objectiveId ||
+      expected.cycleId !== replacement.cycleId
+    ) {
+      return false;
+    }
+    const serialized = serializeCycle(replacement);
     const changed = (await this.redis.eval(
-      CAS_CURRENT_LUA,
-      1,
+      TRANSITION_CURRENT_LUA,
+      3,
       currentKey(expected.ownerUserId, expected.objectiveId),
+      historyKey(expected.ownerUserId, expected.objectiveId, expected.cycleId),
+      historyIndexKey(expected.ownerUserId, expected.objectiveId),
       expected.cycleId,
+      expected.evalStatus,
       serialized,
+      'replace',
     )) as number;
     return changed === 1;
   }
 
-  async history(ownerUserId: string, objectiveId: string): Promise<CycleRecord[]> {
-    const ids = await this.redis.zrevrange(historyIndexKey(ownerUserId, objectiveId), 0, -1);
+  async advance(
+    expected: CycleRecord,
+    completed: CycleRecord,
+    version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
+  ): Promise<CycleRecord | null> {
+    if (
+      expected.ownerUserId !== completed.ownerUserId ||
+      expected.objectiveId !== completed.objectiveId ||
+      expected.cycleId !== completed.cycleId ||
+      completed.cycleEnd === undefined ||
+      completed.closedAt === undefined ||
+      completed.evalStatus !== 'written'
+    ) {
+      return null;
+    }
+    const next = idleCycle(expected.ownerUserId, expected.objectiveId, completed.cycleEnd, version);
+    const changed = (await this.redis.eval(
+      TRANSITION_CURRENT_LUA,
+      3,
+      currentKey(expected.ownerUserId, expected.objectiveId),
+      historyKey(expected.ownerUserId, expected.objectiveId, expected.cycleId),
+      historyIndexKey(expected.ownerUserId, expected.objectiveId),
+      expected.cycleId,
+      expected.evalStatus,
+      serializeCycle(completed),
+      'advance',
+      String(completed.closedAt),
+      serializeCycle(next),
+    )) as number;
+    return changed === 1 ? next : null;
+  }
+
+  async historyCycle(ownerUserId: string, objectiveId: string, id: string): Promise<CycleRecord | null> {
+    const key = historyKey(ownerUserId, objectiveId, id);
+    const raw = await this.redis.get(key);
+    return raw ? parseCycle(raw, key) : null;
+  }
+
+  async history(ownerUserId: string, objectiveId: string, limit?: number): Promise<CycleRecord[]> {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0))
+      throw new Error('invalid_cycle_history_limit');
+    if (limit === 0) return [];
+    const ids = await this.redis.zrevrange(
+      historyIndexKey(ownerUserId, objectiveId),
+      0,
+      limit === undefined ? -1 : limit - 1,
+    );
     const records: CycleRecord[] = [];
     for (const id of ids) {
       const key = historyKey(ownerUserId, objectiveId, id);
