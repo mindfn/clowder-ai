@@ -29,7 +29,8 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 - 周期**始终**按 `新起点 = 本周期终点` 刷新，不因 skip 停住。
 - 评估拉数据时**逆序回看**前序周期状态：若前一个周期是 skip（含 insufficient_evidence），把它的时间窗一并纳入；连续 k 个 skip → 本次评估窗口 = 本周期 + 前 k 个 skip 周期（如连续 3 次 skip，第 4 次综合前 3 个周期的 tracing）。遇到第一个非 skip 周期即停止回看。
 - assignment 因此携带 `windows:[{start,end}...]`（≥1 段）与各 skip 周期存档的理由。
-- reject 重评估：同一 `windows`，assignment 追加 `rejectReasons:[...]`；**同一周期最多 2 次 reject**，第 3 次自动转 skip 进入下一周期（防人猫分歧死循环——见 §11 我的判断）。
+- reject 重评估：同一 `windows`，assignment 追加 `rejectReasons:[...]`，评估后**必须重新产生一张新的提案卡**；因此终态只有 approve / skip 两种，不设计数上限（operator 06:42）。
+- 活性检测（TC-16）：状态处于 governance、预期有提案卡、该 Objective thread 无成员在运行且无挂起外部条件、却没有卡 → 系统发一条提醒消息要求产卡；按天节流，避免环境异常时刷屏。
 
 未回写分支（步 5 或 6 超过 T=30 分钟没有回写）：系统投**一条**"你还没回写"的系统 message 重触发；再超过 T 仍无 → 周期记录 `evalStatus:stalled` + 告警到本 thread，**不再重试**，等人处理。
 
@@ -133,16 +134,49 @@ CycleRecord {
 | 09-02 06:32 | 不需要 cursor receipt/digest；周期只记时间窗+指标+结论+起始版本内容指针 | §2、§6、TC-14 |
 | 09-02 06:32 | 首周期起点：最早有效 trace，否则服务启动写当前时间 | §3、TC-15 |
 | 09-02 06:32 | 目标重申：auto 进化，人只在提案审批处判断；规则段按日常对话自动 sunset/合并/调内容 | §11 |
+| 09-02 06:42 | reject → 重评估必产新卡，终态只有 approve/skip；governance 阶段无卡 → 按天提醒 | §1.1、TC-9、TC-16 |
+| 09-02 06:42 | 合并/sunset/新增全部是 overlay + 目录扫描的运行时动作，无 base 级层 | §11、§12 |
+| 09-02 06:42 | 加载三步（扫描→按版本→构建）为既定方案；L0 编译器是否保留待定 | §12、§13 |
 
 ## 11. 我自己的判断（不附和）：这个流程能否闭环
 
 主环（采→触发→评估→回写→governance→提案→下一周期）**能闭环**，而且比现有实现简单得多。我认为还有两处不闭，需要你拍板：
 
-**缺口 A：reject 的终止条件。** reject → 同窗重评估 → 评估猫可能给出同样结论 → 再 reject → 无限。我在 §1.1 写了"同一周期最多 2 次 reject，第 3 次自动转 skip"——这是我的提议，不是你的原话。☐ 同意 / ☐ 改成 __
+**缺口 A（已由 operator 06:42 关闭）**：reject → 重评估 → **必须产新卡** → 终态只能是 approve/skip；活性靠 TC-16 的"governance 阶段无卡"检测 + 按天提醒。我原提的计数上限撤回。
 
-**缺口 B：evolve 的执行层级。** 规则段的"改内容 / 禁用"是 overlay 级，approve 后系统可直接激活、可回退——闭环成立。但你要的"sunset / 合并 / 新增段"是 **base 级**（pack 版本，KD-20），approve 后不能由系统直接改运行实例，只能生成 PR 交人合入。所以 evolve 提案必须分两类：`overlay`（自动执行）与 `base`（自动生成 PR，人合入后才进入新周期）。不分层的话"合并/sunset"这类进化永远只能停在提案。☐ 同意分两类 / ☐ 你有别的想法
+**缺口 B（我判断错了，operator 06:42 纠正）**："合并 A 到 B" = 禁用 A + 修改 B（把 A 的内容补进 B）；"sunset" = 禁用；"新增" = 往 hooks 目录放一个新段，加载时**直接扫描**即可见。全部是运行时 overlay/目录动作，**不存在 base 级 PR 这一层**。前提是加载机制按 §12 三步走；现状差一项：approve 后要触发 registry 重扫（见 §12）。
 
 其余我认为成立的点：v2 差了下一周期 governance 会 rollback（自纠）；连续 skip 合并窗口让"数据不够"自然收敛；不需要 receipt 是对的——我们自管的池只增不改，digest 校验是防外部漂移的多余层。
+
+## 12. 加载机制（operator 早期方案，06:42 重申）与现状对照
+
+```
+加载 hooks  → 直接扫描目录加载（满足 新增 / 启禁用）
+hooks       → 按版本号加载（满足 overlay / 修改内容）
+            → 构建 session / turn 提示词
+```
+
+| 步 | 现状 | 结论 |
+|---|---|---|
+| 扫描加载 | `HookRegistry` 已用 `readdirSync(hooksDir)` 扫 `assets/prompt-hooks/`（46 段目录） | ✓ 已满足 |
+| 按版本加载 | `HookOverrideStore` epochVersion + `refreshOverrideSnapshot` | ✓ 已满足 |
+| 运行中新增段可见 | registry 在启动时缓存（`PipelinePromptBuilder` 第 64 行），仅有一个重置入口（第 72 行） | ✗ 需补：**evolve 提案 approve 后触发 registry 重扫 + snapshot 刷新**，否则新段要等重启 |
+| 构建 session/turn | pipeline 猫走 `PipelinePromptBuilder`；native 猫（Claude×3 carrier、Codex）走**另一条路** `compile-system-prompt-l0.mjs` | ✗ 两条路，见 §13 |
+
+☐ §12 对
+
+## 13. 系统提示词编译器（L0 compiler）是否合理、是否有必要——我的判断
+
+**功能上必要**：Claude/Codex 这类 native 提供商需要一份系统提示词文件（`--system-prompt-file` / `developer_instructions`），不能靠消息前缀注入 session-init 段。
+
+**作为一条独立编译路径不合理**，且是本线三起事故的共同根源：
+- 第二套源：`assets/system-prompts/system-prompt-l0.md` 模板 + `l1-parallel-world.md`… 七个模板文件，与 `assets/prompt-hooks/` 的段目录是**两份真相**——L1–L7 不能 overlay、不能 sunset、不受 §12 的扫描/版本机制管；
+- 第二套 ID：L1–L7 vs 段目录 ID（S/D…）→ tracing 段投影混乱（8/19 S-vs-L 事故）；
+- 独立 manifest 侧车（同 render pass 产 manifest、stdout 传输）→ 8/25–8/28 的 manifest 拒绝 55 次、stdout 污染、L0 编译错启动失败三起事故。
+
+**提议**：native 提供商的 session-init 提示词 = **同一条 hook pipeline 的 session 阶段输出写入文件**；L1–L7 降为 hooks 目录里的普通段（从此可 overlay、可 sunset、走同一套 tracing）；删除 `compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 及其 manifest 协议。这样 §12 三步对所有提供商只有一条路，tracing 只有一个 ID 空间。
+
+☐ 同意合并成一条路 / ☐ 保留独立编译器（请写原因）
 
 ---
 确认方式：在 thread 回一句"§x 对 / §y 改成…"，或直接改本文件。全部 ☐ 勾完 → 解冻，按 §6 顺序实施：先删后建，不在旧状态机上加固。
