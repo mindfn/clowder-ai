@@ -9,6 +9,8 @@ source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 09-02 04:50（thre
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
+> ⛔ **代码冻结（operator 2026-09-02 04:5x）**：在 `complete-design-v1.md` 被 operator 逐节确认之前，**F257 任何猫不得提交/合入代码改动**（含 sol 进行中的 A/B/C）。已开的 worktree 保留，不 push 不开 PR。解冻以 operator 在本 thread 的明确一句为准，并同步改本行。
+>
 > 这份文件存在的原因：同一个预期 operator 口头纠正了 ≥4 次，每次实现都偏。**从本文件起，F257 任何实现/review/验收都以下面 TC-# 编号为准；PR 描述必须逐条映射 TC-#；对话里的"理解了"不作数。**
 
 ## 1. 终态（operator 原话整理，不加工）
