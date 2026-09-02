@@ -5,11 +5,11 @@ status: authoritative
 supersedes:
   - feature-specs/2026-08-04-f257-objective-eval-redesign.md §0 / §2.4 中"冻结 raw corpus"的表述
   - F257-harness-ledger.md KD-21 中"触发时冻结 raw corpus"的表述
-source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32 / 06:42（thread_mrdip0u5aw4ysi97）
+source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32 / 06:42 / 07:17（thread_mrdip0u5aw4ysi97）
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
-> ⛔ **代码冻结（operator 2026-09-02 04:5x）**：在 `complete-design-v1.md` 被 operator 逐节确认之前，**F257 任何猫不得提交/合入代码改动**（含 sol 进行中的 A/B/C）。已开的 worktree 保留，不 push 不开 PR。解冻以 operator 在本 thread 的明确一句为准，并同步改本行。
+> ⛔ **代码冻结（operator 2026-09-02 04:5x；07:17 修订解冻条件）**：解冻 = operator 勾完方向/方案项（§1/§3/§5/§9–§13；§2 已勾）；§4/§6/§7 由实现猫自决并对结果负责，不等 operator。在此之前，**F257 任何猫不得提交/合入代码改动**（含 sol 进行中的 A/B/C）。已开的 worktree 保留，不 push 不开 PR。解冻以 operator 在本 thread 的明确一句为准，并同步改本行。
 >
 > 这份文件存在的原因：同一个预期 operator 口头纠正了 ≥4 次，每次实现都偏。**从本文件起，F257 任何实现/review/验收都以下面 TC-# 编号为准；PR 描述必须逐条映射 TC-#；对话里的"理解了"不作数。**
 
@@ -29,7 +29,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 |---|---|---|
 | TC-1 | tracing 是 owner 级**单一线性池**；采集不做判定、不分组 | 引入第二个池 / 预分类后才入池 |
 | TC-2 | 结构化反例 / MCP 举报 = 池内**高置信度标记**，仅用于评估时优先阅读 | 把标记当证据准入门；无标记就不评 |
-| TC-3 | 触发三路 anyOf：周期内累计 ≥ 200 / 周期内去重反例 ≥ 阈值 / 距上次评估 ≥ 7 天；**由系统触发** | 需要人点按钮；任一路被其它步骤前置阻塞 |
+| TC-3 | 触发三路 **anyOf**：周期内累计 ≥ N / 周期内去重反例 ≥ M / 距上次评估 ≥ D 天；N/M/D 与最小评估间隔（默认 2h）**按 Objective 可配**；**由系统触发** | 写成"三路都满足"；阈值全局硬编码；需要人点按钮；任一路被其它步骤前置阻塞；关闭周期后无最小间隔地连续触发 |
 | TC-4 | 冻结 = **只冻结时间窗**（start=上次周期终点，end=now）+ 目标/指标/版本引用；**不复制 tracing 数据** | snapshot 内嵌 episode 正文（现状 6 MB/个） |
 | TC-5 | 评估在**每个 Objective 专属的系统 thread** 中由其**默认成员**执行（不单独指定评估猫；不合理在 thread 侧改）；跨 Objective 可并发，同 Objective 严格串行；输入 = **评估目标（Objective statement）** + 时间窗 + 范围 + 指标；从池子按窗读取，反例优先 | 全域共用一个评估 thread；评估依赖预先分类结果；评估在主请求路径上跑；assignment 只列指标不声明目标 |
 | TC-6 | 评估必须**调工具回写 eval 状态**（每指标结论 + 整体结论） | 只在对话里说结论 |
