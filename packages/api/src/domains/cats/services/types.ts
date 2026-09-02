@@ -289,6 +289,8 @@ export interface AgentMessage {
     auxiliaryTurnExecutions?: TurnExecutionMessageProjection[];
     /** #814: True when message originated from an explicit post_message callback (not stream duplicate) */
     isExplicitPost?: boolean;
+    /** F257: observe-only trailing cat-signature contract result. */
+    signatureLint?: { signed: boolean };
     /** F272: durable proactive visit that owns this canonical home message. */
     proactive?: { visitId: string; intentId: string; source: 'private_time' };
   };

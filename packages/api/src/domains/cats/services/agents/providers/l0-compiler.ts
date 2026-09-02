@@ -21,8 +21,10 @@
  */
 
 import { spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CURRENT_RELATIONSHIP_PROFILE_URI, DEFAULT_PROFILE_USER_ID } from '@cat-cafe/shared/profile-contract';
 import { profilePointerEmitted } from '../../../../../infrastructure/telemetry/instruments.js';
@@ -32,7 +34,13 @@ import { type L0CacheGeneration, L0ProfileCache } from './l0-profile-cache.js';
 
 const SCRIPT_BASENAME = 'compile-system-prompt-l0.mjs';
 const l0Cache = new L0ProfileCache();
+const l0ManifestCache = new Map<string, L0SegmentContent[]>();
 const dependencySignatures = new L0DependencySignatureTracker();
+
+export interface L0SegmentContent {
+  segmentId: string;
+  content: string;
+}
 
 function recordProfilePointerEmission(compiledL0: string): void {
   if (compiledL0.includes(CURRENT_RELATIONSHIP_PROFILE_URI)) profilePointerEmitted.add(1);
@@ -45,6 +53,9 @@ function refreshL0DependencySignature(cwd: string, scriptPath: string): string |
 /** Clear cached L0 for one cat or all cats (call on hot-reload / re-sync). */
 export function clearL0Cache(catId?: string, userId?: string): void {
   l0Cache.clear(catId, userId);
+  // The profile cache can clear one key or a family of user-scoped keys; the
+  // manifest cache is tiny, so clear it wholesale to preserve lockstep truth.
+  l0ManifestCache.clear();
 }
 
 /** Number of cached entries (test/diagnostic). */
@@ -125,8 +136,9 @@ export interface CompileL0Options {
   dataDir?: string;
   /**
    * When set → the script writes the compiled L0 to this path (Claude
-   * `--system-prompt-file`). When omitted → the compiled L0 is captured from
-   * stdout and returned (Codex `-c developer_instructions=`).
+   * `--system-prompt-file`). When omitted → the boundary creates a private
+   * temporary file and still returns those exact bytes (Codex
+   * `-c developer_instructions=`). stdout is never a prompt transport.
    */
   outPath?: string;
   /** Working dir used to resolve the script + spawn (defaults to process.cwd()). */
@@ -137,7 +149,7 @@ export interface CompileL0Options {
 
 /**
  * Compile per-cat L0 by invoking the Phase B CLI as a subprocess.
- * @returns the compiled L0 string (file content when `outPath` is set, else stdout).
+ * @returns the compiled L0 string read from the caller or internal output file.
  * @throws when the script is unresolvable, the subprocess fails to spawn,
  *   exits non-zero, or produces empty output (fail-closed).
  */
@@ -193,6 +205,39 @@ export async function compileL0ViaSubprocess(options: CompileL0Options): Promise
   }
 }
 
+export async function getL0ManifestViaSubprocess(options: CompileL0Options): Promise<L0SegmentContent[]> {
+  const userId = options.userId ?? process.env.CAT_CAFE_USER_ID ?? DEFAULT_PROFILE_USER_ID;
+  const key = l0Cache.key(userId, options.catId);
+  if (l0ManifestCache.has(key)) return l0ManifestCache.get(key) ?? [];
+  await compileL0ViaSubprocess(options);
+  return l0ManifestCache.get(key) ?? [];
+}
+
+function readL0Manifest(manifestPath: string): L0SegmentContent[] {
+  try {
+    if (!existsSync(manifestPath)) return [];
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (entry): entry is { id: string; content: string } =>
+          !!entry &&
+          typeof entry === 'object' &&
+          typeof (entry as { id?: unknown }).id === 'string' &&
+          typeof (entry as { content?: unknown }).content === 'string',
+      )
+      .map((entry) => ({ segmentId: entry.id, content: entry.content }));
+  } catch {
+    return [];
+  } finally {
+    try {
+      if (existsSync(manifestPath)) unlinkSync(manifestPath);
+    } catch {
+      // Best-effort cleanup; manifest absence is already represented by [].
+    }
+  }
+}
+
 /**
  * Internal compile path — separated from `compileL0ViaSubprocess` so the
  * in-flight dedup wrapper can install the Promise without recursing.
@@ -214,57 +259,81 @@ async function doCompileL0(
   }
 
   // F231 KD-19: private profile truth is user-scoped persistent data, never cwd/worktree state.
-  const args = [scriptPath, '--cat', catId, '--profile-dir', profileDir, ...(outPath ? ['--out', outPath] : [])];
+  const artifactId = randomUUID();
+  const manifestPath = join(tmpdir(), `cat-cafe-l0-manifest-${catId}-${artifactId}.json`);
+  const promptPath = outPath ?? join(tmpdir(), `cat-cafe-l0-prompt-${catId}-${artifactId}.md`);
+  const ownsPromptPath = outPath === undefined;
+  const args = [
+    scriptPath,
+    '--cat',
+    catId,
+    '--profile-dir',
+    profileDir,
+    '--out',
+    promptPath,
+    '--manifest-out',
+    manifestPath,
+  ];
 
-  const stdout = await new Promise<string>((resolvePromise, rejectPromise) => {
-    const child = spawnFn(process.execPath, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    let settled = false;
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      rejectPromise(error);
-    };
-    child.stdout?.on('data', (d: Buffer) => {
-      out += d.toString();
+  try {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const child = spawnFn(process.execPath, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      let err = '';
+      let settled = false;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        rejectPromise(error);
+      };
+      // Drain stdout to avoid child backpressure, but never interpret it as a
+      // protocol payload. Logging frameworks are free to write noise here.
+      child.stdout?.on('data', () => {});
+      child.stderr?.on('data', (d: Buffer) => {
+        err += d.toString();
+      });
+      child.on('error', (e: Error) => fail(new Error(`L0 compile spawn failed for ${catId}: ${e.message}`)));
+      child.on('close', (code: number | null) => {
+        if (settled) return;
+        if (code !== 0) {
+          fail(new Error(`L0 compile exited code=${code} for ${catId}: ${err.trim() || '(no stderr)'}`));
+          return;
+        }
+        settled = true;
+        resolvePromise();
+      });
     });
-    child.stderr?.on('data', (d: Buffer) => {
-      err += d.toString();
-    });
-    child.on('error', (e: Error) => fail(new Error(`L0 compile spawn failed for ${catId}: ${e.message}`)));
-    child.on('close', (code: number | null) => {
-      if (settled) return;
-      if (code !== 0) {
-        fail(new Error(`L0 compile exited code=${code} for ${catId}: ${err.trim() || '(no stderr)'}`));
-        return;
-      }
-      settled = true;
-      resolvePromise(out);
-    });
-  });
 
-  let result: string;
-  if (outPath) {
-    result = readFileSync(outPath, 'utf8');
-    if (result.trim().length === 0) {
-      throw new Error(`L0 compile produced empty file ${outPath} for ${catId}`);
+    if (!existsSync(promptPath)) {
+      throw new Error(`L0 compile produced no prompt file ${promptPath} for ${catId}`);
     }
-  } else {
-    result = stdout;
+    const result = readFileSync(promptPath, 'utf8');
     if (result.trim().length === 0) {
-      throw new Error(`L0 compile produced empty output (no --out) for ${catId}`);
+      throw new Error(`L0 compile produced empty file ${promptPath} for ${catId}`);
     }
-  }
 
-  if (
-    dependencySignature &&
-    profileSignature !== null &&
-    dependencySignatures.isCurrent(dependencySignature) &&
-    l0Cache.profileSignatureIsCurrent(profileDir, profileSignature) &&
-    l0Cache.generationIsCurrent(cacheKey, compileGeneration)
-  ) {
-    l0Cache.set(cacheKey, result, profileSignature);
+    const manifest = readL0Manifest(manifestPath);
+
+    if (
+      dependencySignature &&
+      profileSignature !== null &&
+      dependencySignatures.isCurrent(dependencySignature) &&
+      l0Cache.profileSignatureIsCurrent(profileDir, profileSignature) &&
+      l0Cache.generationIsCurrent(cacheKey, compileGeneration)
+    ) {
+      l0Cache.set(cacheKey, result, profileSignature);
+      l0ManifestCache.set(cacheKey, manifest);
+    }
+    return result;
+  } finally {
+    if (ownsPromptPath) removeCompileArtifact(promptPath);
+    removeCompileArtifact(manifestPath);
   }
-  return result;
+}
+
+function removeCompileArtifact(path: string): void {
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // Best-effort temp cleanup; the compile result/error remains authoritative.
+  }
 }
