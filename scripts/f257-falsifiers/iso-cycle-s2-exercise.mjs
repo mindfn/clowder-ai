@@ -65,7 +65,6 @@ const record = (step, ok, detail) => {
 };
 const MIN = 60 * 1000;
 const current = (objective) => runtime.cycles.current(owner, objective);
-const kinds = () => delivered.map((d) => d.idempotencyKey.split(':').pop());
 
 // ---- F-3: per requested cycle exactly one retrigger, then exactly one stalled alert, then silence.
 // (The API process may have requested several Objectives via the per-trace path; count per cycle.)
