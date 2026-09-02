@@ -1239,7 +1239,7 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
     current.status === 'queued' &&
     current.allTargetCats.length === 0 &&
     current.pendingTargetCats.length === 0 &&
-    (entry.status === 'processing' || entry.exactSteerBatch?.targetCatId === entry.targetCats[0]) &&
+    entry.status === 'processing' &&
     entry.targetCats.length > 0;
   const allTargetCats = bindsResolvedTargetlessAdmission ? catIds(entry.targetCats) : [...current.allTargetCats];
   const targetAttempts = projectTargetAttemptsFromEntry(current, entry, allTargetCats, updatedAt);

@@ -587,7 +587,7 @@ export async function* routeSerial(
       return;
     }
     try {
-      const enqueueResult = freshnessReinvokeEnqueue({
+      const enqueueResult = await freshnessReinvokeEnqueue({
         threadId,
         userId,
         ownerAuthProvenance,
@@ -4918,7 +4918,7 @@ export async function* routeSerial(
             const reinvokeContent =
               reinvokeDecision.reinvokePrompt ||
               buildFreshnessReinvokePrompt(threadId, reinvokeDecision.senders, reinvokeDecision.noticeIds.length);
-            freshnessReinvokeEnqueue({
+            await freshnessReinvokeEnqueue({
               threadId,
               userId,
               ownerAuthProvenance,

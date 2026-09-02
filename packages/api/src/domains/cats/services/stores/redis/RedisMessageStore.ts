@@ -22,6 +22,7 @@ import {
   assertQueueLedgerEntry,
   type QueueLedgerEntry,
   type QueueLedgerStore,
+  queueLedgerAdmissionsMatch,
 } from '../../agents/invocation/queue-ledger/QueueLedger.js';
 import { QueueLedgerKeys } from '../../agents/invocation/queue-ledger/queue-ledger-keys.js';
 import { RedisQueueLedgerStore } from '../../agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
@@ -1066,10 +1067,19 @@ export class RedisMessageStore {
       return { outcome: 'enqueued', message: result.message, entries, deduped: false };
     }
     const replayEntries = [...buildAdmission(result.message.id)];
-    const activeEntries = (
-      await Promise.all(replayEntries.map((entry) => ledgerStore.get(entry.threadId, entry.id)))
-    ).filter((entry): entry is QueueLedgerEntry => entry !== null);
-    return { outcome: 'enqueued', message: result.message, entries: activeEntries, deduped: true };
+    const persisted = await Promise.all(replayEntries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+    if (
+      persisted.some((entry) => entry === null) ||
+      !persisted.every((entry, index) => queueLedgerAdmissionsMatch(entry!, replayEntries[index]!))
+    ) {
+      throw new Error(`Queue admission identity conflict for replayed message ${result.message.id}`);
+    }
+    return {
+      outcome: 'enqueued',
+      message: result.message,
+      entries: persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+      deduped: true,
+    };
   }
 
   private async appendWithReservedId(

@@ -21,7 +21,7 @@ export interface QueueEntryMessagePreview {
 }
 
 /** QueueEntry enriched with message preview for frontend consumption. */
-export interface EnrichedQueueEntry extends Omit<QueueEntry, 'ownerAuthProvenance' | 'exactSteerBatch'> {
+export interface EnrichedQueueEntry extends Omit<QueueEntry, 'ownerAuthProvenance'> {
   targetStates: Record<string, 'queued' | 'notified' | 'awakened' | 'seen' | 'failed' | 'steering' | 'handled'>;
   messagePreview?: QueueEntryMessagePreview;
   queueReceipt?: QueueMessageReceipt;
@@ -175,11 +175,7 @@ function projectAgentQueueReceipt(
 }
 
 export function projectPublicQueueEntry(entry: QueueEntry): EnrichedQueueEntry {
-  const {
-    ownerAuthProvenance: _internalOwnerAuthProvenance,
-    exactSteerBatch: _internalExactSteerBatch,
-    ...publicEntry
-  } = entry;
+  const { ownerAuthProvenance: _internalOwnerAuthProvenance, ...publicEntry } = entry;
   const notified = new Set(entry.queuedNotifiedByCatIds ?? []);
   const awakened = new Set(Object.keys(entry.queuedAwakenedInvocationIdByCatId ?? {}));
   const seen = new Set(entry.queuedSeenByCatIds ?? []);

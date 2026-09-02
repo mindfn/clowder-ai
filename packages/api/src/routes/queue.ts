@@ -3,7 +3,6 @@
  *
  * GET    /api/threads/:threadId/queue               → 列出队列条目
  * DELETE /api/threads/:threadId/queue/:entryId       → 撤回条目
- * POST   /api/threads/:threadId/queue/steer-batch   → #1291 exact ordinary-user Batch Steer
  * POST   /api/threads/:threadId/queue/:entryId/steer → Steer queued entry（取消当前轮并以同一消息立即启动）
  * POST   /api/threads/:threadId/queue/:entryId/append → Append queued entry into exact existing Active Run(s)
  * PATCH  /api/threads/:threadId/queue/:entryId/move → 重排序（上移/下移）
@@ -272,17 +271,6 @@ const appendBodySchema = z
       .min(1),
   })
   .strict();
-
-const steerBatchBodySchema = z
-  .object({
-    entryIds: z.array(z.string().min(1)).min(2).max(5),
-  })
-  .strict()
-  .superRefine(({ entryIds }, ctx) => {
-    if (new Set(entryIds).size !== entryIds.length) {
-      ctx.addIssue({ code: 'custom', path: ['entryIds'], message: 'entryIds must be distinct' });
-    }
-  });
 
 const remindBodySchema = z
   .object({
@@ -676,37 +664,38 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
-      if (invocationQueue.hasUnsettledExactSteerReservation(threadId, guard.userId, entryId)) {
+      const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, entryId);
+      if (!claimed) {
         reply.status(409);
-        return { error: 'Steer 正在抢占，暂无法撤回', code: 'ENTRY_STEERING' };
+        return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
-
-      // Remove entry from queue FIRST (sync) to close the TOCTOU window —
-      // prevents queue processor from promoting to 'processing' during the
-      // async contentBlocks snapshot below.
-      const nextEntryId = entries[entries.findIndex((candidate) => candidate.id === entryId) + 1]?.id;
-      const removed = invocationQueue.remove(threadId, guard.userId, entryId);
-      if (removed && opts.queueCustodyCoordinator) {
-        try {
-          await opts.queueCustodyCoordinator.withdrawEntry(removed);
-        } catch (err) {
-          invocationQueue.restoreDurableEntry(removed, { beforeEntryId: nextEntryId });
-          request.log.error({ err, entryId, threadId }, 'durable Queue withdrawal failed; entry restored');
-          await emitQueueUpdated(
-            socketManager,
-            guard.userId,
-            threadId,
-            invocationQueue.list(threadId, guard.userId),
-            messageStore,
-            'withdraw_failed',
-          );
-          reply.status(503);
-          return {
-            error: '撤出未完成，消息仍保留在待处理队列中',
-            code: 'QUEUE_WITHDRAWAL_FAILED',
-            queue: await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore),
-          };
+      let removed: QueueEntry | null = null;
+      try {
+        const messageIds = queueEntryMessageIds(claimed);
+        const remaining = invocationQueue.list(threadId, guard.userId).filter((candidate) => candidate.id !== entryId);
+        for (const messageId of messageIds) {
+          const hasSibling = remaining.some((candidate) => queueEntryMessageIds(candidate).includes(messageId));
+          if (!hasSibling) await messageStore?.markCanceled(messageId);
         }
+        removed = await invocationQueue.commitClaimedWithdrawal(threadId, entryId);
+        if (!removed) throw new Error('Queue withdrawal claim changed before commit');
+      } catch (err) {
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
+        request.log.error({ err, entryId, threadId }, 'durable Queue withdrawal failed; entry restored');
+        await emitQueueUpdated(
+          socketManager,
+          guard.userId,
+          threadId,
+          invocationQueue.list(threadId, guard.userId),
+          messageStore,
+          'withdraw_failed',
+        );
+        reply.status(503);
+        return {
+          error: '撤出未完成，消息仍保留在待处理队列中',
+          code: 'QUEUE_WITHDRAWAL_FAILED',
+          queue: await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore),
+        };
       }
       if (removed) {
         try {
@@ -819,142 +808,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     },
   );
 
-  // POST /api/threads/:threadId/queue/steer-batch
-  app.post<{ Params: { threadId: string } }>('/api/threads/:threadId/queue/steer-batch', async (request, reply) => {
-    const { threadId } = request.params;
-    const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
-    if (!guard) return;
-
-    const parseResult = steerBatchBodySchema.safeParse(request.body);
-    if (!parseResult.success) {
-      reply.status(400);
-      return { error: 'Invalid body', details: parseResult.error.issues };
-    }
-
-    const reserved = invocationQueue.reserveExactUserBatch(threadId, guard.userId, parseResult.data.entryIds);
-    if (reserved.outcome === 'rejected') {
-      const rejection = {
-        invalid_entry_ids: { status: 400 as const, code: 'INVALID_BATCH_ENTRY_IDS', error: 'entryIds 无效' },
-        entry_not_found: { status: 404 as const, code: 'BATCH_ENTRY_NOT_FOUND', error: '批量 Steer 条目不存在' },
-        entry_ineligible: {
-          status: 409 as const,
-          code: 'BATCH_ENTRY_INELIGIBLE',
-          error: '批量 Steer 仅支持普通用户消息',
-        },
-        entries_incompatible: {
-          status: 409 as const,
-          code: 'BATCH_ENTRIES_INCOMPATIBLE',
-          error: '批量 Steer 条目必须属于同一猫、意图和授权来源',
-        },
-      }[reserved.reason];
-      reply.status(rejection.status);
-      return { error: rejection.error, code: rejection.code };
-    }
-
-    const releaseReservation = async () => {
-      const restored = invocationQueue.releaseExactUserBatch(threadId, guard.userId, reserved.reservationId);
-      try {
-        await persistQueueEntries(
-          threadId,
-          guard.userId,
-          restored.map((entry) => entry.id),
-        );
-      } catch (err) {
-        request.log.error(
-          { err, threadId, reservationId: reserved.reservationId },
-          'Failed to persist exact Batch Steer reservation rollback',
-        );
-      }
-      return restored;
-    };
-
-    try {
-      await persistQueueEntries(threadId, guard.userId, reserved.entryIds);
-    } catch (err) {
-      await releaseReservation();
-      request.log.error(
-        { err, threadId, reservationId: reserved.reservationId },
-        'Failed to persist exact Batch Steer reservation before preemption',
-      );
-      reply.status(503);
-      return { error: '批量 Steer 预留暂不可用', code: 'BATCH_RESERVATION_PERSIST_FAILED' };
-    }
-
-    if (!invocationQueue.beginExactSteerPreemption(threadId, guard.userId, reserved.reservationId)) {
-      await releaseReservation();
-      reply.status(409);
-      return { error: '批量 Steer 预留已变化', code: 'BATCH_RESERVATION_LOST' };
-    }
-
-    const preemption = await preemptSteerTarget(threadId, guard.userId, reserved.targetCatId, request);
-    if (!preemption.ok) {
-      await releaseReservation();
-      reply.status(preemption.status);
-      return { error: preemption.error, code: preemption.code };
-    }
-
-    if (!invocationQueue.activateExactSteerReservation(threadId, guard.userId, reserved.reservationId)) {
-      await releaseReservation();
-      reply.status(409);
-      return { error: '批量 Steer 预留已变化', code: 'BATCH_RESERVATION_LOST' };
-    }
-
-    if (preemption.deferred) {
-      await emitQueueUpdated(
-        socketManager,
-        guard.userId,
-        threadId,
-        invocationQueue.list(threadId, guard.userId),
-        messageStore,
-        'steer_batch_reserved',
-      );
-      reply.status(202);
-      return {
-        ok: true,
-        deferred: true,
-        code: 'PREEMPT_PENDING_PRESTART',
-        batchId: reserved.reservationId,
-        entryIds: reserved.entryIds,
-      };
-    }
-
-    const result = await queueProcessor.processExactSteerReservation(
-      threadId,
-      guard.userId,
-      reserved.primaryEntryId,
-      reserved.reservationId,
-    );
-    if (!result.started) {
-      await releaseReservation();
-      await emitQueueUpdated(
-        socketManager,
-        guard.userId,
-        threadId,
-        invocationQueue.list(threadId, guard.userId),
-        messageStore,
-        'steer_batch_failed',
-      );
-      reply.status(409);
-      return { error: '队列繁忙，暂无法立即执行', code: 'QUEUE_BUSY' };
-    }
-
-    await emitQueueUpdated(
-      socketManager,
-      guard.userId,
-      threadId,
-      invocationQueue.list(threadId, guard.userId),
-      messageStore,
-      'steer_batch_reserved',
-    );
-
-    return {
-      ok: true,
-      batchId: reserved.reservationId,
-      entryIds: reserved.entryIds,
-      ...projectQueueStartResult(result),
-    };
-  });
-
   // POST /api/threads/:threadId/queue/:entryId/steer
   app.post<{ Params: { threadId: string; entryId: string } }>(
     '/api/threads/:threadId/queue/:entryId/steer',
@@ -1004,87 +857,35 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(400);
         return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_STEER_TARGET' };
       }
-      // Reserve the entry BEFORE preempting. Preemption cancels a running turn;
-      // doing it first meant a losing CAS returned STEER_STATE_CHANGED *after*
-      // the user's turn was already killed — they lost the work and did not get
-      // the steer, while the message told them to retry.
-      const reserved = invocationQueue.reserveExactUserEntry(threadId, guard.userId, entryId, steerCatId);
-      if (reserved.outcome === 'rejected') {
-        reply.status(409);
-        return { error: 'Steer 状态已变化，请重试', code: 'STEER_STATE_CHANGED' };
-      }
-      // The reservation must be durable BEFORE anything is cancelled, mirroring
-      // steer-batch. Reserving only in memory just moved the split: a rejected
-      // persistence would still have landed after the running turn was killed.
-      const releaseSteerReservation = async (): Promise<void> => {
-        const restored = invocationQueue.releaseExactUserBatch(threadId, guard.userId, reserved.reservationId);
-        try {
-          await persistQueueEntries(
-            threadId,
-            guard.userId,
-            restored.map((candidate) => candidate.id),
-          );
-        } catch (releaseErr) {
-          request.log.error(
-            { err: releaseErr, threadId, entryId },
-            'Failed to persist Steer reservation release; in-memory marker cleared',
-          );
-        }
-      };
+      // The ledger claim is the one durable dequeue fence. It happens before
+      // cancellation so a losing claim cannot kill the active turn, and it can
+      // be restored in place if cancellation fails.
+      let claimed;
       try {
-        await persistQueueEntries(threadId, guard.userId, [entryId]);
+        claimed = await invocationQueue.claimExactSteerEntryDurable(threadId, guard.userId, entryId, steerCatId);
       } catch (err) {
-        await releaseSteerReservation();
-        request.log.error({ err, threadId, entryId }, 'Failed to persist exact Steer reservation before preemption');
+        request.log.error({ err, threadId, entryId }, 'Failed to claim durable Queue row before Steer preemption');
         reply.status(503);
-        return { error: 'Steer 预留暂不可用', code: 'STEER_RESERVATION_PERSIST_FAILED' };
+        return { error: 'Steer 暂不可用', code: 'STEER_CLAIM_FAILED' };
       }
-
-      if (!invocationQueue.beginExactSteerPreemption(threadId, guard.userId, reserved.reservationId)) {
-        await releaseSteerReservation();
-        reply.status(409);
-        return { error: 'Steer 预留已变化，请重试', code: 'STEER_RESERVATION_LOST' };
+      if (claimed.outcome === 'rejected') {
+        const status = claimed.reason === 'entry_not_found' ? 404 : 409;
+        reply.status(status);
+        return claimed.reason === 'entry_processing'
+          ? { error: '条目正在处理中，无法 steer', code: 'ENTRY_PROCESSING' }
+          : { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
 
       const preemption = await preemptSteerTarget(threadId, guard.userId, steerCatId, request);
       if (!preemption.ok) {
-        // The replacement reservation must not survive a rejected or partially
-        // terminalized preemption — locally or durably.
-        await releaseSteerReservation();
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
         reply.status(preemption.status);
         return { error: preemption.error, code: preemption.code };
       }
-      if (!invocationQueue.activateExactSteerReservation(threadId, guard.userId, reserved.reservationId)) {
-        await releaseSteerReservation();
-        reply.status(409);
-        return { error: 'Steer 预留已变化，请重试', code: 'STEER_RESERVATION_LOST' };
-      }
-      if (preemption.deferred) {
-        await emitQueueUpdated(
-          socketManager,
-          guard.userId,
-          threadId,
-          invocationQueue.list(threadId, guard.userId),
-          messageStore,
-          'steer_immediate',
-        );
-        reply.status(202);
-        return {
-          ok: true,
-          deferred: true,
-          code: 'PREEMPT_PENDING_PRESTART',
-          message: '目标正在启动中，已请求中断，插队消息将在当前调用退出后立即执行',
-        };
-      }
 
-      const result = await queueProcessor.processExactSteerReservation(
-        threadId,
-        guard.userId,
-        entryId,
-        reserved.reservationId,
-      );
+      const result = await queueProcessor.processClaimedSteerEntries(threadId, guard.userId, [entryId], steerCatId);
       if (!result.started) {
-        await releaseSteerReservation();
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
         await emitQueueUpdated(
           socketManager,
           guard.userId,
@@ -1093,8 +894,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           messageStore,
           'steer_failed',
         );
-        reply.status(409);
-        return { error: '队列繁忙，暂无法立即执行', code: 'QUEUE_BUSY' };
+        reply.status(503);
+        return { error: 'Steer 启动失败，请重试', code: 'STEER_START_FAILED' };
       }
 
       await emitQueueUpdated(
@@ -1135,21 +936,25 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '正在处理中的条目不可移动', code: 'ENTRY_PROCESSING' };
       }
-      if (entry.exactSteerBatch) {
-        reply.status(409);
-        return { error: '批量 Steer 已预留，暂不可重排', code: 'ENTRY_STEERING' };
-      }
       if (isSystemPinnedQueueEntry(entry)) {
         reply.status(409);
         return { error: '系统续接条目不可手动调整位置', code: 'ENTRY_POSITION_LOCKED' };
       }
 
-      invocationQueue.move(threadId, guard.userId, entryId, parseResult.data.direction);
-      await persistQueueEntries(
-        threadId,
-        guard.userId,
-        invocationQueue.list(threadId, guard.userId).map((candidate) => candidate.id),
-      );
+      const queued = entries.filter((candidate) => candidate.status === 'queued');
+      const index = queued.findIndex((candidate) => candidate.id === entryId);
+      const neighborIndex = parseResult.data.direction === 'up' ? index - 1 : index + 1;
+      if (neighborIndex >= 0 && neighborIndex < queued.length) {
+        const neighbor = queued[neighborIndex]!;
+        if (!(await invocationQueue.setPositionDurable(threadId, guard.userId, entryId, neighborIndex))) {
+          reply.status(409);
+          return { error: '队列状态已变化，请重试', code: 'ENTRY_PROCESSING' };
+        }
+        if (!(await invocationQueue.setPositionDurable(threadId, guard.userId, neighbor.id, index))) {
+          reply.status(409);
+          return { error: '队列状态已变化，请重试', code: 'ENTRY_PROCESSING' };
+        }
+      }
       await emitQueueUpdated(
         socketManager,
         guard.userId,
@@ -1199,10 +1004,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(400);
         return { error: `Cannot reorder entry ${entryId} (processing)` };
       }
-      if (entry.exactSteerBatch) {
-        reply.status(409);
-        return { error: '批量 Steer 已预留，暂不可重排', code: 'ENTRY_STEERING' };
-      }
       if (isSystemPinnedQueueEntry(entry)) {
         reply.status(409);
         return { error: '系统续接条目不可手动调整位置', code: 'ENTRY_POSITION_LOCKED' };
@@ -1210,13 +1011,11 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     }
 
     for (const { entryId, position } of parseResult.data.positions) {
-      invocationQueue.setPosition(threadId, guard.userId, entryId, position);
+      if (!(await invocationQueue.setPositionDurable(threadId, guard.userId, entryId, position))) {
+        reply.status(409);
+        return { error: `Cannot reorder entry ${entryId} (state changed)`, code: 'ENTRY_PROCESSING' };
+      }
     }
-    await persistQueueEntries(
-      threadId,
-      guard.userId,
-      parseResult.data.positions.map(({ entryId }) => entryId),
-    );
 
     await emitQueueUpdated(
       socketManager,
@@ -1235,31 +1034,29 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
     if (!guard) return;
 
-    if (invocationQueue.hasUnsettledExactSteerReservation(threadId, guard.userId)) {
-      reply.status(409);
-      return { error: 'Steer 正在抢占，暂无法清空队列', code: 'ENTRY_STEERING' };
-    }
-
-    // Explicit clear supersedes a deferred Batch Steer. Restore its original
-    // snapshots first so the existing per-entry withdrawal CAS remains valid.
-    invocationQueue.releaseAllExactUserBatches(threadId, guard.userId);
-
-    // Withdraw one exact snapshot at a time. This preserves processing entries and lets a
-    // durable-store failure stop before any later entry is removed from actionable custody.
+    // Claim one exact ledger row at a time. Processing rows are the only business-level block.
     const cleared: QueueEntry[] = [];
     const candidates = invocationQueue.list(threadId, guard.userId);
-    for (const [candidateIndex, candidate] of candidates.entries()) {
+    for (const candidate of candidates) {
       if (!isPublicQueueEntry(candidate)) continue;
       const current = invocationQueue.getEntrySnapshot(threadId, guard.userId, candidate.id);
       if (!current || current.status === 'processing') continue;
-      if (!invocationQueue.removeEntrySnapshotIfUnchanged(current)) continue;
+      const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, current.id);
+      if (!claimed) continue;
 
       try {
-        await opts.queueCustodyCoordinator?.withdrawEntry(current);
+        const messageIds = queueEntryMessageIds(claimed);
+        const remaining = invocationQueue.list(threadId, guard.userId).filter((entry) => entry.id !== claimed.id);
+        for (const messageId of messageIds) {
+          const hasSibling = remaining.some((entry) => queueEntryMessageIds(entry).includes(messageId));
+          if (!hasSibling) await messageStore?.markCanceled(messageId);
+        }
+        const removed = await invocationQueue.commitClaimedWithdrawal(threadId, claimed.id);
+        if (!removed) throw new Error('Queue clear claim changed before commit');
       } catch (err) {
-        invocationQueue.restoreDurableEntry(current, { beforeEntryId: candidates[candidateIndex + 1]?.id });
+        await invocationQueue.restoreClaimedEntries(threadId, [claimed.id]);
         request.log.error(
-          { err, entryId: current.id, threadId, clearedCount: cleared.length },
+          { err, entryId: claimed.id, threadId, clearedCount: cleared.length },
           'durable Queue clear stopped; unsettled entries retained',
         );
         const remaining = invocationQueue.list(threadId, guard.userId);
@@ -1277,17 +1074,17 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
 
       try {
-        await retireWithdrawnManagedWake(opts, current);
+        await retireWithdrawnManagedWake(opts, claimed);
       } catch (err) {
         request.log.error(
-          { err, entryId: current.id, threadId },
+          { err, entryId: claimed.id, threadId },
           'managed wake producer retirement deferred to recovery sweep',
         );
       }
 
-      queueProcessor.unregisterEntryCompleteHook?.(current.id);
-      await queueProcessor.finalizeRemovedEntry?.(current, 'user_cancel');
-      cleared.push(current);
+      queueProcessor.unregisterEntryCompleteHook?.(claimed.id);
+      await queueProcessor.finalizeRemovedEntry?.(claimed, 'user_cancel');
+      cleared.push(claimed);
     }
     await emitQueueUpdated(
       socketManager,

@@ -162,12 +162,7 @@ import { emitQueueUpdated } from '../utils/queue-enrichment.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { recordAnchorDrillEvent, recordAnchorPreviewEvent } from './anchor-event-log.js';
 import { recordAnchorFullDrill, recordAnchorReturned } from './anchor-telemetry.js';
-import {
-  type A2AFanoutAdmissionPlan,
-  createA2AFanoutAdmissionFromPlan,
-  enqueueA2ATargets,
-  planA2AFanoutAdmission,
-} from './callback-a2a-trigger.js';
+import { type A2AFanoutAdmissionPlan, enqueueA2ATargets, planA2AFanoutAdmission } from './callback-a2a-trigger.js';
 import { anchorPendingMention, anchorThreadMessage, truncateHead } from './callback-anchor-helpers.js';
 import {
   extractCallbackCredentials,
@@ -1681,12 +1676,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...(extra ? { extra } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
       };
-      const storedMsg =
-        a2aAdmissionPlan && a2aAdmissionOptions
-          ? await messageStore.appendWithQueueCustodyAdmission(appendInput, (messageId) =>
-              createA2AFanoutAdmissionFromPlan(messageId, a2aAdmissionPlan!, a2aAdmissionOptions),
-            )
-          : await messageStore.append(appendInput);
+      const storedMsg = await messageStore.append(appendInput);
 
       const replyPreview = validatedReplyTo ? await hydrateReplyPreview(messageStore, validatedReplyTo) : undefined;
 
@@ -3376,12 +3366,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       extra: persistedExtra,
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
     };
-    const storedMsg =
-      a2aAdmissionPlan && a2aAdmissionOptions
-        ? await messageStore.appendWithQueueCustodyAdmission(appendInput, (messageId) =>
-            createA2AFanoutAdmissionFromPlan(messageId, a2aAdmissionPlan!, a2aAdmissionOptions),
-          )
-        : await messageStore.append(appendInput);
+    const storedMsg = await messageStore.append(appendInput);
     const localReviewSettlement = await settleTypedLocalReviewMessage(storedMsg.id);
     if (localReviewSettlement && localReviewSettlement.outcome !== 'committed') {
       if (

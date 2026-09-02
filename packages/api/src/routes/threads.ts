@@ -998,7 +998,6 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       intent: 'execute',
       idempotencyKey: `freshness-closure:${closure.id}:retry:${nextEpoch}`,
       freshnessClosureId: closure.id,
-      freshnessRequiredFrontierMessageId: closure.requiredFrontierMessageId,
     });
     if (enqueue.outcome === 'full') {
       reply.status(409);

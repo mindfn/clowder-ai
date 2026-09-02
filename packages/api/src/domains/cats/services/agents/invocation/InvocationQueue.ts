@@ -91,14 +91,6 @@ export interface QueueEntry {
   steerRequestedByCatIds?: string[];
   /** F264: exact replacement invocation after provider-start read binding. */
   steeredInvocationIdByCatId?: Record<string, string>;
-  /**
-   * #1291 Gate 6: process-local exact Batch Steer reservation.
-   *
-   * This is deliberately not a second durable ledger. Durable per-message Queue
-   * custody remains authoritative; this marker only fences dequeue so F175 cannot
-   * absorb an unselected adjacent entry between reservation and replacement start.
-   */
-  exactSteerBatch?: ExactSteerBatchReservation;
   /** Restart-stable exact group fence while pre-start supersession terminalizes durable carriers. */
   prestartRetirement?: QueuePrestartRetirementIntent;
   intent: string;
@@ -129,7 +121,6 @@ export interface QueueEntry {
   continuationKey?: string;
   /** F254 Phase E: typed custody carrier for one persistent catch closure. */
   freshnessClosureId?: string;
-  freshnessRequiredFrontierMessageId?: string;
   /** ADR-042 distinct supplement carrier; never aliases freshnessClosureId. */
   freshnessSupplementId?: string;
   freshnessSupplementLineageId?: string;
@@ -197,7 +188,6 @@ export type QueueEnqueueInput = Omit<
   | 'position'
   | 'suggestedSkill'
   | 'ownerAuthProvenance'
-  | 'exactSteerBatch'
   | 'owner'
 > & {
   owner?: QueueOwner;
@@ -211,28 +201,12 @@ export type QueueEnqueueInput = Omit<
   dedupeProcessing?: boolean;
 };
 
-export interface ExactSteerBatchReservation {
-  reservationId: string;
-  primaryEntryId: string;
-  entryIds: string[];
-  targetCatId: string;
-}
-
-export type ExactUserBatchReservationResult =
-  | ({ outcome: 'reserved' } & ExactSteerBatchReservation)
+export type DurableSteerClaimResult =
+  | { outcome: 'claimed'; entries: QueueEntry[]; targetCatId: string }
   | {
       outcome: 'rejected';
-      reason: 'invalid_entry_ids' | 'entry_not_found' | 'entry_ineligible' | 'entries_incompatible';
+      reason: 'entry_not_found' | 'entry_processing' | 'entry_ineligible';
     };
-
-export type ExactUserEntryReservationResult =
-  | ({ outcome: 'reserved' } & ExactSteerBatchReservation)
-  | { outcome: 'rejected'; reason: 'state_changed' };
-
-export interface ActivatedExactSteerReservation {
-  reservationId: string;
-  entry: QueueEntry;
-}
 
 export interface QueuedHandledResult {
   entryId: string;
@@ -310,22 +284,11 @@ export class InvocationQueue {
   private readonly log = createModuleLogger('invocation-queue');
   private queues = new Map<string, QueueEntry[]>();
   private lastEnqueuedAt = 0;
+  /** Claimed rows remain reversible until tracker admission owns execution. */
+  private readonly ledgerClaimIds = new Map<string, string>();
 
   /** Original content per entryId at enqueue time, for rollbackEnqueue */
   private originalContents = new Map<string, string>();
-
-  /** Rollback snapshots for the short reservation→preempt→dequeue window. */
-  private exactSteerReservations = new Map<
-    string,
-    {
-      threadId: string;
-      userId: string;
-      primaryEntryId: string;
-      targetCatId: string;
-      entries: Map<string, QueueEntry>;
-      phase: 'reserved' | 'preempting' | 'activated';
-    }
-  >();
 
   constructor(private readonly ledgerStore: QueueLedgerStore = new InMemoryQueueLedgerStore()) {}
 
@@ -416,7 +379,6 @@ export class InvocationQueue {
     const e = this.findEntry(threadId, userId, entryId);
     if (!e || e.status !== 'queued') return false;
     if (e.kind === 'private_input') return false;
-    if (e.exactSteerBatch) return false;
     if (isSystemPinnedQueueEntry(e)) return false;
     e.position = position;
     return true;
@@ -498,7 +460,6 @@ export class InvocationQueue {
       sourceCategory: input.sourceCategory,
       continuationKey: input.continuationKey,
       freshnessClosureId: input.freshnessClosureId,
-      freshnessRequiredFrontierMessageId: input.freshnessRequiredFrontierMessageId,
       freshnessSupplementId: input.freshnessSupplementId,
       freshnessSupplementLineageId: input.freshnessSupplementLineageId,
       freshnessSupplementSeq: input.freshnessSupplementSeq,
@@ -653,12 +614,17 @@ export class InvocationQueue {
         ? { callerTraceContext: structuredClone(entry.execution.callerTraceContext) }
         : {}),
       ...(entry.execution.a2aTriggerMessageId ? { a2aTriggerMessageId: entry.execution.a2aTriggerMessageId } : {}),
+      ...(entry.sourceCategory === 'continuation' ? { continuationKey: entry.payload.sourceId } : {}),
     };
   }
 
   private cacheLedgerEntries(entries: readonly QueueLedgerEntry[]): QueueEntry[] {
     const projected: QueueEntry[] = [];
     for (const row of entries) {
+      if (row.status === 'terminal') {
+        this.removeCachedEntry(row.threadId, row.id);
+        continue;
+      }
       const entry = InvocationQueue.projectLedgerEntry(row);
       const queue = this.getOrCreate(this.scopeKey(entry.threadId, entry.userId));
       const index = queue.findIndex((candidate) => candidate.id === entry.id);
@@ -671,9 +637,18 @@ export class InvocationQueue {
 
   async hydrateFromLedger(): Promise<number> {
     this.queues.clear();
+    this.ledgerClaimIds.clear();
     let count = 0;
     for (const threadId of await this.ledgerStore.listThreadIds()) {
-      const rows = await this.ledgerStore.list(threadId);
+      const rows: QueueLedgerEntry[] = [];
+      for (const row of await this.ledgerStore.list(threadId)) {
+        if (row.status !== 'claimed' || !row.claimId) {
+          rows.push(row);
+          continue;
+        }
+        const restored = await this.ledgerStore.restore(threadId, row.id, row.claimId);
+        if (restored.outcome === 'updated') rows.push(restored.entry);
+      }
       count += this.cacheLedgerEntries(rows).length;
     }
     return count;
@@ -684,6 +659,29 @@ export class InvocationQueue {
     const enqueuedAt = this.nextEnqueuedAt();
     const rows = this.createLedgerRows(input, sourceId, enqueuedAt, input.messageId ?? undefined);
     const result = await this.ledgerStore.enqueue(rows, input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined);
+    if (result.outcome === 'full') return { outcome: 'full' };
+    if (result.outcome === 'conflict') throw new Error(`Queue admission identity conflict: ${sourceId}`);
+    const entries = this.cacheLedgerEntries(result.entries);
+    const primary = entries[0];
+    return {
+      outcome: 'enqueued',
+      ...(primary ? { entry: primary } : {}),
+      entries,
+      queuePosition: primary
+        ? this.list(primary.threadId, primary.userId).findIndex((entry) => entry.id === primary.id) + 1
+        : undefined,
+      deduped: result.outcome === 'replayed',
+    };
+  }
+
+  /** Synchronous durable admission for the in-memory store used by local/test hosts. */
+  enqueueDurableNow(input: QueueEnqueueInput): EnqueueResult & { entries?: QueueEntry[] } {
+    if (!(this.ledgerStore instanceof InMemoryQueueLedgerStore)) {
+      throw new Error('synchronous durable Queue admission requires the in-memory ledger');
+    }
+    const sourceId = InvocationQueue.persistentSourceId(input);
+    const rows = this.createLedgerRows(input, sourceId, this.nextEnqueuedAt(), input.messageId ?? undefined);
+    const result = this.ledgerStore.enqueueNow(rows, input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined);
     if (result.outcome === 'full') return { outcome: 'full' };
     if (result.outcome === 'conflict') throw new Error(`Queue admission identity conflict: ${sourceId}`);
     const entries = this.cacheLedgerEntries(result.entries);
@@ -744,6 +742,360 @@ export class InvocationQueue {
         : undefined,
       deduped: result.deduped,
     };
+  }
+
+  private findEntryAcrossUsers(threadId: string, entryId: string): QueueEntry | undefined {
+    for (const queue of this.queues.values()) {
+      if (!this.queueMatchesThread(queue, threadId)) continue;
+      const entry = queue.find((candidate) => candidate.id === entryId);
+      if (entry) return entry;
+    }
+    return undefined;
+  }
+
+  private async claimLedgerEntry(entry: QueueEntry, selectedTargetCatId?: string): Promise<QueueEntry | null> {
+    const claimId = randomUUID();
+    const claimedAt = Date.now();
+    const bindTargetCatId = entry.targetCats.length === 0 ? selectedTargetCatId : undefined;
+    const claimed = await this.ledgerStore.claim(entry.threadId, entry.id, claimId, claimedAt, bindTargetCatId);
+    if (claimed.outcome !== 'claimed') return null;
+    const [projected] = this.cacheLedgerEntries(claimed.entries);
+    if (!projected) return null;
+    const cached = this.findEntry(projected.threadId, projected.userId, projected.id);
+    if (!cached) return null;
+    // Legacy readers have no `claimed` state. Present the reversible claim as
+    // processing while ledgerClaimIds retains the exact restore authority.
+    cached.status = 'processing';
+    cached.processingStartedAt = claimedAt;
+    this.ledgerClaimIds.set(cached.id, claimId);
+    return InvocationQueue.cloneEntry(cached);
+  }
+
+  private cacheLedgerClaim(entries: readonly QueueLedgerEntry[], claimId: string, claimedAt: number): QueueEntry[] {
+    const projected = this.cacheLedgerEntries(entries);
+    for (const entry of projected) {
+      const cached = this.findEntry(entry.threadId, entry.userId, entry.id);
+      if (!cached) continue;
+      // QueueEntry is a compatibility projection while consumers move to the
+      // scalar ledger row. Claimed is intentionally hidden from ordinary
+      // dequeue selectors as processing; ledgerClaimIds keeps restore authority.
+      cached.status = 'processing';
+      cached.processingStartedAt = claimedAt;
+      this.ledgerClaimIds.set(cached.id, claimId);
+    }
+    return projected.map((entry) => this.getEntrySnapshot(entry.threadId, entry.userId, entry.id) ?? entry);
+  }
+
+  async claimExactSteerEntryDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    claimedAt = Date.now(),
+  ): Promise<DurableSteerClaimResult> {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (!entry) return { outcome: 'rejected', reason: 'entry_not_found' };
+    if (entry.status !== 'queued') return { outcome: 'rejected', reason: 'entry_processing' };
+    const assignsTargetlessConversation = entry.kind === 'conversation_input' && entry.targetCats.length === 0;
+    if (
+      isSystemPinnedQueueEntry(entry) ||
+      (!assignsTargetlessConversation && !isOrdinaryQueueTargetEligible(entry, targetCatId))
+    ) {
+      return { outcome: 'rejected', reason: 'entry_ineligible' };
+    }
+    const claimId = randomUUID();
+    const claimed = await this.ledgerStore.claim(
+      threadId,
+      entryId,
+      claimId,
+      claimedAt,
+      assignsTargetlessConversation ? targetCatId : undefined,
+      claimedAt,
+    );
+    if (claimed.outcome !== 'claimed') {
+      return {
+        outcome: 'rejected',
+        reason: claimed.outcome === 'not_found' ? 'entry_not_found' : 'entry_processing',
+      };
+    }
+    return { outcome: 'claimed', entries: this.cacheLedgerClaim(claimed.entries, claimId, claimedAt), targetCatId };
+  }
+
+  async restoreClaimedEntries(threadId: string, entryIds: readonly string[]): Promise<boolean> {
+    let restoredAll = true;
+    for (const entryId of entryIds) {
+      const claimId = this.ledgerClaimIds.get(entryId);
+      if (!claimId) {
+        restoredAll = false;
+        continue;
+      }
+      const restored = await this.ledgerStore.restore(threadId, entryId, claimId);
+      if (restored.outcome !== 'updated') {
+        restoredAll = false;
+        continue;
+      }
+      this.ledgerClaimIds.delete(entryId);
+      this.cacheLedgerEntries([restored.entry]);
+    }
+    return restoredAll;
+  }
+
+  /** Claim one queued row before an external withdrawal side effect. */
+  async claimQueuedEntryForWithdrawal(threadId: string, userId: string, entryId: string): Promise<QueueEntry | null> {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (!entry || entry.status !== 'queued') return null;
+    return this.claimLedgerEntry(entry);
+  }
+
+  /** Remove a withdrawal claim after its source-message terminal write succeeds. */
+  async commitClaimedWithdrawal(threadId: string, entryId: string): Promise<QueueEntry | null> {
+    const claimId = this.ledgerClaimIds.get(entryId);
+    if (!claimId) return null;
+    const committed = await this.ledgerStore.commit(threadId, entryId, claimId, 'withdrawn', Date.now());
+    if (committed.outcome !== 'updated') return null;
+    this.ledgerClaimIds.delete(entryId);
+    return this.removeCachedEntry(threadId, entryId);
+  }
+
+  /** Persist explicit ordering through the same claim/commit CAS as dequeue. */
+  async setPositionDurable(threadId: string, userId: string, entryId: string, position: number): Promise<boolean> {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (
+      !entry ||
+      entry.status !== 'queued' ||
+      entry.kind === 'private_input' ||
+      isSystemPinnedQueueEntry(entry) ||
+      !Number.isInteger(position) ||
+      position < 0
+    ) {
+      return false;
+    }
+    const claimId = randomUUID();
+    const claimedAt = Date.now();
+    const claimed = await this.ledgerStore.claim(threadId, entryId, claimId, claimedAt);
+    if (claimed.outcome !== 'claimed' || !claimed.entries[0]) return false;
+    const replacement = structuredClone(claimed.entries[0]);
+    replacement.position = position;
+    const committed = await this.ledgerStore.commit(threadId, entryId, claimId, 'queued', claimedAt, replacement);
+    if (committed.outcome !== 'updated') {
+      await this.ledgerStore.restore(threadId, entryId, claimId);
+      return false;
+    }
+    this.cacheLedgerEntries([committed.entry]);
+    return true;
+  }
+
+  async claimPreAdmissionFailureAcrossUsersDurable(threadId: string, entryId: string): Promise<QueueEntry | null> {
+    const best = this.peekOldestAcrossUsers(threadId);
+    if (!best || best.id !== entryId) return null;
+    return this.claimLedgerEntry(best);
+  }
+
+  /** Durable counterpart of markProcessingAcrossUsers. */
+  async markProcessingDurable(
+    threadId: string,
+    userId: string,
+    resolvedHead: { readonly entryId: string; readonly targetCats: readonly string[] },
+  ): Promise<QueueEntry | null> {
+    const best = this.peekNextQueued(threadId, userId);
+    if (
+      !best ||
+      best.id !== resolvedHead.entryId ||
+      resolvedHead.targetCats.length === 0 ||
+      resolvedHead.targetCats.some((catId) => typeof catId !== 'string' || !catId) ||
+      new Set(resolvedHead.targetCats).size !== resolvedHead.targetCats.length
+    ) {
+      return null;
+    }
+    const selectedTargetCatId = resolvedHead.targetCats[0]!;
+    if (best.targetCats.length > 0 && !best.targetCats.includes(selectedTargetCatId)) return null;
+    return this.claimLedgerEntry(best, selectedTargetCatId);
+  }
+
+  /** Durable counterpart of markProcessingAcrossUsers. */
+  async markProcessingAcrossUsersDurable(
+    threadId: string,
+    resolvedHead: { readonly entryId: string; readonly targetCats: readonly string[] },
+  ): Promise<QueueEntry | null> {
+    const best = this.peekOldestAcrossUsers(threadId);
+    if (
+      !best ||
+      best.id !== resolvedHead.entryId ||
+      resolvedHead.targetCats.length === 0 ||
+      resolvedHead.targetCats.some((catId) => typeof catId !== 'string' || !catId) ||
+      new Set(resolvedHead.targetCats).size !== resolvedHead.targetCats.length
+    ) {
+      return null;
+    }
+    const selectedTargetCatId = resolvedHead.targetCats[0]!;
+    if (best.targetCats.length > 0 && !best.targetCats.includes(selectedTargetCatId)) return null;
+    return this.claimLedgerEntry(best, selectedTargetCatId);
+  }
+
+  async markProcessingGroupAcrossUsersDurable(
+    threadId: string,
+    resolvedHead: { readonly entryId: string; readonly targetCats: readonly string[] },
+    entryIds: readonly string[],
+  ): Promise<{ entry: QueueEntry; members: QueueEntry[] } | null> {
+    const best = this.peekOldestAcrossUsers(threadId);
+    if (
+      !best ||
+      best.id !== resolvedHead.entryId ||
+      entryIds[0] !== best.id ||
+      entryIds.length === 0 ||
+      new Set(entryIds).size !== entryIds.length ||
+      resolvedHead.targetCats.length !== 1
+    ) {
+      return null;
+    }
+    const selectedTargetCatId = resolvedHead.targetCats[0]!;
+    const selected = entryIds.map((entryId) => this.findEntryAcrossUsers(threadId, entryId));
+    if (
+      selected.some(
+        (entry) =>
+          !entry ||
+          entry.status !== 'queued' ||
+          entry.userId !== best.userId ||
+          (entry.targetCats.length > 0 && !entry.targetCats.includes(selectedTargetCatId)),
+      )
+    ) {
+      return null;
+    }
+    const claimId = randomUUID();
+    const claimedAt = Date.now();
+    const bindsTargetlessGroup = selected.every((entry) => entry?.targetCats.length === 0);
+    const claimed = await this.ledgerStore.claimPrefix(
+      threadId,
+      entryIds,
+      claimId,
+      claimedAt,
+      bindsTargetlessGroup ? selectedTargetCatId : undefined,
+    );
+    if (claimed.outcome !== 'claimed') return null;
+    const projected = this.cacheLedgerClaim(claimed.entries, claimId, claimedAt);
+    const byId = new Map(projected.map((entry) => [entry.id, entry]));
+    const primary = byId.get(best.id);
+    if (!primary) return null;
+    return {
+      entry: primary,
+      members: entryIds
+        .slice(1)
+        .map((entryId) => byId.get(entryId))
+        .filter((entry): entry is QueueEntry => !!entry),
+    };
+  }
+
+  async markProcessingGroupDurable(
+    threadId: string,
+    userId: string,
+    resolvedHead: { readonly entryId: string; readonly targetCats: readonly string[] },
+    entryIds: readonly string[],
+  ): Promise<{ entry: QueueEntry; members: QueueEntry[] } | null> {
+    const best = this.peekNextQueued(threadId, userId);
+    if (
+      !best ||
+      best.id !== resolvedHead.entryId ||
+      entryIds[0] !== best.id ||
+      entryIds.length === 0 ||
+      new Set(entryIds).size !== entryIds.length ||
+      resolvedHead.targetCats.length !== 1
+    ) {
+      return null;
+    }
+    const selectedTargetCatId = resolvedHead.targetCats[0]!;
+    const selected = entryIds.map((entryId) => this.findEntry(threadId, userId, entryId));
+    if (
+      selected.some(
+        (entry) =>
+          !entry ||
+          entry.status !== 'queued' ||
+          (entry.targetCats.length > 0 && !entry.targetCats.includes(selectedTargetCatId)),
+      )
+    ) {
+      return null;
+    }
+    const claimId = randomUUID();
+    const claimedAt = Date.now();
+    const bindsTargetlessGroup = selected.every((entry) => entry?.targetCats.length === 0);
+    const claimed = await this.ledgerStore.claimPrefix(
+      threadId,
+      entryIds,
+      claimId,
+      claimedAt,
+      bindsTargetlessGroup ? selectedTargetCatId : undefined,
+    );
+    if (claimed.outcome !== 'claimed') return null;
+    const projected = this.cacheLedgerClaim(claimed.entries, claimId, claimedAt);
+    const byId = new Map(projected.map((entry) => [entry.id, entry]));
+    const primary = byId.get(best.id);
+    if (!primary) return null;
+    return {
+      entry: primary,
+      members: entryIds
+        .slice(1)
+        .map((entryId) => byId.get(entryId))
+        .filter((entry): entry is QueueEntry => !!entry),
+    };
+  }
+
+  async markProcessingByIdDurable(threadId: string, entryId: string, targetCatId: string): Promise<QueueEntry | null> {
+    const entry = this.findEntryAcrossUsers(threadId, entryId);
+    if (!entry || entry.status !== 'queued') return null;
+    if (entry.targetCats.length > 0 && !entry.targetCats.includes(targetCatId)) return null;
+    return this.claimLedgerEntry(entry, targetCatId);
+  }
+
+  async commitClaimedProcessing(threadId: string, entryIds: readonly string[], at = Date.now()): Promise<boolean> {
+    for (const entryId of entryIds) {
+      const claimId = this.ledgerClaimIds.get(entryId);
+      if (!claimId) continue;
+      const committed = await this.ledgerStore.commit(threadId, entryId, claimId, 'processing', at);
+      if (committed.outcome !== 'updated') return false;
+      this.ledgerClaimIds.delete(entryId);
+      this.cacheLedgerEntries([committed.entry]);
+    }
+    return true;
+  }
+
+  async rollbackProcessingDurable(threadId: string, entryId: string): Promise<boolean> {
+    const claimId = this.ledgerClaimIds.get(entryId);
+    if (!claimId) return false;
+    const restored = await this.ledgerStore.restore(threadId, entryId, claimId);
+    if (restored.outcome !== 'updated') return false;
+    this.ledgerClaimIds.delete(entryId);
+    this.cacheLedgerEntries([restored.entry]);
+    return true;
+  }
+
+  private removeCachedEntry(threadId: string, entryId: string): QueueEntry | null {
+    for (const queue of this.queues.values()) {
+      if (!this.queueMatchesThread(queue, threadId)) continue;
+      const index = queue.findIndex((entry) => entry.id === entryId);
+      if (index < 0) continue;
+      this.originalContents.delete(entryId);
+      return queue.splice(index, 1)[0] ?? null;
+    }
+    return null;
+  }
+
+  async removeProcessedAcrossUsersDurable(threadId: string, entryId: string): Promise<QueueEntry | null> {
+    const snapshot = this.findEntryAcrossUsers(threadId, entryId);
+    if (!snapshot || snapshot.status !== 'processing') return null;
+    const claimId = this.ledgerClaimIds.get(entryId);
+    if (claimId) {
+      const processing = await this.ledgerStore.commit(threadId, entryId, claimId, 'processing', Date.now());
+      if (processing.outcome !== 'updated') return null;
+      this.ledgerClaimIds.delete(entryId);
+    }
+    const terminal = await this.ledgerStore.commit(threadId, entryId, '', 'terminal', Date.now());
+    if (terminal.outcome !== 'updated') return null;
+    return this.removeCachedEntry(threadId, entryId);
+  }
+
+  async removeProcessedDurable(threadId: string, userId: string, entryId: string): Promise<QueueEntry | null> {
+    const snapshot = this.getEntrySnapshot(threadId, userId, entryId);
+    if (!snapshot) return null;
+    return this.removeProcessedAcrossUsersDurable(threadId, entryId);
   }
 
   /** Check if any entry in the thread already carries this messageId (connector retry dedup). */
@@ -827,18 +1179,10 @@ export class InvocationQueue {
 
   /** Remove a specific entry by id. Returns null if not found. */
   remove(threadId: string, userId: string, entryId: string): QueueEntry | null {
-    let q = this.queues.get(this.scopeKey(threadId, userId));
+    const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return null;
-    let idx = q.findIndex((e) => e.id === entryId);
+    const idx = q.findIndex((e) => e.id === entryId);
     if (idx === -1) return null;
-    const batch = q[idx]?.exactSteerBatch;
-    if (batch) {
-      this.releaseExactUserBatch(threadId, userId, batch.reservationId);
-      q = this.queues.get(this.scopeKey(threadId, userId));
-      if (!q) return null;
-      idx = q.findIndex((entry) => entry.id === entryId);
-      if (idx === -1) return null;
-    }
     this.originalContents.delete(entryId);
 
     return q.splice(idx, 1)[0] ?? null;
@@ -889,6 +1233,16 @@ export class InvocationQueue {
     return [...q].sort(InvocationQueue.compareEntries);
   }
 
+  /** Canonical hydrated scopes used to resume pending ledger work after startup. */
+  listScopes(): Array<{ threadId: string; userId: string }> {
+    const scopes: Array<{ threadId: string; userId: string }> = [];
+    for (const queue of this.queues.values()) {
+      const first = queue[0];
+      if (first) scopes.push({ threadId: first.threadId, userId: first.userId });
+    }
+    return scopes;
+  }
+
   /** Exact process-local Queue snapshot fence used by explicit row actions. */
   snapshotRevision(threadId: string, userId: string): string {
     return createHash('sha256')
@@ -901,20 +1255,19 @@ export class InvocationQueue {
    * semantics. Revision and the complete target set are checked in the same
    * synchronous mutation that crosses queued -> processing.
    */
-  claimExactAppend(
+  async claimExactAppend(
     threadId: string,
     userId: string,
     entryId: string,
     expectedQueueRevision: string,
     expectedTargetIds: readonly string[],
-  ): QueueEntry | null {
+  ): Promise<QueueEntry | null> {
     if (this.snapshotRevision(threadId, userId) !== expectedQueueRevision) return null;
     const entry = this.findEntry(threadId, userId, entryId);
     if (
       !entry ||
       entry.status !== 'queued' ||
       entry.kind === 'private_input' ||
-      entry.exactSteerBatch ||
       entry.queueCustodyAdmissionId ||
       isSystemPinnedQueueEntry(entry) ||
       expectedTargetIds.length === 0 ||
@@ -924,9 +1277,7 @@ export class InvocationQueue {
     ) {
       return null;
     }
-    entry.status = 'processing';
-    entry.processingStartedAt = Date.now();
-    return InvocationQueue.cloneEntry(entry);
+    return this.claimLedgerEntry(entry);
   }
 
   /** Persist the exact Active Run body exposure before the Queue row is detached. */
@@ -1614,14 +1965,6 @@ export class InvocationQueue {
       ...(entry.steeredInvocationIdByCatId
         ? { steeredInvocationIdByCatId: { ...entry.steeredInvocationIdByCatId } }
         : {}),
-      ...(entry.exactSteerBatch
-        ? {
-            exactSteerBatch: {
-              ...entry.exactSteerBatch,
-              entryIds: [...entry.exactSteerBatch.entryIds],
-            },
-          }
-        : {}),
       ...(entry.prestartRetirement
         ? {
             prestartRetirement: {
@@ -1648,7 +1991,6 @@ export class InvocationQueue {
     if (!q) return [];
     for (const e of q) {
       this.originalContents.delete(e.id);
-      if (e.exactSteerBatch) this.exactSteerReservations.delete(e.exactSteerBatch.reservationId);
     }
     this.queues.delete(key);
     return q;
@@ -1663,7 +2005,6 @@ export class InvocationQueue {
     if (!q) return false;
     const target = q.find((e) => e.id === entryId);
     if (!target || target.status === 'processing') return false;
-    if (target.exactSteerBatch) return false;
     if (isSystemPinnedQueueEntry(target)) return false;
 
     const queued = q.filter((e) => e.status === 'queued');
@@ -1693,7 +2034,6 @@ export class InvocationQueue {
     if (!q) return false;
     const entry = q.find((e) => e.id === entryId);
     if (!entry || entry.status === 'processing') return false;
-    if (entry.exactSteerBatch) return false;
     if (isSystemPinnedQueueEntry(entry)) return false;
 
     const minPos = q.reduce((min, e) => {
@@ -1704,397 +2044,13 @@ export class InvocationQueue {
     return true;
   }
 
-  /**
-   * Atomically reserve an explicit ordinary-user allowlist before Steer preempts
-   * the current invocation. Every validation happens before the first mutation.
-   */
-  reserveExactUserBatch(
-    threadId: string,
-    userId: string,
-    entryIds: readonly string[],
-  ): ExactUserBatchReservationResult {
-    const distinctIds = [...new Set(entryIds)];
-    if (distinctIds.length < 2 || distinctIds.length !== entryIds.length || distinctIds.length > MAX_QUEUE_DEPTH) {
-      return { outcome: 'rejected', reason: 'invalid_entry_ids' };
-    }
-
-    const q = this.queues.get(this.scopeKey(threadId, userId));
-    if (!q) return { outcome: 'rejected', reason: 'entry_not_found' };
-    const byId = new Map(q.map((entry) => [entry.id, entry]));
-    const selected = distinctIds.map((entryId) => byId.get(entryId));
-    if (selected.some((entry) => !entry)) return { outcome: 'rejected', reason: 'entry_not_found' };
-    const entries = selected as QueueEntry[];
-
-    if (entries.some((entry) => !InvocationQueue.isExactUserBatchEligible(entry))) {
-      return { outcome: 'rejected', reason: 'entry_ineligible' };
-    }
-
-    const primary = entries[0];
-    const targetCatId = primary?.targetCats[0];
-    if (!primary || !targetCatId) return { outcome: 'rejected', reason: 'entry_ineligible' };
-    if (
-      entries.some(
-        (entry) =>
-          entry.intent !== primary.intent ||
-          entry.ownerAuthProvenance !== primary.ownerAuthProvenance ||
-          entry.targetCats[0] !== targetCatId,
-      )
-    ) {
-      return { outcome: 'rejected', reason: 'entries_incompatible' };
-    }
-
-    return { outcome: 'reserved', ...this.commitExactSteerReservation(threadId, userId, entries, targetCatId) };
-  }
-
-  /**
-   * Reserve one exact queued entry before single-message Steer crosses an await.
-   * The durable steer marker records intent; this process-local identity is the
-   * exclusive dequeue fence and cannot be claimed through ordinary queue APIs.
-   */
-  reserveExactUserEntry(
-    threadId: string,
-    userId: string,
-    entryId: string,
-    targetCatId: string,
-  ): ExactUserEntryReservationResult {
-    const entry = this.findEntry(threadId, userId, entryId);
-    const assignsTargetlessConversation =
-      entry?.kind === 'conversation_input' && entry.targetCats.length === 0 && !entry.queueCustodyAdmissionId;
-    if (
-      !entry ||
-      entry.status !== 'queued' ||
-      (!assignsTargetlessConversation && !isOrdinaryQueueTargetEligible(entry, targetCatId)) ||
-      entry.exactSteerBatch ||
-      entry.steerRequestedByCatIds?.includes(targetCatId) ||
-      isSystemPinnedQueueEntry(entry)
-    ) {
-      return { outcome: 'rejected', reason: 'state_changed' };
-    }
-    if (assignsTargetlessConversation) {
-      entry.targetCats = [targetCatId];
-      entry.allTargetCats = [targetCatId];
-    }
-    return {
-      outcome: 'reserved',
-      ...this.commitExactSteerReservation(threadId, userId, [entry], targetCatId),
-    };
-  }
-
-  private commitExactSteerReservation(
-    threadId: string,
-    userId: string,
-    entries: readonly QueueEntry[],
-    targetCatId: string,
-  ): ExactSteerBatchReservation {
-    const primary = entries[0]!;
-    const entryIds = entries.map((entry) => entry.id);
-
-    const reservation: ExactSteerBatchReservation = {
-      reservationId: randomUUID(),
-      primaryEntryId: primary.id,
-      entryIds,
-      targetCatId,
-    };
-    const snapshots = new Map(entries.map((entry) => [entry.id, InvocationQueue.cloneEntry(entry)]));
-
-    const q = this.queues.get(this.scopeKey(threadId, userId))!;
-
-    const minPos = q.reduce((min, entry) => {
-      if (entry.status === 'queued' && entry.position !== undefined && entry.position < min) return entry.position;
-      return min;
-    }, 0);
-    for (const entry of entries) {
-      entry.exactSteerBatch = { ...reservation, entryIds: [...reservation.entryIds] };
-      const requested = new Set(entry.steerRequestedByCatIds ?? []);
-      requested.add(targetCatId);
-      entry.steerRequestedByCatIds = [...requested];
-    }
-    primary.position = minPos - 1;
-    this.exactSteerReservations.set(reservation.reservationId, {
-      threadId,
-      userId,
-      primaryEntryId: primary.id,
-      targetCatId,
-      entries: snapshots,
-      phase: 'reserved',
-    });
-    return reservation;
-  }
-
-  /** Cross the durable boundary immediately before preemption gains side effects. */
-  beginExactSteerPreemption(threadId: string, userId: string, reservationId: string): boolean {
-    const reservation = this.exactSteerReservations.get(reservationId);
-    if (
-      !reservation ||
-      reservation.phase !== 'reserved' ||
-      reservation.threadId !== threadId ||
-      reservation.userId !== userId
-    ) {
-      return false;
-    }
-    const q = this.queues.get(this.scopeKey(threadId, userId));
-    if (
-      !q ||
-      [...reservation.entries.keys()].some((entryId) => {
-        const entry = q.find((candidate) => candidate.id === entryId);
-        return entry?.status !== 'queued' || entry.exactSteerBatch?.reservationId !== reservationId;
-      })
-    ) {
-      return false;
-    }
-    reservation.phase = 'preempting';
-    return true;
-  }
-
-  /** Make one successfully preempted reservation eligible for its exact owner claim. */
-  activateExactSteerReservation(threadId: string, userId: string, reservationId: string): boolean {
-    const reservation = this.exactSteerReservations.get(reservationId);
-    if (
-      !reservation ||
-      reservation.phase !== 'preempting' ||
-      reservation.threadId !== threadId ||
-      reservation.userId !== userId
-    ) {
-      return false;
-    }
-    const q = this.queues.get(this.scopeKey(threadId, userId));
-    if (
-      !q ||
-      [...reservation.entries.keys()].some((entryId) => {
-        const entry = q.find((candidate) => candidate.id === entryId);
-        return entry?.status !== 'queued' || entry.exactSteerBatch?.reservationId !== reservationId;
-      })
-    ) {
-      return false;
-    }
-    reservation.phase = 'activated';
-    return true;
-  }
-
-  /** A reserved/preempting entry still has an in-flight route and cannot be withdrawn safely. */
-  hasUnsettledExactSteerReservation(threadId: string, userId: string, entryId?: string): boolean {
-    return [...this.exactSteerReservations.values()].some(
-      (reservation) =>
-        reservation.threadId === threadId &&
-        reservation.userId === userId &&
-        reservation.phase !== 'activated' &&
-        (entryId === undefined || reservation.entries.has(entryId)),
-    );
-  }
-
-  /** Peek a preempted exact reservation without granting ordinary dequeue its identity. */
-  peekActivatedExactSteerReservation(
-    threadId: string,
-    userId?: string,
-    onlyTargetCat?: string,
-  ): ActivatedExactSteerReservation | null {
-    let best: ActivatedExactSteerReservation | null = null;
-    for (const [reservationId, reservation] of this.exactSteerReservations) {
-      if (reservation.phase !== 'activated' || reservation.threadId !== threadId) continue;
-      if (userId !== undefined && reservation.userId !== userId) continue;
-      if (onlyTargetCat !== undefined && reservation.targetCatId !== onlyTargetCat) continue;
-      const queue = this.queues.get(this.scopeKey(threadId, reservation.userId));
-      if (
-        !queue ||
-        [...reservation.entries.keys()].some((entryId) => {
-          const entry = queue.find((candidate) => candidate.id === entryId);
-          return entry?.status !== 'queued' || entry.exactSteerBatch?.reservationId !== reservationId;
-        })
-      ) {
-        continue;
-      }
-      const current = queue.find((entry) => entry.id === reservation.primaryEntryId);
-      if (!current || current.exactSteerBatch?.primaryEntryId !== current.id) {
-        continue;
-      }
-      if (!best || InvocationQueue.compareEntries(current, best.entry) < 0) {
-        best = { reservationId, entry: InvocationQueue.cloneEntry(current) };
-      }
-    }
-    return best;
-  }
-
-  /** Atomically claim only the exact entry set owned by this activated identity. */
-  claimExactSteerReservation(
-    threadId: string,
-    userId: string,
-    entryId: string,
-    reservationId: string,
-  ): QueueEntry | null {
-    const reservation = this.exactSteerReservations.get(reservationId);
-    if (reservation?.phase !== 'activated' || reservation.threadId !== threadId || reservation.userId !== userId) {
-      return null;
-    }
-    const entry = this.findEntry(threadId, userId, entryId);
-    if (
-      !entry ||
-      entry.exactSteerBatch?.reservationId !== reservationId ||
-      entry.exactSteerBatch.primaryEntryId !== entryId
-    ) {
-      return null;
-    }
-    return this.markEntryProcessing(entry, reservationId);
-  }
-
-  /** Release an unstarted reservation and restore every selected entry snapshot. */
-  releaseExactUserBatch(threadId: string, userId: string, reservationId: string): QueueEntry[] {
-    const reservation = this.exactSteerReservations.get(reservationId);
-    if (!reservation || reservation.threadId !== threadId || reservation.userId !== userId) return [];
-    const q = this.queues.get(this.scopeKey(threadId, userId));
-    if (!q) {
-      this.exactSteerReservations.delete(reservationId);
-      return [];
-    }
-
-    const restored: QueueEntry[] = [];
-    for (const [entryId, snapshot] of reservation.entries) {
-      const index = q.findIndex(
-        (entry) =>
-          entry.id === entryId && entry.status === 'queued' && entry.exactSteerBatch?.reservationId === reservationId,
-      );
-      if (index === -1) continue;
-      const restoredEntry = InvocationQueue.cloneEntry(snapshot);
-      q[index] = restoredEntry;
-      restored.push(InvocationQueue.cloneEntry(restoredEntry));
-    }
-    this.exactSteerReservations.delete(reservationId);
-    return restored;
-  }
-
-  /** Cancel every still-queued Batch Steer reservation in one user scope. */
-  releaseAllExactUserBatches(threadId: string, userId: string): QueueEntry[] {
-    const reservationIds = new Set(
-      this.list(threadId, userId).flatMap((entry) =>
-        entry.exactSteerBatch ? [entry.exactSteerBatch.reservationId] : [],
-      ),
-    );
-    return [...reservationIds].flatMap((reservationId) => this.releaseExactUserBatch(threadId, userId, reservationId));
-  }
-
-  /** Drop rollback bookkeeping once no live Queue entry references the reservation. */
-  pruneExactUserBatchReservation(reservationId: string): boolean {
-    const stillReferenced = [...this.queues.values()].some((q) =>
-      q.some((entry) => entry.exactSteerBatch?.reservationId === reservationId),
-    );
-    if (stillReferenced) return false;
-    return this.exactSteerReservations.delete(reservationId);
-  }
-
-  /** Exact already-processing members, in the caller-frozen order, excluding the primary. */
-  collectExactSteerBatchMembers(entry: QueueEntry): QueueEntry[] | null {
-    const batch = entry.exactSteerBatch;
-    if (!batch || batch.primaryEntryId !== entry.id) return null;
-    const reservation = this.exactSteerReservations.get(batch.reservationId);
-    if (!reservation || reservation.threadId !== entry.threadId || reservation.userId !== entry.userId) return null;
-    const q = this.queues.get(this.scopeKey(entry.threadId, entry.userId));
-    if (!q) return null;
-    const byId = new Map(q.map((candidate) => [candidate.id, candidate]));
-    const members: QueueEntry[] = [];
-    for (const entryId of batch.entryIds) {
-      const current = byId.get(entryId);
-      if (
-        !current ||
-        current.status !== 'processing' ||
-        current.exactSteerBatch?.reservationId !== batch.reservationId
-      ) {
-        return null;
-      }
-      if (entryId !== batch.primaryEntryId) members.push(InvocationQueue.cloneEntry(current));
-    }
-    return members;
-  }
-
-  /** Restore every member after a start-reservation persistence failure. */
-  rollbackExactSteerBatchProcessing(threadId: string, reservationId: string): QueueEntry[] {
-    const reservation = this.exactSteerReservations.get(reservationId);
-    if (!reservation || reservation.threadId !== threadId) return [];
-    const q = this.queues.get(this.scopeKey(reservation.threadId, reservation.userId));
-    if (!q) return [];
-    const rolledBack: QueueEntry[] = [];
-    for (const entryId of reservation.entries.keys()) {
-      const entry = q.find(
-        (candidate) =>
-          candidate.id === entryId &&
-          candidate.status === 'processing' &&
-          candidate.exactSteerBatch?.reservationId === reservationId,
-      );
-      if (!entry) continue;
-      entry.status = 'queued';
-      delete entry.processingStartedAt;
-      rolledBack.push(InvocationQueue.cloneEntry(entry));
-    }
-    return rolledBack;
-  }
-
-  private static isExactUserBatchEligible(entry: QueueEntry): boolean {
-    const targetCatId = entry.targetCats[0];
-    return (
-      entry.status === 'queued' &&
-      entry.from.kind === 'user' &&
-      entry.ownerAuthProvenance !== 'unknown' &&
-      entry.targetCats.length === 1 &&
-      !!targetCatId &&
-      !entry.autoExecute &&
-      !entry.sourceCategory &&
-      !entry.actionSuccessorFence &&
-      !entry.waitContinuationCarrier &&
-      !entry.freshnessClosureId &&
-      !entry.freshnessSupplementId &&
-      !entry.continuationKey &&
-      !entry.a2aParentInvocationId &&
-      !entry.a2aTriggerMessageId &&
-      !entry.exactSteerBatch &&
-      isOrdinaryQueueTargetEligible(entry, targetCatId) &&
-      entry.authorIntentByCatId?.[targetCatId]?.requested !== 'continue_current'
-    );
-  }
-
-  /** Mark a primary plus its frozen exact allowlist in one synchronous mutation. */
-  private markEntryProcessing(
-    entry: QueueEntry,
-    exactReservationId?: string,
-    selectedTargetCatId?: string,
-  ): QueueEntry | null {
-    const batch = entry.exactSteerBatch;
+  /** Mark one legacy in-memory entry processing. */
+  private markEntryProcessing(entry: QueueEntry, selectedTargetCatId?: string): QueueEntry | null {
     const targetCatId =
-      selectedTargetCatId ??
-      batch?.targetCatId ??
-      entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
+      selectedTargetCatId ?? entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
     if (!targetCatId || !isOrdinaryQueueTargetEligible(entry, targetCatId)) return null;
-    if (!batch) {
-      entry.status = 'processing';
-      entry.processingStartedAt = Date.now();
-      return InvocationQueue.cloneEntry(entry);
-    }
-    if (exactReservationId !== batch.reservationId) return null;
-    if (batch.primaryEntryId !== entry.id) return null;
-    const reservation = this.exactSteerReservations.get(batch.reservationId);
-    if (
-      reservation?.phase !== 'activated' ||
-      reservation.threadId !== entry.threadId ||
-      reservation.userId !== entry.userId
-    ) {
-      return null;
-    }
-    const q = this.queues.get(this.scopeKey(entry.threadId, entry.userId));
-    if (!q) return null;
-    const byId = new Map(q.map((candidate) => [candidate.id, candidate]));
-    const selected = batch.entryIds.map((entryId) => byId.get(entryId));
-    if (
-      selected.some(
-        (candidate) =>
-          !candidate ||
-          candidate.status !== 'queued' ||
-          candidate.exactSteerBatch?.reservationId !== batch.reservationId,
-      )
-    ) {
-      return null;
-    }
-    const processingStartedAt = Date.now();
-    for (const candidate of selected as QueueEntry[]) {
-      candidate.status = 'processing';
-      candidate.processingStartedAt = processingStartedAt;
-    }
+    entry.status = 'processing';
+    entry.processingStartedAt = Date.now();
     return InvocationQueue.cloneEntry(entry);
   }
 
@@ -2106,7 +2062,7 @@ export class InvocationQueue {
   ): QueueEntry | null {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return null;
-    const queued = q.filter((entry) => entry.status === 'queued' && !entry.exactSteerBatch);
+    const queued = q.filter((entry) => entry.status === 'queued');
     if (queued.length === 0) return null;
     queued.sort(InvocationQueue.compareEntries);
     const best = queued[0]!;
@@ -2125,14 +2081,14 @@ export class InvocationQueue {
       selectedTargetCatId = best.targetCats[0];
     }
     if (!selectedTargetCatId || !isOrdinaryQueueTargetEligible(best, selectedTargetCatId)) return null;
-    return this.markEntryProcessing(best, undefined, selectedTargetCatId);
+    return this.markEntryProcessing(best, selectedTargetCatId);
   }
 
   /** Peek at this user scope's strict comparator head, including targetless public work. */
   peekNextQueued(threadId: string, userId: string): QueueEntry | null {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return null;
-    const queued = q.filter((entry) => entry.status === 'queued' && !entry.exactSteerBatch);
+    const queued = q.filter((entry) => entry.status === 'queued');
     if (queued.length === 0) return null;
     queued.sort(InvocationQueue.compareEntries);
     return { ...queued[0]! };
@@ -2171,7 +2127,7 @@ export class InvocationQueue {
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
       for (const e of q) {
-        if (e.status !== 'queued' || e.exactSteerBatch) continue;
+        if (e.status !== 'queued') continue;
         if (!best || InvocationQueue.compareEntries(e, best) < 0) {
           best = e;
         }
@@ -2191,7 +2147,7 @@ export class InvocationQueue {
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
       for (const e of q) {
-        if (e.status !== 'queued' || e.exactSteerBatch) continue;
+        if (e.status !== 'queued') continue;
         candidates.push(e);
         if (!best || InvocationQueue.compareEntries(e, best) < 0) {
           best = e;
@@ -2214,7 +2170,7 @@ export class InvocationQueue {
       bestTargetCatId = best.targetCats[0];
     }
     if (!bestTargetCatId || !isOrdinaryQueueTargetEligible(best, bestTargetCatId)) return null;
-    return this.markEntryProcessing(best, undefined, bestTargetCatId);
+    return this.markEntryProcessing(best, bestTargetCatId);
   }
 
   /**
@@ -2227,7 +2183,7 @@ export class InvocationQueue {
     for (const queue of this.queues.values()) {
       if (!this.queueMatchesThread(queue, threadId)) continue;
       for (const candidate of queue) {
-        if (candidate.status !== 'queued' || candidate.exactSteerBatch) continue;
+        if (candidate.status !== 'queued') continue;
         if (!best || InvocationQueue.compareEntries(candidate, best) < 0) best = candidate;
       }
     }
@@ -2254,13 +2210,12 @@ export class InvocationQueue {
   private resolveProcessingGroupAcrossUsers(
     threadId: string,
     entryId: string,
-  ): { queue: QueueEntry[]; members: Array<{ candidate: QueueEntry; index: number }>; reservationId?: string } | null {
+  ): { queue: QueueEntry[]; members: Array<{ candidate: QueueEntry; index: number }> } | null {
     for (const queue of this.queues.values()) {
       if (!this.queueMatchesThread(queue, threadId)) continue;
       const entry = queue.find((candidate) => candidate.status === 'processing' && candidate.id === entryId);
       if (!entry) continue;
-      const batch = entry.exactSteerBatch;
-      if (!batch && entry.prestartRetirement) {
+      if (entry.prestartRetirement) {
         const intent = entry.prestartRetirement;
         const members = queue
           .map((candidate, index) => ({ candidate, index }))
@@ -2283,34 +2238,7 @@ export class InvocationQueue {
         }
         return { queue, members };
       }
-      if (!batch) return { queue, members: [{ candidate: entry, index: queue.indexOf(entry) }] };
-
-      const reservation = this.exactSteerReservations.get(batch.reservationId);
-      if (
-        !reservation ||
-        reservation.threadId !== threadId ||
-        reservation.userId !== entry.userId ||
-        reservation.primaryEntryId !== batch.primaryEntryId ||
-        reservation.entries.size !== batch.entryIds.length ||
-        batch.entryIds.some((memberId) => !reservation.entries.has(memberId))
-      ) {
-        return null;
-      }
-
-      const byId = new Map(queue.map((candidate, index) => [candidate.id, { candidate, index }]));
-      const members: Array<{ candidate: QueueEntry; index: number }> = [];
-      for (const memberId of batch.entryIds) {
-        const member = byId.get(memberId);
-        if (
-          !member ||
-          member.candidate.status !== 'processing' ||
-          member.candidate.exactSteerBatch?.reservationId !== batch.reservationId
-        ) {
-          return null;
-        }
-        members.push(member);
-      }
-      return { queue, members, reservationId: batch.reservationId };
+      return { queue, members: [{ candidate: entry, index: queue.indexOf(entry) }] };
     }
     return null;
   }
@@ -2341,7 +2269,6 @@ export class InvocationQueue {
       const removedEntry = group.queue.splice(member.index, 1)[0];
       if (removedEntry) this.originalContents.delete(removedEntry.id);
     }
-    if (group.reservationId) this.exactSteerReservations.delete(group.reservationId);
     return removed;
   }
 
@@ -2647,7 +2574,12 @@ export class InvocationQueue {
         if (opts?.sourceCategories) {
           if (!e.sourceCategory || !opts.sourceCategories.includes(e.sourceCategory)) continue;
         }
-        if (opts?.continuationKey !== undefined && e.continuationKey !== opts.continuationKey) continue;
+        if (
+          opts?.continuationKey !== undefined &&
+          e.continuationKey !== opts.continuationKey &&
+          e.idempotencyKey !== opts.continuationKey
+        )
+          continue;
 
         if (e.status === 'queued') {
           return true;
@@ -2687,7 +2619,7 @@ export class InvocationQueue {
   ): boolean {
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
-      const entry = q.find((e) => e.id === entryId && e.status === 'queued' && !e.exactSteerBatch);
+      const entry = q.find((e) => e.id === entryId && e.status === 'queued');
       if (entry) {
         if (resolvedTargetCats) {
           if (
@@ -2703,7 +2635,7 @@ export class InvocationQueue {
         const selectedTargetCatId =
           targetCatId ?? entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
         if (!selectedTargetCatId || !isOrdinaryQueueTargetEligible(entry, selectedTargetCatId)) return false;
-        return this.markEntryProcessing(entry, undefined, selectedTargetCatId) !== null;
+        return this.markEntryProcessing(entry, selectedTargetCatId) !== null;
       }
     }
     return false;
@@ -2729,10 +2661,8 @@ export class InvocationQueue {
     if (
       !head ||
       head.kind !== 'conversation_input' ||
-      head.status !== 'processing' ||
-      head.targetCats.length === 0 ||
+      (resolution?.resolvedTargets ?? head.targetCats).length === 0 ||
       head.position !== undefined ||
-      head.exactSteerBatch ||
       head.queuedFailedByCatIds?.length ||
       head.steerRequestedByCatIds?.length
     ) {
@@ -2742,7 +2672,7 @@ export class InvocationQueue {
     const queued: QueueEntry[] = [];
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, head.threadId)) continue;
-      queued.push(...q.filter((entry) => entry.status === 'queued' && !entry.exactSteerBatch));
+      queued.push(...q.filter((entry) => entry.status === 'queued' && entry.id !== head.id));
     }
     queued.sort(InvocationQueue.compareEntries);
 

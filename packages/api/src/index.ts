@@ -2500,7 +2500,6 @@ async function main(): Promise<void> {
     router: router as unknown as RouterLike,
     socketManager,
     messageStore,
-    queueCustodyCoordinator,
     turnExecutionStore,
     log: app.log,
     getPushService: getPushNotificationService,
@@ -2767,7 +2766,7 @@ async function main(): Promise<void> {
       await reconcileFreshnessClosuresAtStartup({
         closureStore: freshnessClosureStore,
         enqueue: (closure) =>
-          invocationQueue.enqueue({
+          invocationQueue.enqueueDurable({
             from: { kind: 'agent', catId: closure.catId },
             threadId: closure.threadId,
             userId: closure.userId,
@@ -2779,9 +2778,8 @@ async function main(): Promise<void> {
             autoExecute: true,
             priority: 'normal',
             intent: 'execute',
-            idempotencyKey: `freshness-closure:${closure.id}`,
+            sourceId: `freshness-closure:${closure.id}`,
             freshnessClosureId: closure.id,
-            freshnessRequiredFrontierMessageId: closure.requiredFrontierMessageId,
           }),
         executeThread: (threadId) => queueProcessor.requestDrain(threadId),
         onProjection: (projection) => {
@@ -2804,7 +2802,12 @@ async function main(): Promise<void> {
       await reconcileFreshnessSupplementsAtStartup({
         closureStore: freshnessClosureStore,
         messageStore,
-        enqueue: (supplement) => invocationQueue.enqueue({ ...supplement, ownerAuthProvenance: 'unknown' }),
+        enqueue: (supplement) =>
+          invocationQueue.enqueueDurable({
+            ...supplement,
+            sourceId: supplement.idempotencyKey,
+            ownerAuthProvenance: 'unknown',
+          }),
         executeThread: (threadId) => queueProcessor.requestDrain(threadId),
         onProjection: (projection) => {
           socketManager?.broadcastAgentMessage(
@@ -5719,8 +5722,6 @@ async function main(): Promise<void> {
           messageStore,
           socketManager: socketManager ?? undefined,
           invocationQueue,
-          ...(a2aDispatchDispositionService ? { a2aDispatchDispositionService } : {}),
-          resumePrestartRetirement: (entries) => queueProcessor.resumeDurablePrestartRetirement(entries),
           ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
         });
         const startupRecovery = await reconciler.reconcileOrphans();

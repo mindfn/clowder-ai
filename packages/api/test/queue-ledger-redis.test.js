@@ -90,23 +90,36 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       target: { kind: 'unassigned' },
     });
     await store.enqueue([targetless]);
-    const claimed = await store.claim('thread-redis', targetless.id, 'claim-targetless', 200, 'codex');
+    const claimed = await store.claim('thread-redis', targetless.id, 'claim-targetless', 200, 'codex', 199);
     assert.equal(claimed.outcome, 'claimed');
     assert.deepEqual(claimed.entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.equal(claimed.entries[0].delivery.steerRequestedAt, 199);
+    const restored = await store.restore('thread-redis', targetless.id, 'claim-targetless');
+    assert.equal(restored.outcome, 'updated');
+    assert.equal(restored.entry.delivery.steerRequestedAt, undefined);
   });
 
-  it('claims prefixes all-or-nothing and commits processing to terminal removal', async () => {
+  it('claims prefixes all-or-nothing and retains terminal idempotency tombstones outside active order', async () => {
     const first = row('m1', 'opus');
     const second = row('m2', 'opus', { enqueuedAt: 101 });
     await store.enqueue([first]);
     await store.enqueue([second]);
-    const claimed = await store.claimPrefix('thread-redis', [first.id, second.id], 'batch-1', 200);
+    const claimed = await store.claimPrefix('thread-redis', [first.id, second.id], 'batch-1', 200, undefined, 199);
     assert.equal(claimed.outcome, 'claimed');
+    assert.ok(claimed.entries.every((entry) => entry.delivery.steerRequestedAt === 199));
     assert.equal((await store.commit('thread-redis', first.id, 'batch-1', 'processing', 201)).outcome, 'updated');
     assert.equal((await store.commit('thread-redis', first.id, '', 'terminal', 300)).outcome, 'updated');
     assert.deepEqual(
       (await store.list('thread-redis')).map((entry) => [entry.id, entry.status]),
       [[second.id, 'claimed']],
+    );
+    assert.equal((await store.get('thread-redis', first.id)).status, 'terminal');
+    const replay = await store.enqueue([{ ...first, enqueuedAt: 999 }]);
+    assert.equal(replay.outcome, 'replayed');
+    assert.equal(replay.entries[0].status, 'terminal');
+    assert.deepEqual(
+      (await store.list('thread-redis')).map((entry) => entry.id),
+      [second.id],
     );
   });
 

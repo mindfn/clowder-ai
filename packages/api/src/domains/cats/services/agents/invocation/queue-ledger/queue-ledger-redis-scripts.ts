@@ -21,7 +21,6 @@ for i = 1, count do
   local existing = redis.call('HGET', rowsKey, row.id)
   if existing then
     existingCount = existingCount + 1
-    if existing ~= raw then return -1 end
   end
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
   incoming[i] = { id = row.id, raw = raw }
@@ -64,6 +63,8 @@ if bindTargetCatId and bindTargetCatId ~= '' then
   if row.target.kind == 'cat' and row.target.catId ~= bindTargetCatId then return {0, raw} end
   row.target = { kind = 'cat', catId = bindTargetCatId }
 end
+local steerRequestedAt = tonumber(ARGV[5])
+if steerRequestedAt then row.delivery.steerRequestedAt = steerRequestedAt end
 local next = cjson.encode(row)
 redis.call('HSET', KEYS[1], ARGV[1], next)
 return {1, next}
@@ -74,13 +75,18 @@ local count = tonumber(ARGV[1])
 if not count or count < 1 then return redis.error_reply('QUEUE_CLAIM_PREFIX_EMPTY') end
 local claimId = ARGV[2]
 local claimedAt = tonumber(ARGV[3])
+local bindTargetCatId = ARGV[4]
+local steerRequestedAt = tonumber(ARGV[5])
 local rows = {}
 for i = 1, count do
-  local id = ARGV[3 + i]
+  local id = ARGV[5 + i]
   local raw = redis.call('HGET', KEYS[1], id)
   if not raw then return {-1, ''} end
   local row = cjson.decode(raw)
   if row.status ~= 'queued' then return {0, raw} end
+  if bindTargetCatId and bindTargetCatId ~= '' and row.target.kind == 'cat' and row.target.catId ~= bindTargetCatId then
+    return {0, raw}
+  end
   rows[i] = { id = id, row = row }
 end
 local encoded = {}
@@ -88,6 +94,10 @@ for i = 1, count do
   rows[i].row.status = 'claimed'
   rows[i].row.claimId = claimId
   rows[i].row.claimedAt = claimedAt
+  if bindTargetCatId and bindTargetCatId ~= '' then
+    rows[i].row.target = { kind = 'cat', catId = bindTargetCatId }
+  end
+  if steerRequestedAt then rows[i].row.delivery.steerRequestedAt = steerRequestedAt end
   local next = cjson.encode(rows[i].row)
   redis.call('HSET', KEYS[1], rows[i].id, next)
   encoded[i] = next
@@ -100,30 +110,47 @@ local id = ARGV[1]
 local claimId = ARGV[2]
 local mode = ARGV[3]
 local at = tonumber(ARGV[4])
+local replacementRaw = ARGV[5]
 local raw = redis.call('HGET', KEYS[1], id)
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
 
-if mode == 'processing' then
+if mode == 'queued' or mode == 'processing' then
   if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
-  row.status = 'processing'
-  row.processingStartedAt = at
-  row.claimId = nil
-  row.claimedAt = nil
-  local next = cjson.encode(row)
+  local nextRow = row
+  if replacementRaw and replacementRaw ~= '' then
+    nextRow = cjson.decode(replacementRaw)
+    if nextRow.id ~= id or nextRow.threadId ~= row.threadId then
+      return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
+    end
+  end
+  nextRow.status = mode
+  if mode == 'processing' then
+    nextRow.processingStartedAt = at
+  else
+    nextRow.processingStartedAt = nil
+  end
+  nextRow.claimId = nil
+  nextRow.claimedAt = nil
+  local next = cjson.encode(nextRow)
   redis.call('HSET', KEYS[1], id, next)
   return {1, next}
 end
 if mode == 'terminal' then
   if row.status ~= 'processing' then return {0, raw} end
 elseif mode == 'withdrawn' then
-  if row.status ~= 'queued' then return {0, raw} end
+  if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
 else
   return redis.error_reply('QUEUE_COMMIT_INVALID_MODE')
 end
-redis.call('HDEL', KEYS[1], id)
+row.status = 'terminal'
+row.terminalAt = at
+row.claimId = nil
+row.claimedAt = nil
+local terminal = cjson.encode(row)
+redis.call('HSET', KEYS[1], id, terminal)
 redis.call('LREM', KEYS[2], 1, id)
-return {1, raw}
+return {1, terminal}
 `;
 
 export const RESTORE_QUEUE_ROW_LUA = `
@@ -134,6 +161,7 @@ if row.status ~= 'claimed' or row.claimId ~= ARGV[2] then return {0, raw} end
 row.status = 'queued'
 row.claimId = nil
 row.claimedAt = nil
+row.delivery.steerRequestedAt = nil
 local next = cjson.encode(row)
 redis.call('HSET', KEYS[1], ARGV[1], next)
 return {1, next}

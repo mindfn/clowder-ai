@@ -28,7 +28,11 @@ import type {
 import { isCrossThreadProvenance, isLifecycleStoredMessageMetadata, isMessageFrom } from '@cat-cafe/shared';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import { InMemoryQueueLedgerStore } from '../../agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
-import type { QueueLedgerEntry, QueueLedgerStore } from '../../agents/invocation/queue-ledger/QueueLedger.js';
+import {
+  type QueueLedgerEntry,
+  type QueueLedgerStore,
+  queueLedgerAdmissionsMatch,
+} from '../../agents/invocation/queue-ledger/QueueLedger.js';
 import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import { cursorFor, parseCursor } from '../cursor.js';
@@ -1994,9 +1998,20 @@ export class MessageStore {
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const existing = msg.idempotencyKey ? this.getByIdempotencyKey(msg.userId, threadId, msg.idempotencyKey) : null;
     if (existing) {
-      // The process-local InvocationQueue already owns any still-active row;
-      // terminal rows intentionally stay absent on request replay.
-      return { outcome: 'enqueued', message: existing, entries: [], deduped: true };
+      const expected = [...buildAdmission(existing.id)];
+      const persisted = expected.map((entry) => ledgerStore.getNow(entry.threadId, entry.id));
+      if (
+        persisted.some((entry) => entry === null) ||
+        !persisted.every((entry, index) => queueLedgerAdmissionsMatch(entry!, expected[index]!))
+      ) {
+        throw new Error(`Queue admission identity conflict for replayed message ${existing.id}`);
+      }
+      return {
+        outcome: 'enqueued',
+        message: existing,
+        entries: persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+        deduped: true,
+      };
     }
 
     const messageId = generateSortableId(msg.timestamp);

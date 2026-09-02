@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   CatRoutingError,
   MessageFrom,
@@ -15,7 +16,7 @@ import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 
 export type QueueOwner = { kind: 'user'; userId: string } | { kind: 'system'; service: string };
 
-export type QueueLedgerStatus = 'queued' | 'claimed' | 'processing';
+export type QueueLedgerStatus = 'queued' | 'claimed' | 'processing' | 'terminal';
 export type QueueLedgerTarget = { kind: 'cat'; catId: string } | { kind: 'unassigned' };
 
 export interface QueueLedgerPayload {
@@ -79,6 +80,7 @@ export interface QueueLedgerEntry {
   claimedAt?: number;
   claimId?: string;
   processingStartedAt?: number;
+  terminalAt?: number;
   retiringGroupId?: string;
   priority: 'urgent' | 'normal';
   sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'continuation' | 'issue' | 'freshness';
@@ -98,7 +100,7 @@ export type QueueLedgerTransitionResult =
   | { outcome: 'updated'; entry: QueueLedgerEntry }
   | { outcome: 'not_found' | 'state_changed' };
 
-export type QueueLedgerCommitMode = 'processing' | 'terminal' | 'withdrawn';
+export type QueueLedgerCommitMode = 'queued' | 'processing' | 'terminal' | 'withdrawn';
 
 export interface QueueLedgerStore {
   enqueue(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): Promise<QueueLedgerEnqueueResult>;
@@ -111,12 +113,15 @@ export interface QueueLedgerStore {
     claimId: string,
     claimedAt: number,
     bindTargetCatId?: string,
+    steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult>;
   claimPrefix(
     threadId: string,
     entryIds: readonly string[],
     claimId: string,
     claimedAt: number,
+    bindTargetCatId?: string,
+    steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult>;
   commit(
     threadId: string,
@@ -124,6 +129,7 @@ export interface QueueLedgerStore {
     claimId: string,
     mode: QueueLedgerCommitMode,
     at: number,
+    replacement?: QueueLedgerEntry,
   ): Promise<QueueLedgerTransitionResult>;
   restore(threadId: string, entryId: string, claimId: string): Promise<QueueLedgerTransitionResult>;
 }
@@ -152,6 +158,33 @@ export function cloneQueueLedgerEntry(entry: QueueLedgerEntry): QueueLedgerEntry
   return structuredClone(entry);
 }
 
+/**
+ * Compare only the immutable producer admission contract. Lifecycle progress,
+ * queue ordering, and distributed trace context may legitimately differ when
+ * the same durable source is replayed.
+ */
+export function queueLedgerAdmissionsMatch(existing: QueueLedgerEntry, incoming: QueueLedgerEntry): boolean {
+  const { callerTraceContext: _existingTrace, ...existingExecution } = existing.execution;
+  const { callerTraceContext: _incomingTrace, ...incomingExecution } = incoming.execution;
+  const targetMatches =
+    isDeepStrictEqual(existing.target, incoming.target) ||
+    (incoming.target.kind === 'unassigned' && incoming.id === queueEntryId(incoming.payload.sourceId));
+  return (
+    existing.version === incoming.version &&
+    existing.id === incoming.id &&
+    existing.threadId === incoming.threadId &&
+    isDeepStrictEqual(existing.owner, incoming.owner) &&
+    existing.kind === incoming.kind &&
+    isDeepStrictEqual(existing.from, incoming.from) &&
+    targetMatches &&
+    isDeepStrictEqual(existing.payload, incoming.payload) &&
+    isDeepStrictEqual(existingExecution, incomingExecution) &&
+    isDeepStrictEqual(existing.delivery.authorIntent, incoming.delivery.authorIntent) &&
+    existing.priority === incoming.priority &&
+    existing.sourceCategory === incoming.sourceCategory
+  );
+}
+
 function assertQueueLedgerState(entry: QueueLedgerEntry): void {
   if (entry.status === 'queued' && (entry.claimId !== undefined || entry.claimedAt !== undefined)) {
     throw new Error('queued ledger entry cannot carry a claim');
@@ -161,6 +194,12 @@ function assertQueueLedgerState(entry: QueueLedgerEntry): void {
   }
   if (entry.status === 'processing' && entry.processingStartedAt === undefined) {
     throw new Error('processing ledger entry requires processingStartedAt');
+  }
+  if (entry.status === 'terminal' && entry.terminalAt === undefined) {
+    throw new Error('terminal ledger entry requires terminalAt');
+  }
+  if (entry.status === 'terminal' && (entry.claimId !== undefined || entry.claimedAt !== undefined)) {
+    throw new Error('terminal ledger entry cannot carry a claim');
   }
 }
 

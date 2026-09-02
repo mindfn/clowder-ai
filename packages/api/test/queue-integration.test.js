@@ -240,12 +240,13 @@ describe('Queue Integration (E2E scenarios)', () => {
     trackerMock.setActive('thread-1');
 
     // 2. Enqueue a user message (simulating what POST /api/messages does)
-    const result = queue.enqueue(
+    const result = await queue.enqueueDurable(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
         kind: 'conversation_input',
+        sourceId: 'integration-fix-bug',
         content: 'Fix the bug',
         source: 'user',
         targetCats: ['opus'],
@@ -282,12 +283,13 @@ describe('Queue Integration (E2E scenarios)', () => {
       messageStore: /** @type {any} */ ({ getById: async () => null }),
       log: noopLog(),
     });
-    queue.enqueue(
+    await queue.enqueueDurable(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
         kind: 'conversation_input',
+        sourceId: 'integration-session-seal',
         content: 'Run only after the old session pointer is cleared',
         source: 'user',
         targetCats: ['opus'],
@@ -315,12 +317,13 @@ describe('Queue Integration (E2E scenarios)', () => {
   it('E2E: terminal cancellation requests the next Queue drain', async () => {
     // 1. Enqueue a message
     trackerMock.setActive('thread-1');
-    queue.enqueue(
+    await queue.enqueueDurable(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
         kind: 'conversation_input',
+        sourceId: 'integration-terminal-cancel',
         content: 'Continue working',
         source: 'user',
         targetCats: ['opus'],
@@ -426,12 +429,13 @@ describe('Queue Integration (E2E scenarios)', () => {
     trackerMock.setActive('thread-1');
 
     // 2. autoExecute entry for gpt52 is enqueued
-    const enqResult = queue.enqueue(
+    const enqResult = await queue.enqueueDurable(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'agent-user',
         kind: 'private_input',
+        sourceId: 'integration-orphan-review',
         content: 'P1 修完，请 review',
         source: 'agent',
         targetCats: ['gpt52'],
@@ -505,12 +509,13 @@ describe('Queue Integration (E2E scenarios)', () => {
     activeSlots.add('thread-1:codex');
     activeSlots.add('thread-1:opus');
 
-    queue.enqueue(
+    await queue.enqueueDurable(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'agent-user',
         kind: 'private_input',
+        sourceId: 'integration-codex-review',
         content: 'review request for codex',
         source: 'agent',
         targetCats: ['codex'],
@@ -518,12 +523,13 @@ describe('Queue Integration (E2E scenarios)', () => {
         autoExecute: true,
       }),
     );
-    queue.enqueue(
+    await queue.enqueueDurable(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'agent-user',
         kind: 'private_input',
+        sourceId: 'integration-opus-review',
         content: 'review request for opus',
         source: 'agent',
         targetCats: ['opus'],

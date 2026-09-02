@@ -103,7 +103,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     /** @type {any} */ (processor).processingSlots.set(slotKey('t1', 'opus'), reservation(T0, entry.id));
     t.mock.timers.tick(SHORT_TTL + 1);
 
-    assert.equal(processor.reapStalePrestartReservations(), 1);
+    assert.equal(await processor.reapStalePrestartReservations(), 1);
     assert.equal(/** @type {any} */ (processor).processingSlots.has(slotKey('t1', 'opus')), false);
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id)?.status, 'queued');
     await new Promise((resolve) => setImmediate(resolve));
@@ -111,7 +111,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     assert.equal(persisted[0].status, 'queued');
   });
 
-  it('treats a bound reservation as pre-provider until tracker installation is proven', (t) => {
+  it('treats a bound reservation as pre-provider until tracker installation is proven', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: T0 });
     const deps = stubDeps();
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
@@ -122,11 +122,11 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     );
     t.mock.timers.tick(SHORT_TTL + 1);
 
-    assert.equal(processor.reapStalePrestartReservations(), 1);
+    assert.equal(await processor.reapStalePrestartReservations(), 1);
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id)?.status, 'queued');
   });
 
-  it('never reaps a started provider reservation without lifecycle reconciliation', (t) => {
+  it('never reaps a started provider reservation without lifecycle reconciliation', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: T0 });
     const deps = stubDeps();
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
@@ -137,7 +137,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     );
     t.mock.timers.tick(SHORT_TTL + 1);
 
-    assert.equal(processor.reapStalePrestartReservations(), 0);
+    assert.equal(await processor.reapStalePrestartReservations(), 0);
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id)?.status, 'processing');
     assert.deepEqual(processor.listStaleProcessingLeases(), [
       {

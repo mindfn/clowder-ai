@@ -85,13 +85,16 @@ function stubDeps(overrides = {}) {
 }
 
 /** Helper: enqueue an entry and return it */
+let queueSourceSequence = 0;
 function enqueueEntry(queue, overrides = {}) {
-  const result = queue.enqueue(
+  queueSourceSequence += 1;
+  const result = queue.enqueueDurableNow(
     canonicalTestQueueInput({
       threadId: 't1',
       userId: 'u1',
       kind: 'conversation_input',
       content: 'hello',
+      sourceId: `queue-processor-source-${queueSourceSequence}`,
       source: 'user',
       ownerAuthProvenance: 'unknown',
       targetCats: ['opus'],
@@ -104,22 +107,36 @@ function enqueueEntry(queue, overrides = {}) {
 
 function enqueueCustodiedEntry(queue, messageStore, overrides = {}) {
   const { messageSource, messageUserId, ...entryOverrides } = overrides;
-  const entry = enqueueEntry(queue, entryOverrides);
+  queueSourceSequence += 1;
+  const queueInput = canonicalTestQueueInput({
+    threadId: 't1',
+    userId: 'u1',
+    kind: 'conversation_input',
+    content: 'hello',
+    sourceId: `queue-processor-source-${queueSourceSequence}`,
+    source: 'user',
+    ownerAuthProvenance: 'unknown',
+    targetCats: ['opus'],
+    intent: 'execute',
+    ...entryOverrides,
+  });
   const message = messageStore.append(
     canonicalTestMessageInput({
-      userId: messageUserId ?? entry.userId,
+      userId: messageUserId ?? queueInput.userId,
       catId: null,
-      content: entry.content,
-      mentions: entry.targetCats,
-      timestamp: entry.createdAt,
-      threadId: entry.threadId,
+      content: queueInput.content,
+      mentions: queueInput.targetCats,
+      timestamp: Date.now(),
+      threadId: queueInput.threadId,
       deliveryStatus: 'queued',
-      queueCustody: createInitialQueuedMessageCustody(entry),
+      from: queueInput.from,
       ...(messageSource ? { source: messageSource } : {}),
     }),
   );
-  queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
-  return { entry, message };
+  const result = queue.enqueueDurableNow({ ...queueInput, messageId: message.id });
+  const entry = result.entry;
+  assert.ok(entry);
+  return { entry, message: messageStore.getById(message.id) };
 }
 
 async function waitFor(predicate, timeoutMs = 5000, intervalMs = 10) {
@@ -224,26 +241,11 @@ describe('QueueProcessor', () => {
       { text: 'continue in this turn', messageIds: [message.id] },
       { force: false, expectedInvocationId: 'turn-1' },
     ]);
-    const acceptedReceipt = projectQueueReceipt((await messageStore.getById(message.id)).queueCustody);
-    const acceptedAt = acceptedReceipt.targets[0].attempts?.[0]?.activeAppendAcceptedAt;
+    assert.equal((await messageStore.getById(message.id)).deliveryStatus, 'delivered');
     assert.equal(
-      typeof acceptedAt,
-      'number',
-      'only a provider-accepted active append may publish the durable append affordance',
-    );
-    assert.equal(
-      await appendDeps.queueCustodyCoordinator.markActiveAppendAccepted(
-        entry,
-        [{ targetId: 'codex', invocationId: 'turn-1' }],
-        acceptedAt + 100,
-      ),
-      false,
-      'replaying the same provider acknowledgement must be idempotent',
-    );
-    assert.equal(
-      projectQueueReceipt((await messageStore.getById(message.id)).queueCustody).targets[0].attempts?.[0]
-        ?.activeAppendAcceptedAt,
-      acceptedAt,
+      (await messageStore.getById(message.id)).queueCustody,
+      undefined,
+      'Append lifecycle truth must not recreate the retired message-level Queue mirror',
     );
 
     const rejectedCarrier = enqueueCustodiedEntry(queue, messageStore, {
@@ -297,14 +299,9 @@ describe('QueueProcessor', () => {
     assert.deepEqual(persistenceFailure, { outcome: 'rejected', reason: 'lifecycle_conflict' });
     assert.equal(queue.list('t1', 'u1')[0]?.status, 'queued');
     assert.equal(
-      (await messageStore.getById(persistenceFailureCarrier.message.id)).queueCustody.status,
+      (await messageStore.getById(persistenceFailureCarrier.message.id)).deliveryStatus,
       'queued',
-      'catch rollback must restore durable Queue custody, not only the process-local row',
-    );
-    assert.deepEqual(
-      (await messageStore.getById(persistenceFailureCarrier.message.id)).queueCustody.bodyExposures,
-      undefined,
-      'a pre-admission failure must not persist an append-only body-exposure witness',
+      'a pre-admission failure restores the claimed ledger row without publishing the message',
     );
     assert.equal(
       invocationTracker
@@ -321,12 +318,10 @@ describe('QueueProcessor', () => {
       content: 'fail terminally after lifecycle admission',
       targetCats: ['codex'],
     });
-    const persistEntry = appendDeps.queueCustodyCoordinator.persistEntry.bind(appendDeps.queueCustodyCoordinator);
-    let persistCalls = 0;
-    appendDeps.queueCustodyCoordinator.persistEntry = mock.fn(async (candidate) => {
-      persistCalls += 1;
-      if (persistCalls === 2) throw new Error('injected exposure persistence failure');
-      return persistEntry(candidate);
+    const markDelivered = messageStore.markDelivered.bind(messageStore);
+    messageStore.markDelivered = mock.fn((messageId, deliveredAt) => {
+      if (messageId === postAdmissionFailureCarrier.message.id) throw new Error('injected delivery write failure');
+      return markDelivered(messageId, deliveredAt);
     });
     const postAdmissionFailure = await appendProcessor.appendExactEntry({
       threadId: 't1',
@@ -346,7 +341,7 @@ describe('QueueProcessor', () => {
     const postAdmissionRef = postAdmissionInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'codex');
     assert.equal(postAdmissionRef.phase, 'settled');
     assert.notEqual(postAdmissionRef.statusMessageId, response.id);
-    assert.equal(postAdmissionInput.queueCustody.status, 'terminal');
+    assert.equal(postAdmissionInput.queueCustody, undefined);
     assert.equal(
       (await messageStore.getById(response.id)).lifecycle.inputEntryIds.includes(postAdmissionFailureCarrier.entry.id),
       false,
@@ -355,98 +350,10 @@ describe('QueueProcessor', () => {
     assert.equal(
       dispatch.mock.calls.length,
       2,
-      'provider side effects must not start after exposure persistence fails',
+      'provider side effects must not start after the delivery transition fails',
     );
 
-    appendDeps.queueCustodyCoordinator.persistEntry = persistEntry;
-    dispatch.mock.mockImplementation(async () => ({
-      accepted: true,
-      handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
-    }));
-    const opusResponse = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'u1',
-        threadId: 't1',
-        catId: 'opus',
-        content: '',
-        mentions: [],
-        timestamp: entry.createdAt + 2,
-        lifecycle: {
-          kind: 'response',
-          orderKey: `${entry.createdAt + 2}:turn-2`,
-          from: { kind: 'agent', catId: 'opus' },
-          invocationId: 'turn-2',
-          targetId: 'opus',
-          inputEntryIds: ['entry-opus-old'],
-          inputMessageIds: ['message-opus-old'],
-          status: 'processing',
-          startedAt: entry.createdAt + 2,
-        },
-      }),
-    );
-    invocationTracker.start('t1', 'opus', 'u1', ['opus'], 'parent-2');
-    invocationTracker.bindLifecycleActiveRun(
-      {
-        threadId: 't1',
-        targetId: 'opus',
-        invocationId: 'turn-2',
-        responseMessageId: opusResponse.id,
-        inputEntryIds: ['entry-opus-old'],
-        inputMessageIds: ['message-opus-old'],
-        privateInputEntryIds: [],
-        startedAt: entry.createdAt + 2,
-      },
-      'parent-2',
-    );
-    const opusDispatch = mock.fn(async () => ({ accepted: false, reason: 'active_run_closed' }));
-    invocationTracker.bindAgentClientActiveRunDispatcher(
-      't1',
-      'opus',
-      {
-        invocationId: 'turn-2',
-        capabilities: { append: true, steer: true },
-        handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-2', turnId: 'turn-2' },
-        dispatch: opusDispatch,
-      },
-      'parent-2',
-    );
-    const partialCarrier = enqueueCustodiedEntry(queue, messageStore, {
-      ownerAuthProvenance: 'strict',
-      content: 'append to two active clients',
-      targetCats: ['codex', 'opus'],
-    });
-    const partial = await appendProcessor.appendExactEntry({
-      threadId: 't1',
-      userId: 'u1',
-      entryId: partialCarrier.entry.id,
-      expectedQueueRevision: queue.snapshotRevision('t1', 'u1'),
-      expectedRuns: [
-        { targetId: 'codex', invocationId: 'turn-1', responseMessageId: response.id },
-        { targetId: 'opus', invocationId: 'turn-2', responseMessageId: opusResponse.id },
-      ],
-    });
-
-    assert.deepEqual(partial, {
-      outcome: 'rejected',
-      reason: 'provider_rejected',
-      rejectedTargetIds: ['opus'],
-    });
-    const partialInput = await messageStore.getById(partialCarrier.message.id);
-    assert.deepEqual(
-      partialInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'codex'),
-      { targetId: 'codex', phase: 'dispatched', statusMessageId: response.id },
-    );
-    assert.equal(partialInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'opus').phase, 'settled');
-    assert.deepEqual(partialInput.queueCustody.pendingTargetCats, ['codex']);
-    assert.equal(partialInput.queueCustody.status, 'processing');
-    assert.equal(
-      (await messageStore.getById(response.id)).lifecycle.inputEntryIds.includes(partialCarrier.entry.id),
-      true,
-    );
-    assert.equal(
-      (await messageStore.getById(opusResponse.id)).lifecycle.inputEntryIds.includes(partialCarrier.entry.id),
-      false,
-    );
+    messageStore.markDelivered = markDelivered;
   });
 
   it('auto-appends a continue-current user row to its bound exact Active Run without leaving next work', async () => {
@@ -622,13 +529,20 @@ describe('QueueProcessor', () => {
       userId: 'u1',
       entryId: mixedTargets.entry.id,
     });
-    assert.deepEqual(mixed, { outcome: 'rejected', reason: 'append_unavailable' });
+    assert.equal(mixed.outcome, 'appended');
     assert.equal(
       queue.list('t1', 'u1').some((queued) => queued.id === mixedTargets.entry.id),
-      true,
-      'a multi-target user carrier must stay whole when any sibling falls back to next work',
+      false,
+      'fan-out lets the exact active target append independently',
     );
-    assert.equal(dispatch.mock.calls.length, 1, 'mixed eligibility must not partially expose one user carrier');
+    assert.equal(
+      queue
+        .list('t1', 'u1')
+        .some((queued) => queued.content === mixedTargets.entry.content && queued.targetCats[0] === 'opus'),
+      true,
+      'the ineligible sibling remains an independent next-work row',
+    );
+    assert.equal(dispatch.mock.calls.length, 2);
   });
 
   it('publishes a decision-required push from the canonical queued user execution', async () => {
@@ -694,10 +608,6 @@ describe('QueueProcessor', () => {
         timestamp: 90,
       }),
     );
-    const entry = enqueueEntry(deps.queue, {
-      content: '转发了 1 条消息 · 来自「Source Thread」',
-      idempotencyKey: 'bundle-q1-key',
-    });
     const targetMessage = durableStore.append(
       canonicalTestMessageInput({
         id: 'bundle-q1',
@@ -715,10 +625,23 @@ describe('QueueProcessor', () => {
             items: [{ kind: 'message', messageId: sourceMessage.id }],
           },
         },
-        queueCustody: createInitialQueuedMessageCustody(entry),
       }),
     );
-    deps.queue.backfillMessageId('t1', 'u1', entry.id, targetMessage.id);
+    const entry = deps.queue.enqueueDurableNow(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        content: targetMessage.content,
+        sourceId: targetMessage.id,
+        messageId: targetMessage.id,
+        source: 'user',
+        ownerAuthProvenance: 'unknown',
+        targetCats: ['opus'],
+        intent: 'execute',
+      }),
+    ).entry;
+    assert.ok(entry);
     const queueDeps = stubDeps({
       queue: deps.queue,
       threadStore: {
@@ -735,22 +658,33 @@ describe('QueueProcessor', () => {
     queueDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
     const queueProcessor = new QueueProcessor(queueDeps);
 
-    const result = await queueProcessor.executeEntry(queueDeps.queue.markProcessing('t1', 'u1'));
+    const processing = await queueDeps.queue.markProcessingDurable('t1', 'u1', {
+      entryId: entry.id,
+      targetCats: ['opus'],
+    });
+    assert.ok(processing);
+    const result = await queueProcessor.executeEntry(processing);
 
-    assert.equal(result.status, 'succeeded');
+    assert.equal(
+      result.status,
+      'succeeded',
+      queueDeps.log.error.mock.calls
+        .map((call) => `${call.arguments[1]}: ${call.arguments[0]?.err?.stack ?? call.arguments[0]?.err}`)
+        .join('\n'),
+    );
     assert.equal(queueDeps.router.routeExecution.mock.calls.length, 1);
     const routeCall = queueDeps.router.routeExecution.mock.calls[0].arguments;
-    assert.match(routeCall[1], /current source truth at dequeue/);
-    assert.match(routeCall[1], new RegExp(`Bundle ID: ${targetMessage.id}`));
-    assert.equal(routeCall[1].includes(targetMessage.content), false, 'safe summary is not the cat prompt fallback');
+    assert.equal(routeCall[1], targetMessage.content, 'the route carrier preserves the exact Queue row body');
     assert.deepEqual(routeCall[6].persistedPromptMessageIds, [targetMessage.id]);
     assert.deepEqual(routeCall[6].persistedPromptMessages, [
       {
         messageId: targetMessage.id,
-        content: routeCall[1],
+        content: queueDeps.router.routeExecution.mock.calls[0].arguments[6].persistedPromptMessages[0].content,
         forceExplicitProjection: true,
       },
     ]);
+    assert.match(routeCall[6].persistedPromptMessages[0].content, /current source truth at dequeue/);
+    assert.match(routeCall[6].persistedPromptMessages[0].content, new RegExp(`Bundle ID: ${targetMessage.id}`));
   });
 
   it('F294 fails a queued Bundle without invoking a cat when every source has become unavailable', async () => {
@@ -1985,7 +1919,7 @@ describe('QueueProcessor', () => {
       });
       durableDeps.invocationTracker.bindLifecycleActiveRun = bindLifecycleActiveRun;
       const durableProcessor = new QueueProcessor(durableDeps);
-      const privateEntry = durableDeps.queue.enqueue(
+      const privateEntry = durableDeps.queue.enqueueDurableNow(
         canonicalTestQueueInput({
           threadId: 't1',
           userId: 'u1',
@@ -2074,7 +2008,7 @@ describe('QueueProcessor', () => {
       const durableStore = new MessageStore();
       const queue = new InvocationQueue();
       const enqueueCarrier = (catId, triggerMessageId, autoExecute = true) =>
-        queue.enqueue(
+        queue.enqueueDurableNow(
           canonicalTestQueueInput({
             threadId: 't1',
             userId: 'u1',
@@ -3608,7 +3542,7 @@ describe('QueueProcessor', () => {
     it('retires the failed coalesced target while preserving an independent live target', async () => {
       const durableStore = new MessageStore();
       const queue = new InvocationQueue();
-      const carrier = queue.enqueue(
+      const carrier = queue.enqueueDurableNow(
         canonicalTestQueueInput({
           threadId: 't1',
           userId: 'u1',
@@ -3949,7 +3883,7 @@ describe('QueueProcessor', () => {
       });
       const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       durableDeps.queueCustodyCoordinator = coordinator;
-      const original = durableDeps.queue.enqueue(
+      const original = durableDeps.queue.enqueueDurableNow(
         canonicalTestQueueInput({
           threadId: 'target-thread',
           userId: 'u1',
@@ -5314,7 +5248,7 @@ describe('QueueProcessor', () => {
   });
 
   it('canceled_by_user → auto-dequeues and does not emit queue_paused', async () => {
-    deps.queue.enqueue(
+    deps.queue.enqueueDurableNow(
       canonicalTestQueueInput({
         threadId: 't1',
         userId: 'u1',
@@ -7160,7 +7094,7 @@ describe('QueueProcessor', () => {
       await processor.processNext('t1', 'u1');
 
       // Use different intent to prevent auto-merge with entry1
-      const entry2res = deps.queue.enqueue(
+      const entry2res = deps.queue.enqueueDurableNow(
         canonicalTestQueueInput({
           threadId: 't1',
           userId: 'u1',
@@ -8083,19 +8017,14 @@ describe('QueueProcessor', () => {
       hookDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const hookProcessor = new QueueProcessor(hookDeps);
 
-      const { entry: first } = enqueueCustodiedEntry(hookDeps.queue, durableStore, {
+      enqueueCustodiedEntry(hookDeps.queue, durableStore, {
         content: 'batch-a',
         ownerAuthProvenance: 'strict',
       });
-      const { entry: second } = enqueueCustodiedEntry(hookDeps.queue, durableStore, {
+      enqueueCustodiedEntry(hookDeps.queue, durableStore, {
         content: 'batch-b',
         ownerAuthProvenance: 'strict',
       });
-      const reserved = hookDeps.queue.reserveExactUserBatch('t1', 'u1', [first.id, second.id]);
-      assert.equal(reserved.outcome, 'reserved');
-      assert.equal(hookDeps.queue.beginExactSteerPreemption('t1', 'u1', reserved.reservationId), true);
-      assert.equal(hookDeps.queue.activateExactSteerReservation('t1', 'u1', reserved.reservationId), true);
-
       await hookProcessor.processNext('t1', 'u1');
       await waitFor(() => batchDoneCalls.length >= 1);
 
@@ -8304,17 +8233,26 @@ describe('QueueProcessor', () => {
       throw new Error(`waitForQueue timed out after ${timeoutMs}ms`);
     }
 
-    it('combines adjacent user entries into single routeExecution call', async () => {
-      enqueueEntry(deps.queue, { content: 'msg-a' });
-      enqueueEntry(deps.queue, { content: 'msg-b' });
-      enqueueEntry(deps.queue, { content: 'msg-c' });
+    it('passes adjacent user entries as separate persisted prompts in one routeExecution call', async () => {
+      const durableStore = new MessageStore();
+      const batchDeps = stubDeps({ messageStore: durableStore });
+      batchDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      const batchProcessor = new QueueProcessor(batchDeps);
+      const first = enqueueCustodiedEntry(batchDeps.queue, durableStore, { content: 'msg-a' });
+      const second = enqueueCustodiedEntry(batchDeps.queue, durableStore, { content: 'msg-b' });
+      const third = enqueueCustodiedEntry(batchDeps.queue, durableStore, { content: 'msg-c' });
 
-      await processor.processNext('t1', 'u1');
-      await waitForQueue(deps.queue, 't1', 'u1', (q) => deps.router.routeExecution.mock.calls.length >= 1);
+      await batchProcessor.processNext('t1', 'u1');
+      await waitForQueue(batchDeps.queue, 't1', 'u1', () => batchDeps.router.routeExecution.mock.calls.length >= 1);
 
-      assert.equal(deps.router.routeExecution.mock.calls.length, 1, 'should call routeExecution once');
-      const calledContent = deps.router.routeExecution.mock.calls[0].arguments[1];
-      assert.equal(calledContent, 'msg-a\nmsg-b\nmsg-c', 'content should be combined');
+      assert.equal(batchDeps.router.routeExecution.mock.calls.length, 1, 'should call routeExecution once');
+      const call = batchDeps.router.routeExecution.mock.calls[0];
+      assert.equal(call.arguments[1], 'msg-a', 'the route carrier keeps the exact head body');
+      assert.deepEqual(call.arguments[6].persistedPromptMessages, [
+        { messageId: first.message.id, content: 'msg-a' },
+        { messageId: second.message.id, content: 'msg-b' },
+        { messageId: third.message.id, content: 'msg-c' },
+      ]);
     });
 
     it('keeps a targetless public head in front of later explicit work while the thread is active', async () => {
@@ -8352,19 +8290,34 @@ describe('QueueProcessor', () => {
     });
 
     it('shares one admission snapshot across adjacent targetless inputs without absorbing explicit work', async () => {
-      enqueueEntry(deps.queue, { content: 'targetless-a', targetCats: [] });
-      enqueueEntry(deps.queue, { content: 'targetless-b', targetCats: [] });
-      enqueueEntry(deps.queue, { content: 'explicit-c', targetCats: ['opus'] });
+      const durableStore = new MessageStore();
+      const batchDeps = stubDeps({ messageStore: durableStore });
+      batchDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      const batchProcessor = new QueueProcessor(batchDeps);
+      const first = enqueueCustodiedEntry(batchDeps.queue, durableStore, {
+        content: 'targetless-a',
+        targetCats: [],
+      });
+      const second = enqueueCustodiedEntry(batchDeps.queue, durableStore, {
+        content: 'targetless-b',
+        targetCats: [],
+      });
+      enqueueCustodiedEntry(batchDeps.queue, durableStore, { content: 'explicit-c', targetCats: ['opus'] });
 
-      await processor.requestDrain('t1');
-      await waitForQueue(deps.queue, 't1', 'u1', () => deps.router.routeExecution.mock.calls.length >= 1);
+      await batchProcessor.requestDrain('t1');
+      await waitForQueue(batchDeps.queue, 't1', 'u1', () => batchDeps.router.routeExecution.mock.calls.length >= 1);
 
-      const targetlessResolutions = deps.router.resolveConversationTargetsAtAdmission.mock.calls.filter(
+      const targetlessResolutions = batchDeps.router.resolveConversationTargetsAtAdmission.mock.calls.filter(
         (call) => call.arguments[0].length === 0,
       );
       assert.equal(targetlessResolutions.length, 1);
-      assert.equal(deps.router.routeExecution.mock.calls[0].arguments[1], 'targetless-a\ntargetless-b');
-      assert.deepEqual(deps.router.routeExecution.mock.calls[0].arguments[4], ['opus']);
+      const call = batchDeps.router.routeExecution.mock.calls[0];
+      assert.equal(call.arguments[1], 'targetless-a');
+      assert.deepEqual(call.arguments[4], ['opus']);
+      assert.deepEqual(call.arguments[6].persistedPromptMessages, [
+        { messageId: first.message.id, content: 'targetless-a' },
+        { messageId: second.message.id, content: 'targetless-b' },
+      ]);
     });
 
     it('terminalizes a targetless public head when admission resolves no available target', async () => {
@@ -8519,96 +8472,6 @@ describe('QueueProcessor', () => {
       const admitted = durableStore.getById(message.id);
       assert.equal(admitted.deliveryStatus, 'delivered');
       assert.deepEqual(admitted.queueCustody.allTargetCats, ['opus']);
-    });
-
-    it('#1291 exact reservation executes selected A+B once without absorbing adjacent C', async () => {
-      const a = enqueueEntry(deps.queue, { content: 'msg-a', ownerAuthProvenance: 'strict' });
-      const b = enqueueEntry(deps.queue, { content: 'msg-b', ownerAuthProvenance: 'strict' });
-      enqueueEntry(deps.queue, { content: 'msg-c', ownerAuthProvenance: 'strict' });
-      const reserved = deps.queue.reserveExactUserBatch('t1', 'u1', [a.id, b.id]);
-      assert.equal(reserved.outcome, 'reserved');
-      assert.equal(deps.queue.beginExactSteerPreemption('t1', 'u1', reserved.reservationId), true);
-      assert.equal(deps.queue.activateExactSteerReservation('t1', 'u1', reserved.reservationId), true);
-
-      await processor.processNext('t1', 'u1');
-      await waitForQueue(deps.queue, 't1', 'u1', () => deps.router.routeExecution.mock.calls.length >= 1);
-
-      assert.equal(deps.router.routeExecution.mock.calls[0].arguments[1], 'msg-a\nmsg-b');
-      await waitForQueue(deps.queue, 't1', 'u1', () => deps.router.routeExecution.mock.calls.length >= 2);
-      assert.equal(
-        deps.router.routeExecution.mock.calls[1].arguments[1],
-        'msg-c',
-        'unselected C may run next but is never absorbed into the selected invocation',
-      );
-    });
-
-    it('#1291 restart fallback never lets persisted Steer intent absorb an unselected neighbor', async () => {
-      const a = enqueueEntry(deps.queue, { content: 'msg-a', ownerAuthProvenance: 'strict' });
-      const b = enqueueEntry(deps.queue, { content: 'msg-b', ownerAuthProvenance: 'strict' });
-      enqueueEntry(deps.queue, { content: 'msg-c', ownerAuthProvenance: 'strict' });
-
-      // exactSteerBatch is deliberately process-local. After restart, durable
-      // custody restores the selected entries' Steer intent without the group
-      // marker; fail closed to separate invocations instead of widening to C.
-      assert.equal(deps.queue.markSteering('t1', 'u1', a.id, 'opus'), true);
-      assert.equal(deps.queue.markSteering('t1', 'u1', b.id, 'opus'), true);
-
-      await processor.processNext('t1', 'u1');
-      await waitForQueue(deps.queue, 't1', 'u1', () => deps.router.routeExecution.mock.calls.length >= 3);
-
-      assert.deepEqual(
-        deps.router.routeExecution.mock.calls.slice(0, 3).map((call) => call.arguments[1]),
-        ['msg-a', 'msg-b', 'msg-c'],
-      );
-    });
-
-    it('#1291 exact reservation never revives selected members after provider admission fails', async () => {
-      const failDeps = stubDeps({
-        router: {
-          routeExecution: mock.fn(async function* () {
-            throw new Error('provider unavailable');
-          }),
-          ackCollectedCursors: mock.fn(async () => {}),
-        },
-      });
-      const failProcessor = new QueueProcessor(failDeps);
-      const a = enqueueEntry(failDeps.queue, { content: 'a', ownerAuthProvenance: 'strict' });
-      const b = enqueueEntry(failDeps.queue, { content: 'b', ownerAuthProvenance: 'strict' });
-      const c = enqueueEntry(failDeps.queue, { content: 'c', ownerAuthProvenance: 'strict' });
-      const reserved = failDeps.queue.reserveExactUserBatch('t1', 'u1', [a.id, b.id]);
-      assert.equal(reserved.outcome, 'reserved');
-      assert.equal(failDeps.queue.beginExactSteerPreemption('t1', 'u1', reserved.reservationId), true);
-      assert.equal(failDeps.queue.activateExactSteerReservation('t1', 'u1', reserved.reservationId), true);
-
-      await failProcessor.processNext('t1', 'u1');
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      const byId = new Map(failDeps.queue.list('t1', 'u1').map((entry) => [entry.id, entry]));
-      assert.equal(byId.has(a.id), false);
-      assert.equal(byId.has(b.id), false);
-      assert.equal(byId.get(c.id)?.exactSteerBatch, undefined);
-    });
-
-    it('#1291 exact reservation restores every selected member when processing custody cannot persist', async () => {
-      const persistEntry = mock.fn(async () => {
-        throw new Error('custody unavailable');
-      });
-      const persistDeps = stubDeps({ queueCustodyCoordinator: { persistEntry } });
-      const persistProcessor = new QueueProcessor(persistDeps);
-      const a = enqueueEntry(persistDeps.queue, { content: 'a', ownerAuthProvenance: 'strict' });
-      const b = enqueueEntry(persistDeps.queue, { content: 'b', ownerAuthProvenance: 'strict' });
-      const reserved = persistDeps.queue.reserveExactUserBatch('t1', 'u1', [a.id, b.id]);
-      assert.equal(reserved.outcome, 'reserved');
-      assert.equal(persistDeps.queue.beginExactSteerPreemption('t1', 'u1', reserved.reservationId), true);
-      assert.equal(persistDeps.queue.activateExactSteerReservation('t1', 'u1', reserved.reservationId), true);
-
-      const result = await persistProcessor.processNext('t1', 'u1');
-
-      assert.equal(result.started, false);
-      assert.equal(persistDeps.router.routeExecution.mock.calls.length, 0);
-      const selected = persistDeps.queue.list('t1', 'u1').filter((entry) => entry.id === a.id || entry.id === b.id);
-      assert.equal(selected.length, 2);
-      assert.ok(selected.every((entry) => entry.status === 'queued'));
     });
 
     it('never lets fallback content ride a strict owner invocation', async () => {
@@ -8988,7 +8851,7 @@ describe('QueueProcessor', () => {
 
       // 2. Simulate supersede: remove FIRST (tombstone) + enqueue SECOND (follow-up)
       deps.queue.removeProcessed('t1', 'u1', first.id);
-      deps.queue.enqueue(
+      deps.queue.enqueueDurableNow(
         canonicalTestQueueInput({
           threadId: 't1',
           userId: 'u1',

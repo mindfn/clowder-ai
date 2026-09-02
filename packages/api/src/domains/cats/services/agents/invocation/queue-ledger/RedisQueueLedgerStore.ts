@@ -8,6 +8,7 @@ import {
   type QueueLedgerEntry,
   type QueueLedgerStore,
   type QueueLedgerTransitionResult,
+  queueLedgerAdmissionsMatch,
 } from './QueueLedger.js';
 import { QueueLedgerKeys } from './queue-ledger-keys.js';
 import {
@@ -72,7 +73,16 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     if (raw === 0) return { outcome: 'full', entries: [] };
     if (raw === -1) return { outcome: 'conflict', entries: [] };
     if (raw !== 1 && raw !== 2) throw new Error(`unexpected queue ledger enqueue outcome: ${raw}`);
-    return { outcome: raw === 1 ? 'enqueued' : 'replayed', entries: entries.map(cloneQueueLedgerEntry) };
+    if (raw === 1) return { outcome: 'enqueued', entries: entries.map(cloneQueueLedgerEntry) };
+    const existingRaws = await this.redis.hmget(QueueLedgerKeys.entries(threadId), ...entries.map((entry) => entry.id));
+    if (existingRaws.some((value) => typeof value !== 'string')) {
+      throw new Error('Queue replay identity vanished after atomic preflight');
+    }
+    const existing = existingRaws.map((value) => hydrateQueueLedgerEntry(value as string));
+    if (!existing.every((entry, index) => queueLedgerAdmissionsMatch(entry, entries[index]!))) {
+      return { outcome: 'conflict', entries: [] };
+    }
+    return { outcome: 'replayed', entries: existing };
   }
 
   async list(threadId: string): Promise<QueueLedgerEntry[]> {
@@ -120,6 +130,7 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     claimId: string,
     claimedAt: number,
     bindTargetCatId?: string,
+    steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult> {
     const raw = await this.redis.eval(
       CLAIM_QUEUE_ROW_LUA,
@@ -129,6 +140,7 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
       claimId,
       String(claimedAt),
       bindTargetCatId ?? '',
+      steerRequestedAt === undefined ? '' : String(steerRequestedAt),
     );
     const result = transitionResult(raw);
     return result.outcome === 'updated'
@@ -141,6 +153,8 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     entryIds: readonly string[],
     claimId: string,
     claimedAt: number,
+    bindTargetCatId?: string,
+    steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult> {
     if (entryIds.length === 0) throw new Error('queue prefix claim requires at least one row');
     const raw = await this.redis.eval(
@@ -150,6 +164,8 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
       String(entryIds.length),
       claimId,
       String(claimedAt),
+      bindTargetCatId ?? '',
+      steerRequestedAt === undefined ? '' : String(steerRequestedAt),
       ...entryIds,
     );
     if (!Array.isArray(raw)) throw new Error('invalid queue prefix claim reply');
@@ -174,7 +190,9 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     claimId: string,
     mode: QueueLedgerCommitMode,
     at: number,
+    replacement?: QueueLedgerEntry,
   ): Promise<QueueLedgerTransitionResult> {
+    if (replacement) assertQueueLedgerEntry(replacement);
     return transitionResult(
       await this.redis.eval(
         COMMIT_QUEUE_ROW_LUA,
@@ -185,6 +203,7 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
         claimId,
         mode,
         String(at),
+        replacement ? JSON.stringify(replacement) : '',
       ),
     );
   }

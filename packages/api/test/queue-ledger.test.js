@@ -111,9 +111,13 @@ describe('ADR-043 queue ledger', () => {
       target: { kind: 'unassigned' },
     });
     await store.enqueue([targetless]);
-    const claimed = await store.claim('thread-1', targetless.id, 'claim-targetless', 200, 'codex');
+    const claimed = await store.claim('thread-1', targetless.id, 'claim-targetless', 200, 'codex', 199);
     assert.equal(claimed.outcome, 'claimed');
     assert.deepEqual(claimed.entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.equal(claimed.entries[0].delivery.steerRequestedAt, 199);
+    const restored = await store.restore('thread-1', targetless.id, 'claim-targetless');
+    assert.equal(restored.outcome, 'updated');
+    assert.equal(restored.entry.delivery.steerRequestedAt, undefined);
   });
 
   it('counts a fan-out group as one user queue message', async () => {
@@ -122,7 +126,7 @@ describe('ADR-043 queue ledger', () => {
     assert.equal((await store.enqueue([row('message-2', 'opus')], 1)).outcome, 'full');
   });
 
-  it('commits a claim to processing and only terminalizes a processing row', async () => {
+  it('removes terminal work from active order while retaining an idempotency tombstone', async () => {
     const store = new InMemoryQueueLedgerStore();
     const entry = row('message-1', 'opus');
     await store.enqueue([entry]);
@@ -134,6 +138,21 @@ describe('ADR-043 queue ledger', () => {
     assert.equal((await store.restore('thread-1', entry.id, 'claim-1')).outcome, 'state_changed');
     assert.equal((await store.commit('thread-1', entry.id, '', 'terminal', 300)).outcome, 'updated');
     assert.deepEqual(await store.list('thread-1'), []);
+    assert.deepEqual(await store.get('thread-1', entry.id), {
+      ...entry,
+      status: 'terminal',
+      processingStartedAt: 201,
+      terminalAt: 300,
+    });
+
+    const replay = await store.enqueue([{ ...entry, enqueuedAt: 999 }]);
+    assert.equal(replay.outcome, 'replayed');
+    assert.equal(replay.entries[0].status, 'terminal');
+    assert.deepEqual(await store.list('thread-1'), []);
+    assert.equal(
+      (await store.enqueue([{ ...entry, payload: { ...entry.payload, content: 'changed' } }])).outcome,
+      'conflict',
+    );
   });
 
   it('claims a prefix all-or-nothing', async () => {
@@ -144,7 +163,7 @@ describe('ADR-043 queue ledger', () => {
     await store.enqueue([second]);
     await store.claim('thread-1', second.id, 'other', 150);
 
-    const result = await store.claimPrefix('thread-1', [first.id, second.id], 'batch', 200);
+    const result = await store.claimPrefix('thread-1', [first.id, second.id], 'batch', 200, undefined, 199);
     assert.equal(result.outcome, 'state_changed');
     assert.equal((await store.get('thread-1', first.id)).status, 'queued');
   });

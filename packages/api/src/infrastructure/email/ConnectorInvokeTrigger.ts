@@ -171,7 +171,6 @@ export class ConnectorInvokeTrigger {
       : undefined;
     if (!entry) throw new Error(`connector Queue admission did not return an entry for ${input.messageId}`);
 
-    invocationQueue.backfillMessageId(input.threadId, input.userId, entry.id, input.messageId);
     const prepared = await messageStore.prepareQueueAdmission(input.messageId);
     if (prepared.kind !== 'prepared' && prepared.kind !== 'existing') {
       if (!result.deduped) invocationQueue.rollbackEnqueue(input.threadId, input.userId, entry.id);

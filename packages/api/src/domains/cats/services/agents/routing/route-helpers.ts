@@ -401,7 +401,6 @@ export interface RouteOptions {
         /** Closure successors must ignore the attempt that is currently processing while still coalescing queued duplicates. */
         dedupeProcessing?: boolean;
         freshnessClosureId?: string;
-        freshnessRequiredFrontierMessageId?: string;
         freshnessSupplementId?: string;
         freshnessSupplementLineageId?: string;
         freshnessSupplementSeq?: 1 | 2;
@@ -412,7 +411,10 @@ export interface RouteOptions {
           senders: string[];
           reason: string;
         };
-      }) => undefined | { outcome?: 'enqueued' | 'full' | string } | undefined)
+      }) =>
+        | undefined
+        | { outcome?: 'enqueued' | 'full' | string }
+        | Promise<undefined | { outcome?: 'enqueued' | 'full' | string }>)
     | undefined;
 }
 

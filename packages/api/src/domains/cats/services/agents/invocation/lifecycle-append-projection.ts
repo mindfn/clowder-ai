@@ -76,13 +76,7 @@ export function projectLifecycleAppendAction(input: {
   readonly invocationTracker: LifecycleAppendTracker;
 }): LifecycleAppendProjection {
   const { entry, invocationTracker } = input;
-  if (
-    entry.status !== 'queued' ||
-    entry.kind === 'private_input' ||
-    entry.exactSteerBatch ||
-    entry.queueCustodyAdmissionId ||
-    isSystemPinnedQueueEntry(entry)
-  ) {
+  if (entry.status !== 'queued' || entry.kind === 'private_input' || isSystemPinnedQueueEntry(entry)) {
     return { available: false, reason: 'entry_ineligible' };
   }
   if (entry.targetCats.length === 0) return { available: false, reason: 'target_missing' };

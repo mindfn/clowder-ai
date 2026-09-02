@@ -7,14 +7,12 @@ import {
   type QueueLedgerEntry,
   type QueueLedgerStore,
   type QueueLedgerTransitionResult,
+  queueLedgerAdmissionsMatch,
 } from './QueueLedger.js';
-
-function equalEntry(a: QueueLedgerEntry, b: QueueLedgerEntry): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
 
 export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
+  private readonly terminalRows = new Map<string, Map<string, QueueLedgerEntry>>();
 
   enqueueNow(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): QueueLedgerEnqueueResult {
     if (entries.length === 0) throw new Error('queue ledger enqueue requires at least one row');
@@ -26,12 +24,15 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
       throw new Error('queue ledger enqueue ids must be unique');
     }
     const current = this.rows.get(threadId) ?? [];
-    const existing = entries.map((entry) => current.find((candidate) => candidate.id === entry.id));
+    const terminal = this.terminalRows.get(threadId);
+    const existing = entries.map(
+      (entry) => current.find((candidate) => candidate.id === entry.id) ?? terminal?.get(entry.id),
+    );
     const existingEntries = existing.filter((entry): entry is QueueLedgerEntry => entry !== undefined);
     if (existingEntries.length === entries.length) {
       return existingEntries.every((entry, index) => {
         const input = entries[index];
-        return input !== undefined && equalEntry(entry, input);
+        return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
       })
         ? { outcome: 'replayed', entries: existingEntries.map(cloneQueueLedgerEntry) }
         : { outcome: 'conflict', entries: [] };
@@ -84,7 +85,13 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   }
 
   async get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null> {
-    const entry = this.rows.get(threadId)?.find((candidate) => candidate.id === entryId);
+    return this.getNow(threadId, entryId);
+  }
+
+  getNow(threadId: string, entryId: string): QueueLedgerEntry | null {
+    const entry =
+      this.rows.get(threadId)?.find((candidate) => candidate.id === entryId) ??
+      this.terminalRows.get(threadId)?.get(entryId);
     return entry ? cloneQueueLedgerEntry(entry) : null;
   }
 
@@ -94,17 +101,11 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     claimId: string,
     claimedAt: number,
     bindTargetCatId?: string,
+    steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult> {
-    const result = await this.claimPrefix(threadId, [entryId], claimId, claimedAt);
+    const result = await this.claimPrefix(threadId, [entryId], claimId, claimedAt, bindTargetCatId, steerRequestedAt);
     if (result.outcome !== 'claimed' || !bindTargetCatId) return result;
-    const entry = this.rows.get(threadId)?.find((candidate) => candidate.id === entryId);
-    if (!entry) return { outcome: 'not_found' };
-    if (entry.target.kind === 'cat' && entry.target.catId !== bindTargetCatId) {
-      await this.restore(threadId, entryId, claimId);
-      return { outcome: 'state_changed' };
-    }
-    entry.target = { kind: 'cat', catId: bindTargetCatId };
-    return { outcome: 'claimed', claimId, entries: [cloneQueueLedgerEntry(entry)] };
+    return result;
   }
 
   async claimPrefix(
@@ -112,6 +113,8 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     entryIds: readonly string[],
     claimId: string,
     claimedAt: number,
+    bindTargetCatId?: string,
+    steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult> {
     if (entryIds.length === 0 || !claimId || !Number.isFinite(claimedAt)) throw new Error('invalid queue claim');
     const current = this.rows.get(threadId);
@@ -120,10 +123,18 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     const selectedEntries = selected.filter((entry): entry is QueueLedgerEntry => entry !== undefined);
     if (selectedEntries.length !== selected.length) return { outcome: 'not_found' };
     if (selectedEntries.some((entry) => entry.status !== 'queued')) return { outcome: 'state_changed' };
+    if (
+      bindTargetCatId &&
+      selectedEntries.some((entry) => entry.target.kind === 'cat' && entry.target.catId !== bindTargetCatId)
+    ) {
+      return { outcome: 'state_changed' };
+    }
     for (const entry of selectedEntries) {
       entry.status = 'claimed';
       entry.claimId = claimId;
       entry.claimedAt = claimedAt;
+      if (bindTargetCatId) entry.target = { kind: 'cat', catId: bindTargetCatId };
+      if (steerRequestedAt !== undefined) entry.delivery.steerRequestedAt = steerRequestedAt;
     }
     return { outcome: 'claimed', claimId, entries: selectedEntries.map(cloneQueueLedgerEntry) };
   }
@@ -134,28 +145,41 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     claimId: string,
     mode: QueueLedgerCommitMode,
     at: number,
+    replacement?: QueueLedgerEntry,
   ): Promise<QueueLedgerTransitionResult> {
     const current = this.rows.get(threadId);
     const index = current?.findIndex((entry) => entry.id === entryId) ?? -1;
     if (!current || index < 0) return { outcome: 'not_found' };
     const entry = current[index];
     if (!entry) return { outcome: 'not_found' };
-    if (mode === 'withdrawn') {
-      if (entry.status !== 'queued') return { outcome: 'state_changed' };
-      current.splice(index, 1);
-      return { outcome: 'updated', entry: cloneQueueLedgerEntry(entry) };
-    }
-    if (mode === 'processing') {
+    if (mode === 'queued' || mode === 'processing') {
       if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
-      entry.status = 'processing';
-      entry.processingStartedAt = at;
-      delete entry.claimId;
-      delete entry.claimedAt;
-      return { outcome: 'updated', entry: cloneQueueLedgerEntry(entry) };
+      const next = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
+      if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
+      next.status = mode;
+      delete next.claimId;
+      delete next.claimedAt;
+      if (mode === 'processing') next.processingStartedAt = at;
+      else delete next.processingStartedAt;
+      assertQueueLedgerEntry(next);
+      current[index] = next;
+      return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
     }
-    if (entry.status !== 'processing') return { outcome: 'state_changed' };
+    if (mode === 'withdrawn') {
+      if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
+    } else if (entry.status !== 'processing') return { outcome: 'state_changed' };
+    const terminal = cloneQueueLedgerEntry(entry);
+    terminal.status = 'terminal';
+    terminal.terminalAt = at;
+    delete terminal.claimId;
+    delete terminal.claimedAt;
+    assertQueueLedgerEntry(terminal);
     current.splice(index, 1);
-    return { outcome: 'updated', entry: cloneQueueLedgerEntry(entry) };
+    if (current.length === 0) this.rows.delete(threadId);
+    const threadTerminalRows = this.terminalRows.get(threadId) ?? new Map<string, QueueLedgerEntry>();
+    threadTerminalRows.set(entryId, terminal);
+    this.terminalRows.set(threadId, threadTerminalRows);
+    return { outcome: 'updated', entry: cloneQueueLedgerEntry(terminal) };
   }
 
   async restore(threadId: string, entryId: string, claimId: string): Promise<QueueLedgerTransitionResult> {
@@ -165,6 +189,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     entry.status = 'queued';
     delete entry.claimId;
     delete entry.claimedAt;
+    delete entry.delivery.steerRequestedAt;
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(entry) };
   }
 }

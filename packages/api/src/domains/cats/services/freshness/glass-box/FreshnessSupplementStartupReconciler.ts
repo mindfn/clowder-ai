@@ -34,7 +34,7 @@ interface SupplementQueueCarrier {
 export interface FreshnessSupplementStartupReconcilerDeps {
   closureStore: Pick<FreshnessClosureStore, 'listRecoverableSupplements' | 'commitSupplement' | 'failSupplement'>;
   messageStore: Pick<IMessageStore, 'getByIdempotencyKey'>;
-  enqueue(entry: SupplementQueueCarrier): EnqueueResult;
+  enqueue(entry: SupplementQueueCarrier): EnqueueResult | Promise<EnqueueResult>;
   executeThread(threadId: string): void | Promise<void>;
   onProjection?(projection: FreshnessSupplementProjection): void | Promise<void>;
   log: StartupRecoveryLogger;
@@ -131,7 +131,7 @@ async function reconcileCandidate(
 
   let enqueueResult: EnqueueResult;
   try {
-    enqueueResult = deps.enqueue(carrierFor(candidate));
+    enqueueResult = await deps.enqueue(carrierFor(candidate));
   } catch {
     await failCandidate(deps, candidate, 'scheduler_unavailable', now);
     return { recoveredCommitted: 0, failed: 1, enqueued: 0 };

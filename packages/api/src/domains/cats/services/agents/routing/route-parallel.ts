@@ -252,7 +252,7 @@ export async function* routeParallel(
       return;
     }
     try {
-      const enqueueResult = options.freshnessReinvokeEnqueue({
+      const enqueueResult = await options.freshnessReinvokeEnqueue({
         threadId,
         userId,
         ownerAuthProvenance,
