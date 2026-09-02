@@ -573,7 +573,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             (signal.newComments.length > 0
               ? Math.max(...signal.newComments.map((comment) => comment.id))
               : (task.automationState?.issue?.lastCommentCursor ?? 0));
-          await opts.waitLifecycle.observe({
+          const observed = await opts.waitLifecycle.observe({
             taskId: task.id,
             facts: {
               issue: {
@@ -595,6 +595,34 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             ...(signal.issueState === 'closed' ? { subjectState: 'closed' as const } : {}),
           });
           ctx?.signal?.throwIfAborted();
+          // #1392 AC-6c: observe already delivered the compact github-wait connector message, but it
+          // still needs Queue admission — without firing invokeTrigger the owner never wakes (the
+          // early return here was the missing-notification bug). Mirrors the legacy path below.
+          // No pendingWake/restart-retry: delivery reliability is #1356/#1398's domain, not #1392's.
+          if (observed.kind === 'notified' && opts.invokeTrigger) {
+            const policy: ConnectorTriggerPolicy = {
+              priority: 'normal',
+              reason: 'github_issue_comment',
+              sourceCategory: 'issue',
+              coalesceKey: `${subjectKey}:issue-comment:${task.ownerCatId || 'unassigned'}`,
+            };
+            try {
+              const outcome = await opts.invokeTrigger.trigger(
+                task.threadId,
+                task.ownerCatId as CatId,
+                task.userId,
+                observed.content,
+                observed.messageId,
+                undefined,
+                policy,
+              );
+              if (outcome !== 'dispatched' && outcome !== 'enqueued') {
+                opts.log.error({ taskId: task.id, subjectKey, outcome }, '[issue-comment] wait wake was not accepted');
+              }
+            } catch (err) {
+              opts.log.error({ err, taskId: task.id, subjectKey }, '[issue-comment] wait wake trigger failed');
+            }
+          }
           return;
         }
 

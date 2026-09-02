@@ -194,6 +194,9 @@ import { TtsRegistry } from './domains/cats/services/tts/TtsRegistry.js';
 import { startTtsCacheCleaner } from './domains/cats/services/tts/tts-cache-cleaner.js';
 import { initVoiceBlockSynthesizer } from './domains/cats/services/tts/VoiceBlockSynthesizer.js';
 import type { AgentService } from './domains/cats/services/types.js';
+// #1392 AC-7: audience shapes for the transparent tracking-preview reader.
+// #1392 AC-7: injectable, unit-tested production audience reader for the tracking-preview helper.
+import { createGitHubTrackingAudienceReader } from './domains/github-signals/github-tracking-audience-reader.js';
 import { ActivityTracker } from './domains/health/ActivityTracker.js';
 import { shouldTrackApiActivity } from './domains/health/activity-route-filter.js';
 import { HumanDispositionFeedbackContextService } from './domains/human-disposition/HumanDispositionFeedbackContextService.js';
@@ -3504,6 +3507,18 @@ async function main(): Promise<void> {
     }
   };
 
+  // #1392 AC-7: read-only GitHub audience resolution for the transparent
+  // tracking-preview helper. The route owns this authoritative read boundary
+  // (MCP has no token). Endpoint selection + --paginate + page merging live in a
+  // unit-tested reader module; here we only inject the real `gh` runner.
+  const fetchGitHubTrackingAudience = createGitHubTrackingAudienceReader(async (args, timeoutMs) => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync('gh', [...args], getGitHubExecOptions(timeoutMs));
+    return stdout;
+  });
+
   // F126: Create LimbRegistry + Phase B deps for device/hardware capability management
   const { LimbRegistry } = await import('./domains/limb/LimbRegistry.js');
   const { LimbAccessPolicy } = await import('./domains/limb/LimbAccessPolicy.js');
@@ -4073,6 +4088,7 @@ async function main(): Promise<void> {
     validateIssue,
     fetchPrWaitBaseline,
     fetchIssueWaitBaseline,
+    fetchGitHubTrackingAudience,
     waitLifecycleHolder,
     verifyPrReviewEventWaitCoverage,
     ...(externalReviewVerdictService ? { externalReviewVerdictService } : {}),

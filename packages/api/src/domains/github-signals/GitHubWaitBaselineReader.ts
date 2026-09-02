@@ -65,6 +65,9 @@ export async function readGitHubWaitBaseline(
     'pr_review_result_available',
     'pr_review_decision_changed',
     'pr_review_thread_changed',
+    // #1392 AC-6b: a conversation-comment waiter needs the review frontier fetched to seed its
+    // baseline conversationCommentCursor; without this its baseline is 0 and it re-matches history.
+    'pr_conversation_comment_added',
   );
   const needsCi = hasPredicate(input.when, 'pr_ci_terminal');
   const needsConflict = hasPredicate(input.when, 'pr_became_conflicting');

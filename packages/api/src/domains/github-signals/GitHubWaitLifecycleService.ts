@@ -1,5 +1,6 @@
 import type {
   AutomationState,
+  AwaitStateV1,
   IssueWaitAutomationState,
   PrAutomationState,
   TaskItem,
@@ -20,6 +21,7 @@ import {
   transitionWaitState,
   type WaitTransitionEvent,
 } from '../ball-custody/wait-state-machine.js';
+import { automationGeneration } from '../cats/services/stores/ports/TaskAutomationState.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import { type GitHubWaitFacts, matchGitHubWaitPredicates } from './GitHubWaitPredicateCatalog.js';
 import { renderGitHubWaitOutcome } from './github-wait-renderer.js';
@@ -114,6 +116,19 @@ function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   return outcome?.delivery === 'pending' ? outcome : null;
 }
 
+/** #1392: conversation-comment frontier used when building a renewal baseline. */
+function computeConversationCursor(
+  explicitCursor: number | undefined,
+  comments: readonly { readonly id: number }[] | undefined,
+  fallback: number,
+): number {
+  // #1392 P2: strict union of every conversation-comment frontier. An explicit result cursor must
+  // NOT shadow a larger same-batch comment id (or the previous frontier) — otherwise the next
+  // generation re-matches a comment already seen. Take the max of all three.
+  const commentsMax = comments && comments.length > 0 ? Math.max(...comments.map((c) => c.id)) : 0;
+  return Math.max(fallback, explicitCursor ?? 0, commentsMax);
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -162,7 +177,8 @@ export class GitHubWaitLifecycleService {
         };
       } else {
         const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
-        if (matched.length === 0 && at < active.expiresAt) {
+        // #1392 AC-2: no deadline (expiresAt undefined) ⇒ never time-out; stay pending until a match.
+        if (matched.length === 0 && (active.expiresAt === undefined || at < active.expiresAt)) {
           if (input.collectorPatch) {
             await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
           }
@@ -181,20 +197,65 @@ export class GitHubWaitLifecycleService {
         return { kind: 'deduped', reason: transitioned.reason };
       }
       const replacement = transitioned.state as AutomationState;
+      const outcome = replacement.waitOutcome;
+      if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
+
+      // #1392 AC-1: on a predicate MATCH with autoRenew, atomically install gen N+1
+      // (fresh baseline, same when/then/expiresAt) in the SAME CAS as the delivered
+      // outcome — a TaskStore-only generation transition. Never renew on expiry,
+      // terminal, cancel, or subject-terminal. Delivery reliability stays with #1356/#1398.
+      const renewing =
+        outcome.delivery === 'pending' &&
+        outcome.reason === 'matched' &&
+        active.autoRenew === true &&
+        !outcome.terminalSubjectState;
+
+      let installState: AutomationState = replacement;
+      let installStatus: 'done' | 'doing' = 'done';
+      let deliverOutcome: WaitOutcomeV1 = outcome;
+      if (renewing) {
+        const newGeneration = active.generation + 1;
+        const awaitState = {
+          v: 1 as const,
+          generation: newGeneration,
+          subjectRef: active.subjectRef,
+          ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+          baseline: this.buildRenewalBaseline(active, input.facts, collectorState),
+          continuation: {
+            when: active.continuation.when,
+            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+            then: active.continuation.then,
+          },
+          createdAt: this.now(),
+          autoRenew: true,
+          // #1392 AC-2: renewal reuses the ORIGINAL absolute expiresAt — it never extends.
+          ...(active.expiresAt !== undefined ? { expiresAt: active.expiresAt } : {}),
+          provenance: 'explicit_registration' as const,
+        } as AwaitStateV1;
+        deliverOutcome = { ...outcome, autoRenewed: true };
+        installState = { ...replacement, await: awaitState, waitOutcome: deliverOutcome } as AutomationState;
+        installStatus = 'doing';
+      }
+
       const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
         expectedGeneration: active.generation,
         expectedUpdatedAt: task.updatedAt,
-        automationState: replacement,
-        status: 'done',
+        automationState: installState,
+        status: installStatus,
       });
       if (!installed) continue;
-      const outcome = installed.automationState?.waitOutcome;
-      if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
-      await this.appendLifecycleEvent(installed, outcome);
-      if (outcome.delivery !== 'pending') {
-        return { kind: 'state_only', reason: outcome.reason };
+      const installedOutcome = installed.automationState?.waitOutcome ?? deliverOutcome;
+      await this.appendLifecycleEvent(installed, installedOutcome);
+      if (installedOutcome.delivery !== 'pending') {
+        return { kind: 'state_only', reason: installedOutcome.reason };
       }
-      return this.publishPending(installed, outcome, input.deliveryExtra);
+      if (renewing) {
+        this.opts.log.info(
+          { taskId: task.id, newGeneration: active.generation + 1 },
+          '[#1392] auto-renewed wait tracking with a fresh baseline',
+        );
+      }
+      return this.publishPending(installed, installedOutcome, input.deliveryExtra);
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
@@ -266,6 +327,98 @@ export class GitHubWaitLifecycleService {
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
 
+  // #1392 AC-5: fresh baseline for gen N+1 — advance every cursor past the current
+  // frontier (previous ∪ facts) so the next generation only matches NEW events. TaskStore-only.
+  private buildRenewalBaseline(
+    previousActive: AwaitStateV1,
+    facts: GitHubWaitFacts,
+    collectorState?: AutomationState,
+  ): AwaitStateV1['baseline'] {
+    const prev = previousActive.baseline;
+    if ('headSha' in prev) {
+      const prevReview = prev.review;
+      const collectorReview = (collectorState as Record<string, unknown> | undefined)?.review as
+        | Record<string, number | undefined>
+        | undefined;
+      // #1392 P2: the renewal review baseline is a strict union of previous ∪ facts ∪ collector for
+      // every frontier — even when a NON-review signal (CI, conflict) triggered this renewal and
+      // facts.review is absent. Copying prevReview verbatim in that case would drop collector
+      // frontiers advanced by intervening observes, so the next generation would re-match seen
+      // review events. Always fold the collector in.
+      const reviewFacts = facts.review;
+      const review =
+        reviewFacts || prevReview || collectorReview
+          ? {
+              inlineCommentCursor: Math.max(
+                prevReview?.inlineCommentCursor ?? 0,
+                (collectorReview?.lastInlineCommentCursor as number) ?? 0,
+              ),
+              conversationCommentCursor: Math.max(
+                prevReview?.conversationCommentCursor ?? 0,
+                computeConversationCursor(
+                  reviewFacts?.resultConversationCommentCursor,
+                  reviewFacts?.conversationComments,
+                  0,
+                ),
+                (collectorReview?.lastConversationCommentCursor as number) ?? 0,
+              ),
+              decisionCursor: Math.max(
+                reviewFacts?.decisionCursor ?? 0,
+                prevReview?.decisionCursor ?? 0,
+                (collectorReview?.lastDecisionCursor as number) ?? 0,
+              ),
+              ...(reviewFacts?.decision
+                ? { decision: reviewFacts.decision }
+                : prevReview?.decision
+                  ? { decision: prevReview.decision }
+                  : {}),
+              ...(reviewFacts?.threads
+                ? { threads: reviewFacts.threads }
+                : prevReview?.threads
+                  ? { threads: prevReview.threads }
+                  : {}),
+              ...(reviewFacts?.resultTriggerCommentId
+                ? { resultTriggerCommentId: reviewFacts.resultTriggerCommentId }
+                : prevReview?.resultTriggerCommentId
+                  ? { resultTriggerCommentId: prevReview.resultTriggerCommentId }
+                  : {}),
+              ...(reviewFacts?.resultTriggerCommentId
+                ? { resultTriggerHeadSha: facts.headSha ?? prev.headSha }
+                : prevReview?.resultTriggerHeadSha
+                  ? { resultTriggerHeadSha: prevReview.resultTriggerHeadSha }
+                  : {}),
+            }
+          : undefined;
+      return {
+        capturedAt: this.now(),
+        headSha: facts.headSha ?? prev.headSha,
+        ...(review ? { review } : {}),
+        ...(facts.ci
+          ? { ci: { bucket: facts.ci.bucket, fingerprint: facts.ci.fingerprint } }
+          : prev.ci
+            ? { ci: { ...prev.ci } }
+            : {}),
+        ...(facts.conflict ? { conflict: facts.conflict } : prev.conflict ? { conflict: { ...prev.conflict } } : {}),
+      };
+    }
+    const maxCommentId = Math.max(0, ...(facts.issue?.comments ?? []).map((c) => c.id));
+    const prevIssue = 'issue' in prev ? prev.issue : undefined;
+    const collectorIssue = (collectorState as Record<string, unknown> | undefined)?.issue as
+      | Record<string, number | string | undefined>
+      | undefined;
+    return {
+      capturedAt: this.now(),
+      issue: {
+        lastCommentCursor: Math.max(
+          maxCommentId || prevIssue?.lastCommentCursor || 0,
+          (collectorIssue?.lastCommentCursor as number) ?? 0,
+        ),
+        state: facts.issue?.state ?? prevIssue?.state ?? 'open',
+        ...(prevIssue?.authorLogin ? { authorLogin: prevIssue.authorLogin } : {}),
+      },
+    };
+  }
+
   private async appendLifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): Promise<void> {
     if (!this.opts.eventLog) return;
     try {
@@ -306,11 +459,17 @@ export class GitHubWaitLifecycleService {
     const current = await this.opts.taskStore.get(task.id);
     if (current?.automationState?.waitOutcome?.outcomeId === outcome.outcomeId) {
       const marked = markWaitOutcomeDelivered(current.automationState ?? {}, outcome.outcomeId);
+      // #1392 P1: confirm delivery against the CURRENT active generation, not this outcome's
+      // original generation. After an auto-renew the store already advanced to gen N+1 (the fresh
+      // await) while this outcome is gen N; a CAS on gen N would deterministically fail, leaving the
+      // outcome `pending` forever and re-delivering it on every observe. Likewise keep the task
+      // `doing` whenever a live await remains (renewed) — forcing `done` would stop the poller.
+      const activeAwait = current.automationState?.await;
       await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
-        expectedGeneration: outcome.generation,
+        expectedGeneration: automationGeneration(current.automationState) ?? outcome.generation,
         expectedUpdatedAt: current.updatedAt,
         automationState: marked as AutomationState,
-        status: 'done',
+        status: activeAwait ? 'doing' : 'done',
       });
     }
     this.opts.log.info(
