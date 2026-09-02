@@ -8,7 +8,17 @@
 import { APPROVAL_PRODUCER_CATALOG } from '../approval-producer-catalog.js';
 
 /** Producers admitted to the runtime registry in Wave 0. Later waves extend this union atomically with a binding. */
-export type ApprovalProducerId = 'F128' | 'F139' | 'F193' | 'F221' | 'F225' | 'F231' | 'F260' | 'F276' | 'F292';
+export type ApprovalProducerId =
+  | 'F128'
+  | 'F139'
+  | 'F193'
+  | 'F221'
+  | 'F225'
+  | 'F231'
+  | 'F257'
+  | 'F260'
+  | 'F276'
+  | 'F292';
 
 /** @deprecated Use ApprovalProducerId. Kept as a source-compatible alias during Phase I. */
 export type ApprovalFeatureId = ApprovalProducerId;

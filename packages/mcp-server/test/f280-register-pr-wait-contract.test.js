@@ -10,6 +10,20 @@ describe('F280 register_pr_tracking public contract', () => {
     assert.deepEqual(Object.keys(registerPrTrackingInputSchema).sort(), EXPECTED_PUBLIC_KEYS);
     const definition = callbackTools.find((tool) => tool.name === 'cat_cafe_register_pr_tracking');
     assert.equal(definition?.policy.activeState, 'canonical');
+
+    assert.deepEqual(
+      registerPrTrackingInputSchema.when.parse([
+        { kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer'] },
+      ]),
+      [{ kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer'] }],
+    );
+    assert.throws(
+      () =>
+        registerPrTrackingInputSchema.when.parse([
+          { kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer', 'maintainer'] },
+        ]),
+      /duplicate login \(case-insensitive\)/i,
+    );
   });
 
   it('forwards typed predicates and never serializes legacy axes or caller baseline', async () => {
@@ -31,7 +45,7 @@ describe('F280 register_pr_tracking public contract', () => {
       await handleRegisterPrTracking({
         repoFullName: 'zts212653/cat-cafe',
         prNumber: 3300,
-        when: [{ kind: 'pr_head_changed' }, { kind: 'pr_ci_terminal' }],
+        when: [{ kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'] }, { kind: 'pr_ci_terminal' }],
         nextStep: 'Re-lock the exact HEAD and continue merge-gate.',
         expiresAt: 1_785_500_000_000,
       });
@@ -39,7 +53,7 @@ describe('F280 register_pr_tracking public contract', () => {
       assert.deepEqual(requestBody, {
         repoFullName: 'zts212653/cat-cafe',
         prNumber: 3300,
-        when: [{ kind: 'pr_head_changed' }, { kind: 'pr_ci_terminal' }],
+        when: [{ kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'] }, { kind: 'pr_ci_terminal' }],
         nextStep: 'Re-lock the exact HEAD and continue merge-gate.',
         expiresAt: 1_785_500_000_000,
       });

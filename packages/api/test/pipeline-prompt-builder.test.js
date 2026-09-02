@@ -119,4 +119,63 @@ describe('PipelinePromptBuilder (AC-P2-6)', () => {
     assert.ok(output.length > 100, 'Works after reset');
     assert.ok(ppb.getCachedRegistry() !== null, 'Re-initialized');
   });
+
+  // -- AF-1 cold-start bootstrap regression (P2-2) ----------------------------
+
+  it('refreshOverrideSnapshot warms registry on cold start (AF-1 regression)', async () => {
+    // Simulates server restart: registry is null, store has existing overrides.
+    // Without bootstrap refreshOverrideSnapshot(), getCachedRegistry() stays null
+    // and all lifeline/override routes return 404.
+    ppb.resetPipelineSingleton();
+    assert.equal(ppb.getCachedRegistry(), null, 'Cold: registry is null');
+
+    // Fake store: loadSnapshot returns a map with one disabled override
+    const fakeSnapshot = new Map([
+      [
+        'test-hook',
+        {
+          hookId: 'test-hook',
+          enabled: false,
+          source: 'operator',
+          updatedAt: Date.now(),
+          updatedBy: 'test',
+        },
+      ],
+    ]);
+    const fakeStore = { loadSnapshot: async () => fakeSnapshot };
+    ppb.setOverrideStore(fakeStore);
+
+    // This is the bootstrap call from index.ts — must warm registry from null
+    await ppb.refreshOverrideSnapshot();
+
+    assert.ok(ppb.getCachedRegistry() !== null, 'Warm: registry initialized by refreshOverrideSnapshot');
+    // Verify the override snapshot was actually loaded into the registry
+    const registry = ppb.getCachedRegistry();
+    assert.ok(registry.isEnabled !== undefined, 'Registry has isEnabled method');
+
+    // Clean up: restore singleton for any subsequent tests
+    ppb.resetPipelineSingleton();
+    ppb.setOverrideStore(null);
+  });
+
+  // Source-contract: production startup must call the canonical bootstrap,
+  // whose ordering is setOverrideStore() then refreshOverrideSnapshot().
+  // Keeping the constructor and sequence together prevents route/prompt stores
+  // from silently diverging during a develop_base rebuild.
+  it('index.ts invokes the canonical override bootstrap, which warms the snapshot after store install', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const indexSrc = readFileSync(resolve(import.meta.dirname, '../src/index.ts'), 'utf-8');
+    const bootstrapSrc = readFileSync(
+      resolve(import.meta.dirname, '../src/domains/prompt-hooks/hook-override-bootstrap.ts'),
+      'utf-8',
+    );
+
+    assert.match(indexSrc, /hookOverrideStore\s*=\s*await bootstrapHookOverrideStore\(redis\)/);
+    const setStoreIdx = bootstrapSrc.indexOf('setOverrideStore(store)');
+    const refreshIdx = bootstrapSrc.indexOf('await refreshOverrideSnapshot()');
+    assert.ok(setStoreIdx > 0, 'bootstrap installs the canonical store');
+    assert.ok(refreshIdx > 0, 'bootstrap warms the override snapshot');
+    assert.ok(refreshIdx > setStoreIdx, 'refreshOverrideSnapshot() comes after setOverrideStore()');
+  });
 });

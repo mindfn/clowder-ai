@@ -32,6 +32,7 @@ import type {
   TokenUsage,
   ToolEvent,
 } from '@/stores/chat-types';
+import { pickSignatureLint } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { extractRecallMetaDetail, toolResultDetail } from '@/utils/toolPreview';
@@ -316,6 +317,8 @@ interface AgentMsg {
     isExplicitPost?: boolean;
     /** F098-C1: Explicit target cats from post_message (direction pills) */
     targetCats?: string[];
+    /** F257 #4: message-signature lint verdict (observe-only detection layer). */
+    signatureLint?: { signed: boolean };
     /** Durable child identity projected onto the live bubble before history hydration. */
     turnExecution?: NonNullable<NonNullable<ChatMessage['extra']>['turnExecution']>;
     /** Bodyless child executions that assisted the visible child. */
@@ -535,6 +538,8 @@ export interface BackgroundAgentMessage {
     isExplicitPost?: boolean;
     /** F098-C1: Explicit target cats from post_message (direction pills) */
     targetCats?: string[];
+    /** F257 #4: message-signature lint verdict (observe-only detection layer). */
+    signatureLint?: { signed: boolean };
     /** Durable child identity projected onto the live bubble before history hydration. */
     turnExecution?: NonNullable<NonNullable<ChatMessage['extra']>['turnExecution']>;
     /** Bodyless child executions that assisted the visible child. */
@@ -2586,11 +2591,12 @@ export function handleBackgroundAgentMessage(
 
         const sidePatch: Partial<ChatMessage> = {
           ...(msg.metadata ? { metadata: msg.metadata } : {}),
-          ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+          ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.signatureLint
             ? {
                 extra: {
                   ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                   ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                  ...pickSignatureLint(msg.extra),
                 },
               }
             : {}),
@@ -2671,12 +2677,13 @@ export function handleBackgroundAgentMessage(
             catId: msg.catId,
             content: msg.content,
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats || msg.extra?.signatureLint
               ? {
                   extra: {
                     ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                     ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(msg.extra.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+                    ...pickSignatureLint(msg.extra),
                   },
                 }
               : {}),
@@ -2690,12 +2697,13 @@ export function handleBackgroundAgentMessage(
           // Side-fields after reducer success (reducer 不 model 这些)
           const sidePatch: Partial<ChatMessage> = {
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats || msg.extra?.signatureLint
               ? {
                   extra: {
                     ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                     ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(msg.extra.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+                    ...pickSignatureLint(msg.extra),
                   },
                 }
               : {}),
@@ -4037,6 +4045,7 @@ export function useAgentMessages() {
           // skips merge for explicit post_message callbacks in fallback path.
           ...(msg.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
           ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+          ...pickSignatureLint(msg.extra),
           stream: {
             invocationId,
             ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
@@ -4064,6 +4073,7 @@ export function useAgentMessages() {
         ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
         ...(msg.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
         ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+        ...pickSignatureLint(msg.extra),
       };
       if (
         msg.metadata ||
@@ -4779,6 +4789,7 @@ export function useAgentMessages() {
             // 已写好的 turnInvocationId（applyMessagePatch 是 shallow merge, stream 整块替换）。
             const extraForPatch = {
               ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+              ...pickSignatureLint(msg.extra),
               ...(hasExplicitInvocationId && msg.invocationId
                 ? {
                     stream: {
@@ -4844,6 +4855,7 @@ export function useAgentMessages() {
             const extraForAdd = {
               ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
               ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+              ...pickSignatureLint(msg.extra),
               ...(hasExplicitInvocationId && msg.invocationId
                 ? {
                     stream: {
