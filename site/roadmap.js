@@ -66,8 +66,9 @@
   document.addEventListener('DOMContentLoaded', () => {
     const svg = document.getElementById('rt-svg');
     const stage = document.getElementById('rt-stage');
+    // Painted tree is the default; ?tree=svg keeps the procedural fallback reachable for comparison.
     const rasterTree =
-      new URLSearchParams(location.search).get('tree') === 'raster' ? 'assets/roadmap/tree/tree-wood.png' : null;
+      new URLSearchParams(location.search).get('tree') === 'svg' ? null : 'assets/roadmap/tree/tree-wood.png';
     const render = window.ClowderRoadmapRender.mount(svg, data, { lang: lang(), raster: rasterTree });
     const cats = window.ClowderRoadmapCats.mount(render.layers.cats, render.layers.scaffold, data, render.tree);
     const chapters = Array.from(document.querySelectorAll('.rt-chapter'));
