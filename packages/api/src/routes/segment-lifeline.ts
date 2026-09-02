@@ -2,8 +2,8 @@
  * F257 Phase D — Segment lifeline endpoint.
  *
  * Read-model join: InjectionTraceStore + GuardRejectionEventLog + HookOverrideStore
- * → version lifecycle chain response. Objective/MetricResult truth is exposed
- * by segment-evaluation; legacy SegmentJudgment data is deliberately ignored.
+ * → version lifecycle chain response. CycleRecord truth is exposed by
+ * segment-evaluation; legacy ObjectiveJudgment/MetricResult data is deliberately ignored.
  *
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
@@ -35,12 +35,8 @@ export interface SegmentLifelineRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
   /**
-   * F257 conclusion->governance wiring: resolve the eval judgment(s) for this
-   * segment (ObjectiveEvaluationRuntime's ObjectiveJudgment mapped into the
-   * current lifecycle projection) so the version chain can advance past
-   * tracing when a conclusive verdict exists. Absent or throwing => no judgment
-   * attached and the chain stays at tracing — an honest gap, never a fabricated
-   * verdict.
+   * Legacy projection seam retained only for isolated chain consumers. The
+   * production Console does not wire it; /api/segment-evaluation reads CycleRecord.
    */
   resolveEvalJudgments?: (
     ownerUserId: string,
@@ -197,15 +193,14 @@ async function assembleLifelineData(
   // 3. Get current override state for contentVersion
   const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
 
-  // 4. Resolve manifest version. Legacy SegmentJudgment keys are not read:
-  // ObjectiveEvaluationRuntime + MetricResult are the only current eval truth.
+  // 4. Resolve manifest version. Legacy judgment keys are not read by the
+  // production composition; /api/segment-evaluation owns CycleRecord truth.
   const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
   const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
 
   // 5. Build version lifecycle chain (R15: returns timeline for guard attribution)
-  // F257 conclusion->governance: attach the eval judgment(s) so a conclusive
-  // verdict advances the active epoch past tracing. Fail-open to no judgment
-  // (honest gap → tracing), never a guessed verdict.
+  // Explicit legacy consumers may still supply lifecycle projections. The
+  // production composition leaves this unwired and uses CycleRecord panels.
   let judgmentHistory: LifecycleJudgmentProjection[] = [];
   let evalSource: LifecycleEvalSource = {
     status: 'unavailable',

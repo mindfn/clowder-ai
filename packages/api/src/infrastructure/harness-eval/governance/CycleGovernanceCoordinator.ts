@@ -107,7 +107,7 @@ export class CycleGovernanceCoordinator {
     const reason = input.reason.trim();
     if (!reason) throw new Error('cycle_governance_reason_required');
     const writtenAt = this.now();
-    if (input.decision === 'keep') return this.keep(record, input, reason, writtenAt);
+    if (input.decision === 'keep') return this.keep(record, input, reason, writtenAt, principal.catId);
 
     const history = await this.deps.runtime.cycles.history(record.ownerUserId, record.objectiveId, 8);
     const assignment = buildGovernanceAssignment(this.deps.runtime.catalog, record, history);
@@ -141,7 +141,7 @@ export class CycleGovernanceCoordinator {
     await this.deps.proposals.create(proposal);
     const replacement: CycleRecord = {
       ...record,
-      governance: { decision: input.decision, reason, writtenAt },
+      governance: { decision: input.decision, reason, writtenAt, by: principal.catId },
       approval: {
         cardId: proposal.proposalId,
         state: 'pending',
@@ -171,11 +171,17 @@ export class CycleGovernanceCoordinator {
     return this.decisions.reject(ownerUserId, proposalId, actorId, reason);
   }
 
-  private async keep(record: CycleRecord, input: CycleGovernanceSubmission, reason: string, writtenAt: number) {
+  private async keep(
+    record: CycleRecord,
+    input: CycleGovernanceSubmission,
+    reason: string,
+    writtenAt: number,
+    by: string,
+  ) {
     await this.deps.executor.hydrate(record.objectiveId, { ...input, reason });
     const completed: CycleRecord = {
       ...record,
-      governance: { decision: 'keep', reason, writtenAt },
+      governance: { decision: 'keep', reason, writtenAt, by },
       closedAt: writtenAt,
     };
     const version = await this.deps.executor.currentVersion(record.objectiveId);

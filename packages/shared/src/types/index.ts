@@ -666,6 +666,7 @@ export type {
   ObjectiveJudgment,
   ObjectiveVerdictDecision,
   PendingTraceMarker,
+  SegmentCycleSummary,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
   SegmentObjectiveEvaluationView,
@@ -673,10 +674,6 @@ export type {
   TraceAnnotation,
   TraceAnnotationPolarity,
   TraceAnnotationSource,
-} from './harness-evaluation.js';
-export {
-  EVALUATION_READINESS_WINDOW_MS,
-  EVALUATION_TRACE_VOLUME_THRESHOLD,
 } from './harness-evaluation.js';
 // F257 governance ring: Objective-cycle decision and human-gated proposal.
 export type {

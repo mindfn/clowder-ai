@@ -6,10 +6,6 @@ export type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
 export type TraceAnnotationSource = 'mcp-marker' | 'structured-rule' | 'semantic-sweep';
 export type TraceAnnotationPolarity = 'counterexample' | 'positive' | 'candidate' | 'irrelevant' | 'unscorable';
 
-/** Shared Console/runtime contract for one Evaluation Unit readiness window. */
-export const EVALUATION_TRACE_VOLUME_THRESHOLD = 200;
-export const EVALUATION_READINESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-
 export interface EvaluationUnitRef {
   unitType: 'segment';
   unitId: string;
@@ -150,11 +146,12 @@ export interface CycleRecord {
     writtenAt: number;
     by: string;
   };
-  governance?: { decision: 'keep' | 'rollback' | 'evolve'; reason: string; writtenAt: number };
+  governance?: { decision: 'keep' | 'rollback' | 'evolve'; reason: string; writtenAt: number; by: string };
   approval?: {
     cardId?: string;
     state: 'pending' | 'approved' | 'skipped' | 'rejected';
     reason?: string;
+    by?: string;
     rejectCount: number;
     at: number;
   };
@@ -277,59 +274,22 @@ export interface SegmentMetricEvaluationView {
   kind: MetricKind;
   evaluatorKind: 'code' | 'llm' | 'replay';
   evaluatorRuleRef: string;
-  trigger: MetricTrigger;
-  collection: {
-    window: { start: number; end: number };
-    positive: number;
-    counterexamples: number;
-    candidates: number;
-    classifiedTotal: number;
-    pendingTowardTrigger: number;
-    required: number | null;
-  };
-  latestEvaluation: {
-    result: MetricResult;
-    window: { start: number; end: number };
-  } | null;
+  verdictRule: MetricVerdictRule;
+  latestConclusion: CycleMetricEvaluation['conclusion'] | null;
+  evidenceRefs: string[];
 }
 
 export interface SegmentTracingEvaluationView {
   trigger: {
-    /**
-     * Summary: MAX eligible trace count across all Objectives in the Unit.
-     * Not authoritative for readiness -- use perObjective for per-Objective status.
-     */
-    traceCount: number;
-    traceRequired: number;
-    /**
-     * Summary: actual window width (endMs - windowStartMs) of the most favorable
-     * Objective. Not authoritative -- use perObjective for per-Objective windows.
-     */
-    windowMs: number;
-    /**
-     * Summary: MAX per-Objective counterexample count. Null when no metric defines
-     * a counterexample trigger. Not authoritative -- use perObjective.
-     */
-    counterexampleCount: number | null;
-    /**
-     * Summary: MIN per-Objective counterexample threshold. Null when no metric
-     * defines a counterexample trigger. Not authoritative -- use perObjective.
-     */
-    counterexampleRequired: number | null;
-    /**
-     * Per-Objective readiness projection. Each Objective reports its own trace
-     * count, counterexample count/required, and evaluation window boundaries.
-     * The front-end should display per-Objective readiness; the top-level
-     * summary fields are backward-compatible and must not drive "ready" status.
-     */
     perObjective: Array<{
       objectiveId: string;
-      traceCount: number;
-      traceRequired: number;
-      windowStartMs: number;
-      windowEndMs: number;
-      counterexampleCount: number | null;
-      counterexampleRequired: number | null;
+      evalStatus: CycleEvaluationStatus;
+      cycleStartMs: number;
+      cycleEndMs: number | null;
+      triggeredBy: CycleTriggerRoute[];
+      cumulative: { count: number; threshold: number };
+      counterexamples: { count: number; threshold: number };
+      cadence: { elapsedMs: number; thresholdMs: number; eligible: boolean };
     }>;
   };
   structuredCounterexamples: Array<{
@@ -346,32 +306,52 @@ export interface SegmentTracingEvaluationView {
   }>;
 }
 
+export interface SegmentCycleSummary {
+  cycleId: string;
+  version: string;
+  versionContentRef: string;
+  cycleStart: number;
+  cycleEnd: number | null;
+  evalStatus: CycleEvaluationStatus;
+  windows: CycleWindow[];
+  triggeredBy: CycleTriggerRoute[];
+  evaluation: {
+    overall: 'complete' | 'partial' | 'insufficient_evidence';
+    writtenAt: number;
+    by: string;
+  } | null;
+  governance: CycleRecord['governance'] | null;
+  approval: CycleRecord['approval'] | null;
+  rejectReasons: string[];
+  closedAt: number | null;
+}
+
 export interface SegmentObjectiveEvaluationView {
   objectiveId: string;
   objectiveLabel: string;
+  objectiveStatement: string;
   evaluationModelId: string;
   evaluationModelLabel: string;
   ruleVersion: string;
   unitRefs: EvaluationUnitRef[];
   metrics: SegmentMetricEvaluationView[];
-  /**
-   * F257 P1-5: the latest ObjectiveJudgment for this Unit within the query window.
-   * Null when no Unit run has completed for the objective in the window.
-   */
-  latestJudgment: {
-    judgmentId: string;
-    completion: ObjectiveJudgment['completion'];
-    evaluatedAt: number;
-    window: { start: number; end: number };
-    /**
-     * F257 P1-4: per-metric outcome vector from the judgment, so Console can
-     * distinguish "the Unit run completed" from "a metric threshold was met".
-     */
-    metricOutcomes: ObjectiveJudgment['metricOutcomes'];
-    /** The conclusion written back by the eval runtime, not inferred by the UI. */
-    verdict: ObjectiveJudgment['verdict'];
-    verdictDecision: ObjectiveJudgment['verdictDecision'];
+  currentCycle: SegmentCycleSummary | null;
+  latestEvaluation: {
+    cycleId: string;
+    overall: 'complete' | 'partial' | 'insufficient_evidence';
+    writtenAt: number;
+    by: string;
+    windows: CycleWindow[];
   } | null;
+  latestGovernance: {
+    cycleId: string;
+    decision: NonNullable<CycleRecord['governance']>['decision'];
+    reason: string;
+    writtenAt: number;
+    by: string;
+    approval: CycleRecord['approval'] | null;
+  } | null;
+  versionChain: SegmentCycleSummary[];
 }
 
 export interface SegmentEvaluationResponse {

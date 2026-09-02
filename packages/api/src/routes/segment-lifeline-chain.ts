@@ -5,60 +5,12 @@ import type {
   EvalStageSummary,
   LifecycleEvent,
   LifecycleJudgmentProjection,
-  ObjectiveJudgment,
   OverrideChangeEvent,
   SegmentVerdict,
   VersionEpoch,
   VersionEpochStatus,
   VersionOrigin,
 } from '@cat-cafe/shared';
-
-/**
- * F257 conclusion→governance wiring: project an objective-level ObjectiveJudgment
- * onto the current lifecycle projection DTO. The
- * objective verdict IS the conclusion; deriveActiveStage advances the segment's
- * cycle to governance once it is alive/dormant. Before this the lifeline never
- * received any judgment at all (assembleLifelineData passed none), so epoch.eval
- * stayed undefined and every unit was painted as tracing forever regardless of
- * the eval result. injection/violation counts are best-effort display
- * projections from the metric results (only `verdict` gates the stage);
- * segmentVersion is null so attachJudgments binds the judgment to the active
- * epoch via the activation timeline.
- */
-export function objectiveJudgmentToLifecycleProjection(
-  judgment: ObjectiveJudgment,
-  segmentId: string,
-): LifecycleJudgmentProjection {
-  let injectionCount = 0;
-  let violationCount = 0;
-  for (const result of judgment.metricResults) {
-    const value = result.value;
-    if (value.kind === 'counter') {
-      violationCount += value.count;
-    } else if (value.kind === 'rate') {
-      injectionCount += value.denominator;
-      violationCount += value.numerator;
-    } else if (value.kind === 'replay') {
-      injectionCount += value.passed + value.failed;
-      violationCount += value.failed;
-    }
-  }
-  const conclusive = judgment.verdict === 'alive' || judgment.verdict === 'dormant';
-  return {
-    segmentId,
-    objectiveId: judgment.objectiveId,
-    judgmentId: judgment.judgmentId,
-    verdict: judgment.verdict,
-    injectionCount,
-    violationCount,
-    evaluatedAt: judgment.evaluatedAt,
-    segmentVersion: null,
-    window: { startMs: judgment.window.start, endMs: judgment.window.end },
-    windowGap: null,
-    denominatorKind: injectionCount > 0 || conclusive ? 'fired-count' : 'none',
-    denominatorGap: null,
-  };
-}
 
 // Input types (pre-fetched data from stores)
 

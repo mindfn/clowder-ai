@@ -130,6 +130,7 @@ describe('F257 production segment lifecycle surface', () => {
 
   test('index.ts wires the canonical stores into the registrar and prompt content routes', () => {
     const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const surfaceSource = readFileSync(new URL('../src/routes/segment-lifecycle-surface.ts', import.meta.url), 'utf8');
     const lifelineSource = readFileSync(new URL('../src/routes/segment-lifeline.ts', import.meta.url), 'utf8');
 
     assert.match(source, /bootstrapHookOverrideStore\(redis\)/);
@@ -162,6 +163,11 @@ describe('F257 production segment lifecycle surface', () => {
       lifelineSource,
       /SegmentJudgmentCache|segment-judgment-engine/,
       'production lifeline must not import either legacy judgment truth source',
+    );
+    assert.doesNotMatch(
+      surfaceSource,
+      /objectiveJudgmentToLifecycleProjection|judgments\.latest/,
+      'production Console evaluation must read CycleRecord, not ObjectiveJudgment',
     );
   });
 });

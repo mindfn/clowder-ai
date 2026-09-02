@@ -16,7 +16,6 @@ import { harnessGovernanceCandidateRoutes } from './harness-governance-candidate
 import { promptInjectionOverrideRoutes } from './prompt-injection-overrides.js';
 import { segmentEvaluationRoutes } from './segment-evaluation.js';
 import { segmentLifelineRoutes } from './segment-lifeline.js';
-import { objectiveJudgmentToLifecycleProjection } from './segment-lifeline-chain.js';
 import { segmentLifelineReplayRoutes } from './segment-lifeline-replay.js';
 
 export interface SegmentLifecycleSurfaceOptions {
@@ -47,28 +46,10 @@ export async function registerSegmentLifecycleSurface(
   await app.register(harnessGovernanceCandidateRoutes, {
     governance: options.governance,
   });
-  const evalRuntime = options.runtime;
   await app.register(segmentLifelineRoutes, {
     traceStore: options.traceStore,
     guardRejectionLog: options.guardRejectionLog,
     overrideStore: options.overrideStore,
-    // F257 conclusion->governance: read this segment's objective judgment(s) and
-    // map them into current lifecycle projections so a conclusive verdict advances the lifeline
-    // past tracing to governance. Fail-open to [] (no runtime / no judgment /
-    // outside the query window) — an honest gap, never a fabricated verdict.
-    resolveEvalJudgments: evalRuntime
-      ? async (ownerUserId, segmentId, windowStart, windowEnd) => {
-          const unit = evalRuntime.catalog.manifest.units.find((candidate) => candidate.unitId === segmentId);
-          if (!unit) return [];
-          const projections = [];
-          for (const attachment of unit.objectives) {
-            const judgment = await evalRuntime.judgments.latest(ownerUserId, attachment.objectiveId);
-            if (!judgment || judgment.evaluatedAt < windowStart || judgment.evaluatedAt >= windowEnd) continue;
-            projections.push(objectiveJudgmentToLifecycleProjection(judgment, segmentId));
-          }
-          return projections;
-        }
-      : undefined,
     resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
     resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
     resolveSegmentManifest: (segmentId) => {
