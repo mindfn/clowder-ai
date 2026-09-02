@@ -97,7 +97,21 @@ CycleRecord {
 - **Eval**：**平时只显示指标目录**（每指标：名称、id、方向、含义、评估方式/规则——同 Eval Hub eval:a2a 的"指标说明"样式）；**结论只在实际评估发生时刷新**：有则显示最新 verdict 卡（结论 / 现在要做 / 下次看什么 / 证据引用），无则不显示假空态；evalStatus 可见。
 - **Governance**：decision + 理由；审批卡状态；版本链 v1→v2…（谁、何时、为何）。
 
-☐ 三面正确（Eval 面按 operator 07:17 截图样板）
+### 5.1 提案卡渲染（operator 07:31：审批时必须看得到内容）
+
+复用 Eval Hub verdict 卡骨架，固定五段：
+
+| 段 | 内容 |
+|---|---|
+| 头 | Objective 名 · 当前版本 vN · 决策（rollback / evolve）· 本周期窗口 · 触发原因（哪一路） |
+| 结论摘要 | 本周期各指标结论一行一条（同 Eval 面）+ governance 理由；折叠展开可看历史周期结论 |
+| **内容变更**（核心） | 按受影响段逐条渲染：`disable` → 段标题 + 被禁理由；`modify` → **before/after 逐行 diff**（长段默认折叠，可展开全文）；`add` → 新段全文 + 挂靠的 Objective；`enable` → 段标题 + 启用理由。rollback 卡则显示 vN→vN-1 的整体 diff |
+| 证据 | 支撑该决策的反例引用（点击回放）+ 累计/反例计数 |
+| 操作 | **approve**（立即执行 §1 步8）/ **skip**（可填理由，进入下一周期）/ **reject**（必填理由 → 重评估 → 新卡）；卡上显示历史动作（第几次出卡、上次 reject 理由） |
+
+渲染要求：diff 用现有 override versions 的 content 做 before，草案做 after；不在卡内复制 tracing 正文，只给引用。
+
+☐ 三面正确（Eval 面按 operator 07:17 截图样板；提案卡按 §5.1）
 
 ## 6. 现有组件处置表
 
@@ -158,6 +172,8 @@ CycleRecord {
 | 09-02 07:17 | Eval 面平时只列指标，结论只在实际评估时刷新 | §5 |
 | 09-02 07:17 | §2 通过；§4/§6/§7 operator 不裁决，实现者负责 + falsifier 验收 | §2/§4/§6/§7、冻结条件 |
 | 09-02 07:17 | 定位：这是基于规则段的 auto-harness 基建**穿刺**；跑通并按谱系管理后，其它组件与既有评估都要纳入同一体系 | §0 |
+| 09-02 07:31 | §12 通过；§13 走合一（删独立 L0 编译器，L1–L7 迁为普通段） | §12、§13、§6 |
+| 09-02 07:31 | 提案卡必须展示内容变更（逐段 diff）；渲染规格入 §5.1 | §5.1 |
 
 ## 11. 我自己的判断（不附和）：这个流程能否闭环
 
@@ -184,7 +200,7 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 | 运行中新增段可见 | registry 在启动时缓存（`PipelinePromptBuilder` 第 64 行），仅有一个重置入口（第 72 行） | ✗ 需补：**evolve 提案 approve 后触发 registry 重扫 + snapshot 刷新**，否则新段要等重启 |
 | 构建 session/turn | pipeline 猫走 `PipelinePromptBuilder`；native 猫（Claude×3 carrier、Codex）走**另一条路** `compile-system-prompt-l0.mjs` | ✗ 两条路——**§13 合一即解此行**（operator 06:47 确认同一问题）；合一后提供商差异只剩投递载体（消息前缀 vs 写文件给 `--system-prompt-file`/`developer_instructions`），内容来源唯一 |
 
-☐ §12 对
+☑ §12 对（operator 07:31）
 
 ## 13. 系统提示词编译器（L0 compiler）是否合理、是否有必要——我的判断
 
@@ -199,7 +215,7 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 
 合一后 native 猫与 pipeline 猫的 session-init 段集合完全相同（今天 L1–L7 与 S 系列是两套内容），tracing 段投影随之统一；提供商只保留"写文件投递"这一处差异。
 
-☐ 同意合并成一条路 / ☐ 保留独立编译器（请写原因）
+☑ **已决（operator 07:31）：合并成一条路。** 实施含义：删 `compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 与 manifest 协议；L1–L7 迁为 `assets/prompt-hooks/` 普通段；native 提供商由同一 pipeline 的 session 阶段输出写文件投递
 
 ---
 确认方式：在 thread 回一句"§x 对 / §y 改成…"，或直接改本文件。全部 ☐ 勾完 → 解冻，按 §6 顺序实施：先删后建，不在旧状态机上加固。
