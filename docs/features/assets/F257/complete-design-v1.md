@@ -217,7 +217,13 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 
 ☑ **已决（operator 07:31）：合并成一条路。** 实施含义：删 `compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 与 manifest 协议；L1–L7 迁为 `assets/prompt-hooks/` 普通段；native 提供商由同一 pipeline 的 session 阶段输出写文件投递
 
-## 14. 实施切片（先删后建；每片一个 PR → `develop_base`；PR 描述逐条映射 TC-#；Fable review；合入重启后 Fable 跑 falsifier，不过不进下一片）
+## 14. 实施切片（先删后建；**一条分支、每片一个 commit、最后一个 PR → `develop_base`**——operator 07:4x：只能整体做完后体验验收，PR 不要拆碎）
+
+交付形态：
+- 从 `develop_base` 切一条 feature 分支；S0…S5 **各一个 commit**（commit message 逐条映射 TC-#），每片完成即 push。
+- Fable 在分支上**逐 commit 增量 review**（§15 把关尺），并在**隔离实例**（抛弃式 Redis + 该分支 build，同 Gate 1 做法）跑该片 falsifier；不过则该片返工，不进下一片。
+- 全部六片通过 → 开**唯一 PR**（描述汇总 TC-# 映射 + 六片 falsifier 结果）→ 合入 `develop_base` → 运行实例回流 + 重启 → Fable 在运行实例跑完整 F-1~6 → operator 体验验收。
+- S0 清场脚本随第一个 commit 进分支，但**只在最终合入后、重启前对运行实例执行一次**（先 dry-run 贴 thread）；开发期间只对隔离实例执行。
 
 | 片 | 做什么 | 删什么 | Falsifier |
 |---|---|---|---|
@@ -228,7 +234,7 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 | S4 Console | Tracing 两组 + 三路进度 + 周期起点（并入 Fable 的 `fix/f257-tracing-two-groups`）；Eval 指标目录 + verdict 卡；Governance 面 | "待分类"、旧三数字 | F-6 |
 | S5 单一路径 | native 提供商 session-init 由同一 pipeline 输出写文件投递；L1–L7 迁为 `assets/prompt-hooks/` 普通段 | `compile-system-prompt-l0.mjs`、`l0-compiler.ts`、`native-l0-trace.ts`、manifest 协议 | native 猫与 pipeline 猫段 ID 一致；L0 启动零报错；tracing 中无 L 系列独立 ID |
 
-顺序 S0→S1→S2→S3→S4→S5；S4 可与 S3 并行。每片 diff 目标 ≤ 600 行，超了拆。全部通过后：一次真实周期走通截图链 = 完成。
+顺序 S0→S1→S2→S3→S4→S5；S4 可与 S3 并行。每片 commit 目标 ≤ 600 行，超了拆 commit（不拆 PR）。全部通过后：运行实例一次真实周期走通截图链 = 完成。
 
 ## 15. 把关尺（Fable review 时逐条对照；命中任一条 = changes_requested）
 
