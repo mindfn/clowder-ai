@@ -51,15 +51,15 @@ describe('report', () => {
 });
 
 describe('F-8 code-tree residue', () => {
-  it('fails while any L0 compiler file exists and stays unbound (not pass) once removed', () => {
+  it('fails while any L0 compiler file exists and stays unbound (not pass) once removed', async () => {
     const root = mkdtempSync(join(tmpdir(), 'f257-f8-'));
     try {
       const present = join(root, L0_FILES[0]);
       mkdirSync(dirname(present), { recursive: true });
       writeFileSync(present, '// legacy');
-      assert.equal(checkF8({ projectRoot: root }).status, 'fail');
+      assert.equal((await checkF8({ projectRoot: root })).status, 'fail');
       rmSync(present);
-      const result = checkF8({ projectRoot: root });
+      const result = await checkF8({ projectRoot: root });
       assert.equal(result.status, 'unbound');
       assert.equal(result.evidence.parts[0].status, 'pass');
     } finally {
