@@ -161,7 +161,7 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 | 扫描加载 | `HookRegistry` 已用 `readdirSync(hooksDir)` 扫 `assets/prompt-hooks/`（46 段目录） | ✓ 已满足 |
 | 按版本加载 | `HookOverrideStore` epochVersion + `refreshOverrideSnapshot` | ✓ 已满足 |
 | 运行中新增段可见 | registry 在启动时缓存（`PipelinePromptBuilder` 第 64 行），仅有一个重置入口（第 72 行） | ✗ 需补：**evolve 提案 approve 后触发 registry 重扫 + snapshot 刷新**，否则新段要等重启 |
-| 构建 session/turn | pipeline 猫走 `PipelinePromptBuilder`；native 猫（Claude×3 carrier、Codex）走**另一条路** `compile-system-prompt-l0.mjs` | ✗ 两条路，见 §13 |
+| 构建 session/turn | pipeline 猫走 `PipelinePromptBuilder`；native 猫（Claude×3 carrier、Codex）走**另一条路** `compile-system-prompt-l0.mjs` | ✗ 两条路——**§13 合一即解此行**（operator 06:47 确认同一问题）；合一后提供商差异只剩投递载体（消息前缀 vs 写文件给 `--system-prompt-file`/`developer_instructions`），内容来源唯一 |
 
 ☐ §12 对
 
@@ -175,6 +175,8 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 - 独立 manifest 侧车（同 render pass 产 manifest、stdout 传输）→ 8/25–8/28 的 manifest 拒绝 55 次、stdout 污染、L0 编译错启动失败三起事故。
 
 **提议**：native 提供商的 session-init 提示词 = **同一条 hook pipeline 的 session 阶段输出写入文件**；L1–L7 降为 hooks 目录里的普通段（从此可 overlay、可 sunset、走同一套 tracing）；删除 `compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 及其 manifest 协议。这样 §12 三步对所有提供商只有一条路，tracing 只有一个 ID 空间。
+
+合一后 native 猫与 pipeline 猫的 session-init 段集合完全相同（今天 L1–L7 与 S 系列是两套内容），tracing 段投影随之统一；提供商只保留"写文件投递"这一处差异。
 
 ☐ 同意合并成一条路 / ☐ 保留独立编译器（请写原因）
 
