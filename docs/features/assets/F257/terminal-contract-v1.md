@@ -9,7 +9,7 @@ source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
-> ✅ **已解冻（operator 2026-09-02 07:37 "确认了"）**，附条件：实施只按 `complete-design-v1.md` §14 切片进行，base = `develop_base`、每片 PR、PR 描述映射 TC-#、Fable review 并以 §15 把关尺裁决、合入重启后 Fable 跑 §4 falsifier，不过不进下一片。sol 冻结前的 A/B/C worktree 改动**不直接沿用**：按 §14 重新对表，能复用的部分进对应切片。
+> ✅ **已解冻（operator 2026-09-02 07:37 "确认了"）**，附条件：实施只按 `complete-design-v1.md` §14 切片进行：base = `develop_base`、**一条分支每片一个 commit、最后一个 PR**、commit/PR 描述映射 TC-#、Fable 逐 commit review 并以 §15 把关尺裁决、每片在隔离实例跑 §4 falsifier（不过不进下一片）、合入重启后在运行实例跑完整 falsifier 再交 operator 体验。sol 冻结前的 A/B/C worktree 改动**不直接沿用**：按 §14 重新对表，能复用的部分进对应切片。
 >
 > 这份文件存在的原因：同一个预期 operator 口头纠正了 ≥4 次，每次实现都偏。**从本文件起，F257 任何实现/review/验收都以下面 TC-# 编号为准；PR 描述必须逐条映射 TC-#；对话里的"理解了"不作数。**
 
