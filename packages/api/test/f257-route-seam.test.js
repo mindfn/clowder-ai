@@ -1,20 +1,6 @@
-/**
- * F257 #2 (2b R2 P2-2) — route seam: native-L0 identity is persisted via the compiler
- * manifest through BOTH route-serial and route-parallel, and non-native routing stays on
- * its existing session-trace path.
- *
- * The unit seam test starts at persistNativeL0SessionTrace and can't catch a route dropping
- * or mis-branching the call. This drives the real routes with a bootstrapped fake trace
- * store + a prewarmed manifest cache (sol's recipe — no broad full-suite driver): a
- * native-L0 service must yield persisted L1-L7 with channel `native-l0`; a non-native
- * service must NOT (no compiler L segments, not native-l0).
- */
+/** F257 S5: serial and parallel routes share one session HookPipeline result. */
 
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
 class FakeRedis {
@@ -77,35 +63,10 @@ class FakeRedis {
   }
 }
 
-const RAW = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'].map((id) => ({ id, content: `${id} governance content` }));
-
-function makeRoot() {
-  const root = mkdtempSync(join(tmpdir(), 'l0-seam-'));
-  mkdirSync(join(root, 'scripts'), { recursive: true });
-  writeFileSync(join(root, 'scripts', 'compile-system-prompt-l0.mjs'), '// fake');
-  return root;
-}
-
-function buildManifestSpawn(manifest) {
-  return function fakeSpawn(_cmd, args) {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    setImmediate(() => {
-      const oi = args.indexOf('--out');
-      if (oi >= 0 && args[oi + 1]) writeFileSync(args[oi + 1], 'PROMPT', 'utf8');
-      const mi = args.indexOf('--manifest-out');
-      if (mi >= 0 && args[mi + 1]) writeFileSync(args[mi + 1], JSON.stringify(manifest), 'utf8');
-      child.stdout.emit('data', Buffer.from('PROMPT'));
-      child.emit('close', 0);
-    });
-    return child;
-  };
-}
-
-function mockService(catId, { native }) {
+function mockService(catId, { native, captures }) {
   return {
-    async *invoke() {
+    async *invoke(_messages, options) {
+      captures.push(options);
       yield { type: 'text', catId, content: 'reply', timestamp: Date.now() };
       yield { type: 'done', catId, timestamp: Date.now() };
     },
@@ -173,10 +134,10 @@ async function pollTrace(store, threadId, predicate, timeoutMs = 1500) {
 describe('F257 #2 route seam (2b R2 P2-2)', () => {
   let routeParallel;
   let routeSerial;
-  let l0c;
   let StoreMod;
   let catReg;
   let store;
+  let buildStaticIdentity;
 
   before(async () => {
     const shared = await import('@cat-cafe/shared');
@@ -198,34 +159,23 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
     }
     routeParallel = (await import('../dist/domains/cats/services/agents/routing/route-parallel.js')).routeParallel;
     routeSerial = (await import('../dist/domains/cats/services/agents/routing/route-serial.js')).routeSerial;
-    l0c = await import('../dist/domains/cats/services/agents/providers/l0-compiler.js');
+    buildStaticIdentity = (await import('../dist/domains/cats/services/context/SystemPromptBuilder.js'))
+      .buildStaticIdentity;
     StoreMod = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const traceBootstrap = await import('../dist/domains/prompt-hooks/trace-bootstrap.js');
 
     const redis = new FakeRedis();
     traceBootstrap.bootstrapTraceStore(redis);
     store = new StoreMod.InjectionTraceStore(redis);
-
-    // Prewarm the manifest cache so the route's cache-first read hits it (no real subprocess).
-    // R3 P2: key by 'user1' (the userId the route passes) — without this, the R2 P1-2
-    // owner-scoped cache lookup misses and triggers the real compiler.
-    l0c.clearL0Cache();
-    await l0c.getL0ManifestViaSubprocess({
-      catId: 'nativecat',
-      userId: 'user1',
-      cwd: makeRoot(),
-      spawnFn: buildManifestSpawn(RAW),
-    });
   });
 
   after(() => {
     catReg?.reset();
-    l0c?.clearL0Cache();
   });
 
-  async function drain(route, catId, threadId) {
+  async function drain(route, catId, threadId, captures) {
     for await (const _m of route(
-      createMockDeps({ [catId]: mockService(catId, { native: catId === 'nativecat' }) }),
+      createMockDeps({ [catId]: mockService(catId, { native: catId === 'nativecat', captures }) }),
       [catId],
       'hi',
       'user1',
@@ -240,9 +190,13 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
     ['parallel', () => routeParallel],
     ['serial', () => routeSerial],
   ]) {
-    test(`${mode}: native-L0 cat persists L1-L7 via the compiler manifest (native-l0 channel)`, async () => {
+    test(`${mode}: native carrier receives the exact route-owned session prompt and traces L1-L7`, async () => {
       const threadId = `seam-${mode}-native`;
-      await drain(getRoute(), 'nativecat', threadId);
+      const expectedPrompt = buildStaticIdentity('nativecat', { mcpAvailable: false });
+      const captures = [];
+      await drain(getRoute(), 'nativecat', threadId, captures);
+      assert.equal(captures.length, 1);
+      assert.equal(captures[0].nativeSessionPrompt, expectedPrompt, 'carrier gets exact HookPipeline bytes');
       const summary = await pollTrace(store, threadId, (s) => s.segments.some((x) => x.segmentId === 'L4'));
       assert.ok(summary, `${mode}: native-L0 trace was persisted`);
       const invocationIds = await store.listUnclassifiedInvocationIds('user1', 0, Date.now() + 1000, 100);
@@ -258,12 +212,15 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       assert.equal(lSegs.length, 7, 'all L1-L7 present');
       assert.ok(lSegs.every((s) => s.status === 'observed' && s.pipelineStatus === 'fired'));
       const session = summary.delivery.find((d) => d.stage === 'session-init');
-      assert.equal(session.channel, 'native-l0', 'session delivered via native L0');
+      assert.equal(session.channel, 'native-l0', 'session was transported by the native carrier');
     });
 
     test(`${mode}: non-native cat stays on the existing pipeline path (message-prepend, S/D segments)`, async () => {
       const threadId = `seam-${mode}-plain`;
-      await drain(getRoute(), 'plaincat', threadId);
+      const captures = [];
+      await drain(getRoute(), 'plaincat', threadId, captures);
+      assert.equal(captures.length, 1);
+      assert.equal(captures[0].nativeSessionPrompt, undefined);
       // Non-vacuous: REQUIRE the existing path to have actually persisted a trace. If the
       // non-native persistence were deleted/broken, summaries=[] would make the "no native-l0
       // / no L" checks pass falsely — so first prove a trace exists, then assert its shape.
@@ -279,16 +236,14 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       assert.match(episode.terminal.outputMessageId, /^m-/);
       const session = summary.delivery.find((d) => d.stage === 'session-init');
       assert.equal(session.channel, 'message-prepend', 'non-native session uses message-prepend, not native-l0');
-      // #839 full observability: non-native pipeline also captures L1-L7 governance hooks
-      // (PipelinePromptBuilder records ALL hooks, not just S-scoped delivery).
-      // What distinguishes native from non-native is the delivery channel — asserted above.
+      // Both transports observe the same L1-L7 hook IDs.
       const lSegs = summary.segments.filter((s) => /^L\d/.test(s.segmentId));
       if (lSegs.length > 0) {
         // L-segments exist from the standard hook pipeline — verify they carry pipeline
         // status (execution truth) rather than being opaque compiler-injected blobs.
         assert.ok(
           lSegs.every((s) => s.pipelineStatus !== undefined),
-          'non-native L-segments carry pipeline status (sourced from hook pipeline, not raw compiler blob)',
+          'non-native L-segments carry pipeline execution status',
         );
       }
       const pipelineSeg = summary.segments.find((x) => /^[SD]\d/.test(x.segmentId));
