@@ -211,7 +211,7 @@ export type DurableSteerClaimResult =
       reason: 'entry_not_found' | 'entry_processing' | 'entry_ineligible';
     };
 
-export type DurableRecallClaimResult =
+export type DurableMessageClaimResult =
   | { outcome: 'claimed'; entries: QueueEntry[] }
   | { outcome: 'not_found' | 'processing' };
 
@@ -902,13 +902,13 @@ export class InvocationQueue {
     return this.claimLedgerEntry(entry);
   }
 
-  /** Freeze the complete scalar fan-out for one owner message before true recall moves its body. */
-  async claimMessageEntriesForRecall(
+  /** Freeze the complete scalar fan-out for one message before its terminal side effect. */
+  async claimMessageEntriesForWithdrawal(
     threadId: string,
     userId: string,
     messageId: string,
     claimedAt = Date.now(),
-  ): Promise<DurableRecallClaimResult> {
+  ): Promise<DurableMessageClaimResult> {
     const matches = [...this.queues.values()]
       .flat()
       .filter((entry) => entry.threadId === threadId && entry.messageId === messageId);
@@ -927,8 +927,8 @@ export class InvocationQueue {
     return { outcome: 'claimed', entries: this.cacheLedgerClaim(claimed.entries, claimId, claimedAt) };
   }
 
-  /** Commit every row frozen by claimMessageEntriesForRecall as terminal. */
-  async commitClaimedRecall(threadId: string, entryIds: readonly string[]): Promise<boolean> {
+  /** Commit every row frozen by claimMessageEntriesForWithdrawal as terminal. */
+  async commitClaimedMessageWithdrawal(threadId: string, entryIds: readonly string[]): Promise<boolean> {
     let committedAll = true;
     for (const entryId of entryIds) {
       if (!(await this.commitClaimedWithdrawal(threadId, entryId))) committedAll = false;

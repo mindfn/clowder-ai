@@ -88,7 +88,7 @@ async function resolveRecallContext(
 }
 
 async function resolveCarrier(context: RecallContext, reply: FastifyReply): Promise<Resolution<CarrierContext>> {
-  const claim = await context.opts.invocationQueue.claimMessageEntriesForRecall(
+  const claim = await context.opts.invocationQueue.claimMessageEntriesForWithdrawal(
     context.threadId,
     context.ownerUserId,
     context.messageId,
@@ -196,7 +196,7 @@ async function commitRecall(
       exposures,
     });
     if (result.kind === 'recalled' || result.kind === 'already_recalled') {
-      if (!(await context.opts.invocationQueue.commitClaimedRecall(context.threadId, entryIds))) {
+      if (!(await context.opts.invocationQueue.commitClaimedMessageWithdrawal(context.threadId, entryIds))) {
         context.request.log.error(
           { threadId: context.threadId, messageId: context.messageId, entryIds },
           'true recall committed; claimed Queue terminalization deferred to startup recovery',

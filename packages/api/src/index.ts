@@ -81,7 +81,6 @@ import {
   selectInvocationBackendKind,
 } from './domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from './domains/cats/services/agents/invocation/InvocationTracker.js';
-import { QueuedMessageCustodyCoordinator } from './domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type {
   InvocationRecordStoreLike,
   RouterLike,
@@ -795,7 +794,6 @@ async function main(): Promise<void> {
     redis ? new RedisQueueLedgerStore(redis) : new InMemoryQueueLedgerStore(),
   );
   await invocationQueue.hydrateFromLedger(messageStore);
-  const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
   const invocationRecordStore = createInvocationRecordStore(redis);
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   // #1200 P2-3: wire cursor canonicalizer for v1→v2 async resolution

@@ -939,7 +939,7 @@ test('carrier-free local review rejects a stale inherited HEAD before persistenc
   assert.equal(harness.invocationQueue.list(harness.reviewPredecessorThread.id, 'user-1').length, 0);
 });
 
-test('carrier-free local review cancels a verdict that becomes stale after preflight', async () => {
+test('carrier-free local review keeps stale verdict evidence out of Queue after preflight', async () => {
   const reviewedHeadSha = 'c'.repeat(40);
   const harness = await createHarness({
     carrierlessReviewSubject: 'pr:owner/repo#2915',
@@ -977,7 +977,8 @@ test('carrier-free local review cancels a verdict that becomes stale after prefl
     'user-1',
   );
   assert.ok(rejectedVerdict, 'published reviewer speech remains as immutable timeline evidence');
-  assert.equal(rejectedVerdict.queueCustody?.status, 'terminal');
+  assert.equal(rejectedVerdict.deliveryStatus, undefined);
+  assert.equal(rejectedVerdict.queueCustody, undefined);
   assert.equal(harness.invocationQueue.list(harness.reviewPredecessorThread.id, 'user-1').length, 0);
 });
 

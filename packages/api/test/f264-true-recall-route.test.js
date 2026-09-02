@@ -393,7 +393,12 @@ describe('F264 Gap F true recall API', () => {
     const harness = createHarness();
     apps.push(harness.app);
     const { message, entries } = await appendQueued(harness, '消息已提交但进程还没提交 Queue');
-    const claim = await harness.invocationQueue.claimMessageEntriesForRecall(THREAD_ID, OWNER_ID, message.id, 1_500);
+    const claim = await harness.invocationQueue.claimMessageEntriesForWithdrawal(
+      THREAD_ID,
+      OWNER_ID,
+      message.id,
+      1_500,
+    );
     assert.equal(claim.outcome, 'claimed');
     assert.equal(
       harness.messageStore.recallMessageToComposerDraft(message.id, {
