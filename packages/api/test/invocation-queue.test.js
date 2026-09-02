@@ -642,6 +642,30 @@ describe('InvocationQueue', () => {
     assert.equal(queue.size('t1', 'u1'), 0);
   });
 
+  it('removes an operational Queue row when its last target fails', () => {
+    const r = queue.enqueue(
+      entry({
+        content: 'single target that fails',
+        targetCats: ['opus'],
+        messageId: 'msg-failed',
+      }),
+    );
+
+    const failed = queue.takeQueuedFailedTargetForCatAcrossUsers(
+      't1',
+      'opus',
+      'inv-opus-failed',
+      new Set([r.entry.id]),
+      'invocation_failed',
+      1234,
+    );
+
+    assert.equal(failed.length, 1);
+    assert.deepEqual(failed[0].remainingTargetCats, []);
+    assert.equal(failed[0].fullyConsumed, true);
+    assert.equal(queue.size('t1', 'u1'), 0, 'an all-failed carrier cannot remain as an actionless Queue row');
+  });
+
   it('markQueuedHandledForCatAcrossUsers ignores entries not seen by the completing cat', () => {
     const r = queue.enqueue(entry({ targetCats: ['opus'], messageId: 'msg-1' }));
 

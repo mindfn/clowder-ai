@@ -1898,9 +1898,13 @@ describe('QueueProcessor', () => {
       assert.deepEqual(terminal.queueCustody.handledByCatIds, ['opus']);
       assert.deepEqual(terminal.queueCustody.targetOutcomeByCatId.opus, {
         invocationId: 'child-inv-stub',
-        disposition: 'completed_with_turn',
+        disposition: 'responded',
         evidenceRef: { kind: 'invocation_lineage', invocationId: 'child-inv-stub' },
         handledAt: terminal.queueCustody.targetOutcomeByCatId.opus.handledAt,
+        consumption: {
+          kind: 'source_response',
+          outputMessageIds: [lifecycleResponseId],
+        },
       });
       assert.ok(seenAt < terminal.queueCustody.targetOutcomeByCatId.opus.handledAt);
       assert.ok(terminal.deliveredAt <= terminal.queueCustody.targetOutcomeByCatId.opus.handledAt);
@@ -5457,6 +5461,64 @@ describe('QueueProcessor', () => {
     assert.equal(stored.queueCustody.status, 'terminal');
     assert.deepEqual(stored.queueCustody.failedByCatIds, ['opus']);
     assert.equal(stored.queueCustody.targetAttempts.at(-1).state, 'cancelled');
+    assert.equal(stored.queueCustody.targetAttempts.at(-1).terminalReason, 'invocation_cancelled');
+  });
+
+  it('Steer preemption during processing publication cannot revive the attempted durable carrier', async () => {
+    const durableStore = new MessageStore();
+    let controller;
+    let trackerStarted = false;
+    const durableDeps = stubDeps({
+      messageStore: durableStore,
+      invocationTracker: {
+        start: mock.fn(() => new AbortController()),
+        startAll: mock.fn(() => {
+          trackerStarted = true;
+          controller = new AbortController();
+          return controller;
+        }),
+        complete: mock.fn(),
+        completeAll: mock.fn(),
+        has: mock.fn(() => false),
+      },
+      router: {
+        routeExecution: mock.fn(async function* () {
+          yield { type: 'done', catId: 'opus', isFinal: true, timestamp: Date.now() };
+        }),
+        ackCollectedCursors: mock.fn(async () => {}),
+      },
+    });
+    durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+    const durableProcessor = new QueueProcessor(durableDeps);
+    const { entry, message } = enqueueCustodiedEntry(durableDeps.queue, durableStore);
+    const originalGetById = durableStore.getById.bind(durableStore);
+    let releaseProjection;
+    const projectionGate = new Promise((resolve) => {
+      releaseProjection = resolve;
+    });
+    let projectionReadStarted;
+    const projectionRead = new Promise((resolve) => {
+      projectionReadStarted = resolve;
+    });
+    let blocked = false;
+    durableStore.getById = mock.fn(async (messageId) => {
+      if (trackerStarted && !blocked) {
+        blocked = true;
+        projectionReadStarted();
+        await projectionGate;
+      }
+      return originalGetById(messageId);
+    });
+
+    await durableProcessor.processNext('t1', 'u1');
+    await projectionRead;
+    controller.abort('preempted');
+    releaseProjection();
+
+    await waitFor(() => durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id) === null);
+    const stored = await durableStore.getById(message.id);
+    assert.equal(stored.queueCustody.status, 'terminal');
+    assert.deepEqual(stored.queueCustody.failedByCatIds, ['opus']);
     assert.equal(stored.queueCustody.targetAttempts.at(-1).terminalReason, 'invocation_cancelled');
   });
 

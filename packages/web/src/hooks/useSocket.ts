@@ -1,6 +1,11 @@
 'use client';
 
-import { isLifecycleStoredMessageMetadata, isMessageFrom, type MessageFrom } from '@cat-cafe/shared';
+import {
+  isLifecycleStoredMessageMetadata,
+  isMessageFrom,
+  type MessageFrom,
+  type QueueMessageReceiptProjection,
+} from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {
@@ -243,22 +248,44 @@ function finalizeStreamingBubblesAbsentFromServerSlots(threadId: string, activeC
  *
  * Exported for tests (F173 PR-C Task 10 — fixture asserts mirror invariant).
  */
+interface QueueReconciliationSnapshot {
+  queue?: import('../stores/chat-types').QueueEntry[];
+  activeInvocations?: QueueActiveInvocationSlot[];
+}
+
+async function fetchQueueReconciliationSnapshot(threadId: string): Promise<QueueReconciliationSnapshot | null> {
+  try {
+    const response = await apiFetch(`/api/threads/${threadId}/queue`);
+    if (!response.ok) return null;
+    return (await response.json()) as QueueReconciliationSnapshot;
+  } catch {
+    return null;
+  }
+}
+
 export async function reconcileThreadWithServer(
   threadId: string,
   shouldAbort: () => boolean,
   source: string,
+  socketFallback?: {
+    queue: import('../stores/chat-types').QueueEntry[];
+    messageReceipts: readonly QueueMessageReceiptProjection[];
+  },
 ): Promise<void> {
+  const data = await fetchQueueReconciliationSnapshot(threadId);
+  if (shouldAbort()) return;
+  const queue = Array.isArray(data?.queue) ? data.queue : socketFallback?.queue;
+  const store = useChatStore.getState();
+  if (queue) {
+    if (socketFallback?.messageReceipts.length) {
+      store.setQueue(threadId, queue, socketFallback.messageReceipts);
+    } else {
+      store.setQueue(threadId, queue);
+    }
+  }
+  if (!data) return;
+
   try {
-    const res = await apiFetch(`/api/threads/${threadId}/queue`);
-    if (shouldAbort()) return;
-    if (!res.ok) return;
-    const data = (await res.json()) as {
-      queue?: import('../stores/chat-types').QueueEntry[];
-      activeInvocations?: QueueActiveInvocationSlot[];
-    };
-    if (shouldAbort()) return;
-    const store = useChatStore.getState();
-    if (Array.isArray(data.queue)) store.setQueue(threadId, data.queue);
     const serverSlots = data.activeInvocations && data.activeInvocations.length > 0 ? data.activeInvocations : null;
     const isActiveThread = store.currentThreadId === threadId;
 
@@ -340,7 +367,8 @@ export async function reconcileThreadWithServer(
       { threadId },
     );
   } catch {
-    // Non-critical — don't break the caller
+    // Queue replacement is already settled above. Liveness reconciliation is
+    // recoverable from the next event/watchdog and must not reject its caller.
   }
 }
 
@@ -925,7 +953,10 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         return typeof status === 'string' ? status : 'unknown';
       });
 
-    // F39: Queue events — always write via store (no dual-pointer guard needed, queue is thread-scoped)
+    // F39: Queue events — reconcile the full canonical projection before
+    // replacing the thread-scoped Queue. Socket rows intentionally omit some
+    // server-only actions (for example exact active-run Append), so committing
+    // them first would create a false-negative action surface.
     socket.on(
       'queue_updated',
       (data: { threadId: string; queue: unknown[]; action: string; messageReceipts?: unknown }) => {
@@ -934,20 +965,21 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         const queue = normalizeQueueEntries(data.queue);
         const messageReceipts = normalizeQueueMessageReceiptProjections(data.messageReceipts);
         if (messageReceipts.length > 0) {
-          store.setQueue(data.threadId, queue, messageReceipts);
-        } else {
-          store.setQueue(data.threadId, queue);
+          const currentQueue =
+            data.threadId === store.currentThreadId ? store.queue : store.getThreadState(data.threadId).queue;
+          // Removed rows can carry terminal receipt truth that the next Queue
+          // snapshot no longer contains. Apply that truth immediately against
+          // the existing complete Queue; canonical hydration below owns the
+          // subsequent row replacement.
+          store.setQueue(data.threadId, currentQueue, messageReceipts);
         }
-        if (data.threadId === store.currentThreadId) {
-          const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
-          void reconcileThreadWithServer(
-            data.threadId,
-            () =>
-              useChatStore.getState().currentThreadId !== data.threadId ||
-              getLiveQueueHydrateEpoch(data.threadId) !== epoch,
-            'QueueUpdated',
-          );
-        }
+        const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
+        void reconcileThreadWithServer(
+          data.threadId,
+          () => getLiveQueueHydrateEpoch(data.threadId) !== epoch,
+          'QueueUpdated',
+          { queue, messageReceipts },
+        );
         // F264: every durable user queue entry is owner-visible from admission.
         // Hydrate the authoritative message so its receipt stays live and the
         // same projection is recovered after F5. Connector/agent work remains
@@ -966,18 +998,6 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           // stale slots before raising the coarse marker; preserve uncorrelated
           // slots until canonical `/queue` supplies the new exact identity.
           store.setThreadHasActiveInvocation(data.threadId, true);
-        }
-        if (data.action === 'completed') {
-          const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
-          // Queue `completed` is terminal for the event's own thread regardless
-          // of which thread is currently visible. Reconcile that thread in place;
-          // a later processing/completed event advances the epoch and invalidates
-          // this request without coupling correctness to navigation timing.
-          void reconcileThreadWithServer(
-            data.threadId,
-            () => getLiveQueueHydrateEpoch(data.threadId) !== epoch,
-            'QueueCompleted',
-          );
         }
         if (isDebugEnabled()) {
           const stateAfterUpdate = store.getThreadState(data.threadId);

@@ -11,7 +11,6 @@ export interface SteerTargetOption {
 }
 
 export function SteerQueuedEntryModal({
-  source: _source = 'queued',
   targets = [],
   initialTargetId,
   onCancel,
