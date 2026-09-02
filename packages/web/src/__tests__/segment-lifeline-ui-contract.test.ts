@@ -356,7 +356,7 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   it('loads exact content when a version node is selected', () => {
     expect(modalSrc).toContain('VersionContentPreview');
     expect(modalSrc).toContain('/api/prompt-injection/segment/');
-    expect(modalSrc).toContain('/versions/${epoch.version}/content');
+    expect(modalSrc).toMatch(/\/versions\/\$\{epoch\.version\}\/content/);
   });
 
   it('makes selected lifecycle nodes visually and semantically explicit', () => {
@@ -413,7 +413,11 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     // windowed cumulative tracing; the owner-wide unclassified count is removed
     // from the segment view (it never participates in this Unit's trigger).
     expect(theaterSrc).toContain('结构化反例 Tracing');
-    expect(theaterSrc).toContain('时间窗内累计 Tracing');
+    expect(theaterSrc).toContain('周期内累计 Tracing（Objective）');
+    expect(theaterSrc).toContain('周期内反例');
+    expect(theaterSrc).toContain('生命线查询窗内本段 Tracing 明细');
+    expect(theaterSrc).toContain('周期内暂无明确反例；周期内 Tracing 仍持续累计');
+    expect(theaterSrc).not.toContain('时间窗内累计 Tracing');
     expect(theaterSrc).not.toContain('待分类');
     expect(theaterSrc).not.toContain('unclassifiedEpisodeCount');
     expect(theaterSrc).not.toContain('原始 Tracing 记录');

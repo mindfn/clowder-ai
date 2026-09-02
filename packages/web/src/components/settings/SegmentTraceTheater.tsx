@@ -64,7 +64,7 @@ export function SegmentTraceTheater({
         </SettingsText>
         {!loading && (readiness?.structuredCounterexamples.length ?? 0) === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前窗口暂无明确反例；时间窗内 Tracing 仍持续累计。
+            周期内暂无明确反例；周期内 Tracing 仍持续累计。
           </SettingsText>
         ) : (
           <div className="mt-2 space-y-1.5">
@@ -95,14 +95,14 @@ export function SegmentTraceTheater({
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">
-          时间窗内累计 Tracing 明细（当前查询窗 {total}）
+          生命线查询窗内本段 Tracing 明细（{total}）
         </summary>
         <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
           点击记录查看完整现场
         </SettingsText>
         {observations.length === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前窗口暂无原始记录
+            当前生命线查询窗内本段暂无 Tracing 记录
           </SettingsText>
         ) : (
           <div className="mt-2 space-y-1.5">
@@ -150,9 +150,9 @@ export function SegmentTraceTheater({
 }
 
 /**
- * Trigger rules with live progress. Each rule names the group it counts
- * (时间窗内累计 Tracing / 结构化反例) so the thresholds visibly map to the
- * two groups below — the relation must be legible at a glance.
+ * Trigger rules are Objective-cycle counts. The detail list below remains a
+ * segment-scoped view of the lifeline query window; their labels must not imply
+ * that the two coordinates or denominators are interchangeable.
  */
 function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
   return (
@@ -172,7 +172,7 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
             ))}
           </div>
           <div className="mt-1 text-cafe-muted">
-            · 时间窗内累计 Tracing {objective.cumulative.count}/{objective.cumulative.threshold} 条
+            · 周期内累计 Tracing（Objective）{objective.cumulative.count}/{objective.cumulative.threshold} 条
           </div>
           <div className="text-cafe-muted">
             · 周期内反例 {objective.counterexamples.count}/{objective.counterexamples.threshold} 条
