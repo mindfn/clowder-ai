@@ -1,24 +1,23 @@
 import type {
-  EvaluationSnapshot,
-  EvaluationUnitRef,
+  CycleRecord,
   MetricDefinition,
+  SegmentCycleSummary,
   SegmentEvaluationResponse,
-  SegmentMetricEvaluationView,
   SegmentObjectiveEvaluationView,
-  SegmentTracingEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
-import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } from '@cat-cafe/shared';
 
-import { metricWindowStartFor, selectCandidates } from './evaluation-cohort.js';
+import type { EvaluationModelDefinition, ObjectiveDefinition } from '../objective-registry.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
-import {
-  distinctIncidents,
-  distinctUnitRefs,
-  triggerRequirement,
-  unitRefsForObjective,
-} from './segment-evaluation-helpers.js';
+import { unitRefsForObjective } from './segment-evaluation-helpers.js';
 
+type ObjectiveProjection = {
+  objective: SegmentObjectiveEvaluationView;
+  trigger: SegmentEvaluationResponse['tracing']['trigger']['perObjective'][number];
+  counterexamples: TraceAnnotation[];
+};
+
+/** F257 S4: Console projection whose only cycle truth is CycleRecord. */
 export class SegmentEvaluationReadModel {
   constructor(private readonly runtime: ObjectiveEvaluationRuntime) {}
 
@@ -31,79 +30,24 @@ export class SegmentEvaluationReadModel {
     const unit = this.runtime.catalog.manifest.units.find((candidate) => candidate.unitId === input.segmentId);
     if (!unit) throw new Error(`segment_evaluation_unit_not_found:${input.segmentId}`);
 
-    const objectiveIds = unit.objectives.map((attachment) => attachment.objectiveId);
-    const completedEnds = await Promise.all(
-      objectiveIds.map((id) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, id)),
-    );
-    const objectiveViews: SegmentEvaluationResponse['objectives'] = [];
-    const tracingMetrics: Array<{ objectiveId: string; metric: MetricDefinition }> = [];
-    for (const attachment of unit.objectives) {
-      const objective = this.runtime.catalog.registry.objectives.find(
-        (candidate) => candidate.id === attachment.objectiveId,
-      );
-      if (!objective) throw new Error(`segment_evaluation_objective_not_found:${attachment.objectiveId}`);
-      const model = this.runtime.catalog.registry.evaluationModels.find(
-        (candidate) => candidate.id === objective.evaluationModelId,
-      );
-      if (!model) throw new Error(`segment_evaluation_model_not_found:${objective.evaluationModelId}`);
-      tracingMetrics.push(...model.metrics.map((metric) => ({ objectiveId: objective.id, metric })));
-      const [metrics, latestJudgment] = await Promise.all([
-        Promise.all(
-          model.metrics.map((metric) =>
-            this.readMetric({
-              ownerUserId: input.ownerUserId,
-              segmentId: input.segmentId,
-              objectiveId: objective.id,
-              metric,
-              startMs: input.startMs,
-              endMs: input.endMs,
-              completedWindowEnd: completedEnds[objectiveIds.indexOf(objective.id)],
-            }),
-          ),
-        ),
-        this.latestJudgment(input.ownerUserId, objective.id, input.startMs, input.endMs),
-      ]);
-      objectiveViews.push({
-        objectiveId: objective.id,
-        objectiveLabel: objective.label,
-        evaluationModelId: model.id,
-        evaluationModelLabel: model.label,
-        ruleVersion: model.ruleVersion,
-        unitRefs: unitRefsForObjective(this.runtime, objective.id),
-        metrics,
-        latestJudgment,
-      });
-    }
-    const annotationLists = await Promise.all(
-      tracingMetrics.map(({ objectiveId, metric }) => {
-        const annStart = readinessFloor(completedEnds[objectiveIds.indexOf(objectiveId)], input.endMs);
-        return this.runtime.annotations.queryMetricWindow(
-          input.ownerUserId,
-          objectiveId,
-          metric.id,
-          annStart,
-          input.endMs,
-        );
+    const projections = await Promise.all(
+      unit.objectives.map(async (attachment) => {
+        const objective = this.requireObjective(attachment.objectiveId);
+        const model = this.requireModel(objective.evaluationModelId);
+        return this.projectObjective(input, objective, model);
       }),
     );
-    const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
-    const { trigger, cohortCounterexamples } = await this.buildTracingTrigger(
-      input,
-      objectiveIds,
-      completedEnds,
-      tracingMetrics,
-      annotationLists,
-      unitRefs,
+    const counterexamples = distinctIncidents(projections.flatMap((projection) => projection.counterexamples)).filter(
+      (annotation) =>
+        annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
     );
-    const structuredCounterexamples = cohortCounterexamples.filter((a) =>
-      a.unitRefs.some((u) => u.unitType === 'segment' && u.unitId === input.segmentId),
-    );
+
     return {
       segmentId: input.segmentId,
       window: { start: input.startMs, end: input.endMs },
       tracing: {
-        trigger,
-        structuredCounterexamples: structuredCounterexamples.map((annotation) => ({
+        trigger: { perObjective: projections.map((projection) => projection.trigger) },
+        structuredCounterexamples: counterexamples.map((annotation) => ({
           annotationId: annotation.annotationId,
           incidentKey: annotation.incidentKey,
           objectiveId: annotation.objectiveId,
@@ -116,223 +60,148 @@ export class SegmentEvaluationReadModel {
           catId: annotation.episodeRef.catId,
         })),
       },
-      objectives: objectiveViews,
+      objectives: projections.map((projection) => projection.objective),
     };
   }
 
-  private async readMetric(input: {
-    ownerUserId: string;
-    segmentId: string;
-    objectiveId: string;
-    metric: MetricDefinition;
-    startMs: number;
-    endMs: number;
-    completedWindowEnd: number;
-  }): Promise<SegmentMetricEvaluationView> {
-    // F257 R6: readiness floor must match Scheduler: watermark or 7-day fallback.
-    // input.startMs is the version window, not the readiness floor.
-    const metricWindowStartMs = Math.max(
-      readinessFloor(input.completedWindowEnd, input.endMs),
-      metricWindowStartFor(input.metric, input.endMs),
-    );
-    const annotationStartScore = metricWindowStartMs;
-    const annotationEndScore = input.endMs;
-
-    const [objectiveAnnotations, consumed, results] = await Promise.all([
-      this.runtime.annotations.queryMetricWindow(
-        input.ownerUserId,
-        input.objectiveId,
-        input.metric.id,
-        annotationStartScore,
-        annotationEndScore,
-      ),
-      this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId),
-      this.runtime.results.queryMetricWindow(
-        input.ownerUserId,
-        input.objectiveId,
-        input.metric.id,
-        input.startMs,
-        input.endMs,
+  private async projectObjective(
+    input: { ownerUserId: string; startMs: number; endMs: number },
+    objective: ObjectiveDefinition,
+    model: EvaluationModelDefinition,
+  ): Promise<ObjectiveProjection> {
+    const [current, history] = await Promise.all([
+      this.runtime.cycles.current(input.ownerUserId, objective.id),
+      this.runtime.cycles.history(input.ownerUserId, objective.id, 8),
+    ]);
+    const cycleStart = current?.cycleStart ?? input.startMs;
+    const cycleEnd = current?.cycleEnd ?? input.endMs;
+    const [cumulativeCount, annotationLists] = await Promise.all([
+      this.runtime.objectiveTraces.countWindow(input.ownerUserId, objective.id, cycleStart, cycleEnd),
+      Promise.all(
+        model.metrics.map((metric) =>
+          this.runtime.annotations.queryMetricWindow(input.ownerUserId, objective.id, metric.id, cycleStart, cycleEnd),
+        ),
       ),
     ]);
-    const segmentAnnotations = objectiveAnnotations.filter((annotation) =>
-      annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
+    const counterexamples = distinctIncidents(
+      annotationLists.flat().filter((annotation) => annotation.polarity === 'counterexample'),
     );
-    const unconsumedSegmentAnnotations = segmentAnnotations.filter(
-      (annotation) => !consumed.has(annotation.annotationId),
+    const records = [...(current ? [current] : []), ...history];
+    const latestEvaluated = records.find((record) => record.evaluation);
+    const latestGoverned = records.find((record) => record.governance);
+    const latestMetrics = new Map(
+      (latestEvaluated?.evaluation?.metrics ?? []).map((metric) => [metric.id, metric] as const),
     );
-    const candidates = selectCandidates(input.metric, unconsumedSegmentAnnotations);
-    const { result: latestResult, snapshot: latestSnapshot } = await this.latestSegmentResult(
-      results
-        .filter((result) => result.metricId === input.metric.id)
-        .sort((left, right) => right.evaluatedAt - left.evaluatedAt || right.resultId.localeCompare(left.resultId)),
-      input.segmentId,
-    );
-    return {
-      metricId: input.metric.id,
-      label: input.metric.label,
-      kind: input.metric.kind,
-      evaluatorKind: input.metric.evaluator.kind,
-      evaluatorRuleRef: input.metric.evaluator.ruleRef,
-      trigger: input.metric.trigger,
-      collection: {
-        window: { start: metricWindowStartMs, end: input.endMs },
-        positive: candidates.filter((annotation) => annotation.polarity === 'positive').length,
-        counterexamples: candidates.filter((annotation) => annotation.polarity === 'counterexample').length,
-        candidates: candidates.filter((annotation) => annotation.polarity === 'candidate').length,
-        classifiedTotal: candidates.filter(
-          (annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample',
-        ).length,
-        pendingTowardTrigger: candidates.length,
-        required: triggerRequirement(input.metric),
-      },
-      latestEvaluation: latestResult && latestSnapshot ? { result: latestResult, window: latestSnapshot.window } : null,
-    };
-  }
+    const versionChain = [...history].reverse().map(toSummary);
+    if (current) versionChain.push(toSummary(current));
 
-  private async latestSegmentResult(
-    results: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['queryMetricWindow']>>,
-    segmentId: string,
-  ): Promise<{
-    result: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['get']>>;
-    snapshot: EvaluationSnapshot | null;
-  }> {
-    for (const result of results) {
-      const snapshot = await this.runtime.snapshots.get(result.snapshotId);
-      if (!snapshot) continue;
-      // A Unit result belongs to every member segment. Raw-only semantic runs
-      // legitimately have no annotations or metric sample buckets.
-      const isUnitMember = snapshot.unitRefs.some(
-        (unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === segmentId,
-      );
-      if (isUnitMember) {
-        return { result, snapshot };
-      }
-    }
-    return { result: null, snapshot: null };
-  }
-
-  private async latestJudgment(
-    ownerUserId: string,
-    objectiveId: string,
-    startMs: number,
-    endMs: number,
-  ): Promise<SegmentObjectiveEvaluationView['latestJudgment']> {
-    const judgment = await this.runtime.judgments.latest(ownerUserId, objectiveId);
-    if (!judgment || judgment.evaluatedAt < startMs || judgment.evaluatedAt >= endMs) return null;
-    return {
-      judgmentId: judgment.judgmentId,
-      completion: judgment.completion,
-      evaluatedAt: judgment.evaluatedAt,
-      window: judgment.window,
-      metricOutcomes: judgment.metricOutcomes,
-      verdict: judgment.verdict,
-      verdictDecision: judgment.verdictDecision,
-    };
-  }
-
-  /** Per-Objective readiness: scheduler-aligned cohort for trigger + structured counterexamples. */
-  private async buildTracingTrigger(
-    input: { ownerUserId: string; segmentId: string; startMs: number; endMs: number },
-    objectiveIds: string[],
-    completedEnds: number[],
-    tracingMetrics: Array<{ objectiveId: string; metric: MetricDefinition }>,
-    annotationLists: TraceAnnotation[][],
-    unitRefs: EvaluationUnitRef[],
-  ): Promise<{ trigger: SegmentTracingEvaluationView['trigger']; cohortCounterexamples: TraceAnnotation[] }> {
-    const consumedSets = await Promise.all(
-      objectiveIds.map((id) => this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, id)),
-    );
-    const fallbackStart = Math.max(0, input.endMs - EVALUATION_READINESS_WINDOW_MS);
-    const perObjective: SegmentTracingEvaluationView['trigger']['perObjective'] = [];
-    const allCohortCx: TraceAnnotation[] = [];
-    let maxTraceCount = 0;
-    let bestWindowStart = fallbackStart;
-    for (let i = 0; i < objectiveIds.length; i++) {
-      const objectiveId = objectiveIds[i];
-      const windowStart = completedEnds[i] > 0 ? completedEnds[i] : fallbackStart;
-      const count = await this.runtime.traces.countSegmentWindow(
-        input.ownerUserId,
-        input.segmentId,
-        windowStart,
-        input.endMs,
-      );
-      const objCx = objectiveCohort(
-        tracingMetrics,
-        annotationLists,
-        objectiveId,
-        windowStart,
-        input.endMs,
-        consumedSets[i],
-        unitRefs,
-      );
-      allCohortCx.push(...objCx);
-      const thresholds = tracingMetrics
-        .filter((tm) => tm.objectiveId === objectiveId)
-        .map(({ metric }) => (metric.trigger.kind === 'distinct-counterexamples' ? metric.trigger.threshold : null))
-        .filter((v): v is number => v !== null);
-      perObjective.push({
-        objectiveId,
-        traceCount: count,
-        traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
-        windowStartMs: windowStart,
-        windowEndMs: input.endMs,
-        counterexampleCount: thresholds.length > 0 ? objCx.length : null,
-        counterexampleRequired: thresholds.length > 0 ? Math.min(...thresholds) : null,
-      });
-      if (count > maxTraceCount) {
-        maxTraceCount = count;
-        bestWindowStart = windowStart;
-      }
-    }
-    if (objectiveIds.length === 0) {
-      maxTraceCount = await this.runtime.traces.countSegmentWindow(
-        input.ownerUserId,
-        input.segmentId,
-        fallbackStart,
-        input.endMs,
-      );
-      bestWindowStart = fallbackStart;
-    }
-    const cxCounts = perObjective.map((po) => po.counterexampleCount).filter((v): v is number => v !== null);
-    const cxReqs = perObjective.map((po) => po.counterexampleRequired).filter((v): v is number => v !== null);
     return {
       trigger: {
-        traceCount: maxTraceCount,
-        traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
-        windowMs: input.endMs - bestWindowStart,
-        counterexampleCount: cxCounts.length > 0 ? Math.max(...cxCounts) : null,
-        counterexampleRequired: cxReqs.length > 0 ? Math.min(...cxReqs) : null,
-        perObjective,
+        objectiveId: objective.id,
+        evalStatus: current?.evalStatus ?? 'idle',
+        cycleStartMs: cycleStart,
+        cycleEndMs: current?.cycleEnd ?? null,
+        triggeredBy: current?.triggeredBy ?? [],
+        cumulative: { count: cumulativeCount, threshold: model.cycleTrigger.cumulativeThreshold },
+        counterexamples: { count: counterexamples.length, threshold: model.cycleTrigger.counterexampleThreshold },
+        cadence: {
+          elapsedMs: Math.max(0, cycleEnd - cycleStart),
+          thresholdMs: model.cycleTrigger.cadenceDays * 24 * 60 * 60 * 1000,
+          eligible: cumulativeCount > 0,
+        },
       },
-      cohortCounterexamples: distinctIncidents(allCohortCx),
+      counterexamples,
+      objective: {
+        objectiveId: objective.id,
+        objectiveLabel: objective.label,
+        objectiveStatement: objective.statement,
+        evaluationModelId: model.id,
+        evaluationModelLabel: model.label,
+        ruleVersion: model.ruleVersion,
+        unitRefs: unitRefsForObjective(this.runtime, objective.id),
+        metrics: model.metrics.map((metric) => metricView(metric, latestMetrics.get(metric.id))),
+        currentCycle: current ? toSummary(current) : null,
+        latestEvaluation: latestEvaluated?.evaluation
+          ? {
+              cycleId: latestEvaluated.cycleId,
+              overall: latestEvaluated.evaluation.overall,
+              writtenAt: latestEvaluated.evaluation.writtenAt,
+              by: latestEvaluated.evaluation.by,
+              windows: latestEvaluated.windows,
+            }
+          : null,
+        latestGovernance: latestGoverned?.governance
+          ? {
+              cycleId: latestGoverned.cycleId,
+              ...latestGoverned.governance,
+              approval: latestGoverned.approval ?? null,
+            }
+          : null,
+        versionChain,
+      },
     };
+  }
+
+  private requireObjective(objectiveId: string): ObjectiveDefinition {
+    const objective = this.runtime.catalog.registry.objectives.find((candidate) => candidate.id === objectiveId);
+    if (!objective) throw new Error(`segment_evaluation_objective_not_found:${objectiveId}`);
+    return objective;
+  }
+
+  private requireModel(modelId: string): EvaluationModelDefinition {
+    const model = this.runtime.catalog.registry.evaluationModels.find((candidate) => candidate.id === modelId);
+    if (!model) throw new Error(`segment_evaluation_model_not_found:${modelId}`);
+    return model;
   }
 }
 
-/** Scheduler-aligned counterexample cohort: watermark + per-metric window + consumed + selectCandidates. */
-function objectiveCohort(
-  metrics: Array<{ objectiveId: string; metric: MetricDefinition }>,
-  annotations: TraceAnnotation[][],
-  objectiveId: string,
-  windowStart: number,
-  endMs: number,
-  consumed: Set<string>,
-  unitRefs: EvaluationUnitRef[],
-): TraceAnnotation[] {
-  return distinctIncidents(
-    metrics.flatMap((tm, j) => {
-      if (tm.objectiveId !== objectiveId || tm.metric.trigger.kind !== 'distinct-counterexamples') return [];
-      const start = Math.max(windowStart, metricWindowStartFor(tm.metric, endMs));
-      const unconsumed = annotations[j].filter((a) => a.createdAt >= start && !consumed.has(a.annotationId));
-      return selectCandidates(tm.metric, unconsumed).filter((a) =>
-        a.unitRefs.some((au) => unitRefs.some((r) => r.unitType === au.unitType && r.unitId === au.unitId)),
-      );
-    }),
-  );
+function metricView(
+  metric: MetricDefinition,
+  latest: NonNullable<CycleRecord['evaluation']>['metrics'][number] | undefined,
+): SegmentObjectiveEvaluationView['metrics'][number] {
+  return {
+    metricId: metric.id,
+    label: metric.label,
+    kind: metric.kind,
+    evaluatorKind: metric.evaluator.kind,
+    evaluatorRuleRef: metric.evaluator.ruleRef,
+    verdictRule: metric.verdictRule,
+    latestConclusion: latest?.conclusion ?? null,
+    evidenceRefs: latest?.evidenceRefs ?? [],
+  };
 }
 
-/** Scheduler-aligned readiness floor: watermark when set, otherwise 7-day fallback. Never input.startMs. */
-function readinessFloor(completedWindowEnd: number, endMs: number): number {
-  return completedWindowEnd > 0 ? completedWindowEnd : Math.max(0, endMs - EVALUATION_READINESS_WINDOW_MS);
+function toSummary(record: CycleRecord): SegmentCycleSummary {
+  return {
+    cycleId: record.cycleId,
+    version: record.version,
+    versionContentRef: record.versionContentRef,
+    cycleStart: record.cycleStart,
+    cycleEnd: record.cycleEnd ?? null,
+    evalStatus: record.evalStatus,
+    windows: record.windows,
+    triggeredBy: record.triggeredBy ?? [],
+    evaluation: record.evaluation
+      ? {
+          overall: record.evaluation.overall,
+          writtenAt: record.evaluation.writtenAt,
+          by: record.evaluation.by,
+        }
+      : null,
+    governance: record.governance ?? null,
+    approval: record.approval ?? null,
+    rejectReasons: record.rejectReasons ?? [],
+    closedAt: record.closedAt ?? null,
+  };
+}
+
+function distinctIncidents(annotations: TraceAnnotation[]): TraceAnnotation[] {
+  const seen = new Set<string>();
+  return [...annotations]
+    .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
+    .filter((annotation) => {
+      if (seen.has(annotation.incidentKey)) return false;
+      seen.add(annotation.incidentKey);
+      return true;
+    });
 }

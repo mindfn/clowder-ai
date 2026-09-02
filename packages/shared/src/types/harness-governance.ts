@@ -38,8 +38,8 @@ export interface CycleGovernanceHistorySummary {
     metrics: CycleMetricEvaluation[];
     writtenAt: number;
   };
-  governance?: { decision: CycleGovernanceDecision; reason: string; writtenAt: number };
-  approval?: { state: 'approved' | 'skipped' | 'rejected'; reason?: string; at: number };
+  governance?: { decision: CycleGovernanceDecision; reason: string; writtenAt: number; by: string };
+  approval?: { state: 'approved' | 'skipped' | 'rejected'; reason?: string; by?: string; at: number };
 }
 
 export interface CycleGovernanceAssignment {
