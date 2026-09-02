@@ -283,7 +283,6 @@ type ReminderRequestResolution =
       ok: true;
       entry: QueueEntry;
       invocationId: string;
-      coordinator: QueuedMessageCustodyCoordinator;
     }
   | { ok: false; status: 404 | 409 | 503; error: string; code: string };
 
@@ -299,7 +298,6 @@ function resolveReminderRequest(input: {
   threadId: string;
   userId: string;
   invocationTracker: InvocationTrackerLike;
-  coordinator: QueuedMessageCustodyCoordinator | undefined;
   carrierCapability: FreshnessCarrierCapability | undefined;
 }): ReminderRequestResolution {
   if (!input.entry) return { ok: false, status: 404, error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
@@ -308,9 +306,6 @@ function resolveReminderRequest(input: {
   }
   if (input.entry.status === 'processing') {
     return { ok: false, status: 409, error: '该消息已经进入处理，无需提醒', code: 'ENTRY_PROCESSING' };
-  }
-  if (!input.coordinator) {
-    return { ok: false, status: 503, error: '持久回执暂不可用', code: 'RECEIPT_STORE_UNAVAILABLE' };
   }
   if (!input.carrierCapability || input.carrierCapability.deliverySemantics === 'undeclared') {
     return {
@@ -334,7 +329,7 @@ function resolveReminderRequest(input: {
   if (!active || activeUserId !== input.userId || !invocationId) {
     return { ok: false, status: 409, error: '当前没有可接收提醒的工作轮次', code: 'NO_ACTIVE_INVOCATION' };
   }
-  return { ok: true, entry: input.entry, invocationId, coordinator: input.coordinator };
+  return { ok: true, entry: input.entry, invocationId };
 }
 
 /**
@@ -374,14 +369,6 @@ async function guardThreadOwnership(
 export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, opts) => {
   const { threadStore, invocationQueue, queueProcessor, invocationTracker, socketManager, messageStore } = opts;
   const sessionLocks = opts.agentSessionMutex ?? agentSessionMutex;
-  const persistQueueEntries = async (threadId: string, userId: string, entryIds: readonly string[]) => {
-    if (!opts.queueCustodyCoordinator) return;
-    for (const entryId of new Set(entryIds)) {
-      const entry = invocationQueue.getEntrySnapshot(threadId, userId, entryId);
-      if (entry) await opts.queueCustodyCoordinator.persistEntry(entry);
-    }
-  };
-
   const releaseAgentSessionLocks = (
     scope: { threadId: string; userId: string; catId?: string },
     request: FastifyRequest,
@@ -746,7 +733,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         threadId,
         userId: guard.userId,
         invocationTracker,
-        coordinator: opts.queueCustodyCoordinator,
         carrierCapability: opts.resolveCarrierCapability?.(targetCatId as CatId),
       });
       if (!resolution.ok) {
@@ -754,47 +740,18 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         return { error: resolution.error, code: resolution.code };
       }
 
-      const existingAttempt = await resolution.coordinator.findReminderAttempt(
-        resolution.entry,
-        targetCatId,
-        resolution.invocationId,
-      );
-      if (existingAttempt) {
-        return {
-          ok: true,
-          reminderId: existingAttempt.id,
-          targetCatId,
-          invocationId: resolution.invocationId,
-          state: existingAttempt.state,
-          idempotent: true,
-        };
-      }
-
       const reminderId = randomUUID();
-      const persisted = await resolution.coordinator.requestReminder(
-        resolution.entry,
+      const persisted = await invocationQueue.requestReminderDurable(
+        threadId,
+        guard.userId,
+        resolution.entry.id,
         targetCatId,
         resolution.invocationId,
         reminderId,
       );
       if (!persisted) {
-        const racedAttempt = await resolution.coordinator.findReminderAttempt(
-          resolution.entry,
-          targetCatId,
-          resolution.invocationId,
-        );
-        if (racedAttempt) {
-          return {
-            ok: true,
-            reminderId: racedAttempt.id,
-            targetCatId,
-            invocationId: resolution.invocationId,
-            state: racedAttempt.state,
-            idempotent: true,
-          };
-        }
         reply.status(409);
-        return { error: '消息尚未建立可持久回执', code: 'RECEIPT_NOT_PERSISTED' };
+        return { error: '提醒状态已变化，请重试', code: 'REMINDER_STATE_CHANGED' };
       }
       await emitQueueUpdated(
         socketManager,
@@ -804,7 +761,14 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         messageStore,
         'reminder_requested',
       );
-      return { ok: true, reminderId, targetCatId, invocationId: resolution.invocationId, state: 'requested' as const };
+      return {
+        ok: true,
+        reminderId: persisted.attempt.id,
+        targetCatId,
+        invocationId: resolution.invocationId,
+        state: persisted.attempt.state,
+        idempotent: persisted.idempotent,
+      };
     },
   );
 
@@ -1252,20 +1216,24 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         .list(threadId, guard.userId)
         .filter((entry) => queueEntryMessageIds(entry).some((messageId) => managedMessageIds.has(messageId)));
       for (const carrier of managedCarriers) {
-        const current = invocationQueue.getEntrySnapshot(threadId, guard.userId, carrier.id);
-        if (!current || !invocationQueue.removeEntrySnapshotIfUnchanged(current)) continue;
+        const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, carrier.id);
+        if (!claimed) continue;
         try {
-          await opts.queueCustodyCoordinator?.withdrawEntry(current);
+          const withdrawn = await invocationQueue.commitClaimedWithdrawal(threadId, carrier.id);
+          if (!withdrawn) {
+            await invocationQueue.restoreClaimedEntries(threadId, [carrier.id]);
+            continue;
+          }
         } catch (err) {
-          invocationQueue.restoreDurableEntry(current);
+          await invocationQueue.restoreClaimedEntries(threadId, [carrier.id]);
           request.log.error(
-            { err, entryId: current.id, threadId },
+            { err, entryId: carrier.id, threadId },
             'force-reset could not terminalize managed wake carrier; producer remains retired',
           );
           continue;
         }
-        queueProcessor.unregisterEntryCompleteHook?.(current.id);
-        await queueProcessor.finalizeRemovedEntry?.(current, 'user_cancel');
+        queueProcessor.unregisterEntryCompleteHook?.(claimed.id);
+        await queueProcessor.finalizeRemovedEntry?.(claimed, 'user_cancel');
       }
       await emitQueueUpdated(
         socketManager,

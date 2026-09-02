@@ -4565,8 +4565,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const seenAt = Date.now();
       let receiptChanged = false;
       for (const entry of fullyReturnedQueuedEntries) {
-        const before = opts.invocationQueue.getEntrySnapshot(effectiveThreadId, principalUserId, entry.entryId);
-        const newlySeen = opts.invocationQueue.markQueuedSeen(
+        const seen = await opts.invocationQueue.markQueuedSeenDurable(
           effectiveThreadId,
           principalUserId,
           entry.entryId,
@@ -4574,28 +4573,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           queuedSeenInvocationId,
           seenAt,
         );
-        const persistedEntry = opts.invocationQueue.getEntrySnapshot(effectiveThreadId, principalUserId, entry.entryId);
-        const evidenceChanged =
-          before?.queuedSeenInvocationIdByCatId?.[principalCatId] !==
-          persistedEntry?.queuedSeenInvocationIdByCatId?.[principalCatId];
-        const exposureChanged =
-          !(before?.queuedBodyExposures ?? []).some(
-            (exposure) => exposure.targetCatId === principalCatId && exposure.invocationId === queuedSeenInvocationId,
-          ) &&
-          (persistedEntry?.queuedBodyExposures ?? []).some(
-            (exposure) => exposure.targetCatId === principalCatId && exposure.invocationId === queuedSeenInvocationId,
-          );
-        let reminderSeen = false;
-        if (persistedEntry && opts.queueCustodyCoordinator) {
-          await opts.queueCustodyCoordinator.persistEntry(persistedEntry);
-          reminderSeen = await opts.queueCustodyCoordinator.markReminderSeen(
-            persistedEntry,
-            principalCatId,
-            queuedSeenInvocationId,
-          );
-        }
-        receiptChanged = newlySeen || evidenceChanged || exposureChanged || reminderSeen || receiptChanged;
-        if (newlySeen) recordQueuedSeenTelemetry();
+        receiptChanged = seen.changed || receiptChanged;
+        if (seen.newlySeen) recordQueuedSeenTelemetry();
       }
       if (receiptChanged) {
         await emitQueueUpdated(
@@ -6300,34 +6279,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         let changed = false;
         const reminderInvocationId = principal.parentInvocationId ?? principal.invocationId;
         for (const entry of queuedEntries) {
-          const entryChanged = opts.invocationQueue.markQueuedNotified(
+          const entryChanged = await opts.invocationQueue.markQueuedNotifiedAndReminderDeliveredDurable(
             principal.threadId,
             principal.userId,
             entry.entryId,
             principal.catId,
+            reminderInvocationId,
           );
-          if (entryChanged && opts.queueCustodyCoordinator) {
-            const persistedEntry = opts.invocationQueue.getEntrySnapshot(
-              principal.threadId,
-              principal.userId,
-              entry.entryId,
-            );
-            if (persistedEntry) await opts.queueCustodyCoordinator.persistEntry(persistedEntry);
-          }
-          const persistedEntry = opts.invocationQueue.getEntrySnapshot(
-            principal.threadId,
-            principal.userId,
-            entry.entryId,
-          );
-          const reminderChanged =
-            persistedEntry && opts.queueCustodyCoordinator
-              ? await opts.queueCustodyCoordinator.markReminderDelivered(
-                  persistedEntry,
-                  principal.catId,
-                  reminderInvocationId,
-                )
-              : false;
-          changed = entryChanged || reminderChanged || changed;
+          changed = entryChanged || changed;
         }
         if (changed) {
           await emitQueueUpdated(

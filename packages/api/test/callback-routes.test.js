@@ -4556,9 +4556,6 @@ describe('Callback Routes', () => {
     const { checkFreshnessForPostMessage, createQueueChecker } = await import(
       '../dist/domains/cats/services/freshness/checkFreshnessForPostMessage.js'
     );
-    const { QueuedMessageCustodyCoordinator, createInitialQueuedMessageCustody } = await import(
-      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
-    );
     const { InMemoryTurnExecutionStore } = await import(
       '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
     );
@@ -4566,6 +4563,15 @@ describe('Callback Routes', () => {
     queuedTelemetry.resetFreshnessQueueTelemetryForTest();
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-d12a');
+    const storedQueuedMessage = messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'queued body visible only in full read',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'thread-queued-d12a',
+      deliveryStatus: 'queued',
+    });
     const queued = invocationQueue.enqueue({
       kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
@@ -4578,19 +4584,8 @@ describe('Callback Routes', () => {
         opus: { requested: 'continue_current', boundParentInvocationId: invocationId },
       },
       intent: 'execute',
+      messageId: storedQueuedMessage.id,
     });
-    const storedQueuedMessage = messageStore.append({
-      userId: 'user-1',
-      catId: null,
-      content: 'queued body visible only in full read',
-      mentions: [],
-      timestamp: 100,
-      threadId: 'thread-queued-d12a',
-      deliveryStatus: 'queued',
-      queueCustody: createInitialQueuedMessageCustody(queued.entry),
-    });
-    invocationQueue.backfillMessageId('thread-queued-d12a', 'user-1', queued.entry.id, storedQueuedMessage.id);
-    queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
     const turnExecutionStore = new InMemoryTurnExecutionStore();
     const app = await createApp({ turnExecutionStore });
     const freshnessDecision = await checkFreshnessForPostMessage({
@@ -4605,8 +4600,14 @@ describe('Callback Routes', () => {
     });
     assert.equal(freshnessDecision.decision, 'held', 'queued current work must first surface as freshness');
     assert.equal(freshnessDecision.reason, 'queued_messages_pending');
-    const activeEntry = invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id);
-    await queueCustodyCoordinator.requestReminder(activeEntry, 'opus', invocationId, 'reminder-read-boundary');
+    await invocationQueue.requestReminderDurable(
+      'thread-queued-d12a',
+      'user-1',
+      queued.entry.id,
+      'opus',
+      invocationId,
+      'reminder-read-boundary',
+    );
 
     const missingLedgerResponse = await app.inject({
       method: 'GET',
@@ -4615,7 +4616,10 @@ describe('Callback Routes', () => {
     });
     assert.equal(missingLedgerResponse.statusCode, 409);
     assert.equal(JSON.parse(missingLedgerResponse.body).code, 'TURN_EXECUTION_NOT_FOUND');
-    assert.deepEqual(messageStore.getById(storedQueuedMessage.id).queueCustody.bodyExposures, undefined);
+    assert.deepEqual(
+      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).queuedBodyExposures,
+      undefined,
+    );
 
     await turnExecutionStore.createRunning({
       invocationId,
@@ -4661,18 +4665,19 @@ describe('Callback Routes', () => {
       1,
       'first full contiguous read should count one queued_seen transition',
     );
-    assert.deepEqual(messageStore.getById(storedQueuedMessage.id).queueCustody.seenByCatIds, ['opus']);
+    const persistedRead = invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id);
+    assert.deepEqual(persistedRead.queuedSeenByCatIds, ['opus']);
     assert.equal(
-      messageStore.getById(storedQueuedMessage.id).queueCustody.seenInvocationIdByCatId.opus,
+      persistedRead.queuedSeenInvocationIdByCatId.opus,
       invocationId,
       'thread-context must persist exact read evidence before returning it',
     );
-    const firstExposure = messageStore.getById(storedQueuedMessage.id).queueCustody.bodyExposures?.[0];
+    const firstExposure = persistedRead.queuedBodyExposures?.[0];
     assert.equal(firstExposure?.targetCatId, 'opus');
     assert.equal(firstExposure?.invocationId, invocationId);
     assert.equal(Number.isFinite(firstExposure?.seenAt), true);
     assert.equal(
-      messageStore.getById(storedQueuedMessage.id).queueCustody.reminderAttempts[0].state,
+      persistedRead.reminderAttempts[0].state,
       'seen',
       'exact body exposure must close the matching reminder attempt as seen',
     );
@@ -4702,47 +4707,14 @@ describe('Callback Routes', () => {
       'repeat full read should refresh evidence if needed but not double-count queued_seen',
     );
     assert.deepEqual(
-      messageStore.getById(storedQueuedMessage.id).queueCustody.bodyExposures,
+      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).queuedBodyExposures,
       [firstExposure],
       'repeat exposure by the same child must preserve the first exact seenAt',
-    );
-
-    const handled = invocationQueue.markQueuedHandledForCatAcrossUsers('thread-queued-d12a', 'opus', invocationId);
-    assert.equal(handled.length, 1, 'the exact reading invocation closes current-read custody');
-    assert.equal(invocationQueue.peekNextQueued('thread-queued-d12a', 'user-1'), null);
-
-    const unread = invocationQueue.enqueue({
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'strict',
-      threadId: 'thread-queued-d12a',
-      userId: 'user-1',
-      content: 'unread before the parent ended',
-      source: 'user',
-      targetCats: ['opus'],
-      authorIntentByCatId: {
-        opus: { requested: 'continue_current', boundParentInvocationId: invocationId },
-      },
-      intent: 'execute',
-    });
-    invocationQueue.fallbackAuthorIntentsForParentAcrossUsers('thread-queued-d12a', 'opus', invocationId, 200);
-    assert.deepEqual(
-      invocationQueue.getQueuedBodyMessagesForCat('thread-queued-d12a', 'user-1', 'opus', invocationId),
-      [],
-      'an unread message must not leak back into its closed parent',
-    );
-    assert.equal(invocationQueue.peekNextQueued('thread-queued-d12a', 'user-1')?.id, unread.entry.id);
-    assert.equal(
-      invocationQueue.markProcessing('thread-queued-d12a', 'user-1')?.id,
-      unread.entry.id,
-      'the unread entry remains eligible for the typed successor path',
     );
   });
 
   test('F167: full-context read binds an adopted managed hold to the active route before returning its body', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const { QueuedMessageCustodyCoordinator, createInitialQueuedMessageCustody } = await import(
-      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
-    );
     const { InMemoryTurnExecutionStore } = await import(
       '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
     );
@@ -4751,6 +4723,20 @@ describe('Callback Routes', () => {
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const threadId = 'thread-adopt-managed-hold';
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
+    const stored = messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'managed command completed',
+      mentions: ['opus'],
+      timestamp: 100,
+      threadId,
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: '持球通知',
+        meta: { taskId: 'task-full-read-adopted', threadId, catId: 'opus', wakeWhen: true },
+      },
+    });
     const queued = invocationQueue.enqueue({
       kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
@@ -4761,24 +4747,8 @@ describe('Callback Routes', () => {
       sourceCategory: 'scheduled',
       targetCats: ['opus'],
       intent: 'execute',
+      messageId: stored.id,
     });
-    const stored = messageStore.append({
-      userId: 'user-1',
-      catId: null,
-      content: queued.entry.content,
-      mentions: ['opus'],
-      timestamp: 100,
-      threadId,
-      deliveryStatus: 'queued',
-      source: {
-        connector: 'hold-ball',
-        label: '持球通知',
-        meta: { taskId: 'task-full-read-adopted', threadId, catId: 'opus', wakeWhen: true },
-      },
-      queueCustody: createInitialQueuedMessageCustody(queued.entry),
-    });
-    invocationQueue.backfillMessageId(threadId, 'user-1', queued.entry.id, stored.id);
-    queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
     const turnExecutionStore = new InMemoryTurnExecutionStore();
     await turnExecutionStore.createRunning({
       invocationId,

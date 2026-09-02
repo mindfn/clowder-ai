@@ -15,6 +15,7 @@ import type {
   CatRoutingError,
   MessageFrom,
   QueueAuthorIntent,
+  QueueReminderAttempt,
   QueueTargetAttemptTerminalReason,
   WaitContinuationCarrierV1,
 } from '@cat-cafe/shared';
@@ -91,6 +92,8 @@ export interface QueueEntry {
   steerRequestedByCatIds?: string[];
   /** F264: exact replacement invocation after provider-start read binding. */
   steeredInvocationIdByCatId?: Record<string, string>;
+  /** Durable reminder delivery attempts for this scalar target. */
+  reminderAttempts?: QueueReminderAttempt[];
   /** Restart-stable exact group fence while pre-start supersession terminalizes durable carriers. */
   prestartRetirement?: QueuePrestartRetirementIntent;
   intent: string;
@@ -579,6 +582,9 @@ export class InvocationQueue {
       ...(targetCatId && entry.delivery.steeredInvocationId
         ? { steeredInvocationIdByCatId: { [targetCatId]: entry.delivery.steeredInvocationId } }
         : {}),
+      ...(entry.delivery.reminderAttempts?.length
+        ? { reminderAttempts: entry.delivery.reminderAttempts.map((attempt) => structuredClone(attempt)) }
+        : {}),
       intent: entry.execution.intent,
       status: entry.status === 'processing' ? 'processing' : 'queued',
       createdAt: entry.enqueuedAt,
@@ -883,6 +889,156 @@ export class InvocationQueue {
     }
     this.cacheLedgerEntries([committed.entry]);
     return true;
+  }
+
+  /**
+   * Apply a queued-row metadata mutation through the existing ledger claim/commit
+   * CAS. This deliberately reuses the five ADR-043 primitives instead of adding
+   * a side-channel persistence API for receipts.
+   */
+  private async mutateQueuedLedgerEntry(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    mutate: (entry: QueueLedgerEntry) => boolean,
+  ): Promise<{ changed: boolean; entry: QueueEntry } | null> {
+    const cached = this.findEntry(threadId, userId, entryId);
+    if (!cached || cached.status !== 'queued') return null;
+    const claimId = randomUUID();
+    const claimedAt = Date.now();
+    const claimed = await this.ledgerStore.claim(threadId, entryId, claimId, claimedAt);
+    if (claimed.outcome !== 'claimed' || !claimed.entries[0]) return null;
+    const replacement = structuredClone(claimed.entries[0]);
+    let changed: boolean;
+    try {
+      changed = mutate(replacement);
+    } catch (error) {
+      await this.ledgerStore.restore(threadId, entryId, claimId);
+      throw error;
+    }
+    const committed = await this.ledgerStore.commit(threadId, entryId, claimId, 'queued', claimedAt, replacement);
+    if (committed.outcome !== 'updated') {
+      await this.ledgerStore.restore(threadId, entryId, claimId);
+      return null;
+    }
+    const [entry] = this.cacheLedgerEntries([committed.entry]);
+    return entry ? { changed, entry } : null;
+  }
+
+  async requestReminderDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    invocationId: string,
+    reminderId: string,
+    requestedAt = Date.now(),
+  ): Promise<{ attempt: QueueReminderAttempt; idempotent: boolean } | null> {
+    let attempt: QueueReminderAttempt | undefined;
+    let idempotent = false;
+    const result = await this.mutateQueuedLedgerEntry(threadId, userId, entryId, (row) => {
+      if (row.target.kind !== 'cat' || row.target.catId !== targetCatId) return false;
+      const existing = row.delivery.reminderAttempts?.find(
+        (candidate) => candidate.targetCatId === targetCatId && candidate.invocationId === invocationId,
+      );
+      if (existing) {
+        attempt = structuredClone(existing);
+        idempotent = true;
+        return false;
+      }
+      attempt = {
+        id: reminderId,
+        targetCatId,
+        invocationId,
+        state: 'requested',
+        requestedAt,
+      };
+      row.delivery.reminderAttempts = [...(row.delivery.reminderAttempts ?? []), attempt];
+      return true;
+    });
+    return result && attempt ? { attempt, idempotent } : null;
+  }
+
+  async markQueuedSeenDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    invocationId: string,
+    seenAt = Date.now(),
+  ): Promise<{ changed: boolean; newlySeen: boolean }> {
+    let newlySeen = false;
+    const result = await this.mutateQueuedLedgerEntry(threadId, userId, entryId, (row) => {
+      if (row.target.kind !== 'cat' || row.target.catId !== targetCatId) return false;
+      let changed = false;
+      if (row.delivery.seenAt === undefined) {
+        row.delivery.seenAt = seenAt;
+        newlySeen = true;
+        changed = true;
+      }
+      if (row.delivery.seenInvocationId !== invocationId) {
+        row.delivery.seenInvocationId = invocationId;
+        changed = true;
+      }
+      if (row.delivery.notifiedAt !== undefined) {
+        delete row.delivery.notifiedAt;
+        changed = true;
+      }
+      if (
+        !(row.delivery.bodyExposures ?? []).some(
+          (exposure) => exposure.targetCatId === targetCatId && exposure.invocationId === invocationId,
+        )
+      ) {
+        row.delivery.bodyExposures = [...(row.delivery.bodyExposures ?? []), { targetCatId, invocationId, seenAt }];
+        changed = true;
+      }
+      const attempts = (row.delivery.reminderAttempts ?? []).map((candidate) => {
+        if (
+          candidate.targetCatId !== targetCatId ||
+          candidate.invocationId !== invocationId ||
+          (candidate.state !== 'requested' && candidate.state !== 'delivered')
+        ) {
+          return candidate;
+        }
+        changed = true;
+        return { ...candidate, state: 'seen' as const, seenAt };
+      });
+      if (changed && row.delivery.reminderAttempts) row.delivery.reminderAttempts = attempts;
+      return changed;
+    });
+    return { changed: result?.changed ?? false, newlySeen };
+  }
+
+  async markQueuedNotifiedAndReminderDeliveredDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    invocationId: string,
+    deliveredAt = Date.now(),
+  ): Promise<boolean> {
+    const result = await this.mutateQueuedLedgerEntry(threadId, userId, entryId, (row) => {
+      if (row.target.kind !== 'cat' || row.target.catId !== targetCatId) return false;
+      let changed = false;
+      if (row.delivery.seenAt === undefined && row.delivery.notifiedAt === undefined) {
+        row.delivery.notifiedAt = deliveredAt;
+        changed = true;
+      }
+      const attempts = (row.delivery.reminderAttempts ?? []).map((candidate) => {
+        if (
+          candidate.targetCatId !== targetCatId ||
+          candidate.invocationId !== invocationId ||
+          candidate.state !== 'requested'
+        ) {
+          return candidate;
+        }
+        changed = true;
+        return { ...candidate, state: 'delivered' as const, deliveredAt };
+      });
+      if (changed && row.delivery.reminderAttempts) row.delivery.reminderAttempts = attempts;
+      return changed;
+    });
+    return result?.changed ?? false;
   }
 
   async claimPreAdmissionFailureAcrossUsersDurable(threadId: string, entryId: string): Promise<QueueEntry | null> {

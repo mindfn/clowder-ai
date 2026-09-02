@@ -9,6 +9,7 @@
 
 const MESSAGE_STORE_ADAPTED = Symbol('message-store-from-fixtures');
 const INVOCATION_QUEUE_ADAPTED = Symbol('invocation-queue-from-fixtures');
+let adaptedQueueSourceSequence = 0;
 
 export function canonicalTestMessageInput(input) {
   const { catId, lifecycle: legacyLifecycle, ...rest } = input;
@@ -73,8 +74,20 @@ export function canonicalTestQueueInput(input) {
 
 export function adaptInvocationQueue(queue) {
   if (queue[INVOCATION_QUEUE_ADAPTED]) return queue;
-  const enqueue = queue.enqueue.bind(queue);
-  queue.enqueue = (input) => enqueue(canonicalTestQueueInput(input));
+  const enqueueDurableNow = queue.enqueueDurableNow.bind(queue);
+  queue.enqueue = (input) => {
+    const canonical = canonicalTestQueueInput(input);
+    adaptedQueueSourceSequence += 1;
+    return enqueueDurableNow({
+      ...canonical,
+      sourceId:
+        canonical.sourceId ??
+        canonical.messageId ??
+        canonical.idempotencyKey ??
+        canonical.continuationKey ??
+        `adapted-queue-source-${adaptedQueueSourceSequence}`,
+    });
+  };
   Object.defineProperty(queue, INVOCATION_QUEUE_ADAPTED, { value: true });
   return queue;
 }

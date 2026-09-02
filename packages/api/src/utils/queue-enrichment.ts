@@ -101,9 +101,15 @@ function latestQueueEntryExposure(
 }
 
 function hasAgentLiveReceiptEvidence(entry: QueueEntry): boolean {
-  return (
-    entry.from.kind === 'agent' &&
-    Boolean(entry.queuedSeenByCatIds?.length || Object.keys(entry.queuedAwakenedInvocationIdByCatId ?? {}).length)
+  return Boolean(
+    entry.queuedNotifiedByCatIds?.length ||
+      entry.queuedSeenByCatIds?.length ||
+      entry.queuedFailedByCatIds?.length ||
+      entry.queuedHandledByCatIds?.length ||
+      entry.steerRequestedByCatIds?.length ||
+      entry.reminderAttempts?.length ||
+      Object.keys(entry.queuedAwakenedInvocationIdByCatId ?? {}).length ||
+      Object.keys(entry.steeredInvocationIdByCatId ?? {}).length,
   );
 }
 
@@ -170,7 +176,7 @@ function projectAgentQueueReceipt(
     version: 1,
     entryId: entry.id,
     targets: targetCats.map((catId) => projectAgentReceiptTarget(entry, catId, targetStates[catId])),
-    reminderAttempts: [],
+    reminderAttempts: (entry.reminderAttempts ?? []).map((attempt) => ({ ...attempt })),
   };
 }
 

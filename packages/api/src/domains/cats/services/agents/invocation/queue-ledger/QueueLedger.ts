@@ -4,6 +4,7 @@ import type {
   CatRoutingError,
   MessageFrom,
   QueueAuthorIntent,
+  QueueReminderAttempt,
   QueueTargetAttemptTerminalReason,
   WaitContinuationCarrierV1,
 } from '@cat-cafe/shared';
@@ -58,6 +59,7 @@ export interface QueueLedgerDelivery {
   handledAt?: number;
   steerRequestedAt?: number;
   steeredInvocationId?: string;
+  reminderAttempts?: readonly QueueReminderAttempt[];
 }
 
 /**
