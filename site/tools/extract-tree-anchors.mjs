@@ -27,6 +27,10 @@ const MAX_FILL = 0.13; // reject anything thicker than a twig (trunk, limb joint
 const MIN_LEAN = 0.3; // how far the local centre of mass must sit off the pixel
 const MIN_GAP = 38; // suppress tips closer than this to an already-kept tip
 const SKIRT = 180; // ignore "tips" this close to the ground: root flare, not twigs
+const SPRIG_R = 16; // half-window used to read the local branch axis at a mid-twig point
+const SPRIG_GAP = 20; // spacing between mid-twig leaf anchors
+const SPRIG_FILL = 0.3; // a twig fills more of the smaller sprig window than of the tip window
+const SPRIG_CLEAR = 26; // keep mid-twig anchors clear of the tips
 
 // Where to look for each limb's main stem. Order matches roadmap-tree-data.js.
 // The seed itself is the thickest wood in the region, so it lands on the stem
@@ -77,6 +81,40 @@ function findTips(mask, sums, w, h) {
     if (kept.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < MIN_GAP)) continue;
     const len = Math.hypot(p.dx, p.dy) || 1;
     kept.push({ x: p.x, y: p.y, ux: +(p.dx / len).toFixed(3), uy: +(p.dy / len).toFixed(3) });
+  }
+  return kept;
+}
+
+/**
+ * Mid-twig anchors: thin wood that is not an endpoint, tagged with the normal of the
+ * local branch axis (from the neighbourhood's principal direction) so leaves can be
+ * scattered to either side of the branch instead of only at its tip.
+ */
+function findSprigs(mask, sums, w, h, tips) {
+  const { sMask, sX, sY, sXX, sYY, sXY } = sums;
+  const area = (2 * SPRIG_R + 1) ** 2;
+  const found = [];
+  for (let y = SPRIG_R; y < Math.min(h, GROUND - SKIRT); y += 2) {
+    for (let x = SPRIG_R; x < w - SPRIG_R; x += 2) {
+      if (!mask[y * w + x]) continue;
+      const box = [x - SPRIG_R, y - SPRIG_R, x + SPRIG_R, y + SPRIG_R];
+      const n = windowSum(sMask, w, ...box);
+      if (n < 10 || n > area * SPRIG_FILL) continue;
+      const mx = windowSum(sX, w, ...box) / n;
+      const my = windowSum(sY, w, ...box) / n;
+      const cxx = windowSum(sXX, w, ...box) / n - mx * mx;
+      const cyy = windowSum(sYY, w, ...box) / n - my * my;
+      const cxy = windowSum(sXY, w, ...box) / n - mx * my;
+      const angle = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+      found.push({ x, y, n, nx: -Math.sin(angle), ny: Math.cos(angle) });
+    }
+  }
+  found.sort((a, b) => a.n - b.n);
+  const kept = [];
+  for (const p of found) {
+    if (tips.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < SPRIG_CLEAR)) continue;
+    if (kept.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < SPRIG_GAP)) continue;
+    kept.push({ x: p.x, y: p.y, nx: +p.nx.toFixed(3), ny: +p.ny.toFixed(3) });
   }
   return kept;
 }
@@ -168,31 +206,46 @@ function main() {
   const { width: w, height: h, alpha } = readAlpha(ART);
   const mask = new Float64Array(w * h);
   const soft = new Uint8Array(w * h);
-  const mx = new Float64Array(w * h);
-  const my = new Float64Array(w * h);
+  const fields = { mx: new Float64Array(w * h), my: new Float64Array(w * h) };
+  fields.mxx = new Float64Array(w * h);
+  fields.myy = new Float64Array(w * h);
+  fields.mxy = new Float64Array(w * h);
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const i = y * w + x;
       if (alpha[i] > 16) soft[i] = 1;
       if (alpha[i] <= 64) continue;
       mask[i] = 1;
-      mx[i] = x;
-      my[i] = y;
+      fields.mx[i] = x;
+      fields.my[i] = y;
+      fields.mxx[i] = x * x;
+      fields.myy[i] = y * y;
+      fields.mxy[i] = x * y;
     }
   }
-  const sums = { sMask: integral(mask, w, h), sX: integral(mx, w, h), sY: integral(my, w, h) };
+  const sums = {
+    sMask: integral(mask, w, h),
+    sX: integral(fields.mx, w, h),
+    sY: integral(fields.my, w, h),
+    sXX: integral(fields.mxx, w, h),
+    sYY: integral(fields.myy, w, h),
+    sXY: integral(fields.mxy, w, h),
+  };
   const seeds = LIMB_REGIONS.map((limb) => findSeed(mask, sums.sMask, w, limb.region));
   const { label, depth } = labelLimbs(soft, w, h, seeds);
   const tips = findTips(mask, sums, w, h);
+  const sprigs = findSprigs(mask, sums, w, h, tips);
   let orphans = 0;
-  const owned = tips.map((p) => {
+  const own = (p) => {
     const idx = p.y * w + p.x;
     if (label[idx] >= 0) return { ...p, limb: label[idx], d: depth[idx] };
     const adopted = adoptOrphan(label, depth, w, h, p);
     if (!adopted) return null;
     orphans += 1;
     return { ...p, limb: adopted.label, d: adopted.depth };
-  });
+  };
+  const owned = tips.map(own);
+  const ownedSprigs = sprigs.map(own);
   const limbs = LIMB_REGIONS.map((limb, i) => ({
     id: limb.id,
     seed: [seeds[i].x, seeds[i].y],
@@ -200,6 +253,9 @@ function main() {
       .filter((p) => p && p.limb === i)
       .map(({ x, y, ux, uy, d }) => ({ x, y, ux, uy, d }))
       .sort((a, b) => b.d - a.d),
+    sprigs: ownedSprigs
+      .filter((p) => p && p.limb === i)
+      .map(({ x, y, nx, ny }) => ({ x, y, nx, ny })),
   }));
   const loose = owned.filter((p) => !p);
   const payload = {
@@ -211,7 +267,9 @@ function main() {
   };
   writeFileSync(OUT, `${JSON.stringify(payload, null, 2)}\n`);
   process.stdout.write(
-    `tips=${tips.length} ${limbs.map((l) => `${l.id}=${l.tips.length}`).join(' ')} adopted=${orphans} unassigned=${loose.length}\n-> ${OUT}\n`,
+    `tips=${tips.length} sprigs=${sprigs.length} ${limbs
+      .map((l) => `${l.id}=${l.tips.length}+${l.sprigs.length}`)
+      .join(' ')} adopted=${orphans} unassigned=${loose.length}\n-> ${OUT}\n`,
   );
 }
 

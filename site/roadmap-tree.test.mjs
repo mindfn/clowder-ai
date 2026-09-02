@@ -224,6 +224,25 @@ describe('painted tree anchors', () => {
     }
   });
 
+  it('fills the canopy: every limb gets mid-twig anchors and a mass of leaves', () => {
+    for (const limb of anchors.limbs) {
+      assert.ok(limb.sprigs.length >= 8, `${limb.id} needs mid-twig anchors, got ${limb.sprigs.length}`);
+      for (const sprig of limb.sprigs) {
+        assert.ok(Math.abs(Math.hypot(sprig.nx, sprig.ny) - 1) < 0.02, `${limb.id} sprig needs a unit normal`);
+      }
+    }
+    const tree = geo.build(data, 20260902);
+    geo.bindToPainted(tree, anchors, (x, y) => ({ x: x * 0.625, y: 317.5 + y * 0.625 }));
+    assert.ok(tree.leaves.length > 500, `a big tree needs a canopy, got ${tree.leaves.length} leaves`);
+    assert.ok(
+      tree.leaves.some((l) => l.clump),
+      'the canopy needs soft masses behind the leaves',
+    );
+    for (const leaf of tree.leaves) {
+      if (!leaf.node.startsWith('crown-')) assert.ok(leaf.size > 0, `${leaf.id} has no size`);
+    }
+  });
+
   it('gives every fruit its own twig so nothing stacks up', () => {
     const tree = geo.build(data, 20260902);
     geo.bindToPainted(tree, anchors, (x, y) => ({ x: x * 0.625, y: 317.5 + y * 0.625 }));

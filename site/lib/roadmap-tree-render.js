@@ -62,6 +62,22 @@
     outer.style.setProperty('--ph', `${(-leaf.phase * 4).toFixed(2)}s`);
     outer.style.setProperty('--dur', `${(3.2 + leaf.phase * 2.4).toFixed(2)}s`);
     const inner = el('g', { class: 'rt-leaf-in' }, outer);
+    if (leaf.clump) {
+      // A soft mass behind the individual leaves: without it a few hundred separate leaves
+      // still read as a sapling instead of a canopy.
+      outer.classList.add('rt-clump');
+      for (const [cx, cy, r] of [
+        [0, 0, 1],
+        [13, -5, 0.78],
+        [-11, 4, 0.72],
+        [3, 9, 0.66],
+      ]) {
+        el('circle', { cx, cy, r: fmt(r * 20) }, inner);
+      }
+      leaf.el = inner;
+      leaf.base = `translate(${fmt(leaf.x)} ${fmt(leaf.y)}) rotate(${fmt(leaf.angle * (180 / Math.PI))}) scale(${fmt(s)})`;
+      return outer;
+    }
     el('path', { d: 'M0 0 C4 -7 14 -8 20 0 C14 8 4 7 0 0 Z' }, inner);
     el('path', { d: 'M1 0 L17 0', class: 'rt-vein' }, inner);
     leaf.el = inner;
@@ -161,6 +177,39 @@
     return g;
   }
 
+  /**
+   * The meadow the seed is planted in: two bands of grass with a soft wavy edge, plus tufts.
+   * It also hides the seam where the painted soil layer meets the ground line.
+   */
+  function meadow(parent, V) {
+    const rng = geo.mulberry32(0x6d3a55);
+    const grass = el('g', { class: 'rt-grass' }, parent);
+    const band = (top, depth, cls) => {
+      const steps = 22;
+      const pts = [];
+      for (let i = 0; i <= steps; i += 1) {
+        const x = (V.w * i) / steps;
+        pts.push(`${fmt(x)} ${fmt(top + Math.sin(i * 1.7 + rng()) * 2.5)}`);
+      }
+      el('path', { d: `M0 ${fmt(top + depth)} L${pts.join(' L')} L${V.w} ${fmt(top + depth)} Z`, class: cls }, grass);
+    };
+    band(V.ground - 9, 20, 'rt-grass-far');
+    band(V.ground - 3, 16, 'rt-grass-near');
+    for (let i = 0; i < 46; i += 1) {
+      const x = rng() * V.w;
+      const h = 6 + rng() * 8;
+      const lean = (rng() - 0.5) * 6;
+      el(
+        'path',
+        {
+          d: `M${fmt(x)} ${V.ground + 2} Q ${fmt(x + lean)} ${fmt(V.ground - h * 0.6)} ${fmt(x + lean * 2)} ${fmt(V.ground - h)}`,
+          class: 'rt-tuft',
+        },
+        grass,
+      );
+    }
+  }
+
   function buildDefs(svg, data) {
     const defs = el('defs', {}, svg);
     const grads = [...data.branches.map((b) => b.color), 'green'];
@@ -172,6 +221,10 @@
     const soil = el('linearGradient', { id: 'rt-grad-soil', x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
     el('stop', { offset: '0%', class: 'rt-soil-hi' }, soil);
     el('stop', { offset: '100%', class: 'rt-soil-lo' }, soil);
+    const seam = el('linearGradient', { id: 'rt-grad-soil-fade', x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+    el('stop', { offset: '0%', class: 'rt-seam-clear' }, seam);
+    el('stop', { offset: '55%', class: 'rt-seam-solid' }, seam);
+    el('stop', { offset: '100%', class: 'rt-seam-solid' }, seam);
     const glow = el('filter', { id: 'rt-blur', x: '-50%', y: '-50%', width: '200%', height: '200%' }, defs);
     el('feGaussianBlur', { stdDeviation: 6 }, glow);
     return defs;
@@ -207,6 +260,7 @@
       { d: `M0 ${V.ground} Q ${V.cx} ${V.ground - 10} ${V.w} ${V.ground}`, class: 'rt-ground-line' },
       layers.ground,
     );
+    meadow(layers.ground, V);
     el('ellipse', { cx: V.cx, cy: V.ground + 4, rx: 150, ry: 12, class: 'rt-shadow' }, layers.ground);
     const seed = el('g', { class: 'rt-seed' }, layers.ground);
     el('ellipse', { cx: V.cx, cy: V.ground + 1, rx: 26, ry: 7, class: 'rt-mound' }, seed);
@@ -280,8 +334,10 @@
       svg.classList.add('rt-raster');
       const woodClip = el('clipPath', { id: 'rt-clip-raster' }, defs);
       const circle = el('circle', { cx: V.cx, cy: V.ground, r: 0 }, woodClip);
+      // Roots grow out of the root collar the way the branches grow out of the trunk, rather
+      // than a curtain sliding down the soil.
       const rootClip = el('clipPath', { id: 'rt-clip-raster-roots' }, defs);
-      const rootRect = el('rect', { x: 0, y: V.ground - 2, width: V.w, height: 0 }, rootClip);
+      const rootCircle = el('circle', { cx: V.cx, cy: V.ground, r: 0 }, rootClip);
       const place = (href, clipId, cls, host) =>
         el(
           'image',
@@ -298,20 +354,34 @@
         );
       if (options.raster.roots) {
         place(options.raster.roots, 'rt-clip-raster-roots', 'rt-raster-roots', layers.roots);
+        // The painted soil block ends on a hard edge; wash it into the flat earth fill below.
+        const seam = rasterTop + RASTER.h * rasterScale;
+        el(
+          'rect',
+          {
+            x: 0,
+            y: fmt(seam - 70),
+            width: V.w,
+            height: fmt(V.h - seam + 70),
+            fill: 'url(#rt-grad-soil-fade)',
+          },
+          layers.roots,
+        );
       }
       place(options.raster.wood, 'rt-clip-raster', 'rt-raster-wood', layers.raster);
       raster = {
         circle,
-        rootRect,
+        rootCircle,
         reach: Math.hypot(V.w / 2, V.ground - rasterTop) + 20,
-        soil: (RASTER.h - RASTER.ground) * rasterScale + 2,
+        rootReach: Math.hypot(V.w / 2, (RASTER.h - RASTER.ground) * rasterScale) + 20,
       };
     }
 
     function update(G) {
       if (raster) {
         raster.circle.setAttribute('r', fmt(raster.reach * geo.clamp01((G - 2) / 5)));
-        raster.rootRect.setAttribute('height', fmt(raster.soil * geo.clamp01((G - 1) / 0.9)));
+        const root = geo.clamp01((G - 1) / 0.9);
+        raster.rootCircle.setAttribute('r', fmt(raster.rootReach * (1 - (1 - root) ** 2)));
       }
       for (const node of tree.nodes) growWood(node, geo.progress(node, G));
       for (const leaf of tree.leaves) growSprout(leaf, geo.progress(leaf, G), true);

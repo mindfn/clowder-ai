@@ -123,15 +123,24 @@
       { x: -140, dir: 1 },
     ];
 
+    // Chapter 0: the three of them close a ring around the seed — one kneeling to plant it,
+    // one facing in from the far side, one standing back a step behind it.
+    const RING = [
+      { x: V.cx - 62, y: V.ground, dir: 1, scale: 1 },
+      { x: V.cx + 66, y: V.ground, dir: -1, scale: 1 },
+      { x: V.cx + 6, y: V.ground - 16, dir: 1, scale: 0.82 },
+    ];
     function seedScene(t) {
       return cats.map((_, i) => {
         const from = OFFSTAGE[i];
-        const to = [V.cx - 70, V.cx + 70, V.cx - 150][i];
+        const spot = RING[i];
         const walk = ease(seg(t, 0.02 + i * 0.05, 0.42 + i * 0.05));
-        const x = geo.lerp(from.x, to, walk);
-        if (walk < 1) return { x, y: V.ground, dir: from.dir, pose: 'walk' };
-        if (i === 0 && t < 0.62) return { x, y: V.ground, dir: 1, pose: 'dig' };
-        return { x, y: V.ground, dir: i === 1 ? -1 : 1, pose: t > 0.62 ? 'sit' : 'stand' };
+        const x = geo.lerp(from.x, spot.x, walk);
+        const y = geo.lerp(V.ground, spot.y, walk);
+        const scale = geo.lerp(1, spot.scale, walk);
+        if (walk < 1) return { x, y, scale, dir: from.dir, pose: 'walk' };
+        if (i === 0 && t < 0.62) return { ...spot, pose: 'dig' };
+        return { ...spot, pose: t > 0.62 ? 'sit' : 'stand' };
       });
     }
 
@@ -193,7 +202,8 @@
       const key = cat.sprites[want] ? want : cat.sprites[cat.roles?.[want]] ? cat.roles[want] : 'sit';
       const sprite = cat.sprites[key];
       const flip = sprite.face && sprite.face !== s.dir ? -1 : 1;
-      cat.el.setAttribute('transform', `translate(${fmt(s.x)} ${fmt(s.y)}) scale(${flip} 1)`);
+      const depth = s.scale || 1;
+      cat.el.setAttribute('transform', `translate(${fmt(s.x)} ${fmt(s.y)}) scale(${fmt(flip * depth)} ${fmt(depth)})`);
       for (const [name, sp] of Object.entries(cat.sprites)) sp.el.style.display = name === key ? '' : 'none';
       for (const p of POSES) cat.el.classList.toggle(`is-${p}`, s.pose === p);
     }

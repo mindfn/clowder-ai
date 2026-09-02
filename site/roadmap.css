@@ -10,12 +10,15 @@
   --rt-bark: #7a5a3c;
   --rt-bark-light: #a07a52;
   --rt-root: #6b4a30;
-  --rt-soil-hi: #7a5a3c;
-  --rt-soil-lo: #3c2a1b;
+  /* Matched to the painted soil block so the two never show a seam. */
+  --rt-soil-hi: #3d2a1a;
+  --rt-soil-lo: #241810;
   --rt-ink: #1c1917;
-  --rt-sky-a: #fdf8f0;
-  --rt-sky-b: #e6f0fb;
+  --rt-sky-a: #dcefff;
+  --rt-sky-b: #78b8ea;
   --rt-ground: #9bbf7a;
+  --rt-grass-far: #6b9c58;
+  --rt-grass-near: #85b968;
   --rt-wood-dark: #5f4229;
   --rt-plank: #c9a06a;
   --rt-post: #8b6a45;
@@ -152,8 +155,76 @@ html.dark .rt-rail-btn {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(180deg, var(--rt-sky-b) 0%, var(--rt-sky-a) 100%);
+  background: linear-gradient(180deg, var(--rt-sky-b) 0%, var(--rt-sky-a) 62%, var(--rt-sky-a) 100%);
   transition: filter 0.6s ease;
+}
+/* Clouds live in the panel, not the scene, so the chapter camera never zooms them. */
+.rt-clouds {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 62%;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+.rt-cloud {
+  fill: #fff;
+  opacity: 0.85;
+  animation: rt-drift linear infinite;
+}
+.rt-cloud--1 {
+  animation-duration: 150s;
+  opacity: 0.9;
+}
+.rt-cloud--2 {
+  animation-duration: 210s;
+  animation-delay: -70s;
+  opacity: 0.6;
+}
+.rt-cloud--3 {
+  animation-duration: 260s;
+  animation-delay: -160s;
+  opacity: 0.75;
+}
+.rt-cloud--4 {
+  animation-duration: 185s;
+  animation-delay: -40s;
+  opacity: 0.5;
+}
+@keyframes rt-drift {
+  from {
+    transform: translateX(-320px);
+  }
+  to {
+    transform: translateX(1240px);
+  }
+}
+html.dark .rt-clouds {
+  opacity: 0.22;
+}
+
+.rt-grass-far {
+  fill: var(--rt-grass-far);
+}
+.rt-grass-near {
+  fill: var(--rt-grass-near);
+}
+.rt-tuft {
+  fill: none;
+  stroke: #5f9950;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+html.dark .rt-grass-far {
+  fill: #2f5330;
+}
+html.dark .rt-grass-near {
+  fill: #3f6b3a;
+}
+html.dark .rt-tuft {
+  stroke: #2b4d2c;
 }
 .rt-stage[data-chapter="1"] .rt-sky {
   filter: brightness(0.86) saturate(0.7);
@@ -424,6 +495,14 @@ html.dark .rt-wood-hi {
 .rt-underground .rt-soil {
   opacity: 0.92;
 }
+.rt-seam-clear {
+  stop-color: var(--rt-soil-lo);
+  stop-opacity: 0;
+}
+.rt-seam-solid {
+  stop-color: var(--rt-soil-lo);
+  stop-opacity: 1;
+}
 .rt-soil-hi {
   stop-color: var(--rt-soil-hi);
 }
@@ -456,6 +535,15 @@ html.dark .rt-shadow {
 .rt-leaf path {
   fill: var(--leaf);
   stroke: none;
+}
+/* The mass is one tree's foliage: mostly leaf-green, with only a hint of the limb's hue.
+   The individual leaves on top carry the branch colour. */
+.rt-clump circle {
+  fill: color-mix(in oklab, var(--rt-green) 72%, var(--leaf));
+  opacity: 0.62;
+}
+.rt-clump circle:first-child {
+  opacity: 0.5;
 }
 .rt-leaf .rt-vein {
   fill: none;
@@ -877,6 +965,7 @@ html.dark .rt-card-item {
 
 /* ---------- Reduced motion ---------- */
 .rt-story .rt-reduced *,
+.rt-reduced .rt-cloud,
 .rt-story .rt-reduced *::before {
   animation: none;
   transition: none;
@@ -949,7 +1038,6 @@ html.dark .rt-card-item {
 .rt-raster .rt-layer--wood,
 .rt-raster .rt-branch-wood,
 .rt-raster .rt-layer--crown .rt-wood,
-.rt-raster .rt-layer--roots .rt-wood,
-.rt-raster .rt-soil {
+.rt-raster .rt-layer--roots .rt-wood {
   display: none;
 }

@@ -10,6 +10,8 @@
  */
 (function attachRoadmapTreeCanopy(global) {
   const geo = global.ClowderRoadmapGeometry;
+  const TIP_LEAVES = 6; // leaves clustered at a twig end
+  const SPRIG_LEAVES = 4; // leaves flanking a mid-twig anchor
 
   /** Greedy farthest-point sampling: `count` tips that stay as far apart as possible. */
   function spread(tips, count) {
@@ -64,17 +66,45 @@
         fruit.y = tip.y + tip.uy * 6 * s + fruit.r * 0.9;
       });
 
-      const leaves = tree.leaves.filter((l) => l.node === l1.id || l.node.startsWith(`${l1.id}-`));
-      leaves.forEach((leaf, i) => {
-        const tip = tips[i % tips.length];
-        const along = 2 + rng() * 11;
-        const across = (rng() - 0.5) * 18;
-        leaf.x = tip.x + (tip.ux * along + -tip.uy * across) * s;
-        leaf.y = tip.y + (tip.uy * along + tip.ux * across) * s;
-        leaf.angle = Math.atan2(tip.uy, tip.ux) + (rng() - 0.5) * 1.6;
-        leaf.size *= 0.55;
+      // A bare limb with one leaf per twig reads as a sapling. Every twig tip *and* every
+      // mid-twig anchor carries a small cluster, so the limb fills out into a canopy.
+      const sprigs = (limb.sprigs || []).map((p) => ({ ...toView(p.x, p.y), ux: p.nx, uy: p.ny, sprig: true }));
+      const spots = tips.concat(sprigs);
+      const template = tree.leaves.filter((l) => l.node === l1.id || l.node.startsWith(`${l1.id}-`));
+      const leaves = [];
+      spots.forEach((spot, i) => {
+        const src0 = template[(i * 5) % template.length];
+        leaves.push({
+          ...src0,
+          id: `${src0.id}-clump${i}`,
+          clump: true,
+          x: spot.x + spot.ux * 7 * s,
+          y: spot.y + spot.uy * 7 * s,
+          angle: rng() * Math.PI,
+          size: (spot.sprig ? 17 : 24) + rng() * 8,
+          phase: rng(),
+        });
+        for (let k = 0; k < (spot.sprig ? SPRIG_LEAVES : TIP_LEAVES); k += 1) {
+          const src = template[(i * 7 + k * 3) % template.length];
+          const used = leaves.filter((l) => !l.clump).length;
+          const leaf = used < template.length ? template[used] : { ...src, id: `${src.id}-x${i}-${k}`, clump: false };
+          // Tips fan outward from the twig end; sprigs sit to either side of the branch.
+          const along = spot.sprig ? (k % 2 ? 1 : -1) * (3 + rng() * 13) : 2 + rng() * 12;
+          const across = (rng() - 0.5) * (spot.sprig ? 12 : 20);
+          leaf.x = spot.x + (spot.ux * along + -spot.uy * across) * s;
+          leaf.y = spot.y + (spot.uy * along + spot.ux * across) * s;
+          leaf.angle = Math.atan2(spot.uy * along, spot.ux * along) + (rng() - 0.5) * 1.8;
+          leaf.size = 11 + rng() * 7;
+          leaf.phase = rng();
+          leaves.push(leaf);
+        }
       });
+      for (const leaf of leaves) if (!tree.leaves.includes(leaf)) tree.leaves.push(leaf);
+      for (const leaf of template) if (!leaves.includes(leaf)) leaf.size = 0;
     }
+    // Draw every soft mass first so no clump paints over a neighbour limb's leaves.
+    tree.leaves.sort((a, b) => (a.clump ? 0 : 1) - (b.clump ? 0 : 1));
+
     // Crown blooms are outcomes, not twigs: hang them on the highest painted tips so they read
     // as the tree's own crown rather than stickers floating in the sky.
     const skyline = anchors.limbs
