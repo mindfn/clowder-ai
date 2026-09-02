@@ -222,7 +222,7 @@ hooks       → 按版本号加载（满足 overlay / 修改内容）
 交付形态：
 - 从 `develop_base` 切一条 feature 分支；S0…S5 **各一个 commit**（commit message 逐条映射 TC-#），每片完成即 push。
 - Fable 在分支上**逐 commit 增量 review**（§15 把关尺），并在**隔离实例**（抛弃式 Redis + 该分支 build，同 Gate 1 做法）跑该片 falsifier；不过则该片返工，不进下一片。
-- 全部六片通过 → 开**唯一 PR**（描述汇总 TC-# 映射 + 六片 falsifier 结果）→ 合入 `develop_base` → 运行实例回流 + 重启 → Fable 在运行实例跑完整 F-1~8 → operator 体验验收。
+- 全部六片通过 → 开**唯一 PR**（描述汇总 TC-# 映射 + 六片 falsifier 结果）→ 合入 `develop_base` → 运行实例回流 → **Fable 通知 operator "可以重启验收"并等待**（operator 09-02 08:5x："不要自动重启；需要重启验收的时候和我说下，避免突然打断工作"——**猫不得自动重启运行实例，重启只由 operator 择时执行**）→ operator 重启后 Fable 在运行实例跑完整 F-1~8 → operator 体验验收。
 - S0 清场脚本随第一个 commit 进分支，但**只在最终合入后、重启前对运行实例执行一次**（先 dry-run 贴 thread）；开发期间只对隔离实例执行。
 
 | 片 | 做什么 | 删什么 | Falsifier |
