@@ -42,6 +42,7 @@ export function GenericApprovalItemCard({ item }: { item: ApprovalItem }) {
   const isPersonMemoryClaimSelect = item.sourceFeatureId === 'F276' && item.decisionMode === 'claim-select';
   const approveProposal = useApprovalHubStore((state) => state.approveProposal);
   const rejectProposal = useApprovalHubStore((state) => state.rejectProposal);
+  const decideHarnessGovernance = useApprovalHubStore((state) => state.decideHarnessGovernance);
   const decisionError = useApprovalHubStore((state) => state.error);
   const resolveEntityConflict = useApprovalHubStore((state) => state.resolveEntityConflict);
   const decidingState = useApprovalHubStore((state) => state.deciding[item.proposalId]);
@@ -74,6 +75,13 @@ export function GenericApprovalItemCard({ item }: { item: ApprovalItem }) {
       void resolveEntityConflict(item.proposalId, resolution);
     },
     [item.proposalId, resolveEntityConflict],
+  );
+
+  const handleHarnessDecision = useCallback(
+    (action: 'approve' | 'skip' | 'reject', note?: string) => {
+      void decideHarnessGovernance(item.proposalId, action, note);
+    },
+    [decideHarnessGovernance, item.proposalId],
   );
 
   const submitReject = useCallback(
@@ -144,6 +152,7 @@ export function GenericApprovalItemCard({ item }: { item: ApprovalItem }) {
       onApprove={handleApprove}
       onReject={handleReject}
       onEntityResolution={handleEntityResolution}
+      onHarnessDecision={handleHarnessDecision}
       onBeforeNavigate={close}
     />
   );

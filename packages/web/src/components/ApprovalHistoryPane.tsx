@@ -7,7 +7,7 @@ import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { ApprovalFeatureFilter } from './ApprovalFeatureFilter';
 import { ApprovalHistoryList } from './ApprovalHistoryList';
 
-export type ApprovalHistoryOutcomeFilter = 'all' | 'approved' | 'rejected';
+export type ApprovalHistoryOutcomeFilter = 'all' | 'approved' | 'skipped' | 'rejected';
 
 interface ApprovalHistoryPaneProps {
   featureFilters: ReadonlySet<ApprovalFeatureId>;
@@ -55,6 +55,11 @@ export function ApprovalHistoryPane({
           status="approved"
         />
         <OutcomeButton
+          active={outcomeFilter === 'skipped'}
+          onClick={() => onOutcomeFilterChange(outcomeFilter === 'skipped' ? 'all' : 'skipped')}
+          status="skipped"
+        />
+        <OutcomeButton
           active={outcomeFilter === 'rejected'}
           onClick={() => onOutcomeFilterChange(outcomeFilter === 'rejected' ? 'all' : 'rejected')}
           status="rejected"
@@ -100,21 +105,27 @@ function OutcomeButton({
 }: {
   active: boolean;
   onClick: () => void;
-  status: 'approved' | 'rejected';
+  status: 'approved' | 'skipped' | 'rejected';
 }) {
-  const approved = status === 'approved';
+  const activeTone =
+    status === 'approved'
+      ? 'text-[var(--semantic-success)]'
+      : status === 'skipped'
+        ? 'text-[var(--semantic-warning)]'
+        : 'text-[var(--semantic-critical)]';
+  const label = status === 'approved' ? '✅ 通过' : status === 'skipped' ? '跳过' : '❌ 拒绝';
   return (
     <button
       type="button"
       onClick={onClick}
       className={`rounded-full px-2 py-0.5 text-micro font-medium transition-all ${
         active
-          ? `border border-cafe-subtle/60 bg-cafe-surface ${approved ? 'text-[var(--semantic-success)]' : 'text-[var(--semantic-critical)]'}`
+          ? `border border-cafe-subtle/60 bg-cafe-surface ${activeTone}`
           : 'text-cafe-interactive/40 hover:text-cafe-interactive/60'
       }`}
       data-testid={`approval-history-filter-${status}`}
     >
-      {approved ? '✅ 通过' : '❌ 拒绝'}
+      {label}
     </button>
   );
 }

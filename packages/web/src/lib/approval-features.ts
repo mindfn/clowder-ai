@@ -28,6 +28,7 @@ export function isApprovalItemBatchDecidable(item: ApprovalItem): boolean {
     item.inlineApprovable &&
     item.decisionMode !== 'resume-only' &&
     item.decisionMode !== 'claim-select' &&
+    item.decisionMode !== 'approve-skip-reject' &&
     !hasEntityConflict
   );
 }

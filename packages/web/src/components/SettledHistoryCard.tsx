@@ -26,7 +26,12 @@ interface SettledHistoryCardProps {
 export function SettledHistoryCard({ item }: SettledHistoryCardProps) {
   const resolveCatName = useCatNameResolver();
   const featureMeta = approvalFeatureMeta(item.sourceFeatureId);
-  const isApproved = item.status === 'approved';
+  const statusPresentation =
+    item.status === 'approved'
+      ? { label: '✅ 已通过', tone: 'text-[var(--semantic-success)]' }
+      : item.status === 'skipped'
+        ? { label: '已跳过', tone: 'text-[var(--semantic-warning)]' }
+        : { label: '❌ 已拒绝', tone: 'text-[var(--semantic-critical)]' };
 
   return (
     <div
@@ -41,13 +46,8 @@ export function SettledHistoryCard({ item }: SettledHistoryCardProps) {
           <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: featureMeta.color }} />
           {featureMeta.label}
         </span>
-        <span
-          className={`text-micro font-medium ${
-            isApproved ? 'text-[var(--semantic-success)]' : 'text-[var(--semantic-critical)]'
-          }`}
-          data-testid="settled-card-status"
-        >
-          {isApproved ? '✅ 已通过' : '❌ 已拒绝'}
+        <span className={`text-micro font-medium ${statusPresentation.tone}`} data-testid="settled-card-status">
+          {statusPresentation.label}
         </span>
         <span className="truncate text-micro text-cafe-interactive/35">来自 {resolveCatName(item.requesterCatId)}</span>
         <span className="ml-auto text-micro text-cafe-interactive/40" data-testid="settled-card-time">
