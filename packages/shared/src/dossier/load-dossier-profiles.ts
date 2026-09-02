@@ -4,15 +4,10 @@
  * Provides `getDossierRosterSummary(catId)` for the fallback chain:
  *   dossier.l0RosterSummary ?? config.teamStrengths ?? config.roleDescription
  *
- * Consumers:
- * - compile-system-prompt-l0.mjs:buildRosterRow (line 243)
- * - SystemPromptBuilder.ts:buildTeammateRoster (line 453)
+ * Consumer: the session HookPipeline's SystemPromptBuilder inputs.
  *
- * Both must switch simultaneously (KD-12).
- *
- * Cache lifetime: process-scoped (no invalidation). Acceptable for Phase B because:
- * - compile-l0 is short-lived (script exits after compilation)
- * - API server restarts on deployment (new code → new process → fresh cache)
+ * Cache lifetime: process-scoped (no invalidation). The API server restarts on
+ * deployment, so a new code revision receives a fresh cache.
  * Phase C may add file-watcher or TTL invalidation if operator-driven hot-reload is needed.
  */
 import { readFileSync } from 'node:fs';
