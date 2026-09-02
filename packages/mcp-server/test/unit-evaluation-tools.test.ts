@@ -9,6 +9,7 @@ describe('F257 cycle evaluation MCP surface', () => {
       'cat_cafe_read_cycle_traces',
       'cat_cafe_submit_cycle_evaluation',
       'cat_cafe_describe_harness_unit',
+      'cat_cafe_submit_cycle_governance',
     ]);
     assert.equal(names.includes('cat_cafe_retrieve_unit_evaluation_traces'), false);
     assert.equal(names.includes('cat_cafe_submit_unit_evaluation'), false);

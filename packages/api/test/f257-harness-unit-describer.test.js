@@ -5,9 +5,8 @@ const { HarnessUnitDescriber } = await import('../dist/infrastructure/harness-ev
 const { buildCycleAssignment } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationContent.js'
 );
-const { handleDescribeHarnessUnit, handleReadCycleTraces, handleSubmitCycleEvaluation } = await import(
-  '../dist/infrastructure/harness-eval/evaluation/cycle-evaluation-callbacks.js'
-);
+const { handleDescribeHarnessUnit, handleReadCycleTraces, handleSubmitCycleEvaluation, handleSubmitCycleGovernance } =
+  await import('../dist/infrastructure/harness-eval/evaluation/cycle-evaluation-callbacks.js');
 
 function describer() {
   const manifest = {
@@ -28,7 +27,7 @@ function describer() {
         units: [
           {
             unitId: 'S6',
-            hookId: 'S6',
+            hookId: 's6-different-asset-slug',
             unitState: 'evaluable',
             objectives: [{ objectiveId: 'workflow-discipline' }],
           },
@@ -98,6 +97,7 @@ describe('F257 harness unit and callback contracts', () => {
   test('describes action gates and the active immutable version pointer', async () => {
     const result = await describer().describe('S6');
     assert.deepEqual(result.allowedActions, { enable: true, disable: true, modify: true, add: true });
+    assert.equal(result.hookId, 'S6', 'runtime actions use the canonical manifest id, not the directory slug');
     assert.deepEqual(result.current, { enabled: false, version: 3, contentRef: 'hook-content:S6@3' });
     assert.deepEqual(result.versionChain, [
       { version: 1, contentRef: 'hook-content:S6@1', current: false },
@@ -166,5 +166,34 @@ describe('F257 harness unit and callback contracts', () => {
       status: 400,
       body: { error: 'invalid_cycle_evaluation', message: 'cycle_record_too_large:cycle' },
     });
+  });
+
+  test('accepts the structured governance shape and rejects unknown mutation fields', async () => {
+    const calls = [];
+    const coordinator = {
+      async submitGovernance(principal, input) {
+        calls.push({ principal, input });
+        return { outcome: 'written', proposalId: 'HGP-1' };
+      },
+    };
+    const principal = { userId: 'owner', catId: 'cat', threadId: 'thread_eval_f257_obj' };
+    const input = {
+      objectiveId: 'obj',
+      cycleId: 'cycle',
+      decision: 'evolve',
+      reason: 'The evidence supports a change.',
+      v2Draft: {
+        changes: [{ action: 'modify', unitId: 'D1', reason: 'Clarify.', proposedContent: 'new body' }],
+      },
+    };
+    assert.equal((await handleSubmitCycleGovernance(coordinator, principal, input)).status, 200);
+    assert.equal(calls.length, 1);
+
+    const invalid = await handleSubmitCycleGovernance(coordinator, principal, {
+      ...input,
+      directApply: true,
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(calls.length, 1, 'invalid callback input must never reach the coordinator');
   });
 });

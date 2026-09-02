@@ -17,20 +17,20 @@ export class HarnessUnitDescriber {
     const unit = this.deps.catalog.manifest.units.find((candidate) => candidate.unitId === unitId);
     if (!unit) throw new Error(`harness_unit_not_found:${unitId}`);
     const registry = this.deps.getRegistry();
-    const hook = registry?.getHook(unit.hookId);
-    if (!registry || !hook) throw new Error(`harness_hook_not_available:${unit.hookId}`);
+    const hook = registry?.getHook(unit.unitId);
+    if (!registry || !hook) throw new Error(`harness_hook_not_available:${unit.unitId}`);
 
-    const activeVersion = await this.deps.overrideStore.getActiveVersion(unit.hookId);
-    const snapshots = await this.deps.overrideStore.listVersions(unit.hookId);
+    const activeVersion = await this.deps.overrideStore.getActiveVersion(unit.unitId);
+    const snapshots = await this.deps.overrideStore.listVersions(unit.unitId);
     const versions = new Set(
       [hook.manifest.version, activeVersion, ...snapshots.map((snapshot) => snapshot.version)].filter(
         (version) => Number.isSafeInteger(version) && version >= 0,
       ),
     );
-    const contentRef = (version: number) => `hook-content:${unit.hookId}@${version}`;
+    const contentRef = (version: number) => `hook-content:${unit.unitId}@${version}`;
     return {
       unitId: unit.unitId,
-      hookId: unit.hookId,
+      hookId: unit.unitId,
       objectives: unit.objectives.map((objective) => ({ ...objective })),
       allowedActions: {
         enable: true,
@@ -41,7 +41,7 @@ export class HarnessUnitDescriber {
         add: hook.manifest.governanceTier === 'auto-evolve',
       },
       current: {
-        enabled: registry.isEnabled(unit.hookId),
+        enabled: registry.isEnabled(unit.unitId),
         version: activeVersion,
         contentRef: contentRef(activeVersion),
       },

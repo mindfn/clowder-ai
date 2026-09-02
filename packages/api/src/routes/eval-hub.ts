@@ -13,6 +13,7 @@ import type { CycleEvaluationCoordinator } from '../infrastructure/harness-eval/
 import { registerCycleEvaluationCallbackRoutes } from '../infrastructure/harness-eval/evaluation/cycle-evaluation-callbacks.js';
 import type { HarnessUnitDescriber } from '../infrastructure/harness-eval/evaluation/HarnessUnitDescriber.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
+import type { CycleGovernanceCoordinator } from '../infrastructure/harness-eval/governance/CycleGovernanceCoordinator.js';
 import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { loadDomains } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { loadEnrichedEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-summary-service.js';
@@ -97,6 +98,8 @@ export interface EvalHubRoutesOptions {
   cycleEvaluationCoordinator?: CycleEvaluationCoordinator;
   /** F257 read-only unit action/version schema. */
   harnessUnitDescriber?: HarnessUnitDescriber;
+  /** F257 structured governance assignment and writeback. */
+  cycleGovernanceCoordinator?: CycleGovernanceCoordinator;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -121,7 +124,12 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     registerSubmitSemanticSweepRoute(app, opts.semanticSweepCoordinator);
   }
   if (opts.cycleEvaluationCoordinator && opts.harnessUnitDescriber) {
-    registerCycleEvaluationCallbackRoutes(app, opts.cycleEvaluationCoordinator, opts.harnessUnitDescriber);
+    registerCycleEvaluationCallbackRoutes(
+      app,
+      opts.cycleEvaluationCoordinator,
+      opts.harnessUnitDescriber,
+      opts.cycleGovernanceCoordinator,
+    );
   }
   app.get('/api/eval-hub/summary', async (request, reply) => {
     const userId = requireSession(request, reply);

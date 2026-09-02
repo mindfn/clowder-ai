@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
+import type { CycleGovernanceCoordinator } from '../governance/CycleGovernanceCoordinator.js';
 import type { CycleEvaluationCoordinator, CycleEvaluationPrincipal } from './CycleEvaluationCoordinator.js';
 import type { HarnessUnitDescriber } from './HarnessUnitDescriber.js';
 
@@ -39,6 +40,86 @@ export const submitCycleEvaluationBodySchema = z
   .strict();
 
 export const describeHarnessUnitBodySchema = z.object({ unitId: identifier }).strict();
+const reason = z.string().trim().min(1).max(8_000);
+const hookManifest = z
+  .object({
+    id: z.string().regex(/^[A-Z]+\\d+$/),
+    name: z.string().trim().min(1).max(200),
+    stage: z.enum(['session-init', 'per-turn']),
+    order: z.number().int().nonnegative(),
+    version: z.literal(1),
+    enabled: z.boolean(),
+    template: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$/),
+    resolver: z.never().optional(),
+    inputs: z.array(identifier).max(32),
+    variables: z
+      .array(
+        z
+          .object({
+            name: identifier,
+            description: z.string().max(500).optional(),
+            placeholder: z.string().max(500).optional(),
+          })
+          .strict(),
+      )
+      .max(64)
+      .optional(),
+    disableable: z.boolean(),
+    safetyTier: z.enum(['readonly', 'limited-edit', 'editable']),
+    transparencyTier: z.enum(['visible-by-default', 'opt-in-view', 'debug-only']),
+    governanceTier: z.enum(['immutable', 'human-gated', 'auto-evolve']),
+    userExplanation: z.string().max(2_000).optional(),
+  })
+  .strict();
+const objectiveAttachment = z.object({ objectiveId: identifier, clauseId: identifier.optional() }).strict();
+const governanceChange = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('enable'), unitId: identifier, reason }).strict(),
+  z.object({ action: z.literal('disable'), unitId: identifier, reason }).strict(),
+  z
+    .object({
+      action: z.literal('modify'),
+      unitId: identifier,
+      reason,
+      proposedContent: z
+        .string()
+        .trim()
+        .min(1)
+        .max(128 * 1024),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('add'),
+      reason,
+      unit: z
+        .object({
+          unitId: z.string().regex(/^[A-Z]+\\d+$/),
+          assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+          manifest: hookManifest,
+          content: z
+            .string()
+            .trim()
+            .min(1)
+            .max(128 * 1024),
+          objectives: z.array(objectiveAttachment).min(1).max(16),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
+export const submitCycleGovernanceBodySchema = z
+  .object({
+    objectiveId: identifier,
+    cycleId: identifier,
+    decision: z.enum(['keep', 'rollback', 'evolve']),
+    reason,
+    rollback: z.object({ unitId: identifier, targetVersion: z.number().int().positive() }).strict().optional(),
+    v2Draft: z
+      .object({ changes: z.array(governanceChange).min(1).max(16) })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 type HandlerResult = { status: number; body: unknown };
 
@@ -89,10 +170,25 @@ export async function handleDescribeHarnessUnit(
   }
 }
 
+export async function handleSubmitCycleGovernance(
+  coordinator: CycleGovernanceCoordinator,
+  principal: CycleEvaluationPrincipal,
+  rawBody: unknown,
+): Promise<HandlerResult> {
+  const parsed = submitCycleGovernanceBodySchema.safeParse(rawBody);
+  if (!parsed.success) return invalidBody(parsed.error.issues);
+  try {
+    return { status: 200, body: await coordinator.submitGovernance(principal, parsed.data) };
+  } catch (error) {
+    return cycleError(error);
+  }
+}
+
 export function registerCycleEvaluationCallbackRoutes(
   app: FastifyInstance,
   coordinator: CycleEvaluationCoordinator,
   describer: HarnessUnitDescriber,
+  governance?: CycleGovernanceCoordinator,
 ): void {
   app.post('/api/callbacks/harness-signals/read-cycle-traces', async (request, reply) => {
     const principal = invocationPrincipal(request, reply);
@@ -114,6 +210,15 @@ export function registerCycleEvaluationCallbackRoutes(
     reply.status(result.status);
     return result.body;
   });
+  if (governance) {
+    app.post('/api/callbacks/harness-signals/submit-cycle-governance', async (request, reply) => {
+      const principal = invocationPrincipal(request, reply);
+      if (!principal) return;
+      const result = await handleSubmitCycleGovernance(governance, principal, request.body);
+      reply.status(result.status);
+      return result.body;
+    });
+  }
 }
 
 function invocationPrincipal(
@@ -138,12 +243,20 @@ function cycleError(error: unknown): HandlerResult {
   if (message.startsWith('cycle_evaluation_principal_mismatch:')) {
     return { status: 403, body: { error: 'cycle_evaluation_principal_mismatch' } };
   }
+  if (message.startsWith('cycle_governance_principal_mismatch:')) {
+    return { status: 403, body: { error: 'cycle_governance_principal_mismatch' } };
+  }
+  if (message.startsWith('cycle_governance_not_found:')) {
+    return { status: 404, body: { error: 'cycle_governance_not_found' } };
+  }
   if (message.startsWith('cycle_evaluation_not_found:')) {
     return { status: 404, body: { error: 'cycle_evaluation_not_found' } };
   }
   if (
     message.startsWith('cycle_evaluation_not_active:') ||
     message.startsWith('cycle_evaluation_conflict:') ||
+    message.startsWith('cycle_governance_not_active:') ||
+    message.startsWith('cycle_governance_conflict:') ||
     message.startsWith('cycle_trace_cursor_out_of_range:')
   ) {
     return { status: 409, body: { error: message.split(':', 1)[0] } };
@@ -157,6 +270,9 @@ function cycleError(error: unknown): HandlerResult {
     message.startsWith('cycle_record_too_large:')
   ) {
     return { status: 400, body: { error: 'invalid_cycle_evaluation', message } };
+  }
+  if (message.startsWith('cycle_governance_') || message.startsWith('harness_governance_')) {
+    return { status: 400, body: { error: 'invalid_cycle_governance', message } };
   }
   throw error;
 }
