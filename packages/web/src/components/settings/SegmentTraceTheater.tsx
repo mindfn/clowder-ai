@@ -41,6 +41,7 @@ export function SegmentTraceTheater({
     pipelineStatus: string;
   } | null>(null);
   const trigger = readiness?.trigger;
+  const cycleStart = cycleStartMs(trigger, window);
   return (
     <div className="space-y-3" data-testid="segment-trace-theater">
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
@@ -48,9 +49,7 @@ export function SegmentTraceTheater({
           <MetaRow label="触发条件">
             {loading ? '加载中…' : trigger ? <TriggerRules trigger={trigger} /> : '当前 Unit 尚无评估触发配置'}
           </MetaRow>
-          <MetaRow label="周期起点">
-            {cycleStartMs(trigger, window) ? new Date(cycleStartMs(trigger, window)!).toLocaleString() : '窗口未知'}
-          </MetaRow>
+          <MetaRow label="周期起点">{cycleStart ? new Date(cycleStart).toLocaleString() : '窗口未知'}</MetaRow>
         </div>
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">
@@ -96,7 +95,7 @@ export function SegmentTraceTheater({
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">
-          时间窗内累计 Tracing（{total}）
+          时间窗内累计 Tracing 明细（当前查询窗 {total}）
         </summary>
         <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
           点击记录查看完整现场
@@ -157,16 +156,33 @@ export function SegmentTraceTheater({
  */
 function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
   return (
-    <div className="space-y-0.5">
-      <div>满足任一条件即触发 Unit 评估</div>
-      <div className="text-cafe-muted">
-        · 时间窗内累计 Tracing {trigger.traceCount}/{trigger.traceRequired} 条
-      </div>
-      {trigger.counterexampleRequired != null && (
-        <div className="text-cafe-muted">
-          · 明确反例 {trigger.counterexampleCount ?? 0}/{trigger.counterexampleRequired} 条
+    <div className="space-y-2">
+      <div>满足任一路即触发 Objective 评估</div>
+      {trigger.perObjective.map((objective) => (
+        <div key={objective.objectiveId} className="rounded-lg bg-[var(--console-card-bg)] p-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-mono">{objective.objectiveId}</span>
+            <SettingsBadge tone={objective.evalStatus === 'stalled' ? 'red' : 'slate'} size="xxs">
+              {objective.evalStatus}
+            </SettingsBadge>
+            {objective.triggeredBy.map((route) => (
+              <SettingsBadge key={route} tone="blue" size="xxs">
+                {routeLabel(route)} 已触发
+              </SettingsBadge>
+            ))}
+          </div>
+          <div className="mt-1 text-cafe-muted">
+            · 时间窗内累计 Tracing {objective.cumulative.count}/{objective.cumulative.threshold} 条
+          </div>
+          <div className="text-cafe-muted">
+            · 周期内反例 {objective.counterexamples.count}/{objective.counterexamples.threshold} 条
+          </div>
+          <div className="text-cafe-muted">
+            · 距周期起点 {formatDuration(objective.cadence.elapsedMs)}/{formatDuration(objective.cadence.thresholdMs)}
+            {!objective.cadence.eligible ? '（至少需 1 条累计 Tracing）' : ''}
+          </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -176,9 +192,20 @@ function cycleStartMs(
   trigger: SegmentTracingEvaluationView['trigger'] | undefined,
   window: { startMs: number; endMs: number } | null,
 ): number | null {
-  const starts = trigger?.perObjective?.map((po) => po.windowStartMs).filter((v): v is number => v > 0);
+  const starts = trigger?.perObjective?.map((po) => po.cycleStartMs).filter((v): v is number => v > 0);
   if (starts && starts.length > 0) return Math.min(...starts);
   return window?.startMs ?? null;
+}
+
+function routeLabel(route: SegmentTracingEvaluationView['trigger']['perObjective'][number]['triggeredBy'][number]) {
+  return { cumulative: '累计', counterexamples: '反例', cadence: '周期' }[route];
+}
+
+function formatDuration(value: number): string {
+  const days = value / (24 * 60 * 60 * 1000);
+  if (days >= 1) return `${days.toFixed(days >= 10 ? 0 : 1)} 天`;
+  const hours = value / (60 * 60 * 1000);
+  return `${hours.toFixed(hours >= 10 ? 0 : 1)} 小时`;
 }
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {

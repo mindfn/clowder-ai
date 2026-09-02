@@ -1,6 +1,6 @@
 'use client';
 
-import type { ApprovalItem, SegmentEvaluationResponse } from '@cat-cafe/shared';
+import type { ApprovalItem, SegmentCycleSummary, SegmentEvaluationResponse } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { ApprovalDecisionCard } from '@/components/ApprovalDecisionCard';
 import { GenericApprovalRecommendation } from '@/components/GenericApprovalRecommendation';
@@ -28,25 +28,46 @@ interface SelectedStage {
   stage: 'version' | 'tracing' | 'eval' | 'governance';
 }
 
+const CURRENT_CYCLE: SegmentCycleSummary = {
+  cycleId: 'cycle-s13-demo',
+  version: 'S13@1',
+  versionContentRef: 'hook:S13@1',
+  cycleStart: WINDOW.start,
+  cycleEnd: WINDOW.end,
+  evalStatus: 'written',
+  windows: [WINDOW],
+  triggeredBy: ['counterexamples'],
+  evaluation: { overall: 'complete', writtenAt: WINDOW.end, by: 'cat-evaluator' },
+  governance: {
+    decision: 'evolve',
+    reason: '修正工具名与参数约束，降低 Schema 失败',
+    writtenAt: WINDOW.end,
+    by: 'cat-evaluator',
+  },
+  approval: { cardId: CANDIDATE_ID, state: 'pending', rejectCount: 0, at: WINDOW.end },
+  rejectReasons: [],
+  closedAt: null,
+};
+
 const EVALUATION: SegmentEvaluationResponse = {
   segmentId: 'S13',
   window: WINDOW,
   tracing: {
     trigger: {
-      traceCount: 146,
-      traceRequired: 200,
-      windowMs: 7 * 24 * 60 * 60 * 1000,
-      counterexampleCount: 3,
-      counterexampleRequired: 3,
       perObjective: [
         {
           objectiveId: 'tool-access-correct-use',
-          traceCount: 146,
-          traceRequired: 200,
-          windowStartMs: WINDOW.start,
-          windowEndMs: WINDOW.end,
-          counterexampleCount: 3,
-          counterexampleRequired: 3,
+          evalStatus: 'written',
+          cycleStartMs: WINDOW.start,
+          cycleEndMs: WINDOW.end,
+          triggeredBy: ['counterexamples'],
+          cumulative: { count: 146, threshold: 200 },
+          counterexamples: { count: 3, threshold: 3 },
+          cadence: {
+            elapsedMs: WINDOW.end - WINDOW.start,
+            thresholdMs: 7 * 24 * 60 * 60 * 1000,
+            eligible: true,
+          },
         },
       ],
     },
@@ -64,49 +85,16 @@ const EVALUATION: SegmentEvaluationResponse = {
         catId: 'cat-reviewer',
       },
     ],
-    unclassifiedEpisodeCount: 0,
   },
   objectives: [
     {
       objectiveId: 'tool-access-correct-use',
       objectiveLabel: '工具可达与正确使用',
+      objectiveStatement: '工具能力可发现、可调用，并在真实任务中正确使用。',
       evaluationModelId: 'em-tool-access-correct-use',
       evaluationModelLabel: '工具可达与正确使用评估',
       ruleVersion: 'v1',
       unitRefs: [{ unitType: 'segment', unitId: 'S13' }],
-      latestJudgment: {
-        judgmentId: 'judgment-s13-demo',
-        completion: 'complete',
-        evaluatedAt: WINDOW.end,
-        window: WINDOW,
-        metricOutcomes: [{ metricId: 'tool-schema-failure-count', status: 'evaluated' }],
-        verdict: 'retire-candidate',
-        verdictDecision: {
-          schemaVersion: 2,
-          evaluationModelVersion: 'v1',
-          primaryMetricId: 'tool-schema-failure-count',
-          measurement: {
-            kind: 'count',
-            value: 3,
-            howCounted: 'tool-schema-failure-count:distinct-counterexamples(3)',
-          },
-          targetSegmentIds: ['S13'],
-          metricDecisions: [
-            {
-              metricId: 'tool-schema-failure-count',
-              rule: { kind: 'counter-zero' },
-              status: 'breach',
-              reason: 'counter=3; zero required',
-              measurement: {
-                kind: 'count',
-                value: 3,
-                howCounted: 'tool-schema-failure-count:distinct-counterexamples(3)',
-              },
-              attributedSegmentIds: ['S13'],
-            },
-          ],
-        },
-      },
       metrics: [
         {
           metricId: 'tool-schema-failure-count',
@@ -114,31 +102,28 @@ const EVALUATION: SegmentEvaluationResponse = {
           kind: 'counter',
           evaluatorKind: 'code',
           evaluatorRuleRef: 'tool-schema-failure',
-          trigger: { kind: 'distinct-counterexamples', threshold: 3 },
-          collection: {
-            window: WINDOW,
-            positive: 0,
-            counterexamples: 3,
-            candidates: 0,
-            classifiedTotal: 3,
-            pendingTowardTrigger: 3,
-            required: 3,
-          },
-          latestEvaluation: {
-            result: {
-              resultId: 'result-s13-schema-failure',
-              snapshotId: 'snapshot-s13-schema-failure',
-              ownerUserId: 'demo-owner',
-              objectiveId: 'tool-access-correct-use',
-              metricId: 'tool-schema-failure-count',
-              kind: 'counter',
-              value: { kind: 'counter', count: 3, threshold: 3 },
-              evaluatedAt: WINDOW.end,
-            },
-            window: WINDOW,
-          },
+          verdictRule: { kind: 'counter-zero' },
+          latestConclusion: { kind: 'count', value: 3, howCounted: '3 个去重 incident' },
+          evidenceRefs: ['invocation://turn_schema_failure_3'],
         },
       ],
+      currentCycle: CURRENT_CYCLE,
+      latestEvaluation: {
+        cycleId: CURRENT_CYCLE.cycleId,
+        overall: 'complete',
+        writtenAt: WINDOW.end,
+        by: 'cat-evaluator',
+        windows: [WINDOW],
+      },
+      latestGovernance: {
+        cycleId: CURRENT_CYCLE.cycleId,
+        decision: 'evolve',
+        reason: '修正工具名与参数约束，降低 Schema 失败',
+        writtenAt: WINDOW.end,
+        by: 'cat-evaluator',
+        approval: CURRENT_CYCLE.approval,
+      },
+      versionChain: [CURRENT_CYCLE],
     },
   ],
 };

@@ -334,12 +334,14 @@ describe('segment lifeline: a11y entry point (P2-4)', () => {
 describe('segment evaluation: objective metrics and trace replay are the modal truth (F257 redesign)', () => {
   const modalSrc = readComponent('SegmentLifelineModal.tsx');
   const evaluationSrc = readComponent('ObjectiveEvaluationPanel.tsx');
+  const governanceSrc = readComponent('ObjectiveGovernancePanel.tsx');
   const theaterSrc = readComponent('SegmentTraceTheater.tsx');
 
   it('loads the objective evaluation read model alongside neutral tracing', () => {
     expect(modalSrc).toContain('/api/segment-evaluation/');
     expect(modalSrc).toContain('/api/segment-lifeline/');
     expect(modalSrc).toContain('ObjectiveEvaluationPanel');
+    expect(modalSrc).toContain('ObjectiveGovernancePanel');
     expect(modalSrc).toContain('SegmentTraceTheater');
   });
 
@@ -367,21 +369,26 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('shows the operator-facing metric contract', () => {
-    for (const label of ['归属', '评估模型', '评估方式', '评估规则', '评估时间', '评估窗口']) {
+    for (const label of ['归属', '评估模型', '指标目录', '方向', '含义', '评估方式', '评估规则']) {
       expect(evaluationSrc).toContain(label);
     }
-    expect(evaluationSrc).not.toContain('触发条件');
-    expect(evaluationSrc).not.toContain('下一次触发');
-    expect(evaluationSrc).toContain('latestJudgment.verdict');
-    expect(evaluationSrc).toContain('explainVerdict');
+    expect(evaluationSrc).toContain('currentCycle?.evalStatus');
+    expect(evaluationSrc).toContain('latestEvaluation');
+    expect(evaluationSrc).toContain('latestConclusion');
+    expect(evaluationSrc).toContain('现在要做');
+    expect(evaluationSrc).toContain('下次看什么');
+    expect(evaluationSrc).toContain('openInvocationTrajectory');
+    expect(evaluationSrc).not.toContain('latestJudgment');
+    expect(evaluationSrc).not.toContain('MetricResult');
   });
 
-  it('keeps eval-source failures visibly distinct from an ordinary no-judgment state', () => {
-    expect(modalSrc).toContain('<EvalSourceWarning source={lifeline.evalSource} />');
-    expect(modalSrc).toContain("source.status !== 'unavailable'");
-    expect(modalSrc).toContain("source.reason === 'resolver-failed'");
-    expect(modalSrc).toContain('当前 tracing 状态不能解释为“尚无结论”');
-    expect(modalSrc).toContain('当前 tracing 状态不可作为评估结论');
+  it('shows CycleRecord governance and version provenance', () => {
+    for (const field of ['latestGovernance', 'decision', 'approval', 'versionChain', 'governance.by']) {
+      expect(governanceSrc).toContain(field);
+    }
+    expect(governanceSrc).toContain('版本链');
+    expect(governanceSrc).toContain('决策者');
+    expect(modalSrc).not.toContain('EvalSourceWarning');
   });
 
   it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {
@@ -394,11 +401,14 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).toContain('structuredCounterexamples');
     // Trigger shows live progress against thresholds so the 200/3 rules map to
     // the visible group counts (co-creator 2026-08-26: the relation must be legible)
-    expect(theaterSrc).toContain('trigger.traceCount');
-    expect(theaterSrc).toContain('trigger.traceRequired');
-    expect(theaterSrc).toContain('trigger.counterexampleCount');
-    expect(theaterSrc).toContain('trigger.counterexampleRequired');
-    expect(theaterSrc).toContain('满足任一条件即触发');
+    expect(theaterSrc).toContain('objective.cumulative.count');
+    expect(theaterSrc).toContain('objective.cumulative.threshold');
+    expect(theaterSrc).toContain('objective.counterexamples.count');
+    expect(theaterSrc).toContain('objective.counterexamples.threshold');
+    expect(theaterSrc).toContain('objective.cadence.elapsedMs');
+    expect(theaterSrc).toContain('objective.cadence.thresholdMs');
+    expect(theaterSrc).toContain('objective.triggeredBy');
+    expect(theaterSrc).toContain('满足任一路即触发');
     // co-creator 2026-08-26: exactly two groups — structured counterexamples +
     // windowed cumulative tracing; the owner-wide unclassified count is removed
     // from the segment view (it never participates in this Unit's trigger).
@@ -407,8 +417,8 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).not.toContain('待分类');
     expect(theaterSrc).not.toContain('unclassifiedEpisodeCount');
     expect(theaterSrc).not.toContain('原始 Tracing 记录');
-    // Cycle start uses perObjective windowStartMs
-    expect(theaterSrc).toContain('po.windowStartMs');
+    // Cycle start uses the CycleRecord-backed per-Objective start.
+    expect(theaterSrc).toContain('po.cycleStartMs');
     // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)
     expect(theaterSrc).toContain('toLocaleString()');
     expect(theaterSrc).not.toContain('toLocaleDateString()');
