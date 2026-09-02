@@ -370,7 +370,7 @@ describe('download buttons (structural)', () => {
 
 // ─── P2: No runtime Tailwind CDN ─────────────────────────────────────
 describe('no runtime Tailwind CDN', () => {
-  for (const page of ['index.html', 'docs.html', 'community.html']) {
+  for (const page of ['index.html', 'docs.html', 'community.html', 'roadmap.html']) {
     it(`${page} does not load cdn.tailwindcss.com`, () => {
       const html = readSite(page);
       assert.doesNotMatch(html, /cdn\.tailwindcss\.com/, `${page} should use pre-built tailwind.css, not CDN`);
@@ -421,7 +421,7 @@ describe('lang toggle only on translated pages', () => {
 describe('HTML-referenced local assets exist', () => {
   const assetRe = /(?:src|href)\s*=\s*["']((?:assets|styles|main|tailwind|input)[^"']*?)["']/g;
 
-  for (const page of ['index.html', 'docs.html', 'community.html']) {
+  for (const page of ['index.html', 'docs.html', 'community.html', 'roadmap.html']) {
     it(`${page} — all local asset paths resolve`, () => {
       const html = readSite(page);
       const missing = [];
@@ -439,7 +439,7 @@ describe('HTML-referenced local assets exist', () => {
 describe('transparent Clowder AI logo contract', () => {
   const transparentLogo = 'assets/logo-transparent.png';
 
-  for (const page of ['index.html', 'docs.html', 'community.html']) {
+  for (const page of ['index.html', 'docs.html', 'community.html', 'roadmap.html']) {
     it(`${page} uses the transparent logo as its favicon`, () => {
       const document = new JSDOM(readSite(page)).window.document;
       const icon = document.querySelector('link[rel="icon"]');

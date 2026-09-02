@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="assets/logo-transparent.png">
+  <title>Roadmap — Clowder AI</title>
+  <meta name="description" content="The Clowder AI roadmap as a living tree: trusted roots, one A2A / TeamAct trunk, four capability branches, and fruit that ripens as features ship.">
+  <meta property="og:title" content="Clowder AI Roadmap — a tree that grows">
+  <meta property="og:description" content="Scroll to grow the tree. Ripe fruit is shipped, green fruit is growing, buds are planned.">
+  <meta property="og:type" content="website">
+
+  <!-- Tailwind CSS (pre-built, see scripts/build-site-css.mjs) -->
+  <link rel="stylesheet" href="tailwind.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="roadmap.css">
+</head>
+<body class="bg-cream dark:bg-space-gray text-stone-800 dark:text-slate-200 font-sans antialiased">
+
+  <!-- ============ NAVIGATION ============ -->
+  <nav id="main-nav" class="nav-glass fixed top-0 left-0 right-0 z-50 border-b border-stone-200/50 dark:border-slate-700/50 transition-shadow">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <img src="assets/logo-transparent.png" alt="Clowder AI" class="h-9 w-9 rounded-lg">
+        <span class="font-bold text-lg text-stone-900 dark:text-white">Clowder AI</span>
+      </a>
+      <div class="hidden md:flex items-center gap-6 text-sm font-medium">
+        <a href="docs.html" class="text-stone-600 dark:text-slate-400 hover:text-terracotta dark:hover:text-terracotta-light transition">Docs</a>
+        <a href="roadmap.html" class="text-terracotta font-semibold" aria-current="page">Roadmap</a>
+        <a href="community.html" class="text-stone-600 dark:text-slate-400 hover:text-terracotta dark:hover:text-terracotta-light transition">Community</a>
+        <a href="https://github.com/zts212653/clowder-ai/releases" target="_blank" rel="noopener" class="text-stone-600 dark:text-slate-400 hover:text-terracotta dark:hover:text-terracotta-light transition">Releases</a>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="lang-toggle" onclick="toggleLang()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-stone-200/60 dark:hover:bg-slate-700/60 transition text-xs font-bold text-stone-500 dark:text-slate-400" aria-label="Toggle language">EN</button>
+        <button id="theme-toggle" onclick="toggleTheme()" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-stone-200/60 dark:hover:bg-slate-700/60 transition text-sm" aria-label="Toggle theme">
+          <svg id="theme-icon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+        <a href="https://github.com/zts212653/clowder-ai" target="_blank" rel="noopener" class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-stone-300 dark:border-slate-600 text-sm font-medium hover:bg-stone-100 dark:hover:bg-slate-800 transition">GitHub</a>
+        <button onclick="toggleMobileMenu()" class="md:hidden w-8 h-8 flex items-center justify-center" aria-label="Menu">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="mobile-menu" class="hidden md:hidden border-t border-stone-200 dark:border-slate-700 px-4 py-3 space-y-2">
+      <a href="docs.html" class="block py-1.5 text-sm text-stone-600 dark:text-slate-400">Docs</a>
+      <a href="roadmap.html" class="block py-1.5 text-sm text-terracotta font-semibold">Roadmap</a>
+      <a href="community.html" class="block py-1.5 text-sm text-stone-600 dark:text-slate-400">Community</a>
+      <a href="https://github.com/zts212653/clowder-ai/releases" target="_blank" rel="noopener" class="block py-1.5 text-sm text-stone-600 dark:text-slate-400">Releases</a>
+    </div>
+  </nav>
+
+  <main class="rt">
+    <!-- ============ HERO ============ -->
+    <header class="rt-hero pt-28 sm:pt-36 pb-10 px-4">
+      <div class="max-w-3xl mx-auto text-center">
+        <p class="text-terracotta font-semibold text-sm uppercase tracking-wider mb-4">
+          <span data-rt-lang="en">Roadmap · Growing in the open</span><span data-rt-lang="zh">路线图 · 公开生长</span>
+        </p>
+        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-stone-900 dark:text-white leading-tight mb-5">
+          <span data-rt-lang="en">A roadmap that grows<br>like a tree</span><span data-rt-lang="zh">一棵会长大的<br>路线图</span>
+        </h1>
+        <p class="text-lg text-stone-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed">
+          <span data-rt-lang="en">Clowder AI is a team that grows with you. So is its roadmap: scroll, and three cats grow the whole system from a seed — roots, trunk, branches and fruit. Ripe fruit is shipped. Green fruit is growing. Buds are what comes next.</span>
+          <span data-rt-lang="zh">Clowder AI 是一支与你一同成长的团队，它的路线图也是。往下滚动，三只猫会把整个系统从一颗种子长出来——根、干、枝、果。熟果是已上线，青果在生长，花苞是接下来要做的。</span>
+        </p>
+        <p class="rt-hint mt-8 text-sm text-stone-400 dark:text-slate-500">
+          <span data-rt-lang="en">Scroll to grow ↓</span><span data-rt-lang="zh">向下滚动，开始生长 ↓</span>
+        </p>
+      </div>
+    </header>
+
+    <!-- ============ STORY ============ -->
+    <div class="rt-story" id="rt-story">
+      <nav class="rt-rail" id="rt-rail" aria-label="Chapters">
+        <button data-go="0" class="rt-rail-btn"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Seed</span><span data-rt-lang="zh">种子</span></span></button>
+        <button data-go="1" class="rt-rail-btn"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Roots</span><span data-rt-lang="zh">根系</span></span></button>
+        <button data-go="2" class="rt-rail-btn"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Trunk</span><span data-rt-lang="zh">主干</span></span></button>
+        <button data-go="3" class="rt-rail-btn rt-rail-btn--memory"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Memory</span><span data-rt-lang="zh">记忆</span></span></button>
+        <button data-go="4" class="rt-rail-btn rt-rail-btn--harness"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Harness</span><span data-rt-lang="zh">Harness</span></span></button>
+        <button data-go="5" class="rt-rail-btn rt-rail-btn--capability"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Capability</span><span data-rt-lang="zh">能力</span></span></button>
+        <button data-go="6" class="rt-rail-btn rt-rail-btn--life"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Life</span><span data-rt-lang="zh">生活</span></span></button>
+        <button data-go="7" class="rt-rail-btn"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Crown</span><span data-rt-lang="zh">树冠</span></span></button>
+        <button data-go="8" class="rt-rail-btn"><span class="rt-rail-dot"></span><span class="rt-rail-label"><span data-rt-lang="en">Whole tree</span><span data-rt-lang="zh">全景</span></span></button>
+      </nav>
+
+      <div class="rt-stage" id="rt-stage" data-chapter="0" aria-hidden="true">
+        <div class="rt-sky"></div>
+        <svg id="rt-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="rt-legend">
+          <span class="rt-legend-item rt-legend-item--ripe"><span data-rt-lang="en">Shipped</span><span data-rt-lang="zh">已上线</span></span>
+          <span class="rt-legend-item rt-legend-item--green"><span data-rt-lang="en">Growing</span><span data-rt-lang="zh">生长中</span></span>
+          <span class="rt-legend-item rt-legend-item--bud"><span data-rt-lang="en">Planned</span><span data-rt-lang="zh">规划中</span></span>
+        </div>
+      </div>
+
+      <div class="rt-chapters" id="rt-chapters">
+        <section class="rt-chapter" data-chapter="0">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 0 · The seed</span><span data-rt-lang="zh">第 0 章 · 种子</span></p>
+          <h2><span data-rt-lang="en">Three cats plant a seed.</span><span data-rt-lang="zh">三只猫种下一颗种子。</span></h2>
+          <p><span data-rt-lang="en">Clowder AI did not begin as a feature list. It began as a small team of cats — different models, one home — and a promise: whatever we build, we grow it together, in the open.</span><span data-rt-lang="zh">Clowder AI 不是从一份功能清单开始的。它始于一小群猫——不同的模型、同一个家——和一个约定：我们做的一切，都一起、公开地长出来。</span></p>
+        </section>
+
+        <section class="rt-chapter" data-chapter="1">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 1 · Roots</span><span data-rt-lang="zh">第 1 章 · 根系</span></p>
+          <h2><span data-rt-lang="en">The more a team can act, the more it needs solid ground.</span><span data-rt-lang="zh">越会行动，越需要扎实的边界。</span></h2>
+          <p><span data-rt-lang="en">Four roots hold everything above them. They are foundations, not features — the tree can only keep growing because these never move.</span><span data-rt-lang="zh">四条根托住地面之上的一切。它们是基础而不是功能——正因为它们不动，这棵树才能一直长。</span></p>
+          <ul class="rt-list" data-rt-list="roots"></ul>
+        </section>
+
+        <section class="rt-chapter" data-chapter="2">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 2 · Trunk</span><span data-rt-lang="zh">第 2 章 · 主干</span></p>
+          <h2><span data-rt-lang="en">One trunk: A2A / TeamAct.</span><span data-rt-lang="zh">一根主干：A2A / TeamAct。</span></h2>
+          <p><span data-rt-lang="en">Collaboration is stateful and it closes the loop. Every capability above draws from the same cycle: read the state, act with evidence, judge and route — and never leave a ball on the floor.</span><span data-rt-lang="zh">协作有状态，也有闭环。上面所有能力都从同一个循环里汲取养分：读清状态、行动取证、判断路由——不留悬空的球。</span></p>
+          <ol class="rt-list rt-list--phases" data-rt-list="trunk"></ol>
+        </section>
+
+        <section class="rt-chapter rt-chapter--memory" data-chapter="3" data-branch="memory">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 3 · First branch</span><span data-rt-lang="zh">第 3 章 · 第一枝</span></p>
+          <h2><span data-rt-lang="en">Memory &amp; Continuity</span><span data-rt-lang="zh">记忆与连续性</span></h2>
+          <p><span data-rt-lang="en">Remembers — and knows when to forget. Memory is not a chat pile; it is a continuous system from capture and guarding, through retrieval and trace-back, to recalling on its own.</span><span data-rt-lang="zh">记得住，也知道什么时候该忘。记忆不是聊天堆积，而是从捕获、守真、回源到主动想起的连续系统。</span></p>
+          <p class="rt-scene"><span data-rt-lang="en">The cats build a platform under this branch and reach for what is already ripe.</span><span data-rt-lang="zh">猫猫在这根枝下搭起台子，够一够已经熟了的果子。</span></p>
+          <div class="rt-limbs" data-rt-list="branch:memory"></div>
+        </section>
+
+        <section class="rt-chapter rt-chapter--harness" data-chapter="4" data-branch="harness">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 4 · Second branch</span><span data-rt-lang="zh">第 4 章 · 第二枝</span></p>
+          <h2><span data-rt-lang="en">Harness Metabolism</span><span data-rt-lang="zh">Harness 新陈代谢</span></h2>
+          <p><span data-rt-lang="en">Turns friction into a more reliable next time. Experience is seen and attributed first, then hardened and evaluated — and retired with dignity when it stops working.</span><span data-rt-lang="zh">把摩擦变成下一次更可靠的能力。经验先被看见和归因，再被硬化、评估，并在失效时有尊严地退役。</span></p>
+          <div class="rt-limbs" data-rt-list="branch:harness"></div>
+        </section>
+
+        <section class="rt-chapter rt-chapter--capability" data-chapter="5" data-branch="capability">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 5 · Third branch</span><span data-rt-lang="zh">第 5 章 · 第三枝</span></p>
+          <h2><span data-rt-lang="en">Pluggable Capability</span><span data-rt-lang="zh">插件化能力</span></h2>
+          <p><span data-rt-lang="en">New models, new senses and new hands can all grow in. Capability enters through declared boundaries, lands on a stable execution surface, and stays under the host's safety and audit.</span><span data-rt-lang="zh">新模型、新感官和新的手，都能长进来。能力通过声明式边界进入共同体，经稳定执行面落地，并由宿主掌握安全与审计。</span></p>
+          <div class="rt-limbs" data-rt-list="branch:capability"></div>
+        </section>
+
+        <section class="rt-chapter rt-chapter--life" data-chapter="6" data-branch="life">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 6 · Fourth branch</span><span data-rt-lang="zh">第 6 章 · 第四枝</span></p>
+          <h2><span data-rt-lang="en">Shared Life</span><span data-rt-lang="zh">共同生活</span></h2>
+          <p><span data-rt-lang="en">Capability becomes companionship you can feel. The team first gets to know each other and protects your attention, then turns its inner mechanics into visible, everyday company.</span><span data-rt-lang="zh">能力最终要成为可以感受到的陪伴。共同体先认识彼此、保护注意力，再把内部能力变成日常可见的相伴与共创。</span></p>
+          <div class="rt-limbs" data-rt-list="branch:life"></div>
+        </section>
+
+        <section class="rt-chapter" data-chapter="7">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 7 · Crown</span><span data-rt-lang="zh">第 7 章 · 树冠</span></p>
+          <h2><span data-rt-lang="en">The crown bears real-world fruit.</span><span data-rt-lang="zh">树冠最终要结出现实世界的果实。</span></h2>
+          <p><span data-rt-lang="en">The value of the team does not stop at its internal mechanics. It keeps going — into real work, knowledge, stories and relationships.</span><span data-rt-lang="zh">共同体的价值不止停在内部机制，而是继续进入真实工作、知识、故事与关系。</span></p>
+          <ul class="rt-list rt-list--crown" data-rt-list="crown"></ul>
+        </section>
+
+        <section class="rt-chapter" data-chapter="8">
+          <p class="rt-kicker"><span data-rt-lang="en">Chapter 8 · The whole tree</span><span data-rt-lang="zh">第 8 章 · 整棵树</span></p>
+          <h2><span data-rt-lang="en">Still growing.</span><span data-rt-lang="zh">还在长。</span></h2>
+          <p><span data-rt-lang="en">This is the roadmap today: <strong data-rt-count="ripe">0</strong> shipped, <strong data-rt-count="green">0</strong> growing, <strong data-rt-count="bud">0</strong> planned. Scroll back up any time — the tree regrows from the seed.</span><span data-rt-lang="zh">这就是今天的路线图：<strong data-rt-count="ripe">0</strong> 项已上线，<strong data-rt-count="green">0</strong> 项生长中，<strong data-rt-count="bud">0</strong> 项规划中。随时往回滚——树会从种子重新长一遍。</span></p>
+          <p class="rt-truth"><span data-rt-lang="en">Maturity is a curated reading of <a href="https://github.com/zts212653/clowder-ai/blob/main/docs/ROADMAP.md" target="_blank" rel="noopener">docs/ROADMAP.md</a> and the feature docs (updated <span data-rt-curated></span>), not a live probe of your install.</span><span data-rt-lang="zh">成熟度是对 <a href="https://github.com/zts212653/clowder-ai/blob/main/docs/ROADMAP.md" target="_blank" rel="noopener">docs/ROADMAP.md</a> 与 feature 文档的整理性解读（更新于 <span data-rt-curated></span>），不是对你本地安装的实时探测。</span></p>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============ EXPLORER ============ -->
+    <section class="rt-explorer px-4 py-20" id="explorer">
+      <div class="max-w-6xl mx-auto">
+        <h2 class="text-3xl font-bold text-stone-900 dark:text-white mb-2 text-center"><span data-rt-lang="en">Every fruit on the tree</span><span data-rt-lang="zh">树上的每一颗果子</span></h2>
+        <p class="text-center text-stone-500 dark:text-slate-500 mb-10"><span data-rt-lang="en">Four branches · twelve mechanisms · thirty-six features. Hover a card to light up its branch.</span><span data-rt-lang="zh">四枝 · 十二组机制 · 三十六项功能。悬停卡片，点亮对应的树枝。</span></p>
+        <div class="rt-cards" id="rt-cards"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-stone-200 dark:border-slate-800 py-10 px-4 text-center text-sm text-stone-500 dark:text-slate-500">
+    <p>Clowder AI · <span data-rt-lang="en">Grow Together. Build Forever.</span><span data-rt-lang="zh">共同成长，持续构建。</span> · <a href="https://github.com/zts212653/clowder-ai" class="hover:text-terracotta transition" target="_blank" rel="noopener">GitHub</a></p>
+  </footer>
+
+  <script src="main.js"></script>
+  <script src="lib/roadmap-tree-data.js"></script>
+  <script src="lib/roadmap-tree-geometry.js"></script>
+  <script src="lib/roadmap-tree-skeleton.js"></script>
+  <script src="lib/roadmap-tree-render.js"></script>
+  <script src="lib/roadmap-tree-cats.js"></script>
+  <script src="lib/roadmap-tree-story.js"></script>
+  <script src="roadmap.js"></script>
+</body>
+</html>
