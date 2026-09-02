@@ -11,6 +11,7 @@ import { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
 import { type EvaluationCatalog } from './evaluation-catalog.js';
 import { MetricResultStore } from './MetricResultStore.js';
 import { ObjectiveJudgmentStore } from './ObjectiveJudgmentStore.js';
+import { ObjectiveTraceIndex } from './ObjectiveTraceIndex.js';
 import {
   isCurrentVerdictDecision,
   produceObjectiveVerdictDecision,
@@ -37,6 +38,7 @@ export class ObjectiveEvaluationRuntime {
   readonly judgments: ObjectiveJudgmentStore;
   readonly cycles: CycleRecordStore;
   readonly cycleChecker: CycleTriggerChecker;
+  readonly objectiveTraces: ObjectiveTraceIndex;
   readonly traces: InjectionTraceStore;
   private postCommitHook?: JudgmentCommittedHook;
 
@@ -55,10 +57,12 @@ export class ObjectiveEvaluationRuntime {
     this.judgments = new ObjectiveJudgmentStore(redis, async (value) => this.normalizeStoredJudgment(value));
     this.traces = options.traceStore ?? new InjectionTraceStore(redis);
     this.cycles = new CycleRecordStore(redis);
+    this.objectiveTraces = new ObjectiveTraceIndex(redis, catalog, this.traces);
     this.cycleChecker = new CycleTriggerChecker({
       catalog,
       cycles: this.cycles,
       traces: this.traces,
+      objectiveTraces: this.objectiveTraces,
       annotations,
       resolveVersion:
         options.resolveVersion ??
