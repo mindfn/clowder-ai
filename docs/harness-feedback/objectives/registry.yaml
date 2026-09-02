@@ -8,6 +8,7 @@ evaluationModels:
   - id: em-identity-truth
     label: 身份真实性评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 1, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: identity-claim-mismatch-count
         label: 身份声明与运行时身份不一致次数
@@ -25,6 +26,7 @@ evaluationModels:
   - id: em-agent-instance-disambiguation
     label: Agent 实例消歧评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: ambiguous-instance-target-count
         label: 同族多实例目标歧义次数
@@ -36,6 +38,7 @@ evaluationModels:
   - id: em-capability-boundary
     label: 能力边界评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 1, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: forbidden-capability-execution-count
         label: 禁止能力实际执行次数
@@ -53,6 +56,7 @@ evaluationModels:
   - id: em-safety-data-boundary
     label: 数据安全边界评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 1, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: unsafe-data-action-count
         label: 未授权不可逆数据操作次数
@@ -70,6 +74,7 @@ evaluationModels:
   - id: em-routing-target-delivery
     label: 路由目标送达评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: explicit-target-mismatch-count
         label: 明示目标与实际送达目标不一致次数
@@ -87,6 +92,7 @@ evaluationModels:
   - id: em-turn-custody-closure
     label: 回合球权闭合评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: unresolved-turn-exit-count
         label: 持球状态下无合法出口结束次数
@@ -98,6 +104,7 @@ evaluationModels:
   - id: em-wait-wakeup-liveness
     label: 等待与唤醒活性评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: invalid-wait-contract-count
         label: 缺少可验证等待来源的等待请求次数
@@ -115,6 +122,7 @@ evaluationModels:
   - id: em-message-thread-continuity
     label: 消息与 Thread 连续性评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: explicit-cross-thread-target-mismatch-count
         label: 明示来源 Thread 与实际回帖 Thread 不一致次数
@@ -132,6 +140,7 @@ evaluationModels:
   - id: em-collaboration-loop-boundedness
     label: 协作循环有界性评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: collaboration-loop-breach-count
         label: 超过协作循环上限次数
@@ -143,6 +152,7 @@ evaluationModels:
   - id: em-review-independence
     label: Review 独立性评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 1, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: self-review-count
         label: 同一作者自审次数
@@ -154,6 +164,7 @@ evaluationModels:
   - id: em-critical-analysis-quality
     label: 批评性分析质量评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: critique-grounding-quality
         label: critique 场景中的证据与反例质量
@@ -165,6 +176,7 @@ evaluationModels:
   - id: em-tool-access-correct-use
     label: 工具可达与正确使用评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: tool-schema-failure-count
         label: 工具名或 Schema 校验失败次数
@@ -188,6 +200,7 @@ evaluationModels:
   - id: em-capability-guide-wakeup
     label: 能力指南唤醒评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: guide-candidate-use-rate
         label: 展示候选指南后的有效采用率
@@ -205,6 +218,7 @@ evaluationModels:
   - id: em-continuation-memory-recovery
     label: 延续记忆恢复评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: continuation-context-recovery-quality
         label: 延续任务所需上下文恢复完整性
@@ -222,6 +236,7 @@ evaluationModels:
   - id: em-teammate-awareness
     label: 队友认知评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: disabled-teammate-routing-count
         label: 路由给禁用或不可用队友次数
@@ -239,6 +254,7 @@ evaluationModels:
   - id: em-workflow-context-supply
     label: 工作流上下文供给评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: workflow-context-version-drift-count
         label: 注入工作流上下文版本过期次数
@@ -256,6 +272,7 @@ evaluationModels:
   - id: em-interaction-mode-adherence
     label: 交互模式遵循评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: interaction-mode-violation-count
         label: Voice/Bootcamp 等当前模式违背次数
@@ -267,6 +284,7 @@ evaluationModels:
   - id: em-world-state-fidelity
     label: 世界状态忠实度评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: world-context-contradiction-count
         label: 回复与已注入世界状态矛盾次数
@@ -284,6 +302,7 @@ evaluationModels:
   - id: em-governance-authority-freshness
     label: 治理权威新鲜度评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: governance-version-stale-count
         label: 注入治理版本落后于权威版本次数
@@ -295,6 +314,7 @@ evaluationModels:
   - id: em-knowledge-evidence-quality
     label: 知识证据质量评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: unsupported-external-claim-count
         label: 关键外部断言缺少有效证据次数
@@ -312,6 +332,7 @@ evaluationModels:
   - id: em-operator-preference-alignment
     label: Operator 偏好对齐评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: explicit-preference-violation-count
         label: 明示偏好被违背次数
@@ -329,6 +350,7 @@ evaluationModels:
   - id: em-partnership-autonomy
     label: 共创自主性评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 3, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: unnecessary-operator-escalation-count
         label: 可自决事项不必要升级次数
@@ -346,6 +368,7 @@ evaluationModels:
   - id: em-engineering-quality-discipline
     label: 工程质量纪律评估
     ruleVersion: v1
+    cycleTrigger: { cumulativeThreshold: 200, counterexampleThreshold: 1, cadenceDays: 7, minimumIntervalMs: 7200000 }
     metrics:
       - id: quality-gate-bypass-count
         label: 未经规定质量门禁进入下一阶段次数
