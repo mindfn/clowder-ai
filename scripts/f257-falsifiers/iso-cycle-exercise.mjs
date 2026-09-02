@@ -57,7 +57,10 @@ const latest = await redis.zrevrange(`trace-owner-episode:${owner}`, 0, 0, 'WITH
 const latestInvocation = latest[0];
 const latestAt = Number(latest[1]);
 const a0 = await timed(() => checker.checkTrace(owner, latestInvocation, latestAt + 1));
-record('A0 checkTrace(latest real invocation) cost', a0.ms < 1000, { ms: a0.ms, requested: a0.value });
+record('A0 checkTrace(latest real invocation) ≤ 100 ms while all cycles idle (S1 gate P1)', a0.ms <= 100, {
+  ms: a0.ms,
+  requested: a0.value,
+});
 
 // A1: hourly path — checkKnownOwners over every objective.
 const a1 = await timed(() => checker.checkKnownOwners(Date.now()));
@@ -68,8 +71,8 @@ for (const objective of catalogResult.catalog.registry.objectives) {
 }
 const identity = JSON.parse(await redis.get(currentKey('identity-truth')));
 record(
-  'A1 checkKnownOwners cost + identity-truth requested via cumulative',
-  a1.ms < 5000 && identity.evalStatus === 'requested' && identity.triggeredBy.includes('cumulative'),
+  'A1 checkKnownOwners ≤ 500 ms + identity-truth requested via cumulative',
+  a1.ms <= 500 && identity.evalStatus === 'requested' && identity.triggeredBy.includes('cumulative'),
   {
     ms: a1.ms,
     requestedCount: a1.value,
