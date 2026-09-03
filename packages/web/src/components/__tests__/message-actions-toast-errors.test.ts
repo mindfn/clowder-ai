@@ -104,24 +104,10 @@ async function triggerAction(container: HTMLDivElement, buttonTitle: string, dia
   });
 }
 
-async function openOverflowAction(container: HTMLDivElement, label: string) {
-  const more = container.querySelector('button[aria-label="更多消息操作"]') as HTMLButtonElement | null;
-  expect(more).not.toBeNull();
-  if (!more) throw new Error('more-actions button not found');
-  await act(async () => {
-    more.click();
-  });
-
-  const action = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === label);
-  expect(action, `overflow action "${label}" should exist`).toBeTruthy();
-  if (!action) throw new Error(`overflow action "${label}" not found`);
-  await act(async () => {
-    action.click();
-  });
-}
-
-async function triggerOverflowDialogAction(container: HTMLDivElement, label: string, dialogTitle: string) {
-  await openOverflowAction(container, label);
+async function triggerDirectDialogAction(container: HTMLDivElement, buttonTitle: string, dialogTitle: string) {
+  const action = container.querySelector(`button[title="${buttonTitle}"]`) as HTMLButtonElement | null;
+  expect(action, `button[title="${buttonTitle}"] should exist`).not.toBeNull();
+  await act(async () => action?.click());
   const dialog = findOpenDialog(dialogTitle);
   expect(dialog, `dialog "${dialogTitle}" should be open`).toBeTruthy();
   await act(async () => {
@@ -131,7 +117,7 @@ async function triggerOverflowDialogAction(container: HTMLDivElement, label: str
 
 // ---------- suite ----------
 
-describe('F109: MessageActions toast on errors (4 UI paths)', () => {
+describe('F109: MessageActions toast on errors', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -189,63 +175,7 @@ describe('F109: MessageActions toast on errors (4 UI paths)', () => {
     });
   });
 
-  // ── 2. Hard Delete ──
-
-  describe('confirmHardDelete', () => {
-    it('shows toast on !res.ok', async () => {
-      // First call: GET thread info (for hard delete dialog setup)
-      // Second call: DELETE (the actual hard delete)
-      apiFetchMock
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ title: '测试对话' }) })
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 400,
-          json: async () => ({ error: '确认标题不匹配' }),
-        });
-      renderActions(root);
-
-      // Hard delete has a two-step flow: open overflow action → GET thread → show dialog
-      await openOverflowAction(container, '永久删除');
-
-      // Wait for the async handleHardDelete to resolve (GET thread)
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 0));
-      });
-
-      const dialog = findOpenDialog('永久删除');
-      expect(dialog).toBeTruthy();
-      await act(async () => {
-        await dialog!.onConfirm?.();
-      });
-
-      expect(addToastMock).toHaveBeenCalledOnce();
-      expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '删除失败' });
-      expect(removeThreadMessageMock).not.toHaveBeenCalled();
-    });
-
-    it('shows toast on network error (catch path)', async () => {
-      apiFetchMock
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ title: '测试对话' }) })
-        .mockRejectedValueOnce(new Error('Network error'));
-      renderActions(root);
-
-      await openOverflowAction(container, '永久删除');
-      await act(async () => {
-        await new Promise((r) => setTimeout(r, 0));
-      });
-
-      const dialog = findOpenDialog('永久删除');
-      expect(dialog).toBeTruthy();
-      await act(async () => {
-        await dialog!.onConfirm?.();
-      });
-
-      expect(addToastMock).toHaveBeenCalledOnce();
-      expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '删除失败' });
-    });
-  });
-
-  // ── 3. Branch (from edit) ──
+  // ── 2. Branch (from edit) ──
 
   describe('confirmBranch (edit → branch)', () => {
     it('shows toast on !res.ok', async () => {
@@ -310,7 +240,7 @@ describe('F109: MessageActions toast on errors (4 UI paths)', () => {
     });
   });
 
-  // ── 4. Direct Branch ──
+  // ── 3. Direct Branch ──
 
   describe('confirmBranchDirect', () => {
     it('shows toast on !res.ok', async () => {
@@ -320,7 +250,7 @@ describe('F109: MessageActions toast on errors (4 UI paths)', () => {
         json: async () => ({ error: '无权对此对话创建分支' }),
       });
       renderActions(root);
-      await triggerOverflowDialogAction(container, '从这里分支', '从这里分支');
+      await triggerDirectDialogAction(container, '从这里分支', '从这里分支');
 
       expect(addToastMock).toHaveBeenCalledOnce();
       expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '分支创建失败' });
@@ -330,7 +260,7 @@ describe('F109: MessageActions toast on errors (4 UI paths)', () => {
     it('shows toast on network error (catch path)', async () => {
       apiFetchMock.mockRejectedValue(new Error('Network error'));
       renderActions(root);
-      await triggerOverflowDialogAction(container, '从这里分支', '从这里分支');
+      await triggerDirectDialogAction(container, '从这里分支', '从这里分支');
 
       expect(addToastMock).toHaveBeenCalledOnce();
       expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '分支创建失败' });

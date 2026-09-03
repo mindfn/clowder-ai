@@ -16,6 +16,7 @@ export function buildChatTimelineProjectionKey(messages: readonly ChatMessage[])
       message.replyTo,
       message.replyPreview?.senderCatId,
       message.replyPreview?.kind,
+      message.lifecycle,
       message.type === 'user' ? message.content : undefined,
       message.type === 'user' ? message.contentBlocks : undefined,
       message.extra?.queueReceipt,
