@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
+import {
+  adaptInvocationQueue,
+  canonicalTestMessageInput,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 let app;
 
@@ -44,24 +49,26 @@ test('canonical review decision survives completion rehydration through a real o
   ]);
 
   const registry = new InvocationRegistry();
-  const invocationQueue = new InvocationQueue();
+  const invocationQueue = adaptInvocationQueue(new InvocationQueue());
   const invocationRecordStore = new InvocationRecordStore();
   const messageStore = new MessageStore();
   const threadStore = new ThreadStore();
   const holderThread = await threadStore.create('user-1', 'Canonical review holder');
   const predecessorThread = await threadStore.create('user-1', 'Canonical review predecessor');
-  const trigger = await messageStore.append({
-    userId: 'user-1',
-    catId: 'codex',
-    content: 'Review the inherited exact HEAD and return one typed terminal verdict.',
-    mentions: ['opus'],
-    timestamp: Date.now(),
-    threadId: holderThread.id,
-    extra: {
-      crossPost: { sourceThreadId: predecessorThread.id, effectClass: 'investigate' },
-      coordination: { id: 'coord-real-outer-child', phase: 'active', hop: 1, subjectRef },
-    },
-  });
+  const trigger = await messageStore.append(
+    canonicalTestMessageInput({
+      userId: 'user-1',
+      catId: 'codex',
+      content: 'Review the inherited exact HEAD and return one typed terminal verdict.',
+      mentions: ['opus'],
+      timestamp: Date.now(),
+      threadId: holderThread.id,
+      extra: {
+        crossPost: { sourceThreadId: predecessorThread.id, effectClass: 'investigate' },
+        coordination: { id: 'coord-real-outer-child', phase: 'active', hop: 1, subjectRef },
+      },
+    }),
+  );
 
   let lease = claimActionSuccessor(null, {
     leaseId: 'lease-real-outer-child',
@@ -128,21 +135,24 @@ test('canonical review decision survives completion rehydration through a real o
     generation: 1,
     dispatchId: 'dispatch-stale-review',
   };
-  const queued = invocationQueue.enqueue({
-    threadId: holderThread.id,
-    userId: 'user-1',
-    ownerAuthProvenance: 'strict',
-    idempotencyKey: 'real-outer-child-review-source',
-    content: trigger.content,
-    messageId: trigger.id,
-    source: 'a2a',
-    targetCats: ['opus'],
-    intent: 'execute',
-    actionSuccessorFence: staleFence,
-    a2aTriggerMessageId: trigger.id,
-  });
+  const queued = invocationQueue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'message_wake',
+      threadId: holderThread.id,
+      userId: 'user-1',
+      ownerAuthProvenance: 'strict',
+      idempotencyKey: 'real-outer-child-review-source',
+      content: trigger.content,
+      messageId: trigger.id,
+      source: 'agent',
+      targetCats: ['opus'],
+      intent: 'execute',
+      actionSuccessorFence: staleFence,
+      a2aTriggerMessageId: trigger.id,
+    }),
+  );
   assert.equal(queued.outcome, 'enqueued');
-  assert.equal(invocationQueue.markProcessingById(holderThread.id, queued.entry.id, 'opus'), true);
+  assert.ok(await invocationQueue.markProcessingByIdDurable(holderThread.id, queued.entry.id, 'opus'));
   const outer = invocationRecordStore.create({
     threadId: holderThread.id,
     userId: 'user-1',
@@ -194,7 +204,7 @@ test('canonical review decision survives completion rehydration through a real o
         return [];
       },
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     actionSuccessorAdmissionService: new ActionSuccessorAdmissionService(leaseStore, truthResolver),
     localReviewVerdictService,
   });
@@ -229,7 +239,7 @@ test('canonical review decision survives completion rehydration through a real o
   assert.equal(
     invocationQueue
       .list(predecessorThread.id, 'user-1')
-      .filter((entry) => entry.targetCats.length === 1 && entry.targetCats[0] === 'codex').length,
+      .filter((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex').length,
     1,
   );
 });

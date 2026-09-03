@@ -24,11 +24,9 @@ import { ManagedHoldDispositionService } from '../dist/domains/ball-custody/Mana
 import { ManagedHoldReceiptService } from '../dist/domains/ball-custody/ManagedHoldReceiptService.js';
 import { TurnCustodyProjectionService } from '../dist/domains/ball-custody/TurnCustodyProjectionService.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
-import {
-  createInitialQueuedMessageCustody,
-  QueuedMessageCustodyCoordinator,
-} from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import { queueEntryId } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const THREAD = 'thread-1';
 const USER = 'user-1';
@@ -115,47 +113,45 @@ async function harness() {
   const ingest = new BallCustodyIngest(eventLog, projector);
   const messageStore = new MessageStore();
   const queue = new InvocationQueue();
-  const coordinator = new QueuedMessageCustodyCoordinator({ messageStore, now: () => now });
   const tasks = new Map();
 
   async function deliverWake({ taskId, invocationId, at, state = 'enqueued' }) {
-    const enqueue = queue.enqueue({
+    const stored = messageStore.append(
+      canonicalTestMessageInput({
+        id: 'ignored-by-store',
+        userId: USER,
+        catId: null,
+        from: { kind: 'system', service: 'hold-ball' },
+        content: `[定时任务] ${taskId} passed`,
+        mentions: [],
+        timestamp: at + 100,
+        threadId: THREAD,
+        source: {
+          connector: 'hold-ball',
+          label: '持球通知',
+          meta: { taskId, threadId: THREAD, catId: CAT, wakeWhen: true },
+        },
+      }),
+    );
+    tasks.set(taskId, managedTask({ id: taskId, messageId: stored.id, state, fireAt: at }));
+    const enqueue = await queue.enqueueExistingMessageDurable(messageStore, stored.id, {
+      kind: 'conversation_input',
       threadId: THREAD,
       userId: USER,
       ownerAuthProvenance: 'unknown',
-      content: `[定时任务] ${taskId} passed`,
-      source: 'connector',
+      content: stored.content,
+      messageId: stored.id,
+      from: { kind: 'system', service: 'hold-ball' },
       sourceCategory: 'scheduled',
       targetCats: [CAT],
       intent: 'execute',
       priority: 'normal',
     });
     assert.ok(enqueue.entry);
-    const stored = messageStore.append({
-      id: 'ignored-by-store',
-      userId: 'scheduler',
-      catId: null,
-      content: `[定时任务] ${taskId} passed`,
-      mentions: [],
-      timestamp: at + 100,
-      threadId: THREAD,
-      deliveryStatus: 'queued',
-      source: {
-        connector: 'hold-ball',
-        label: '持球通知',
-        meta: { taskId, threadId: THREAD, catId: CAT, wakeWhen: true },
-      },
-    });
-    tasks.set(taskId, managedTask({ id: taskId, messageId: stored.id, state, fireAt: at }));
-    queue.backfillMessageId(THREAD, USER, enqueue.entry.id, stored.id);
-    messageStore.initializeQueueCustody(
-      stored.id,
-      createInitialQueuedMessageCustody(queue.getEntrySnapshot(THREAD, USER, enqueue.entry.id)),
-    );
-    const processing = queue.markProcessing(THREAD, USER);
-    await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, processing.id));
-    queue.markProcessingSeen(THREAD, USER, processing.id, [CAT], invocationId, at + 200);
-    await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, processing.id));
+    await queue.markQueuedSeenDurable(THREAD, USER, enqueue.entry.id, CAT, invocationId, at + 200);
+    const processing = await queue.markProcessingByIdDurable(THREAD, enqueue.entry.id, CAT);
+    assert.ok(processing);
+    assert.equal(await queue.commitClaimedProcessing(THREAD, [processing.id], at + 201), true);
 
     await ingest.record(buildHeldEvent({ threadId: THREAD, catId: CAT, fireAt: at + 90_000, at }));
     await ingest.record(
@@ -175,7 +171,7 @@ async function harness() {
   }
 
   let latestInvocationId = 'inv-1';
-  const realReceiptService = new ManagedHoldReceiptService({ queue, messageStore, coordinator, now: () => now });
+  const realReceiptService = new ManagedHoldReceiptService({ queue, messageStore, now: () => now });
   let failNextReceipt = false;
   const receiptService = {
     async complete(input) {
@@ -223,32 +219,11 @@ async function harness() {
   return {
     eventLog,
     projectionStore,
+    queue,
+    messageStore,
     restartService,
     failReceiptOnce() {
       failNextReceipt = true;
-    },
-    handledCatIds(messageId) {
-      return messageStore.getById(messageId).queueCustody.handledByCatIds;
-    },
-    /**
-     * Model the real recovery path: Queue rolls the carrier back after a failed
-     * settlement and re-exposes the SAME source/task to a successor invocation.
-     */
-    async reexposeTo(messageId, invocationId) {
-      const entry = queue.list(THREAD, USER).find((candidate) => candidate.messageId === messageId);
-      assert.ok(entry, 'carrier must still exist to be re-exposed');
-      queue.rollbackProcessing(THREAD, entry.id);
-      queue.markQueuedFailedForCatAcrossUsers(THREAD, CAT, latestInvocationId, new Set([entry.id]));
-      await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, entry.id));
-      assert.ok(
-        queue.retryFailedTarget(THREAD, USER, entry.id, CAT),
-        'successor re-exposure must explicitly reopen the failed target',
-      );
-      const successor = queue.markProcessing(THREAD, USER);
-      await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, successor.id));
-      queue.markProcessingSeen(THREAD, USER, successor.id, [CAT], invocationId, now + 1);
-      await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, successor.id));
-      latestInvocationId = invocationId;
     },
     ingest,
     tasks,
@@ -479,11 +454,7 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     assert.equal(projection.heldUntil, beforeHeldUntil, 'the newer hold window is untouched');
   });
 
-  // ── Sol R2 P1: the terminal's sourceEventId embeds invocationId, but the wake's
-  // identity is (sourceMessageId, taskId). If the event lands and the F264 receipt
-  // then fails, Queue re-exposes the SAME wake to a successor invocation — which
-  // must recognize the existing terminal instead of writing a second one.
-  test('a successor invocation settles the same wake without a second terminal (no successor hold)', async () => {
+  test('the same invocation repairs a receipt failure without a second terminal', async () => {
     const h = await harness();
     const { stored } = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
 
@@ -494,15 +465,15 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     );
     assert.equal((await dispositionEvents(h)).length, 1, 'the custody terminal is already durable');
 
-    // Queue rolled the carrier back and re-exposed it to a new invocation.
-    await h.reexposeTo(stored.id, 'inv-2');
-    const retry = await h.service.complete(auth({ invocationId: 'inv-2', sourceMessageId: stored.id }), 'handled');
+    const retry = await h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled');
 
-    assert.equal(retry.outcome, 'replayed', 'the successor must recognize the existing per-wake terminal');
+    assert.equal(retry.outcome, 'replayed');
     assert.equal((await dispositionEvents(h)).length, 1, 'exactly one terminal event for one wake');
+    assert.equal(h.messageStore.getById(stored.id).deliveryStatus, 'delivered');
+    assert.equal((await h.queue.getDurableEntry(THREAD, queueEntryId(stored.id, CAT))).status, 'terminal');
   });
 
-  test('a successor invocation settles a retired wake without a second terminal (newer hold present)', async () => {
+  test('the same invocation repairs a retired wake receipt without touching the newer hold', async () => {
     const h = await harness();
     const first = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
     await h.deliverWake({ taskId: 'task-2', invocationId: 'inv-2', at: 50_000 });
@@ -514,25 +485,19 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     );
     assert.equal((await dispositionEvents(h)).length, 1);
 
-    await h.reexposeTo(first.stored.id, 'inv-3');
     const retry = await h.service.complete(
-      auth({ invocationId: 'inv-3', sourceMessageId: first.stored.id }),
+      auth({ invocationId: 'inv-1', sourceMessageId: first.stored.id }),
       'handled',
     );
 
     assert.equal(retry.outcome, 'replayed');
-    assert.equal(retry.retired, true, 'the successor reads the retired plane off the durable event');
+    assert.equal(retry.retired, true);
     assert.equal((await dispositionEvents(h)).length, 1, '#1366 AC: duplicate disposition creates no duplicate event');
     const projection = await h.projectionStore.get(SUBJECT);
     assert.notEqual(projection.state, 'resolved', 'the newer hold is still untouched');
   });
 
-  // ── Sol R3 P1: the producer can replay, but the CONSUMER must also recognize an
-  // existing per-wake terminal. Production order is gate.open -> tool -> gate.close;
-  // the first non-retired terminal already drove the subject to `resolved`, so
-  // openStructured bailed to unknown_legacy and the route still wrote
-  // `managed_hold_disposition_missing`, failing the successor invocation.
-  test('the stop gate recognizes an existing terminal after receipt-failure re-exposure', async () => {
+  test('the stop gate recognizes an existing terminal while the receipt is repaired', async () => {
     const h = await harness();
     const { stored, taskId } = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
 
@@ -543,11 +508,9 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     assert.equal((await dispositionEvents(h)).length, 1);
     assert.equal((await h.projectionStore.get(SUBJECT)).state, 'resolved');
 
-    await h.reexposeTo(stored.id, 'inv-2');
-
     // Production order: the route opens the projection BEFORE the tool runs.
     const opened = await h.gate.open(holdWake({ sourceMessageId: stored.id, taskId }));
-    const retry = await h.service.complete(auth({ invocationId: 'inv-2', sourceMessageId: stored.id }), 'handled');
+    const retry = await h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled');
     const decision = await h.gate.close(opened);
 
     assert.equal(retry.outcome, 'replayed');
@@ -556,7 +519,7 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     assert.equal((await dispositionEvents(h)).length, 1);
   });
 
-  test('the stop gate recognizes an existing retired terminal while the newer hold stays live', async () => {
+  test('a successor invocation cannot steal a processing receipt from its exposed invocation', async () => {
     const h = await harness();
     const first = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
     await h.deliverWake({ taskId: 'task-2', invocationId: 'inv-2', at: 50_000 });
@@ -567,64 +530,11 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
       h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: first.stored.id }), 'handled'),
     );
 
-    await h.reexposeTo(first.stored.id, 'inv-3');
-    const opened = await h.gate.open(holdWake({ sourceMessageId: first.stored.id, taskId: first.taskId }));
-    const retry = await h.service.complete(
-      auth({ invocationId: 'inv-3', sourceMessageId: first.stored.id }),
-      'handled',
+    h.setLatest('inv-3');
+    await assert.rejects(
+      () => h.service.complete(auth({ invocationId: 'inv-3', sourceMessageId: first.stored.id }), 'handled'),
+      (error) => error.code === 'managed_hold_receipt_carrier_mismatch',
     );
-    const decision = await h.gate.close(opened);
-
-    assert.equal(retry.outcome, 'replayed');
-    assert.equal(decision.shouldBlock, false);
-    assert.equal((await dispositionEvents(h)).length, 1);
-    assert.notEqual((await h.projectionStore.get(SUBJECT)).state, 'resolved', 'newer hold untouched');
-  });
-
-  // ── Sol R4 P1: every turn is free to pick handled|completed. A successor
-  // invocation cannot know what its predecessor chose, so requiring the same value
-  // left the current F264 exposure permanently unsettled.
-  test('a successor may choose a different disposition and still settle via the canonical terminal', async () => {
-    const h = await harness();
-    const { stored } = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
-
-    h.failReceiptOnce();
-    await assert.rejects(() =>
-      h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled'),
-    );
-    assert.equal((await dispositionEvents(h)).length, 1);
-
-    await h.reexposeTo(stored.id, 'inv-2');
-    const retry = await h.service.complete(auth({ invocationId: 'inv-2', sourceMessageId: stored.id }), 'completed');
-
-    assert.equal(retry.outcome, 'replayed');
-    assert.equal(retry.disposition, 'handled', 'the canonical prior terminal wins; it is not rewritten');
-    const events = await dispositionEvents(h);
-    assert.equal(events.length, 1, 'no second terminal for one wake');
-    assert.equal(events[0].payload.disposition, 'handled');
-    assert.deepEqual(h.handledCatIds(stored.id), [CAT], 'the current exposure receipt is settled');
-  });
-
-  test('a successor with a newer hold may also choose a different disposition', async () => {
-    const h = await harness();
-    const first = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
-    await h.deliverWake({ taskId: 'task-2', invocationId: 'inv-2', at: 50_000 });
-
-    h.setLatest('inv-1');
-    h.failReceiptOnce();
-    await assert.rejects(() =>
-      h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: first.stored.id }), 'completed'),
-    );
-
-    await h.reexposeTo(first.stored.id, 'inv-3');
-    const retry = await h.service.complete(
-      auth({ invocationId: 'inv-3', sourceMessageId: first.stored.id }),
-      'handled',
-    );
-
-    assert.equal(retry.outcome, 'replayed');
-    assert.equal(retry.disposition, 'completed', 'canonical prior terminal preserved');
-    assert.equal(retry.retired, true);
     assert.equal((await dispositionEvents(h)).length, 1);
     assert.notEqual((await h.projectionStore.get(SUBJECT)).state, 'resolved', 'newer hold untouched');
   });

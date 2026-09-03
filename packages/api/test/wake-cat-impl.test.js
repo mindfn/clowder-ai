@@ -20,13 +20,13 @@ function createMockDeps() {
         },
       },
       invocationQueue: {
-        enqueue(input) {
+        async enqueueDurable(input) {
           enqueuedEntries.push(input);
           return enqueueResult;
         },
       },
       queueProcessor: {
-        async tryAutoExecute(threadId) {
+        async requestDrain(threadId) {
           autoExecuteCalls.push(threadId);
         },
       },
@@ -54,9 +54,10 @@ describe('createWakeCatFn', () => {
     assert.equal(enqueuedEntries.length, 1);
     const entry = enqueuedEntries[0];
     assert.equal(entry.threadId, 'thread-game-1');
-    assert.equal(entry.userId, 'user-operator');
+    assert.equal(entry.userId, 'user-landy');
+    assert.equal(entry.kind, 'private_input');
     assert.equal(entry.content, 'You are wolf.');
-    assert.equal(entry.source, 'agent');
+    assert.deepEqual(entry.from, { kind: 'system', service: 'game-orchestrator' });
     assert.deepEqual(entry.targetCats, ['opus']);
     assert.equal(entry.intent, 'execute');
     assert.equal(entry.autoExecute, true);

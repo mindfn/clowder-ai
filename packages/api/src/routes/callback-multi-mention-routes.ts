@@ -25,21 +25,19 @@ import {
   actionSuccessorFencesMatch,
   reconcileActionSuccessorEnqueue,
 } from '../domains/ball-custody/reconcile-action-successor-enqueue.js';
-import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import {
+  type InvocationQueue,
+  queueEntryTargetCats,
+} from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRecord } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
-import { isTerminalDispositionEvent } from '../domains/cats/services/agents/invocation/PerCatTerminalDispositionCollector.js';
-import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
 import {
   type MultiMentionCreateParams,
   MultiMentionOrchestrator,
 } from '../domains/cats/services/agents/routing/MultiMentionOrchestrator.js';
-import { userFacingSystemInfoNoticeContent } from '../domains/cats/services/agents/routing/persist-system-info-warnings.js';
-import { createA2ASlotTrackingBridge } from '../domains/cats/services/agents/routing/route-helpers.js';
 import type { CloudDispatchProvenance } from '../domains/cats/services/cloud-bridge/types.js';
-import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import {
   checkFreshnessForPostMessage,
   createQueueChecker,
@@ -52,6 +50,7 @@ import {
   resolveFreshnessDescriptorProvider,
 } from '../domains/cats/services/freshness/RuntimeCapabilityDescriptor.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
@@ -73,7 +72,7 @@ import {
   successorUnfencedSingleTargetMultiMention,
 } from '../infrastructure/telemetry/instruments.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
-import { emitParallelRoutingPills } from './a2a-routing-projection.js';
+import { type A2AFanoutAdmissionPlan, type A2ATriggerDeps, enqueueA2ATargets } from './callback-a2a-trigger.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
 import { resolveCallbackActionLeaseRef } from './callback-scope-helpers.js';
 
@@ -246,13 +245,11 @@ export interface MultiMentionRouteDeps {
     'admit' | 'markUnavailable' | 'markReturnedDelivered'
   >;
   /** F122B B6: InvocationQueue for unified dispatch */
-  invocationQueue?: Pick<
-    InvocationQueue,
-    'enqueue' | 'countAgentEntriesForThread' | 'hasQueuedAgentForCat' | 'list' | 'getQueuedFreshnessMessagesForCat'
-  >;
+  invocationQueue?: A2ATriggerDeps['invocationQueue'] &
+    Pick<InvocationQueue, 'hasQueuedAgentForCat' | 'getQueuedFreshnessMessagesForCat'>;
   /** F122B B6: QueueProcessor for execution + response hook */
   queueProcessor?: {
-    tryAutoExecute?(threadId: string): Promise<void>;
+    requestDrain?(threadId: string): Promise<void>;
     registerEntryCompleteHook?(
       entryId: string,
       hook: (
@@ -335,75 +332,59 @@ function registerMultiMentionCompletionHook(input: {
   });
 }
 
-function enqueueMultiMentionTarget(input: {
-  deps: MultiMentionRouteDeps;
+function planMultiMentionFanout(input: {
   invocationQueue: NonNullable<MultiMentionRouteDeps['invocationQueue']>;
-  queueProcessor: NonNullable<MultiMentionRouteDeps['queueProcessor']>;
-  requestId: string;
-  catId: CatId;
-  messageContent: string;
+  targetCatIds: readonly CatId[];
   threadId: string;
-  userId: string;
-  ownerAuthProvenance: OwnerAuthProvenance;
-  initiator: CatId;
-  cloudDispatchProvenance: CloudDispatchProvenance | undefined;
-  parentInvocationId: string;
-  log: FastifyBaseLogger;
   actionFence: ActionSuccessorFence | undefined;
-}): 'enqueued' | 'skipped' | 'depth_limited' | 'unavailable' {
+}): A2AFanoutAdmissionPlan {
   const MAX_MM_DEPTH = 10;
-  if (input.invocationQueue.countAgentEntriesForThread(input.threadId) >= MAX_MM_DEPTH) {
-    input.log.warn(
-      { threadId: input.threadId, requestId: input.requestId, catId: input.catId },
-      '[F122B B6] multi-mention: depth limit reached',
-    );
-    return 'depth_limited';
+  const acceptedTargetCats: CatId[] = [];
+  let predictedDepth = input.invocationQueue.countAgentEntriesForThread(input.threadId);
+  let stop: A2AFanoutAdmissionPlan['stop'];
+  for (const catId of input.targetCatIds) {
+    if (predictedDepth >= MAX_MM_DEPTH) {
+      stop = { reason: 'depth', catId, currentDepth: predictedDepth };
+      break;
+    }
+    if (!input.actionFence && input.invocationQueue.hasQueuedAgentForCat(input.threadId, catId)) continue;
+    acceptedTargetCats.push(catId);
+    predictedDepth += 1;
   }
-  if (!input.actionFence && input.invocationQueue.hasQueuedAgentForCat(input.threadId, input.catId)) {
-    input.log.info(
-      { threadId: input.threadId, requestId: input.requestId, catId: input.catId },
-      '[F122B B6] multi-mention: skipping duplicate agent entry',
-    );
-    return 'skipped';
-  }
+  return {
+    requestedTargetCats: [...input.targetCatIds],
+    acceptedTargetCats,
+    streakTargetCats: [],
+    ...(stop ? { stop } : {}),
+  };
+}
 
-  const result = input.invocationQueue.enqueue({
-    threadId: input.threadId,
-    userId: input.userId,
-    ownerAuthProvenance: input.ownerAuthProvenance,
-    content: input.messageContent,
-    source: 'agent',
-    targetCats: [input.catId],
-    intent: 'execute',
-    autoExecute: true,
-    callerCatId: input.initiator,
-    a2aParentInvocationId: input.parentInvocationId,
-    idempotencyKey: input.actionFence
-      ? `action:${input.actionFence.leaseId}:${input.actionFence.generation}:${input.catId}`
-      : `multi-mention:${input.requestId}:${input.catId}`,
-    ...(input.cloudDispatchProvenance ? { cloudDispatchProvenance: input.cloudDispatchProvenance } : {}),
-    requiresExactCloudDispatchProvenance: true,
-    ...(input.actionFence
-      ? {
-          actionSuccessorFence: input.actionFence,
-        }
-      : {}),
-  });
-
-  if (result.outcome === 'enqueued' && result.entry) {
-    registerMultiMentionCompletionHook({
-      deps: input.deps,
-      queueProcessor: input.queueProcessor,
-      entryId: result.entry.id,
-      requestId: input.requestId,
-      catId: input.catId,
-      threadId: input.threadId,
-      userId: input.userId,
-      log: input.log,
-    });
-    return 'enqueued';
+async function resolveMultiMentionSourceMessage(
+  deps: MultiMentionRouteDeps,
+  input: { invocationId: string; callerCatId: CatId; threadId: string; userId: string },
+): Promise<StoredMessage | null> {
+  const source = await deps.messageStore.getByIdempotencyKey(
+    input.userId,
+    input.threadId,
+    `message-lifecycle-response:${input.invocationId}`,
+  );
+  const from = source ? messageFrom(source) : null;
+  if (
+    !source ||
+    source.threadId !== input.threadId ||
+    source.userId !== input.userId ||
+    from?.kind !== 'agent' ||
+    from.catId !== input.callerCatId ||
+    source.lifecycle?.kind !== 'response' ||
+    source.lifecycle.invocationId !== input.invocationId ||
+    source.deliveryStatus === 'canceled' ||
+    source.visibility === 'whisper' ||
+    source.recall ||
+    source._tombstone
+  ) {
+    return null;
   }
-  return input.actionFence ? 'unavailable' : 'skipped';
+  return source;
 }
 
 // ── Dispatch via InvocationQueue (F122B B6) ─────────────────────────
@@ -418,19 +399,11 @@ async function dispatchViaQueue(
   ownerAuthProvenance: OwnerAuthProvenance,
   initiator: CatId,
   cloudDispatchProvenance: CloudDispatchProvenance | undefined,
-  parentInvocationId: string,
   log: FastifyBaseLogger,
+  sourceMessage: StoredMessage,
+  parentInvocationId: string,
   actionFence?: ActionSuccessorFence,
   actionCarrierDisposition?: ActionSuccessorCarrierDisposition,
-  /**
-   * F086/F216: runs AFTER every target has real Queue custody and BEFORE any target is started.
-   * Projection must describe admitted siblings only — announcing the requested target list before
-   * admission is the exact "projection ahead of fact" defect this change exists to remove.
-   * Deliberately NOT awaited by the caller: see the call site: custody is durable by then, and
-   * awaiting a projection write in front of `tryAutoExecute` would turn a slow message store into
-   * a scheduling stall.
-   */
-  onAdmitted?: (admitted: CatId[]) => Promise<void>,
 ): Promise<void> {
   const { invocationQueue, queueProcessor } = deps;
   if (!invocationQueue || !queueProcessor) return;
@@ -439,33 +412,47 @@ async function dispatchViaQueue(
     '\n\n',
   );
 
-  const unavailable: CatId[] = [];
-  /** Targets that actually obtained Queue custody — the only honest basis for a fan-out pill. */
-  const admitted: CatId[] = [];
-  for (const catId of targetCatIds) {
-    const enqueueOutcome = enqueueMultiMentionTarget({
-      deps,
-      invocationQueue,
+  const preplannedAdmission = planMultiMentionFanout({ invocationQueue, targetCatIds, threadId, actionFence });
+  const result = await enqueueA2ATargets(
+    {
+      socketManager: deps.socketManager,
+      invocationTracker: deps.invocationTracker,
       queueProcessor,
-      requestId,
-      catId,
-      messageContent,
-      threadId,
+      messageStore: deps.messageStore,
+      invocationQueue,
+      log,
+    },
+    {
+      targetCats: targetCatIds,
+      content: messageContent,
       userId,
       ownerAuthProvenance,
-      initiator,
-      cloudDispatchProvenance,
+      threadId,
+      triggerMessage: sourceMessage,
+      callerCatId: initiator,
       parentInvocationId,
-      log,
-      actionFence,
-    });
-    if (enqueueOutcome === 'depth_limited') {
-      unavailable.push(...targetCatIds.slice(targetCatIds.indexOf(catId)));
-      break;
-    }
-    if (enqueueOutcome === 'unavailable') unavailable.push(catId);
-    if (enqueueOutcome === 'enqueued') admitted.push(catId);
-  }
+      preplannedAdmission,
+      ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+      onQueueEntriesAdmitted: (entries) => {
+        for (const entry of entries) {
+          const catId = queueEntryTargetCats(entry)[0];
+          if (!catId) continue;
+          registerMultiMentionCompletionHook({
+            deps,
+            queueProcessor,
+            entryId: entry.id,
+            requestId,
+            catId: catId as CatId,
+            threadId,
+            userId,
+            log,
+          });
+        }
+      },
+    },
+  );
+  const admitted = [...result.enqueued, ...(result.coalesced ?? [])];
+  const unavailable = targetCatIds.filter((catId) => !admitted.includes(catId));
 
   await reconcileActionSuccessorEnqueue({
     service: deps.actionSuccessorAdmissionService,
@@ -485,298 +472,6 @@ async function dispatchViaQueue(
     orch.recordResponse(requestId, catId, '[dispatch unavailable: target was not admitted to the queue]');
   }
   if (rejected.length > 0) settleGroupIfComplete(deps, requestId, threadId, userId, log);
-
-  // Custody is durable here and start has not happened yet — the only correct window to describe
-  // the fan-out. Deliberately NOT awaited: the projection is downstream of durable custody, so it
-  // must never sit in front of `tryAutoExecute`. Awaiting it (even after custody) let a slow or
-  // never-settling message store stall every admitted sibling's start — the same "cannot gate
-  // scheduling" claim being false for a second time (砚砚 R2 P1). Fire-and-forget is the contract;
-  // failures are logged and can only lose a pill, never a dispatch.
-  if (onAdmitted) {
-    void onAdmitted(admitted).catch((err) => {
-      log.warn({ threadId, requestId, err }, 'parallel routing projection failed (custody + start unaffected)');
-    });
-  }
-
-  await queueProcessor.tryAutoExecute?.(threadId);
-}
-
-// ── Legacy dispatch (direct routeExecution, fallback) ────────────────
-
-/** Custody handle produced by {@link admitLegacyTarget} and consumed by `dispatchToTarget`. */
-interface LegacyAdmission {
-  controller: AbortController;
-  invocationId: string;
-  /** Parsed once at admission and carried forward — no second parse of the same content (砚砚 R4 P2). */
-  intent: ReturnType<typeof parseIntent>;
-}
-
-/**
- * One legacy target's ADMISSION half, split out of `dispatchToTarget` (砚砚 R3 P1).
- *
- * Requirement 2 applies to both dispatch families: for an explicit parallel fan-out every sibling
- * must hold custody before ANY of them starts. The Queue path got that by enqueueing all targets
- * before `tryAutoExecute`; the legacy path used to interleave admission with execution, so a fast
- * first target could terminate while a later sibling had not yet created its invocation — and it
- * can still drop out entirely here (pre-start cancel at the tracker gate, or a duplicate record).
- * Hoisting admission lets the caller batch it, then project only what was admitted, then start.
- *
- * Returns null when the target did not obtain custody; the tracker slot is released in that case.
- * On success the CALLER owns the slot and must pass the handle to `dispatchToTarget`, whose
- * `finally` performs the (idempotent) release.
- */
-async function admitLegacyTarget(input: {
-  deps: MultiMentionRouteDeps;
-  requestId: string;
-  targetCatId: CatId;
-  threadId: string;
-  userId: string;
-  intent: ReturnType<typeof parseIntent>;
-  log: FastifyBaseLogger;
-}): Promise<LegacyAdmission | null> {
-  const { deps, requestId, targetCatId, threadId, userId, intent, log } = input;
-  const { invocationRecordStore, invocationTracker } = deps;
-  const orch = getMultiMentionOrchestrator();
-
-  // F122 AC-A9: occupy the tracker slot BEFORE create to close the TOCTOU window.
-  const controller = invocationTracker?.start(threadId, targetCatId, userId, [targetCatId]) ?? new AbortController();
-  // 砚砚 R4 P1: hoisted so the catch can SEE a record it already created. Splitting admission out of
-  // `dispatchToTarget` moved the happy path but left that function's catch behind, so a throw after
-  // create (the state machine's canonical `queued → failed` pre-start failure, e.g. the
-  // `status: running` update failing) leaked a record stuck at `queued` forever AND never recorded a
-  // response — the whole group then sat at `partial` until the timeout fired. Extracting a function
-  // means extracting its failure obligations too, not just its success path.
-  let invocationId: string | undefined;
-  try {
-    if (controller.signal.aborted) {
-      log.info({ requestId, targetCatId }, '[F086] Multi-mention dispatch canceled before start (deleting)');
-      invocationTracker?.complete(threadId, targetCatId, controller);
-      return null;
-    }
-
-    const createResult = await invocationRecordStore.create({
-      threadId,
-      userId,
-      targetCats: [targetCatId],
-      intent: intent.intent,
-      idempotencyKey: `mm-${requestId}-${targetCatId}`,
-      actionLeaseCarrier: { kind: 'none' },
-    });
-
-    if (createResult.outcome === 'duplicate') {
-      log.info({ requestId, targetCatId }, '[F086] Dispatch skipped: duplicate invocation');
-      invocationTracker?.complete(threadId, targetCatId, controller);
-      return null;
-    }
-
-    invocationId = createResult.invocationId;
-    invocationTracker?.bindExecutionId?.(threadId, [targetCatId], controller, invocationId);
-    await invocationRecordStore.update(invocationId, { status: 'running' });
-    orch.registerDispatch(requestId, targetCatId, controller);
-    return { controller, invocationId, intent };
-  } catch (err) {
-    log.error({ requestId, targetCatId, err }, '[F086] Multi-mention admission failed');
-    // Converge the record we already created — otherwise it is orphaned at `queued`.
-    if (invocationId) {
-      try {
-        await invocationRecordStore.update(invocationId, {
-          status: controller.signal.aborted ? 'canceled' : 'failed',
-          ...(controller.signal.aborted ? {} : { error: 'admission_error' }),
-        });
-      } catch (updateErr) {
-        log.warn(
-          { requestId, targetCatId, invocationId, err: updateErr },
-          '[F086] Failed to converge InvocationRecord after admission error',
-        );
-      }
-    }
-    // Register the failure so the group can reach a terminal state on its own instead of
-    // hanging at `partial` until the timeout.
-    orch.recordResponse(
-      requestId,
-      targetCatId,
-      `[admission error: ${err instanceof Error ? err.message : String(err)}]`,
-    );
-    invocationTracker?.complete(threadId, targetCatId, controller);
-    return null;
-  }
-}
-
-async function dispatchToTarget(
-  deps: MultiMentionRouteDeps,
-  requestId: string,
-  targetCatId: CatId,
-  question: string,
-  context: string | undefined,
-  threadId: string,
-  userId: string,
-  ownerAuthProvenance: OwnerAuthProvenance,
-  initiator: CatId,
-  cloudDispatchProvenance: CloudDispatchProvenance | undefined,
-  log: FastifyBaseLogger,
-  /** Custody obtained by `admitLegacyTarget`. The caller admitted every sibling before any start. */
-  admission: LegacyAdmission,
-): Promise<void> {
-  const orch = getMultiMentionOrchestrator();
-  const { router, invocationRecordStore, socketManager, invocationTracker } = deps;
-
-  // Build the message for this target
-  // Include multi-mention context as structured prefix so the target cat
-  // understands the request is from another cat, not the user directly.
-  const messageContent = [`[Multi-Mention from ${initiator}]`, question, ...(context ? ['---', context] : [])].join(
-    '\n\n',
-  );
-
-  // Parsed once at admission; re-parsing the identical content here was dead duplication (砚砚 R4 P2).
-  const intent = admission.intent;
-
-  // Collect response text from the routing execution
-  let responseText = '';
-  const toolsUsed: string[] = [];
-  // Custody was established by `admitLegacyTarget` before ANY sibling started (requirement 2).
-  const { controller } = admission;
-  const invocationId: string | undefined = admission.invocationId;
-
-  try {
-    let governanceErrorCode: string | undefined;
-
-    try {
-      // #768: Defer intent_mode broadcast until CLI produces first event.
-      let intentModeBroadcast = false;
-
-      for await (const msg of router.routeExecution(
-        userId,
-        messageContent,
-        threadId,
-        cloudDispatchProvenance?.sourceMessageId ?? invocationId,
-        [targetCatId],
-        intent,
-        {
-          ownerAuthProvenance,
-          humanDispositionInvocationOrigin: 'callback',
-          signal: controller.signal,
-          ...createA2ASlotTrackingBridge(invocationTracker, controller, admission.invocationId),
-          ...(deps.invocationQueue
-            ? {
-                deferA2AEnqueue: (entry: Parameters<InvocationQueue['enqueue']>[0]) =>
-                  deps.invocationQueue?.enqueue({ ...entry, ownerAuthProvenance }),
-              }
-            : {}),
-          parentInvocationId: invocationId,
-          ...(cloudDispatchProvenance ? { cloudDispatchProvenance } : {}),
-          requiresExactCloudDispatchProvenance: true,
-          onPromptMessagesExposed: (input) => deps.queueProcessor?.markPromptMessagesSeen?.(input) ?? Promise.resolve(),
-          // F222 P1: Multi-mention fallback dispatch is callback-authenticated cat-to-cat
-          // work (callerCatId = record.catId), consistent with queue path source:'agent'.
-          frustrationAutoIssueEligible: false,
-        },
-      )) {
-        // #768: Broadcast intent_mode on first CLI event — proves CLI is alive.
-        if (!intentModeBroadcast) {
-          socketManager.broadcastToRoom(`thread:${threadId}`, 'intent_mode', {
-            threadId,
-            mode: intent.intent,
-            targetCats: [targetCatId],
-            invocationId: admission.invocationId,
-          });
-          intentModeBroadcast = true;
-        }
-        if (controller.signal.aborted) break;
-        if (isTerminalDispositionEvent(msg) && msg.catId) {
-          invocationTracker?.completeSlot?.(threadId, msg.catId, controller);
-        }
-
-        // Capture text + tool usage for response aggregation
-        if (msg.catId === targetCatId) {
-          if (msg.type === 'text' && msg.content) {
-            responseText += msg.content;
-          } else if (msg.type === 'system_info' && msg.content) {
-            const visibleNotice = userFacingSystemInfoNoticeContent(msg.content, targetCatId);
-            if (visibleNotice) responseText = responseText ? `${responseText}\n${visibleNotice}` : visibleNotice;
-          } else if (msg.type === 'tool_use' && msg.toolName) {
-            toolsUsed.push(msg.toolName);
-          }
-        }
-        if (msg.type === 'done' && msg.errorCode) {
-          governanceErrorCode = msg.errorCode;
-        }
-
-        // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
-        socketManager.broadcastAgentMessage({ ...msg, ...stampVisibleTurn(invocationId, msg.invocationId) }, threadId);
-      }
-
-      const finalInvocationStatus = controller.signal.aborted
-        ? 'canceled'
-        : governanceErrorCode
-          ? 'failed'
-          : 'succeeded';
-      await invocationRecordStore.update(invocationId, {
-        status: finalInvocationStatus,
-        ...(governanceErrorCode ? { error: governanceErrorCode } : {}),
-      });
-    } finally {
-      orch.unregisterDispatch(requestId, targetCatId);
-    }
-
-    // If aborted or governance-blocked, do NOT record response
-    // or flush result — the partial/empty text would produce a misleading summary.
-    if (controller.signal.aborted || governanceErrorCode) {
-      log.info(
-        { requestId, targetCatId, governanceErrorCode },
-        '[F086] Multi-mention dispatch aborted/blocked, skipping recordResponse',
-      );
-      return;
-    }
-
-    // If no text captured but tools were used, generate a tool-usage summary
-    // so the aggregation doesn't show "(空回答)" for cats that responded via tools
-    const finalResponse =
-      responseText || (toolsUsed.length > 0 ? `(通过工具回复: ${[...new Set(toolsUsed)].join(', ')})` : '');
-
-    // Record response in orchestrator
-    const newStatus = orch.recordResponse(requestId, targetCatId, finalResponse);
-    log.info(
-      { requestId, targetCatId, newStatus, responseLength: finalResponse.length, toolsUsed: toolsUsed.length },
-      '[F086] Multi-mention response recorded',
-    );
-
-    settleGroupIfComplete(deps, requestId, threadId, userId, log);
-  } catch (err) {
-    log.error(
-      { requestId, targetCatId, err: err instanceof Error ? err.message : String(err) },
-      '[F086] Multi-mention dispatch failed for target',
-    );
-    if (invocationId) {
-      try {
-        await invocationRecordStore.update(invocationId, {
-          status: controller.signal.aborted ? 'canceled' : 'failed',
-          error: controller.signal.aborted ? undefined : 'dispatch_error',
-        });
-      } catch (updateErr) {
-        log.warn(
-          {
-            requestId,
-            targetCatId,
-            invocationId,
-            err: updateErr instanceof Error ? updateErr.message : String(updateErr),
-          },
-          '[F086] Failed to converge InvocationRecord after dispatch error',
-        );
-      }
-    }
-    // Record failure response in orchestrator
-    orch.recordResponse(
-      requestId,
-      targetCatId,
-      `[dispatch error: ${err instanceof Error ? err.message : String(err)}]`,
-    );
-    settleGroupIfComplete(deps, requestId, threadId, userId, log);
-  } finally {
-    // F122 AC-A7: unconditional slot release — covers early return, registerDispatch
-    // throw, routeExecution crash, and normal completion. InvocationTracker.complete()
-    // is idempotent (no-op if slot already removed or controller doesn't match).
-    invocationTracker?.complete(threadId, targetCatId, controller);
-  }
 }
 
 // ── Result flush ─────────────────────────────────────────────────────
@@ -859,8 +554,8 @@ async function flushResult(
 
   // Post aggregated result to thread (with source for persistence)
   const stored = await messageStore.append({
+    from: { kind: 'external', connectorId: 'multi-mention-result' },
     userId,
-    catId: result.request.callbackTo,
     content,
     mentions: [],
     timestamp: Date.now(),
@@ -996,7 +691,7 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
           // #1200 codex R12 P1: system-generated messages (persisted error badges)
           // are display-only — route-helpers.ts:744-745 excludes them from freshness.
           // All 4 freshness filter sites now consistent.
-          if (msg.userId === 'system') return false;
+          if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
           if (msg.origin === 'briefing') return false;
           // Play-mode visibility:
           if (needsFreshnessPlayFilter) {
@@ -1121,6 +816,20 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
       }
     }
 
+    if (!deps.invocationQueue || !deps.queueProcessor?.requestDrain) {
+      return reply.code(503).send({ error: 'Multi-mention dispatch requires InvocationQueue and QueueProcessor' });
+    }
+
+    const sourceMessage = await resolveMultiMentionSourceMessage(deps, {
+      invocationId: record.invocationId,
+      callerCatId,
+      threadId: record.threadId,
+      userId: record.userId,
+    });
+    if (!sourceMessage) {
+      return reply.code(409).send({ status: 'lifecycle_source_unavailable' });
+    }
+
     const createParams = {
       threadId: record.threadId,
       initiator: callerCatId,
@@ -1151,7 +860,7 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
         const accepted =
           deps.invocationQueue
             ?.list(record.threadId, record.userId)
-            .some((entry) => actionSuccessorFencesMatch(entry.actionSuccessorFence, actionFence)) ?? false;
+            .some((entry) => actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, actionFence)) ?? false;
         await reconcileActionSuccessorEnqueue({
           service: deps.actionSuccessorAdmissionService,
           fence: actionFence,
@@ -1181,98 +890,23 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
         : undefined,
     );
 
-    // F086/F216: a real fan-out renders as "A ⇉ B（并行 N/M）", distinct from a serial leg's
-    // "A → B（串行 1/2）" / "A ⇢ B（串行 2/2·排队中）". Before this the parallel path emitted no
-    // pill at all, so the only multi-target projection users ever saw was the sequential one.
-    // The projection runs from inside the dispatch, keyed on ADMITTED targets only (砚砚 R1 P1).
-    const projectAdmittedFanOut = (admitted: CatId[]): Promise<void> =>
-      emitParallelRoutingPills({
-        ...(deps.messageStore ? { messageStore: deps.messageStore } : {}),
-        socketManager: deps.socketManager,
-        threadId: record.threadId,
-        fromCatId: callerCatId,
-        targetCatIds: admitted,
-        log: request.log,
-      });
-
-    // Dispatch to all targets in parallel (fire and forget)
-    // F122B B6: Use InvocationQueue when available, legacy direct dispatch as fallback
-    if (deps.invocationQueue && deps.queueProcessor) {
-      await dispatchViaQueue(
-        deps,
-        mmRequest.id,
-        targetCatIds,
-        body.question,
-        body.context,
-        record.threadId,
-        record.userId,
-        record.ownerAuthProvenance,
-        callerCatId,
-        cloudDispatchProvenance,
-        record.invocationId,
-        request.log,
-        actionFence,
-        actionCarrierDisposition,
-        projectAdmittedFanOut,
-      );
-    } else {
-      // Legacy direct-dispatch fallback, now TWO-PHASE (砚砚 R3 P1): admit every target first, then
-      // project only what was admitted, then start. Previously each target admitted itself inside
-      // its own fire-and-forget dispatch, so a fast sibling could terminate before a later one had
-      // an invocation — requirement 2 held on the Queue path only. Targets that drop out during
-      // admission (pre-start cancel / duplicate record) are simply never announced.
-      const legacyMessageContent = [
-        `[Multi-Mention from ${callerCatId}]`,
-        body.question,
-        ...(body.context ? ['---', body.context] : []),
-      ].join('\n\n');
-      const legacyIntent = parseIntent(legacyMessageContent, 1);
-      const admissions = await Promise.all(
-        targetCatIds.map(async (targetCatId) => ({
-          targetCatId,
-          admission: await admitLegacyTarget({
-            deps,
-            requestId: mmRequest.id,
-            targetCatId,
-            threadId: record.threadId,
-            userId: record.userId,
-            intent: legacyIntent,
-            log: request.log,
-          }),
-        })),
-      );
-      const admittedLegacy = admissions.flatMap((a) =>
-        a.admission ? [{ targetCatId: a.targetCatId, admission: a.admission }] : [],
-      );
-
-      void projectAdmittedFanOut(admittedLegacy.map((a) => a.targetCatId)).catch((err) => {
-        request.log.warn({ err, threadId: record.threadId }, 'parallel routing projection failed');
-      });
-
-      // 砚砚 R4 P1: admission failures already recorded their own failure response, so a group where
-      // every target failed is already terminal — settle it now instead of leaving the initiator
-      // waiting on the timeout timer.
-      if (admittedLegacy.length < targetCatIds.length) {
-        settleGroupIfComplete(deps, mmRequest.id, record.threadId, record.userId, request.log);
-      }
-
-      for (const { targetCatId, admission } of admittedLegacy) {
-        void dispatchToTarget(
-          deps,
-          mmRequest.id,
-          targetCatId,
-          body.question,
-          body.context,
-          record.threadId,
-          record.userId,
-          record.ownerAuthProvenance,
-          callerCatId,
-          cloudDispatchProvenance,
-          request.log,
-          admission,
-        );
-      }
-    }
+    await dispatchViaQueue(
+      deps,
+      mmRequest.id,
+      targetCatIds,
+      body.question,
+      body.context,
+      record.threadId,
+      record.userId,
+      record.ownerAuthProvenance,
+      callerCatId,
+      cloudDispatchProvenance,
+      request.log,
+      sourceMessage,
+      expectedParentInvocationId,
+      actionFence,
+      actionCarrierDisposition,
+    );
 
     request.log.info(
       {

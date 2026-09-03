@@ -19,6 +19,7 @@ const TARGET_STATES = new Set([
   'seen',
   'failed',
   'interrupted',
+  'cancelled',
   'steering',
   'withdrawn',
   'handled',
@@ -203,8 +204,18 @@ function normalizeTargetAttempt(value: unknown): QueueTargetAttempt | undefined 
     !isFiniteNumber(candidate.updatedAt) ||
     !isOptionalString(candidate.invocationId) ||
     !isOptionalNumber(candidate.seenAt) ||
+    !isOptionalNumber(candidate.activeAppendAcceptedAt) ||
     (candidate.terminalReason !== undefined &&
       (typeof candidate.terminalReason !== 'string' || !ATTEMPT_TERMINAL_REASONS.has(candidate.terminalReason)))
+  ) {
+    return undefined;
+  }
+  if (
+    candidate.activeAppendAcceptedAt !== undefined &&
+    (!isNonEmptyString(candidate.invocationId) ||
+      !isFiniteNumber(candidate.seenAt) ||
+      candidate.activeAppendAcceptedAt < candidate.seenAt ||
+      candidate.activeAppendAcceptedAt > candidate.updatedAt)
   ) {
     return undefined;
   }
@@ -221,7 +232,6 @@ function hasValidReceiptTargetOptionals(candidate: UnknownRecord): boolean {
     isOptionalNumber(candidate.awakenedAt) &&
     isOptionalNumber(candidate.seenAt) &&
     isOptionalNumber(candidate.withdrawnAt) &&
-    (candidate.retryable === undefined || typeof candidate.retryable === 'boolean') &&
     (candidate.attempts === undefined || Array.isArray(candidate.attempts))
   );
 }
@@ -258,7 +268,6 @@ function buildReceiptTarget(candidate: UnknownRecord, nested: NormalizedReceiptT
   if (candidate.withdrawnAt !== undefined) target.withdrawnAt = candidate.withdrawnAt as number;
   if (nested.outcome) target.outcome = nested.outcome;
   if (nested.attempts) target.attempts = nested.attempts;
-  if (candidate.retryable !== undefined) target.retryable = candidate.retryable as boolean;
   return target;
 }
 

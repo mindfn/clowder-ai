@@ -1,6 +1,10 @@
-import type { CatId, QueueTargetOutcome } from '@cat-cafe/shared';
-import type { InvocationQueue, QueueEntry } from '../cats/services/agents/invocation/InvocationQueue.js';
-import type { QueuedMessageCustodyCoordinator } from '../cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import type { CatId } from '@cat-cafe/shared';
+import {
+  type InvocationQueue,
+  type QueueEntry,
+  queueEntryMessageIds,
+} from '../cats/services/agents/invocation/InvocationQueue.js';
+import { queueEntryId } from '../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 
 export interface ManagedHoldReceiptInput {
@@ -26,26 +30,10 @@ export class ManagedHoldReceiptError extends Error {
 }
 
 interface ManagedHoldReceiptDeps {
-  readonly queue: Pick<InvocationQueue, 'getEntrySnapshot' | 'removeEntrySnapshotIfUnchanged'>;
-  readonly messageStore: Pick<IMessageStore, 'getById'>;
-  readonly coordinator: Pick<QueuedMessageCustodyCoordinator, 'commitSuccessfulTargetForMessage'>;
+  readonly queue: Pick<InvocationQueue, 'findEntryWithMessageId' | 'getDurableEntry' | 'terminalizeEntryDurable'>;
+  readonly messageStore: Pick<IMessageStore, 'getById' | 'markDelivered'>;
   readonly now?: () => number;
   readonly onSettled?: (input: ManagedHoldReceiptInput & { entryId: string }) => void | Promise<void>;
-}
-
-function entryMessageIds(entry: Pick<QueueEntry, 'messageId' | 'mergedMessageIds'>): string[] {
-  return [entry.messageId ?? '', ...entry.mergedMessageIds].filter(Boolean);
-}
-
-function exactOutcomeMatches(
-  outcome: QueueTargetOutcome | undefined,
-  invocationId: string,
-): outcome is QueueTargetOutcome {
-  return (
-    outcome?.invocationId === invocationId &&
-    outcome.evidenceRef.kind === 'invocation_lineage' &&
-    outcome.evidenceRef.invocationId === invocationId
-  );
 }
 
 /**
@@ -63,8 +51,7 @@ export class ManagedHoldReceiptService {
 
   async complete(input: ManagedHoldReceiptInput): Promise<ManagedHoldReceiptResult> {
     const message = await this.deps.messageStore.getById(input.sourceMessageId);
-    const custody = message?.queueCustody;
-    if (!message || message.threadId !== input.threadId || !custody) {
+    if (!message || message.threadId !== input.threadId || message.userId !== input.userId) {
       throw new ManagedHoldReceiptError('managed_hold_receipt_missing');
     }
 
@@ -73,57 +60,25 @@ export class ManagedHoldReceiptService {
       throw new ManagedHoldReceiptError('managed_hold_receipt_source_mismatch');
     }
 
-    const existingOutcome = custody.targetOutcomeByCatId?.[input.catId];
-    if (custody.handledByCatIds.includes(input.catId as CatId)) {
-      if (!exactOutcomeMatches(existingOutcome, input.invocationId)) {
-        throw new ManagedHoldReceiptError('managed_hold_receipt_replay_mismatch');
-      }
-      await this.removeResidualCarrier(custody.entryId, input.userId, input);
-      return { outcome: 'replayed', entryId: custody.entryId };
-    }
-
-    const exposure = custody.bodyExposures?.find(
+    const entry = this.deps.queue.findEntryWithMessageId(input.threadId, input.sourceMessageId);
+    if (!entry) return this.resolveReplay(input);
+    this.assertExactCarrier(entry, input);
+    const exposure = entry.delivery.bodyExposures?.find(
       (candidate) => candidate.targetCatId === input.catId && candidate.invocationId === input.invocationId,
     );
-    if (
-      !custody.pendingTargetCats.includes(input.catId as CatId) ||
-      custody.seenInvocationIdByCatId[input.catId] !== input.invocationId ||
-      !exposure
-    ) {
-      throw new ManagedHoldReceiptError('managed_hold_receipt_invocation_mismatch');
-    }
-
-    const entry = this.deps.queue.getEntrySnapshot(input.threadId, input.userId, custody.entryId);
-    this.assertExactCarrier(entry, input);
-
+    if (!exposure) throw new ManagedHoldReceiptError('managed_hold_receipt_invocation_mismatch');
     const handledAt = Math.max(input.handledAt, exposure.seenAt + 1, this.now());
-    const outcome: QueueTargetOutcome = {
-      invocationId: input.invocationId,
-      disposition: 'managed_hold_disposition',
-      evidenceRef: { kind: 'invocation_lineage', invocationId: input.invocationId },
-      handledAt,
-    };
-    const completion = await this.deps.coordinator.commitSuccessfulTargetForMessage(
-      custody.entryId,
-      input.sourceMessageId,
-      input.catId,
-      input.invocationId,
-      handledAt,
-      outcome,
-      () => true,
-    );
-    if (!completion.handledTargetCats.includes(input.catId as CatId)) {
-      const after = await this.deps.messageStore.getById(input.sourceMessageId);
-      if (!exactOutcomeMatches(after?.queueCustody?.targetOutcomeByCatId?.[input.catId], input.invocationId)) {
-        throw new ManagedHoldReceiptError('managed_hold_receipt_commit_rejected');
-      }
+    const delivered = await this.deps.messageStore.markDelivered(input.sourceMessageId, handledAt);
+    if (!delivered || (delivered.deliveryStatus !== 'delivered' && delivered.deliveryTransitioned !== true)) {
+      throw new ManagedHoldReceiptError('managed_hold_receipt_commit_rejected');
     }
-
-    if (!entry || !this.deps.queue.removeEntrySnapshotIfUnchanged(entry)) {
-      throw new ManagedHoldReceiptError('managed_hold_receipt_carrier_changed');
+    const terminal = await this.deps.queue.terminalizeEntryDurable(input.threadId, input.userId, entry.id, 'handled');
+    if (!terminal) {
+      const replay = await this.resolveReplay(input);
+      if (replay.outcome !== 'replayed') throw new ManagedHoldReceiptError('managed_hold_receipt_carrier_changed');
     }
-    await this.deps.onSettled?.({ ...input, entryId: custody.entryId, handledAt });
-    return { outcome: 'applied', entryId: custody.entryId };
+    await this.deps.onSettled?.({ ...input, entryId: entry.id, handledAt });
+    return { outcome: 'applied', entryId: entry.id };
   }
 
   private assertExactCarrier(entry: QueueEntry | null, input: ManagedHoldReceiptInput): asserts entry is QueueEntry {
@@ -131,27 +86,29 @@ export class ManagedHoldReceiptService {
       !entry ||
       (entry.status !== 'processing' && entry.status !== 'queued') ||
       entry.threadId !== input.threadId ||
-      entry.source !== 'connector' ||
       entry.sourceCategory !== 'scheduled' ||
-      !entry.targetCats.includes(input.catId as CatId) ||
-      entry.queuedSeenInvocationIdByCatId?.[input.catId] !== input.invocationId ||
-      entryMessageIds(entry).length !== 1 ||
-      entryMessageIds(entry)[0] !== input.sourceMessageId
+      entry.target.kind !== 'cat' ||
+      entry.target.catId !== (input.catId as CatId) ||
+      entry.delivery.seenInvocationId !== input.invocationId ||
+      queueEntryMessageIds(entry).length !== 1 ||
+      queueEntryMessageIds(entry)[0] !== input.sourceMessageId
     ) {
       throw new ManagedHoldReceiptError('managed_hold_receipt_carrier_mismatch');
     }
   }
 
-  private async removeResidualCarrier(
-    entryId: string,
-    messageUserId: string,
-    input: ManagedHoldReceiptInput,
-  ): Promise<void> {
-    const entry = this.deps.queue.getEntrySnapshot(input.threadId, messageUserId, entryId);
-    if (!entry) return;
-    this.assertExactCarrier(entry, input);
-    if (!this.deps.queue.removeEntrySnapshotIfUnchanged(entry)) {
-      throw new ManagedHoldReceiptError('managed_hold_receipt_carrier_changed');
+  private async resolveReplay(input: ManagedHoldReceiptInput): Promise<ManagedHoldReceiptResult> {
+    const entryId = queueEntryId(input.sourceMessageId, input.catId);
+    const row = await this.deps.queue.getDurableEntry(input.threadId, entryId);
+    if (
+      row?.status !== 'terminal' ||
+      row.payload.messageId !== input.sourceMessageId ||
+      row.target.kind !== 'cat' ||
+      row.target.catId !== input.catId ||
+      row.delivery.seenInvocationId !== input.invocationId
+    ) {
+      throw new ManagedHoldReceiptError('managed_hold_receipt_replay_mismatch');
     }
+    return { outcome: 'replayed', entryId };
   }
 }

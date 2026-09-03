@@ -1,155 +1,87 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, it } from 'node:test';
 
 import { createManagedCommandWakeQueueAdapter } from '../dist/domains/ball-custody/managed-command-wake-queue-adapter.js';
-import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
-import {
-  createInitialQueuedMessageCustody,
-  QueuedMessageCustodyCoordinator,
-} from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
-import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 
-test('managed wake adapter retries one exact failed disposition attempt under its durable owner', async () => {
-  const threadId = 'thread-managed-adapter';
-  const userId = 'user-owner';
-  const catId = 'codex-sol';
-  const taskId = 'hold-ball-managed-adapter';
-  const invocationId = 'invocation-missing-disposition';
-  const startedAt = Date.now();
-  const queue = new InvocationQueue();
-  const messageStore = new MessageStore();
-  const coordinator = new QueuedMessageCustodyCoordinator({ messageStore, now: () => startedAt + 3_000 });
-  const admission = queue.enqueue({
-    threadId,
-    userId,
-    ownerAuthProvenance: 'strict',
-    content: '[managed wake] command complete',
-    source: 'connector',
-    sourceCategory: 'scheduled',
-    targetCats: [catId],
-    intent: 'execute',
-    autoExecute: true,
-  });
-  assert.equal(admission.outcome, 'enqueued');
-  const message = messageStore.append({
-    threadId,
-    userId: 'scheduler',
-    catId: null,
-    content: admission.entry.content,
-    mentions: [catId],
-    timestamp: startedAt,
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: 'managed wake',
-      icon: '⏱️',
-      meta: { wakeWhen: true, taskId },
+function terminalEntry(overrides = {}) {
+  return {
+    version: 1,
+    id: 'queue:managed-wake',
+    threadId: 'thread-managed-adapter',
+    owner: { kind: 'user', userId: 'user-owner' },
+    kind: 'conversation_input',
+    from: { kind: 'system', service: 'scheduler' },
+    target: { kind: 'cat', catId: 'codex-sol' },
+    payload: { sourceId: 'message-managed-wake', messageId: 'message-managed-wake', content: 'command complete' },
+    execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: true },
+    delivery: {
+      attemptId: 'queue:managed-wake:1',
+      seenInvocationId: 'invocation-failed',
+      terminalOutcome: 'failed',
+      failedAt: 300,
+      failureReason: 'invocation_failed',
     },
-  });
-  queue.backfillMessageId(threadId, userId, admission.entry.id, message.id);
-  let entry = queue.getEntrySnapshot(threadId, userId, admission.entry.id);
-  assert.equal(
-    messageStore.initializeQueueCustody(message.id, createInitialQueuedMessageCustody(entry)).kind,
-    'initialized',
-  );
-  queue.markQueuedSeen(threadId, userId, entry.id, catId, invocationId, startedAt + 2_000);
-  await coordinator.persistEntry(queue.getEntrySnapshot(threadId, userId, entry.id));
-  queue.markQueuedFailedForCatAcrossUsers(
-    threadId,
-    catId,
-    invocationId,
-    new Set([entry.id]),
-    'invocation_failed',
-    startedAt + 2_100,
-  );
-  entry = queue.getEntrySnapshot(threadId, userId, entry.id);
-  await coordinator.persistEntry(entry);
-
-  const task = {
-    id: taskId,
-    templateId: 'reminder',
-    trigger: { type: 'once', fireAt: startedAt + 99_000 },
-    params: {
-      triggerUserId: userId,
-      holdLifecycle: {
-        mode: 'wake_when',
-        status: 'active',
-        createdBy: `hold-ball:${catId}`,
-        managedCommand: {
-          state: 'enqueued',
-          command: 'pnpm gate',
-          startedAt,
-          messageId: message.id,
-        },
-      },
-    },
-    display: { label: 'hold', category: 'system', description: 'hold' },
-    deliveryThreadId: threadId,
-    enabled: true,
-    createdBy: `hold-ball:${catId}`,
-    createdAt: new Date(startedAt).toISOString(),
+    status: 'terminal',
+    enqueuedAt: 100,
+    processingStartedAt: 200,
+    terminalAt: 300,
+    priority: 'normal',
+    ...overrides,
   };
-  const queueProcessor = {
-    async retryFailedTarget(expectedThreadId, expectedUserId, entryId, targetCatId, expectedAttemptId, commit) {
-      const current = queue.getEntrySnapshot(expectedThreadId, expectedUserId, entryId);
-      if (!current) return { outcome: 'not_retryable' };
-      const retried = await coordinator.retryFailedTarget(current, targetCatId, expectedAttemptId, commit);
-      if (retried.outcome !== 'retried') return retried;
-      const queueRetry = queue.retryFailedTarget(expectedThreadId, expectedUserId, entryId, targetCatId);
-      if (!queueRetry) return { outcome: 'not_retryable' };
-      queue.bindRetryAttemptId(expectedThreadId, expectedUserId, entryId, targetCatId, retried.attempt.id);
-      return { outcome: 'retried', attemptId: retried.attempt.id };
-    },
-  };
-  const adapter = createManagedCommandWakeQueueAdapter({
-    dynamicTaskStore: { getById: (id) => (id === taskId ? task : null) },
-    messageStore,
-    invocationRecordStore: {
-      async get(id) {
-        return id === invocationId ? { id, status: 'failed', error: 'managed_hold_disposition_missing' } : null;
+}
+
+describe('managed command wake durable-ledger adapter', () => {
+  it('projects one exact terminal failure with provider evidence', async () => {
+    const entry = terminalEntry();
+    const adapter = createManagedCommandWakeQueueAdapter({
+      messageStore: {
+        getById: async (id) =>
+          id === 'message-managed-wake' ? { id, threadId: entry.threadId, deliveryStatus: 'delivered' } : null,
       },
-    },
-    invocationQueue: queue,
-    queueProcessor,
+      invocationRecordStore: {
+        get: async (id) =>
+          id === 'invocation-failed' ? { id, status: 'failed', error: 'managed_hold_disposition_missing' } : null,
+      },
+      invocationQueue: {
+        getDurableEntriesForMessages: async () => new Map([['message-managed-wake', [entry]]]),
+      },
+    });
+
+    assert.deepEqual(
+      await adapter.getEventCarrier({
+        threadId: entry.threadId,
+        userId: 'user-owner',
+        catId: 'codex-sol',
+        messageId: 'message-managed-wake',
+      }),
+      {
+        state: 'failed',
+        attemptId: 'queue:managed-wake:1',
+        attemptSequence: 1,
+        invocationId: 'invocation-failed',
+        errorCode: 'managed_hold_disposition_missing',
+      },
+    );
   });
 
-  const failedCarrier = await adapter.getEventCarrier({ threadId, userId, catId, messageId: message.id });
-  assert.deepEqual(failedCarrier, {
-    state: 'failed',
-    attemptId: `${entry.id}:${catId}:1`,
-    attemptSequence: 1,
-    invocationId,
-    errorCode: 'managed_hold_disposition_missing',
+  it('does not expose a carrier across its durable owner boundary', async () => {
+    const entry = terminalEntry();
+    const adapter = createManagedCommandWakeQueueAdapter({
+      messageStore: { getById: async () => ({ id: 'message-managed-wake', threadId: entry.threadId }) },
+      invocationRecordStore: { get: async () => null },
+      invocationQueue: {
+        getDurableEntriesForMessages: async () => new Map([['message-managed-wake', [entry]]]),
+      },
+    });
+
+    assert.deepEqual(
+      await adapter.getEventCarrier({
+        threadId: entry.threadId,
+        userId: 'user-foreign',
+        catId: 'codex-sol',
+        messageId: 'message-managed-wake',
+      }),
+      { state: 'missing' },
+    );
   });
-  assert.equal(
-    await adapter.retryEventCarrier({
-      taskId,
-      threadId,
-      userId,
-      catId,
-      messageId: message.id,
-      attemptId: failedCarrier.attemptId,
-    }),
-    'retried',
-  );
-  const retriedCustody = messageStore.getById(message.id).queueCustody;
-  assert.equal(retriedCustody.ownerUserId, userId);
-  assert.deepEqual(
-    retriedCustody.targetAttempts.map(({ id, state }) => ({ id, state })),
-    [
-      { id: `${entry.id}:${catId}:1`, state: 'failed' },
-      { id: `${entry.id}:${catId}:2`, state: 'queued' },
-    ],
-  );
-  assert.equal(
-    await adapter.retryEventCarrier({
-      taskId,
-      threadId,
-      userId: 'user-foreign',
-      catId,
-      messageId: message.id,
-      attemptId: failedCarrier.attemptId,
-    }),
-    'not_retryable',
-  );
 });

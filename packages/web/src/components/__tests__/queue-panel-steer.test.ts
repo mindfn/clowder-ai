@@ -24,7 +24,7 @@ const QUEUED_ENTRY: QueueEntry = {
   content: 'queued message',
   messageId: 'm1',
   mergedMessageIds: [],
-  source: 'user',
+  from: { kind: 'user', userId: 'test-user' },
   targetCats: ['opus'],
   intent: 'execute',
   status: 'queued',
@@ -36,35 +36,6 @@ const PROCESSING_ENTRY: QueueEntry = {
   id: 'q2',
   content: 'processing message',
   status: 'processing',
-};
-
-const FAILED_RECEIPT = {
-  version: 1 as const,
-  entryId: QUEUED_ENTRY.id,
-  targets: [
-    {
-      catId: 'opus',
-      state: 'failed' as const,
-      attempts: [
-        {
-          id: 'q1:opus:3',
-          targetCatId: 'opus',
-          sequence: 3,
-          state: 'failed' as const,
-          createdAt: NOW - 100,
-          updatedAt: NOW,
-          terminalReason: 'invocation_failed' as const,
-        },
-      ],
-    },
-  ],
-  reminderAttempts: [],
-};
-
-const FAILED_ENTRY: QueueEntry = {
-  ...QUEUED_ENTRY,
-  targetStates: { opus: 'failed' },
-  queueReceipt: FAILED_RECEIPT,
 };
 
 function response(body: unknown, status = 200) {
@@ -97,11 +68,21 @@ describe('QueuePanel steer (F047)', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
       activeInvocations: {},
       catInvocations: {},
       targetCats: [],
+      threads: [
+        {
+          id: 'thread-1',
+          projectPath: '/test',
+          title: 'Test thread',
+          createdBy: 'test-user',
+          participants: ['opus', 'codex'],
+          lastActiveAt: NOW,
+          createdAt: NOW,
+        },
+      ],
     });
   });
 
@@ -120,64 +101,6 @@ describe('QueuePanel steer (F047)', () => {
     const html = container.innerHTML;
     expect(html).toContain('Steer');
     expect(container.querySelector('[data-testid="steer-q2"]')).toBeNull();
-  });
-
-  it('routes a failed-only target exclusively to Retry', () => {
-    useChatStore.setState({ queue: [FAILED_ENTRY] });
-    act(() => {
-      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
-    });
-
-    expect(container.querySelectorAll('[data-testid="retry-q1-opus"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="steer-q1"]')).toBeNull();
-    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
-    expect(container.textContent).not.toContain('等待 opus 调度');
-  });
-
-  it('lets only a non-failed sibling contribute mixed-target Recover and Steer', () => {
-    useChatStore.setState({
-      queue: [
-        {
-          ...FAILED_ENTRY,
-          targetCats: ['opus', 'codex'],
-          targetStates: { opus: 'failed', codex: 'queued' },
-          queueReceipt: {
-            ...FAILED_RECEIPT,
-            targets: [...FAILED_RECEIPT.targets, { catId: 'codex', state: 'queued' }],
-          },
-        },
-      ],
-    });
-    act(() => {
-      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
-    });
-
-    expect(container.querySelectorAll('[data-testid="retry-q1-opus"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="steer-q1"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
-    expect(container.textContent).toContain('等待 codex 调度');
-    expect(container.textContent).not.toContain('等待 opus');
-  });
-
-  it('retries the exact failed target once through its message and attempt fence', async () => {
-    vi.mocked(apiFetch).mockResolvedValueOnce(response({ status: 'retry_queued' }, 202) as Response);
-    useChatStore.setState({ queue: [FAILED_ENTRY] });
-    act(() => {
-      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
-    });
-
-    const retry = container.querySelector('[data-testid="retry-q1-opus"]') as HTMLButtonElement | null;
-    expect(retry).not.toBeNull();
-    await act(async () => retry?.click());
-
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    expect(apiFetch).toHaveBeenCalledWith(
-      '/api/messages/m1/queue-targets/opus/retry',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ attemptId: 'q1:opus:3' }),
-      }),
-    );
   });
 
   it('renders only actionable per-target queue truth hydrated from the server', () => {
@@ -224,16 +147,116 @@ describe('QueuePanel steer (F047)', () => {
       '/api/threads/thread-1/queue/q1/steer',
       expect.objectContaining({
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetCatId: 'opus' }),
       }),
     );
-    const callArgs = (apiFetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[1] as { body?: string };
-    expect(callArgs.body).toBeUndefined();
+  });
+
+  it('lets a targetless queued message select an exact current-thread member', async () => {
+    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetCats: [] }] });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-q1"]')?.click());
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/steer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: 'codex' }),
+    });
+  });
+
+  it('offers Append only from the server projection and echoes both exact fences', async () => {
+    const appendEntry: QueueEntry = {
+      ...QUEUED_ENTRY,
+      lifecycleActions: {
+        append: {
+          kind: 'append',
+          expectedQueueRevision: 'revision-1',
+          expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+        },
+      },
+    };
+    useChatStore.setState({ queue: [appendEntry] });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+
+    const append = container.querySelector('[data-testid="append-q1"]') as HTMLButtonElement | null;
+    expect(append).not.toBeNull();
+    await act(async () => append?.click());
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/append', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expectedQueueRevision: 'revision-1',
+        expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+      }),
+    });
+    expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it('never infers Append from a local active invocation without a server action', () => {
+    useChatStore.setState({
+      queue: [QUEUED_ENTRY],
+      activeInvocations: { 'turn-1': { catId: 'opus', mode: 'execute', startedAt: Date.now() } },
+    });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+    expect(container.querySelector('[data-testid="append-q1"]')).toBeNull();
+  });
+
+  it('preserves a concurrent Queue arrival when an Append response resolves from an older render', async () => {
+    const appendEntry: QueueEntry = {
+      ...QUEUED_ENTRY,
+      lifecycleActions: {
+        append: {
+          kind: 'append',
+          expectedQueueRevision: 'revision-1',
+          expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+        },
+      },
+    };
+    const concurrentEntry: QueueEntry = { ...QUEUED_ENTRY, id: 'q-concurrent', content: 'arrived while appending' };
+    let resolveAppend!: (value: Response) => void;
+    vi.mocked(apiFetch).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveAppend = resolve;
+        }),
+    );
+    useChatStore.setState({ queue: [appendEntry] });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+
+    const append = container.querySelector('[data-testid="append-q1"]') as HTMLButtonElement | null;
+    await act(async () => {
+      append?.click();
+      await Promise.resolve();
+    });
+    act(() => useChatStore.getState().setQueue('thread-1', [appendEntry, concurrentEntry]));
+    await act(async () => {
+      resolveAppend(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      await Promise.resolve();
+    });
+
+    expect(useChatStore.getState().queue).toEqual([concurrentEntry]);
   });
 
   it('closes a stale Steer confirmation and refreshes Queue truth after a 409', async () => {
     vi.mocked(apiFetch)
       .mockResolvedValueOnce(
-        response({ code: 'STEER_STATE_CHANGED', error: 'Steer 状态已变化，请重试' }, 409) as Response,
+        response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中，无法 steer' }, 409) as Response,
       )
       .mockResolvedValueOnce(response({ queue: [], paused: false }) as Response);
     useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });
@@ -248,7 +271,11 @@ describe('QueuePanel steer (F047)', () => {
 
     expect(container.querySelector('[data-testid="steer-confirm"]')).toBeNull();
     expect(apiFetch).toHaveBeenCalledTimes(2);
-    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/threads/thread-1/queue/q1/steer', { method: 'POST' });
+    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/threads/thread-1/queue/q1/steer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: 'opus' }),
+    });
     expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/threads/thread-1/queue');
     expect(useChatStore.getState().queue).toEqual([]);
   });
@@ -260,7 +287,6 @@ describe('QueuePanel steer (F047)', () => {
     });
 
     expect(container.querySelector('[data-testid="steer-q1"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="retry-q1-opus"]')).toBeNull();
   });
 
   it('shows the single Steer contract as stop current then restart from this exact message', () => {
@@ -273,10 +299,9 @@ describe('QueuePanel steer (F047)', () => {
     expect(steerBtn).not.toBeNull();
     act(() => steerBtn?.click());
 
-    expect(container.textContent).toContain('停止目标当前回复');
-    expect(container.textContent).toContain('立即发送这条排队消息');
-    expect(container.textContent).toContain('已经完成的回复仍会保留');
-    expect(container.querySelector('[data-testid="steer-confirm"]')?.textContent).toBe('停止并发送');
+    expect(container.textContent).toContain('opus');
+    expect(container.querySelector('[data-testid="steer-confirm"]')?.textContent).toBe('停止回复并发送');
+    expect(container.textContent).not.toContain('旧回复会被停止');
     expect(container.textContent).not.toContain('提到队首');
   });
 

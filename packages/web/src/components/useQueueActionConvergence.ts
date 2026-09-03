@@ -20,10 +20,8 @@ function steerFailureMessage(status: number, code: unknown, error: unknown): str
 
 export function useQueueActionConvergence(threadId: string) {
   const setQueue = useChatStore((state) => state.setQueue);
-  const setQueuePaused = useChatStore((state) => state.setQueuePaused);
   const addToast = useToastStore((state) => state.addToast);
   const [steerEntryId, setSteerEntryId] = useState<string | null>(null);
-  const [retryingAttemptIds, setRetryingAttemptIds] = useState<Set<string>>(() => new Set());
 
   const refreshQueue = useCallback(async () => {
     const response = await apiFetch(`/api/threads/${threadId}/queue`);
@@ -31,80 +29,48 @@ export function useQueueActionConvergence(threadId: string) {
     const data = await response.json().catch(() => ({}));
     if (!Array.isArray(data?.queue)) return false;
     setQueue(threadId, data.queue);
-    if (typeof data?.paused === 'boolean') setQueuePaused(threadId, data.paused, data.pauseReason);
     reconcileQueueActiveInvocationProjection({
       threadId,
       slots: data.activeInvocations as QueueActiveInvocationSlot[] | undefined,
       source: 'QueueActionRefresh',
     });
     return true;
-  }, [setQueue, setQueuePaused, threadId]);
+  }, [setQueue, threadId]);
 
-  const handleRetry = useCallback(
-    async (messageId: string, targetCatId: string, attemptId: string) => {
-      setRetryingAttemptIds((current) => new Set(current).add(attemptId));
+  const handleSteerConfirm = useCallback(
+    async (targetCatId?: string) => {
+      if (!steerEntryId || !targetCatId) return;
       try {
-        const response = await apiFetch(
-          `/api/messages/${encodeURIComponent(messageId)}/queue-targets/${encodeURIComponent(targetCatId)}/retry`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ attemptId }),
-          },
-        );
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          addToast({
-            type: 'error',
-            title: '重试未成功',
-            message: data?.error ?? '重试未能排入队列',
-            threadId,
-            duration: 5000,
-          });
-        }
-      } catch {
-        addToast({ type: 'error', title: '重试未成功', message: '重试请求没有完成', threadId, duration: 5000 });
-      } finally {
-        setRetryingAttemptIds((current) => {
-          const next = new Set(current);
-          next.delete(attemptId);
-          return next;
+        const response = await apiFetch(`/api/threads/${threadId}/queue/${steerEntryId}/steer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetCatId }),
         });
+        if (response.ok) {
+          setSteerEntryId(null);
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 409) {
+          setSteerEntryId(null);
+          await refreshQueue();
+        }
+        addToast({
+          type: 'error',
+          title: 'Steer 失败',
+          message: steerFailureMessage(response.status, data?.code, data?.error),
+          threadId,
+          duration: 5000,
+        });
+      } catch {
+        addToast({ type: 'error', title: 'Steer 失败', message: 'Steer 失败，请重试', threadId, duration: 5000 });
       }
     },
-    [addToast, threadId],
+    [addToast, refreshQueue, steerEntryId, threadId],
   );
-
-  const handleSteerConfirm = useCallback(async () => {
-    if (!steerEntryId) return;
-    try {
-      const response = await apiFetch(`/api/threads/${threadId}/queue/${steerEntryId}/steer`, { method: 'POST' });
-      if (response.ok) {
-        setSteerEntryId(null);
-        return;
-      }
-      const data = await response.json().catch(() => ({}));
-      if (response.status === 409) {
-        setSteerEntryId(null);
-        await refreshQueue();
-      }
-      addToast({
-        type: 'error',
-        title: 'Steer 失败',
-        message: steerFailureMessage(response.status, data?.code, data?.error),
-        threadId,
-        duration: 5000,
-      });
-    } catch {
-      addToast({ type: 'error', title: 'Steer 失败', message: 'Steer 失败，请重试', threadId, duration: 5000 });
-    }
-  }, [addToast, refreshQueue, steerEntryId, threadId]);
 
   return {
     steerEntryId,
-    retryingAttemptIds,
-    handleRetry,
-    refreshQueue,
     handleSteerConfirm,
     handleSteerOpen: setSteerEntryId,
     handleSteerCancel: () => setSteerEntryId(null),

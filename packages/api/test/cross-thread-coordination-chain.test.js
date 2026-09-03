@@ -15,6 +15,7 @@ function createMockSocketManager() {
   return {
     broadcastAgentMessage() {},
     broadcastToRoom() {},
+    emitToUser() {},
   };
 }
 
@@ -64,6 +65,7 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
     const { InMemoryDispatchProposalStore } = await import(
       '../dist/domains/approval-hub/stores/ports/IDispatchProposalStore.js'
     );
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
 
     registry = new InvocationRegistry();
@@ -71,6 +73,7 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
     threadStore = new ThreadStore();
     invocationRecordStore = createMockInvocationRecordStore();
     dispatchProposalStore = new InMemoryDispatchProposalStore();
+    const invocationQueue = new InvocationQueue();
     app = Fastify();
     await app.register(callbacksRoutes, {
       registry,
@@ -80,6 +83,8 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
       router: createMockRouter(),
       invocationRecordStore,
       dispatchProposalStore,
+      invocationQueue,
+      queueProcessor: { requestDrain() {} },
     });
   });
 
@@ -226,7 +231,11 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
     });
     assert.equal(restartResponse.statusCode, 200);
     assert.equal(restartResponse.json().status, 'ok');
-    assert.equal(invocationRecordStore.getRecords().length, recordsBeforeRestart + 1);
+    assert.equal(
+      invocationRecordStore.getRecords().length,
+      recordsBeforeRestart,
+      'callback admission must not mint an InvocationRecord before QueueProcessor reserves the carrier',
+    );
     const restart = findMessage(source.id, 'New substantive coordination');
     assert.notEqual(restart.extra.coordination.id, coordinationId);
     assert.equal(restart.extra.coordination.phase, 'active');
@@ -325,7 +334,11 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
         messageStore.getByThread(target.id, 20, 'user-1').filter((message) => message.content === content).length,
         1,
       );
-      assert.equal(invocationRecordStore.getRecords().length, recordsBefore + 1);
+      assert.equal(
+        invocationRecordStore.getRecords().length,
+        recordsBefore,
+        'deduped callback admission must leave InvocationRecord creation to QueueProcessor',
+      );
     }
   });
 
