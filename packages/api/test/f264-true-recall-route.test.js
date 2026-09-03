@@ -17,7 +17,6 @@ const AUTH_HEADERS = { 'x-cat-cafe-user': OWNER_ID };
 async function appendQueued(harness, content, targetCats = ['codex', 'fable5']) {
   const message = harness.messageStore.append(
     canonicalTestMessageInput({
-      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: THREAD_ID,
       userId: OWNER_ID,
       catId: null,

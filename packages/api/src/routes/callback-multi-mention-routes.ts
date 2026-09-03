@@ -252,6 +252,8 @@ export interface MultiMentionRouteDeps {
     ActionSuccessorAdmissionService,
     'admit' | 'markUnavailable' | 'markReturnedDelivered'
   >;
+  /** F293: fresh routing policy at the actual Queue admission boundary. */
+  routingDispatchPreflight?: A2ATriggerDeps['routingDispatchPreflight'];
   /** F122B B6: InvocationQueue for unified dispatch */
   invocationQueue?: A2ATriggerDeps['invocationQueue'] &
     Pick<InvocationQueue, 'hasQueuedAgentForCat' | 'getQueuedFreshnessMessagesForCat'>;
@@ -428,6 +430,7 @@ async function dispatchViaQueue(
       queueProcessor,
       messageStore: deps.messageStore,
       invocationQueue,
+      ...(deps.routingDispatchPreflight ? { routingDispatchPreflight: deps.routingDispatchPreflight } : {}),
       log,
     },
     {
@@ -440,6 +443,8 @@ async function dispatchViaQueue(
       callerCatId: initiator,
       parentInvocationId,
       preplannedAdmission,
+      ...(cloudDispatchProvenance ? { cloudDispatchProvenance } : {}),
+      requiresExactCloudDispatchProvenance: true,
       ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
       onQueueEntriesAdmitted: (entries) => {
         for (const entry of entries) {

@@ -53,7 +53,6 @@ describe('F254 withheld-message recovery Redis safety', { skip: redisIsolationSk
     const catId = 'fable-5';
     const question = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         threadId,
         catId: null,
@@ -64,7 +63,6 @@ describe('F254 withheld-message recovery Redis safety', { skip: redisIsolationSk
     );
     const later = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         threadId,
         catId: null,

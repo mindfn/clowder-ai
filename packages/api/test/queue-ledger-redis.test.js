@@ -206,7 +206,6 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
         threadId: 'thread-redis',
         idempotencyKey: 'shared-input',
         deliveryStatus: 'queued',
-        provenance: { author: 'user', routed: true, observation: 'original' },
       },
       {
         from: { kind: 'user', userId: 'owner-1' },
@@ -294,7 +293,6 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       threadId: 'thread-redis',
       idempotencyKey,
       deliveryStatus: 'queued',
-      provenance: { author: 'user', routed: true, observation: 'original' },
     });
 
     for (let index = 0; index < 5; index += 1) {
@@ -340,7 +338,6 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       mentions: ['opus'],
       timestamp: 100,
       threadId: 'thread-redis',
-      provenance: { author: 'connector', routed: true, observation: 'original' },
     });
     const input = {
       from: source.from,

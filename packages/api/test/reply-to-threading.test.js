@@ -16,7 +16,6 @@ describe('replyTo threading', () => {
 
     const parent = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: 'Original message',
@@ -28,7 +27,6 @@ describe('replyTo threading', () => {
 
     const reply = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex',
         content: 'Reply to original',
@@ -50,7 +48,6 @@ describe('replyTo threading', () => {
 
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: 'No reply',
@@ -68,7 +65,6 @@ describe('replyTo threading', () => {
 
     const parent = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: 'Parent',
@@ -80,7 +76,6 @@ describe('replyTo threading', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex',
         content: 'Child',
@@ -106,7 +101,6 @@ describe('replyTo threading', () => {
 
     const parent = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: '这是一条很长的消息，需要被截断到八十个字符以内来显示预览内容，确保在引用气泡中不会太长影响阅读体验',
@@ -131,7 +125,6 @@ describe('replyTo threading', () => {
 
     const parent = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: 'Will be deleted',
@@ -167,7 +160,6 @@ describe('replyTo threading', () => {
 
     const parent = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: 'User message',

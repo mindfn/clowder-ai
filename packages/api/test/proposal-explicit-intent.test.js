@@ -43,13 +43,6 @@ describe('F128 explicit intent override (round-5)', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: [],
           intent: { intent: 'ideate' },
           hasMentions: false,
@@ -153,13 +146,6 @@ describe('F128 explicit intent override (round-5)', () => {
         // Simulate real router: raw `#execute @kimi @gemini @codex` →
         // resolved.targetCats = [kimi, gemini, codex].
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['kimi', 'gemini', 'codex'],
           intent: { intent: 'execute' },
           hasMentions: true,

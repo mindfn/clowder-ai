@@ -73,7 +73,6 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
   const createQueued = (userId, threadId, ts) =>
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: `queued-msg-${ts}`,
@@ -111,7 +110,6 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
     // Create a message WITHOUT deliveryStatus (= immediate/legacy)
     const msg = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'userA',
         catId: null,
         content: 'immediate msg',
@@ -208,7 +206,6 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
     const ttlStore = new RedisMessageStore(redis, { ttlSeconds: 60 });
     const msg = await ttlStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'userA',
         catId: null,
         content: 'ttl-test-msg',
@@ -239,7 +236,6 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
     const base = Date.now();
     const msg = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'userA',
         catId: null,
         content: 'private queued work becomes publishable',

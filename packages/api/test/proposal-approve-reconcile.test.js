@@ -31,14 +31,10 @@ const router = {
  * queue-full test would fail with repeated redispatches.
  */
 async function simulateDelivery(ctx, invocationQueue, threadId, userId) {
-  const entry = invocationQueue.peek(threadId, userId);
-  if (entry?.messageId) {
-    const msg = await ctx.messageStore.getById(entry.messageId);
-    if (msg?.queueCustody) {
-      msg.deliveryStatus = 'delivered';
-      msg.deliveredAt = Date.now();
-    }
-    invocationQueue.dequeue(threadId, userId);
+  const entry = invocationQueue.list(threadId, userId)[0];
+  if (entry?.payload.messageId) {
+    await ctx.messageStore.markDelivered(entry.payload.messageId, Date.now());
+    await invocationQueue.terminalizeEntryDurable(threadId, userId, entry.id, 'handled');
   }
   return { started: true };
 }
@@ -53,15 +49,16 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const invocationQueue = new InvocationQueue();
     let proposalEnqueueAttempt = 0;
-    const originalEnqueue = invocationQueue.enqueue.bind(invocationQueue);
-    invocationQueue.enqueue = (input) => {
+    const originalEnqueue = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
+    invocationQueue.appendAndEnqueueDurable = (...args) => {
+      const input = args[2];
       if (input.idempotencyKey?.startsWith('proposal-initial:')) {
         proposalEnqueueAttempt += 1;
         if (proposalEnqueueAttempt === 1) {
           return { outcome: 'full' };
         }
       }
-      return originalEnqueue(input);
+      return originalEnqueue(...args);
     };
 
     const processCalls = [];
@@ -101,7 +98,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     assert.equal(second.statusCode, 200);
     const secondBody = JSON.parse(second.body);
     assert.equal(secondBody.deduped, true);
-    assert.ok(!secondBody.warnings || secondBody.warnings.length === 0);
+    assert.ok(!secondBody.warnings || secondBody.warnings.length === 0, JSON.stringify(secondBody));
 
     const third = await ctx.approve('alice', proposalId);
     assert.equal(third.statusCode, 200);
@@ -274,8 +271,8 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     // Materialize a legacy seed: no idempotency key, no deliveryStatus, no
     // queueCustody, but the proposal-specific source envelope and cross-post.
     ctx.messageStore.append({
+      from: { kind: 'agent', catId: 'codex' },
       userId: 'alice',
-      catId: 'codex',
       content: `**来源**: ${proposal.title}\n\n${proposal.reason}`,
       mentions: ['opus'],
       timestamp: Date.now(),
@@ -294,7 +291,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const firstBody = JSON.parse(first.body);
     assert.equal(firstBody.deduped, true);
     assert.equal(firstBody.legacySeed, true);
-    assert.ok(!firstBody.warnings || firstBody.warnings.length === 0);
+    assert.ok(!firstBody.warnings || firstBody.warnings.length === 0, JSON.stringify(firstBody));
 
     const second = await ctx.approve('alice', proposalId);
     assert.equal(second.statusCode, 200);

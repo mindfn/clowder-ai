@@ -198,42 +198,83 @@ describe('F293 actual-send routing preflight', () => {
     assert.deepEqual(receipt.target.alternatives, []);
   });
 
-  test('serial deferred A2A checks fresh state before creating a queue entry', async () => {
-    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
-    const calls = [];
-    const deferred = [];
-    const deps = routeDeps(
+  test('completed response preflights before atomic ledger admission and leaves no rejected row', async () => {
+    const { commitCompletedResponseAndEnqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
+    const broadcasts = [];
+    const processing = messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      threadId: 'thread-deferred',
+      userId: 'owner-1',
+      content: '',
+      mentions: [],
+      origin: 'stream',
+      timestamp: 100,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '0000000000100:response-opus',
+        from: { kind: 'agent', catId: 'opus' },
+        invocationId: 'inv-opus',
+        targetId: 'opus',
+        inputEntryIds: ['entry-source'],
+        inputMessageIds: ['message-source'],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    const stored = await commitCompletedResponseAndEnqueueA2ATargets(
       {
-        opus: {
-          async *invoke() {
-            calls.push('opus');
-            yield { type: 'text', catId: 'opus', content: '@codex\ncontinue from here', timestamp: Date.now() };
-            yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        invocationQueue: queue,
+        messageStore,
+        queueProcessor: { async requestDrain() {} },
+        socketManager: {
+          broadcastAgentMessage(message, threadId) {
+            broadcasts.push({ message, threadId });
           },
+          emitToUser() {},
         },
-        codex: service('codex', calls),
+        routingDispatchPreflight: {
+          preflight: async (input) => decision(input, { codex: 'rejected', terra: 'warned' }),
+        },
+        log: { error() {}, warn() {}, info() {} },
       },
-      { preflight: async (input) => decision(input, { opus: 'allowed', codex: 'rejected' }) },
+      {
+        responseMessageId: processing.id,
+        invocationId: 'inv-opus',
+        terminal: { status: 'completed', completedAt: 200 },
+        message: {
+          from: { kind: 'agent', catId: 'opus' },
+          threadId: 'thread-deferred',
+          userId: 'owner-1',
+          content: '@codex\n@terra\ncontinue from here',
+          mentions: ['codex', 'terra'],
+          origin: 'stream',
+          timestamp: 200,
+        },
+        targetCats: ['codex', 'terra'],
+        userId: 'owner-1',
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-deferred',
+        callerCatId: 'opus',
+      },
     );
-    const events = [];
-    for await (const event of routeSerial(deps, ['opus'], 'start', 'owner-1', 'thread-deferred', {
-      queueHasQueuedMessages: () => true,
-      deferA2AEnqueue: (entry) => {
-        deferred.push(entry);
-        return { outcome: 'enqueued' };
-      },
-    })) {
-      events.push(event);
-    }
 
-    assert.deepEqual(calls, ['opus']);
-    assert.deepEqual(deferred, [], 'rejected dynamic target must never enter InvocationQueue');
+    assert.equal(stored.lifecycle.status, 'completed');
+    assert.deepEqual(
+      queue
+        .list('thread-deferred', 'owner-1')
+        .flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : [])),
+      ['terra'],
+    );
     assert.ok(
-      events.some(
-        (event) =>
-          event.type === 'system_info' &&
-          event.content?.includes('routing_preflight') &&
-          JSON.parse(event.content).target.targetCatId === 'codex',
+      broadcasts.some(
+        ({ message }) =>
+          message.type === 'system_info' &&
+          message.content?.includes('routing_preflight') &&
+          JSON.parse(message.content).target.targetCatId === 'codex',
       ),
     );
   });
@@ -326,14 +367,24 @@ describe('F293 actual-send routing preflight', () => {
   test('callback queue partitions mixed targets before creating queue entries and returns the complete receipt', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
     const broadcasts = [];
+    const triggerMessage = messageStore.append({
+      from: { kind: 'agent', catId: 'terra' },
+      threadId: 'thread-callback',
+      userId: 'owner-1',
+      content: 'review this',
+      mentions: ['opus', 'codex'],
+      origin: 'callback',
+      timestamp: Date.now(),
+    });
     const result = await enqueueA2ATargets(
       {
-        router: {},
-        invocationRecordStore: {},
         invocationQueue: queue,
-        queueProcessor: { async tryAutoExecute() {} },
+        messageStore,
+        queueProcessor: { async requestDrain() {} },
         socketManager: {
           broadcastAgentMessage(message, threadId) {
             broadcasts.push({ message, threadId });
@@ -352,15 +403,7 @@ describe('F293 actual-send routing preflight', () => {
         userId: 'owner-1',
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-callback',
-        triggerMessage: {
-          id: 'message-callback',
-          threadId: 'thread-callback',
-          userId: 'owner-1',
-          catId: 'terra',
-          content: 'review this',
-          mentions: ['opus', 'codex'],
-          timestamp: Date.now(),
-        },
+        triggerMessage,
         callerCatId: 'terra',
       },
     );
@@ -374,7 +417,9 @@ describe('F293 actual-send routing preflight', () => {
       ],
     );
     assert.deepEqual(
-      queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targetCats),
+      queue
+        .list('thread-callback', 'owner-1')
+        .flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : [])),
       ['codex'],
     );
     assert.deepEqual(

@@ -6,10 +6,6 @@ import { buildHandedEvent } from '../dist/domains/ball-custody/ball-custody-even
 import { TurnCustodyProjectionService } from '../dist/domains/ball-custody/TurnCustodyProjectionService.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import {
-  createInitialCrossThreadQueuedMessageCustody,
-  QueuedMessageCustodyCoordinator,
-} from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
-import {
   createA2ADispositionAuth as auth,
   createA2ADispositionWake as dispatchWake,
   createA2ADispositionHarness as harness,
@@ -36,7 +32,7 @@ function bindActiveCoordination(h) {
 function appendTerminal(h, overrides = {}) {
   return h.messageStore.append({
     userId: 'user-1',
-    catId: createCatId('codex-sol'),
+    from: { kind: 'agent', catId: createCatId('codex-sol') },
     content: '@fable5 terminal result',
     mentions: [createCatId('fable5')],
     timestamp: 1_750,
@@ -79,12 +75,15 @@ describe('coordination terminal → ordinary A2A dispatch retirement', () => {
     const opened = await gate.open(dispatchWake(h));
     const terminal = appendTerminal(h);
     const queue = new InvocationQueue();
-    const enqueued = queue.enqueue({
+    const enqueued = await queue.enqueueExistingMessageDurable(h.messageStore, terminal.id, {
       threadId: terminal.threadId,
       userId: terminal.userId,
       ownerAuthProvenance: 'unknown',
+      sourceId: terminal.id,
+      messageId: terminal.id,
+      kind: 'message_wake',
+      from: terminal.from,
       content: terminal.content,
-      source: 'agent',
       sourceCategory: 'a2a',
       targetCats: ['fable5'],
       intent: 'execute',
@@ -94,55 +93,49 @@ describe('coordination terminal → ordinary A2A dispatch retirement', () => {
       a2aTriggerMessageId: terminal.id,
     });
     assert.equal(enqueued.outcome, 'enqueued');
-    queue.backfillMessageId(terminal.threadId, terminal.userId, enqueued.entry.id, terminal.id);
     const queued = queue.getEntrySnapshot(terminal.threadId, terminal.userId, enqueued.entry.id);
+    const seenAt = queued.enqueuedAt + 10;
+    assert.ok(await queue.markProcessingByIdDurable(terminal.threadId, queued.id, 'fable5'));
+    assert.equal(await queue.commitClaimedProcessing(terminal.threadId, [queued.id], seenAt - 2), true);
     assert.equal(
-      h.messageStore.initializeQueueCustody(
-        terminal.id,
-        createInitialCrossThreadQueuedMessageCustody(terminal.id, [queued]),
-      ).kind,
-      'initialized',
-    );
-    const seenAt = queued.createdAt + 10;
-    assert.equal(queue.markProcessingById(terminal.threadId, queued.id), true);
-    assert.equal(
-      queue.markQueuedAwakened(terminal.threadId, terminal.userId, queued.id, 'fable5', 'terminal-child', seenAt - 1),
+      await queue.markProcessingAwakenedDurable(
+        terminal.threadId,
+        terminal.userId,
+        queued.id,
+        'fable5',
+        'terminal-child',
+        seenAt - 1,
+      ),
       true,
     );
-    queue.markProcessingSeen(terminal.threadId, terminal.userId, queued.id, ['fable5'], 'terminal-child', seenAt);
+    await queue.markProcessingSeenDurable(
+      terminal.threadId,
+      terminal.userId,
+      queued.id,
+      'fable5',
+      'terminal-child',
+      seenAt,
+    );
     const processing = queue.getEntrySnapshot(terminal.threadId, terminal.userId, queued.id);
-    const custody = new QueuedMessageCustodyCoordinator({ messageStore: h.messageStore, now: () => seenAt + 1 });
-    await custody.persistEntry(processing);
 
     assert.equal((await gate.close(opened)).shouldBlock, true);
     assert.equal((await h.service.completeFromCoordinationTerminal(terminal.id)).outcome, 'applied');
-    const settled = await custody.commitSuccessfulTargets(processing, ['fable5'], 'terminal-child', seenAt + 20, {
-      fable5: {
-        invocationId: 'terminal-child',
-        disposition: 'completed_with_turn',
-        evidenceRef: { kind: 'invocation_lineage', invocationId: 'terminal-child' },
-        handledAt: seenAt + 20,
-        consumption: {
-          kind: 'terminal_silent',
-          projectionState: 'covered_empty',
-          wake: 'coordination_terminal',
-        },
-      },
-    });
-    assert.equal(settled.perMessage[0].fullyConsumed, true);
+    assert.ok(
+      await queue.removeProcessedAcrossUsersDurable(
+        terminal.threadId,
+        processing.id,
+        'handled',
+        undefined,
+        seenAt + 20,
+      ),
+    );
+    await h.messageStore.markDelivered(terminal.id, seenAt + 20);
+    const settled = await queue.getDurableEntry(terminal.threadId, processing.id);
+    assert.equal(settled.status, 'terminal');
+    assert.equal(settled.delivery.terminalOutcome, 'handled');
+    assert.equal(settled.delivery.awakenedInvocationId, 'terminal-child');
+    assert.equal(settled.delivery.seenInvocationId, 'terminal-child');
     assert.equal(h.messageStore.getById(terminal.id).deliveryStatus, 'delivered');
-    assert.equal(h.messageStore.getById(terminal.id).queueCustody.status, 'terminal');
-    assert.deepEqual(h.messageStore.getById(terminal.id).queueCustody.targetOutcomeByCatId.fable5, {
-      invocationId: 'terminal-child',
-      disposition: 'completed_with_turn',
-      evidenceRef: { kind: 'invocation_lineage', invocationId: 'terminal-child' },
-      handledAt: seenAt + 20,
-      consumption: {
-        kind: 'terminal_silent',
-        projectionState: 'covered_empty',
-        wake: 'coordination_terminal',
-      },
-    });
     assert.deepEqual(await gate.close(opened), {
       state: 'covered_active',
       shouldBlock: false,
@@ -185,7 +178,7 @@ describe('coordination terminal → ordinary A2A dispatch retirement', () => {
     const terminal = appendTerminal(h);
     const successor = h.messageStore.append({
       userId: 'user-1',
-      catId: createCatId('opus'),
+      from: { kind: 'agent', catId: createCatId('opus') },
       content: '@codex-sol continue the successor coordination',
       mentions: [createCatId('codex-sol')],
       timestamp: 1_900,

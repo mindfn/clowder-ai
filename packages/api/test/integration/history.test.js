@@ -38,7 +38,6 @@ describe('POST → GET /api/messages roundtrip', () => {
     // Simulate what AgentRouter does: store user msg + cat reply
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'hello @opus',
@@ -48,7 +47,6 @@ describe('POST → GET /api/messages roundtrip', () => {
     );
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'opus',
         content: 'hello human',
@@ -73,7 +71,6 @@ describe('POST → GET /api/messages roundtrip', () => {
     const loneHighSurrogate = String.fromCharCode(0xd800);
     const loneLowSurrogate = String.fromCharCode(0xdc00);
     const input = {
-      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex',
       content: `before${loneHighSurrogate}after 😀`,
@@ -94,7 +91,6 @@ describe('POST → GET /api/messages roundtrip', () => {
     const loneLowSurrogate = String.fromCharCode(0xdc00);
     const legacy = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'codex',
         content: 'placeholder',
@@ -121,7 +117,6 @@ describe('POST → GET /api/messages roundtrip', () => {
     for (let i = 0; i < 5; i++) {
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'default-user',
           catId: null,
           content: `msg ${i}`,
@@ -160,7 +155,6 @@ describe('POST → GET /api/messages roundtrip', () => {
   it('response format matches frontend ChatMessage interface', async () => {
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'codex',
         content: 'review done',

@@ -30,7 +30,6 @@ describe('#1269 R8 P1-1: isTimelinePublished in forward scans', () => {
     // Direct message visible at append
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C-direct',
@@ -43,7 +42,6 @@ describe('#1269 R8 P1-1: isTimelinePublished in forward scans', () => {
     // Timeline-published cat speech: queued but catId is real cat → visible at append
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Q-cat-speech',
@@ -69,7 +67,6 @@ describe('#1269 R8 P1-1: isTimelinePublished in forward scans', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C-direct',
@@ -82,7 +79,6 @@ describe('#1269 R8 P1-1: isTimelinePublished in forward scans', () => {
     // Timeline-published cat speech — queued, real cat
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Q-cat-speech',
@@ -106,7 +102,6 @@ describe('#1269 R8 P1-1: isTimelinePublished in forward scans', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C-direct',
@@ -119,7 +114,6 @@ describe('#1269 R8 P1-1: isTimelinePublished in forward scans', () => {
     // Hidden queued work: catId=null, not timeline-published
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: 'Q-hidden',
@@ -149,7 +143,6 @@ describe('#1269: isTimelinePublished in mention queries', () => {
     // Cat speech mentioning 'terra' — queued but timeline-published → visible
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Hey @terra check this',
@@ -172,7 +165,6 @@ describe('#1269: isTimelinePublished in mention queries', () => {
     // Hidden queued work mentioning 'terra' — not timeline-published
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: 'Hidden mention @terra',
@@ -193,7 +185,6 @@ describe('#1269: isTimelinePublished in mention queries', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Recent @terra',
@@ -214,7 +205,6 @@ describe('#1269: isTimelinePublished in mention queries', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: 'Hidden recent @terra',
@@ -239,7 +229,6 @@ describe('#1269 R8 P1-2: cancel keeps Message and Queue storage independent', ()
 
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'work-to-cancel',

@@ -32,7 +32,6 @@ describe('F246 v2: proposal_created socket event for F231', () => {
     if (!origin) {
       origin = messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId,
           catId: null,
           content: 'Please update the profile',

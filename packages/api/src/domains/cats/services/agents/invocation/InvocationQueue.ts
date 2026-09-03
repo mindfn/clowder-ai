@@ -27,6 +27,7 @@ import {
   type ActionSuccessorFence,
   actionSuccessorFencesMatch,
 } from '../../../../ball-custody/ActionSuccessorAdmissionContract.js';
+import type { CloudDispatchProvenance } from '../../cloud-bridge/types.js';
 import type {
   AppendMessageInput,
   IMessageStore,
@@ -80,6 +81,8 @@ export interface QueueEnqueueInput {
   suggestedSkill?: string;
   callerTraceContext?: CallerTraceContext;
   a2aTriggerMessageId?: string;
+  cloudDispatchProvenance?: CloudDispatchProvenance;
+  requiresExactCloudDispatchProvenance?: boolean;
   dedupeProcessing?: boolean;
 }
 
@@ -326,6 +329,8 @@ export class InvocationQueue {
       suggestedSkill: input.suggestedSkill,
       callerTraceContext: input.callerTraceContext,
       a2aTriggerMessageId: input.a2aTriggerMessageId ?? (input.kind === 'message_wake' ? messageId : undefined),
+      cloudDispatchProvenance: input.cloudDispatchProvenance,
+      requiresExactCloudDispatchProvenance: input.requiresExactCloudDispatchProvenance,
       enqueuedAt,
     });
   }

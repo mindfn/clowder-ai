@@ -16,7 +16,6 @@ describe('MessageStore.markDelivered', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'queued message',
@@ -45,7 +44,6 @@ describe('MessageStore.markDelivered', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'test',
@@ -66,7 +64,6 @@ describe('MessageStore.markDelivered', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'immediate message',
@@ -89,7 +86,6 @@ describe('MessageStore.getByThreadAfter', () => {
     const store = new MessageStore();
     const beforeCursor = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         threadId: 'thread-a',
         userId: 'u1',
         catId: null,
@@ -100,7 +96,6 @@ describe('MessageStore.getByThreadAfter', () => {
     );
     const afterCursor = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         threadId: 'thread-a',
         userId: 'u1',
         catId: null,
@@ -111,7 +106,6 @@ describe('MessageStore.getByThreadAfter', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         threadId: 'thread-b',
         userId: 'u1',
         catId: null,

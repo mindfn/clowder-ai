@@ -24,13 +24,6 @@ describe('F128 Phase AA — seed message source attribution', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['opus'],
           intent: { intent: 'execute' },
           hasMentions: false,
@@ -82,13 +75,6 @@ describe('F128 Phase AA — seed message source attribution', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['opus'],
           intent: { intent: 'execute' },
           hasMentions: false,

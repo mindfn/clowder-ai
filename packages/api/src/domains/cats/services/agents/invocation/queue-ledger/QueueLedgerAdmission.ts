@@ -1,6 +1,7 @@
 import type { CatRoutingError, MessageFrom, QueueAuthorIntent, WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { CallerTraceContext } from '../../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../../ball-custody/ActionSuccessorAdmissionContract.js';
+import type { CloudDispatchProvenance } from '../../../cloud-bridge/types.js';
 import type { ToolExecutionPolicy } from '../../../types.js';
 import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 import { type QueueLedgerEntry, type QueueOwner, queueEntryId } from './QueueLedger.js';
@@ -32,6 +33,8 @@ export interface QueueLedgerAdmissionInput {
   suggestedSkill?: string;
   callerTraceContext?: CallerTraceContext;
   a2aTriggerMessageId?: string;
+  cloudDispatchProvenance?: CloudDispatchProvenance;
+  requiresExactCloudDispatchProvenance?: boolean;
   enqueuedAt: number;
 }
 
@@ -77,6 +80,10 @@ export function createQueueLedgerAdmission(input: QueueLedgerAdmissionInput): Qu
       ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
       ...(input.callerTraceContext ? { callerTraceContext: structuredClone(input.callerTraceContext) } : {}),
       ...(input.a2aTriggerMessageId ? { a2aTriggerMessageId: input.a2aTriggerMessageId } : {}),
+      ...(input.cloudDispatchProvenance
+        ? { cloudDispatchProvenance: structuredClone(input.cloudDispatchProvenance) }
+        : {}),
+      ...(input.requiresExactCloudDispatchProvenance ? { requiresExactCloudDispatchProvenance: true } : {}),
     },
     delivery: {
       ...(targetCatId && input.authorIntentByCatId?.[targetCatId]

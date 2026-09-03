@@ -19,7 +19,6 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
     const base = Date.now();
     const msg = await memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'test',
@@ -42,7 +41,6 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
     const memStore = new MessageStore();
     const msg = await memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'immediate',
@@ -61,7 +59,6 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
     const memStore = new MessageStore();
     const msg = await memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'test',

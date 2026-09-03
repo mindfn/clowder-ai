@@ -84,7 +84,6 @@ describe('staged recovery origin preservation', () => {
     await threadStore.addParticipants(target.id, ['sonnet']);
     const originA = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         threadId: source.id,
@@ -95,7 +94,6 @@ describe('staged recovery origin preservation', () => {
     );
     const originB = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         threadId: source.id,

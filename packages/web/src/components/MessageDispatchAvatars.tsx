@@ -1,6 +1,11 @@
 'use client';
 
-import type { LifecycleActiveRun, LifecycleDispatchRef, LifecycleStoredMessageMetadata } from '@cat-cafe/shared';
+import {
+  hasExactLifecycleProcessingDispatch,
+  type LifecycleActiveRun,
+  type LifecycleDispatchRef,
+  type LifecycleStoredMessageMetadata,
+} from '@cat-cafe/shared';
 import type { ChatMessage } from '@/stores/chat-types';
 import { CatAvatar } from './CatAvatar';
 
@@ -15,26 +20,6 @@ const TERMINAL_RESPONSE_STATUSES = new Set(['completed', 'failed', 'canceled', '
 function exactMessageById(messages: readonly ChatMessage[], messageId: string): ChatMessage | undefined {
   const matches = messages.filter((candidate) => candidate.id === messageId);
   return matches.length === 1 ? matches[0] : undefined;
-}
-
-function exactActiveRun(
-  activeRuns: readonly LifecycleActiveRun[],
-  input: {
-    sourceMessageId: string;
-    targetId: string;
-    statusMessageId: string;
-    invocationId: string;
-  },
-): boolean {
-  return (
-    activeRuns.filter(
-      (run) =>
-        run.targetId === input.targetId &&
-        run.responseMessageId === input.statusMessageId &&
-        run.invocationId === input.invocationId &&
-        run.inputMessageIds.includes(input.sourceMessageId),
-    ).length === 1
-  );
 }
 
 type StatusDispatchRef = Exclude<LifecycleDispatchRef, { readonly phase: 'assigned' }>;
@@ -71,6 +56,7 @@ function exactHandledReceiptProjection(
 
 function projectDispatchRef(
   sourceMessageId: string,
+  sourceDispatchRefs: readonly LifecycleDispatchRef[],
   ref: LifecycleDispatchRef,
   statusLifecycle: LifecycleStoredMessageMetadata,
   activeRuns: readonly LifecycleActiveRun[],
@@ -94,11 +80,12 @@ function projectDispatchRef(
     return TERMINAL_RESPONSE_STATUSES.has(statusLifecycle.status) ? settledProjection(ref) : null;
   }
   if (statusLifecycle.status !== 'processing') return null;
-  return exactActiveRun(activeRuns, {
+  return hasExactLifecycleProcessingDispatch({
     sourceMessageId,
-    targetId: ref.targetId,
-    statusMessageId: ref.statusMessageId,
-    invocationId: statusLifecycle.invocationId,
+    sourceDispatchRefs,
+    responseMessageId: ref.statusMessageId,
+    responseLifecycle: statusLifecycle,
+    activeRuns,
   })
     ? { targetId: ref.targetId, phase: 'processing', evidenceKey: `message:${ref.statusMessageId}` }
     : null;
@@ -126,7 +113,7 @@ export function projectMessageDispatchAvatars(
     const statusMessage = exactMessageById(timelineMessages, ref.statusMessageId);
     const statusLifecycle = statusMessage?.lifecycle;
     if (!statusLifecycle) return [];
-    const projection = projectDispatchRef(message.id, ref, statusLifecycle, activeRuns);
+    const projection = projectDispatchRef(message.id, refs, ref, statusLifecycle, activeRuns);
     return projection ? [projection] : [];
   });
 }

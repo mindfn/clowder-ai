@@ -23,7 +23,6 @@ describe('#1200 P1-A: allocator uses server time, not payload timestamp', () => 
     const farFuture = Date.now() + 365 * 24 * 60 * 60 * 1000; // +1 year
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'far-future',
@@ -50,7 +49,6 @@ describe('#1200 P1-A: allocator uses server time, not payload timestamp', () => 
     // Append with past, normal, and far-future timestamps
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'past',
@@ -61,7 +59,6 @@ describe('#1200 P1-A: allocator uses server time, not payload timestamp', () => 
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'normal',
@@ -72,7 +69,6 @@ describe('#1200 P1-A: allocator uses server time, not payload timestamp', () => 
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'future',
@@ -109,7 +105,6 @@ describe('#1200 P1-A: allocator uses server time, not payload timestamp', () => 
 
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'queued',

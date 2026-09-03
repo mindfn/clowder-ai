@@ -11,6 +11,7 @@ import type {
 import { isMessageFrom } from '@cat-cafe/shared';
 import type { CallerTraceContext } from '../../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../../ball-custody/ActionSuccessorAdmissionContract.js';
+import type { CloudDispatchProvenance } from '../../../cloud-bridge/types.js';
 import type { ToolExecutionPolicy } from '../../../types.js';
 import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 
@@ -57,6 +58,8 @@ export interface QueueLedgerExecution {
   suggestedSkill?: string;
   callerTraceContext?: CallerTraceContext;
   a2aTriggerMessageId?: string;
+  cloudDispatchProvenance?: CloudDispatchProvenance;
+  requiresExactCloudDispatchProvenance?: boolean;
 }
 
 export interface QueueLedgerDelivery {
@@ -274,6 +277,25 @@ function assertQueueExecution(value: unknown): asserts value is QueueLedgerExecu
     throw new Error('queue ledger owner auth provenance is invalid');
   }
   if (typeof value.autoExecute !== 'boolean') throw new Error('queue ledger autoExecute is invalid');
+  if (
+    value.requiresExactCloudDispatchProvenance !== undefined &&
+    typeof value.requiresExactCloudDispatchProvenance !== 'boolean'
+  ) {
+    throw new Error('queue ledger exact cloud provenance requirement is invalid');
+  }
+  if (value.cloudDispatchProvenance !== undefined) {
+    if (
+      !isRecord(value.cloudDispatchProvenance) ||
+      typeof value.cloudDispatchProvenance.sourceMessageId !== 'string' ||
+      !value.cloudDispatchProvenance.sourceMessageId ||
+      typeof value.cloudDispatchProvenance.calledByCatId !== 'string' ||
+      !value.cloudDispatchProvenance.calledByCatId ||
+      typeof value.cloudDispatchProvenance.intent !== 'string' ||
+      !isRecord(value.cloudDispatchProvenance.sourceSender)
+    ) {
+      throw new Error('queue ledger cloud dispatch provenance is invalid');
+    }
+  }
 }
 
 function assertQueueClassification(entry: Partial<QueueLedgerEntry>): void {

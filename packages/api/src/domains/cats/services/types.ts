@@ -757,6 +757,8 @@ export interface AgentRouteIntent {
 export interface AgentServiceOptions {
   /** Provider-neutral interaction port bound to this invocation. */
   runtimeInteractionPort?: import('../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
+  /** F310: source-bound Task relation resolved from canonical Task truth for an F306 question. */
+  resolveEntrustedWorkTaskRef?: () => Promise<import('@cat-cafe/shared').EntrustedWorkTaskRefV1 | undefined>;
   /** Route-owned intent. Providers may project only explicit behavior intent onto native modes. */
   routeIntent?: AgentRouteIntent;
   /** Session ID to resume (optional) */

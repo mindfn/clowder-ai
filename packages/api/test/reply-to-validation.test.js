@@ -58,13 +58,6 @@ describe('POST /api/messages — replyTo validation', () => {
       },
       router: {
         resolveTargetsAndIntent: mock.fn(async () => ({
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['opus'],
           intent: { intent: 'execute' },
         })),
@@ -149,7 +142,6 @@ describe('POST /api/messages — replyTo validation', () => {
     const thread = await createThread();
     const sysMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'system',
         catId: null,
         content: 'SYSTEM BADGE — internal',
@@ -173,7 +165,6 @@ describe('POST /api/messages — replyTo validation', () => {
     const thread = await createThread();
     const briefingMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'TOP SECRET BRIEFING',
@@ -200,7 +191,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const otherThreadMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'message in thread 2',
@@ -232,7 +222,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const deleted = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'will be deleted',
@@ -265,7 +254,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const queued = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'queued message',
@@ -297,7 +285,6 @@ describe('POST /api/messages — replyTo validation', () => {
     const thread = await createThread();
     const published = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'codex',
         content: 'published source-cat seed',
@@ -331,7 +318,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const canceled = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'canceled message',
@@ -365,7 +351,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const target = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: 'original message',
@@ -399,7 +384,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const whisperMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'opus',
         content: 'secret whisper content',
@@ -434,7 +418,6 @@ describe('POST /api/messages — replyTo validation', () => {
     // Parent whispered only to codex
     const whisperMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'opus',
         content: 'private to codex only',
@@ -471,7 +454,6 @@ describe('POST /api/messages — replyTo validation', () => {
 
     const whisperMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: 'opus',
         content: 'whisper to codex',

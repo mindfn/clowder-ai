@@ -230,7 +230,6 @@ describe('P2-5: Tombstone store parity — getByThreadAfter keeps tombstones', (
 
     const _m1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'keep',
@@ -241,7 +240,6 @@ describe('P2-5: Tombstone store parity — getByThreadAfter keeps tombstones', (
     );
     const m2 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'delete-me',
@@ -252,7 +250,6 @@ describe('P2-5: Tombstone store parity — getByThreadAfter keeps tombstones', (
     );
     const _m3 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'also-keep',
@@ -280,7 +277,6 @@ describe('P2-5: Tombstone store parity — getByThreadAfter keeps tombstones', (
 
     const m1 = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'keep-redis',
@@ -291,7 +287,6 @@ describe('P2-5: Tombstone store parity — getByThreadAfter keeps tombstones', (
     );
     const m2 = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'delete-me-redis',
@@ -302,7 +297,6 @@ describe('P2-5: Tombstone store parity — getByThreadAfter keeps tombstones', (
     );
     const m3 = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'also-keep-redis',
@@ -333,7 +327,6 @@ describe('P2-6: append return value must include visibilitySeq', () => {
 
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'direct',
@@ -358,7 +351,6 @@ describe('P2-6: append return value must include visibilitySeq', () => {
     // hidden queued scheduler/system work does not.
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'queued',
@@ -382,7 +374,6 @@ describe('P2-6: append return value must include visibilitySeq', () => {
 
     const msg = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'direct-redis',
@@ -535,7 +526,6 @@ describe('Lua hwm guard: NaN and fractional rejection', () => {
       // not overwritten by the migration logic.
       await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: 'trigger-migration',
@@ -554,7 +544,6 @@ describe('Lua hwm guard: NaN and fractional rejection', () => {
         () =>
           store.append(
             canonicalTestMessageInput({
-              provenance: { author: 'user', routed: false, observation: 'original' },
               userId: 'u1',
               catId: null,
               content: 'test',
@@ -593,7 +582,6 @@ describe('Lua hwm guard: NaN and fractional rejection', () => {
       // Trigger migration first, then poison
       await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: 'trigger-migration',
@@ -610,7 +598,6 @@ describe('Lua hwm guard: NaN and fractional rejection', () => {
         () =>
           store.append(
             canonicalTestMessageInput({
-              provenance: { author: 'user', routed: false, observation: 'original' },
               userId: 'u1',
               catId: null,
               content: 'test',
@@ -652,7 +639,6 @@ describe('Lua hwm guard: NaN and fractional rejection', () => {
       // poisoned hwm (Sol R4 P2-5: queued append may not set the flag).
       await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: 'trigger-migration',
@@ -667,7 +653,6 @@ describe('Lua hwm guard: NaN and fractional rejection', () => {
       // speech (catId: 'opus') already has visibilitySeq and would skip HWM.
       const msg = await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'system', routed: false, observation: 'original' },
           userId: 'scheduler',
           catId: null,
           content: 'queued-msg',
@@ -1140,7 +1125,6 @@ describe('Sol R5: HWM reject zero-mutation (comprehensive)', () => {
       // Trigger migration flag
       await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: 'trigger',
@@ -1154,7 +1138,6 @@ describe('Sol R5: HWM reject zero-mutation (comprehensive)', () => {
       // so markDelivered enters the HWM allocation path.
       const msg = await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'system', routed: false, observation: 'original' },
           userId: 'scheduler',
           catId: null,
           content: 'queued-msg',
@@ -1209,7 +1192,6 @@ describe('Sol R5: HWM reject zero-mutation (comprehensive)', () => {
       // Trigger migration
       const seed = await store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: 'seed',
@@ -1232,7 +1214,6 @@ describe('Sol R5: HWM reject zero-mutation (comprehensive)', () => {
         () =>
           store.append(
             canonicalTestMessageInput({
-              provenance: { author: 'user', routed: false, observation: 'original' },
               userId: 'u1',
               catId: null,
               content: 'rejected',
@@ -1405,7 +1386,6 @@ describe('Sol R6 P2-1: Redis hydrateMessages includes visibilitySeq', () => {
     // Append a message that mentions a cat (so getRecentMentionsFor picks it up)
     const msg = await store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: `Hey @${catId} check this`,
@@ -1632,7 +1612,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
 
     const _msgA = memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'message A (live)',
@@ -1643,7 +1622,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
     );
     const msgB = memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'message B (live)',
@@ -1654,7 +1632,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
     );
     const msgC = memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'message C (will be tombstoned)',
@@ -1683,7 +1660,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
 
     const msgOnly = memStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'sole message',
@@ -1732,7 +1708,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
 
     const _msgA = await redisStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'message A (live)',
@@ -1743,7 +1718,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
     );
     const msgB = await redisStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'message B (live)',
@@ -1754,7 +1728,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
     );
     const msgC = await redisStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'message C (will be tombstoned)',
@@ -1783,7 +1756,6 @@ describe('Codex R9 P1: getLatestVisibleCursor skips soft-deleted (tombstoned) me
 
     const msgOnly = await redisStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'sole message',

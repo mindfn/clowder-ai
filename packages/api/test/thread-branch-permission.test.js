@@ -68,7 +68,6 @@ describe('F109: Branch from system-created thread', () => {
     // Seed a system-created thread with a message
     const msg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: 'hello from system thread',
@@ -116,7 +115,6 @@ describe('F109: Branch from system-created thread', () => {
 
     const msg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: 'message',

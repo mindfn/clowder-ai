@@ -118,7 +118,6 @@ describe('F096: MessageStore.updateExtra', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'hello',
@@ -167,7 +166,6 @@ describe('F096: MessageStore.updateExtra', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'hi',
@@ -243,7 +241,6 @@ describe('F096: PATCH /block-state route guards (P1-1, P2-2)', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'owner',
         catId: 'opus',
         content: 'pick',
@@ -272,7 +269,6 @@ describe('F096: PATCH /block-state route guards (P1-1, P2-2)', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'owner',
         catId: 'opus',
         content: 'card msg',
@@ -294,7 +290,6 @@ describe('F096: PATCH /block-state route guards (P1-1, P2-2)', () => {
     const store = new MessageStore();
     const msg = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'owner',
         catId: 'opus',
         content: 'pick',

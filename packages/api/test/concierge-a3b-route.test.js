@@ -481,7 +481,6 @@ describe('GET /api/concierge/peek', () => {
     for (let i = 0; i < 7; i++) {
       const stored = messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: i % 2 === 0 ? 'user' : 'cat', routed: false, observation: 'original' },
           threadId: 'peek-thread',
           content: `Message ${i}`,
           userId: 'test-user',
@@ -515,7 +514,6 @@ describe('GET /api/concierge/peek', () => {
   it('returns a normal window around queued cat-authored speech already published to timeline', async () => {
     const target = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 'peek-thread',
         content: 'published source-cat seed',
         userId: 'test-user',

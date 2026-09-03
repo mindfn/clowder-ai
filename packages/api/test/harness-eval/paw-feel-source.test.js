@@ -135,7 +135,6 @@ describe('F278 canonical paw-feel source', () => {
     for (let index = 0; index < 5; index += 1) {
       store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'cat', routed: false, observation: 'original' },
           userId: 'u1',
           catId: 'codex-sol',
           content: `[爪感差: tool${index}+现象${index}]`,

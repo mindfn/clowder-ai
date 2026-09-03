@@ -7,7 +7,6 @@ import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 function appendQueued(store) {
   return store.append(
     canonicalTestMessageInput({
-      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: 'thread-f264-gap-f',
       userId: 'owner-1',
       catId: null,
@@ -56,7 +55,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
     const store = new MessageStore();
     const message = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         threadId: 'thread-f264-gap-f',
         userId: 'owner-1',
         catId: null,

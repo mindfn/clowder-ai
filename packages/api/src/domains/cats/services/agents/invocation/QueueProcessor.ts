@@ -86,6 +86,7 @@ import {
   type TokenUsage,
 } from '../../types.js';
 import { extractImagePaths } from '../providers/image-paths.js';
+import { userFacingSystemInfoNoticeContent } from '../routing/persist-system-info-warnings.js';
 import {
   type PersistedPromptMessage,
   type PersistenceContext,
@@ -4213,7 +4214,7 @@ export class QueueProcessor {
         userId,
         content,
         threadId,
-        messageId ?? null,
+        entry.execution.cloudDispatchProvenance?.sourceMessageId ?? messageId ?? null,
         targetCats,
         {
           intent,
@@ -4433,6 +4434,12 @@ export class QueueProcessor {
             ? { a2aCallerCatId: queueEntryCallerCatId(entry) }
             : {}),
           ...(entry.execution.callerTraceContext ? { callerTraceContext: entry.execution.callerTraceContext } : {}),
+          ...(entry.execution.cloudDispatchProvenance
+            ? { cloudDispatchProvenance: entry.execution.cloudDispatchProvenance }
+            : {}),
+          ...(entry.execution.requiresExactCloudDispatchProvenance
+            ? { requiresExactCloudDispatchProvenance: true }
+            : {}),
           ...(entry.execution.freshnessClosureId
             ? {
                 freshnessClosureId: entry.execution.freshnessClosureId,
@@ -4491,6 +4498,15 @@ export class QueueProcessor {
             (msg as { content?: string }).content!,
             (msg as { textMode?: 'append' | 'replace' }).textMode,
           );
+        } else if (
+          hook &&
+          entry.execution.requiresExactCloudDispatchProvenance &&
+          msg.catId === primaryCat &&
+          msg.type === 'system_info' &&
+          (msg as { content?: string }).content
+        ) {
+          const visibleNotice = userFacingSystemInfoNoticeContent((msg as { content?: string }).content!, primaryCat);
+          if (visibleNotice) responseText = accumulateTextAggregate(responseText, visibleNotice, 'append');
         }
         const continuationCapsule = extractContinuityCapsuleFromAgentMessage(msg);
         if (continuationCapsule) {

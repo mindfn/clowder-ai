@@ -38,7 +38,7 @@ describe('F046 B5 runtime regression scenarios after lifecycle cutover', () => {
     });
 
     assert.match(context, /^Direct message from 布偶猫\(opus\)/m);
-    assert.match(context, /最近活跃：布偶猫\(opus\)/);
-    assert.doesNotMatch(context, /Direct message from @opus|最近活跃：@opus/);
+    assert.match(context, /最近发言：布偶猫\(opus\)/);
+    assert.doesNotMatch(context, /Direct message from @opus|最近发言：@opus/);
   });
 });

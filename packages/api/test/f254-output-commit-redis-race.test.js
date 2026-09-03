@@ -21,11 +21,6 @@ function message(content, timestamp, overrides = {}) {
   const { catId, ...messageInput } = input;
   return {
     from: catId ? { kind: 'agent', catId } : { kind: 'user', userId: input.userId },
-    provenance: {
-      author: catId ? 'cat' : 'user',
-      routed: false,
-      observation: 'original',
-    },
     ...messageInput,
   };
 }

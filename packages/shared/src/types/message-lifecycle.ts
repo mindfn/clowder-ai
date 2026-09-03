@@ -272,6 +272,46 @@ export interface LifecycleActiveRun {
   readonly startedAt: number;
 }
 
+/**
+ * Canonical live-dispatch predicate shared by UI and agent situation projection.
+ * A source is "processing" only when its dispatch ref, response bubble, and one
+ * exact Active Run all agree. Ambiguous or partial evidence fails closed.
+ */
+export function hasExactLifecycleProcessingDispatch(input: {
+  readonly sourceMessageId: string;
+  readonly sourceDispatchRefs: readonly LifecycleDispatchRef[];
+  readonly responseMessageId: string;
+  readonly responseLifecycle: LifecycleStoredMessageMetadata | undefined;
+  readonly activeRuns: readonly LifecycleActiveRun[];
+}): boolean {
+  const response = input.responseLifecycle;
+  if (
+    !response ||
+    response.kind !== 'response' ||
+    response.status !== 'processing' ||
+    !response.inputMessageIds.includes(input.sourceMessageId)
+  ) {
+    return false;
+  }
+  const refs = input.sourceDispatchRefs.filter(
+    (ref) =>
+      ref.targetId === response.targetId &&
+      ref.phase === 'dispatched' &&
+      ref.statusMessageId === input.responseMessageId,
+  );
+  const targetRefs = input.sourceDispatchRefs.filter((ref) => ref.targetId === response.targetId);
+  if (refs.length !== 1 || targetRefs.length !== 1) return false;
+  return (
+    input.activeRuns.filter(
+      (run) =>
+        run.targetId === response.targetId &&
+        run.responseMessageId === input.responseMessageId &&
+        run.invocationId === response.invocationId &&
+        run.inputMessageIds.includes(input.sourceMessageId),
+    ).length === 1
+  );
+}
+
 /** Exact live-run fence returned by the server for one explicit Queue Append. */
 export interface LifecycleAppendExpectedRun {
   readonly targetId: string;

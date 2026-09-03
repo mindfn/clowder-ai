@@ -10,7 +10,10 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
-import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import {
+  InvocationQueue,
+  queueEntryTargetCats,
+} from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import {
@@ -251,11 +254,14 @@ describe('B6: multi_mention queue dispatch', () => {
       mentions: [],
       timestamp: 100,
       threadId: 'thread-1',
-      deliveryStatus: 'delivered',
+      // F117: append() delivery metadata is transition-owned; only 'queued' may be
+      // initialized at append time (MessageStore.assertValidAppendDeliveryMetadata).
+      // This fixture only needs the source message identity, so omit deliveryStatus.
     });
     creds = mockRegistry.register('opus', 'thread-1', 'user-1', {
       originTriggerMessageId: source.id,
     });
+    const callerResponse = appendTestLifecycleResponseSource(mockMessageStore, creds);
 
     const res = await app.inject({
       method: 'POST',
@@ -270,22 +276,21 @@ describe('B6: multi_mention queue dispatch', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    const { requestId } = res.json();
     const entries = invocationQueue.list('thread-1', 'user-1');
     assert.equal(entries.length, 2);
     assert.deepEqual(
       entries.map((entry) => ({
-        targetCatId: entry.targetCats[0],
-        parentInvocationId: entry.a2aParentInvocationId,
-        idempotencyKey: entry.idempotencyKey,
-        requiresExactProvenance: entry.requiresExactCloudDispatchProvenance,
-        provenance: entry.cloudDispatchProvenance,
+        targetCatId: queueEntryTargetCats(entry)[0],
+        parentInvocationId: entry.execution.a2aParentInvocationId,
+        sourceId: entry.payload.sourceId,
+        requiresExactProvenance: entry.execution.requiresExactCloudDispatchProvenance,
+        provenance: entry.execution.cloudDispatchProvenance,
       })),
       [
         {
           targetCatId: 'codex',
           parentInvocationId: creds.invocationId,
-          idempotencyKey: `multi-mention:${requestId}:codex`,
+          sourceId: callerResponse.id,
           requiresExactProvenance: true,
           provenance: {
             sourceMessageId: source.id,
@@ -297,7 +302,7 @@ describe('B6: multi_mention queue dispatch', () => {
         {
           targetCatId: 'gpt-pro',
           parentInvocationId: creds.invocationId,
-          idempotencyKey: `multi-mention:${requestId}:gpt-pro`,
+          sourceId: callerResponse.id,
           requiresExactProvenance: true,
           provenance: {
             sourceMessageId: source.id,
@@ -308,6 +313,8 @@ describe('B6: multi_mention queue dispatch', () => {
         },
       ],
     );
+    // Per-target rows must remain individually addressable under the shared sourceId.
+    assert.notEqual(entries[0].id, entries[1].id);
   });
 
   test('rejects caller-visible but cloud-ineligible Queue provenance while local sibling stays independent', async () => {
@@ -318,13 +325,17 @@ describe('B6: multi_mention queue dispatch', () => {
       mentions: [],
       timestamp: 101,
       threadId: 'thread-1',
-      deliveryStatus: 'delivered',
+      // F117: delivery metadata is transition-owned (see sibling fixture above);
+      // append() rejects any non-'queued' initialization, so omit deliveryStatus.
       visibility: 'whisper',
       whisperTo: ['opus'],
     });
     creds = mockRegistry.register('opus', 'thread-1', 'user-1', {
       originTriggerMessageId: source.id,
     });
+    // F117: seed the lifecycle response source for the re-registered invocation id
+    // (same contract as the sibling test above).
+    appendTestLifecycleResponseSource(mockMessageStore, creds);
 
     const res = await app.inject({
       method: 'POST',
@@ -340,12 +351,14 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.equal(res.statusCode, 200);
     const { requestId } = res.json();
     const entries = invocationQueue.list('thread-1', 'user-1');
-    const localEntry = entries.find((entry) => entry.targetCats[0] === 'codex');
-    const cloudEntry = entries.find((entry) => entry.targetCats[0] === 'gpt-pro');
+    // F117: QueueEntry.target is a structured union; resolve cat ids via the canonical accessor.
+    const localEntry = entries.find((entry) => queueEntryTargetCats(entry)[0] === 'codex');
+    const cloudEntry = entries.find((entry) => queueEntryTargetCats(entry)[0] === 'gpt-pro');
     assert.ok(localEntry);
     assert.ok(cloudEntry);
-    assert.equal(cloudEntry.requiresExactCloudDispatchProvenance, true);
-    assert.equal(cloudEntry.cloudDispatchProvenance, undefined);
+    assert.equal(cloudEntry.execution.requiresExactCloudDispatchProvenance, true);
+    assert.equal(cloudEntry.execution.cloudDispatchProvenance, undefined);
+    assert.equal(cloudEntry.execution.a2aParentInvocationId, creds.invocationId);
 
     const orch = getMultiMentionOrchestrator();
     mockQueueProcessor.simulateComplete(cloudEntry.id, 'succeeded', '未发送给 @gpt-pro：精确来源不满足公开回程资格。');
@@ -1288,11 +1301,18 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     assert.equal(hookResult.responseText, 'Hello from hook');
   });
 
-  test('dispatches one exact cloud child on Queue replay and returns its typed failure notice', async () => {
+  test('dispatches one exact cloud child, returns its typed failure notice, and does not replay terminal work', async () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
-    const queue = new IQ();
+    // F117: InvocationQueue dropped the legacy in-memory `enqueue`; use the
+    // fixture adapter (canonical MessageFrom + durable ledger admission) like the
+    // sibling tests below.
+    const queue = adaptInvocationQueue(new IQ());
+    // F117: message_wake rows must reference a real persisted History message —
+    // production admits message+queue atomically (appendAndEnqueueDurable), and
+    // the QueueProcessor fails a wake closed when the referenced message is absent.
+    const messageStore = adaptMessageStore(new MessageStore());
     const recordsByIdempotencyKey = new Map();
     const recordsById = new Map();
     let invocationCounter = 0;
@@ -1327,6 +1347,8 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         },
       },
       router: {
+        resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
+        resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
         async *routeExecution(userId, message, threadId, sourceMessageId, targetCats, intent, options) {
           routeCalls.push({ userId, message, threadId, sourceMessageId, targetCats, intent, options });
           yield {
@@ -1349,22 +1371,31 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         broadcastToRoom: () => {},
         emitToUser: () => {},
       },
-      messageStore: {
-        markDelivered: () => null,
-        getById: () => null,
-      },
+      messageStore,
       log: { info: () => {}, warn: () => {}, error: () => {} },
     };
 
     const qp = new QP(stubDeps);
+    // Persist the exact source message the wake references (atomic-admission contract).
+    const sourceMessage = messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'Original raw intent',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'thread-1',
+    });
     const carrier = {
-      sourceMessageId: 'msg-exact-source',
+      sourceMessageId: sourceMessage.id,
       sourceSender: { kind: 'user', id: 'user-1' },
       calledByCatId: 'opus',
       intent: 'Original raw intent',
     };
     const enqueue = () =>
       queue.enqueue({
+        // F117: durable Queue admission requires an explicit ledger kind
+        // (same contract as production A2A fan-out: message_wake).
+        kind: 'message_wake',
         ownerAuthProvenance: 'strict',
         threadId: 'thread-1',
         userId: 'user-1',
@@ -1375,6 +1406,10 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         autoExecute: true,
         callerCatId: 'opus',
         a2aParentInvocationId: 'inv-parent',
+        // F117: message_wake admission requires a durable History message reference;
+        // production A2A fan-out threads the source message id as payload.messageId.
+        messageId: carrier.sourceMessageId,
+        a2aTriggerMessageId: carrier.sourceMessageId,
         idempotencyKey: 'multi-mention:req-1:gpt-pro',
         cloudDispatchProvenance: carrier,
         requiresExactCloudDispatchProvenance: true,
@@ -1384,7 +1419,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     qp.registerEntryCompleteHook(first.entry.id, (_entryId, status, responseText) => {
       hookResults.push({ status, responseText });
     });
-    await qp.tryAutoExecute('thread-1');
+    await qp.requestDrain('thread-1');
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     assert.equal(routeCalls.length, 1);
@@ -1399,15 +1434,13 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     ]);
 
     const replay = enqueue();
-    qp.registerEntryCompleteHook(replay.entry.id, (_entryId, status, responseText) => {
-      hookResults.push({ status, responseText });
-    });
-    await qp.tryAutoExecute('thread-1');
+    assert.equal(replay.deduped, true);
+    assert.equal(replay.entry, undefined, 'a terminal ledger tombstone must not be projected as active work');
+    await qp.requestDrain('thread-1');
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     assert.equal(routeCalls.length, 1, 'stable replay must not dispatch the exact child twice');
-    assert.equal(hookResults.length, 2);
-    assert.equal(hookResults[1].status, 'succeeded');
+    assert.equal(hookResults.length, 1, 'terminal replay must not synthesize a second completion');
   });
 
   test('hook is auto-removed after firing (one-shot)', async () => {

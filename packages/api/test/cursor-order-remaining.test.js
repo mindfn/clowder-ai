@@ -25,7 +25,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     // Simulate legacy messages (direct, no queuing)
     const l1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'L1',
@@ -36,7 +35,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     );
     const l2 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'L2',
@@ -55,7 +53,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     // Append new messages — must have seqs strictly above legacy
     const _n1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'N1',
@@ -84,7 +81,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
 
     const _m1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'A-will-delete',
@@ -95,7 +91,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     );
     const m2 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'B-live',
@@ -116,7 +111,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     // Now append another message — its seq must be > highestSeq
     const m3 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C-after-delete',
@@ -148,7 +142,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
 
     const m = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'legacy-msg',
@@ -190,7 +183,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
       msgs.push(
         store.append(
           canonicalTestMessageInput({
-            provenance: { author: 'user', routed: false, observation: 'original' },
             userId: 'u1',
             catId: null,
             content: `m${i}`,
@@ -223,7 +215,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
 
     const _m1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'will-survive',
@@ -239,7 +230,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     // Append with earlier timestamp (simulates clock rollback)
     const m2 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'after-rollback',
@@ -263,7 +253,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
 
     const _m1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'msg1',
@@ -281,7 +270,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     // New append — seq must continue above the old hwm
     const _m2 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'after-delete',
@@ -330,7 +318,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
     for (let i = 0; i < 500; i++) {
       store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: `msg-${i}`,
@@ -365,7 +352,6 @@ describe('Cursor Order — Remaining RED tests (§8.8)', () => {
       msgs.push(
         store.append(
           canonicalTestMessageInput({
-            provenance: { author: 'user', routed: false, observation: 'original' },
             userId: 'u1',
             catId: null,
             content: `legacy-${i}`,
