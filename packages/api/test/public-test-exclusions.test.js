@@ -9,6 +9,8 @@ const packageRoot = resolve(__dirname, '..');
 const registryPath = resolve(packageRoot, 'config/public-test-exclusions.json');
 const resolverModuleUrl = pathToFileURL(resolve(packageRoot, 'scripts/resolve-public-test-files.mjs')).href;
 
+const F257_REATTESTED_EXCLUSIONS = new Set(['redis', 'memory-tests', 'harness-eval-private-verdict-publication']);
+
 const RECONCILED_EXCLUSIONS = [
   'redis-',
   'session-strategy-phase3',
@@ -66,9 +68,13 @@ test('registry retains only audited exclusions and drops re-admitted cases', asy
   assert.equal(registry.version, 2);
   assert.equal(registry.entries.length, RECONCILED_EXCLUSIONS.length);
   for (const entry of registry.entries) {
-    assert.deepEqual(entry.audit.sourceHead, 'b741f42fdbbb4484a54cde7eadca08b3b11652e3');
+    const f257Reattested = F257_REATTESTED_EXCLUSIONS.has(entry.id);
+    assert.deepEqual(
+      entry.audit.sourceHead,
+      f257Reattested ? '438cf8b97c9fd6692c6bca6c276bf427c843cce4' : 'b741f42fdbbb4484a54cde7eadca08b3b11652e3',
+    );
     assert.deepEqual(entry.audit.publicHead, '182d8ec9abc87ff7905441dca0575aab9787ee8f');
-    assert.match(entry.audit.reviewedOn, /^2026-09-01$/);
+    assert.equal(entry.audit.reviewedOn, f257Reattested ? '2026-09-03' : '2026-09-01');
     assert.match(entry.audit.matchedFilesHash, /^[a-f0-9]{64}$/);
     assert.ok(entry.audit.matchedFileCount > 0);
   }

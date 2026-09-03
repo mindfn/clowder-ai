@@ -10,12 +10,12 @@
       "introducedBy": "78f3bc57c",
       "expiresOn": "2026-10-01",
       "audit": {
-        "reviewedOn": "2026-09-01",
-        "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
+        "reviewedOn": "2026-09-03",
+        "sourceHead": "438cf8b97c9fd6692c6bca6c276bf427c843cce4",
         "publicHead": "182d8ec9abc87ff7905441dca0575aab9787ee8f",
         "status": "resource_contract",
-        "matchedFileCount": 62,
-        "matchedFilesHash": "414a329e11828b5b202777c4b0560e7e8e7328292f6cb065551d691286c8a7f4"
+        "matchedFileCount": 64,
+        "matchedFilesHash": "8707ef617bdd7d1b50dff6df2d3d7a2700394936872d16b302546b81610bb492"
       }
     },
     {
@@ -95,12 +95,12 @@
       "introducedBy": "78f3bc57c",
       "expiresOn": "2026-10-01",
       "audit": {
-        "reviewedOn": "2026-09-01",
-        "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
+        "reviewedOn": "2026-09-03",
+        "sourceHead": "438cf8b97c9fd6692c6bca6c276bf427c843cce4",
         "publicHead": "182d8ec9abc87ff7905441dca0575aab9787ee8f",
         "status": "source_dependency_failure",
-        "matchedFileCount": 243,
-        "matchedFilesHash": "4953141167946fe4c413f545d503c37bb24794f4877b8f4a3693c79323f2e026"
+        "matchedFileCount": 244,
+        "matchedFilesHash": "bff7869c93efde0aade2e621ec28f0c965aa3f7b455b82075ab15568045d8946"
       }
     },
     {
@@ -401,12 +401,12 @@
       "introducedBy": "bfa9e2c8f",
       "expiresOn": "2026-10-01",
       "audit": {
-        "reviewedOn": "2026-09-01",
-        "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
+        "reviewedOn": "2026-09-03",
+        "sourceHead": "438cf8b97c9fd6692c6bca6c276bf427c843cce4",
         "publicHead": "182d8ec9abc87ff7905441dca0575aab9787ee8f",
         "status": "private_fixture_failure",
-        "matchedFileCount": 9,
-        "matchedFilesHash": "0c0d80f3d4f94431a26b151478f8beed27527783d335186604a61627b7a9f4de"
+        "matchedFileCount": 8,
+        "matchedFilesHash": "7226a5b41e8a3d702b60100b735b2514b9ff23cffd45af5bb7562610d319c45b"
       }
     },
     {
