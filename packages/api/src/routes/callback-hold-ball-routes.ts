@@ -512,7 +512,15 @@ function launchWakeWhenRunner(opts: {
           socketManager: deps.socketManager,
           taskRunner: deps.taskRunner,
           invocationRecordStore: deps.invocationRecordStore,
-          getInvokeTrigger: () => deps.invokeTrigger,
+          getInvokeTrigger: () =>
+            deps.invokeTrigger
+              ? {
+                  trigger: async (...args) => {
+                    const outcome = await deps.invokeTrigger!.trigger(...args);
+                    return outcome === 'dispatched' ? 'enqueued' : outcome;
+                  },
+                }
+              : undefined,
         });
 
       // F295: an ordinary user message can retire the wake carrier, but it is
@@ -976,8 +984,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     const holdSource = { ...HOLD_BALL_SOURCE, meta: { taskId, threadId, catId: catIdStr } };
     try {
       const stored = await messageStore.append({
+        from: { kind: 'system', service: 'hold-ball' },
         userId: 'system',
-        catId: null,
         content: holdMessage,
         mentions: [],
         timestamp: Date.now(),
@@ -1105,8 +1113,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       const admissionFactIdempotencyKey = buildAdmissionFactIdempotencyKey(taskId);
       try {
         const admStored = await messageStore.append({
+          from: { kind: 'system', service: 'hold-ball' },
           userId: 'system',
-          catId: null,
           content: admissionFact,
           mentions: [],
           timestamp: Date.now(),

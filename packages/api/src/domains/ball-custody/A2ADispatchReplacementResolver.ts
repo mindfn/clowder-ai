@@ -1,4 +1,5 @@
 import type { BallCustodyEvent, CrossThreadCoordination } from '@cat-cafe/shared';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 
 export interface A2ADispatchHandoffSource {
@@ -184,9 +185,10 @@ function isVerifiedReplacementMessage(
   event: ReplacementEvent,
 ): message is StoredMessage {
   if (!message || message.threadId !== threadId) return false;
-  if (event.kind === 'ball.handed_cvo') return message.catId === event.payload.fromCatId;
+  const from = messageFrom(message);
+  if (event.kind === 'ball.handed_cvo') return from.kind === 'agent' && from.catId === event.payload.fromCatId;
   return Boolean(
-    (!event.payload.fromCatId || message.catId === event.payload.fromCatId) &&
+    (!event.payload.fromCatId || (from.kind === 'agent' && from.catId === event.payload.fromCatId)) &&
       (message.mentions.some((candidate) => candidate === event.payload.toCatId) ||
         message.extra?.targetCats?.includes(event.payload.toCatId)),
   );

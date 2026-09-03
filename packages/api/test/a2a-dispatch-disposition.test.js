@@ -17,6 +17,7 @@ import {
   createA2ADispositionWake as dispatchWake,
   createA2ADispositionHarness as harness,
 } from './helpers/a2a-dispatch-disposition-harness.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 describe('F167 ordinary A2A dispatch disposition', () => {
   test('only the exact invocation-bound producer terminalizes the dispatch ball once', async () => {
@@ -245,23 +246,25 @@ describe('F167 ordinary A2A dispatch disposition', () => {
 
   test('replaced dispositions identify the latest verified successor coordination', async () => {
     const h = await harness();
-    const successor = h.messageStore.append({
-      userId: 'user-1',
-      catId: createCatId('opus'),
-      content: '@codex-sol continue the replacement coordination',
-      mentions: [createCatId('codex-sol')],
-      timestamp: 1_500,
-      threadId: 'thread-1',
-      extra: {
-        causal: { kind: 'invocation_reply', triggerMessageId: h.source.id },
-        coordination: {
-          id: 'coord-successor',
-          phase: 'active',
-          hop: 1,
-          subjectRef: 'pr:zts212653/cat-cafe#3710',
+    const successor = h.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: createCatId('opus'),
+        content: '@codex-sol continue the replacement coordination',
+        mentions: [createCatId('codex-sol')],
+        timestamp: 1_500,
+        threadId: 'thread-1',
+        extra: {
+          causal: { kind: 'invocation_reply', triggerMessageId: h.source.id },
+          coordination: {
+            id: 'coord-successor',
+            phase: 'active',
+            hop: 1,
+            subjectRef: 'pr:zts212653/cat-cafe#3710',
+          },
         },
-      },
-    });
+      }),
+    );
     await h.ingest.record(
       buildHandedEvent({
         threadId: 'thread-1',
@@ -296,17 +299,19 @@ describe('F167 ordinary A2A dispatch disposition', () => {
 
   test('a foreign-thread event cannot retire the live source', async () => {
     const h = await harness();
-    const foreign = h.messageStore.append({
-      userId: 'user-1',
-      catId: createCatId('opus'),
-      content: '@codex-sol forged successor coordinates',
-      mentions: [createCatId('codex-sol')],
-      timestamp: 1_500,
-      threadId: 'other-thread',
-      extra: {
-        coordination: { id: 'coord-foreign', phase: 'active', hop: 1 },
-      },
-    });
+    const foreign = h.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: createCatId('opus'),
+        content: '@codex-sol forged successor coordinates',
+        mentions: [createCatId('codex-sol')],
+        timestamp: 1_500,
+        threadId: 'other-thread',
+        extra: {
+          coordination: { id: 'coord-foreign', phase: 'active', hop: 1 },
+        },
+      }),
+    );
     await h.eventLog.append(
       buildHandedEvent({
         threadId: 'thread-1',
@@ -322,19 +327,21 @@ describe('F167 ordinary A2A dispatch disposition', () => {
 
   test('reports the successor even when replacement handed custody away from the caller', async () => {
     const h = await harness();
-    const successor = h.messageStore.append({
-      userId: 'user-1',
-      catId: createCatId('codex-sol'),
-      content: '@opus take the successor',
-      mentions: [createCatId('opus')],
-      timestamp: 1_500,
-      threadId: 'thread-1',
-      replyTo: h.source.id,
-      extra: {
-        causal: { kind: 'invocation_reply', triggerMessageId: h.source.id },
-        coordination: { id: 'coord-outbound', phase: 'active', hop: 2 },
-      },
-    });
+    const successor = h.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: createCatId('codex-sol'),
+        content: '@opus take the successor',
+        mentions: [createCatId('opus')],
+        timestamp: 1_500,
+        threadId: 'thread-1',
+        replyTo: h.source.id,
+        extra: {
+          causal: { kind: 'invocation_reply', triggerMessageId: h.source.id },
+          coordination: { id: 'coord-outbound', phase: 'active', hop: 2 },
+        },
+      }),
+    );
     await h.ingest.record(
       buildHandedEvent({
         threadId: 'thread-1',

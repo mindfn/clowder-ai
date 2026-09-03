@@ -63,7 +63,7 @@ function makeEntry(
     targetCats?: string[];
     queueReceipt?: QueueMessageReceipt;
     targetStates?: Record<string, string>;
-    source?: QueueEntry['source'];
+    source?: 'user' | 'agent' | 'connector';
     callerCatId?: string;
     recoveryActions?: QueueEntry['recoveryActions'];
   } = {},
@@ -75,7 +75,12 @@ function makeEntry(
     content: opts.content ?? 'test message',
     messageId: `m-${id}`,
     mergedMessageIds: [],
-    source: opts.source ?? 'user',
+    from:
+      opts.source === 'agent'
+        ? { kind: 'agent', catId: opts.callerCatId ?? 'test-agent' }
+        : opts.source === 'connector'
+          ? { kind: 'external', connectorId: 'test-connector' }
+          : { kind: 'user', userId: 'u1' },
     targetCats: opts.targetCats ?? ['opus'],
     intent: 'execute',
     status: 'queued',
@@ -160,7 +165,6 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
       activeInvocations: {},
       catInvocations: {},

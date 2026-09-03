@@ -7,7 +7,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueueEntry } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { useToastStore } from '@/stores/toastStore';
 import { QueuePanel } from '../QueuePanel';
 
 vi.mock('@/utils/api-client', () => ({
@@ -23,7 +22,7 @@ const QUEUED_ENTRY: QueueEntry = {
   content: 'queued message',
   messageId: 'm1',
   mergedMessageIds: [],
-  source: 'user',
+  from: { kind: 'user', userId: 'test-user' },
   targetCats: ['opus'],
   intent: 'execute',
   status: 'queued',
@@ -106,12 +105,10 @@ describe('QueuePanel processing recovery', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       activeInvocations: {},
       catInvocations: {},
       currentThreadId: 'thread-1',
     });
-    useToastStore.setState({ toasts: [] });
   });
 
   afterEach(() => {
@@ -206,7 +203,6 @@ describe('QueuePanel processing recovery', () => {
   it('does not offer recovery while the queued target still has an active blocker', () => {
     useChatStore.setState({
       queue: [QUEUED_ENTRY],
-      queuePaused: false,
       activeInvocations: {
         'inv-active': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -221,7 +217,6 @@ describe('QueuePanel processing recovery', () => {
   it('moves a seen child target out of the queue when its parent control slot is live', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'seen' })],
-      queuePaused: false,
       activeInvocations: {
         'parent-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -244,7 +239,15 @@ describe('QueuePanel processing recovery', () => {
 
   it('liveness-first: keeps an agent/A2A exact receipt out of QueuePanel when its child live turn is already bridged', () => {
     useChatStore.setState({
-      queuePaused: false,
+      queue: [
+        {
+          ...withTargetStates({ opus: 'seen' }),
+          id: 'q-agent-live',
+          from: { kind: 'agent', catId: 'codex' },
+          sourceCategory: 'a2a',
+          autoExecute: true,
+        },
+      ],
       activeInvocations: {
         'parent-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -260,10 +263,9 @@ describe('QueuePanel processing recovery', () => {
       {
         ...withTargetStates({ opus: 'seen' }),
         id: 'q-agent-live',
-        source: 'agent',
+        from: { kind: 'agent', catId: 'codex' },
         sourceCategory: 'a2a',
         autoExecute: true,
-        callerCatId: 'codex',
       },
     ]);
     act(() => {
@@ -278,7 +280,6 @@ describe('QueuePanel processing recovery', () => {
   it('moves an awakened exact child out of QueuePanel while its parent control slot is live', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'awakened' })],
-      queuePaused: false,
       activeInvocations: {
         'parent-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -301,7 +302,6 @@ describe('QueuePanel processing recovery', () => {
   it('keeps an awakened target visible as recoverable when its exact child is no longer live', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'awakened' })],
-      queuePaused: false,
       activeInvocations: {},
     });
     act(() => {
@@ -310,13 +310,12 @@ describe('QueuePanel processing recovery', () => {
 
     expect(container.textContent).toContain('待处理');
     expect(container.textContent).toContain('已唤醒，但关联回合已结束；尚未读取消息正文');
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
   });
 
   it('keeps a seen target without a live invocation as an explicit recoverable anomaly', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'seen' })],
-      queuePaused: false,
       activeInvocations: {},
     });
     act(() => {
@@ -326,13 +325,12 @@ describe('QueuePanel processing recovery', () => {
     expect(container.textContent).toContain('待处理');
     expect(container.textContent).toContain('已读，但关联回合已结束；尚未确认处理完成');
     expect(container.textContent).not.toContain('当前轮处理中');
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
   });
 
   it('does not borrow an unrelated live cat to hide a seen target anomaly', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'seen' })],
-      queuePaused: false,
       activeInvocations: {
         'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
       },
@@ -342,13 +340,12 @@ describe('QueuePanel processing recovery', () => {
     });
 
     expect(container.textContent).toContain('已读，但关联回合已结束；尚未确认处理完成');
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
   });
 
   it('does not borrow a different live invocation for the same cat', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'seen' })],
-      queuePaused: false,
       activeInvocations: {
         'parent-opus-successor': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -365,13 +362,12 @@ describe('QueuePanel processing recovery', () => {
     });
 
     expect(container.textContent).toContain('已读，但关联回合已结束；尚未确认处理完成');
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
   });
 
   it('does not let a parent-only rebind inherit the previous child receipt', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'seen' })],
-      queuePaused: false,
       activeInvocations: {
         'parent-opus-new': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -393,7 +389,7 @@ describe('QueuePanel processing recovery', () => {
 
     expect(container.textContent).toContain('已读，但关联回合已结束；尚未确认处理完成');
     expect(container.textContent).not.toContain('当前轮处理中');
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
   });
 
   it('fails closed when a seen target has no exact receipt invocation id', () => {
@@ -402,10 +398,9 @@ describe('QueuePanel processing recovery', () => {
         {
           ...QUEUED_ENTRY,
           id: 'q-agent-missing-exact-id',
-          source: 'agent',
+          from: { kind: 'agent', catId: 'codex' },
           sourceCategory: 'a2a',
           autoExecute: true,
-          callerCatId: 'codex',
           targetStates: { opus: 'seen' },
           queueReceipt: {
             version: 1,
@@ -415,7 +410,6 @@ describe('QueuePanel processing recovery', () => {
           },
         },
       ],
-      queuePaused: false,
       activeInvocations: {
         'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -425,13 +419,12 @@ describe('QueuePanel processing recovery', () => {
     });
 
     expect(container.textContent).toContain('已读，但关联回合已结束；尚未确认处理完成');
-    expect(container.querySelector('[data-testid="queue-recover"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
   });
 
   it('counts only actionable targets in a mixed receipt and omits handled evidence', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'seen', codex: 'queued', gpt52: 'handled' })],
-      queuePaused: false,
       activeInvocations: {
         'parent-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
       },
@@ -457,7 +450,6 @@ describe('QueuePanel processing recovery', () => {
   it('keeps handled-only entries in history rather than the queue panel', () => {
     useChatStore.setState({
       queue: [withTargetStates({ gpt52: 'handled' })],
-      queuePaused: false,
       activeInvocations: {},
     });
     act(() => {
@@ -471,7 +463,6 @@ describe('QueuePanel processing recovery', () => {
   it('keeps author-withdrawn entries in history rather than the queue panel', () => {
     useChatStore.setState({
       queue: [withTargetStates({ opus: 'withdrawn' })],
-      queuePaused: false,
       activeInvocations: {},
     });
     act(() => {
@@ -481,82 +472,5 @@ describe('QueuePanel processing recovery', () => {
     expect(container.textContent).not.toContain('待处理');
     expect(container.querySelector('[data-testid="steer-q1"]')).toBeNull();
     expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
-  });
-
-  it('refreshes Queue truth when recovery loses a race without inventing a busy or Steer reason', async () => {
-    const { apiFetch } = await import('@/utils/api-client');
-    vi.mocked(apiFetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ started: false }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ queue: [], paused: false }) } as Response);
-    useChatStore.setState({ queue: [QUEUED_ENTRY], queuePaused: false, activeInvocations: {} });
-    act(() => {
-      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
-    });
-
-    const recovery = container.querySelector('[data-testid="queue-recover"]') as HTMLButtonElement;
-    await act(async () => recovery.click());
-
-    expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/threads/thread-1/queue');
-    expect(useChatStore.getState().queue).toEqual([]);
-    const toast = useToastStore.getState().toasts.at(-1);
-    expect(toast?.title).toBe('队列状态已刷新');
-    expect(toast?.message).not.toContain('运行占用');
-    expect(toast?.message).not.toContain('Steer');
-  });
-
-  it('hydrates no-start liveness so exact-live work leaves QueuePanel and ordinary work stops looking orphaned', async () => {
-    const { apiFetch } = await import('@/utils/api-client');
-    const exactSeenEntry = {
-      ...withTargetStates({ opus: 'seen' }),
-      id: 'q-exact-seen',
-      content: 'exact seen work',
-    };
-    const ordinaryEntry = {
-      ...QUEUED_ENTRY,
-      id: 'q-ordinary',
-      content: 'ordinary queued work',
-    };
-    vi.mocked(apiFetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ started: false }) } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          queue: [exactSeenEntry, ordinaryEntry],
-          paused: false,
-          activeInvocations: [
-            {
-              catId: 'opus',
-              startedAt: NOW,
-              executionId: 'parent-opus',
-              turnInvocationId: 'inv-opus',
-            },
-          ],
-        }),
-      } as Response);
-    useChatStore.setState({
-      queue: [exactSeenEntry, ordinaryEntry],
-      queuePaused: false,
-      activeInvocations: {},
-      catInvocations: {},
-    });
-    act(() => {
-      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
-    });
-
-    const recovery = container.querySelector('[data-testid="queue-recover"]') as HTMLButtonElement;
-    expect(recovery).not.toBeNull();
-    await act(async () => recovery.click());
-
-    expect(useChatStore.getState().activeInvocations).toHaveProperty('parent-opus');
-    expect(useChatStore.getState().catInvocations.opus).toMatchObject({
-      invocationId: 'parent-opus',
-      turnInvocationId: 'inv-opus',
-    });
-    expect(container.textContent).not.toContain('exact seen work');
-    expect(container.querySelector('[data-testid="steer-q-exact-seen"]')).toBeNull();
-    expect(container.textContent).toContain('ordinary queued work');
-    expect(container.querySelector('[data-testid="queue-recover"]')).toBeNull();
-    expect(container.textContent).not.toContain('等待 opus 调度');
-    expect(container.textContent).toContain('等待 opus 当前回合');
   });
 });

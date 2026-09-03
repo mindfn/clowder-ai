@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { persistUserFacingSystemInfoNotices } from '../dist/domains/cats/services/agents/routing/persist-system-info-warnings.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 function receipt(sourceMessageId, overrides = {}) {
   return {
@@ -148,15 +149,17 @@ describe('F247 durable outbound receipt provenance', () => {
 
   it('persists replyTo only when source, sender, dispatch invocation, and target all match server context', async () => {
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: 'thread-owner',
-      content: '@gpt-pro exact source',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-      extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: 'thread-owner',
+        content: '@gpt-pro exact source',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
+      }),
+    );
 
     await persistUserFacingSystemInfoNotices({
       messageStore: store,
@@ -176,24 +179,28 @@ describe('F247 durable outbound receipt provenance', () => {
 
   it('drops a same-thread receipt when its source differs from the server-owned trigger', async () => {
     const store = new MessageStore();
-    const expectedSource = store.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: 'thread-owner',
-      content: '@gpt-pro expected source',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-      extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-    });
-    const substitutedSource = store.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: 'thread-owner',
-      content: 'same sender, wrong source',
-      mentions: [],
-      timestamp: 1_001,
-      extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-    });
+    const expectedSource = store.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: 'thread-owner',
+        content: '@gpt-pro expected source',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
+      }),
+    );
+    const substitutedSource = store.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: 'thread-owner',
+        content: 'same sender, wrong source',
+        mentions: [],
+        timestamp: 1_001,
+        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
+      }),
+    );
 
     await persistUserFacingSystemInfoNotices({
       messageStore: store,
@@ -237,16 +244,18 @@ describe('F247 durable outbound receipt provenance', () => {
   ]) {
     it(`drops the source-bound projection for ${invalidCase.name}`, async () => {
       const store = new MessageStore();
-      const source = store.append({
-        userId: invalidCase.sourceUserId ?? 'alice',
-        catId: invalidCase.sourceCatId === undefined ? 'codex-sol' : invalidCase.sourceCatId,
-        threadId: invalidCase.sourceThreadId,
-        content: 'private source body must not hydrate',
-        mentions: [],
-        timestamp: 1_000,
-        ...(invalidCase.deliveryStatus ? { deliveryStatus: invalidCase.deliveryStatus } : {}),
-        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-      });
+      const source = store.append(
+        canonicalTestMessageInput({
+          userId: invalidCase.sourceUserId ?? 'alice',
+          catId: invalidCase.sourceCatId === undefined ? 'codex-sol' : invalidCase.sourceCatId,
+          threadId: invalidCase.sourceThreadId,
+          content: 'private source body must not hydrate',
+          mentions: [],
+          timestamp: 1_000,
+          ...(invalidCase.deliveryStatus ? { deliveryStatus: invalidCase.deliveryStatus } : {}),
+          extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
+        }),
+      );
 
       await persistUserFacingSystemInfoNotices({
         messageStore: store,
