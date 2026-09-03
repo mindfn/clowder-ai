@@ -26,7 +26,7 @@ Why（一句话）: A2A 触发与卡死恢复都落在既有 invocation/queue/tr
 2. **可观测**：目标猫"启动中/排队中"占位及时出现在主聊天 chrome（复用 F118 D2 `spawn_started`）——用户看得见"猫在路上"，不是空等一片
 3. 猫正常跑完 → 回复出现；若在排队，用户看到队列占位而非"消失"
 4. **可靠**：即使上一棒猫被判僵尸清理，它残留的 stale `processing` 队列条目也被一并收敛（clowder-ai#972）——用户后发的消息不会卡在一具"尸体"后面永远不跑
-5. **可恢复**：若猫真卡死，用户仍只点同一个「停止」；服务端自动从精确取消升级为就地对账（只清运行态、绝不动消息/历史/记忆，LL-048）→ thread 解放。仅当进程快照不可用、有界重试后仍无法确认进程是否存活时，才出现唯一一次确认（2026-09-03 KD-9 取代原「force-reset 逃生口」，现行真相为 ADR-043 D9）
+5. **可恢复**：若猫真卡死，用户仍只点同一个「停止」；服务端自动从精确取消升级为就地对账（只清运行态、绝不动消息/历史/记忆，LL-048）→ thread 解放。进程快照不可用时服务端有界重试后按 dispatch terminal 把该执行终局为 failed 并沿 F117 Phase C 失败传播回溯上游（猫来源 A2A 报回、origin 来源可见失败终态）；没有任何确认弹窗（2026-09-03 KD-9 取代原「force-reset 逃生口」，现行真相为 ADR-043 D9）
 6. 全程用户对"谁在跑 / 卡没卡 / 能不能自救"有一致、可信的感知——猫间协作**看得见、信得过、能恢复**
 
 ---
@@ -118,9 +118,10 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 
 **Phase 3（可恢复）✅ code+test done @ main 4e80ec889（PR #2065 squash）；runtime 截图验收 → operator quickpath**
 - [x] AC-3.1: 卡死/有活跃调用时 thread 出现情境化 force-reset 入口（非常驻）。→ `ThreadExecutionBar` 内 `ForceResetEntry`，有猫在跑才显示，`suspected_stall`/`alive_but_silent` 时上浮升级（`data-escalated`）。测试 4 绿。→ **superseded 2026-09-03（KD-9）**：入口删除，卡死时用户仍只点「停止」。
-- [x] AC-3.2: 点击弹**确认弹窗**（做什么/保留什么/何时用），确认才执行。→ `ForceResetDialog`（取消默认 focus / 强制重置危险红）。测试 4 绿。→ **superseded 2026-09-03（KD-9）**：弹窗只保留为「无法确认运行状态」的最后一问，仅在 Stop 有界重试后 liveness 仍未知时出现。
+- [x] AC-3.2: 点击弹**确认弹窗**（做什么/保留什么/何时用），确认才执行。→ `ForceResetDialog`（取消默认 focus / 强制重置危险红）。测试 4 绿。→ **superseded 2026-09-03（KD-9）**：弹窗退役；进程快照不可用时按 failed 终局并沿失败传播回溯上游，不弹任何确认。
 - [x] AC-3.3: 确认 → force-reset → thread 解放；消息/历史**不丢**（LL-048 只清运行态）。→ `apiFetch POST force-reset` + toast「已重置」。复核（截图前后 + 消息条数不变）→ operator quickpath runtime 验。（端点保留为 Stop 阶梯最后一级的 thread 级对账；LL-048 边界不变）
 - [x] AC-3.4: force-reset 对 record-present hung 和 **recordless canonical Queue owner** 都能清。后者从 user/thread-scoped `processingSlots` 发现 exact Queue group，在首个终态 await 前安装 replacement barrier，完成 durable row/custody terminalization 后才释放；迟到 cleanup 无法删除 replacement owner。真实 route + QueueProcessor 回归并验证 `queue_updated` 发布。2026-08-19 新 runtime（revision `1d1e774d4`，包含 PR #3782 merge `e240a8183`）live acceptance：exact cancel 后 Queue/active 归零，180 秒 foreground tree 与其 exact app-server host 消失，无关 host 存活；同 thread 后继在新 host 完成 exact token，未续跑旧指令；随后 Queue-backed 120 秒 invocation 经 force-reset 再次收敛至 queue=0、active=0、无 marker/host 残留。
+- [ ] AC-3.5: **逃生口退役 + Stop 阶梯（KD-9 / ADR-043 D9）**：删除 `ThreadExecutionBar` 常驻与 `suspected_stall` 触发的 force-reset 入口、「运行状态待确认」横幅与 `ForceResetDialog`；exact Stop 无活候选时服务端就地对账返回 `reconciled`，进程快照不可用时按 failed 终局；`/force-reset` 仅作内部 reconciler。→ 在 PR #1398（F117 Phase E，AC-E7）实施中；完成后勾选并将本 feat 标 done。
 
 ## Dependencies
 - force-reset 端点（`queue.ts`，已存在）。
@@ -141,7 +142,7 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 - KD-5（2026-06-17 Ragdoll opus-48，接 Maine Coon routing #972）：Phase 2 答案按 **F220↔F224 轴接缝**切两层——**2a 局部修**（active-pane canonical-liveness SoT / reconcileZombies→queue 收敛 / slot↔queue 一致 / 回归）= F220 已祝福方向内、可逆 → **自决实现，不上 operator**；**2b 架构 seam**（serial-continuation-child ↔ parent/queue liveness 桥接，牵动"统一 liveness SoT"+ 轴边界重画）= 架构级 → 出 Decision Packet 交 **operator 拍板拆 feat**。遵 KD-3：2b 不在根因报告+repro 前动手大改。**#972 是"两轴不共享根因"假设的反例**（轴在此 failure mode 交互）——若 2b operator 决定重画边界，序言断言需同步修订。
 - KD-7（2026-08-04 小太阳·Maine Coon，operator 接管后 closure audit）：KD-5 的 Decision Packet 前提已被 2026-07-18 PR #3047 的后续事实消解。child lifecycle 继续由既有 `TurnExecutionStore` 持有，F194 canonical read 只消费它；没有新增 store、extension point 或 ownership cell。结论是 **不拆新 feat、不改 `/active-pane`、不再向 operator提交过期的架构 A/B 题**，直接按已合入证据同步 truth。
 - KD-8（2026-08-18 小太阳·Maine Coon）：#1371 live acceptance 暴露的两个 residual 按确定契约分治。Queue reset 复用既有 pre-start exact-group retirement barrier，不新造 slot 恢复机制；Codex 取消一旦被 lease 观察就永久污染 exact host，cooperative close 和 timeout 都只能走 host eviction 与既有 supervisor owner-token/PID-start-identity 收敛。裸 `@target` 仍是 composer 语法，literal 日志/示例用反引号或代码块，不修 runtime parser。
-- KD-9（2026-09-03 co-creator，#1398 worktree 验收）：**force-reset 逃生口退役为用户概念**。用户只有在运行/未运行两态和一个动作「停止」（单只/全部）；停止的成功判据是投影进入未运行。服务端阶梯：exact 活取消 → 无活候选则就地对账（pre-start 退回 / running 记录置 canceled / 孤儿锁与槽位释放 / 终态广播）返回 `reconciled`，永不对自有执行 409；仅进程快照不完整才 503 + 有界重试；重试耗尽才出现唯一确认（可能双写）。「运行状态待确认」横幅与基于 `suspected_stall` 上浮的入口删除。根因定性：Phase 2 报告（#972）的「多 liveness SoT 无收敛点」是设计缺陷，F194 / TurnExecution / ADR-043 已关闭进程内分叉，剩余基础设施故障归 reconciler（启动 / 读取 read-repair / 停止三处复用）。现行真相：ADR-043 D9。
+- KD-9（2026-09-03 co-creator，#1398 worktree 验收）：**force-reset 逃生口退役为用户概念**。用户只有在运行/未运行两态和一个动作「停止」（单只/全部）；停止的成功判据是投影进入未运行。服务端阶梯：exact 活取消 → 无活候选则就地对账（pre-start 退回 / running 记录置 canceled / 孤儿锁与槽位释放 / 终态广播）返回 `reconciled`，永不对自有执行 409；进程快照不完整时服务端有界重试后按 dispatch terminal 将该执行终局为 failed 并沿 F117 Phase C 失败传播回溯上游（猫来源 A2A 报回、origin 来源可见失败终态；重做只来自新的用户意图），没有任何确认弹窗；Windows 等没有进程归属层的平台视为 complete。「运行状态待确认」横幅与基于 `suspected_stall` 上浮的入口删除。根因定性：Phase 2 报告（#972）的「多 liveness SoT 无收敛点」是设计缺陷，F194 / TurnExecution / ADR-043 已关闭进程内分叉，剩余基础设施故障归 reconciler（启动 / 读取 read-repair / 停止三处复用）。现行真相：ADR-043 D9。
 
 ## 设计稿（Phase 3 — force-reset 逃生口 UI，operator 2026-06-02 已审概念；**2026-09-03 KD-9 退役，仅存档**）
 

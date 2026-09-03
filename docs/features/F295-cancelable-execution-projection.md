@@ -61,8 +61,9 @@ Why: F295 adds the canonical live/managed-command execution read-and-cancel proj
 - exact live cancel 找不到可控候选时不再 409 `EXECUTION_NOT_ACTIVE`：同一请求对该 target 就地对账
   （pre-start 退回 / running 记录置 canceled / 孤儿锁与槽位释放 / 终态广播），返回
   `{ ok, cancelled: false, reconciled }`。foreign occupancy 与更新回合替代仍是 409。
-- `not_cancelable/control_plane_unavailable` 是唯一保留的「不可取消」原因：进程快照不完整时返回 503，
-  客户端有界重试；重试耗尽才出现一次「无法确认运行状态」确认，确认后走 thread 级 `force-reset` 对账。
+- 进程快照不完整时不再让用户面对「不可取消」：服务端有界重试后按 dispatch terminal 将该执行终局为 failed
+  （reason `control_plane_unavailable`）并返回 200，失败沿 F117 Phase C 失败传播回溯上游；Windows 等没有进程归属层的平台视为
+  complete。`ForceResetDialog` 退役；503 只保留给持久层不可用。
 - Primary Journey 第 3 步收窄为「仅 liveness 未知时显示原因」；旧 `useExecutionRecoveryVerification` 的
   「运行状态待确认」死角与基于 `suspected_stall` 上浮的强制重置入口退役。
 

@@ -234,7 +234,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 | E4 | 狸花猫 Steer 无「不中断继续发送」 | UI 门控错误 | 作者意图始终提供；服务端按 carrier 回退并在回执显示实际生效 |
 | E5 | codex 失败正文与系统提示重复 | 实现 | terminal failed response 已携带错误时不再另存 system notice |
 | E6 | 「执行中」与 QueuePanel「等待 xxx 当前回合」重复；气泡浮窗「查看轨迹」冗余；首个轨迹 chip 位置 | UI 冗余 | 去横幅、去按钮、轨迹 chip 置于引用 chip 之后 |
-| E7 | 「卡住了？强制重置」常驻 / 「运行状态待确认」红横幅 | 设计（补丁化逃生舱） | ADR-043 D9：停止是唯一动作；无活候选时服务端就地对账；仅 liveness 未知才出最后一问 |
+| E7 | 「卡住了？强制重置」常驻 / 「运行状态待确认」红横幅 | 设计（补丁化逃生舱） | ADR-043 D9：停止是唯一动作；无活候选时服务端就地对账；进程快照不可用时按 failed 终局并沿 Phase C 失败传播回溯上游；无任何确认弹窗 |
 
 ## Acceptance Criteria
 
@@ -295,7 +295,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [ ] AC-E4: Steer 对任一可选 target 提供「不中断继续发送」；非 exact carrier 回退为 next_work 且回执显示 `fallbackReason`
 - [ ] AC-E5: 失败 response 只呈现一次错误正文
 - [ ] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
-- [ ] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时 503 + 有界重试后才出现唯一确认；`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
+- [ ] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；Windows 等无进程归属层的平台视为 complete；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
 
 ## Scope Boundary
 

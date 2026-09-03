@@ -76,7 +76,7 @@ doc_anchors:
   - feature-specs/2026-08-12-1291-gate5-retry-revalidation.md
 static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, QueueLedgerReceipt, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, getByMessageIds, timelinePublishedAtAppend, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, QueueMessageReceipt, QueueReceiptTarget, QueueReminderAttempt, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, terminalOutcome, bodyExposures, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute, reconcileInactiveLiveInvocation, EXECUTION_CONTROL_UNAVAILABLE]
 cited_by:
-  - {feature: F220-KD9-stop-ladder, date: 2026-09-03, delta: Stop is the only user-facing termination; an exact live cancel escalates server-side to per-target reconciliation of durable running truth instead of 409, an incomplete process-owner snapshot is the only case that surfaces one last confirmation, and force-reset is demoted to that confirmation's thread-scoped reconciler}
+  - {feature: F220-KD9-stop-ladder, date: 2026-09-03, delta: Stop is the only user-facing termination; an exact live cancel escalates server-side to per-target reconciliation of durable running truth instead of 409, an incomplete process-owner snapshot terminalizes the execution as failed instead of prompting, and force-reset is demoted to an internal thread-scoped reconciler}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: an exact full same-thread read adopts only that source-target scalar row into the current LifecycleActiveRun and response, publishes the Message to History, and terminalizes the row while siblings remain queued}
   - {feature: F117-ADR-043, date: 2026-09-03, delta: QueueLedger becomes the only durable Queue truth; deterministic source-by-target rows atomically admit Messages, retain terminal receipt tombstones outside active order, and drive live/history receipt projection through an exact message index}
   - {feature: F295-post-close-thread-admission, date: 2026-08-22, delta: active-execution read and exact-cancel reuse canonical owner/default/user-index/external-anchor thread admission before liveness lookup while retaining masked shared occupancy and execution-principal control fences}
@@ -146,9 +146,12 @@ row plus a liveness witness (tracker slot or process owner); in-memory slots, tr
 locks are caches and cannot pin a thread busy by themselves. An exact Stop first cancels a live candidate; when
 the durable row still says running but no controllable candidate exists, the same request reconciles that
 target (retire the pre-start reservation, cancel the running record, release the orphaned lock and slot,
-publish terminal) and returns `reconciled` rather than 409. Only an incomplete process-owner snapshot returns
-503 for bounded client retry, after which one confirmation may run the thread-scoped `force-reset` reconciler.
-The same reconciliation is reused at startup, on projection read, and on Stop (ADR-043 D9).
+publish terminal) and returns `reconciled` rather than 409. An incomplete process-owner snapshot (`ps` failure
+or unreadable owner manifests; platforms without a process-owner layer count as complete with no owners) is
+retried server-side and then terminalizes the exact execution as failed through the ordinary dispatch terminal
+path, so ordinary failure propagation runs (source dispatchRef settlement, A2A report back to a cat source,
+`delivery_failure` for pre-start); no confirmation dialog exists, and `force-reset` remains only an internal thread-scoped reconciler. The
+same reconciliation is reused at startup, on projection read, and on Stop (ADR-043 D9).
 
 Steer is the only preemption path: atomically claim the exact queued row, cancel the currently running
 invocation outside Redis, then commit the claim to processing or restore it to the original position.
@@ -211,7 +214,7 @@ transport failure into Queue replay.
 - Do not return a full queued body before its exact active-child adoption is durable, and do not retire a
   sibling target row when another target adopts the same source.
 - Do not gate Stop on an in-memory live candidate or answer a user's Stop with 409 while the durable row still
-  says running; reconcile the exact target instead, and reserve 503 for an incomplete process-owner snapshot.
+  says running; reconcile or terminalize the exact target instead, and reserve 503 for persistence failure only.
 - Do not let an in-memory slot, tracker tombstone, or session lock pin a thread busy without a durable running
   row and a liveness witness, and do not surface force-reset as a standing or stall-triggered user entry.
 - Do not use the in-memory Queue cache as persistence or accept an unvalidated Redis row into scheduling.
