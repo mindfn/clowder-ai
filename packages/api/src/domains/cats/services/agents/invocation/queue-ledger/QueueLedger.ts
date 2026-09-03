@@ -117,7 +117,7 @@ export type QueueLedgerTransitionResult =
   | { outcome: 'updated'; entry: QueueLedgerEntry }
   | { outcome: 'not_found' | 'state_changed' };
 
-export type QueueLedgerCommitMode = 'queued' | 'processing' | 'terminal' | 'withdrawn';
+export type QueueLedgerCommitMode = 'queued' | 'processing' | 'processing_evidence' | 'terminal' | 'withdrawn';
 
 export interface QueueLedgerStore {
   enqueue(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): Promise<QueueLedgerEnqueueResult>;

@@ -1,6 +1,6 @@
 'use client';
 
-import type { LifecycleActiveRun } from '@cat-cafe/shared';
+import type { CapabilityTipContext, LifecycleActiveRun } from '@cat-cafe/shared';
 import { memo } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import type { ChatMessage as ChatMessageData } from '@/stores/chat-types';
@@ -26,6 +26,8 @@ interface ChatMessageRowProps {
   forwardingDisabled: boolean;
   eager?: boolean;
   backgroundMountDelayMs?: number;
+  showCapabilityTip?: boolean;
+  capabilityTipContexts?: readonly CapabilityTipContext[];
 }
 
 /**
@@ -51,6 +53,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   forwardingDisabled,
   eager,
   backgroundMountDelayMs,
+  showCapabilityTip,
+  capabilityTipContexts,
 }: ChatMessageRowProps) {
   return (
     <MessageViewportBoundary messageId={message.id} eager={eager} backgroundMountDelayMs={backgroundMountDelayMs}>
@@ -75,6 +79,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           hideDiagnosticsPanel={hideDiagnosticsPanel}
           dedupCount={dedupCount}
           forwardingDisabled={forwardingDisabled}
+          showCapabilityTip={showCapabilityTip}
+          capabilityTipContexts={capabilityTipContexts}
         />
       </MessageActions>
     </MessageViewportBoundary>

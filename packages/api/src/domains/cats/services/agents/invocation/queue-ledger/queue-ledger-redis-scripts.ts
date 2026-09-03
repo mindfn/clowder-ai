@@ -151,6 +151,22 @@ local raw = redis.call('HGET', KEYS[1], id)
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
 
+if mode == 'processing_evidence' then
+  if row.status ~= 'processing' or not replacementRaw or replacementRaw == '' then return {0, raw} end
+  local nextRow = cjson.decode(replacementRaw)
+  if nextRow.id ~= id or nextRow.threadId ~= row.threadId then
+    return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
+  end
+  nextRow.status = 'processing'
+  nextRow.processingStartedAt = row.processingStartedAt
+  nextRow.claimId = nil
+  nextRow.claimedAt = nil
+  nextRow.terminalAt = nil
+  local next = cjson.encode(nextRow)
+  redis.call('HSET', KEYS[1], id, next)
+  return {1, next}
+end
+
 if mode == 'queued' or mode == 'processing' then
   if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
   local nextRow = row

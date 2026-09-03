@@ -206,6 +206,19 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (!current || index < 0) return { outcome: 'not_found' };
     const entry = current[index];
     if (!entry) return { outcome: 'not_found' };
+    if (mode === 'processing_evidence') {
+      if (entry.status !== 'processing' || !replacement) return { outcome: 'state_changed' };
+      const next = cloneQueueLedgerEntry(replacement);
+      if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
+      next.status = 'processing';
+      next.processingStartedAt = entry.processingStartedAt;
+      delete next.claimId;
+      delete next.claimedAt;
+      delete next.terminalAt;
+      assertQueueLedgerEntry(next);
+      current[index] = next;
+      return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
+    }
     if (mode === 'queued' || mode === 'processing') {
       return this.commitClaimedState(current, index, entry, claimId, mode, at, replacement);
     }

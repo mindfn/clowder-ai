@@ -18,13 +18,15 @@ function message(content, timestamp, overrides = {}) {
     threadId: 'thread-1',
     ...overrides,
   };
+  const { catId, ...messageInput } = input;
   return {
+    from: catId ? { kind: 'agent', catId } : { kind: 'user', userId: input.userId },
     provenance: {
-      author: input.catId ? 'cat' : 'user',
+      author: catId ? 'cat' : 'user',
       routed: false,
       observation: 'original',
     },
-    ...input,
+    ...messageInput,
   };
 }
 
@@ -82,6 +84,11 @@ describe('RedisMessageStore F254 conditional append', { skip: redisIsolationSkip
       priorFrontierMessageId: queued.id,
     });
     assert.equal((await store.getById(result.message.id)).content, 'published answer');
+    assert.deepEqual(
+      (await store.getByThreadAfter('thread-1', undefined, 10, 'user-1')).map((entry) => entry.id),
+      [trigger.id, result.message.id],
+    );
+    assert.equal(Number.isSafeInteger(result.message.visibilitySeq), true);
     assert.notEqual(result.priorFrontierMessageId, trigger.id);
   });
 
@@ -144,6 +151,10 @@ describe('RedisMessageStore F254 conditional append', { skip: redisIsolationSkip
     const retry = await store.appendIfThreadFrontier({ ...candidate, content: 'duplicate' }, trigger.id);
     assert.equal(retry.kind, 'committed');
     assert.equal(retry.message.id, won.message.id);
+    assert.deepEqual(
+      (await store.getByThreadAfter('thread-1', trigger.id, 10, 'user-1')).map((entry) => entry.id),
+      [racing.id, won.message.id],
+    );
     assert.equal((await store.getByThread('thread-1')).filter((item) => item.catId === 'codex-sol').length, 1);
   });
 
@@ -168,5 +179,43 @@ describe('RedisMessageStore F254 conditional append', { skip: redisIsolationSkip
       ),
     ]);
     assert.deepEqual([left.kind, right.kind].sort(), ['committed', 'frontier_advanced']);
+  });
+
+  it('validates the visibility allocator before conditional append side effects', async () => {
+    const trigger = await store.append(message('question', 100));
+    const candidate = message('must not publish', 200, {
+      catId: 'codex-sol',
+      origin: 'stream',
+      idempotencyKey: 'f254-published:invalid-hwm',
+    });
+    await redis.hset(MessageKeys.threadVisibilityMeta('thread-1'), 'hwm', 'invalid');
+
+    await assert.rejects(store.appendAndObservePriorFrontier(candidate), /VISIBILITY_HWM_INVALID/);
+
+    assert.equal(await store.getByIdempotencyKey('user-1', 'thread-1', candidate.idempotencyKey), null);
+    assert.deepEqual(await redis.zrange(MessageKeys.thread('thread-1'), 0, -1), [trigger.id]);
+  });
+
+  it('keeps queued user work private while publishing queued cat speech', async () => {
+    const queuedUser = await store.appendAndObservePriorFrontier(
+      message('private queued work', 100, { deliveryStatus: 'queued' }),
+    );
+    const queuedCat = await store.appendAndObservePriorFrontier(
+      message('published queued speech', 200, {
+        catId: 'codex-sol',
+        origin: 'stream',
+        deliveryStatus: 'queued',
+      }),
+    );
+
+    assert.equal(queuedUser.message.visibilitySeq, undefined);
+    assert.equal(Number.isSafeInteger(queuedCat.message.visibilitySeq), true);
+    assert.equal(await redis.zscore(MessageKeys.threadVisibility('thread-1'), queuedUser.message.id), null);
+    assert.deepEqual(
+      (await store.getByThreadAfter('thread-1', undefined, 10, 'user-1', { includeQueuedCatMessages: true })).map(
+        (entry) => entry.id,
+      ),
+      [queuedCat.message.id],
+    );
   });
 });

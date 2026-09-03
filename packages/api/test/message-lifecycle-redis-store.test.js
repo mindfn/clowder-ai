@@ -142,6 +142,94 @@ describe(
       assert.equal((await store.commitLifecycleAppendRejection(rejection)).kind, 'replayed');
     });
 
+    test('publishes a lifecycle response to cursor reads only with its terminal body', async () => {
+      const threadId = 'thread-redis-terminal-visibility';
+      const processing = (
+        await store.appendAndObservePriorFrontier(
+          canonicalFixture({
+            userId: 'owner-redis',
+            threadId,
+            catId: 'opus',
+            content: '',
+            mentions: [],
+            timestamp: 100,
+            lifecycle: {
+              kind: 'response',
+              orderKey: '100:terminal-visibility',
+              from: { kind: 'agent', catId: 'opus' },
+              invocationId: 'inv-terminal-visibility',
+              targetId: 'opus',
+              inputEntryIds: ['entry-terminal-visibility'],
+              inputMessageIds: ['message-terminal-visibility'],
+              status: 'processing',
+              startedAt: 100,
+            },
+          }),
+        )
+      ).message;
+
+      assert.equal((await redis.hget(`msg:${processing.id}`, 'visibilitySeq')) ?? null, null);
+      assert.deepEqual(await store.getByThreadAfter(threadId, undefined, undefined, 'owner-redis'), []);
+
+      const terminal = await store.commitLifecycleResponseTerminal(processing.id, {
+        invocationId: 'inv-terminal-visibility',
+        status: 'completed',
+        completedAt: 200,
+        content: 'terminal body',
+        mentions: [],
+        origin: 'stream',
+      });
+
+      assert.equal(terminal.kind, 'applied');
+      assert.equal(typeof terminal.message.visibilitySeq, 'number');
+      assert.equal(
+        await redis.zscore(`msg:visibility:${threadId}`, processing.id),
+        String(terminal.message.visibilitySeq),
+      );
+      assert.deepEqual(
+        (await store.getByThreadAfter(threadId, undefined, undefined, 'owner-redis')).map((message) => message.id),
+        [processing.id],
+      );
+    });
+
+    test('repairs terminal lifecycle responses omitted by the first single-ledger rollout', async () => {
+      const threadId = 'thread-redis-terminal-visibility-repair';
+      const response = await store.append(
+        canonicalFixture({
+          userId: 'owner-redis',
+          threadId,
+          catId: 'opus',
+          content: 'already terminal',
+          mentions: [],
+          timestamp: 100,
+          lifecycle: {
+            kind: 'response',
+            orderKey: '100:terminal-repair',
+            from: { kind: 'agent', catId: 'opus' },
+            invocationId: 'inv-terminal-repair',
+            targetId: 'opus',
+            inputEntryIds: ['entry-terminal-repair'],
+            inputMessageIds: ['message-terminal-repair'],
+            status: 'completed',
+            startedAt: 90,
+            completedAt: 100,
+          },
+        }),
+      );
+      await redis.zrem(`msg:visibility:${threadId}`, response.id);
+      await redis.hdel(`msg:${response.id}`, 'visibilitySeq');
+      await redis.hdel(`msg:visibility-meta:${threadId}`, 'terminalResponseRepair');
+
+      const visible = await store.getByThreadAfter(threadId, undefined, undefined, 'owner-redis');
+
+      assert.deepEqual(
+        visible.map((message) => message.id),
+        [response.id],
+      );
+      assert.equal(typeof visible[0].visibilitySeq, 'number');
+      assert.equal(await redis.hget(`msg:visibility-meta:${threadId}`, 'terminalResponseRepair'), '1');
+    });
+
     test('preserves a child settle that races with parent response terminalization', async () => {
       const processing = await store.append(
         canonicalFixture({
@@ -174,7 +262,7 @@ describe(
               if (
                 !injectedChildSettle &&
                 typeof script === 'string' &&
-                script.includes("existing.status ~= 'processing'") &&
+                script.includes("existing.status == 'processing'") &&
                 script.includes('existingRaw ~= ARGV[14]')
               ) {
                 injectedChildSettle = true;

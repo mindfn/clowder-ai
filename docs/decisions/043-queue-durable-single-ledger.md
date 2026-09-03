@@ -8,7 +8,7 @@ created: 2026-09-02
 
 # ADR-043: 消息队列 = 独立持久化的有序工单账本
 
-> **Status**: implemented locally; cross-family review pending | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
+> **Status**: implemented locally; acceptance follow-up under review | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
 > **Supersedes (设计层)**: F039 / F122 / F175 / F047 中关于队列状态与 Steer 预留的描述
 
 ## 背景
@@ -127,6 +127,11 @@ cancel 正在跑的 invocation   ← I/O，进不了 Lua
 
 Steer 只需在条目上留 2 个标量：`steerRequestedAt?: number`（UI「Steer 中」回执态）、`steeredInvocationId?: string`（替补 run 归属证据）。
 
+Steer modal 的两个按钮表达作者意图，不表达一次易过期的 carrier capability snapshot：正常 Steer
+选择 `next_work` 并在仍 active 时走上述 preemption；“不中断继续发送”选择 `continue_current`，admission
+先尝试 exact Active Run Append，provider 不支持或 run 已结束时保留同一 Queue row，由普通 drain 启动。
+因此任一可选择的 active target 都必须显示不中断选项，前端不得因 `canAppend` 投影缺失而隐藏作者意图。
+
 ### D6 — freshness carrier 是载荷标记，不是状态机
 
 5 个字段写一次、起跑读一次即消费，**不进持久 custody**（custody 三文件 grep `freshness` 零命中），重启靠从 closure store 重新入队。归类同 `sourceCategory`。
@@ -142,6 +147,27 @@ terminal tombstone 会重新变成可执行状态，并再次制造 Message/Queu
 
 用户若要重做失败事项，应发送新的消息或执行明确的新动作，由生产者产生新的持久 source 与 Queue row；
 旧 response、receipt 与 wait carrier 只保留原 attempt 的终态证据，不能充当 retry token。
+
+### D8 — 完整正文读取是当前 child 对标量工单的接管
+
+无 filter 的完整 thread-context 读取若返回一个 same-target queued 正文，服务端必须先验证 exact running
+`TurnExecution` 与同一个 `LifecycleActiveRun`，再把该 `sourceId × targetCatId` 标量行接管到现有 response：
+
+1. claim exact row；
+2. 在 live Active Run 预留 source/entry，并将 source Message 单调推进到 `delivered`；
+3. 把 source message/entry 持久写入该 response lifecycle；
+4. 在 row 上保留 exact `(targetCatId, childInvocationId, seenAt)` exposure，并终局为 `handled`。
+
+History publication 失败时必须撤销 live 预留、restore claim 并拒绝返回正文；若后续 lifecycle CAS 因
+并发冲突失败，Message 可以保持已发布，但 row 恢复 queued，且本次仍拒绝返回 queued projection。接管一旦持久化，后续失败不得把
+同一工单放回 Queue。`queued_seen` 与 `queued_handled` 仍是不同证据字段/指标，但在这条用户旅程中由同一
+adoption path 提交，不再等待 invocation terminal success 推断 handled。
+
+fan-out 的每个 target 是独立行：A 读取只终局 A，B 继续 queued；B 后续读取再终局 B。第一只猫接管后
+Message 已进入成员可见 History，其他 target 的 Queue 责任仍由各自标量行独立追踪。稀疏读取、跨 thread
+读取、oversized anchor 或无法证明 exact active child 的请求都不得接管。
+
+本决策取代 F254 D1.2 的旧“两阶段 seen，成功后 handled”实现约束；旧段落只保留为历史设计记录。
 
 ## 不会简化的部分（诚实边界）
 

@@ -1063,10 +1063,10 @@ export const freshnessQueuedSeen = lazy(() =>
   }),
 );
 
-/** Queued handled: a seen queued entry closed via same-invocation successful completion evidence. */
+/** Queued handled: an exact active child durably adopted one source-target row. */
 export const freshnessQueuedHandled = lazy(() =>
   meter().createCounter('cat_cafe.freshness.queued_handled', {
-    description: 'F254 queued handled closures inferred from queued_seen plus successful invocation evidence',
+    description: 'F254 queued handled closures committed by exact active-child full-read adoption',
   }),
 );
 

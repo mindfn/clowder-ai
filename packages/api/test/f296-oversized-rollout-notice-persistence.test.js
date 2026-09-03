@@ -54,4 +54,28 @@ describe('F296 oversized native rollover response-owned diagnostics', () => {
 
     assert.equal(messages.length, 0);
   });
+
+  it('does not duplicate an exact provider failure already owned by the response body', async () => {
+    const store = new MessageStore();
+    const failureText = 'Codex CLI: CLI 异常退出 (code=1)';
+
+    await persistUserFacingSystemInfoNotices({
+      messageStore: store,
+      threadId: 'thread-owner',
+      catId: 'codex-sol',
+      terminalFailureText: failureText,
+      contents: [
+        JSON.stringify({ type: 'warning', message: failureText }),
+        JSON.stringify({ type: 'warning', message: '另一条独立警告' }),
+      ],
+    });
+
+    const warnings = (await store.getByThread('thread-owner')).filter(
+      (message) => message.source?.connector === 'system-warning',
+    );
+    assert.deepEqual(
+      warnings.map((message) => message.content),
+      ['⚠️ 另一条独立警告'],
+    );
+  });
 });

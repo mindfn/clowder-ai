@@ -424,10 +424,77 @@ local maxMembers = tonumber(ARGV[3])
 local metaKey = kp .. 'msg:visibility-meta:' .. threadId
 local visKey = kp .. 'msg:visibility:' .. threadId
 
--- Guard: already migrated → no-op
+-- ADR-043 follow-up: the first single-ledger build terminalized processing
+-- response placeholders without publishing them to the visibility index. Run
+-- this bounded, one-shot repair even for threads that already completed the
+-- original #1200 migration. Repaired responses are appended after the current
+-- HWM so no previously issued cursor changes meaning.
 local migrated = redis.call('HGET', metaKey, 'migrated')
+local terminalRepair = redis.call('HGET', metaKey, 'terminalResponseRepair')
+if migrated and terminalRepair then return 0 end
+
 if migrated then
-  return 0
+  local count = redis.call('ZCARD', threadKey)
+  if count > maxMembers then
+    return redis.error_reply(
+      'VISIBILITY_REPAIR_TOO_LARGE: threadId=' .. threadId ..
+      ' members=' .. tostring(count) ..
+      ' max=' .. tostring(maxMembers)
+    )
+  end
+
+  local hwmRaw = redis.call('HGET', metaKey, 'hwm')
+  local hwm = 0
+  if hwmRaw ~= false then
+    hwm = tonumber(hwmRaw)
+    if hwm == nil or hwm ~= hwm or hwm ~= math.floor(hwm) or hwm < 0 then
+      return redis.error_reply('VISIBILITY_HWM_INVALID: raw=' .. tostring(hwmRaw) .. ' metaKey=' .. metaKey)
+    end
+  end
+
+  local repairIds = {}
+  local members = redis.call('ZRANGE', threadKey, 0, -1)
+  for i = 1, #members do
+    local messageId = members[i]
+    local messageKey = kp .. 'msg:' .. messageId
+    local existingSeq = redis.call('HGET', messageKey, 'visibilitySeq')
+    local lifecycleRaw = redis.call('HGET', messageKey, 'lifecycle')
+    local lifecycle = nil
+    if lifecycleRaw and lifecycleRaw ~= '' then
+      local okLifecycle, decodedLifecycle = pcall(cjson.decode, lifecycleRaw)
+      if okLifecycle and type(decodedLifecycle) == 'table' then lifecycle = decodedLifecycle end
+    end
+    local deliveryStatus = redis.call('HGET', messageKey, 'deliveryStatus')
+    local publishableDelivery = not deliveryStatus or deliveryStatus == '' or
+      deliveryStatus == 'delivered' or deliveryStatus == 'canceled'
+    if (not existingSeq or existingSeq == '') and
+       not redis.call('HGET', messageKey, 'recall') and
+       not redis.call('HGET', messageKey, '_tombstone') and
+       lifecycle and lifecycle.kind == 'response' and lifecycle.status ~= 'processing' and
+       publishableDelivery then
+      table.insert(repairIds, messageId)
+    end
+  end
+
+  local firstSeq = nil
+  if #repairIds > 0 then
+    local timeArr = redis.call('TIME')
+    local nowMs = tonumber(timeArr[1]) * 1000 + math.floor(tonumber(timeArr[2]) / 1000)
+    firstSeq = math.max(hwm + 1, nowMs)
+    local lastSeq = firstSeq + #repairIds - 1
+    if lastSeq > 9007199254730991 then
+      return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(lastSeq))
+    end
+  end
+
+  for i = 1, #repairIds do
+    local seq = firstSeq + i - 1
+    redis.call('ZADD', visKey, seq, repairIds[i])
+    redis.call('HSET', kp .. 'msg:' .. repairIds[i], 'visibilitySeq', tostring(seq))
+    hwm = seq
+  end
+  redis.call('HSET', metaKey, 'hwm', tostring(hwm), 'terminalResponseRepair', '1')
+  return #repairIds
 end
 
 -- #1200 Sol R1 P2: ZCARD first to avoid materializing huge thread in Lua memory
@@ -435,7 +502,7 @@ local count = redis.call('ZCARD', threadKey)
 
 -- Empty thread → mark migrated, no backfill needed
 if count == 0 then
-  redis.call('HSET', metaKey, 'migrated', '1', 'hwm', '0')
+  redis.call('HSET', metaKey, 'migrated', '1', 'hwm', '0', 'terminalResponseRepair', '1')
   return 0
 end
 
@@ -460,7 +527,7 @@ end
 
 -- Set meta atomically: migrated + hwm = last assigned seq
 local hwm = BASE + count - 1
-redis.call('HSET', metaKey, 'migrated', '1', 'hwm', tostring(hwm))
+redis.call('HSET', metaKey, 'migrated', '1', 'hwm', tostring(hwm), 'terminalResponseRepair', '1')
 
 -- Log-friendly return: count of backfilled members
 return count

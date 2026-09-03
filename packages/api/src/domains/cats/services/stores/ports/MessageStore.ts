@@ -1830,6 +1830,14 @@ export class MessageStore {
     }
   }
 
+  /** Publish a bodyless processing placeholder only when its final body is durable. */
+  private publishLifecycleResponse(message: StoredMessage): void {
+    if (this.visibilitySeq.has(message.id)) return;
+    this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
+    this.visibilitySeq.set(message.id, this.visibilitySeqCounter);
+    message.visibilitySeq = this.visibilitySeqCounter;
+  }
+
   /**
    * Append a message to the store. Returns the stored message with generated id.
    */
@@ -1949,6 +1957,7 @@ export class MessageStore {
       return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
     }
     this.messages[index] = prepared.message;
+    this.publishLifecycleResponse(prepared.message);
     return {
       kind: prepared.lifecycleReplayed ? 'replayed' : 'applied',
       message: structuredClone(prepared.message),
@@ -1960,7 +1969,7 @@ export class MessageStore {
   private appendWithReservedId(
     msg: AppendMessageInput,
     reservedId?: string,
-    options?: { timelinePublishedAtAppend?: boolean },
+    options?: { timelinePublishedAtAppend?: boolean; deferVisibility?: boolean },
   ): StoredMessage {
     const normalizedMessage = canonicalizeAppendMessageInput(msg);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
@@ -1999,7 +2008,7 @@ export class MessageStore {
     // seq = max(counter+1, Date.now()) mirrors the Redis Lua allocator: max(hwm+1, serverTimeMs).
     // Uses server wall-clock (Date.now()), NOT the message payload timestamp — a far-future
     // payload timestamp must NEVER enter the allocator. (#1200 P1-A fix)
-    if (isTimelinePublishedFn(stored)) {
+    if (!options?.deferVisibility && isTimelinePublishedFn(stored)) {
       this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
       this.visibilitySeq.set(stored.id, this.visibilitySeqCounter);
       // #1200 P2-6: Inject visibilitySeq into returned message so callers
@@ -2081,13 +2090,16 @@ export class MessageStore {
       }
     }
     const priorFrontierMessageId = this.getLatestThreadMessageIdIncludingQueued(threadId);
-    const message = this.append({
+    const observedMessage: AppendMessageInput = {
       ...normalizedMessage,
       extra: {
         ...normalizedMessage.extra,
         freshness: { kind: 'scan_pending', priorFrontierMessageId },
       },
-    });
+    };
+    const deferVisibility =
+      observedMessage.lifecycle?.kind === 'response' && observedMessage.lifecycle.status === 'processing';
+    const message = this.appendWithReservedId(observedMessage, undefined, { deferVisibility });
     return { kind: 'committed', message, priorFrontierMessageId, idempotent: false };
   }
 
@@ -2448,12 +2460,9 @@ export class MessageStore {
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;
       if (!isVisible(msg)) continue;
       const seq = this.visibilitySeq.get(msg.id);
-      if (seq === undefined) {
-        // Published but not yet in visibility index (queued cat speech, pre-visibility era).
-        // Use timeline position as fallback seq for inclusion without breaking ordering.
-        visible.push({ msg, seq: getTimelineOrderTime(msg) });
-        continue;
-      }
+      // The visibility index is the cursor-read truth. A lifecycle processing
+      // placeholder deliberately has no position until its terminal body commits.
+      if (seq === undefined) continue;
       visible.push({ msg: { ...msg, visibilitySeq: seq }, seq });
     }
 
@@ -2771,11 +2780,14 @@ export class MessageStore {
     }
     const expectedMessage = prepareLifecycleResponseTerminalMessage(msg, patch);
     if (msg.lifecycle.status !== 'processing') {
-      return isDeepStrictEqual(msg, expectedMessage)
-        ? { kind: 'replayed', message: structuredClone(msg) }
-        : { kind: 'conflict', reason: 'different_terminal', message: structuredClone(msg) };
+      if (!isDeepStrictEqual(msg, expectedMessage)) {
+        return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(msg) };
+      }
+      this.publishLifecycleResponse(msg);
+      return { kind: 'replayed', message: structuredClone(msg) };
     }
     this.messages[index] = expectedMessage;
+    this.publishLifecycleResponse(expectedMessage);
     return { kind: 'applied', message: structuredClone(expectedMessage) };
   }
 

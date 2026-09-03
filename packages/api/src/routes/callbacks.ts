@@ -86,7 +86,6 @@ import {
 } from '../domains/cats/services/freshness/checkFreshnessForPostMessage.js';
 import { FreshnessAttentionEventLog } from '../domains/cats/services/freshness/FreshnessAttentionEventLog.js';
 import { FreshnessInvocationStateStore } from '../domains/cats/services/freshness/FreshnessInvocationStateStore.js';
-import { recordQueuedSeenTelemetry } from '../domains/cats/services/freshness/freshness-queue-telemetry.js';
 import {
   descriptorFromDriver,
   descriptorFromProviderFallback,
@@ -974,6 +973,21 @@ export interface CallbackRoutesOptions {
       catId: string;
       messageIds: readonly string[];
     }): Promise<readonly TurnCustodyWakeProvenance[]>;
+    adoptExposedQueuedEntries?(input: {
+      threadId: string;
+      userId: string;
+      catId: string;
+      invocationId: string;
+      entries: readonly { entryId: string; messageId: string }[];
+      seenAt?: number;
+    }): Promise<
+      | { outcome: 'adopted'; adoptedEntryIds: string[] }
+      | {
+          outcome: 'rejected';
+          reason: 'active_run_missing' | 'state_changed' | 'lifecycle_conflict' | 'persistence_unavailable';
+          entryId?: string;
+        }
+    >;
   };
   /** F122B: InvocationQueue for agent-sourced A2A entries */
   invocationQueue?: import('../domains/cats/services/agents/invocation/InvocationQueue.js').InvocationQueue;
@@ -4603,51 +4617,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (fullyReturnedQueuedEntries.length > 0 && opts.invocationQueue && principal.kind === 'invocation') {
       const queuedSeenInvocationId = principal.invocationId;
       const seenAt = Date.now();
-      let receiptChanged = false;
-      for (const entry of fullyReturnedQueuedEntries) {
-        if (entry.alreadyExposed) continue;
-        const seen = await opts.invocationQueue.markQueuedSeenDurable(
-          effectiveThreadId,
-          principalUserId,
-          entry.entryId,
-          principalCatId,
-          queuedSeenInvocationId,
-          seenAt,
-        );
-        receiptChanged = seen.changed || receiptChanged;
-        if (seen.newlySeen) recordQueuedSeenTelemetry();
-      }
-      if (receiptChanged) {
-        await emitQueueUpdated(
-          socketManager,
-          principalUserId,
-          effectiveThreadId,
-          opts.invocationQueue.list(effectiveThreadId, principalUserId),
-          messageStore,
-          'queued_seen',
-        );
-      }
-      if (opts.redis) {
-        const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
-          entry.messageId ? [entry.messageId] : [],
-        );
-        try {
-          await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
-            invocationId: queuedSeenInvocationId,
-            catId: principalCatId as CatId,
-            exactMessageIds: exactQueuedMessageIds,
-            evidenceKind: 'queue_exact_read',
-          });
-        } catch (err) {
-          app.log.warn(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId },
-            '[F254-D2] provider notice seen projection failed for Queue exact read',
-          );
-        }
-      }
       const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
         entry.messageId ? [entry.messageId] : [],
       );
+      // Structured stop-gate custody must be accepted by this exact child
+      // before Queue ownership is retired. The queued row is the last retryable
+      // carrier if the live adoption route has already closed.
       if (queueProcessor?.resolvePromptMessageCustodyWakes) {
         let adoptedWakes: readonly TurnCustodyWakeProvenance[];
         try {
@@ -4674,6 +4649,55 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           );
           reply.status(409);
           return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+        }
+      }
+      const exactEntries = fullyReturnedQueuedEntries.flatMap((entry) =>
+        typeof entry.messageId === 'string' ? [{ entryId: entry.entryId, messageId: entry.messageId }] : [],
+      );
+      if (exactEntries.length !== fullyReturnedQueuedEntries.length || !queueProcessor?.adoptExposedQueuedEntries) {
+        reply.status(503);
+        return {
+          error: 'Queued body adoption is unavailable',
+          code: 'QUEUE_ADOPTION_UNAVAILABLE',
+        };
+      }
+      const adoption = await queueProcessor
+        .adoptExposedQueuedEntries({
+          threadId: effectiveThreadId,
+          userId: principalUserId,
+          catId: principalCatId,
+          invocationId: queuedSeenInvocationId,
+          entries: exactEntries,
+          seenAt,
+        })
+        .catch((err) => {
+          app.log.error(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[F254] queued body adoption persistence failed before full-body return',
+          );
+          return { outcome: 'rejected', reason: 'persistence_unavailable' } as const;
+        });
+      if (adoption.outcome === 'rejected') {
+        reply.status(adoption.reason === 'persistence_unavailable' ? 503 : 409);
+        return {
+          error: 'Queued body adoption changed before commit',
+          code: adoption.reason === 'persistence_unavailable' ? 'QUEUE_ADOPTION_UNAVAILABLE' : 'QUEUE_ADOPTION_CHANGED',
+          ...('entryId' in adoption && adoption.entryId ? { entryId: adoption.entryId } : {}),
+        };
+      }
+      if (opts.redis) {
+        try {
+          await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
+            invocationId: queuedSeenInvocationId,
+            catId: principalCatId as CatId,
+            exactMessageIds: exactQueuedMessageIds,
+            evidenceKind: 'queue_exact_read',
+          });
+        } catch (err) {
+          app.log.warn(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId },
+            '[F254-D2] provider notice seen projection failed for Queue exact read',
+          );
         }
       }
     }

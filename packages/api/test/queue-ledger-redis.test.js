@@ -148,6 +148,120 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal((await store.get('thread-redis', entry.id)).delivery.terminalOutcome, 'interrupted');
   });
 
+  it('updates processing receipt evidence without changing execution ownership', async () => {
+    const queue = new InvocationQueue(store);
+    const entry = row('m-processing-evidence', 'opus');
+    await store.enqueue([entry]);
+    await queue.hydrateFromLedger();
+    assert.ok(
+      await queue.markProcessingDurable('thread-redis', 'owner-1', {
+        entryId: entry.id,
+        targetCats: ['opus'],
+      }),
+    );
+    assert.equal(await queue.commitClaimedProcessing('thread-redis', [entry.id], 200), true);
+
+    assert.equal(
+      await queue.markProcessingAwakenedDurable(
+        'thread-redis',
+        'owner-1',
+        entry.id,
+        'opus',
+        'inv-processing-evidence',
+        210,
+      ),
+      true,
+    );
+    assert.deepEqual(
+      await queue.markProcessingSeenDurable(
+        'thread-redis',
+        'owner-1',
+        entry.id,
+        'opus',
+        'inv-processing-evidence',
+        220,
+      ),
+      { changed: true, newlySeen: true },
+    );
+
+    const durable = await store.get('thread-redis', entry.id);
+    assert.equal(durable.status, 'processing');
+    assert.equal(durable.processingStartedAt, 200);
+    assert.equal(durable.delivery.awakenedInvocationId, 'inv-processing-evidence');
+    assert.equal(durable.delivery.awakenedAt, 210);
+    assert.equal(durable.delivery.seenAt, 220);
+    assert.equal(durable.delivery.seenInvocationId, 'inv-processing-evidence');
+  });
+
+  it('retires only the exposed source-target row and preserves its Redis tombstone evidence', async () => {
+    const queue = new InvocationQueue(store);
+    const admitted = await queue.appendAndEnqueueDurable(
+      messageStore,
+      {
+        from: { kind: 'user', userId: 'owner-1' },
+        userId: 'owner-1',
+        content: 'shared input',
+        mentions: ['opus', 'codex'],
+        timestamp: 100,
+        threadId: 'thread-redis',
+        idempotencyKey: 'shared-input',
+        deliveryStatus: 'queued',
+        provenance: { author: 'user', routed: true, observation: 'original' },
+      },
+      {
+        from: { kind: 'user', userId: 'owner-1' },
+        threadId: 'thread-redis',
+        userId: 'owner-1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'strict',
+        idempotencyKey: 'shared-input',
+        content: 'shared input',
+        targetCats: ['opus', 'codex'],
+        intent: 'execute',
+      },
+    );
+    assert.equal(admitted.outcome, 'enqueued');
+    const opus = admitted.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
+    const codex = admitted.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex');
+    assert.ok(opus);
+    assert.ok(codex);
+
+    const claimed = await queue.claimExactExposureDurable(
+      'thread-redis',
+      'owner-1',
+      opus.id,
+      'opus',
+      admitted.message.id,
+    );
+    assert.equal(claimed?.id, opus.id);
+    const committed = await queue.commitClaimedExposureDurable(
+      'thread-redis',
+      'owner-1',
+      opus.id,
+      'opus',
+      'turn-read',
+      200,
+    );
+    assert.equal(committed?.entry.id, opus.id);
+    assert.equal(committed?.newlySeen, true);
+
+    assert.deepEqual(
+      (await store.list('thread-redis')).map((entry) => [entry.id, entry.status]),
+      [[codex.id, 'queued']],
+    );
+    const durableOpus = await store.get('thread-redis', opus.id);
+    assert.equal(durableOpus.status, 'terminal');
+    assert.equal(durableOpus.delivery.terminalOutcome, 'handled');
+    assert.equal(durableOpus.delivery.seenInvocationId, 'turn-read');
+    assert.deepEqual(durableOpus.delivery.bodyExposures, [
+      { targetCatId: 'opus', invocationId: 'turn-read', seenAt: 200 },
+    ]);
+    assert.deepEqual((await store.getByMessageIds('thread-redis', [admitted.message.id])).get(admitted.message.id), [
+      durableOpus,
+      codex,
+    ]);
+  });
+
   it('bounds queue admission scans to active order even when historical rows are corrupt', async () => {
     await redis.hset('queue:{thread-redis}:entries', 'historical-corrupt-row', '{not-json');
     const admitted = await store.enqueue([row('m-active', 'opus')], 1);
@@ -269,25 +383,28 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
 
   it('atomically terminalizes one response bubble with its outbound fan-out', async () => {
     const queue = new InvocationQueue(store);
-    const response = await messageStore.append({
-      from: { kind: 'agent', catId: 'opus' },
-      userId: 'owner-1',
-      content: '',
-      mentions: [],
-      timestamp: 100,
-      threadId: 'thread-redis',
-      lifecycle: {
-        kind: 'response',
-        orderKey: '0000000000100:response-atomic',
+    const response = (
+      await messageStore.appendAndObservePriorFrontier({
         from: { kind: 'agent', catId: 'opus' },
-        invocationId: 'invocation-atomic',
-        targetId: 'opus',
-        inputEntryIds: ['entry-input'],
-        inputMessageIds: ['message-input'],
-        status: 'processing',
-        startedAt: 100,
-      },
-    });
+        userId: 'owner-1',
+        content: '',
+        mentions: [],
+        timestamp: 100,
+        threadId: 'thread-redis',
+        lifecycle: {
+          kind: 'response',
+          orderKey: '0000000000100:response-atomic',
+          from: { kind: 'agent', catId: 'opus' },
+          invocationId: 'invocation-atomic',
+          targetId: 'opus',
+          inputEntryIds: ['entry-input'],
+          inputMessageIds: ['message-input'],
+          status: 'processing',
+          startedAt: 100,
+        },
+      })
+    ).message;
+    assert.deepEqual(await messageStore.getByThreadAfter('thread-redis', undefined, undefined, 'owner-1'), []);
     const input = {
       from: { kind: 'agent', catId: 'opus' },
       threadId: 'thread-redis',
@@ -315,6 +432,13 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(applied.outcome, 'enqueued');
     assert.equal(applied.deduped, false);
     assert.equal(applied.message.lifecycle.status, 'completed');
+    assert.equal(typeof applied.message.visibilitySeq, 'number');
+    assert.deepEqual(
+      (await messageStore.getByThreadAfter('thread-redis', undefined, undefined, 'owner-1')).map(
+        (message) => message.id,
+      ),
+      [response.id],
+    );
     assert.deepEqual(applied.message.lifecycle.dispatchRefs, [
       { targetId: 'codex', phase: 'assigned' },
       { targetId: 'sonnet', phase: 'assigned' },

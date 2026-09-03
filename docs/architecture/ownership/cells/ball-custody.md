@@ -180,7 +180,10 @@ agent/connector messages without attributable canonical provenance remain non-ex
 - Legacy migration 必须以全部 active closure 为根集合，再逐 attached invocation 分类。只有每项都有 exact message/evidence 或审计化 no-text 归宿时，才能通过 revision-fenced `MigrateLegacyFreshnessClosureInput` 写入 `legacy_migrated` disposition；恢复 append 必须幂等且零路由副作用。
 - Completed output 必须先成为 MessageStore truth。普通 queued user message 继续由 Queue exact ACK 生命周期单一拥有，禁止复制到 supplement；只有 non-Queue relevant unseen 才能通过 distinct `FreshnessSupplementAggregate` 追加责任，且不能复用 closure final key、删除原文或把 supplement 当 replacement。
 - Late cat replies must carry typed `invocation_reply -> triggerMessageId` provenance. Compare that trigger only with exact message IDs already present in this invocation's prompt; explicit current-cat targets override sibling suppression, while independent causal roots remain relevant.
-- Queue restart 只能用 immutable per-target invocation success witness 核销 exact `(messageId, catId, invocationId)` custody；aggregate parent `succeeded`、`targetCats` membership 或缺失 witness 都不是 handled 证据。缺失证据必须 fail-closed 回 `failed/queued`。
+- Queue restart 只从 ADR-043 QueueLedger 恢复 exact source×target custody；aggregate parent `succeeded`、
+  `targetCats` membership 或 prose 都不是 handled 证据。完整正文只有在 exact running child + response
+  lifecycle adoption 成功时才立即终局该 target row；缺失证据 fail closed，遗留 claimed restore，遗留
+  processing 终局为 `interrupted/runtime_restart`，sibling target 不受影响。
 - 删除/隐藏任何 draft 前必须拿到 typed custody proof（message / exact closure / retained）；blocked old lineage 不得吸收独立新 draft。
 - 新 freshness cursor 复用 `DeliveryCursorStore` 的 CAS 基础设施时必须使用独立 key prefix，不能推进 `deliveryCursor`。
 - Action successor 必须通过 `ActionSuccessorLeaseStore` claim/recordOutcome/returnToPredecessor/replace/preflight；structured generation 的 predecessor 只能从认证 actor/source thread 派生，existing-standing 只允许 grounded self-claim。single return 必须由该 generation 持久化的 holder cat + holder thread 发起，先以 expected generation 原子移交 custody，再由 carrier 确认 delivery；parallel rejection 只 CAS 写入 rejecting holder 的 terminal outcome，不增 generation、不唤醒整租约 predecessor。同一 immutable single dispatch 重试只 replay 已完成的 transition，delivery 失败保持 pending，不得反向改成 unavailable。

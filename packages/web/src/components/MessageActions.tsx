@@ -18,7 +18,6 @@ import { getUserId } from '@/utils/userId';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CopyIdButton } from './CopyIdButton';
 import { createQuoteContextAttachment } from './chat-context-reference';
-import { describeMessageInvocationTrajectory, openMessageInvocationTrajectory } from './InvocationTrajectoryAnchor';
 import { LiveSelectionAnnotationAction } from './LiveSelectionAnnotationAction';
 import { MessageActionSlotProvider } from './MessageActionSlot';
 import { SelectionAnnotationAction } from './SelectionAnnotationAction';
@@ -181,7 +180,6 @@ export function MessageActions({
   const isUser = message.type === 'user' && !message.catId;
   const isAssistant = message.type === 'assistant' || (message.type === 'user' && !!message.catId);
   const isRecalled = Boolean(message.extra?.recall);
-  const completedInvocationTrajectory = describeMessageInvocationTrajectory(message)?.status === 'done';
   const canAct = (isUser || isAssistant) && !message.isStreaming && !isRecalled;
   // #699: Reply is available on all message types (not just user/assistant)
   const canReply = !message.isStreaming && !isRecalled;
@@ -416,29 +414,6 @@ export function MessageActions({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m4.5 7 1.25 1.25L8 6" />
               <rect x="3" y="14" width="6" height="6" rx="1" strokeWidth={2} />
               <path strokeLinecap="round" strokeWidth={2} d="M13 7h8M13 17h8" />
-            </svg>
-          </button>
-        )}
-        {completedInvocationTrajectory && (
-          <button
-            type="button"
-            onClick={() => openMessageInvocationTrajectory(message, threadId)}
-            className="rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-accent"
-            title="查看这轮轨迹"
-            aria-label="查看这轮 invocation 轨迹"
-            data-testid="message-action-invocation-trajectory"
-          >
-            <svg
-              aria-hidden="true"
-              className="h-3.5 w-3.5"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <circle cx="4" cy="4" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-              <path d="M4 5.5v3A3.5 3.5 0 0 0 7.5 12h3" />
             </svg>
           </button>
         )}

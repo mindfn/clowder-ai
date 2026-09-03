@@ -208,6 +208,13 @@ interface TrackerLike {
     entryId: string,
     messageIds: readonly string[],
   ): boolean;
+  adoptLifecycleActiveRunInputs?(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+  ): boolean;
   detachLifecycleActiveRunInputs?(
     threadId: string,
     catId: string,
@@ -239,6 +246,14 @@ interface MarkDeliveredAndEmitResult {
   transitionedIds: string[];
   failedIds: string[];
 }
+
+export type AdoptExposedQueuedEntriesResult =
+  | { outcome: 'adopted'; adoptedEntryIds: string[] }
+  | {
+      outcome: 'rejected';
+      reason: 'active_run_missing' | 'state_changed' | 'lifecycle_conflict' | 'persistence_unavailable';
+      entryId?: string;
+    };
 
 interface PromptMessagesExposedInput {
   threadId: string;
@@ -476,7 +491,7 @@ export interface QueueProcessorDeps {
   threadStore?: ThreadStoreLike;
   /** F224: continuation lifecycle coordinator boundary. */
   sessionContinuationCoordinator?: SessionContinuationCoordinatorLike;
-  /** F254 D1.2b: audit stream for queued_seen → queued_handled closure. */
+  /** F254: audit stream for exact queued-body adoption and other freshness lifecycle events. */
   freshnessEventLog?: FreshnessAttentionEventLog;
   /** F254 Phase E: typed successor preflight/adoption and crash closure. */
   freshnessClosureStore?: FreshnessClosureStore;
@@ -1118,6 +1133,176 @@ export class QueueProcessor {
     }
   }
 
+  /**
+   * Adopt full queued bodies that one exact active child has already requested.
+   * Each source×target row is retired immediately; sibling target rows remain
+   * independent Queue work, while Message lifecycle points at the existing
+   * processing response instead of creating a second invocation.
+   */
+  async adoptExposedQueuedEntries(input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    invocationId: string;
+    entries: readonly { entryId: string; messageId: string }[];
+    seenAt?: number;
+  }): Promise<AdoptExposedQueuedEntriesResult> {
+    const { queue, invocationTracker, messageStore, socketManager } = this.deps;
+    const activeRun = invocationTracker
+      .getActiveSlots?.(input.threadId)
+      .find((slot) => slot.catId === input.catId)?.activeRun;
+    if (
+      !activeRun ||
+      activeRun.invocationId !== input.invocationId ||
+      activeRun.targetId !== input.catId ||
+      invocationTracker.getUserId?.(input.threadId, input.catId) !== input.userId
+    ) {
+      return { outcome: 'rejected', reason: 'active_run_missing' };
+    }
+    if (
+      input.entries.length === 0 ||
+      new Set(input.entries.map((entry) => entry.entryId)).size !== input.entries.length ||
+      new Set(input.entries.map((entry) => entry.messageId)).size !== input.entries.length
+    ) {
+      return { outcome: 'rejected', reason: 'state_changed' };
+    }
+
+    const adoptedEntryIds: string[] = [];
+    for (const candidate of input.entries) {
+      const result = await this.adoptExposedQueuedEntry({
+        ...input,
+        candidate,
+        run: {
+          targetId: input.catId,
+          invocationId: activeRun.invocationId,
+          responseMessageId: activeRun.responseMessageId,
+        },
+      });
+      if (result.outcome === 'rejected') return result;
+      adoptedEntryIds.push(candidate.entryId);
+    }
+
+    await emitQueueUpdated(
+      socketManager,
+      input.userId,
+      input.threadId,
+      queue.list(input.threadId, input.userId),
+      messageStore,
+      'queued_adopted',
+    );
+    return { outcome: 'adopted', adoptedEntryIds };
+  }
+
+  private async adoptExposedQueuedEntry(input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    invocationId: string;
+    candidate: { entryId: string; messageId: string };
+    run: { targetId: string; invocationId: string; responseMessageId: string };
+    seenAt?: number;
+  }): Promise<AdoptExposedQueuedEntriesResult> {
+    const { queue, invocationTracker, messageStore } = this.deps;
+    const claimed = await queue.claimExactExposureDurable(
+      input.threadId,
+      input.userId,
+      input.candidate.entryId,
+      input.catId,
+      input.candidate.messageId,
+    );
+    if (!claimed) return { outcome: 'rejected', reason: 'state_changed', entryId: input.candidate.entryId };
+
+    const messageIds = queueEntryMessageIds(claimed);
+    const newlySeen = claimed.delivery.seenAt === undefined;
+    let lifecycleCommitted = false;
+    let liveProjectionExtended = false;
+    try {
+      liveProjectionExtended =
+        invocationTracker.adoptLifecycleActiveRunInputs?.(
+          input.threadId,
+          input.catId,
+          input.run,
+          claimed.id,
+          messageIds,
+        ) ?? false;
+      if (!liveProjectionExtended) {
+        await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
+        return { outcome: 'rejected', reason: 'active_run_missing', entryId: claimed.id };
+      }
+
+      const seenAt = Math.max(input.seenAt ?? Date.now(), claimed.enqueuedAt);
+      const delivery = await this.markDeliveredAndEmit(input.userId, input.threadId, messageIds, seenAt, new Set());
+      if (delivery.failedIds.length > 0) {
+        invocationTracker.detachLifecycleActiveRunInputs?.(
+          input.threadId,
+          input.catId,
+          input.run,
+          claimed.id,
+          messageIds,
+        );
+        await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
+        return { outcome: 'rejected', reason: 'persistence_unavailable', entryId: claimed.id };
+      }
+
+      const admission = await messageStore.commitLifecycleAppendAdmission({
+        threadId: input.threadId,
+        entryId: claimed.id,
+        inputMessageIds: messageIds,
+        runs: [input.run],
+      });
+      if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
+        invocationTracker.detachLifecycleActiveRunInputs?.(
+          input.threadId,
+          input.catId,
+          input.run,
+          claimed.id,
+          messageIds,
+        );
+        await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
+        return { outcome: 'rejected', reason: 'lifecycle_conflict', entryId: claimed.id };
+      }
+      lifecycleCommitted = true;
+
+      const committed = await queue.commitClaimedExposureDurable(
+        input.threadId,
+        input.userId,
+        claimed.id,
+        input.catId,
+        input.invocationId,
+        seenAt,
+      );
+      if (!committed && !(await queue.removeProcessedDurable(input.threadId, input.userId, claimed.id))) {
+        return { outcome: 'rejected', reason: 'persistence_unavailable', entryId: claimed.id };
+      }
+      if (newlySeen) recordQueuedSeenTelemetry();
+      recordQueuedHandledTelemetry({ fullyConsumed: true });
+      for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
+      return { outcome: 'adopted', adoptedEntryIds: [claimed.id] };
+    } catch (err) {
+      if (!lifecycleCommitted) {
+        if (liveProjectionExtended) {
+          invocationTracker.detachLifecycleActiveRunInputs?.(
+            input.threadId,
+            input.catId,
+            input.run,
+            claimed.id,
+            messageIds,
+          );
+        }
+        await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
+      }
+      this.deps.log.error(
+        { err, threadId: input.threadId, entryId: claimed.id, invocationId: input.invocationId },
+        '[QueueProcessor] exact queued-body adoption failed closed',
+      );
+      return {
+        outcome: 'rejected',
+        reason: lifecycleCommitted ? 'persistence_unavailable' : 'lifecycle_conflict',
+        entryId: claimed.id,
+      };
+    }
+  }
+
   /** ADR-042: removing a queued carrier must also close its durable responsibility. */
   async finalizeRemovedEntry(
     entry: Pick<QueueEntry, 'execution'> | null | undefined,
@@ -1620,6 +1805,37 @@ export class QueueProcessor {
    */
   async markPromptMessagesSeen(input: PromptMessagesExposedInput): Promise<readonly TurnCustodyWakeProvenance[]> {
     await this.ackPromptMentionCursors(input);
+    const entriesByMessage = await this.deps.queue.getDurableEntriesForMessages(input.threadId, input.messageIds);
+    for (const entry of [...entriesByMessage.values()].flat()) {
+      if (
+        queueEntryOwnerId(entry) !== input.userId ||
+        entry.target.kind !== 'cat' ||
+        entry.target.catId !== input.catId
+      ) {
+        continue;
+      }
+      const result =
+        entry.status === 'processing'
+          ? await this.deps.queue.markProcessingSeenDurable(
+              input.threadId,
+              input.userId,
+              entry.id,
+              input.catId,
+              input.invocationId,
+              input.seenAt,
+            )
+          : entry.status === 'queued'
+            ? await this.deps.queue.markQueuedSeenDurable(
+                input.threadId,
+                input.userId,
+                entry.id,
+                input.catId,
+                input.invocationId,
+                input.seenAt,
+              )
+            : undefined;
+      if (result?.newlySeen) recordQueuedSeenTelemetry();
+    }
     return this.resolvePromptMessageCustodyWakes(input);
   }
 
@@ -1658,8 +1874,31 @@ export class QueueProcessor {
    * Persist the exact child-created boundary before the generator can advance
    * to prompt exposure. This is intentionally separate from queued_seen.
    */
-  async markPromptMessagesAwakened(_input: PromptMessagesAwakenedInput): Promise<void> {
-    // The processing ledger row already owns the child before provider startup.
+  async markPromptMessagesAwakened(input: PromptMessagesAwakenedInput): Promise<void> {
+    const entriesByMessage = await this.deps.queue.getDurableEntriesForMessages(input.threadId, input.messageIds);
+    const processing = [...entriesByMessage.values()]
+      .flat()
+      .filter(
+        (entry) =>
+          entry.status === 'processing' &&
+          queueEntryOwnerId(entry) === input.userId &&
+          entry.target.kind === 'cat' &&
+          entry.target.catId === input.catId,
+      );
+    for (const entry of processing) {
+      if (
+        !(await this.deps.queue.markProcessingAwakenedDurable(
+          input.threadId,
+          input.userId,
+          entry.id,
+          input.catId,
+          input.invocationId,
+          input.awakenedAt,
+        ))
+      ) {
+        throw new Error(`Queue awakened evidence changed before commit: ${entry.id}`);
+      }
+    }
   }
 
   /** A2A dedup: check if a specific cat already has a queued or processing entry for this thread. */
@@ -4066,6 +4305,20 @@ export class QueueProcessor {
               });
               throw new Error(`Lifecycle ActiveRun owner mismatch: ${input.invocationId}`);
             }
+            await this.markPromptMessagesAwakened({
+              threadId: input.threadId,
+              userId: input.userId,
+              catId: input.catId,
+              invocationId: input.invocationId,
+              messageIds: [
+                ...new Set(
+                  admissionEntries
+                    .map((candidate) => candidate.payload.messageId)
+                    .filter((messageId): messageId is string => typeof messageId === 'string'),
+                ),
+              ],
+              awakenedAt: input.startedAt,
+            });
             for (const inputSnapshot of lifecycleInputSnapshots) {
               this.emitLifecycleMessageUpdated(input.userId, inputSnapshot);
             }

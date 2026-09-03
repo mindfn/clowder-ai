@@ -8,7 +8,11 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
-import { adaptInvocationQueue, adaptMessageStore } from './helpers/message-from-fixtures.js';
+import {
+  adaptInvocationQueue,
+  adaptMessageStore,
+  appendTestLifecycleResponseSource,
+} from './helpers/message-from-fixtures.js';
 import './helpers/setup-cat-registry.js';
 
 // Mock SocketManager
@@ -172,6 +176,52 @@ describe('Callback Routes', () => {
     }
     await app.register(callbacksRoutes, options);
     return app;
+  }
+
+  async function createQueuedReadProcessor({
+    threadId,
+    invocationId,
+    parentInvocationId = invocationId,
+    catId = 'opus',
+    userId = 'user-1',
+  }) {
+    const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
+    const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
+    const invocationTracker = new InvocationTracker();
+    invocationTracker.start(threadId, catId, userId, [catId], parentInvocationId);
+    const response = appendTestLifecycleResponseSource(messageStore, {
+      invocationId,
+      catId,
+      threadId,
+      userId,
+      timestamp: 101,
+    });
+    assert.equal(
+      invocationTracker.bindLifecycleActiveRun(
+        {
+          threadId,
+          targetId: catId,
+          invocationId,
+          responseMessageId: response.id,
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: 101,
+        },
+        parentInvocationId,
+      ),
+      true,
+    );
+    const processor = new QueueProcessor({
+      queue: invocationQueue,
+      invocationTracker,
+      invocationRecordStore: {},
+      router: {},
+      socketManager,
+      messageStore,
+      log: { info() {}, warn() {}, error() {} },
+    });
+    return { processor, response, invocationTracker };
   }
 
   // ---- POST /api/callbacks/post-message ----
@@ -4097,8 +4147,11 @@ describe('Callback Routes', () => {
     );
   });
 
-  test('durable queue exposure remains exact-readable after child seal/runtime replacement without cross-cat or cross-thread leakage', async () => {
+  test('full reads adopt A+B scalar rows independently while preserving same-thread history', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { InMemoryTurnExecutionStore } = await import(
+      '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
+    );
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const callerThreadId = 'thread-durable-exposure-caller';
     const sourceThreadId = callerThreadId;
@@ -4130,6 +4183,10 @@ describe('Callback Routes', () => {
       content: exposed.content,
       from: { kind: 'user', userId: 'user-1' },
       targetCats: ['opus', 'codex'],
+      authorIntentByCatId: {
+        opus: { requested: 'continue_current', boundParentInvocationId: opus.invocationId },
+        codex: { requested: 'continue_current', boundParentInvocationId: codex.invocationId },
+      },
       intent: 'execute',
       messageId: exposed.id,
     });
@@ -4178,10 +4235,56 @@ describe('Callback Routes', () => {
       'sealed-child-other',
       2550,
     );
-    const exposureBefore = structuredClone(
-      invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', opusRow.id).delivery.bodyExposures,
+    const codexRow = exposedRows.entries.find((entry) => entry.target.catId === 'codex');
+    const turnExecutionStore = new InMemoryTurnExecutionStore();
+    const {
+      processor,
+      response: opusResponse,
+      invocationTracker,
+    } = await createQueuedReadProcessor({
+      threadId: sourceThreadId,
+      invocationId: opus.invocationId,
+      catId: 'opus',
+    });
+    invocationTracker.start(sourceThreadId, 'codex', 'user-1', ['codex'], codex.invocationId);
+    const codexResponse = appendTestLifecycleResponseSource(messageStore, {
+      invocationId: codex.invocationId,
+      catId: 'codex',
+      threadId: sourceThreadId,
+      userId: 'user-1',
+      timestamp: 102,
+    });
+    assert.equal(
+      invocationTracker.bindLifecycleActiveRun(
+        {
+          threadId: sourceThreadId,
+          targetId: 'codex',
+          invocationId: codex.invocationId,
+          responseMessageId: codexResponse.id,
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: 102,
+        },
+        codex.invocationId,
+      ),
+      true,
     );
-    const app = await createApp();
+    for (const identity of [
+      { invocationId: opus.invocationId, catId: 'opus' },
+      { invocationId: codex.invocationId, catId: 'codex' },
+    ]) {
+      await turnExecutionStore.createRunning({
+        invocationId: identity.invocationId,
+        parentInvocationId: identity.invocationId,
+        threadId: sourceThreadId,
+        userId: 'user-1',
+        catId: identity.catId,
+        executionKind: 'ordinary',
+        startedAt: 1,
+      });
+    }
+    const app = await createApp({ queueProcessor: processor, turnExecutionStore });
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const full = await app.inject({
@@ -4191,21 +4294,20 @@ describe('Callback Routes', () => {
       });
       assert.equal(full.statusCode, 200, full.body);
       const messages = JSON.parse(full.body).messages;
-      assert.deepEqual(
-        messages.map((message) => message.id),
-        [before.id, exposed.id, after.id],
-        'full history must preserve chronological position and exclude another thread',
-      );
+      assert.ok(messages.some((message) => message.id === before.id));
+      assert.ok(messages.some((message) => message.id === after.id));
       const projected = messages.find((message) => message.id === exposed.id);
       assert.equal(projected.speaker, 'co-creator');
       assert.equal(projected.content, exposed.content);
       assert.ok(!messages.some((message) => message.id === foreign.id));
     }
-    assert.deepEqual(
-      invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', opusRow.id).delivery.bodyExposures,
-      exposureBefore,
-      'historical repeat reads must not mutate or re-ack Queue exposure',
+    assert.equal(invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', opusRow.id), null);
+    assert.equal(invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', codexRow.id)?.status, 'queued');
+    assert.equal(
+      (await invocationQueue.getDurableEntry(sourceThreadId, opusRow.id)).delivery.terminalOutcome,
+      'handled',
     );
+    assert.deepEqual(messageStore.getById(opusResponse.id).lifecycle.inputMessageIds, [exposed.id]);
 
     const exact = await app.inject({
       method: 'GET',
@@ -4221,14 +4323,25 @@ describe('Callback Routes', () => {
       headers: { 'x-invocation-id': codex.invocationId, 'x-callback-token': codex.callbackToken },
     });
     assert.equal(otherCatFull.statusCode, 200, otherCatFull.body);
-    assert.ok(!JSON.parse(otherCatFull.body).messages.some((message) => message.id === exposed.id));
+    assert.ok(JSON.parse(otherCatFull.body).messages.some((message) => message.id === exposed.id));
+    assert.equal(invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', codexRow.id), null);
+    assert.equal(
+      (await invocationQueue.getDurableEntry(sourceThreadId, codexRow.id)).delivery.terminalOutcome,
+      'handled',
+    );
+    assert.deepEqual(messageStore.getById(codexResponse.id).lifecycle.inputMessageIds, [exposed.id]);
+    assert.equal(invocationQueue.getEntrySnapshot(otherThreadId, 'user-1', foreignRow.entry.id)?.status, 'queued');
 
     const otherCatWindow = await app.inject({
       method: 'GET',
       url: `/api/callbacks/thread-context?threadId=${sourceThreadId}&messageId=${exposed.id}&responseMode=full`,
       headers: { 'x-invocation-id': codex.invocationId, 'x-callback-token': codex.callbackToken },
     });
-    assert.equal(otherCatWindow.statusCode, 404);
+    assert.equal(otherCatWindow.statusCode, 200, otherCatWindow.body);
+    assert.equal(
+      JSON.parse(otherCatWindow.body).messages.some((message) => message.id === exposed.id),
+      true,
+    );
   });
 
   // ---- F236 Track-1: responseMode=anchor|full on thread-context ----
@@ -4524,7 +4637,7 @@ describe('Callback Routes', () => {
     assert.ok(finalSeenCursor.includes(unread.at(-1).id));
   });
 
-  test('full thread-context projects published queued cat speech only once while recording queue read evidence', async () => {
+  test('full thread-context adopts published queued cat speech into the exact active response', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const threadId = 'thread-queued-cat-dedup';
@@ -4550,8 +4663,9 @@ describe('Callback Routes', () => {
       intent: 'execute',
       callerCatId: 'codex',
     });
-    const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
+    const { processor } = await createQueuedReadProcessor({ threadId, invocationId });
+    const app = await createApp({ queueProcessor: processor });
 
     const response = await app.inject({
       method: 'GET',
@@ -4563,14 +4677,14 @@ describe('Callback Routes', () => {
     const body = JSON.parse(response.body);
     assert.equal(body.messages.filter((message) => message.id === stored.id).length, 1);
     assert.equal(body.messages.find((message) => message.id === stored.id).content, stored.content);
-    assert.equal(invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).delivery.seenAt > 0, true);
-    assert.equal(
-      invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).delivery.seenInvocationId,
-      invocationId,
-    );
+    assert.equal(invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id), null);
+    const durable = await invocationQueue.getDurableEntry(threadId, queued.entry.id);
+    assert.equal(durable.status, 'terminal');
+    assert.equal(durable.delivery.terminalOutcome, 'handled');
+    assert.equal(durable.delivery.seenInvocationId, invocationId);
   });
 
-  test('F254/F264: queued freshness reaches current full read while an unread sibling becomes successor work', async () => {
+  test('F254/F264: full queued read adopts only this target into the existing response', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { checkFreshnessForPostMessage, createQueueChecker } = await import(
       '../dist/domains/cats/services/freshness/checkFreshnessForPostMessage.js'
@@ -4606,7 +4720,11 @@ describe('Callback Routes', () => {
       messageId: storedQueuedMessage.id,
     });
     const turnExecutionStore = new InMemoryTurnExecutionStore();
-    const app = await createApp({ turnExecutionStore });
+    const { processor, response: lifecycleResponse } = await createQueuedReadProcessor({
+      threadId: 'thread-queued-d12a',
+      invocationId,
+    });
+    const app = await createApp({ turnExecutionStore, queueProcessor: processor });
     const freshnessDecision = await checkFreshnessForPostMessage({
       userId: 'user-1',
       catId: 'opus',
@@ -4664,13 +4782,13 @@ describe('Callback Routes', () => {
     assert.equal(queuedMessage.id, storedQueuedMessage.id);
     assert.equal(
       messageStore.getById(storedQueuedMessage.id).deliveryStatus,
-      'queued',
-      'read must not mark queued messages delivered',
+      'delivered',
+      'the exact active child now owns the delivered input',
     );
     assert.equal(
       invocationQueue.list('thread-queued-d12a', 'user-1').some((entry) => entry.id === queued.entry.id),
-      true,
-      'read must not consume the queued work item',
+      false,
+      'the consumed target must leave the active Queue immediately',
     );
     assert.equal(
       invocationQueue.getQueuedFreshnessMessagesForCat('thread-queued-d12a', 'user-1', 'opus', {
@@ -4684,7 +4802,11 @@ describe('Callback Routes', () => {
       1,
       'first full contiguous read should count one queued_seen transition',
     );
-    const persistedRead = invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id);
+    assert.equal(queuedTelemetry.getFreshnessQueueTelemetrySnapshot().queuedHandledTotal, 1);
+    assert.equal(queuedTelemetry.getFreshnessQueueTelemetrySnapshot().queuedHandledFullyConsumedTotal, 1);
+    const persistedRead = await invocationQueue.getDurableEntry('thread-queued-d12a', queued.entry.id);
+    assert.equal(persistedRead.status, 'terminal');
+    assert.equal(persistedRead.delivery.terminalOutcome, 'handled');
     assert.equal(persistedRead.delivery.seenAt > 0, true);
     assert.equal(
       persistedRead.delivery.seenInvocationId,
@@ -4700,14 +4822,10 @@ describe('Callback Routes', () => {
       'seen',
       'exact body exposure must close the matching reminder attempt as seen',
     );
-    const receiptUpdate = socketManager
-      .getUserEvents()
-      .find((event) => event.event === 'queue_updated' && event.data.action === 'queued_seen');
-    assert.ok(receiptUpdate, 'full body read must update the original timeline receipt without waiting for completion');
-    assert.equal(receiptUpdate.data.queue[0].queueReceipt.targets[0].state, 'seen');
-    assert.equal(receiptUpdate.data.queue[0].queueReceipt.targets[0].invocationId, invocationId);
-    assert.equal(receiptUpdate.data.queue[0].queueReceipt.targets[0].seenAt, firstExposure.seenAt);
-    assert.equal(receiptUpdate.data.queue[0].queueReceipt.reminderAttempts[0].state, 'seen');
+    assert.deepEqual(messageStore.getById(lifecycleResponse.id).lifecycle.inputMessageIds, [storedQueuedMessage.id]);
+    assert.deepEqual(messageStore.getById(storedQueuedMessage.id).lifecycle.dispatchRefs, [
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: lifecycleResponse.id },
+    ]);
 
     const secondResponse = await app.inject({
       method: 'GET',
@@ -4718,17 +4836,22 @@ describe('Callback Routes', () => {
     assert.equal(secondResponse.statusCode, 200);
     const secondBody = JSON.parse(secondResponse.body);
     const secondQueuedMessage = secondBody.messages.find((message) => message.queueEntryId === queued.entry.id);
-    assert.ok(secondQueuedMessage, 'queued_seen must not make unresolved queued body unreadable');
-    assert.equal(secondQueuedMessage.content, 'queued body visible only in full read');
+    assert.equal(secondQueuedMessage, undefined, 'an adopted target must not remain projected as Queue work');
+    assert.ok(
+      secondBody.messages.some(
+        (message) =>
+          message.id === storedQueuedMessage.id && message.content === 'queued body visible only in full read',
+      ),
+      'the original message remains readable from durable History',
+    );
     assert.equal(
       queuedTelemetry.getFreshnessQueueTelemetrySnapshot().queuedSeenTotal,
       1,
       'repeat full read should refresh evidence if needed but not double-count queued_seen',
     );
     assert.deepEqual(
-      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).delivery.bodyExposures,
+      (await invocationQueue.getDurableEntry('thread-queued-d12a', queued.entry.id)).delivery.bodyExposures,
       [firstExposure],
-      'repeat exposure by the same child must preserve the first exact seenAt',
     );
   });
 
@@ -4786,13 +4909,7 @@ describe('Callback Routes', () => {
       sourceMessageId: stored.id,
       taskId: 'task-full-read-adopted',
     };
-    const queueProcessor = {
-      onInvocationComplete: async () => {},
-      requestDrain: async () => {},
-      registerEntryCompleteHook: () => {},
-      unregisterEntryCompleteHook: () => {},
-      resolvePromptMessageCustodyWakes: async () => [wake],
-    };
+    const { processor: queueProcessor } = await createQueuedReadProcessor({ threadId, invocationId });
     const app = await createApp({ turnExecutionStore, queueProcessor });
 
     const unbound = await app.inject({
@@ -4815,6 +4932,7 @@ describe('Callback Routes', () => {
       assert.equal(response.statusCode, 200, response.body);
       assert.ok(JSON.parse(response.body).messages.some((message) => message.id === stored.id));
       assert.deepEqual(adopted, [wake]);
+      assert.equal(invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id), null);
 
       await unregister();
       released = true;
@@ -4823,8 +4941,8 @@ describe('Callback Routes', () => {
         url: '/api/callbacks/thread-context?responseMode=full',
         headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       });
-      assert.equal(afterRelease.statusCode, 409);
-      assert.equal(JSON.parse(afterRelease.body).code, 'TURN_CUSTODY_ADOPTION_UNAVAILABLE');
+      assert.equal(afterRelease.statusCode, 200);
+      assert.ok(JSON.parse(afterRelease.body).messages.some((message) => message.id === stored.id));
       assert.deepEqual(adopted, [wake], 'released route ownership must reject later adoption');
     } finally {
       if (!released) await unregister();
@@ -4835,7 +4953,6 @@ describe('Callback Routes', () => {
   test('F254/F264: queued body exposure records the exact child invocation id', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
-    const app = await createApp();
     const outerParentInv = 'outer-parent-d12b-token';
     const { invocationId: innerInv, callbackToken } = await registry.create(
       'user-1',
@@ -4867,6 +4984,12 @@ describe('Callback Routes', () => {
       intent: 'execute',
       messageId: storedQueuedMessage.id,
     });
+    const { processor, response: lifecycleResponse } = await createQueuedReadProcessor({
+      threadId: 'thread-queued-d12b-token',
+      invocationId: innerInv,
+      parentInvocationId: outerParentInv,
+    });
+    const app = await createApp({ queueProcessor: processor });
 
     const response = await app.inject({
       method: 'GET',
@@ -4881,7 +5004,8 @@ describe('Callback Routes', () => {
       'full read must include the queued body before marking seen',
     );
 
-    const exposed = invocationQueue.getEntrySnapshot('thread-queued-d12b-token', 'user-1', queued.entry.id);
+    const exposed = await invocationQueue.getDurableEntry('thread-queued-d12b-token', queued.entry.id);
+    assert.equal(exposed.status, 'terminal');
     assert.notEqual(
       exposed.delivery.seenInvocationId,
       outerParentInv,
@@ -4895,6 +5019,7 @@ describe('Callback Routes', () => {
         seenAt: exposed.delivery.bodyExposures[0].seenAt,
       },
     ]);
+    assert.deepEqual(messageStore.getById(lifecycleResponse.id).lifecycle.inputMessageIds, [storedQueuedMessage.id]);
   });
 
   test('F254 D1.2a: sparse thread-context read does not include queued body or mark queued_seen', async () => {

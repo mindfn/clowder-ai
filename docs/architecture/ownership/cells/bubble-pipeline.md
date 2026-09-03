@@ -18,7 +18,7 @@ code_anchors:
   - packages/web/src/debug/bubbleInvariantDiagnostics.ts
   - packages/web/src/hooks/useSocket.ts
   - packages/web/src/components/ChatMessage.tsx
-  - packages/web/src/components/MessageReceiptDock.tsx
+  - packages/web/src/components/MessageDispatchAvatars.tsx
   - packages/web/src/components/ConnectorBubble.tsx
 doc_anchors:
   - docs/decisions/043-queue-durable-single-ledger.md
@@ -39,8 +39,10 @@ doc_anchors:
   - feature-specs/2026-07-31-f264-terminal-consumption-receipt.md
   - feature-specs/2026-08-04-f264-author-declared-message-disposition.md
   - feature-specs/2026-08-13-1291-gate6-live-terminal-receipt-consumption.md
-static_scan_hints: [AgentMessageType, system_info, provider_signal, BubbleEvent, bubbleKind, bubbleIdentity, BubbleReducer, bubble-event-adapter, formatVisibleSystemInfo, useAgentMessages, useChatHistory, useSocket, queue_updated, QueueLedgerReceipt, QueueMessageReceipt, QueueMessageReceiptProjection, messageReceipts, timelinePublishedAtAppend, TurnExecutionMessageProjection, executionKind, routing_guard, freshness_supplement, auxiliaryTurnExecutions, MessageReceiptDock, seenAt, handledAt, terminalOutcome, evidenceRef, lineage, originalMessageId, sourceInvocationId, chatStore, hydration, IndexedDB]
+static_scan_hints: [AgentMessageType, system_info, provider_signal, BubbleEvent, bubbleKind, bubbleIdentity, BubbleReducer, bubble-event-adapter, formatVisibleSystemInfo, useAgentMessages, useChatHistory, useSocket, queue_updated, QueueLedgerReceipt, QueueMessageReceipt, QueueMessageReceiptProjection, messageReceipts, timelinePublishedAtAppend, TurnExecutionMessageProjection, executionKind, routing_guard, freshness_supplement, auxiliaryTurnExecutions, MessageDispatchAvatars, seenAt, handledAt, terminalOutcome, evidenceRef, lineage, originalMessageId, sourceInvocationId, chatStore, hydration, IndexedDB]
 cited_by:
+  - {feature: F264-author-intent-steer-ui, date: 2026-09-03, delta: the Steer modal offers non-interrupting send as author intent for every selectable target; admission appends to an exact accepting run or preserves the same row for ordinary drain when the carrier is unavailable or already stopped}
+  - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: full queued-body adoption links the original source dispatchRef to the already-processing response so its member avatar and processing bubble appear on the original timeline message without copying or moving the body}
   - {feature: F117-ADR-043, date: 2026-09-03, delta: live queue updates and F5 history project the same QueueMessageReceipt from exact QueueLedger rows while MessageStore retains only body, coarse delivery state, and immutable timeline publication fact}
   - {feature: F306, date: 2026-08-26, delta: provider raw streams remain adapter-specific but converge into a provider-neutral semantic event contract; one projector registry serves live, background, hydration, callback, and replay, while unknown structured payloads fail closed instead of rendering raw JSON}
   - {feature: F295, date: 2026-08-13, delta: a managed-command hold bubble consumes the same execution projection and exact taskId cancel target as thread/workspace running chrome; message identity and hold lifecycle ownership remain unchanged}
@@ -77,6 +79,12 @@ receipt truth: `QueueLedgerReceipt` projects target state, exact child/body expo
 and reminder attempts. Live `queue_updated` carries additive `messageReceipts`; F5 history resolves the
 same rows through the ledger's exact `messageId → entryIds` index. Terminal receipts remain visible after
 the actionable row leaves active order without copying state into MessageStore or creating another writer.
+
+When a running member obtains a complete queued body through thread context, the server attaches that source
+to the member's existing response lifecycle and `LifecycleActiveRun` before retiring its scalar Queue row.
+The source's `dispatchRef.statusMessageId` therefore drives `MessageDispatchAvatars` and the existing
+processing response bubble on the original message. A sibling target remains assigned/queued until it adopts
+the same source independently; no duplicate source or synthetic processing bubble is created.
 
 MessageStore owns body, coarse `deliveryStatus`, and the immutable `timelinePublishedAtAppend` fact.
 Only atomically admitted user `conversation_input` work keeps authored timeline order when later
@@ -127,6 +135,6 @@ Watch for new or renamed `BubbleEvent`, `bubbleKind`, `bubbleIdentity`, `BubbleR
 `bubble-event-adapter`, `useAgentMessages`, `useChatHistory`, `useSocket`, `queue_updated`,
 `QueueLedgerReceipt`, `QueueMessageReceipt`, `QueueMessageReceiptProjection`, `messageReceipts`,
 `timelinePublishedAtAppend`, `TurnExecutionMessageProjection`, `executionKind`,
-`freshness_supplement`, `MessageReceiptDock`, `seenAt`, `handledAt`, `terminalOutcome`,
+`freshness_supplement`, `MessageDispatchAvatars`, `seenAt`, `handledAt`, `terminalOutcome`,
 `originalMessageId`, `sourceInvocationId`, `chatStore`, hydration, IndexedDB, placeholder recovery,
 provider-specific render switches, raw JSON fallbacks, and direct message mutations.

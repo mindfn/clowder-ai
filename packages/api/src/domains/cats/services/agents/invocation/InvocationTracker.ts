@@ -562,6 +562,32 @@ export class InvocationTracker {
     entryId: string,
     messageIds: readonly string[],
   ): boolean {
+    return this.extendLifecycleActiveRunInputs(threadId, catId, expected, entryId, messageIds, true);
+  }
+
+  /**
+   * Mirror an exact body that the current turn has already read. Unlike a
+   * provider Append, prompt adoption does not require a live dispatcher: the
+   * callback itself is the durable proof that this exact child received it.
+   */
+  adoptLifecycleActiveRunInputs(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+  ): boolean {
+    return this.extendLifecycleActiveRunInputs(threadId, catId, expected, entryId, messageIds, false);
+  }
+
+  private extendLifecycleActiveRunInputs(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+    requireDispatcher: boolean,
+  ): boolean {
     const inv = this.active.get(this.slotKey(threadId, catId));
     const run = inv?.activeRun;
     if (
@@ -570,7 +596,7 @@ export class InvocationTracker {
       !run ||
       run.invocationId !== expected.invocationId ||
       run.responseMessageId !== expected.responseMessageId ||
-      inv.activeRunDispatcher?.invocationId !== expected.invocationId
+      (requireDispatcher && inv.activeRunDispatcher?.invocationId !== expected.invocationId)
     ) {
       return false;
     }

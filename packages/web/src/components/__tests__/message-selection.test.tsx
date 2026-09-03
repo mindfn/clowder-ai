@@ -237,7 +237,7 @@ describe('MessageActions selection entry', () => {
     expect(toolbar?.querySelector('button[title="删除"]')).not.toBeNull();
   });
 
-  it('keeps completed invocation trajectory in the unified dock without duplicating abnormal status anchors', () => {
+  it('does not duplicate the message-header trajectory anchor in the floating action dock', () => {
     const lifecycle = (status: 'completed' | 'failed'): ChatMessage['lifecycle'] => ({
       kind: 'response',
       orderKey: `1:${status}`,
@@ -266,7 +266,7 @@ describe('MessageActions selection entry', () => {
         </MessageActions>,
       );
     });
-    expect(container.querySelectorAll('[data-testid="message-action-invocation-trajectory"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="message-action-invocation-trajectory"]')).toBeNull();
 
     React.act(() => {
       root.render(

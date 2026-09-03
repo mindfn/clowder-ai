@@ -271,22 +271,29 @@ return 1
 `;
 
 const COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA = `
-if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
-if redis.call('HGET', KEYS[1], 'recall') or redis.call('HGET', KEYS[1], '_tombstone') then return -2 end
-local existingRaw = redis.call('HGET', KEYS[1], 'lifecycle')
+local messageKey = KEYS[1]
+if redis.call('EXISTS', messageKey) == 0 then return -1 end
+if redis.call('HGET', messageKey, 'recall') or redis.call('HGET', messageKey, '_tombstone') then return -2 end
+local existingRaw = redis.call('HGET', messageKey, 'lifecycle')
 if not existingRaw or existingRaw == '' then return -2 end
 local ok, existing = pcall(cjson.decode, existingRaw)
 if not ok or type(existing) ~= 'table' or existing.kind ~= 'response' then return -2 end
 if existing.invocationId ~= ARGV[1] then return -3 end
 
 local function sameField(field, expected)
-  local actual = redis.call('HGET', KEYS[1], field)
+  local actual = redis.call('HGET', messageKey, field)
   if actual == false then actual = '' end
   return actual == expected
 end
 
-if existing.status ~= 'processing' then
-  if existingRaw == ARGV[2] and
+local lifecycleNeedsWrite = false
+if existing.status == 'processing' then
+  -- A child dispatch can settle while its parent response is still processing.
+  -- Never replace that newer lifecycle snapshot with a terminal state prepared
+  -- from an older read; make the caller re-read and preserve the child transition.
+  if existingRaw ~= ARGV[14] then return 0 end
+  lifecycleNeedsWrite = true
+elseif not (existingRaw == ARGV[2] and
      sameField('content', ARGV[3]) and
      sameField('contentBlocks', ARGV[4]) and
      sameField('toolEvents', ARGV[5]) and
@@ -297,35 +304,58 @@ if existing.status ~= 'processing' then
      sameField('mentions', ARGV[10]) and
      sameField('mentionsUser', ARGV[11]) and
      sameField('replyTo', ARGV[12]) and
-     sameField('pluginMessage', ARGV[13]) then
-    return 2
-  end
+     sameField('pluginMessage', ARGV[13])) then
   return -4
 end
 
--- A child dispatch can settle while its parent response is still processing.
--- Never replace that newer lifecycle snapshot with the terminal state prepared
--- from an older read; make the caller re-read and preserve the child transition.
-if existingRaw ~= ARGV[14] then return 0 end
-
-redis.call('HSET', KEYS[1],
-  'lifecycle', ARGV[2],
-  'content', ARGV[3],
-  'mentions', ARGV[10])
-local function replaceOptional(field, value)
-  if value == '' then redis.call('HDEL', KEYS[1], field)
-  else redis.call('HSET', KEYS[1], field, value) end
+-- Validate the visibility allocator before the first mutation. The response
+-- placeholder is intentionally absent from cursor reads until its terminal body
+-- is durable, so lifecycle + publication share this one linearization point.
+local seq = nil
+local existingVis = redis.call('HGET', messageKey, 'visibilitySeq')
+if not existingVis or existingVis == '' then
+  local hwmRaw = redis.call('HGET', KEYS[3], 'hwm')
+  local hwm = 0
+  if hwmRaw ~= false then
+    hwm = tonumber(hwmRaw)
+    if hwm == nil or hwm ~= hwm or hwm ~= math.floor(hwm) or hwm < 0 then
+      return redis.error_reply('VISIBILITY_HWM_INVALID: raw=' .. tostring(hwmRaw))
+    end
+  end
+  local timeArr = redis.call('TIME')
+  local nowMs = tonumber(timeArr[1]) * 1000 + math.floor(tonumber(timeArr[2]) / 1000)
+  seq = math.max(hwm + 1, nowMs)
+  if seq > 9007199254730991 then
+    return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(seq))
+  end
 end
-replaceOptional('contentBlocks', ARGV[4])
-replaceOptional('toolEvents', ARGV[5])
-replaceOptional('metadata', ARGV[6])
-replaceOptional('extra', ARGV[7])
-replaceOptional('thinking', ARGV[8])
-replaceOptional('origin', ARGV[9])
-replaceOptional('mentionsUser', ARGV[11])
-replaceOptional('replyTo', ARGV[12])
-replaceOptional('pluginMessage', ARGV[13])
-return 1
+
+local function replaceOptional(field, value)
+  if value == '' then redis.call('HDEL', messageKey, field)
+  else redis.call('HSET', messageKey, field, value) end
+end
+if lifecycleNeedsWrite then
+  redis.call('HSET', messageKey,
+    'lifecycle', ARGV[2],
+    'content', ARGV[3],
+    'mentions', ARGV[10])
+  replaceOptional('contentBlocks', ARGV[4])
+  replaceOptional('toolEvents', ARGV[5])
+  replaceOptional('metadata', ARGV[6])
+  replaceOptional('extra', ARGV[7])
+  replaceOptional('thinking', ARGV[8])
+  replaceOptional('origin', ARGV[9])
+  replaceOptional('mentionsUser', ARGV[11])
+  replaceOptional('replyTo', ARGV[12])
+  replaceOptional('pluginMessage', ARGV[13])
+end
+if seq then
+  local messageId = redis.call('HGET', messageKey, 'id')
+  redis.call('ZADD', KEYS[2], seq, messageId)
+  redis.call('HSET', KEYS[3], 'hwm', tostring(seq))
+  redis.call('HSET', messageKey, 'visibilitySeq', tostring(seq))
+end
+return lifecycleNeedsWrite and 1 or 2
 `;
 
 /**
@@ -427,6 +457,27 @@ elseif not (existingLifecycleRaw == ARGV[2] and
   return -4
 end
 
+-- Validate terminal-response publication before the first Message or Queue
+-- mutation. Processing placeholders have no cursor position until this commit.
+local visibilitySeq = nil
+local existingVisibility = redis.call('HGET', messageKey, 'visibilitySeq')
+if not existingVisibility or existingVisibility == '' then
+  local hwmRaw = redis.call('HGET', KEYS[6], 'hwm')
+  local hwm = 0
+  if hwmRaw ~= false then
+    hwm = tonumber(hwmRaw)
+    if hwm == nil or hwm ~= hwm or hwm ~= math.floor(hwm) or hwm < 0 then
+      return redis.error_reply('VISIBILITY_HWM_INVALID: raw=' .. tostring(hwmRaw))
+    end
+  end
+  local timeArr = redis.call('TIME')
+  local nowMs = tonumber(timeArr[1]) * 1000 + math.floor(tonumber(timeArr[2]) / 1000)
+  visibilitySeq = math.max(hwm + 1, nowMs)
+  if visibilitySeq > 9007199254730991 then
+    return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(visibilitySeq))
+  end
+end
+
 if lifecycleNeedsWrite then
   redis.call('HSET', messageKey, 'lifecycle', ARGV[2], 'content', ARGV[3], 'mentions', ARGV[10])
   local function replaceOptional(field, value)
@@ -442,6 +493,11 @@ if lifecycleNeedsWrite then
   replaceOptional('mentionsUser', ARGV[11])
   replaceOptional('replyTo', ARGV[12])
   replaceOptional('pluginMessage', ARGV[13])
+end
+if visibilitySeq then
+  redis.call('ZADD', KEYS[5], visibilitySeq, messageId)
+  redis.call('HSET', KEYS[6], 'hwm', tostring(visibilitySeq))
+  redis.call('HSET', messageKey, 'visibilitySeq', tostring(visibilitySeq))
 end
 
 if expectedMode == 'absent' then
@@ -1085,6 +1141,7 @@ export class RedisMessageStore {
         throw new Error('lifecycle Queue admission row must bind its exact response message');
       }
     }
+    await this.ensureVisibilityMigrated(threadId!);
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const key = MessageKeys.detail(messageId);
@@ -1117,11 +1174,13 @@ export class RedisMessageStore {
       const outcome = Number(
         await this.redis.eval(
           COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA,
-          4,
+          6,
           key,
           QueueLedgerKeys.entries(threadId!),
           QueueLedgerKeys.order(threadId!),
           QueueLedgerKeys.messageIndex(threadId!),
+          MessageKeys.threadVisibility(threadId!),
+          MessageKeys.threadVisibilityMeta(threadId!),
           ...lifecycleResponseTerminalLuaArgs(patch, terminalMessageForLua, expectedLifecycleRaw),
           maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
           String(entries.length),
@@ -1354,6 +1413,8 @@ export class RedisMessageStore {
     msg: AppendMessageInput,
     expectedLatestMessageId: string | null,
   ): Promise<ThreadFrontierAppendResult> {
+    const canonical = canonicalizeAppendMessageInput(msg);
+    await this.ensureVisibilityMigrated(canonical.threadId ?? DEFAULT_THREAD_ID);
     const result = await appendMessageIfThreadFrontier({
       redis: this.redis,
       message: msg,
@@ -1367,6 +1428,8 @@ export class RedisMessageStore {
   }
 
   async appendAndObservePriorFrontier(msg: AppendMessageInput): Promise<ThreadObservedAppendResult> {
+    const canonical = canonicalizeAppendMessageInput(msg);
+    await this.ensureVisibilityMigrated(canonical.threadId ?? DEFAULT_THREAD_ID);
     const result = await appendMessageAndObservePriorFrontier({
       redis: this.redis,
       message: msg,
@@ -2867,12 +2930,22 @@ export class RedisMessageStore {
       const current = await this.getById(id);
       if (!current) return { kind: 'not_found' };
       const prepared = prepareRedisLifecycleResponseTerminal(current, patch);
-      if (prepared.kind === 'result') return prepared.result;
+      if (prepared.kind === 'result') {
+        if (prepared.result.kind !== 'replayed') return prepared.result;
+        await this.ensureVisibilityMigrated(current.threadId);
+        return {
+          kind: 'replayed',
+          message: (await this.getById(id)) ?? prepared.result.message,
+        };
+      }
+      await this.ensureVisibilityMigrated(current.threadId);
       const outcome = Number(
         await this.redis.eval(
           COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA,
-          1,
+          3,
           key,
+          MessageKeys.threadVisibility(current.threadId),
+          MessageKeys.threadVisibilityMeta(current.threadId),
           ...lifecycleResponseTerminalLuaArgs(patch, prepared.nextMessage, expectedLifecycleRaw),
         ),
       );

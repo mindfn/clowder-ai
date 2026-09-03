@@ -4696,6 +4696,9 @@ export async function* routeSerial(
         contents: userFacingSystemInfoContents,
         ...(turnTriggerMessageId ? { expectedSourceMessageId: turnTriggerMessageId } : {}),
         ...(ownInvocationId ? { expectedDispatchInvocationId: ownInvocationId } : {}),
+        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId && collectedErrorText
+          ? { terminalFailureText: collectedErrorText }
+          : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
 

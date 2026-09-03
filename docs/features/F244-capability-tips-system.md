@@ -29,7 +29,7 @@ operator 2026-06-18 收敛：
 
 > "直接立项吧，反正第一个用户就是我啊！"
 
-等待态不是单纯的 dead time。用户盯着猫猫思考、执行、等待外部条件时，注意力被自然锁住；这几秒最适合把 Clowder AI 的能力、家规、magic words、工作流边界和新 feature 用法轻量投影出来。目标不是把 loading 文案变可爱，而是把 W7 Knowledge Feed 和 F223 capability registry 变成用户能自然吸收的产品表面。
+等待态不是单纯的 dead time。用户盯着猫猫思考、执行、等待外部条件时，注意力被自然锁住；这几秒最适合把产品能力、家规、magic words、工作流边界和新 feature 用法轻量投影出来。目标不是把 loading 文案变可爱，而是把 W7 Knowledge Feed 和 F223 capability registry 变成用户能自然吸收的产品表面。
 
 ## Current State / 现状基线
 
@@ -130,12 +130,12 @@ F229 猫猫球是 F244 的未来展示面，不是第二个 tips 系统：
 在等待/执行 UI 中增加 tips 投影，但与真实状态分层：
 
 - 真实状态仍由 liveness/runtime signal 驱动，`ThreadExecutionBar` / `ThinkingIndicator` 继续放状态、计时、停止与强制重置入口。
-- Tip 的第一展示面是 `ThreadExecutionBar` 内的 neutral execution strip：无猫头像、无名字、无
-  `MessageBubble` identity；时间线只渲染服务端真实消息。
-- 一个 thread 只展示一个 execution tip strip；多猫执行不为每只猫复制 tip，也不产生
-  `pending-*` 占位消息。
+- Tip 的第一展示面是服务端已创建的 bodyless processing response：它带 exact invocation identity、
+  猫头像和响应消息 ID，正文到达后原位升级成真实回复，不创建 `pending-*` 合成消息。
+- 一个 thread 只让一个 processing response 展示 tip；其他并行响应只显示最小等待动效，避免复制
+  tip，也不在 `ThreadExecutionBar` / QueuePanel 再投影同一等待信息。
 - `suspected_stall` / `alive_but_silent` 时，故障与取消入口优先；tips 不得遮挡或弱化 `卡住了？强制重置`。
-- execution strip 中 tip 立即展示（`firstDelayMs=0`）；其他 surface（如
+- processing response 中 tip 立即展示（`firstDelayMs=0`）；其他 surface（如
   `assistant_stream_bubble`）保留首次延迟。单条至少停留 30s，避免每几秒闪动制造噪音。
 - 上下文选择优先级：当前执行阶段 > thread workflow > feature dev/review mode > 通用 capability/magic word；`ideate`/review 等待仍使用 `review` + `long_running` contexts，而不是退化成通用 `thinking` tips。
 - 支持 action：hover 提示"了解更多"；click 拉起 F229 猫猫球并把解释请求预填进输入框，不自动发送。需要直达时可附 source/guide/capability surface secondary action；没有 action 的 tip 不能冒充可执行能力。
@@ -304,6 +304,7 @@ Bloom filter 不用于 D1。原因：当前 inventory 量级是几十到几百�
 | KD-13 | #997 曝光均匀性用 Set/Map 轮转，不用 Bloom filter | tips inventory 是小集合，Set/Map 简单、可删除、可按 scope 清轮且无假阳性；Bloom filter 为百万级省内存去重设计，假阳性会漏 tip，不适合本场景 | 2026-06-22 |
 | KD-14 | ~~执行状态只能属于 execution chrome；时间线不得有 pending member projection~~（2026-07-28 superseded） | #3261 把“同一执行重复头像”误泛化成“任何 pending 头像都不合法”，删除了已 dogfood 的正常 pre-output 身份与 tip 位置 | 2026-07-27 |
 | KD-15 | Pending member projection 必须按 exact invocation 因果去重 | 正常首个等待头像有价值；真正 bug 是 later user message 切断扫描边界，使已经有真实输出的同一 invocation 再生成第二头像。去重键使用 `(catId, parent/turn invocationId)`，不使用“最后一条 user message”或单纯 catId；缺 causal identity 的 hydration slot fail closed，显式 post 不算真实输出 | 2026-07-28 |
+| KD-16 | `PendingMemberBubble` 的 presentation 合入 durable processing response | ADR-043 后服务端先创建带 exact invocation 的 response；复用它承载头像与 tip，正文到达后原位升级，才能同时保留 pre-output 体验并消除 synthetic wait bubble 与真实回复的重复身份 | 2026-09-03 |
 
 ## Review Gate
 

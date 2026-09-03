@@ -150,17 +150,21 @@ describe('MessageStore lifecycle response terminal CAS', () => {
   test('replaces one processing bubble in place and replays only the exact terminal', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const processing = store.append(
-      canonicalTestMessageInput({
-        userId: 'owner-1',
-        threadId: 'thread-1',
-        catId: 'opus',
-        content: '',
-        mentions: [],
-        timestamp: 100,
-        lifecycle: processingLifecycle,
-      }),
-    );
+    const processing = (
+      await store.appendAndObservePriorFrontier(
+        canonicalTestMessageInput({
+          userId: 'owner-1',
+          threadId: 'thread-1',
+          catId: 'opus',
+          content: '',
+          mentions: [],
+          timestamp: 100,
+          lifecycle: processingLifecycle,
+        }),
+      )
+    ).message;
+
+    assert.deepEqual(await store.getByThreadAfter('thread-1', undefined, undefined, 'owner-1'), []);
 
     const applied = store.commitLifecycleResponseTerminal(processing.id, terminalPatch());
     assert.equal(applied.kind, 'applied');
@@ -168,6 +172,11 @@ describe('MessageStore lifecycle response terminal CAS', () => {
     assert.equal(applied.message.content, 'final body');
     assert.equal(applied.message.lifecycle.status, 'completed');
     assert.equal(applied.message.lifecycle.completedAt, 200);
+    assert.equal(typeof applied.message.visibilitySeq, 'number');
+    assert.deepEqual(
+      (await store.getByThreadAfter('thread-1', undefined, undefined, 'owner-1')).map((message) => message.id),
+      [processing.id],
+    );
 
     const replayed = store.commitLifecycleResponseTerminal(processing.id, terminalPatch());
     assert.equal(replayed.kind, 'replayed');

@@ -121,7 +121,7 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
             运行状态待确认
           </span>
         </div>
-        <ForceResetEntry escalated onClick={() => setResetDialogOpen(true)} />
+        <ForceResetEntry onClick={() => setResetDialogOpen(true)} />
         <ForceResetDialog
           open={resetDialogOpen}
           busy={resetting}
@@ -164,7 +164,7 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
           );
         })}
       </div>
-      <ForceResetEntry escalated={stalled} onClick={() => setResetDialogOpen(true)} />
+      {stalled && <ForceResetEntry onClick={() => setResetDialogOpen(true)} />}
       <ForceResetDialog
         open={resetDialogOpen}
         busy={resetting}
@@ -194,40 +194,24 @@ function TriangleAlertIcon({ className }: { className?: string }) {
   );
 }
 
-/** F220 Phase 3: force-reset 入口。默认低调（dashed-top + 灰 + 小，藏面板底）；
- *  escalated（疑似卡死）时上浮变醒目（critical-surface 底 + 警告色）。 */
-function ForceResetEntry({ escalated, onClick }: { escalated: boolean; onClick: () => void }) {
-  if (escalated) {
-    return (
-      <div className="px-4 pb-1.5">
-        <button
-          type="button"
-          data-testid="force-reset-entry"
-          data-escalated="true"
-          onClick={onClick}
-          className="w-full flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90"
-          style={{
-            backgroundColor: 'var(--semantic-critical-surface)',
-            color: 'var(--semantic-critical)',
-            border: '1px solid color-mix(in srgb, var(--semantic-critical) 30%, transparent)',
-          }}
-        >
-          <TriangleAlertIcon className="w-3.5 h-3.5" />
-          卡住了？强制重置
-        </button>
-      </div>
-    );
-  }
+/** F220 Phase 3: force-reset 只在疑似卡死或 canonical 状态缺失时出现。
+ *  正常运行始终使用 execution-scoped stop，避免把两个不同语义的动作并列。 */
+function ForceResetEntry({ onClick }: { onClick: () => void }) {
   return (
     <div className="px-4 pb-1.5">
       <button
         type="button"
         data-testid="force-reset-entry"
-        data-escalated="false"
+        data-escalated="true"
         onClick={onClick}
-        className="flex items-center gap-1.5 w-full pt-1.5 border-t border-dashed border-cafe text-xs text-cafe-muted hover:text-cafe-secondary transition-colors"
+        className="w-full flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90"
+        style={{
+          backgroundColor: 'var(--semantic-critical-surface)',
+          color: 'var(--semantic-critical)',
+          border: '1px solid color-mix(in srgb, var(--semantic-critical) 30%, transparent)',
+        }}
       >
-        <TriangleAlertIcon className="w-3 h-3 opacity-70" />
+        <TriangleAlertIcon className="w-3.5 h-3.5" />
         卡住了？强制重置
       </button>
     </div>

@@ -97,18 +97,18 @@ describe('ThreadExecutionBar force-reset (F220 Phase 3)', () => {
     vi.clearAllMocks();
   });
 
-  it('renders a force-reset entry when a cat is running (情境化, 非常驻)', () => {
+  it('keeps force-reset hidden while the exact normal stop control is healthy', () => {
     setActive('opus', 'streaming');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
     const entry = container.querySelector('[data-testid="force-reset-entry"]');
-    expect(entry).not.toBeNull();
-    expect(container.textContent).toContain('强制重置');
+    expect(entry).toBeNull();
+    expect(container.textContent).not.toContain('强制重置');
   });
 
-  it('clicking the entry opens the confirm dialog; confirming calls the force-reset endpoint + toast', async () => {
-    setActive('opus', 'streaming');
+  it('clicking the stalled escape hatch opens the dialog and reaches the force-reset endpoint', async () => {
+    setActive('opus', 'suspected_stall');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
@@ -143,13 +143,13 @@ describe('ThreadExecutionBar force-reset (F220 Phase 3)', () => {
     expect(entry?.getAttribute('data-escalated')).toBe('true');
   });
 
-  it('does not escalate when cats are running normally', () => {
+  it('does not render a force-reset entry when cats are running normally', () => {
     setActive('opus', 'streaming');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
     const entry = container.querySelector('[data-testid="force-reset-entry"]');
-    expect(entry?.getAttribute('data-escalated')).toBe('false');
+    expect(entry).toBeNull();
   });
 
   it('escalates when app-server is active but silent past the recovery threshold', () => {

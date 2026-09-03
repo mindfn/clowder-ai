@@ -18,13 +18,37 @@ local latestRows = redis.call('ZREVRANGE', KEYS[1], 0, 0)
 local actual = latestRows[1] or ''
 local expected = ARGV[1] == '__NULL__' and '' or ARGV[1]
 if actual ~= expected then return {'frontier', actual} end
+
+local visibilitySeq = nil
+if ARGV[7] == '1' then
+  local hwmRaw = redis.call('HGET', KEYS[7], 'hwm')
+  local hwm = 0
+  if hwmRaw ~= false then
+    hwm = tonumber(hwmRaw)
+    if hwm == nil or hwm ~= hwm or hwm ~= math.floor(hwm) or hwm < 0 then
+      return redis.error_reply('VISIBILITY_HWM_INVALID: raw=' .. tostring(hwmRaw))
+    end
+  end
+  local timeArr = redis.call('TIME')
+  local nowMs = tonumber(timeArr[1]) * 1000 + math.floor(tonumber(timeArr[2]) / 1000)
+  visibilitySeq = math.max(hwm + 1, nowMs)
+  if visibilitySeq > 9007199254730991 then
+    return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(visibilitySeq))
+  end
+end
+
 if ARGV[4] == '1' then redis.call('SET', KEYS[5], ARGV[2]) end
 local fields = cjson.decode(ARGV[6])
 for field, value in pairs(fields) do redis.call('HSET', KEYS[2], field, value) end
 redis.call('ZADD', KEYS[1], ARGV[3], ARGV[2])
 redis.call('ZADD', KEYS[3], ARGV[3], ARGV[2])
 redis.call('ZADD', KEYS[4], ARGV[3], ARGV[2])
-for index = 6, #KEYS do redis.call('ZADD', KEYS[index], ARGV[3], ARGV[2]) end
+for index = 8, #KEYS do redis.call('ZADD', KEYS[index], ARGV[3], ARGV[2]) end
+if visibilitySeq then
+  redis.call('ZADD', KEYS[6], visibilitySeq, ARGV[2])
+  redis.call('HSET', KEYS[7], 'migrated', '1', 'hwm', tostring(visibilitySeq))
+  redis.call('HSET', KEYS[2], 'visibilitySeq', tostring(visibilitySeq))
+end
 local ttl = tonumber(ARGV[5])
 if ttl and ttl > 0 then
   redis.call('EXPIRE', KEYS[2], ttl)
@@ -32,7 +56,7 @@ if ttl and ttl > 0 then
   redis.call('EXPIRE', KEYS[3], ttl)
   redis.call('EXPIRE', KEYS[4], ttl)
   if ARGV[4] == '1' then redis.call('EXPIRE', KEYS[5], ttl) end
-  for index = 6, #KEYS do redis.call('EXPIRE', KEYS[index], ttl) end
+  for index = 8, #KEYS do redis.call('EXPIRE', KEYS[index], ttl) end
 end
 return {'committed', ARGV[2]}
 `;
@@ -44,6 +68,25 @@ if ARGV[4] == '1' then
 end
 local latestRows = redis.call('ZREVRANGE', KEYS[1], 0, 0)
 local prior = latestRows[1] or ''
+
+local visibilitySeq = nil
+if ARGV[7] == '1' then
+  local hwmRaw = redis.call('HGET', KEYS[7], 'hwm')
+  local hwm = 0
+  if hwmRaw ~= false then
+    hwm = tonumber(hwmRaw)
+    if hwm == nil or hwm ~= hwm or hwm ~= math.floor(hwm) or hwm < 0 then
+      return redis.error_reply('VISIBILITY_HWM_INVALID: raw=' .. tostring(hwmRaw))
+    end
+  end
+  local timeArr = redis.call('TIME')
+  local nowMs = tonumber(timeArr[1]) * 1000 + math.floor(tonumber(timeArr[2]) / 1000)
+  visibilitySeq = math.max(hwm + 1, nowMs)
+  if visibilitySeq > 9007199254730991 then
+    return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(visibilitySeq))
+  end
+end
+
 if ARGV[4] == '1' then redis.call('SET', KEYS[5], ARGV[1]) end
 local fields = cjson.decode(ARGV[6])
 local extra = {}
@@ -57,7 +100,12 @@ for field, value in pairs(fields) do redis.call('HSET', KEYS[2], field, value) e
 redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
 redis.call('ZADD', KEYS[3], ARGV[2], ARGV[1])
 redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
-for index = 6, #KEYS do redis.call('ZADD', KEYS[index], ARGV[2], ARGV[1]) end
+for index = 8, #KEYS do redis.call('ZADD', KEYS[index], ARGV[2], ARGV[1]) end
+if visibilitySeq then
+  redis.call('ZADD', KEYS[6], visibilitySeq, ARGV[1])
+  redis.call('HSET', KEYS[7], 'migrated', '1', 'hwm', tostring(visibilitySeq))
+  redis.call('HSET', KEYS[2], 'visibilitySeq', tostring(visibilitySeq))
+end
 local ttl = tonumber(ARGV[5])
 if ttl and ttl > 0 then
   redis.call('EXPIRE', KEYS[2], ttl)
@@ -65,7 +113,7 @@ if ttl and ttl > 0 then
   redis.call('EXPIRE', KEYS[3], ttl)
   redis.call('EXPIRE', KEYS[4], ttl)
   if ARGV[4] == '1' then redis.call('EXPIRE', KEYS[5], ttl) end
-  for index = 6, #KEYS do redis.call('EXPIRE', KEYS[index], ttl) end
+  for index = 8, #KEYS do redis.call('EXPIRE', KEYS[index], ttl) end
 end
 return {'committed', ARGV[1], prior}
 `;
@@ -127,6 +175,8 @@ export async function appendMessageIfThreadFrontier(input: {
     MessageKeys.TIMELINE,
     MessageKeys.user(message.userId),
     idempotencyRedisKey,
+    MessageKeys.threadVisibility(threadId),
+    MessageKeys.threadVisibilityMeta(threadId),
     ...message.mentions.map((catId) => MessageKeys.mentions(catId)),
   ];
   const [kind, value] = (await redis.eval(
@@ -139,6 +189,7 @@ export async function appendMessageIfThreadFrontier(input: {
     message.idempotencyKey ? '1' : '0',
     String(ttlSeconds ?? 0),
     JSON.stringify(hashFields),
+    shouldPublishImmediately(message) ? '1' : '0',
   )) as [string, string];
   if (kind === 'frontier') return { kind: 'frontier_advanced', actualLatestMessageId: value || null };
   const stored = await loadById(value);
@@ -156,6 +207,12 @@ export async function appendMessageIfThreadFrontier(input: {
 function readStoredPriorFrontier(message: StoredMessage): string | null {
   const freshness = message.extra?.freshness;
   return freshness && 'priorFrontierMessageId' in freshness ? freshness.priorFrontierMessageId : null;
+}
+
+function shouldPublishImmediately(message: AppendMessageInput): boolean {
+  if (message.lifecycle?.kind === 'response' && message.lifecycle.status === 'processing') return false;
+  if (message.deliveryStatus !== 'queued') return true;
+  return message.from.kind === 'agent' && message.origin !== 'briefing';
 }
 
 /**
@@ -213,6 +270,8 @@ export async function appendMessageAndObservePriorFrontier(input: {
     MessageKeys.TIMELINE,
     MessageKeys.user(message.userId),
     idempotencyRedisKey,
+    MessageKeys.threadVisibility(threadId),
+    MessageKeys.threadVisibilityMeta(threadId),
     ...message.mentions.map((catId) => MessageKeys.mentions(catId)),
   ];
 
@@ -227,6 +286,7 @@ export async function appendMessageAndObservePriorFrontier(input: {
       message.idempotencyKey ? '1' : '0',
       String(ttlSeconds ?? 0),
       JSON.stringify(hashFields),
+      shouldPublishImmediately(message) ? '1' : '0',
     )) as [string, string, string];
     const stored = await loadById(value);
     if (stored) {

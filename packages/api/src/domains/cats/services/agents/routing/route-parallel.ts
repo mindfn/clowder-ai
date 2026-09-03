@@ -2368,6 +2368,10 @@ export async function* routeParallel(
         }
       }
 
+      const errorText = catErrorText.get(msg.catId);
+      const lifecycleErrorOwnedByResponse =
+        catLifecycleResponse.has(msg.catId) &&
+        catLifecycleResponse.get(msg.catId)?.messageId === catOutputMessageId.get(msg.catId);
       await persistUserFacingSystemInfoNotices({
         messageStore: deps.messageStore,
         threadId,
@@ -2375,6 +2379,7 @@ export async function* routeParallel(
         contents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
         ...(bridgeTriggerMessageId ? { expectedSourceMessageId: bridgeTriggerMessageId } : {}),
         ...(ownInvId ? { expectedDispatchInvocationId: ownInvId } : {}),
+        ...(lifecycleErrorOwnedByResponse && errorText ? { terminalFailureText: errorText } : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
       catUserFacingSystemInfoContents.delete(msg.catId);
@@ -2383,10 +2388,6 @@ export async function* routeParallel(
       // re-enter the prompt as a cat message (aligned with route-serial.ts).
       // Previously errors were mixed into catText and persisted with userId=user,
       // which polluted the conversation history and caused "context poisoning".
-      const errorText = catErrorText.get(msg.catId);
-      const lifecycleErrorOwnedByResponse =
-        catLifecycleResponse.has(msg.catId) &&
-        catLifecycleResponse.get(msg.catId)?.messageId === catOutputMessageId.get(msg.catId);
       if (errorText && !lifecycleErrorOwnedByResponse) {
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {

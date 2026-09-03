@@ -128,6 +128,50 @@ async function admitMessage(harness, overrides = {}) {
   return result;
 }
 
+function bindActiveRun(
+  harness,
+  { catId = 'opus', invocationId = 'turn-active', parentInvocationId = 'parent-active' } = {},
+) {
+  const startedAt = Date.now();
+  harness.invocationTracker.start('thread-1', catId, 'user-1', [catId], parentInvocationId);
+  const response = harness.messageStore.append({
+    from: { kind: 'agent', catId },
+    userId: 'user-1',
+    content: '',
+    mentions: [],
+    origin: 'stream',
+    timestamp: startedAt,
+    threadId: 'thread-1',
+    lifecycle: {
+      kind: 'response',
+      orderKey: `${startedAt}:${invocationId}`,
+      invocationId,
+      targetId: catId,
+      inputEntryIds: [],
+      inputMessageIds: [],
+      status: 'processing',
+      startedAt,
+    },
+  });
+  assert.equal(
+    harness.invocationTracker.bindLifecycleActiveRun(
+      {
+        threadId: 'thread-1',
+        targetId: catId,
+        invocationId,
+        responseMessageId: response.id,
+        inputEntryIds: [],
+        inputMessageIds: [],
+        privateInputEntryIds: [],
+        startedAt,
+      },
+      parentInvocationId,
+    ),
+    true,
+  );
+  return { invocationId, response, startedAt };
+}
+
 describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
   it('claims, admits, and terminalizes one queued message without reviving it', async () => {
     const harness = createHarness();
@@ -141,6 +185,118 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal(durable.status, 'terminal');
     assert.equal(durable.delivery.terminalOutcome, 'handled', JSON.stringify(errorLog(harness)));
     assert.equal((await harness.messageStore.getById(admitted.message.id)).deliveryStatus, 'delivered');
+  });
+
+  it('records the exact child awakening and prompt exposure on the processing receipt', async () => {
+    const childInvocationId = 'turn-receipt-evidence';
+    const startedAt = Date.now();
+    const harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, messageId, targetCats, , options] = args;
+        await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId: targetCats[0],
+          invocationId: childInvocationId,
+          parentInvocationId: options.parentInvocationId,
+          startedAt,
+        });
+        await options.onPromptMessagesExposed({
+          threadId,
+          userId,
+          catId: targetCats[0],
+          invocationId: childInvocationId,
+          messageIds: [messageId],
+          seenAt: startedAt + 1,
+        });
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: startedAt + 2 };
+      },
+    });
+    const admitted = await admitMessage(harness);
+
+    assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
+    await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
+
+    const durable = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
+    assert.equal(durable.status, 'terminal');
+    assert.equal(durable.delivery.terminalOutcome, 'handled');
+    assert.equal(durable.delivery.awakenedInvocationId, childInvocationId);
+    assert.equal(durable.delivery.awakenedAt, startedAt);
+    assert.equal(durable.delivery.seenInvocationId, childInvocationId);
+    assert.equal(durable.delivery.seenAt, startedAt + 1);
+    assert.deepEqual(durable.delivery.bodyExposures, [
+      { targetCatId: 'opus', invocationId: childInvocationId, seenAt: startedAt + 1 },
+    ]);
+  });
+
+  it('adopts an exactly exposed target into the current response and leaves sibling targets queued', async () => {
+    const harness = createHarness();
+    const admitted = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    const opusEntry = admitted.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
+    const codexEntry = admitted.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex');
+    assert.ok(opusEntry);
+    assert.ok(codexEntry);
+
+    const { invocationId, response, startedAt } = bindActiveRun(harness);
+
+    const result = await harness.processor.adoptExposedQueuedEntries({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      catId: 'opus',
+      invocationId,
+      entries: [{ entryId: opusEntry.id, messageId: admitted.message.id }],
+      seenAt: startedAt + 1,
+    });
+
+    assert.deepEqual(result, { outcome: 'adopted', adoptedEntryIds: [opusEntry.id] });
+    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', opusEntry.id), null);
+    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', codexEntry.id)?.status, 'queued');
+    const durable = await harness.queue.getDurableEntry('thread-1', opusEntry.id);
+    assert.equal(durable.status, 'terminal');
+    assert.equal(durable.delivery.terminalOutcome, 'handled');
+    assert.equal(durable.delivery.seenInvocationId, invocationId);
+    assert.deepEqual(durable.delivery.bodyExposures, [{ targetCatId: 'opus', invocationId, seenAt: startedAt + 1 }]);
+
+    const source = await harness.messageStore.getById(admitted.message.id);
+    assert.equal(source.deliveryStatus, 'delivered');
+    assert.deepEqual(source.lifecycle.dispatchRefs, [
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: response.id },
+      { targetId: 'codex', phase: 'assigned' },
+    ]);
+    assert.deepEqual((await harness.messageStore.getById(response.id)).lifecycle.inputMessageIds, [
+      admitted.message.id,
+    ]);
+    assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputEntryIds, [opusEntry.id]);
+    assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds, [
+      admitted.message.id,
+    ]);
+  });
+
+  it('restores the exact row without attaching it when History publication fails', async () => {
+    const harness = createHarness();
+    const admitted = await admitMessage(harness);
+    const { invocationId, response, startedAt } = bindActiveRun(harness);
+    const markDelivered = mock.method(harness.messageStore, 'markDelivered', () => null);
+
+    const result = await harness.processor.adoptExposedQueuedEntries({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      catId: 'opus',
+      invocationId,
+      entries: [{ entryId: admitted.entry.id, messageId: admitted.message.id }],
+      seenAt: startedAt + 1,
+    });
+    markDelivered.mock.restore();
+
+    assert.deepEqual(result, {
+      outcome: 'rejected',
+      reason: 'persistence_unavailable',
+      entryId: admitted.entry.id,
+    });
+    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id)?.status, 'queued');
+    assert.equal((await harness.messageStore.getById(admitted.message.id)).deliveryStatus, 'queued');
+    assert.deepEqual((await harness.messageStore.getById(response.id)).lifecycle.inputMessageIds, []);
+    assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds, []);
   });
 
   it('keeps a FIFO prefix as separate prompt messages instead of concatenating bodies', async () => {

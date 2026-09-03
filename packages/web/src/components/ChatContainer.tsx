@@ -1,6 +1,6 @@
 'use client';
 
-import type { LifecycleActiveRun, MessageBundleSelectionItem } from '@cat-cafe/shared';
+import type { CapabilityTipContext, LifecycleActiveRun, MessageBundleSelectionItem } from '@cat-cafe/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
@@ -46,6 +46,7 @@ import { ChatInput } from './ChatInput';
 import { ChatMessage } from './ChatMessage';
 import { ChatMessageRow } from './ChatMessageRow';
 import { ConnectionStatusBar } from './ConnectionStatusBar';
+import { getStreamingTipContexts, selectLifecycleTipMessageId } from './capability-tip-placement';
 import { buildChatTimelineProjectionKey } from './chat-timeline-projection-key';
 import { FirstRunQuestWizard } from './FirstRunQuestWizard';
 import { BootcampGuideOverlay } from './first-run-quest/BootcampGuideOverlay';
@@ -766,6 +767,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // F212 follow-up — UI-layer dedup for adjacent identical CliDiagnostics panels.
   // Compute once per messages change; map is keyed by messageId.
   const cliDedupMap = useMemo(() => computeCliDiagnosticsDedup(messages), [messages]);
+  const capabilityTipContexts = useMemo<readonly CapabilityTipContext[]>(
+    () => getStreamingTipContexts(intentMode),
+    [intentMode],
+  );
+  const lifecycleTipMessageId = useMemo(
+    () => selectLifecycleTipMessageId(messages, catStatuses, catInvocations),
+    [messages, catStatuses, catInvocations],
+  );
   const timelineProjectionKey = useMemo(() => buildChatTimelineProjectionKey(messages), [messages]);
   // Keep the previous message-array identity while only stream text/tool events
   // change. Cross-message projections do not consume those fields.
@@ -803,6 +812,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           forwardingDisabled={connectionStatus.forwardingBlocked}
           eager={mountPolicy.eager}
           backgroundMountDelayMs={mountPolicy.backgroundMountDelayMs}
+          showCapabilityTip={msg.id === lifecycleTipMessageId}
+          capabilityTipContexts={capabilityTipContexts}
         />
       );
     },
@@ -820,6 +831,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       selectionMode,
       toggleMessageSelection,
       connectionStatus.forwardingBlocked,
+      lifecycleTipMessageId,
+      capabilityTipContexts,
     ],
   );
 

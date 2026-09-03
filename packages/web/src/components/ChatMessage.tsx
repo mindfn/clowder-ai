@@ -1,6 +1,6 @@
 'use client';
 
-import { isCrossThreadProvenance, type LifecycleActiveRun } from '@cat-cafe/shared';
+import { type CapabilityTipContext, isCrossThreadProvenance, type LifecycleActiveRun } from '@cat-cafe/shared';
 import { type CSSProperties, memo, type ReactNode, useState } from 'react';
 import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
@@ -19,6 +19,7 @@ import {
   doesAssistantMessageRenderBubble,
   projectEmptyResponseLifecycleNotice,
 } from './assistant-message-renderability';
+import { CapabilityTipStrip } from './CapabilityTipStrip';
 import { CatAvatar } from './CatAvatar';
 import { CliDiagnosticsPanel, isKnownReason } from './CliDiagnosticsPanel';
 import { CollapsibleMarkdown } from './CollapsibleMarkdown';
@@ -164,6 +165,9 @@ interface ChatMessageProps {
   dedupCount?: number;
   /** The current browser document has not been admitted to perform forwarding writes. */
   forwardingDisabled?: boolean;
+  /** This exact processing response owns the thread's single rotating capability tip. */
+  showCapabilityTip?: boolean;
+  capabilityTipContexts?: readonly CapabilityTipContext[];
 }
 
 function needsTimelineProjection(message: ChatMessageType): boolean {
@@ -189,6 +193,8 @@ function ChatMessageContent({
   hideDiagnosticsPanel,
   dedupCount,
   forwardingDisabled = false,
+  showCapabilityTip = false,
+  capabilityTipContexts,
 }: ChatMessageProps) {
   const coCreator = useCoCreatorConfig();
   const currentThreadId = useChatStore((s) => s.currentThreadId);
@@ -680,18 +686,36 @@ function ChatMessageContent({
     if (notice?.tone === 'processing') {
       return (
         <div data-message-id={message.id} data-testid="response-lifecycle-tip" className="mb-4 flex items-start gap-2">
-          {catData && message.catId ? <CatAvatar catId={message.catId} size={32} /> : null}
-          <div className="min-w-0 pt-1">
+          {catData && message.catId ? <CatAvatar catId={message.catId} size={32} status="streaming" /> : null}
+          <div className="min-w-0 flex-1 pt-1">
             <div className="flex items-center gap-2 text-xs">
               <span className="font-semibold" style={{ color: catStyle?.textColor }}>
                 {catStyle?.label ?? message.catId}
               </span>
               <span className="text-cafe-muted">{formatTime(message.timestamp)}</span>
             </div>
-            <output className="mt-1 inline-flex items-center gap-2 text-sm text-cafe-muted">
-              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" aria-hidden="true" />
-              <span>{notice.label}</span>
-            </output>
+            {showCapabilityTip && capabilityTipContexts ? (
+              <CapabilityTipStrip
+                surface="pending_bubble"
+                contexts={capabilityTipContexts}
+                audience="cvo"
+                enabled
+                firstDelayMs={0}
+              />
+            ) : (
+              <output className="mt-1 inline-flex items-center gap-0.5 py-2 text-sm text-cafe-muted">
+                <span className="sr-only">处理中</span>
+                <span className="animate-bounce" style={{ animationDelay: '0ms' }} aria-hidden="true">
+                  ·
+                </span>
+                <span className="animate-bounce" style={{ animationDelay: '150ms' }} aria-hidden="true">
+                  ·
+                </span>
+                <span className="animate-bounce" style={{ animationDelay: '300ms' }} aria-hidden="true">
+                  ·
+                </span>
+              </output>
+            )}
           </div>
         </div>
       );
@@ -716,7 +740,6 @@ function ChatMessageContent({
             {catStyle?.label ?? message.catId}
           </span>
           <span className="text-xs text-cafe-muted shrink-0">{formatTime(message.timestamp)}</span>
-          <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />
           {message.extra?.recovery?.kind === 'f254_withheld_message' && (
             <span
               className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
@@ -753,6 +776,7 @@ function ChatMessageContent({
           {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
             <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
           )}
+          <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />
           <MessageActionSlot />
         </div>
         {showSchedulerAccent && (

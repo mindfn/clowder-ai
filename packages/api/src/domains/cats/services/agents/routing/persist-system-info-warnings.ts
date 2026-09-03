@@ -105,6 +105,18 @@ function parseVisibleNotice(
 
 type VisibleNotice = NonNullable<ReturnType<typeof parseVisibleNotice>>;
 
+function normalizedFailureText(value: string): string {
+  return value.replace(/^(?:⚠️\s*|Error:\s*)+/u, '').trim();
+}
+
+function duplicatesTerminalFailure(notice: VisibleNotice, terminalFailureText: string | undefined): boolean {
+  return (
+    notice.connector === 'system-warning' &&
+    typeof terminalFailureText === 'string' &&
+    normalizedFailureText(notice.content) === normalizedFailureText(terminalFailureText)
+  );
+}
+
 async function appendVisibleNotice(
   messageStore: IMessageStore,
   threadId: string,
@@ -217,6 +229,8 @@ export async function persistUserFacingSystemInfoNotices(options: {
   contents: readonly string[];
   expectedSourceMessageId?: string;
   expectedDispatchInvocationId?: string;
+  /** Exact provider failure already persisted in the lifecycle response body. */
+  terminalFailureText?: string;
   persistenceContext?: PersistenceContext;
 }): Promise<void> {
   const {
@@ -226,12 +240,14 @@ export async function persistUserFacingSystemInfoNotices(options: {
     contents,
     expectedSourceMessageId,
     expectedDispatchInvocationId,
+    terminalFailureText,
     persistenceContext,
   } = options;
 
   for (const content of contents) {
     const notice = parseVisibleNotice(content, catId);
     if (notice == null) continue;
+    if (duplicatesTerminalFailure(notice, terminalFailureText)) continue;
 
     try {
       await appendVisibleNotice(

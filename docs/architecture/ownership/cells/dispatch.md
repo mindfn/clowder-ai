@@ -40,7 +40,7 @@ code_anchors:
   - packages/web/src/stores/activeExecutionStore.ts
   - packages/web/src/hooks/useActiveExecutionProjection.ts
   - packages/web/src/components/ThreadExecutionBar.tsx
-  - packages/web/src/components/ThinkingIndicator.tsx
+  - packages/web/src/components/MessageDispatchAvatars.tsx
   - packages/web/src/components/workspace/WorkspaceNowSurface.tsx
   - packages/api/src/domains/cats/services/freshness/FreshnessClosureStore.ts
   - packages/api/src/domains/cats/services/freshness/FreshnessClosurePreflight.ts
@@ -75,6 +75,7 @@ doc_anchors:
   - feature-specs/2026-08-12-1291-gate5-retry-revalidation.md
 static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, QueueLedgerReceipt, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, getByMessageIds, timelinePublishedAtAppend, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, QueueMessageReceipt, QueueReceiptTarget, QueueReminderAttempt, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, terminalOutcome, bodyExposures, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute]
 cited_by:
+  - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: an exact full same-thread read adopts only that source-target scalar row into the current LifecycleActiveRun and response, publishes the Message to History, and terminalizes the row while siblings remain queued}
   - {feature: F117-ADR-043, date: 2026-09-03, delta: QueueLedger becomes the only durable Queue truth; deterministic source-by-target rows atomically admit Messages, retain terminal receipt tombstones outside active order, and drive live/history receipt projection through an exact message index}
   - {feature: F295-post-close-thread-admission, date: 2026-08-22, delta: active-execution read and exact-cancel reuse canonical owner/default/user-index/external-anchor thread admission before liveness lookup while retaining masked shared occupancy and execution-principal control fences}
   - {feature: F295, date: 2026-08-13, delta: one project-scoped read projection joins canonical live invocation truth with existing managed-command receipts; every displayed execution carries thread, kind, exact identity and an identity-fenced cancel target or an explicit non-cancelable reason}
@@ -132,8 +133,11 @@ fail closed.
 
 F264 receipts are projections of QueueLedger rows through `QueueLedgerReceipt`. Live Queue enrichment and
 F5 history both read the same ledger facts; receipt projection does not mutate MessageStore and terminal
-rows need not remain actionable. Body exposure remains exact to
-`(messageId, targetCatId, childInvocationId, seenAt)`; terminal handling never substitutes for body read.
+rows need not remain actionable. A complete same-thread read first proves the exact running child, claims
+that source×target row, attaches its source to the existing response lifecycle and `LifecycleActiveRun`,
+marks the Message delivered, then records exact `(messageId, targetCatId, childInvocationId, seenAt)` exposure
+and terminal handling together. Sibling target rows remain independent Queue work. Sparse, cross-thread,
+oversized-anchor, or unproven-child reads never consume a row.
 
 Steer is the only preemption path: atomically claim the exact queued row, cancel the currently running
 invocation outside Redis, then commit the claim to processing or restore it to the original position.
@@ -193,6 +197,8 @@ transport failure into Queue replay.
 - Do not let Queue decide action uniqueness, wait ownership, freshness closure, connector transport policy,
   or callback authentication.
 - Do not infer seen/handled from notices, provider success, log text, or rendered prose.
+- Do not return a full queued body before its exact active-child adoption is durable, and do not retire a
+  sibling target row when another target adopts the same source.
 - Do not use the in-memory Queue cache as persistence or accept an unvalidated Redis row into scheduling.
 - Do not collapse user side-dispatch and external automated wakes into one busy-gate policy.
 

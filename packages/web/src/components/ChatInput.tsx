@@ -205,13 +205,14 @@ export function ChatInput({
       if (seen.has(execution.catId)) continue;
       seen.add(execution.catId);
       const cat = byId.get(execution.catId);
-      const append = execution.inputCapabilities?.append;
-      const canAppend = append?.expectedRun.targetId === execution.catId;
       targets.push({
         id: execution.catId,
         label: cat ? `@${cat.displayName}` : `@${execution.catId}`,
         ...(cat?.avatar ? { avatar: cat.avatar } : {}),
-        canAppend,
+        // This is an author intent, not a snapshot of one live provider
+        // carrier. Admission appends when the exact run still accepts it and
+        // otherwise leaves the same message as ordinary next work.
+        canAppend: true,
       });
     }
     return targets;
@@ -266,10 +267,6 @@ export function ChatInput({
     )[];
   }, [activeCatIds, catInvocations, whisperMode, whisperTargets]);
   const dispositionCarrierSupport = classifyFreshnessCarrierSupport(dispositionCarrierCapabilities);
-  const displayedDisposition =
-    messageDisposition.effective === 'continue_current' && dispositionCarrierSupport !== 'exact'
-      ? 'next_work'
-      : messageDisposition.effective;
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);
@@ -362,9 +359,7 @@ export function ChatInput({
         const declaredDisposition =
           options.forcedDisposition ??
           (dispositionIsMeaningful && options.postAdmissionAction !== 'steer'
-            ? dispositionCarrierSupport === 'exact'
-              ? (messageDisposition.oneShot ?? undefined)
-              : 'next_work'
+            ? (messageDisposition.oneShot ?? undefined)
             : undefined);
         const settleAdmission = beginComposerDraftAdmission(draftSnapshot);
         let admission: ReturnType<ChatInputProps['onSend']>;
@@ -437,7 +432,6 @@ export function ChatInput({
       clearReplyTo,
       dispositionIsMeaningful,
       messageDisposition,
-      dispositionCarrierSupport,
       beginComposerDraftAdmission,
       markComposerDraftOptimisticallyCleared,
     ],
@@ -451,9 +445,8 @@ export function ChatInput({
   const handleAppendSend = useCallback(
     (targetId: string) =>
       doSend({
-        postAdmissionAction: 'append',
         explicitTargetCats: [targetId],
-        forcedDisposition: 'next_work',
+        forcedDisposition: 'continue_current',
       }),
     [doSend],
   );
@@ -1070,7 +1063,7 @@ export function ChatInput({
               whisperMode
                 ? '悄悄话...'
                 : hasActiveInvocation && !whisperTargetsAllIdle
-                  ? displayedDisposition === 'continue_current'
+                  ? messageDisposition.effective === 'continue_current'
                     ? '接着当前工作补充...'
                     : '继续输入，成为下一件工作...'
                   : '输入消息... (@ 召唤猫猫 · /thread 引用对话)'

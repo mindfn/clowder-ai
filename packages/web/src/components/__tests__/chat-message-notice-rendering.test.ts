@@ -222,7 +222,7 @@ describe('ChatMessage notice rendering', () => {
     expect(container.querySelector('[data-testid="notice-bar"]')).toBeFalsy();
   });
 
-  it('renders an admitted empty response as an avatar tip before a real bubble exists', () => {
+  it('renders the thread capability tip in the admitted response instead of a second wait bubble', () => {
     act(() => {
       root.render(
         React.createElement(ChatMessage, {
@@ -237,6 +237,8 @@ describe('ChatMessage notice rendering', () => {
             roleDescription: '',
             personality: '',
           })) as never,
+          showCapabilityTip: true,
+          capabilityTipContexts: ['thinking', 'long_running'],
           message: {
             id: 'response-processing',
             type: 'assistant',
@@ -260,7 +262,8 @@ describe('ChatMessage notice rendering', () => {
 
     expect(container.querySelector('[data-testid="response-lifecycle-tip"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="message-bubble"]')).toBeNull();
-    expect(container.textContent).toContain('正在回复');
+    expect(container.querySelector('[data-testid="capability-tip-strip"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('正在回复');
     expect(container.textContent).toContain('avatar');
   });
 

@@ -345,7 +345,7 @@ describe('F264 author message disposition selector', () => {
     );
   });
 
-  it('offers non-interrupting send only for a server-projected append-capable member', async () => {
+  it('offers non-interrupting send as an intent even when the selected member has no active Append carrier', async () => {
     const onSend = vi.fn(async () => true);
     seedCanonicalExecutions('thread-steer-append', ['opus', 'codex'], ['opus']);
     useChatStore.setState({
@@ -362,8 +362,7 @@ describe('F264 author message disposition selector', () => {
 
     expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
     act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
-    expect(container.querySelector('[data-testid="steer-append"]')).toBeNull();
-    act(() => (container.querySelector('[data-testid="steer-target-opus"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
     await act(async () => {
       (container.querySelector('[data-testid="steer-append"]') as HTMLButtonElement).click();
       await Promise.resolve();
@@ -373,11 +372,11 @@ describe('F264 author message disposition selector', () => {
       '补充一个约束',
       undefined,
       undefined,
-      'append',
       undefined,
-      'next_work',
       undefined,
-      ['opus'],
+      'continue_current',
+      undefined,
+      ['codex'],
     );
   });
 
@@ -435,7 +434,8 @@ describe('F264 author message disposition selector', () => {
     expect(container.querySelector('[data-testid="message-disposition-onboarding"]')).toBeNull();
   });
 
-  it('fails closed without presenting an unsupported carrier as busy', async () => {
+  it('keeps continue-current selectable when the server may need to start next work', async () => {
+    const onSend = vi.fn(async () => true);
     useChatStore.setState({
       catInvocations: {
         opus: {
@@ -448,7 +448,7 @@ describe('F264 author message disposition selector', () => {
         },
       },
     });
-    await renderThreadInput({ threadId: 'thread-6', onSend: vi.fn(), hasActiveInvocation: true });
+    await renderThreadInput({ threadId: 'thread-6', onSend, hasActiveInvocation: true });
     const trigger = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
     expect(trigger.textContent).toContain('下一件工作');
     await act(async () => {
@@ -457,18 +457,35 @@ describe('F264 author message disposition selector', () => {
     });
     const continueOption = container.querySelector('[data-disposition-option="continue_current"]') as HTMLButtonElement;
     const nextWorkOption = container.querySelector('[data-disposition-option="next_work"]') as HTMLButtonElement;
-    expect(continueOption.disabled).toBe(true);
-    expect(continueOption.className).toContain('disabled:cursor-not-allowed');
+    expect(continueOption.disabled).toBe(false);
+    expect(continueOption.className).not.toContain('disabled:cursor-not-allowed');
     expect(continueOption.className).not.toContain('disabled:cursor-wait');
     expect(nextWorkOption.disabled).toBe(false);
     expect(container.textContent).toContain('当前接入不支持本轮读取');
+    expect(container.textContent).toContain('服务端会把它作为下一件工作启动');
+
+    act(() => continueOption.click());
+    expect(trigger.textContent).toContain('接着当前工作');
+    await typeAndSend('接入不支持也保留我的意图');
+    expect(onSend).toHaveBeenCalledWith(
+      '接入不支持也保留我的意图',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'continue_current',
+    );
 
     act(() => {
       useChatStore.setState({
         catInvocations: { opus: { invocationId: 'inv-active' } },
       });
     });
-    await renderThreadInput({ threadId: 'thread-6', onSend: vi.fn(), hasActiveInvocation: true });
+    await renderThreadInput({ threadId: 'thread-6', onSend, hasActiveInvocation: true });
+    await act(async () => {
+      (container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
     expect(container.textContent).toContain('能力未声明');
   });
 

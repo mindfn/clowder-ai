@@ -219,10 +219,6 @@ export class InvocationQueue {
     return q;
   }
 
-  private static normalizedPriority(input: { priority?: QueueEntry['priority'] }): QueueEntry['priority'] {
-    return input.priority ?? 'normal';
-  }
-
   private static persistentSourceId(input: QueueEnqueueInput): string {
     const sourceId =
       input.sourceId ??
@@ -774,6 +770,32 @@ export class InvocationQueue {
     return entry ? { changed, entry } : null;
   }
 
+  /** Update receipt evidence without reopening or replacing processing ownership. */
+  private async mutateProcessingLedgerEntry(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    mutate: (entry: QueueLedgerEntry) => boolean,
+  ): Promise<{ changed: boolean; entry: QueueEntry } | null> {
+    const cached = this.findEntry(threadId, userId, entryId);
+    if (!cached || cached.status !== 'processing') return null;
+    const durable = await this.ledgerStore.get(threadId, entryId);
+    if (!durable || durable.status !== 'processing') return null;
+    const replacement = structuredClone(durable);
+    const changed = mutate(replacement);
+    const committed = await this.ledgerStore.commit(
+      threadId,
+      entryId,
+      '',
+      'processing_evidence',
+      Date.now(),
+      replacement,
+    );
+    if (committed.outcome !== 'updated') return null;
+    const [entry] = this.cacheLedgerEntries([committed.entry]);
+    return entry ? { changed, entry } : null;
+  }
+
   async requestReminderDurable(
     threadId: string,
     userId: string,
@@ -819,43 +841,153 @@ export class InvocationQueue {
     let newlySeen = false;
     const result = await this.mutateQueuedLedgerEntry(threadId, userId, entryId, (row) => {
       if (row.target.kind !== 'cat' || row.target.catId !== targetCatId) return false;
+      const exposure = InvocationQueue.applyQueuedExposure(row, targetCatId, invocationId, seenAt);
+      newlySeen = exposure.newlySeen;
+      return exposure.changed;
+    });
+    return { changed: result?.changed ?? false, newlySeen: Boolean(result && newlySeen) };
+  }
+
+  async markProcessingAwakenedDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    invocationId: string,
+    awakenedAt = Date.now(),
+  ): Promise<boolean> {
+    let identityConflict = false;
+    let targetMismatch = false;
+    const result = await this.mutateProcessingLedgerEntry(threadId, userId, entryId, (row) => {
+      if (row.target.kind !== 'cat' || row.target.catId !== targetCatId) {
+        targetMismatch = true;
+        return false;
+      }
+      if (row.delivery.awakenedInvocationId && row.delivery.awakenedInvocationId !== invocationId) {
+        identityConflict = true;
+        return false;
+      }
       let changed = false;
-      if (row.delivery.seenAt === undefined) {
-        row.delivery.seenAt = seenAt;
-        newlySeen = true;
+      if (!row.delivery.awakenedInvocationId) {
+        row.delivery.awakenedInvocationId = invocationId;
         changed = true;
       }
-      if (row.delivery.seenInvocationId !== invocationId) {
-        row.delivery.seenInvocationId = invocationId;
+      if (row.delivery.awakenedAt === undefined) {
+        row.delivery.awakenedAt = awakenedAt;
         changed = true;
       }
-      if (row.delivery.notifiedAt !== undefined) {
-        delete row.delivery.notifiedAt;
-        changed = true;
-      }
-      if (
-        !(row.delivery.bodyExposures ?? []).some(
-          (exposure) => exposure.targetCatId === targetCatId && exposure.invocationId === invocationId,
-        )
-      ) {
-        row.delivery.bodyExposures = [...(row.delivery.bodyExposures ?? []), { targetCatId, invocationId, seenAt }];
-        changed = true;
-      }
-      const attempts = (row.delivery.reminderAttempts ?? []).map((candidate) => {
-        if (
-          candidate.targetCatId !== targetCatId ||
-          candidate.invocationId !== invocationId ||
-          (candidate.state !== 'requested' && candidate.state !== 'delivered')
-        ) {
-          return candidate;
-        }
-        changed = true;
-        return { ...candidate, state: 'seen' as const, seenAt };
-      });
-      if (changed && row.delivery.reminderAttempts) row.delivery.reminderAttempts = attempts;
       return changed;
     });
-    return { changed: result?.changed ?? false, newlySeen };
+    return Boolean(result && !identityConflict && !targetMismatch);
+  }
+
+  async markProcessingSeenDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    invocationId: string,
+    seenAt = Date.now(),
+  ): Promise<{ changed: boolean; newlySeen: boolean }> {
+    let newlySeen = false;
+    const result = await this.mutateProcessingLedgerEntry(threadId, userId, entryId, (row) => {
+      if (row.target.kind !== 'cat' || row.target.catId !== targetCatId) return false;
+      const exposure = InvocationQueue.applyQueuedExposure(row, targetCatId, invocationId, seenAt);
+      newlySeen = exposure.newlySeen;
+      return exposure.changed;
+    });
+    return { changed: result?.changed ?? false, newlySeen: Boolean(result && newlySeen) };
+  }
+
+  private static applyQueuedExposure(
+    row: QueueLedgerEntry,
+    targetCatId: string,
+    invocationId: string,
+    seenAt: number,
+  ): { changed: boolean; newlySeen: boolean } {
+    let changed = false;
+    const newlySeen = row.delivery.seenAt === undefined;
+    if (newlySeen) {
+      row.delivery.seenAt = seenAt;
+      changed = true;
+    }
+    if (row.delivery.seenInvocationId !== invocationId) {
+      row.delivery.seenInvocationId = invocationId;
+      changed = true;
+    }
+    if (row.delivery.notifiedAt !== undefined) {
+      delete row.delivery.notifiedAt;
+      changed = true;
+    }
+    if (
+      !(row.delivery.bodyExposures ?? []).some(
+        (exposure) => exposure.targetCatId === targetCatId && exposure.invocationId === invocationId,
+      )
+    ) {
+      row.delivery.bodyExposures = [...(row.delivery.bodyExposures ?? []), { targetCatId, invocationId, seenAt }];
+      changed = true;
+    }
+    const attempts = (row.delivery.reminderAttempts ?? []).map((candidate) => {
+      if (
+        candidate.targetCatId !== targetCatId ||
+        candidate.invocationId !== invocationId ||
+        (candidate.state !== 'requested' && candidate.state !== 'delivered')
+      ) {
+        return candidate;
+      }
+      changed = true;
+      return { ...candidate, state: 'seen' as const, seenAt };
+    });
+    if (changed && row.delivery.reminderAttempts) row.delivery.reminderAttempts = attempts;
+    return { changed, newlySeen };
+  }
+
+  /** Claim one exact source×target row before binding a full-body read to its active child. */
+  async claimExactExposureDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    messageId: string,
+  ): Promise<QueueEntry | null> {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (
+      !entry ||
+      entry.status !== 'queued' ||
+      entry.target.kind !== 'cat' ||
+      entry.target.catId !== targetCatId ||
+      entry.payload.messageId !== messageId
+    ) {
+      return null;
+    }
+    return this.claimLedgerEntry(entry);
+  }
+
+  /**
+   * Persist full-body exposure and terminal handling on the already claimed
+   * scalar row. Sibling targets are different ledger rows and remain queued.
+   */
+  async commitClaimedExposureDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    invocationId: string,
+    seenAt: number,
+  ): Promise<{ entry: QueueEntry; newlySeen: boolean } | null> {
+    const snapshot = this.getEntrySnapshot(threadId, userId, entryId);
+    const claimId = this.ledgerClaimIds.get(entryId);
+    if (!snapshot || snapshot.status !== 'claimed' || !claimId) return null;
+    const durable = await this.ledgerStore.get(threadId, entryId);
+    if (!durable || durable.target.kind !== 'cat' || durable.target.catId !== targetCatId) return null;
+    const replacement = structuredClone(durable);
+    const exposure = InvocationQueue.applyQueuedExposure(replacement, targetCatId, invocationId, seenAt);
+    const processing = await this.ledgerStore.commit(threadId, entryId, claimId, 'processing', seenAt, replacement);
+    if (processing.outcome !== 'updated') return null;
+    this.ledgerClaimIds.delete(entryId);
+    this.cacheLedgerEntries([processing.entry]);
+    const entry = await this.removeProcessedAcrossUsersDurable(threadId, entryId, 'handled', undefined, seenAt);
+    return entry ? { entry, newlySeen: exposure.newlySeen } : null;
   }
 
   async markQueuedNotifiedAndReminderDeliveredDurable(
@@ -1322,7 +1454,7 @@ export class InvocationQueue {
       }));
   }
 
-  /** F254 D1.2a: queued bodies readable by a target cat. Seen suppresses nags, not body access. */
+  /** Queued bodies readable by a target cat until one exact active child adopts them. */
   getQueuedBodyMessagesForCat(
     threadId: string,
     userId: string,
@@ -1366,7 +1498,6 @@ export class InvocationQueue {
     );
   }
 
-  /** F254 D1.2b: consume only this cat's target for queued entries it already saw. */
   size(threadId: string, userId: string): number {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return 0;

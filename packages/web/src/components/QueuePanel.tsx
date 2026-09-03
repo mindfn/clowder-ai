@@ -533,25 +533,16 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         </div>
       </div>
 
-      {waitInfo && visibleEntries.length > 0 && (
+      {waitInfo?.kind === 'target_dispatch' && visibleEntries.length > 0 && (
         <div
           className="px-3 py-1.5 text-xs text-cafe-muted border-b"
           style={{ borderColor: 'color-mix(in oklch, var(--color-cocreator-primary) 10%, transparent)' }}
         >
-          {waitInfo.kind === 'active_turn' ? (
-            <>
-              等待 <span className="font-medium text-cafe-secondary">{resolveCatName(waitInfo.catId)}</span> 当前回合
-              {waitInfo.elapsedLabel ? `（已运行 ${waitInfo.elapsedLabel}）` : ''}
-            </>
-          ) : (
-            <>
-              等待{' '}
-              <span className="font-medium text-cafe-secondary">
-                {waitInfo.catIds.map((catId) => resolveCatName(catId)).join('、')}
-              </span>{' '}
-              调度
-            </>
-          )}
+          等待{' '}
+          <span className="font-medium text-cafe-secondary">
+            {waitInfo.catIds.map((catId) => resolveCatName(catId)).join('、')}
+          </span>{' '}
+          调度
         </div>
       )}
 

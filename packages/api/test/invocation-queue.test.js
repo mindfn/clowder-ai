@@ -248,6 +248,47 @@ describe('InvocationQueue ADR-043 adapter', () => {
     assert.ok(!('seenByCatIds' in row.delivery));
   });
 
+  it('persists awakened and seen evidence while the exact row remains processing', async () => {
+    const queue = new InvocationQueue();
+    const admitted = await queue.enqueueDurable(queueInput({ sourceId: 'processing-receipt-source' }));
+    const processing = await queue.markProcessingDurable('thread-1', 'user-1', {
+      entryId: admitted.entry.id,
+      targetCats: ['opus'],
+    });
+    assert.ok(processing);
+    assert.equal(await queue.commitClaimedProcessing('thread-1', [admitted.entry.id], 200), true);
+
+    assert.equal(
+      await queue.markProcessingAwakenedDurable('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-processing', 210),
+      true,
+    );
+    assert.deepEqual(
+      await queue.markProcessingSeenDurable('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-processing', 220),
+      { changed: true, newlySeen: true },
+    );
+
+    const durable = await queue.getDurableEntry('thread-1', admitted.entry.id);
+    assert.equal(durable.status, 'processing');
+    assert.equal(durable.processingStartedAt, 200);
+    assert.equal(durable.delivery.awakenedInvocationId, 'inv-processing');
+    assert.equal(durable.delivery.awakenedAt, 210);
+    assert.equal(durable.delivery.seenInvocationId, 'inv-processing');
+    assert.equal(durable.delivery.seenAt, 220);
+
+    assert.equal(
+      await queue.markProcessingAwakenedDurable(
+        'thread-1',
+        'user-1',
+        admitted.entry.id,
+        'codex',
+        'inv-processing',
+        230,
+      ),
+      false,
+      'receipt evidence must remain target-bound',
+    );
+  });
+
   it('restores reversible claims during hydration after a host restart', async () => {
     const ledger = new InMemoryQueueLedgerStore();
     const firstHost = new InvocationQueue(ledger);
