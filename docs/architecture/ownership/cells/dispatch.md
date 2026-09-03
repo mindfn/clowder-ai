@@ -146,8 +146,8 @@ row plus a liveness witness (tracker slot or process owner); in-memory slots, tr
 locks are caches and cannot pin a thread busy by themselves. An exact Stop first cancels a live candidate; when
 the durable row still says running but no controllable candidate exists, the same request reconciles that
 target (retire the pre-start reservation, cancel the running record, release the orphaned lock and slot,
-publish terminal) and returns `reconciled` rather than 409. An incomplete process-owner snapshot (`ps` failure
-or unreadable owner manifests; platforms without a process-owner layer count as complete with no owners) is
+publish terminal) and returns `reconciled` rather than 409. An incomplete process-owner snapshot (`ps` failure,
+unreadable owner manifests, or a platform without `ps`; no platform compatibility branch) is
 retried server-side and then terminalizes the exact execution as failed through the ordinary dispatch terminal
 path, so ordinary failure propagation runs (source dispatchRef settlement, A2A report back to a cat source,
 `delivery_failure` for pre-start); no confirmation dialog exists, and `force-reset` remains only an internal thread-scoped reconciler. The

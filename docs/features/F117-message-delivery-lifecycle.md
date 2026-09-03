@@ -141,6 +141,7 @@ operator experience：
 - **成员唤起的 dispatch 失败**：结果按现有 A2A 逻辑自动报回 source 成员；source 消息上该成员头像转静止（失败终态）；source 成员随后重分发给其他成员、或放弃并上报一条普通消息给用户——两者都是普通 History 消息，走同一套头像+引用投影，不新增 UI。
 - **origin 唤起的 dispatch 失败**（source 为 user/GitHub/IM connector 等无上游、无法报回的来源）：投影为 `delivery failure result` 的用户可见 system message "唤起 xxx 失败"；不伪造 response 气泡、不挂动态头像。
 - 判据：**能报回 cat source 的 → 报回 + 普通消息；报不回的 origin → 才降级 system message。**
+- **失败正文必须完整（2026-09-03 验收补充）**：failed / interrupted 的 terminal response 正文携带成员、源消息引用与失败原因及细节（provider 错误原文、配额/token 耗尽、控制面不可用等），并与其它终态回复一样进入可见性索引——其他成员无需用户转达即可读到「谁在处理什么时失败、为什么」；细节不得只放进 system notice 或日志。
 
 #### 重试与默认信息密度
 
@@ -232,7 +233,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 | E2 | 被 @ 的成员头像不再脉冲，回复气泡固定「正在回复…」没有 tips | 设计取舍被验收否决：`833aa0587` 删除了 `PendingMemberBubble` / `CapabilityTipStrip` 消费者 | processing 态 lifecycle 回复行即新的 pending bubble：头像 `streaming` 脉冲 + `CapabilityTipStrip`；message 下小头像与回复气泡共用同一 `activeRun` 状态 |
 | E3 | 猫读到 queued 正文后工单仍留在队列 | 设计修正 | ADR-043 D8：无 filter 完整读取 = exact active child 接管该 source×target 行；A+B 各自独立；无持久 Message / typed custody 行保留 read→seen，读取不 503 |
 | E4 | 狸花猫 Steer 无「不中断继续发送」 | UI 门控错误 | 作者意图始终提供；服务端按 carrier 回退并在回执显示实际生效 |
-| E5 | codex 失败正文与系统提示重复 | 实现 | terminal failed response 已携带错误时不再另存 system notice |
+| E5 | codex 失败正文与系统提示重复 | 实现 | 失败细节合并进 terminal failed response 正文（成员 / 源引用 / 原因与 provider 原文），不再另存 system notice；正文进入可见性索引供其他成员读到 |
 | E6 | 「执行中」与 QueuePanel「等待 xxx 当前回合」重复；气泡浮窗「查看轨迹」冗余；首个轨迹 chip 位置 | UI 冗余 | 去横幅、去按钮、轨迹 chip 置于引用 chip 之后 |
 | E7 | 「卡住了？强制重置」常驻 / 「运行状态待确认」红横幅 | 设计（补丁化逃生舱） | ADR-043 D9：停止是唯一动作；无活候选时服务端就地对账；进程快照不可用时按 failed 终局并沿 Phase C 失败传播回溯上游；无任何确认弹窗 |
 
@@ -293,7 +294,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
 - [x] AC-E3: 无 filter 完整读取接管 exact source×target 行（A+B 独立）；存在无 messageId / typed custody 的 queued 行时全量读仍 200；接管后原消息保持 authored 顺序（精确顺序断言）
 - [x] AC-E4: Steer 对任一可选 target 提供「不中断继续发送」；非 exact carrier 回退为 next_work 且回执显示 `fallbackReason`
-- [x] AC-E5: 失败 response 只呈现一次错误正文
+- [ ] AC-E5: 失败 response 只呈现一次、且完整的失败正文（成员、源引用、原因与细节，含 provider 原文）；另一只猫的 cursor 读能读到该失败正文，无需用户转达（2026-09-03 收紧，待实现）
 - [x] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
 - [x] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；Windows 等无进程归属层的平台视为 complete；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
 

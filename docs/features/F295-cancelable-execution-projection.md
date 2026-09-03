@@ -62,8 +62,7 @@ Why: F295 adds the canonical live/managed-command execution read-and-cancel proj
   （pre-start 退回 / running 记录置 canceled / 孤儿锁与槽位释放 / 终态广播），返回
   `{ ok, cancelled: false, reconciled }`。foreign occupancy 与更新回合替代仍是 409。
 - 进程快照不完整时不再让用户面对「不可取消」：服务端有界重试后按 dispatch terminal 将该执行终局为 failed
-  （reason `control_plane_unavailable`）并返回 200，失败沿 F117 Phase C 失败传播回溯上游；Windows 等没有进程归属层的平台视为
-  complete。`ForceResetDialog` 退役；503 只保留给持久层不可用。
+  （reason `control_plane_unavailable`）并返回 200，失败沿 F117 Phase C 失败传播回溯上游；不做平台兼容分支（Windows 子进程不可观测同样走这条 fail 分支收敛）。`ForceResetDialog` 退役；503 只保留给持久层不可用。
 - Primary Journey 第 3 步收窄为「仅 liveness 未知时显示原因」；旧 `useExecutionRecoveryVerification` 的
   「运行状态待确认」死角与基于 `suspected_stall` 上浮的强制重置入口退役。
 
