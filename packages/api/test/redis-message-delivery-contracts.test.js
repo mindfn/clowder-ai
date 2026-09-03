@@ -234,15 +234,15 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
     assert.equal(oldScore, null, 'old user must not have entry');
   });
 
-  // 14. Queue state lives in the independent ledger and cannot fence Message publication.
-  it('markDelivered publishes a queued message without a Queue mirror in History', async () => {
+  // 14. A queued row without atomic conversation admission is first published at delivery.
+  it('markDelivered publishes unadmitted queued work at its delivery coordinate', async () => {
     const base = Date.now();
     const msg = await store.append(
       canonicalTestMessageInput({
         provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'userA',
         catId: null,
-        content: 'terminal custody is publishable',
+        content: 'private queued work becomes publishable',
         mentions: ['opus', 'codex'],
         timestamp: base,
         threadId: 'thread-dlv-terminal-custody-14',
@@ -255,22 +255,22 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
     assert.equal(result?.deliveryTransitioned, true, 'Queue state must not block the delivery transition');
     assert.equal(result?.deliveryStatus, 'delivered');
     assert.equal(result?.deliveredAt, base + 100);
-    assert.equal(result?.timelineOrderAt, base, 'delivery must retain its authored timeline position');
+    assert.equal(result?.timelineOrderAt, base + 100, 'private queued work enters the timeline at delivery');
     assert.equal(result?.queueCustody, undefined, 'History must not mirror Queue ledger state');
     assert.equal(
       await redis.zscore(MessageKeys.thread(msg.threadId), msg.id),
-      String(base),
-      'thread receipt order must remain at author time',
+      String(base + 100),
+      'thread receipt order must use delivery time',
     );
     assert.equal(
       await redis.zscore(MessageKeys.TIMELINE, msg.id),
-      String(base),
-      'global receipt order must remain at author time',
+      String(base + 100),
+      'global receipt order must use delivery time',
     );
     assert.equal(
       await redis.zscore(MessageKeys.user(msg.userId), msg.id),
-      String(base),
-      'owner receipt order must remain at author time',
+      String(base + 100),
+      'owner receipt order must use delivery time',
     );
     await assertConsistency(msg.id, 'queue-independent-delivery');
   });

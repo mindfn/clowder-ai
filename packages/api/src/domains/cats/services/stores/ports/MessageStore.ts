@@ -389,6 +389,12 @@ export interface StoredMessage {
   deliveredAt?: number;
   /** Stable timeline score when publication time differs from execution delivery time. */
   timelineOrderAt?: number;
+  /**
+   * The queued owner message was published in the timeline by its atomic
+   * conversation-input admission. This replaces the old custody-presence
+   * proxy without making Message reads depend on the Queue ledger.
+   */
+  timelinePublishedAtAppend?: true;
   /** F117: Delivery lifecycle status. undefined = legacy (treated as delivered) */
   deliveryStatus?: 'queued' | 'delivered' | 'canceled';
   /** F264 Gap F: content-free terminal recall truth; body custody lives only in owner composer draft. */
@@ -543,6 +549,7 @@ export type AppendMessageInput = Omit<
   | 'catId'
   | 'deliveredAt'
   | 'timelineOrderAt'
+  | 'timelinePublishedAtAppend'
   | 'deliveryStatus'
   | 'recall'
   | 'sourceParseFailure'
@@ -666,6 +673,23 @@ export function prepareQueueLedgerMessageAdmission(
     throw new Error('atomic Message/Queue admission has conflicting lifecycle identity');
   }
   return { ...message, lifecycle: assigned.lifecycle };
+}
+
+/**
+ * Only an atomic user conversation admission publishes queued owner work at
+ * append time. The fact is persisted on Message so later reads never need to
+ * infer publication from mutable Queue state.
+ */
+export function isQueueLedgerTimelinePublishedAtAppend(
+  message: Pick<StoredMessage, 'from' | 'deliveryStatus'>,
+  entries: readonly QueueLedgerEntry[],
+): boolean {
+  return (
+    message.deliveryStatus === 'queued' &&
+    message.from?.kind === 'user' &&
+    entries.length > 0 &&
+    entries.every((entry) => entry.kind === 'conversation_input')
+  );
 }
 
 export interface LifecycleResponseTerminalPatch {
@@ -1257,10 +1281,11 @@ export function lifecycleResponseTerminalPatchFromAppendInput(
  */
 export function assertValidAppendDeliveryMetadata(msg: AppendMessageInput): void {
   const runtimeInput = msg as AppendMessageInput &
-    Partial<Pick<StoredMessage, 'deliveredAt' | 'timelineOrderAt' | 'deliveryStatus'>>;
+    Partial<Pick<StoredMessage, 'deliveredAt' | 'timelineOrderAt' | 'timelinePublishedAtAppend' | 'deliveryStatus'>>;
   if (
     'deliveredAt' in runtimeInput ||
     'timelineOrderAt' in runtimeInput ||
+    'timelinePublishedAtAppend' in runtimeInput ||
     (runtimeInput.deliveryStatus !== undefined && runtimeInput.deliveryStatus !== 'queued')
   ) {
     throw new TypeError('append() delivery metadata is transition-owned; only queued status may be initialized');
@@ -1849,7 +1874,10 @@ export class MessageStore {
       throw new Error(`Queue admission identity conflict for message ${messageId}`);
     }
     try {
-      const message = this.appendWithReservedId(prepareQueueLedgerMessageAdmission(msg, messageId, entries), messageId);
+      const prepared = prepareQueueLedgerMessageAdmission(msg, messageId, entries);
+      const message = this.appendWithReservedId(prepared, messageId, {
+        timelinePublishedAtAppend: isQueueLedgerTimelinePublishedAtAppend(prepared, entries),
+      });
       return {
         outcome: 'enqueued',
         message,
@@ -1929,7 +1957,11 @@ export class MessageStore {
     };
   }
 
-  private appendWithReservedId(msg: AppendMessageInput, reservedId?: string): StoredMessage {
+  private appendWithReservedId(
+    msg: AppendMessageInput,
+    reservedId?: string,
+    options?: { timelinePublishedAtAppend?: boolean },
+  ): StoredMessage {
     const normalizedMessage = canonicalizeAppendMessageInput(msg);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(
@@ -1952,6 +1984,7 @@ export class MessageStore {
     void idempotencyKey;
     const stored: StoredMessage = {
       ...payload,
+      ...(options?.timelinePublishedAtAppend ? { timelinePublishedAtAppend: true as const } : {}),
       id: reservedId ?? generateSortableId(normalizedMessage.timestamp),
       threadId,
     };

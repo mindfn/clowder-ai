@@ -6,4 +6,5 @@ function threadTag(threadId: string): string {
 export const QueueLedgerKeys = {
   entries: (threadId: string) => `queue:{${threadTag(threadId)}}:entries`,
   order: (threadId: string) => `queue:{${threadTag(threadId)}}:order`,
+  messageIndex: (threadId: string) => `queue:{${threadTag(threadId)}}:messages`,
 } as const;

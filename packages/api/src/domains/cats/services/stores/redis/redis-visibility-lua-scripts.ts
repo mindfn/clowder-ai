@@ -36,6 +36,7 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  * KEYS[1] = hash key (auto-prefixed by ioredis)
  * KEYS[2] = ADR-043 Queue row hash (combined admission only)
  * KEYS[3] = ADR-043 Queue order list (combined admission only)
+ * KEYS[4] = ADR-043 Queue message-to-row index (combined admission only)
  *
  * ARGV layout (1-indexed):
  *   [1]  keyPrefix
@@ -86,10 +87,12 @@ local queueMaxIdx = hfStart + hfPairCount * 2
 local queueMaxUserSources = tonumber(ARGV[queueMaxIdx] or '-1')
 local queueRowCount = tonumber(ARGV[queueMaxIdx + 1] or '0')
 local queueRows = {}
+local queueEntryIds = {}
 for i = 1, queueRowCount do
   local raw = ARGV[queueMaxIdx + 1 + i]
   local row = cjson.decode(raw)
   queueRows[i] = { id = row.id, raw = raw, row = row }
+  queueEntryIds[i] = row.id
 end
 
 -- #1210 idempotency: if key points to a live hash, replay (return winner ID).
@@ -108,7 +111,7 @@ end
 -- ADR-043 Queue preflight. Every rejection happens before the first message
 -- or queue write so Queue-full and identity conflicts cannot create ghosts.
 if queueRowCount > 0 then
-  if #KEYS < 3 or not KEYS[2] or not KEYS[3] then
+  if #KEYS < 4 or not KEYS[2] or not KEYS[3] or not KEYS[4] then
     return redis.error_reply('QUEUE_ADMISSION_KEYS_MISSING')
   end
   local incomingIds = {}
@@ -125,11 +128,14 @@ if queueRowCount > 0 then
     if redis.call('HEXISTS', KEYS[2], row.id) == 1 then return {-1, ''} end
     if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
   end
+  if redis.call('HEXISTS', KEYS[4], msgId) == 1 then return {-1, ''} end
   if queueMaxUserSources and queueMaxUserSources >= 0 then
     local queuedUserSources = {}
-    local current = redis.call('HVALS', KEYS[2])
-    for i = 1, #current do
-      local row = cjson.decode(current[i])
+    local activeIds = redis.call('LRANGE', KEYS[3], 0, -1)
+    for i = 1, #activeIds do
+      local currentRaw = redis.call('HGET', KEYS[2], activeIds[i])
+      if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
+      local row = cjson.decode(currentRaw)
       if row.status == 'queued' and row.from and row.from.kind == 'user' then
         queuedUserSources[row.payload.sourceId] = true
       end
@@ -212,6 +218,9 @@ for i = 1, queueRowCount do
   redis.call('HSET', KEYS[2], queueRows[i].id, queueRows[i].raw)
   redis.call('RPUSH', KEYS[3], queueRows[i].id)
 end
+if queueRowCount > 0 then
+  redis.call('HSET', KEYS[4], msgId, cjson.encode(queueEntryIds))
+end
 
 -- 8. TTL management (does NOT apply to visibility index, meta, or Queue)
 if ttlSec > 0 then
@@ -278,6 +287,7 @@ local timestamp = redis.call('HGET', hash, 'timestamp')
 local catId = redis.call('HGET', hash, 'catId')
 local origin = redis.call('HGET', hash, 'origin')
 local source = redis.call('HGET', hash, 'source')
+local timelinePublishedAtAppend = redis.call('HGET', hash, 'timelinePublishedAtAppend')
 
 -- Publication order: already-published real-cat speech and owner-visible
 -- queued user receipts keep their authored timestamp; private queued work
@@ -286,6 +296,7 @@ local isRealCatSpeech = catId and catId ~= '' and catId ~= 'system'
   and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
 local isQueuedUserReceipt = (not catId or catId == '') and (not source or source == '')
   and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
+  and timelinePublishedAtAppend == '1'
 local timelineScore = deliveredAt
 if isRealCatSpeech or isQueuedUserReceipt then
   timelineScore = timestamp

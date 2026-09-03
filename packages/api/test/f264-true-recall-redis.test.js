@@ -131,11 +131,10 @@ describe('F264 Gap F true recall contract (Redis store)', { skip: redisIsolation
     assert.deepEqual(result.message.recall.exposures, [
       { targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 },
     ]);
-    const indexed = await store.getByQueueExposure('thread-f264-gap-f-redis', 'codex', 'child-codex');
-    assert.deepEqual(
-      indexed.map((candidate) => candidate.id),
-      [message.id],
-    );
+    const persisted = await store.getById(message.id);
+    assert.deepEqual(persisted.recall.exposures, [
+      { targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 },
+    ]);
     assert.equal((await store.getByThread('thread-f264-gap-f-redis')).length, 0);
     assert.equal(
       (

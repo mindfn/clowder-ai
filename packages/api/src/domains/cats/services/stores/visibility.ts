@@ -158,7 +158,12 @@ function isQueuedCatTimelineMessage(message: StoredMessage): boolean {
  * learn an undelivered body merely because the browser can render its receipt.
  */
 function isQueuedUserTimelineMessage(message: StoredMessage): boolean {
-  return message.deliveryStatus === 'queued' && messageFrom(message).kind === 'user' && message.origin !== 'briefing';
+  return (
+    message.deliveryStatus === 'queued' &&
+    message.timelinePublishedAtAppend === true &&
+    messageFrom(message).kind === 'user' &&
+    message.origin !== 'briefing'
+  );
 }
 
 function isOwnerVisibleRecalledUserMessage(message: StoredMessage): boolean {

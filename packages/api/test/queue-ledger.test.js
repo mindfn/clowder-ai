@@ -88,6 +88,10 @@ describe('ADR-043 queue ledger', () => {
       (await store.list('thread-1')).map((entry) => entry.target.catId),
       ['opus', 'codex'],
     );
+    assert.deepEqual(
+      (await store.getByMessageIds('thread-1', ['message-1', 'missing'])).get('message-1'),
+      result.entries,
+    );
   });
 
   it('rejects a partial replay instead of duplicating part of a fan-out group', async () => {
@@ -198,6 +202,9 @@ describe('ADR-043 queue ledger', () => {
     assert.equal(terminal.outcome, 'updated');
     assert.deepEqual(await store.list('thread-1'), []);
     assert.deepEqual(await store.listAll('thread-1'), [terminal.entry]);
+    assert.deepEqual((await store.getByMessageIds('thread-1', ['message-terminal'])).get('message-terminal'), [
+      terminal.entry,
+    ]);
     assert.equal((await store.get('thread-1', entry.id)).delivery.terminalOutcome, 'failed');
   });
 

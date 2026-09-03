@@ -68,6 +68,7 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       (await store.list('thread-redis')).map((entry) => entry.target.catId),
       ['opus', 'codex'],
     );
+    assert.deepEqual((await store.getByMessageIds('thread-redis', ['m1', 'missing'])).get('m1'), rows);
   });
 
   it('claims and restores without changing Redis list order', async () => {
@@ -143,7 +144,18 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(terminal.outcome, 'updated');
     assert.deepEqual(await store.list('thread-redis'), []);
     assert.deepEqual(await store.listAll('thread-redis'), [terminal.entry]);
+    assert.deepEqual((await store.getByMessageIds('thread-redis', ['m-terminal'])).get('m-terminal'), [terminal.entry]);
     assert.equal((await store.get('thread-redis', entry.id)).delivery.terminalOutcome, 'interrupted');
+  });
+
+  it('bounds queue admission scans to active order even when historical rows are corrupt', async () => {
+    await redis.hset('queue:{thread-redis}:entries', 'historical-corrupt-row', '{not-json');
+    const admitted = await store.enqueue([row('m-active', 'opus')], 1);
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.deepEqual(
+      await store.getByMessageIds('thread-redis', ['m-active']),
+      new Map([['m-active', admitted.entries]]),
+    );
   });
 
   it('atomically commits a Message and exact fan-out rows, and rejects Queue-full without a ghost', async () => {
@@ -176,6 +188,11 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       const admitted = await queue.appendAndEnqueueDurable(messageStore, message(id), input(id));
       assert.equal(admitted.outcome, 'enqueued');
       assert.ok(admitted.entries.every((entry) => entry.payload.messageId === admitted.message.id));
+      assert.equal(admitted.message.timelinePublishedAtAppend, true);
+      assert.deepEqual(
+        await queue.getDurableEntriesForMessages('thread-redis', [admitted.message.id]),
+        new Map([[admitted.message.id, admitted.entries]]),
+      );
     }
     const beforeRows = await store.list('thread-redis');
     assert.equal(beforeRows.length, 10);
@@ -193,6 +210,11 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.deepEqual(rejected, { outcome: 'full' });
     assert.equal(await messageStore.getByIdempotencyKey('owner-1', 'thread-redis', 'over-capacity'), null);
     assert.equal((await store.list('thread-redis')).length, 10);
+
+    const published = await messageStore.getByIdempotencyKey('owner-1', 'thread-redis', 'request-0');
+    const delivered = await messageStore.markDelivered(published.id, 500);
+    assert.equal(delivered.timelineOrderAt, published.timestamp);
+    assert.equal(await redis.zscore('msg:thread:thread-redis', published.id), String(published.timestamp));
   });
 
   it('atomically adopts an existing connector message and treats a terminal replay as no new work', async () => {
@@ -224,6 +246,11 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(admitted.deduped, false);
     assert.equal((await messageStore.getById(source.id)).deliveryStatus, 'queued');
     assert.equal((await store.list(source.threadId)).length, 1);
+    assert.equal(admitted.message.timelinePublishedAtAppend, undefined);
+    assert.deepEqual(
+      await queue.getDurableEntriesForMessages(source.threadId, [source.id]),
+      new Map([[source.id, admitted.entries]]),
+    );
 
     const entry = admitted.entry;
     assert.ok(entry);
@@ -295,6 +322,10 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.deepEqual(
       (await store.list('thread-redis')).map((entry) => entry.target.catId),
       ['codex', 'sonnet'],
+    );
+    assert.deepEqual(
+      await queue.getDurableEntriesForMessages('thread-redis', [response.id]),
+      new Map([[response.id, applied.entries]]),
     );
 
     const replay = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);

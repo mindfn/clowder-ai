@@ -1160,16 +1160,7 @@ export class InvocationQueue {
     threadId: string,
     messageIds: readonly string[],
   ): Promise<Map<string, QueueLedgerEntry[]>> {
-    const requested = new Set(messageIds);
-    const grouped = new Map<string, QueueLedgerEntry[]>();
-    for (const entry of await this.ledgerStore.listAll(threadId)) {
-      const messageId = entry.payload.messageId;
-      if (!messageId || !requested.has(messageId)) continue;
-      const current = grouped.get(messageId) ?? [];
-      current.push(entry);
-      grouped.set(messageId, current);
-    }
-    return grouped;
+    return this.ledgerStore.getByMessageIds(threadId, messageIds);
   }
 
   /**

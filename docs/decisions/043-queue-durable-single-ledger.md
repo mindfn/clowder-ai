@@ -86,6 +86,11 @@ return admission.targetCats.map((targetCatId) => ({
 
 职责边界：**message = 内容；queue entry = 投递工单。**
 
+Message 另外持久化一个不可变的发布事实 `timelinePublishedAtAppend=true`：只由「用户
+`conversation_input` Message + 完整 fan-out」原子写入。它不是 Queue 状态镜像，而是替代旧
+`queueCustody` 存在性所兼任的时间线语义；后续 delivery 以它决定保留 authored time，还是在
+`deliveredAt` 才进入时间线。
+
 ### D3 — fan-out 铺满所有入队来源
 
 `targetCats: string[]` → 单目标。13 个 `...ByCatId(s)` map **退化成条目自身标量**。
@@ -93,6 +98,11 @@ return admission.targetCats.map((targetCatId) => ({
 ### D4 — 用 Lua 保证原子性
 
 拆成两个 key 后，「消息入库」与「入队」仍必须原子。队列自身由 5 个 Lua 转换保证：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix`（§6.4 前缀批处理需原子多条 claim）。另外有 3 条跨记录原子路径：新 Message + fan-out、已有 connector Message + fan-out、terminal response + outbound fan-out。任一路径失败都不得留下 ghost Message 或半组 Queue rows。
+
+Redis 的 `order` list 是 active 集合，terminal tombstone 只留在 `entries` hash 作为 receipt 真相；
+容量判定只遍历 `order`，不扫描历史 tombstone。入队同时原子维护 `messageId → entryIds` hash
+索引，History 分页和 socket receipt 投影按请求的 messageId 做 `HMGET`，复杂度只随 active
+队列或当前页面增长，不随 thread 的终态历史增长。
 
 ### D5 — Steer：三段式 → 两步
 
@@ -174,7 +184,7 @@ RFC 是「没看代码、不拘泥实现的理论目标」，因此不能照搬�
 |---|---|
 | `owner` | RFC 引入 `from` 治好了 author 一侧，但 grep `ownerUserId` / `owner principal` / `owner scope` 在 RFC 中**零命中**——它想的是「谁发的」，没想「这是谁的队列」 |
 | `status` 的 `claimed` 态 | RFC 认为「仍在 Queue 就表示尚未 dispatch」，隐含出队即离开。但 Steer 必须先 `cancel` 正在跑的 invocation，**cancel 是 I/O 进不了 Lua**，失败必须原位回滚 → 需要可回滚的中间态 |
-| `claimedAt` | 出队到起跑之间有 546 行异步（`QueueProcessor.ts:4873` → `:5419`）。无时间戳则无法回收 stale claim，进程崩溃后条目永久卡住 |
+| `claimedAt` | 出队到起跑之间存在异步窗口；进程内的重复工作/活跃性判定用它识别 stale claim。当前不做进程内 sweep：重启恢复会无条件把遗留 `claimed` 行恢复为 `queued`，因此这是观测与 restart-only 恢复证据，不是后台回收租约 |
 
 **RFC 建议但评估后不采纳的 2 条**
 

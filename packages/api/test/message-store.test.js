@@ -129,6 +129,7 @@ describe('MessageStore', () => {
       for (const metadata of [
         { deliveredAt: undefined },
         { timelineOrderAt: undefined },
+        { timelinePublishedAtAppend: true },
         { deliveredAt: 101, deliveryStatus: 'delivered' },
         { deliveryStatus: 'delivered' },
         { deliveryStatus: 'canceled' },
@@ -234,7 +235,7 @@ describe('MessageStore', () => {
     const queue = new InvocationQueue();
     const message = canonicalTestMessageInput({
       userId: 'user-1',
-      from: { kind: 'agent', catId: 'opus' },
+      from: { kind: 'user', userId: 'user-1' },
       content: 'durable fan-out',
       mentions: ['codex', 'codex-terra'],
       timestamp: 200,
@@ -246,7 +247,7 @@ describe('MessageStore', () => {
       userId: 'user-1',
       threadId: 'thread-admission',
       kind: 'conversation_input',
-      from: { kind: 'agent', catId: 'opus' },
+      from: { kind: 'user', userId: 'user-1' },
       ownerAuthProvenance: 'unknown',
       content: 'durable fan-out',
       intent: 'execute',
@@ -262,9 +263,12 @@ describe('MessageStore', () => {
     assert.equal(replay.outcome, 'enqueued');
     assert.equal(replay.deduped, true);
     assert.equal(replay.message.id, first.message.id);
+    assert.equal(first.message.timelinePublishedAtAppend, true);
     assert.equal(store.getById(first.message.id).deliveryStatus, 'queued');
     assert.equal(queue.list('thread-admission', 'user-1').length, 1);
-    assert.equal(store.markDelivered(first.message.id, 201).deliveryTransitioned, true);
+    const delivered = store.markDelivered(first.message.id, 201);
+    assert.equal(delivered.deliveryTransitioned, true);
+    assert.equal(delivered.timelineOrderAt, first.message.timestamp);
     assert.equal(store.getById(first.message.id).deliveryStatus, 'delivered');
   });
 

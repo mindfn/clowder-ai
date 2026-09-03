@@ -617,6 +617,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       for (const metadata of [
         { deliveredAt: undefined },
         { timelineOrderAt: undefined },
+        { timelinePublishedAtAppend: true },
         { deliveredAt: 101, deliveryStatus: 'delivered' },
         { deliveryStatus: 'delivered' },
         { deliveryStatus: 'canceled' },

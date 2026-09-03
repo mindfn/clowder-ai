@@ -125,6 +125,8 @@ export interface QueueLedgerStore {
   list(threadId: string): Promise<QueueLedgerEntry[]>;
   /** Active rows plus terminal tombstones, used for durable receipt projection. */
   listAll(threadId: string): Promise<QueueLedgerEntry[]>;
+  /** Active or terminal rows for exact Message identities, without scanning thread history. */
+  getByMessageIds(threadId: string, messageIds: readonly string[]): Promise<Map<string, QueueLedgerEntry[]>>;
   get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null>;
   claim(
     threadId: string,

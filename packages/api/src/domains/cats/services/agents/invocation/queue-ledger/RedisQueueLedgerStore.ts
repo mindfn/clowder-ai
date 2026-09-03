@@ -27,6 +27,19 @@ export function hydrateQueueLedgerEntry(raw: string): QueueLedgerEntry {
   return entry;
 }
 
+function hydrateQueueMessageIndex(raw: string, messageId: string): string[] {
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.some((entryId) => typeof entryId !== 'string' || entryId.length === 0) ||
+    new Set(parsed).size !== parsed.length
+  ) {
+    throw new Error(`corrupt queue message index: ${messageId}`);
+  }
+  return parsed;
+}
+
 function transitionResult(raw: unknown): QueueLedgerTransitionResult {
   if (!Array.isArray(raw)) throw new Error('invalid queue ledger transition reply');
   const outcome = Number(raw[0]);
@@ -62,9 +75,10 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     const raw = Number(
       await this.redis.eval(
         ENQUEUE_QUEUE_ROWS_LUA,
-        2,
+        3,
         QueueLedgerKeys.entries(threadId),
         QueueLedgerKeys.order(threadId),
+        QueueLedgerKeys.messageIndex(threadId),
         maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
         String(entries.length),
         ...serialized,
@@ -108,6 +122,47 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     return raws
       .map(hydrateQueueLedgerEntry)
       .sort((left, right) => left.enqueuedAt - right.enqueuedAt || left.id.localeCompare(right.id));
+  }
+
+  async getByMessageIds(threadId: string, messageIds: readonly string[]): Promise<Map<string, QueueLedgerEntry[]>> {
+    const uniqueMessageIds = [...new Set(messageIds.filter((messageId) => messageId.length > 0))];
+    const grouped = new Map<string, QueueLedgerEntry[]>();
+    if (uniqueMessageIds.length === 0) return grouped;
+    const rawIndexes = await this.redis.hmget(QueueLedgerKeys.messageIndex(threadId), ...uniqueMessageIds);
+    const entryIdsByMessage = new Map<string, string[]>();
+    const allEntryIds = new Set<string>();
+    for (let index = 0; index < uniqueMessageIds.length; index += 1) {
+      const raw = rawIndexes[index];
+      if (typeof raw !== 'string') continue;
+      const messageId = uniqueMessageIds[index];
+      if (!messageId) throw new Error('queue message index result length mismatch');
+      const entryIds = hydrateQueueMessageIndex(raw, messageId);
+      entryIdsByMessage.set(messageId, entryIds);
+      for (const entryId of entryIds) allEntryIds.add(entryId);
+    }
+    if (allEntryIds.size === 0) return grouped;
+    const orderedEntryIds = [...allEntryIds];
+    const raws = await this.redis.hmget(QueueLedgerKeys.entries(threadId), ...orderedEntryIds);
+    const entriesById = new Map<string, QueueLedgerEntry>();
+    for (let index = 0; index < orderedEntryIds.length; index += 1) {
+      const entryId = orderedEntryIds[index];
+      if (!entryId) throw new Error('queue entry result length mismatch');
+      const raw = raws[index];
+      if (typeof raw !== 'string') throw new Error(`queue message index references missing row: ${entryId}`);
+      entriesById.set(entryId, hydrateQueueLedgerEntry(raw));
+    }
+    for (const [messageId, entryIds] of entryIdsByMessage) {
+      const entries = entryIds.map((entryId) => {
+        const entry = entriesById.get(entryId);
+        if (!entry) throw new Error(`queue message index references missing row: ${entryId}`);
+        return entry;
+      });
+      if (entries.some((entry) => entry.payload.messageId !== messageId)) {
+        throw new Error(`queue message index identity mismatch: ${messageId}`);
+      }
+      grouped.set(messageId, entries);
+    }
+    return grouped;
   }
 
   async listThreadIds(): Promise<string[]> {

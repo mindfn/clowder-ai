@@ -23,16 +23,49 @@ for i = 1, count do
     existingCount = existingCount + 1
   end
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
-  incoming[i] = { id = row.id, raw = raw }
+  incoming[i] = { id = row.id, raw = raw, row = row }
 end
 if existingCount == count then return 2 end
 if existingCount ~= 0 then return -1 end
 
+local messageIndexUpdates = {}
+for i = 1, count do
+  local row = incoming[i].row
+  local messageId = row.payload and row.payload.messageId
+  if messageId and messageId ~= '' then
+    local update = messageIndexUpdates[messageId]
+    if not update then
+      update = { ids = {}, seen = {} }
+      local existingIndexRaw = redis.call('HGET', KEYS[3], messageId)
+      if existingIndexRaw then
+        local decodedOk, decoded = pcall(cjson.decode, existingIndexRaw)
+        if not decodedOk or type(decoded) ~= 'table' then
+          return redis.error_reply('QUEUE_MESSAGE_INDEX_INVALID')
+        end
+        for j = 1, #decoded do
+          if type(decoded[j]) ~= 'string' or decoded[j] == '' or update.seen[decoded[j]] then
+            return redis.error_reply('QUEUE_MESSAGE_INDEX_INVALID')
+          end
+          update.seen[decoded[j]] = true
+          update.ids[#update.ids + 1] = decoded[j]
+        end
+      end
+      messageIndexUpdates[messageId] = update
+    end
+    if not update.seen[row.id] then
+      update.seen[row.id] = true
+      update.ids[#update.ids + 1] = row.id
+    end
+  end
+end
+
 if maxQueuedUsers and maxQueuedUsers >= 0 then
   local queuedUserSources = {}
-  local current = redis.call('HVALS', rowsKey)
-  for i = 1, #current do
-    local row = cjson.decode(current[i])
+  local activeIds = redis.call('LRANGE', orderKey, 0, -1)
+  for i = 1, #activeIds do
+    local currentRaw = redis.call('HGET', rowsKey, activeIds[i])
+    if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
+    local row = cjson.decode(currentRaw)
     if row.status == 'queued' and row.from and row.from.kind == 'user' then
       queuedUserSources[row.payload.sourceId] = true
     end
@@ -46,6 +79,9 @@ end
 for i = 1, count do
   redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
   redis.call('RPUSH', orderKey, incoming[i].id)
+end
+for messageId, update in pairs(messageIndexUpdates) do
+  redis.call('HSET', KEYS[3], messageId, cjson.encode(update.ids))
 end
 return 1
 `;

@@ -13,6 +13,32 @@ import {
 export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
   private readonly terminalRows = new Map<string, Map<string, QueueLedgerEntry>>();
+  private readonly messageRows = new Map<string, Map<string, Set<string>>>();
+
+  private indexEntries(threadId: string, entries: readonly QueueLedgerEntry[]): void {
+    const threadIndex = this.messageRows.get(threadId) ?? new Map<string, Set<string>>();
+    for (const entry of entries) {
+      const messageId = entry.payload.messageId;
+      if (!messageId) continue;
+      const entryIds = threadIndex.get(messageId) ?? new Set<string>();
+      entryIds.add(entry.id);
+      threadIndex.set(messageId, entryIds);
+    }
+    if (threadIndex.size > 0) this.messageRows.set(threadId, threadIndex);
+  }
+
+  private unindexEntries(threadId: string, entries: readonly QueueLedgerEntry[]): void {
+    const threadIndex = this.messageRows.get(threadId);
+    if (!threadIndex) return;
+    for (const entry of entries) {
+      const messageId = entry.payload.messageId;
+      if (!messageId) continue;
+      const entryIds = threadIndex.get(messageId);
+      entryIds?.delete(entry.id);
+      if (entryIds?.size === 0) threadIndex.delete(messageId);
+    }
+    if (threadIndex.size === 0) this.messageRows.delete(threadId);
+  }
 
   enqueueNow(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): QueueLedgerEnqueueResult {
     if (entries.length === 0) throw new Error('queue ledger enqueue requires at least one row');
@@ -54,6 +80,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     const inserted = entries.map(cloneQueueLedgerEntry);
     current.push(...inserted);
     this.rows.set(threadId, current);
+    this.indexEntries(threadId, inserted);
     return { outcome: 'enqueued', entries: inserted.map(cloneQueueLedgerEntry) };
   }
 
@@ -72,8 +99,10 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (!current) return;
     const ids = new Set(entries.map((entry) => entry.id));
     const remaining = current.filter((entry) => !ids.has(entry.id));
+    const removed = current.filter((entry) => ids.has(entry.id));
     if (remaining.length === 0) this.rows.delete(threadId);
     else this.rows.set(threadId, remaining);
+    this.unindexEntries(threadId, removed);
   }
 
   async list(threadId: string): Promise<QueueLedgerEntry[]> {
@@ -84,6 +113,27 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     return [...(this.rows.get(threadId) ?? []), ...[...(this.terminalRows.get(threadId)?.values() ?? [])]].map(
       cloneQueueLedgerEntry,
     );
+  }
+
+  async getByMessageIds(threadId: string, messageIds: readonly string[]): Promise<Map<string, QueueLedgerEntry[]>> {
+    const grouped = new Map<string, QueueLedgerEntry[]>();
+    const threadIndex = this.messageRows.get(threadId);
+    if (!threadIndex) return grouped;
+    for (const messageId of new Set(messageIds)) {
+      const entryIds = threadIndex.get(messageId);
+      if (!entryIds) continue;
+      const entries: QueueLedgerEntry[] = [];
+      for (const entryId of entryIds) {
+        const entry = this.getNow(threadId, entryId);
+        if (!entry) throw new Error(`queue message index references missing row: ${entryId}`);
+        if (entry.payload.messageId !== messageId) {
+          throw new Error(`queue message index identity mismatch: ${messageId}:${entryId}`);
+        }
+        entries.push(entry);
+      }
+      grouped.set(messageId, entries);
+    }
+    return grouped;
   }
 
   async listThreadIds(): Promise<string[]> {
@@ -109,9 +159,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     bindTargetCatId?: string,
     steerRequestedAt?: number,
   ): Promise<QueueLedgerClaimResult> {
-    const result = await this.claimPrefix(threadId, [entryId], claimId, claimedAt, bindTargetCatId, steerRequestedAt);
-    if (result.outcome !== 'claimed' || !bindTargetCatId) return result;
-    return result;
+    return this.claimPrefix(threadId, [entryId], claimId, claimedAt, bindTargetCatId, steerRequestedAt);
   }
 
   async claimPrefix(

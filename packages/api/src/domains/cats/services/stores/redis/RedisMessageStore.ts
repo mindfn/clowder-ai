@@ -77,6 +77,7 @@ import {
   DEFAULT_THREAD_ID,
   generateSortableId,
   isDelivered,
+  isQueueLedgerTimelinePublishedAtAppend,
   lifecycleInputIdentityForStoredMessage,
   matchesLifecyclePreAdmissionFailure,
   preAdmissionFailureIdempotencyKey,
@@ -147,6 +148,7 @@ const ENQUEUE_EXISTING_MESSAGE_WITH_LEDGER_LUA = `
 local messageKey = KEYS[1]
 local rowsKey = KEYS[2]
 local orderKey = KEYS[3]
+local messageIndexKey = KEYS[4]
 local messageId = ARGV[1]
 local maxUserSources = tonumber(ARGV[2])
 local count = tonumber(ARGV[3])
@@ -154,6 +156,7 @@ if redis.call('HGET', messageKey, 'id') ~= messageId then return -2 end
 if not count or count < 1 then return redis.error_reply('QUEUE_ADMISSION_EMPTY') end
 
 local incoming = {}
+local entryIds = {}
 local existingCount = 0
 local incomingIds = {}
 local incomingUserSources = {}
@@ -166,11 +169,13 @@ for i = 1, count do
   if incomingIds[row.id] then return redis.error_reply('QUEUE_ADMISSION_DUPLICATE_ID') end
   incomingIds[row.id] = true
   incoming[i] = { id = row.id, raw = raw, row = row }
+  entryIds[i] = row.id
   if redis.call('HEXISTS', rowsKey, row.id) == 1 then existingCount = existingCount + 1 end
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
 end
 if existingCount == count then return 2 end
 if existingCount > 0 then return -1 end
+if redis.call('HEXISTS', messageIndexKey, messageId) == 1 then return -1 end
 
 local deliveryStatus = redis.call('HGET', messageKey, 'deliveryStatus')
 if deliveryStatus and deliveryStatus ~= '' and deliveryStatus ~= 'queued' then
@@ -179,9 +184,11 @@ end
 
 if maxUserSources and maxUserSources >= 0 then
   local queuedUserSources = {}
-  local current = redis.call('HVALS', rowsKey)
-  for i = 1, #current do
-    local row = cjson.decode(current[i])
+  local activeIds = redis.call('LRANGE', orderKey, 0, -1)
+  for i = 1, #activeIds do
+    local currentRaw = redis.call('HGET', rowsKey, activeIds[i])
+    if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
+    local row = cjson.decode(currentRaw)
     if row.status == 'queued' and row.from and row.from.kind == 'user' then
       queuedUserSources[row.payload.sourceId] = true
     end
@@ -197,6 +204,7 @@ for i = 1, count do
   redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
   redis.call('RPUSH', orderKey, incoming[i].id)
 end
+redis.call('HSET', messageIndexKey, messageId, cjson.encode(entryIds))
 return 1
 `;
 
@@ -329,7 +337,9 @@ const COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA = `
 local messageKey = KEYS[1]
 local rowsKey = KEYS[2]
 local orderKey = KEYS[3]
-if redis.call('EXISTS', messageKey) == 0 then return -1 end
+local messageIndexKey = KEYS[4]
+local messageId = redis.call('HGET', messageKey, 'id')
+if not messageId then return -1 end
 if redis.call('HGET', messageKey, 'recall') or redis.call('HGET', messageKey, '_tombstone') then return -2 end
 
 local existingLifecycleRaw = redis.call('HGET', messageKey, 'lifecycle')
@@ -344,15 +354,20 @@ local expectedMode = ARGV[17]
 if not count or count < 1 then return redis.error_reply('QUEUE_ADMISSION_EMPTY') end
 
 local incoming = {}
+local entryIds = {}
 local incomingIds = {}
 local incomingUserSources = {}
 for i = 1, count do
   local raw = ARGV[17 + i]
   local row = cjson.decode(raw)
-  if row.status ~= 'queued' then return redis.error_reply('QUEUE_ADMISSION_INVALID_ROW') end
+  if row.status ~= 'queued' or not row.payload or row.payload.sourceId ~= messageId or
+     row.payload.messageId ~= messageId then
+    return redis.error_reply('QUEUE_ADMISSION_INVALID_ROW')
+  end
   if incomingIds[row.id] then return redis.error_reply('QUEUE_ADMISSION_DUPLICATE_ID') end
   incomingIds[row.id] = true
   incoming[i] = { id = row.id, raw = raw, row = row }
+  entryIds[i] = row.id
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
 end
 
@@ -368,11 +383,15 @@ for i = 1, count do
   end
 end
 
+if expectedMode == 'absent' and redis.call('HEXISTS', messageIndexKey, messageId) == 1 then return -10 end
+
 if expectedMode == 'absent' and maxUserSources and maxUserSources >= 0 then
   local queuedUserSources = {}
-  local current = redis.call('HVALS', rowsKey)
-  for i = 1, #current do
-    local row = cjson.decode(current[i])
+  local activeIds = redis.call('LRANGE', orderKey, 0, -1)
+  for i = 1, #activeIds do
+    local currentRaw = redis.call('HGET', rowsKey, activeIds[i])
+    if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
+    local row = cjson.decode(currentRaw)
     if row.status == 'queued' and row.from and row.from.kind == 'user' then
       queuedUserSources[row.payload.sourceId] = true
     end
@@ -430,6 +449,7 @@ if expectedMode == 'absent' then
     redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
     redis.call('RPUSH', orderKey, incoming[i].id)
   end
+  redis.call('HSET', messageIndexKey, messageId, cjson.encode(entryIds))
 end
 
 if lifecycleNeedsWrite and expectedMode == 'absent' then return 1 end
@@ -1006,10 +1026,11 @@ export class RedisMessageStore {
     const outcome = Number(
       await this.redis.eval(
         ENQUEUE_EXISTING_MESSAGE_WITH_LEDGER_LUA,
-        3,
+        4,
         MessageKeys.detail(messageId),
         QueueLedgerKeys.entries(threadId!),
         QueueLedgerKeys.order(threadId!),
+        QueueLedgerKeys.messageIndex(threadId!),
         messageId,
         maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
         String(entries.length),
@@ -1096,10 +1117,11 @@ export class RedisMessageStore {
       const outcome = Number(
         await this.redis.eval(
           COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA,
-          3,
+          4,
           key,
           QueueLedgerKeys.entries(threadId!),
           QueueLedgerKeys.order(threadId!),
+          QueueLedgerKeys.messageIndex(threadId!),
           ...lifecycleResponseTerminalLuaArgs(patch, terminalMessageForLua, expectedLifecycleRaw),
           maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
           String(entries.length),
@@ -1165,7 +1187,13 @@ export class RedisMessageStore {
     const id = reservedId ?? generateSortableId(msg.timestamp);
     const { idempotencyKey, ...payload } = msg;
     void idempotencyKey;
-    const stored: StoredMessage = { ...payload, id, threadId };
+    const timelinePublishedAtAppend = queue ? isQueueLedgerTimelinePublishedAtAppend(msg, queue.entries) : false;
+    const stored: StoredMessage = {
+      ...payload,
+      ...(timelinePublishedAtAppend ? { timelinePublishedAtAppend: true as const } : {}),
+      id,
+      threadId,
+    };
     const score = msg.timestamp;
     const hashKey = MessageKeys.detail(id);
 
@@ -1205,6 +1233,7 @@ export class RedisMessageStore {
     if (msg.source) hashFields.push('source', JSON.stringify(msg.source));
     if (msg.mentionsUser) hashFields.push('mentionsUser', '1');
     if (msg.deliveryStatus) hashFields.push('deliveryStatus', msg.deliveryStatus);
+    if (timelinePublishedAtAppend) hashFields.push('timelinePublishedAtAppend', '1');
     if (msg.replyTo) hashFields.push('replyTo', msg.replyTo);
     if (msg.routingFact) hashFields.push('routingFact', JSON.stringify(msg.routingFact));
     if (msg.provenance) hashFields.push('provenance', JSON.stringify(msg.provenance));
@@ -1249,8 +1278,10 @@ export class RedisMessageStore {
     // Lua returns:
     // - string (existing msgId) → idempotency replay, return existing message
     // - number (visibilitySeq) → new message created, seq > 0 for non-queued
-    const queueKeys = queue ? [QueueLedgerKeys.entries(threadId), QueueLedgerKeys.order(threadId)] : [];
-    const result = await this.redis.eval(APPEND_WITH_VISIBILITY_LUA, queue ? 3 : 1, hashKey, ...queueKeys, ...argv);
+    const queueKeys = queue
+      ? [QueueLedgerKeys.entries(threadId), QueueLedgerKeys.order(threadId), QueueLedgerKeys.messageIndex(threadId)]
+      : [];
+    const result = await this.redis.eval(APPEND_WITH_VISIBILITY_LUA, queue ? 4 : 1, hashKey, ...queueKeys, ...argv);
 
     if (queue) {
       if (!Array.isArray(result)) throw new Error('invalid combined message/Queue admission reply');
@@ -1548,6 +1579,7 @@ export class RedisMessageStore {
       ...(data.revealedAt ? { revealedAt: parseInt(data.revealedAt, 10) } : {}),
       ...(data.deliveredAt ? { deliveredAt: parseRedisNumber(data.deliveredAt) } : {}),
       ...(data.timelineOrderAt !== undefined ? { timelineOrderAt: parseRedisNumber(data.timelineOrderAt) } : {}),
+      ...(data.timelinePublishedAtAppend === '1' ? { timelinePublishedAtAppend: true as const } : {}),
       ...(data.deliveryStatus ? { deliveryStatus: data.deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
       ...(parsedRecall ? { recall: parsedRecall } : {}),
       ...(routingFact ? { routingFact } : {}),
