@@ -321,3 +321,5 @@ queueOwner(entry): QueueOwner;   // Queue scope 的统一访问路径
 **为何优于初版三步**：初版试图在**存储层**达成不变量（全量回写 message），本方案在**访问层**达成。类型强度相同（调用方拿到的永远是必填 union），但没有不可逆写操作的风险；存量数据自然老化，新写入均带 `fromRaw`，将来 fallback 分支自然成为死码，届时删除为零风险。
 
 **关于门禁**：不新增字符串扫描 gate。新写边界要求 `from`，持久 Queue row 要求 `owner: QueueOwner`，Redis hydrate 再做运行时 shape 校验；兼容只留在 resolver。存储 owner 的 `userId` 仍是合法且必要的，不应被 lint 误报。
+
+**Scheduled trigger 契约（R4 裁定，sol adjudication / Fable 三审）**：scheduler 模板（reminder / web-digest browser path）写出的 trigger message，`from = { kind: 'system', service: 'scheduler' }` 表达作者身份；存储 `userId` 必须是**已验证的 trigger owner（`triggerUserId`）**，Queue owner 与之一致。`userId: 'scheduler'` 会在 canonical ingress fence（`ConnectorInvokeTrigger` 的 source owner vs queue owner 强校验）处被拒，不会进入 ledger。行为回归由 `test/scheduler/scheduled-trigger-owner-fence.test.js`（真实 template + createDeliverFn + ConnectorInvokeTrigger 组合）钉住。
