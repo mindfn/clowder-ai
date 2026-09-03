@@ -531,20 +531,19 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 > Added 2026-07-01 | 详见 ADR-040
 
-当用户发消息给正在执行的猫时，消息进入排队状态（`queued`）。排队消息的读取（read）、处理（handled）、投递（delivered）、目标消费（target consumed）是四个独立状态层：
+当用户发消息给正在执行的猫时，消息进入排队状态（`queued`）。排队消息的读取（read）、处理（handled）、投递（delivered）、目标消费（target consumed）仍是四种不同证据；ADR-043 D8 规定 exact full-read journey 由一条 active-child adoption 路径一起提交这些相关转换：
 
 | 层 | 含义 | Scope | 影响其他猫？ |
 |----|------|-------|------------|
-| `delivery` | 消息是否进入 thread history | message-level | 否 |
-| `queued_seen` | 猫获取了排队正文 | per-cat + queue entry | 否 |
-| `queued_handled` | 猫处理完毕或显式 disposition | per-cat + queue entry | 否 |
-| `target_consumed` | 路由 work item 对该 target 猫已解决 | per-target + queue entry | 否（仅编排器聚合） |
+| `delivery` | 第一只 exact child 接管后消息进入成员 thread history | message-level | 不消费其他 target |
+| `queued_seen` | exact child 获取了该 target 的完整正文 | source×target queue row | 否 |
+| `queued_handled` | 该 target 的正文已接入现有 response lifecycle / Active Run | source×target queue row | 否 |
+| `target_consumed` | 该 source×target row 已 terminal handled | source×target queue row | 否；sibling row 仍 queued |
 
-**设计规则**：read is per-cat, handled is per-cat, target consumption is per-target. Nothing is global by default.
+**设计规则**：full queued read is an exact per-target adoption, not a passive peek. A+B 中 A 接管只终局 A；B 后续从同一可见 History source 接管自己的 row，最后没有剩余 target 才表现为 Queue 清空。Sparse/cross-thread/无法证明 active child 的读取不接管。
 
 **关联 Feature**：
-- F254 产出/消费 `queued_seen`，用于抑制 freshness 重复提醒
+- F254 消费 exact `queued_seen` / `queued_handled` 证据来抑制 freshness 重复提醒；转换本身由 F117/ADR-043 QueueProcessor 拥有
 - F086 拥有 canonical per-target `TargetStatus` 状态机
 - F108 拥有独立 fan-out context cutoff 策略
 - F117/F039 定义 queued delivery lifecycle 底层语义
-

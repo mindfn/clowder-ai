@@ -62,11 +62,15 @@ import {
 import { turnCustodyAdoptionRegistry } from '../domains/ball-custody/TurnCustodyAdoptionRegistry.js';
 import type { TurnCustodyWakeProvenance } from '../domains/ball-custody/TurnCustodyProjectionService.js';
 import { transitionWaitState } from '../domains/ball-custody/wait-state-machine.js';
-import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import {
+  type InvocationQueue,
+  type QueueEntry,
+  queueEntryTargetCats,
+} from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import { MessageDeliveryService } from '../domains/cats/services/agents/invocation/MessageDeliveryService.js';
-import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import type { QueueLedgerEntry } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
@@ -93,16 +97,17 @@ import {
 import type { AgentRouter } from '../domains/cats/services/index.js';
 import type { EventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IRuntimeSessionStore } from '../domains/cats/services/runtime-session/RuntimeSessionStore.js';
-import { compareCursors, cursorFor, parseCursor } from '../domains/cats/services/stores/cursor.js';
+import { compareCursors, cursorFor } from '../domains/cats/services/stores/cursor.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IBacklogStore } from '../domains/cats/services/stores/ports/BacklogStore.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
+  type AppendMessageInput,
   hydrateCrossThreadReplyHint,
   hydrateReplyPreview,
   type IMessageStore,
   isDelivered,
-  isTimelinePublished,
   type StoredMessage,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isManagedWorkBindingConflictError } from '../domains/cats/services/stores/ports/TaskManagedWorkBinding.js';
@@ -116,9 +121,9 @@ import {
 import {
   canViewMessage,
   getTimelineOrderTime,
-  isDurablyReadableByCat,
   isInternalNonQuotableParent,
   isSystemUserMessage,
+  isTimelinePublished,
   resolveVisibleReplyParent,
   type Viewer,
 } from '../domains/cats/services/stores/visibility.js';
@@ -160,7 +165,12 @@ import { emitQueueUpdated } from '../utils/queue-enrichment.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { recordAnchorDrillEvent, recordAnchorPreviewEvent } from './anchor-event-log.js';
 import { recordAnchorFullDrill, recordAnchorReturned } from './anchor-telemetry.js';
-import { enqueueA2ATargets, triggerA2AInvocation } from './callback-a2a-trigger.js';
+import {
+  type A2AFanoutAdmissionPlan,
+  appendA2ASourceWithLedgerAdmission,
+  enqueueA2ATargets,
+  planA2AFanoutAdmission,
+} from './callback-a2a-trigger.js';
 import { anchorPendingMention, anchorThreadMessage, truncateHead } from './callback-anchor-helpers.js';
 import {
   extractCallbackCredentials,
@@ -222,7 +232,7 @@ import { registerCallbackWithdrawThreadProposalRoutes } from './callback-withdra
 import { registerCallbackWorkflowSopRoutes } from './callback-workflow-sop-routes.js';
 import { resolveCrossThreadCoordination } from './cross-thread-coordination.js';
 import { type FeatIndexEntry, readFeatIndexEntries } from './feat-index-doc-import.js';
-import { buildThreadIdsByFeatId, normalizeFeatId, resolveFeatureOwnerCatId } from './feature-thread-resolver.js';
+import { buildThreadIdsByFeatId, normalizeFeatId } from './feature-thread-resolver.js';
 import { verifyKeeperOwnership } from './gate-keeping-cross-store.js';
 import { checkGateKeepingGuard } from './gate-keeping-guard.js';
 import {
@@ -239,7 +249,6 @@ import { clearVoteTimer, closeVoteInternal, voteTimers } from './votes.js';
 import { publishDispatchProposal } from './wave2-proposal-publication.js';
 
 const log = createModuleLogger('routes/callbacks');
-const PUBLISHED_TIMELINE_READ = { includeQueuedCatMessages: true } as const;
 const CALLBACK_EXACT_DUPLICATE_WINDOW_MS = 5_000;
 
 /**
@@ -268,6 +277,58 @@ function hasPlausibleLineStartMention(content: string): boolean {
     }
   }
   return false;
+}
+
+function resolveSlashSeparatedOwnerCatId(ownerWithoutAnnotations: string): CatId | undefined {
+  const segments = ownerWithoutAnnotations
+    .split(/[/／]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  if (segments.length < 2) return undefined;
+
+  const firstResolved = resolveCatTarget(segments[0]);
+  if (!('ok' in firstResolved)) return undefined;
+
+  const resolved = new Set<CatId>();
+  const unresolved: string[] = [];
+  for (const segment of segments) {
+    const result = resolveCatTarget(segment);
+    if ('ok' in result) {
+      resolved.add(result.ok);
+    } else {
+      unresolved.push(segment);
+    }
+  }
+
+  if (resolved.size !== 1) return undefined;
+  if (unresolved.some((segment) => /[@\u4E00-\u9FFF]/.test(segment))) return undefined;
+  return firstResolved.ok;
+}
+
+function resolveFeatureOwnerCatId(owner: string | undefined): string | undefined {
+  if (!owner) return undefined;
+  const trimmed = owner.trim();
+  if (!trimmed) return undefined;
+  const ownerWithoutAnnotations = trimmed
+    .replace(/\s*[（(][^()（）]*[）)]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/[+＋、，,；;]/.test(ownerWithoutAnnotations)) return undefined;
+  const slashSeparatedOwnerCatId = resolveSlashSeparatedOwnerCatId(ownerWithoutAnnotations);
+  if (slashSeparatedOwnerCatId) return slashSeparatedOwnerCatId;
+
+  const candidates = [
+    trimmed,
+    trimmed.match(/@[^\s,，、/+()（）]+/)?.[0],
+    ownerWithoutAnnotations,
+    ownerWithoutAnnotations.split(/\s+/)[0],
+  ].filter((value): value is string => Boolean(value && value.trim().length > 0));
+
+  for (const candidate of candidates) {
+    const resolved = resolveCatTarget(candidate);
+    if ('ok' in resolved) return resolved.ok;
+  }
+  return undefined;
 }
 
 function buildFeatIndexQueryHaystack(item: FeatIndexEntry): string {
@@ -326,6 +387,44 @@ function buildPostMessageRoutingMessage(
     }
   }
   return parts.length > 0 ? parts.join(' ') : '消息已存储。';
+}
+
+function checkRoutingMismatch(
+  rawDeclaredTargets: readonly string[] | undefined,
+  resolvedDeclaredTargets: readonly CatId[],
+  contentTargets: readonly CatId[],
+):
+  | { held: false }
+  | {
+      held: true;
+      response: {
+        status: 'held';
+        reason: 'routing_mismatch';
+        declaredTargets: string[];
+        parsedTargets: string[];
+        unexpectedTargets: string[];
+        actions: ['revise_content', 'expand_target_cats'];
+        guidance: string;
+      };
+    } {
+  if (!rawDeclaredTargets || rawDeclaredTargets.length === 0) return { held: false };
+  const resolvedSet = new Set(resolvedDeclaredTargets.map(String));
+  const unexpectedTargets = contentTargets.filter((catId) => !resolvedSet.has(String(catId))).map(String);
+  if (unexpectedTargets.length === 0) return { held: false };
+  return {
+    held: true,
+    response: {
+      status: 'held',
+      reason: 'routing_mismatch',
+      declaredTargets: [...rawDeclaredTargets],
+      parsedTargets: contentTargets.map(String),
+      unexpectedTargets,
+      actions: ['revise_content', 'expand_target_cats'],
+      guidance:
+        `content 行首 @ 解析出的目标（${unexpectedTargets.map((id) => `@${id}`).join('、')}）不在声明的 targetCats 内。` +
+        '消息未发送。请修改 content 的 @ 写法，或把这些猫加进 targetCats 后重试。',
+    },
+  };
 }
 
 function buildRoutingOutcome(requestedIds: string[], enqueuedIds: readonly string[], enqueueAttempted: boolean) {
@@ -409,6 +508,18 @@ async function getRecentCallbackDuplicateCandidates(
   return messageStore.getByThread(threadId, 20, userId);
 }
 
+function isMentionOwnedByQueue(
+  invocationQueue: InvocationQueue | undefined,
+  message: StoredMessage,
+  catId: CatId,
+): boolean {
+  return (
+    invocationQueue
+      ?.list(message.threadId, message.userId)
+      .some((entry) => entry.payload.messageId === message.id && queueEntryTargetCats(entry).includes(catId)) ?? false
+  );
+}
+
 async function findTypedLocalReviewMessage(
   messageStore: IMessageStore,
   input: {
@@ -436,14 +547,35 @@ async function findTypedLocalReviewMessage(
     );
 }
 
-/** Permanent mismatch/stale compensation only; retryable insufficient facts keep their queued row for same-ID replay. */
 async function cancelPermanentlyRejectedLocalReviewMessage(
   messageStore: IMessageStore,
+  invocationQueue: InvocationQueue | undefined,
   messageId: string,
   outcome: 'mismatch' | 'stale',
 ): Promise<boolean> {
+  const message = await messageStore.getById(messageId);
+  if (!message) return false;
+  const claim = invocationQueue
+    ? await invocationQueue.claimMessageEntriesForWithdrawal(message.threadId, message.userId, messageId)
+    : { outcome: 'not_found' as const };
+  if (claim.outcome === 'processing') return false;
   const canceled = await messageStore.markCanceled(messageId);
-  if (!canceled) return true;
+  if (!canceled) {
+    if (claim.outcome === 'claimed') {
+      await invocationQueue?.restoreClaimedEntries(
+        message.threadId,
+        claim.entries.map((entry) => entry.id),
+      );
+    }
+    return false;
+  }
+  if (claim.outcome === 'claimed') {
+    const committed = await invocationQueue?.commitClaimedMessageWithdrawal(
+      message.threadId,
+      claim.entries.map((entry) => entry.id),
+    );
+    if (!committed) return false;
+  }
   if (canceled.deliveryTransitioned || canceled.deliveryStatus === 'canceled') return true;
   if (canceled.deliveryStatus !== 'queued') return true;
   log.error(
@@ -740,27 +872,23 @@ function hasQueuedActionSuccessorFence(
   return (
     invocationQueue
       ?.list(threadId, userId)
-      .some((entry) => actionSuccessorFencesMatch(entry.actionSuccessorFence, fence)) ?? false
+      .some((entry) => actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, fence)) ?? false
   );
 }
 
-async function recoverQueuedDuplicateCallbackMessage(input: {
+/** Re-establish only the missing recipient wake for an already-public duplicate. */
+async function ensureDuplicateCallbackWake(input: {
   duplicateMsg: StoredMessage;
-  willEnqueueToQueue: boolean;
+  canEnqueueA2A: boolean;
   invocationQueue?: InvocationQueue;
   threadId: string;
   userId: string;
   actionFence?: ActionSuccessorFence;
   log: Pick<FastifyBaseLogger, 'error' | 'warn'>;
   enqueueA2A: () => Promise<{ enqueued: readonly CatId[] }>;
-  markDelivered?: (deliveredAt: number) => Promise<unknown> | unknown;
-  zeroEnqueuedWarnMessage: string;
   enqueueFailureMessage: string;
-  broadcastNow: () => Promise<void> | void;
-  preserveQueuedOnEnqueueFailure?: boolean;
 }): Promise<boolean> {
-  if (input.duplicateMsg.deliveryStatus !== 'queued') return false;
-  if (!input.willEnqueueToQueue) return false;
+  if (!input.canEnqueueA2A) return false;
   if (hasQueuedA2AEntryForMessage(input.invocationQueue, input.threadId, input.duplicateMsg.id)) {
     return input.actionFence
       ? hasQueuedActionSuccessorFence(input.invocationQueue, input.threadId, input.userId, input.actionFence)
@@ -769,23 +897,12 @@ async function recoverQueuedDuplicateCallbackMessage(input: {
 
   const deliveryDecision = await MessageDeliveryService.resolveCallbackDeliveryDecision({
     canEnqueueA2A: true,
-    willEnqueueToQueue: input.willEnqueueToQueue,
     messageId: input.duplicateMsg.id,
     threadId: input.threadId,
     log: input.log,
     enqueueA2A: input.enqueueA2A,
-    markDelivered: input.markDelivered,
-    zeroEnqueuedWarnMessage: input.zeroEnqueuedWarnMessage,
     enqueueFailureMessage: input.enqueueFailureMessage,
-    ...(input.preserveQueuedOnEnqueueFailure ? { preserveQueuedOnEnqueueFailure: true } : {}),
   });
-
-  if (
-    deliveryDecision.shouldBroadcastNow &&
-    !hasQueuedA2AEntryForMessage(input.invocationQueue, input.threadId, input.duplicateMsg.id)
-  ) {
-    await input.broadcastNow();
-  }
   return (
     deliveryDecision.enqueued.length > 0 ||
     hasQueuedA2AEntryForMessage(input.invocationQueue, input.threadId, input.duplicateMsg.id)
@@ -930,7 +1047,7 @@ export interface CallbackRoutesOptions {
       invocationId: string | undefined,
       completedCatIds: readonly string[],
     ): Promise<void>;
-    tryAutoExecute(threadId: string): Promise<void>;
+    requestDrain(threadId: string): Promise<void>;
     registerEntryCompleteHook(
       entryId: string,
       hook: (
@@ -945,11 +1062,24 @@ export interface CallbackRoutesOptions {
       catId: string;
       messageIds: readonly string[];
     }): Promise<readonly TurnCustodyWakeProvenance[]>;
+    adoptExposedQueuedEntries?(input: {
+      threadId: string;
+      userId: string;
+      catId: string;
+      invocationId: string;
+      entries: readonly { entryId: string; messageId: string }[];
+      seenAt?: number;
+    }): Promise<
+      | { outcome: 'adopted'; adoptedEntryIds: string[] }
+      | {
+          outcome: 'rejected';
+          reason: 'active_run_missing' | 'state_changed' | 'lifecycle_conflict' | 'persistence_unavailable';
+          entryId?: string;
+        }
+    >;
   };
   /** F122B: InvocationQueue for agent-sourced A2A entries */
   invocationQueue?: import('../domains/cats/services/agents/invocation/InvocationQueue.js').InvocationQueue;
-  /** F254: await exact Queue ACK persistence before releasing callback evidence. */
-  queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
   /** F167 Phase S: durable subject/action/slot admission for A2A successor dispatch. */
   actionSuccessorAdmissionService?: import('../domains/ball-custody/ActionSuccessorAdmissionService.js').ActionSuccessorAdmissionService;
   /** F126: Limb node registry for device/hardware capability management */
@@ -1423,9 +1553,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const durableCloudReturnDuplicate = cloudReturnMessageIdempotencyKey
         ? await messageStore.getByIdempotencyKey(principal.userId, effectiveThreadId, cloudReturnMessageIdempotencyKey)
         : null;
-      // A durable exact-source winner is already admitted and must recover from
-      // its persisted bytes. Mutable concierge ownership can gate only a fresh
-      // append, never reinterpret a retry of an operation that already won.
       const contentProjection: CallbackContentProjection = durableCloudReturnDuplicate
         ? { ok: true, content: durableCloudReturnDuplicate.content }
         : await projectCallbackContentForStorage(
@@ -1441,17 +1568,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         reply.status(contentProjection.statusCode);
         return { kind: contentProjection.kind, message: contentProjection.message };
       }
-      let richBlocks = extractedBlocks;
-      const synthesizer = getVoiceBlockSynthesizer();
-      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
-        try {
-          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
-        } catch (err) {
-          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
-        }
-      }
-
-      // F182 AC-C1: use analyzeA2AMentions (captures routing_warnings for disabled cats)
       const contentAnalysis = analyzeA2AMentions(storedContent, senderCatId);
       const contentTargets = contentAnalysis.mentions;
       const validExplicitTargets: CatId[] = [];
@@ -1464,6 +1580,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           routing_warnings.push(resolved.error);
         }
       }
+      const mismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+      if (mismatch.held) {
+        return { ...mismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
+      }
+
+      let richBlocks = extractedBlocks;
+      const synthesizer = getVoiceBlockSynthesizer();
+      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
+        try {
+          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
+        } catch (err) {
+          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
+        }
+      }
+
       const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
       // F177-H: Agent-key participant awareness — same check as invocation-auth
@@ -1524,7 +1655,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
       const hasA2AMentions = !!(mentions.length > 0 && router && invocationRecordStore && effectiveThreadId);
-      const willEnqueueToQueue = !!(hasA2AMentions && opts.invocationQueue);
       const now = Date.now();
       const cloudReturnGrantScope =
         usesServerGrant && validatedReplyTo
@@ -1579,30 +1709,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               now,
             })
           : undefined);
-      const recoverPersistedCloudReturn = async (duplicateMsg: StoredMessage) => {
-        // A durable exact-source duplicate is recovery truth from a previous
-        // append, not a fresh delivery request. Route and broadcast only the
-        // persisted message so regenerated retry content/targets cannot change
-        // who receives which trigger after a process restart.
+      if (duplicateMsg) {
         const duplicateMentions = [...duplicateMsg.mentions];
         const duplicateReplyTo = duplicateMsg.replyTo;
-        const duplicateExplicitTargets = duplicateMsg.extra?.targetCats ?? [];
-        const duplicateWillEnqueueToQueue = Boolean(
-          duplicateMentions.length > 0 && router && invocationRecordStore && opts.invocationQueue,
-        );
-        if (cloudReturnGrantClaim && cloudReturnGrantStore && cloudReturnGrantScope) {
-          await commitCloudReturnGrantAfterPersistence({
-            store: cloudReturnGrantStore,
-            claim: cloudReturnGrantClaim,
-            log: app.log,
-            threadId: effectiveThreadId,
-            sourceMessageId: cloudReturnGrantScope.sourceMessageId,
-            messageId: duplicateMsg.id,
-          });
-        }
-        await recoverQueuedDuplicateCallbackMessage({
+        await ensureDuplicateCallbackWake({
           duplicateMsg,
-          willEnqueueToQueue: duplicateWillEnqueueToQueue,
+          canEnqueueA2A: !!(duplicateMentions.length > 0 && router && invocationRecordStore && opts.invocationQueue),
           ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
           threadId: effectiveThreadId,
           userId: principal.userId,
@@ -1610,8 +1722,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           enqueueA2A: () =>
             enqueueA2ATargets(
               {
-                router: router!,
-                invocationRecordStore: invocationRecordStore!,
                 socketManager,
                 messageStore,
                 ...(invocationTracker ? { invocationTracker } : {}),
@@ -1632,34 +1742,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 callerCatId: senderCatId,
               },
             ),
-          markDelivered: (deliveredAt) => messageStore.markDelivered?.(duplicateMsg.id, deliveredAt),
-          zeroEnqueuedWarnMessage: '[agent-key/post-message] queued duplicate had no A2A entry — broadcasting anyway',
-          enqueueFailureMessage: '[agent-key/post-message] queued duplicate recovery failed — broadcasting anyway',
-          broadcastNow: async () => {
-            const replyPreview = duplicateReplyTo
-              ? await hydrateReplyPreview(messageStore, duplicateReplyTo)
-              : undefined;
-            socketManager.broadcastAgentMessage(
-              {
-                type: 'text',
-                catId: principal.catId,
-                content: duplicateMsg.content,
-                origin: 'callback',
-                messageId: duplicateMsg.id,
-                invocationId: duplicateMsg.id,
-                // #814: Always include isExplicitPost in broadcast so frontend TD112 dedup skips merge
-                extra: {
-                  isExplicitPost: true,
-                  ...(duplicateExplicitTargets.length ? { targetCats: duplicateExplicitTargets } : {}),
-                },
-                ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
-                ...(duplicateReplyTo ? { replyTo: duplicateReplyTo } : {}),
-                ...(replyPreview ? { replyPreview } : {}),
-                timestamp: Date.now(),
-              },
-              effectiveThreadId,
-            );
-          },
+          enqueueFailureMessage: '[agent-key/post-message] duplicate wake admission failed',
         });
         return {
           status: 'duplicate',
@@ -1668,8 +1751,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           ...(duplicateReplyTo ? { replyTo: duplicateReplyTo } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         };
-      };
-      if (duplicateMsg) return recoverPersistedCloudReturn(duplicateMsg);
+      }
 
       // Server-custodied returns use a durable exact-source idempotency key in
       // the message store. Consuming the short-lived agent-key key would make
@@ -1681,88 +1763,81 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         }
       }
 
-      if (!usesServerGrant) {
-        // Race-safe backstop for ordinary agent-key posts (for example the
-        // shared Antigravity MCP). Server-grant returns deliberately bypass
-        // this transient fingerprint: their exact-source idempotency key is
-        // durable and atomic, while a failed append must remain retryable with
-        // identical content after the grant lease is released.
-        const agentKeyContentDuplicate = await claimCallbackContentOrDuplicate(messageStore, {
-          threadId: effectiveThreadId,
-          userId: principal.userId,
-          catId: principal.catId,
-          content: persistedContent,
-          ...(richBlocks.length > 0 ? { richBlocks } : {}),
-          mentions,
-          ...(mentionsUser ? { mentionsUser } : {}),
-          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-          isExplicitPost: true,
-          ...(clientMessageId ? { clientMessageId } : {}),
-          now,
-          hasRoutingWarnings: routing_warnings.length > 0,
-        });
-        if (agentKeyContentDuplicate) return agentKeyContentDuplicate;
+      let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
+      const a2aAdmissionOptions = hasA2AMentions
+        ? {
+            targetCats: mentions,
+            content: storedContent,
+            userId: principal.userId,
+            ownerAuthProvenance: 'unknown' as const,
+            threadId: effectiveThreadId,
+            createdAt: now,
+            callerCatId: senderCatId,
+          }
+        : undefined;
+      if (a2aAdmissionOptions) {
+        if (!opts.invocationQueue || !queueProcessor?.requestDrain) {
+          reply.status(503);
+          return {
+            kind: 'a2a_admission_unavailable',
+            message: 'Recipient wake admission is unavailable; no message was published.',
+          };
+        }
+        a2aAdmissionPlan = planA2AFanoutAdmission({ invocationQueue: opts.invocationQueue }, a2aAdmissionOptions);
       }
 
-      let storedMsg: Awaited<ReturnType<IMessageStore['append']>>;
-      try {
-        const appendInput: Parameters<IMessageStore['append']>[0] = {
-          threadId: effectiveThreadId,
-          userId: principal.userId,
-          catId: principal.catId,
-          content: persistedContent,
-          mentions,
-          ...(mentionsUser ? { mentionsUser } : {}),
-          origin: 'callback',
-          timestamp: now,
-          ...(extra ? { extra } : {}),
-          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-          ...(willEnqueueToQueue ? { deliveryStatus: 'queued' as const } : {}),
-          ...(cloudReturnMessageIdempotencyKey ? { idempotencyKey: cloudReturnMessageIdempotencyKey } : {}),
-        };
-        if (cloudReturnMessageIdempotencyKey) {
-          const appendResult = await messageStore.appendIdempotent(appendInput);
-          storedMsg = appendResult.message;
-          if (appendResult.idempotent) return recoverPersistedCloudReturn(storedMsg);
-        } else {
-          storedMsg = await messageStore.append(appendInput);
-        }
-      } catch (error) {
-        if (cloudReturnGrantClaim && cloudReturnGrantStore) {
-          await cloudReturnGrantStore.release(cloudReturnGrantClaim);
-        }
-        throw error;
-      }
-      if (cloudReturnGrantClaim && cloudReturnGrantStore && cloudReturnGrantScope) {
-        const committed = await commitCloudReturnGrantAfterPersistence({
-          store: cloudReturnGrantStore,
-          claim: cloudReturnGrantClaim,
-          log: app.log,
-          threadId: effectiveThreadId,
-          sourceMessageId: cloudReturnGrantScope.sourceMessageId,
-          messageId: storedMsg.id,
-        });
-        if (!committed) {
-          app.log.error(
-            { threadId: effectiveThreadId, sourceMessageId: replyTo, messageId: storedMsg.id },
-            '[F247] source-bound reply persisted; durable source idempotency will recover retries without a second append',
-          );
-        }
-      }
+      // Race-safe backstop (agent-key path, e.g. shared Antigravity MCP): the exact-duplicate scan
+      // above is check-then-act, so an atomic content claim makes the at-most-once decision.
+      const agentKeyContentDuplicate = await claimCallbackContentOrDuplicate(messageStore, {
+        threadId: effectiveThreadId,
+        userId: principal.userId,
+        catId: principal.catId,
+        content: storedContent,
+        ...(richBlocks.length > 0 ? { richBlocks } : {}),
+        mentions,
+        ...(mentionsUser ? { mentionsUser } : {}),
+        ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+        isExplicitPost: true,
+        ...(clientMessageId ? { clientMessageId } : {}),
+        now,
+        hasRoutingWarnings: routing_warnings.length > 0,
+      });
+      if (agentKeyContentDuplicate) return agentKeyContentDuplicate;
+
+      const appendInput: AppendMessageInput = {
+        from: { kind: 'agent', catId: principal.catId },
+        threadId: effectiveThreadId,
+        userId: principal.userId,
+        content: storedContent,
+        mentions,
+        ...(mentionsUser ? { mentionsUser } : {}),
+        origin: 'callback',
+        timestamp: now,
+        ...(extra ? { extra } : {}),
+        ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+      };
+      const atomicAdmission = a2aAdmissionPlan
+        ? await appendA2ASourceWithLedgerAdmission(
+            { messageStore, invocationQueue: opts.invocationQueue },
+            appendInput,
+            {
+              plan: a2aAdmissionPlan,
+              ownerAuthProvenance: 'unknown',
+            },
+          )
+        : { message: await messageStore.append(appendInput) };
+      const storedMsg = atomicAdmission.message;
 
       const replyPreview = validatedReplyTo ? await hydrateReplyPreview(messageStore, validatedReplyTo) : undefined;
 
       const deliveryDecision = await MessageDeliveryService.resolveCallbackDeliveryDecision({
         canEnqueueA2A: hasA2AMentions,
-        willEnqueueToQueue,
         messageId: storedMsg.id,
         threadId: effectiveThreadId,
         log: app.log,
         enqueueA2A: () =>
           enqueueA2ATargets(
             {
-              router: router!,
-              invocationRecordStore: invocationRecordStore!,
               socketManager,
               messageStore,
               ...(invocationTracker ? { invocationTracker } : {}),
@@ -1781,50 +1856,50 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               threadId: effectiveThreadId,
               triggerMessage: storedMsg,
               callerCatId: senderCatId,
+              ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
+              ...(atomicAdmission.preAdmittedEntries
+                ? {
+                    preAdmittedEntries: atomicAdmission.preAdmittedEntries,
+                    preAdmittedReplayed: atomicAdmission.preAdmittedReplayed,
+                  }
+                : {}),
             },
           ),
-        markDelivered: (deliveredAt) => messageStore.markDelivered?.(storedMsg.id, deliveredAt),
-        zeroEnqueuedWarnMessage:
-          '[agent-key/post-message] routing preflight or queue guards left no A2A target — broadcasting receipt carrier',
-        enqueueFailureMessage: '[agent-key/post-message] enqueueA2ATargets failed — falling back to broadcast',
+        enqueueFailureMessage: '[agent-key/post-message] wake admission failed',
       });
 
-      // #607: Only broadcast when message is not queued — queued messages are
-      // broadcast later via messages_delivered when QueueProcessor delivers them.
-      if (deliveryDecision.shouldBroadcastNow) {
+      socketManager.broadcastAgentMessage(
+        {
+          type: 'text',
+          catId: principal.catId,
+          content: storedContent,
+          origin: 'callback',
+          messageId: storedMsg.id,
+          invocationId: storedMsg.id,
+          // #814: Always include isExplicitPost in broadcast so frontend TD112 dedup skips merge
+          extra: {
+            isExplicitPost: true,
+            ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+          },
+          ...(mentionsUser ? { mentionsUser } : {}),
+          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+          ...(replyPreview ? { replyPreview } : {}),
+          timestamp: Date.now(),
+        },
+        effectiveThreadId,
+      );
+
+      for (const block of richBlocks) {
         socketManager.broadcastAgentMessage(
           {
-            type: 'text',
+            type: 'system_info' as const,
             catId: principal.catId,
-            content: persistedContent,
-            origin: 'callback',
-            messageId: storedMsg.id,
+            content: JSON.stringify({ type: 'rich_block', block, messageId: storedMsg.id }),
             invocationId: storedMsg.id,
-            // #814: Always include isExplicitPost in broadcast so frontend TD112 dedup skips merge
-            extra: {
-              isExplicitPost: true,
-              ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
-            },
-            ...(mentionsUser ? { mentionsUser } : {}),
-            ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-            ...(replyPreview ? { replyPreview } : {}),
             timestamp: Date.now(),
           },
           effectiveThreadId,
         );
-
-        for (const block of richBlocks) {
-          socketManager.broadcastAgentMessage(
-            {
-              type: 'system_info' as const,
-              catId: principal.catId,
-              content: JSON.stringify({ type: 'rich_block', block, messageId: storedMsg.id }),
-              invocationId: storedMsg.id,
-              timestamp: Date.now(),
-            },
-            effectiveThreadId,
-          );
-        }
       }
 
       if (opts.outboundHook) {
@@ -1881,7 +1956,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...(clientMessageId ? { clientMessageId } : {}),
         ...(routing_warnings.length > 0 ? { routing_warnings } : {}),
         message: buildPostMessageRoutingMessage(routingOutcome.routed, routing_warnings, routingOutcome.notEnqueued),
-        ...(deliveryDecision.routingPreflight ? { routing_preflight: deliveryDecision.routingPreflight } : {}),
       };
     }
 
@@ -2244,6 +2318,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
+    const senderCatId = createCatId(actor.catId);
+
     // F246 Phase B: assign_work effect-class intercept — hold as DispatchProposal
     // instead of auto-delivering. Only applies to cross-thread posts.
     if (isCrossThread && effectClass === 'assign_work' && opts.dispatchProposalStore) {
@@ -2509,7 +2585,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Resolve the ordinary carrier's canonical targets before any policy that
     // can claim, buffer, queue, or emit it. The proposal store's index is
     // deny-only; canonical fields are revalidated inside the store lookup.
-    const senderCatId = createCatId(actor.catId);
     const coordinationResult =
       effectiveCoordination || incomingCrossThreadHint?.coordination
         ? resolveCrossThreadCoordination({
@@ -2631,7 +2706,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           if (!isDelivered(msg as unknown as Parameters<typeof isDelivered>[0])) return false;
           // #1200 codex R11 P1: system-generated messages (persisted error badges)
           // are display-only — route-helpers.ts:744-745 excludes them from freshness.
-          if (msg.userId === 'system') return false;
+          if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
           if (msg.origin === 'briefing') return false;
           // Play-mode privacy visibility. `origin` is transport provenance;
           // persisted cat speech remains freshness-relevant.
@@ -2800,7 +2875,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           }
           if (admission.outcome === 'safe_wait') {
             const carrier = await resolveDirectActionSuccessorCarrier({
-              messageStore,
+              invocationQueue: opts.invocationQueue!,
               lease: admission.lease,
               admissionInput,
             });
@@ -2910,19 +2985,16 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const recoverTypedLocalReviewContinuation = async (duplicateMsg: StoredMessage): Promise<boolean> => {
       if (!typedLocalReviewContinuationTarget) return false;
       if (!opts.invocationQueue) return false;
-      return recoverQueuedDuplicateCallbackMessage({
+      return ensureDuplicateCallbackWake({
         duplicateMsg,
-        willEnqueueToQueue: true,
+        canEnqueueA2A: true,
         invocationQueue: opts.invocationQueue,
         threadId: effectiveThreadId,
         userId: actor.userId,
         log: app.log,
-        preserveQueuedOnEnqueueFailure: true,
         enqueueA2A: () =>
           enqueueA2ATargets(
             {
-              router: router!,
-              invocationRecordStore: invocationRecordStore!,
               socketManager,
               messageStore,
               ...(invocationTracker ? { invocationTracker } : {}),
@@ -2945,10 +3017,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               callerTraceContext: record.traceContext,
             },
           ),
-        markDelivered: (deliveredAt) => messageStore.markDelivered?.(duplicateMsg.id, deliveredAt),
-        zeroEnqueuedWarnMessage: '[F167] typed local-review continuation recovery found no Queue target',
-        enqueueFailureMessage: '[F167] typed local-review continuation recovery failed closed',
-        broadcastNow: () => {},
+        enqueueFailureMessage: '[F167] typed local-review continuation wake admission failed closed',
       });
     };
 
@@ -2982,6 +3051,33 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (!contentProjection.ok) {
       reply.status(contentProjection.statusCode);
       return { kind: contentProjection.kind, message: contentProjection.message };
+    }
+    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
+    const contentTargets = action || typedLocalReviewContinuationTarget ? [] : contentAnalysis.mentions;
+    const validExplicitTargets: CatId[] = [];
+    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
+    if (typedLocalReviewContinuationTarget) {
+      validExplicitTargets.push(typedLocalReviewContinuationTarget);
+    } else {
+      for (const id of explicitTargetCats ?? []) {
+        const resolved = resolveCatTarget(id);
+        if ('ok' in resolved) {
+          validExplicitTargets.push(createCatId(resolved.ok));
+        } else {
+          routing_warnings.push(resolved.error);
+          app.log.warn(
+            { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
+            '[callbacks/post-message] Dropped unavailable catId from targetCats',
+          );
+        }
+      }
+    }
+    const invocationPathMismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+    if (invocationPathMismatch.held) {
+      return {
+        ...invocationPathMismatch.response,
+        ...(clientMessageId ? { clientMessageId } : {}),
+      };
     }
 
     // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
@@ -3035,7 +3131,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             if (
               settlement &&
               settlement.outcome !== 'insufficient' &&
-              !(await cancelPermanentlyRejectedLocalReviewMessage(messageStore, persisted.id, settlement.outcome))
+              !(await cancelPermanentlyRejectedLocalReviewMessage(
+                messageStore,
+                opts.invocationQueue,
+                persisted.id,
+                settlement.outcome,
+              ))
             ) {
               reply.status(503);
               return { kind: 'local_review_rejection_compensation_failed', messageId: persisted.id };
@@ -3043,7 +3144,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             reply.status(settlement?.outcome === 'insufficient' ? 422 : 409);
             return { kind: 'local_review_settlement_failed', settlement, clientMessageId };
           }
-          if (persisted.deliveryStatus === 'queued' && !(await recoverTypedLocalReviewContinuation(persisted))) {
+          if (typedLocalReviewContinuationTarget && !(await recoverTypedLocalReviewContinuation(persisted))) {
             reply.status(503);
             return {
               kind: 'local_review_continuation_pending',
@@ -3083,33 +3184,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     // F52: isCrossThread already computed above (before idempotency claim, F193 AC-A4 gate).
 
-    // Parse line-start @mentions (A2A rule: only line-start, strip code blocks, single target)
-    // Uses analyzeA2AMentions to capture routing_warnings for disabled cats (F182 KD-10).
-    // F52: Cross-thread posts skip self-reference filter so @codex can trigger target thread's codex
-    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
-    // Action-scoped dispatch uses explicit targetCats as the authoritative holder set.
-    // Text mentions remain presentation only and cannot silently mutate lease cardinality.
-    const contentTargets = action ? [] : typedLocalReviewContinuationTarget ? [] : contentAnalysis.mentions;
-    // F098-C1: Merge explicit targetCats with content-parsed mentions (deduped)
-    // F182: use resolveCatTarget to distinguish disabled vs unknown — collect routing_warnings
-    const validExplicitTargets: CatId[] = [];
-    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
-    if (typedLocalReviewContinuationTarget) {
-      validExplicitTargets.push(typedLocalReviewContinuationTarget);
-    } else if (explicitTargetCats) {
-      for (const id of explicitTargetCats) {
-        const resolved = resolveCatTarget(id);
-        if ('ok' in resolved) {
-          validExplicitTargets.push(createCatId(resolved.ok));
-        } else {
-          routing_warnings.push(resolved.error);
-          app.log.warn(
-            { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
-            '[callbacks/post-message] Dropped unavailable catId from targetCats',
-          );
-        }
-      }
-    }
     const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
     // F177-H: Cross-post participant awareness — warn when target cats are not
@@ -3272,7 +3346,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // store with deliveryStatus:'queued' so ContextAssembler excludes this message
     // from other invocations' context until QueueProcessor.executeEntry marks it delivered.
     const hasA2AMentions = !!(mentions.length > 0 && router && invocationRecordStore && effectiveThreadId);
-    const willEnqueueToQueue = !!(hasA2AMentions && opts.invocationQueue);
     // #573: persisted record's extra.stream.invocationId aligned to effectiveInvId
     // (parent/outer) so F5/hydration broadcasts match what live broadcasts use.
     // Merge with any existing extra (cross-post / explicit targets) without losing it.
@@ -3319,9 +3392,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const newlyClaimedActionLease = Boolean(actionFence && actionAdmissionOutcome !== 'replayed');
       let recoveredDuplicateCarrier = false;
       if (!newlyClaimedActionLease) {
-        recoveredDuplicateCarrier = await recoverQueuedDuplicateCallbackMessage({
+        recoveredDuplicateCarrier = await ensureDuplicateCallbackWake({
           duplicateMsg,
-          willEnqueueToQueue,
+          canEnqueueA2A: !!(hasA2AMentions && opts.invocationQueue),
           ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
           threadId: effectiveThreadId,
           userId: actor.userId,
@@ -3330,8 +3403,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           enqueueA2A: () =>
             enqueueA2ATargets(
               {
-                router: router!,
-                invocationRecordStore: invocationRecordStore!,
                 socketManager,
                 messageStore,
                 ...(invocationTracker ? { invocationTracker } : {}),
@@ -3355,45 +3426,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
               },
             ),
-          markDelivered: (deliveredAt) => messageStore.markDelivered?.(duplicateMsg.id, deliveredAt),
-          zeroEnqueuedWarnMessage: '[callbacks/post-message] queued duplicate had no A2A entry — broadcasting anyway',
-          enqueueFailureMessage: '[callbacks/post-message] queued duplicate recovery failed — broadcasting anyway',
-          ...(typedLocalReviewContinuationTarget ? { preserveQueuedOnEnqueueFailure: true } : {}),
-          broadcastNow: async () => {
-            const replyPreview = validatedReplyTo
-              ? await hydrateReplyPreview(messageStore, validatedReplyTo)
-              : undefined;
-            socketManager.broadcastAgentMessage(
-              {
-                type: 'text',
-                catId: actor.catId,
-                content: duplicateMsg.content,
-                origin: 'callback',
-                messageId: duplicateMsg.id,
-                ...stampVisibleTurn(effectiveInvId, invocationId),
-                extra: {
-                  ...standaloneExplicitPostExtra,
-                  ...(isCrossThread
-                    ? {
-                        crossPost: {
-                          sourceThreadId: actor.threadId,
-                          sourceInvocationId: effectiveInvId,
-                        },
-                      }
-                    : {}),
-                  ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-                  ...(!suppressTerminalRouting && validExplicitTargets.length
-                    ? { targetCats: validExplicitTargets }
-                    : {}),
-                },
-                ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
-                ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-                ...(replyPreview ? { replyPreview } : {}),
-                timestamp: Date.now(),
-              },
-              effectiveThreadId,
-            );
-          },
+          enqueueFailureMessage: '[callbacks/post-message] duplicate wake admission failed',
         });
       }
       if (actionFence && actionCarrierDisposition === 'return') {
@@ -3418,6 +3451,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           localReviewSettlement.outcome !== 'insufficient' &&
           !(await cancelPermanentlyRejectedLocalReviewMessage(
             messageStore,
+            opts.invocationQueue,
             duplicateMsg.id,
             localReviewSettlement.outcome,
           ))
@@ -3436,6 +3470,38 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...(clientMessageId ? { clientMessageId } : {}),
         ...(localReviewSettlement ? { localReviewSettlement } : {}),
       };
+    }
+    let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
+    const a2aAdmissionOptions = hasA2AMentions
+      ? {
+          targetCats: mentions,
+          content: storedContent,
+          userId: actor.userId,
+          ownerAuthProvenance: record.ownerAuthProvenance,
+          threadId: effectiveThreadId,
+          createdAt: now,
+          callerCatId: senderCatId,
+          ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+          ...(isCrossThread ? { isCrossThread: true } : {}),
+          ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+        }
+      : undefined;
+    if (a2aAdmissionOptions) {
+      if (!opts.invocationQueue || !queueProcessor?.requestDrain) {
+        await reconcileActionSuccessorEnqueue({
+          service: opts.actionSuccessorAdmissionService,
+          fence: actionFence,
+          disposition: actionCarrierDisposition,
+          unavailableCatIds: actionHolderCatIds,
+          now: Date.now(),
+        });
+        reply.status(503);
+        return {
+          kind: 'a2a_admission_unavailable',
+          message: 'Recipient wake admission is unavailable; no message was published.',
+        };
+      }
+      a2aAdmissionPlan = planA2AFanoutAdmission({ invocationQueue: opts.invocationQueue }, a2aAdmissionOptions);
     }
     // Race-safe backstop: the exact-duplicate scan above is check-then-act, so an atomic content
     // claim makes the at-most-once decision (root cause of the byte-identical duplicate bug).
@@ -3485,6 +3551,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           localReviewSettlement.outcome !== 'insufficient' &&
           !(await cancelPermanentlyRejectedLocalReviewMessage(
             messageStore,
+            opts.invocationQueue,
             contentDuplicate.messageId,
             localReviewSettlement.outcome,
           ))
@@ -3497,25 +3564,39 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
       return { ...contentDuplicate, localReviewSettlement };
     }
-    const storedMsg = await messageStore.append({
+    const appendInput: AppendMessageInput = {
+      from: { kind: 'agent', catId: actor.catId },
       userId: actor.userId,
-      catId: actor.catId,
       content: persistedContent,
       mentions,
       ...(mentionsUser ? { mentionsUser } : {}),
       origin: 'callback',
       timestamp: now,
       threadId: effectiveThreadId,
+      ...(interruptedActionCarrierRecoveryKey ? { idempotencyKey: interruptedActionCarrierRecoveryKey } : {}),
       extra: persistedExtra,
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-      ...(willEnqueueToQueue ? { deliveryStatus: 'queued' as const } : {}),
-      ...(interruptedActionCarrierRecoveryKey ? { idempotencyKey: interruptedActionCarrierRecoveryKey } : {}),
-    });
+    };
+    const atomicAdmission = a2aAdmissionPlan
+      ? await appendA2ASourceWithLedgerAdmission({ messageStore, invocationQueue: opts.invocationQueue }, appendInput, {
+          plan: a2aAdmissionPlan,
+          ownerAuthProvenance: record.ownerAuthProvenance,
+          parentInvocationId: record.parentInvocationId,
+          callerTraceContext: record.traceContext,
+          ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+        })
+      : { message: await messageStore.append(appendInput) };
+    const storedMsg = atomicAdmission.message;
     const localReviewSettlement = await settleTypedLocalReviewMessage(storedMsg.id);
     if (localReviewSettlement && localReviewSettlement.outcome !== 'committed') {
       if (
         localReviewSettlement.outcome !== 'insufficient' &&
-        !(await cancelPermanentlyRejectedLocalReviewMessage(messageStore, storedMsg.id, localReviewSettlement.outcome))
+        !(await cancelPermanentlyRejectedLocalReviewMessage(
+          messageStore,
+          opts.invocationQueue,
+          storedMsg.id,
+          localReviewSettlement.outcome,
+        ))
       ) {
         reply.status(503);
         return { kind: 'local_review_rejection_compensation_failed', messageId: storedMsg.id };
@@ -3541,15 +3622,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // F27: Enqueue @mentioned cats into parent worklist (unified A2A path)
     const deliveryDecision = await MessageDeliveryService.resolveCallbackDeliveryDecision({
       canEnqueueA2A: hasA2AMentions,
-      willEnqueueToQueue,
       messageId: storedMsg.id,
       threadId: effectiveThreadId,
       log: app.log,
       enqueueA2A: () =>
         enqueueA2ATargets(
           {
-            router: router!,
-            invocationRecordStore: invocationRecordStore!,
             socketManager,
             messageStore,
             ...(invocationTracker ? { invocationTracker } : {}),
@@ -3571,15 +3649,16 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             ownerAuthProvenance: record.ownerAuthProvenance,
             callerTraceContext: record.traceContext,
             ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+            ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
+            ...(atomicAdmission.preAdmittedEntries
+              ? {
+                  preAdmittedEntries: atomicAdmission.preAdmittedEntries,
+                  preAdmittedReplayed: atomicAdmission.preAdmittedReplayed,
+                }
+              : {}),
           },
         ),
-      markDelivered: (deliveredAt) => messageStore.markDelivered?.(storedMsg.id, deliveredAt),
-      zeroEnqueuedWarnMessage:
-        '[callbacks/post-message] routing preflight or queue guards left no A2A target — broadcasting receipt carrier',
-      enqueueFailureMessage: '[invocation-callback] enqueueA2ATargets failed — falling back to broadcast',
-      ...(typedLocalReviewContinuationTarget || interruptedActionCarrierRecoveryKey
-        ? { preserveQueuedOnEnqueueFailure: true }
-        : {}),
+      enqueueFailureMessage: '[invocation-callback] wake admission failed',
     });
 
     if (interruptedActionCarrierRecoveryKey && deliveryDecision.enqueueFailed) {
@@ -3614,59 +3693,55 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       now: Date.now(),
     });
 
-    // #607: Only broadcast when message is not queued — queued messages are
-    // broadcast later via messages_delivered when QueueProcessor delivers them.
-    if (deliveryDecision.shouldBroadcastNow) {
+    socketManager.broadcastAgentMessage(
+      {
+        type: 'text',
+        catId: actor.catId,
+        content: persistedContent,
+        origin: 'callback',
+        messageId: storedMsg.id,
+        // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
+        ...stampVisibleTurn(effectiveInvId, invocationId),
+        // F52+F098-C1: Include crossPost + targetCats in real-time broadcast.
+        // #1332: replace_final omits the standalone marker so live UI replaces
+        // the provider stream bubble and suppresses later stream chunks.
+        extra: {
+          ...standaloneExplicitPostExtra,
+          ...(isCrossThread
+            ? {
+                crossPost: {
+                  sourceThreadId: actor.threadId,
+                  sourceInvocationId: effectiveInvId,
+                },
+              }
+            : {}),
+          ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
+          ...(!suppressTerminalRouting && validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+        },
+        ...(mentionsUser ? { mentionsUser } : {}),
+        ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+        ...(replyPreview ? { replyPreview } : {}),
+        timestamp: Date.now(),
+      },
+      effectiveThreadId,
+    );
+
+    // #83: Broadcast each extracted rich block as SSE event for live rendering
+    // P2 cloud-review: include messageId for frontend correlation
+    // #454/573: include effectiveInvId (parent/outer) so frontend can exact-match
+    // callback to stream bubble.
+    // F194 Phase Z9 (砚砚 R1 P1-2): rich_block broadcast — unified stamp via helper.
+    for (const block of richBlocks) {
       socketManager.broadcastAgentMessage(
         {
-          type: 'text',
+          type: 'system_info' as const,
           catId: actor.catId,
-          content: persistedContent,
-          origin: 'callback',
-          messageId: storedMsg.id,
-          // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
+          content: JSON.stringify({ type: 'rich_block', block, messageId: storedMsg.id }),
           ...stampVisibleTurn(effectiveInvId, invocationId),
-          // F52+F098-C1: Include crossPost + targetCats in real-time broadcast.
-          // #1332: replace_final omits the standalone marker so live UI replaces
-          // the provider stream bubble and suppresses later stream chunks.
-          extra: {
-            ...standaloneExplicitPostExtra,
-            ...(isCrossThread
-              ? {
-                  crossPost: {
-                    sourceThreadId: actor.threadId,
-                    sourceInvocationId: effectiveInvId,
-                  },
-                }
-              : {}),
-            ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-            ...(!suppressTerminalRouting && validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
-          },
-          ...(mentionsUser ? { mentionsUser } : {}),
-          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-          ...(replyPreview ? { replyPreview } : {}),
           timestamp: Date.now(),
         },
         effectiveThreadId,
       );
-
-      // #83: Broadcast each extracted rich block as SSE event for live rendering
-      // P2 cloud-review: include messageId for frontend correlation
-      // #454/573: include effectiveInvId (parent/outer) so frontend can exact-match
-      // callback to stream bubble.
-      // F194 Phase Z9 (砚砚 R1 P1-2): rich_block broadcast — unified stamp via helper.
-      for (const block of richBlocks) {
-        socketManager.broadcastAgentMessage(
-          {
-            type: 'system_info' as const,
-            catId: actor.catId,
-            content: JSON.stringify({ type: 'rich_block', block, messageId: storedMsg.id }),
-            ...stampVisibleTurn(effectiveInvId, invocationId),
-            timestamp: Date.now(),
-          },
-          effectiveThreadId,
-        );
-      }
     }
 
     if (opts.outboundHook) {
@@ -3729,7 +3804,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(clientMessageId ? { clientMessageId } : {}),
       ...(routing_warnings.length > 0 ? { routing_warnings } : {}),
       ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-      ...(deliveryDecision.routingPreflight ? { routing_preflight: deliveryDecision.routingPreflight } : {}),
       ...(isCrossThread && crossThreadFreshnessPolicy.mode === 'bypass'
         ? {
             freshness: {
@@ -3793,7 +3867,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       : await messageStore.getMentionsFor(record.catId, 20, record.userId, record.threadId, lastAckId);
     // F35: Filter out whispers not intended for this cat
     const mentionViewer = { type: 'cat' as const, catId };
-    const mentions = rawMentions.filter((m) => canViewMessage(m, mentionViewer));
+    const mentions = rawMentions.filter(
+      (message) =>
+        canViewMessage(message, mentionViewer) && !isMentionOwnedByQueue(opts.invocationQueue, message, catId),
+    );
     // #1200 P2-8 (Sol R2): pair-domain acked resolution via compareCursors.
     // Uses the same (seq, id) pair comparison as the Lua CAS and in-memory
     // cursor store, ensuring consistent ordering semantics across all
@@ -4006,7 +4083,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const principalUserId = principal.userId;
     const exposureAwareThreadRead = {
       includeQueuedCatMessages: true,
-      includeExposedQueuedUserMessagesForCatId: principalCatId,
     } as const;
     // F148 Phase B (AC-B2): tokenize keyword for relevance scoring
     const keywordTerms = keyword ? tokenizeKeyword(keyword) : [];
@@ -4067,9 +4143,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       // F148 Phase E (AC-E2): briefing messages are non-routing, never enter cat context
       if (item.origin === 'briefing') return false;
       if (filterCatId) {
+        const from = messageFrom(item);
         if (filterCatId === 'user') {
-          if (item.catId !== null) return false;
-        } else if (item.catId !== filterCatId) {
+          if (from.kind !== 'user') return false;
+        } else if (from.kind !== 'agent' || from.catId !== filterCatId) {
           return false;
         }
       }
@@ -4079,7 +4156,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       item: Awaited<ReturnType<typeof messageStore.getByThread>>[number],
     ): boolean => {
       if (item.deletedAt) return false;
-      if (!isDurablyReadableByCat(item, principalCatId)) return false;
+      if (!isTimelinePublished(item)) return false;
       if (item.userId !== principalUserId && !isSystemUserMessage(item)) return false;
       if (!canViewMessage(item, viewer)) return false;
       return matchesExtraFilters(item);
@@ -4095,9 +4172,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const isFreshnessRelevant = (item: Awaited<ReturnType<typeof messageStore.getByThread>>[number]): boolean => {
       if (item.deletedAt) return false;
       if (!isDelivered(item)) return false;
-      if (item.userId === 'system') return false;
+      if (messageFrom(item).kind === 'system') return false;
       if (item.origin === 'briefing') return false;
-      if (!item.extra?.crossPost && item.catId !== null && item.catId === principalCatId) return false;
+      const itemFrom = messageFrom(item);
+      const authorCatId = itemFrom.kind === 'agent' ? itemFrom.catId : null;
+      if (!item.extra?.crossPost && authorCatId !== null && authorCatId === principalCatId) return false;
       if (needsPlayFilter && !canViewMessage(item, viewer)) return false;
       return true;
     };
@@ -4329,25 +4408,45 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Sparse reads (keyword/window/cat filter) may skip messages, so they must not ack queued bodies either.
     // Queued-body ledger checks run after envelope selection below; no omitted body may be confirmed as read.
     const publishedMessageIds = new Set(filtered.map((message) => message.id));
+    const queuedSourceMessages = new Map(
+      (
+        await Promise.all(
+          queuedFullEntries.map(async (entry) =>
+            entry.messageId ? await messageStore.getById(entry.messageId) : null,
+          ),
+        )
+      )
+        .filter((message): message is StoredMessage => message !== null)
+        .map((message) => [message.id, message]),
+    );
     const queuedFullMessages = queuedFullEntries
       .filter(
         (entry) =>
-          ![entry.messageId, ...(entry.mergedMessageIds ?? [])].some(
+          ![entry.messageId].some(
             (candidateMessageId) => candidateMessageId && publishedMessageIds.has(candidateMessageId),
           ),
       )
       .map((entry) => {
         const id = entry.messageId ?? `queued:${entry.entryId}`;
-        const speaker =
-          entry.source === 'user'
-            ? getSenderName(null)
-            : entry.callerCatId
-              ? getSenderName(entry.callerCatId)
-              : entry.source;
+        const sourceMessage = entry.messageId ? queuedSourceMessages.get(entry.messageId) : undefined;
+        const speaker = (() => {
+          switch (entry.from.kind) {
+            case 'user':
+              return getSenderName(null);
+            case 'agent':
+              return getSenderName(entry.from.catId);
+            case 'external':
+              return entry.from.sender?.name ?? entry.from.sender?.id ?? entry.from.connectorId;
+            case 'plugin':
+              return entry.from.instanceId;
+            case 'system':
+              return entry.from.service;
+          }
+        })();
         return {
           id,
           threadId: effectiveThreadId,
-          timestamp: Date.now(),
+          timestamp: sourceMessage?.timestamp ?? Date.now(),
           speaker,
           content: entry.content,
           contentLength: entry.content.length,
@@ -4356,13 +4455,24 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           queueEntryId: entry.entryId,
         };
       });
+    const publishedQueueEntries: Map<string, QueueLedgerEntry[]> = opts.invocationQueue
+      ? await opts.invocationQueue.getDurableEntriesForMessages(
+          effectiveThreadId,
+          filtered.map((message) => message.id),
+        )
+      : new Map();
     const publishedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = filtered.map((item) => {
       const imagePaths = extractImagePaths(item.contentBlocks, uploadDir);
       const imageUrls = extractImageUrls(item.contentBlocks);
-      const queuedProjection =
-        item.deliveryStatus === 'queued' && item.queueCustody
-          ? { deliveryStatus: 'queued' as const, queueEntryId: item.queueCustody.entryId }
-          : {};
+      const queueEntry = publishedQueueEntries
+        .get(item.id)
+        ?.find(
+          (entry) =>
+            entry.status !== 'terminal' &&
+            (entry.target.kind === 'unassigned' ||
+              (entry.target.kind === 'cat' && entry.target.catId === principalCatId)),
+        );
+      const queuedProjection = queueEntry ? { deliveryStatus: 'queued' as const, queueEntryId: queueEntry.id } : {};
       const anchored = anchorThreadMessage(item, {
         effectiveThreadId,
         speaker: getSenderName(item.catId),
@@ -4443,6 +4553,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         };
       },
     );
+    const allCandidates =
+      queuedCandidates.length === 0
+        ? publishedCandidates
+        : [...publishedCandidates, ...queuedCandidates].sort((left, right) => {
+            const leftTimestamp = Number(left.projection.timestamp);
+            const rightTimestamp = Number(right.projection.timestamp);
+            const timestampDelta = leftTimestamp - rightTimestamp;
+            return timestampDelta === 0 ? left.id.localeCompare(right.id) : timestampDelta;
+          });
     let envelopePage: ReturnType<typeof pageThreadContextEnvelope<Record<string, unknown>>>;
     try {
       envelopePage = pageThreadContextEnvelope({
@@ -4460,7 +4579,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               },
             }
           : {}),
-        allCandidates: [...publishedCandidates, ...queuedCandidates],
+        allCandidates,
         cursor: decodedCursor,
         scopeHash: cursorScopeHash,
         selection: contextSelection,
@@ -4470,7 +4589,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reply.status(400);
       return { error: error.message, code: 'INVALID_THREAD_CONTEXT_CURSOR' };
     }
-    const payload = envelopePage.payload;
+    let payload = envelopePage.payload;
     const returnedPublishedIds = new Set(
       envelopePage.candidates.filter((candidate) => candidate.source === 'published').map((candidate) => candidate.id),
     );
@@ -4479,8 +4598,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         .filter((candidate) => candidate.source === 'published' && typeof candidate.projection.content === 'string')
         .map((candidate) => candidate.id),
     );
-    const returnedFiltered = filtered.filter((message) => returnedPublishedIds.has(message.id));
-    const fullyReturnedFiltered = filtered.filter((message) => fullPublishedIds.has(message.id));
+    let returnedFiltered = filtered.filter((message) => returnedPublishedIds.has(message.id));
+    let fullyReturnedFiltered = filtered.filter((message) => fullPublishedIds.has(message.id));
     const returnedQueuedEntryIds = new Set(
       envelopePage.candidates
         .filter(
@@ -4492,47 +4611,190 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const fullyReturnedQueuedEntries = queuedFullEntries.filter(
       (entry) =>
         returnedQueuedEntryIds.has(entry.entryId) ||
-        [entry.messageId, ...(entry.mergedMessageIds ?? [])].some(
-          (messageId) => typeof messageId === 'string' && fullPublishedIds.has(messageId),
-        ),
+        [entry.messageId].some((messageId) => typeof messageId === 'string' && fullPublishedIds.has(messageId)),
     );
-    if (fullyReturnedQueuedEntries.length > 0 && principal.kind === 'invocation' && opts.turnExecutionStore) {
-      let exposureExecution: TurnExecutionRecord | null;
+    const adoptableQueuedEntries = fullyReturnedQueuedEntries.filter(
+      (entry): entry is typeof entry & { messageId: string } =>
+        entry.readDisposition === 'adopt' && typeof entry.messageId === 'string',
+    );
+    const seenOnlyQueuedEntries = fullyReturnedQueuedEntries.filter((entry) => entry.readDisposition === 'seen_only');
+    const suppressedQueuedEntryIds = new Set<string>();
+    const suppressedQueuedMessageIds = new Set<string>();
+    const suppressQueuedBody = (entry: (typeof fullyReturnedQueuedEntries)[number]): void => {
+      suppressedQueuedEntryIds.add(entry.entryId);
+      if (typeof entry.messageId === 'string') suppressedQueuedMessageIds.add(entry.messageId);
+    };
+
+    if (fullyReturnedQueuedEntries.length > 0 && opts.invocationQueue && principal.kind === 'invocation') {
+      const queuedSeenInvocationId = principal.invocationId;
+      const seenAt = Date.now();
+      const adoptExposedQueuedEntries = queueProcessor?.adoptExposedQueuedEntries?.bind(queueProcessor);
+      let adoptionAllowed = Boolean(adoptExposedQueuedEntries);
+      if (adoptableQueuedEntries.length > 0 && opts.turnExecutionStore) {
+        let exposureExecution: TurnExecutionRecord | null;
+        try {
+          exposureExecution = await opts.turnExecutionStore.get(principal.invocationId);
+        } catch (err) {
+          app.log.error(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[turn-execution] queued body adoption ledger read failed',
+          );
+          reply.status(503);
+          return { error: 'Turn execution ledger unavailable', code: 'TURN_EXECUTION_LEDGER_UNAVAILABLE' };
+        }
+        adoptionAllowed = Boolean(
+          adoptionAllowed &&
+            exposureExecution &&
+            exposureExecution.status === 'running' &&
+            exposureExecution.parentInvocationId === expectedParentInvocationId &&
+            exposureExecution.threadId === effectiveThreadId &&
+            exposureExecution.userId === principalUserId &&
+            exposureExecution.catId === principalCatId,
+        );
+        if (!adoptionAllowed) {
+          app.log.warn(
+            {
+              invocationId: principal.invocationId,
+              expectedParentInvocationId,
+              effectiveThreadId,
+              principalUserId,
+              principalCatId,
+              exposureExecution,
+            },
+            '[turn-execution] queued body adoption no longer matches the active child; omitting queued bodies',
+          );
+        }
+      }
+
+      const adoptedMessageIds: string[] = [];
+      if (!adoptionAllowed || !adoptExposedQueuedEntries) {
+        for (const entry of adoptableQueuedEntries) suppressQueuedBody(entry);
+      } else {
+        for (const entry of adoptableQueuedEntries) {
+          const adoption = await adoptExposedQueuedEntries({
+            threadId: effectiveThreadId,
+            userId: principalUserId,
+            catId: principalCatId,
+            invocationId: queuedSeenInvocationId,
+            entries: [{ entryId: entry.entryId, messageId: entry.messageId }],
+            seenAt,
+          }).catch((err) => {
+            app.log.error(
+              { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+              '[F254] queued body adoption persistence failed before full-body return',
+            );
+            return { outcome: 'rejected', reason: 'persistence_unavailable' } as const;
+          });
+          if (adoption.outcome === 'adopted') {
+            adoptedMessageIds.push(entry.messageId);
+            continue;
+          }
+          if (adoption.reason === 'persistence_unavailable') {
+            reply.status(503);
+            return { error: 'Queued body adoption unavailable', code: 'QUEUE_ADOPTION_UNAVAILABLE' };
+          }
+          suppressQueuedBody(entry);
+        }
+      }
+
+      const custodyMessageIds = [
+        ...seenOnlyQueuedEntries.flatMap((entry) => (typeof entry.messageId === 'string' ? [entry.messageId] : [])),
+        ...adoptedMessageIds,
+      ];
+      if (queueProcessor?.resolvePromptMessageCustodyWakes && custodyMessageIds.length > 0) {
+        let adoptedWakes: readonly TurnCustodyWakeProvenance[];
+        try {
+          adoptedWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
+            threadId: effectiveThreadId,
+            catId: principalCatId,
+            messageIds: custodyMessageIds,
+          });
+        } catch (err) {
+          app.log.error(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[F167] queued custody obligation resolution failed before full-body return',
+          );
+          reply.status(503);
+          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+        }
+        if (
+          adoptedWakes.length > 0 &&
+          !(await turnCustodyAdoptionRegistry.adopt(principal.invocationId, adoptedWakes))
+        ) {
+          app.log.error(
+            { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[F167] active invocation has no turn custody adoption handler',
+          );
+          reply.status(409);
+          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+        }
+      }
+
+      let receiptChanged = false;
       try {
-        exposureExecution = await opts.turnExecutionStore.get(principal.invocationId);
+        for (const entry of seenOnlyQueuedEntries) {
+          if (entry.alreadyExposed) continue;
+          const seen = await opts.invocationQueue.markQueuedSeenDurable(
+            effectiveThreadId,
+            principalUserId,
+            entry.entryId,
+            principalCatId,
+            queuedSeenInvocationId,
+            seenAt,
+          );
+          receiptChanged = seen.changed || receiptChanged;
+          if (seen.newlySeen) recordQueuedSeenTelemetry();
+        }
       } catch (err) {
         app.log.error(
           { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-          '[turn-execution] queued body exposure ledger read failed',
+          '[F254] queued body seen persistence failed before full-body return',
         );
         reply.status(503);
-        return { error: 'Turn execution ledger unavailable', code: 'TURN_EXECUTION_LEDGER_UNAVAILABLE' };
+        return { error: 'Queued body receipt unavailable', code: 'QUEUE_RECEIPT_UNAVAILABLE' };
       }
-      if (!exposureExecution) {
-        reply.status(409);
-        return { error: 'Turn execution not found', code: 'TURN_EXECUTION_NOT_FOUND' };
-      }
-      if (
-        exposureExecution.status !== 'running' ||
-        exposureExecution.parentInvocationId !== expectedParentInvocationId ||
-        exposureExecution.threadId !== effectiveThreadId ||
-        exposureExecution.userId !== principalUserId ||
-        exposureExecution.catId !== principalCatId
-      ) {
-        app.log.error(
-          {
-            invocationId: principal.invocationId,
-            expectedParentInvocationId,
-            effectiveThreadId,
-            principalUserId,
-            principalCatId,
-            exposureExecution,
-          },
-          '[turn-execution] queued body exposure scope/status mismatch',
+
+      if (receiptChanged) {
+        await emitQueueUpdated(
+          socketManager,
+          principalUserId,
+          effectiveThreadId,
+          opts.invocationQueue.list(effectiveThreadId, principalUserId),
+          messageStore,
+          'queued_seen',
         );
-        reply.status(409);
-        return { error: 'Turn execution scope mismatch', code: 'TURN_EXECUTION_SCOPE_MISMATCH' };
       }
+      if (opts.redis && custodyMessageIds.length > 0) {
+        try {
+          await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
+            invocationId: queuedSeenInvocationId,
+            catId: principalCatId as CatId,
+            exactMessageIds: custodyMessageIds,
+            evidenceKind: 'queue_exact_read',
+          });
+        } catch (err) {
+          app.log.warn(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId },
+            '[F254-D2] provider notice seen projection failed for Queue exact read',
+          );
+        }
+      }
+    }
+
+    if (suppressedQueuedEntryIds.size > 0 || suppressedQueuedMessageIds.size > 0) {
+      payload = {
+        ...payload,
+        messages: payload.messages.filter((message) => {
+          const messageId = typeof message.id === 'string' ? message.id : undefined;
+          const queueEntryId = typeof message.queueEntryId === 'string' ? message.queueEntryId : undefined;
+          return !(
+            (messageId && suppressedQueuedMessageIds.has(messageId)) ||
+            (queueEntryId && suppressedQueuedEntryIds.has(queueEntryId))
+          );
+        }),
+      };
+      returnedFiltered = returnedFiltered.filter((message) => !suppressedQueuedMessageIds.has(message.id));
+      fullyReturnedFiltered = fullyReturnedFiltered.filter((message) => !suppressedQueuedMessageIds.has(message.id));
     }
     // F236 AC-A1 (R1/砚砚 P1): emit returnedChars so the eval layer can compute payload shrink (省).
     const serializedPayload = JSON.stringify(payload);
@@ -4717,106 +4979,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         );
       }
     }
-    if (fullyReturnedQueuedEntries.length > 0 && opts.invocationQueue && principal.kind === 'invocation') {
-      const queuedSeenInvocationId = principal.invocationId;
-      const seenAt = Date.now();
-      let receiptChanged = false;
-      for (const entry of fullyReturnedQueuedEntries) {
-        const before = opts.invocationQueue.getEntrySnapshot(effectiveThreadId, principalUserId, entry.entryId);
-        const newlySeen = opts.invocationQueue.markQueuedSeen(
-          effectiveThreadId,
-          principalUserId,
-          entry.entryId,
-          principalCatId,
-          queuedSeenInvocationId,
-          seenAt,
-        );
-        const persistedEntry = opts.invocationQueue.getEntrySnapshot(effectiveThreadId, principalUserId, entry.entryId);
-        const evidenceChanged =
-          before?.queuedSeenInvocationIdByCatId?.[principalCatId] !==
-          persistedEntry?.queuedSeenInvocationIdByCatId?.[principalCatId];
-        const exposureChanged =
-          !(before?.queuedBodyExposures ?? []).some(
-            (exposure) => exposure.targetCatId === principalCatId && exposure.invocationId === queuedSeenInvocationId,
-          ) &&
-          (persistedEntry?.queuedBodyExposures ?? []).some(
-            (exposure) => exposure.targetCatId === principalCatId && exposure.invocationId === queuedSeenInvocationId,
-          );
-        let reminderSeen = false;
-        if (persistedEntry && opts.queueCustodyCoordinator) {
-          await opts.queueCustodyCoordinator.persistEntry(persistedEntry);
-          reminderSeen = await opts.queueCustodyCoordinator.markReminderSeen(
-            persistedEntry,
-            principalCatId,
-            queuedSeenInvocationId,
-          );
-        }
-        receiptChanged = newlySeen || evidenceChanged || exposureChanged || reminderSeen || receiptChanged;
-        if (newlySeen) recordQueuedSeenTelemetry();
-      }
-      if (receiptChanged) {
-        await emitQueueUpdated(
-          socketManager,
-          principalUserId,
-          effectiveThreadId,
-          opts.invocationQueue.list(effectiveThreadId, principalUserId),
-          messageStore,
-          'queued_seen',
-        );
-      }
-      if (opts.redis) {
-        const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) => [
-          ...(entry.messageId ? [entry.messageId] : []),
-          ...(entry.mergedMessageIds ?? []),
-        ]);
-        try {
-          await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
-            invocationId: queuedSeenInvocationId,
-            catId: principalCatId as CatId,
-            exactMessageIds: exactQueuedMessageIds,
-            evidenceKind: 'queue_exact_read',
-          });
-        } catch (err) {
-          app.log.warn(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId },
-            '[F254-D2] provider notice seen projection failed for Queue exact read',
-          );
-        }
-      }
-      const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) => [
-        ...(entry.messageId ? [entry.messageId] : []),
-        ...(entry.mergedMessageIds ?? []),
-      ]);
-      if (queueProcessor?.resolvePromptMessageCustodyWakes) {
-        let adoptedWakes: readonly TurnCustodyWakeProvenance[];
-        try {
-          adoptedWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
-            threadId: effectiveThreadId,
-            catId: principalCatId,
-            messageIds: exactQueuedMessageIds,
-          });
-        } catch (err) {
-          app.log.error(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] queued custody obligation resolution failed before full-body return',
-          );
-          reply.status(503);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
-        if (
-          adoptedWakes.length > 0 &&
-          !(await turnCustodyAdoptionRegistry.adopt(principal.invocationId, adoptedWakes))
-        ) {
-          app.log.error(
-            { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] active invocation has no turn custody adoption handler',
-          );
-          reply.status(409);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
-      }
-    }
-
     return payload;
   });
 
@@ -4853,7 +5015,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
 
     // #699 P1-1: Enforce visibility — userId scope, publication status, whisper filtering
-    if (!isDurablyReadableByCat(message, principal.catId)) {
+    const durableRows = opts.invocationQueue
+      ? ((await opts.invocationQueue.getDurableEntriesForMessages(message.threadId, [message.id])).get(message.id) ??
+        [])
+      : [];
+    const hasDurableExposure = durableRows.some(
+      (entry) =>
+        entry.target.kind === 'cat' &&
+        entry.target.catId === principal.catId &&
+        entry.delivery.bodyExposures?.some((exposure) => exposure.targetCatId === principal.catId),
+    );
+    if (!isTimelinePublished(message) && !hasDurableExposure) {
       reply.status(404);
       return { error: 'Message not found' };
     }
@@ -4922,7 +5094,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const principalUserId = principal.userId;
       const exposureAwareThreadRead = {
         includeQueuedCatMessages: true,
-        includeExposedQueuedUserMessagesForCatId: principal.catId,
       } as const;
       const before = await messageStore.getByThreadBefore(
         message.threadId,
@@ -4946,7 +5117,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           if (m.deletedAt) return false;
           // #699 P1 (gpt52 intake review): exclude internal/non-routable (system/briefing) from context too
           if (isInternalNonQuotableParent(m)) return false;
-          if (!isDurablyReadableByCat(m, principal.catId)) return false;
+          if (!isTimelinePublished(m)) return false;
           if (m.userId !== principalUserId && !isSystemUserMessage(m)) return false;
           if (!canViewMessage(m, viewer)) return false;
           return true;
@@ -6127,24 +6298,58 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Send notification message to each voter (so they see the vote request in chat)
     const notificationContent = buildVoteNotification(question, options);
     const mentionCatIds = resolvedVoters;
+    const notificationTimestamp = Date.now();
+    const canDispatchVote = Boolean(
+      router && invocationRecordStore && opts.invocationQueue && queueProcessor?.requestDrain,
+    );
+    const voteAdmissionPlan = canDispatchVote
+      ? planA2AFanoutAdmission(
+          { invocationQueue: opts.invocationQueue },
+          {
+            targetCats: mentionCatIds,
+            content: notificationContent,
+            userId: record.userId,
+            ownerAuthProvenance: record.ownerAuthProvenance,
+            threadId: record.threadId,
+            createdAt: notificationTimestamp,
+            callerCatId: record.catId as CatId,
+            ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+          },
+        )
+      : undefined;
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
+    let preAdmittedVoteEntries: readonly QueueEntry[] | undefined;
+    let preAdmittedVoteReplayed = false;
     try {
-      notificationMsg = await messageStore.append({
+      const notificationInput: AppendMessageInput = {
+        from: { kind: 'agent', catId: record.catId },
         userId: record.userId,
-        catId: record.catId,
         content: notificationContent,
         mentions: mentionCatIds,
         origin: 'callback',
-        timestamp: Date.now(),
+        timestamp: notificationTimestamp,
         threadId: record.threadId,
-      });
+      };
+      const admission = voteAdmissionPlan
+        ? await appendA2ASourceWithLedgerAdmission(
+            { messageStore, invocationQueue: opts.invocationQueue },
+            notificationInput,
+            {
+              plan: voteAdmissionPlan,
+              ownerAuthProvenance: record.ownerAuthProvenance,
+              ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+              callerTraceContext: record.traceContext,
+            },
+          )
+        : { message: await messageStore.append(notificationInput) };
+      notificationMsg = admission.message;
+      preAdmittedVoteEntries = admission.preAdmittedEntries;
+      preAdmittedVoteReplayed = admission.preAdmittedReplayed ?? false;
     } catch (err) {
       log.warn({ err }, 'Failed to persist vote notification');
     }
 
-    // Dispatch voter cats so they receive the notification and can vote.
-    // Uses enqueueA2ATargets (standard A2A dispatch, NOT multi_mention depth guard).
-    // If queue overflows (>MAX_QUEUE_DEPTH), falls back to direct dispatch for remaining voters.
+    // Dispatch voter cats through the canonical A2A Queue so they receive the notification and can vote.
     if (notificationMsg && router && invocationRecordStore) {
       const a2aDeps = {
         router,
@@ -6168,25 +6373,23 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         callerCatId: record.catId as CatId,
         ownerAuthProvenance: record.ownerAuthProvenance,
         callerTraceContext: record.traceContext,
+        ...(voteAdmissionPlan ? { preplannedAdmission: voteAdmissionPlan } : {}),
+        ...(preAdmittedVoteEntries
+          ? {
+              preAdmittedEntries: preAdmittedVoteEntries,
+              preAdmittedReplayed: preAdmittedVoteReplayed,
+            }
+          : {}),
       };
       try {
-        const { enqueued, coalesced, routingPreflight } = await enqueueA2ATargets(a2aDeps, a2aOpts);
-        // Fallback: voters that hit queue capacity limit → direct dispatch.
-        // F216 AC-D5: coalesced voters are already handled (content merged into existing entry),
-        // so they must NOT be counted as missed. Only truly unhandled cats get direct dispatch.
+        const { enqueued, coalesced } = await enqueueA2ATargets(a2aDeps, a2aOpts);
         const handled = new Set([...enqueued, ...(coalesced ?? [])]);
-        const rejected = new Set(
-          routingPreflight?.targets
-            .filter((target) => target.disposition === 'rejected')
-            .map((target) => target.targetCatId) ?? [],
-        );
-        const missed = mentionCatIds.filter((c) => !handled.has(c) && !rejected.has(c));
+        const missed = mentionCatIds.filter((c) => !handled.has(c));
         if (missed.length > 0) {
-          app.log.info(
+          app.log.warn(
             { threadId: record.threadId, missed, enqueued },
-            '[callbacks/start-vote] Queue overflow: falling back to direct dispatch for remaining voters',
+            '[callbacks/start-vote] canonical Queue did not admit every voter',
           );
-          await triggerA2AInvocation(a2aDeps, { ...a2aOpts, targetCats: missed });
         }
       } catch (err) {
         app.log.warn(`[callbacks/start-vote] Failed to dispatch voter invocations: ${String(err)}`);
@@ -6431,7 +6634,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         if (!isDelivered(msg as unknown as Parameters<typeof isDelivered>[0])) return false;
         // #1200 codex R11 P1: system-generated messages (persisted error badges)
         // are display-only — route-helpers.ts:744-745 excludes them from freshness.
-        if (msg.userId === 'system') return false;
+        if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
         if (msg.origin === 'briefing') return false;
         if (needsPlayFilter) {
           if (!canViewMessage(msg as unknown as Parameters<typeof canViewMessage>[0], freshnessViewer)) return false;
@@ -6470,34 +6673,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         let changed = false;
         const reminderInvocationId = principal.parentInvocationId ?? principal.invocationId;
         for (const entry of queuedEntries) {
-          const entryChanged = opts.invocationQueue.markQueuedNotified(
+          const entryChanged = await opts.invocationQueue.markQueuedNotifiedAndReminderDeliveredDurable(
             principal.threadId,
             principal.userId,
             entry.entryId,
             principal.catId,
+            reminderInvocationId,
           );
-          if (entryChanged && opts.queueCustodyCoordinator) {
-            const persistedEntry = opts.invocationQueue.getEntrySnapshot(
-              principal.threadId,
-              principal.userId,
-              entry.entryId,
-            );
-            if (persistedEntry) await opts.queueCustodyCoordinator.persistEntry(persistedEntry);
-          }
-          const persistedEntry = opts.invocationQueue.getEntrySnapshot(
-            principal.threadId,
-            principal.userId,
-            entry.entryId,
-          );
-          const reminderChanged =
-            persistedEntry && opts.queueCustodyCoordinator
-              ? await opts.queueCustodyCoordinator.markReminderDelivered(
-                  persistedEntry,
-                  principal.catId,
-                  reminderInvocationId,
-                )
-              : false;
-          changed = entryChanged || reminderChanged || changed;
+          changed = entryChanged || changed;
         }
         if (changed) {
           await emitQueueUpdated(

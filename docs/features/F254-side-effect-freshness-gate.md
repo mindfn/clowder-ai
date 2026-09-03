@@ -1,12 +1,12 @@
 ---
 feature_ids: [F254]
 related_features: [F233, F167, F069, F193, F086, F108, F117, F039, F118, F212, F244, F264]
-related_decisions: [040, 041, 042]
+related_decisions: [040, 041, 042, 043]
 topics: [freshness, glass-box, supplement, inbox-notice, runtime-descriptor, side-effect-gate, codex-app-server, lifecycle, liveness, ax]
 doc_kind: spec
 created: 2026-06-27
-updated: 2026-08-28
-tips_exempt: historical protocol-contract correction only; no new user capability surface
+updated: 2026-09-03
+tips_exempt: true
 ---
 
 # F254: Side-Effect Freshness Gate — 副作用出口 freshness 拦截
@@ -18,6 +18,19 @@ Architecture cell: ball-custody, dispatch, bubble-pipeline, transport, harness-e
 Map delta: completed
 
 Map delta why: ADR-042 changes the durable responsibility from withheld replacement to one published original plus bounded supplement sequences, with explicit ownership edges into dispatch, bubble-pipeline, and transport.
+
+### 2026-09-03 ADR-043 acceptance correction: full queued read = exact active-child adoption
+
+The co-creator's worktree acceptance supersedes the old D1.2 two-stage implementation rule for persisted
+`conversation_input` rows. A complete, contiguous same-thread read may return such a queued body only after
+the exact running child adopts that target's scalar QueueLedger row into its existing response lifecycle. The
+same adoption marks the Message delivered, records exact body exposure, and terminalizes only that target row
+as handled. For A+B, A's read leaves B queued; B's later read retires B. Sparse/cross-thread/oversized-anchor
+reads do not adopt. A benign active-run/CAS race omits only the unadopted queued body from the 200 response;
+persistence unavailability fails the read with 503. Message-less and typed scheduled/freshness/continuation custody rows retain read→seen.
+
+Historical sections below that say “read must not consume” or infer handled from later invocation success are
+retained as design history, not current implementation authority. ADR-043 D8 and AC-D8a/b below are current.
 
 ## Why
 
@@ -54,7 +67,9 @@ operator 愿景审计把原始洞察补全：gate 放在工具/路由层确实�
 
 - `stream_stale_detected` 只是 **observed proof**，不是 catch closure。
 - `existing invocation coverage` 只是 **scheduler coverage**，只能防重复 enqueue，不能证明已有/后继 invocation 真读到并处理了消息。
-- `queued_seen + invocation succeeded` 可继续作为队列消费的 v1 operational evidence，但它不能单独证明回答在语义上纳入了该消息，更不能作为用户体验层的完成判据。
+- `queued_seen + invocation succeeded` 是已退役的 v1 Queue 消费推断；ADR-043 D8 改由 exact active-child
+  adoption 直接证明正文进入哪一个 response。即便 adoption 已解决 Queue 责任，它仍不能单独证明最终回答在
+  语义上充分回应了正文，不能替代 Phase E 的用户体验判据。
 
 因此，Phase D 的“stale stream 仍正常存储和投递 + 之后尽力 re-invoke”只完成了检测与恢复尝试，没有完成交付闭环。Phase E 以 catch closure 重新钉住终态。
 
@@ -613,14 +628,14 @@ interface RuntimeCapabilityDescriptor {
 **两猫独立验证闭合**（Ragdoll + Maine Coon 2026-06-30）：
 - Maine Coon查 runtime transcript 确认测试轮次（invocation `d2748bf3`）的 tool_use 只有 `ToolSearch`，无 `cat_cafe_post_message`
 - Ragdoll查 API 日志确认该轮无 `checkFreshnessForPostMessage` 调用记录
-- operator质疑"你也调了 MCP"精确化：猫确实调了 MCP（ToolSearch），但 ToolSearch 是 Claude Code 内置工具，不走 Clowder AI MCP 回调层，不触发 B1 notice 也不经过 A 的 freshness gate
+- operator质疑"你也调了 MCP"精确化：猫确实调了 MCP（ToolSearch），但 ToolSearch 是 Claude Code 内置工具，不走应用 MCP 回调层，不触发 B1 notice 也不经过 A 的 freshness gate
 
 **三层缺口叠加**：
 
 | 层 | 机制 | 现状 | 影响 |
 |----|------|------|------|
 | Phase A | stream output freshness check | ❌ 不存在 | 文本回复直接存，不拦 |
-| Phase B1 | 调 MCP 时附未读提醒 | ⚠️ 只覆盖 Clowder AI MCP | ToolSearch/Bash/Read 等 harness 内置工具不触发 |
+| Phase B1 | 调 MCP 时附未读提醒 | ⚠️ 只覆盖应用 MCP | ToolSearch/Bash/Read 等 harness 内置工具不触发 |
 | Phase B3 | invocation 结束 re-invoke | ⚠️ cursor_caught_up | MCP read 工具推了 seenCursor，掩盖了未读 |
 
 #### D1: Stream output freshness check
@@ -648,25 +663,27 @@ interface RuntimeCapabilityDescriptor {
 3. 触发前必须检查已有 coverage：queued/newer invocation/freshness re-invoke 已存在则 skip
 4. prompt 必须指向能 ack 的读取路径（无 filter 的 `get_thread_context`），或实现显式 D1 ack；不能只说 `list_recent`
 
-**D1.2 queued read/ack journey 重开（2026-07-01 operator 实测）**：
+**D1.2 queued read/ack journey 重开（2026-07-01 operator 实测，已由 ADR-043 D8 取代）**：
 
 - PR #2664 让 gate/notice 能看到 `InvocationQueue` 中的 queued 消息，但 `get_thread_context` 仍只返回 delivered 消息，猫无法 fetch queued 正文并确认自己看过
 - 单纯让猫 fetch queued 正文还不够：`read/seen`、`handled`、`delivery`、`target consumption` 是四个不同语义；把 fetch 直接当 consume 会吞掉多目标并行任务
-- 当前推荐方向：full read 只产生 per-cat `queued_seen`；只有成功回应或显式 disposition 才产生 per-cat `queued_handled`；多目标 entry 必须保留其他 target
+- 当时推荐方向是 full read 只产生 per-cat `queued_seen`、成功回应后再产生 `queued_handled`；2026-09-03
+  acceptance 证明这个延迟会让已进入当前 child 输入的同一 target 继续显示在 Queue，现改为 exact active-child
+  adoption 立即提交 seen + handled，仍只终局当前 target 标量行
 - 稀疏读取（`keyword` / `messageId` / `catId` filter）默认不 ack queued work，避免猫只看局部结果却把未读队列标成已处理
 
 #### D2: Provider-native 工具的 same-turn notice 覆盖（reopened 2026-07-16）
 
-B1 notice 只覆盖 Clowder AI MCP server 的 tool result。Codex `functions.exec` / `commandExecution` /
-`apply_patch` 等 provider-native surface 不经过 Clowder AI MCP callback；2026-07-16 live reproduction 证明
+B1 notice 只覆盖应用 MCP server 的 tool result。Codex `functions.exec` / `commandExecution` /
+`apply_patch` 等 provider-native surface 不经过应用 MCP callback；2026-07-16 live reproduction 证明
 消息可在 native command active 时进入 durable Queue，而当前 `exec --json` turn 继续多个工具边界仍看不到正文。
 
 Phase 0 结论：PostToolUse warning 与外部 polling 都没有 active-turn input 口；满足 D2 需要把 Codex carrier
 迁移到 app-server，通过 stable `turn/steer(expectedTurnId)` 在 `item/completed` 安全边界追加 content-free
 
-Claude-family 当前“本轮经常收到”主要来自 B1：成功的 read-only Clowder AI MCP result 每 5 次工具调用
+Claude-family 当前“本轮经常收到”主要来自 B1：成功的 read-only 应用 MCP result 每 5 次工具调用
 check 一次、一轮最多 3 次；Bash/Read/Edit/ToolSearch 等 provider-native surface 与 cap 后的长尾不覆盖。
-Phase A 写门也只保护显式 Clowder AI MCP 发消息路径，普通 stdout final 不经过。默认 `print_sdk` carrier
+Phase A 写门也只保护显式应用 MCP 发消息路径，普通 stdout final 不经过。默认 `print_sdk` carrier
 写完首条 prompt 即关闭 stdin；Claude Code 2.1.210 虽支持 stream-json input，但官方允许工作中消息排为
 自己的 internal turn，必须经 live fixture 区分 `exact_active_turn` 与 `queued_internal_turn`。共享 Queue、
 notice broker、seen/handled truth 和 eval 不分叉，只在 Codex/Claude 最后一米 adapter 分叉。
@@ -747,8 +764,8 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 - [x] AC-D5: 猫的 stream output 是自回复（thread 中最新消息是自己发的）→ 不标 stale（self-message 排除，与 Phase A 一致）
 - [x] AC-D6: **D1.1 regression fix**：`stream output stale` 不得无条件强制 re-invoke。同一 stale set 必须 single-flight 去重；已有 queued/newer invocation/freshness/current-user same-cat pending coverage 时只标记 stale + 记录 skip，不 enqueue 第二次。**merged**: PR #2701 — D1 single-flight claim + enqueue-outcome release + current-user pending coverage
 - [x] AC-D7: **D1.1 ack path**：D1 re-invoke prompt 必须要求可推进 seenCursor 的读取路径（无 `catId`/keyword/messageId filter 的 `get_thread_context`），或实现独立 D1 ack 事件；`list_recent` / filtered context read 不能作为闭环完成凭据。**merged**: PR #2701 — prompt 指向 full `get_thread_context`
-- [x] AC-D8a: **D1.2 queued read + freshness suppression**：无 filter 的 `get_thread_context?responseMode=full` 必须能返回 same-target queued 正文；读取后在 `QueueEntry` 上记录 durable per-cat `queued_seen`（suppress duplicate freshness nag for same cat+message）。Sparse reads（keyword/messageId/catId filter）不得返回 queued 正文或记录 `queued_seen`。读取不得 `markDelivered`，不得 consume target。**merged**: PR #2707 — queued bodies remain readable after `queued_seen`, while duplicate same-cat freshness nags are suppressed.
-- [x] AC-D8b: **D1.2 handled closure**：cat 对已 `queued_seen` 的 entry 成功回应后，产出 `queued_handled` 证据供 freshness loop 闭环；v1 handled 证据由 `queued_seen(entry, cat, I) + cat-level invocation terminal succeeded(I, cat)` 推断，显式 disposition 延后。**Evidence identity contract**：`queued_handled(entry, cat)` 成立当且仅当存在唯一 invocation `I`，seen 记录时 `I` 是 `(thread, cat)` 的 active invocation，且 seen 与 succeeded 锚定同一个 outer `InvocationRecord.id`。失败/取消不得 consume；delivery persistence + `messages_delivered` emit 未完成时不得提交 `queued_handled`。**merged**: PR #2712 — successful same-invocation handled closure consumes only the completed target, preserves failed/canceled work, emits delivery events atomically, and closes duplicate/retry/connector evidence edges.
+- [x] AC-D8a: **D1.2 exact active-child adoption**：无 filter 的 `get_thread_context?responseMode=full` 只有在 exact running `TurnExecution`、callback parent 和 `LifecycleActiveRun` 全部一致时，才返回带持久 Message 的 same-target `conversation_input` queued 正文。返回前必须 claim 该 source×target 标量行，把 source/entry 写入现有 response lifecycle 与 live Active Run，并将 Message 单调推进为 delivered。Sparse reads（keyword/messageId/catId filter）、cross-thread reads 与 oversized anchor 不得返回或接管 queued 正文；良性竞态只剔除未接管正文并 200 返回其余 History，持久层不可用才 503。无 Message 与 typed custody 行仍只写 seen。**ADR-043 D8 supersedes the PR #2707 read-only transition for persisted conversation input.**
+- [x] AC-D8b: **D1.2 immediate per-target closure**：同一 adoption path 写 exact `queued_seen(entry, cat, childInvocationId)` 与 `queued_handled`，并把该 target row 终局为 handled；不再以 invocation terminal success 推断 Queue 消费。A+B 的 A row 终局不得改变 B row；第一只猫接管后原 Message 进入成员 History，B 的工单仍保持 queued，直到 B 自己接管或走其他明确终态。durable lifecycle 接管前失败必须 restore；接管后不得 requeue，terminal receipt 暂不可写时保持 processing 供 restart interrupted 收敛。
 - [x] AC-D9: **A2A handoff reply suppression**：如果 B 的消息 `replyTo` 指向 A 自己的消息，且该父消息 mentions B，则 B 的回复是 A 主动发起的 handoff 覆盖，不得让 Phase A gate / D1 / B1 把它当作需要 hold 或重新唤醒 A 的未读 freshness；普通未被父消息 mention 的其他 cat 回复仍按 freshness 候选处理。
 - [x] AC-D10: **Current trigger suppression**：connector/event/user message 如果就是当前 invocation 的触发消息（`currentUserMessageId` / trigger `messageId`），说明它已经进入本次 prompt；D1 stream freshness 不得再把同一个 message 计为 unseen 并 enqueue `Freshness -> cat`。其他非触发 connector 消息仍按 freshness 候选处理。
 - [x] AC-D11: **Routable freshness input**：Phase A gate / B1 notice / D1 stream stale 只看可路由 conversation 内容。空正文且仅含 tool events 的 cat stream、`routing-guard-failure` 等内部诊断、`system` display-only 消息、`context_briefing`/`origin=briefing` 不得产生 held/notice/stale/re-invoke；rich blocks / contentBlocks 仍算可路由内容。`userId=scheduler` 的 hold-ball / scheduled-task trigger 含正文且会进入下一次 prompt，必须保留为 routable freshness input。
@@ -789,7 +806,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
     diagnostic path；已见 disconnect wording 分类为 network error。PR #3082（`7dd7a4d51`）。
   - [x] **AC-D14h Capacity checkpoint continuation**：`turn.completed(status=failed)` 且错误精确等于 provider
     model-capacity terminal 时，允许在同一 native thread 开一个有界恢复 turn，但不得发送通用“继续”。pre-tool
-    恢复绑定 exact interrupted turn；post-tool 还必须同时具备 Clowder AI child invocation + prompt message IDs、
+    恢复绑定 exact interrupted turn；post-tool 还必须同时具备应用 child invocation + prompt message IDs、
     最新 `turn/plan/updated` 与逐 item terminal 账本。任一工具仍 in-flight 或 checkpoint 不完整即 fail closed；
     续接语义是 at-least-once，prompt 强制 verify-before-redo，不扩大 cwd/sandbox/approval/tool/授权边界。
     中间重试留在 status channel；`blocked_inflight_tool` / `checkpoint_incomplete` / `budget_exhausted` 各保留
@@ -813,7 +830,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 - [ ] AC-D15: **Provider × tool-surface eval**：按 provider、carrier、tool surface 记录
   opportunity/delivered/seen/missed，并区分 `exact_active_turn` / `queued_internal_turn` /
   `mcp_result_piggyback` / `unsupported`；Codex 与 Claude 的 command/file-change/non-Cat-Café MCP /
-  Clowder AI MCP 逐格报告。
+  应用 MCP 逐格报告。
   MCP-only fixture 不得输出 all-tool healthy verdict。
   app-server lifecycle 的 stage duration / retry / interrupt / forced cleanup 是 OTel 工程 telemetry，不能混入
   freshness coverage verdict，也不能创建无 ground truth 的“最长合法静默”指标。
@@ -839,7 +856,7 @@ Codex 0.146.0 schema 还声明 `webSearch`、`imageView`、`sleep`、`imageGener
 `subAgentActivity`。不能把它们一律当 safe：每个 variant 必须被协议 census 明确归为 safe tool boundary、
 intentional non-boundary 或 deferred/no-data；新 variant 未分类时 gate 失败，并将 item type/status 记入有界
 unknown telemetry。Claude 的 native tool-name classifier 已有 dynamic fallback，但默认 `print_sdk` carrier
-明确 unsupported；Kimi 的 `kimi_stream_json` 也必须显式声明 `unsupported/no_data`，不得从 Clowder AI MCP
+明确 unsupported；Kimi 的 `kimi_stream_json` 也必须显式声明 `unsupported/no_data`，不得从应用 MCP
 piggyback 推断 native coverage。
 
 完整 UAT、provider/carrier matrix 与 repair contract 见
@@ -876,7 +893,7 @@ piggyback 推断 native coverage。
 - [x] AC-E19: **精确边界与兼容迁移**：annotation 只扫描 atomic pre-append frontier；幂等 retry 复用原消息与原 observation boundary；legacy running closure 在新原文发表后可 terminalize，但旧 `superseded_positive_stale` 只保留为未完成/历史兼容语义。
 - [x] AC-E20: **可观测性**：记录 `published_with_unseen`、`supplement_offered`、`supplement_produced`、`supplement_declined`，并用 focused API/Web/Redis/connector fixtures 覆盖原文不消失、补充不替换、失败不静默。
 - [x] AC-E21: **Queue 单一所有权与发表不变量**：普通 queued user message 不得同时进入 supplement lifecycle。猫实际读到 exact message 才记录 `(messageId, targetCat, invocationId)` ACK；成功后 handled 且不再 spawn，未读则自然下轮 spawn，失败/取消标记 failed 并回队。Steer 只允许“取消当前 invocation + 立即以同一条消息启动一次”。所有路径都不得扣押 completed original；per-target 五态必须在 F5/reconnect 后水合一致。
-- [x] AC-E22: **Queue restart-durable custody**：普通 queued user message 在 MessageStore 上持久保存 revisioned、TTL=0 custody；API restart 必须按原 `messageId / entryId / position / target` 确定性重建 Queue owner。exact seen 仅在同一 invocation 的 immutable per-target `successfulCatIds` witness 包含该猫时 handled；aggregate parent `succeeded` / target membership 不得代替逐猫证明，缺失 witness、失败、取消与 restart-crash 均回 `failed/queued`，多 target 独立恢复。不得用 `markDelivered` 把尚未执行的责任降级成仅可见 timeline 消息。Formal review 进一步证明 A2A worklist growth、provider failure + bare done 与 fail-silent writer 会破坏该 witness；`d93dda62e` 固化 immutable target domain、typed rejection、checked terminal writers 与 per-record startup isolation，聚焦与隔离 Redis 回归已绿，待 exact-head gate/re-review 与 PR/cloud/CI。
+- [x] AC-E22: **Queue restart-durable custody**：ADR-043 将普通 queued user message 的 TTL=0 custody 从 MessageStore 镜像迁入独立 QueueLedger；API restart 直接恢复确定性的 `sourceId × targetCatId` row、position 与 terminal tombstone。exact full-read 只有在同一 running child 与 response lifecycle 可证明时才接管并立即 terminal handled；aggregate parent `succeeded` / target membership 不得代替逐 target adoption。未接管的多 target rows 独立恢复；遗留 claimed 在 restart restore，遗留 processing 终局为 `interrupted/runtime_restart`，terminal row 永不复活。
 - [x] AC-E23: **legacy closure 全量核销迁移**：迁移以全部 active legacy closure 为根集合，逐 attached withheld invocation 分类为 `already_formal_exact / already_recovered_exact / recoverable_text / no_text / conflict`；conflict fail-closed。只有所有 invocation 均有 exact message/evidence 或审计化 no-text 归宿后，closure 才以显式 `legacy_migrated` disposition terminalize；不得伪装成用户 dismissed。恢复复用 exact transcript proof + idempotent append，零 route/Queue/Socket/A2A；重跑不复制正文或递增 revision。PR #3572（squash `d1044074a`）补齐日志轮转后的 35 个 `closure_state` provenance 缺口：51 个 active closure 均进入 root set，134 个 attachment 按 `legacy_census > runtime_log > closure_state` 归一化；exact bundle `250cc9d81938d4a3bcdaef28313d02aefe9bf2101cb08c5c4e8c038a2ba03a7f` 在 production-RDB 隔离克隆上证明 dry-run、33 条恢复、51 个 terminal transition、第二次 apply 零重复与 write-ahead journal。生产 apply 仍未执行，且必须取得绑定该 bundle SHA 的新 operator 授权。
 
 ### Phase E-C ✅（Child Execution Truth + Typed Causal Relevance，2026-07-16 实弹重开）
@@ -950,7 +967,7 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 | **内部/空消息被当成 freshness 输入**（2026-07-05 实测） | Phase A/B/D 共享 `isFreshnessRoutableMessage`：排除空 tool-only stream、route-guard 失败诊断、system display-only、context/briefing；避免将“猫正在工具调用”或内部提示误报成另一只猫/operator的新消息。Scheduler trigger 消息是 prompt-visible work，不在内部噪音过滤内 |
 | 跨 thread cross_post_message 的 freshness 判据不清 | 检查**目标 thread** 的 seenCursor（猫要发到的地方），不是源 thread；目标 thread 无 cursor 时 fail-open |
 | **排队中消息对 gate 不可见**（2026-06-29 实测发现，**已修复** PR #2664） | ~~F117 设计冲突~~ → 已通过 `QueuedMessageChecker` interface 解决：gate 在 delivered-message check 无结果或全 self-message 时 fallback 查 `InvocationQueue.list()`，三条 freshness 路径全部 wired。合成 `maxMessageId` 用 `generateSortableId(Date.now())` 确保 notice 可 resolve |
-| **排队中消息可检测但 read/handled/target consumption 语义未定**（2026-07-01 实测发现） | D1.2 讨论重开：full read 应解决 queued 正文 fetch + per-cat `queued_seen`；consume-on-read / markDelivered-on-read 会破坏 delivery/read/handled 分层，需改成 seen/handled 两阶段。Durable per-target storage/execution 在 QueueEntry/QueueProcessor，F086/F108 消费语义分别处理 multi-recipient 状态和独立 fan-out cutoff |
+| **已被当前 child 读取的 target 仍留在 Queue**（2026-09-03 acceptance） | ADR-043 D8：完整读取必须先完成 exact active-child adoption；同一路径写 seen/handled、markDelivered 并只终局当前 source×target 标量行。A+B 的 sibling row 保持独立；稀疏/跨 thread/无 exact child 证据不接管 |
 | **operator消息 vs 猫消息优先级未区分** | 当前 gate 对所有 unseen 消息一视同仁；B3 re-invoke 已区分高优先级（人类消息 > 猫 chatter，KD-9），但 gate 本身没有。operator消息（"算了不做了"）的时效性高于猫间 chatter，可能需要 gate 层也引入优先级——例如operator消息即使 queued 也 hold，猫消息只 notice |
 
 ## Key Decisions
@@ -983,7 +1000,7 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 - **误 hold 率**：猫已看过消息但仍被 hold 的比例（目标：趋近 0%——独立 seenCursor 应消除大部分此类，但跨 thread cursor 初始化等边缘场景可能残留极少数）
 - **acknowledgeHeld 使用率**：猫选择强制发送的比例（高 = held 信息不够有用，或 hold 太频繁）
 - **re-invoke 触发率**：Phase B.c 自动 re-invoke 的频率（高 = 猫经常无视 notice，notice 设计需改进）
-- **queued read/handled 缺口**：`cat_cafe.freshness.queued_seen` 与 `cat_cafe.freshness.queued_handled` 的差距（高 = 猫读到 queued 正文但未闭环、失败保留、或 `succeeded=handled` v1 推断需要校准）
+- **queued adoption 完整性**：`cat_cafe.freshness.queued_seen` 与 `cat_cafe.freshness.queued_handled` 应在 exact full-read adoption 上同步增长；差值非零表示持久化/接线缺口，不再解释为等待 invocation success
 - **eval:freshness registry**：`docs/harness-feedback/eval-domains/eval-freshness.yaml` 注册并启用 F254 freshness eval 域；`f254-freshness-replay` adapter 从 server-owned fixtures 或 durable closure truth 生成有界 replay artifact，publish generator 只消费其派生 metrics / samples / provenance。零 eligible data 必须输出 `no_data`，避免 silent-green。
 - **D2 carrier coverage**：provider × carrier × tool-surface 分格记录 notice
   `opportunity / delivered / seen / missed`。`codex_exec_json` 对 provider-native surface 必须报告
@@ -1003,8 +1020,8 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 7. **stream output 路径**：operator发消息 → 猫 invocation 启动 → operator又发一条 → 猫 stream 输出文本 → 检测到 unseen → 标记 stale + 触发 re-invoke（不只靠 B3 cursor 判断）
 8. stream output 路径：所有 unseen 消息是自己发的 → 不标 stale（self-message 排除）
 9. **D1.1 回归**：同一 stale set（same seenCursor/highWatermark + same senders/count）已触发过 freshness re-invoke，但猫只调用 `list_recent` / filtered `get_thread_context?catId=...` 未推进 seenCursor → 下一次 stream output 不得再次 enqueue freshness re-invoke；只能记录 stale skip / unresolved ack
-10. **D1.2a queued read/seen**：猫运行期间用户消息进入 queue → 猫调用无 filter `get_thread_context?responseMode=full` → 返回 same-target queued 正文并记录 per-cat `queued_seen` → 三条 freshness 路径不再因同一 queued entry 重复 hold/notice/stale；entry 仍在 queue，且不 `markDelivered`
-11. **D1.2b queued handled**：猫对已 `queued_seen` entry 的 invocation succeeded → 记录/推断 per-cat `queued_handled` → consume only that target；failed/canceled 不 consume；多目标 entry 不移除其他 target
+10. **D1.2a exact adoption**：猫运行期间用户消息进入 queue → exact child 调无 filter `get_thread_context?responseMode=full` → source/entry 接入该 child 的现有 response lifecycle 与 Active Run，Message delivered，当前 target row 写 exact exposure 后 terminal handled
+11. **D1.2b A+B isolation**：A 完整读取只移除 A row、B row 保持 queued；B 后续完整读取从成员 History 取得同一 source 并只移除 B row；最终 active Queue 为空而两个 terminal tombstone 均可审计。无 exact running child、sparse/cross-thread/oversized 读取不得消费
 12. **A2A handoff reply**：A 输出 line-start `@B` 并存为 trigger message → B 的回复 `replyTo` 该 trigger → A 的 Phase A gate / D1 stream freshness / B1 notice 不得因此 hold 或 enqueue `Freshness -> A`；若父消息没有 mention B，则 B 的 reply 仍是普通 unseen 候选
 13. **event trigger coverage**：GitHub CI/CD / Review Feedback 等 connector event 先创建消息并用该 `messageId` 唤醒目标猫 → 该猫本轮 stream output 结束时，不得再因同一 connector message enqueue `Freshness -> cat`；另一个非 trigger connector message 仍会触发 freshness
 14. **routable freshness input**：另一只猫运行中产生空正文 tool-only stream，或 route-guard/system 产生内部诊断消息 → Phase A gate / B1 notice / D1 stream stale 都不得把这些消息计入 unseen；含正文或 rich block 的真实消息仍计入；`userId=scheduler` 的 hold-ball / scheduled-task trigger 因为会进入 prompt，必须计入
@@ -1052,8 +1069,8 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 | R18 | stream output freshness check | D | AC-D1 | stream 存储前 freshness 验证 | ✅ |
 | R19 | stale output re-invoke | D | AC-D2 | 强制 re-invoke 绕过 cursor_caught_up | ✅ |
 | R20 | stale audit trail | D | AC-D4 | 事件流记录 | ✅ |
-| R21 | queued read + freshness suppression | D | AC-D8a | queued 正文返回 + durable per-cat `queued_seen` + no duplicate freshness nag；no consume/markDelivered on read | ✅ |
-| R22 | queued handled closure | D | AC-D8b | `queued_seen + succeeded` handled v1 evidence + per-target consume; failed/canceled preserves work | ✅ |
+| R21 | queued active-child adoption | D | AC-D8a | exact TurnExecution + Active Run + response lifecycle attachment + Message delivered before full queued body returns | ✅ |
+| R22 | immediate per-target closure | D | AC-D8b | paired queued_seen/handled + one scalar row terminal; A+B sibling remains queued until its own adoption | ✅ |
 | R23 | D1.2 eval observability | D | AC-B5/D8 | `queued_seen` + `queued_handled` OTel counters, freshness eval registry/glossary, fail-closed eval-cat instructions | ✅ |
 | R24 | trigger-message coverage suppression | D | AC-D10 | connector trigger message excluded from D1 stream stale; non-trigger connector messages still count | ✅ |
 | R25 | routable freshness input | D | AC-D11 | shared routable predicate excludes empty tool-only stream + internal diagnostics from Phase A/B/D freshness while preserving prompt-visible scheduler triggers | ✅ |
@@ -1067,7 +1084,7 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 | R33 | production wiring guard | E | AC-E10 | convention consumer + gate regression | ✅ merged PR #2853 |
 | R34 | lineage custody + running lease | E | AC-E12 | old blocked × independent fresh/stale matrices, route custody, Redis CAS | ✅ merged PR #2880 |
 | R35 | current/attributable recovery | E | AC-E13 | retry preflight, relevance, cancel provenance, cross-thread effect, peer-context IR13 | ✅ merged PR #2880; runtime dogfood pending |
-| R36 | Queue restart-durable custody | E-B | AC-E22 | exact identity/order + same-invocation success + crash/cancel/restart + multi-target Redis fixtures | ✅ merged PR #2912 (`07f46f5aa`); post-merge operator/alpha validation pending |
+| R36 | Queue restart-durable custody | E-B | AC-E22 | QueueLedger exact identity/order + active-child adoption + claimed/processing restart convergence + multi-target Redis fixtures | ✅ ADR-043 local implementation; acceptance follow-up under review |
 | R37 | all-active legacy closure accounting | E-B | AC-E23 | 51-root inventory + per-invocation outcomes + exact 399-char target + idempotent Redis replay | ✅ machinery merged PR #2912 (`07f46f5aa`); rotated-log inventory closure merged PR #3572 (`d1044074a`); production apply not run |
 | R38 | Codex provider-native same-turn notice | D2 | AC-D12/D13 | stable `turn/steer` exact-turn delivery + notified/seen truth split | ✅ default-off adapter + exact-turn live cognition fixture |
 | R39 | carrier parity + no replay | D2 | AC-D14 | session/auth/approval/tmux/timeout/internal-archive/F212 matrix | ✅ AC-D14a-g merged via PR #3079/#3082/#3097；AC-D16 live matrix 仍独立 gated |

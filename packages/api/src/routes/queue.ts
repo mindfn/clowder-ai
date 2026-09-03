@@ -3,9 +3,8 @@
  *
  * GET    /api/threads/:threadId/queue               → 列出队列条目
  * DELETE /api/threads/:threadId/queue/:entryId       → 撤回条目
- * POST   /api/threads/:threadId/queue/next          → 手动触发处理下一条
- * POST   /api/threads/:threadId/queue/steer-batch   → #1291 exact ordinary-user Batch Steer
  * POST   /api/threads/:threadId/queue/:entryId/steer → Steer queued entry（取消当前轮并以同一消息立即启动）
+ * POST   /api/threads/:threadId/queue/:entryId/append → Append queued entry into exact existing Active Run(s)
  * PATCH  /api/threads/:threadId/queue/:entryId/move → 重排序（上移/下移）
  * PATCH  /api/threads/:threadId/queue/reorder       → F175: 批量设置 position（拖拽重排）
  * DELETE /api/threads/:threadId/queue               → 清空队列
@@ -28,21 +27,36 @@ import {
 } from '../domains/cats/services/agents/invocation/active-execution-service.js';
 import {
   type InvocationQueue,
-  isOrdinaryQueueTargetEligible,
   isSystemPinnedQueueEntry,
   type QueueEntry,
+  queueEntryMessageIds,
+  queueEntryOwnerId,
+  queueEntryTargetCats,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
-import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import { DEFAULT_PRESTART_RESERVATION_TTL_MS } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
+import {
+  projectLifecycleAppendAction,
+  projectLifecycleAppendCapability,
+} from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
-import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import {
+  type IMessageStore,
+  type StoredMessage,
+  settleLifecycleResponseInputs,
+} from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IThreadStore, Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
 import { buildCancelMessages, type SocketManager } from '../infrastructure/websocket/index.js';
 import type { CliExecutionOwnerService, LiveCliExecutionOwner } from '../utils/cli-process-ownership.js';
-import { emitQueueUpdated, enrichQueueEntries, projectPublicQueueEntry } from '../utils/queue-enrichment.js';
+import {
+  emitQueueUpdated,
+  enrichQueueEntries,
+  isPublicQueueEntry,
+  projectPublicQueueEntry,
+} from '../utils/queue-enrichment.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { type LiveExecutionCandidate, registerActiveExecutionRoutes } from './active-execution-routes.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
@@ -68,8 +82,6 @@ export interface QueueRoutesOptions {
   socketManager: SocketManager;
   /** MessageStore supplies receipt hydration; Queue withdrawal never deletes author history. */
   messageStore?: IMessageStore;
-  /** F254: persist reorder/promote mutations before acknowledging them. */
-  queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
   /** F194 Phase B: canonical liveness read sources (record + draft). When omitted,
    *  GET /queue's activeInvocations falls back to legacy tracker-only enumeration
    *  for backward compat in tests. */
@@ -108,6 +120,37 @@ interface ProcessOwnerSnapshot {
 }
 
 const processOwnerSnapshotByRequest = new WeakMap<FastifyRequest, Promise<ProcessOwnerSnapshot>>();
+const CONTROL_PLANE_RETRY_ATTEMPTS = 3;
+const CONTROL_PLANE_RETRY_DELAY_MS = 50;
+
+type ExecutionFailureReason = 'control_plane_unavailable' | 'execution_owner_lost';
+
+function executionFailureExplanation(reason: ExecutionFailureReason): string {
+  return reason === 'control_plane_unavailable' ? '执行控制面不可用' : '执行进程归属已丢失';
+}
+
+function completeExecutionFailureContent(
+  response: StoredMessage,
+  targetCatId: string,
+  reason: ExecutionFailureReason,
+): string {
+  const existing = response.content.trim();
+  const inputMessageIds = response.lifecycle?.kind === 'response' ? response.lifecycle.inputMessageIds : [];
+  const sourceMessageIds = [response.replyTo, ...inputMessageIds].filter(
+    (messageId, index, values): messageId is string => Boolean(messageId) && values.indexOf(messageId) === index,
+  );
+  const failureLine = `@${targetCatId} 处理失败：${executionFailureExplanation(reason)}（${reason}）。`;
+  const sourceLine = sourceMessageIds.length > 0 ? `来源消息：${sourceMessageIds.join('、')}。` : undefined;
+  const missingContext = [
+    ...(!existing.includes(failureLine) ? [failureLine] : []),
+    ...(sourceLine && !existing.includes(sourceLine) ? [sourceLine] : []),
+  ];
+  return [existing, ...missingContext].filter(Boolean).join('\n\n');
+}
+
+async function waitForControlPlaneRetry(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, CONTROL_PLANE_RETRY_DELAY_MS));
+}
 
 async function processOwnerSnapshotForRequest(
   request: FastifyRequest,
@@ -127,6 +170,46 @@ async function processOwnerSnapshotForRequest(
   return pending;
 }
 
+async function retryProcessOwnerSnapshot(
+  request: FastifyRequest,
+  service: CliExecutionOwnerService | undefined,
+): Promise<ProcessOwnerSnapshot> {
+  if (!service) return { owners: [], complete: true };
+  let latest = await processOwnerSnapshotForRequest(request, service);
+  for (let attempt = 1; !latest.complete && attempt < CONTROL_PLANE_RETRY_ATTEMPTS; attempt += 1) {
+    await waitForControlPlaneRetry();
+    try {
+      const snapshot = await service.listLive();
+      latest = { owners: snapshot.owners, complete: snapshot.complete };
+    } catch (err) {
+      request.log.warn({ err, attempt }, 'CLI execution owner retry failed');
+      latest = { owners: [], complete: false };
+    }
+  }
+  processOwnerSnapshotByRequest.set(request, Promise.resolve(latest));
+  return latest;
+}
+
+function emitLifecycleMessageUpdated(socketManager: SocketManager, userId: string, message: StoredMessage): void {
+  if (!message.lifecycle) return;
+  socketManager.emitToUser(userId, 'message_lifecycle_updated', {
+    threadId: message.threadId,
+    message: {
+      id: message.id,
+      ...(message.from ? { from: message.from } : {}),
+      catId: message.catId,
+      content: message.content,
+      lifecycle: message.lifecycle,
+      timestamp: message.timestamp,
+      ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
+      ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
+      ...(message.extra ? { extra: message.extra } : {}),
+      ...(message.origin ? { origin: message.origin } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    },
+  });
+}
+
 function projectCanonicalLiveCandidate(
   threadId: string,
   fallbackUserId: string,
@@ -135,10 +218,18 @@ function projectCanonicalLiveCandidate(
 ): LiveExecutionCandidate {
   const ownerUserId = tracker.getUserId(threadId, candidate.catId) ?? fallbackUserId;
   const trackerExecutionId = tracker.getExecutionId?.(threadId, candidate.catId);
+  const append = projectLifecycleAppendCapability({
+    threadId,
+    userId: fallbackUserId,
+    targetId: candidate.catId,
+    activeRun: candidate.activeRun,
+    invocationTracker: tracker,
+  });
   return {
     ...candidate,
     ownerUserId,
     controlSource: candidate.executionId && trackerExecutionId === candidate.executionId ? 'tracker' : 'unavailable',
+    ...(append.available ? { inputCapabilities: { append: append.capability } } : {}),
   };
 }
 
@@ -218,10 +309,6 @@ async function terminalizeTrackerlessTurn(input: {
   }
 }
 
-function queueEntryMessageIds(entry: Pick<QueueEntry, 'messageId' | 'mergedMessageIds'>): string[] {
-  return [entry.messageId, ...entry.mergedMessageIds].filter((messageId): messageId is string => !!messageId);
-}
-
 async function retireWithdrawnManagedWake(opts: QueueRoutesOptions, entry: QueueEntry): Promise<void> {
   const recovery = opts.getManagedCommandWakeRecovery?.();
   if (!recovery) return;
@@ -235,19 +322,26 @@ const moveBodySchema = z.object({
 const steerBodySchema = z
   .object({
     mode: z.literal('immediate').optional(),
+    targetCatId: z.string().min(1).optional(),
   })
   .strict();
 
-const steerBatchBodySchema = z
+const appendBodySchema = z
   .object({
-    entryIds: z.array(z.string().min(1)).min(2).max(5),
+    expectedQueueRevision: z.string().min(1),
+    expectedRuns: z
+      .array(
+        z
+          .object({
+            targetId: z.string().min(1),
+            invocationId: z.string().min(1),
+            responseMessageId: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(1),
   })
-  .strict()
-  .superRefine(({ entryIds }, ctx) => {
-    if (new Set(entryIds).size !== entryIds.length) {
-      ctx.addIssue({ code: 'custom', path: ['entryIds'], message: 'entryIds must be distinct' });
-    }
-  });
+  .strict();
 
 const remindBodySchema = z
   .object({
@@ -260,12 +354,13 @@ type ReminderRequestResolution =
       ok: true;
       entry: QueueEntry;
       invocationId: string;
-      coordinator: QueuedMessageCustodyCoordinator;
     }
   | { ok: false; status: 404 | 409 | 503; error: string; code: string };
 
 function projectQueueStartResult(result: { started: boolean; entry?: QueueEntry }) {
-  return result.entry ? { ...result, entry: projectPublicQueueEntry(result.entry) } : result;
+  return result.entry && isPublicQueueEntry(result.entry)
+    ? { ...result, entry: projectPublicQueueEntry(result.entry) }
+    : { started: result.started };
 }
 
 function resolveReminderRequest(input: {
@@ -274,18 +369,14 @@ function resolveReminderRequest(input: {
   threadId: string;
   userId: string;
   invocationTracker: InvocationTrackerLike;
-  coordinator: QueuedMessageCustodyCoordinator | undefined;
   carrierCapability: FreshnessCarrierCapability | undefined;
 }): ReminderRequestResolution {
   if (!input.entry) return { ok: false, status: 404, error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
-  if (!input.entry.targetCats.includes(input.targetCatId)) {
+  if (!queueEntryTargetCats(input.entry).includes(input.targetCatId)) {
     return { ok: false, status: 409, error: '该猫已不再等待处理此消息', code: 'TARGET_NOT_PENDING' };
   }
   if (input.entry.status === 'processing') {
     return { ok: false, status: 409, error: '该消息已经进入处理，无需提醒', code: 'ENTRY_PROCESSING' };
-  }
-  if (!input.coordinator) {
-    return { ok: false, status: 503, error: '持久回执暂不可用', code: 'RECEIPT_STORE_UNAVAILABLE' };
   }
   if (!input.carrierCapability || input.carrierCapability.deliverySemantics === 'undeclared') {
     return {
@@ -309,7 +400,7 @@ function resolveReminderRequest(input: {
   if (!active || activeUserId !== input.userId || !invocationId) {
     return { ok: false, status: 409, error: '当前没有可接收提醒的工作轮次', code: 'NO_ACTIVE_INVOCATION' };
   }
-  return { ok: true, entry: input.entry, invocationId, coordinator: input.coordinator };
+  return { ok: true, entry: input.entry, invocationId };
 }
 
 /**
@@ -321,7 +412,7 @@ async function guardThreadOwnership(
   reply: FastifyReply,
   threadStore: IThreadStore,
   threadId: string,
-): Promise<{ userId: string } | null> {
+): Promise<{ userId: string; thread: Thread } | null> {
   const userId = resolveUserId(request, {});
   if (!userId) {
     reply.status(401);
@@ -343,20 +434,12 @@ async function guardThreadOwnership(
     return null;
   }
 
-  return { userId };
+  return { userId, thread };
 }
 
 export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, opts) => {
   const { threadStore, invocationQueue, queueProcessor, invocationTracker, socketManager, messageStore } = opts;
   const sessionLocks = opts.agentSessionMutex ?? agentSessionMutex;
-  const persistQueueEntries = async (threadId: string, userId: string, entryIds: readonly string[]) => {
-    if (!opts.queueCustodyCoordinator) return;
-    for (const entryId of new Set(entryIds)) {
-      const entry = invocationQueue.getEntrySnapshot(threadId, userId, entryId);
-      if (entry) await opts.queueCustodyCoordinator.persistEntry(entry);
-    }
-  };
-
   const releaseAgentSessionLocks = (
     scope: { threadId: string; userId: string; catId?: string },
     request: FastifyRequest,
@@ -377,6 +460,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     threadId: string,
     userId: string,
     steerCatId: string,
+    reservedEntryId: string,
     request: FastifyRequest,
   ): Promise<{ ok: true; deferred: boolean } | { ok: false; status: 409 | 503; error: string; code: string }> => {
     if (invocationTracker.has(threadId, steerCatId)) {
@@ -401,18 +485,16 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       if (!cancelResult.cancelled && invocationTracker.has(threadId, steerCatId)) {
         return { ok: false, status: 409, error: '当前调用无法取消，无法立即执行', code: 'INVOCATION_CANCEL_FAILED' };
       }
-      queueProcessor.clearPause(threadId, steerCatId);
       queueProcessor.releaseSlot(threadId, steerCatId);
       return { ok: true, deferred: false };
     }
 
     releaseAgentSessionLocks({ threadId, userId, catId: steerCatId }, request, 'steer');
-    const inflight = invocationQueue.findProcessingByCat(threadId, steerCatId);
-    if (inflight && inflight.userId !== userId) {
+    const inflight = invocationQueue.findProcessingByCat(threadId, steerCatId, reservedEntryId);
+    if (inflight && queueEntryOwnerId(inflight) !== userId) {
       return { ok: false, status: 409, error: '当前有其他用户的调用在执行，无法立即执行', code: 'INVOCATION_ACTIVE' };
     }
     if (!inflight) {
-      queueProcessor.clearPause(threadId, steerCatId);
       return { ok: true, deferred: false };
     }
 
@@ -420,7 +502,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     // a retirement barrier before awaiting durable terminalization; the old
     // coroutine loses its reservation immediately, while the complete group
     // remains visible and recoverable until every durable projection closes.
-    queueProcessor.clearPause(threadId, steerCatId);
     const retirement = await queueProcessor.retirePrestartProcessingGroup(threadId, steerCatId, userId);
     if (retirement === 'state_changed') {
       return { ok: false, status: 409, error: '启动中的队列状态已变化，请重试', code: 'PRESTART_STATE_CHANGED' };
@@ -438,6 +519,131 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     return { ok: true, deferred: false };
   };
 
+  const failUncontrollableInvocation = async (input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    executionId: string;
+    invocationId?: string;
+    request: FastifyRequest;
+    reason?: ExecutionFailureReason;
+  }): Promise<{ reconciled: boolean }> => {
+    if (!messageStore || !opts.invocationRecordStore) {
+      throw new Error('durable execution failure stores are unavailable');
+    }
+    const failedAt = Date.now();
+    const failureReason = input.reason ?? 'control_plane_unavailable';
+    const childExecutions = opts.turnExecutionStore
+      ? (await opts.turnExecutionStore.listByParent(input.executionId)).filter(
+          (child) => child.threadId === input.threadId && child.userId === input.userId && child.catId === input.catId,
+        )
+      : [];
+    const childInvocationIds = [
+      ...new Set([
+        ...(input.invocationId ? [input.invocationId] : []),
+        ...childExecutions.map((child) => child.invocationId),
+      ]),
+    ];
+    let responseTerminalized = false;
+    for (const invocationId of childInvocationIds) {
+      const response = await messageStore.getByIdempotencyKey(
+        input.userId,
+        input.threadId,
+        `message-lifecycle-response:${invocationId}`,
+      );
+      if (!response?.lifecycle || response.lifecycle.kind !== 'response') continue;
+      const result = await messageStore.commitLifecycleResponseTerminal(response.id, {
+        invocationId,
+        status: 'failed',
+        completedAt: Math.max(failedAt, response.lifecycle.startedAt),
+        reason: failureReason,
+        content: completeExecutionFailureContent(response, input.catId, failureReason),
+        ...(response.contentBlocks ? { contentBlocks: response.contentBlocks } : {}),
+        ...(response.toolEvents ? { toolEvents: response.toolEvents } : {}),
+        ...(response.metadata ? { metadata: response.metadata } : {}),
+        ...(response.extra ? { extra: response.extra } : {}),
+        ...(response.thinking ? { thinking: response.thinking } : {}),
+        ...(response.origin ? { origin: response.origin } : {}),
+        mentions: response.mentions,
+        ...(response.mentionsUser ? { mentionsUser: true } : {}),
+        ...(response.replyTo ? { replyTo: response.replyTo } : {}),
+      });
+      if (result.kind !== 'applied' && result.kind !== 'replayed') {
+        const resultLifecycle = result.kind === 'conflict' ? result.message.lifecycle : undefined;
+        if (
+          result.kind !== 'conflict' ||
+          resultLifecycle?.kind !== 'response' ||
+          resultLifecycle.status === 'processing'
+        ) {
+          throw new Error(`control-plane failure response terminalization rejected: ${result.kind}`);
+        }
+      }
+      const terminalMessage = result.message;
+      await settleLifecycleResponseInputs(messageStore, terminalMessage, terminalMessage.id);
+      emitLifecycleMessageUpdated(socketManager, input.userId, terminalMessage);
+      responseTerminalized = true;
+    }
+
+    const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);
+    if (!responseTerminalized && inflight) {
+      if (queueEntryOwnerId(inflight) !== input.userId) throw new Error('pre-start execution owner changed');
+      const outcome = await queueProcessor.failPrestartProcessingGroup(
+        input.threadId,
+        input.catId,
+        input.userId,
+        failureReason,
+      );
+      if (outcome !== 'retired') throw new Error(`pre-start failure terminalization ${outcome}`);
+    }
+
+    for (const invocationId of childInvocationIds) {
+      await opts.turnExecutionStore?.transitionTerminal(invocationId, {
+        status: 'failed',
+        endedAt: failedAt,
+        terminalReason: failureReason,
+      });
+    }
+    const record = await opts.invocationRecordStore.get(input.executionId);
+    const siblingCatIds = (record?.targetCats ?? []).filter((catId) => catId !== input.catId);
+    const ownerSnapshot = await processOwnerSnapshotForRequest(input.request, opts.cliExecutionOwnerService);
+    const siblingStillActive = siblingCatIds.some(
+      (catId) =>
+        invocationTracker.has(input.threadId, catId) ||
+        ownerSnapshot.owners.some(
+          (owner) =>
+            owner.executionId === input.executionId &&
+            owner.threadId === input.threadId &&
+            owner.userId === input.userId &&
+            owner.catId === catId,
+        ),
+    );
+    if (record?.status === 'running' && !siblingStillActive) {
+      const updated = await opts.invocationRecordStore.update(input.executionId, {
+        status: 'failed',
+        error: failureReason,
+        expectedStatus: 'running',
+      });
+      if (!updated) throw new Error('control-plane failure parent terminalization lost its running fence');
+    }
+
+    releaseAgentSessionLocks(
+      { threadId: input.threadId, userId: input.userId, catId: input.catId },
+      input.request,
+      'cancel',
+    );
+    if (queueProcessor.canReleaseSlotForUser(input.threadId, input.catId, input.userId)) {
+      queueProcessor.releaseSlot(input.threadId, input.catId);
+    }
+    for (const message of buildCancelMessages({
+      cancelled: true,
+      catIds: [input.catId],
+      executionIds: [input.executionId],
+    })) {
+      socketManager.broadcastAgentMessage(message, input.threadId);
+    }
+    return { reconciled: true };
+  };
+
   const cancelProcessOwnedInvocation = async (input: {
     threadId: string;
     userId: string;
@@ -446,15 +652,32 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     invocationId: string;
     ownerUserId?: string;
     request: FastifyRequest;
-  }): Promise<{ cancelled: boolean; controlPlaneUnavailable?: boolean }> => {
-    const processResult = await opts.cliExecutionOwnerService?.terminateExact({
+  }): Promise<{ cancelled: boolean; reconciled?: boolean; controlPlaneUnavailable?: boolean }> => {
+    const executionOwner = {
       executionId: input.executionId,
       invocationId: input.invocationId,
       threadId: input.threadId,
       catId: input.catId,
       userId: input.ownerUserId ?? input.userId,
-    });
-    if (!processResult?.complete) return { cancelled: false, controlPlaneUnavailable: true };
+    };
+    let processResult = await opts.cliExecutionOwnerService?.terminateExact(executionOwner);
+    for (
+      let attempt = 1;
+      processResult && !processResult.complete && attempt < CONTROL_PLANE_RETRY_ATTEMPTS;
+      attempt += 1
+    ) {
+      await waitForControlPlaneRetry();
+      processResult = await opts.cliExecutionOwnerService?.terminateExact(executionOwner);
+    }
+    if (!processResult?.complete) {
+      try {
+        await failUncontrollableInvocation({ ...input, invocationId: input.invocationId });
+        return { cancelled: false, reconciled: true };
+      } catch (err) {
+        input.request.log.error({ err, ...executionOwner }, 'failed to persist control-plane failure terminal');
+        return { cancelled: false, controlPlaneUnavailable: true };
+      }
+    }
     // The request already resolved this exact live owner. A zero-signal result
     // means it exited in the snapshot-to-signal race; cancellation is
     // idempotently complete and its durable child truth still needs closing.
@@ -479,7 +702,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     })) {
       socketManager.broadcastAgentMessage(message, input.threadId);
     }
-    queueProcessor.clearPause(input.threadId, input.catId);
     return { cancelled: true };
   };
 
@@ -500,10 +722,205 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       for (const message of buildCancelMessages({ ...cancelResult, catIds: [input.catId] })) {
         socketManager.broadcastAgentMessage(message, input.threadId);
       }
-      queueProcessor.clearPause(input.threadId, input.catId);
       queueProcessor.releaseSlot(input.threadId, input.catId);
     }
     return { cancelled: cancelResult.cancelled };
+  };
+
+  const reconcileInactiveLiveInvocation = async (input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    executionId: string;
+    request: FastifyRequest;
+  }): Promise<{
+    reconciled: boolean;
+    replacement?: boolean;
+    controlPlaneUnavailable?: boolean;
+    error?: string;
+    code?: string;
+  }> => {
+    const trackerExecutionId = invocationTracker.getExecutionId?.(input.threadId, input.catId);
+    if (invocationTracker.has(input.threadId, input.catId)) {
+      const result = cancelTrackedInvocation(input);
+      return {
+        reconciled: result.cancelled,
+        ...(trackerExecutionId !== input.executionId ? { replacement: true } : {}),
+      };
+    }
+
+    const processSnapshot = await retryProcessOwnerSnapshot(input.request, opts.cliExecutionOwnerService);
+    if (!processSnapshot.complete) {
+      try {
+        return await failUncontrollableInvocation(input);
+      } catch (err) {
+        input.request.log.error(
+          { err, threadId: input.threadId, catId: input.catId, executionId: input.executionId },
+          'failed to persist control-plane failure terminal',
+        );
+        return {
+          reconciled: false,
+          controlPlaneUnavailable: true,
+          error: '执行失败终态未能持久化，请重试',
+          code: 'EXECUTION_TERMINAL_PERSISTENCE_UNAVAILABLE',
+        };
+      }
+    }
+    const processOwner = processSnapshot.owners.find(
+      (owner) => owner.threadId === input.threadId && owner.catId === input.catId && owner.userId === input.userId,
+    );
+    if (processOwner) {
+      const result = await cancelProcessOwnedInvocation({
+        ...input,
+        executionId: processOwner.executionId,
+        invocationId: processOwner.invocationId,
+        ownerUserId: processOwner.userId,
+      });
+      return {
+        reconciled: result.cancelled || result.reconciled === true,
+        ...(processOwner.executionId !== input.executionId ? { replacement: true } : {}),
+        ...(result.controlPlaneUnavailable ? { controlPlaneUnavailable: true } : {}),
+      };
+    }
+
+    const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);
+    if (inflight && queueEntryOwnerId(inflight) !== input.userId) {
+      return {
+        reconciled: false,
+        controlPlaneUnavailable: true,
+        error: '当前执行归属已变化，请重试',
+        code: 'EXECUTION_OWNER_CHANGED',
+      };
+    }
+    if (inflight) {
+      const retirement = await queueProcessor.retirePrestartProcessingGroup(input.threadId, input.catId, input.userId);
+      if (retirement === 'terminalization_failed') {
+        return {
+          reconciled: false,
+          controlPlaneUnavailable: true,
+          error: '启动中的执行未能写入持久终态，请重试',
+          code: 'PRESTART_TERMINALIZATION_FAILED',
+        };
+      }
+      if (retirement === 'state_changed') {
+        return {
+          reconciled: false,
+          controlPlaneUnavailable: true,
+          error: '启动中的执行状态已变化，请重试',
+          code: 'PRESTART_STATE_CHANGED',
+        };
+      }
+    }
+
+    // Re-check after durable retirement: a newer run may have claimed the cat
+    // while the request awaited Redis. Never release that run's lock or slot.
+    if (invocationTracker.has(input.threadId, input.catId)) {
+      const replacementExecutionId = invocationTracker.getExecutionId?.(input.threadId, input.catId);
+      const result = cancelTrackedInvocation(input);
+      return {
+        reconciled: result.cancelled,
+        ...(replacementExecutionId !== input.executionId ? { replacement: true } : {}),
+      };
+    }
+
+    let canceledRecord = false;
+    if (opts.invocationRecordStore) {
+      const runningRecords = await opts.invocationRecordStore.listRunningByThread(input.threadId, input.userId);
+      const exactRecord = runningRecords.find(
+        (record) => record.id === input.executionId && (record.targetCats as string[]).includes(input.catId),
+      );
+      if (exactRecord) {
+        const siblingStillActive = (exactRecord.targetCats as string[])
+          .filter((catId) => catId !== input.catId)
+          .some((catId) => invocationTracker.has(input.threadId, catId));
+        if (!siblingStillActive) {
+          await opts.invocationRecordStore.update(exactRecord.id, { status: 'canceled' });
+          canceledRecord = true;
+        }
+      }
+    }
+
+    if (invocationTracker.has(input.threadId, input.catId)) {
+      const replacementExecutionId = invocationTracker.getExecutionId?.(input.threadId, input.catId);
+      const result = cancelTrackedInvocation(input);
+      return {
+        reconciled: result.cancelled,
+        ...(replacementExecutionId !== input.executionId ? { replacement: true } : {}),
+      };
+    }
+    const lockRelease = releaseAgentSessionLocks(
+      { threadId: input.threadId, userId: input.userId, catId: input.catId },
+      input.request,
+      'cancel',
+    );
+    const canReleaseSlot = queueProcessor.canReleaseSlotForUser(input.threadId, input.catId, input.userId);
+    if (canReleaseSlot && !invocationTracker.has(input.threadId, input.catId)) {
+      queueProcessor.releaseSlot(input.threadId, input.catId);
+    }
+    // The socket projection is only a legacy witness. Once every authoritative
+    // source says the exact run is gone, publish convergence even when there was
+    // no remaining local artifact to remove.
+    for (const message of buildCancelMessages({
+      cancelled: true,
+      catIds: [input.catId],
+      executionIds: [input.executionId],
+    })) {
+      socketManager.broadcastAgentMessage(message, input.threadId);
+    }
+    return {
+      reconciled: Boolean(
+        inflight ||
+          canceledRecord ||
+          lockRelease.releasedHolders > 0 ||
+          lockRelease.rejectedWaiters > 0 ||
+          canReleaseSlot,
+      ),
+    };
+  };
+
+  const resolveAndRepairLiveExecutions = async (
+    threadId: string,
+    userId: string,
+    request: FastifyRequest,
+  ): Promise<LiveExecutionCandidate[]> => {
+    const candidates = await resolveLiveExecutionCandidates(threadId, userId, request, opts);
+    if (!opts.invocationRecordStore) return candidates;
+    const processSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
+    if (!processSnapshot.complete) return candidates;
+    const ownerExecutionTargets = new Set(
+      processSnapshot.owners
+        .filter((owner) => owner.threadId === threadId && owner.userId === userId)
+        .map((owner) => `${owner.executionId}\u0000${owner.catId}`),
+    );
+    const repairedExecutionIds = new Set<string>();
+    const runningRecords = await opts.invocationRecordStore.listRunningByThread(threadId, userId);
+    for (const record of runningRecords) {
+      if (Date.now() - record.updatedAt <= DEFAULT_PRESTART_RESERVATION_TTL_MS) continue;
+      const repairTargets = (record.targetCats as string[]).filter(
+        (catId) => !invocationTracker.has(threadId, catId) && !ownerExecutionTargets.has(`${record.id}\u0000${catId}`),
+      );
+      if (repairTargets.length === 0) continue;
+      try {
+        for (const catId of repairTargets) {
+          await failUncontrollableInvocation({
+            threadId,
+            userId,
+            catId,
+            executionId: record.id,
+            request,
+            reason: 'execution_owner_lost',
+          });
+        }
+        const repairedRecord = await opts.invocationRecordStore.get(record.id);
+        if (repairedRecord?.status !== 'running') repairedExecutionIds.add(record.id);
+      } catch (err) {
+        request.log.error(
+          { err, threadId, userId, executionId: record.id, targetCats: repairTargets },
+          'active execution read-repair failed closed',
+        );
+      }
+    }
+    return candidates.filter((candidate) => !candidate.executionId || !repairedExecutionIds.has(candidate.executionId));
   };
 
   registerActiveExecutionRoutes(app, {
@@ -524,10 +941,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           },
         }
       : {}),
-    resolveLiveExecutions: (threadId, userId, request) =>
-      resolveLiveExecutionCandidates(threadId, userId, request, opts),
-    isLiveExecutionControlPlaneComplete: async (request) =>
-      (await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService)).complete,
+    resolveLiveExecutions: resolveAndRepairLiveExecutions,
     cancelExactLiveInvocation: async ({ threadId, userId, catId, executionId, candidate, request }) => {
       if (candidate.controlSource === 'process_owner' && opts.cliExecutionOwnerService && candidate.invocationId) {
         return cancelProcessOwnedInvocation({
@@ -540,8 +954,48 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           request,
         });
       }
-      return cancelTrackedInvocation({ threadId, userId, catId, request });
+      if (candidate.controlSource === 'tracker' && invocationTracker.has(threadId, catId)) {
+        return cancelTrackedInvocation({ threadId, userId, catId, request });
+      }
+      const snapshot = await retryProcessOwnerSnapshot(request, opts.cliExecutionOwnerService);
+      if (!snapshot.complete) {
+        try {
+          await failUncontrollableInvocation({
+            threadId,
+            userId,
+            catId,
+            executionId,
+            ...(candidate.invocationId ? { invocationId: candidate.invocationId } : {}),
+            request,
+          });
+          return { cancelled: false, reconciled: true };
+        } catch (err) {
+          request.log.error({ err, threadId, catId, executionId }, 'failed to persist control-plane failure terminal');
+          return { cancelled: false, controlPlaneUnavailable: true };
+        }
+      }
+      const owner = snapshot.owners.find(
+        (item) => item.threadId === threadId && item.catId === catId && item.userId === userId,
+      );
+      if (owner) {
+        return cancelProcessOwnedInvocation({
+          threadId,
+          userId,
+          catId,
+          executionId: owner.executionId,
+          invocationId: owner.invocationId,
+          ownerUserId: owner.userId,
+          request,
+        });
+      }
+      const reconciled = await reconcileInactiveLiveInvocation({ threadId, userId, catId, executionId, request });
+      return {
+        cancelled: false,
+        reconciled: reconciled.reconciled,
+        ...(reconciled.controlPlaneUnavailable ? { controlPlaneUnavailable: true } : {}),
+      };
     },
+    reconcileInactiveLiveInvocation,
   });
 
   // GET /api/threads/:threadId/queue
@@ -569,14 +1023,61 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         deliverySemantics: 'undeclared' as const,
       },
     }));
-    const enrichedQueue = await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore);
+    const queueEntries = invocationQueue.list(threadId, guard.userId);
+    const queueRevision = invocationQueue.snapshotRevision(threadId, guard.userId);
+    const enrichedQueue = await enrichQueueEntries(queueEntries, messageStore);
     return {
-      queue: enrichedQueue,
-      paused: queueProcessor.isPaused(threadId),
-      pauseReason: queueProcessor.getPauseReason(threadId),
+      queue: enrichedQueue.map((entry) => {
+        const internal = queueEntries.find((candidate) => candidate.id === entry.id);
+        if (!internal) return entry;
+        const projection = projectLifecycleAppendAction({
+          threadId,
+          userId: guard.userId,
+          queueRevision,
+          entry: internal,
+          invocationTracker,
+        });
+        return projection.available ? { ...entry, lifecycleActions: { append: projection.action } } : entry;
+      }),
+      queueRevision,
       activeInvocations,
     };
   });
+
+  app.post<{ Params: { threadId: string; entryId: string } }>(
+    '/api/threads/:threadId/queue/:entryId/append',
+    async (request, reply) => {
+      const { threadId, entryId } = request.params;
+      const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
+      if (!guard) return;
+      const parsed = appendBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.status(400);
+        return { error: 'Append 请求格式无效', code: 'INVALID_APPEND_REQUEST' };
+      }
+      const result = await queueProcessor.appendExactEntry({
+        threadId,
+        userId: guard.userId,
+        entryId,
+        ...parsed.data,
+      });
+      if (result.outcome === 'appended') return result;
+      const status = result.reason === 'custody_unavailable' ? 503 : result.reason === 'provider_rejected' ? 502 : 409;
+      reply.status(status);
+      return {
+        error:
+          result.reason === 'append_unavailable'
+            ? '当前 Agent Client 已不再接受 Append'
+            : result.reason === 'state_changed'
+              ? 'Queue 或 Active Run 已变化，请刷新后重试'
+              : result.reason === 'provider_rejected'
+                ? '部分或全部 Agent Client 拒绝了 Append；失败回执已保留'
+                : 'Append 持久化暂不可用',
+        code: result.reason.toUpperCase(),
+        ...(result.rejectedTargetIds ? { rejectedTargetIds: result.rejectedTargetIds } : {}),
+      };
+    },
+  );
 
   // DELETE /api/threads/:threadId/queue/:entryId
   app.delete<{ Params: { threadId: string; entryId: string }; Querystring: { deleteMessage?: string } }>(
@@ -589,7 +1090,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // Check if entry exists and is not processing
       const entries = invocationQueue.list(threadId, guard.userId);
       const entry = entries.find((e) => e.id === entryId);
-      if (!entry) {
+      if (!entry || !isPublicQueueEntry(entry)) {
         reply.status(404);
         return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
@@ -597,37 +1098,38 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
-      if (invocationQueue.hasUnsettledExactSteerReservation(threadId, guard.userId, entryId)) {
+      const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, entryId);
+      if (!claimed) {
         reply.status(409);
-        return { error: 'Steer 正在抢占，暂无法撤回', code: 'ENTRY_STEERING' };
+        return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
-
-      // Remove entry from queue FIRST (sync) to close the TOCTOU window —
-      // prevents queue processor from promoting to 'processing' during the
-      // async contentBlocks snapshot below.
-      const nextEntryId = entries[entries.findIndex((candidate) => candidate.id === entryId) + 1]?.id;
-      const removed = invocationQueue.remove(threadId, guard.userId, entryId);
-      if (removed && opts.queueCustodyCoordinator) {
-        try {
-          await opts.queueCustodyCoordinator.withdrawEntry(removed);
-        } catch (err) {
-          invocationQueue.restoreDurableEntry(removed, { beforeEntryId: nextEntryId });
-          request.log.error({ err, entryId, threadId }, 'durable Queue withdrawal failed; entry restored');
-          await emitQueueUpdated(
-            socketManager,
-            guard.userId,
-            threadId,
-            invocationQueue.list(threadId, guard.userId),
-            messageStore,
-            'withdraw_failed',
-          );
-          reply.status(503);
-          return {
-            error: '撤出未完成，消息仍保留在待处理队列中',
-            code: 'QUEUE_WITHDRAWAL_FAILED',
-            queue: await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore),
-          };
+      let removed: QueueEntry | null = null;
+      try {
+        const messageIds = queueEntryMessageIds(claimed);
+        const remaining = invocationQueue.list(threadId, guard.userId).filter((candidate) => candidate.id !== entryId);
+        for (const messageId of messageIds) {
+          const hasSibling = remaining.some((candidate) => queueEntryMessageIds(candidate).includes(messageId));
+          if (!hasSibling) await messageStore?.markCanceled(messageId);
         }
+        removed = await invocationQueue.commitClaimedWithdrawal(threadId, entryId);
+        if (!removed) throw new Error('Queue withdrawal claim changed before commit');
+      } catch (err) {
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
+        request.log.error({ err, entryId, threadId }, 'durable Queue withdrawal failed; entry restored');
+        await emitQueueUpdated(
+          socketManager,
+          guard.userId,
+          threadId,
+          invocationQueue.list(threadId, guard.userId),
+          messageStore,
+          'withdraw_failed',
+        );
+        reply.status(503);
+        return {
+          error: '撤出未完成，消息仍保留在待处理队列中',
+          code: 'QUEUE_WITHDRAWAL_FAILED',
+          queue: await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore),
+        };
       }
       if (removed) {
         try {
@@ -647,22 +1149,12 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationQueue.list(threadId, guard.userId),
         messageStore,
         'removed',
-        { receiptMessageIds: removed ? queueEntryMessageIds(removed) : [] },
+        { receiptMessageIds: removed ? queueEntryMessageIds(removed) : [], receiptSource: invocationQueue },
       );
 
       return { removed: removed ? projectPublicQueueEntry(removed) : removed };
     },
   );
-
-  // POST /api/threads/:threadId/queue/next
-  app.post<{ Params: { threadId: string } }>('/api/threads/:threadId/queue/next', async (request, reply) => {
-    const { threadId } = request.params;
-    const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
-    if (!guard) return;
-
-    const result = await queueProcessor.processNext(threadId, guard.userId);
-    return projectQueueStartResult(result);
-  });
 
   // POST /api/threads/:threadId/queue/:entryId/remind
   // Non-interrupting: records one exact attempt for the current invocation and waits
@@ -681,12 +1173,13 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
 
       const { targetCatId } = parsed.data;
       const resolution = resolveReminderRequest({
-        entry: invocationQueue.list(threadId, guard.userId).find((candidate) => candidate.id === entryId),
+        entry: invocationQueue
+          .list(threadId, guard.userId)
+          .find((candidate) => candidate.id === entryId && isPublicQueueEntry(candidate)),
         targetCatId,
         threadId,
         userId: guard.userId,
         invocationTracker,
-        coordinator: opts.queueCustodyCoordinator,
         carrierCapability: opts.resolveCarrierCapability?.(targetCatId as CatId),
       });
       if (!resolution.ok) {
@@ -694,47 +1187,18 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         return { error: resolution.error, code: resolution.code };
       }
 
-      const existingAttempt = await resolution.coordinator.findReminderAttempt(
-        resolution.entry,
-        targetCatId,
-        resolution.invocationId,
-      );
-      if (existingAttempt) {
-        return {
-          ok: true,
-          reminderId: existingAttempt.id,
-          targetCatId,
-          invocationId: resolution.invocationId,
-          state: existingAttempt.state,
-          idempotent: true,
-        };
-      }
-
       const reminderId = randomUUID();
-      const persisted = await resolution.coordinator.requestReminder(
-        resolution.entry,
+      const persisted = await invocationQueue.requestReminderDurable(
+        threadId,
+        guard.userId,
+        resolution.entry.id,
         targetCatId,
         resolution.invocationId,
         reminderId,
       );
       if (!persisted) {
-        const racedAttempt = await resolution.coordinator.findReminderAttempt(
-          resolution.entry,
-          targetCatId,
-          resolution.invocationId,
-        );
-        if (racedAttempt) {
-          return {
-            ok: true,
-            reminderId: racedAttempt.id,
-            targetCatId,
-            invocationId: resolution.invocationId,
-            state: racedAttempt.state,
-            idempotent: true,
-          };
-        }
         reply.status(409);
-        return { error: '消息尚未建立可持久回执', code: 'RECEIPT_NOT_PERSISTED' };
+        return { error: '提醒状态已变化，请重试', code: 'REMINDER_STATE_CHANGED' };
       }
       await emitQueueUpdated(
         socketManager,
@@ -744,145 +1208,16 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         messageStore,
         'reminder_requested',
       );
-      return { ok: true, reminderId, targetCatId, invocationId: resolution.invocationId, state: 'requested' as const };
-    },
-  );
-
-  // POST /api/threads/:threadId/queue/steer-batch
-  app.post<{ Params: { threadId: string } }>('/api/threads/:threadId/queue/steer-batch', async (request, reply) => {
-    const { threadId } = request.params;
-    const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
-    if (!guard) return;
-
-    const parseResult = steerBatchBodySchema.safeParse(request.body);
-    if (!parseResult.success) {
-      reply.status(400);
-      return { error: 'Invalid body', details: parseResult.error.issues };
-    }
-
-    const reserved = invocationQueue.reserveExactUserBatch(threadId, guard.userId, parseResult.data.entryIds);
-    if (reserved.outcome === 'rejected') {
-      const rejection = {
-        invalid_entry_ids: { status: 400 as const, code: 'INVALID_BATCH_ENTRY_IDS', error: 'entryIds 无效' },
-        entry_not_found: { status: 404 as const, code: 'BATCH_ENTRY_NOT_FOUND', error: '批量 Steer 条目不存在' },
-        entry_ineligible: {
-          status: 409 as const,
-          code: 'BATCH_ENTRY_INELIGIBLE',
-          error: '批量 Steer 仅支持普通用户消息',
-        },
-        entries_incompatible: {
-          status: 409 as const,
-          code: 'BATCH_ENTRIES_INCOMPATIBLE',
-          error: '批量 Steer 条目必须属于同一猫、意图和授权来源',
-        },
-      }[reserved.reason];
-      reply.status(rejection.status);
-      return { error: rejection.error, code: rejection.code };
-    }
-
-    const releaseReservation = async () => {
-      const restored = invocationQueue.releaseExactUserBatch(threadId, guard.userId, reserved.reservationId);
-      try {
-        await persistQueueEntries(
-          threadId,
-          guard.userId,
-          restored.map((entry) => entry.id),
-        );
-      } catch (err) {
-        request.log.error(
-          { err, threadId, reservationId: reserved.reservationId },
-          'Failed to persist exact Batch Steer reservation rollback',
-        );
-      }
-      return restored;
-    };
-
-    try {
-      await persistQueueEntries(threadId, guard.userId, reserved.entryIds);
-    } catch (err) {
-      await releaseReservation();
-      request.log.error(
-        { err, threadId, reservationId: reserved.reservationId },
-        'Failed to persist exact Batch Steer reservation before preemption',
-      );
-      reply.status(503);
-      return { error: '批量 Steer 预留暂不可用', code: 'BATCH_RESERVATION_PERSIST_FAILED' };
-    }
-
-    if (!invocationQueue.beginExactSteerPreemption(threadId, guard.userId, reserved.reservationId)) {
-      await releaseReservation();
-      reply.status(409);
-      return { error: '批量 Steer 预留已变化', code: 'BATCH_RESERVATION_LOST' };
-    }
-
-    const preemption = await preemptSteerTarget(threadId, guard.userId, reserved.targetCatId, request);
-    if (!preemption.ok) {
-      await releaseReservation();
-      reply.status(preemption.status);
-      return { error: preemption.error, code: preemption.code };
-    }
-
-    if (!invocationQueue.activateExactSteerReservation(threadId, guard.userId, reserved.reservationId)) {
-      await releaseReservation();
-      reply.status(409);
-      return { error: '批量 Steer 预留已变化', code: 'BATCH_RESERVATION_LOST' };
-    }
-
-    if (preemption.deferred) {
-      await emitQueueUpdated(
-        socketManager,
-        guard.userId,
-        threadId,
-        invocationQueue.list(threadId, guard.userId),
-        messageStore,
-        'steer_batch_reserved',
-      );
-      reply.status(202);
       return {
         ok: true,
-        deferred: true,
-        code: 'PREEMPT_PENDING_PRESTART',
-        batchId: reserved.reservationId,
-        entryIds: reserved.entryIds,
+        reminderId: persisted.attempt.id,
+        targetCatId,
+        invocationId: resolution.invocationId,
+        state: persisted.attempt.state,
+        idempotent: persisted.idempotent,
       };
-    }
-
-    const result = await queueProcessor.processExactSteerReservation(
-      threadId,
-      guard.userId,
-      reserved.primaryEntryId,
-      reserved.reservationId,
-    );
-    if (!result.started) {
-      await releaseReservation();
-      await emitQueueUpdated(
-        socketManager,
-        guard.userId,
-        threadId,
-        invocationQueue.list(threadId, guard.userId),
-        messageStore,
-        'steer_batch_failed',
-      );
-      reply.status(409);
-      return { error: '队列繁忙，暂无法立即执行', code: 'QUEUE_BUSY' };
-    }
-
-    await emitQueueUpdated(
-      socketManager,
-      guard.userId,
-      threadId,
-      invocationQueue.list(threadId, guard.userId),
-      messageStore,
-      'steer_batch_reserved',
-    );
-
-    return {
-      ok: true,
-      batchId: reserved.reservationId,
-      entryIds: reserved.entryIds,
-      ...projectQueueStartResult(result),
-    };
-  });
+    },
+  );
 
   // POST /api/threads/:threadId/queue/:entryId/steer
   app.post<{ Params: { threadId: string; entryId: string } }>(
@@ -900,7 +1235,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
 
       const entries = invocationQueue.list(threadId, guard.userId);
       const entry = entries.find((e) => e.id === entryId);
-      if (!entry) {
+      if (!entry || !isPublicQueueEntry(entry)) {
         reply.status(404);
         return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
@@ -916,92 +1251,48 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // Steer has exactly one meaning: cancel the current target invocation and
       // immediately start this same durable queue entry. Reordering remains a
       // separate drag/move interaction and is never accepted as a Steer mode.
-      const steerCatId = entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
+      const requestedTargetCatId = parseResult.data.targetCatId;
+      const targetCats = queueEntryTargetCats(entry);
+      const steerCatId = requestedTargetCatId ?? targetCats[0];
       if (!steerCatId) {
-        reply.status(409);
-        return { error: 'Steer 状态已变化，请重试', code: 'STEER_STATE_CHANGED' };
+        reply.status(400);
+        return { error: '请选择当前对话中的成员', code: 'STEER_TARGET_REQUIRED' };
       }
-      // Reserve the entry BEFORE preempting. Preemption cancels a running turn;
-      // doing it first meant a losing CAS returned STEER_STATE_CHANGED *after*
-      // the user's turn was already killed — they lost the work and did not get
-      // the steer, while the message told them to retry.
-      const reserved = invocationQueue.reserveExactUserEntry(threadId, guard.userId, entryId, steerCatId);
-      if (reserved.outcome === 'rejected') {
-        reply.status(409);
-        return { error: 'Steer 状态已变化，请重试', code: 'STEER_STATE_CHANGED' };
+      const targetInThread = guard.thread.participants.includes(steerCatId as CatId);
+      const targetMatchesEntry = targetCats.length === 0 || targetCats.includes(steerCatId);
+      if (!targetInThread || !targetMatchesEntry) {
+        reply.status(400);
+        return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_STEER_TARGET' };
       }
-      // The reservation must be durable BEFORE anything is cancelled, mirroring
-      // steer-batch. Reserving only in memory just moved the split: a rejected
-      // persistence would still have landed after the running turn was killed.
-      const releaseSteerReservation = async (): Promise<void> => {
-        const restored = invocationQueue.releaseExactUserBatch(threadId, guard.userId, reserved.reservationId);
-        try {
-          await persistQueueEntries(
-            threadId,
-            guard.userId,
-            restored.map((candidate) => candidate.id),
-          );
-        } catch (releaseErr) {
-          request.log.error(
-            { err: releaseErr, threadId, entryId },
-            'Failed to persist Steer reservation release; in-memory marker cleared',
-          );
-        }
-      };
+      // The ledger claim is the one durable dequeue fence. It happens before
+      // cancellation so a losing claim cannot kill the active turn, and it can
+      // be restored in place if cancellation fails.
+      let claimed;
       try {
-        await persistQueueEntries(threadId, guard.userId, [entryId]);
+        claimed = await invocationQueue.claimExactSteerEntryDurable(threadId, guard.userId, entryId, steerCatId);
       } catch (err) {
-        await releaseSteerReservation();
-        request.log.error({ err, threadId, entryId }, 'Failed to persist exact Steer reservation before preemption');
+        request.log.error({ err, threadId, entryId }, 'Failed to claim durable Queue row before Steer preemption');
         reply.status(503);
-        return { error: 'Steer 预留暂不可用', code: 'STEER_RESERVATION_PERSIST_FAILED' };
+        return { error: 'Steer 暂不可用', code: 'STEER_CLAIM_FAILED' };
+      }
+      if (claimed.outcome === 'rejected') {
+        const status = claimed.reason === 'entry_not_found' ? 404 : 409;
+        reply.status(status);
+        return claimed.reason === 'entry_processing'
+          ? { error: '条目正在处理中，无法 steer', code: 'ENTRY_PROCESSING' }
+          : { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
 
-      if (!invocationQueue.beginExactSteerPreemption(threadId, guard.userId, reserved.reservationId)) {
-        await releaseSteerReservation();
-        reply.status(409);
-        return { error: 'Steer 预留已变化，请重试', code: 'STEER_RESERVATION_LOST' };
-      }
-
-      const preemption = await preemptSteerTarget(threadId, guard.userId, steerCatId, request);
+      const preemption = await preemptSteerTarget(threadId, guard.userId, steerCatId, entryId, request);
       if (!preemption.ok) {
-        // The replacement reservation must not survive a rejected or partially
-        // terminalized preemption — locally or durably.
-        await releaseSteerReservation();
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
         reply.status(preemption.status);
         return { error: preemption.error, code: preemption.code };
       }
-      if (!invocationQueue.activateExactSteerReservation(threadId, guard.userId, reserved.reservationId)) {
-        await releaseSteerReservation();
-        reply.status(409);
-        return { error: 'Steer 预留已变化，请重试', code: 'STEER_RESERVATION_LOST' };
-      }
-      if (preemption.deferred) {
-        await emitQueueUpdated(
-          socketManager,
-          guard.userId,
-          threadId,
-          invocationQueue.list(threadId, guard.userId),
-          messageStore,
-          'steer_immediate',
-        );
-        reply.status(202);
-        return {
-          ok: true,
-          deferred: true,
-          code: 'PREEMPT_PENDING_PRESTART',
-          message: '目标正在启动中，已请求中断，插队消息将在当前调用退出后立即执行',
-        };
-      }
 
-      const result = await queueProcessor.processExactSteerReservation(
-        threadId,
-        guard.userId,
-        entryId,
-        reserved.reservationId,
-      );
+      const result = await queueProcessor.processClaimedSteerEntries(threadId, guard.userId, [entryId], steerCatId);
       if (!result.started) {
-        await releaseSteerReservation();
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
         await emitQueueUpdated(
           socketManager,
           guard.userId,
@@ -1010,8 +1301,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           messageStore,
           'steer_failed',
         );
-        reply.status(409);
-        return { error: '队列繁忙，暂无法立即执行', code: 'QUEUE_BUSY' };
+        reply.status(503);
+        return { error: 'Steer 启动失败，请重试', code: 'STEER_START_FAILED' };
       }
 
       await emitQueueUpdated(
@@ -1044,7 +1335,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // Check if entry is processing
       const entries = invocationQueue.list(threadId, guard.userId);
       const entry = entries.find((e) => e.id === entryId);
-      if (!entry) {
+      if (!entry || !isPublicQueueEntry(entry)) {
         reply.status(404);
         return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
@@ -1052,21 +1343,25 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '正在处理中的条目不可移动', code: 'ENTRY_PROCESSING' };
       }
-      if (entry.exactSteerBatch) {
-        reply.status(409);
-        return { error: '批量 Steer 已预留，暂不可重排', code: 'ENTRY_STEERING' };
-      }
       if (isSystemPinnedQueueEntry(entry)) {
         reply.status(409);
         return { error: '系统续接条目不可手动调整位置', code: 'ENTRY_POSITION_LOCKED' };
       }
 
-      invocationQueue.move(threadId, guard.userId, entryId, parseResult.data.direction);
-      await persistQueueEntries(
-        threadId,
-        guard.userId,
-        invocationQueue.list(threadId, guard.userId).map((candidate) => candidate.id),
-      );
+      const queued = entries.filter((candidate) => candidate.status === 'queued');
+      const index = queued.findIndex((candidate) => candidate.id === entryId);
+      const neighborIndex = parseResult.data.direction === 'up' ? index - 1 : index + 1;
+      if (neighborIndex >= 0 && neighborIndex < queued.length) {
+        const neighbor = queued[neighborIndex]!;
+        if (!(await invocationQueue.setPositionDurable(threadId, guard.userId, entryId, neighborIndex))) {
+          reply.status(409);
+          return { error: '队列状态已变化，请重试', code: 'ENTRY_PROCESSING' };
+        }
+        if (!(await invocationQueue.setPositionDurable(threadId, guard.userId, neighbor.id, index))) {
+          reply.status(409);
+          return { error: '队列状态已变化，请重试', code: 'ENTRY_PROCESSING' };
+        }
+      }
       await emitQueueUpdated(
         socketManager,
         guard.userId,
@@ -1108,17 +1403,13 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const entries = invocationQueue.list(threadId, guard.userId);
     for (const { entryId } of parseResult.data.positions) {
       const entry = entries.find((e) => e.id === entryId);
-      if (!entry) {
+      if (!entry || !isPublicQueueEntry(entry)) {
         reply.status(400);
         return { error: `Cannot reorder entry ${entryId} (not found)` };
       }
       if (entry.status === 'processing') {
         reply.status(400);
         return { error: `Cannot reorder entry ${entryId} (processing)` };
-      }
-      if (entry.exactSteerBatch) {
-        reply.status(409);
-        return { error: '批量 Steer 已预留，暂不可重排', code: 'ENTRY_STEERING' };
       }
       if (isSystemPinnedQueueEntry(entry)) {
         reply.status(409);
@@ -1127,13 +1418,11 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     }
 
     for (const { entryId, position } of parseResult.data.positions) {
-      invocationQueue.setPosition(threadId, guard.userId, entryId, position);
+      if (!(await invocationQueue.setPositionDurable(threadId, guard.userId, entryId, position))) {
+        reply.status(409);
+        return { error: `Cannot reorder entry ${entryId} (state changed)`, code: 'ENTRY_PROCESSING' };
+      }
     }
-    await persistQueueEntries(
-      threadId,
-      guard.userId,
-      parseResult.data.positions.map(({ entryId }) => entryId),
-    );
 
     await emitQueueUpdated(
       socketManager,
@@ -1152,30 +1441,29 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
     if (!guard) return;
 
-    if (invocationQueue.hasUnsettledExactSteerReservation(threadId, guard.userId)) {
-      reply.status(409);
-      return { error: 'Steer 正在抢占，暂无法清空队列', code: 'ENTRY_STEERING' };
-    }
-
-    // Explicit clear supersedes a deferred Batch Steer. Restore its original
-    // snapshots first so the existing per-entry withdrawal CAS remains valid.
-    invocationQueue.releaseAllExactUserBatches(threadId, guard.userId);
-
-    // Withdraw one exact snapshot at a time. This preserves processing entries and lets a
-    // durable-store failure stop before any later entry is removed from actionable custody.
+    // Claim one exact ledger row at a time. Processing rows are the only business-level block.
     const cleared: QueueEntry[] = [];
     const candidates = invocationQueue.list(threadId, guard.userId);
-    for (const [candidateIndex, candidate] of candidates.entries()) {
+    for (const candidate of candidates) {
+      if (!isPublicQueueEntry(candidate)) continue;
       const current = invocationQueue.getEntrySnapshot(threadId, guard.userId, candidate.id);
       if (!current || current.status === 'processing') continue;
-      if (!invocationQueue.removeEntrySnapshotIfUnchanged(current)) continue;
+      const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, current.id);
+      if (!claimed) continue;
 
       try {
-        await opts.queueCustodyCoordinator?.withdrawEntry(current);
+        const messageIds = queueEntryMessageIds(claimed);
+        const remaining = invocationQueue.list(threadId, guard.userId).filter((entry) => entry.id !== claimed.id);
+        for (const messageId of messageIds) {
+          const hasSibling = remaining.some((entry) => queueEntryMessageIds(entry).includes(messageId));
+          if (!hasSibling) await messageStore?.markCanceled(messageId);
+        }
+        const removed = await invocationQueue.commitClaimedWithdrawal(threadId, claimed.id);
+        if (!removed) throw new Error('Queue clear claim changed before commit');
       } catch (err) {
-        invocationQueue.restoreDurableEntry(current, { beforeEntryId: candidates[candidateIndex + 1]?.id });
+        await invocationQueue.restoreClaimedEntries(threadId, [claimed.id]);
         request.log.error(
-          { err, entryId: current.id, threadId, clearedCount: cleared.length },
+          { err, entryId: claimed.id, threadId, clearedCount: cleared.length },
           'durable Queue clear stopped; unsettled entries retained',
         );
         const remaining = invocationQueue.list(threadId, guard.userId);
@@ -1193,17 +1481,17 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
 
       try {
-        await retireWithdrawnManagedWake(opts, current);
+        await retireWithdrawnManagedWake(opts, claimed);
       } catch (err) {
         request.log.error(
-          { err, entryId: current.id, threadId },
+          { err, entryId: claimed.id, threadId },
           'managed wake producer retirement deferred to recovery sweep',
         );
       }
 
-      queueProcessor.unregisterEntryCompleteHook?.(current.id);
-      await queueProcessor.finalizeRemovedEntry?.(current, 'user_cancel');
-      cleared.push(current);
+      queueProcessor.unregisterEntryCompleteHook?.(claimed.id);
+      await queueProcessor.finalizeRemovedEntry?.(claimed, 'user_cancel');
+      cleared.push(claimed);
     }
     await emitQueueUpdated(
       socketManager,
@@ -1212,7 +1500,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       invocationQueue.list(threadId, guard.userId),
       messageStore,
       'cleared',
-      { receiptMessageIds: cleared.flatMap(queueEntryMessageIds) },
+      { receiptMessageIds: cleared.flatMap(queueEntryMessageIds), receiptSource: invocationQueue },
     );
 
     return { cleared: cleared.map(projectPublicQueueEntry) };
@@ -1251,7 +1539,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
 
             await opts.invocationRecordStore.update(orphanRecord.id, { status: 'canceled' });
             // P2-1 + P2 (codex 第4轮 a5e8eea2): the WHOLE record is being canceled, so broadcast
-            // done + clear pause + release slot for EVERY targetCat — not just the requested one.
+            // done + release slot for EVERY targetCat — not just the requested one.
             // Otherwise sibling cats in a multi-cat orphan record stay stuck in the client's active
             // state and their processingSlots leak; and since the record is no longer running,
             // force-reset can't rediscover those siblings via listRunningByThread.
@@ -1268,7 +1556,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
               }
             }
             for (const c of terminalOrphanCats) {
-              queueProcessor.clearPause(threadId, c);
               queueProcessor.releaseSlot(threadId, c);
             }
             return { ok: true, cancelled: true };
@@ -1282,7 +1569,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           for (const m of buildCancelMessages({ cancelled: true, catIds: [catId] })) {
             socketManager.broadcastAgentMessage(m, threadId);
           }
-          queueProcessor.clearPause(threadId, catId);
           queueProcessor.releaseSlot(threadId, catId);
           return { ok: true, cancelled: true };
         }
@@ -1305,7 +1591,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         for (const m of buildCancelMessages(scopedResult)) {
           socketManager.broadcastAgentMessage(m, threadId);
         }
-        queueProcessor.clearPause(threadId, catId);
         queueProcessor.releaseSlot(threadId, catId);
       }
 
@@ -1318,7 +1603,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
   // could leave the thread in a permanently stuck state that users could not recover from.
   // This endpoint provides a last-resort manual reset:
   //   1. invocationTracker.cancelAll — aborts all active controllers + clears tracker slots
-  //   2. queueProcessor.releaseThread — clears all in-memory processingSlots
+  //   2. queueProcessor.releaseSlot — clears only the canceled cats' in-memory slots
   //   3. listRunningByThread + update canceled — marks all persistent running records done
   // Returns { ok: true, canceledRecords: N }
   app.post<{ Params: { threadId: string } }>('/api/threads/:threadId/force-reset', async (request, reply) => {
@@ -1374,20 +1659,24 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         .list(threadId, guard.userId)
         .filter((entry) => queueEntryMessageIds(entry).some((messageId) => managedMessageIds.has(messageId)));
       for (const carrier of managedCarriers) {
-        const current = invocationQueue.getEntrySnapshot(threadId, guard.userId, carrier.id);
-        if (!current || !invocationQueue.removeEntrySnapshotIfUnchanged(current)) continue;
+        const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, carrier.id);
+        if (!claimed) continue;
         try {
-          await opts.queueCustodyCoordinator?.withdrawEntry(current);
+          const withdrawn = await invocationQueue.commitClaimedWithdrawal(threadId, carrier.id);
+          if (!withdrawn) {
+            await invocationQueue.restoreClaimedEntries(threadId, [carrier.id]);
+            continue;
+          }
         } catch (err) {
-          invocationQueue.restoreDurableEntry(current);
+          await invocationQueue.restoreClaimedEntries(threadId, [carrier.id]);
           request.log.error(
-            { err, entryId: current.id, threadId },
+            { err, entryId: carrier.id, threadId },
             'force-reset could not terminalize managed wake carrier; producer remains retired',
           );
           continue;
         }
-        queueProcessor.unregisterEntryCompleteHook?.(current.id);
-        await queueProcessor.finalizeRemovedEntry?.(current, 'user_cancel');
+        queueProcessor.unregisterEntryCompleteHook?.(claimed.id);
+        await queueProcessor.finalizeRemovedEntry?.(claimed, 'user_cancel');
       }
       await emitQueueUpdated(
         socketManager,
@@ -1443,7 +1732,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       queueProcessor.canReleaseSlotForUser(threadId, catId, guard.userId),
     );
 
-    // Broadcast cancel + clear pause + release processingSlot for EVERY still-owned cat in
+    // Broadcast cancel + release processingSlot for EVERY still-owned cat in
     // terminalCatIds. P2 (opus-4.6 cross-cat
     // review): broadcasting only cancelledCatIds left stale records' cats without a done broadcast,
     // so the frontend "正在回复中" never cleared after force-reset (user had to F5). Doing all three
@@ -1459,7 +1748,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // cleanup and a late connector wake before releasing the slot. Terminal
       // consumption is restricted to executions this reset actually canceled.
       queueProcessor.suppressAutoResume(threadId, cid, [...(canceledExecutionIdsByCatId.get(cid) ?? [])]);
-      queueProcessor.clearPause(threadId, cid);
       queueProcessor.releaseSlot(threadId, cid);
     }
 

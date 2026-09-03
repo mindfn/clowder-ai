@@ -4,7 +4,7 @@ related_features: [F039]
 topics: [queue, steer, ux, chat]
 doc_kind: note
 created: 2026-02-28
-tips_exempt: existing Queue UI contract correction; no new cat-facing capability or workflow to teach
+tips_exempt: 2026-09-03 ADR-043 renews the existing Queue Steer contract and removes stale gates without adding a new user action or discoverable capability
 ---
 
 # F047: Queue Steer（取消当前轮并以同一消息立即重启）
@@ -58,8 +58,8 @@ operator在 Codex 原生体验中使用 **Steer**：当消息在队列里等待�
 F175 在 Steer 基础上扩展了用户可控编排能力：
 
 - **Drag & Drop 排序**：QueuePanel 支持拖动排序（`@dnd-kit`），拖拽后通过 `PATCH /queue/reorder` 批量设置 position
-- **Reorder API**：`PATCH /api/threads/:threadId/queue/reorder`，body: `{ positions: [{ entryId, position }] }`
-- **排序语义**：显式 position（用户手动拖动）仅在同 user 内覆盖 `priority`，未手动排序的 entry 仍按 `priority > createdAt`
+- **Reorder API**：`PATCH /api/threads/:threadId/queue/reorder`，body: `{ expectedQueueRevision, orderedVisibleEntryIds }`（RFC #1356 §4.1 `ReorderVisibleEntriesCommand`）。前端提交同一 snapshot 下**完整的 visible row 顺序**；服务端校验 revision 与集合一致后原子写入 `position=0..n-1`，revision/集合/eligibility 任一变化即整批 typed conflict，不做 partial write
+- **排序语义**：唯一 comparator 为 `position presence → position → priority(urgent before normal) → enqueuedAt → id`。隐藏 rows 不被客户端寻址，仍按自身 priority/FIFO 排序
 - **Optimistic UI**：前端立即按 comparator 重排，失败时 rollback
 
 ## Key Decisions
@@ -67,6 +67,32 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 - Steer 不改动消息内容，也不表示 promote / supplement；它只做 cancel + exact-message restart
 - 排序是独立的 Queue 控制面，不属于 Steer
 - `processing` 不提供 Steer：运行中纠偏属于更大能力（需要运行中注入/重路由），本 feature 不扩大范围
+
+## 设计现状（2026-09-02 校准，见 ADR-043）
+
+> **本节记录已落地的 ADR-043 语义。**
+
+本文档描述的 Steer 语义（cancel + 以同一 exact entry 重启、`processing` 是唯一业务状态拦截）保持不变。旧实现的三段式预留
+（`reserveExactUserEntry` → `beginExactSteerPreemption` → `activateExactSteerReservation`）已经删除。
+
+按 [ADR-043](../decisions/043-queue-durable-single-ledger.md) 已收敛为：
+
+- **两步，不是三段**：Lua 原子 claim（`queued → claimed`）→ cancel 正在跑的 invocation（I/O，可能失败）→ 成功则 Lua commit（`claimed → processing`），失败则 Lua restore（`claimed → queued`，原位）。
+  不能压成一步的唯一原因是 `invocationTracker.cancel` 是 I/O，进不了 Lua。
+- **`exactSteerBatch` 删除**：它防的「F175 吸走相邻条目」在 `QueueProcessor.ts:5382-5383` 已与持久的 `steerRequestedByCatIds` 重复检查；原子 claim 后其余用途消失。
+- **条目上只保留 2 个 Steer 标量**（fan-out 单目标后由 map 退化）：`steerRequestedAt`（UI「Steer 中」回执态）、`steeredInvocationId`（替补 run 归属证据）。
+
+### 不变量：Steer 只有一个业务拦截场景
+
+**用户点击 Steer 时，唯一应当拦截的业务场景是「该条目已出队、正在触发」→ 409 `ENTRY_PROCESSING`。**
+
+其余拒绝只允许是通用鉴权/归属/schema guard、系统固定位置约束，或真实基础设施失败（例如取消 I/O 失败）；这些不是另一套 Queue 生命周期。旧三段式产生的 `STEER_STATE_CHANGED` / `STEER_RESERVATION_LOST` / `STEER_RESERVATION_PERSIST_FAILED` / `QUEUE_BUSY` / `PRESTART_STATE_CHANGED` 已消失。并发抢先 claim 或条目已 processing 统一投影为 `ENTRY_PROCESSING`。
+
+新增任何 Steer 拒绝分支前，必须先证明它不是上述两类产物。
+
+### 已确认的死码
+
+`PREEMPT_PENDING_PRESTART`（202）分支不可达：`preemptSteerTarget` 三个成功出口（`routes/queue.ts:442/451/472`）全部返回 `deferred: false`，故 `:902` 与 `:1062` 的 `if (preemption.deferred)` 恒假。「先预留、稍后投递」模式早已被收敛为同步。
 
 ## Risk / Blast Radius
 

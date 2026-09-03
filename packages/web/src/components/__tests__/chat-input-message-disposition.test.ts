@@ -21,7 +21,29 @@ vi.mock('@/components/icons/AttachIcon', () => ({
 vi.mock('@/components/ImagePreview', () => ({ ImagePreview: () => null }));
 vi.mock('@/components/AttachmentPreview', () => ({ AttachmentPreview: () => null }));
 vi.mock('@/utils/compressImage', () => ({ compressImage: (file: File) => Promise.resolve(file) }));
-vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ cats: [], isLoading: false }) }));
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({
+    cats: [
+      {
+        id: 'opus',
+        displayName: '布偶猫',
+        mentionPatterns: ['@布偶猫', '@opus'],
+        roleDescription: 'reviewer',
+        avatar: '/opus.png',
+        roster: { available: true },
+      },
+      {
+        id: 'codex',
+        displayName: '缅因猫',
+        mentionPatterns: ['@缅因猫', '@codex'],
+        roleDescription: 'reviewer',
+        avatar: '/codex.png',
+        roster: { available: true },
+      },
+    ],
+    isLoading: false,
+  }),
+}));
 
 const mockApiFetch = vi.fn((path: string, init?: RequestInit) => globalThis.fetch(path, init));
 vi.mock('@/utils/api-client', () => ({
@@ -57,23 +79,41 @@ function setTextarea(textarea: HTMLTextAreaElement, value: string) {
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-function seedCanonicalExecution(threadId: string): void {
-  const execution: ActiveExecutionProjection = {
-    executionId: 'inv-active',
-    threadId,
-    threadTitle: 'Test thread',
-    catId: 'opus',
-    kind: 'live_invocation',
-    startedAt: Date.now(),
-    cancelability: {
-      state: 'cancelable',
-      target: { kind: 'live_invocation', threadId, catId: 'opus', executionId: 'inv-active' },
-    },
-  };
+function seedCanonicalExecutions(threadId: string, catIds: string[] = ['opus'], appendableCatIds: string[] = []): void {
+  const appendable = new Set(appendableCatIds);
+  const executions = catIds.map<ActiveExecutionProjection>((catId, index) => {
+    const executionId = `inv-${catId}-${index}`;
+    return {
+      executionId,
+      threadId,
+      threadTitle: 'Test thread',
+      catId,
+      kind: 'live_invocation',
+      startedAt: Date.now() + index,
+      cancelability: {
+        state: 'cancelable',
+        target: { kind: 'live_invocation', threadId, catId, executionId },
+      },
+      ...(appendable.has(catId)
+        ? {
+            inputCapabilities: {
+              append: {
+                kind: 'append' as const,
+                expectedRun: {
+                  targetId: catId,
+                  invocationId: `turn-${catId}`,
+                  responseMessageId: `response-${catId}`,
+                },
+              },
+            },
+          }
+        : {}),
+    };
+  });
   useActiveExecutionStore.setState({
     anchorThreadId: threadId,
     projectPath: '/project/cafe',
-    executionsByKey: { [activeExecutionKey(execution)]: execution },
+    executionsByKey: Object.fromEntries(executions.map((execution) => [activeExecutionKey(execution), execution])),
     hydration: 'ready',
     hydrationError: null,
   });
@@ -184,7 +224,7 @@ describe('F264 author message disposition selector', () => {
       '顺手看一下问题 B',
       undefined,
       undefined,
-      'queue',
+      undefined,
       undefined,
       'continue_current',
     );
@@ -201,7 +241,7 @@ describe('F264 author message disposition selector', () => {
       '网络失败也别吃掉我的选择',
       undefined,
       undefined,
-      'queue',
+      undefined,
       undefined,
       'continue_current',
     );
@@ -210,21 +250,21 @@ describe('F264 author message disposition selector', () => {
 
   it('confirms that draft Steer stops the target reply before sending', async () => {
     const onSend = vi.fn(async () => true);
-    seedCanonicalExecution('thread-3');
+    seedCanonicalExecutions('thread-3');
     await renderThreadInput({ threadId: 'thread-3', onSend, hasActiveInvocation: true });
     const trigger = await chooseContinueCurrent();
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     act(() => setTextarea(textarea, '现在就换轨'));
     await act(async () => {
-      (container.querySelector('[aria-label="强制停止并发送此消息"]') as HTMLButtonElement).click();
+      (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(onSend).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('停止目标当前回复');
-    expect(container.textContent).toContain('立即发送当前输入的消息');
-    expect(container.textContent).toContain('这不是“追加到当前回复”');
+    expect(container.textContent).toContain('Steer');
+    expect(container.textContent).toContain('@布偶猫');
+    expect(container.textContent).not.toContain('这不是“追加到当前回复”');
 
     await act(async () => {
       (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
@@ -232,8 +272,112 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'force', undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'steer', undefined, undefined, undefined, [
+      'opus',
+    ]);
     expect(trigger.textContent).toContain('接着当前工作');
+  });
+
+  it('lets an unaddressed draft choose one current member before stopping and sending', async () => {
+    const onSend = vi.fn(async () => true);
+    seedCanonicalExecutions('thread-steer-target', ['opus', 'codex']);
+    useChatStore.setState({
+      targetCats: ['opus', 'codex'],
+      activeInvocations: {
+        'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+    });
+    await renderThreadInput({ threadId: 'thread-steer-target', onSend, hasActiveInvocation: true });
+    act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '请现在处理这个'));
+    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      '请现在处理这个',
+      undefined,
+      undefined,
+      'steer',
+      undefined,
+      undefined,
+      undefined,
+      ['codex'],
+    );
+  });
+
+  it('locks an explicitly addressed draft to that current member', async () => {
+    const onSend = vi.fn(async () => true);
+    seedCanonicalExecutions('thread-steer-addressed', ['opus', 'codex']);
+    useChatStore.setState({
+      targetCats: ['opus', 'codex'],
+      activeInvocations: {
+        'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+    });
+    await renderThreadInput({ threadId: 'thread-steer-addressed', onSend, hasActiveInvocation: true });
+    act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '@缅因猫 请现在改一下'));
+    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      '@缅因猫 请现在改一下',
+      undefined,
+      undefined,
+      'steer',
+      undefined,
+      undefined,
+      undefined,
+      ['codex'],
+    );
+  });
+
+  it('offers non-interrupting send as an intent even when the selected member has no active Append carrier', async () => {
+    const onSend = vi.fn(async () => true);
+    seedCanonicalExecutions('thread-steer-append', ['opus', 'codex'], ['opus']);
+    useChatStore.setState({
+      targetCats: ['opus', 'codex'],
+      activeInvocations: {
+        'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+      catInvocations: {},
+    });
+    await renderThreadInput({ threadId: 'thread-steer-append', onSend, hasActiveInvocation: true });
+    act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '补充一个约束'));
+    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+
+    expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-append"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      '补充一个约束',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'continue_current',
+      undefined,
+      ['codex'],
+    );
   });
 
   it('can persist the choice for this thread instead of changing every send', async () => {
@@ -290,7 +434,8 @@ describe('F264 author message disposition selector', () => {
     expect(container.querySelector('[data-testid="message-disposition-onboarding"]')).toBeNull();
   });
 
-  it('fails closed without presenting an unsupported carrier as busy', async () => {
+  it('keeps continue-current selectable when the server may need to start next work', async () => {
+    const onSend = vi.fn(async () => true);
     useChatStore.setState({
       catInvocations: {
         opus: {
@@ -303,7 +448,7 @@ describe('F264 author message disposition selector', () => {
         },
       },
     });
-    await renderThreadInput({ threadId: 'thread-6', onSend: vi.fn(), hasActiveInvocation: true });
+    await renderThreadInput({ threadId: 'thread-6', onSend, hasActiveInvocation: true });
     const trigger = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
     expect(trigger.textContent).toContain('下一件工作');
     await act(async () => {
@@ -312,18 +457,35 @@ describe('F264 author message disposition selector', () => {
     });
     const continueOption = container.querySelector('[data-disposition-option="continue_current"]') as HTMLButtonElement;
     const nextWorkOption = container.querySelector('[data-disposition-option="next_work"]') as HTMLButtonElement;
-    expect(continueOption.disabled).toBe(true);
-    expect(continueOption.className).toContain('disabled:cursor-not-allowed');
+    expect(continueOption.disabled).toBe(false);
+    expect(continueOption.className).not.toContain('disabled:cursor-not-allowed');
     expect(continueOption.className).not.toContain('disabled:cursor-wait');
     expect(nextWorkOption.disabled).toBe(false);
     expect(container.textContent).toContain('当前接入不支持本轮读取');
+    expect(container.textContent).toContain('服务端会把它作为下一件工作启动');
+
+    act(() => continueOption.click());
+    expect(trigger.textContent).toContain('接着当前工作');
+    await typeAndSend('接入不支持也保留我的意图');
+    expect(onSend).toHaveBeenCalledWith(
+      '接入不支持也保留我的意图',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'continue_current',
+    );
 
     act(() => {
       useChatStore.setState({
         catInvocations: { opus: { invocationId: 'inv-active' } },
       });
     });
-    await renderThreadInput({ threadId: 'thread-6', onSend: vi.fn(), hasActiveInvocation: true });
+    await renderThreadInput({ threadId: 'thread-6', onSend, hasActiveInvocation: true });
+    await act(async () => {
+      (container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
     expect(container.textContent).toContain('能力未声明');
   });
 
@@ -395,7 +557,7 @@ describe('F264 author message disposition selector', () => {
     await renderThreadInput({ threadId: 'thread-b', onSend: vi.fn(), hasActiveInvocation: true });
 
     const triggerB = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    expect(triggerB.textContent).toContain('下一件工作');
+    expect(triggerB.textContent).toContain('接着当前工作');
     expect(triggerB.textContent).toContain('产品默认');
     expect(triggerB.textContent).not.toContain('仅这一次');
     expect(triggerB.textContent).not.toContain('本 Thread');
