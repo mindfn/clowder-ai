@@ -15,7 +15,7 @@ import type {
   UserPreferences,
 } from '@cat-cafe/shared';
 
-export const MESSAGE_DISPOSITION_PRODUCT_DEFAULT: MessageWorkDisposition = 'next_work';
+export const MESSAGE_DISPOSITION_PRODUCT_DEFAULT: MessageWorkDisposition = 'continue_current';
 
 function preferencesPath(projectRoot: string): string {
   return resolve(projectRoot, '.cat-cafe', 'user-preferences.json');
