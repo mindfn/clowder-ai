@@ -155,8 +155,8 @@ export class ManagedCommandWakeRecoverySweep {
         const existing = await this.deps.messageStore.getByIdempotencyKey('system', parsed.threadId, idempotencyKey);
         if (!existing) {
           const stored = await this.deps.messageStore.append({
+            from: { kind: 'external', connectorId: 'hold-ball' },
             userId: 'system',
-            catId: null,
             content: admissionFact,
             mentions: [],
             timestamp: this.now(),
@@ -361,7 +361,7 @@ export class ManagedCommandWakeRecoverySweep {
         `[定时任务] ${wakeContent}`,
         messageId,
         undefined,
-        { sourceCategory: 'scheduled', forceQueue: true },
+        { sourceCategory: 'scheduled' },
       );
     } catch (err) {
       if (err instanceof ManagedCommandWakeActionLeaseAdmissionError) {

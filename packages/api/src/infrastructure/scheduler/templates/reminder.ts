@@ -90,7 +90,11 @@ export const reminderTemplate: TaskTemplate = {
           const messageId = await ctx.deliver({
             threadId: tid,
             content,
-            userId: 'scheduler',
+            // F117 ADR-043 D.4: stored userId is the verified trigger owner (tenant),
+            // not the author — scheduler authorship is expressed via from: system:scheduler.
+            // Must equal the triggerUserId passed to invokeTrigger below, otherwise the
+            // canonical ingress fence (source owner vs queue owner) rejects the enqueue.
+            userId: triggerUserId,
             ...(ctx.invokeTrigger ? { extra: { scheduler: { hiddenTrigger: true } } } : {}),
           });
 

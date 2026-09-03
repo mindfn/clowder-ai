@@ -112,7 +112,7 @@ export interface ScheduleLifecycleNotice {
 
 export type ScheduleLifecycleNotifier = (notice: ScheduleLifecycleNotice) => void;
 
-export type ScheduleInvokeTriggerOutcome = 'dispatched' | 'enqueued' | 'full';
+export type ScheduleInvokeTriggerOutcome = 'enqueued' | 'full';
 
 /** Async cat invocation trigger — callers may detach it, but resolution means durable wake acceptance. */
 export interface ScheduleInvokeTrigger {
