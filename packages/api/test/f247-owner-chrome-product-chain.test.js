@@ -7,6 +7,7 @@ import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocat
 import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
 import { persistUserFacingSystemInfoNotices } from '../dist/domains/cats/services/agents/routing/persist-system-info-warnings.js';
 import { buildCloudBridgeStatusContent } from '../dist/domains/cats/services/cloud-bridge/cloud-bridge-fallback.js';
+import { CloudReturnBindingSigner } from '../dist/domains/cats/services/cloud-bridge/cloud-return-binding.js';
 import { MemoryCloudReturnGrantStore } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { dispatchBoundConversationThroughHost } from '../dist/domains/cats/services/cloud-bridge/conversation-host-dispatch.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
@@ -52,6 +53,9 @@ describe('F247 normal owner-Chrome product chain', () => {
       }),
     );
     const signer = new CloudReturnBindingSigner(Buffer.alloc(32, 17));
+    // F117: the Host dispatch issues exactly one server-custodied return grant into
+    // this store before dispatching; the callback route claims it on source-bound returns.
+    const grantStore = new MemoryCloudReturnGrantStore();
     const bridgeCalls = [];
     const dispositionCalls = [];
     const events = await drain(
@@ -158,11 +162,15 @@ describe('F247 normal owner-Chrome product chain', () => {
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),
       agentKeyRegistry,
+      cloudReturnBindingSigner: signer,
       cloudReturnGrantStore: grantStore,
       messageStore,
       threadStore,
       socketManager: { broadcastAgentMessage: () => undefined },
     });
+    // F117 new contract: a legacy cloudReturnBinding without its exact replyTo source
+    // is rejected 400 before any grant claim; the normal source-bound path is
+    // authorized by the server-custodied grant, not by a client-sent binding.
     const missingBinding = await app.inject({
       method: 'POST',
       url: '/api/callbacks/post-message',
@@ -170,7 +178,13 @@ describe('F247 normal owner-Chrome product chain', () => {
       payload: {
         content: 'must not return without the exact capability',
         threadId: thread.id,
-        replyTo: bridgeCalls[0].sourceMessageId,
+        cloudReturnBinding: signer.sign({
+          threadId: thread.id,
+          userId: 'alice',
+          sourceMessageId: bridgeCalls[0].sourceMessageId,
+          dispatchInvocationId: 'inv-cloud',
+          targetCatId: 'gpt-pro',
+        }),
       },
     });
     assert.equal(missingBinding.statusCode, 400);

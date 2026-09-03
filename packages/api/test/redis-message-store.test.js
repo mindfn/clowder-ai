@@ -51,7 +51,6 @@ describe('RedisMessageStore message JSON Unicode boundary', () => {
     };
     const store = new RedisMessageStore(redis);
     const input = {
-      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'unicode-user',
       catId: 'codex',
       content: `redis${loneHighSurrogate}message 😀`,
@@ -883,7 +882,6 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const admissionStore = new RedisMessageStore(redis, { ttlSeconds: 0 });
     const threadId = 'thread-canceled-response-visible';
     const response = await appendFixture(admissionStore, {
-      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-canceled-response-visible',
       catId: 'codex',
       content: '',

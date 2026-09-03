@@ -43,6 +43,7 @@ import type {
   CustodyOfferTransitionInput,
   CustodyOfferTransitionResult,
   HostMessageExtra,
+  IdempotentAppendResult,
   LifecycleAppendAdmissionInput,
   LifecycleAppendRejectionInput,
   LifecycleInputDispatchPatch,
@@ -1098,6 +1099,12 @@ export class RedisMessageStore {
     const result = await this.appendWithReservedId(input);
     if (result.outcome !== 'stored') throw new Error('plain message append returned a Queue admission outcome');
     return result.message;
+  }
+
+  async appendIdempotent(input: AppendMessageInput): Promise<IdempotentAppendResult> {
+    const result = await this.appendWithReservedId(input);
+    if (result.outcome !== 'stored') throw new Error('idempotent message append returned a Queue admission outcome');
+    return { message: result.message, idempotent: result.replayed };
   }
 
   async appendWithQueueLedgerAdmission(

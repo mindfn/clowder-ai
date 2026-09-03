@@ -18,8 +18,9 @@ describe(
     let connected = false;
     let RedisMessageStore;
     let RedisActionSuccessorLeaseStore;
+    let RedisQueueLedgerStore;
     let InvocationQueue;
-    let QueuedMessageCustodyStartupReconciler;
+    let recoverLegacyLocalReviewContinuationAdmissions;
     let canonicalizeActionTerminalPredicate;
 
     before(async () => {
@@ -30,8 +31,11 @@ describe(
         '../dist/domains/ball-custody/RedisActionSuccessorLeaseStore.js'
       ));
       ({ InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'));
-      ({ QueuedMessageCustodyStartupReconciler } = await import(
-        '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.js'
+      ({ RedisQueueLedgerStore } = await import(
+        '../dist/domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.js'
+      ));
+      ({ recoverLegacyLocalReviewContinuationAdmissions } = await import(
+        '../dist/domains/ball-custody/LegacyLocalReviewContinuationStartupRecovery.js'
       ));
       ({ canonicalizeActionTerminalPredicate } = await import(
         '../dist/domains/ball-custody/ActionTerminalPredicateCatalog.js'
@@ -47,12 +51,12 @@ describe(
 
     beforeEach(async (t) => {
       if (!connected) return t.skip('Redis not connected');
-      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'action:successor:*']);
+      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'queue:*', 'action:successor:*']);
     });
 
     after(async () => {
       if (!connected) return;
-      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'action:successor:*']);
+      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'queue:*', 'action:successor:*']);
       await redis.quit();
     });
 
@@ -71,8 +75,8 @@ describe(
         decisionId: 'decision-review-redis-post-cas',
       };
       const decision = await writerMessageStore.append({
+        from: { kind: 'user', userId: 'owner-f167-redis' },
         userId: 'owner-f167-redis',
-        catId: null,
         threadId: 'thread-author-redis',
         content: 'operator 对旧 Review 的结算选择为“需要修改”。',
         mentions: ['codex-sol'],
@@ -118,33 +122,28 @@ describe(
 
       const recoveryMessageStore = new RedisMessageStore(redis);
       const recoveryLeaseStore = new RedisActionSuccessorLeaseStore(redis);
-      const invocationQueue = new InvocationQueue();
-      const reconciler = new QueuedMessageCustodyStartupReconciler({
-        messageStore: recoveryMessageStore,
-        legacyLocalReviewDispositionLeaseStore: recoveryLeaseStore,
-        invocationQueue,
-        invocationRecordStore: {
-          async get() {
-            return null;
-          },
-        },
-        now: () => 500,
-        log: { info() {}, warn() {} },
-      });
+      const invocationQueue = new InvocationQueue(new RedisQueueLedgerStore(redis));
+      const reconcile = () =>
+        recoverLegacyLocalReviewContinuationAdmissions({
+          messageStore: recoveryMessageStore,
+          invocationQueue,
+          leaseStore: recoveryLeaseStore,
+          log: { info() {}, warn() {} },
+        });
 
-      const firstRestart = await reconciler.reconcile();
-      const replay = await reconciler.reconcile();
+      const firstRestart = await reconcile();
+      const replay = await reconcile();
 
-      assert.equal(firstRestart.entriesRestored, 1);
-      assert.equal(replay.entriesRestored, 0);
+      assert.equal(firstRestart.admitted, 1);
+      assert.equal(replay.admitted, 0);
       const restored = invocationQueue.list('thread-author-redis', 'owner-f167-redis');
       assert.equal(restored.length, 1);
-      assert.equal(restored[0].messageId, decision.id);
-      assert.deepEqual(restored[0].targetCats, ['codex-sol']);
-      assert.equal(restored[0].targetCats.includes('codex-terra'), false);
+      assert.equal(restored[0].payload.messageId, decision.id);
+      assert.deepEqual(restored[0].target, { kind: 'cat', catId: 'codex-sol' });
       const persisted = await recoveryMessageStore.getById(decision.id);
       assert.equal(persisted?.deliveryStatus, 'queued');
-      assert.equal(persisted?.queueCustody?.status, 'queued');
+      const persistedRows = await invocationQueue.getDurableEntriesForMessages('thread-author-redis', [decision.id]);
+      assert.equal(persistedRows.get(decision.id)?.length, 1);
       assert.deepEqual(await recoveryMessageStore.scanPendingLegacyLocalReviewDispositions(), []);
       assert.deepEqual(await recoveryLeaseStore.get(disposition.leaseId), settledLease);
     });

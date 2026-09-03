@@ -1008,7 +1008,11 @@ export type {
   ReorderVisibleLifecycleEntriesCommand,
   StructuredOwnerAdmissionBinding,
 } from './message-lifecycle.js';
-export { isLifecycleStoredMessageMetadata, isMessageFrom } from './message-lifecycle.js';
+export {
+  hasExactLifecycleProcessingDispatch,
+  isLifecycleStoredMessageMetadata,
+  isMessageFrom,
+} from './message-lifecycle.js';
 // Mount Rules types (F228 Skill 挂载规则解耦)
 export type {
   CustomMountPointRule,

@@ -150,7 +150,6 @@ describe('GET /api/threads/:threadId/artifacts (F232)', () => {
     // earliest message carries the file artifact, then push 59 newer plain messages past the default-50 window
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus-48',
         content: '',
@@ -165,7 +164,6 @@ describe('GET /api/threads/:threadId/artifacts (F232)', () => {
     for (let i = 1; i <= 59; i++) {
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'cat', routed: false, observation: 'original' },
           userId: 'alice',
           catId: 'opus-48',
           content: `m${i}`,

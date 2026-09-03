@@ -42,13 +42,6 @@ describe('F128 parallel reporter handle resolution', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['kimi', 'gemini', 'codex'],
           intent: { intent: 'ideate' },
           hasMentions: true,
@@ -113,13 +106,6 @@ describe('F128 parallel reporter handle resolution', () => {
       async resolveTargetsAndIntent() {
         // Router resolves Chinese alias `@砚砚` → catId `codex` per cat-template.json.
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['codex', 'opus'],
           intent: { intent: 'ideate' },
           hasMentions: true,
@@ -173,13 +159,6 @@ describe('F128 parallel reporter handle resolution', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['gpt-5.2', 'gpt-5.4'],
           intent: { intent: 'ideate' },
           hasMentions: true,

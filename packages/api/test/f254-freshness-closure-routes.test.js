@@ -46,7 +46,6 @@ describe('F254 Phase E — closure projection and retry routes', () => {
     const closureStore = new InMemoryFreshnessClosureStore();
     const original = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex-sol',
         threadId: thread.id,
@@ -72,7 +71,6 @@ describe('F254 Phase E — closure projection and retry routes', () => {
     });
     const leaked = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex-sol',
         threadId: thread.id,

@@ -1,64 +1,57 @@
 import { createCatId } from '@cat-cafe/shared';
 import type { LegacyLocalReviewDispositionServiceDeps } from '../domains/ball-custody/LegacyLocalReviewDispositionService.js';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
-import { type A2ATriggerDeps, enqueueA2ATargets } from './callback-a2a-trigger.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { QueueProcessorLike } from './callback-a2a-trigger.js';
 
-export type LegacyLocalReviewContinuationQueueDeps = Omit<A2ATriggerDeps, 'invocationQueue'> & {
+export interface LegacyLocalReviewContinuationQueueDeps {
   invocationQueue: InvocationQueue;
-  enqueueTargets?: typeof enqueueA2ATargets;
-};
+  messageStore: IMessageStore;
+  queueProcessor?: QueueProcessorLike;
+}
 
 export function createLegacyLocalReviewContinuationQueueAdapter(
   deps: LegacyLocalReviewContinuationQueueDeps,
 ): LegacyLocalReviewDispositionServiceDeps['enqueueContinuation'] {
-  const { invocationQueue, enqueueTargets = enqueueA2ATargets, ...a2aDeps } = deps;
-  return async ({ decisionMessage, reviewerCatId, predecessorCatId, predecessorThreadId }) => {
+  const { invocationQueue } = deps;
+  return async ({ decisionMessage, predecessorCatId, predecessorThreadId }) => {
     const existingCarrier = invocationQueue.findEntryWithMessageId(predecessorThreadId, decisionMessage.id);
     if (existingCarrier) return { outcome: 'replayed', queueEntryId: existingCarrier.id };
 
-    const persistedBeforeEnqueue = await deps.messageStore?.getById(decisionMessage.id);
-    if (
-      persistedBeforeEnqueue?.deliveryStatus === 'delivered' ||
-      persistedBeforeEnqueue?.queueCustody?.status === 'terminal'
-    ) {
+    const persistedRows =
+      (await invocationQueue.getDurableEntriesForMessages(predecessorThreadId, [decisionMessage.id])).get(
+        decisionMessage.id,
+      ) ?? [];
+    if (persistedRows.length > 0) {
       return {
         outcome: 'replayed',
-        queueEntryId: `delivered:${decisionMessage.id}`,
+        queueEntryId: persistedRows[0]!.id,
       };
     }
 
     const targetCatId = createCatId(predecessorCatId);
-    const enqueueResult = await enqueueTargets(
-      { ...a2aDeps, invocationQueue },
-      {
-        targetCats: [targetCatId],
-        content: decisionMessage.content,
-        userId: decisionMessage.userId,
-        ownerAuthProvenance: 'strict',
-        threadId: predecessorThreadId,
-        triggerMessage: decisionMessage,
-        callerCatId: createCatId(reviewerCatId),
-      },
-    );
-    const accepted = new Set([...enqueueResult.enqueued, ...(enqueueResult.coalesced ?? [])]);
-    const carrier = invocationQueue.findEntryWithMessageId(predecessorThreadId, decisionMessage.id);
-    if (carrier) {
-      return {
-        outcome: accepted.has(targetCatId) ? 'enqueued' : 'replayed',
-        queueEntryId: carrier.id,
-      };
+    const result = await invocationQueue.enqueueExistingMessageDurable(deps.messageStore, decisionMessage.id, {
+      from: messageFrom(decisionMessage),
+      threadId: predecessorThreadId,
+      userId: decisionMessage.userId,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      content: decisionMessage.content,
+      messageId: decisionMessage.id,
+      sourceId: decisionMessage.id,
+      sourceCategory: 'continuation',
+      targetCats: [targetCatId],
+      intent: 'execute',
+      autoExecute: true,
+    });
+    if (result.outcome === 'full' || !result.entry) {
+      throw new Error('legacy review continuation has no durable Queue carrier');
     }
-
-    const persistedAfterEnqueue = await deps.messageStore?.getById(decisionMessage.id);
-    if (
-      persistedAfterEnqueue?.deliveryStatus === 'delivered' ||
-      persistedAfterEnqueue?.queueCustody?.status === 'terminal'
-    ) {
-      return {
-        outcome: 'replayed',
-        queueEntryId: `delivered:${decisionMessage.id}`,
-      };
-    }
-    throw new Error('legacy review continuation has no durable Queue carrier');
+    await deps.queueProcessor?.requestDrain?.(predecessorThreadId);
+    return {
+      outcome: result.deduped ? 'replayed' : 'enqueued',
+      queueEntryId: result.entry.id,
+    };
   };
 }

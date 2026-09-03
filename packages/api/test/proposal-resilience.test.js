@@ -12,7 +12,6 @@ import { createProposalTestContext } from './helpers/proposal-test-harness.js';
 async function createInvocationWithOrigin(ctx, threadId) {
   const origin = await ctx.messageStore.append(
     canonicalTestMessageInput({
-      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'alice',
       catId: null,
       content: 'Please propose this child thread',
@@ -82,7 +81,6 @@ describe('F128 partial-commit + dedup + self-heal', () => {
     for (let i = 0; i < 60; i++) {
       await ctx.messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'alice',
           catId: null,
           content: `filler ${i}`,
@@ -131,7 +129,6 @@ describe('F128 partial-commit + dedup + self-heal', () => {
     });
     const legacyCard = await ctx.messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: 'Legacy approval card',

@@ -196,7 +196,6 @@ test('collectAllThreadMessages paginates a REAL store with no overlap (oldest→
   for (let i = 0; i < 250; i++) {
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u',
         catId: 'opus-48',
         content: `m${i}`,
@@ -299,7 +298,6 @@ test('getByThreadBefore (in-memory) keeps queued user work at its authored timel
   const base = Date.now();
   store.append(
     canonicalTestMessageInput({
-      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'older',
@@ -310,7 +308,6 @@ test('getByThreadBefore (in-memory) keeps queued user work at its authored timel
   );
   const queued = store.append(
     canonicalTestMessageInput({
-      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'queued',

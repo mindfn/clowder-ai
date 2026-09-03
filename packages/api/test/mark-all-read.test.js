@@ -66,7 +66,6 @@ describe('POST /api/threads/read/mark-all', () => {
     for (const t of threads) {
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'cat', routed: false, observation: 'original' },
           userId: 'alice',
           catId: 'opus',
           content: `msg1 in ${t.id}`,
@@ -77,7 +76,6 @@ describe('POST /api/threads/read/mark-all', () => {
       );
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'cat', routed: false, observation: 'original' },
           userId: 'alice',
           catId: 'opus',
           content: `msg2 in ${t.id}`,
@@ -104,7 +102,6 @@ describe('POST /api/threads/read/mark-all', () => {
     const thread = threadStore.create('alice', 'Source-cat seed only');
     const seed = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'codex-sol',
         content: 'published source-cat seed',
@@ -132,7 +129,6 @@ describe('POST /api/threads/read/mark-all', () => {
     const thread = threadStore.create('alice', 'Mixed: ordinary + queued');
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'alice',
         catId: null,
         content: 'ordinary message A',
@@ -143,7 +139,6 @@ describe('POST /api/threads/read/mark-all', () => {
     );
     const q = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'codex-sol',
         content: 'queued cat speech Q',
@@ -173,7 +168,6 @@ describe('POST /api/threads/read/mark-all', () => {
     const t = threadStore.create('alice', 'Thread X');
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: 'hello',

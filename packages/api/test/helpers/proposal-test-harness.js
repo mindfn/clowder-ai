@@ -90,6 +90,7 @@ export async function createProposalTestContext({
           userId,
           catId: null,
           content: 'Please propose a child thread',
+          contentBlocks: originContentBlocks,
           mentions: [],
           timestamp: Date.now(),
           threadId,

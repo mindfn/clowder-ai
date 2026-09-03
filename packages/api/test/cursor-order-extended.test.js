@@ -29,7 +29,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     // Append 3 messages — timestamps don't matter, seq must be strictly monotonic
     const m1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'a',
@@ -40,7 +39,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     const m2 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'b',
@@ -51,7 +49,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     const m3 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'c',
@@ -82,7 +79,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'stable',
@@ -114,7 +110,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const direct = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'direct',
@@ -127,7 +122,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     // Hidden queued work (system/scheduler) — NOT timeline-published
     const queued = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: 'system',
         content: 'hidden-queued',
@@ -178,7 +172,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const c = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C-direct',
@@ -189,7 +182,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Q-queued',
@@ -222,7 +214,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'msg',
@@ -247,7 +238,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const c = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C',
@@ -258,7 +248,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Q',
@@ -291,7 +280,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const direct = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'visible',
@@ -302,7 +290,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'will-cancel',
@@ -326,7 +313,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const response = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'codex',
         content: '',
@@ -367,7 +353,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'queued-msg',
@@ -407,7 +392,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'codex-sol',
         content: 'timeline-published cat speech',
@@ -426,7 +410,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     // Append later ordinary B — gets a higher seq
     const b = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'ordinary B',
@@ -464,7 +447,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
 
     const hidden = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: 'system',
         content: 'hidden system queued work',
@@ -499,7 +481,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     // Create 3 messages
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'M1',
@@ -510,7 +491,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'M2',
@@ -521,7 +501,6 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'M3',

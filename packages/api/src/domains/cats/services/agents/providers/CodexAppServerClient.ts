@@ -252,6 +252,7 @@ export class CodexAppServerClient {
           input.thread.kind === 'resume' ? { threadId: input.thread.threadId } : undefined,
         ),
         startParams: buildCodexAppServerThreadParams(input),
+        ...(input.resumeReplacement ? { resumeReplacement: input.resumeReplacement } : {}),
         // A reused session-affinity host (`wire.reusedSessionHost`) is the owner
         // host resolveHostEntry returned WITHOUT an active lease — the prior lease
         // already released. The genuine live-lease case (owner.lease.sessionId ===
@@ -478,6 +479,7 @@ export class CodexAppServerClient {
         if (mapped?.type === 'turn.completed' && latestUsage) mapped.usage = latestUsage;
         if (mapped) yield mapped;
         if (record?.method === 'turn/completed') {
+          runtimeInteraction?.close('provider_cancelled');
           activeRunDispatchOpen = false;
           try {
             await this.deps.freshnessController?.markTurnCompleted(activeTurnId);
@@ -523,6 +525,7 @@ export class CodexAppServerClient {
       if (failed) yield this.lifecycle.event(failed);
       throw failure;
     } finally {
+      runtimeInteraction?.close('provider_cancelled');
       activeRunDispatchOpen = false;
       releaseActiveRunDispatch?.();
       const { closing, closed } = await closeCodexAppServerTransport(

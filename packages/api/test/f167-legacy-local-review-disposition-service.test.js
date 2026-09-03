@@ -106,30 +106,15 @@ function createHarness(source = sourceMessage(), options = {}) {
         const id = byIdempotency.get(`${userId}\0${threadId}\0${idempotencyKey}`);
         return id ? structuredClone(messages.get(id)) : null;
       },
-      async appendIdempotent(input) {
+      async append(input) {
         const key = `${input.userId}\0${input.threadId}\0${input.idempotencyKey}`;
         const existingId = byIdempotency.get(key);
-        if (existingId) return { message: structuredClone(messages.get(existingId)), idempotent: true };
+        if (existingId) return structuredClone(messages.get(existingId));
         appendCount += 1;
-        const message = { ...structuredClone(input), id: `decision-message-${appendCount}` };
+        const message = { ...structuredClone(input), id: `decision-message-${appendCount}`, catId: null };
         messages.set(message.id, message);
         byIdempotency.set(key, message.id);
-        return { message: structuredClone(message), idempotent: false };
-      },
-      async prepareQueueAdmission(id) {
-        prepareAttempts += 1;
-        if (options.failPrepareAttempts && prepareAttempts <= options.failPrepareAttempts) {
-          throw new Error('simulated interruption after lease CAS before Queue admission');
-        }
-        const message = messages.get(id);
-        if (!message) return { kind: 'not_found' };
-        if (message.deliveryStatus === 'queued') {
-          return { kind: 'existing', message: structuredClone(message) };
-        }
-        if (message.deliveryStatus !== undefined || message.queueCustody) return { kind: 'conflict' };
-        const prepared = { ...message, deliveryStatus: 'queued' };
-        messages.set(id, prepared);
-        return { kind: 'prepared', message: structuredClone(prepared) };
+        return structuredClone(message);
       },
     },
     leaseStore: {
@@ -149,6 +134,10 @@ function createHarness(source = sourceMessage(), options = {}) {
       },
     },
     async enqueueContinuation(input) {
+      prepareAttempts += 1;
+      if (options.failPrepareAttempts && prepareAttempts <= options.failPrepareAttempts) {
+        throw new Error('simulated interruption after lease CAS before Queue admission');
+      }
       enqueueAttempts += 1;
       if (options.failContinuationAttempts && enqueueAttempts <= options.failContinuationAttempts) {
         throw new Error('simulated queue outage');
@@ -157,6 +146,7 @@ function createHarness(source = sourceMessage(), options = {}) {
       if (queueCarriers.has(key)) return { outcome: 'replayed', queueEntryId: queueCarriers.get(key) };
       const id = `queue-${queueCarriers.size + 1}`;
       queueCarriers.set(key, id);
+      messages.set(input.decisionMessage.id, { ...messages.get(input.decisionMessage.id), deliveryStatus: 'queued' });
       return { outcome: 'enqueued', queueEntryId: id };
     },
   });
@@ -373,7 +363,7 @@ test('a crash after lease CAS replays the same decision and admits the predecess
   assert.equal(interrupted.outcome, 'continuation_pending');
   assert.equal(harness.lease.status, 'completed', 'the typed terminal must remain durably settled');
   assert.equal(harness.appendCount, 1);
-  assert.equal(harness.messages.get(interrupted.decisionMessageId)?.deliveryStatus, 'queued');
+  assert.equal(harness.messages.get(interrupted.decisionMessageId)?.deliveryStatus, undefined);
   assert.equal(harness.enqueueAttempts, 1);
   assert.equal(harness.queueCarriers.size, 0);
 

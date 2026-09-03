@@ -79,7 +79,6 @@ describe('F272 natural echo and next-wake memory', () => {
   async function appendUserReply(content, replyTo) {
     const message = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         threadId: HOME,
         userId: OWNER,
         catId: null,

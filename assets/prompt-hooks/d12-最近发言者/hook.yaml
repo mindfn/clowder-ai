@@ -1,13 +1,13 @@
 id: D12
-name: 活跃参与者
+name: 最近发言者
 stage: per-turn
 order: 1200
 version: 1
 enabled: true
 
 # Content resolution
-template: d12-active-participants.md
-resolver: D12ActiveParticipantsResolver
+template: d12-recent-speaker.md
+resolver: D12Resolver
 
 # Dependencies
 inputs:
@@ -22,4 +22,4 @@ transparencyTier: opt-in-view
 governanceTier: human-gated
 
 # operator-facing
-userExplanation: "当前 thread 中活跃的猫猫列表"
+userExplanation: "最近在此 thread 发过言的成员（不表示正在执行）"

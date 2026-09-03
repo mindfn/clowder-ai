@@ -87,7 +87,6 @@ function append(store, ageMs, content = '[爪感差: tool+phenomenon]', override
       mentions: [],
       timestamp: NOW_MS - ageMs,
       ...overrides,
-      provenance: { author: catId === null ? 'user' : 'cat', routed: false, observation: 'original' },
     }),
   );
 }

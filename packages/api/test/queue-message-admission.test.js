@@ -17,7 +17,6 @@ function message(idempotencyKey, content = idempotencyKey) {
     threadId: 'thread-admission',
     idempotencyKey,
     deliveryStatus: 'queued',
-    provenance: { author: 'user', routed: true, observation: 'original' },
   };
 }
 

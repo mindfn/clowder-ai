@@ -1256,6 +1256,7 @@ describe('incremental current-message fallback integration', () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const { formatConciergeHandleBinding } = await import('../dist/domains/concierge/concierge-search-context.js');
+    const { projectConciergeStoredContent } = await import('../dist/domains/concierge/concierge-reply-validator.js');
     const { CONCIERGE_CONFIG_DEFAULTS } = await import('@cat-cafe/shared');
     const appendCalls = [];
     const targetEntry = {
@@ -1449,7 +1450,14 @@ describe('incremental current-message fallback integration', () => {
     const serialStoredReply = appendCalls.find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus');
     assertDanglingTriageStoredAsVisibleText(serialStoredReply, 'serial');
     const serialDone = serialProjectedEvents.find((event) => event.type === 'done' && event.catId === 'opus');
-    assert.equal(serialDone?.content, serialStoredReply.content, 'serial done must expose the canonical stored body');
+    // F117: the done event carries the canonical projection of the stored body
+    // (route-serial persistedDoneContent = projectConciergeStoredContent), while the
+    // stream append keeps the verbatim reply text (marker syntax included).
+    assert.equal(
+      serialDone?.content,
+      projectConciergeStoredContent(serialStoredReply.content),
+      'serial done must expose the canonical projection of the stored body',
+    );
     assert.deepStrictEqual(serialStoredReply.mentions, [], 'serial should ignore hidden triage A2A mentions');
     assert.equal(
       hiddenMentionService.calls.length,

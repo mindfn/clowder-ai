@@ -26,7 +26,6 @@ describe('Cursor Order — RED #22: Late mention exactly-once', () => {
     // C: direct mention (visible immediately)
     const c = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: '@opus direct mention',
@@ -42,7 +41,6 @@ describe('Cursor Order — RED #22: Late mention exactly-once', () => {
     // must appear exactly once in the next mention page.
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: '@opus queued mention',
@@ -81,7 +79,6 @@ describe('Cursor Order — RED #22: Late mention exactly-once', () => {
     // First mention (will be acked)
     const _anchor = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: '@opus anchor',
@@ -96,7 +93,6 @@ describe('Cursor Order — RED #22: Late mention exactly-once', () => {
     for (let i = 0; i < 25; i++) {
       store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'u1',
           catId: null,
           content: `filler-${i}`,
@@ -110,7 +106,6 @@ describe('Cursor Order — RED #22: Late mention exactly-once', () => {
     // 1 mention at the end
     const lateMention = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: '@opus late mention',

@@ -65,7 +65,6 @@ describe('auto-replyTo for A2A invocations', () => {
     // 1. Simulate the trigger message (cat A @mentions cat B)
     const triggerMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: '请帮忙看一下\n@codex',
@@ -136,7 +135,6 @@ describe('auto-replyTo for A2A invocations', () => {
     // Trigger message
     const triggerMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: '请看一下\n@codex',
@@ -149,7 +147,6 @@ describe('auto-replyTo for A2A invocations', () => {
     // A different message the cat wants to reply to explicitly
     const otherMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: '用户的另一条消息',
@@ -230,7 +227,6 @@ describe('auto-replyTo for A2A invocations', () => {
     // Trigger message exists in thread-1
     const triggerMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: '请看\n@codex',
@@ -285,7 +281,6 @@ describe('auto-replyTo for A2A invocations', () => {
     // Trigger message in thread-1
     const triggerMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: '请看\n@codex',

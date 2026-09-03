@@ -81,7 +81,6 @@ describe('Concurrent fault drills - in-memory stores', () => {
 
     const base = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: 'base',
@@ -95,7 +94,6 @@ describe('Concurrent fault drills - in-memory stores', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       return messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId,
           catId: null,
           content: 'new-after-ack',
@@ -257,7 +255,6 @@ describe('Concurrent fault drills - Redis stores', { skip: redisIsolationSkipRea
 
     const base = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: 'base',
@@ -271,7 +268,6 @@ describe('Concurrent fault drills - Redis stores', { skip: redisIsolationSkipRea
       await new Promise((resolve) => setTimeout(resolve, 0));
       return messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId,
           catId: null,
           content: 'new-after-ack',

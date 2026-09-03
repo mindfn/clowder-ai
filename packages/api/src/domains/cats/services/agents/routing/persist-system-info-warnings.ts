@@ -105,6 +105,11 @@ function parseVisibleNotice(
 
 type VisibleNotice = NonNullable<ReturnType<typeof parseVisibleNotice>>;
 
+/** Reuse the canonical system-info parser when a non-persistence consumer needs visible text. */
+export function userFacingSystemInfoNoticeContent(content: string, catId: string): string | undefined {
+  return parseVisibleNotice(content, catId)?.content;
+}
+
 function normalizedFailureText(value: string): string {
   return value.replace(/^(?:⚠️\s*|Error:\s*)+/u, '').trim();
 }

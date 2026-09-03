@@ -45,9 +45,6 @@ describe('ProactiveMemoryCandidateDetector', () => {
         threadId,
         timestamp,
         ...overrides,
-        provenance: {
-          observation: 'original',
-        },
       }),
     );
   }

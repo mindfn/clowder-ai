@@ -1961,6 +1961,26 @@ export class CodexAgentService implements AgentService {
               prepareRequest: (body, boundaryReason) => prepareProviderRequest(body, 'app_server', boundaryReason),
               prepareRecoveryRequest,
               ...(options?.beforeProviderLaunch ? { beforeProviderLaunch: options.beforeProviderLaunch } : {}),
+              ...(auditContext
+                ? {
+                    runtimeInteraction: {
+                      owner: {
+                        userId: auditContext.userId,
+                        threadId: auditContext.threadId,
+                        catId: auditContext.catId,
+                        invocationId: auditContext.invocationId,
+                      },
+                      port: options?.runtimeInteractionPort ?? {
+                        request: async () => {
+                          throw confirmationUnavailableError();
+                        },
+                      },
+                      ...(options?.resolveEntrustedWorkTaskRef
+                        ? { resolveEntrustedWorkTaskRef: options.resolveEntrustedWorkTaskRef }
+                        : {}),
+                    },
+                  }
+                : {}),
               ...(options?.activeRunDispatch ? { activeRunDispatch: options.activeRunDispatch } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
               timeoutMs: resolveCliTimeoutMs(parseCliTimeoutMs(codexEnv.CLI_TIMEOUT_MS ?? undefined)),

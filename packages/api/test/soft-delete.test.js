@@ -31,7 +31,6 @@ function seedMessages(store) {
     msgs.push(
       store.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           userId: 'user-1',
           catId: null,
           content: `message ${i}`,
@@ -536,7 +535,6 @@ describe('Authorization: DELETE /api/messages/:id', () => {
     // Add a message from a different user
     const catMsg = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'cat-opus',
         catId: 'opus',
         content: 'cat reply',

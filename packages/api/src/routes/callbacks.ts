@@ -15,6 +15,7 @@ import type {
   IssueWaitAutomationState,
   PrAutomationState,
   RichBlock,
+  RoutingPreflightDecisionV1,
   SuggestedCrossPostAction,
 } from '@cat-cafe/shared';
 import {
@@ -72,6 +73,7 @@ import type { InvocationTracker } from '../domains/cats/services/agents/invocati
 import { MessageDeliveryService } from '../domains/cats/services/agents/invocation/MessageDeliveryService.js';
 import type { QueueLedgerEntry } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
+import type { ThreadExecutionSituationSource } from '../domains/cats/services/agents/invocation/thread-execution-situation.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
 import { analyzeA2AMentions } from '../domains/cats/services/agents/routing/a2a-mentions.js';
@@ -170,6 +172,7 @@ import {
   appendA2ASourceWithLedgerAdmission,
   enqueueA2ATargets,
   planA2AFanoutAdmission,
+  preflightA2ATargets,
 } from './callback-a2a-trigger.js';
 import { anchorPendingMention, anchorThreadMessage, truncateHead } from './callback-anchor-helpers.js';
 import {
@@ -923,6 +926,8 @@ export interface CallbackRoutesOptions {
     'claim' | 'commit' | 'release'
   >;
   messageStore: IMessageStore;
+  /** Exact lifecycle-backed execution state shared by prompts, UI, and thread-context reads. */
+  threadExecutionSituationSource?: ThreadExecutionSituationSource;
   socketManager: SocketManager;
   /** F174 D2b-1: in-context surface for callback auth failures (optional — back-compat). */
   callbackAuthNotifier?: CallbackAuthSystemMessageNotifier;
@@ -1709,11 +1714,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               now,
             })
           : undefined);
-      if (duplicateMsg) {
-        const duplicateMentions = [...duplicateMsg.mentions];
-        const duplicateReplyTo = duplicateMsg.replyTo;
+      const recoverPersistedCloudReturn = async (persisted: StoredMessage) => {
+        if (cloudReturnGrantClaim && cloudReturnGrantStore && cloudReturnGrantScope) {
+          await commitCloudReturnGrantAfterPersistence({
+            store: cloudReturnGrantStore,
+            claim: cloudReturnGrantClaim,
+            log: app.log,
+            threadId: effectiveThreadId,
+            sourceMessageId: cloudReturnGrantScope.sourceMessageId,
+            messageId: persisted.id,
+          });
+        }
+        const duplicateMentions = [...persisted.mentions];
+        const duplicateReplyTo = persisted.replyTo;
         await ensureDuplicateCallbackWake({
-          duplicateMsg,
+          duplicateMsg: persisted,
           canEnqueueA2A: !!(duplicateMentions.length > 0 && router && invocationRecordStore && opts.invocationQueue),
           ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
           threadId: effectiveThreadId,
@@ -1734,11 +1749,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               },
               {
                 targetCats: duplicateMentions,
-                content: duplicateMsg.content,
+                content: persisted.content,
                 userId: principal.userId,
                 ownerAuthProvenance: 'unknown',
                 threadId: effectiveThreadId,
-                triggerMessage: duplicateMsg,
+                triggerMessage: persisted,
                 callerCatId: senderCatId,
               },
             ),
@@ -1747,11 +1762,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         return {
           status: 'duplicate',
           threadId: effectiveThreadId,
-          messageId: duplicateMsg.id,
+          messageId: persisted.id,
           ...(duplicateReplyTo ? { replyTo: duplicateReplyTo } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         };
-      }
+      };
+      if (duplicateMsg) return recoverPersistedCloudReturn(duplicateMsg);
 
       // Server-custodied returns use a durable exact-source idempotency key in
       // the message store. Consuming the short-lived agent-key key would make
@@ -1764,6 +1780,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
 
       let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
+      let a2aRoutingPreflightDecision: RoutingPreflightDecisionV1 | undefined;
       const a2aAdmissionOptions = hasA2AMentions
         ? {
             targetCats: mentions,
@@ -1783,26 +1800,40 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             message: 'Recipient wake admission is unavailable; no message was published.',
           };
         }
-        a2aAdmissionPlan = planA2AFanoutAdmission({ invocationQueue: opts.invocationQueue }, a2aAdmissionOptions);
+        const routingPreflight = await preflightA2ATargets(
+          opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {},
+          { targetCats: mentions, content: storedContent, userId: principal.userId },
+        );
+        a2aRoutingPreflightDecision = routingPreflight.decision;
+        a2aAdmissionPlan = planA2AFanoutAdmission(
+          { invocationQueue: opts.invocationQueue },
+          {
+            ...a2aAdmissionOptions,
+            targetCats: routingPreflight.acceptedTargetCats,
+            requestedTargetCats: routingPreflight.requestedTargetCats,
+          },
+        );
       }
 
       // Race-safe backstop (agent-key path, e.g. shared Antigravity MCP): the exact-duplicate scan
       // above is check-then-act, so an atomic content claim makes the at-most-once decision.
-      const agentKeyContentDuplicate = await claimCallbackContentOrDuplicate(messageStore, {
-        threadId: effectiveThreadId,
-        userId: principal.userId,
-        catId: principal.catId,
-        content: storedContent,
-        ...(richBlocks.length > 0 ? { richBlocks } : {}),
-        mentions,
-        ...(mentionsUser ? { mentionsUser } : {}),
-        ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-        isExplicitPost: true,
-        ...(clientMessageId ? { clientMessageId } : {}),
-        now,
-        hasRoutingWarnings: routing_warnings.length > 0,
-      });
-      if (agentKeyContentDuplicate) return agentKeyContentDuplicate;
+      if (!usesServerGrant) {
+        const agentKeyContentDuplicate = await claimCallbackContentOrDuplicate(messageStore, {
+          threadId: effectiveThreadId,
+          userId: principal.userId,
+          catId: principal.catId,
+          content: storedContent,
+          ...(richBlocks.length > 0 ? { richBlocks } : {}),
+          mentions,
+          ...(mentionsUser ? { mentionsUser } : {}),
+          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+          isExplicitPost: true,
+          ...(clientMessageId ? { clientMessageId } : {}),
+          now,
+          hasRoutingWarnings: routing_warnings.length > 0,
+        });
+        if (agentKeyContentDuplicate) return agentKeyContentDuplicate;
+      }
 
       const appendInput: AppendMessageInput = {
         from: { kind: 'agent', catId: principal.catId },
@@ -1815,18 +1846,52 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         timestamp: now,
         ...(extra ? { extra } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+        ...(cloudReturnMessageIdempotencyKey ? { idempotencyKey: cloudReturnMessageIdempotencyKey } : {}),
       };
-      const atomicAdmission = a2aAdmissionPlan
-        ? await appendA2ASourceWithLedgerAdmission(
+      let atomicAdmission: Awaited<ReturnType<typeof appendA2ASourceWithLedgerAdmission>>;
+      let durableAppendReplayed = false;
+      try {
+        if (a2aAdmissionPlan) {
+          atomicAdmission = await appendA2ASourceWithLedgerAdmission(
             { messageStore, invocationQueue: opts.invocationQueue },
             appendInput,
             {
               plan: a2aAdmissionPlan,
               ownerAuthProvenance: 'unknown',
             },
-          )
-        : { message: await messageStore.append(appendInput) };
+          );
+          durableAppendReplayed = atomicAdmission.preAdmittedReplayed === true;
+        } else if (cloudReturnMessageIdempotencyKey) {
+          const appended = await messageStore.appendIdempotent(appendInput);
+          atomicAdmission = { message: appended.message };
+          durableAppendReplayed = appended.idempotent;
+        } else {
+          atomicAdmission = { message: await messageStore.append(appendInput) };
+        }
+      } catch (error) {
+        if (cloudReturnGrantClaim && cloudReturnGrantStore) {
+          await cloudReturnGrantStore.release(cloudReturnGrantClaim);
+        }
+        throw error;
+      }
       const storedMsg = atomicAdmission.message;
+      if (durableAppendReplayed) return recoverPersistedCloudReturn(storedMsg);
+      if (cloudReturnGrantClaim && cloudReturnGrantStore && cloudReturnGrantScope) {
+        const committed = await commitCloudReturnGrantAfterPersistence({
+          store: cloudReturnGrantStore,
+          claim: cloudReturnGrantClaim,
+          log: app.log,
+          threadId: effectiveThreadId,
+          sourceMessageId: cloudReturnGrantScope.sourceMessageId,
+          messageId: storedMsg.id,
+        });
+        if (!committed) {
+          app.log.error(
+            { threadId: effectiveThreadId, sourceMessageId: replyTo, messageId: storedMsg.id },
+            '[F247] source-bound reply persisted; durable source idempotency will recover retries without a second append',
+          );
+        }
+      }
 
       const replyPreview = validatedReplyTo ? await hydrateReplyPreview(messageStore, validatedReplyTo) : undefined;
 
@@ -1857,6 +1922,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               triggerMessage: storedMsg,
               callerCatId: senderCatId,
               ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
+              ...(a2aRoutingPreflightDecision ? { routingPreflightDecision: a2aRoutingPreflightDecision } : {}),
               ...(atomicAdmission.preAdmittedEntries
                 ? {
                     preAdmittedEntries: atomicAdmission.preAdmittedEntries,
@@ -3472,6 +3538,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       };
     }
     let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
+    let a2aRoutingPreflightDecision: RoutingPreflightDecisionV1 | undefined;
     const a2aAdmissionOptions = hasA2AMentions
       ? {
           targetCats: mentions,
@@ -3501,7 +3568,19 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           message: 'Recipient wake admission is unavailable; no message was published.',
         };
       }
-      a2aAdmissionPlan = planA2AFanoutAdmission({ invocationQueue: opts.invocationQueue }, a2aAdmissionOptions);
+      const routingPreflight = await preflightA2ATargets(
+        opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {},
+        { targetCats: mentions, content: storedContent, userId: actor.userId },
+      );
+      a2aRoutingPreflightDecision = routingPreflight.decision;
+      a2aAdmissionPlan = planA2AFanoutAdmission(
+        { invocationQueue: opts.invocationQueue },
+        {
+          ...a2aAdmissionOptions,
+          targetCats: routingPreflight.acceptedTargetCats,
+          requestedTargetCats: routingPreflight.requestedTargetCats,
+        },
+      );
     }
     // Race-safe backstop: the exact-duplicate scan above is check-then-act, so an atomic content
     // claim makes the at-most-once decision (root cause of the byte-identical duplicate bug).
@@ -3650,6 +3729,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             callerTraceContext: record.traceContext,
             ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
             ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
+            ...(a2aRoutingPreflightDecision ? { routingPreflightDecision: a2aRoutingPreflightDecision } : {}),
             ...(atomicAdmission.preAdmittedEntries
               ? {
                   preAdmittedEntries: atomicAdmission.preAdmittedEntries,
@@ -4081,6 +4161,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
     const principalCatId = principal.kind === 'invocation' ? principal.catId : principal.catId;
     const principalUserId = principal.userId;
+    let executionSituation: Awaited<ReturnType<ThreadExecutionSituationSource['resolve']>> | undefined;
+    if (opts.threadExecutionSituationSource) {
+      try {
+        executionSituation = await opts.threadExecutionSituationSource.resolve(effectiveThreadId);
+      } catch {
+        executionSituation = {
+          kind: 'thread_execution_situation.v1',
+          complete: false,
+          activeRuns: [],
+        };
+      }
+    }
     const exposureAwareThreadRead = {
       includeQueuedCatMessages: true,
     } as const;
@@ -4567,6 +4659,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       envelopePage = pageThreadContextEnvelope({
         base: {
           threadId: effectiveThreadId,
+          ...(executionSituation ? { situation: executionSituation } : {}),
           ...(keywordScanTiming ? { scanCapped: keywordScanTiming.scanCapped } : {}),
           ...(workflowSop ? { workflowSop } : {}),
         },
@@ -4574,6 +4667,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           ? {
               boundedBase: {
                 threadId: effectiveThreadId,
+                ...(executionSituation ? { situation: executionSituation } : {}),
                 ...(keywordScanTiming ? { scanCapped: keywordScanTiming.scanCapped } : {}),
                 workflowSop: boundedWorkflowSop,
               },
@@ -6302,21 +6396,29 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const canDispatchVote = Boolean(
       router && invocationRecordStore && opts.invocationQueue && queueProcessor?.requestDrain,
     );
-    const voteAdmissionPlan = canDispatchVote
-      ? planA2AFanoutAdmission(
-          { invocationQueue: opts.invocationQueue },
-          {
-            targetCats: mentionCatIds,
-            content: notificationContent,
-            userId: record.userId,
-            ownerAuthProvenance: record.ownerAuthProvenance,
-            threadId: record.threadId,
-            createdAt: notificationTimestamp,
-            callerCatId: record.catId as CatId,
-            ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
-          },
+    const voteRoutingPreflight = canDispatchVote
+      ? await preflightA2ATargets(
+          opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {},
+          { targetCats: mentionCatIds, content: notificationContent, userId: record.userId },
         )
       : undefined;
+    const voteAdmissionPlan =
+      canDispatchVote && voteRoutingPreflight
+        ? planA2AFanoutAdmission(
+            { invocationQueue: opts.invocationQueue },
+            {
+              targetCats: voteRoutingPreflight.acceptedTargetCats,
+              requestedTargetCats: voteRoutingPreflight.requestedTargetCats,
+              content: notificationContent,
+              userId: record.userId,
+              ownerAuthProvenance: record.ownerAuthProvenance,
+              threadId: record.threadId,
+              createdAt: notificationTimestamp,
+              callerCatId: record.catId as CatId,
+              ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+            },
+          )
+        : undefined;
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
     let preAdmittedVoteEntries: readonly QueueEntry[] | undefined;
     let preAdmittedVoteReplayed = false;
@@ -6374,6 +6476,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ownerAuthProvenance: record.ownerAuthProvenance,
         callerTraceContext: record.traceContext,
         ...(voteAdmissionPlan ? { preplannedAdmission: voteAdmissionPlan } : {}),
+        ...(voteRoutingPreflight?.decision ? { routingPreflightDecision: voteRoutingPreflight.decision } : {}),
         ...(preAdmittedVoteEntries
           ? {
               preAdmittedEntries: preAdmittedVoteEntries,
@@ -6585,6 +6688,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(threadStore ? { threadStore } : {}),
       ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
       ...(queueProcessor ? { queueProcessor } : {}),
+      ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
       ...(opts.actionSuccessorAdmissionService
         ? { actionSuccessorAdmissionService: opts.actionSuccessorAdmissionService }
         : {}),

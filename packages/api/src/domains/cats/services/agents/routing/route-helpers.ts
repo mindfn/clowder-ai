@@ -131,6 +131,8 @@ export interface RouteStrategyDeps {
   skillLoadEventLog?: import('../../tool-usage/SkillLoadEventLog.js').SkillLoadEventLog;
   /** F148 Phase F: Task store for navigation context (optional, fail-open) */
   taskStore?: import('../../stores/ports/TaskStore.js').ITaskStore;
+  /** RFC A79: exact lifecycle situation shared with UI and read-only thread context. */
+  threadExecutionSituationSource?: import('../invocation/thread-execution-situation.js').ThreadExecutionSituationSource;
   /** F222: Frustration auto-issue store (optional, fail-open) */
   frustrationIssueStore?: import('../../stores/ports/FrustrationIssueStore.js').IFrustrationIssueStore;
   /** F093: World context provider for world-building mode (optional, fail-open) */
@@ -1515,10 +1517,24 @@ export async function assembleIncrementalContext(
   );
   const topSource = selectDirectiveSources(rankedSources)[0] ?? null;
   const bestNextSource = topSource ? `先看 ${topSource.label}: ${topSource.ref}` : undefined;
+  let executionSituation: import('../invocation/thread-execution-situation.js').ThreadExecutionSituation | undefined;
+  if (deps.threadExecutionSituationSource) {
+    try {
+      executionSituation = await deps.threadExecutionSituationSource.resolve(threadId);
+    } catch {
+      executionSituation = {
+        kind: 'thread_execution_situation.v1',
+        complete: false,
+        activeRuns: [],
+      };
+    }
+  }
   const navigationHeader = formatNavigationHeader({
     threadId,
+    currentCatId: catId,
     baton,
     tasks: activeTasks,
+    ...(executionSituation ? { executionSituation } : {}),
     // Epoch-owned packets admit only a validated truth source. A recency-only
     // artifact list is not canonical state and must wait for the B3b mapper.
     artifacts: options?.contextProjection ? [] : recentArtifacts,

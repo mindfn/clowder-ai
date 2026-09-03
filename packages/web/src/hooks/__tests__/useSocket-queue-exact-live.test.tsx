@@ -48,10 +48,9 @@ const QUEUED_SEEN_ENTRY: QueueEntry = {
   content: 'already read by this exact child',
   messageId: 'm-exact-live',
   mergedMessageIds: [],
-  source: 'agent',
+  from: { kind: 'agent', catId: 'codex' },
   sourceCategory: 'a2a',
   autoExecute: true,
-  callerCatId: 'codex',
   targetCats: ['codex-sol'],
   targetStates: { 'codex-sol': 'seen' },
   queueReceipt: {
@@ -121,7 +120,6 @@ describe('useSocket Queue exact-live bridge', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       activeInvocations: {},
       catInvocations: {},
       currentThreadId: THREAD_ID,

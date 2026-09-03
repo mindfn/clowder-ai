@@ -290,13 +290,6 @@ describe('Phase H P1 Fixes — definition-level regression guards', () => {
       router: {
         async resolveTargetsAndIntent() {
           return {
-            attemptBatch: {
-              parserMode: 'user',
-              spanBasis: 'lowercased_message',
-              attempts: [],
-              truncated: false,
-              metricEligible: true,
-            },
             targetCats: ['opus'],
             intent: { intent: 'execute', explicit: false, promptTags: [] },
           };

@@ -68,7 +68,6 @@ describe('F276 defer-person-memory callback', () => {
   async function ownerMessage(threadId, content, extra = {}) {
     return messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'owner-1',
         catId: null,
         content,
@@ -185,7 +184,6 @@ describe('F276 defer-person-memory callback', () => {
   it('rejects caller-owned auth fields and cross-owner source laundering', async () => {
     const source = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'owner-2',
         catId: null,
         content: '黄挺的私密事实',

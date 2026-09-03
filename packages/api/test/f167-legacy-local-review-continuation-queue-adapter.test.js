@@ -14,13 +14,12 @@ test('typed operator settlement enters the canonical Queue once and replays the 
   const invocationQueue = new InvocationQueue();
   const messageStore = new MessageStore();
   const decisionMessage = await messageStore.append({
+    from: { kind: 'user', userId: 'owner-1' },
     userId: 'owner-1',
-    catId: null,
     threadId: 'thread-author',
     content: 'operator 对旧 Review 的结算选择为“需要修改”。系统未解析原评论正文。',
     mentions: ['codex-sol'],
     timestamp: 200,
-    deliveryStatus: 'queued',
     extra: {
       targetCats: ['codex-sol'],
       legacyLocalReviewDisposition: {
@@ -38,30 +37,13 @@ test('typed operator settlement enters the canonical Queue once and replays the 
   });
   const autoExecuteCalls = [];
   const enqueueContinuation = createLegacyLocalReviewContinuationQueueAdapter({
-    router: {},
-    invocationRecordStore: {},
-    socketManager: {
-      broadcastToRoom() {},
-      emitToUser() {},
-    },
     messageStore,
     queueProcessor: {
-      async tryAutoExecute(threadId) {
+      async requestDrain(threadId) {
         autoExecuteCalls.push(threadId);
       },
     },
     invocationQueue,
-    log: {
-      info() {},
-      warn() {},
-      error() {},
-      debug() {},
-      fatal() {},
-      trace() {},
-      child() {
-        return this;
-      },
-    },
   });
   const input = {
     decisionMessage,
@@ -76,88 +58,20 @@ test('typed operator settlement enters the canonical Queue once and replays the 
   assert.equal(first.outcome, 'enqueued');
   const queued = invocationQueue.findEntryWithMessageId('thread-author', decisionMessage.id);
   assert.equal(queued?.id, first.queueEntryId);
-  assert.deepEqual(queued?.targetCats, ['codex-sol']);
-  assert.equal(queued?.callerCatId, 'codex-terra');
+  assert.deepEqual(queued?.target, { kind: 'cat', catId: 'codex-sol' });
+  assert.deepEqual(queued?.from, { kind: 'user', userId: 'owner-1' });
   assert.equal(invocationQueue.list('thread-author', 'owner-1').length, 1);
   assert.deepEqual(autoExecuteCalls, ['thread-author']);
 
   const persisted = await messageStore.getById(decisionMessage.id);
   assert.equal(persisted?.deliveryStatus, 'queued');
-  assert.equal(persisted?.queueCustody?.status, 'queued');
-  assert.equal(persisted?.queueCustody?.carrierByTargetCatId['codex-sol']?.entryId, first.queueEntryId);
+  const persistedRows = await invocationQueue.getDurableEntriesForMessages('thread-author', [decisionMessage.id]);
+  assert.equal(persistedRows.get(decisionMessage.id)?.[0]?.id, first.queueEntryId);
 
   const replay = await enqueueContinuation(input);
   assert.deepEqual(replay, { outcome: 'replayed', queueEntryId: first.queueEntryId });
   assert.equal(invocationQueue.list('thread-author', 'owner-1').length, 1);
   assert.deepEqual(autoExecuteCalls, ['thread-author'], 'exact replay must not auto-execute a second carrier');
-});
-
-test('restart ignores pre-CAS evidence and restores one post-CAS author continuation', async () => {
-  const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-  const { QueuedMessageCustodyStartupReconciler } = await import(
-    '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.js'
-  );
-  const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-  const messageStore = new MessageStore();
-  messageStore.scanByDeliveryStatus = (status) =>
-    messageStore
-      .getRecent(100)
-      .filter((message) => message.deliveryStatus === status)
-      .map((message) => message.id);
-  const disposition = {
-    sourceMessageId: 'review-terminal-prose-restart',
-    leaseId: 'lease-review-restart',
-    generation: 4,
-    subjectRef: 'pr:owner/repo#4074',
-    reviewerCatId: 'codex-terra',
-    predecessorCatId: 'codex-sol',
-    reviewedHeadSha: '6a907b316a907b316a907b316a907b316a907b31',
-    verdict: 'changes_requested',
-    decisionId: 'decision-review-restart',
-  };
-  const decision = await messageStore.append({
-    userId: 'owner-1',
-    catId: null,
-    threadId: 'thread-author',
-    content: 'operator 对旧 Review 的结算选择为“需要修改”。',
-    mentions: ['codex-sol'],
-    timestamp: 200,
-    extra: { targetCats: ['codex-sol'], legacyLocalReviewDisposition: disposition },
-  });
-  const createReconciler = (invocationQueue) =>
-    new QueuedMessageCustodyStartupReconciler({
-      messageStore,
-      invocationQueue,
-      invocationRecordStore: {
-        async get() {
-          return null;
-        },
-      },
-      now: () => 500,
-      log: { info() {}, warn() {} },
-    });
-  const beforeCasQueue = new InvocationQueue();
-  const beforeCas = await createReconciler(beforeCasQueue).reconcile();
-  assert.equal(beforeCas.entriesRestored, 0);
-  assert.deepEqual(beforeCasQueue.list('thread-author', 'owner-1'), []);
-  assert.equal((await messageStore.getById(decision.id))?.queueCustody, undefined);
-
-  const prepared = await messageStore.prepareQueueAdmission(decision.id);
-  assert.equal(prepared.kind, 'prepared');
-  const afterCasQueue = new InvocationQueue();
-  const afterCasReconciler = createReconciler(afterCasQueue);
-  const firstRestart = await afterCasReconciler.reconcile();
-  const secondRestart = await afterCasReconciler.reconcile();
-
-  assert.equal(firstRestart.entriesRestored, 1);
-  assert.equal(secondRestart.entriesRestored, 0);
-  const restored = afterCasQueue.list('thread-author', 'owner-1');
-  assert.equal(restored.length, 1);
-  assert.equal(restored[0].messageId, decision.id);
-  assert.deepEqual(restored[0].targetCats, ['codex-sol']);
-  const persistedDecision = await messageStore.getById(decision.id);
-  assert.equal(persistedDecision?.deliveryStatus, 'queued');
-  assert.equal(persistedDecision?.queueCustody?.status, 'queued');
 });
 
 test('cold restart admits an exact post-CAS decision and restores only the predecessor author', async () => {
@@ -166,17 +80,12 @@ test('cold restart admits an exact post-CAS decision and restores only the prede
   );
   const { claimActionSuccessor } = await import('../dist/domains/ball-custody/action-successor-state-machine.js');
   const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-  const { QueuedMessageCustodyStartupReconciler } = await import(
-    '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.js'
+  const { recoverLegacyLocalReviewContinuationAdmissions } = await import(
+    '../dist/domains/ball-custody/LegacyLocalReviewContinuationStartupRecovery.js'
   );
   const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
   const messageStore = new MessageStore();
-  messageStore.scanByDeliveryStatus = (status) =>
-    messageStore
-      .getRecent(100)
-      .filter((message) => message.deliveryStatus === status)
-      .map((message) => message.id);
   const disposition = {
     sourceMessageId: 'review-terminal-post-cas',
     leaseId: 'lease-review-post-cas',
@@ -189,14 +98,19 @@ test('cold restart admits an exact post-CAS decision and restores only the prede
     decisionId: 'decision-review-post-cas',
   };
   const decision = await messageStore.append({
+    from: { kind: 'user', userId: 'owner-1' },
     userId: 'owner-1',
-    catId: null,
     threadId: 'thread-author',
     content: 'operator 对旧 Review 的结算选择为“需要修改”。',
     mentions: ['codex-sol'],
     timestamp: 200,
     extra: { targetCats: ['codex-sol'], legacyLocalReviewDisposition: disposition },
   });
+  messageStore.scanPendingLegacyLocalReviewDispositions = () =>
+    messageStore
+      .getRecent(100)
+      .filter((message) => message.extra?.legacyLocalReviewDisposition && message.deliveryStatus === undefined)
+      .map((message) => message.id);
   const claimed = claimActionSuccessor(null, {
     leaseId: disposition.leaseId,
     tenantScope: 'owner-1',
@@ -225,27 +139,22 @@ test('cold restart admits an exact post-CAS decision and restores only the prede
   assert.equal(claimed.outcome, 'claimed');
   let persistedLease = claimed.lease;
   let leaseReads = 0;
-  const createReconciler = (invocationQueue) =>
-    new QueuedMessageCustodyStartupReconciler({
+  const reconcile = (invocationQueue) =>
+    recoverLegacyLocalReviewContinuationAdmissions({
       messageStore,
       invocationQueue,
-      invocationRecordStore: {
-        async get() {
-          return null;
-        },
-      },
-      legacyLocalReviewDispositionLeaseStore: {
+      leaseStore: {
         async get(leaseId) {
           leaseReads += 1;
           return leaseId === persistedLease.leaseId ? structuredClone(persistedLease) : null;
         },
       },
-      now: () => 500,
       log: { info() {}, warn() {} },
     });
   const beforeCasQueue = new InvocationQueue();
-  const beforeCasRestart = await createReconciler(beforeCasQueue).reconcile();
-  assert.equal(beforeCasRestart.entriesRestored, 0);
+  const beforeCasRestart = await reconcile(beforeCasQueue);
+  assert.equal(beforeCasRestart.admitted, 0);
+  assert.equal(beforeCasRestart.deferred, 1);
   assert.deepEqual(beforeCasQueue.list('thread-author', 'owner-1'), []);
   assert.equal((await messageStore.getById(decision.id))?.deliveryStatus, undefined);
 
@@ -262,22 +171,19 @@ test('cold restart admits an exact post-CAS decision and restores only the prede
   assert.equal(settled.outcome, 'recovered');
   persistedLease = settled.lease;
   const invocationQueue = new InvocationQueue();
-  const reconciler = createReconciler(invocationQueue);
+  const firstRestart = await reconcile(invocationQueue);
+  const sameProcessReplay = await reconcile(invocationQueue);
 
-  const firstRestart = await reconciler.reconcile();
-  const sameProcessReplay = await reconciler.reconcile();
-
-  assert.equal(firstRestart.entriesRestored, 1);
-  assert.equal(sameProcessReplay.entriesRestored, 0);
+  assert.equal(firstRestart.admitted, 1);
+  assert.equal(sameProcessReplay.admitted, 0);
   assert.equal(leaseReads, 2, 'active proof defers once; completed proof admits once; queued replay does not reread');
   const restored = invocationQueue.list('thread-author', 'owner-1');
   assert.equal(restored.length, 1);
-  assert.equal(restored[0].messageId, decision.id);
-  assert.deepEqual(restored[0].targetCats, ['codex-sol']);
-  assert.equal(restored[0].targetCats.includes('codex-terra'), false);
+  assert.equal(restored[0].payload.messageId, decision.id);
+  assert.deepEqual(restored[0].target, { kind: 'cat', catId: 'codex-sol' });
   const persisted = await messageStore.getById(decision.id);
   assert.equal(persisted?.deliveryStatus, 'queued');
-  assert.equal(persisted?.queueCustody?.status, 'queued');
+  assert.equal((await invocationQueue.getDurableEntriesForMessages('thread-author', [decision.id])).size, 1);
   assert.equal(
     messageStore
       .getRecent(100)

@@ -215,6 +215,7 @@ export async function reconcileApprovedInitialMessage({
         router,
         invocationQueue,
         queueProcessor,
+        idempotentSeed,
       );
       return { warnings, wasPresent: true, redispatched: true };
     }

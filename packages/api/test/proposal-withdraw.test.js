@@ -89,7 +89,6 @@ describe('F128 requester withdraw', () => {
     ctx.socketEvents.length = 0;
     const origin = await ctx.messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'alice',
         catId: null,
         content: `Withdraw thread proposal ${proposalId}`,

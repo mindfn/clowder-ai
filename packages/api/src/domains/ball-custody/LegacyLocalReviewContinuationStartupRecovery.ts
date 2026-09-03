@@ -1,9 +1,13 @@
+import { createCatId } from '@cat-cafe/shared';
+import type { InvocationQueue } from '../cats/services/agents/invocation/InvocationQueue.js';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import type { ActionSuccessorLeaseStore } from './ActionSuccessorLeaseStore.js';
 import type { ActionSuccessorLease } from './action-successor-state-machine.js';
 
 export interface LegacyLocalReviewContinuationStartupRecoveryDeps {
-  messageStore: Pick<IMessageStore, 'getById' | 'prepareQueueAdmission' | 'scanPendingLegacyLocalReviewDispositions'>;
+  messageStore: IMessageStore;
+  invocationQueue: Pick<InvocationQueue, 'getDurableEntriesForMessages' | 'enqueueExistingMessageDurable'>;
   leaseStore?: Pick<ActionSuccessorLeaseStore, 'get'>;
   log: { info(message: string): void; warn(message: string): void };
 }
@@ -21,13 +25,28 @@ async function recoverCandidate(
 ): Promise<'admitted' | 'deferred' | 'ignored'> {
   const message = await deps.messageStore.getById(id);
   const disposition = message?.extra?.legacyLocalReviewDisposition;
-  if (!message || !disposition || message.deliveryStatus !== undefined || message.queueCustody) return 'ignored';
+  if (!message || !disposition || message.deliveryStatus !== undefined) return 'ignored';
+  const rows = (await deps.invocationQueue.getDurableEntriesForMessages(message.threadId, [message.id])).get(
+    message.id,
+  );
+  if (rows?.length) return 'ignored';
   const lease = await deps.leaseStore?.get(disposition.leaseId);
   if (!exactSettledDecision(message, lease ?? null)) return 'deferred';
-  const prepared = await deps.messageStore.prepareQueueAdmission(message.id);
-  if (prepared.kind !== 'prepared' && prepared.kind !== 'existing') {
-    throw new Error(`Queue admission failed: ${prepared.kind}`);
-  }
+  const result = await deps.invocationQueue.enqueueExistingMessageDurable(deps.messageStore, message.id, {
+    from: messageFrom(message),
+    threadId: message.threadId,
+    userId: message.userId,
+    kind: 'conversation_input',
+    ownerAuthProvenance: 'strict',
+    content: message.content,
+    messageId: message.id,
+    sourceId: message.id,
+    sourceCategory: 'continuation',
+    targetCats: [createCatId(disposition.predecessorCatId)],
+    intent: 'execute',
+    autoExecute: true,
+  });
+  if (result.outcome === 'full') throw new Error('Queue admission failed: full');
   return 'admitted';
 }
 
@@ -67,7 +86,6 @@ function exactSettledDecision(message: StoredMessage, lease: ActionSuccessorLeas
     !evidenceRef ||
     !lease ||
     message.deliveryStatus !== undefined ||
-    message.queueCustody ||
     message.deletedAt ||
     message.catId !== null ||
     message.userId !== lease.tenantScope ||

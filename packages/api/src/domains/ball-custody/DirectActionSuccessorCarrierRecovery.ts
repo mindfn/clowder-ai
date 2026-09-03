@@ -1,6 +1,7 @@
 import type { QueueReceiptTargetState } from '@cat-cafe/shared';
-import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
-import { projectQueueReceipt } from '../cats/services/stores/ports/queued-message-receipt.js';
+import type { InvocationQueue } from '../cats/services/agents/invocation/InvocationQueue.js';
+import type { QueueLedgerEntry } from '../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
+import { projectQueueLedgerReceipt } from '../cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
 import {
   type ActionSuccessorAdmissionInput,
   type ActionSuccessorFence,
@@ -12,7 +13,7 @@ import type { ActionSuccessorLease } from './action-successor-state-machine.js';
 
 const LIVE_TARGET_STATES = new Set<QueueReceiptTargetState>(['queued', 'notified', 'awakened', 'seen', 'steering']);
 
-type ObservedCarrierState = QueueReceiptTargetState | 'admitted';
+type ObservedCarrierState = QueueReceiptTargetState;
 
 export type DirectActionSuccessorCarrierUnavailableReason =
   | 'authority_mismatch'
@@ -85,58 +86,34 @@ export function isExactDirectActionSuccessorReentry(
   }
 }
 
-function observeAdmission(
-  message: StoredMessage,
+function observeLedgerEntry(
+  entry: QueueLedgerEntry,
   holders: readonly string[],
   fence: ActionSuccessorFence,
   observed: Map<string, Set<ObservedCarrierState>>,
 ): void {
-  const admission = message.queueCustodyAdmission;
-  if (!admission || !actionSuccessorFencesMatch(admission.actionSuccessorFence, fence)) return;
-  if (!sameMembers(holders, admission.targetCats)) return;
-  for (const holder of holders) {
-    if (admission.targetCats.includes(holder as (typeof admission.targetCats)[number])) {
-      observed.get(holder)?.add('admitted');
-    }
-  }
-}
-
-function observeCustody(
-  message: StoredMessage,
-  holders: readonly string[],
-  fence: ActionSuccessorFence,
-  observed: Map<string, Set<ObservedCarrierState>>,
-): void {
-  const custody = message.queueCustody;
-  if (!custody) return;
-  const receipt = projectQueueReceipt(custody);
-  for (const holder of holders) {
-    const binding = custody.carrierByTargetCatId?.[holder];
-    if (!actionSuccessorFencesMatch(binding?.actionSuccessorFence, fence)) continue;
-    if (binding?.idempotencyKey !== `action:${fence.leaseId}:${fence.generation}:${holder}`) continue;
-    const target = receipt.targets.find((candidate) => candidate.catId === holder);
-    if (target) observed.get(holder)?.add(target.state);
-  }
+  if (!actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, fence)) return;
+  if (entry.target.kind !== 'cat' || !holders.includes(entry.target.catId)) return;
+  const target = projectQueueLedgerReceipt([entry])?.targets[0];
+  if (target) observed.get(entry.target.catId)?.add(target.state);
 }
 
 /** Classify only durable, exact-fence custody; message recency and process state are irrelevant. */
 export function classifyDirectActionSuccessorCarrier(
   lease: ActionSuccessorLease,
-  messages: readonly StoredMessage[],
+  entries: readonly QueueLedgerEntry[],
 ): DirectActionSuccessorCarrierDecision {
   const fence = buildActionSuccessorFence(lease, lease.dispatchId);
   const observed = new Map(lease.holderCatIds.map((catId) => [catId, new Set<ObservedCarrierState>()]));
 
-  for (const message of messages) {
-    if (message.threadId !== lease.holderThreadId || message.userId !== lease.tenantScope) continue;
-    observeAdmission(message, lease.holderCatIds, fence, observed);
-    observeCustody(message, lease.holderCatIds, fence, observed);
+  for (const entry of entries) {
+    const ownerUserId = entry.owner.kind === 'user' ? entry.owner.userId : `system:${entry.owner.service}`;
+    if (entry.threadId !== lease.holderThreadId || ownerUserId !== lease.tenantScope) continue;
+    observeLedgerEntry(entry, lease.holderCatIds, fence, observed);
   }
 
   const holderStates = lease.holderCatIds.map((catId) => observed.get(catId) ?? new Set<ObservedCarrierState>());
-  const everyHolderLive = holderStates.every((states) =>
-    [...states].some((state) => state === 'admitted' || LIVE_TARGET_STATES.has(state as QueueReceiptTargetState)),
-  );
+  const everyHolderLive = holderStates.every((states) => [...states].some((state) => LIVE_TARGET_STATES.has(state)));
   if (everyHolderLive) return { disposition: 'live', fence };
 
   const everyHolderRestartInterrupted = holderStates.every(
@@ -157,7 +134,7 @@ export function classifyDirectActionSuccessorCarrier(
 }
 
 export async function resolveDirectActionSuccessorCarrier(input: {
-  messageStore: Pick<IMessageStore, 'getByThreadAfter'>;
+  invocationQueue: Pick<InvocationQueue, 'listAllDurable'>;
   lease: ActionSuccessorLease;
   admissionInput: ActionSuccessorAdmissionInput;
 }): Promise<DirectActionSuccessorCarrierDecision> {
@@ -165,14 +142,8 @@ export async function resolveDirectActionSuccessorCarrier(input: {
     return { disposition: 'unavailable', reason: 'authority_mismatch' };
   }
   try {
-    const messages = await input.messageStore.getByThreadAfter(
-      input.lease.holderThreadId,
-      undefined,
-      undefined,
-      input.lease.tenantScope,
-      { includeQueuedCatMessages: true, includeQueuedUserMessages: true },
-    );
-    return classifyDirectActionSuccessorCarrier(input.lease, messages);
+    const entries = await input.invocationQueue.listAllDurable(input.lease.holderThreadId);
+    return classifyDirectActionSuccessorCarrier(input.lease, entries);
   } catch {
     return { disposition: 'unavailable', reason: 'lookup_failed' };
   }

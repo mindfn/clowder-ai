@@ -135,7 +135,10 @@ describe('F139 Phase 4 E2E', () => {
     assert.equal(deliverCalls.length, 1);
     assert.equal(deliverCalls[0].threadId, 'thread-news-123');
     assert.ok(deliverCalls[0].content.includes('搜三天内 Anthropic 新闻'));
-    assert.equal(deliverCalls[0].userId, 'scheduler');
+    // F117 ADR-043 D.4 (sol adjudication R4): stored trigger-message userId is the
+    // verified trigger owner (triggerUserId), not the author 'scheduler'. Scheduler
+    // authorship is expressed via from: system:scheduler in createDeliverFn instead.
+    assert.equal(deliverCalls[0].userId, 'default-user'); // === triggerUserId
     assert.equal(deliverCalls[0].extra?.scheduler?.hiddenTrigger, true);
 
     // 2. invokeTrigger was called with the REAL messageId from deliver
@@ -304,7 +307,10 @@ describe('F139 Phase 4 E2E', () => {
     assert.equal(fetchMock.mock.calls.length, 1);
     assert.equal(deliverCalls.length, 1);
     assert.equal(deliverCalls[0].threadId, 'thread-browser');
-    assert.equal(deliverCalls[0].userId, 'scheduler');
+    // F117 ADR-043 D.4 (sol adjudication R4): stored trigger-message userId is the
+    // verified trigger owner (triggerUserId), not the author 'scheduler'. Scheduler
+    // authorship is expressed via from: system:scheduler in createDeliverFn instead.
+    assert.equal(deliverCalls[0].userId, 'default-user'); // === triggerUserId
     assert.ok(deliverCalls[0].content.includes('browser-automation'));
     assert.ok(deliverCalls[0].content.includes('https://x.com/anthropic'));
     assert.ok(deliverCalls[0].content.includes('今天 AI 新闻'));

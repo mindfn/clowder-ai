@@ -1508,6 +1508,8 @@ export interface IMessageStore {
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
   append(msg: AppendMessageInput): StoredMessage | Promise<StoredMessage>;
+  /** Atomically append by durable idempotency key and report whether an earlier writer won. */
+  appendIdempotent(msg: AppendMessageInput): IdempotentAppendResult | Promise<IdempotentAppendResult>;
   /** Atomically persist one message and its complete ADR-043 Queue fan-out. */
   appendWithQueueLedgerAdmission(
     msg: AppendMessageInput,

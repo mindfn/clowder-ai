@@ -127,16 +127,26 @@ describe('F292 private-thread artifact handoff', () => {
     assert.equal(buildMeetingArtifactPrompt(intake, artifact), appended[0].content);
   });
 
-  it('publishes the durable Host receipt before processNext even when execution does not start', async () => {
+  it('persists the durable Host receipt before processNext even when execution does not start', async () => {
     const order = [];
-    const published = [];
+    const durableInputs = [];
     const dispatcher = new ThreadMeetingArtifactDispatcher({
       threadStore: { get: async () => thread },
       messageStore: {
-        append: async (input) => ({ ...input, id: 'meeting-message-visible', threadId: input.threadId }),
+        append: async (input) => {
+          durableInputs.push(input);
+          return { ...input, id: 'meeting-message-visible', threadId: input.threadId };
+        },
         getByIdempotencyKey: async () => null,
       },
       invocationQueue: {
+        // F117: the dispatcher now routes admission through the durable
+        // append+enqueue contract instead of enqueue + backfill.
+        async appendAndEnqueueDurable(messageStore, messageInput) {
+          const message = await messageStore.append(messageInput);
+          order.push('durableAppend');
+          return { outcome: 'enqueued', entry: { id: 'queue-visible', messageId: message.id }, message };
+        },
         enqueue: () => ({ outcome: 'enqueued', entry: { id: 'queue-visible', messageId: null } }),
         backfillMessageId() {},
         rollbackEnqueue() {},
@@ -148,9 +158,8 @@ describe('F292 private-thread artifact handoff', () => {
         },
       },
       socketManager: {
-        emitToUser(userId, event, data) {
-          order.push(event);
-          published.push({ userId, event, data });
+        emitToUser() {
+          assert.fail('F117: admission publication is the durable ledger append, not a socket event');
         },
       },
       supportsPresentationRetry: () => true,
@@ -181,20 +190,21 @@ describe('F292 private-thread artifact handoff', () => {
     });
 
     assert.equal(receipt, undefined);
-    assert.deepEqual(order, ['messages_queued', 'processNext']);
-    assert.equal(published.length, 1);
-    assert.equal(published[0].userId, 'owner-1');
-    assert.equal(published[0].data.threadId, 'thread-1');
-    assert.deepEqual(published[0].data.messageIds, ['meeting-message-visible']);
-    assert.deepEqual(published[0].data.messages[0].source, {
+    // F117 new contract: the owner-visible admission anchor is the durable message
+    // append (via appendAndEnqueueDurable), ordered before processNext; the old
+    // 'messages_queued' socket publication was retired from this dispatcher.
+    assert.deepEqual(order, ['durableAppend', 'processNext']);
+    assert.equal(durableInputs.length, 1);
+    assert.equal(durableInputs[0].threadId, 'thread-1');
+    assert.equal(durableInputs[0].userId, 'owner-1');
+    assert.equal(durableInputs[0].deliveryStatus, 'queued');
+    assert.deepEqual(durableInputs[0].source, {
       connector: 'feishu',
       label: '飞书会议入站 / 录音豆',
       icon: 'feishu',
       meta: { sourceRevision: artifact.sourceRevision },
     });
-    assert.equal(published[0].data.messages[0].timestamp, 12_345);
-    assert.equal(published[0].data.messages[0].deliveredAt, undefined);
-    assert.equal(published[0].data.messages[0].timelineOrderAt, undefined);
+    assert.equal(durableInputs[0].timestamp, 12_345);
   });
 
   it('admits the Alpha canary through the canonical meeting write-opportunity producer', async () => {
@@ -210,6 +220,11 @@ describe('F292 private-thread artifact handoff', () => {
         getByIdempotencyKey: async () => null,
       },
       invocationQueue: {
+        // F117: same durable append+enqueue contract as the production InvocationQueue.
+        async appendAndEnqueueDurable(messageStore, messageInput) {
+          const message = await messageStore.append(messageInput);
+          return { outcome: 'enqueued', entry: { id: 'q-alpha', messageId: message.id }, message };
+        },
         enqueue: () => ({ outcome: 'enqueued', entry: { id: 'q-alpha', messageId: null } }),
         backfillMessageId() {},
         rollbackEnqueue() {},

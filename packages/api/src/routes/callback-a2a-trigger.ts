@@ -5,7 +5,7 @@
  * message. There is no direct routeExecution fallback.
  */
 
-import type { CatId } from '@cat-cafe/shared';
+import type { CatId, RoutingPreflightDecisionV1 } from '@cat-cafe/shared';
 import type { ActionSuccessorFence } from '../domains/ball-custody/ActionSuccessorAdmissionService.js';
 import type { IBallCustodyIngest } from '../domains/ball-custody/BallCustodyIngest.js';
 import { buildHandedEvent } from '../domains/ball-custody/ball-custody-events.js';
@@ -26,6 +26,7 @@ import {
   peekStreakOnPush,
   updateStreakOnPush,
 } from '../domains/cats/services/agents/routing/WorklistRegistry.js';
+import type { CloudDispatchProvenance } from '../domains/cats/services/cloud-bridge/types.js';
 import type {
   AppendMessageInput,
   IMessageStore,
@@ -37,7 +38,12 @@ import {
   lifecycleResponseTerminalPatchFromAppendInput,
   settleLifecycleResponseInputs,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
-import type { RoutingDispatchPreflightPort } from '../domains/routing-context/RoutingDispatchPreflightPort.js';
+import {
+  inferRoutingContextIntent,
+  preflightRoutingDispatch,
+  type RoutingDispatchPreflightPort,
+  routingDispatchPreflightReceipt,
+} from '../domains/routing-context/RoutingDispatchPreflightPort.js';
 import { wrapWithDispatchSpan } from '../infrastructure/telemetry/dispatch-span.js';
 import type { CallerTraceContext } from '../infrastructure/telemetry/genai-semconv.js';
 import { emitQueueUpdated } from '../utils/queue-enrichment.js';
@@ -117,6 +123,8 @@ export async function appendA2ASourceWithLedgerAdmission(
     parentInvocationId?: string;
     callerTraceContext?: CallerTraceContext;
     actionSuccessorFence?: ActionSuccessorFence;
+    cloudDispatchProvenance?: CloudDispatchProvenance;
+    requiresExactCloudDispatchProvenance?: boolean;
   },
 ): Promise<AtomicA2ASourceAdmission> {
   if (!deps.messageStore) throw new Error('A2A source admission requires MessageStore');
@@ -141,6 +149,8 @@ export async function appendA2ASourceWithLedgerAdmission(
       ? wrapWithDispatchSpan(options.callerTraceContext, options.plan.acceptedTargetCats.length, message.from.catId)
       : undefined,
     ...(options.actionSuccessorFence ? { actionSuccessorFence: options.actionSuccessorFence } : {}),
+    ...(options.cloudDispatchProvenance ? { cloudDispatchProvenance: options.cloudDispatchProvenance } : {}),
+    ...(options.requiresExactCloudDispatchProvenance ? { requiresExactCloudDispatchProvenance: true } : {}),
   });
   if (result.outcome === 'full') throw new Error('A2A source Queue admission is full');
   return {
@@ -152,6 +162,8 @@ export async function appendA2ASourceWithLedgerAdmission(
 
 interface A2AFanoutAdmissionOptions {
   targetCats: readonly CatId[];
+  /** Original requested set when routing preflight removed rejected targets. */
+  requestedTargetCats?: readonly CatId[];
   content: string;
   userId: string;
   ownerAuthProvenance: OwnerAuthProvenance;
@@ -210,11 +222,63 @@ export function planA2AFanoutAdmission(
   }
 
   return {
-    requestedTargetCats: [...opts.targetCats],
+    requestedTargetCats: [...(opts.requestedTargetCats ?? opts.targetCats)],
     acceptedTargetCats,
     streakTargetCats,
     ...(stop ? { stop } : {}),
   };
+}
+
+export interface A2ARoutingPreflightPartition {
+  requestedTargetCats: readonly CatId[];
+  acceptedTargetCats: readonly CatId[];
+  decision?: RoutingPreflightDecisionV1;
+}
+
+/**
+ * Resolve the fresh routing partition before any durable Queue admission.
+ * Warned targets remain eligible; only explicit rejections are removed.
+ */
+export async function preflightA2ATargets(
+  deps: Pick<A2ATriggerDeps, 'routingDispatchPreflight'>,
+  opts: { targetCats: readonly CatId[]; content: string; userId: string },
+): Promise<A2ARoutingPreflightPartition> {
+  const requestedTargetCats = [...opts.targetCats];
+  if (!deps.routingDispatchPreflight) {
+    return { requestedTargetCats, acceptedTargetCats: requestedTargetCats };
+  }
+  const intent = inferRoutingContextIntent(opts.content);
+  const decision = await preflightRoutingDispatch(deps.routingDispatchPreflight, {
+    ownerId: opts.userId,
+    targetCatIds: requestedTargetCats,
+    ...(intent ? { intent } : {}),
+  });
+  return {
+    requestedTargetCats,
+    acceptedTargetCats: requestedTargetCats.filter(
+      (catId) => decision.targets.find((target) => target.targetCatId === catId)?.disposition !== 'rejected',
+    ),
+    decision,
+  };
+}
+
+export function emitA2ARoutingPreflightReceipts(
+  deps: Pick<A2ATriggerDeps, 'socketManager'>,
+  input: { decision?: RoutingPreflightDecisionV1; receiptCatId: CatId; threadId: string },
+): void {
+  if (!input.decision) return;
+  for (const target of input.decision.targets) {
+    if (target.disposition === 'allowed') continue;
+    deps.socketManager.broadcastAgentMessage(
+      {
+        type: 'system_info',
+        catId: input.receiptCatId,
+        content: JSON.stringify(routingDispatchPreflightReceipt(input.decision, target.targetCatId)),
+        timestamp: Date.now(),
+      },
+      input.threadId,
+    );
+  }
 }
 
 export async function commitCompletedResponseAndEnqueueA2ATargets(
@@ -241,8 +305,14 @@ export async function commitCompletedResponseAndEnqueueA2ATargets(
   const durableLineage = causalTriggerMessageId
     ? await readDurableA2ALineage(deps.messageStore, causalTriggerMessageId, opts.callerCatId)
     : undefined;
-  const admissionOptions: A2AFanoutAdmissionOptions = {
+  const routingPreflight = await preflightA2ATargets(deps, {
     targetCats: opts.targetCats,
+    content: opts.message.content,
+    userId: opts.userId,
+  });
+  const admissionOptions: A2AFanoutAdmissionOptions = {
+    targetCats: routingPreflight.acceptedTargetCats,
+    requestedTargetCats: routingPreflight.requestedTargetCats,
     content: opts.message.content,
     userId: opts.userId,
     ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
@@ -308,6 +378,11 @@ export async function commitCompletedResponseAndEnqueueA2ATargets(
   }
 
   if (plan.acceptedTargetCats.length === 0) {
+    emitA2ARoutingPreflightReceipts(deps, {
+      decision: routingPreflight.decision,
+      receiptCatId: opts.callerCatId,
+      threadId: opts.threadId,
+    });
     if (plan.stop?.reason === 'depth') {
       deps.log.warn(
         {
@@ -355,6 +430,7 @@ export async function commitCompletedResponseAndEnqueueA2ATargets(
     ...(opts.parentInvocationId ? { parentInvocationId: opts.parentInvocationId } : {}),
     ...(opts.callerTraceContext ? { callerTraceContext: opts.callerTraceContext } : {}),
     preplannedAdmission: plan,
+    ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
     ...(preAdmittedEntries ? { preAdmittedEntries, preAdmittedReplayed } : {}),
   });
   return (await deps.messageStore.getById(stored.id)) ?? stored;
@@ -381,8 +457,12 @@ export async function enqueueA2ATargets(
     callerTraceContext?: CallerTraceContext;
     /** F167 Phase S: persistent subject/action/slot generation fence. */
     actionSuccessorFence?: ActionSuccessorFence;
+    cloudDispatchProvenance?: CloudDispatchProvenance;
+    requiresExactCloudDispatchProvenance?: boolean;
     /** Exact policy plan already persisted with a newly appended source message. */
     preplannedAdmission?: A2AFanoutAdmissionPlan;
+    /** Fresh routing decision already obtained before atomic source/ledger admission. */
+    routingPreflightDecision?: RoutingPreflightDecisionV1;
     /**
      * Register consumer-specific completion observers after canonical Queue custody is durable
      * and before any accepted carrier can start. Multi-mention uses this to aggregate sibling
@@ -393,7 +473,7 @@ export async function enqueueA2ATargets(
     preAdmittedEntries?: readonly QueueEntry[];
     preAdmittedReplayed?: boolean;
   },
-): Promise<{ enqueued: CatId[]; coalesced?: CatId[] }> {
+): Promise<{ enqueued: CatId[]; coalesced?: CatId[]; routingPreflight?: RoutingPreflightDecisionV1 }> {
   if (!deps.invocationQueue || !deps.queueProcessor?.requestDrain) {
     throw new Error('A2A dispatch requires InvocationQueue and QueueProcessor');
   }
@@ -426,7 +506,28 @@ export async function enqueueA2ATargets(
   if (callerCatId && callerCatId !== fromCatId) {
     throw new Error('A2A Queue dispatch caller does not match persisted MessageFrom');
   }
-  const targetCats = opts.targetCats;
+  const requestedTargetCats = opts.targetCats;
+  const routingPreflight = opts.routingPreflightDecision
+    ? {
+        requestedTargetCats,
+        acceptedTargetCats: requestedTargetCats.filter(
+          (catId) =>
+            opts.routingPreflightDecision?.targets.find((target) => target.targetCatId === catId)?.disposition !==
+            'rejected',
+        ),
+        decision: opts.routingPreflightDecision,
+      }
+    : await preflightA2ATargets(deps, {
+        targetCats: requestedTargetCats,
+        content: opts.content,
+        userId: opts.userId,
+      });
+  emitA2ARoutingPreflightReceipts(deps, {
+    decision: routingPreflight.decision,
+    receiptCatId: fromCatId,
+    threadId,
+  });
+  const targetCats = [...routingPreflight.acceptedTargetCats];
 
   // F153 Phase I (Maine Coon P1): Lazy-create mention_dispatch span + a2a.dispatch.count counter
   // ONLY when a target is about to actually dispatch (passes all guards and reaches a real enqueue
@@ -447,6 +548,7 @@ export async function enqueueA2ATargets(
   // row, so replay converges in the ledger and distinct bodies are never merged.
   const admissionOptions: A2AFanoutAdmissionOptions = {
     targetCats,
+    requestedTargetCats,
     content: opts.content,
     userId: opts.userId,
     ownerAuthProvenance,
@@ -458,7 +560,13 @@ export async function enqueueA2ATargets(
     ...(opts.actionSuccessorFence ? { actionSuccessorFence: opts.actionSuccessorFence } : {}),
   };
   const plan =
-    opts.preplannedAdmission ??
+    (opts.preplannedAdmission
+      ? {
+          ...opts.preplannedAdmission,
+          acceptedTargetCats: opts.preplannedAdmission.acceptedTargetCats.filter((catId) => targetCats.includes(catId)),
+          streakTargetCats: opts.preplannedAdmission.streakTargetCats.filter((catId) => targetCats.includes(catId)),
+        }
+      : undefined) ??
     (() => {
       const replayTargets = new Set(
         targetCats.filter((catId) =>
@@ -469,17 +577,24 @@ export async function enqueueA2ATargets(
       const freshPlan = planA2AFanoutAdmission(deps, { ...admissionOptions, targetCats: freshTargets });
       const acceptedFresh = new Set(freshPlan.acceptedTargetCats);
       return {
-        requestedTargetCats: [...targetCats],
+        requestedTargetCats: [...requestedTargetCats],
         acceptedTargetCats: targetCats.filter((catId) => replayTargets.has(catId) || acceptedFresh.has(catId)),
         streakTargetCats: freshPlan.streakTargetCats,
         ...(freshPlan.stop ? { stop: freshPlan.stop } : {}),
       };
     })();
-  if (JSON.stringify(plan.requestedTargetCats) !== JSON.stringify(targetCats)) {
+  if (JSON.stringify(plan.requestedTargetCats) !== JSON.stringify(requestedTargetCats)) {
     throw new Error('A2A fan-out admission plan requested-target mismatch');
   }
   if (plan.acceptedTargetCats.some((catId) => !targetCats.includes(catId))) {
     throw new Error('A2A fan-out admission plan contains an unrequested target');
+  }
+  if (
+    opts.preAdmittedEntries?.some(
+      (entry) => entry.target.kind === 'cat' && !plan.acceptedTargetCats.includes(entry.target.catId as CatId),
+    )
+  ) {
+    throw new Error('A2A routing preflight must run before atomic ledger admission');
   }
 
   if (plan.stop?.reason === 'depth') {
@@ -555,6 +670,8 @@ export async function enqueueA2ATargets(
           a2aTriggerMessageId: triggerMessageId,
           idempotencyKey,
           ...(opts.actionSuccessorFence ? { actionSuccessorFence: opts.actionSuccessorFence } : {}),
+          ...(opts.cloudDispatchProvenance ? { cloudDispatchProvenance: opts.cloudDispatchProvenance } : {}),
+          ...(opts.requiresExactCloudDispatchProvenance ? { requiresExactCloudDispatchProvenance: true } : {}),
         });
     queueDiagnostics.push({
       catId,
@@ -611,5 +728,9 @@ export async function enqueueA2ATargets(
     '[DIAG/a2a] enqueueA2ATargets single-ledger admission',
   );
   await deps.queueProcessor.requestDrain(threadId);
-  return { enqueued, ...(coalesced.length > 0 ? { coalesced } : {}) };
+  return {
+    enqueued,
+    ...(coalesced.length > 0 ? { coalesced } : {}),
+    ...(routingPreflight.decision ? { routingPreflight: routingPreflight.decision } : {}),
+  };
 }

@@ -23,7 +23,6 @@ describe('#1200 v2 cursor in getByThreadAfter (§8.7 graded issuance)', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'hello',
@@ -49,7 +48,6 @@ describe('#1200 v2 cursor in getByThreadAfter (§8.7 graded issuance)', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'msg1',
@@ -60,7 +58,6 @@ describe('#1200 v2 cursor in getByThreadAfter (§8.7 graded issuance)', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'msg2',
@@ -88,7 +85,6 @@ describe('#1200 v2 cursor in getByThreadAfter (§8.7 graded issuance)', () => {
 
     const msg1 = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'first',
@@ -99,7 +95,6 @@ describe('#1200 v2 cursor in getByThreadAfter (§8.7 graded issuance)', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'second',
@@ -124,7 +119,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'first',
@@ -135,7 +129,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'second',
@@ -146,7 +139,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
     );
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'third',
@@ -173,7 +165,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
 
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'direct',
@@ -187,7 +178,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
     // Timeline-published cat speech (catId: 'opus') WOULD be visible at append.
     store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: 'system',
         content: 'queued-hidden',
@@ -221,7 +211,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
 
     const c = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'C-direct',
@@ -232,7 +221,6 @@ describe('#1200 getLatestVisibleCursor (§8.7 read-state)', () => {
     );
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'Q-queued',
@@ -260,7 +248,6 @@ describe('#1200 canonicalizeCursor (§8.7 CAS ingress)', () => {
 
     const m = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'direct',
@@ -288,7 +275,6 @@ describe('#1200 canonicalizeCursor (§8.7 CAS ingress)', () => {
     // Timeline-published cat speech (catId: 'opus') would get v2 at append.
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: 'system',
         content: 'queued-hidden',
@@ -311,7 +297,6 @@ describe('#1200 canonicalizeCursor (§8.7 CAS ingress)', () => {
 
     const q = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'opus',
         content: 'late-Q',
@@ -344,7 +329,6 @@ describe('#1200 canonicalizeCursor (§8.7 CAS ingress)', () => {
 
     const m = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'in-thread-A',
@@ -370,7 +354,6 @@ describe('#1200 canonicalizeCursor (§8.7 CAS ingress)', () => {
 
     const m = store.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'test',

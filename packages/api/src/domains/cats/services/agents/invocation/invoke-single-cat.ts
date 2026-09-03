@@ -3723,6 +3723,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(spawnCliOverride ? { spawnCliOverride } : {}),
       ...(agentCarrierSessionFactory ? { agentCarrierSessionFactory } : {}),
       ...(activeInvocationFreshness ? { activeInvocationFreshness } : {}),
+      ...(deps.runtimeInteractionPort ? { runtimeInteractionPort: deps.runtimeInteractionPort } : {}),
+      ...(entrustedWorkTaskStore && entrustedWorkSourceMessageId
+        ? {
+            resolveEntrustedWorkTaskRef: async () =>
+              resolveEntrustedWorkTaskRefFromSource(await entrustedWorkTaskStore.listByThread(threadId), {
+                sourceMessageId: entrustedWorkSourceMessageId,
+                threadId,
+                ownerUserId: userId,
+                ownerCatId: catId,
+              }),
+          }
+        : {}),
       ...(params.onAgentClientActiveRunReady
         ? {
             activeRunDispatch: {

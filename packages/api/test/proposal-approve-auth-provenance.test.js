@@ -15,13 +15,6 @@ describe('F275 proposal approval owner-auth provenance', () => {
             targetCats: ['opus'],
             intent: { intent: 'execute' },
             hasMentions: false,
-            attemptBatch: {
-              parserMode: 'user',
-              spanBasis: 'lowercased_message',
-              attempts: [],
-              truncated: false,
-              metricEligible: true,
-            },
           };
         },
       },

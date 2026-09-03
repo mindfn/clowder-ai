@@ -43,7 +43,6 @@ import { ReplyPill } from './ReplyPill';
 import { RoutingWarningNotice } from './RoutingWarningNotice';
 import { BriefingCard } from './rich/BriefingCard';
 import type { CardConfirmationEntry } from './rich/CardBlock';
-import { CustodyOfferCard } from './rich/CustodyOfferCard';
 import { RichBlocks } from './rich/RichBlocks';
 import { SummaryCard } from './SummaryCard';
 import { SystemNoticeBar } from './SystemNoticeBar';

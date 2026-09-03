@@ -170,7 +170,6 @@ describe('SendService — §4a adversarial paths', () => {
   test('replyTo referencing another thread → VALIDATION (no cross-thread preview leak)', async () => {
     const foreign = messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: 'secret in another thread',
@@ -197,7 +196,6 @@ describe('SendService — §4a adversarial paths', () => {
     const parents = [
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           ...base,
           content: 'secret',
           visibility: 'whisper',
@@ -206,7 +204,6 @@ describe('SendService — §4a adversarial paths', () => {
       ),
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           ...base,
           content: 'queued',
           deliveryStatus: 'queued',
@@ -214,7 +211,6 @@ describe('SendService — §4a adversarial paths', () => {
       ),
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'system', routed: false, observation: 'original' },
           ...base,
           userId: 'system',
           content: 'system prompt',
@@ -222,7 +218,6 @@ describe('SendService — §4a adversarial paths', () => {
       ),
       messageStore.append(
         canonicalTestMessageInput({
-          provenance: { author: 'user', routed: false, observation: 'original' },
           ...base,
           content: 'briefing',
           origin: 'briefing',

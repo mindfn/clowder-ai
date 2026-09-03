@@ -67,77 +67,50 @@ function request(overrides = {}) {
   };
 }
 
-function messageForTarget(targetCatId, state, overrides = {}) {
+function ledgerEntryForTarget(targetCatId, state, overrides = {}) {
   const currentLease = overrides.lease ?? lease({ holderCatIds: [targetCatId] });
   const fence = overrides.fence ?? buildActionSuccessorFence(currentLease, currentLease.dispatchId);
-  const interrupted = state === 'interrupted';
-  const handled = state === 'handled';
-  const withdrawn = state === 'withdrawn';
-  const failed = state === 'failed';
-  const live = ['queued', 'notified', 'awakened', 'seen', 'steering'].includes(state);
+  const terminal = ['interrupted', 'handled', 'withdrawn', 'failed'].includes(state);
+  const delivery = {};
+  if (state === 'notified') delivery.notifiedAt = 110;
+  if (state === 'awakened') {
+    delivery.awakenedInvocationId = `invocation-${targetCatId}`;
+    delivery.awakenedAt = 110;
+  }
+  if (state === 'seen') {
+    delivery.awakenedInvocationId = `invocation-${targetCatId}`;
+    delivery.awakenedAt = 110;
+    delivery.seenInvocationId = `invocation-${targetCatId}`;
+    delivery.seenAt = 115;
+  }
+  if (state === 'steering') delivery.steerRequestedAt = 115;
+  if (terminal) {
+    delivery.terminalOutcome = state;
+    if (state === 'handled') delivery.handledAt = 120;
+    else delivery.failedAt = 120;
+    if (state === 'interrupted') delivery.failureReason = 'runtime_restart';
+    if (state === 'failed') delivery.failureReason = 'invocation_failed';
+  }
   return {
-    id: overrides.id ?? `message-${targetCatId}-${state}`,
+    version: 1,
+    id: overrides.id ?? `entry-${targetCatId}-${state}`,
     threadId: currentLease.holderThreadId,
-    userId: currentLease.tenantScope,
-    catId: currentLease.predecessorCatId,
-    content: 'Review exact HEAD',
-    mentions: [targetCatId],
-    timestamp: 100,
-    deliveryStatus: live ? 'queued' : 'delivered',
-    queueCustody: {
-      version: 1,
-      entryId: `entry-${targetCatId}`,
-      revision: 2,
-      intent: 'review',
-      status: live ? 'queued' : 'terminal',
-      allTargetCats: [targetCatId],
-      pendingTargetCats: live ? [targetCatId] : [],
-      notifiedByCatIds: ['notified', 'awakened', 'seen', 'steering'].includes(state) ? [targetCatId] : [],
-      ...(state === 'awakened' || state === 'seen' || state === 'steering'
-        ? { awakenedInvocationIdByCatId: { [targetCatId]: `invocation-${targetCatId}` } }
-        : {}),
-      ...(state === 'awakened' || state === 'seen' || state === 'steering'
-        ? { awakenedAtByCatId: { [targetCatId]: 110 } }
-        : {}),
-      seenByCatIds: state === 'seen' || state === 'steering' ? [targetCatId] : [],
-      seenInvocationIdByCatId:
-        state === 'seen' || state === 'steering' ? { [targetCatId]: `invocation-${targetCatId}` } : {},
-      ...(state === 'steering' ? { steeredInvocationIdByCatId: { [targetCatId]: `invocation-${targetCatId}` } } : {}),
-      failedByCatIds: interrupted || failed ? [targetCatId] : [],
-      ...(withdrawn ? { withdrawnByCatIds: [targetCatId], withdrawnAtByCatId: { [targetCatId]: 120 } } : {}),
-      handledByCatIds: handled ? [targetCatId] : [],
-      carrierByTargetCatId: {
-        [targetCatId]: {
-          entryId: `entry-${targetCatId}`,
-          idempotencyKey: `action:${fence.leaseId}:${fence.generation}:${targetCatId}`,
-          actionSuccessorFence: fence,
-          source: 'agent',
-          sourceCategory: 'a2a',
-          callerCatId: currentLease.predecessorCatId,
-          a2aTriggerMessageId: overrides.id ?? `message-${targetCatId}-${state}`,
-          autoExecute: true,
-          createdAt: 100,
-        },
-      },
-      ...(live ? { carrierStateByTargetCatId: { [targetCatId]: { status: 'queued' } } } : {}),
-      targetAttempts: [
-        {
-          id: `entry-${targetCatId}:${targetCatId}:1`,
-          targetCatId,
-          sequence: 1,
-          state: interrupted ? 'interrupted' : failed ? 'failed' : handled ? 'handled' : live ? 'queued' : 'cancelled',
-          ...(interrupted ? { terminalReason: 'runtime_restart', invocationId: `invocation-${targetCatId}` } : {}),
-          ...(failed ? { terminalReason: 'invocation_failed' } : {}),
-          ...(withdrawn ? { terminalReason: 'source_withdrawn' } : {}),
-          ...(handled ? { invocationId: `invocation-${targetCatId}` } : {}),
-          createdAt: 100,
-          updatedAt: 120,
-        },
-      ],
-      priority: 'normal',
-      createdAt: 100,
-      updatedAt: 120,
+    owner: { kind: 'user', userId: currentLease.tenantScope },
+    kind: 'conversation_input',
+    from: { kind: 'agent', catId: currentLease.predecessorCatId },
+    target: { kind: 'cat', catId: targetCatId },
+    payload: {
+      sourceId: overrides.id ?? `message-${targetCatId}-${state}`,
+      content: 'Review exact HEAD',
+      messageId: overrides.id ?? `message-${targetCatId}-${state}`,
     },
+    execution: { intent: 'review', ownerAuthProvenance: 'strict', autoExecute: true, actionSuccessorFence: fence },
+    delivery,
+    status: terminal ? 'terminal' : 'queued',
+    enqueuedAt: 100,
+    ...(terminal ? { terminalAt: 120 } : {}),
+    priority: 'normal',
+    sourceCategory: 'a2a',
   };
 }
 
@@ -145,7 +118,7 @@ describe('direct action successor carrier recovery', () => {
   test('keeps safe_wait only when every exact-fence holder has live durable custody', () => {
     const current = lease();
     for (const state of ['queued', 'notified', 'awakened', 'seen', 'steering']) {
-      assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [messageForTarget('opus5', state)]), {
+      assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [ledgerEntryForTarget('opus5', state)]), {
         disposition: 'live',
         fence: buildActionSuccessorFence(current, current.dispatchId),
       });
@@ -155,28 +128,7 @@ describe('direct action successor carrier recovery', () => {
   test('recognizes a complete pre-CAS admission as live durable custody', () => {
     const current = lease();
     const fence = buildActionSuccessorFence(current, current.dispatchId);
-    const admission = {
-      id: 'message-admission',
-      threadId: current.holderThreadId,
-      userId: current.tenantScope,
-      catId: current.predecessorCatId,
-      content: 'Review exact HEAD',
-      mentions: ['opus5'],
-      timestamp: 100,
-      deliveryStatus: 'queued',
-      queueCustodyAdmission: {
-        version: 1,
-        admissionId: 'admission-review',
-        ownerUserId: current.tenantScope,
-        ownerAuthProvenance: 'strict',
-        intent: 'review',
-        targetCats: ['opus5'],
-        requestedTargetCats: ['opus5'],
-        actionSuccessorFence: fence,
-        priority: 'normal',
-        createdAt: 100,
-      },
-    };
+    const admission = ledgerEntryForTarget('opus5', 'queued', { id: 'message-admission', fence });
 
     assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [admission]), {
       disposition: 'live',
@@ -186,7 +138,7 @@ describe('direct action successor carrier recovery', () => {
 
   test('recovers only when every exact holder carrier was interrupted by runtime restart', () => {
     const current = lease();
-    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [messageForTarget('opus5', 'interrupted')]), {
+    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [ledgerEntryForTarget('opus5', 'interrupted')]), {
       disposition: 'restart_interrupted',
       fence: buildActionSuccessorFence(current, current.dispatchId),
     });
@@ -197,7 +149,7 @@ describe('direct action successor carrier recovery', () => {
     assert.equal(classifyDirectActionSuccessorCarrier(single, []).disposition, 'unavailable');
     for (const state of ['handled', 'withdrawn', 'failed']) {
       assert.equal(
-        classifyDirectActionSuccessorCarrier(single, [messageForTarget('opus5', state)]).disposition,
+        classifyDirectActionSuccessorCarrier(single, [ledgerEntryForTarget('opus5', state)]).disposition,
         'unavailable',
       );
     }
@@ -205,14 +157,14 @@ describe('direct action successor carrier recovery', () => {
     const parallel = lease({ mode: 'parallel', holderCatIds: ['opus5', 'kimi'], parallelIntent: 'independent review' });
     assert.equal(
       classifyDirectActionSuccessorCarrier(parallel, [
-        messageForTarget('opus5', 'interrupted', { lease: parallel }),
-        messageForTarget('kimi', 'queued', { lease: parallel }),
+        ledgerEntryForTarget('opus5', 'interrupted', { lease: parallel }),
+        ledgerEntryForTarget('kimi', 'queued', { lease: parallel }),
       ]).disposition,
       'unavailable',
     );
     assert.equal(
       classifyDirectActionSuccessorCarrier(single, [
-        messageForTarget('opus5', 'interrupted', {
+        ledgerEntryForTarget('opus5', 'interrupted', {
           fence: { ...buildActionSuccessorFence(single, single.dispatchId), generation: 2 },
         }),
       ]).disposition,
@@ -244,8 +196,8 @@ describe('direct action successor carrier recovery', () => {
     const decision = await resolveDirectActionSuccessorCarrier({
       lease: lease(),
       admissionInput: request(),
-      messageStore: {
-        async getByThreadAfter() {
+      invocationQueue: {
+        async listAllDurable() {
           throw new Error('store unavailable');
         },
       },

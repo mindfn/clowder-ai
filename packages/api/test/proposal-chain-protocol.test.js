@@ -22,13 +22,6 @@ describe('F128 chain protocol injection', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: [],
           intent: { intent: 'execute' },
           hasMentions: false,
@@ -107,13 +100,6 @@ describe('F128 chain protocol injection', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: [],
           intent: { intent: 'execute' },
           hasMentions: false,
@@ -203,13 +189,6 @@ describe('F128 chain protocol injection', () => {
           intent: { intent: 'execute' },
           hasMentions: targetCats.length > 0,
           // real-router contract: a parser ALWAYS hands over its batch (zero attempts on no @)
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
         };
       },
     };
@@ -287,13 +266,6 @@ describe('F128 chain protocol injection', () => {
     const router = {
       async resolveTargetsAndIntent() {
         return {
-          attemptBatch: {
-            parserMode: 'user',
-            spanBasis: 'lowercased_message',
-            attempts: [],
-            truncated: false,
-            metricEligible: true,
-          },
           targetCats: ['opus'],
           intent: { intent: 'execute' },
           hasMentions: true,

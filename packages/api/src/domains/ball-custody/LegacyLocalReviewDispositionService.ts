@@ -46,7 +46,7 @@ export type LegacyLocalReviewSettlementResult =
   | { outcome: 'ineligible' | 'stale' | 'conflict'; reason: string };
 
 export interface LegacyLocalReviewDispositionServiceDeps extends LegacyLocalReviewSourceResolverDeps {
-  messageStore: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey' | 'appendIdempotent' | 'prepareQueueAdmission'>;
+  messageStore: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey' | 'append'>;
   leaseStore: Pick<ActionSuccessorLeaseStore, 'get' | 'recoverLocalReviewVerdict'>;
   enqueueContinuation(input: {
     decisionMessage: StoredMessage;
@@ -180,8 +180,8 @@ function createDecisionMessage(
 ): AppendMessageInput {
   const verdictLabel = verdict === 'approved' ? '通过' : '需要修改';
   return {
+    from: { kind: 'user', userId: ownerUserId },
     userId: ownerUserId,
-    catId: null,
     threadId: eligibility.predecessorThreadId,
     content:
       `operator 对旧 Review 的结算选择为“${verdictLabel}”。` +
@@ -205,18 +205,6 @@ function createDecisionMessage(
       },
     },
   };
-}
-
-async function prepareDecisionForQueue(
-  messageStore: LegacyLocalReviewDispositionServiceDeps['messageStore'],
-  decisionMessage: StoredMessage,
-): Promise<StoredMessage> {
-  if (decisionMessage.deliveryStatus === 'delivered') return decisionMessage;
-  const prepared = await messageStore.prepareQueueAdmission(decisionMessage.id);
-  if (prepared.kind !== 'prepared' && prepared.kind !== 'existing') {
-    throw new Error(`legacy review decision Queue admission failed: ${prepared.kind}`);
-  }
-  return prepared.message;
 }
 
 export class LegacyLocalReviewDispositionService {
@@ -261,12 +249,11 @@ export class LegacyLocalReviewDispositionService {
       return { outcome: 'conflict', reason: 'decision_verdict_mismatch' };
     }
 
-    const append = existingDecision
-      ? { message: existingDecision, idempotent: true }
-      : await this.deps.messageStore.appendIdempotent(
-          createDecisionMessage(eligibility, input.ownerUserId, input.decisionId, input.verdict, input.now),
-        );
-    const decisionMessage = append.message;
+    const decisionMessage =
+      existingDecision ??
+      (await this.deps.messageStore.append(
+        createDecisionMessage(eligibility, input.ownerUserId, input.decisionId, input.verdict, input.now),
+      ));
     if (!decisionMatches(decisionMessage, eligibility, input.ownerUserId, input.verdict)) {
       return { outcome: 'conflict', reason: 'decision_message_mismatch' };
     }
@@ -292,12 +279,8 @@ export class LegacyLocalReviewDispositionService {
     }
 
     try {
-      const admittedDecision = await prepareDecisionForQueue(this.deps.messageStore, decisionMessage);
-      if (!decisionMatches(admittedDecision, eligibility, input.ownerUserId, input.verdict)) {
-        return { outcome: 'conflict', reason: 'decision_message_mismatch' };
-      }
       const continuation = await this.deps.enqueueContinuation({
-        decisionMessage: admittedDecision,
+        decisionMessage,
         leaseId: eligibility.leaseId,
         generation: eligibility.generation,
         reviewerCatId: eligibility.reviewerCatId,

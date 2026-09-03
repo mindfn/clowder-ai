@@ -58,7 +58,6 @@ describe('F254 incident registry v1.2', () => {
 
     const trigger = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         threadId: 'thread-1',
         catId: null,
@@ -76,7 +75,6 @@ describe('F254 incident registry v1.2', () => {
       turnInvocationId: 'new-fable-turn',
       originTriggerMessageId: trigger.id,
       message: canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         threadId: 'thread-1',
         catId: 'fable5',

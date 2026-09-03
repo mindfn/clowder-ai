@@ -70,7 +70,7 @@ describe('GET thread-context with workflowSop', () => {
     };
   }
 
-  async function createApp() {
+  async function createApp(overrides = {}) {
     const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
     const app = Fastify();
     await app.register(callbacksRoutes, {
@@ -79,6 +79,7 @@ describe('GET thread-context with workflowSop', () => {
       socketManager,
       threadStore,
       workflowSopStore,
+      ...overrides,
     });
     return app;
   }
@@ -128,7 +129,6 @@ describe('GET thread-context with workflowSop', () => {
     // Add a message so we have content
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         threadId: thread.id,
@@ -163,6 +163,41 @@ describe('GET thread-context with workflowSop', () => {
     // version and updatedAt should NOT be in the response
     assert.equal(body.workflowSop.version, undefined);
     assert.equal(body.workflowSop.updatedAt, undefined);
+  });
+
+  test('returns the same exact lifecycle situation exposed to agent prompts and UI', async () => {
+    const expectedSituation = {
+      kind: 'thread_execution_situation.v1',
+      complete: true,
+      activeRuns: [
+        {
+          phase: 'processing',
+          targetId: 'kimi',
+          invocationId: 'invocation-kimi',
+          responseMessageId: 'response-kimi',
+          startedAt: 200,
+          sources: [{ messageId: 'source-opus', from: { kind: 'agent', catId: 'opus' } }],
+        },
+      ],
+    };
+    const app = await createApp({
+      threadExecutionSituationSource: {
+        async resolve() {
+          return expectedSituation;
+        },
+      },
+    });
+    const thread = threadStore.create('user-1', 'execution situation', 'default');
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', thread.id);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/callbacks/thread-context?responseMode=full',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(JSON.parse(response.body).situation, expectedSituation);
   });
 
   test('bounds an oversized workflowSop even when the thread has no messages', async () => {
@@ -317,7 +352,6 @@ describe('GET thread-context with workflowSop', () => {
 
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         threadId: thread.id,
@@ -348,7 +382,6 @@ describe('GET thread-context with workflowSop', () => {
 
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         threadId: thread.id,
@@ -386,7 +419,6 @@ describe('GET thread-context with workflowSop', () => {
     // Add a message so thread-context has content
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-2',
         catId: null,
         threadId: otherThread.id,
@@ -418,7 +450,6 @@ describe('GET thread-context with workflowSop', () => {
 
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         threadId: thread.id,

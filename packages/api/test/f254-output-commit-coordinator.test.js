@@ -17,7 +17,6 @@ const scope = { userId: 'user-1', threadId: 'thread-1', catId: 'codex-sol' };
 
 function draft(content = 'draft') {
   return canonicalTestMessageInput({
-    provenance: { author: 'cat', routed: false, observation: 'original' },
     userId: scope.userId,
     catId: scope.catId,
     content,
@@ -60,7 +59,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -105,7 +103,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const queued = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'queued update',
@@ -248,7 +245,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -287,7 +283,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -329,7 +324,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const trigger = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'question',
@@ -349,7 +343,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
         assert.equal(priorFrontierMessageId, trigger.id);
         await messageStore.append(
           canonicalTestMessageInput({
-            provenance: { author: 'user', routed: false, observation: 'original' },
             userId: scope.userId,
             catId: null,
             content: 'arrived after publication',
@@ -374,7 +367,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const frontier = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'question',
@@ -411,7 +403,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -460,7 +451,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -509,7 +499,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -564,7 +553,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',
@@ -620,7 +608,6 @@ describe('F254 ADR-042 — glass-box output commit', () => {
     const messageStore = new MessageStore();
     const unseen = await messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: scope.userId,
         catId: null,
         content: 'late correction',

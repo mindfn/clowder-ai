@@ -407,8 +407,12 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.equal(managedHold.params.holdLifecycle.status, 'active');
     assert.equal(triggerCount, 0, 'ordinary mention cannot dequeue or wake the older holder');
 
+    // F117 (ef94412a5): invokeTrigger success now means admitted into Queue
+    // custody — the routes layer maps 'dispatched' → 'enqueued' before the
+    // recovery sweep persists the state. 'dispatched' was the pre-F117 name
+    // for the same "trigger accepted, wake under Queue custody" terminal.
     const deadline = Date.now() + 3_000;
-    while (managedHold?.params.holdLifecycle?.managedCommand?.state !== 'dispatched' && Date.now() < deadline) {
+    while (managedHold?.params.holdLifecycle?.managedCommand?.state !== 'enqueued' && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
       managedHold = deps.dynamicTaskStore.getById(taskId);
     }
@@ -417,7 +421,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.ok(managedHold, 'the typed wake remains queryable until invocation-bound disposition');
     assert.equal(managedHold.enabled, true);
     assert.equal(managedHold.params.holdLifecycle.status, 'active');
-    assert.equal(managedHold.params.holdLifecycle.managedCommand.state, 'dispatched');
+    assert.equal(managedHold.params.holdLifecycle.managedCommand.state, 'enqueued');
     assert.equal(
       managedHold.params.holdLifecycle.managedCommand.result.cancelled,
       false,

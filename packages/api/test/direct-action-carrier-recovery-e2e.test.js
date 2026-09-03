@@ -53,62 +53,45 @@ function carrierLease(sourceThreadId, targetThreadId) {
   };
 }
 
-function appendCarrier(messageStore, lease, state) {
+async function appendCarrier(messageStore, invocationQueue, lease, state) {
   const fence = buildActionSuccessorFence(lease, lease.dispatchId);
-  return messageStore.append({
+  const from = { kind: 'agent', catId: lease.predecessorCatId };
+  const message = await messageStore.append({
     threadId: lease.holderThreadId,
     userId: lease.tenantScope,
-    catId: lease.predecessorCatId,
+    from,
     content: 'Original exact-HEAD review carrier',
     mentions: ['codex'],
     origin: 'callback',
     timestamp: 100,
     deliveryStatus: 'queued',
-    queueCustody: {
-      version: 1,
-      entryId: 'entry-original-review',
-      revision: 2,
-      intent: 'execute',
-      status: state === 'live' ? 'queued' : 'terminal',
-      allTargetCats: ['codex'],
-      pendingTargetCats: state === 'live' ? ['codex'] : [],
-      notifiedByCatIds: state === 'live' ? ['codex'] : [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      failedByCatIds: state === 'interrupted' ? ['codex'] : [],
-      handledByCatIds: [],
-      carrierByTargetCatId: {
-        codex: {
-          entryId: 'entry-original-review',
-          idempotencyKey: `action:${fence.leaseId}:${fence.generation}:codex`,
-          actionSuccessorFence: fence,
-          source: 'agent',
-          sourceCategory: 'a2a',
-          callerCatId: lease.predecessorCatId,
-          a2aTriggerMessageId: 'message-original-review',
-          autoExecute: true,
-          createdAt: 100,
-        },
-      },
-      ...(state === 'live' ? { carrierStateByTargetCatId: { codex: { status: 'queued' } } } : {}),
-      targetAttempts: [
-        {
-          id: 'entry-original-review:codex:1',
-          targetCatId: 'codex',
-          sequence: 1,
-          state: state === 'live' ? 'queued' : 'interrupted',
-          ...(state === 'interrupted'
-            ? { invocationId: 'invocation-interrupted', terminalReason: 'runtime_restart' }
-            : {}),
-          createdAt: 100,
-          updatedAt: 120,
-        },
-      ],
-      priority: 'normal',
-      createdAt: 100,
-      updatedAt: 120,
-    },
   });
+  const admitted = await invocationQueue.enqueueExistingMessageDurable(messageStore, message.id, {
+    threadId: lease.holderThreadId,
+    userId: lease.tenantScope,
+    from,
+    kind: 'conversation_input',
+    ownerAuthProvenance: 'strict',
+    content: message.content,
+    messageId: message.id,
+    targetCats: ['codex'],
+    intent: 'execute',
+    autoExecute: true,
+    sourceCategory: 'a2a',
+    actionSuccessorFence: fence,
+  });
+  if (state === 'interrupted') {
+    const terminalized = await invocationQueue.terminalizeEntryDurable(
+      lease.holderThreadId,
+      lease.tenantScope,
+      admitted.entry.id,
+      'interrupted',
+      'runtime_restart',
+    );
+    assert.ok(terminalized);
+    assert.equal(invocationQueue.list(lease.holderThreadId, lease.tenantScope).length, 0);
+  }
+  return message;
 }
 
 describe('direct action carrier restart recovery', () => {
@@ -121,6 +104,7 @@ describe('direct action carrier restart recovery', () => {
   let lease;
   let unavailable;
   let registry;
+  let queueDrainError;
 
   beforeEach(async () => {
     app = Fastify();
@@ -133,6 +117,7 @@ describe('direct action carrier restart recovery', () => {
     auth = await registry.create('user-1', 'opus', source.id);
     lease = carrierLease(source.id, target.id);
     unavailable = [];
+    queueDrainError = undefined;
 
     await app.register(callbacksRoutes, {
       registry,
@@ -146,7 +131,12 @@ describe('direct action carrier restart recovery', () => {
         update() {},
         get: () => null,
       },
-      queueProcessor: { async tryAutoExecute() {} },
+      queueProcessor: {
+        async requestDrain() {
+          if (queueDrainError) throw queueDrainError;
+        },
+        async tryAutoExecute() {},
+      },
       actionSuccessorAdmissionService: {
         async admit() {
           return { admit: false, outcome: 'safe_wait', lease };
@@ -178,16 +168,16 @@ describe('direct action carrier restart recovery', () => {
   }
 
   test('keeps safe_wait when exact durable custody is live', async () => {
-    appendCarrier(messageStore, lease, 'live');
+    await appendCarrier(messageStore, invocationQueue, lease, 'live');
     const response = await post('review-4058-live-reentry');
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().status, 'safe_wait');
-    assert.equal(invocationQueue.list(target.id, 'user-1').length, 0);
+    assert.equal(invocationQueue.list(target.id, 'user-1').length, 1);
   });
 
   test('reuses the original generation once after runtime interruption', async () => {
-    appendCarrier(messageStore, lease, 'interrupted');
+    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
     const response = await post('review-4058-recover-interrupted');
 
     assert.equal(response.statusCode, 200);
@@ -198,7 +188,7 @@ describe('direct action carrier restart recovery', () => {
       outcome: 'replayed',
     });
     const [replacement] = invocationQueue.list(target.id, 'user-1');
-    assert.deepEqual(replacement.actionSuccessorFence, buildActionSuccessorFence(lease, lease.dispatchId));
+    assert.deepEqual(replacement.execution.actionSuccessorFence, buildActionSuccessorFence(lease, lease.dispatchId));
     assert.deepEqual(unavailable, []);
 
     const messageCount = messageStore.getByThreadIncludingQueued(target.id, 20, 'user-1').length;
@@ -207,36 +197,51 @@ describe('direct action carrier restart recovery', () => {
     assert.equal(messageStore.getByThreadIncludingQueued(target.id, 20, 'user-1').length, messageCount);
   });
 
-  test('same-client retry finishes a crash after the replacement append', async () => {
-    appendCarrier(messageStore, lease, 'interrupted');
+  test('same-client retry observes an atomically admitted replacement carrier', async () => {
+    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
     const clientMessageId = 'review-4058-crash-after-append';
-    const replacement = messageStore.append({
-      threadId: target.id,
-      userId: 'user-1',
-      catId: 'opus',
-      content: 'Review exact HEAD',
-      mentions: ['codex'],
-      origin: 'callback',
-      timestamp: 130,
-      deliveryStatus: 'queued',
-      idempotencyKey: `action-carrier-recovery:${lease.leaseId}:${lease.generation}`,
-    });
+    const fence = buildActionSuccessorFence(lease, lease.dispatchId);
+    const replacement = await invocationQueue.appendAndEnqueueDurable(
+      messageStore,
+      {
+        threadId: target.id,
+        userId: 'user-1',
+        from: { kind: 'agent', catId: 'opus' },
+        content: 'Review exact HEAD',
+        mentions: ['codex'],
+        origin: 'callback',
+        timestamp: 130,
+        deliveryStatus: 'queued',
+        idempotencyKey: `action-carrier-recovery:${lease.leaseId}:${lease.generation}`,
+      },
+      {
+        threadId: target.id,
+        userId: 'user-1',
+        from: { kind: 'agent', catId: 'opus' },
+        kind: 'message_wake',
+        ownerAuthProvenance: 'strict',
+        content: 'Review exact HEAD',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+        sourceCategory: 'a2a',
+        actionSuccessorFence: fence,
+      },
+    );
     assert.equal(await registry.claimClientMessageId(auth.invocationId, clientMessageId), true);
 
     const response = await post(clientMessageId);
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.json().messageId, replacement.id);
+    assert.equal(response.json().status, 'safe_wait');
     const [queued] = invocationQueue.list(target.id, 'user-1');
-    assert.equal(queued.messageId, replacement.id);
-    assert.deepEqual(queued.actionSuccessorFence, buildActionSuccessorFence(lease, lease.dispatchId));
+    assert.equal(queued.payload.messageId, replacement.message.id);
+    assert.deepEqual(queued.execution.actionSuccessorFence, fence);
   });
 
   test('503 names startup reconciliation instead of promising same-client retry delivery', async () => {
-    appendCarrier(messageStore, lease, 'interrupted');
-    messageStore.initializeQueueCustody = async () => {
-      throw new Error('simulated crash after durable admission');
-    };
+    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
+    queueDrainError = new Error('simulated crash after durable admission');
 
     const response = await post('review-4058-admitted-uncommitted');
 

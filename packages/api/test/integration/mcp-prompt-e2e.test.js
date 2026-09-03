@@ -93,7 +93,6 @@ describe('MCP Prompt Injection E2E', () => {
     // Pre-populate some messages
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: '你好',
@@ -104,7 +103,6 @@ describe('MCP Prompt Injection E2E', () => {
     );
     messageStore.append(
       canonicalTestMessageInput({
-        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'opus',
         content: '你好co-creator',
