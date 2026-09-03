@@ -10,6 +10,10 @@
  */
 window.I18N = {
   en: {
+    'meta.home.title': `Clowder AI — AI Teams That Grow With You`,
+    'meta.community.title': `Community — Clowder AI`,
+    'meta.docs.title': `Docs — Clowder AI`,
+
     // ── Nav / shared link labels (nav, mobile menu, floating TOC, footer) ──
     'nav.docs': `Docs`,
     'nav.community': `Community`,
@@ -253,6 +257,10 @@ window.I18N = {
   },
 
   zh: {
+    'meta.home.title': `Clowder AI — 与你共同成长的 AI 团队`,
+    'meta.community.title': `社区 — Clowder AI`,
+    'meta.docs.title': `文档 — Clowder AI`,
+
     // ── Nav / shared link labels ──
     'nav.docs': `文档`,
     'nav.community': `社区`,

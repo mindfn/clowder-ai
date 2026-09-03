@@ -319,6 +319,38 @@ describe('localized roadmap bars', () => {
   });
 });
 
+describe('localized document titles', () => {
+  const pages = [
+    ['index.html', 'meta.home.title'],
+    ['community.html', 'meta.community.title'],
+    ['docs.html', 'meta.docs.title'],
+  ];
+
+  for (const [page, key] of pages) {
+    it(`${page} updates the browser title when Chinese is applied`, async () => {
+      const dom = new JSDOM(readSite(page), {
+        runScripts: 'outside-only',
+        url: `https://example.test/site/${page}`,
+      });
+      await new Promise((resolve) => {
+        if (dom.window.document.readyState === 'loading') {
+          dom.window.document.addEventListener('DOMContentLoaded', resolve, { once: true });
+        } else {
+          resolve();
+        }
+      });
+      dom.window.I18N = I18N;
+      dom.window.eval(readSite('main.js'));
+
+      const title = dom.window.document.querySelector('title');
+      assert.equal(title?.getAttribute('data-i18n'), key);
+      dom.window.applyLang('zh');
+      assert.equal(dom.window.document.title, I18N.zh[key]);
+      assert.notEqual(I18N.zh[key], I18N.en[key]);
+    });
+  }
+});
+
 // ─── P1: Locale-aware Markdown fallback — behavioral tests ───────────
 describe('localized docs loader (behavioral)', () => {
   it('tries the zh-CN sibling before the canonical path for Chinese', () => {
