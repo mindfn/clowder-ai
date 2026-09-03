@@ -78,8 +78,10 @@
   .legend { position: absolute; left: 0; right: 0; bottom: 5.4%; text-align: center; }
   .legend div { display: inline-block; font-family: var(--mono); font-size: 0.55rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0.85rem; opacity: 0.78; }
   .caption { position: absolute; left: 0; right: 0; bottom: 2.6%; text-align: center; font-style: italic; font-size: 0.76rem; opacity: 0.66; }
-  .track { padding: 42vh 0 46vh; }
-  .beat { min-height: 88vh; display: flex; flex-direction: column; justify-content: center; max-width: 34ch; opacity: 0.25; transition: opacity 0.4s ease; }
+  /* Beats are pinned to the scroll fraction they narrate, so the camera and the text land
+     on the same limb instead of drifting apart with the section heights. */
+  .track { position: relative; height: 760vh; }
+  .beat { position: absolute; left: 0; right: 0; top: calc(var(--at) * (760vh - 100vh) + 50vh); transform: translateY(-50%); max-width: 34ch; opacity: 0.18; transition: opacity 0.45s ease; }
   .beat.on { opacity: 1; }
   .beat h2 { font-size: clamp(1.6rem, 2.6vw, 2.5rem); font-weight: 400; line-height: 1.04; margin: 0.5rem 0 0; }
   .beat p { font-size: 0.95rem; line-height: 1.6; opacity: 0.8; margin: 1rem 0 0; }
@@ -94,7 +96,8 @@
     .eyebrow { font-size: 0.46rem; }
     .legend div { font-size: 0.44rem; margin: 0 0.4rem; }
     .caption { font-size: 0.52rem; }
-    .track { padding: 1rem 0 30vh; }
+    .track { position: static; height: auto; padding: 1rem 0 30vh; }
+    .beat { position: static; transform: none; min-height: 62vh; display: flex; flex-direction: column; justify-content: center; }
     .beat { min-height: 62vh; max-width: none; }
   }
 </style>
@@ -106,7 +109,7 @@
       <div class="sheet">
         <canvas id="plate"></canvas>
         <div class="overlay" id="overlay">
-          <div class="head">
+          <div class="head" id="sheetHead" style="transition: opacity 0.5s ease">
             <div>
               <div class="eyebrow">Clowder AI · Roadmap</div>
               <h1>A system that grows, drawn as one.</h1>
@@ -138,12 +141,13 @@
       let labels = [];
 
       const BEATS = [
-        { at: 0.14, title: 'It starts underground.', body: 'Four roots — identity, authority, truth, safety. Nothing above them can outgrow them.' },
-        { at: 0.34, title: 'One trunk.', body: 'A single shared spine: one home, one memory, one set of rules the whole system lives by.' },
-        { at: 0.5, title: 'Memory & Continuity', body: 'What the cats keep, guard, retrieve and recall on their own.', limb: 'memory' },
-        { at: 0.58, title: 'Harness Metabolism', body: 'Friction becomes a more reliable next time: experience seen, attributed, then fixed.', limb: 'harness' },
-        { at: 0.7, title: 'Pluggable Capability', body: 'New models, senses and hands enter through declared boundaries and stay under audit.', limb: 'capability' },
-        { at: 0.78, title: 'Shared Life', body: 'Not a tool that answers — a household that keeps going between the answers.', limb: 'life' },
+        { at: 0.02, title: 'Three cats plant a seed.', body: 'Not a feature list. A small team of cats — different models, one home — and a promise to grow it in the open.' },
+        { at: 0.1, title: 'It starts underground.', body: 'Four roots — identity, authority, truth, safety. Nothing above them can outgrow them.' },
+        { at: 0.28, title: 'One trunk.', body: 'A single shared spine: one home, one memory, one set of rules the whole system lives by.' },
+        { at: 0.44, title: 'Memory & Continuity', body: 'What the cats keep, guard, retrieve and recall on their own.', limb: 'memory' },
+        { at: 0.57, title: 'Harness Metabolism', body: 'Friction becomes a more reliable next time: experience seen, attributed, then fixed.', limb: 'harness' },
+        { at: 0.69, title: 'Pluggable Capability', body: 'New models, senses and hands enter through declared boundaries and stay under audit.', limb: 'capability' },
+        { at: 0.8, title: 'Shared Life', body: 'Not a tool that answers — a household that keeps going between the answers.', limb: 'life' },
         { at: 0.95, title: 'Still growing.', body: 'Every fruit on this plate is one entry in the roadmap. The drawing is a function of the data: when the roadmap grows, so does the tree.' },
       ];
 
@@ -151,6 +155,7 @@
         const el = document.createElement('section');
         el.className = 'beat';
         el.dataset.at = beat.at;
+        el.style.setProperty('--at', beat.at);
         el.innerHTML = `<div class="eyebrow">${beat.limb ? 'Limb' : 'Chapter'}</div><h2>${beat.title}</h2><p>${beat.body}</p>`;
         track.appendChild(el);
       }
@@ -224,10 +229,11 @@
           labels.push({ anchor: root.tip, side, y, el, colour: P.theme.ink, from: 0.26 });
         });
 
+        // Grouped around the seed rather than scattered across the sheet.
         for (const cat of [
-          { id: 'siamese', x: 300, h: 108 },
-          { id: 'ragdoll', x: 742, h: 96 },
-          { id: 'maine', x: 828, h: 116 },
+          { id: 'siamese', x: 452, h: 104 },
+          { id: 'ragdoll', x: 664, h: 92 },
+          { id: 'maine', x: 748, h: 112 },
         ]) {
           const img = new Image();
           img.onload = () => {
@@ -241,21 +247,22 @@
       let progress = 0;
       function draw() {
         if (!scene) return;
-        scene.compose(progress);
+        // Margin labels belong to the pulled-back sheet: while the camera is in close there are
+        // no margins to point at, and the beat on the right names what is being drawn instead.
+        const wide = progress >= 0.94;
         const [W] = scene.size;
-        leaders(scene.viewCtx, W, labels.filter((l) => progress >= l.from));
-        for (const l of labels) l.el.classList.toggle('on', progress >= l.from);
-        document.getElementById('legend').classList.toggle('on', progress > 0.5);
+        scene.compose(progress, wide ? (ctx) => leaders(ctx, W, labels) : null);
+        for (const l of labels) l.el.classList.toggle('on', wide);
+        document.getElementById('legend').classList.toggle('on', wide);
+        document.getElementById('sheetHead').style.opacity = wide ? '1' : '0.32';
       }
 
       function measure() {
         const r = track.getBoundingClientRect();
         const span = r.height - window.innerHeight;
         progress = span > 0 ? Math.max(0, Math.min(1, -r.top / span)) : 0;
-        const focus = window.innerHeight * 0.5;
         beatEls.forEach((el) => {
-          const b = el.getBoundingClientRect();
-          el.classList.toggle('on', b.top <= focus && b.bottom > focus);
+          el.classList.toggle('on', Math.abs(progress - Number(el.dataset.at)) < 0.055);
         });
         draw();
       }

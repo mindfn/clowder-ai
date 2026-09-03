@@ -50,13 +50,29 @@
     ctx.globalAlpha = 1;
   }
 
-  function soil(ctx, rng) {
+  /** The ground line exists before anything grows: it is the sheet, not the specimen. */
+  function horizon(ctx) {
     ctx.strokeStyle = P.INK();
     ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.moveTo(96, GROUND);
     for (let x = 96; x <= W - 96; x += 24) ctx.lineTo(x, GROUND + Math.sin(x * 0.021) * 1.6);
     ctx.stroke();
+  }
+
+  /** The seed is the opening subject: a mound of worked earth with one mark in it. */
+  function seed(ctx, rng) {
+    P.stipple(ctx, rng, CX, GROUND - 2, 26, 190, 0.5);
+    ctx.save();
+    ctx.fillStyle = P.INK();
+    ctx.beginPath();
+    ctx.ellipse(CX, GROUND - 7, 5.2, 3.6, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function soil(ctx, rng) {
+    ctx.strokeStyle = P.INK();
     ctx.lineWidth = 0.7;
     for (let i = 0; i < 210; i += 1) {
       const x = 96 + rng() * (W - 192);
@@ -142,7 +158,19 @@
         sprigs(ctx, rng, pointAt(l2.pts, 0.45 + rng() * 0.3), spec.angle + turn - 44 * spec.side, 26, 0.95, 3);
       });
       P.carve(ctx, rng, l1.pts);
-      limbs.push({ id: spec.id, spec, path: l1, tips, label: branch.label, base: { x: base.x, y: base.y } });
+      // The reveal is a clip over one shared drawing, so each limb also carries the box it owns:
+      // without it a limb's growing circle would uncover the limb above it.
+      const pad = 96;
+      const box = tips.reduce(
+        (b, t) => ({
+          x0: Math.min(b.x0, t.x - pad),
+          y0: Math.min(b.y0, t.y - pad),
+          x1: Math.max(b.x1, t.x + pad),
+          y1: Math.max(b.y1, t.y + pad),
+        }),
+        { x0: base.x - 40, y0: base.y - 40, x1: base.x + 40, y1: base.y + 40 },
+      );
+      limbs.push({ id: spec.id, spec, path: l1, tips, label: branch.label, base: { x: base.x, y: base.y }, box });
     }
     P.carve(ctx, rng, trunk.pts);
     P.stipple(ctx, rng, CX, GROUND - 4, 34, 340, 0.5);
@@ -215,12 +243,15 @@
   const seg = (p, a, b) => Math.max(0, Math.min(1, (p - a) / (b - a)));
 
   // Growth order is the story: roots, then trunk, then the lower limbs, then the upper ones.
+  // Each window closes on the beat that names it, so the text and the drawing agree.
   const PHASE = {
-    memory: [0.32, 0.5],
-    harness: [0.4, 0.58],
-    capability: [0.5, 0.7],
-    life: [0.58, 0.78],
+    memory: [0.34, 0.46],
+    harness: [0.47, 0.59],
+    capability: [0.6, 0.71],
+    life: [0.72, 0.82],
   };
+  const ROOTS_AT = [0.02, 0.14];
+  const TRUNK_AT = [0.18, 0.32];
 
   function surface(dpr) {
     const c = document.createElement('canvas');
@@ -246,6 +277,8 @@
     const sheet = surface(dpr);
     paper(sheet.ctx, P.mulberry32(((opts && opts.seed) || 20260902) ^ 0x9e3779b9));
     furniture(sheet.ctx);
+    horizon(sheet.ctx);
+    seed(sheet.ctx, P.mulberry32(0x5eed));
 
     const art = surface(dpr);
     const rng = P.mulberry32((opts && opts.seed) || 20260902);
@@ -259,11 +292,54 @@
 
     const cats = surface(dpr);
 
-    function compose(p) {
-      view.clearRect(0, 0, W, H);
+    // The camera reads the plate the way you would with a loupe: close on the part being drawn,
+    // then pulled back at the end so the whole sheet lands as one image.
+    const centre = (limb) => {
+      const b = limb.tips.reduce(
+        (a, t) => ({
+          x0: Math.min(a.x0, t.x),
+          y0: Math.min(a.y0, t.y),
+          x1: Math.max(a.x1, t.x),
+          y1: Math.max(a.y1, t.y),
+        }),
+        { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 },
+      );
+      return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
+    };
+    const at = (id) => centre(limbs.find((l) => l.id === id));
+    const KEYS = [
+      { p: 0, x: CX, y: GROUND - 30, z: 1.72 },
+      { p: 0.1, x: CX, y: GROUND + 120, z: 1.85 },
+      { p: 0.28, x: CX, y: GROUND - 190, z: 1.8 },
+      { p: 0.44, ...at('memory'), z: 1.85 },
+      { p: 0.57, ...at('harness'), z: 1.85 },
+      { p: 0.69, ...at('capability'), z: 1.85 },
+      { p: 0.8, ...at('life'), z: 1.85 },
+      { p: 0.88, x: CX, y: GROUND - 90, z: 1.6 },
+      { p: 0.95, x: CX, y: H / 2, z: 1 },
+      { p: 1, x: CX, y: H / 2, z: 1 },
+    ];
+    const smooth = (t) => t * t * (3 - 2 * t);
+    function camera(p) {
+      let i = 0;
+      while (i < KEYS.length - 2 && p > KEYS[i + 1].p) i += 1;
+      const a = KEYS[i];
+      const b = KEYS[i + 1];
+      const k = smooth(Math.max(0, Math.min(1, (p - a.p) / (b.p - a.p))));
+      return { x: P.lerp(a.x, b.x, k), y: P.lerp(a.y, b.y, k), z: P.lerp(a.z, b.z, k) };
+    }
+
+    function compose(p, annotate) {
+      const cam = camera(p);
+      view.setTransform(1, 0, 0, 1, 0, 0);
+      view.clearRect(0, 0, canvas.width, canvas.height);
+      view.setTransform(dpr, 0, 0, dpr, 0, 0);
+      view.translate(W / 2, H / 2);
+      view.scale(cam.z, cam.z);
+      view.translate(-cam.x, -cam.y);
       view.drawImage(sheet.canvas, 0, 0, W, H);
 
-      const rRoot = ease(seg(p, 0.02, 0.26)) * 700;
+      const rRoot = ease(seg(p, ROOTS_AT[0], ROOTS_AT[1])) * 700;
       if (rRoot > 1) {
         view.save();
         view.beginPath();
@@ -276,11 +352,11 @@
         view.restore();
       }
 
-      const hTrunk = ease(seg(p, 0.2, 0.4)) * 470;
-      const revealAbove = (shape) => {
+      const hTrunk = ease(seg(p, TRUNK_AT[0], TRUNK_AT[1])) * 470;
+      const revealAbove = (own, shape) => {
         view.save();
         view.beginPath();
-        view.rect(0, 0, W, GROUND + 3);
+        view.rect(own.x0, own.y0, own.x1 - own.x0, Math.min(own.y1, GROUND + 3) - own.y0);
         view.clip();
         view.beginPath();
         shape();
@@ -288,20 +364,23 @@
         view.drawImage(art.canvas, 0, 0, W, H);
         view.restore();
       };
-      if (hTrunk > 1) revealAbove(() => view.rect(CX - 82, GROUND - hTrunk, 164, hTrunk + 6));
+      if (hTrunk > 1) {
+        revealAbove({ x0: CX - 82, y0: 0, x1: CX + 82, y1: GROUND + 3 }, () =>
+          view.rect(CX - 82, GROUND - hTrunk, 164, hTrunk + 6),
+        );
+      }
       for (const limb of limbs) {
         const [a, b] = PHASE[limb.id] || [0.4, 0.7];
-        const r = ease(seg(p, a, b)) * 560;
-        if (r > 1) revealAbove(() => view.arc(limb.base.x, limb.base.y, r, 0, Math.PI * 2));
+        const r = ease(seg(p, a, b)) * 620;
+        if (r > 1) revealAbove(limb.box, () => view.arc(limb.base.x, limb.base.y, r, 0, Math.PI * 2));
       }
 
-      const catAlpha = seg(p, 0.78, 0.92);
-      if (catAlpha > 0) {
-        view.save();
-        view.globalAlpha = catAlpha;
-        view.drawImage(cats.canvas, 0, 0, W, H);
-        view.restore();
-      }
+      // The cats are not part of the growth — they are the ones planting it, so they are on the
+      // sheet from the first frame rather than fading in at the end.
+      view.drawImage(cats.canvas, 0, 0, W, H);
+      if (annotate) annotate(view, cam);
+      view.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return cam;
     }
 
     return {
