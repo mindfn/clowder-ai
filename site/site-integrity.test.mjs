@@ -158,6 +158,42 @@ describe('localized accessible names', () => {
     const html = readSite('community.html');
     assert.match(html, /row\.setAttribute\(['"]aria-label['"],\s*`\$\{t\(['"]community\.a11y\.issue['"]\)\}/);
   });
+
+  it('restores focus to the replacement issue row after a translation rerender', () => {
+    const html = readSite('community.html');
+    const inlineScript = html.match(/<script>\s*(const REPO[\s\S]*?)<\/script>/)?.[1];
+    assert.ok(inlineScript, 'community inline script must be present');
+
+    const dom = new JSDOM(html, {
+      runScripts: 'outside-only',
+      url: 'https://example.test/site/community.html',
+    });
+    dom.window.I18N = I18N;
+    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    dom.window.eval(inlineScript);
+
+    const issue = {
+      number: 42,
+      title: 'Focus regression',
+      body: null,
+      labels: [],
+      comments: 0,
+      created_at: '2026-09-03T00:00:00Z',
+      html_url: 'https://github.com/zts212653/clowder-ai/issues/42',
+    };
+    dom.window.renderIssues([issue]);
+    const originalRow = dom.window.document.querySelector('[data-issue-number="42"]');
+    originalRow.focus();
+    dom.window.showIssueDetail(42);
+
+    dom.window.renderIssues([issue]);
+    const replacementRow = dom.window.document.querySelector('[data-issue-number="42"]');
+    assert.notStrictEqual(replacementRow, originalRow);
+    assert.equal(originalRow.isConnected, false);
+
+    dom.window.closeIssueDetail();
+    assert.strictEqual(dom.window.document.activeElement, replacementRow);
+  });
 });
 
 // ─── P1: Locale-aware Markdown fallback — behavioral tests ───────────

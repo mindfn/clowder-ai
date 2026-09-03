@@ -251,8 +251,6 @@
       });
     }
 
-    /** @type {HTMLElement|null} Element that opened the detail panel (for focus restore) */
-    let _detailOpener = null;
     /** @type {number|null} Issue number currently shown in the detail panel */
     let _openIssueNum = null;
 
@@ -276,7 +274,6 @@
       const issue = issueMap.get(num);
       if (!issue) return;
       _openIssueNum = num;
-      _detailOpener = document.activeElement;
       const panel = document.getElementById('issue-detail');
       document.getElementById('issue-detail-title').textContent = `#${issue.number} ${issue.title}`;
       renderIssueDetailBody(issue);
@@ -290,12 +287,13 @@
 
     function closeIssueDetail() {
       document.getElementById('issue-detail').classList.add('hidden');
+      const openerIssueNum = _openIssueNum;
       _openIssueNum = null;
-      // Restore focus to the row that opened the panel
-      if (_detailOpener && typeof _detailOpener.focus === 'function') {
-        _detailOpener.focus();
-        _detailOpener = null;
-      }
+      // The list can be rebuilt while the panel is open (for example after a
+      // language change), so resolve the current row by stable issue identity
+      // instead of focusing a detached DOM reference.
+      const opener = document.querySelector(`.issue-row[data-issue-number="${openerIssueNum}"]`);
+      if (opener instanceof HTMLElement) opener.focus();
     }
 
     // Close detail panel on Escape key
