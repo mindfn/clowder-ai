@@ -252,7 +252,7 @@ describe('F257 SegmentEvaluationReadModel', () => {
     await annotations.append(annotation(2, 150, 'same-incident'));
     await annotations.append(annotation(3, 250, 'same-incident'));
 
-    const view = await new SegmentEvaluationReadModel(runtime).read({
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
       ownerUserId: 'owner-1',
       segmentId: 'S13',
       startMs: 0,
