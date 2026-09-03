@@ -32,6 +32,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: node .github/scripts/check-public-test-ci-contract.mjs
       - run: pnpm check
 
   build:
@@ -60,7 +61,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.20.0
           cache: pnpm
       - id: contract
         name: Detect exact public shard contract
@@ -123,7 +124,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cat-cafe/shared build
@@ -141,6 +142,7 @@ jobs:
           --lane "${{ matrix.lane }}"
           --report "${{ runner.temp }}/public-test/reports/${{ matrix.lane }}.json"
         env:
+          DEFAULT_OWNER_USER_ID: default-user
           GIT_AUTHOR_NAME: CI Runner
           GIT_AUTHOR_EMAIL: ci@clowder-ai.dev
           GIT_COMMITTER_NAME: CI Runner
@@ -166,7 +168,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.20.0
       - name: Download exact plan and all lane reports
         uses: actions/download-artifact@v4
         with:
