@@ -75,6 +75,7 @@ function applyLang(lang) {
     ['data-i18n-placeholder', 'placeholder'],
     ['data-i18n-label', 'label'],
     ['data-i18n-aria-label', 'aria-label'],
+    ['data-i18n-title', 'title'],
   ]) {
     document.querySelectorAll(`[${keyAttr}]`).forEach((el) => {
       const key = el.getAttribute(keyAttr);

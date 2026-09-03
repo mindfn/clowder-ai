@@ -196,6 +196,129 @@ describe('localized accessible names', () => {
   });
 });
 
+describe('localized community request states', () => {
+  async function createCommunityDom() {
+    const html = readSite('community.html');
+    const inlineScript = html.match(/<script>\s*(const REPO[\s\S]*?)<\/script>/)?.[1];
+    assert.ok(inlineScript, 'community inline script must be present');
+
+    const dom = new JSDOM(html, {
+      runScripts: 'outside-only',
+      url: 'https://example.test/site/community.html',
+    });
+    await new Promise((resolve) => {
+      if (dom.window.document.readyState === 'loading') {
+        dom.window.document.addEventListener('DOMContentLoaded', resolve, { once: true });
+      } else {
+        resolve();
+      }
+    });
+    dom.window.I18N = I18N;
+    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    dom.window.eval(inlineScript);
+    return dom;
+  }
+
+  it('keeps loading and error views through language changes instead of showing stale cached rows', async () => {
+    const dom = await createCommunityDom();
+    const previousIssue = {
+      number: 42,
+      title: 'Previous filter result',
+      body: null,
+      labels: [],
+      comments: 0,
+      created_at: '2026-09-03T00:00:00Z',
+      html_url: 'https://github.com/zts212653/clowder-ai/issues/42',
+    };
+    dom.window.fetch = async () => ({ ok: true, json: async () => [previousIssue] });
+    await dom.window.loadIssues('all');
+
+    let resolvePending;
+    dom.window.fetch = () =>
+      new Promise((resolve) => {
+        resolvePending = resolve;
+      });
+    const pendingLoad = dom.window.loadIssues('bug');
+    dom.window.dispatchEvent(new dom.window.CustomEvent('clowder:languagechange'));
+
+    const container = dom.window.document.getElementById('issues-container');
+    assert.match(container.textContent, /Loading issues/);
+    assert.equal(
+      container.querySelector('.issue-row'),
+      null,
+      'language changes must not reveal cached rows while loading',
+    );
+
+    resolvePending({ ok: true, json: async () => [] });
+    await pendingLoad;
+
+    dom.window.fetch = async () => {
+      throw new Error('offline');
+    };
+    await dom.window.loadIssues('enhancement');
+    dom.window.dispatchEvent(new dom.window.CustomEvent('clowder:languagechange'));
+    assert.match(container.textContent, /Could not load issues/);
+    assert.equal(
+      container.querySelector('.issue-row'),
+      null,
+      'language changes must not reveal cached rows after an error',
+    );
+  });
+
+  it('ignores a superseded filter response that resolves after the active request', async () => {
+    const dom = await createCommunityDom();
+    const issue = (number, title) => ({
+      number,
+      title,
+      body: null,
+      labels: [],
+      comments: 0,
+      created_at: '2026-09-03T00:00:00Z',
+      html_url: `https://github.com/zts212653/clowder-ai/issues/${number}`,
+    });
+
+    let resolveSuperseded;
+    dom.window.fetch = (url) => {
+      if (url.includes('labels=bug')) {
+        return Promise.resolve({ ok: true, json: async () => [issue(2, 'Active result')] });
+      }
+      return new Promise((resolve) => {
+        resolveSuperseded = resolve;
+      });
+    };
+
+    const supersededLoad = dom.window.loadIssues('all');
+    await dom.window.loadIssues('bug');
+    resolveSuperseded({ ok: true, json: async () => [issue(1, 'Superseded result')] });
+    await supersededLoad;
+
+    const container = dom.window.document.getElementById('issues-container');
+    assert.match(container.textContent, /Active result/);
+    assert.doesNotMatch(container.textContent, /Superseded result/);
+  });
+});
+
+describe('localized roadmap bars', () => {
+  const dom = new JSDOM(readSite('index.html'));
+  const bars = [...dom.window.document.querySelectorAll('#roadmap .gantt-bar')];
+
+  it('localizes every bar label and hover description', () => {
+    assert.ok(bars.length > 0, 'roadmap should contain bars');
+    assert.deepStrictEqual(
+      bars.filter((bar) => !bar.hasAttribute('data-i18n')).map((bar) => bar.textContent.trim()),
+      [],
+      'every roadmap bar label needs an i18n key',
+    );
+    assert.deepStrictEqual(
+      bars
+        .filter((bar) => bar.hasAttribute('title') && !bar.hasAttribute('data-i18n-title'))
+        .map((bar) => bar.getAttribute('title')),
+      [],
+      'every roadmap hover description needs an i18n key',
+    );
+  });
+});
+
 // ─── P1: Locale-aware Markdown fallback — behavioral tests ───────────
 describe('localized docs loader (behavioral)', () => {
   it('tries the zh-CN sibling before the canonical path for Chinese', () => {
@@ -675,6 +798,7 @@ describe('lang toggle only on translated pages', () => {
     assert.match(js, /data-i18n-placeholder/);
     assert.match(js, /data-i18n-label/);
     assert.match(js, /data-i18n-aria-label/);
+    assert.match(js, /data-i18n-title/);
   });
 });
 
@@ -700,7 +824,7 @@ describe('i18n dictionary integrity', () => {
       const html = readSite(page);
       const keys = [
         ...new Set([
-          ...[...html.matchAll(/data-i18n(?:-(?:placeholder|label|aria-label))?="([^"]+)"/g)].map((m) => m[1]),
+          ...[...html.matchAll(/data-i18n(?:-(?:placeholder|label|aria-label|title))?="([^"]+)"/g)].map((m) => m[1]),
           // JS helper calls: t('key') / t("key") in the inline page scripts.
           ...[...html.matchAll(/\bt\((['"])([^'"]+)\1\)/g)].map((m) => m[2]),
         ]),

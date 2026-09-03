@@ -178,15 +178,16 @@
       good_first_issue: 'bg-codex/10 text-codex',
     };
     let allIssues = [];
-    let currentFilter = 'all';
+    let issueListStatus = 'loading';
+    let issueRequestVersion = 0;
     const issueMap = new Map();
     const currentLang = () => (document.documentElement.lang === 'zh' ? 'zh' : 'en');
     const t = (key) => window.I18N?.[currentLang()]?.[key] || window.I18N?.en?.[key] || key;
 
     async function loadIssues(filter = 'all') {
-      currentFilter = filter;
-      const container = document.getElementById('issues-container');
-      container.innerHTML = `<div class="text-center py-12 text-stone-500 dark:text-slate-500"><svg class="w-6 h-6 mx-auto mb-2 animate-spin" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>${escapeHtml(t('community.loading'))}</div>`;
+      const requestVersion = ++issueRequestVersion;
+      issueListStatus = 'loading';
+      renderIssueListStatus();
 
       document.querySelectorAll('.issue-filter').forEach(b => b.classList.toggle('active', b.dataset.filter === filter));
 
@@ -196,9 +197,25 @@
           : `https://api.github.com/repos/${REPO}/issues?state=open&labels=${filter}&sort=created&direction=desc&per_page=15`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`${res.status}`);
-        allIssues = await res.json();
+        const issues = await res.json();
+        if (requestVersion !== issueRequestVersion) return;
+        allIssues = issues;
+        issueListStatus = 'ready';
         renderIssues(allIssues);
       } catch (err) {
+        if (requestVersion !== issueRequestVersion) return;
+        issueListStatus = 'error';
+        renderIssueListStatus();
+      }
+    }
+
+    function renderIssueListStatus() {
+      const container = document.getElementById('issues-container');
+      if (issueListStatus === 'loading') {
+        container.innerHTML = `<div class="text-center py-12 text-stone-500 dark:text-slate-500"><svg class="w-6 h-6 mx-auto mb-2 animate-spin" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>${escapeHtml(t('community.loading'))}</div>`;
+        return;
+      }
+      if (issueListStatus === 'error') {
         container.innerHTML = `<div class="text-center py-12 text-stone-500"><p class="mb-2">${escapeHtml(t('community.issues.error'))}</p><a href="https://github.com/${REPO}/issues" target="_blank" class="text-terracotta hover:underline text-sm">${t('community.viewongithub')}</a></div>`;
       }
     }
@@ -327,8 +344,8 @@
     // Re-render the issue UI (which is generated in JS) when the language flips.
     window.addEventListener('clowder:languagechange', () => {
       // Re-apply the active search so a filtered view survives the toggle.
-      if (allIssues.length) searchIssues(document.getElementById('issue-search').value);
-      else loadIssues(currentFilter);
+      if (issueListStatus === 'ready') searchIssues(document.getElementById('issue-search').value);
+      else renderIssueListStatus();
       // Re-render an open detail panel so its (only translatable) body updates.
       if (_openIssueNum != null && !document.getElementById('issue-detail').classList.contains('hidden')) {
         const issue = issueMap.get(_openIssueNum);
