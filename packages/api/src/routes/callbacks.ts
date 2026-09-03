@@ -86,6 +86,7 @@ import {
 } from '../domains/cats/services/freshness/checkFreshnessForPostMessage.js';
 import { FreshnessAttentionEventLog } from '../domains/cats/services/freshness/FreshnessAttentionEventLog.js';
 import { FreshnessInvocationStateStore } from '../domains/cats/services/freshness/FreshnessInvocationStateStore.js';
+import { recordQueuedSeenTelemetry } from '../domains/cats/services/freshness/freshness-queue-telemetry.js';
 import {
   descriptorFromDriver,
   descriptorFromProviderFallback,
@@ -4369,7 +4370,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reply.status(400);
       return { error: error.message, code: 'INVALID_THREAD_CONTEXT_CURSOR' };
     }
-    const payload = envelopePage.payload;
+    let payload = envelopePage.payload;
     const returnedPublishedIds = new Set(
       envelopePage.candidates.filter((candidate) => candidate.source === 'published').map((candidate) => candidate.id),
     );
@@ -4378,8 +4379,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         .filter((candidate) => candidate.source === 'published' && typeof candidate.projection.content === 'string')
         .map((candidate) => candidate.id),
     );
-    const returnedFiltered = filtered.filter((message) => returnedPublishedIds.has(message.id));
-    const fullyReturnedFiltered = filtered.filter((message) => fullPublishedIds.has(message.id));
+    let returnedFiltered = filtered.filter((message) => returnedPublishedIds.has(message.id));
+    let fullyReturnedFiltered = filtered.filter((message) => fullPublishedIds.has(message.id));
     const returnedQueuedEntryIds = new Set(
       envelopePage.candidates
         .filter(
@@ -4393,43 +4394,188 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         returnedQueuedEntryIds.has(entry.entryId) ||
         [entry.messageId].some((messageId) => typeof messageId === 'string' && fullPublishedIds.has(messageId)),
     );
-    if (fullyReturnedQueuedEntries.length > 0 && principal.kind === 'invocation' && opts.turnExecutionStore) {
-      let exposureExecution: TurnExecutionRecord | null;
+    const adoptableQueuedEntries = fullyReturnedQueuedEntries.filter(
+      (entry): entry is typeof entry & { messageId: string } =>
+        entry.readDisposition === 'adopt' && typeof entry.messageId === 'string',
+    );
+    const seenOnlyQueuedEntries = fullyReturnedQueuedEntries.filter((entry) => entry.readDisposition === 'seen_only');
+    const suppressedQueuedEntryIds = new Set<string>();
+    const suppressedQueuedMessageIds = new Set<string>();
+    const suppressQueuedBody = (entry: (typeof fullyReturnedQueuedEntries)[number]): void => {
+      suppressedQueuedEntryIds.add(entry.entryId);
+      if (typeof entry.messageId === 'string') suppressedQueuedMessageIds.add(entry.messageId);
+    };
+
+    if (fullyReturnedQueuedEntries.length > 0 && opts.invocationQueue && principal.kind === 'invocation') {
+      const queuedSeenInvocationId = principal.invocationId;
+      const seenAt = Date.now();
+      const adoptExposedQueuedEntries = queueProcessor?.adoptExposedQueuedEntries?.bind(queueProcessor);
+      let adoptionAllowed = Boolean(adoptExposedQueuedEntries);
+      if (adoptableQueuedEntries.length > 0 && opts.turnExecutionStore) {
+        let exposureExecution: TurnExecutionRecord | null;
+        try {
+          exposureExecution = await opts.turnExecutionStore.get(principal.invocationId);
+        } catch (err) {
+          app.log.error(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[turn-execution] queued body adoption ledger read failed',
+          );
+          reply.status(503);
+          return { error: 'Turn execution ledger unavailable', code: 'TURN_EXECUTION_LEDGER_UNAVAILABLE' };
+        }
+        adoptionAllowed = Boolean(
+          adoptionAllowed &&
+            exposureExecution &&
+            exposureExecution.status === 'running' &&
+            exposureExecution.parentInvocationId === expectedParentInvocationId &&
+            exposureExecution.threadId === effectiveThreadId &&
+            exposureExecution.userId === principalUserId &&
+            exposureExecution.catId === principalCatId,
+        );
+        if (!adoptionAllowed) {
+          app.log.warn(
+            {
+              invocationId: principal.invocationId,
+              expectedParentInvocationId,
+              effectiveThreadId,
+              principalUserId,
+              principalCatId,
+              exposureExecution,
+            },
+            '[turn-execution] queued body adoption no longer matches the active child; omitting queued bodies',
+          );
+        }
+      }
+
+      const adoptedMessageIds: string[] = [];
+      if (!adoptionAllowed || !adoptExposedQueuedEntries) {
+        for (const entry of adoptableQueuedEntries) suppressQueuedBody(entry);
+      } else {
+        for (const entry of adoptableQueuedEntries) {
+          const adoption = await adoptExposedQueuedEntries({
+            threadId: effectiveThreadId,
+            userId: principalUserId,
+            catId: principalCatId,
+            invocationId: queuedSeenInvocationId,
+            entries: [{ entryId: entry.entryId, messageId: entry.messageId }],
+            seenAt,
+          }).catch((err) => {
+            app.log.error(
+              { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+              '[F254] queued body adoption persistence failed before full-body return',
+            );
+            return { outcome: 'rejected', reason: 'persistence_unavailable' } as const;
+          });
+          if (adoption.outcome === 'adopted') {
+            adoptedMessageIds.push(entry.messageId);
+            continue;
+          }
+          if (adoption.reason === 'persistence_unavailable') {
+            reply.status(503);
+            return { error: 'Queued body adoption unavailable', code: 'QUEUE_ADOPTION_UNAVAILABLE' };
+          }
+          suppressQueuedBody(entry);
+        }
+      }
+
+      const custodyMessageIds = [
+        ...seenOnlyQueuedEntries.flatMap((entry) => (typeof entry.messageId === 'string' ? [entry.messageId] : [])),
+        ...adoptedMessageIds,
+      ];
+      if (queueProcessor?.resolvePromptMessageCustodyWakes && custodyMessageIds.length > 0) {
+        let adoptedWakes: readonly TurnCustodyWakeProvenance[];
+        try {
+          adoptedWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
+            threadId: effectiveThreadId,
+            catId: principalCatId,
+            messageIds: custodyMessageIds,
+          });
+        } catch (err) {
+          app.log.error(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[F167] queued custody obligation resolution failed before full-body return',
+          );
+          reply.status(503);
+          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+        }
+        if (
+          adoptedWakes.length > 0 &&
+          !(await turnCustodyAdoptionRegistry.adopt(principal.invocationId, adoptedWakes))
+        ) {
+          app.log.error(
+            { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[F167] active invocation has no turn custody adoption handler',
+          );
+          reply.status(409);
+          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+        }
+      }
+
+      let receiptChanged = false;
       try {
-        exposureExecution = await opts.turnExecutionStore.get(principal.invocationId);
+        for (const entry of seenOnlyQueuedEntries) {
+          if (entry.alreadyExposed) continue;
+          const seen = await opts.invocationQueue.markQueuedSeenDurable(
+            effectiveThreadId,
+            principalUserId,
+            entry.entryId,
+            principalCatId,
+            queuedSeenInvocationId,
+            seenAt,
+          );
+          receiptChanged = seen.changed || receiptChanged;
+          if (seen.newlySeen) recordQueuedSeenTelemetry();
+        }
       } catch (err) {
         app.log.error(
           { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-          '[turn-execution] queued body exposure ledger read failed',
+          '[F254] queued body seen persistence failed before full-body return',
         );
         reply.status(503);
-        return { error: 'Turn execution ledger unavailable', code: 'TURN_EXECUTION_LEDGER_UNAVAILABLE' };
+        return { error: 'Queued body receipt unavailable', code: 'QUEUE_RECEIPT_UNAVAILABLE' };
       }
-      if (!exposureExecution) {
-        reply.status(409);
-        return { error: 'Turn execution not found', code: 'TURN_EXECUTION_NOT_FOUND' };
-      }
-      if (
-        exposureExecution.status !== 'running' ||
-        exposureExecution.parentInvocationId !== expectedParentInvocationId ||
-        exposureExecution.threadId !== effectiveThreadId ||
-        exposureExecution.userId !== principalUserId ||
-        exposureExecution.catId !== principalCatId
-      ) {
-        app.log.error(
-          {
-            invocationId: principal.invocationId,
-            expectedParentInvocationId,
-            effectiveThreadId,
-            principalUserId,
-            principalCatId,
-            exposureExecution,
-          },
-          '[turn-execution] queued body exposure scope/status mismatch',
+
+      if (receiptChanged) {
+        await emitQueueUpdated(
+          socketManager,
+          principalUserId,
+          effectiveThreadId,
+          opts.invocationQueue.list(effectiveThreadId, principalUserId),
+          messageStore,
+          'queued_seen',
         );
-        reply.status(409);
-        return { error: 'Turn execution scope mismatch', code: 'TURN_EXECUTION_SCOPE_MISMATCH' };
       }
+      if (opts.redis && custodyMessageIds.length > 0) {
+        try {
+          await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
+            invocationId: queuedSeenInvocationId,
+            catId: principalCatId as CatId,
+            exactMessageIds: custodyMessageIds,
+            evidenceKind: 'queue_exact_read',
+          });
+        } catch (err) {
+          app.log.warn(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId },
+            '[F254-D2] provider notice seen projection failed for Queue exact read',
+          );
+        }
+      }
+    }
+
+    if (suppressedQueuedEntryIds.size > 0 || suppressedQueuedMessageIds.size > 0) {
+      payload = {
+        ...payload,
+        messages: payload.messages.filter((message) => {
+          const messageId = typeof message.id === 'string' ? message.id : undefined;
+          const queueEntryId = typeof message.queueEntryId === 'string' ? message.queueEntryId : undefined;
+          return !(
+            (messageId && suppressedQueuedMessageIds.has(messageId)) ||
+            (queueEntryId && suppressedQueuedEntryIds.has(queueEntryId))
+          );
+        }),
+      };
+      returnedFiltered = returnedFiltered.filter((message) => !suppressedQueuedMessageIds.has(message.id));
+      fullyReturnedFiltered = fullyReturnedFiltered.filter((message) => !suppressedQueuedMessageIds.has(message.id));
     }
     // F236 AC-A1 (R1/砚砚 P1): emit returnedChars so the eval layer can compute payload shrink (省).
     const serializedPayload = JSON.stringify(payload);
@@ -4614,94 +4760,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         );
       }
     }
-    if (fullyReturnedQueuedEntries.length > 0 && opts.invocationQueue && principal.kind === 'invocation') {
-      const queuedSeenInvocationId = principal.invocationId;
-      const seenAt = Date.now();
-      const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
-        entry.messageId ? [entry.messageId] : [],
-      );
-      // Structured stop-gate custody must be accepted by this exact child
-      // before Queue ownership is retired. The queued row is the last retryable
-      // carrier if the live adoption route has already closed.
-      if (queueProcessor?.resolvePromptMessageCustodyWakes) {
-        let adoptedWakes: readonly TurnCustodyWakeProvenance[];
-        try {
-          adoptedWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
-            threadId: effectiveThreadId,
-            catId: principalCatId,
-            messageIds: exactQueuedMessageIds,
-          });
-        } catch (err) {
-          app.log.error(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] queued custody obligation resolution failed before full-body return',
-          );
-          reply.status(503);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
-        if (
-          adoptedWakes.length > 0 &&
-          !(await turnCustodyAdoptionRegistry.adopt(principal.invocationId, adoptedWakes))
-        ) {
-          app.log.error(
-            { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] active invocation has no turn custody adoption handler',
-          );
-          reply.status(409);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
-      }
-      const exactEntries = fullyReturnedQueuedEntries.flatMap((entry) =>
-        typeof entry.messageId === 'string' ? [{ entryId: entry.entryId, messageId: entry.messageId }] : [],
-      );
-      if (exactEntries.length !== fullyReturnedQueuedEntries.length || !queueProcessor?.adoptExposedQueuedEntries) {
-        reply.status(503);
-        return {
-          error: 'Queued body adoption is unavailable',
-          code: 'QUEUE_ADOPTION_UNAVAILABLE',
-        };
-      }
-      const adoption = await queueProcessor
-        .adoptExposedQueuedEntries({
-          threadId: effectiveThreadId,
-          userId: principalUserId,
-          catId: principalCatId,
-          invocationId: queuedSeenInvocationId,
-          entries: exactEntries,
-          seenAt,
-        })
-        .catch((err) => {
-          app.log.error(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F254] queued body adoption persistence failed before full-body return',
-          );
-          return { outcome: 'rejected', reason: 'persistence_unavailable' } as const;
-        });
-      if (adoption.outcome === 'rejected') {
-        reply.status(adoption.reason === 'persistence_unavailable' ? 503 : 409);
-        return {
-          error: 'Queued body adoption changed before commit',
-          code: adoption.reason === 'persistence_unavailable' ? 'QUEUE_ADOPTION_UNAVAILABLE' : 'QUEUE_ADOPTION_CHANGED',
-          ...('entryId' in adoption && adoption.entryId ? { entryId: adoption.entryId } : {}),
-        };
-      }
-      if (opts.redis) {
-        try {
-          await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
-            invocationId: queuedSeenInvocationId,
-            catId: principalCatId as CatId,
-            exactMessageIds: exactQueuedMessageIds,
-            evidenceKind: 'queue_exact_read',
-          });
-        } catch (err) {
-          app.log.warn(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId },
-            '[F254-D2] provider notice seen projection failed for Queue exact read',
-          );
-        }
-      }
-    }
-
     return payload;
   });
 

@@ -150,22 +150,27 @@ terminal tombstone 会重新变成可执行状态，并再次制造 Message/Queu
 
 ### D8 — 完整正文读取是当前 child 对标量工单的接管
 
-无 filter 的完整 thread-context 读取若返回一个 same-target queued 正文，服务端必须先验证 exact running
-`TurnExecution` 与同一个 `LifecycleActiveRun`，再把该 `sourceId × targetCatId` 标量行接管到现有 response：
+无 filter 的完整 thread-context 读取若要返回一个带持久 Message 的 same-target `conversation_input` queued
+正文，服务端必须先验证 exact running `TurnExecution` 与同一个 `LifecycleActiveRun`，再把该
+`sourceId × targetCatId` 标量行接管到现有 response：
 
 1. claim exact row；
 2. 在 live Active Run 预留 source/entry，并将 source Message 单调推进到 `delivered`；
 3. 把 source message/entry 持久写入该 response lifecycle；
 4. 在 row 上保留 exact `(targetCatId, childInvocationId, seenAt)` exposure，并终局为 `handled`。
 
-History publication 失败时必须撤销 live 预留、restore claim 并拒绝返回正文；若后续 lifecycle CAS 因
-并发冲突失败，Message 可以保持已发布，但 row 恢复 queued，且本次仍拒绝返回 queued projection。接管一旦持久化，后续失败不得把
-同一工单放回 Queue。`queued_seen` 与 `queued_handled` 仍是不同证据字段/指标，但在这条用户旅程中由同一
-adoption path 提交，不再等待 invocation terminal success 推断 handled。
+History publication 失败时必须撤销 live 预留、restore claim；若后续 lifecycle CAS 因并发冲突失败，
+Message 可以保持已发布但 row 恢复 queued。`active_run_missing` / `state_changed` / `lifecycle_conflict`
+都是良性竞争：只从本次 payload 剔除尚未接管的 queued 正文并照常返回其余 History，不把整次读取变成
+409。只有持久层不可用才返回 503。接管一旦持久化，后续失败不得把同一工单放回 Queue；无法写 terminal
+receipt 时至少保持 `processing`，让 restart 终局为 interrupted。`queued_seen` 与 `queued_handled` 仍是不同
+证据字段/指标，但在这条用户旅程中由同一 adoption path 提交，不再等待 invocation terminal success 推断 handled。
 
 fan-out 的每个 target 是独立行：A 读取只终局 A，B 继续 queued；B 后续读取再终局 B。第一只猫接管后
-Message 已进入成员可见 History，其他 target 的 Queue 责任仍由各自标量行独立追踪。稀疏读取、跨 thread
-读取、oversized anchor 或无法证明 exact active child 的请求都不得接管。
+Message 已进入成员可见 History，其他 target 的 Queue 责任仍由各自标量行独立追踪。无 Message 的行以及
+带 `actionSuccessorFence` / `waitContinuationCarrier` / scheduled/freshness/continuation custody 的行保留 read→seen
+语义，不由 History 读取终局；稀疏读取、跨 thread 读取、oversized anchor 或无法证明 exact active child
+的请求都不得接管。
 
 本决策取代 F254 D1.2 的旧“两阶段 seen，成功后 handled”实现约束；旧段落只保留为历史设计记录。
 

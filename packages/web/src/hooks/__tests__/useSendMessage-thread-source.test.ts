@@ -41,7 +41,7 @@ function SendRunner({
 }: {
   activeThreadId?: string;
   overrideThreadId?: string;
-  postAdmissionAction?: 'steer' | 'append';
+  postAdmissionAction?: 'steer';
   messageDisposition?: 'continue_current' | 'next_work';
   contextAttachments?: ContextAttachment[];
   explicitTargetCats?: string[];
@@ -151,61 +151,6 @@ describe('useSendMessage canonical Queue ingress', () => {
     });
     expect(payload).not.toHaveProperty('deliveryMode');
     expect(mockAddMessageToThread).not.toHaveBeenCalled();
-  });
-
-  it('appends one explicitly targeted durable entry with the server-authored Queue fences', async () => {
-    mockApiFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 202,
-        json: async () => ({ status: 'queued', entryId: 'entry-append', userMessageId: 'message-append' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          queue: [
-            {
-              id: 'entry-append',
-              lifecycleActions: {
-                append: {
-                  kind: 'append',
-                  expectedQueueRevision: 'revision-7',
-                  expectedRuns: [{ targetId: 'opus', invocationId: 'turn-7', responseMessageId: 'response-7' }],
-                },
-              },
-            },
-          ],
-        }),
-      })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ outcome: 'appended' }) });
-
-    await act(async () => {
-      root.render(
-        React.createElement(SendRunner, {
-          activeThreadId: 'thread-route',
-          postAdmissionAction: 'append',
-          messageDisposition: 'next_work',
-          explicitTargetCats: ['opus'],
-          onDone: () => {},
-        }),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const admissionPayload = JSON.parse(String(mockApiFetch.mock.calls[0]?.[1]?.body));
-    expect(admissionPayload.mentions).toEqual(['opus']);
-    expect(mockApiFetch).toHaveBeenNthCalledWith(2, '/api/threads/thread-route/queue');
-    expect(mockApiFetch).toHaveBeenNthCalledWith(3, '/api/threads/thread-route/queue/entry-append/append', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        expectedQueueRevision: 'revision-7',
-        expectedRuns: [{ targetId: 'opus', invocationId: 'turn-7', responseMessageId: 'response-7' }],
-      }),
-    });
   });
 
   it('falls back to the store thread only when no explicit source thread exists', async () => {

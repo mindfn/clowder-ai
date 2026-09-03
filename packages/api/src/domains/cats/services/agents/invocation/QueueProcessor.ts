@@ -1271,8 +1271,15 @@ export class QueueProcessor {
         input.invocationId,
         seenAt,
       );
-      if (!committed && !(await queue.removeProcessedDurable(input.threadId, input.userId, claimed.id))) {
-        return { outcome: 'rejected', reason: 'persistence_unavailable', entryId: claimed.id };
+      if (!committed) {
+        const terminalized = await queue.removeProcessedDurable(input.threadId, input.userId, claimed.id);
+        if (!terminalized) {
+          // The response lifecycle already owns this input. Best-effort bind the
+          // row to processing so startup terminalizes it as interrupted instead
+          // of restoring a claimed row to executable Queue work.
+          await queue.commitClaimedProcessing(input.threadId, [claimed.id], seenAt);
+          return { outcome: 'rejected', reason: 'persistence_unavailable', entryId: claimed.id };
+        }
       }
       if (newlySeen) recordQueuedSeenTelemetry();
       recordQueuedHandledTelemetry({ fullyConsumed: true });
@@ -1290,6 +1297,13 @@ export class QueueProcessor {
           );
         }
         await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
+      } else {
+        // Once the source is attached to the response, queued is no longer a
+        // truthful recovery state. Preserve processing ownership if storage
+        // recovers enough to accept this final defensive write.
+        await queue
+          .commitClaimedProcessing(input.threadId, [claimed.id], input.seenAt ?? Date.now())
+          .catch(() => false);
       }
       this.deps.log.error(
         { err, threadId: input.threadId, entryId: claimed.id, invocationId: input.invocationId },

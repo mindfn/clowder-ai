@@ -1,6 +1,6 @@
 'use client';
 
-import type { ContextAttachment, LifecycleAppendAction, MessageWorkDisposition } from '@cat-cafe/shared';
+import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared';
 import { useCallback, useState } from 'react';
 import { useChatCommands } from '@/hooks/useChatCommands';
 import { type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
@@ -13,7 +13,7 @@ export interface WhisperOptions {
   whisperTo: string[];
 }
 
-export type PostAdmissionAction = 'steer' | 'append';
+export type PostAdmissionAction = 'steer';
 
 interface MessageAdmissionResponse {
   status?: string;
@@ -72,43 +72,6 @@ export function useSendMessage(activeThreadId?: string) {
         publishError(
           threadId,
           `消息已进入队列，但 Steer 未执行：${error instanceof Error ? error.message : 'Unknown error'}`,
-        );
-      }
-    },
-    [publishError],
-  );
-
-  const appendAcceptedEntry = useCallback(
-    async (threadId: string, entryId: string): Promise<void> => {
-      try {
-        const queueResponse = await apiFetch(`/api/threads/${threadId}/queue`);
-        if (!queueResponse.ok) throw new Error(`Server error: ${queueResponse.status}`);
-        const snapshot = (await queueResponse.json()) as {
-          queue?: Array<{ id?: string; lifecycleActions?: { append?: LifecycleAppendAction } }>;
-        };
-        const action = snapshot.queue?.find((entry) => entry.id === entryId)?.lifecycleActions?.append;
-        if (!action) {
-          publishError(threadId, '消息已进入队列，但当前回复已不再接受追加；消息将按队列继续处理。');
-          return;
-        }
-        const response = await apiFetch(`/api/threads/${threadId}/queue/${entryId}/append`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            expectedQueueRevision: action.expectedQueueRevision,
-            expectedRuns: action.expectedRuns,
-          }),
-        });
-        if (response.ok) return;
-        const body = await response.json().catch(() => null);
-        publishError(
-          threadId,
-          `消息已进入队列，但未能追加到当前回复：${body?.error ?? `Server error: ${response.status}`}`,
-        );
-      } catch (error) {
-        publishError(
-          threadId,
-          `消息已进入队列，但未能追加到当前回复：${error instanceof Error ? error.message : 'Unknown error'}`,
         );
       }
     },
@@ -185,9 +148,6 @@ export function useSendMessage(activeThreadId?: string) {
         if (postAdmissionAction === 'steer') {
           if (!admission.entryId) throw new Error('Steer admission did not return an exact Queue entry');
           await steerAcceptedEntry(threadId, admission.entryId);
-        } else if (postAdmissionAction === 'append') {
-          if (!admission.entryId) throw new Error('Append admission did not return an exact Queue entry');
-          await appendAcceptedEntry(threadId, admission.entryId);
         }
 
         setUploadStatus('idle');
@@ -206,7 +166,7 @@ export function useSendMessage(activeThreadId?: string) {
         return false;
       }
     },
-    [activeThreadId, appendAcceptedEntry, createClientId, processCommand, publishError, steerAcceptedEntry],
+    [activeThreadId, createClientId, processCommand, publishError, steerAcceptedEntry],
   );
 
   return { handleSend, uploadStatus, uploadError };

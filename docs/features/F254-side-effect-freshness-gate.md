@@ -21,12 +21,13 @@ Map delta why: ADR-042 changes the durable responsibility from withheld replacem
 
 ### 2026-09-03 ADR-043 acceptance correction: full queued read = exact active-child adoption
 
-The co-creator's worktree acceptance supersedes the old D1.2 two-stage implementation rule. A complete,
-contiguous same-thread read may return a queued body only after the exact running child adopts that target's
-scalar QueueLedger row into its existing response lifecycle. The same adoption marks the Message delivered,
-records exact body exposure, and terminalizes only that target row as handled. For A+B, A's read leaves B
-queued; B's later read retires B. Sparse/cross-thread/oversized-anchor reads do not adopt, and missing exact
-child/lifecycle truth fails closed before returning the queued body.
+The co-creator's worktree acceptance supersedes the old D1.2 two-stage implementation rule for persisted
+`conversation_input` rows. A complete, contiguous same-thread read may return such a queued body only after
+the exact running child adopts that target's scalar QueueLedger row into its existing response lifecycle. The
+same adoption marks the Message delivered, records exact body exposure, and terminalizes only that target row
+as handled. For A+B, A's read leaves B queued; B's later read retires B. Sparse/cross-thread/oversized-anchor
+reads do not adopt. A benign active-run/CAS race omits only the unadopted queued body from the 200 response;
+persistence unavailability fails the read with 503. Message-less and typed scheduled/freshness/continuation custody rows retain read→seen.
 
 Historical sections below that say “read must not consume” or infer handled from later invocation success are
 retained as design history, not current implementation authority. ADR-043 D8 and AC-D8a/b below are current.
@@ -763,8 +764,8 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 - [x] AC-D5: 猫的 stream output 是自回复（thread 中最新消息是自己发的）→ 不标 stale（self-message 排除，与 Phase A 一致）
 - [x] AC-D6: **D1.1 regression fix**：`stream output stale` 不得无条件强制 re-invoke。同一 stale set 必须 single-flight 去重；已有 queued/newer invocation/freshness/current-user same-cat pending coverage 时只标记 stale + 记录 skip，不 enqueue 第二次。**merged**: PR #2701 — D1 single-flight claim + enqueue-outcome release + current-user pending coverage
 - [x] AC-D7: **D1.1 ack path**：D1 re-invoke prompt 必须要求可推进 seenCursor 的读取路径（无 `catId`/keyword/messageId filter 的 `get_thread_context`），或实现独立 D1 ack 事件；`list_recent` / filtered context read 不能作为闭环完成凭据。**merged**: PR #2701 — prompt 指向 full `get_thread_context`
-- [x] AC-D8a: **D1.2 exact active-child adoption**：无 filter 的 `get_thread_context?responseMode=full` 只有在 exact running `TurnExecution`、callback parent 和 `LifecycleActiveRun` 全部一致时，才返回 same-target queued 正文。返回前必须 claim 该 source×target 标量行，把 source/entry 写入现有 response lifecycle 与 live Active Run，并将 Message 单调推进为 delivered。Sparse reads（keyword/messageId/catId filter）、cross-thread reads 与 oversized anchor 不得返回或接管 queued 正文。**ADR-043 D8 supersedes the PR #2707 read-only transition.**
-- [x] AC-D8b: **D1.2 immediate per-target closure**：同一 adoption path 写 exact `queued_seen(entry, cat, childInvocationId)` 与 `queued_handled`，并把该 target row 终局为 handled；不再以 invocation terminal success 推断 Queue 消费。A+B 的 A row 终局不得改变 B row；第一只猫接管后原 Message 进入成员 History，B 的工单仍保持 queued，直到 B 自己接管或走其他明确终态。durable lifecycle 接管前失败必须 restore/fail closed；接管后不得 requeue。
+- [x] AC-D8a: **D1.2 exact active-child adoption**：无 filter 的 `get_thread_context?responseMode=full` 只有在 exact running `TurnExecution`、callback parent 和 `LifecycleActiveRun` 全部一致时，才返回带持久 Message 的 same-target `conversation_input` queued 正文。返回前必须 claim 该 source×target 标量行，把 source/entry 写入现有 response lifecycle 与 live Active Run，并将 Message 单调推进为 delivered。Sparse reads（keyword/messageId/catId filter）、cross-thread reads 与 oversized anchor 不得返回或接管 queued 正文；良性竞态只剔除未接管正文并 200 返回其余 History，持久层不可用才 503。无 Message 与 typed custody 行仍只写 seen。**ADR-043 D8 supersedes the PR #2707 read-only transition for persisted conversation input.**
+- [x] AC-D8b: **D1.2 immediate per-target closure**：同一 adoption path 写 exact `queued_seen(entry, cat, childInvocationId)` 与 `queued_handled`，并把该 target row 终局为 handled；不再以 invocation terminal success 推断 Queue 消费。A+B 的 A row 终局不得改变 B row；第一只猫接管后原 Message 进入成员 History，B 的工单仍保持 queued，直到 B 自己接管或走其他明确终态。durable lifecycle 接管前失败必须 restore；接管后不得 requeue，terminal receipt 暂不可写时保持 processing 供 restart interrupted 收敛。
 - [x] AC-D9: **A2A handoff reply suppression**：如果 B 的消息 `replyTo` 指向 A 自己的消息，且该父消息 mentions B，则 B 的回复是 A 主动发起的 handoff 覆盖，不得让 Phase A gate / D1 / B1 把它当作需要 hold 或重新唤醒 A 的未读 freshness；普通未被父消息 mention 的其他 cat 回复仍按 freshness 候选处理。
 - [x] AC-D10: **Current trigger suppression**：connector/event/user message 如果就是当前 invocation 的触发消息（`currentUserMessageId` / trigger `messageId`），说明它已经进入本次 prompt；D1 stream freshness 不得再把同一个 message 计为 unseen 并 enqueue `Freshness -> cat`。其他非触发 connector 消息仍按 freshness 候选处理。
 - [x] AC-D11: **Routable freshness input**：Phase A gate / B1 notice / D1 stream stale 只看可路由 conversation 内容。空正文且仅含 tool events 的 cat stream、`routing-guard-failure` 等内部诊断、`system` display-only 消息、`context_briefing`/`origin=briefing` 不得产生 held/notice/stale/re-invoke；rich blocks / contentBlocks 仍算可路由内容。`userId=scheduler` 的 hold-ball / scheduled-task trigger 含正文且会进入下一次 prompt，必须保留为 routable freshness input。

@@ -299,6 +299,36 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds, []);
   });
 
+  it('keeps lifecycle-owned adoption in processing when terminal receipt persistence stays unavailable', async () => {
+    const harness = createHarness();
+    const admitted = await admitMessage(harness);
+    const { invocationId, response, startedAt } = bindActiveRun(harness);
+    const commitExposure = mock.method(harness.queue, 'commitClaimedExposureDurable', async () => null);
+    const terminalize = mock.method(harness.queue, 'removeProcessedDurable', async () => null);
+
+    const result = await harness.processor.adoptExposedQueuedEntries({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      catId: 'opus',
+      invocationId,
+      entries: [{ entryId: admitted.entry.id, messageId: admitted.message.id }],
+      seenAt: startedAt + 1,
+    });
+    commitExposure.mock.restore();
+    terminalize.mock.restore();
+
+    assert.deepEqual(result, {
+      outcome: 'rejected',
+      reason: 'persistence_unavailable',
+      entryId: admitted.entry.id,
+    });
+    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id)?.status, 'processing');
+    assert.equal((await harness.messageStore.getById(admitted.message.id)).deliveryStatus, 'delivered');
+    assert.deepEqual((await harness.messageStore.getById(response.id)).lifecycle.inputMessageIds, [
+      admitted.message.id,
+    ]);
+  });
+
   it('keeps a FIFO prefix as separate prompt messages instead of concatenating bodies', async () => {
     const calls = [];
     const harness = createHarness({

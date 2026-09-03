@@ -1466,6 +1466,7 @@ export class InvocationQueue {
     content: string;
     messageId?: string | null;
     alreadyExposed: boolean;
+    readDisposition: 'adopt' | 'seen_only';
   }> {
     return this.list(threadId, userId)
       .filter((entry) => entry.status === 'queued' && isOrdinaryQueueTargetEligible(entry, catId))
@@ -1475,6 +1476,18 @@ export class InvocationQueue {
         from: structuredClone(entry.from),
         content: entry.payload.content,
         alreadyExposed: Boolean(entry.delivery.bodyExposures?.some((exposure) => exposure.targetCatId === catId)),
+        readDisposition:
+          entry.kind === 'conversation_input' &&
+          entry.payload.messageId !== undefined &&
+          !entry.execution.actionSuccessorFence &&
+          !entry.execution.waitContinuationCarrier &&
+          !entry.execution.freshnessClosureId &&
+          !entry.execution.freshnessSupplementId &&
+          entry.sourceCategory !== 'scheduled' &&
+          entry.sourceCategory !== 'freshness' &&
+          entry.sourceCategory !== 'continuation'
+            ? 'adopt'
+            : 'seen_only',
         ...(entry.payload.messageId !== undefined ? { messageId: entry.payload.messageId } : {}),
       }));
   }
