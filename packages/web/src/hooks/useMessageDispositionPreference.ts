@@ -9,10 +9,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { apiFetch } from '@/utils/api-client';
 
 const DEFAULT_SNAPSHOT: MessageDispositionPreferenceSnapshot = {
-  productDefault: 'next_work',
+  productDefault: 'continue_current',
   global: null,
   thread: null,
-  effective: 'next_work',
+  effective: 'continue_current',
   source: 'product',
   onboardingSeen: false,
 };

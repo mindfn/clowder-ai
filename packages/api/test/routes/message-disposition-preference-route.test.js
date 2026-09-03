@@ -29,7 +29,7 @@ describe('GET/PUT /api/config/message-disposition (F264)', () => {
     await rm(join(projectRoot, '.cat-cafe'), { recursive: true, force: true });
   });
 
-  it('defaults to next-work and reports the product source', async () => {
+  it('defaults to continue-current and reports the product source', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/config/message-disposition?threadId=thread-a',
@@ -37,10 +37,10 @@ describe('GET/PUT /api/config/message-disposition (F264)', () => {
 
     assert.equal(res.statusCode, 200, res.payload);
     assert.deepEqual(JSON.parse(res.payload), {
-      productDefault: 'next_work',
+      productDefault: 'continue_current',
       global: null,
       thread: null,
-      effective: 'next_work',
+      effective: 'continue_current',
       source: 'product',
       onboardingSeen: false,
     });
@@ -63,7 +63,7 @@ describe('GET/PUT /api/config/message-disposition (F264)', () => {
 
     let res = await app.inject({ method: 'GET', url: '/api/config/message-disposition?threadId=thread-a' });
     assert.deepEqual(JSON.parse(res.payload), {
-      productDefault: 'next_work',
+      productDefault: 'continue_current',
       global: 'continue_current',
       thread: 'next_work',
       effective: 'next_work',
