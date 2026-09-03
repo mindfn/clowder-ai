@@ -345,6 +345,30 @@ test('execution owner service preserves process-table degradation for projection
   }
 });
 
+test('execution owner service treats Windows as a complete platform without Unix process ownership', async () => {
+  const snapshotReads = [];
+  const service = createCliExecutionOwnerService({
+    platform: 'win32',
+    readProcessSnapshot: async (options) => {
+      snapshotReads.push(options);
+      return null;
+    },
+  });
+
+  assert.deepEqual(await service.listLive(), { owners: [], complete: true });
+  assert.deepEqual(
+    await service.terminateExact({
+      executionId: 'parent-windows',
+      invocationId: 'turn-windows',
+      threadId: 'thread-windows',
+      catId: 'codex-sol',
+      userId: 'user-windows',
+    }),
+    { matched: 0, signaled: 0, complete: true },
+  );
+  assert.deepEqual(snapshotReads, []);
+});
+
 test('owner service keeps valid rows non-destructive when malformed manifest quarantine is unavailable', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'cat-cafe-execution-owner-quarantine-failure-'));
   const ownerDirectory = join(dataDir, 'cli-process-owners');

@@ -9,6 +9,7 @@ import { adaptInvocationQueue } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
+const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 const SHORT_TTL = 1000;
 const T0 = 100_000;
 
@@ -86,7 +87,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     t.mock.timers.tick(SHORT_TTL + 1);
 
     assert.equal(processor.isThreadBusy('t1'), true);
-    assert.equal(processor.hasActiveExecution('t1'), true);
+    assert.equal(processor.hasActiveExecution('t1'), false);
     assert.equal(processor.isCatBusy('t1', 'opus'), true);
     await processor.requestDrain('t1');
     assert.equal(/** @type {any} */ (processor).processingSlots.has(key), true);
@@ -103,6 +104,53 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     assert.equal(await processor.reapStalePrestartReservations(), 1);
     assert.equal(/** @type {any} */ (processor).processingSlots.has(slotKey('t1', 'opus')), false);
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id)?.status, 'queued');
+  });
+
+  it('fails a public pre-start source with delivery_failure instead of silently canceling it', async () => {
+    const messageStore = new MessageStore();
+    const deps = stubDeps({ messageStore });
+    const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
+    const admitted = await deps.queue.appendAndEnqueueDurable(
+      messageStore,
+      {
+        from: { kind: 'user', userId: 'u1' },
+        userId: 'u1',
+        threadId: 't1',
+        content: 'please run',
+        mentions: ['opus'],
+        timestamp: T0,
+        deliveryStatus: 'queued',
+      },
+      {
+        from: { kind: 'user', userId: 'u1' },
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'unknown',
+        threadId: 't1',
+        userId: 'u1',
+        content: 'please run',
+        targetCats: ['opus'],
+        intent: 'execute',
+      },
+    );
+    const entry = admitted.entries[0];
+    assert.ok(entry);
+    assert.ok(await deps.queue.markProcessingByIdDurable('t1', entry.id, 'opus'));
+    /** @type {any} */ (processor).processingSlots.set(slotKey('t1', 'opus'), reservation(T0, entry.id));
+
+    assert.equal(
+      await processor.failPrestartProcessingGroup('t1', 'opus', 'u1', 'control_plane_unavailable'),
+      'retired',
+    );
+    assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id), null);
+    assert.equal((await deps.queue.ledgerStore.get('t1', entry.id)).status, 'terminal');
+    const source = messageStore.getById(admitted.message.id);
+    assert.equal(source.deliveryStatus, 'delivered');
+    assert.equal(source.lifecycle.dispatchRefs[0].phase, 'settled');
+    const failure = messageStore
+      .getRecent(10, 'system')
+      .find((message) => message.lifecycle?.kind === 'delivery_failure');
+    assert.equal(failure.lifecycle.reason, 'control_plane_unavailable');
+    assert.equal(source.lifecycle.dispatchRefs[0].statusMessageId, failure.id);
   });
 
   it('treats a bound reservation as pre-provider until tracker installation is proven', async (t) => {

@@ -1,6 +1,6 @@
 'use client';
 
-import type { FreshnessCarrierCapability } from '@cat-cafe/shared';
+import type { ActiveExecutionListResponse, FreshnessCarrierCapability } from '@cat-cafe/shared';
 import { type QueueReminderAttemptState, SCHEDULER_TRIGGER_PREFIX } from '@cat-cafe/shared';
 import { closestCenter, DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -286,17 +286,27 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
 
   const handleClear = useCallback(async () => {
     try {
-      const reset = await apiFetch(`/api/threads/${threadId}/force-reset`, { method: 'POST' });
-      if (!reset.ok) {
-        const data = await reset.json().catch(() => ({}));
-        addToast({
-          type: 'error',
-          title: '停止执行失败',
-          message: data?.error ?? '正在运行的执行未能全部停止，请重试',
-          threadId,
-          duration: 5000,
-        });
-        return;
+      const activeResponse = await apiFetch(`/api/threads/${threadId}/executions/active`);
+      if (!activeResponse.ok) throw new Error('active execution projection unavailable');
+      const active = (await activeResponse.json()) as ActiveExecutionListResponse;
+      const stopTargets = active.executions.filter(
+        (execution) =>
+          execution.threadId === threadId &&
+          execution.kind === 'live_invocation' &&
+          execution.cancelability.state === 'cancelable',
+      );
+      for (const execution of stopTargets) {
+        const target = execution.cancelability.state === 'cancelable' ? execution.cancelability.target : undefined;
+        if (!target || target.kind !== 'live_invocation') continue;
+        const stopped = await apiFetch(
+          `/api/threads/${threadId}/executions/live/${encodeURIComponent(target.executionId)}/cancel`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ catId: target.catId }),
+          },
+        );
+        if (!stopped.ok) throw new Error('active execution stop failed');
       }
       const res = await apiFetch(`/api/threads/${threadId}/queue`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));

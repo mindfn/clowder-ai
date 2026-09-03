@@ -4,12 +4,12 @@ related_features: [F216, F175, F153, F118, F194, F215, F224]
 topics: [a2a, observability, liveness, invocation, queue, interrupt, recovery, ux]
 doc_kind: spec
 created: 2026-06-02
-tips_exempt: automatic zombie-ownership and queue-publication hardening; no new user action or standalone capability surface
+tips_exempt: 2026-09-03 KD-9 renews automatic zombie-ownership and Stop reconciliation hardening while deleting the separate force-reset UI; no new user action or standalone capability surface
 ---
 
 # F220: A2A 协作的可观测 · 可靠 · 可恢复
 
-> **Status**: in-progress | **Owner**: 小太阳·Maine Coon (Sol/GPT-5.6-sol；2026-08-04 operator 重分配) | **Priority**: P1 | **Source**: internal
+> **Status**: done | **Owner**: 小太阳·Maine Coon (Sol/GPT-5.6-sol；2026-08-04 operator 重分配) | **Priority**: P1 | **Source**: internal
 >
 > **Thread legend**：`[thread-id]` = 驱动/owner thread（Layer 1 现场调查 + 落地，Ragdoll Opus-4.8）｜`[thread-id]` = 立项 thread（平行 opus-48：立项 + 设计沉淀 + 交接，已收工）。
 
@@ -121,7 +121,7 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 - [x] AC-3.2: 点击弹**确认弹窗**（做什么/保留什么/何时用），确认才执行。→ `ForceResetDialog`（取消默认 focus / 强制重置危险红）。测试 4 绿。→ **superseded 2026-09-03（KD-9）**：弹窗退役；进程快照不可用时按 failed 终局并沿失败传播回溯上游，不弹任何确认。
 - [x] AC-3.3: 确认 → force-reset → thread 解放；消息/历史**不丢**（LL-048 只清运行态）。→ `apiFetch POST force-reset` + toast「已重置」。复核（截图前后 + 消息条数不变）→ operator quickpath runtime 验。（端点保留为 Stop 阶梯最后一级的 thread 级对账；LL-048 边界不变）
 - [x] AC-3.4: force-reset 对 record-present hung 和 **recordless canonical Queue owner** 都能清。后者从 user/thread-scoped `processingSlots` 发现 exact Queue group，在首个终态 await 前安装 replacement barrier，完成 durable row/custody terminalization 后才释放；迟到 cleanup 无法删除 replacement owner。真实 route + QueueProcessor 回归并验证 `queue_updated` 发布。2026-08-19 新 runtime（revision `1d1e774d4`，包含 PR #3782 merge `e240a8183`）live acceptance：exact cancel 后 Queue/active 归零，180 秒 foreground tree 与其 exact app-server host 消失，无关 host 存活；同 thread 后继在新 host 完成 exact token，未续跑旧指令；随后 Queue-backed 120 秒 invocation 经 force-reset 再次收敛至 queue=0、active=0、无 marker/host 残留。
-- [ ] AC-3.5: **逃生口退役 + Stop 阶梯（KD-9 / ADR-043 D9）**：删除 `ThreadExecutionBar` 常驻与 `suspected_stall` 触发的 force-reset 入口、「运行状态待确认」横幅与 `ForceResetDialog`；exact Stop 无活候选时服务端就地对账返回 `reconciled`，进程快照不可用时按 failed 终局；`/force-reset` 仅作内部 reconciler。→ 在 PR #1398（F117 Phase E，AC-E7）实施中；完成后勾选并将本 feat 标 done。
+- [x] AC-3.5: **逃生口退役 + Stop 阶梯（KD-9 / ADR-043 D9）**：删除 `ThreadExecutionBar` 常驻与 `suspected_stall` 触发的 force-reset 入口、「运行状态待确认」横幅与 `ForceResetDialog`；exact Stop 无活候选时服务端就地对账返回 `reconciled`，进程快照不可用时按 failed 终局；`/force-reset` 仅作内部 reconciler。→ PR #1398（F117 Phase E，AC-E7）代码与自动化验收完成，进入跨族复审 / worktree 体验。
 
 ## Dependencies
 - force-reset 端点（`queue.ts`，已存在）。

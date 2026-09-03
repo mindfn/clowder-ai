@@ -85,7 +85,8 @@ export type LifecycleDeliveryFailureReason =
   | 'no_available_target'
   | 'invalid_explicit_target'
   | 'control_carrier_missing'
-  | 'control_carrier_replaced';
+  | 'control_carrier_replaced'
+  | 'control_plane_unavailable';
 
 /**
  * Durable lifecycle metadata stored beside the canonical message body.
@@ -198,6 +199,7 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
         'invalid_explicit_target',
         'control_carrier_missing',
         'control_carrier_replaced',
+        'control_plane_unavailable',
       ].includes(String(candidate.reason)) &&
       isFiniteTimestamp(candidate.createdAt)
     );

@@ -16,6 +16,8 @@ import type { AgentClientActiveRunDispatcher } from '../../types.js';
 
 const log = createModuleLogger('invocation-tracker');
 export const DEFAULT_INVOCATION_SLOT_TTL_MS = 75 * 60_000;
+/** A Queue claim may exist briefly before startAll publishes its tracker owner. */
+export const DEFAULT_PRESTART_RESERVATION_TTL_MS = 30_000;
 
 interface ActiveInvocation {
   controller: AbortController;

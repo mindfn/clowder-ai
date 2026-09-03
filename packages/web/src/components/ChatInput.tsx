@@ -9,7 +9,6 @@ import {
 } from '@cat-cafe/shared';
 import { KeyboardEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
-import { useExecutionRecoveryVerification } from '@/hooks/useExecutionRecoveryVerification';
 import { reconnectGame } from '@/hooks/useGameReconnect';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { useLiveExecutionCancelControl } from '@/hooks/useLiveExecutionCancelControl';
@@ -147,36 +146,42 @@ export function ChatInput({
   // F122B AC-B10: track which cats are actively executing (for whisper disable)
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const {
+    hasActive: legacyHasActiveInvocation,
     activeInvocations,
     catInvocations,
     targetCats: storeTargetCats,
   } = useThreadLiveness(threadId ?? currentThreadId);
   const effectiveThreadId = threadId ?? currentThreadId;
+  const legacyCancelTargets = useMemo(
+    () =>
+      Object.entries(activeInvocations).map(([executionId, invocation]) => ({ executionId, catId: invocation.catId })),
+    [activeInvocations],
+  );
   const {
     executions: canonicalExecutions,
     state: projectedCancelState,
     cancelAll: handleProjectedStop,
-  } = useLiveExecutionCancelControl(effectiveThreadId);
-  // Shared with ThreadExecutionBar: both surfaces must answer "can we verify this
-  // thread's run state?" identically, or their independent fail-closed choices can
-  // combine into a state with no cancel AND no recovery exit.
-  const { hasUnverifiedLegacyExecution } = useExecutionRecoveryVerification(threadId, unscopedHasActiveInvocation);
-  const hasActiveInvocation = canonicalExecutions.length > 0 || hasUnverifiedLegacyExecution;
-  const stopState: 'available' | 'pending' | 'unavailable' | 'hidden' =
-    canonicalExecutions.length === 0 ? (hasUnverifiedLegacyExecution ? 'unavailable' : 'hidden') : projectedCancelState;
+  } = useLiveExecutionCancelControl(effectiveThreadId, legacyCancelTargets);
+  const effectiveLegacyActive = threadId
+    ? legacyHasActiveInvocation
+    : legacyHasActiveInvocation || unscopedHasActiveInvocation;
+  const hasActiveInvocation = canonicalExecutions.length > 0 || effectiveLegacyActive;
+  const stopState: 'available' | 'pending' | 'unavailable' | 'hidden' = hasActiveInvocation
+    ? projectedCancelState
+    : 'hidden';
   const activeCatIds = useMemo(() => {
     const ids = new Set<string>();
     for (const execution of canonicalExecutions) {
       ids.add(execution.catId);
     }
-    if (ids.size === 0 && hasUnverifiedLegacyExecution) {
+    if (ids.size === 0 && legacyHasActiveInvocation) {
       for (const inv of Object.values(activeInvocations ?? {})) ids.add(inv.catId);
       if (ids.size === 0 && storeTargetCats?.length) {
         for (const catId of storeTargetCats) ids.add(catId);
       }
     }
     return ids;
-  }, [activeInvocations, canonicalExecutions, hasUnverifiedLegacyExecution, storeTargetCats]);
+  }, [activeInvocations, canonicalExecutions, legacyHasActiveInvocation, storeTargetCats]);
 
   const [input, setInput] = useState(() => (threadId ? (threadDrafts.get(threadId) ?? '') : ''));
 

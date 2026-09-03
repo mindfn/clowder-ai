@@ -33,6 +33,7 @@ import {
   queueEntryOwnerId,
   queueEntryTargetCats,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import { DEFAULT_PRESTART_RESERVATION_TTL_MS } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import {
   projectLifecycleAppendAction,
   projectLifecycleAppendCapability,
@@ -40,7 +41,11 @@ import {
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  type IMessageStore,
+  type StoredMessage,
+  settleLifecycleResponseInputs,
+} from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore, Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
@@ -115,6 +120,7 @@ interface ProcessOwnerSnapshot {
 }
 
 const processOwnerSnapshotByRequest = new WeakMap<FastifyRequest, Promise<ProcessOwnerSnapshot>>();
+const CONTROL_PLANE_RETRY_ATTEMPTS = 3;
 
 async function processOwnerSnapshotForRequest(
   request: FastifyRequest,
@@ -132,6 +138,45 @@ async function processOwnerSnapshotForRequest(
     });
   processOwnerSnapshotByRequest.set(request, pending);
   return pending;
+}
+
+async function retryProcessOwnerSnapshot(
+  request: FastifyRequest,
+  service: CliExecutionOwnerService | undefined,
+): Promise<ProcessOwnerSnapshot> {
+  if (!service) return { owners: [], complete: true };
+  let latest = await processOwnerSnapshotForRequest(request, service);
+  for (let attempt = 1; !latest.complete && attempt < CONTROL_PLANE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const snapshot = await service.listLive();
+      latest = { owners: snapshot.owners, complete: snapshot.complete };
+    } catch (err) {
+      request.log.warn({ err, attempt }, 'CLI execution owner retry failed');
+      latest = { owners: [], complete: false };
+    }
+  }
+  processOwnerSnapshotByRequest.set(request, Promise.resolve(latest));
+  return latest;
+}
+
+function emitLifecycleMessageUpdated(socketManager: SocketManager, userId: string, message: StoredMessage): void {
+  if (!message.lifecycle) return;
+  socketManager.emitToUser(userId, 'message_lifecycle_updated', {
+    threadId: message.threadId,
+    message: {
+      id: message.id,
+      ...(message.from ? { from: message.from } : {}),
+      catId: message.catId,
+      content: message.content,
+      lifecycle: message.lifecycle,
+      timestamp: message.timestamp,
+      ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
+      ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
+      ...(message.extra ? { extra: message.extra } : {}),
+      ...(message.origin ? { origin: message.origin } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    },
+  });
 }
 
 function projectCanonicalLiveCandidate(
@@ -443,6 +488,116 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     return { ok: true, deferred: false };
   };
 
+  const failUncontrollableInvocation = async (input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    executionId: string;
+    invocationId?: string;
+    request: FastifyRequest;
+  }): Promise<{ reconciled: boolean }> => {
+    if (!messageStore || !opts.invocationRecordStore) {
+      throw new Error('durable execution failure stores are unavailable');
+    }
+    const failedAt = Date.now();
+    const childExecutions = opts.turnExecutionStore
+      ? (await opts.turnExecutionStore.listByParent(input.executionId)).filter(
+          (child) => child.threadId === input.threadId && child.userId === input.userId && child.catId === input.catId,
+        )
+      : [];
+    const childInvocationIds = [
+      ...new Set([
+        ...(input.invocationId ? [input.invocationId] : []),
+        ...childExecutions.map((child) => child.invocationId),
+      ]),
+    ];
+    let responseTerminalized = false;
+    for (const invocationId of childInvocationIds) {
+      const response = await messageStore.getByIdempotencyKey(
+        input.userId,
+        input.threadId,
+        `message-lifecycle-response:${invocationId}`,
+      );
+      if (!response?.lifecycle || response.lifecycle.kind !== 'response') continue;
+      const result = await messageStore.commitLifecycleResponseTerminal(response.id, {
+        invocationId,
+        status: 'failed',
+        completedAt: Math.max(failedAt, response.lifecycle.startedAt),
+        reason: 'control_plane_unavailable',
+        content: response.content || '执行失败：执行控制面不可用。',
+        ...(response.contentBlocks ? { contentBlocks: response.contentBlocks } : {}),
+        ...(response.toolEvents ? { toolEvents: response.toolEvents } : {}),
+        ...(response.metadata ? { metadata: response.metadata } : {}),
+        ...(response.extra ? { extra: response.extra } : {}),
+        ...(response.thinking ? { thinking: response.thinking } : {}),
+        ...(response.origin ? { origin: response.origin } : {}),
+        mentions: response.mentions,
+        ...(response.mentionsUser ? { mentionsUser: true } : {}),
+        ...(response.replyTo ? { replyTo: response.replyTo } : {}),
+      });
+      if (result.kind !== 'applied' && result.kind !== 'replayed') {
+        const resultLifecycle = result.kind === 'conflict' ? result.message.lifecycle : undefined;
+        if (
+          result.kind !== 'conflict' ||
+          resultLifecycle?.kind !== 'response' ||
+          resultLifecycle.status === 'processing'
+        ) {
+          throw new Error(`control-plane failure response terminalization rejected: ${result.kind}`);
+        }
+      }
+      const terminalMessage = result.message;
+      await settleLifecycleResponseInputs(messageStore, terminalMessage, terminalMessage.id);
+      emitLifecycleMessageUpdated(socketManager, input.userId, terminalMessage);
+      responseTerminalized = true;
+    }
+
+    const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);
+    if (!responseTerminalized && inflight) {
+      if (queueEntryOwnerId(inflight) !== input.userId) throw new Error('pre-start execution owner changed');
+      const outcome = await queueProcessor.failPrestartProcessingGroup(
+        input.threadId,
+        input.catId,
+        input.userId,
+        'control_plane_unavailable',
+      );
+      if (outcome !== 'retired') throw new Error(`pre-start failure terminalization ${outcome}`);
+    }
+
+    for (const invocationId of childInvocationIds) {
+      await opts.turnExecutionStore?.transitionTerminal(invocationId, {
+        status: 'failed',
+        endedAt: failedAt,
+        terminalReason: 'control_plane_unavailable',
+      });
+    }
+    const record = await opts.invocationRecordStore.get(input.executionId);
+    if (record?.status === 'running') {
+      const updated = await opts.invocationRecordStore.update(input.executionId, {
+        status: 'failed',
+        error: 'control_plane_unavailable',
+        expectedStatus: 'running',
+      });
+      if (!updated) throw new Error('control-plane failure parent terminalization lost its running fence');
+    }
+
+    releaseAgentSessionLocks(
+      { threadId: input.threadId, userId: input.userId, catId: input.catId },
+      input.request,
+      'cancel',
+    );
+    if (queueProcessor.canReleaseSlotForUser(input.threadId, input.catId, input.userId)) {
+      queueProcessor.releaseSlot(input.threadId, input.catId);
+    }
+    for (const message of buildCancelMessages({
+      cancelled: true,
+      catIds: [input.catId],
+      executionIds: [input.executionId],
+    })) {
+      socketManager.broadcastAgentMessage(message, input.threadId);
+    }
+    return { reconciled: true };
+  };
+
   const cancelProcessOwnedInvocation = async (input: {
     threadId: string;
     userId: string;
@@ -451,15 +606,31 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     invocationId: string;
     ownerUserId?: string;
     request: FastifyRequest;
-  }): Promise<{ cancelled: boolean; controlPlaneUnavailable?: boolean }> => {
-    const processResult = await opts.cliExecutionOwnerService?.terminateExact({
+  }): Promise<{ cancelled: boolean; reconciled?: boolean; controlPlaneUnavailable?: boolean }> => {
+    const executionOwner = {
       executionId: input.executionId,
       invocationId: input.invocationId,
       threadId: input.threadId,
       catId: input.catId,
       userId: input.ownerUserId ?? input.userId,
-    });
-    if (!processResult?.complete) return { cancelled: false, controlPlaneUnavailable: true };
+    };
+    let processResult = await opts.cliExecutionOwnerService?.terminateExact(executionOwner);
+    for (
+      let attempt = 1;
+      processResult && !processResult.complete && attempt < CONTROL_PLANE_RETRY_ATTEMPTS;
+      attempt += 1
+    ) {
+      processResult = await opts.cliExecutionOwnerService?.terminateExact(executionOwner);
+    }
+    if (!processResult?.complete) {
+      try {
+        await failUncontrollableInvocation({ ...input, invocationId: input.invocationId });
+        return { cancelled: false, reconciled: true };
+      } catch (err) {
+        input.request.log.error({ err, ...executionOwner }, 'failed to persist control-plane failure terminal');
+        return { cancelled: false, controlPlaneUnavailable: true };
+      }
+    }
     // The request already resolved this exact live owner. A zero-signal result
     // means it exited in the snapshot-to-signal race; cancellation is
     // idempotently complete and its durable child truth still needs closing.
@@ -509,6 +680,199 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     return { cancelled: cancelResult.cancelled };
   };
 
+  const reconcileInactiveLiveInvocation = async (input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    executionId: string;
+    request: FastifyRequest;
+  }): Promise<{
+    reconciled: boolean;
+    replacement?: boolean;
+    controlPlaneUnavailable?: boolean;
+    error?: string;
+    code?: string;
+  }> => {
+    const trackerExecutionId = invocationTracker.getExecutionId?.(input.threadId, input.catId);
+    if (invocationTracker.has(input.threadId, input.catId)) {
+      const result = cancelTrackedInvocation(input);
+      return {
+        reconciled: result.cancelled,
+        ...(trackerExecutionId !== input.executionId ? { replacement: true } : {}),
+      };
+    }
+
+    const processSnapshot = await retryProcessOwnerSnapshot(input.request, opts.cliExecutionOwnerService);
+    if (!processSnapshot.complete) {
+      try {
+        return await failUncontrollableInvocation(input);
+      } catch (err) {
+        input.request.log.error(
+          { err, threadId: input.threadId, catId: input.catId, executionId: input.executionId },
+          'failed to persist control-plane failure terminal',
+        );
+        return {
+          reconciled: false,
+          controlPlaneUnavailable: true,
+          error: '执行失败终态未能持久化，请重试',
+          code: 'EXECUTION_TERMINAL_PERSISTENCE_UNAVAILABLE',
+        };
+      }
+    }
+    const processOwner = processSnapshot.owners.find(
+      (owner) => owner.threadId === input.threadId && owner.catId === input.catId && owner.userId === input.userId,
+    );
+    if (processOwner) {
+      const result = await cancelProcessOwnedInvocation({
+        ...input,
+        executionId: processOwner.executionId,
+        invocationId: processOwner.invocationId,
+        ownerUserId: processOwner.userId,
+      });
+      return {
+        reconciled: result.cancelled || result.reconciled === true,
+        ...(processOwner.executionId !== input.executionId ? { replacement: true } : {}),
+        ...(result.controlPlaneUnavailable ? { controlPlaneUnavailable: true } : {}),
+      };
+    }
+
+    const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);
+    if (inflight && queueEntryOwnerId(inflight) !== input.userId) {
+      return {
+        reconciled: false,
+        controlPlaneUnavailable: true,
+        error: '当前执行归属已变化，请重试',
+        code: 'EXECUTION_OWNER_CHANGED',
+      };
+    }
+    if (inflight) {
+      const retirement = await queueProcessor.retirePrestartProcessingGroup(input.threadId, input.catId, input.userId);
+      if (retirement === 'terminalization_failed') {
+        return {
+          reconciled: false,
+          controlPlaneUnavailable: true,
+          error: '启动中的执行未能写入持久终态，请重试',
+          code: 'PRESTART_TERMINALIZATION_FAILED',
+        };
+      }
+      if (retirement === 'state_changed') {
+        return {
+          reconciled: false,
+          controlPlaneUnavailable: true,
+          error: '启动中的执行状态已变化，请重试',
+          code: 'PRESTART_STATE_CHANGED',
+        };
+      }
+    }
+
+    // Re-check after durable retirement: a newer run may have claimed the cat
+    // while the request awaited Redis. Never release that run's lock or slot.
+    if (invocationTracker.has(input.threadId, input.catId)) {
+      const replacementExecutionId = invocationTracker.getExecutionId?.(input.threadId, input.catId);
+      const result = cancelTrackedInvocation(input);
+      return {
+        reconciled: result.cancelled,
+        ...(replacementExecutionId !== input.executionId ? { replacement: true } : {}),
+      };
+    }
+
+    let canceledRecord = false;
+    if (opts.invocationRecordStore) {
+      const runningRecords = await opts.invocationRecordStore.listRunningByThread(input.threadId, input.userId);
+      const exactRecord = runningRecords.find(
+        (record) => record.id === input.executionId && (record.targetCats as string[]).includes(input.catId),
+      );
+      if (exactRecord) {
+        const siblingStillActive = (exactRecord.targetCats as string[])
+          .filter((catId) => catId !== input.catId)
+          .some((catId) => invocationTracker.has(input.threadId, catId));
+        if (!siblingStillActive) {
+          await opts.invocationRecordStore.update(exactRecord.id, { status: 'canceled' });
+          canceledRecord = true;
+        }
+      }
+    }
+
+    if (invocationTracker.has(input.threadId, input.catId)) {
+      const replacementExecutionId = invocationTracker.getExecutionId?.(input.threadId, input.catId);
+      const result = cancelTrackedInvocation(input);
+      return {
+        reconciled: result.cancelled,
+        ...(replacementExecutionId !== input.executionId ? { replacement: true } : {}),
+      };
+    }
+    const lockRelease = releaseAgentSessionLocks(
+      { threadId: input.threadId, userId: input.userId, catId: input.catId },
+      input.request,
+      'cancel',
+    );
+    const canReleaseSlot = queueProcessor.canReleaseSlotForUser(input.threadId, input.catId, input.userId);
+    if (canReleaseSlot && !invocationTracker.has(input.threadId, input.catId)) {
+      queueProcessor.releaseSlot(input.threadId, input.catId);
+    }
+    // The socket projection is only a legacy witness. Once every authoritative
+    // source says the exact run is gone, publish convergence even when there was
+    // no remaining local artifact to remove.
+    for (const message of buildCancelMessages({
+      cancelled: true,
+      catIds: [input.catId],
+      executionIds: [input.executionId],
+    })) {
+      socketManager.broadcastAgentMessage(message, input.threadId);
+    }
+    return {
+      reconciled: Boolean(
+        inflight ||
+          canceledRecord ||
+          lockRelease.releasedHolders > 0 ||
+          lockRelease.rejectedWaiters > 0 ||
+          canReleaseSlot,
+      ),
+    };
+  };
+
+  const resolveAndRepairLiveExecutions = async (
+    threadId: string,
+    userId: string,
+    request: FastifyRequest,
+  ): Promise<LiveExecutionCandidate[]> => {
+    const candidates = await resolveLiveExecutionCandidates(threadId, userId, request, opts);
+    if (!opts.invocationRecordStore) return candidates;
+    const processSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
+    if (!processSnapshot.complete) return candidates;
+    const ownerExecutionIds = new Set(
+      processSnapshot.owners
+        .filter((owner) => owner.threadId === threadId && owner.userId === userId)
+        .map((owner) => owner.executionId),
+    );
+    const repairedExecutionIds = new Set<string>();
+    const runningRecords = await opts.invocationRecordStore.listRunningByThread(threadId, userId);
+    for (const record of runningRecords) {
+      if (Date.now() - record.updatedAt <= DEFAULT_PRESTART_RESERVATION_TTL_MS) continue;
+      if (ownerExecutionIds.has(record.id)) continue;
+      const repairTargets = (record.targetCats as string[]).filter((catId) => !invocationTracker.has(threadId, catId));
+      if (repairTargets.length === 0) continue;
+      try {
+        for (const catId of repairTargets) {
+          await failUncontrollableInvocation({
+            threadId,
+            userId,
+            catId,
+            executionId: record.id,
+            request,
+          });
+        }
+        repairedExecutionIds.add(record.id);
+      } catch (err) {
+        request.log.error(
+          { err, threadId, userId, executionId: record.id, targetCats: repairTargets },
+          'active execution read-repair failed closed',
+        );
+      }
+    }
+    return candidates.filter((candidate) => !candidate.executionId || !repairedExecutionIds.has(candidate.executionId));
+  };
+
   registerActiveExecutionRoutes(app, {
     threadStore,
     invocationTracker,
@@ -527,10 +891,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           },
         }
       : {}),
-    resolveLiveExecutions: (threadId, userId, request) =>
-      resolveLiveExecutionCandidates(threadId, userId, request, opts),
-    isLiveExecutionControlPlaneComplete: async (request) =>
-      (await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService)).complete,
+    resolveLiveExecutions: resolveAndRepairLiveExecutions,
     cancelExactLiveInvocation: async ({ threadId, userId, catId, executionId, candidate, request }) => {
       if (candidate.controlSource === 'process_owner' && opts.cliExecutionOwnerService && candidate.invocationId) {
         return cancelProcessOwnedInvocation({
@@ -543,8 +904,48 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           request,
         });
       }
-      return cancelTrackedInvocation({ threadId, userId, catId, request });
+      if (candidate.controlSource === 'tracker' && invocationTracker.has(threadId, catId)) {
+        return cancelTrackedInvocation({ threadId, userId, catId, request });
+      }
+      const snapshot = await retryProcessOwnerSnapshot(request, opts.cliExecutionOwnerService);
+      if (!snapshot.complete) {
+        try {
+          await failUncontrollableInvocation({
+            threadId,
+            userId,
+            catId,
+            executionId,
+            ...(candidate.invocationId ? { invocationId: candidate.invocationId } : {}),
+            request,
+          });
+          return { cancelled: false, reconciled: true };
+        } catch (err) {
+          request.log.error({ err, threadId, catId, executionId }, 'failed to persist control-plane failure terminal');
+          return { cancelled: false, controlPlaneUnavailable: true };
+        }
+      }
+      const owner = snapshot.owners.find(
+        (item) => item.threadId === threadId && item.catId === catId && item.userId === userId,
+      );
+      if (owner) {
+        return cancelProcessOwnedInvocation({
+          threadId,
+          userId,
+          catId,
+          executionId: owner.executionId,
+          invocationId: owner.invocationId,
+          ownerUserId: owner.userId,
+          request,
+        });
+      }
+      const reconciled = await reconcileInactiveLiveInvocation({ threadId, userId, catId, executionId, request });
+      return {
+        cancelled: false,
+        reconciled: reconciled.reconciled,
+        ...(reconciled.controlPlaneUnavailable ? { controlPlaneUnavailable: true } : {}),
+      };
     },
+    reconcileInactiveLiveInvocation,
   });
 
   // GET /api/threads/:threadId/queue

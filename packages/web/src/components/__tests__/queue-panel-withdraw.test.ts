@@ -466,8 +466,8 @@ describe('QueuePanel withdraw UX (F39)', () => {
     const { apiFetch } = await import('@/utils/api-client');
     const remaining = { ...QUEUED_ENTRY, id: 'q-remaining', content: 'still actionable' };
     (apiFetch as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(async (url: string) =>
-      url.endsWith('/force-reset')
-        ? { ok: true, json: async () => ({ ok: true }) }
+      url.endsWith('/executions/active')
+        ? { ok: true, json: async () => ({ projectPath: null, executions: [] }) }
         : {
             ok: false,
             json: async () => ({
@@ -500,6 +500,9 @@ describe('QueuePanel withdraw UX (F39)', () => {
     const requests: string[] = [];
     vi.mocked(apiFetch).mockImplementation(async (url) => {
       requests.push(String(url));
+      if (String(url).endsWith('/executions/active')) {
+        return response({ projectPath: null, executions: [] }) as Response;
+      }
       return response({ cleared: [QUEUED_ENTRY] }) as Response;
     });
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
@@ -516,7 +519,7 @@ describe('QueuePanel withdraw UX (F39)', () => {
     });
 
     expect(requests.filter((url) => url.startsWith('/api/threads/'))).toEqual([
-      '/api/threads/thread-1/force-reset',
+      '/api/threads/thread-1/executions/active',
       '/api/threads/thread-1/queue',
     ]);
     expect(useChatStore.getState().queue).toEqual([]);

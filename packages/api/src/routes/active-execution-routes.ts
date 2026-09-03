@@ -53,8 +53,6 @@ export interface ActiveExecutionRouteDeps {
     userId: string,
     request: FastifyRequest,
   ) => Promise<LiveExecutionCandidate[]>;
-  /** False means a durable process-owner source could not be read on this request. */
-  readonly isLiveExecutionControlPlaneComplete?: (request: FastifyRequest) => Promise<boolean>;
   readonly cancelExactLiveInvocation: (input: {
     threadId: string;
     userId: string;
@@ -63,8 +61,34 @@ export interface ActiveExecutionRouteDeps {
     candidate: LiveExecutionCandidate;
     request: FastifyRequest;
   }) =>
-    | { cancelled: boolean; controlPlaneUnavailable?: boolean }
-    | Promise<{ cancelled: boolean; controlPlaneUnavailable?: boolean }>;
+    | { cancelled: boolean; reconciled?: boolean; controlPlaneUnavailable?: boolean }
+    | Promise<{ cancelled: boolean; reconciled?: boolean; controlPlaneUnavailable?: boolean }>;
+  /**
+   * Reconcile an exact execution that disappeared between projection and Stop.
+   * This runs only after the process-owner snapshot is complete and no newer
+   * controllable execution for the same cat exists.
+   */
+  readonly reconcileInactiveLiveInvocation?: (input: {
+    threadId: string;
+    userId: string;
+    catId: string;
+    executionId: string;
+    request: FastifyRequest;
+  }) =>
+    | {
+        reconciled: boolean;
+        replacement?: boolean;
+        controlPlaneUnavailable?: boolean;
+        error?: string;
+        code?: string;
+      }
+    | Promise<{
+        reconciled: boolean;
+        replacement?: boolean;
+        controlPlaneUnavailable?: boolean;
+        error?: string;
+        code?: string;
+      }>;
 }
 
 const cancelLiveBodySchema = z.object({ catId: z.string().min(1).max(100) }).strict();
@@ -101,21 +125,12 @@ function projectLiveExecution(
   thread: Thread,
   userId: string,
   candidate: LiveExecutionCandidate,
-  tracker: ActiveExecutionTracker,
 ): ActiveExecutionProjection {
   const canControl = canControlLiveExecution(thread, userId, candidate);
-  const trackerExecutionId =
-    tracker.getUserId(thread.id, candidate.catId) === userId
-      ? tracker.getExecutionId?.(thread.id, candidate.catId)
-      : undefined;
   const realExecutionId = candidate.executionId ?? unresolvedExecutionId(thread.id, candidate);
   const executionId = canControl
     ? realExecutionId
     : foreignOccupancyExecutionId(thread.id, candidate.catId, candidate.startedAt);
-  const controlAvailable =
-    candidate.controlSource === 'process_owner' ||
-    candidate.controlSource === 'tracker' ||
-    trackerExecutionId === realExecutionId;
   return {
     executionId,
     threadId: thread.id,
@@ -123,21 +138,20 @@ function projectLiveExecution(
     catId: candidate.catId,
     kind: 'live_invocation',
     startedAt: candidate.startedAt,
-    cancelability:
-      canControl && controlAvailable && candidate.executionId
-        ? {
-            state: 'cancelable',
-            target: {
-              kind: 'live_invocation',
-              threadId: thread.id,
-              catId: candidate.catId,
-              executionId: realExecutionId,
-            },
-          }
-        : {
-            state: 'not_cancelable',
-            reason: canControl ? 'control_plane_unavailable' : 'foreign_principal',
+    cancelability: canControl
+      ? {
+          state: 'cancelable',
+          target: {
+            kind: 'live_invocation',
+            threadId: thread.id,
+            catId: candidate.catId,
+            executionId: realExecutionId,
           },
+        }
+      : {
+          state: 'not_cancelable',
+          reason: canControl ? 'control_plane_unavailable' : 'foreign_principal',
+        },
     ...(canControl && candidate.inputCapabilities ? { inputCapabilities: candidate.inputCapabilities } : {}),
   };
 }
@@ -265,7 +279,7 @@ async function buildActiveExecutionList(
     })),
   );
   const executions = liveGroups.flatMap(({ thread, candidates }) =>
-    candidates.map((candidate) => projectLiveExecution(thread, userId, candidate, deps.invocationTracker)),
+    candidates.map((candidate) => projectLiveExecution(thread, userId, candidate)),
   );
 
   for (const execution of listManagedCommandExecutions(deps.dynamicTaskStore?.getAll() ?? [])) {
@@ -297,35 +311,60 @@ export function registerActiveExecutionRoutes(app: FastifyInstance, deps: Active
     const { threadId, executionId } = request.params;
     const { catId } = parsed.data;
     const liveCandidates = await deps.resolveLiveExecutions(threadId, access.userId, request);
-    const candidate = liveCandidates.find(
+    let candidate = liveCandidates.find(
       (item) =>
         item.catId === catId &&
         item.executionId === executionId &&
         canControlLiveExecution(access.thread, access.userId, item),
     );
     if (!candidate) {
-      if (deps.isLiveExecutionControlPlaneComplete && !(await deps.isLiveExecutionControlPlaneComplete(request))) {
-        reply.status(503);
-        return {
-          error: '执行控制面暂时不可用，请重试',
-          code: 'EXECUTION_CONTROL_UNAVAILABLE',
-        };
+      // A foreign principal's execution is occupancy, not a capability. Keep
+      // its identity masked and never run viewer-scoped cleanup against the
+      // occupied cat merely because the supplied id is not controllable.
+      if (
+        liveCandidates.some(
+          (item) => item.catId === catId && !canControlLiveExecution(access.thread, access.userId, item),
+        )
+      ) {
+        reply.status(409);
+        return { error: '该执行已结束或无法取消', code: 'EXECUTION_NOT_ACTIVE' };
       }
       const replacement = liveCandidates.find(
         (item) => item.catId === catId && canControlLiveExecution(access.thread, access.userId, item),
       );
-      reply.status(409);
-      return {
-        error: replacement ? '该执行已被更新的回合替代' : '该执行已结束或无法取消',
-        code: replacement ? 'EXECUTION_REPLACED' : 'EXECUTION_NOT_ACTIVE',
-      };
+      if (replacement?.executionId) {
+        candidate = replacement;
+      } else if (deps.reconcileInactiveLiveInvocation) {
+        const result = await deps.reconcileInactiveLiveInvocation({
+          threadId,
+          userId: access.userId,
+          catId,
+          executionId,
+          request,
+        });
+        if (result.controlPlaneUnavailable) {
+          reply.status(503);
+          return {
+            error: result.error ?? '执行控制面暂时不可用，请重试',
+            code: result.code ?? 'EXECUTION_CONTROL_UNAVAILABLE',
+          };
+        }
+        return {
+          ok: true,
+          cancelled: false,
+          reconciled: result.reconciled,
+          ...(result.replacement ? { replaced: true } : {}),
+        };
+      } else {
+        return { ok: true, cancelled: false, reconciled: false };
+      }
     }
 
     const result = await deps.cancelExactLiveInvocation({
       threadId,
       userId: access.userId,
       catId,
-      executionId,
+      executionId: candidate.executionId ?? executionId,
       candidate,
       request,
     });
@@ -336,6 +375,11 @@ export function registerActiveExecutionRoutes(app: FastifyInstance, deps: Active
         code: 'EXECUTION_CONTROL_UNAVAILABLE',
       };
     }
-    return { ok: true, cancelled: result.cancelled };
+    return {
+      ok: true,
+      cancelled: result.cancelled,
+      ...(result.reconciled ? { reconciled: true } : {}),
+      ...(candidate.executionId !== executionId ? { replaced: true } : {}),
+    };
   });
 }

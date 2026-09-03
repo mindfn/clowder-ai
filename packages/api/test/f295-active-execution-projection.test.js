@@ -9,8 +9,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+const { InvocationRecordStore } = await import('../dist/domains/cats/services/stores/ports/InvocationRecordStore.js');
+const { InMemoryTurnExecutionStore } = await import(
+  '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
+);
 const { queueRoutes } = await import('../dist/routes/queue.js');
 
 const USER_ID = 'user-a';
@@ -165,12 +171,21 @@ function buildDeps() {
     },
     queueProcessor: {
       canReleaseSlotForUser: mock.fn(() => true),
+      retirePrestartProcessingGroup: mock.fn(async () => 'retired'),
       processNext: mock.fn(async () => ({ started: false })),
       isPaused: mock.fn(() => false),
       getPauseReason: mock.fn(() => undefined),
       clearPause: mock.fn(),
       releaseSlot: mock.fn(),
       releaseThread: mock.fn(),
+    },
+    messageStore: {
+      getByIdempotencyKey: mock.fn(async () => null),
+    },
+    invocationRecordStore: {
+      get: mock.fn(async () => null),
+      update: mock.fn(async () => null),
+      listRunningByThread: mock.fn(async () => []),
     },
     socketManager: {
       broadcastAgentMessage: mock.fn(),
@@ -337,7 +352,7 @@ describe('F295 active execution projection', () => {
     assert.equal(staleExecution.inputCapabilities, undefined);
   });
 
-  it('rejects a stale live cancel target instead of killing its replacement', async () => {
+  it('treats a stale exact Stop as the same per-cat intent and stops the current replacement', async () => {
     deps._executions.set('thread-a:kimi', { executionId: 'inv-new', startedAt: 400 });
 
     const response = await app.inject({
@@ -347,10 +362,27 @@ describe('F295 active execution projection', () => {
       payload: { catId: 'kimi' },
     });
 
-    assert.equal(response.statusCode, 409);
-    assert.equal(response.json().code, 'EXECUTION_REPLACED');
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().replaced, true);
+    assert.equal(deps._cancelCalls.length, 1);
+    assert.equal(deps._executions.has('thread-a:kimi'), false);
+  });
+
+  it('treats Stop on a confirmed-dead exact execution as reconciliation, not an error', async () => {
+    deps._executions.delete('thread-a:kimi');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/threads/thread-a/executions/live/inv-a/cancel',
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'kimi' },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { ok: true, cancelled: false, reconciled: true });
     assert.deepEqual(deps._cancelCalls, []);
-    assert.equal(deps._executions.get('thread-a:kimi').executionId, 'inv-new');
+    assert.equal(deps.queueProcessor.releaseSlot.mock.callCount(), 1);
+    assert.deepEqual(deps.queueProcessor.releaseSlot.mock.calls[0].arguments, ['thread-a', 'kimi']);
   });
 
   it('keeps a command visible and exactly cancelable after an ordinary message retires only its wake', async () => {
@@ -605,7 +637,7 @@ describe('F295 active execution projection', () => {
     );
   });
 
-  it('shows viewer-owned liveness with an unavailable control source as honestly non-cancelable', async () => {
+  it('keeps Stop available when the server must reconcile an unavailable control source', async () => {
     deps.invocationTracker.getExecutionId = () => undefined;
 
     const projection = await app.inject({
@@ -617,10 +649,7 @@ describe('F295 active execution projection', () => {
       .json()
       .executions.find((item) => item.kind === 'live_invocation' && item.threadId === 'thread-a');
     assert.match(execution.executionId, /^unresolved:/);
-    assert.deepEqual(execution.cancelability, {
-      state: 'not_cancelable',
-      reason: 'control_plane_unavailable',
-    });
+    assert.equal(execution.cancelability.state, 'cancelable');
   });
 
   it('treats a process that exits between projection and signal as an idempotent successful cancel', async () => {
@@ -747,7 +776,97 @@ describe('F295 active execution projection', () => {
     );
   });
 
-  it('keeps known process-owner liveness visible but non-cancelable while owner truth is incomplete', async () => {
+  it('read-repairs a stale running record only after complete owner absence is proven', async () => {
+    await app.close();
+    deps._executions.clear();
+    const record = {
+      id: 'inv-stale-record',
+      threadId: 'thread-a',
+      userId: USER_ID,
+      userMessageId: null,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      status: 'running',
+      idempotencyKey: 'stale-running-record',
+      actionLeaseCarrier: { kind: 'none' },
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 60_000,
+    };
+    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.invocationRecordStore = {
+      listRunningByThread: mock.fn(async () => (record.status === 'running' ? [record] : [])),
+      get: mock.fn(async (id) => (id === record.id ? record : null)),
+      update: mock.fn(async (id, update) => {
+        if (id !== record.id || (update.expectedStatus && update.expectedStatus !== record.status)) return null;
+        Object.assign(record, update, { updatedAt: Date.now() });
+        return record;
+      }),
+    };
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: true }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const projection = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+
+    assert.equal(projection.statusCode, 200);
+    assert.equal(record.status, 'failed');
+    assert.equal(record.error, 'control_plane_unavailable');
+    assert.equal(
+      projection.json().executions.some((execution) => execution.executionId === record.id),
+      false,
+      'a record terminalized by read-repair must not remain projected as running',
+    );
+  });
+
+  it('never mutates a stale running record while process-owner truth is incomplete', async () => {
+    await app.close();
+    deps._executions.clear();
+    const record = {
+      id: 'inv-stale-unverified',
+      threadId: 'thread-a',
+      userId: USER_ID,
+      userMessageId: null,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      status: 'running',
+      idempotencyKey: 'stale-unverified-record',
+      actionLeaseCarrier: { kind: 'none' },
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 60_000,
+    };
+    const update = mock.fn(async () => null);
+    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.invocationRecordStore = {
+      listRunningByThread: mock.fn(async () => [record]),
+      get: mock.fn(async (id) => (id === record.id ? record : null)),
+      update,
+    };
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: false }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const projection = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+
+    assert.equal(projection.statusCode, 200);
+    assert.equal(record.status, 'running');
+    assert.equal(update.mock.callCount(), 0);
+    assert.ok(
+      projection.json().executions.some((execution) => execution.executionId === record.id),
+      'unknown process truth must preserve the running projection until Stop performs bounded reconciliation',
+    );
+  });
+
+  it('keeps known process-owner liveness visible and stoppable while owner truth is incomplete', async () => {
     const owner = {
       executionId: 'inv-owner-incomplete',
       invocationId: 'turn-owner-incomplete',
@@ -769,13 +888,20 @@ describe('F295 active execution projection', () => {
 
     const execution = projection.json().executions.find((candidate) => candidate.executionId === owner.executionId);
     assert.ok(execution, 'known liveness remains visible during control-plane degradation');
-    assert.deepEqual(execution.cancelability, {
-      state: 'not_cancelable',
-      reason: 'control_plane_unavailable',
+    assert.equal(execution.cancelability.state, 'cancelable');
+
+    const cancel = await app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-a/executions/live/${owner.executionId}/cancel`,
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: owner.catId },
     });
+    assert.equal(cancel.statusCode, 200);
+    assert.equal(cancel.json().reconciled, true);
+    assert.deepEqual(deps._cancelCalls, []);
   });
 
-  it('reports control-plane degradation instead of claiming an exact process execution is inactive', async () => {
+  it('terminalizes a hidden exact execution after bounded control-plane degradation', async () => {
     await app.close();
     deps._executions.clear();
     deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: false }));
@@ -790,11 +916,12 @@ describe('F295 active execution projection', () => {
       payload: { catId: 'opus5' },
     });
 
-    assert.equal(cancel.statusCode, 503);
-    assert.equal(cancel.json().code, 'EXECUTION_CONTROL_UNAVAILABLE');
+    assert.equal(cancel.statusCode, 200);
+    assert.equal(cancel.json().reconciled, true);
+    assert.equal(deps.cliExecutionOwnerService.listLive.mock.callCount(), 3);
   });
 
-  it('reports a degraded exact termination scan separately from process inactivity', async () => {
+  it('terminalizes failed after a degraded exact termination scan', async () => {
     deps._processOwners.push({
       executionId: 'inv-terminate-degraded',
       invocationId: 'turn-terminate-degraded',
@@ -803,7 +930,7 @@ describe('F295 active execution projection', () => {
       userId: USER_ID,
       startedAt: 476,
     });
-    deps.cliExecutionOwnerService.terminateExact.mock.mockImplementationOnce(async () => ({
+    deps.cliExecutionOwnerService.terminateExact.mock.mockImplementation(async () => ({
       matched: 0,
       signaled: 0,
       complete: false,
@@ -816,9 +943,116 @@ describe('F295 active execution projection', () => {
       payload: { catId: 'opus5' },
     });
 
-    assert.equal(cancel.statusCode, 503);
-    assert.equal(cancel.json().code, 'EXECUTION_CONTROL_UNAVAILABLE');
-    assert.deepEqual(deps._turnTerminalCalls, []);
+    assert.equal(cancel.statusCode, 200);
+    assert.equal(cancel.json().reconciled, true);
+    assert.equal(deps.cliExecutionOwnerService.terminateExact.mock.callCount(), 3);
+    assert.equal(deps._turnTerminalCalls.at(-1)?.terminal.status, 'failed');
+    assert.equal(deps._turnTerminalCalls.at(-1)?.terminal.terminalReason, 'control_plane_unavailable');
+  });
+
+  it('persists control-plane failure through the ordinary response and input settlement chain', async () => {
+    await app.close();
+    deps._executions.clear();
+    const messageStore = new MessageStore();
+    const recordStore = new InvocationRecordStore();
+    const turnStore = new InMemoryTurnExecutionStore();
+    const source = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER_ID,
+        threadId: 'thread-a',
+        catId: 'opus5',
+        content: '@kimi continue',
+        mentions: ['kimi'],
+        timestamp: 100,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '100:source',
+          invocationId: 'source-turn',
+          targetId: 'opus5',
+          inputEntryIds: ['source-entry'],
+          inputMessageIds: ['source-input'],
+          status: 'completed',
+          startedAt: 90,
+          completedAt: 100,
+          dispatchRefs: [{ targetId: 'kimi', phase: 'assigned' }],
+        },
+      }),
+    );
+    const parent = recordStore.create({
+      threadId: 'thread-a',
+      userId: USER_ID,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      idempotencyKey: 'control-plane-failure-parent',
+      actionLeaseCarrier: { kind: 'none' },
+    });
+    recordStore.update(parent.invocationId, { status: 'running' });
+    const childInvocationId = 'turn-control-plane-failed';
+    turnStore.createRunning({
+      invocationId: childInvocationId,
+      parentInvocationId: parent.invocationId,
+      threadId: 'thread-a',
+      userId: USER_ID,
+      catId: 'kimi',
+      executionKind: 'ordinary',
+      startedAt: 110,
+    });
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER_ID,
+        threadId: 'thread-a',
+        catId: 'kimi',
+        content: '',
+        mentions: [],
+        timestamp: 110,
+        replyTo: source.id,
+        idempotencyKey: `message-lifecycle-response:${childInvocationId}`,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '110:response',
+          invocationId: childInvocationId,
+          targetId: 'kimi',
+          inputEntryIds: ['child-entry'],
+          inputMessageIds: [source.id],
+          status: 'processing',
+          startedAt: 110,
+        },
+      }),
+    );
+    assert.equal(
+      messageStore.advanceLifecycleInputDispatch(source.id, {
+        orderKey: '100:source',
+        from: { kind: 'agent', catId: 'opus5' },
+        targetId: 'kimi',
+        phase: 'dispatched',
+        statusMessageId: response.id,
+      }).kind,
+      'applied',
+    );
+    deps.messageStore = messageStore;
+    deps.invocationRecordStore = recordStore;
+    deps.turnExecutionStore = turnStore;
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: false }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const stopped = await app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-a/executions/live/${parent.invocationId}/cancel`,
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'kimi' },
+    });
+
+    assert.equal(stopped.statusCode, 200);
+    assert.equal(stopped.json().reconciled, true);
+    assert.equal(messageStore.getById(response.id).lifecycle.status, 'failed');
+    assert.equal(messageStore.getById(response.id).lifecycle.reason, 'control_plane_unavailable');
+    assert.deepEqual(messageStore.getById(source.id).lifecycle.dispatchRefs, [
+      { targetId: 'kimi', phase: 'settled', statusMessageId: response.id },
+    ]);
+    assert.equal(recordStore.get(parent.invocationId).status, 'failed');
+    assert.equal(turnStore.get(childInvocationId).status, 'failed');
   });
 
   it('shows but never leaks or cancels a scheduler process on an indexed system thread', async () => {

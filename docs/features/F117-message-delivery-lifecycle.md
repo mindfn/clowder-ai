@@ -5,12 +5,12 @@ related_decisions: [043]
 topics: [message, queue, delivery, lifecycle, context]
 doc_kind: spec
 created: 2026-03-14
-tips_exempt: automatic owner-timeline and cat-delivery consistency hardening; no new user action or standalone capability to teach
+tips_exempt: 2026-09-03 Phase E renews automatic owner-timeline, Stop, and cat-delivery consistency hardening; the user still has one existing Stop action and no new standalone capability to teach
 ---
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: done — Phase C/D implemented locally with cross-family APPROVE at `ef62ea7a8`; Phase E acceptance corrections (co-creator worktree acceptance 2026-09-03) in progress in PR #1398 before fork soak / upstream | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: done — Phase C/D implemented locally with cross-family APPROVE at `ef62ea7a8`; Phase E acceptance corrections are code/test complete in PR #1398, pending exact-HEAD cross-family review and co-creator worktree re-experience before fork soak / upstream | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -287,15 +287,15 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-D8: Redis hydrate 对旧/损坏 row fail closed；启动恢复、fan-out、并发 claim 与 terminal replay 有真 Redis 覆盖
 - [x] AC-D9: terminal row 不可复活；旧 Message-custody Gate 5 retry bridge 退役，重做必须由新用户意图产生新 source
 
-### Phase E（验收修正，2026-09-03）— 实施中
+### Phase E（验收修正，2026-09-03）— 代码与测试完成，待跨族复审 / worktree 体验
 
-- [ ] AC-E1: 隔离 Redis 下，猫的 terminal 回复获得 `visibilitySeq` 并进入 `msg:visibility` index；另一只猫的 cursor 读（prompt 增量 / `get_thread_context`）返回该回复
-- [ ] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
-- [ ] AC-E3: 无 filter 完整读取接管 exact source×target 行（A+B 独立）；存在无 messageId / typed custody 的 queued 行时全量读仍 200；接管后原消息保持 authored 顺序（精确顺序断言）
-- [ ] AC-E4: Steer 对任一可选 target 提供「不中断继续发送」；非 exact carrier 回退为 next_work 且回执显示 `fallbackReason`
-- [ ] AC-E5: 失败 response 只呈现一次错误正文
-- [ ] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
-- [ ] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；Windows 等无进程归属层的平台视为 complete；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
+- [x] AC-E1: 隔离 Redis 下，猫的 terminal 回复获得 `visibilitySeq` 并进入 `msg:visibility` index；另一只猫的 cursor 读（prompt 增量 / `get_thread_context`）返回该回复
+- [x] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
+- [x] AC-E3: 无 filter 完整读取接管 exact source×target 行（A+B 独立）；存在无 messageId / typed custody 的 queued 行时全量读仍 200；接管后原消息保持 authored 顺序（精确顺序断言）
+- [x] AC-E4: Steer 对任一可选 target 提供「不中断继续发送」；非 exact carrier 回退为 next_work 且回执显示 `fallbackReason`
+- [x] AC-E5: 失败 response 只呈现一次错误正文
+- [x] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
+- [x] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；Windows 等无进程归属层的平台视为 complete；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
 
 ## Scope Boundary
 

@@ -24,7 +24,7 @@ import {
   unresolvedSubjectWithoutActiveCustodyTotal,
 } from '../../../../../infrastructure/telemetry/instruments.js';
 import { commitCompletedResponseAndEnqueueA2ATargets } from '../../../../../routes/callback-a2a-trigger.js';
-import { emitQueueUpdated } from '../../../../../utils/queue-enrichment.js';
+import { emitQueueUpdated, isPublicQueueEntry } from '../../../../../utils/queue-enrichment.js';
 import type { A2ADispatchDispositionService } from '../../../../ball-custody/A2ADispatchDispositionService.js';
 import type { ActionSuccessorLeaseStore } from '../../../../ball-custody/ActionSuccessorLeaseStore.js';
 import type { TurnCustodyWakeProvenance } from '../../../../ball-custody/TurnCustodyProjectionService.js';
@@ -120,7 +120,7 @@ import {
   queueEntryTargetCats,
 } from './InvocationQueue.js';
 import {
-  DEFAULT_INVOCATION_SLOT_TTL_MS,
+  DEFAULT_PRESTART_RESERVATION_TTL_MS,
   type ExactExecutionOwnerState,
   type ExecutionAdmissionGuard,
   type ExecutionOwnerMatch,
@@ -711,7 +711,7 @@ export class QueueProcessor {
 
   constructor(deps: QueueProcessorDeps, opts?: { processingSlotTtlMs?: number }) {
     this.deps = deps;
-    this.processingSlotTtlMs = opts?.processingSlotTtlMs ?? DEFAULT_INVOCATION_SLOT_TTL_MS;
+    this.processingSlotTtlMs = opts?.processingSlotTtlMs ?? DEFAULT_PRESTART_RESERVATION_TTL_MS;
     this.sessionContinuationCoordinator =
       deps.sessionContinuationCoordinator ?? QueueProcessor.createSessionContinuationCoordinator(deps.threadStore);
   }
@@ -1542,6 +1542,64 @@ export class QueueProcessor {
   }
 
   /**
+   * Fail a tracker-less create→startAll group through the ordinary delivery
+   * lifecycle. Public sources receive an adjacent delivery_failure and settle
+   * their exact target ref; typed/private carriers keep their own producer
+   * terminalization and never manufacture a History row.
+   */
+  async failPrestartProcessingGroup(
+    threadId: string,
+    catId: string,
+    userId: string,
+    reason: 'control_plane_unavailable',
+  ): Promise<PrestartRetirementOutcome> {
+    const retirements = this.preparePrestartRetirements(threadId, [catId], userId);
+    if (!retirements || retirements.length !== 1) return 'state_changed';
+
+    for (const retirement of retirements) {
+      for (const carrier of retirement.carriers) {
+        if (!(await this.finalizeRemovedEntry(carrier, 'infrastructure'))) return 'terminalization_failed';
+        if (isPublicQueueEntry(carrier)) {
+          const sourceMessageId = carrier.payload.messageId;
+          const source = sourceMessageId ? await this.deps.messageStore.getById(sourceMessageId) : null;
+          if (!source) return 'terminalization_failed';
+          const requestedTargets = [...queueEntryTargetCats(carrier)];
+          const failedAt = Math.max(Date.now(), source.timestamp);
+          const failure = await this.deps.messageStore.commitLifecyclePreAdmissionFailure({
+            sourceMessageId: source.id,
+            expectedEntryId: carrier.id,
+            requestedTargets,
+            reason,
+            content: `唤起${requestedTargets.join('、') || catId}失败：执行控制面不可用。`,
+            failedAt,
+          });
+          if (failure.kind !== 'applied' && failure.kind !== 'replayed') return 'terminalization_failed';
+          this.emitLifecycleMessageUpdated(queueEntryOwnerId(carrier), failure.inputMessage);
+          this.emitLifecycleMessageUpdated(queueEntryOwnerId(carrier), failure.failureMessage);
+        }
+        const terminal = await this.deps.queue.removeProcessedAcrossUsersDurable(
+          carrier.threadId,
+          carrier.id,
+          'failed',
+          'invocation_failed',
+        );
+        if (!terminal) return 'terminalization_failed';
+      }
+    }
+
+    if (!this.commitPreparedPrestartRetirements(retirements)) return 'state_changed';
+    await emitQueueUpdated(
+      this.deps.socketManager,
+      userId,
+      threadId,
+      this.deps.queue.list(threadId, userId),
+      this.deps.messageStore,
+      'pre_admission_failed',
+    );
+    return 'retired';
+  }
+
+  /**
    * Force-reset recovery for canonical pre-start owners that have no tracker,
    * invocation record, or session lock witness yet. Snapshot the user-owned
    * thread slots, install every barrier synchronously, then terminalize their
@@ -2265,12 +2323,7 @@ export class QueueProcessor {
 
   /** Active execution only; queued leftovers are not enough to keep new broadcasts in queue mode. */
   hasActiveExecution(threadId: string): boolean {
-    if (this.deps.invocationTracker.has(threadId)) return true;
-    for (const [key, reservation] of this.processingSlots) {
-      if (!QueueProcessor.slotMatchesThread(key, threadId)) continue;
-      if (reservation) return true;
-    }
-    return false;
+    return this.deps.invocationTracker.has(threadId);
   }
 
   /** F151: Signal streaming adapters that delivery is done for this thread invocation.
