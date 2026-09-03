@@ -5,6 +5,7 @@ export type QueueReceiptTargetState =
   | 'seen'
   | 'failed'
   | 'interrupted'
+  | 'cancelled'
   | 'steering'
   | 'withdrawn'
   | 'handled';
@@ -151,6 +152,9 @@ export type QueueTargetAttemptState =
   | 'handled';
 export type QueueTargetAttemptTerminalReason =
   | 'invocation_failed'
+  | 'control_plane_unavailable'
+  | 'execution_owner_lost'
+  | 'prestart_timeout'
   | 'runtime_restart'
   | 'invocation_cancelled'
   | 'source_withdrawn';
@@ -165,6 +169,12 @@ export interface QueueTargetAttempt {
   invocationId?: string;
   /** Exact prompt-body exposure time when this attempt reached a reply. */
   seenAt?: number;
+  /**
+   * Durable provider acknowledgement that this source entered an already-active
+   * invocation through the client's generic append capability. Mere exposure,
+   * batching, or matching invocation ids must never populate this field.
+   */
+  activeAppendAcceptedAt?: number;
   terminalReason?: QueueTargetAttemptTerminalReason;
 }
 
@@ -182,8 +192,6 @@ export interface QueueReceiptTarget {
   outcome?: QueueTargetOutcome;
   /** Append-only target-local delivery history. Missing only on legacy receipts. */
   attempts?: QueueTargetAttempt[];
-  /** False when no durable retry is possible or the fenced business action is already terminal. */
-  retryable?: boolean;
 }
 
 export interface QueueMessageReceipt {

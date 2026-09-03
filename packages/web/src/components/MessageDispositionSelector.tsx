@@ -60,8 +60,6 @@ export function MessageDispositionSelector({
     }
     return { disposition: controller.snapshot.productDefault, source: 'product' as const };
   }, [controller, scope]);
-  const displayedDisposition =
-    controller.effective === 'continue_current' && carrierSupport !== 'exact' ? 'next_work' : controller.effective;
   const carrierCopy = unsupportedCarrierCopy(carrierSupport);
 
   useEffect(() => {
@@ -117,7 +115,7 @@ export function MessageDispositionSelector({
         title="选择这条消息进入当前工作，还是成为下一件工作"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-cocreator-primary)]" aria-hidden />
-        <span>{DISPOSITION_LABEL[displayedDisposition]}</span>
+        <span>{DISPOSITION_LABEL[controller.effective]}</span>
         <span className="text-cafe-muted">· {SOURCE_LABEL[controller.source]}</span>
         <span aria-hidden className="text-cafe-muted">
           {open ? '↑' : '↓'}
@@ -187,14 +185,10 @@ export function MessageDispositionSelector({
                 type="button"
                 data-disposition-option={disposition}
                 aria-pressed={scopeOverride === disposition}
-                disabled={controller.loading || (disposition === 'continue_current' && carrierSupport !== 'exact')}
+                disabled={controller.loading}
                 onClick={() => void choose(disposition)}
                 className={`flex items-start gap-2 rounded-xl border border-cafe px-3 py-2 text-left transition-colors hover:bg-cafe-surface-elevated disabled:opacity-60 ${
-                  controller.loading
-                    ? 'disabled:cursor-wait'
-                    : disposition === 'continue_current' && carrierSupport !== 'exact'
-                      ? 'disabled:cursor-not-allowed'
-                      : ''
+                  controller.loading ? 'disabled:cursor-wait' : ''
                 }`}
               >
                 <span
@@ -212,7 +206,7 @@ export function MessageDispositionSelector({
                       ? '当前轮不可见；当前轮结束后自然开始。'
                       : carrierSupport === 'exact'
                         ? '等待本轮在 provider safe-boundary 精确读取；未读到会自动转成下一件工作。'
-                        : carrierCopy}
+                        : '仍可选择；若当前接入无法追加，服务端会把它作为下一件工作启动。'}
                   </span>
                 </span>
               </button>
