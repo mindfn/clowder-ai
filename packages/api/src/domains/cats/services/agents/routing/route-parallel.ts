@@ -95,7 +95,7 @@ import { signatureLintExtra } from './cat-signature-lint.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
-import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { composeTerminalFailureContent, persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -1742,6 +1742,17 @@ export async function* routeParallel(
               ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
             }
           : undefined;
+      const providerFailureText = catErrorText.get(msg.catId);
+      const terminalFailureContent =
+        lifecycleResponse && providerFailureText
+          ? composeTerminalFailureContent({
+              catId: msg.catId,
+              ...(bridgeTriggerMessageId ? { sourceMessageId: bridgeTriggerMessageId } : {}),
+              reason: lifecycleTerminalReason ?? lifecycleTerminalStatus,
+              providerFailureText,
+              systemInfoContents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
+            })
+          : undefined;
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(
           text || bufferedBlocks.length > 0 || (catToolEvents.get(msg.catId)?.length ?? 0) > 0,
@@ -1948,10 +1959,7 @@ export async function* routeParallel(
           const streamMessageInput: AppendMessageInput = {
             from: { kind: 'agent', catId: msg.catId as CatId },
             userId,
-            content:
-              lifecycleResponse && catErrorText.get(msg.catId)
-                ? `${storedContent}\n\nError: ${catErrorText.get(msg.catId)}`
-                : storedContent,
+            content: terminalFailureContent ? `${storedContent}\n\n${terminalFailureContent}` : storedContent,
             mentions: [],
             origin: 'stream',
             timestamp: invocationStartedAt,
@@ -2297,7 +2305,7 @@ export async function* routeParallel(
             const errorMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId: msg.catId as CatId },
               userId,
-              content: lifecycleResponse && catErrorText.get(msg.catId) ? `Error: ${catErrorText.get(msg.catId)}` : '',
+              content: terminalFailureContent ?? '',
               mentions: [],
               origin: 'stream',
               timestamp: invocationStartedAt,
@@ -2379,7 +2387,9 @@ export async function* routeParallel(
         contents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
         ...(bridgeTriggerMessageId ? { expectedSourceMessageId: bridgeTriggerMessageId } : {}),
         ...(ownInvId ? { expectedDispatchInvocationId: ownInvId } : {}),
-        ...(lifecycleErrorOwnedByResponse && errorText ? { terminalFailureText: errorText } : {}),
+        ...(lifecycleErrorOwnedByResponse && terminalFailureContent
+          ? { terminalFailureText: terminalFailureContent }
+          : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
       catUserFacingSystemInfoContents.delete(msg.catId);

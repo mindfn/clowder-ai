@@ -86,7 +86,9 @@ export type LifecycleDeliveryFailureReason =
   | 'invalid_explicit_target'
   | 'control_carrier_missing'
   | 'control_carrier_replaced'
-  | 'control_plane_unavailable';
+  | 'control_plane_unavailable'
+  | 'execution_owner_lost'
+  | 'prestart_timeout';
 
 /**
  * Durable lifecycle metadata stored beside the canonical message body.
@@ -200,6 +202,8 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
         'control_carrier_missing',
         'control_carrier_replaced',
         'control_plane_unavailable',
+        'execution_owner_lost',
+        'prestart_timeout',
       ].includes(String(candidate.reason)) &&
       isFiniteTimestamp(candidate.createdAt)
     );

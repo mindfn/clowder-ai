@@ -1404,16 +1404,22 @@ export class QueueProcessor {
 
   private async recoverExpiredPrestartReservation(
     threadId: string,
+    catId: string,
     reservation: ProcessingSlotReservation,
-  ): Promise<boolean> {
-    if (reservation.trackerStarted) return false;
+  ): Promise<'requeued' | 'terminalized' | 'released' | 'blocked'> {
+    if (reservation.trackerStarted) return 'blocked';
     const current = this.deps.queue.getEntrySnapshot(threadId, reservation.userId, reservation.entryId);
-    if (current?.status !== 'claimed') return false;
-    if (!(await this.deps.queue.rollbackProcessingDurable(threadId, reservation.entryId))) return false;
-    const requeued = this.deps.queue.getEntrySnapshot(threadId, reservation.userId, reservation.entryId);
-    if (requeued?.status !== 'queued') return false;
-    this.publishRequeuedPrestartEntry(requeued);
-    return true;
+    if (!current) return 'released';
+    if (current.status === 'claimed') {
+      if (!(await this.deps.queue.rollbackProcessingDurable(threadId, reservation.entryId))) return 'blocked';
+      const requeued = this.deps.queue.getEntrySnapshot(threadId, reservation.userId, reservation.entryId);
+      if (requeued?.status !== 'queued') return 'blocked';
+      this.publishRequeuedPrestartEntry(requeued);
+      return 'requeued';
+    }
+    if (current.status !== 'processing') return 'released';
+    const outcome = await this.failPrestartProcessingGroup(threadId, catId, reservation.userId, 'prestart_timeout');
+    return outcome === 'retired' ? 'terminalized' : 'blocked';
   }
 
   private bindProcessingSlotInvocation(
@@ -1551,7 +1557,7 @@ export class QueueProcessor {
     threadId: string,
     catId: string,
     userId: string,
-    reason: 'control_plane_unavailable',
+    reason: 'control_plane_unavailable' | 'execution_owner_lost' | 'prestart_timeout',
   ): Promise<PrestartRetirementOutcome> {
     const retirements = this.preparePrestartRetirements(threadId, [catId], userId);
     if (!retirements || retirements.length !== 1) return 'state_changed';
@@ -1565,12 +1571,18 @@ export class QueueProcessor {
           if (!source) return 'terminalization_failed';
           const requestedTargets = [...queueEntryTargetCats(carrier)];
           const failedAt = Math.max(Date.now(), source.timestamp);
+          const reasonText =
+            reason === 'control_plane_unavailable'
+              ? '执行控制面不可用'
+              : reason === 'execution_owner_lost'
+                ? '执行进程归属已丢失'
+                : '启动阶段超时';
           const failure = await this.deps.messageStore.commitLifecyclePreAdmissionFailure({
             sourceMessageId: source.id,
             expectedEntryId: carrier.id,
             requestedTargets,
             reason,
-            content: `唤起${requestedTargets.join('、') || catId}失败：执行控制面不可用。`,
+            content: `唤起${requestedTargets.join('、') || catId}失败：${reasonText}（${reason}）。来源消息：${source.id}。`,
             failedAt,
           });
           if (failure.kind !== 'applied' && failure.kind !== 'replayed') return 'terminalization_failed';
@@ -1581,7 +1593,7 @@ export class QueueProcessor {
           carrier.threadId,
           carrier.id,
           'failed',
-          'invocation_failed',
+          reason,
         );
         if (!terminal) return 'terminalization_failed';
       }
@@ -1786,8 +1798,9 @@ export class QueueProcessor {
         continue;
       const scope = QueueProcessor.parseSlotKey(key);
       if (!scope || this.deps.invocationTracker.has(scope.threadId, scope.catId)) continue;
-      if (!this.releaseProcessingSlot(key, reservation)) continue;
-      const queueEntryRequeued = await this.recoverExpiredPrestartReservation(scope.threadId, reservation);
+      const recovery = await this.recoverExpiredPrestartReservation(scope.threadId, scope.catId, reservation);
+      if (recovery === 'blocked') continue;
+      if (this.processingSlots.get(key) === reservation && !this.releaseProcessingSlot(key, reservation)) continue;
       reaped += 1;
       this.deps.log.warn(
         {
@@ -1796,7 +1809,7 @@ export class QueueProcessor {
           catId: scope.catId,
           entryId: reservation.entryId,
           ageMs: now - reservation.startedAt,
-          queueEntryRequeued,
+          recovery,
         },
         '[F118] stale pre-provider reservation released by explicit owner reaper',
       );
@@ -2319,11 +2332,6 @@ export class QueueProcessor {
       if (QueueProcessor.slotMatchesThread(key, threadId)) return true;
     }
     return false;
-  }
-
-  /** Active execution only; queued leftovers are not enough to keep new broadcasts in queue mode. */
-  hasActiveExecution(threadId: string): boolean {
-    return this.deps.invocationTracker.has(threadId);
   }
 
   /** F151: Signal streaming adapters that delivery is done for this thread invocation.

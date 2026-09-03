@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { persistUserFacingSystemInfoNotices } from '../dist/domains/cats/services/agents/routing/persist-system-info-warnings.js';
+import {
+  composeTerminalFailureContent,
+  persistUserFacingSystemInfoNotices,
+} from '../dist/domains/cats/services/agents/routing/persist-system-info-warnings.js';
 import { isUserFacingSystemInfoContent } from '../dist/domains/cats/services/agents/routing/route-helpers.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 
@@ -77,5 +80,23 @@ describe('F296 oversized native rollover response-owned diagnostics', () => {
       warnings.map((message) => message.content),
       ['⚠️ 另一条独立警告'],
     );
+  });
+
+  it('composes provider and warning diagnostics into one source-bound member failure body', async () => {
+    const content = composeTerminalFailureContent({
+      catId: 'codex-sol',
+      sourceMessageId: 'message-source-1',
+      reason: 'provider_error',
+      providerFailureText: 'Codex CLI: CLI 异常退出 (code=1)',
+      systemInfoContents: [
+        JSON.stringify({ type: 'warning', message: 'thread-store conflict: expected revision 9' }),
+        JSON.stringify({ type: 'warning', message: 'thread-store conflict: expected revision 9' }),
+      ],
+    });
+
+    assert.match(content, /@codex-sol 处理失败（provider_error）/);
+    assert.match(content, /来源消息：message-source-1/);
+    assert.match(content, /Codex CLI: CLI 异常退出 \(code=1\)/);
+    assert.equal(content.match(/thread-store conflict/g)?.length, 1);
   });
 });

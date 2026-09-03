@@ -132,7 +132,7 @@ export function ConciergePanel() {
   }, [muted, setMuted, setSurfaceState]);
 
   // F229 UX: cancel/stop in-progress invocation via scoped per-cat cancel (F122B AC-B9).
-  // Uses /cancel/:catId (scoped to the duty cat) instead of /force-reset (whole-thread nuclear).
+  // Uses the duty cat's exact Stop action rather than the internal thread-wide reconciler.
   // dutyCatId comes from useConciergeQueue which polls activeInvocations during in_progress.
   const [cancelLoading, setCancelLoading] = useState(false);
   const handleCancel = useCallback(async () => {

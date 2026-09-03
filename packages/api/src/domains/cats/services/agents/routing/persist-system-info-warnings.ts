@@ -109,11 +109,36 @@ function normalizedFailureText(value: string): string {
   return value.replace(/^(?:⚠️\s*|Error:\s*)+/u, '').trim();
 }
 
+export function composeTerminalFailureContent(options: {
+  catId: string;
+  sourceMessageId?: string;
+  reason: string;
+  providerFailureText: string;
+  systemInfoContents: readonly string[];
+}): string {
+  const details: string[] = [];
+  const pushDetail = (value: string): void => {
+    const normalized = normalizedFailureText(value);
+    if (!normalized || details.some((detail) => normalizedFailureText(detail) === normalized)) return;
+    details.push(value.trim());
+  };
+  pushDetail(options.providerFailureText);
+  for (const content of options.systemInfoContents) {
+    const notice = parseVisibleNotice(content, options.catId);
+    if (notice?.connector === 'system-warning') pushDetail(notice.content);
+  }
+  return [
+    `@${options.catId} 处理失败（${options.reason}）。`,
+    ...(options.sourceMessageId ? [`来源消息：${options.sourceMessageId}。`] : []),
+    ...details,
+  ].join('\n\n');
+}
+
 function duplicatesTerminalFailure(notice: VisibleNotice, terminalFailureText: string | undefined): boolean {
   return (
     notice.connector === 'system-warning' &&
     typeof terminalFailureText === 'string' &&
-    normalizedFailureText(notice.content) === normalizedFailureText(terminalFailureText)
+    normalizedFailureText(terminalFailureText).includes(normalizedFailureText(notice.content))
   );
 }
 

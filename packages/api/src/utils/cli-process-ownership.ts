@@ -587,11 +587,8 @@ export function createCliExecutionOwnerService(
     kill?: (pid: number, signal: NodeJS.Signals) => void;
     readProcessSnapshot?: ReadProcessSnapshot;
     log?: CliExecutionOwnerLog;
-    /** Unix `ps` ownership is intentionally absent on Windows. */
-    platform?: NodeJS.Platform;
   } = {},
 ): CliExecutionOwnerService {
-  const platform = options.platform ?? process.platform;
   const processSnapshotReader = options.readProcessSnapshot ?? readUnixProcessSnapshot;
   const readRecoverableRecords = (): { records: CliProcessOwnerRecord[]; complete: boolean } => {
     let discovered: ReadOwnerRecordsResult;
@@ -616,7 +613,6 @@ export function createCliExecutionOwnerService(
   };
   return {
     async listLive() {
-      if (platform === 'win32') return { owners: [], complete: true };
       const { records, complete } = readRecoverableRecords();
       const snapshot = await ownerIdentitySnapshot(records, processSnapshotReader);
       if (!snapshot) return { owners: [], complete: false };
@@ -626,7 +622,6 @@ export function createCliExecutionOwnerService(
       };
     },
     async terminateExact(execution) {
-      if (platform === 'win32') return { matched: 0, signaled: 0, complete: true };
       const { records, complete } = readRecoverableRecords();
       const snapshot = await ownerIdentitySnapshot(records, processSnapshotReader);
       if (!snapshot) return { matched: 0, signaled: 0, complete: false };

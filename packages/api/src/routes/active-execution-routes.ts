@@ -150,7 +150,7 @@ function projectLiveExecution(
         }
       : {
           state: 'not_cancelable',
-          reason: canControl ? 'control_plane_unavailable' : 'foreign_principal',
+          reason: 'foreign_principal',
         },
     ...(canControl && candidate.inputCapabilities ? { inputCapabilities: candidate.inputCapabilities } : {}),
   };

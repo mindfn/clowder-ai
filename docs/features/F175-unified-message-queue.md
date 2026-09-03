@@ -5,6 +5,7 @@ topics: [queue, dispatch, priority, invocation, connector, architecture]
 doc_kind: spec
 created: 2026-04-24
 intake_source: clowder-ai#575
+tips_exempt: 2026-09-03 ADR-043 replaces internal Queue custody and settlement mechanics while preserving the existing priority and reorder user journey
 ---
 
 # F175: 消息队列统一设计 — 优先级排序 + 用户可控编排

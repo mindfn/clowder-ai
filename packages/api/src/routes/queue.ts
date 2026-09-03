@@ -121,6 +121,36 @@ interface ProcessOwnerSnapshot {
 
 const processOwnerSnapshotByRequest = new WeakMap<FastifyRequest, Promise<ProcessOwnerSnapshot>>();
 const CONTROL_PLANE_RETRY_ATTEMPTS = 3;
+const CONTROL_PLANE_RETRY_DELAY_MS = 50;
+
+type ExecutionFailureReason = 'control_plane_unavailable' | 'execution_owner_lost';
+
+function executionFailureExplanation(reason: ExecutionFailureReason): string {
+  return reason === 'control_plane_unavailable' ? '执行控制面不可用' : '执行进程归属已丢失';
+}
+
+function completeExecutionFailureContent(
+  response: StoredMessage,
+  targetCatId: string,
+  reason: ExecutionFailureReason,
+): string {
+  const existing = response.content.trim();
+  const inputMessageIds = response.lifecycle?.kind === 'response' ? response.lifecycle.inputMessageIds : [];
+  const sourceMessageIds = [response.replyTo, ...inputMessageIds].filter(
+    (messageId, index, values): messageId is string => Boolean(messageId) && values.indexOf(messageId) === index,
+  );
+  const failureLine = `@${targetCatId} 处理失败：${executionFailureExplanation(reason)}（${reason}）。`;
+  const sourceLine = sourceMessageIds.length > 0 ? `来源消息：${sourceMessageIds.join('、')}。` : undefined;
+  const missingContext = [
+    ...(!existing.includes(failureLine) ? [failureLine] : []),
+    ...(sourceLine && !existing.includes(sourceLine) ? [sourceLine] : []),
+  ];
+  return [existing, ...missingContext].filter(Boolean).join('\n\n');
+}
+
+async function waitForControlPlaneRetry(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, CONTROL_PLANE_RETRY_DELAY_MS));
+}
 
 async function processOwnerSnapshotForRequest(
   request: FastifyRequest,
@@ -147,6 +177,7 @@ async function retryProcessOwnerSnapshot(
   if (!service) return { owners: [], complete: true };
   let latest = await processOwnerSnapshotForRequest(request, service);
   for (let attempt = 1; !latest.complete && attempt < CONTROL_PLANE_RETRY_ATTEMPTS; attempt += 1) {
+    await waitForControlPlaneRetry();
     try {
       const snapshot = await service.listLive();
       latest = { owners: snapshot.owners, complete: snapshot.complete };
@@ -495,11 +526,13 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     executionId: string;
     invocationId?: string;
     request: FastifyRequest;
+    reason?: ExecutionFailureReason;
   }): Promise<{ reconciled: boolean }> => {
     if (!messageStore || !opts.invocationRecordStore) {
       throw new Error('durable execution failure stores are unavailable');
     }
     const failedAt = Date.now();
+    const failureReason = input.reason ?? 'control_plane_unavailable';
     const childExecutions = opts.turnExecutionStore
       ? (await opts.turnExecutionStore.listByParent(input.executionId)).filter(
           (child) => child.threadId === input.threadId && child.userId === input.userId && child.catId === input.catId,
@@ -523,8 +556,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationId,
         status: 'failed',
         completedAt: Math.max(failedAt, response.lifecycle.startedAt),
-        reason: 'control_plane_unavailable',
-        content: response.content || '执行失败：执行控制面不可用。',
+        reason: failureReason,
+        content: completeExecutionFailureContent(response, input.catId, failureReason),
         ...(response.contentBlocks ? { contentBlocks: response.contentBlocks } : {}),
         ...(response.toolEvents ? { toolEvents: response.toolEvents } : {}),
         ...(response.metadata ? { metadata: response.metadata } : {}),
@@ -558,7 +591,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         input.threadId,
         input.catId,
         input.userId,
-        'control_plane_unavailable',
+        failureReason,
       );
       if (outcome !== 'retired') throw new Error(`pre-start failure terminalization ${outcome}`);
     }
@@ -567,14 +600,27 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       await opts.turnExecutionStore?.transitionTerminal(invocationId, {
         status: 'failed',
         endedAt: failedAt,
-        terminalReason: 'control_plane_unavailable',
+        terminalReason: failureReason,
       });
     }
     const record = await opts.invocationRecordStore.get(input.executionId);
-    if (record?.status === 'running') {
+    const siblingCatIds = (record?.targetCats ?? []).filter((catId) => catId !== input.catId);
+    const ownerSnapshot = await processOwnerSnapshotForRequest(input.request, opts.cliExecutionOwnerService);
+    const siblingStillActive = siblingCatIds.some(
+      (catId) =>
+        invocationTracker.has(input.threadId, catId) ||
+        ownerSnapshot.owners.some(
+          (owner) =>
+            owner.executionId === input.executionId &&
+            owner.threadId === input.threadId &&
+            owner.userId === input.userId &&
+            owner.catId === catId,
+        ),
+    );
+    if (record?.status === 'running' && !siblingStillActive) {
       const updated = await opts.invocationRecordStore.update(input.executionId, {
         status: 'failed',
-        error: 'control_plane_unavailable',
+        error: failureReason,
         expectedStatus: 'running',
       });
       if (!updated) throw new Error('control-plane failure parent terminalization lost its running fence');
@@ -620,6 +666,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       processResult && !processResult.complete && attempt < CONTROL_PLANE_RETRY_ATTEMPTS;
       attempt += 1
     ) {
+      await waitForControlPlaneRetry();
       processResult = await opts.cliExecutionOwnerService?.terminateExact(executionOwner);
     }
     if (!processResult?.complete) {
@@ -840,17 +887,18 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     if (!opts.invocationRecordStore) return candidates;
     const processSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
     if (!processSnapshot.complete) return candidates;
-    const ownerExecutionIds = new Set(
+    const ownerExecutionTargets = new Set(
       processSnapshot.owners
         .filter((owner) => owner.threadId === threadId && owner.userId === userId)
-        .map((owner) => owner.executionId),
+        .map((owner) => `${owner.executionId}\u0000${owner.catId}`),
     );
     const repairedExecutionIds = new Set<string>();
     const runningRecords = await opts.invocationRecordStore.listRunningByThread(threadId, userId);
     for (const record of runningRecords) {
       if (Date.now() - record.updatedAt <= DEFAULT_PRESTART_RESERVATION_TTL_MS) continue;
-      if (ownerExecutionIds.has(record.id)) continue;
-      const repairTargets = (record.targetCats as string[]).filter((catId) => !invocationTracker.has(threadId, catId));
+      const repairTargets = (record.targetCats as string[]).filter(
+        (catId) => !invocationTracker.has(threadId, catId) && !ownerExecutionTargets.has(`${record.id}\u0000${catId}`),
+      );
       if (repairTargets.length === 0) continue;
       try {
         for (const catId of repairTargets) {
@@ -860,9 +908,11 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
             catId,
             executionId: record.id,
             request,
+            reason: 'execution_owner_lost',
           });
         }
-        repairedExecutionIds.add(record.id);
+        const repairedRecord = await opts.invocationRecordStore.get(record.id);
+        if (repairedRecord?.status !== 'running') repairedExecutionIds.add(record.id);
       } catch (err) {
         request.log.error(
           { err, threadId, userId, executionId: record.id, targetCats: repairTargets },

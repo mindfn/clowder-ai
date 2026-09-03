@@ -213,7 +213,7 @@ import {
   resolveEventBackedRoutingExit,
 } from './guards/event-backed-routing-exit.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
-import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { composeTerminalFailureContent, persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -3400,6 +3400,21 @@ export async function* routeSerial(
       // text/no-text split so tool-only turns are checked too.
       const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
       let pendingAckLivenessHint = false;
+      const terminalFailureContent =
+        lifecycleResponseMessageId && collectedErrorText
+          ? composeTerminalFailureContent({
+              catId: catId as string,
+              ...(turnTriggerMessageId ? { sourceMessageId: turnTriggerMessageId } : {}),
+              reason:
+                typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+                  ? doneMsg.errorCode
+                  : catSignal?.aborted
+                    ? 'interrupted'
+                    : 'provider_error',
+              providerFailureText: collectedErrorText,
+              systemInfoContents: userFacingSystemInfoContents,
+            })
+          : undefined;
 
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);
@@ -4011,10 +4026,7 @@ export async function* routeSerial(
             const streamMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId },
               userId,
-              content:
-                lifecycleResponseMessageId && collectedErrorText
-                  ? `${storedContent}\n\nError: ${collectedErrorText}`
-                  : storedContent,
+              content: terminalFailureContent ? `${storedContent}\n\n${terminalFailureContent}` : storedContent,
               mentions: a2aMentions,
               origin: 'stream',
               timestamp: storedTimestamp,
@@ -4593,7 +4605,7 @@ export async function* routeSerial(
             const errorMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId },
               userId,
-              content: lifecycleResponseMessageId && collectedErrorText ? `Error: ${collectedErrorText}` : '',
+              content: terminalFailureContent ?? '',
               mentions: [],
               origin: 'stream',
               timestamp: invocationStartedAt,
@@ -4696,8 +4708,8 @@ export async function* routeSerial(
         contents: userFacingSystemInfoContents,
         ...(turnTriggerMessageId ? { expectedSourceMessageId: turnTriggerMessageId } : {}),
         ...(ownInvocationId ? { expectedDispatchInvocationId: ownInvocationId } : {}),
-        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId && collectedErrorText
-          ? { terminalFailureText: collectedErrorText }
+        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId && terminalFailureContent
+          ? { terminalFailureText: terminalFailureContent }
           : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });

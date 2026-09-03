@@ -4,6 +4,7 @@ related_features: [F117]
 topics: [message, queue, delivery]
 doc_kind: note
 created: 2026-02-26
+tips_exempt: 2026-09-03 ADR-043 retirement updates the existing Queue delivery contract without adding a new user action or discoverable capability
 ---
 
 # F039: 消息排队投递 — 用户操作三模式

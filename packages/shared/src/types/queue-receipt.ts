@@ -152,6 +152,9 @@ export type QueueTargetAttemptState =
   | 'handled';
 export type QueueTargetAttemptTerminalReason =
   | 'invocation_failed'
+  | 'control_plane_unavailable'
+  | 'execution_owner_lost'
+  | 'prestart_timeout'
   | 'runtime_restart'
   | 'invocation_cancelled'
   | 'source_withdrawn';

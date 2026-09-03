@@ -294,9 +294,9 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
 - [x] AC-E3: 无 filter 完整读取接管 exact source×target 行（A+B 独立）；存在无 messageId / typed custody 的 queued 行时全量读仍 200；接管后原消息保持 authored 顺序（精确顺序断言）
 - [x] AC-E4: Steer 对任一可选 target 提供「不中断继续发送」；非 exact carrier 回退为 next_work 且回执显示 `fallbackReason`
-- [ ] AC-E5: 失败 response 只呈现一次、且完整的失败正文（成员、源引用、原因与细节，含 provider 原文）；另一只猫的 cursor 读能读到该失败正文，无需用户转达（2026-09-03 收紧，待实现）
+- [x] AC-E5: 失败 response 只呈现一次、且完整的失败正文（成员、源引用、原因与细节，含 provider 原文）；另一只猫的 cursor 读能读到该失败正文，无需用户转达
 - [x] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
-- [x] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；Windows 等无进程归属层的平台视为 complete；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
+- [x] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；不做平台兼容分支，Windows 子进程不可观测时同样走 fail 收敛；确认无 owner 的 read-repair 使用 `execution_owner_lost`，pre-start processing 超时使用 `prestart_timeout`；单个 child 失败不终局仍有 tracker/process-owner 见证的 sibling parent；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
 
 ## Scope Boundary
 

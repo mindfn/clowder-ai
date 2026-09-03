@@ -4,7 +4,7 @@ related_features: [F039]
 topics: [queue, steer, ux, chat]
 doc_kind: note
 created: 2026-02-28
-tips_exempt: existing Queue UI contract correction; no new cat-facing capability or workflow to teach
+tips_exempt: 2026-09-03 ADR-043 renews the existing Queue Steer contract and removes stale gates without adding a new user action or discoverable capability
 ---
 
 # F047: Queue Steer（取消当前轮并以同一消息立即重启）

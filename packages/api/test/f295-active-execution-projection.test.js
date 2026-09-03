@@ -815,7 +815,7 @@ describe('F295 active execution projection', () => {
 
     assert.equal(projection.statusCode, 200);
     assert.equal(record.status, 'failed');
-    assert.equal(record.error, 'control_plane_unavailable');
+    assert.equal(record.error, 'execution_owner_lost');
     assert.equal(
       projection.json().executions.some((execution) => execution.executionId === record.id),
       false,
@@ -1002,7 +1002,7 @@ describe('F295 active execution projection', () => {
         userId: USER_ID,
         threadId: 'thread-a',
         catId: 'kimi',
-        content: '',
+        content: '已完成一部分分析，日志提到 control_plane_unavailable。',
         mentions: [],
         timestamp: 110,
         replyTo: source.id,
@@ -1048,11 +1048,132 @@ describe('F295 active execution projection', () => {
     assert.equal(stopped.json().reconciled, true);
     assert.equal(messageStore.getById(response.id).lifecycle.status, 'failed');
     assert.equal(messageStore.getById(response.id).lifecycle.reason, 'control_plane_unavailable');
+    assert.match(messageStore.getById(response.id).content, /已完成一部分分析/);
+    assert.match(messageStore.getById(response.id).content, /@kimi 处理失败/);
+    assert.match(messageStore.getById(response.id).content, /control_plane_unavailable/);
+    assert.match(messageStore.getById(response.id).content, new RegExp(`来源消息：${source.id}`));
     assert.deepEqual(messageStore.getById(source.id).lifecycle.dispatchRefs, [
       { targetId: 'kimi', phase: 'settled', statusMessageId: response.id },
     ]);
     assert.equal(recordStore.get(parent.invocationId).status, 'failed');
     assert.equal(turnStore.get(childInvocationId).status, 'failed');
+  });
+
+  it('fails only the uncontrollable child while a sibling remains live and cancelable', async () => {
+    await app.close();
+    deps._executions.clear();
+    const messageStore = new MessageStore();
+    const recordStore = new InvocationRecordStore();
+    const turnStore = new InMemoryTurnExecutionStore();
+    const source = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER_ID,
+        threadId: 'thread-a',
+        catId: 'opus5',
+        content: '@opus5 @kimi compare',
+        mentions: ['opus5', 'kimi'],
+        timestamp: 200,
+        lifecycle: {
+          kind: 'input',
+          orderKey: '200:source',
+          dispatchRefs: [
+            { targetId: 'opus5', phase: 'assigned' },
+            { targetId: 'kimi', phase: 'assigned' },
+          ],
+        },
+      }),
+    );
+    const parent = recordStore.create({
+      threadId: 'thread-a',
+      userId: USER_ID,
+      targetCats: ['opus5', 'kimi'],
+      intent: 'execute',
+      idempotencyKey: 'sibling-control-plane-parent',
+      actionLeaseCarrier: { kind: 'none' },
+    });
+    recordStore.update(parent.invocationId, { status: 'running' });
+    const failedChildId = 'turn-sibling-uncontrollable';
+    turnStore.createRunning({
+      invocationId: failedChildId,
+      parentInvocationId: parent.invocationId,
+      threadId: 'thread-a',
+      userId: USER_ID,
+      catId: 'opus5',
+      executionKind: 'ordinary',
+      startedAt: 210,
+    });
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER_ID,
+        threadId: 'thread-a',
+        catId: 'opus5',
+        content: '',
+        mentions: [],
+        timestamp: 210,
+        replyTo: source.id,
+        idempotencyKey: `message-lifecycle-response:${failedChildId}`,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '210:response',
+          invocationId: failedChildId,
+          targetId: 'opus5',
+          inputEntryIds: ['entry-opus'],
+          inputMessageIds: [source.id],
+          status: 'processing',
+          startedAt: 210,
+        },
+      }),
+    );
+    messageStore.advanceLifecycleInputDispatch(source.id, {
+      orderKey: '200:source',
+      from: { kind: 'user', userId: USER_ID },
+      targetId: 'opus5',
+      phase: 'dispatched',
+      statusMessageId: response.id,
+    });
+    deps._executions.set('thread-a:kimi', {
+      executionId: parent.invocationId,
+      startedAt: 210,
+    });
+    deps.messageStore = messageStore;
+    deps.invocationRecordStore = recordStore;
+    deps.turnExecutionStore = turnStore;
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: false }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-a/executions/live/${parent.invocationId}/cancel`,
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'opus5' },
+    });
+
+    assert.equal(failed.statusCode, 200);
+    assert.equal(failed.json().reconciled, true);
+    assert.equal(turnStore.get(failedChildId).status, 'failed');
+    assert.equal(messageStore.getById(response.id).lifecycle.status, 'failed');
+    assert.equal(recordStore.get(parent.invocationId).status, 'running');
+
+    const projection = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+    const sibling = projection
+      .json()
+      .executions.find((execution) => execution.catId === 'kimi' && execution.executionId === parent.invocationId);
+    assert.equal(sibling?.cancelability.state, 'cancelable');
+
+    const stoppedSibling = await app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-a/executions/live/${parent.invocationId}/cancel`,
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'kimi' },
+    });
+    assert.equal(stoppedSibling.statusCode, 200);
+    assert.equal(stoppedSibling.json().cancelled, true);
   });
 
   it('shows but never leaks or cancels a scheduler process on an indexed system thread', async () => {

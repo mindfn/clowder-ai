@@ -173,9 +173,11 @@ describe(
 
       const terminal = await store.commitLifecycleResponseTerminal(processing.id, {
         invocationId: 'inv-terminal-visibility',
-        status: 'completed',
+        status: 'failed',
         completedAt: 200,
-        content: 'terminal body',
+        reason: 'provider_error',
+        content:
+          '@opus 处理失败（provider_error）。\n\n来源消息：message-terminal-visibility。\n\nProvider quota exhausted.',
         mentions: [],
         origin: 'stream',
       });
@@ -186,10 +188,14 @@ describe(
         await redis.zscore(`msg:visibility:${threadId}`, processing.id),
         String(terminal.message.visibilitySeq),
       );
+      const visible = await store.getByThreadAfter(threadId, undefined, undefined, 'owner-redis');
       assert.deepEqual(
-        (await store.getByThreadAfter(threadId, undefined, undefined, 'owner-redis')).map((message) => message.id),
+        visible.map((message) => message.id),
         [processing.id],
       );
+      assert.match(visible[0].content, /@opus 处理失败/);
+      assert.match(visible[0].content, /来源消息：message-terminal-visibility/);
+      assert.match(visible[0].content, /Provider quota exhausted/);
     });
 
     test('repairs terminal lifecycle responses omitted by the first single-ledger rollout', async () => {

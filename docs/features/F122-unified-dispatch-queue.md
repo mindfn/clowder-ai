@@ -4,6 +4,7 @@ related_features: [F108, F117, F027]
 topics: [a2a, queue, dispatch, steer, multi_mention, architecture]
 doc_kind: spec
 created: 2026-03-14
+tips_exempt: 2026-09-03 ADR-043 consolidates existing A2A and Queue dispatch truth without adding a new user action or discoverable capability
 ---
 
 # F122: 执行通道统一 — A2A/multi_mention 入 Dispatch Queue
