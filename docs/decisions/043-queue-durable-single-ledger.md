@@ -174,6 +174,20 @@ Message 已进入成员可见 History，其他 target 的 Queue 责任仍由各�
 
 本决策取代 F254 D1.2 的旧“两阶段 seen，成功后 handled”实现约束；旧段落只保留为历史设计记录。
 
+### D9 — 停止是对持久执行真相的权威终态化，投影不能反过来卡住它
+
+> 来源：co-creator 2026-09-03 worktree 验收决策（thread `thread_msr51149hym0i79f`）。取代 F220 Phase 3「force-reset 逃生口」作为用户概念的地位。
+
+用户只有两种状态（在运行 / 未运行）和一种动作（停止：单只猫 / 全部）。**停止的成功判据是投影进入「未运行」**；进程是否真的退出由服务端在后台保证。用户不需要区分「正常停」与「强制重置」，也不需要理解逃生舱。
+
+1. **「在跑」的真相 = 持久行 + 活性见证**：TurnExecution `running` / 账本 `processing` 行是持久真相；tracker 槽位、`processingSlots`、session 锁只是内存缓存与活性见证，**单独不能构成 busy**。pre-start 预留只覆盖 `create → startAll` 的 I/O 窗口，不再以 75 分钟 TTL 钉住 busy。
+2. **停止阶梯（服务端自动升级，用户不选机制）**：exact 活候选 → 现有取消链（abort / `terminateExact` / 释放本猫锁与槽位 / 写终态）；无活候选但目标仍投影为在跑 → 同一请求就地对账（退 pre-start 预留、running 记录置 canceled、释放孤儿锁与槽位、广播终态）并返回 `reconciled`；**对自己拥有的执行永不 409**。只有进程快照不完整（liveness 未知）才返回 503，客户端有界重试。
+3. **唯一保留的一问**：重试耗尽仍无法确认进程是否存活时，才出现「无法确认运行状态 → 仍然清除运行状态」的确认——此时强清可能让仍存活的远端进程双写。`/force-reset` 退化为这一问背后的 thread 级对账实现，不再是常驻入口，也不再基于 `suspected_stall` 上浮。
+4. **同一段对账三处复用**：启动（`StartupReconciler`）、投影读取（read-repair：running 记录 + 无 tracker + 进程快照 complete 且无 owner + 超出 pre-start 窗口 → 终态化；快照不 complete 时不动）、停止（第 2 条）。
+5. **前端**：权威投影稳定即信；旧 socket busy 标记自愈，不再有「运行状态待确认」死角与基于卡死的强制重置入口。
+
+历史根因：F220 Phase 2 报告（#972）已定性为「多 liveness SoT 无收敛点」；F194 读模型、TurnExecution 持久子真相与本 ADR 的账本已关闭进程内的绝大部分分叉，剩余只有基础设施故障（Redis / API 进程）一类，归 reconciler，不归用户。
+
 ## 不会简化的部分（诚实边界）
 
 `prestartRetirement` **不消失**。窗口是 `invocationRecordStore.create`（QueueProcessor.ts:4873）→ `invocationTracker.startAll`（:5419），中间 **546 行异步**（freshness 预检、前缀吸收、session 准入）。这个「已 processing 但 tracker 里还没有」的空档由 **I/O 本身**造成，不是内存队列造成的，进不了 Lua。

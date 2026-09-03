@@ -33,7 +33,7 @@ operator 2026-06-18 收敛：
 
 ## Current State / 现状基线
 
-- 现有等待/执行 UI 已有真实状态层：`packages/web/src/components/ThinkingIndicator.tsx` 显示 `启动中` / `思考中` / `回复中` / `静默等待中` / `可能卡住了`，`packages/web/src/components/ThreadExecutionBar.tsx` 显示 `执行中`、计时、停止与 `卡住了？强制重置`。
+- 现有等待/执行 UI 已有真实状态层：`packages/web/src/components/ThinkingIndicator.tsx` 显示 `启动中` / `思考中` / `回复中` / `静默等待中` / `可能卡住了`，`packages/web/src/components/ThreadExecutionBar.tsx` 显示 `执行中`、计时与停止（`卡住了？强制重置` 常驻入口已于 2026-09-03 随 ADR-043 D9 退役）。
 - 现有能力真相源已分散存在：F223 产出 Capability Surface Registry，`cat-cafe-skills/refs/capability-wakeup-index.md` 维护 L0 §8 能力速查，F114/L0/shared-rules 维护 magic words，F155 guide engine 有场景 tips，F227 Event Memory 索引 magic word 事件。
 - 当前没有一个用户可见的等待态 tips 投影层。用户要知道"家里有什么能力 / 什么时候用 / 怎么用"，仍主要靠聊天中被动问、读文档、或猫主动解释。
 - F229 猫猫球已经承担"前台猫 / 功能发现 / 常驻入口"职责；它需要 tips 时必须消费 F244 的 tip contract 和 selector，不维护自己的 tips 文案清单。
@@ -129,12 +129,12 @@ F229 猫猫球是 F244 的未来展示面，不是第二个 tips 系统：
 
 在等待/执行 UI 中增加 tips 投影，但与真实状态分层：
 
-- 真实状态仍由 liveness/runtime signal 驱动，`ThreadExecutionBar` / `ThinkingIndicator` 继续放状态、计时、停止与强制重置入口。
+- 真实状态仍由 liveness/runtime signal 驱动，`ThreadExecutionBar` / `ThinkingIndicator` 继续放状态、计时与停止入口。
 - Tip 的第一展示面是服务端已创建的 bodyless processing response：它带 exact invocation identity、
   猫头像和响应消息 ID，正文到达后原位升级成真实回复，不创建 `pending-*` 合成消息。
 - 一个 thread 只让一个 processing response 展示 tip；其他并行响应只显示最小等待动效，避免复制
   tip，也不在 `ThreadExecutionBar` / QueuePanel 再投影同一等待信息。
-- `suspected_stall` / `alive_but_silent` 时，故障与取消入口优先；tips 不得遮挡或弱化 `卡住了？强制重置`。
+- `suspected_stall` / `alive_but_silent` 时，故障与停止入口优先；tips 不得遮挡或弱化停止（强制重置常驻入口已退役，见 ADR-043 D9）。
 - processing response 中 tip 立即展示（`firstDelayMs=0`）；其他 surface（如
   `assistant_stream_bubble`）保留首次延迟。单条至少停留 30s，避免每几秒闪动制造噪音。
 - 上下文选择优先级：当前执行阶段 > thread workflow > feature dev/review mode > 通用 capability/magic word；`ideate`/review 等待仍使用 `review` + `long_running` contexts，而不是退化成通用 `thinking` tips。
@@ -202,7 +202,7 @@ Bloom filter 不用于 D1。原因：当前 inventory 量级是几十到几百�
 ### 3. Regression Fixture
 
 - 等待态 `thinking` 展示 capability tip，但主状态仍只显示真实 `思考中/回复中`。
-- `suspected_stall` 状态下故障文案、取消和强制重置入口可见且优先，tips 不遮挡。
+- `suspected_stall` 状态下故障文案与停止入口可见且优先，tips 不遮挡。
 - Magic word tip 带 shared-rules/L0 sourceRef，CI 验证 anchor 可定位；body 语义由 owner/reviewer/stale review 维护，不声称静态 CI 可证明语义一致。
 - 新 feature PR fixture 缺 tips 且无 `tips_exempt` 时 hard check red；补 sourceRef + context 后 green。
 

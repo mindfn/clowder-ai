@@ -56,6 +56,16 @@ Why: F295 adds the canonical live/managed-command execution read-and-cancel proj
 - 合法 shared/indexed thread 继续显示 foreign scheduler/system masked occupancy；session record 的
   per-user filter 不适用于 occupancy，精确取消仍由 execution/principal fence 决定。
 
+### Post-close: Stop reconciles confirmed-dead executions（2026-09-03，ADR-043 D9）
+
+- exact live cancel 找不到可控候选时不再 409 `EXECUTION_NOT_ACTIVE`：同一请求对该 target 就地对账
+  （pre-start 退回 / running 记录置 canceled / 孤儿锁与槽位释放 / 终态广播），返回
+  `{ ok, cancelled: false, reconciled }`。foreign occupancy 与更新回合替代仍是 409。
+- `not_cancelable/control_plane_unavailable` 是唯一保留的「不可取消」原因：进程快照不完整时返回 503，
+  客户端有界重试；重试耗尽才出现一次「无法确认运行状态」确认，确认后走 thread 级 `force-reset` 对账。
+- Primary Journey 第 3 步收窄为「仅 liveness 未知时显示原因」；旧 `useExecutionRecoveryVerification` 的
+  「运行状态待确认」死角与基于 `suspected_stall` 上浮的强制重置入口退役。
+
 ## User Journey
 
 ### Primary Journey: 从“猫在运行”到精确停止

@@ -1,6 +1,7 @@
 ---
 feature_ids: [F117]
 related_features: [F039, F173, F183, F264]
+related_decisions: [043]
 topics: [message, queue, delivery, lifecycle, context]
 doc_kind: spec
 created: 2026-03-14
@@ -9,7 +10,7 @@ tips_exempt: automatic owner-timeline and cat-delivery consistency hardening; no
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: done — Phase C implemented locally; cross-family review and worktree experience acceptance pending in PR #1398 | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: done — Phase C/D implemented locally with cross-family APPROVE at `ef62ea7a8`; Phase E acceptance corrections (co-creator worktree acceptance 2026-09-03) in progress in PR #1398 before fork soak / upstream | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -220,6 +221,21 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 
 `prestartRetirement` 不消失。窗口是 `invocationRecordStore.create`（`QueueProcessor.ts:4873`）→ `invocationTracker.startAll`（`:5419`），中间 546 行异步（freshness 预检、前缀吸收、session 准入）。该「已 processing 但 tracker 尚无」的空档由 I/O 本身造成，进不了 Lua；它会从 Steer 专用退化为 fan-out 组的通用 `retiringGroupId`。
 
+### Phase E: 验收修正（normative，2026-09-03）
+
+> 来源：co-creator 在 #1398 worktree（验收实例 Redis 6388，thread `thread_mtkx52e4rmlvopk5`）的体验验收；根因由 Ragdoll(Fable) 数据 + 代码双证，实施由 Maine Coon(sol)。
+> **权威决策**：ADR-043 D8（完整读取即接管）、ADR-043 D9（停止阶梯）。
+
+| # | 验收现象 | 定性 | 修正 |
+|---|---|---|---|
+| E1 | 猫的历史回复不进入其他猫的未读 / `get_thread_context`（codex resume 只见 co-creator 消息） | 实现回归：退役 custody 脚本时丢掉了 terminal commit 的 visibility 分配 | 两个 terminal commit Lua 恢复 validate-before-write 的 `visibilitySeq` 分配；隔离 Redis 测试断言「猫回复对其他猫 cursor 可见」；存量数据 repair |
+| E2 | 被 @ 的成员头像不再脉冲，回复气泡固定「正在回复…」没有 tips | 设计取舍被验收否决：`833aa0587` 删除了 `PendingMemberBubble` / `CapabilityTipStrip` 消费者 | processing 态 lifecycle 回复行即新的 pending bubble：头像 `streaming` 脉冲 + `CapabilityTipStrip`；message 下小头像与回复气泡共用同一 `activeRun` 状态 |
+| E3 | 猫读到 queued 正文后工单仍留在队列 | 设计修正 | ADR-043 D8：无 filter 完整读取 = exact active child 接管该 source×target 行；A+B 各自独立；无持久 Message / typed custody 行保留 read→seen，读取不 503 |
+| E4 | 狸花猫 Steer 无「不中断继续发送」 | UI 门控错误 | 作者意图始终提供；服务端按 carrier 回退并在回执显示实际生效 |
+| E5 | codex 失败正文与系统提示重复 | 实现 | terminal failed response 已携带错误时不再另存 system notice |
+| E6 | 「执行中」与 QueuePanel「等待 xxx 当前回合」重复；气泡浮窗「查看轨迹」冗余；首个轨迹 chip 位置 | UI 冗余 | 去横幅、去按钮、轨迹 chip 置于引用 chip 之后 |
+| E7 | 「卡住了？强制重置」常驻 / 「运行状态待确认」红横幅 | 设计（补丁化逃生舱） | ADR-043 D9：停止是唯一动作；无活候选时服务端就地对账；仅 liveness 未知才出最后一问 |
+
 ## Acceptance Criteria
 
 ### Phase A（后端 — deliveryStatus 真相源） ✅
@@ -271,6 +287,16 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-D8: Redis hydrate 对旧/损坏 row fail closed；启动恢复、fan-out、并发 claim 与 terminal replay 有真 Redis 覆盖
 - [x] AC-D9: terminal row 不可复活；旧 Message-custody Gate 5 retry bridge 退役，重做必须由新用户意图产生新 source
 
+### Phase E（验收修正，2026-09-03）— 实施中
+
+- [ ] AC-E1: 隔离 Redis 下，猫的 terminal 回复获得 `visibilitySeq` 并进入 `msg:visibility` index；另一只猫的 cursor 读（prompt 增量 / `get_thread_context`）返回该回复
+- [ ] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
+- [ ] AC-E3: 无 filter 完整读取接管 exact source×target 行（A+B 独立）；存在无 messageId / typed custody 的 queued 行时全量读仍 200；接管后原消息保持 authored 顺序（精确顺序断言）
+- [ ] AC-E4: Steer 对任一可选 target 提供「不中断继续发送」；非 exact carrier 回退为 next_work 且回执显示 `fallbackReason`
+- [ ] AC-E5: 失败 response 只呈现一次错误正文
+- [ ] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
+- [ ] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时 503 + 有界重试后才出现唯一确认；`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
+
 ## Scope Boundary
 
 - **In scope**: undelivered user message 对 cat cognition (`callback / thread context / prompt / pending-mentions`) 的泄漏，以及 canceled message 对 owner timeline/history 的 resurfacing
@@ -306,6 +332,8 @@ Why: Queue custody 仍归 dispatch，时间线投影与 receipt 合并仍归 bub
 | KD-6 | Phase C 以 actual dispatch facts 建立单一 UI projection，不按消息来源分类 | user/cat/connector/GitHub 通知都可能成为 source；分类例外会再次制造多套生命周期 | 2026-08-31 |
 | KD-7 | 删除旧 dock/占位/fallback，而不是继续收敛到 dock | dock 自身表达了第二套 receipt 模型，且增加用户无需理解的时间、执行类型与跳转信息 | 2026-08-31 |
 | KD-8 | 成功静默、终态头像统一静止；结果只由 canonical terminal response 表达 | 头像只回答“谁在处理/处理过”，不复制 outcome；终态不携带旧 Queue attempt 的 retry 能力 | 2026-08-31 |
+| KD-9 | 验收否决 `833aa0587` 对 pending bubble / tips 的删除：processing 回复行承接脉冲头像与 tips，两个尺寸共用一份 `activeRun` 状态 | co-creator：用户要看见被触发成员在动，且不需要两套定制 | 2026-09-03 |
+| KD-10 | 停止是唯一用户动作；投影与真相不一致由服务端对账，不由用户「强制重置」 | co-creator：用户只有在运行/未运行两态；force-reset 是对多 SoT 分叉的补丁（F220 KD-3 曾推迟根因），根因已由 F194 / TurnExecution / ADR-043 关闭，剩余归 reconciler（ADR-043 D9） | 2026-09-03 |
 
 ## Review Gate
 
@@ -314,3 +342,5 @@ Why: Queue custody 仍归 dispatch，时间线投影与 receipt 合并仍归 bub
 - Phase C spec: co-creator 定稿；Ragdoll Opus 做内容一致性 review 后，实现才可开始
 - Phase C implementation: Opus 按 INV-C1..C8 逐条 review，并额外审计新增 fallback 与 kind/scope 分支；
   co-creator worktree 体验验收仍是 fork/上游前硬门
+- Phase E: Fable 做 exact-HEAD delta 复审，硬门为 AC-E1、AC-E3 的「typed custody 行存在时仍 200」与 AC-E7 的 `reconciled` / pre-start TTL 收窄；
+  co-creator worktree 体验验收与 fork soak 仍是上游前硬门
