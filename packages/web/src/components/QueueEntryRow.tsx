@@ -1,6 +1,6 @@
 'use client';
 
-import type { FreshnessCarrierCapability, QueueRecoveryAction, QueueReminderAttempt } from '@cat-cafe/shared';
+import type { FreshnessCarrierCapability, QueueReminderAttempt } from '@cat-cafe/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useState } from 'react';
@@ -17,6 +17,7 @@ import {
 } from './message-disposition-presentation';
 import { QueueEntryActions } from './QueueEntryActions';
 import { UNSETTLED_SEEN_LABEL } from './queue-receipt-projection';
+import { RoutingWarningNotice } from './RoutingWarningNotice';
 
 const SOURCE_CATEGORY_LABEL: Record<string, string> = {
   ci: 'CI',
@@ -100,9 +101,9 @@ function QueueTargetReceiptRow({
     (state === 'queued' || state === 'notified') &&
     !alreadyAttemptedInActiveTurn;
   const targetReceipt = entry.queueReceipt?.targets.find((target) => target.catId === catId);
-  const authorIntent = entry.source === 'user' ? targetReceipt?.authorIntent : undefined;
-  const chip = entry.source === 'user' ? intentChip(authorIntent) : undefined;
-  const truth = entry.source === 'user' ? secondaryTruth(authorIntent, support) : undefined;
+  const authorIntent = entry.from.kind === 'user' ? targetReceipt?.authorIntent : undefined;
+  const chip = entry.from.kind === 'user' ? intentChip(authorIntent) : undefined;
+  const truth = entry.from.kind === 'user' ? secondaryTruth(authorIntent, support) : undefined;
   const capability = targetReceipt?.authorIntent?.carrierCapability ?? activeCarrierCapability;
 
   return (
@@ -166,29 +167,23 @@ function QueueTargetReceiptRow({
 export interface QueueEntryRowProps {
   entry: QueueEntry;
   index: number;
-  isPaused: boolean;
   imageCount: number;
   ownerName: string;
   resolveCatName: (catId: string) => string;
-  onRemove: (action: Extract<QueueRecoveryAction, { kind: 'withdraw' }>) => void;
+  onRemove: (id: string) => void;
   onRecallEdit: (id: string) => void;
-  onSteer: (action: Extract<QueueRecoveryAction, { kind: 'steer' }>) => void;
-  onRetry: (action: Extract<QueueRecoveryAction, { kind: 'retry_target' }>) => void;
-  onForceReset: (action: Extract<QueueRecoveryAction, { kind: 'force_reset' }>) => void;
+  onSteer: (id: string) => void;
+  onAppend: (entry: QueueEntry) => void;
   onRemind: (id: string, targetCatId: string) => void;
   activeInvocationIdByCatId: Readonly<Record<string, string>>;
   activeCarrierCapabilityByCatId: Readonly<Record<string, FreshnessCarrierCapability | undefined>>;
   remindingTargetKeys: ReadonlySet<string>;
-  retryingAttemptIds: ReadonlySet<string>;
-  resettingActionIds: ReadonlySet<string>;
+  appendingEntryIds: ReadonlySet<string>;
 }
 
 export function SortableQueueEntryRow(props: QueueEntryRowProps) {
   const { entry } = props;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: entry.id,
-    disabled: entry.status !== 'queued',
-  });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
   return (
@@ -201,47 +196,42 @@ export function SortableQueueEntryRow(props: QueueEntryRowProps) {
 function QueueEntryRow({
   entry,
   index,
-  isPaused,
   imageCount,
   ownerName,
   resolveCatName,
   onRemove,
   onRecallEdit,
   onSteer,
-  onRetry,
-  onForceReset,
+  onAppend,
   onRemind,
   activeInvocationIdByCatId,
   activeCarrierCapabilityByCatId,
   remindingTargetKeys,
-  retryingAttemptIds,
-  resettingActionIds,
+  appendingEntryIds,
   dragHandleProps,
 }: QueueEntryRowProps & { dragHandleProps?: Record<string, unknown> }) {
-  const isAgent = entry.source === 'agent';
-  const canRecallEdit = entry.status === 'queued' && entry.source === 'user' && Boolean(entry.messageId);
+  const isAgent = entry.from.kind === 'agent';
+  const canRecallEdit = entry.from.kind === 'user' && Boolean(entry.messageId);
   const isUrgent = entry.priority === 'urgent';
   const categoryLabel = entry.sourceCategory ? SOURCE_CATEGORY_LABEL[entry.sourceCategory] : null;
-  const withdrawAction = entry.recoveryActions?.find(
-    (action): action is Extract<QueueRecoveryAction, { kind: 'withdraw' }> => action.kind === 'withdraw',
-  );
-  const rowToneClass = isPaused ? 'bg-conn-amber-bg/60' : isAgent ? 'bg-[var(--color-cocreator-surface)]' : '';
+  const rowToneClass = isAgent ? 'bg-[var(--color-cocreator-surface)]' : '';
 
   const targetLabel = entry.targetCats[0] ? resolveCatName(entry.targetCats[0]) : '猫猫';
   const sourceLabel =
     isAgent && entry.sourceCategory === 'freshness'
       ? `Freshness → ${targetLabel}`
-      : isAgent
-        ? `${entry.callerCatId ? resolveCatName(entry.callerCatId) : '猫猫'} → ${targetLabel}`
-        : entry.source === 'connector'
+      : entry.from.kind === 'agent'
+        ? `${resolveCatName(entry.from.catId)} → ${targetLabel}`
+        : entry.from.kind === 'external' || entry.from.kind === 'plugin'
           ? 'Connector'
-          : ownerName;
+          : entry.from.kind === 'system'
+            ? 'System'
+            : ownerName;
 
   return (
     <div className={`flex items-start gap-2 px-3 py-2 rounded-lg ${rowToneClass}`}>
       <button
-        disabled={entry.status !== 'queued'}
-        className="p-0.5 mt-1 text-cafe-muted hover:text-cafe-secondary cursor-grab active:cursor-grabbing disabled:cursor-default disabled:opacity-40 shrink-0 touch-none"
+        className="p-0.5 mt-1 text-cafe-muted hover:text-cafe-secondary cursor-grab active:cursor-grabbing shrink-0 touch-none"
         aria-label="Drag to reorder"
         {...dragHandleProps}
       >
@@ -264,6 +254,7 @@ function QueueEntryRow({
           format="markdown"
           density="compact"
         />
+        <RoutingWarningNotice warnings={entry.routingWarnings} />
         <div className="flex items-center gap-1 mt-0.5">
           {isAgent ? (
             <svg className="w-2.5 h-2.5 text-[var(--color-cocreator-primary)]" viewBox="0 0 24 24" fill="currentColor">
@@ -336,14 +327,19 @@ function QueueEntryRow({
       </div>
 
       <div className="flex items-center gap-1 shrink-0 mt-1">
-        <QueueEntryActions
-          entry={entry}
-          retryingAttemptIds={retryingAttemptIds}
-          resettingActionIds={resettingActionIds}
-          onRetry={onRetry}
-          onSteer={onSteer}
-          onForceReset={onForceReset}
-        />
+        {entry.lifecycleActions?.append && (
+          <button
+            type="button"
+            data-testid={`append-${entry.id}`}
+            onClick={() => onAppend(entry)}
+            disabled={appendingEntryIds.has(entry.id)}
+            className="text-xs px-2.5 py-1 rounded-full border border-cafe text-cafe-secondary hover:bg-cafe-surface transition-colors disabled:opacity-50"
+            aria-label="Append"
+          >
+            {appendingEntryIds.has(entry.id) ? '追加中…' : 'Append'}
+          </button>
+        )}
+        <QueueEntryActions entry={entry} onSteer={onSteer} />
         {canRecallEdit && (
           <button
             type="button"
@@ -358,23 +354,21 @@ function QueueEntryRow({
             </svg>
           </button>
         )}
-        {withdrawAction && (
-          <button
-            type="button"
-            onClick={() => onRemove(withdrawAction)}
-            className="p-1 text-cafe-muted hover:text-conn-red-text transition-colors"
-            title="停止后续处理（保留原消息）"
-            aria-label="停止后续处理"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => onRemove(entry.id)}
+          className="p-1 text-cafe-muted hover:text-conn-red-text transition-colors"
+          title="停止后续处理（保留原消息）"
+          aria-label="停止后续处理"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+            <path
+              fillRule="evenodd"
+              d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </button>
       </div>
     </div>
   );

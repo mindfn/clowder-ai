@@ -1,5 +1,5 @@
-import type { CatId } from '@cat-cafe/shared';
 import type { DynamicTaskDef } from '../../infrastructure/scheduler/DynamicTaskStore.js';
+import type { QueueLedgerEntry } from '../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import {
@@ -39,7 +39,7 @@ export interface ManagedCommandWakeRecoveryStats {
   readonly pending: number;
 }
 
-export type ManagedCommandWakeTriggerOutcome = 'dispatched' | 'enqueued' | 'full';
+export type ManagedCommandWakeTriggerOutcome = 'enqueued' | 'full';
 
 export type ManagedCommandWakeEventCarrier =
   | { state: 'missing' | 'pending' | 'orphaned' }
@@ -55,43 +55,35 @@ export type ManagedCommandWakeEventCarrier =
 
 export function resolveManagedCommandWakeEventCarrier(
   message: StoredMessage | null | undefined,
-  expected: { threadId: string; catId: string; activeQueueEntryId?: string | null },
+  entry: QueueLedgerEntry | null | undefined,
+  expected: { threadId: string; catId: string },
 ): ManagedCommandWakeEventCarrier {
   if (!message || message.threadId !== expected.threadId) {
     return { state: 'missing' };
   }
   if (message.deliveryStatus === 'canceled') return { state: 'terminal', reason: 'canceled' };
-  const custody = message.queueCustody;
-  if (!custody) return { state: 'missing' };
-  const outcome = custody.targetOutcomeByCatId?.[expected.catId];
-  if (custody.handledByCatIds.includes(expected.catId as CatId) && outcome) {
-    return { state: 'handled', invocationId: outcome.invocationId };
+  if (
+    !entry ||
+    entry.threadId !== expected.threadId ||
+    entry.target.kind !== 'cat' ||
+    entry.target.catId !== expected.catId
+  )
+    return { state: 'missing' };
+  const invocationId = entry.delivery.seenInvocationId ?? entry.delivery.awakenedInvocationId;
+  if (entry.status !== 'terminal') return { state: 'pending' };
+  if (entry.delivery.terminalOutcome === 'handled') {
+    return { state: 'handled', ...(invocationId ? { invocationId } : {}) };
   }
-  if (custody.withdrawnByCatIds?.includes(expected.catId as CatId)) {
-    return { state: 'terminal', reason: 'withdrawn' };
+  if (entry.delivery.terminalOutcome === 'failed') {
+    return {
+      state: 'failed',
+      attemptId: entry.delivery.attemptId ?? `${entry.id}:1`,
+      attemptSequence: 1,
+      ...(invocationId ? { invocationId } : {}),
+    };
   }
-  if (custody.status === 'terminal') return { state: 'terminal', reason: 'terminal' };
-  if (custody.pendingTargetCats.includes(expected.catId as CatId)) {
-    if ('activeQueueEntryId' in expected && expected.activeQueueEntryId !== custody.entryId) {
-      return { state: 'orphaned' };
-    }
-    if (custody.failedByCatIds.includes(expected.catId as CatId)) {
-      const failedAttempt = (custody.targetAttempts ?? [])
-        .filter((attempt) => attempt.targetCatId === expected.catId && attempt.state === 'failed')
-        .sort((left, right) => left.sequence - right.sequence)
-        .at(-1);
-      if (failedAttempt) {
-        return {
-          state: 'failed',
-          attemptId: failedAttempt.id,
-          attemptSequence: failedAttempt.sequence,
-          ...(failedAttempt.invocationId ? { invocationId: failedAttempt.invocationId } : {}),
-        };
-      }
-    }
-    return { state: 'pending' };
-  }
-  return { state: 'missing' };
+  const reason = entry.delivery.terminalOutcome === 'withdrawn' ? 'withdrawn' : 'terminal';
+  return { state: 'terminal', reason };
 }
 
 export interface ManagedCommandWakeTrigger {
@@ -102,7 +94,7 @@ export interface ManagedCommandWakeTrigger {
     message: string,
     messageId: string,
     contentBlocks?: undefined,
-    policy?: { sourceCategory?: string; forceQueue?: boolean },
+    policy?: { sourceCategory?: string },
   ): Promise<ManagedCommandWakeTriggerOutcome>;
 }
 
@@ -127,22 +119,13 @@ export interface ManagedCommandWakeRecoveryDeps {
     ): InvocationRecord | null | Promise<InvocationRecord | null>;
   };
   readonly getInvokeTrigger: () => ManagedCommandWakeTrigger | undefined;
-  /** F167×F254: current Queue/F264 carrier truth for force-queued event wakes. */
+  /** F167×F254: current Queue/F264 carrier truth for event wakes. */
   readonly getEventCarrier?: (input: {
     threadId: string;
     userId: string;
     catId: string;
     messageId: string;
   }) => ManagedCommandWakeEventCarrier | Promise<ManagedCommandWakeEventCarrier>;
-  /** Retry one exact failed Queue target; the implementation must append a durable attempt fence before execution. */
-  readonly retryEventCarrier?: (input: {
-    taskId: string;
-    threadId: string;
-    userId: string;
-    catId: string;
-    messageId: string;
-    attemptId: string;
-  }) => 'retried' | 'not_retryable' | 'unavailable' | Promise<'retried' | 'not_retryable' | 'unavailable'>;
   readonly now?: () => number;
   readonly dispatchedCarrierGraceMs?: number;
   readonly wakeSlaMs?: number;
