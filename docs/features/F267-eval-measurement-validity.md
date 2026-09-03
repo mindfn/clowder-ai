@@ -2,10 +2,10 @@
 feature_ids: [F267]
 related_features: [F192, F245, F263, F266, F268, F275]
 topics: [eval, measurement-validity, calibration, uncertainty, repeatability, friction, work-eligibility]
-tips_exempt: "Renewed 2026-09-01: decision-proof v1 and its owner-backed ref resolver are internal cross-feature measurement governance APIs; they add no user-invokable action or discovery surface."
+tips_exempt: "Renewed 2026-09-03: the fail-closed census bootstrap guard only permits first-time internal eval-domain registration and adds no user-invokable action or discovery surface."
 doc_kind: spec
 created: 2026-07-18
-updated: 2026-09-01
+updated: 2026-09-03
 description: "为决策型 eval bundle 建立目标、边界、不确定性与重裁契约，并以 friction 通道召回为首个实证迁移。"
 description_source: human
 description_author: codex-sol

@@ -9,6 +9,7 @@ import { afterEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 
 const openApps = [];
+const ownerUserId = process.env.DEFAULT_OWNER_USER_ID?.trim() || 'owner-1';
 
 afterEach(async () => {
   await Promise.all(openApps.splice(0).map((app) => app.close()));
@@ -36,7 +37,7 @@ describe('F257 production segment lifecycle surface', () => {
     const app = Fastify({ logger: false });
     openApps.push(app);
     app.addHook('preHandler', async (request) => {
-      request.sessionUserId = 'owner-1';
+      request.sessionUserId = ownerUserId;
     });
 
     await registerSegmentLifecycleSurface(app, {
@@ -74,7 +75,7 @@ describe('F257 production segment lifecycle surface', () => {
     const app = Fastify({ logger: false });
     openApps.push(app);
     app.addHook('preHandler', async (request) => {
-      request.sessionUserId = 'owner-1';
+      request.sessionUserId = ownerUserId;
     });
     const calls = [];
     const governance = {
@@ -121,9 +122,9 @@ describe('F257 production segment lifecycle surface', () => {
     assert.deepEqual(
       calls.map(([action, owner, proposal, actor, reason]) => [action, owner, proposal, actor, reason]),
       [
-        ['approve', 'owner-1', 'HGP-1', 'owner-1', 'approve reason'],
-        ['skip', 'owner-1', 'HGP-1', 'owner-1', 'skip reason'],
-        ['reject', 'owner-1', 'HGP-1', 'owner-1', 'draft is wrong'],
+        ['approve', ownerUserId, 'HGP-1', ownerUserId, 'approve reason'],
+        ['skip', ownerUserId, 'HGP-1', ownerUserId, 'skip reason'],
+        ['reject', ownerUserId, 'HGP-1', ownerUserId, 'draft is wrong'],
       ],
     );
   });
