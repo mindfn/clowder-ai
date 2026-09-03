@@ -17,8 +17,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -307,6 +307,25 @@ function confirmationUnavailableError(): Error & { reasonCode: 'confirmation_una
   return Object.assign(new Error('Runtime interaction confirmation is unavailable'), {
     reasonCode: 'confirmation_unavailable' as const,
   });
+}
+
+/**
+ * Codex 0.150+ refuses to install helper binaries beneath the OS temporary
+ * directory. API-key auth still needs a clean HOME, so place that isolated
+ * home under an owner-scoped cache root instead of weakening auth isolation.
+ */
+export function resolveCodexApiKeyIsolationRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const userHome = env.HOME || env.USERPROFILE || homedir();
+  if (platform === 'win32') {
+    return join(env.LOCALAPPDATA || join(userHome, 'AppData', 'Local'), 'clowder-ai', 'codex-api-key-homes');
+  }
+  if (platform === 'darwin') {
+    return join(userHome, 'Library', 'Caches', 'clowder-ai', 'codex-api-key-homes');
+  }
+  return join(env.XDG_CACHE_HOME || join(userHome, '.cache'), 'clowder-ai', 'codex-api-key-homes');
 }
 
 /**
@@ -1082,6 +1101,7 @@ export class CodexAgentService implements AgentService {
   private readonly carrierMode: CodexCarrierMode;
   private readonly approvalSurface: CodexApprovalSurface;
   private readonly appServerHostPool: CodexAppServerHostPool | undefined;
+  private apiKeyIsolationHome: string | undefined;
   /** F203 Phase C: compiles per-cat L0 → OpenAI developer role (-c). */
   private readonly l0CompilerFn: typeof compileL0ViaSubprocess;
 
@@ -1100,6 +1120,14 @@ export class CodexAgentService implements AgentService {
     // than relying on transport names or timing heuristics.
     this.approvalSurface = options?.approvalSurface ?? 'unavailable';
     this.appServerHostPool = options?.appServerHostPool;
+  }
+
+  private getApiKeyIsolationHome(): string {
+    if (this.apiKeyIsolationHome) return this.apiKeyIsolationHome;
+    const root = resolveCodexApiKeyIsolationRoot();
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    this.apiKeyIsolationHome = mkdtempSync(join(root, `${this.catId}-`));
+    return this.apiKeyIsolationHome;
   }
 
   /** F203 Phase C — this service injects L0 via `-c developer_instructions=` (Task 4). */
@@ -1674,9 +1702,7 @@ export class CodexAgentService implements AgentService {
       // For API Key mode: use temp HOME to prevent OAuth token refresh interference.
       // On Windows, Rust/codex uses USERPROFILE (not HOME) for config directory.
       if (authMode === 'api_key' && customBaseUrl) {
-        const { mkdtempSync } = await import('node:fs');
-        const { tmpdir } = await import('node:os');
-        const isolatedHome = mkdtempSync(`${tmpdir()}/codex-apikey-`);
+        const isolatedHome = this.getApiKeyIsolationHome();
         rawEnv.HOME = isolatedHome;
         if (process.platform === 'win32') {
           rawEnv.USERPROFILE = isolatedHome;
@@ -1935,26 +1961,7 @@ export class CodexAgentService implements AgentService {
               prepareRequest: (body, boundaryReason) => prepareProviderRequest(body, 'app_server', boundaryReason),
               prepareRecoveryRequest,
               ...(options?.beforeProviderLaunch ? { beforeProviderLaunch: options.beforeProviderLaunch } : {}),
-              ...(auditContext
-                ? {
-                    runtimeInteraction: {
-                      owner: {
-                        userId: auditContext.userId,
-                        threadId: auditContext.threadId,
-                        catId: auditContext.catId,
-                        invocationId: auditContext.invocationId,
-                      },
-                      port: options?.runtimeInteractionPort ?? {
-                        request: async () => {
-                          throw confirmationUnavailableError();
-                        },
-                      },
-                      ...(options?.resolveEntrustedWorkTaskRef
-                        ? { resolveEntrustedWorkTaskRef: options.resolveEntrustedWorkTaskRef }
-                        : {}),
-                    },
-                  }
-                : {}),
+              ...(options?.activeRunDispatch ? { activeRunDispatch: options.activeRunDispatch } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
               timeoutMs: resolveCliTimeoutMs(parseCliTimeoutMs(codexEnv.CLI_TIMEOUT_MS ?? undefined)),
               interruptGraceMs: KILL_GRACE_MS,
