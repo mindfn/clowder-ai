@@ -137,6 +137,29 @@ describe('community.html XSS invariants', () => {
   });
 });
 
+describe('localized accessible names', () => {
+  for (const page of ['index.html', 'community.html', 'docs.html']) {
+    it(`${page} localizes every static aria-label`, () => {
+      const dom = new JSDOM(readSite(page));
+      const missingKeys = [...dom.window.document.querySelectorAll('[aria-label]')]
+        .filter((element) => !element.hasAttribute('data-i18n-aria-label'))
+        .map((element) => element.outerHTML);
+      assert.deepStrictEqual(missingKeys, [], `${page} has untranslated accessible names`);
+    });
+  }
+
+  it('does not use a translated accessible name as a JavaScript selector', () => {
+    const html = readSite('community.html');
+    assert.doesNotMatch(html, /querySelector\([^)]*aria-label/);
+    assert.match(html, /getElementById\(['"]issue-detail-close['"]\)/);
+  });
+
+  it('localizes the accessible name of dynamically rendered issue rows', () => {
+    const html = readSite('community.html');
+    assert.match(html, /row\.setAttribute\(['"]aria-label['"],\s*`\$\{t\(['"]community\.a11y\.issue['"]\)\}/);
+  });
+});
+
 // ─── P1: Locale-aware Markdown fallback — behavioral tests ───────────
 describe('localized docs loader (behavioral)', () => {
   it('tries the zh-CN sibling before the canonical path for Chinese', () => {

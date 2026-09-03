@@ -20,6 +20,12 @@ window.I18N = {
     'nav.firststeps': `First Steps`,
     'nav.roadmap': `Roadmap`,
     'nav.journey': `Journey`,
+    'a11y.language': `Switch language`,
+    'a11y.theme': `Toggle theme`,
+    'a11y.menu': `Menu`,
+    'home.a11y.addaccount': `Add a model account in Clowder AI`,
+    'home.a11y.addmember': `Add an AI team member in Clowder AI`,
+    'home.a11y.startconversation': `Start a conversation with the AI team`,
 
     // ── Hero ──
     'hero.tagline': `Open Source Multi-Model AI Platform`,
@@ -190,11 +196,10 @@ window.I18N = {
     'community.issues.empty': `No issues found.`,
     'community.issues.nodesc': `No description.`,
     'community.searchplaceholder': `Search issues...`,
+    'community.a11y.closeissue': `Close issue detail`,
+    'community.a11y.issue': `Issue`,
 
     // ── Docs page ──
-    'docs.a11y.language': `Switch language`,
-    'docs.a11y.theme': `Toggle theme`,
-    'docs.a11y.menu': `Menu`,
     'docs.category.gettingstarted': `Getting Started`,
     'docs.quickstart': `Quick Start`,
     'docs.setup': `Setup Guide`,
@@ -233,6 +238,12 @@ window.I18N = {
     'nav.firststeps': `上手步骤`,
     'nav.roadmap': `路线图`,
     'nav.journey': `发展历程`,
+    'a11y.language': `切换语言`,
+    'a11y.theme': `切换主题`,
+    'a11y.menu': `菜单`,
+    'home.a11y.addaccount': `在 Clowder AI 中添加模型账号`,
+    'home.a11y.addmember': `在 Clowder AI 中添加 AI 团队成员`,
+    'home.a11y.startconversation': `与 AI 团队开始对话`,
 
     // ── Hero ──
     'hero.tagline': `开源多模型 AI 团队平台`,
@@ -403,11 +414,10 @@ window.I18N = {
     'community.issues.empty': `没有找到 issue。`,
     'community.issues.nodesc': `暂无描述。`,
     'community.searchplaceholder': `搜索 issue……`,
+    'community.a11y.closeissue': `关闭 issue 详情`,
+    'community.a11y.issue': `议题`,
 
     // ── Docs page ──
-    'docs.a11y.language': `切换语言`,
-    'docs.a11y.theme': `切换主题`,
-    'docs.a11y.menu': `菜单`,
     'docs.category.gettingstarted': `开始使用`,
     'docs.quickstart': `快速开始`,
     'docs.setup': `安装指南`,
