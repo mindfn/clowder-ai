@@ -11,9 +11,11 @@ describe('Approval Hub feature registry', () => {
       'F231',
       'F257',
       'F260',
+      'F266',
       'F221',
       'F276',
       'F292',
+      'F306',
     ]);
   });
 

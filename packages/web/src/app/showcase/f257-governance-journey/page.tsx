@@ -1,6 +1,6 @@
 'use client';
 
-import type { ApprovalItem, SegmentCycleSummary, SegmentEvaluationResponse } from '@cat-cafe/shared';
+import type { ApprovalHubItem, SegmentCycleSummary, SegmentEvaluationResponse } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { ApprovalDecisionCard } from '@/components/ApprovalDecisionCard';
 import { GenericApprovalRecommendation } from '@/components/GenericApprovalRecommendation';
@@ -128,13 +128,14 @@ const EVALUATION: SegmentEvaluationResponse = {
   ],
 };
 
-function approvalItemFor(): ApprovalItem {
+function approvalItemFor(): ApprovalHubItem {
   return {
     proposalId: CANDIDATE_ID,
     sourceFeatureId: 'F257',
     requesterCatId: 'harness-governance-worker',
     ownerUserId: 'demo-owner',
-    status: 'pending',
+    resolution: 'open',
+    materialization: { state: 'not_started' },
     summary: '修改内容后生成 v2',
     detail: {
       targetSegmentIds: ['S13'],
@@ -148,7 +149,7 @@ function approvalItemFor(): ApprovalItem {
       approvalCardRef: { threadId: 'thread_demo_f257', messageId: 'approval_demo_f257' },
     },
     inlineApprovable: true,
-    decisionMode: 'approve-reject',
+    decisionMode: 'approve-skip-reject',
     createdAt: WINDOW.end,
   };
 }

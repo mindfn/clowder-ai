@@ -7,7 +7,7 @@ import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { ApprovalFeatureFilter } from './ApprovalFeatureFilter';
 import { ApprovalHistoryList } from './ApprovalHistoryList';
 
-export type ApprovalHistoryOutcomeFilter = 'all' | 'approved' | 'skipped' | 'rejected';
+export type ApprovalHistoryOutcomeFilter = 'all' | 'accepted' | 'skipped' | 'rejected' | 'closed_without_decision';
 
 interface ApprovalHistoryPaneProps {
   featureFilters: ReadonlySet<ApprovalFeatureId>;
@@ -31,7 +31,7 @@ export function ApprovalHistoryPane({
     if (featureFilters.size > 0) {
       filtered = filtered.filter((item) => featureFilters.has(item.sourceFeatureId));
     }
-    if (outcomeFilter !== 'all') filtered = filtered.filter((item) => item.status === outcomeFilter);
+    if (outcomeFilter !== 'all') filtered = filtered.filter((item) => item.resolution === outcomeFilter);
     return filtered;
   }, [settledItems, featureFilters, outcomeFilter]);
   const hasActiveFilters = featureFilters.size > 0 || outcomeFilter !== 'all';
@@ -50,9 +50,9 @@ export function ApprovalHistoryPane({
         />
         <span className="h-4 w-px bg-cafe-subtle/40" />
         <OutcomeButton
-          active={outcomeFilter === 'approved'}
-          onClick={() => onOutcomeFilterChange(outcomeFilter === 'approved' ? 'all' : 'approved')}
-          status="approved"
+          active={outcomeFilter === 'accepted'}
+          onClick={() => onOutcomeFilterChange(outcomeFilter === 'accepted' ? 'all' : 'accepted')}
+          status="accepted"
         />
         <OutcomeButton
           active={outcomeFilter === 'skipped'}
@@ -63,6 +63,13 @@ export function ApprovalHistoryPane({
           active={outcomeFilter === 'rejected'}
           onClick={() => onOutcomeFilterChange(outcomeFilter === 'rejected' ? 'all' : 'rejected')}
           status="rejected"
+        />
+        <OutcomeButton
+          active={outcomeFilter === 'closed_without_decision'}
+          onClick={() =>
+            onOutcomeFilterChange(outcomeFilter === 'closed_without_decision' ? 'all' : 'closed_without_decision')
+          }
+          status="closed_without_decision"
         />
         {hasActiveFilters && (
           <button
@@ -105,15 +112,18 @@ function OutcomeButton({
 }: {
   active: boolean;
   onClick: () => void;
-  status: 'approved' | 'skipped' | 'rejected';
+  status: 'accepted' | 'skipped' | 'rejected' | 'closed_without_decision';
 }) {
   const activeTone =
-    status === 'approved'
+    status === 'accepted'
       ? 'text-[var(--semantic-success)]'
       : status === 'skipped'
         ? 'text-[var(--semantic-warning)]'
-        : 'text-[var(--semantic-critical)]';
-  const label = status === 'approved' ? '✅ 通过' : status === 'skipped' ? '跳过' : '❌ 拒绝';
+        : status === 'rejected'
+          ? 'text-[var(--semantic-critical)]'
+          : 'text-cafe-interactive/60';
+  const label =
+    status === 'accepted' ? '接受' : status === 'skipped' ? '跳过' : status === 'rejected' ? '拒绝' : '未决定关闭';
   return (
     <button
       type="button"

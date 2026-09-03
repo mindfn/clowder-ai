@@ -387,7 +387,7 @@ describe('Phase H P1 Fixes', () => {
         threadId: 'thread-p1-1',
         definition: makeWerewolfDefinition(),
         seats: makeSeats(),
-        config: { humanRole: 'god', observerUserId: 'user-landy' },
+        config: { humanRole: 'god', observerUserId: 'user-operator' },
       });
       const gameId = game.gameId;
 
@@ -500,7 +500,7 @@ describe('Phase H P1 Fixes', () => {
         threadId: 'thread-p1-2',
         definition: makeWerewolfDefinition(),
         seats: makeSeats(),
-        config: { humanRole: 'player', humanSeat: 'P1', observerUserId: 'user-landy' },
+        config: { humanRole: 'player', humanSeat: 'P1', observerUserId: 'user-operator' },
       });
       const gameId = game.gameId;
 

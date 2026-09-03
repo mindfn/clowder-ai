@@ -22,9 +22,11 @@ describe('F246 Approval producer catalog', () => {
       'F231',
       'F257',
       'F260',
+      'F266',
       'F221',
       'F276',
       'F292',
+      'F306',
     ]);
     assert.equal('F028' in APPROVAL_PRODUCER_CATALOG, false);
     assert.equal('authorization' in APPROVAL_PRODUCER_CATALOG, false);
@@ -42,6 +44,12 @@ describe('F246 Approval producer catalog', () => {
     assert.equal(approvalProducerMeta('F276').decisionEndpointBase, '/api/person-memory-proposals');
     assert.equal(approvalProducerMeta('F276').sourcePolicy, 'message-required');
     assert.equal(approvalProducerMeta('F276').badgeLabel, 'People');
+    assert.equal(approvalProducerMeta('F266').decisionEndpointBase, '/api/eval-repair-proposals');
+    assert.equal(approvalProducerMeta('F266').lifecycleVersion, 1);
+    assert.equal(approvalProducerMeta('F306').decisionEndpointBase, null);
+    assert.equal(approvalProducerMeta('F306').decisionSurface, 'origin_card');
+    assert.equal(approvalProducerMeta('F306').sourcePolicy, 'message-required');
+    assert.equal(approvalProducerMeta('F306').history, false);
   });
 
   it('has non-empty display metadata for every producer', () => {
@@ -50,8 +58,10 @@ describe('F246 Approval producer catalog', () => {
       assert.ok(entry.label.trim());
       assert.ok(entry.badgeLabel.trim());
       assert.ok(entry.colorToken.trim());
-      assert.ok(entry.decisionEndpointBase.startsWith('/api/'));
-      assert.equal(entry.history, true);
+      if (entry.decisionSurface === 'approval_hub') assert.ok(entry.decisionEndpointBase?.startsWith('/api/'));
+      else assert.equal(entry.decisionEndpointBase, null);
+      assert.equal(entry.decisionSurface, producerId === 'F306' ? 'origin_card' : 'approval_hub');
+      assert.equal(entry.history, producerId !== 'F306');
     }
   });
 

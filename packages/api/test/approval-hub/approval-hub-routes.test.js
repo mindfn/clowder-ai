@@ -393,7 +393,12 @@ describe('GET /api/approval-hub/settled', () => {
     const body = JSON.parse(res.body);
     assert.equal(body.count, 2);
     assert.ok(body.items[0].decidedAt >= body.items[1].decidedAt, 'newest first');
-    assert.ok(body.items.every((i) => i.status === 'approved'));
+    assert.ok(body.items.every((i) => i.resolution === 'accepted'));
+    assert.ok(body.items.every((i) => i.materialization.state === 'outcome_unknown'));
+    assert.ok(
+      body.items.every((i) => !Object.hasOwn(i, 'status')),
+      'raw legacy vocabulary must not cross the Hub boundary',
+    );
   });
 
   it('does not leak settled proposals to other users', async () => {
@@ -438,7 +443,7 @@ describe('GET /api/approval-hub/settled', () => {
     assert.equal(body.count, 3, 'limit=3 should cap results');
   });
 
-  it('returns both approved and rejected in the history', async () => {
+  it('normalizes accepted and rejected history without leaking legacy status vocabulary', async () => {
     await createAndAnchor({
       proposalId: 'pa',
       targetThreadId: 'thread-A',
@@ -463,8 +468,9 @@ describe('GET /api/approval-hub/settled', () => {
 
     const body = JSON.parse(res.body);
     assert.equal(body.count, 2);
-    const statuses = body.items.map((i) => i.status).sort();
-    assert.deepEqual(statuses, ['approved', 'rejected']);
+    const resolutions = body.items.map((i) => i.resolution).sort();
+    assert.deepEqual(resolutions, ['accepted', 'rejected']);
+    assert.ok(body.items.every((i) => !Object.hasOwn(i, 'status')));
   });
 
   it('coerces fractional limit to integer — limit=0.9 must default (floor=0, P2 fix)', async () => {

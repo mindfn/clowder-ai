@@ -11,13 +11,21 @@ import {
   type VerdictHandoffPacket,
 } from '../verdict-handoff.js';
 import { mapPublishVerdictError } from './error-mapping.js';
-import { writeLifecycleRootArtifact } from './lifecycle-root-artifact.js';
+import {
+  rejectServerOwnedFrictionPacketFields,
+  validateFrictionAggregateWrite,
+  validateFrictionAnalysisInput,
+} from './friction-findings/friction-analysis-input.js';
+import { writeGeneratedLifecycleArtifacts } from './friction-findings/generated-lifecycle-artifacts.js';
 import { validateMetricRefsAgainstGlossary } from './metric-glossary-validation.js';
 import { computePublishPolicy } from './publish-policy.js';
 import { validateSourceRefsForPublish } from './source-ref-validation/source-ref-handler-validation.js';
 import type {
   ArtifactPublisher,
+  GeneratedFindingArtifact,
+  GeneratedVerdictArtifact,
   HandlerError,
+  PublishedVerdictChildArtifact,
   PublishVerdictDeps,
   PublishVerdictInput,
   PublishVerdictSuccess,
@@ -72,6 +80,8 @@ export async function handlePublishVerdict(
   deps: PublishVerdictDeps,
   input: PublishVerdictInput,
 ): Promise<PublishVerdictSuccess | HandlerError> {
+  const serverFieldError = rejectServerOwnedFrictionPacketFields(input.packet);
+  if (serverFieldError) return serverFieldError;
   // AC-H1: validate full packet schema
   let packet: VerdictHandoffPacket;
   try {
@@ -87,6 +97,25 @@ export async function handlePublishVerdict(
       status: 400,
       error: 'domain_mismatch',
       detail: `input.domain '${input.domain}' does not match packet.domainId '${packet.domainId}'`,
+    };
+  }
+
+  const analysisInput = validateFrictionAnalysisInput(packet.domainId, input.analysisFindings);
+  if (analysisInput.error) return analysisInput.error;
+  const analysisFindings = analysisInput.findings;
+  const aggregateError = validateFrictionAggregateWrite(packet, analysisFindings);
+  if (aggregateError) return aggregateError;
+
+  // One server-owned clock governs both future-time rejection and generator
+  // provenance. This must run before GitPublisher can create a branch, commit,
+  // remote ref, or PR; packet.createdAt remains the event time and may be old,
+  // but it cannot claim an event later than the publication request itself.
+  const publicationTime = (deps.now?.() ?? new Date()).toISOString();
+  if (Date.parse(packet.createdAt) > Date.parse(publicationTime)) {
+    return {
+      status: 400,
+      error: 'packet_created_at_in_future',
+      detail: `packet.createdAt '${packet.createdAt}' is later than server publication time '${publicationTime}'`,
     };
   }
 
@@ -226,12 +255,9 @@ export async function handlePublishVerdict(
   const artifactPublisher = deps.artifactPublisher ?? defaultArtifactPublisher;
   const generator: VerdictGenerator = deps.generator; // checked above (501 if missing)
 
-  let generated: {
-    verdictPath: string;
-    bundleDir: string;
-    extraStagedPaths?: string[];
-    afterPublish?: () => void | Promise<void>;
-  } | null = null;
+  let generated: GeneratedVerdictArtifact | null = null;
+  let findingArtifacts: GeneratedFindingArtifact[] = [];
+  let childArtifacts: PublishedVerdictChildArtifact[] = [];
   try {
     // Preserve main's measurement-policy gate. The census remains a product-repo
     // input; local artifact publication must not rewrite that repository file.
@@ -253,16 +279,14 @@ export async function handlePublishVerdict(
         generated = await generator(packet, input.sourceRefs, {
           harnessFeedbackRoot: outputRoot,
           liveHarnessFeedbackRoot: deps.harnessFeedbackRoot,
+          publicationTime,
           ownerUserId: input.ownerUserId,
           taskOutcomeDbPath: deps.taskOutcomeDbPath,
           eventMemoryDbPath: deps.eventMemoryDbPath,
+          ...(analysisFindings ? { analysisFindings } : {}),
         });
-        // Production generators materialize the bundle before returning. Keep
-        // the lifecycle sidecar coupled to that real bundle, while allowing
-        // publisher-level tests to use a path-only generator stub.
-        if (existsSync(generated.bundleDir)) {
-          writeLifecycleRootArtifact(generated.bundleDir, packet);
-        }
+        childArtifacts = writeGeneratedLifecycleArtifacts(generated, packet, outputRoot);
+        findingArtifacts = generated.findingArtifacts ?? [];
         return generated;
       },
     });
@@ -286,6 +310,8 @@ export async function handlePublishVerdict(
       bundleDir: ref.bundleDir,
       artifactId: ref.artifactId,
       artifactUrl: ref.artifactUrl,
+      findingArtifacts,
+      childArtifacts,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

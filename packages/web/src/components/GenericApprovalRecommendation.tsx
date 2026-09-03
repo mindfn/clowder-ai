@@ -1,4 +1,4 @@
-import type { ApprovalItem } from '@cat-cafe/shared';
+import type { ApprovalHubItem } from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
 import { CriticalText } from './content-overflow';
 import { DiffViewer } from './workspace/DiffViewer';
@@ -13,7 +13,7 @@ export function GenericApprovalRecommendation({
   targetThreadTitle,
   resolveCatName,
 }: {
-  item: ApprovalItem;
+  item: ApprovalHubItem;
   f221TasteEvidence?: string;
   f225HandoffDetails?: string;
   f193TargetThreadId: string;
@@ -45,7 +45,7 @@ export function GenericApprovalRecommendation({
   );
 }
 
-function HarnessGovernanceRecommendation({ item }: { item: ApprovalItem }) {
+function HarnessGovernanceRecommendation({ item }: { item: ApprovalHubItem }) {
   const header = asRecord(item.detail.header);
   const conclusions = asRecords(item.detail.conclusions);
   const history = asRecords(item.detail.history);
@@ -237,7 +237,7 @@ function formatWindow(window: Record<string, unknown>): string {
   return `${start} → ${end}`;
 }
 
-function TasteRecommendation({ item, evidence }: { item: ApprovalItem; evidence?: string }) {
+function TasteRecommendation({ item, evidence }: { item: ApprovalHubItem; evidence?: string }) {
   return (
     <div className="space-y-1">
       {evidence && <CriticalText summary="品味提案依据" details={evidence} tone="info" />}
@@ -262,7 +262,7 @@ function DispatchRecommendation({
   targetThreadId,
   resolveCatName,
 }: {
-  item: ApprovalItem;
+  item: ApprovalHubItem;
   sourceThreadTitle: string;
   targetThreadTitle: string | null;
   targetThreadId: string;
@@ -290,7 +290,7 @@ function DispatchRecommendation({
   );
 }
 
-function EntityRecommendation({ item }: { item: ApprovalItem }) {
+function EntityRecommendation({ item }: { item: ApprovalHubItem }) {
   return (
     <div className="space-y-1">
       <p data-testid="entity-proposal-identity">

@@ -147,7 +147,10 @@ describe('F257 production segment lifecycle surface', () => {
     assert.match(source, /new HarnessGovernanceExecutor\(\{/);
     assert.match(source, /new HarnessUnitDirectoryWriter\(\{/);
     assert.match(source, /^\s*governance:\s*cycleGovernanceCoordinator,\s*$/m);
-    assert.match(source, /F257:\s*\{ adapter: new F257ApprovalAdapter\(harnessGovernanceProposalStore\) \}/);
+    assert.match(
+      source,
+      /F257:\s*bindLegacyApprovalProducer\(new F257ApprovalAdapter\(harnessGovernanceProposalStore\)\)/,
+    );
     assert.doesNotMatch(
       source,
       /CandidateStore|GovernanceWorker|GovernanceDecisionGenerator|setPostCommitHook|reconcileLatestJudgments/,

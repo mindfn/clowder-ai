@@ -34,6 +34,7 @@ export function createTaskOutcomeGeneratorAdapter(): VerdictGenerator {
       harnessFeedbackRoot: deps.harnessFeedbackRoot,
       domain,
       sourceWindow,
+      generatedAt: deps.publicationTime,
       submittedPacket: packet,
     });
     const afterPublish = buildEpisodeVerdictWriteback(

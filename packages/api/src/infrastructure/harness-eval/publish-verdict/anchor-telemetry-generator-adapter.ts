@@ -55,6 +55,7 @@ export function createAnchorTelemetryGeneratorAdapter(provider: AnchorTelemetryM
       domain,
       rollup,
       selector,
+      generatedAt: deps.publicationTime,
       submittedPacket: packet,
     });
 

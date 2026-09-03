@@ -461,13 +461,20 @@ fixtures: []
     // handler mapping layer returns the correct 4xx instead of 500 publisher_failed.
     it('returns 400 invalid_episode_verdict_writeback when afterPublish throws typed domain error', async () => {
       const mockPublisher = createMockArtifactPublisher();
-      const mockGenerator = async (packet, sources, deps) => ({
-        verdictPath: `${deps.harnessFeedbackRoot}/verdicts/${packet.id}.md`,
-        bundleDir: `${deps.harnessFeedbackRoot}/bundles/${packet.id}`,
-        afterPublish() {
-          throw new Error('invalid_episode_verdict_writeback: stale claim');
-        },
-      });
+      const mockGenerator = async (packet, sources, deps) => {
+        const verdictPath = `${deps.harnessFeedbackRoot}/verdicts/${packet.id}.md`;
+        const bundleDir = `${deps.harnessFeedbackRoot}/bundles/${packet.id}`;
+        mkdirSync(resolve(verdictPath, '..'), { recursive: true });
+        mkdirSync(bundleDir, { recursive: true });
+        writeFileSync(verdictPath, '# verdict\n');
+        return {
+          verdictPath,
+          bundleDir,
+          afterPublish() {
+            throw new Error('invalid_episode_verdict_writeback: stale claim');
+          },
+        };
+      };
 
       const result = await handlePublishVerdict(
         { harnessFeedbackRoot: root, artifactPublisher: mockPublisher, generator: mockGenerator },

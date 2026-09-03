@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-describe('V27 migration — dynamic_task_defs retry_attempts', () => {
+describe('V42 migration — dynamic_task_defs retry_attempts', () => {
   it('adds retry_attempts with default 0 for durable once-task retry progress', async () => {
     const Database = (await import('better-sqlite3')).default;
     const schema = await import('../../dist/domains/memory/schema.js');
@@ -21,7 +21,7 @@ describe('V27 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.equal(schema.CURRENT_SCHEMA_VERSION, 40);
+      assert.equal(schema.CURRENT_SCHEMA_VERSION, 42);
     } finally {
       db.close();
     }
@@ -39,13 +39,13 @@ describe('V27 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.equal(schema.CURRENT_SCHEMA_VERSION, 40);
+      assert.equal(schema.CURRENT_SCHEMA_VERSION, 42);
     } finally {
       db.close();
     }
   });
 
-  it('upgrades an existing upstream V39 database with the scheduler retry column', async () => {
+  it('upgrades an existing upstream V41 database with the scheduler retry column', async () => {
     const Database = (await import('better-sqlite3')).default;
     const schema = await import('../../dist/domains/memory/schema.js');
 
@@ -53,13 +53,13 @@ describe('V27 migration — dynamic_task_defs retry_attempts', () => {
     try {
       schema.applyMigrations(db);
       db.exec('ALTER TABLE dynamic_task_defs DROP COLUMN retry_attempts');
-      db.prepare('DELETE FROM schema_version WHERE version = 40').run();
+      db.prepare('DELETE FROM schema_version WHERE version = 42').run();
 
       schema.applyMigrations(db);
 
       const cols = db.prepare("PRAGMA table_info('dynamic_task_defs')").all();
       assert.ok(cols.some((col) => col.name === 'retry_attempts'));
-      assert.equal(db.prepare('SELECT MAX(version) as v FROM schema_version').get().v, 40);
+      assert.equal(db.prepare('SELECT MAX(version) as v FROM schema_version').get().v, 42);
     } finally {
       db.close();
     }
