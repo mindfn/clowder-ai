@@ -13,7 +13,6 @@ describe('GET /api/messages', () => {
   let freshnessClosureStore;
   let invocationQueue;
   let queueLedgerStore;
-  let queueEntryId;
 
   beforeEach(async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -28,7 +27,6 @@ describe('GET /api/messages', () => {
     const { InMemoryQueueLedgerStore } = await import(
       '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'
     );
-    ({ queueEntryId } = await import('../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js'));
 
     messageStore = new MessageStore();
     freshnessClosureStore = new InMemoryFreshnessClosureStore();
@@ -358,7 +356,8 @@ describe('GET /api/messages', () => {
   });
 
   it('F264 hydrates a terminal receipt at the original user-message position', async () => {
-    const queued = messageStore.append(
+    const admission = await invocationQueue.appendAndEnqueueDurable(
+      messageStore,
       canonicalTestMessageInput({
         userId: 'default-user',
         catId: null,
@@ -368,23 +367,24 @@ describe('GET /api/messages', () => {
         threadId: 'thread-receipt',
         deliveryStatus: 'queued',
       }),
+      {
+        userId: 'default-user',
+        threadId: 'thread-receipt',
+        kind: 'conversation_input',
+        from: { kind: 'user', userId: 'default-user' },
+        ownerAuthProvenance: 'strict',
+        content: 'message sent during the turn',
+        intent: 'execute',
+        targetCats: ['opus'],
+        priority: 'normal',
+        autoExecute: false,
+      },
     );
-    const entry = {
-      version: 1,
-      id: queueEntryId(queued.id, 'opus'),
-      threadId: queued.threadId,
-      owner: { kind: 'user', userId: queued.userId },
-      kind: 'conversation_input',
-      from: queued.from,
-      target: { kind: 'cat', catId: 'opus' },
-      payload: { sourceId: queued.id, messageId: queued.id, content: queued.content },
-      execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: false },
-      delivery: {},
-      status: 'queued',
-      enqueuedAt: 1500,
-      priority: 'normal',
-    };
-    assert.equal((await queueLedgerStore.enqueue([entry])).outcome, 'enqueued');
+    assert.equal(admission.outcome, 'enqueued');
+    const queued = admission.message;
+    const entry = admission.entry;
+    assert.ok(entry);
+    assert.equal(queued.timelinePublishedAtAppend, true);
     assert.equal((await queueLedgerStore.claim(queued.threadId, entry.id, 'claim-receipt', 1550)).outcome, 'claimed');
     assert.equal(
       (await queueLedgerStore.commit(queued.threadId, entry.id, 'claim-receipt', 'processing', 1550)).outcome,
@@ -432,7 +432,7 @@ describe('GET /api/messages', () => {
               sequence: 1,
               state: 'handled',
               invocationId: 'inv-receipt',
-              createdAt: 1500,
+              createdAt: entry.enqueuedAt,
               updatedAt: 1700,
               seenAt: 1600,
             },
