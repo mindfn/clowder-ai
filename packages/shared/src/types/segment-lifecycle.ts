@@ -51,13 +51,12 @@ export interface LifecycleEvent {
 // Stage summaries within a version epoch
 // ---------------------------------------------------------------------------
 
-/** Tracing stage summary: observation counts and time range. */
+/** Segment activity summary within the current lifeline query window. */
 export interface TracingStageSummary {
   /**
-   * Observed rows in the CURRENT query window (all pipelineStatus, incl.
-   * observe-only). EXACT full-window aggregate (sol R6): the route scans all
-   * matching rows for counting — only the DETAIL row list is capped
-   * (see SegmentLifecycleResponse observationsCapped), never the counts.
+   * Every trace row in which this segment was evaluated by the pipeline,
+   * including fired, observe-only, skipped, and disabled outcomes. This is an
+   * exact full-window aggregate; only the injection DETAIL list is capped.
    */
   observationCount: number;
   /**
@@ -67,6 +66,8 @@ export interface TracingStageSummary {
    * not injections. EXACT (same full-window scan as observationCount).
    */
   firedCount: number;
+  /** Exact count of rows whose pipeline outcome was disabled. */
+  disabledCount: number;
   firstAt: number | null;
   lastAt: number | null;
 }
@@ -291,7 +292,7 @@ export interface SegmentLifecycleResponse {
    * must label them separately, never as one context.
    */
   window: { startMs: number; endMs: number };
-  /** Raw observations in the query window (detail list, capped separately). */
+  /** Fired injection rows in the query window (detail list, capped separately). */
   observations: SegmentObservation[];
   /** True when the detail list was truncated; aggregate counts remain exact. */
   observationsCapped?: boolean;

@@ -415,7 +415,9 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).toContain('结构化反例 Tracing');
     expect(theaterSrc).toContain('周期内累计 Tracing（Objective）');
     expect(theaterSrc).toContain('周期内反例');
-    expect(theaterSrc).toContain('生命线查询窗内本段 Tracing 明细');
+    expect(theaterSrc).toContain('本段注入明细');
+    expect(theaterSrc).toContain('注入 {activity.firedCount} 次');
+    expect(theaterSrc).toContain('禁用 {activity.disabledCount} 次');
     expect(theaterSrc).toContain('周期内暂无明确反例；周期内 Tracing 仍持续累计');
     expect(theaterSrc).not.toContain('时间窗内累计 Tracing');
     expect(theaterSrc).not.toContain('待分类');
@@ -424,7 +426,11 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     // Cycle start uses the CycleRecord-backed sole Objective start.
     expect(theaterSrc).toContain('trigger.objective.cycleStartMs');
     expect(theaterSrc).toContain('采集故障：owner 线性池在本周期内没有 Tracing');
-    expect(theaterSrc).toContain('触发策略已调整');
+    expect(theaterSrc).toContain('objective.policyChangeCount > 0');
+    expect(theaterSrc).toContain("objective.evalStatus !== 'idle'");
+    expect(theaterSrc).toContain("objective.lifecycle !== 'active'");
+    expect(theaterSrc).toContain('评估停滞');
+    expect(theaterSrc).toContain('已休眠');
     expect(theaterSrc).not.toContain('Tracing 明细（{total}）');
     // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)
     expect(theaterSrc).toContain('toLocaleString()');

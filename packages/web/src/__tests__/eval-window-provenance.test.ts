@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EvalStagePanel } from '../components/settings/EvalStagePanel';
 import { LifelineChainView } from '../components/settings/LifelineChainView';
 import { LifelineStageDetail } from '../components/settings/LifelineStageDetail';
+import { SegmentTraceTheater } from '../components/settings/SegmentTraceTheater';
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -86,6 +87,7 @@ function makeEpoch(overrides: Record<string, unknown> = {}) {
     tracing: {
       observationCount: 18,
       firedCount: 18,
+      disabledCount: 0,
       firstAt: QUERY_WINDOW.startMs + 1000,
       lastAt: QUERY_WINDOW.endMs - 1000,
     },
@@ -213,10 +215,79 @@ describe('判据② tracing vs eval — the 18-vs-0 incident guard', () => {
   });
 });
 
+describe('F257 segment activity presentation', () => {
+  function readiness(
+    overrides: Partial<import('@cat-cafe/shared').SegmentTracingEvaluationView['trigger']['objective']> = {},
+  ): import('@cat-cafe/shared').SegmentTracingEvaluationView {
+    return {
+      trigger: {
+        objective: {
+          objectiveId: 'iron-law-compliance',
+          lifecycle: 'active',
+          health: 'healthy',
+          policyChangeCount: 0,
+          evalStatus: 'idle',
+          cycleStartMs: QUERY_WINDOW.startMs,
+          cycleEndMs: null,
+          triggeredBy: [],
+          cumulative: { count: 251, threshold: 200 },
+          counterexamples: { count: 0, threshold: 3 },
+          cadence: { elapsedMs: 1000, thresholdMs: 7 * 24 * 60 * 60 * 1000, eligible: true },
+          ...overrides,
+        },
+      },
+      structuredCounterexamples: [],
+    };
+  }
+
+  it('keeps default state quiet and separates pool Tracing from injection/disabled activity', async () => {
+    await render(
+      createElement(SegmentTraceTheater, {
+        segmentId: 'L4',
+        observations: [],
+        window: QUERY_WINDOW,
+        readiness: readiness(),
+        activity: {
+          observationCount: 251,
+          firedCount: 101,
+          disabledCount: 150,
+          firstAt: QUERY_WINDOW.startMs,
+          lastAt: QUERY_WINDOW.endMs - 1,
+        },
+      }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('周期内累计 Tracing（Objective）251/200 条');
+    expect(text).toContain('注入 101 次');
+    expect(text).toContain('禁用 150 次');
+    expect(text).toContain('本段注入明细');
+    expect(text).not.toContain('触发策略已调整 0 次');
+    expect(text).not.toMatch(/\bidle\b/);
+    expect(text).not.toMatch(/\bactive\b/);
+  });
+
+  it('shows only non-default states and localizes them', async () => {
+    await render(
+      createElement(SegmentTraceTheater, {
+        segmentId: 'L4',
+        observations: [],
+        window: QUERY_WINDOW,
+        readiness: readiness({ evalStatus: 'stalled', lifecycle: 'dormant', policyChangeCount: 2 }),
+      }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('评估停滞');
+    expect(text).toContain('已休眠');
+    expect(text).toContain('触发策略已调整 2 次');
+    expect(text).not.toMatch(/\bstalled\b/);
+    expect(text).not.toMatch(/\bdormant\b/);
+  });
+});
+
 // ── 判据② P1-1 (sol R1): composed viewport — 18 vs 0 on two coordinates at once ──
 
 describe('判据② P1-1 composed render — chain + eval detail in ONE viewport', () => {
-  it('shows tracing(18)+query window AND eval 0+eval window+denominator in the same DOM', async () => {
+  it('shows 注入 18 次 + query window AND eval 0+eval window+denominator in the same DOM', async () => {
     await render(
       createElement(
         'div',
@@ -244,7 +315,8 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
     );
     const text = container.textContent ?? '';
     // Chain: current tracing count visible
-    expect(text).toContain('tracing(18)');
+    expect(text).toContain('注入 18 次');
+    expect(text).not.toContain('tracing(18)');
     // Eval detail: historical eval count + its OWN coordinates
     expect(text).toContain('评估窗口');
     expect(text).toContain(fmt(EVAL_WINDOW.startMs));
@@ -270,6 +342,7 @@ describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count comp
   function renderEvalWithTracing(tracing: {
     observationCount: number;
     firedCount: number;
+    disabledCount: number;
     firstAt: number | null;
     lastAt: number | null;
   }) {
@@ -288,6 +361,7 @@ describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count comp
     await renderEvalWithTracing({
       observationCount: 1,
       firedCount: 0,
+      disabledCount: 0,
       firstAt: QUERY_WINDOW.startMs + 1000,
       lastAt: QUERY_WINDOW.endMs - 1000,
     });
@@ -306,6 +380,7 @@ describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count comp
     await renderEvalWithTracing({
       observationCount: 101,
       firedCount: 101,
+      disabledCount: 0,
       firstAt: QUERY_WINDOW.startMs + 1000,
       lastAt: QUERY_WINDOW.endMs - 1000,
     });
@@ -324,6 +399,7 @@ describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count comp
             tracing: {
               observationCount: 101,
               firedCount: 101,
+              disabledCount: 0,
               firstAt: QUERY_WINDOW.startMs + 1000,
               lastAt: QUERY_WINDOW.endMs - 1000,
             },
@@ -343,7 +419,7 @@ describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count comp
       }),
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('101 次观测');
+    expect(text).toContain('注入 101 次');
     expect(text).toContain('明细仅显示最近 100 条');
     expect(text).toContain('精确聚合');
   });

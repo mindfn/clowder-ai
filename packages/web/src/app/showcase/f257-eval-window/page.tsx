@@ -39,6 +39,7 @@ const epoch = {
   tracing: {
     observationCount: 18,
     firedCount: 18,
+    disabledCount: 0,
     firstAt: QUERY_WINDOW.startMs + 3_600_000,
     lastAt: QUERY_WINDOW.endMs - 3_600_000,
   },

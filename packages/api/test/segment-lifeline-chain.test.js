@@ -66,14 +66,26 @@ describe('buildVersionChain', () => {
         makeEvent({ action: 'rollback', timestamp: 2000 }),
       ],
       observations: [
-        { timestamp: 500, version: null, fired: false },
-        { timestamp: 1500, version: 1, fired: true },
-        { timestamp: 2500, version: null, fired: true },
+        { timestamp: 500, version: null, fired: false, disabled: true },
+        { timestamp: 1500, version: 1, fired: true, disabled: false },
+        { timestamp: 2500, version: null, fired: true, disabled: false },
       ],
       currentContentVersion: null,
     });
-    assert.deepEqual(chain[0].tracing, { observationCount: 2, firedCount: 1, firstAt: 500, lastAt: 2500 });
-    assert.deepEqual(chain[1].tracing, { observationCount: 1, firedCount: 1, firstAt: 1500, lastAt: 1500 });
+    assert.deepEqual(chain[0].tracing, {
+      observationCount: 2,
+      firedCount: 1,
+      disabledCount: 1,
+      firstAt: 500,
+      lastAt: 2500,
+    });
+    assert.deepEqual(chain[1].tracing, {
+      observationCount: 1,
+      firedCount: 1,
+      disabledCount: 0,
+      firstAt: 1500,
+      lastAt: 1500,
+    });
     assert.equal(chain[0].status, 'tracing');
   });
 
@@ -85,7 +97,7 @@ describe('buildVersionChain', () => {
         makeEvent({ action: 'rollback', timestamp: 2000 }),
         makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 3 }),
       ],
-      observations: [{ timestamp: 2500, version: null, fired: false }],
+      observations: [{ timestamp: 2500, version: null, fired: false, disabled: false }],
       currentContentVersion: 2,
     });
     assert.equal(chain[2].isActive, true);

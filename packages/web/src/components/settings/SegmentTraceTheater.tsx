@@ -1,6 +1,6 @@
 'use client';
 
-import type { SegmentTracingEvaluationView } from '@cat-cafe/shared';
+import type { SegmentTracingEvaluationView, TracingStageSummary } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { SettingsBadge, SettingsText } from './primitives';
 import { SegmentReplayPanel } from './SegmentReplayPanel';
@@ -23,6 +23,7 @@ export function SegmentTraceTheater({
   loading,
   error,
   capped,
+  activity,
 }: {
   segmentId: string;
   observations: TraceTheaterObservation[];
@@ -31,6 +32,7 @@ export function SegmentTraceTheater({
   loading?: boolean;
   error?: string | null;
   capped?: boolean;
+  activity?: TracingStageSummary | null;
 }) {
   const [selected, setSelected] = useState<{
     threadId: string;
@@ -49,6 +51,19 @@ export function SegmentTraceTheater({
           </MetaRow>
           <MetaRow label="周期起点">{cycleStart ? new Date(cycleStart).toLocaleString() : '窗口未知'}</MetaRow>
         </div>
+        {activity && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-cafe-muted">
+            <span>本段查询窗</span>
+            <SettingsBadge tone="emerald" size="xxs">
+              注入 {activity.firedCount} 次
+            </SettingsBadge>
+            {activity.disabledCount > 0 && (
+              <SettingsBadge tone="amber" size="xxs">
+                禁用 {activity.disabledCount} 次
+              </SettingsBadge>
+            )}
+          </div>
+        )}
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">
             {error}
@@ -92,15 +107,13 @@ export function SegmentTraceTheater({
       </section>
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-        <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">
-          生命线查询窗内本段 Tracing 明细
-        </summary>
+        <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">本段注入明细</summary>
         <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
           点击记录查看完整现场
         </SettingsText>
         {observations.length === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前生命线查询窗内本段暂无 Tracing 记录
+            当前查询窗内本段暂无注入记录
           </SettingsText>
         ) : (
           <div className="mt-2 space-y-1.5">
@@ -114,8 +127,8 @@ export function SegmentTraceTheater({
                 <span className="w-[132px] shrink-0 text-xs text-cafe-secondary">
                   {new Date(observation.timestamp).toLocaleString()}
                 </span>
-                <SettingsBadge tone={observation.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
-                  {observation.pipelineStatus === 'fired' ? '已注入' : '已观测'}
+                <SettingsBadge tone="emerald" size="xxs">
+                  已注入
                 </SettingsBadge>
                 <span className="min-w-0 flex-1 truncate text-xs text-cafe-secondary">@{observation.catId}</span>
                 <span className="shrink-0 text-micro text-cafe-muted">{observation.charCount} chars</span>
@@ -128,7 +141,7 @@ export function SegmentTraceTheater({
         )}
         {capped && (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前仅展示最近 100 场；累计记录仍为完整窗口计数。
+            当前仅展示最近 100 次注入；上方计数仍为完整窗口精确聚合。
           </SettingsText>
         )}
       </details>
@@ -148,9 +161,9 @@ export function SegmentTraceTheater({
 }
 
 /**
- * Trigger rules are Objective-cycle counts. The detail list below remains a
- * segment-scoped view of the lifeline query window; their labels must not imply
- * that the two coordinates or denominators are interchangeable.
+ * Trigger rules are Objective-cycle pool counts. Segment activity and replay
+ * below use injection/disabled vocabulary so the two coordinates cannot be
+ * mistaken for the same Tracing count.
  */
 function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
   const objective = trigger.objective;
@@ -160,12 +173,8 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
       <div className="rounded-lg bg-[var(--console-card-bg)] p-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="font-mono">{objective.objectiveId}</span>
-          <SettingsBadge tone={objective.evalStatus === 'stalled' ? 'red' : 'slate'} size="xxs">
-            {objective.evalStatus}
-          </SettingsBadge>
-          <SettingsBadge tone={objective.lifecycle === 'dormant' ? 'amber' : 'slate'} size="xxs">
-            {objective.lifecycle}
-          </SettingsBadge>
+          {objective.evalStatus !== 'idle' && <EvaluationStatusBadge status={objective.evalStatus} />}
+          {objective.lifecycle !== 'active' && <LifecycleBadge lifecycle={objective.lifecycle} />}
           {objective.triggeredBy.map((route) => (
             <SettingsBadge key={route} tone="blue" size="xxs">
               {routeLabel(route)} 已触发
@@ -187,9 +196,49 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
           · 距周期起点 {formatDuration(objective.cadence.elapsedMs)}/{formatDuration(objective.cadence.thresholdMs)}
           {!objective.cadence.eligible ? '（至少需 1 条累计 Tracing）' : ''}
         </div>
-        <div className="text-cafe-muted">· 触发策略已调整 {objective.policyChangeCount} 次</div>
+        {objective.policyChangeCount > 0 && (
+          <div className="text-cafe-muted">· 触发策略已调整 {objective.policyChangeCount} 次</div>
+        )}
       </div>
     </div>
+  );
+}
+
+const EVALUATION_STATUS_LABEL = {
+  requested: { label: '待评估', tone: 'blue' },
+  retriggered: { label: '已重触发', tone: 'amber' },
+  written: { label: '评估已回写', tone: 'emerald' },
+  stalled: { label: '评估停滞', tone: 'red' },
+} as const;
+
+function EvaluationStatusBadge({
+  status,
+}: {
+  status: Exclude<SegmentTracingEvaluationView['trigger']['objective']['evalStatus'], 'idle'>;
+}) {
+  const presentation = EVALUATION_STATUS_LABEL[status];
+  return (
+    <SettingsBadge tone={presentation.tone} size="xxs">
+      {presentation.label}
+    </SettingsBadge>
+  );
+}
+
+const LIFECYCLE_LABEL = {
+  dormant: { label: '已休眠', tone: 'amber' },
+  retired: { label: '已退役', tone: 'slate' },
+} as const;
+
+function LifecycleBadge({
+  lifecycle,
+}: {
+  lifecycle: Exclude<SegmentTracingEvaluationView['trigger']['objective']['lifecycle'], 'active'>;
+}) {
+  const presentation = LIFECYCLE_LABEL[lifecycle];
+  return (
+    <SettingsBadge tone={presentation.tone} size="xxs">
+      {presentation.label}
+    </SettingsBadge>
   );
 }
 

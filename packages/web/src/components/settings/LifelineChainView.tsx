@@ -4,7 +4,7 @@
  * F257 Phase D — Version lifecycle chain visualization.
  *
  * Horizontal scrollable chain of version epochs:
- *   [v1] → [tracing(445)] → [eval(pass)] → [governance] → [v2] → [tracing(12)] → ...
+ *   [v1] → [注入 445 次] → [eval] → [governance] → [v2] → [注入 12 次] → ...
  *
  * Each badge is clickable — selecting a stage shows its detail in LifelineStageDetail.
  */
@@ -24,6 +24,7 @@ interface VersionEpoch {
     observationCount: number;
     /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
     firedCount: number;
+    disabledCount: number;
     firstAt: number | null;
     lastAt: number | null;
   } | null;
@@ -53,6 +54,7 @@ function versionTone(epoch: VersionEpoch): BadgeTone {
 
 function tracingTone(epoch: VersionEpoch): BadgeTone {
   if (!epoch.tracing || epoch.tracing.observationCount === 0) return 'slate';
+  if (epoch.tracing.firedCount === 0 && epoch.tracing.disabledCount > 0) return 'amber';
   return 'emerald';
 }
 
@@ -67,8 +69,8 @@ function governanceTone(): BadgeTone {
 // ── Labels ─────────────────────────────────────────────────────
 
 function tracingLabel(epoch: VersionEpoch): string {
-  if (!epoch.tracing || epoch.tracing.observationCount === 0) return 'tracing';
-  return `tracing(${epoch.tracing.observationCount})`;
+  if (!epoch.tracing || epoch.tracing.observationCount === 0) return '尚无注入';
+  return `注入 ${epoch.tracing.firedCount} 次`;
 }
 
 // ── Helpers ────────────────────────────────────────────────────

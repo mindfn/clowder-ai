@@ -22,6 +22,7 @@ interface VersionEpoch {
     observationCount: number;
     /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
     firedCount: number;
+    disabledCount: number;
     firstAt: number | null;
     lastAt: number | null;
   } | null;
@@ -240,9 +241,12 @@ function TracingDetail({
   return (
     <>
       <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
-        v{epoch.version} — Tracing
+        v{epoch.version} — 注入
         {epoch.tracing && (
-          <span className="ml-2 text-xs font-normal text-cafe-muted">({epoch.tracing.observationCount} 次观测)</span>
+          <span className="ml-2 text-xs font-normal text-cafe-muted">
+            （注入 {epoch.tracing.firedCount} 次
+            {epoch.tracing.disabledCount > 0 ? ` · 禁用 ${epoch.tracing.disabledCount} 次` : ''}）
+          </span>
         )}
       </SettingsText>
 
@@ -251,7 +255,7 @@ function TracingDetail({
           aggregate), so completeness provenance lives here, not on the numbers. */}
       {observationsCapped && (
         <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
-          明细仅显示最近 100 条（上方计数为完整窗口精确聚合）
+          注入明细仅显示最近 100 条（上方计数为完整窗口精确聚合）
         </SettingsText>
       )}
 
@@ -259,7 +263,7 @@ function TracingDetail({
           a distinct coordinate from the eval stage's historical sampling window. */}
       {queryWindow && (
         <div className="mb-3">
-          <InfoRow label="观测窗口">
+          <InfoRow label="查询窗口">
             <span>
               {formatTs(queryWindow.startMs)} ~ {formatTs(queryWindow.endMs)}
               <span className="ml-1 text-cafe-muted">（当前查询窗口，非评估窗口）</span>
@@ -270,8 +274,8 @@ function TracingDetail({
 
       {epoch.tracing?.firstAt && epoch.tracing.lastAt && (
         <div className="mb-3 space-y-1">
-          <InfoRow label="首次观测">{formatRel(epoch.tracing.firstAt)}</InfoRow>
-          <InfoRow label="最近观测">{formatRel(epoch.tracing.lastAt)}</InfoRow>
+          <InfoRow label="首次活动">{formatRel(epoch.tracing.firstAt)}</InfoRow>
+          <InfoRow label="最近活动">{formatRel(epoch.tracing.lastAt)}</InfoRow>
         </div>
       )}
 
@@ -288,7 +292,7 @@ function TracingDetail({
         </div>
       ) : (
         <SettingsText as="p" variant="xs" tone="muted" className="italic">
-          该版本无观测数据
+          该版本没有可回放的注入记录
         </SettingsText>
       )}
     </>

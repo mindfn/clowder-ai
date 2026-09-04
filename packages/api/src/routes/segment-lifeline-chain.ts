@@ -19,6 +19,8 @@ export interface SegmentObservationInput {
    * rows (pipelineStatus 'observed') are observations, NOT injections.
    */
   fired: boolean;
+  /** The hook was evaluated but disabled, so no content was injected. */
+  disabled: boolean;
 }
 
 export interface ChainBuilderInput {
@@ -229,11 +231,12 @@ function attachObservations(
     const epoch = resolveActiveEpochAt(timeline, obs.timestamp, epochs);
 
     if (!epoch.tracing) {
-      epoch.tracing = { observationCount: 0, firedCount: 0, firstAt: null, lastAt: null };
+      epoch.tracing = { observationCount: 0, firedCount: 0, disabledCount: 0, firstAt: null, lastAt: null };
     }
 
     epoch.tracing.observationCount++;
     if (obs.fired) epoch.tracing.firedCount++;
+    if (obs.disabled) epoch.tracing.disabledCount++;
     if (epoch.tracing.firstAt === null || obs.timestamp < epoch.tracing.firstAt) {
       epoch.tracing.firstAt = obs.timestamp;
     }
