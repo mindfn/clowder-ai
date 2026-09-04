@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
-import { rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
+import { createLocalArtifactPublisher } from '../../dist/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js';
 import { handlePublishVerdict } from '../../dist/infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 import { setupHarnessFeedback } from './eval-manual-trigger-fixtures.js';
-import { buildPacket } from './publish-verdict-fixtures.js';
+import { buildPacket, createMockArtifactPublisher } from './publish-verdict-fixtures.js';
 
 /**
  * F192 Phase H — Verdict Publishing Pipeline (砚砚 R0 Path B narrowed).
  * AC-H1: packet schema validation.
- * AC-H2: branch + commit + push + auto-PR pipeline (exec + generator injected).
+ * AC-H2: atomic durable artifact publication (publisher + generator injected).
  * AC-H7 partial: domain↔packet cross-check + eval:a2a-only v1.
  */
 describe('handlePublishVerdict', () => {
@@ -396,7 +398,19 @@ fixtures: []
     });
 
     it('returns 400 invalid_packet_id for slug violations (uppercase, underscore, etc.)', async () => {
-      for (const bad of ['Test-Foo', 'test_foo', '-leading', 'foo.bar', 'foo bar', 'foo/bar']) {
+      for (const bad of [
+        'Test-Foo',
+        'test_foo',
+        '-leading',
+        'foo.bar',
+        'foo bar',
+        'foo/bar',
+        '../escape',
+        '..\\escape',
+        '/absolute',
+        '.',
+        '..',
+      ]) {
         const result = await handlePublishVerdict(
           { harnessFeedbackRoot: root },
           { packet: buildPacket({ id: bad, domainId: 'eval:a2a' }), domain: 'eval:a2a', catId: 'codex' },
@@ -421,23 +435,206 @@ fixtures: []
       assert.match(result.detail, /phenomenon.*2048/);
     });
 
-    it('returns 409 verdict_already_exists when verdict file already exists for this id', async () => {
-      const { mkdirSync, writeFileSync } = await import('node:fs');
-      const { resolve } = await import('node:path');
+    it('returns 409 verdict_already_exists when artifact publisher detects duplicate id', async () => {
       const dupId = 'dup-verdict-test';
-      mkdirSync(resolve(root, 'verdicts'), { recursive: true });
-      writeFileSync(resolve(root, 'verdicts', `${dupId}.md`), '# Existing verdict\n');
+      const mockPublisher = createMockArtifactPublisher({ duplicateIds: new Set([dupId]) });
+      const mockGenerator = async (packet, sources, deps) => ({
+        verdictPath: `${deps.harnessFeedbackRoot}/verdicts/${packet.id}.md`,
+        bundleDir: `${deps.harnessFeedbackRoot}/bundles/${packet.id}`,
+      });
 
       const result = await handlePublishVerdict(
-        { harnessFeedbackRoot: root },
-        { packet: buildPacket({ id: dupId, domainId: 'eval:a2a' }), domain: 'eval:a2a', catId: 'codex' },
+        { harnessFeedbackRoot: root, artifactPublisher: mockPublisher, generator: mockGenerator },
+        {
+          packet: buildPacket({ id: dupId, domainId: 'eval:a2a' }),
+          domain: 'eval:a2a',
+          catId: 'codex',
+          sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
+        },
       );
       assert.ok('error' in result);
       assert.equal(result.status, 409);
       assert.equal(result.error, 'verdict_already_exists');
-      assert.match(result.detail, /data integrity|forbidden/i);
+    });
+
+    // F257 R5 P2: publisher rollback must preserve typed domain errors so the
+    // handler mapping layer returns the correct 4xx instead of 500 publisher_failed.
+    it('returns 400 invalid_episode_verdict_writeback when afterPublish throws typed domain error', async () => {
+      const mockPublisher = createMockArtifactPublisher();
+      const mockGenerator = async (packet, sources, deps) => {
+        const verdictPath = `${deps.harnessFeedbackRoot}/verdicts/${packet.id}.md`;
+        const bundleDir = `${deps.harnessFeedbackRoot}/bundles/${packet.id}`;
+        mkdirSync(resolve(verdictPath, '..'), { recursive: true });
+        mkdirSync(bundleDir, { recursive: true });
+        writeFileSync(verdictPath, '# verdict\n');
+        return {
+          verdictPath,
+          bundleDir,
+          afterPublish() {
+            throw new Error('invalid_episode_verdict_writeback: stale claim');
+          },
+        };
+      };
+
+      const result = await handlePublishVerdict(
+        { harnessFeedbackRoot: root, artifactPublisher: mockPublisher, generator: mockGenerator },
+        {
+          packet: buildPacket({ domainId: 'eval:a2a' }),
+          domain: 'eval:a2a',
+          catId: 'codex',
+          sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
+        },
+      );
+      assert.ok('error' in result);
+      assert.equal(result.status, 400);
+      assert.equal(result.error, 'invalid_episode_verdict_writeback');
+    });
+
+    // F257 R6 P2: the rollback path must work with the REAL LocalArtifactPublisher,
+    // not just a mock. The artifact is atomically committed, afterPublish fails with
+    // a typed domain error, the artifact is rolled back, and the handler still maps
+    // it to 400 invalid_episode_verdict_writeback instead of 500 publisher_failed.
+    it('returns 400 invalid_episode_verdict_writeback with real LocalArtifactPublisher', async () => {
+      const artifactRoot = mkdtempSync(join(tmpdir(), 'r7-real-publisher-'));
+      try {
+        const artifactPublisher = createLocalArtifactPublisher({ artifactRoot });
+        const testId = 'real-publisher-typed-error';
+        const realGenerator = async (packet, sources, deps) => {
+          const verdictPath = resolve(deps.harnessFeedbackRoot, 'verdicts', `${packet.id}.md`);
+          const bundleDir = resolve(deps.harnessFeedbackRoot, 'bundles', packet.id);
+          mkdirSync(resolve(deps.harnessFeedbackRoot, 'verdicts'), { recursive: true });
+          mkdirSync(bundleDir, { recursive: true });
+          writeFileSync(verdictPath, '# verdict\n');
+          return {
+            verdictPath,
+            bundleDir,
+            afterPublish() {
+              throw new Error('invalid_episode_verdict_writeback: stale claim');
+            },
+          };
+        };
+
+        const result = await handlePublishVerdict(
+          { harnessFeedbackRoot: root, artifactPublisher, generator: realGenerator },
+          {
+            packet: buildPacket({ id: testId, domainId: 'eval:a2a' }),
+            domain: 'eval:a2a',
+            catId: 'codex',
+            sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
+          },
+        );
+        assert.ok('error' in result);
+        assert.equal(result.status, 400);
+        assert.equal(result.error, 'invalid_episode_verdict_writeback');
+
+        // Rollback guarantee: the committed artifact must not be left behind.
+        const finalDir = resolve(artifactRoot, 'eval-a2a', testId);
+        assert.equal(existsSync(finalDir), false, 'artifact should be rolled back after afterPublish failure');
+      } finally {
+        rmSync(artifactRoot, { recursive: true, force: true });
+      }
     });
   });
 
-  // AC-H2 + 砚砚 R1 P1 #1: pipeline mechanics via GitPublisher abstraction
+  // AC-H2 + 砚砚 R1 P1 #1: pipeline mechanics via ArtifactPublisher abstraction.
+  //
+  // F257 regression — mixed injection state. A develop_base rebuild (upstream sync #1390)
+  // reverted this handler to the retired GitPublisher path (`deps.gitPublisher ?? defaultGitPublisher`)
+  // while index.ts / eval-hub.ts still wire ONLY `deps.artifactPublisher`. That mixed state made
+  // every eval-domain verdict publish fail at runtime with `generator_failed: GitPublisher not
+  // injected`. These tests inject ONLY artifactPublisher (mirroring production wiring) and assert
+  // the durable-artifact contract holds — they fail closed if the handler ever reads
+  // `deps.gitPublisher` again.
+  describe('AC-H2 — durable artifact publication (F257 mixed-injection regression)', () => {
+    it('delegates to the injected artifactPublisher and returns an artifact:// reference', async () => {
+      let publishArtifactCalls = 0;
+      const base = createMockArtifactPublisher();
+      const artifactPublisher = {
+        publishArtifact(opts) {
+          publishArtifactCalls += 1;
+          return base.publishArtifact(opts);
+        },
+      };
+      const generator = async (packet, _sources, deps) => {
+        mkdirSync(resolve(deps.harnessFeedbackRoot, 'verdicts'), { recursive: true });
+        const bundleDir = resolve(deps.harnessFeedbackRoot, 'bundles', packet.id);
+        mkdirSync(bundleDir, { recursive: true });
+        const verdictPath = resolve(deps.harnessFeedbackRoot, 'verdicts', `${packet.id}.md`);
+        writeFileSync(verdictPath, `---\ndomain_id: ${packet.domainId}\n---\n`);
+        return { verdictPath, bundleDir };
+      };
+
+      const result = await handlePublishVerdict(
+        // No gitPublisher injected — mirrors index.ts, which wires only artifactPublisher.
+        { harnessFeedbackRoot: root, artifactPublisher, generator },
+        {
+          packet: buildPacket({ id: 'f257-artifact-happy', domainId: 'eval:a2a' }),
+          domain: 'eval:a2a',
+          catId: 'codex',
+          sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
+        },
+      );
+
+      assert.ok(!('error' in result), `expected success, got ${JSON.stringify(result)}`);
+      assert.equal(publishArtifactCalls, 1, 'handler must delegate to the injected artifactPublisher');
+      assert.equal(result.ok, true);
+      assert.match(result.artifactUrl, /^artifact:\/\//, 'durable artifact reference, not a git PR url');
+      assert.equal(result.artifactId, 'f257-artifact-happy');
+      // Git-era response fields must never leak back into the artifact contract.
+      assert.equal('commitSha' in result, false, 'artifact response must not carry a git commitSha');
+      assert.equal('prUrl' in result, false, 'artifact response must not carry a git prUrl');
+      // The lifecycle sidecar is coupled to the real materialized bundle.
+      const lifecycleRoot = JSON.parse(readFileSync(resolve(result.bundleDir, 'lifecycle-root.json'), 'utf8'));
+      assert.equal(lifecycleRoot.verdictId, 'f257-artifact-happy');
+      assert.equal(lifecycleRoot.domainId, 'eval:a2a');
+    });
+
+    it('returns 500 generator_failed when the generator throws (no artifact produced)', async () => {
+      const artifactPublisher = createMockArtifactPublisher();
+      const result = await handlePublishVerdict(
+        {
+          harnessFeedbackRoot: root,
+          artifactPublisher,
+          generator: async () => {
+            throw new Error('synthetic generator failure');
+          },
+        },
+        {
+          packet: buildPacket({ domainId: 'eval:a2a' }),
+          domain: 'eval:a2a',
+          catId: 'codex',
+          sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
+        },
+      );
+      assert.ok('error' in result);
+      assert.equal(result.status, 500);
+      assert.equal(result.error, 'generator_failed');
+      assert.match(result.detail, /synthetic generator failure/);
+    });
+
+    it('returns 500 publisher_failed when the artifactPublisher throws after generate', async () => {
+      const artifactPublisher = createMockArtifactPublisher({ failAfterGenerate: 'synthetic publisher failure' });
+      const generator = async (packet, _sources, deps) => {
+        mkdirSync(resolve(deps.harnessFeedbackRoot, 'verdicts'), { recursive: true });
+        const bundleDir = resolve(deps.harnessFeedbackRoot, 'bundles', packet.id);
+        mkdirSync(bundleDir, { recursive: true });
+        const verdictPath = resolve(deps.harnessFeedbackRoot, 'verdicts', `${packet.id}.md`);
+        writeFileSync(verdictPath, '# v\n');
+        return { verdictPath, bundleDir };
+      };
+      const result = await handlePublishVerdict(
+        { harnessFeedbackRoot: root, artifactPublisher, generator },
+        {
+          packet: buildPacket({ id: 'f257-publisher-fail', domainId: 'eval:a2a' }),
+          domain: 'eval:a2a',
+          catId: 'codex',
+          sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
+        },
+      );
+      assert.ok('error' in result);
+      assert.equal(result.status, 500);
+      assert.equal(result.error, 'publisher_failed');
+      assert.match(result.detail, /synthetic publisher failure/);
+    });
+  });
 });

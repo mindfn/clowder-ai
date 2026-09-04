@@ -172,7 +172,7 @@ describe('MemoryCueEpisodeStore', () => {
       }),
     );
 
-    assert.equal(CURRENT_SCHEMA_VERSION, 41);
+    assert.equal(CURRENT_SCHEMA_VERSION, 42);
     assert.equal(eventReceipt.resolverFamily, 'event');
     assert.deepEqual(store.listByCue('owner-1', 'cue-1'), [person]);
     assert.throws(() => db.prepare('DELETE FROM memory_cue_events').run(), /append-only/);

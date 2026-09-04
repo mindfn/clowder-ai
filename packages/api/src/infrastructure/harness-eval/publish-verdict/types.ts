@@ -10,63 +10,24 @@ import type { TaskOutcomeVerdict } from '../task-outcome/task-outcome-episode.js
 import type { TrajectoryInspectorWindowSelector } from '../trajectory-inspector/trajectory-inspector-types.js';
 import type { FrictionVerdictHandoffPacketV3, VerdictHandoffPacket } from '../verdict-handoff.js';
 
-/**
- * F192 Phase H — Verdict Publishing Pipeline types.
- * Extracted from publish-verdict.ts per AGENTS.md 350-line hard limit.
- */
+// F257 / F192 sunset: verdicts are immutable runtime artifacts, not Git PRs.
 
-export interface StageResult {
-  /** Absolute paths under the isolated worktree to `git add`. */
-  paths: string[];
-  commitMessage: string;
-  prTitle: string;
-  prBody: string;
-  /**
-   * F192 Phase H 收尾 PR-3 (砚砚 R2): per-PR labels driven by `computePublishPolicy`.
-   * GitPublisher passes each as `--label X` to `gh pr create`. Omit/empty → no labels.
-   * Standard labels:
-   *   - `evidence-only`: artifact-only PR; merge gate is artifact-only-pr-merge-gate (SOP),
-   *     not full pnpm gate. NOT a regular code review request.
-   *   - `no-action-needed`: keep_observe verdict with noFindingRecord — interim per-run PR;
-   *     rollup mechanism deferred to future Phase.
-   */
-  labels?: string[];
-  /** Exact-commit GitHub statuses emitted after every local publication contract passes. */
-  statusChecks?: VerdictCommitStatus[];
-  /**
-   * Optional live side effect that runs after commit/push/PR creation succeeds
-   * but before the publisher returns success. If it fails, the publisher must
-   * clean up the newly exposed PR/branch before surfacing the error.
-   */
-  afterPublish?: () => void | Promise<void>;
+export interface ArtifactRef {
+  artifactId: string;
+  domainSlug: string;
+  verdictPath: string;
+  bundleDir: string;
+  artifactUrl: string;
 }
 
-export interface PublishOnIsolatedWorktreeOpts {
-  branchName: string;
-  sourceBase: string; // e.g. 'origin/main'
-  /** Generator + artifact production happens inside the isolated worktree. */
-  stage: (worktreeRoot: string) => Promise<StageResult>;
+export interface PublishArtifactOpts {
+  packet: VerdictHandoffPacket;
+  sourceRefs: VerdictSourceRefs;
+  generate: (outputRoot: string) => Promise<GeneratedVerdictArtifact>;
 }
 
-export interface RefreshPublishedVerdictPrOpts {
-  branchName: string;
-  verdictId: string;
-  expectedHeadSha: string;
-  generatedAt: string;
-  refreshDerivedCensus: (worktreeRoot: string, generatedAt: string, cleanSource: string) => string;
-}
-
-export interface RefreshPublishedVerdictPrResult {
-  outcome: 'updated' | 'already_current';
-  previousHeadSha: string;
-  commitSha: string;
-  baseSha: string;
-  prUrl: string;
-}
-
-export interface GitPublisher {
-  publishOnIsolatedWorktree(opts: PublishOnIsolatedWorktreeOpts): Promise<{ commitSha: string; prUrl: string }>;
-  refreshPublishedVerdictPr?(opts: RefreshPublishedVerdictPrOpts): Promise<RefreshPublishedVerdictPrResult>;
+export interface ArtifactPublisher {
+  publishArtifact(opts: PublishArtifactOpts): Promise<ArtifactRef>;
 }
 
 /**
@@ -161,6 +122,7 @@ export interface AnchorTelemetrySourceSelector {
  * - anchor-telemetry branch: `AnchorTelemetrySourceSelector` (kind required, F236 Track-2)
  * - qc branch: `QcMetricsSelector` (kind required, F253 Phase C)
  * - freshness branch: `FreshnessReplaySelector` (kind required, F254 AC-E9)
+ * - harness-ledger branch: `PromptSegmentsSourceSelector` (kind required, F257)
  *
  * 砚砚 R1 P1 #2: generator MUST receive explicit `sources` (sanitized
  * evidence refs / replayable selector); tool NEVER fabricates evidence.
@@ -176,7 +138,17 @@ export type VerdictSourceRefs =
   | QcMetricsSelector
   | FreshnessReplaySelector
   | DesignGateEpisodeSourceSelector
-  | TrajectoryInspectorWindowSelector;
+  | TrajectoryInspectorWindowSelector
+  | PromptSegmentsSourceSelector;
+
+/** F257 Harness Ledger snapshot selector. */
+export interface PromptSegmentsSourceSelector {
+  kind: 'prompt-segments';
+  windowStartMs: number;
+  windowEndMs: number;
+  evalRunId: string;
+  guardId?: string;
+}
 
 /**
  * Resolved evidence source paths (a2a only — for backward-compat helpers in validation.ts).
@@ -235,10 +207,10 @@ export type VerdictGenerator = (
 ) => Promise<GeneratedVerdictArtifact>;
 
 export interface GeneratorDeps {
-  /** ISOLATED worktree's docs/harness-feedback — where generator writes verdict.md + bundle. */
+  /** Isolated artifact staging root's docs/harness-feedback — generator output location. */
   harnessFeedbackRoot: string;
-  /** LIVE checkout's docs/harness-feedback — a2a needs this to read raw snapshot/attribution YAML
-   *  that are gitignored from origin/main (砚砚 R17 P1 cloud). cw doesn't use it. */
+  /** LIVE checkout's docs/harness-feedback — source evidence and the runtime domain registry
+   *  live here; the isolated publish base can legitimately lag both. */
   liveHarnessFeedbackRoot: string;
   /** Server-owned clock sampled once per publish request and shared with timestamp validation. */
   publicationTime: string;
@@ -254,8 +226,8 @@ export interface GeneratorDeps {
 
 export interface PublishVerdictDeps {
   harnessFeedbackRoot: string;
-  /** AC-H2 + 砚砚 R1 P1 #1: isolated publish worktree (default throws). */
-  gitPublisher?: GitPublisher;
+  /** F257 / F192 sunset: durable publisher outside the product Git repository. */
+  artifactPublisher?: ArtifactPublisher;
   /** AC-H2: domain-specific generator (default throws — route-layer must inject per-domain). */
   generator?: VerdictGenerator;
   /** 砚砚 R6 P1: Redis client for OQ-20 eval-cat overrides (symmetric with trigger-now). */
@@ -301,8 +273,10 @@ export interface PublishVerdictSuccess {
   ok: true;
   verdictPath: string;
   bundleDir: string;
-  commitSha: string;
-  prUrl: string;
+  // F257 durable-artifact contract: publish returns an immutable artifact reference,
+  // NOT a git commit/PR. The upstream-sync git shape (commitSha/prUrl) is retired.
+  artifactId: string;
+  artifactUrl: string;
   findingArtifacts: GeneratedFindingArtifact[];
   childArtifacts: PublishedVerdictChildArtifact[];
 }

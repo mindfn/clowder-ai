@@ -487,14 +487,10 @@ export function buildStaticIdentity(catId: CatId, options?: StaticIdentityOption
 }
 
 /**
- * F203 Phase C (Task 2): the pack-only slice of the static identity.
- *
- * After L0 (non-pack identity / A2A / roster / workflow triggers / operator ref /
- * governance digest / MCP) moves to the compression-immune native system role
- * (`--system-prompt-file` for Claude, `-c developer_instructions` for Codex —
- * Task 3/4), the user-message `systemPrompt` must carry ONLY the F129 pack
- * blocks: per-invocation dynamic + external-project-specific, so they must
- * never be baked into the cached native prompt nor duplicated there.
+ * Pack-only slice for native carriers. The canonical non-pack session prompt
+ * comes from the same HookPipeline as every other provider and rides the native
+ * system/developer channel; per-invocation pack content remains a message layer
+ * so a resumed provider session is not silently bound to stale project context.
  *
  * Returns '' for an unknown cat or when there are no pack blocks — the route
  * layer's `...(x ? { systemPrompt: x } : {})` then omits the prepend entirely.

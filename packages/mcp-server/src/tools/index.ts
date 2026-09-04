@@ -201,6 +201,12 @@ export {
   limbListToolsInputSchema,
   limbTools,
 } from './limb-tools.js';
+// F257 #3: cat_cafe_list_objectives (objective registry discovery)
+export {
+  handleListObjectives,
+  listObjectivesInputSchema,
+  listObjectivesTools,
+} from './list-objectives-tool.js';
 export {
   handleLocalReviewVerdict,
   handleRecoverLocalReviewVerdict,
@@ -242,6 +248,12 @@ export {
   listRecentInputSchema,
   recentTools,
 } from './recent-tools.js';
+// F257 V1: cat_cafe_report_harness_signal (T-C §3.6)
+export {
+  handleReportHarnessSignalTool,
+  reportHarnessSignalInputSchema,
+  reportHarnessSignalTools,
+} from './report-harness-signal-tool.js';
 // F193 Phase D AC-D1: reflect-tools removed (deprecated)
 export {
   handleGetRichBlockRules,
@@ -303,3 +315,17 @@ export {
   prepareSkillConsumptionInputSchema,
   skillConsumptionTools,
 } from './skill-consumption-tools.js';
+export {
+  handleSubmitSemanticSweepTool,
+  submitSemanticSweepInputSchema,
+  submitSemanticSweepTools,
+} from './submit-semantic-sweep-tool.js';
+export {
+  describeHarnessUnitInputSchema,
+  handleDescribeHarnessUnitTool,
+  handleReadCycleTracesTool,
+  handleSubmitCycleEvaluationTool,
+  readCycleTracesInputSchema,
+  submitCycleEvaluationInputSchema,
+  unitEvaluationTools,
+} from './unit-evaluation-tools.js';

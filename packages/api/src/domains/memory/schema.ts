@@ -70,7 +70,7 @@ END`,
 END`,
 ];
 
-export const CURRENT_SCHEMA_VERSION = 41;
+export const CURRENT_SCHEMA_VERSION = 42;
 
 // F163 Phase A: experiment infrastructure tables (cohorts, suggestions, logs)
 export const SCHEMA_V13_TABLES = `
@@ -1207,7 +1207,6 @@ export function applyMigrations(db: Database.Database): void {
     }
     db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(40, new Date().toISOString());
   }
-
   // V41: F312 Phase C — admit the Event lane to the existing append-only Cue Plane ledger.
   // SQLite cannot alter a CHECK constraint in place, so rebuild the table transactionally
   // while preserving every content-free receipt and its immutable coordinates.
@@ -1264,6 +1263,17 @@ export function applyMigrations(db: Database.Database): void {
       `);
       db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(41, new Date().toISOString());
     })();
+  }
+
+  // V42: F257 scheduler provenance — persist RUN_FAILED retry progress for once-tasks
+  // so that a restart during the backoff window does not lose the task as a missed window.
+  if (currentVersion < 42) {
+    try {
+      db.exec('ALTER TABLE dynamic_task_defs ADD COLUMN retry_attempts INTEGER DEFAULT 0');
+    } catch {
+      // Column may already exist from a partial migration.
+    }
+    db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(42, new Date().toISOString());
   }
 }
 
