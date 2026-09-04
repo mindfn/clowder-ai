@@ -129,6 +129,7 @@
   </div>
   <script src="lib/roadmap-tree-data.js"></script>
   <script src="lib/roadmap-plate.js"></script>
+  <script src="lib/roadmap-plate-cats.js"></script>
   <script src="lib/roadmap-plate-scene.js"></script>
   <script>
     (() => {
@@ -229,19 +230,6 @@
           labels.push({ anchor: root.tip, side, y, el, colour: P.theme.ink, from: 0.26 });
         });
 
-        // Screened once each; the scene walks them around the sheet from there.
-        [
-          { id: 'siamese', h: 124 },
-          { id: 'ragdoll', h: 110 },
-          { id: 'maine', h: 134 },
-        ].forEach((cat, i) => {
-          const img = new Image();
-          img.onload = () => {
-            scene.setCat(i, P.halftone(img, cat.h, 3));
-            draw();
-          };
-          img.src = `assets/roadmap/cats/${cat.id}-sit.png`;
-        });
       }
 
       let progress = 0;

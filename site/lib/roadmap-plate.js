@@ -190,46 +190,23 @@
   }
 
   /**
-   * The canon cats, screened into the plate's medium instead of pasted onto it.
-   * Returns its own small canvas so a cat can be moved around the sheet per frame
-   * without re-screening it every time.
+   * Draw a pre-screened cat (site/tools/screen-cats.mjs) onto its own small canvas in the
+   * current ink. Screening in the browser would mean reading a sprite back out of a canvas,
+   * which a file:// page is not allowed to do — so the dots arrive as data instead.
    */
-  function halftone(img, height, cell) {
-    const ratio = img.naturalWidth / img.naturalHeight;
-    const w = Math.round(height * ratio);
-    const off = document.createElement('canvas');
-    off.width = w;
-    off.height = Math.round(height);
-    const octx = off.getContext('2d', { willReadFrequently: true });
-    octx.drawImage(img, 0, 0, off.width, off.height);
-    const px = octx.getImageData(0, 0, off.width, off.height).data;
+  function screened(cat, dpr) {
     const out = document.createElement('canvas');
-    out.width = w;
-    out.height = off.height;
+    out.width = Math.ceil(cat.w * dpr);
+    out.height = Math.ceil(cat.h * dpr);
     const ctx = out.getContext('2d');
+    ctx.scale(dpr, dpr);
     ctx.fillStyle = INK();
-    for (let cy = 0; cy < off.height; cy += cell) {
-      for (let cx = 0; cx < off.width; cx += cell) {
-        let sum = 0;
-        let hits = 0;
-        for (let j = 0; j < cell; j += 1) {
-          for (let i = 0; i < cell; i += 1) {
-            const idx = ((cy + j) * off.width + cx + i) * 4;
-            if (px[idx + 3] < 40) continue;
-            sum += 1 - (px[idx] * 0.299 + px[idx + 1] * 0.587 + px[idx + 2] * 0.114) / 255;
-            hits += 1;
-          }
-        }
-        if (!hits) continue;
-        const cover = (hits / (cell * cell)) * (0.28 + (sum / hits) * 0.95);
-        const r = Math.min(cell * 0.62, cell * 0.62 * Math.sqrt(cover));
-        if (r < 0.22) continue;
-        ctx.beginPath();
-        ctx.arc(cx + cell / 2, cy + cell / 2, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    for (let i = 0; i < cat.dots.length; i += 3) {
+      ctx.beginPath();
+      ctx.arc(cat.dots[i], cat.dots[i + 1], cat.dots[i + 2], 0, Math.PI * 2);
+      ctx.fill();
     }
-    return { canvas: out, w, h: off.height };
+    return { canvas: out, w: cat.w, h: cat.h };
   }
 
   global.ClowderRoadmapPlate = {
@@ -243,7 +220,7 @@
     twig,
     stipple,
     fruit,
-    halftone,
+    screened,
     lerp,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

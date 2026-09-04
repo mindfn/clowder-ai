@@ -254,3 +254,42 @@ describe('painted tree anchors', () => {
     }
   });
 });
+
+describe('plate study opens straight off disk', () => {
+  const files = [
+    'roadmap-plate.html',
+    'lib/roadmap-plate.js',
+    'lib/roadmap-plate-scene.js',
+    'lib/roadmap-plate-cats.js',
+    'lib/roadmap-tree-data.js',
+  ];
+
+  // A page opened as file:// may not read pixels back out of a canvas, may not fetch, and may
+  // not load ES modules. Breaking any of those makes the cats silently vanish for anyone who
+  // double-clicks the file, which is how it is actually opened.
+  it('uses no API that a file:// page is forbidden to use', () => {
+    for (const file of files) {
+      const src = read(file);
+      assert.doesNotMatch(src, /getImageData/, `${file} must not read pixels back`);
+      assert.doesNotMatch(src, /new Image\(/, `${file} must not load images at runtime`);
+      assert.doesNotMatch(src, /\bfetch\(/, `${file} must not fetch`);
+      assert.doesNotMatch(src, /type="module"/, `${file} must not use ES modules`);
+    }
+  });
+
+  it('ships the cats as screened dot data, loaded before the scene', () => {
+    const cats = read('lib/roadmap-plate-cats.js');
+    for (const id of ['siamese', 'ragdoll', 'maine']) {
+      const entry = new RegExp(`${id}: \\{ w: (\\d+), h: (\\d+), dots: \\[([^\\]]+)\\]`).exec(cats);
+      assert.ok(entry, `${id} must be screened`);
+      const dots = entry[3].split(',').length;
+      assert.equal(dots % 3, 0, `${id} dots must be x,y,r triples`);
+      assert.ok(dots / 3 > 200, `${id} needs enough dots to read as a cat, got ${dots / 3}`);
+    }
+    const page = read('roadmap-plate.html');
+    assert.ok(
+      page.indexOf('roadmap-plate-cats.js') < page.indexOf('roadmap-plate-scene.js'),
+      'cats must load before the scene that rasterises them',
+    );
+  });
+});

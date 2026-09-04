@@ -42,8 +42,35 @@ function unfilter(raw, width, height, bpp) {
   return out;
 }
 
+/** Read `file` and return { width, height, data } with data as straight RGBA bytes. */
+export function readPixels(file) {
+  const { width, height, samples, bpp, colorType } = decode(file);
+  const out = new Uint8Array(width * height * 4);
+  const grey = colorType === 0 || colorType === 4;
+  for (let i = 0; i < width * height; i += 1) {
+    const s = i * bpp;
+    const r = samples[s];
+    const g = grey ? r : samples[s + 1];
+    const b = grey ? r : samples[s + 2];
+    const a = colorType === 4 ? samples[s + 1] : colorType === 6 ? samples[s + 3] : 255;
+    out[i * 4] = r;
+    out[i * 4 + 1] = g;
+    out[i * 4 + 2] = b;
+    out[i * 4 + 3] = a;
+  }
+  return { width, height, data: out };
+}
+
 /** Read `file` and return { width, height, alpha } with alpha as a Uint8Array. */
 export function readAlpha(file) {
+  const { width, height, samples, bpp, colorType } = decode(file);
+  const alpha = new Uint8Array(width * height);
+  const hasAlpha = colorType === 4 || colorType === 6;
+  for (let i = 0; i < width * height; i += 1) alpha[i] = hasAlpha ? samples[i * bpp + bpp - 1] : 255;
+  return { width, height, alpha };
+}
+
+function decode(file) {
   const buf = readFileSync(file);
   let width = 0;
   let height = 0;
@@ -68,8 +95,5 @@ export function readAlpha(file) {
   const bpp = CHANNELS[colorType];
   if (!bpp) throw new Error(`${file}: unsupported color type ${colorType}`);
   const samples = unfilter(inflateSync(Buffer.concat(idat)), width, height, bpp);
-  const alpha = new Uint8Array(width * height);
-  const hasAlpha = colorType === 4 || colorType === 6;
-  for (let i = 0; i < width * height; i += 1) alpha[i] = hasAlpha ? samples[i * bpp + bpp - 1] : 255;
-  return { width, height, alpha };
+  return { width, height, samples, bpp, colorType };
 }

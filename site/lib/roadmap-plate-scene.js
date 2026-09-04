@@ -317,9 +317,12 @@
       { p: 0.95, x: CX, y: H / 2, z: 1 },
       { p: 1, x: CX, y: H / 2, z: 1 },
     ];
-    // Cats are drawn per frame from their own screened sprites, so they walk the sheet with the
+    // Cats are rasterised once from the shipped dot data, then walked around the sheet with the
     // story: gathered round the seed, then standing under whichever limb is being drawn.
-    const catSprites = [];
+    const screenedCats = global.ClowderPlateCats || {};
+    const catSprites = ['siamese', 'ragdoll', 'maine'].map((id) =>
+      screenedCats[id] ? P.screened(screenedCats[id], dpr) : null,
+    );
     const under = (id, spread) => {
       const x = at(id).x;
       return spread.map((d) => Math.max(120, Math.min(W - 200, x + d)));
@@ -426,9 +429,6 @@
       ground: GROUND,
       compose,
       viewCtx: view,
-      setCat: (i, sprite) => {
-        catSprites[i] = sprite;
-      },
 
       phase: PHASE,
       limbs: limbs.map((l) => {
