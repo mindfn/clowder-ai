@@ -15,6 +15,6 @@ bushy striped tail, green eye, and no collar or neck pendant. The green tea cup
 is a handheld semantic prop, never jewelry. These are identity signals, not a
 Ragdoll palette swap.
 
-Identity correction status: the four contact actions were reissued against this
-contract. The remaining rows inherited a pendant from the first catalog pass and
-must be reissued before the Maine catalog can pass its identity gate.
+Identity correction status: all 38 actions now meet this contract. The original
+pendant-bearing rows were reissued from their action-specific sources; the four
+contact actions retain their surface-free contact sidecars.
