@@ -9,11 +9,11 @@ created: 2026-08-04
 
 **Feature:** F257 — `docs/features/F257-harness-ledger.md`
 **Goal:** 把 Harness Ledger 重构为 raw-first 的 Objective Unit 评估闭环：非结构化 `TraceEpisode` 是所有 Unit 共用的 canonical fact pool；同一 Objective 挂靠的多个段组成一个 Unit；每个 Unit 拥有独立的 readiness/cadence 水位；结构化反例只作为高优先级检索锚点和触发信号；到达评估节点后**只冻结该 Unit 的时间窗与目标/指标/版本引用（不复制 tracing 数据，见 assets/F257/terminal-contract-v1.md TC-4）**，由 eval cat 按窗从共享池读取并完成语义判断，最终追加可追溯结果。
-**Acceptance Criteria:** AC-1 tracing 从 invocation 已有起点持续采集并在 terminal 时以 `invocationId/inputMessageId/outputMessageId/traceTurnId` 精确闭合；AC-2 MCP 只写 pending marker，不直接制造评估结论；AC-3 annotation 是提示/触发 sidecar，不是 raw evidence admission gate，classified episode 仍留在共享 raw corpus；AC-4 count 指标无需分母，去重反例 episode 可触发 Unit 评估；AC-5 rate/semantic/replay 指标各自显式声明输入和规则；AC-6 Objective 只保存静态定义与段挂靠，不引入 Objective 状态机；AC-7 每个 Objective Unit 以“去重结构化反例达到阈值 / raw tracing 达到容量 / 自上次完成评估或首条 eligible trace 起达到 cadence”三路 `anyOf` 独立调度；N/D 依结论自适应（keep 升 / rollback·evolve 降；D 另需“连续多次 cadence 触发且全 keep”），不低于出厂值 N=200·M=3·D=7 天，变更写入 CycleRecord；M 在根因级去重落地前冻结于出厂值（TC-3）；AC-8 snapshot 冻结时间窗、结构化提示引用、Unit attachment 与 evaluator version（**不内嵌 episode 正文**，TC-4），cursor receipt 冻结实际检索 identity + evidence digest，源内容漂移时失败关闭；AC-9 旧 `SegmentJudgment` 时间窗归因与 `SegmentJudgmentCache` 不再作为评估或 Console 真相源；AC-10 同一 Objective 的全部 attached segments 组成一个 Evaluation Unit，一次结果投影到全部成员段；AC-11 Tracing Console 显示当前/所需 raw trace 与 distinct counterexample 水位、真实回放，Eval Console 只显示评估方式、规则与结果；AC-12 旧的不合适派生评估数据不迁移、不参与新结果，且不删除原始 tracing、message、thread 或其他用户数据；AC-13 结构化分类不得搬移、改写或排除 raw trace；AC-14 eval cat 从高优先级反例开始，按 server-issued cursor 渐进读取 frozen corpus，服务端只从不可变 receipt 生成 inspected provenance；AC-15 cadence 基线必须持久化为首条 eligible raw trace 或实际完成时刻，重复扫描不得把时间窗向后滑动；AC-16 跳过/insufficient_evidence 不得推进周期起点（TC-10）；AC-17 judgment 回写后自动进入 governance，仅回退/演进产生审批卡（TC-8/9）；AC-18 评估未回写时系统仅重触发一次（TC-7）；AC-19 Semantic Sweep 已移除，不再作为标记来源，历史 annotation 仅保留审计价值、不参与触发排序与治理（TC-13）。**本 AC 列表与 `assets/F257/terminal-contract-v1.md` 冲突时以后者为准。**
+**Acceptance Criteria:** AC-1 tracing 从 invocation 已有起点持续采集并在 terminal 时以 `invocationId/inputMessageId/outputMessageId/traceTurnId` 精确闭合；AC-2 MCP 只写 pending marker，不直接制造评估结论；AC-3 annotation 是提示/触发 sidecar，不是 raw evidence admission gate，全部 episode 留在 owner 共享 raw pool；AC-4 count 指标无需分母，高置信去重反例可触发 Unit 评估；AC-5 rate/semantic/replay 指标各自显式声明输入和规则；AC-6 Objective 静态定义与每周期有效策略/生命周期分离，CycleRecord 仅保存 `active/dormant/retired` 与当前 N/M/D，不新增第二套流程状态机；AC-7 每个 Objective Unit 以“高置信反例达到阈值 / owner raw tracing 达到容量 / 距周期起点达到 cadence”三路 `anyOf` 独立调度；N/D 依结论自适应（keep 升 / rollback·evolve 降；D 另需“连续多次 cadence-only 触发且全 keep”），不低于出厂值 N=200·M=3·D=7 天，变更写入 CycleRecord；M 在根因级去重落地前冻结于出厂值；AC-8 CycleRecord 只冻结时间窗、Objective/Metric/成员 hook/版本引用（**不内嵌 episode 正文**）；AC-9 旧 `SegmentJudgment` 不再作为评估或 Console 真相源；AC-10 每个段恰好归属一个 Objective，一个 Objective 可含多个段，一次结果投影到全部成员段；AC-11 Tracing Console 只显示唯一 Objective 的两组触发水位、cadence 与回放，Eval Console 只显示评估方式、规则与结果；AC-12 旧派生评估数据不迁移且不删除原始 tracing/message/thread；AC-13 分类不得搬移、改写或排除 raw trace；AC-14 eval cat 从高置信反例开始按窗分页读取 owner pool，回写的 evidenceRefs 必须属于冻结窗口；AC-15 cadence 基线持久化为 owner 池首条 trace 或上周期终点，重复扫描不得后移；AC-16 跳过/insufficient_evidence **仍推进下一周期起点到本周期终点**，下次通过 `windows[]` 逆序回看连续 skip；AC-17 evaluation 回写后自动进入 governance，仅回退/演进产生审批卡；AC-18 评估未回写时系统仅重触发一次；AC-19 Semantic Sweep 已移除，历史 annotation 仅审计。**本 AC 列表与 `assets/F257/terminal-contract-v1.md` 冲突时以后者为准。**
 **Architecture cell:** harness-eval
 **Map delta:** update required
-**Map delta why:** `harness-eval` 的当前 ownership cell 仍把 `SegmentJudgment`/时间窗 join/`SegmentJudgmentCache` 列为核心产物；本次要改为 TraceEpisode/TraceAnnotation/EvaluationSnapshot/MetricResult，并明确 tracing 与 eval 的边界。
-**Architecture:** terminal seam 追加不可变 episode closure，并写 owner-scoped、classification-independent raw index。manifest 把一个 Objective 的全部 attached segments 组成 Unit；scheduler 从 raw index 选择 eligible corpus，以 annotation 水位、raw volume、durable cadence 三路 `anyOf` 触发并冻结 snapshot。code/replay evaluator 本地消费 snapshot；LLM semantic evaluator 由异步 eval cat 领取确定性 job，先看结构化锚点，再用 cursor 渐进读取 raw trace。服务端把每次实际返回的 invocation identity 与 evidence digest 写 append-only receipt，只有同 Unit 全部 MetricResult 持久化后才原子提交 judgment/cadence watermark。主请求路径不运行 LLM，也不等待 eval。
+**Map delta why:** `harness-eval` 的核心产物现为 TraceEpisode/TraceAnnotation/CycleRecord/ObjectiveVersionSnapshot；需要明确 owner 线性池、策略适配、whole-hook governance 与 Console 的单一读面。
+**Architecture:** terminal seam 追加不可变 episode closure并写 owner-scoped raw index；任何 `observed/absent/disabled` 只作为 episode 属性。manifest 保证一段一 Objective，一个 Objective 可挂多段。checker 用 CycleRecord 当前 N/M/D 对 owner raw volume、高置信 annotation 与 durable cadence 做三路 `anyOf`，只冻结时间窗和内容寻址版本引用。异步 eval cat 先看高置信反例再分页读取全窗口，结构化回写 per-metric 结论与反例根因计数；governance 对 whole hook 的 content/condition params/enablement 产原子动作列表，并确定性调整 N/D。主请求路径不运行 LLM，也不等待 eval。
 **Tech Stack:** TypeScript, Redis/ioredis, Node test runner, YAML registry/manifest, React/Next.js Console
 **前端验证:** Yes — reviewer 必须用 Browser/Playwright 实测 Eval 指标卡、Tracing 回放剧场和段编辑器。
 
@@ -21,7 +21,7 @@ created: 2026-08-04
 
 ## 0. Straight-line finish line
 
-终态 B：任何 invocation 都形成可回放 `TraceEpisode` 并进入 owner 级共享 raw pool。manifest 通过 `summary.segments` 把同一 Objective 的全部 attached segments 投影成 Unit corpus；一个 episode 即使没有 annotation、只有 absent opportunity，或已经被 structured/semantic annotation 分类，也仍是 raw evidence。每个 Unit 自己维护 counterexample、raw volume 与 cadence 三路水位；任一路到达时冻结 exact corpus。结构化反例只改变 eval cat 的检索顺序，eval cat 可按 cursor 继续读取低优先级 raw trace，服务端据实际 receipt 追加 MetricResult 并原子完成整个 Unit。
+终态 B：任何 invocation 都形成可回放 `TraceEpisode` 并进入 owner 级共享 raw pool；一个 episode 即使没有 annotation、只有 absent/disabled opportunity，或已经被分类，也仍是 raw evidence。每个 Objective 维护高置信 counterexample、owner raw volume 与 cadence 三路水位；任一路到达时只冻结时间窗和内容寻址版本引用。高置信反例只改变 eval cat 的检索顺序，eval cat 可按 cursor 继续读取全部窗口并结构化回写结论与根因数。
 
 Console 的职责边界固定如下：
 
@@ -164,7 +164,9 @@ interface MetricResult {
 }
 ```
 
-`EvaluationIndexer` 不是语义判断器。它只执行 annotation 的确定性校验、按 `incidentKey` 去重并维护提示/触发水位。raw eligibility 由 owner + `TraceEpisode.summary.segments` + 半开时间窗确定，annotation 不参与 admission。没有 annotation 的 episode 可进入 Semantic Sweep 候选索引，但 Sweep 只产生稀疏提示，绝不能替代 Unit semantic evaluator。
+> **历史模型警告（2026-09-04）**：上面的 `EvaluationSnapshot` / `MetricResult` 形状仅保留为方案演进考古，不再是实现指令。当前生产契约是轻量 `CycleRecord`（只冻结窗口与内容寻址版本引用、不复制 corpus）+ owner 线性池按窗读取；唯一规范见 `docs/features/assets/F257/terminal-contract-v1.md` TC-1～19。
+
+`EvaluationIndexer` 不是语义判断器。它只执行 annotation 的确定性校验、按 `incidentKey` 去重并维护提示水位。raw eligibility 仅由 owner + 半开时间窗确定，annotation 与 `summary.segments[].status` 都不参与 admission。Semantic Sweep 生产路径已移除；历史 annotation 只作审计。
 
 ## 2. Stateful object census
 
@@ -227,7 +229,9 @@ Lifecycle owner：TraceAnnotationStore。无 update/delete API；修正通过追
 - INV-9 annotation append 与 index 更新原子化；重复 `incidentKey` 不重复计数。
 - INV-10 raw trace 内容不可被 annotation 回写或改写。
 
-### 2.4 EvaluationSnapshot / UnitSemanticEvaluationJob / MetricResult
+### 2.4 历史：EvaluationSnapshot / UnitSemanticEvaluationJob / MetricResult（已由 CycleRecord 取代）
+
+> 本节记录旧状态机为什么被淘汰。`snapshot / job / receipt / watermark` 不得据此重新接回生产路径；现行周期语义由 CycleRecord 五态、窗口引用与专属 Objective thread 承担。
 
 Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成，MetricResultStore 追加结果。
 
@@ -340,7 +344,9 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 4. 增加 hook asset anchor existence + uniqueness lint。
 5. 跑 parser/lint 测试；commit `feat(f257): register objective metrics and unit attachments`。
 
-### Task 5: Implement raw-first Unit scheduler and durable watermarks
+### Task 5（历史，已取代）: Implement raw-first Unit scheduler and durable watermarks
+
+> 下列文件清单是旧实施计划，不是当前 TODO。终态已经删除 `EvaluationScheduler` / `EvaluationSnapshotStore` / `MetricResultStore`，改由 CycleRecord + owner 线性池 + code-only N/D 自适应策略实现。
 
 **Files:**
 - Create: `packages/api/src/infrastructure/harness-eval/evaluation/EvaluationIndexer.ts`
@@ -370,7 +376,7 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 
 1. 写红测：zero annotations 的 raw corpus 仍可 evaluate；code evaluator deterministic；eval-cat cursor/principal/retry fail closed；replay input frozen。
 2. runner 按 metric `evaluator.kind` dispatch；LLM evaluator 只接受 server-issued Unit job/cursor，receipt 记录 identity+digest 而不复制 message body，未知 rule fail closed。
-3. daily/N-day/manual 任务先跑 readiness，再把 frozen Unit packet 注入 eval cat；Semantic Sweep 只并行生成稀疏提示，不代跑 Unit evaluation。
+3. daily/N-day/manual 任务先跑 readiness，再把冻结时间窗与 Objective/version 引用注入 eval cat；不再并行运行 Semantic Sweep。
 4. 删除 SegmentJudgment 的 production wiring/cache/time-window attribution；legacy 模块只为旧 API/测试兼容保留，新 Console 和评估路径不实例化、不读取。legacy Redis keys 不读不迁移。
 5. 跑 manual/daily/lifeline focused tests；commit `refactor(f257): replace segment judgments with metric results`。
 
@@ -423,7 +429,7 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 - invocation exact id 的现有来源若不贯穿 route，将在 invocation request object 上增加一个 server-generated id；不得以 timestamp proximity 代替。
 - `outputText` 只从现有 canonical MessageStore 在 eval-cat retrieval 时读取；Unit receipt 仅保存 invocation identity + evidence digest，不复制敏感/长文本。源消息被删除或漂移后重试必须 `evidence_changed/source_missing`，不得从 ledger 复活正文。
 - annotation correction V1 若无产品入口，仅保留 append-only + deterministic id；不为未提出的人工编辑造 UI。
-- semantic sweep 的 budget/批次沿用 eval-domain scheduler，失败不升级为 Objective blocked。
+- Semantic Sweep 生产路径已移除；历史 `semantic-sweep` annotation 不删除，但不参与触发、排序或治理。
 - 旧 `SegmentJudgment` 源文件暂留给历史 API/回归测试，但 bootstrap、manual/daily eval、新 `segment-evaluation` read model 与新 Console 均不再消费它。这是“退出生产真相”，不是对旧派生数据做兼容迁移。
 
 ## 6. No operator value questions
