@@ -1,0 +1,183 @@
+{
+  "id": "ragdoll-canon-v1",
+  "displayName": "布偶猫 / 宪宪",
+  "version": 1,
+  "format": "row-strips",
+  "cell": {
+    "width": 192,
+    "height": 208
+  },
+  "identity": {
+    "breed": "ragdoll",
+    "family": "opus",
+    "markings": [
+      "silver-gray tabby crown, back, legs, and tail",
+      "cream-white muzzle, chest, belly, and paws",
+      "large blue eyes",
+      "purple collar with purple flower pendant"
+    ]
+  },
+  "rows": {
+    "sit": {
+      "src": "../../../dist/ragdoll-sit-row.png",
+      "frames": 1
+    },
+    "stand": {
+      "src": "../../../dist/ragdoll-stand-row.png",
+      "frames": 1
+    },
+    "lie": {
+      "src": "../../../dist/ragdoll-lie-row.png",
+      "frames": 1
+    },
+    "loaf": {
+      "src": "../../../dist/ragdoll-loaf-row.png",
+      "frames": 1
+    },
+    "sprawl": {
+      "src": "../../../dist/ragdoll-sprawl-row.png",
+      "frames": 1
+    },
+    "curl": {
+      "src": "../../../dist/ragdoll-curl-row.png",
+      "frames": 1
+    },
+    "sleep": {
+      "src": "../../../dist/ragdoll-sleep-row.png",
+      "frames": 1
+    },
+    "crouch": {
+      "src": "../../../dist/ragdoll-crouch-row.png",
+      "frames": 1
+    },
+    "walk": {
+      "src": "../../../dist/ragdoll-walk-row.png",
+      "frames": 1
+    },
+    "run": {
+      "src": "../../../dist/ragdoll-run-row.png",
+      "frames": 1
+    },
+    "pounce": {
+      "src": "../../../dist/ragdoll-pounce-row.png",
+      "frames": 1
+    },
+    "jump": {
+      "src": "../../../dist/ragdoll-jump-row.png",
+      "frames": 1
+    },
+    "land": {
+      "src": "../../../dist/ragdoll-land-row.png",
+      "frames": 1
+    },
+    "climb": {
+      "src": "../../../dist/ragdoll-climb-row.png",
+      "frames": 1
+    },
+    "look-down": {
+      "src": "../../../dist/ragdoll-look-down-row.png",
+      "frames": 1
+    },
+    "look-up": {
+      "src": "../../../dist/ragdoll-look-up-row.png",
+      "frames": 1
+    },
+    "alert": {
+      "src": "../../../dist/ragdoll-alert-row.png",
+      "frames": 1
+    },
+    "startle": {
+      "src": "../../../dist/ragdoll-startle-row.png",
+      "frames": 1
+    },
+    "flatten": {
+      "src": "../../../dist/ragdoll-flatten-row.png",
+      "frames": 1
+    },
+    "rub": {
+      "src": "../../../dist/ragdoll-rub-row.png",
+      "frames": 1
+    },
+    "knead": {
+      "src": "../../../dist/ragdoll-knead-row.png",
+      "frames": 1
+    },
+    "headbutt": {
+      "src": "../../../dist/ragdoll-headbutt-row.png",
+      "frames": 1
+    },
+    "belly-up": {
+      "src": "../../../dist/ragdoll-belly-up-row.png",
+      "frames": 1
+    },
+    "tail-up": {
+      "src": "../../../dist/ragdoll-tail-up-row.png",
+      "frames": 1
+    },
+    "groom": {
+      "src": "../../../dist/ragdoll-groom-row.png",
+      "frames": 1
+    },
+    "stretch": {
+      "src": "../../../dist/ragdoll-stretch-row.png",
+      "frames": 1
+    },
+    "yawn": {
+      "src": "../../../dist/ragdoll-yawn-row.png",
+      "frames": 1
+    },
+    "scratch": {
+      "src": "../../../dist/ragdoll-scratch-row.png",
+      "frames": 1
+    },
+    "drink": {
+      "src": "../../../dist/ragdoll-drink-row.png",
+      "frames": 1
+    },
+    "reach": {
+      "src": "../../../dist/ragdoll-reach-row.png",
+      "frames": 1
+    },
+    "carry": {
+      "src": "../../../dist/ragdoll-carry-row.png",
+      "frames": 1
+    },
+    "paw": {
+      "src": "../../../dist/ragdoll-paw-row.png",
+      "frames": 1
+    },
+    "wave": {
+      "src": "../../../dist/ragdoll-wave-row.png",
+      "frames": 1
+    },
+    "perch": {
+      "src": "../../../dist/ragdoll-perch-row.png",
+      "frames": 1
+    },
+    "work": {
+      "src": "../../../dist/ragdoll-work-row.png",
+      "frames": 1
+    },
+    "think": {
+      "src": "../../../dist/ragdoll-think-row.png",
+      "frames": 1
+    },
+    "present": {
+      "src": "../../../dist/ragdoll-present-row.png",
+      "frames": 1
+    },
+    "read": {
+      "src": "../../../dist/ragdoll-read-row.png",
+      "frames": 1
+    }
+  },
+  "view": "side",
+  "facing": "left",
+  "expression": "neutral",
+  "provenance": {
+    "generator": "OpenAI built-in image generation",
+    "identityReference": "../ragdoll-stand-turnaround-master.png",
+    "processing": "edge-connected pale-background removal; alpha crop; aspect-preserving scale; transparent 192x208 pad",
+    "qaPreview": "ragdoll-actions-preview-59x64.png"
+  }
+}
