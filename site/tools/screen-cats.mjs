@@ -5,6 +5,13 @@
  * allowed to do — the cats silently vanish. So the screening happens here instead
  * and ships as plain dot data the page can draw in whatever the ink colour is.
  *
+ * Two source shapes are accepted, so the house's 192x208 atlas convention and the
+ * plate's tight-crop stills can come from one delivery:
+ *   {cat}-{pose}-row.png   192x208 cells appended horizontally (F258 row-strips)
+ *   {cat}-{pose}.png       a single tight-cropped sprite
+ * Either way the cat's real bounding box is measured, so the foot anchor is derived
+ * rather than assumed — cells are not baseline-aligned.
+ *
  *   node site/tools/screen-cats.mjs
  */
 import { existsSync, writeFileSync } from 'node:fs';
@@ -24,11 +31,38 @@ const CATS = [
   { id: 'maine', sit: 134 },
 ];
 const POSES = ['sit', 'stand', 'walk', 'look', 'gaze', 'crouch', 'reach', 'leap'];
+const CELL_W = 192; // house atlas cell (packages/web/public/visible-cafe/skins/*/skin.json)
+const CELL_H = 208;
+
+/** Crop a source down to the ink that is actually in it. Cells carry padding; stills may too. */
+function trim(src, box) {
+  const [bx, by, bw, bh] = box;
+  let x0 = bx + bw;
+  let y0 = by + bh;
+  let x1 = bx - 1;
+  let y1 = by - 1;
+  for (let y = by; y < by + bh; y += 1) {
+    for (let x = bx; x < bx + bw; x += 1) {
+      if (src.data[(y * src.width + x) * 4 + 3] < 40) continue;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < x0) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/** First cell of a row strip, or the whole image for a single sprite. */
+function frameOf(src) {
+  const isRow = src.height === CELL_H && src.width % CELL_W === 0;
+  return trim(src, isRow ? [0, 0, CELL_W, CELL_H] : [0, 0, src.width, src.height]);
+}
 
 /** Box-sample the sprite at the dot pitch; darker and more opaque means a fatter dot. */
-function screen(file, h) {
-  const src = readPixels(file);
-  const w = Math.round((src.width / src.height) * h);
+function screen(src, box, h) {
+  const w = Math.round((box.w / box.h) * h);
   const dots = [];
   for (let cy = 0; cy < h; cy += CELL) {
     for (let cx = 0; cx < w; cx += CELL) {
@@ -36,8 +70,8 @@ function screen(file, h) {
       let hits = 0;
       for (let j = 0; j < CELL; j += 1) {
         for (let i = 0; i < CELL; i += 1) {
-          const sx = Math.floor(((cx + i) / w) * src.width);
-          const sy = Math.floor(((cy + j) / h) * src.height);
+          const sx = box.x + Math.floor(((cx + i) / w) * box.w);
+          const sy = box.y + Math.floor(((cy + j) / h) * box.h);
           if (sx >= src.width || sy >= src.height) continue;
           const p = (sy * src.width + sx) * 4;
           if (src.data[p + 3] < 40) continue;
@@ -55,13 +89,29 @@ function screen(file, h) {
   return { w, h, dots };
 }
 
+/** Prefer a row strip, fall back to a single sprite. */
+function source(id, pose) {
+  for (const name of [`${id}-${pose}-row.png`, `${id}-${pose}.png`]) {
+    const file = join(SPRITES, name);
+    if (!existsSync(file)) continue;
+    const src = readPixels(file);
+    const box = frameOf(src);
+    if (box) return { src, box };
+  }
+  return null;
+}
+
 const screened = CATS.map((cat) => {
-  const scale = cat.sit / readPixels(join(SPRITES, `${cat.id}-sit.png`)).height;
+  // World scale comes from the cat's measured height when sitting, not the file height:
+  // in a 192x208 cell most of the file is padding.
+  const anchor = source(cat.id, 'sit');
+  if (!anchor) throw new Error(`${cat.id}: no sit sprite to scale from`);
+  const scale = cat.sit / anchor.box.h;
   const poses = {};
   for (const pose of POSES) {
-    const file = join(SPRITES, `${cat.id}-${pose}.png`);
-    if (!existsSync(file)) continue;
-    poses[pose] = screen(file, Math.round(readPixels(file).height * scale));
+    const found = source(cat.id, pose);
+    if (!found) continue;
+    poses[pose] = screen(found.src, found.box, Math.round(found.box.h * scale));
   }
   return { id: cat.id, poses };
 });
