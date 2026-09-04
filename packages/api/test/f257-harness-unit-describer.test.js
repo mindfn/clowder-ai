@@ -198,4 +198,52 @@ describe('F257 harness unit and callback contracts', () => {
     assert.equal(invalid.status, 400);
     assert.equal(calls.length, 1, 'invalid callback input must never reach the coordinator');
   });
+
+  test('accepts a persistable new hook unit id and template in an evolve draft', async () => {
+    const calls = [];
+    const coordinator = {
+      async submitGovernance(principal, input) {
+        calls.push({ principal, input });
+        return { outcome: 'written', proposalId: 'HGP-2' };
+      },
+    };
+    const principal = { userId: 'owner', catId: 'cat', threadId: 'thread_eval_f257_obj' };
+    const input = {
+      objectiveId: 'engineering-quality-discipline',
+      cycleId: 'cycle',
+      decision: 'evolve',
+      reason: 'The failed replay needs a dedicated merge-readiness guard.',
+      v2Draft: {
+        changes: [
+          {
+            action: 'add',
+            reason: 'Consume exact-HEAD P1/P2 findings before declaring merge readiness.',
+            unit: {
+              unitId: 'L8',
+              assetSlug: 'l8-merge-readiness-findings',
+              manifest: {
+                id: 'L8',
+                name: 'Merge-readiness finding consumption',
+                stage: 'per-turn',
+                order: 8,
+                version: 1,
+                enabled: true,
+                template: 'l8-merge-readiness-findings.md',
+                inputs: [],
+                disableable: true,
+                safetyTier: 'readonly',
+                transparencyTier: 'visible-by-default',
+                governanceTier: 'human-gated',
+              },
+              content: 'Before declaring merge-ready, consume every current-HEAD P1/P2 finding.',
+              objectives: [{ objectiveId: 'engineering-quality-discipline' }],
+            },
+          },
+        ],
+      },
+    };
+
+    assert.equal((await handleSubmitCycleGovernance(coordinator, principal, input)).status, 200);
+    assert.equal(calls.length, 1, 'a writer-compatible add draft must reach the coordinator');
+  });
 });

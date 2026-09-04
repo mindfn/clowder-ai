@@ -6,6 +6,7 @@ import type { CycleEvaluationCoordinator, CycleEvaluationPrincipal } from './Cyc
 import type { HarnessUnitDescriber } from './HarnessUnitDescriber.js';
 
 const identifier = z.string().trim().min(1).max(200);
+const hookUnitId = z.string().regex(/^[A-Z]+\d+$/u);
 const evidenceRefs = z.array(identifier).max(64);
 const howCounted = z.string().trim().min(1).max(2_000);
 const conclusion = z.discriminatedUnion('kind', [
@@ -50,13 +51,13 @@ export const describeHarnessUnitBodySchema = z.object({ unitId: identifier }).st
 const reason = z.string().trim().min(1).max(8_000);
 const hookManifest = z
   .object({
-    id: z.string().regex(/^[A-Z]+\\d+$/),
+    id: hookUnitId,
     name: z.string().trim().min(1).max(200),
     stage: z.enum(['session-init', 'per-turn']),
     order: z.number().int().nonnegative(),
     version: z.literal(1),
     enabled: z.boolean(),
-    template: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$/),
+    template: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/u),
     resolver: z.never().optional(),
     inputs: z.array(identifier).max(32),
     variables: z
@@ -136,7 +137,7 @@ const governanceChange = z
         reason,
         unit: z
           .object({
-            unitId: z.string().regex(/^[A-Z]+\\d+$/),
+            unitId: hookUnitId,
             assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
             manifest: hookManifest,
             content: z
