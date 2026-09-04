@@ -1,0 +1,183 @@
+{
+  "id": "siamese-canon-v1",
+  "displayName": "暹罗猫 / Fable",
+  "version": 1,
+  "format": "row-strips",
+  "cell": {
+    "width": 192,
+    "height": 208
+  },
+  "identity": {
+    "breed": "siamese",
+    "family": "fable",
+    "markings": [
+      "sleek cream short-haired body with chocolate face mask, ears, legs, and tail",
+      "large triangular ears and a long thin curved tail",
+      "bright blue eyes",
+      "blue collar with blue diamond pendant"
+    ]
+  },
+  "rows": {
+    "sit": {
+      "src": "../../../dist/siamese-sit-row.png",
+      "frames": 1
+    },
+    "stand": {
+      "src": "../../../dist/siamese-stand-row.png",
+      "frames": 1
+    },
+    "lie": {
+      "src": "../../../dist/siamese-lie-row.png",
+      "frames": 1
+    },
+    "loaf": {
+      "src": "../../../dist/siamese-loaf-row.png",
+      "frames": 1
+    },
+    "sprawl": {
+      "src": "../../../dist/siamese-sprawl-row.png",
+      "frames": 1
+    },
+    "curl": {
+      "src": "../../../dist/siamese-curl-row.png",
+      "frames": 1
+    },
+    "sleep": {
+      "src": "../../../dist/siamese-sleep-row.png",
+      "frames": 1
+    },
+    "crouch": {
+      "src": "../../../dist/siamese-crouch-row.png",
+      "frames": 1
+    },
+    "walk": {
+      "src": "../../../dist/siamese-walk-row.png",
+      "frames": 1
+    },
+    "run": {
+      "src": "../../../dist/siamese-run-row.png",
+      "frames": 1
+    },
+    "pounce": {
+      "src": "../../../dist/siamese-pounce-row.png",
+      "frames": 1
+    },
+    "jump": {
+      "src": "../../../dist/siamese-jump-row.png",
+      "frames": 1
+    },
+    "land": {
+      "src": "../../../dist/siamese-land-row.png",
+      "frames": 1
+    },
+    "climb": {
+      "src": "../../../dist/siamese-climb-row.png",
+      "frames": 1
+    },
+    "look-down": {
+      "src": "../../../dist/siamese-look-down-row.png",
+      "frames": 1
+    },
+    "look-up": {
+      "src": "../../../dist/siamese-look-up-row.png",
+      "frames": 1
+    },
+    "alert": {
+      "src": "../../../dist/siamese-alert-row.png",
+      "frames": 1
+    },
+    "startle": {
+      "src": "../../../dist/siamese-startle-row.png",
+      "frames": 1
+    },
+    "flatten": {
+      "src": "../../../dist/siamese-flatten-row.png",
+      "frames": 1
+    },
+    "rub": {
+      "src": "../../../dist/siamese-rub-row.png",
+      "frames": 1
+    },
+    "knead": {
+      "src": "../../../dist/siamese-knead-row.png",
+      "frames": 1
+    },
+    "headbutt": {
+      "src": "../../../dist/siamese-headbutt-row.png",
+      "frames": 1
+    },
+    "belly-up": {
+      "src": "../../../dist/siamese-belly-up-row.png",
+      "frames": 1
+    },
+    "tail-up": {
+      "src": "../../../dist/siamese-tail-up-row.png",
+      "frames": 1
+    },
+    "groom": {
+      "src": "../../../dist/siamese-groom-row.png",
+      "frames": 1
+    },
+    "stretch": {
+      "src": "../../../dist/siamese-stretch-row.png",
+      "frames": 1
+    },
+    "yawn": {
+      "src": "../../../dist/siamese-yawn-row.png",
+      "frames": 1
+    },
+    "scratch": {
+      "src": "../../../dist/siamese-scratch-row.png",
+      "frames": 1
+    },
+    "drink": {
+      "src": "../../../dist/siamese-drink-row.png",
+      "frames": 1
+    },
+    "reach": {
+      "src": "../../../dist/siamese-reach-row.png",
+      "frames": 1
+    },
+    "carry": {
+      "src": "../../../dist/siamese-carry-row.png",
+      "frames": 1
+    },
+    "paw": {
+      "src": "../../../dist/siamese-paw-row.png",
+      "frames": 1
+    },
+    "wave": {
+      "src": "../../../dist/siamese-wave-row.png",
+      "frames": 1
+    },
+    "perch": {
+      "src": "../../../dist/siamese-perch-row.png",
+      "frames": 1
+    },
+    "work": {
+      "src": "../../../dist/siamese-work-row.png",
+      "frames": 1
+    },
+    "think": {
+      "src": "../../../dist/siamese-think-row.png",
+      "frames": 1
+    },
+    "present": {
+      "src": "../../../dist/siamese-present-row.png",
+      "frames": 1
+    },
+    "read": {
+      "src": "../../../dist/siamese-read-row.png",
+      "frames": 1
+    }
+  },
+  "view": "side",
+  "facing": "left",
+  "expression": "neutral",
+  "provenance": {
+    "generator": "OpenAI built-in image generation",
+    "identityReference": "../../../source/three-cats-character-sheet.png",
+    "processing": "edge-connected pale-background removal; alpha crop; aspect-preserving scale; transparent 192x208 pad",
+    "qaPreview": "siamese-actions-preview-59x64.png"
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "id": "maine-canon-v1",
+  "displayName": "缅因猫 / 砚砚",
+  "version": 1,
+  "format": "row-strips",
+  "cell": {
+    "width": 192,
+    "height": 208
+  },
+  "identity": {
+    "breed": "maine-coon",
+    "family": "codex",
+    "markings": [
+      "large long-haired gray tabby body with a broad chest ruff",
+      "dramatic ear tufts and a bushy striped plume tail",
+      "green eyes",
+      "tea-cup pendant collar"
+    ]
+  },
+  "rows": {
+    "sit": {
+      "src": "../../../dist/maine-sit-row.png",
+      "frames": 1
+    },
+    "stand": {
+      "src": "../../../dist/maine-stand-row.png",
+      "frames": 1
+    },
+    "lie": {
+      "src": "../../../dist/maine-lie-row.png",
+      "frames": 1
+    },
+    "loaf": {
+      "src": "../../../dist/maine-loaf-row.png",
+      "frames": 1
+    },
+    "sprawl": {
+      "src": "../../../dist/maine-sprawl-row.png",
+      "frames": 1
+    },
+    "curl": {
+      "src": "../../../dist/maine-curl-row.png",
+      "frames": 1
+    },
+    "sleep": {
+      "src": "../../../dist/maine-sleep-row.png",
+      "frames": 1
+    },
+    "crouch": {
+      "src": "../../../dist/maine-crouch-row.png",
+      "frames": 1
+    },
+    "walk": {
+      "src": "../../../dist/maine-walk-row.png",
+      "frames": 1
+    },
+    "run": {
+      "src": "../../../dist/maine-run-row.png",
+      "frames": 1
+    },
+    "pounce": {
+      "src": "../../../dist/maine-pounce-row.png",
+      "frames": 1
+    },
+    "jump": {
+      "src": "../../../dist/maine-jump-row.png",
+      "frames": 1
+    },
+    "land": {
+      "src": "../../../dist/maine-land-row.png",
+      "frames": 1
+    },
+    "climb": {
+      "src": "../../../dist/maine-climb-row.png",
+      "frames": 1
+    },
+    "look-down": {
+      "src": "../../../dist/maine-look-down-row.png",
+      "frames": 1
+    },
+    "look-up": {
+      "src": "../../../dist/maine-look-up-row.png",
+      "frames": 1
+    },
+    "alert": {
+      "src": "../../../dist/maine-alert-row.png",
+      "frames": 1
+    },
+    "startle": {
+      "src": "../../../dist/maine-startle-row.png",
+      "frames": 1
+    },
+    "flatten": {
+      "src": "../../../dist/maine-flatten-row.png",
+      "frames": 1
+    },
+    "rub": {
+      "src": "../../../dist/maine-rub-row.png",
+      "frames": 1
+    },
+    "knead": {
+      "src": "../../../dist/maine-knead-row.png",
+      "frames": 1
+    },
+    "headbutt": {
+      "src": "../../../dist/maine-headbutt-row.png",
+      "frames": 1
+    },
+    "belly-up": {
+      "src": "../../../dist/maine-belly-up-row.png",
+      "frames": 1
+    },
+    "tail-up": {
+      "src": "../../../dist/maine-tail-up-row.png",
+      "frames": 1
+    },
+    "groom": {
+      "src": "../../../dist/maine-groom-row.png",
+      "frames": 1
+    },
+    "stretch": {
+      "src": "../../../dist/maine-stretch-row.png",
+      "frames": 1
+    },
+    "yawn": {
+      "src": "../../../dist/maine-yawn-row.png",
+      "frames": 1
+    },
+    "scratch": {
+      "src": "../../../dist/maine-scratch-row.png",
+      "frames": 1
+    },
+    "drink": {
+      "src": "../../../dist/maine-drink-row.png",
+      "frames": 1
+    },
+    "reach": {
+      "src": "../../../dist/maine-reach-row.png",
+      "frames": 1
+    },
+    "carry": {
+      "src": "../../../dist/maine-carry-row.png",
+      "frames": 1
+    },
+    "paw": {
+      "src": "../../../dist/maine-paw-row.png",
+      "frames": 1
+    },
+    "wave": {
+      "src": "../../../dist/maine-wave-row.png",
+      "frames": 1
+    },
+    "perch": {
+      "src": "../../../dist/maine-perch-row.png",
+      "frames": 1
+    },
+    "work": {
+      "src": "../../../dist/maine-work-row.png",
+      "frames": 1
+    },
+    "think": {
+      "src": "../../../dist/maine-think-row.png",
+      "frames": 1
+    },
+    "present": {
+      "src": "../../../dist/maine-present-row.png",
+      "frames": 1
+    },
+    "read": {
+      "src": "../../../dist/maine-read-row.png",
+      "frames": 1
+    }
+  },
+  "view": "side",
+  "facing": "left",
+  "expression": "neutral",
+  "provenance": {
+    "generator": "OpenAI built-in image generation",
+    "identityReference": "../../../source/three-cats-character-sheet.png",
+    "processing": "edge-connected pale-background removal; alpha crop; aspect-preserving scale; transparent 192x208 pad",
+    "qaPreview": "maine-actions-preview-59x64.png"
+  }
+}
