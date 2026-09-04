@@ -290,8 +290,6 @@
       for (const tip of limb.tips) P.fruit(art.ctx, tip.x, tip.y - 2, 6, tip.status);
     }
 
-    const cats = surface(dpr);
-
     // The camera reads the plate the way you would with a loupe: close on the part being drawn,
     // then pulled back at the end so the whole sheet lands as one image.
     const centre = (limb) => {
@@ -319,6 +317,26 @@
       { p: 0.95, x: CX, y: H / 2, z: 1 },
       { p: 1, x: CX, y: H / 2, z: 1 },
     ];
+    // Cats are drawn per frame from their own screened sprites, so they walk the sheet with the
+    // story: gathered round the seed, then standing under whichever limb is being drawn.
+    const catSprites = [];
+    const under = (id, spread) => {
+      const x = at(id).x;
+      return spread.map((d) => Math.max(120, Math.min(W - 200, x + d)));
+    };
+    const HOME = [452, 664, 748];
+    const CAT_PLAN = [
+      { p: 0, x: HOME },
+      { p: 0.1, x: [438, 660, 752] },
+      { p: 0.28, x: [428, 674, 764] },
+      { p: 0.44, x: [...under('memory', [-78, 18]), 700] },
+      { p: 0.57, x: [520, ...under('harness', [-58, 42])] },
+      { p: 0.69, x: [...under('capability', [-78, 18]), 690] },
+      { p: 0.8, x: [530, ...under('life', [-58, 42])] },
+      { p: 0.95, x: HOME },
+      { p: 1, x: HOME },
+    ];
+
     const smooth = (t) => t * t * (3 - 2 * t);
     function camera(p) {
       let i = 0;
@@ -327,6 +345,15 @@
       const b = KEYS[i + 1];
       const k = smooth(Math.max(0, Math.min(1, (p - a.p) / (b.p - a.p))));
       return { x: P.lerp(a.x, b.x, k), y: P.lerp(a.y, b.y, k), z: P.lerp(a.z, b.z, k) };
+    }
+
+    function catX(p, i) {
+      let k = 0;
+      while (k < CAT_PLAN.length - 2 && p > CAT_PLAN[k + 1].p) k += 1;
+      const a = CAT_PLAN[k];
+      const b = CAT_PLAN[k + 1];
+      const t = smooth(Math.max(0, Math.min(1, (p - a.p) / (b.p - a.p))));
+      return P.lerp(a.x[i], b.x[i], t);
     }
 
     function compose(p, annotate) {
@@ -375,9 +402,20 @@
         if (r > 1) revealAbove(limb.box, () => view.arc(limb.base.x, limb.base.y, r, 0, Math.PI * 2));
       }
 
-      // The cats are not part of the growth — they are the ones planting it, so they are on the
-      // sheet from the first frame rather than fading in at the end.
-      view.drawImage(cats.canvas, 0, 0, W, H);
+      // The cats are not part of the growth — they are the ones planting it. They stand around
+      // the seed, then move under whichever limb is being drawn, then gather again at the end.
+      catSprites.forEach((cat, i) => {
+        if (!cat) return;
+        const x = catX(p, i);
+        view.save();
+        view.translate(x, GROUND - cat.h);
+        if (x > CX) {
+          view.translate(cat.w, 0);
+          view.scale(-1, 1);
+        }
+        view.drawImage(cat.canvas, 0, 0, cat.w, cat.h);
+        view.restore();
+      });
       if (annotate) annotate(view, cam);
       view.setTransform(dpr, 0, 0, dpr, 0, 0);
       return cam;
@@ -388,7 +426,10 @@
       ground: GROUND,
       compose,
       viewCtx: view,
-      catsCtx: cats.ctx,
+      setCat: (i, sprite) => {
+        catSprites[i] = sprite;
+      },
+
       phase: PHASE,
       limbs: limbs.map((l) => {
         const outer = l.tips.reduce((a, b) => (l.spec.side < 0 ? (a.x < b.x ? a : b) : a.x > b.x ? a : b));

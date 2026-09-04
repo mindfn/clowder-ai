@@ -189,8 +189,12 @@
     ctx.restore();
   }
 
-  /** The canon cats, screened into the plate's medium instead of pasted onto it. */
-  function halftone(ctx, img, x, y, height, cell) {
+  /**
+   * The canon cats, screened into the plate's medium instead of pasted onto it.
+   * Returns its own small canvas so a cat can be moved around the sheet per frame
+   * without re-screening it every time.
+   */
+  function halftone(img, height, cell) {
     const ratio = img.naturalWidth / img.naturalHeight;
     const w = Math.round(height * ratio);
     const off = document.createElement('canvas');
@@ -199,6 +203,10 @@
     const octx = off.getContext('2d', { willReadFrequently: true });
     octx.drawImage(img, 0, 0, off.width, off.height);
     const px = octx.getImageData(0, 0, off.width, off.height).data;
+    const out = document.createElement('canvas');
+    out.width = w;
+    out.height = off.height;
+    const ctx = out.getContext('2d');
     ctx.fillStyle = INK();
     for (let cy = 0; cy < off.height; cy += cell) {
       for (let cx = 0; cx < off.width; cx += cell) {
@@ -217,10 +225,11 @@
         const r = Math.min(cell * 0.62, cell * 0.62 * Math.sqrt(cover));
         if (r < 0.22) continue;
         ctx.beginPath();
-        ctx.arc(x + cx + cell / 2, y + cy + cell / 2, r, 0, Math.PI * 2);
+        ctx.arc(cx + cell / 2, cy + cell / 2, r, 0, Math.PI * 2);
         ctx.fill();
       }
     }
+    return { canvas: out, w, h: off.height };
   }
 
   global.ClowderRoadmapPlate = {

@@ -229,19 +229,19 @@
           labels.push({ anchor: root.tip, side, y, el, colour: P.theme.ink, from: 0.26 });
         });
 
-        // Grouped around the seed rather than scattered across the sheet.
-        for (const cat of [
-          { id: 'siamese', x: 452, h: 104 },
-          { id: 'ragdoll', x: 664, h: 92 },
-          { id: 'maine', x: 748, h: 112 },
-        ]) {
+        // Screened once each; the scene walks them around the sheet from there.
+        [
+          { id: 'siamese', h: 124 },
+          { id: 'ragdoll', h: 110 },
+          { id: 'maine', h: 134 },
+        ].forEach((cat, i) => {
           const img = new Image();
           img.onload = () => {
-            P.halftone(scene.catsCtx, img, cat.x, scene.ground - cat.h, cat.h, 3);
+            scene.setCat(i, P.halftone(img, cat.h, 3));
             draw();
           };
           img.src = `assets/roadmap/cats/${cat.id}-sit.png`;
-        }
+        });
       }
 
       let progress = 0;
