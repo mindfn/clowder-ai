@@ -1,5 +1,6 @@
 import type { CycleRecord, HarnessGovernanceProposal } from '@cat-cafe/shared';
 import type { CycleEvaluationCoordinator } from '../evaluation/CycleEvaluationCoordinator.js';
+import { adaptCycleTriggerPolicy } from '../evaluation/cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from '../evaluation/ObjectiveEvaluationRuntime.js';
 import type { HarnessGovernanceExecutor } from './HarnessGovernanceExecutor.js';
 import type { HarnessGovernanceProposalStore } from './HarnessGovernanceProposalStore.js';
@@ -24,16 +25,21 @@ export class CycleGovernanceProposalDecisions {
       const current = await this.proposalCycle(proposal);
       if (proposal.status === 'approved' && !current) return { proposal, deduped: true };
       if (!current) throw new Error('harness_governance_cycle_not_active');
-      const version = await this.deps.executor.apply(proposal, actorId, reason);
+      const decidedAt = this.deps.now();
+      const adaptation = adaptCycleTriggerPolicy(this.deps.runtime.catalog, current, proposal.decision, decidedAt);
+      const version = await this.deps.executor.apply(proposal, actorId, reason, {
+        triggerPolicy: adaptation.change.after,
+        lifecycle: adaptation.lifecycle,
+      });
       const settled = await this.deps.proposals.settle({
         proposalId,
         ownerUserId,
         status: 'approved',
-        decidedAt: this.deps.now(),
+        decidedAt,
         decidedBy: actorId,
         reason,
       });
-      await this.closeCycle(current, settled, version, 'approved', reason);
+      await this.closeCycle(current, settled, version, 'approved', reason, adaptation);
       this.notify(ownerUserId, proposalId, 'approved');
       return { proposal: settled, deduped: proposal.status === 'approved' };
     });
@@ -60,6 +66,7 @@ export class CycleGovernanceProposalDecisions {
         { version: current.version, versionContentRef: current.versionContentRef },
         'skipped',
         decisionReason,
+        null,
       );
       this.notify(ownerUserId, proposalId, 'skipped');
       return { proposal: settled, deduped: proposal.status === 'skipped' };
@@ -105,6 +112,7 @@ export class CycleGovernanceProposalDecisions {
     version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
     state: 'approved' | 'skipped',
     reason: string,
+    adaptation: ReturnType<typeof adaptCycleTriggerPolicy> | null,
   ): Promise<void> {
     const decidedAt = proposal.decidedAt ?? this.deps.now();
     const completed: CycleRecord = {
@@ -117,6 +125,7 @@ export class CycleGovernanceProposalDecisions {
         rejectCount: proposal.cardOrdinal - 1,
         at: decidedAt,
       },
+      ...(adaptation ? { triggerPolicyChange: adaptation.change, objectiveLifecycle: adaptation.lifecycle } : {}),
       closedAt: decidedAt,
     };
     const next = await this.deps.runtime.cycles.advance(current, completed, version);

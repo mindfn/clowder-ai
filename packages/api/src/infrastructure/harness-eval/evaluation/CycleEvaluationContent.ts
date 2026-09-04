@@ -1,4 +1,5 @@
 import type { CycleEvaluationAssignment, CycleRecord, TraceAnnotation } from '@cat-cafe/shared';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { isSkippedCycle } from './CycleRecordStore.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
@@ -57,6 +58,7 @@ export function formatCycleAssignment(record: CycleRecord, assignment: CycleEval
     `Cycle: \`${record.cycleId}\``,
     'Read the immutable owner trace pool only through the named readPoolTool, starting with counterexample references.',
     'Submit every metric conclusion and the overall result with cat_cafe_submit_cycle_evaluation.',
+    'Also group every high-confidence counterexample event in the frozen windows into semantic root causes and submit eventCount, rootCauseCount, and howGrouped. This is audit evidence only; M remains fixed.',
     'Conversation text is not a writeback. Do not compare this cycle with another version.',
     '',
     '```json',
@@ -79,7 +81,7 @@ async function collectCounterexamples(
   );
   const unique = new Map<string, TraceAnnotation>();
   for (const annotation of lists.flat()) {
-    if (annotation.polarity !== 'counterexample' || unique.has(annotation.incidentKey)) continue;
+    if (!isHighConfidenceCounterexample(annotation) || unique.has(annotation.incidentKey)) continue;
     unique.set(annotation.incidentKey, annotation);
   }
   return [...unique.values()]

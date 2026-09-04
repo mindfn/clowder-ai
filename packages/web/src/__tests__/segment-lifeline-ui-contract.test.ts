@@ -421,8 +421,11 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).not.toContain('待分类');
     expect(theaterSrc).not.toContain('unclassifiedEpisodeCount');
     expect(theaterSrc).not.toContain('原始 Tracing 记录');
-    // Cycle start uses the CycleRecord-backed per-Objective start.
-    expect(theaterSrc).toContain('po.cycleStartMs');
+    // Cycle start uses the CycleRecord-backed sole Objective start.
+    expect(theaterSrc).toContain('trigger.objective.cycleStartMs');
+    expect(theaterSrc).toContain('采集故障：owner 线性池在本周期内没有 Tracing');
+    expect(theaterSrc).toContain('触发策略已调整');
+    expect(theaterSrc).not.toContain('Tracing 明细（{total}）');
     // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)
     expect(theaterSrc).toContain('toLocaleString()');
     expect(theaterSrc).not.toContain('toLocaleDateString()');

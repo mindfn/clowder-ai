@@ -80,7 +80,8 @@ export class HarnessUnitDirectoryWriter {
       throw new Error('harness_governance_add_manifest_invalid');
     }
     if (
-      !draft.objectives.length ||
+      draft.objectives.length !== 1 ||
+      draft.objectives[0]?.clauseId !== undefined ||
       !draft.objectives.every((attachment) => this.objectiveExists(attachment.objectiveId))
     ) {
       throw new Error('harness_governance_add_objective_invalid');
@@ -92,7 +93,9 @@ export class HarnessUnitDirectoryWriter {
   }
 
   private objectiveExists(objectiveId: string): boolean {
-    return this.deps.catalog.registry.objectives.some((objective) => objective.id === objectiveId);
+    return this.deps.catalog.registry.objectives.some(
+      (objective) => objective.id === objectiveId && objective.lifecycle !== 'retired',
+    );
   }
 
   private async appendEvaluationUnit(draft: HarnessUnitAddDraft): Promise<void> {

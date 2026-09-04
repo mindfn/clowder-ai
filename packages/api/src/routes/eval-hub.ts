@@ -28,7 +28,6 @@ import {
   type VerdictGenerator,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 import type { IReevalClosureEventLog } from '../infrastructure/harness-eval/reeval-closure-event-log.js';
-import { registerSubmitSemanticSweepRoute } from '../infrastructure/harness-eval/trace-annotation/submit-semantic-sweep.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-auth-prehandler.js';
 
@@ -92,8 +91,6 @@ export interface EvalHubRoutesOptions {
   lifecycleEventLog?: Pick<IReevalClosureEventLog, 'read'>;
   /** F257 guard-rejection ledger sink for publish-policy rejects. */
   guardRejectionLog?: GuardRejectionEventLog;
-  /** F257 semantic sweep coordinator for trigger-now judgments. */
-  semanticSweepCoordinator?: import('../infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
   /** F257 Objective-cycle assignment, trace read, and structured writeback. */
   cycleEvaluationCoordinator?: CycleEvaluationCoordinator;
   /** F257 read-only unit action/version schema. */
@@ -119,9 +116,6 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   if (opts.callbackRegistry) {
     // 砚砚 R9 P1: pass agentKeyRegistry so shared-MCP (agent-key) cats can publish.
     registerCallbackAuthHook(app, opts.callbackRegistry, { agentKeyRegistry: opts.agentKeyRegistry });
-  }
-  if (opts.semanticSweepCoordinator) {
-    registerSubmitSemanticSweepRoute(app, opts.semanticSweepCoordinator);
   }
   if (opts.cycleEvaluationCoordinator && opts.harnessUnitDescriber) {
     registerCycleEvaluationCallbackRoutes(
@@ -242,7 +236,6 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         // buildEvalCatInvocation omits publish instructions for unwired domains.
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
         guardRejectionLog: opts.guardRejectionLog,
-        semanticSweepCoordinator: opts.semanticSweepCoordinator,
       },
       { domainId, userId },
     );

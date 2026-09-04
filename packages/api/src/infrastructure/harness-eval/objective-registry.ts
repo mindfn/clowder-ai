@@ -21,6 +21,7 @@ export interface ObjectiveDefinition {
   label: string;
   statement: string;
   evaluationModelId: string;
+  lifecycle: 'active' | 'retired';
 }
 
 export interface ObjectiveRegistry {
@@ -86,9 +87,9 @@ const metric = z
   .strict();
 const cycleTrigger = z
   .object({
-    cumulativeThreshold: z.number().int().positive(),
-    counterexampleThreshold: z.number().int().positive(),
-    cadenceDays: z.number().int().positive(),
+    cumulativeThreshold: z.number().int().min(200),
+    counterexampleThreshold: z.number().int().min(3),
+    cadenceDays: z.number().int().min(7),
     minimumIntervalMs: z.number().int().nonnegative(),
   })
   .strict();
@@ -107,6 +108,7 @@ const objective = z
     label: z.string().trim().min(1),
     statement: z.string().trim().min(1),
     evaluationModelId: slug,
+    lifecycle: z.enum(['active', 'retired']).default('active'),
   })
   .strict();
 const registrySchema = z

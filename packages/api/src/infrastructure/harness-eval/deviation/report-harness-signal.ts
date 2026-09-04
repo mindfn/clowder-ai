@@ -3,8 +3,8 @@
  *
  * The tool does not create a deviation result. It marks the authenticated
  * current invocation; after the invocation closes, the marker resolves against
- * its exact TraceEpisode into the same TraceAnnotation shape used by structured
- * rules and semantic sweep.
+ * its exact TraceEpisode into the same append-only TraceAnnotation ledger used
+ * by structured rules. Historical sweep annotations remain audit-only.
  */
 
 import { createHash } from 'node:crypto';

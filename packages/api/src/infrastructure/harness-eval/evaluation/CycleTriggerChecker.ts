@@ -1,9 +1,11 @@
 import type { CycleRecord, CycleTriggerRoute, CycleWindow, TraceAnnotation } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { CycleRecordStore, isSkippedCycle } from './CycleRecordStore.js';
+import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
-import type { ObjectiveTraceIndex } from './ObjectiveTraceIndex.js';
+import type { ObjectiveVersionState } from './ObjectiveVersionStore.js';
 
 export type CycleCheckResult =
   | { status: 'idle' | 'interval' | 'active'; record: CycleRecord }
@@ -21,10 +23,12 @@ export class CycleTriggerChecker {
     private readonly deps: {
       catalog: EvaluationCatalog;
       cycles: CycleRecordStore;
-      traces: Pick<InjectionTraceStore, 'getEpisodeByInvocationId'>;
-      objectiveTraces: Pick<ObjectiveTraceIndex, 'countWindow' | 'earliest' | 'ensureOwnerBackfilled' | 'indexEpisode'>;
+      traces: Pick<
+        InjectionTraceStore,
+        'countOwnerWindow' | 'earliestOwnerEpisode' | 'ensureOwnerEpisodeBackfilled' | 'getEpisodeByInvocationId'
+      >;
       annotations: Pick<TraceAnnotationStore, 'queryMetricWindow'>;
-      resolveVersion: (objectiveId: string) => CycleVersionRef | Promise<CycleVersionRef>;
+      resolveVersion: (objectiveId: string, state: ObjectiveVersionState) => CycleVersionRef | Promise<CycleVersionRef>;
     },
   ) {}
 
@@ -33,15 +37,15 @@ export class CycleTriggerChecker {
   }
 
   async initializeOwner(ownerUserId: string, now: number): Promise<void> {
-    await this.deps.objectiveTraces.ensureOwnerBackfilled(ownerUserId, now);
-    for (const objective of this.deps.catalog.registry.objectives) {
+    await this.deps.traces.ensureOwnerEpisodeBackfilled();
+    for (const objective of activeObjectives(this.deps.catalog)) {
       await this.ensureCurrent(ownerUserId, objective.id, now);
     }
   }
 
   async checkOwner(ownerUserId: string, now: number): Promise<number> {
     let requested = 0;
-    for (const objective of this.deps.catalog.registry.objectives) {
+    for (const objective of activeObjectives(this.deps.catalog)) {
       const result = await this.checkObjective(ownerUserId, objective.id, now);
       if (result.status === 'requested') requested++;
     }
@@ -59,35 +63,27 @@ export class CycleTriggerChecker {
   async checkTrace(ownerUserId: string, invocationId: string, now: number): Promise<number> {
     const episode = await this.deps.traces.getEpisodeByInvocationId(invocationId);
     if (!episode || episode.terminal.ownerUserId !== ownerUserId) return 0;
-    const objectiveIds = await this.deps.objectiveTraces.indexEpisode(episode);
-    let requested = 0;
-    for (const objectiveId of objectiveIds) {
-      if ((await this.checkObjective(ownerUserId, objectiveId, now)).status === 'requested') requested++;
-    }
-    return requested;
+    return this.checkOwner(ownerUserId, now);
   }
 
   async checkObjective(ownerUserId: string, objectiveId: string, now: number): Promise<CycleCheckResult> {
     const objective = this.deps.catalog.registry.objectives.find((item) => item.id === objectiveId);
     if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
+    if (objective.lifecycle === 'retired') throw new Error(`cycle_objective_retired:${objectiveId}`);
     const model = this.deps.catalog.registry.evaluationModels.find((item) => item.id === objective.evaluationModelId);
     if (!model) throw new Error(`cycle_evaluation_model_not_found:${objective.evaluationModelId}`);
 
     const current = await this.ensureCurrent(ownerUserId, objectiveId, now);
     if (current.evalStatus !== 'idle') return { status: 'active', record: current };
 
+    const policy = cycleTriggerPolicyFor(this.deps.catalog, current);
     const history = await this.deps.cycles.history(ownerUserId, objectiveId);
     const lastClosedAt = history[0]?.closedAt;
-    if (lastClosedAt !== undefined && now < lastClosedAt + model.cycleTrigger.minimumIntervalMs) {
+    if (lastClosedAt !== undefined && now < lastClosedAt + policy.minimumIntervalMs) {
       return { status: 'interval', record: current };
     }
 
-    const observedInvocationCount = await this.deps.objectiveTraces.countWindow(
-      ownerUserId,
-      objectiveId,
-      current.cycleStart,
-      now,
-    );
+    const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, current.cycleStart, now);
     const counterexamples = await this.distinctCounterexamples(
       ownerUserId,
       objectiveId,
@@ -96,12 +92,9 @@ export class CycleTriggerChecker {
       now,
     );
     const triggeredBy: CycleTriggerRoute[] = [];
-    if (observedInvocationCount >= model.cycleTrigger.cumulativeThreshold) triggeredBy.push('cumulative');
-    if (counterexamples.size >= model.cycleTrigger.counterexampleThreshold) triggeredBy.push('counterexamples');
-    if (
-      observedInvocationCount > 0 &&
-      now - current.cycleStart >= model.cycleTrigger.cadenceDays * 24 * 60 * 60 * 1000
-    ) {
+    if (observedInvocationCount >= policy.cumulativeThreshold) triggeredBy.push('cumulative');
+    if (counterexamples.size >= policy.counterexampleThreshold) triggeredBy.push('counterexamples');
+    if (observedInvocationCount > 0 && now - current.cycleStart >= policy.cadenceDays * 24 * 60 * 60 * 1000) {
       triggeredBy.push('cadence');
     }
     if (triggeredBy.length === 0) return { status: 'idle', record: current };
@@ -128,9 +121,18 @@ export class CycleTriggerChecker {
     if (existing) return existing;
     const legacyStart = await this.deps.cycles.legacyCompletedWindowEnd(ownerUserId, objectiveId);
     if (legacyStart !== null && legacyStart > now) throw new Error(`cycle_start_after_now:${objectiveId}`);
-    const cycleStart = legacyStart ?? (await this.deps.objectiveTraces.earliest(ownerUserId, objectiveId, now)) ?? now;
-    const version = await this.deps.resolveVersion(objectiveId);
-    return this.deps.cycles.initialize(ownerUserId, objectiveId, cycleStart, version);
+    const cycleStart = legacyStart ?? (await this.deps.traces.earliestOwnerEpisode(ownerUserId)) ?? now;
+    const objective = this.deps.catalog.registry.objectives.find((candidate) => candidate.id === objectiveId);
+    const model = this.deps.catalog.registry.evaluationModels.find(
+      (candidate) => candidate.id === objective?.evaluationModelId,
+    );
+    if (!model) throw new Error(`cycle_evaluation_model_not_found:${objectiveId}`);
+    const state = { triggerPolicy: initialCycleTriggerPolicy(model), lifecycle: 'active' as const };
+    const version = await this.deps.resolveVersion(objectiveId, state);
+    return this.deps.cycles.initialize(ownerUserId, objectiveId, cycleStart, version, {
+      triggerPolicy: state.triggerPolicy,
+      objectiveLifecycle: state.lifecycle,
+    });
   }
 
   private async distinctCounterexamples(
@@ -148,10 +150,14 @@ export class CycleTriggerChecker {
     return new Set(
       lists
         .flat()
-        .filter((annotation: TraceAnnotation) => annotation.polarity === 'counterexample')
+        .filter((annotation: TraceAnnotation) => isHighConfidenceCounterexample(annotation))
         .map((annotation) => annotation.incidentKey),
     );
   }
+}
+
+function activeObjectives(catalog: EvaluationCatalog) {
+  return catalog.registry.objectives.filter((objective) => objective.lifecycle !== 'retired');
 }
 
 function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {

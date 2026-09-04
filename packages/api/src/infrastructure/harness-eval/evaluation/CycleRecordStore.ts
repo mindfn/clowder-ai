@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { CycleRecord } from '@cat-cafe/shared';
+import type { CycleRecord, CycleTriggerPolicy } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 
 const CURRENT_PREFIX = 'harness-cycle-current:';
@@ -45,6 +45,7 @@ function idleCycle(
   objectiveId: string,
   cycleStart: number,
   version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
+  state: Pick<CycleRecord, 'triggerPolicy' | 'objectiveLifecycle'> = {},
 ): CycleRecord {
   return {
     schemaVersion: 1,
@@ -54,6 +55,7 @@ function idleCycle(
     ...version,
     cycleStart,
     evalStatus: 'idle',
+    ...state,
     windows: [],
   };
 }
@@ -82,11 +84,46 @@ function parseCycle(raw: string, key: string): CycleRecord {
       (window) =>
         Number.isFinite(window.start) && Number.isFinite(window.end) && window.start >= 0 && window.end >= window.start,
     ) ||
-    !['idle', 'requested', 'retriggered', 'written', 'stalled'].includes(record.evalStatus ?? '')
+    !['idle', 'requested', 'retriggered', 'written', 'stalled'].includes(record.evalStatus ?? '') ||
+    (record.triggerPolicy !== undefined && !isTriggerPolicy(record.triggerPolicy)) ||
+    (record.objectiveLifecycle !== undefined && !['active', 'dormant'].includes(record.objectiveLifecycle)) ||
+    (record.triggerPolicyChange !== undefined && !isTriggerPolicyChange(record.triggerPolicyChange))
   ) {
     throw new Error(`invalid_cycle_record:${key}`);
   }
   return record as CycleRecord;
+}
+
+function isTriggerPolicy(value: unknown): value is CycleTriggerPolicy {
+  if (!value || typeof value !== 'object') return false;
+  const policy = value as Partial<CycleTriggerPolicy>;
+  return (
+    Number.isSafeInteger(policy.cumulativeThreshold) &&
+    (policy.cumulativeThreshold ?? 0) > 0 &&
+    Number.isSafeInteger(policy.counterexampleThreshold) &&
+    (policy.counterexampleThreshold ?? 0) > 0 &&
+    Number.isSafeInteger(policy.cadenceDays) &&
+    (policy.cadenceDays ?? 0) > 0 &&
+    Number.isSafeInteger(policy.minimumIntervalMs) &&
+    (policy.minimumIntervalMs ?? -1) >= 0 &&
+    Number.isSafeInteger(policy.consecutiveKeepCycles) &&
+    (policy.consecutiveKeepCycles ?? -1) >= 0 &&
+    Number.isSafeInteger(policy.consecutiveCadenceKeepCycles) &&
+    (policy.consecutiveCadenceKeepCycles ?? -1) >= 0
+  );
+}
+
+function isTriggerPolicyChange(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const change = value as Partial<NonNullable<CycleRecord['triggerPolicyChange']>>;
+  return (
+    ['keep', 'rollback', 'evolve'].includes(change.decision ?? '') &&
+    isTriggerPolicy(change.before) &&
+    isTriggerPolicy(change.after) &&
+    typeof change.appliedAt === 'number' &&
+    Number.isFinite(change.appliedAt) &&
+    change.appliedAt >= 0
+  );
 }
 
 function serializeCycle(record: CycleRecord): string {
@@ -111,9 +148,10 @@ export class CycleRecordStore {
     objectiveId: string,
     cycleStart: number,
     version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
+    state: Pick<CycleRecord, 'triggerPolicy' | 'objectiveLifecycle'> = {},
   ): Promise<CycleRecord> {
     if (!Number.isFinite(cycleStart) || cycleStart < 0) throw new Error('invalid_cycle_start');
-    const record = idleCycle(ownerUserId, objectiveId, cycleStart, version);
+    const record = idleCycle(ownerUserId, objectiveId, cycleStart, version, state);
     await this.redis.set(currentKey(ownerUserId, objectiveId), serializeCycle(record), 'NX');
     await this.redis.sadd(OWNER_REGISTRY_KEY, ownerUserId);
     return (await this.current(ownerUserId, objectiveId)) ?? record;
@@ -169,7 +207,12 @@ export class CycleRecordStore {
     ) {
       return null;
     }
-    const next = idleCycle(expected.ownerUserId, expected.objectiveId, completed.cycleEnd, version);
+    const next = idleCycle(expected.ownerUserId, expected.objectiveId, completed.cycleEnd, version, {
+      ...(completed.triggerPolicyChange?.after || completed.triggerPolicy
+        ? { triggerPolicy: completed.triggerPolicyChange?.after ?? completed.triggerPolicy }
+        : {}),
+      ...(completed.objectiveLifecycle ? { objectiveLifecycle: completed.objectiveLifecycle } : {}),
+    });
     const changed = (await this.redis.eval(
       TRANSITION_CURRENT_LUA,
       3,

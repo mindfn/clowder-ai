@@ -59,6 +59,7 @@ describe('F257 Objective registry v2', () => {
       label: 'X goal',
       statement: 'Do X correctly',
       evaluationModelId: 'em-x',
+      lifecycle: 'active',
     });
     assert.deepEqual(parsed.registry.evaluationModels[0].metrics[0].trigger, {
       kind: 'distinct-counterexamples',
@@ -93,11 +94,19 @@ describe('F257 Objective registry v2', () => {
     assert.match(wrongCounterTrigger.error, /counter metric/);
   });
 
-  test('shipped registry defines 23 single-goal Objectives and explicit S13 metrics', async () => {
+  test('shipped registry keeps retired history while exposing 22 active single-goal Objectives', async () => {
     const loaded = await loadObjectiveRegistry(registryPath);
     assert.equal(loaded.ok, true, loaded.ok ? '' : loaded.error);
-    assert.equal(loaded.registry.objectives.length, 23);
-    assert.equal(new Set(loaded.registry.objectives.map((objective) => objective.id)).size, 23);
+    assert.equal(loaded.registry.objectives.length, 24);
+    assert.equal(new Set(loaded.registry.objectives.map((objective) => objective.id)).size, 24);
+    assert.equal(loaded.registry.objectives.filter((objective) => objective.lifecycle === 'active').length, 22);
+    assert.deepEqual(
+      loaded.registry.objectives
+        .filter((objective) => objective.lifecycle === 'retired')
+        .map((objective) => objective.id)
+        .sort(),
+      ['engineering-quality-discipline', 'review-independence'],
+    );
     assert.equal(
       loaded.registry.objectives.some((objective) => objective.id === 'obj-routing-delivery'),
       false,
@@ -118,6 +127,10 @@ describe('F257 Objective registry v2', () => {
         ['tool-choice-correctness', 'semantic'],
       ],
     );
+    const ironObjective = loaded.registry.objectives.find((objective) => objective.id === 'iron-law-compliance');
+    const ironModel = loaded.registry.evaluationModels.find((model) => model.id === ironObjective?.evaluationModelId);
+    assert.equal(ironModel.metrics.length, 5);
+    assert.equal(ironModel.cycleTrigger.counterexampleThreshold, 3);
   });
 });
 
@@ -131,8 +144,26 @@ describe('F257 UnitEvaluationManifest', () => {
     assert.equal(new Set(manifest.manifest.units.map((unit) => unit.unitId)).size, 46);
     const s13 = manifest.manifest.units.find((unit) => unit.unitId === 'S13');
     assert.deepEqual(s13.objectives, [{ objectiveId: 'tool-access-correct-use' }]);
+    assert.equal(
+      manifest.manifest.units.every((unit) => unit.objectives.length === 1),
+      true,
+      'every segment must belong to exactly one Objective',
+    );
     const c1 = manifest.manifest.units.find((unit) => unit.unitId === 'C1');
-    assert.equal(c1.objectives.length, 2, 'compound segment is split by stable clauseId');
+    assert.deepEqual(c1.objectives, [{ objectiveId: 'tool-access-correct-use' }]);
+    const l4 = manifest.manifest.units.find((unit) => unit.unitId === 'L4');
+    assert.deepEqual(l4.objectives, [{ objectiveId: 'iron-law-compliance' }]);
+    const attachedObjectives = new Set(
+      manifest.manifest.units.flatMap((unit) => unit.objectives.map((item) => item.objectiveId)),
+    );
+    for (const objective of registry.registry.objectives.filter((item) => item.lifecycle === 'active')) {
+      assert.equal(attachedObjectives.has(objective.id), true, `active Objective ${objective.id} needs a segment`);
+      const model = registry.registry.evaluationModels.find((item) => item.id === objective.evaluationModelId);
+      assert.ok(model);
+      assert.ok(model.cycleTrigger.cumulativeThreshold >= 200);
+      assert.ok(model.cycleTrigger.counterexampleThreshold >= 3);
+      assert.ok(model.cycleTrigger.cadenceDays >= 7);
+    }
     const b1 = manifest.manifest.units.find((unit) => unit.unitId === 'B1');
     assert.equal(b1.unitState, 'not-ready', 'placeholder B1 must not produce evaluation verdicts');
     assert.match(b1.notReadyReason, /placeholder|占位|等待/i);
@@ -146,10 +177,7 @@ describe('F257 UnitEvaluationManifest', () => {
     };
     assert.equal(validateSignalCoordinates(catalog, valid), null);
     assert.match(validateSignalCoordinates(catalog, { ...valid, metricId: 'self-review-count' }), /does not belong/);
-    assert.match(
-      validateSignalCoordinates(catalog, { ...valid, objectiveId: 'review-independence' }),
-      /does not belong|not attached/,
-    );
+    assert.match(validateSignalCoordinates(catalog, { ...valid, objectiveId: 'review-independence' }), /retired/);
   });
 
   test('evaluation catalog failure degrades the sidecar instead of aborting API bootstrap', () => {
@@ -159,11 +187,7 @@ describe('F257 UnitEvaluationManifest', () => {
       source,
       /if \(catalogResult\.ok\)[\s\S]*bootstrapObjectiveEvaluationRuntime[\s\S]*else[\s\S]*app\.log\.warn/,
     );
-    assert.match(
-      source,
-      /const messageStore = createMessageStore[\s\S]*try \{[\s\S]*bootstrapSemanticSweepCoordinator[\s\S]*catch \(err\)[\s\S]*degraded/,
-      'semantic sweep bootstrap must run after MessageStore and degrade when the optional evaluation runtime is absent',
-    );
+    assert.doesNotMatch(source, /bootstrapSemanticSweepCoordinator|getSemanticSweepCoordinator/);
   });
 
   test('missing canonical units and unknown objectives fail closed', () => {
@@ -175,5 +199,49 @@ describe('F257 UnitEvaluationManifest', () => {
     );
     assert.equal(missing.ok, false);
     assert.match(missing.error, /canonical 46 units/);
+  });
+
+  test('rejects clause-level and multi-Objective segment membership', () => {
+    const registry = parseObjectiveRegistry(minimalV2);
+    assert.equal(registry.ok, true);
+    const prefix = Array.from({ length: 46 }, (_, index) => ({
+      unitId:
+        index === 0
+          ? 'B1'
+          : index === 1
+            ? 'C1'
+            : index < 23
+              ? `D${index - 1}`
+              : index < 30
+                ? `L${index - 22}`
+                : index === 30
+                  ? 'N1'
+                  : index === 31
+                    ? 'R1'
+                    : index === 32
+                      ? 'R2'
+                      : `S${index - 32}`,
+      hookId: `hook-${index}`,
+      unitState: 'evaluable',
+      objectives: [{ objectiveId: 'x-goal' }],
+    }));
+    const multi = structuredClone(prefix);
+    multi[0].objectives.push({ objectiveId: 'x-goal' });
+    assert.match(
+      parseUnitEvaluationManifest(
+        JSON.stringify({ manifestVersion: 1, registryVersion: 2, units: multi }),
+        registry.registry,
+      ).error,
+      /exactly 1 (?:item|element)/i,
+    );
+    const clause = structuredClone(prefix);
+    clause[0].objectives[0].clauseId = 'detail';
+    assert.match(
+      parseUnitEvaluationManifest(
+        JSON.stringify({ manifestVersion: 1, registryVersion: 2, units: clause }),
+        registry.registry,
+      ).error,
+      /unrecognized key/i,
+    );
   });
 });

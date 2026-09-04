@@ -1,5 +1,6 @@
 import type { CycleMetricEvaluation } from './cycle-evaluation.js';
 import type { CycleTriggerRoute, CycleWindow } from './harness-evaluation.js';
+import type { HookCondition } from './hook-override.js';
 import type { HookManifest } from './prompt-hook.js';
 
 /** F257 TC-8/9: the eval cat's structured governance writeback. */
@@ -17,7 +18,14 @@ export interface HarnessUnitAddDraft {
 export type HarnessGovernanceChangeDraft =
   | { action: 'enable'; unitId: string; reason: string }
   | { action: 'disable'; unitId: string; reason: string }
-  | { action: 'modify'; unitId: string; reason: string; proposedContent: string }
+  | {
+      action: 'modify';
+      unitId: string;
+      reason: string;
+      proposedContent?: string;
+      /** null clears a prior narrowing override; omission leaves it unchanged. */
+      proposedCondition?: HookCondition | null;
+    }
   | { action: 'add'; reason: string; unit: HarnessUnitAddDraft };
 
 export interface CycleGovernanceSubmission {
@@ -69,6 +77,8 @@ export type HarnessGovernanceProposalChange =
       hookId: string;
       reason: string;
       beforeEnabled: boolean;
+      beforeContent: string;
+      objectiveImpact: { objectiveId: string; remainingMemberCount: number };
     }
   | {
       action: 'disable';
@@ -76,6 +86,8 @@ export type HarnessGovernanceProposalChange =
       hookId: string;
       reason: string;
       beforeEnabled: boolean;
+      beforeContent: string;
+      objectiveImpact: { objectiveId: string; remainingMemberCount: number };
     }
   | {
       action: 'modify';
@@ -84,7 +96,9 @@ export type HarnessGovernanceProposalChange =
       reason: string;
       sourceVersion: number;
       beforeContent: string;
-      proposedContent: string;
+      proposedContent?: string;
+      beforeCondition: HookCondition | null;
+      proposedCondition?: HookCondition | null;
     }
   | {
       action: 'rollback';

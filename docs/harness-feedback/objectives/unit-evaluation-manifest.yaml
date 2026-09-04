@@ -1,5 +1,6 @@
 ---
-# Segment/clause → Objective membership. Metrics are intentionally absent:
+# Segment → Objective membership. Every segment has exactly one Objective;
+# finer coordinates belong to that Objective's Metrics, not to clause attachments.
 # they are owned once by each Objective's Evaluation Model in registry.yaml.
 manifestVersion: 1
 registryVersion: 2
@@ -12,9 +13,7 @@ units:
   - unitId: C1
     hookId: c1-mcp-callback
     unitState: evaluable
-    objectives:
-      - { objectiveId: routing-target-delivery, clauseId: mention-format }
-      - { objectiveId: tool-access-correct-use, clauseId: callback-tool-catalog }
+    objectives: [{ objectiveId: tool-access-correct-use }]
   - { unitId: D1, hookId: d1-identity-anchor, unitState: evaluable, objectives: [{ objectiveId: identity-truth }] }
   - { unitId: D2, hookId: d2-direct-message-source, unitState: evaluable, objectives: [{ objectiveId: message-thread-continuity }] }
   - { unitId: D3, hookId: d3-same-family-warning, unitState: evaluable, objectives: [{ objectiveId: agent-instance-disambiguation }] }
@@ -33,9 +32,7 @@ units:
   - unitId: D16
     hookId: d16-bootcamp-mode
     unitState: evaluable
-    objectives:
-      - { objectiveId: interaction-mode-adherence, clauseId: bootcamp-mode }
-      - { objectiveId: workflow-context-supply, clauseId: workflow-instructions }
+    objectives: [{ objectiveId: interaction-mode-adherence }]
   - { unitId: D17, hookId: d17-guide-candidates, unitState: evaluable, objectives: [{ objectiveId: capability-guide-wakeup }] }
   - { unitId: D18, hookId: d18-world-context, unitState: evaluable, objectives: [{ objectiveId: world-state-fidelity }] }
   - { unitId: D19, hookId: d19-constitutional-knowledge, unitState: evaluable, objectives: [{ objectiveId: governance-authority-freshness }] }
@@ -43,48 +40,29 @@ units:
   - unitId: D21
     hookId: d21-decision-tree
     unitState: evaluable
-    objectives:
-      - { objectiveId: turn-custody-closure, clauseId: exit-decision }
-      - { objectiveId: wait-wakeup-liveness, clauseId: wait-decision }
+    objectives: [{ objectiveId: wait-wakeup-liveness }]
   - unitId: L1
     hookId: l1-parallel-self-awareness
     unitState: evaluable
-    objectives:
-      - { objectiveId: agent-instance-disambiguation, clauseId: parallel-instance }
-      - { objectiveId: message-thread-continuity, clauseId: cross-thread-coordinate }
-      - { objectiveId: partnership-autonomy, clauseId: collaboration-membership }
+    objectives: [{ objectiveId: agent-instance-disambiguation }]
   - unitId: L2
     hookId: l2-objectivity-carry-over
     unitState: evaluable
-    objectives:
-      - { objectiveId: continuation-memory-recovery, clauseId: compression-recovery }
-      - { objectiveId: knowledge-evidence-quality, clauseId: source-audit }
+    objectives: [{ objectiveId: continuation-memory-recovery }]
   - unitId: L3
     hookId: l3-routing-exit-rules
     unitState: evaluable
-    objectives:
-      - { objectiveId: routing-target-delivery, clauseId: mention-routing }
-      - { objectiveId: turn-custody-closure, clauseId: custody-exit }
-      - { objectiveId: wait-wakeup-liveness, clauseId: wait-contract }
-      - { objectiveId: partnership-autonomy, clauseId: operator-escalation }
+    objectives: [{ objectiveId: partnership-autonomy }]
   - unitId: L4
     hookId: l4-iron-laws
     unitState: evaluable
-    objectives:
-      - { objectiveId: identity-truth, clauseId: identity }
-      - { objectiveId: safety-data-boundary, clauseId: data-storage }
-      - { objectiveId: safety-data-boundary, clauseId: persistence }
-      - { objectiveId: review-independence, clauseId: independent-review }
-      - { objectiveId: engineering-quality-discipline, clauseId: release-acceptance }
+    objectives: [{ objectiveId: iron-law-compliance }]
   - { unitId: L5, hookId: l5-mcp-tool-index, unitState: evaluable, objectives: [{ objectiveId: tool-access-correct-use }] }
   - { unitId: L6, hookId: l6-capability-wakeup, unitState: evaluable, objectives: [{ objectiveId: capability-guide-wakeup }] }
   - unitId: L7
     hookId: l7-collaboration-philosophy
     unitState: evaluable
-    objectives:
-      - { objectiveId: continuation-memory-recovery, clauseId: memory-continuity }
-      - { objectiveId: partnership-autonomy, clauseId: partnership }
-      - { objectiveId: engineering-quality-discipline, clauseId: quality-discipline }
+    objectives: [{ objectiveId: partnership-autonomy }]
   - { unitId: N1, hookId: n1-navigation-context, unitState: evaluable, objectives: [{ objectiveId: workflow-context-supply }] }
   - unitId: R1
     hookId: r1-serial-routing-assembly

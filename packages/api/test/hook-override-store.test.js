@@ -253,6 +253,65 @@ describe('HookOverrideStore', () => {
     });
   });
 
+  describe('condition override', () => {
+    const CONDITION = { conditionRef: 'routing-mode-in', params: { values: ['serial'] } };
+
+    test('auto-evolve hook stores and clears a validated condition', async () => {
+      const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+      const governed = makeManifest('D9', { governanceTier: 'auto-evolve' });
+      const governedStore = new mod.HookOverrideStore(redis, buildLookup(governed));
+
+      await governedStore.setConditionOverride('D9', CONDITION, 'system', { source: 'auto-eval' });
+      const stored = await governedStore.getOverride('D9');
+      assert.deepEqual(stored.conditionOverride, CONDITION);
+      assert.equal(stored.conditionSource, 'auto-eval');
+
+      await governedStore.clearConditionOverride('D9', 'system', { source: 'auto-eval' });
+      const cleared = await governedStore.getOverride('D9');
+      assert.equal(cleared.conditionOverride, undefined);
+      assert.equal(cleared.conditionSource, undefined);
+      assert.deepEqual(
+        (await governedStore.listEvents()).map((event) => event.action),
+        ['condition-set', 'condition-clear'],
+      );
+    });
+
+    test('invalid or immutable condition changes fail closed without audit writes', async () => {
+      const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+      const governed = makeManifest('D9', { governanceTier: 'auto-evolve' });
+      const immutable = makeManifest('D10', { governanceTier: 'immutable' });
+      const governedStore = new mod.HookOverrideStore(redis, buildLookup(governed, immutable));
+
+      await assert.rejects(
+        () => governedStore.setConditionOverride('D9', { conditionRef: 'unknown', params: {} }, 'system'),
+        (err) => err.gate === 'condition',
+      );
+      await assert.rejects(
+        () => governedStore.setConditionOverride('D10', CONDITION, 'system', { source: 'auto-eval' }),
+        (err) => err.gate === 'governanceTier' && err.manifestValue === 'immutable',
+      );
+      assert.equal((await governedStore.listEvents()).length, 0);
+    });
+
+    test('human-gated condition changes require operator source and reconciliation drops stale auto changes', async () => {
+      const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+      const humanGated = makeManifest('D11', { governanceTier: 'human-gated' });
+      const humanStore = new mod.HookOverrideStore(redis, buildLookup(humanGated));
+
+      await assert.rejects(
+        () => humanStore.setConditionOverride('D11', CONDITION, 'system', { source: 'auto-eval' }),
+        (err) => err.gate === 'governanceTier' && err.manifestValue === 'human-gated',
+      );
+      await humanStore.setConditionOverride('D11', CONDITION, 'operator', { source: 'operator' });
+      assert.deepEqual((await humanStore.getOverride('D11')).conditionOverride, CONDITION);
+
+      const raw = await humanStore.getOverride('D11');
+      raw.conditionSource = 'auto-eval';
+      await redis.hset('hook-override:default', 'D11', JSON.stringify(raw));
+      assert.equal((await humanStore.loadSnapshot()).get('D11').conditionOverride, undefined);
+    });
+  });
+
   describe('rollback', () => {
     test('rollback removes all override state for a hook', async () => {
       await store.disable('D5', 'opus');

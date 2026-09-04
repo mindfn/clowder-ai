@@ -144,6 +144,7 @@ describe('F257 harness unit and callback contracts', () => {
         cycleId: 'cycle',
         metrics: [{ id: 'm', conclusion: { kind: 'count', value: 0, howCounted: 'checked' }, evidenceRefs: [] }],
         overall: 'complete',
+        counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
       },
     );
     assert.deepEqual(submit, { status: 409, body: { error: 'cycle_evaluation_conflict' } });
@@ -160,6 +161,7 @@ describe('F257 harness unit and callback contracts', () => {
         cycleId: 'cycle',
         metrics: [{ id: 'm', conclusion: { kind: 'count', value: 0, howCounted: 'checked' }, evidenceRefs: [] }],
         overall: 'complete',
+        counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
       },
     );
     assert.deepEqual(oversized, {

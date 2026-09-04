@@ -19,7 +19,6 @@ const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const objectiveAttachment = z
   .object({
     objectiveId: slug,
-    clauseId: slug.optional(),
   })
   .strict();
 const unit = z
@@ -28,7 +27,7 @@ const unit = z
     hookId: slug,
     unitState: z.enum(['evaluable', 'not-ready']),
     notReadyReason: z.string().trim().min(1).optional(),
-    objectives: z.array(objectiveAttachment).min(1),
+    objectives: z.array(objectiveAttachment).length(1),
   })
   .strict();
 const manifestSchema = z
@@ -70,7 +69,9 @@ export function parseUnitEvaluationManifest(
 }
 
 function validateManifest(manifest: UnitEvaluationManifest, registry: ObjectiveRegistry): string | null {
-  const objectiveIds = new Set(registry.objectives.map((objective) => objective.id));
+  const objectiveIds = new Set(
+    registry.objectives.filter((objective) => objective.lifecycle === 'active').map((objective) => objective.id),
+  );
   const seenUnits = new Set<string>();
   for (const definition of manifest.units) {
     if (seenUnits.has(definition.unitId)) return `duplicate unit id "${definition.unitId}"`;
@@ -90,14 +91,10 @@ function validateUnit(definition: UnitEvaluationManifest['units'][number], objec
   if (definition.unitState === 'evaluable' && definition.notReadyReason) {
     return `unit "${definition.unitId}" is evaluable but has notReadyReason`;
   }
-  const seenAttachments = new Set<string>();
   for (const attachment of definition.objectives) {
     if (!objectiveIds.has(attachment.objectiveId)) {
       return `unit "${definition.unitId}" references unknown objective "${attachment.objectiveId}"`;
     }
-    const coordinate = `${attachment.objectiveId}:${attachment.clauseId ?? ''}`;
-    if (seenAttachments.has(coordinate)) return `unit "${definition.unitId}" repeats attachment "${coordinate}"`;
-    seenAttachments.add(coordinate);
   }
   return null;
 }

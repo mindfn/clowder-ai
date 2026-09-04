@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import type { EvalDomainId } from '../domain/eval-domain-registry.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
-import { formatSemanticSweepPacket } from '../trace-annotation/SemanticSweepCoordinator.js';
 import type { HandlerError, ManualTriggerDeps } from './types.js';
 
 export const MAX_HARNESS_LEDGER_ASSIGNMENT_CHARS = 128_000;
@@ -43,8 +41,6 @@ export interface TriggerNowSuccess {
    * `'enqueued'` reach success — `'full'` is converted to 503 (cloud codex R2 P2).
    */
   triggerOutcome: 'dispatched' | 'enqueued';
-  /** Optional Semantic Sweep job bundled as a counterexample-discovery aid. */
-  semanticSweepJobId?: string;
 }
 
 /**
@@ -134,9 +130,8 @@ export async function handleTriggerNow(
   // KD-17 snapshot-first: for eval:harness-ledger, snapshot is REQUIRED.
   // No snapshot → 503 (fail-closed for manual trigger).
   let precomputedEvidence: string | undefined;
-  let semanticSweepJobId: string | undefined; // F257: for volume drain fencing
   if (input.domainId === 'eval:harness-ledger') {
-    if (!deps.guardRejectionLog && !deps.semanticSweepCoordinator) {
+    if (!deps.guardRejectionLog) {
       return {
         status: 503,
         error: 'harness_ledger_snapshot_unavailable',
@@ -145,30 +140,14 @@ export async function handleTriggerNow(
       };
     }
     try {
-      const evidenceParts: string[] = [];
-      const semantic = await deps.semanticSweepCoordinator?.prepare({
+      const snapshotResult = await produceHarnessLedgerRunSnapshot({
+        guardRejectionLog: deps.guardRejectionLog,
+        harnessFeedbackRoot: deps.harnessFeedbackRoot,
         ownerUserId: input.userId,
-        evaluatorCatId: effectiveDomain.evalCat.catId,
-        startMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
-        endMs: Date.now() + 1,
+        sourceThreadId: input.sourceThreadId,
+        escalationKind: input.escalationKind,
       });
-      if (semantic) {
-        evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
-        semanticSweepJobId = semantic.job.jobId;
-      }
-      let snapshotResult: Awaited<ReturnType<typeof produceHarnessLedgerRunSnapshot>> | null = null;
-      if (deps.guardRejectionLog) {
-        snapshotResult = await produceHarnessLedgerRunSnapshot({
-          guardRejectionLog: deps.guardRejectionLog,
-          harnessFeedbackRoot: deps.harnessFeedbackRoot,
-          ownerUserId: input.userId,
-          sourceThreadId: input.sourceThreadId,
-          escalationKind: input.escalationKind,
-        });
-        evidenceParts.unshift(snapshotResult.summary);
-      }
-
-      if (snapshotResult?.snapshot.totalEvents === 0 && !semantic) {
+      if (snapshotResult.snapshot.totalEvents === 0) {
         return {
           ok: true as const,
           domainId: input.domainId,
@@ -178,7 +157,7 @@ export async function handleTriggerNow(
           windowSummary: `${snapshotResult.snapshot.window.durationHours}h window, 0 events`,
         };
       }
-      precomputedEvidence = evidenceParts.join('\n\n');
+      precomputedEvidence = snapshotResult.summary;
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       return {
@@ -227,12 +206,6 @@ export async function handleTriggerNow(
     };
   }
 
-  const immutableJobIds = [semanticSweepJobId].filter((jobId): jobId is string => typeof jobId === 'string').sort();
-  const idempotencyKey =
-    immutableJobIds.length > 0
-      ? `eval-trigger:${input.domainId}:${createHash('sha256').update(JSON.stringify(immutableJobIds)).digest('hex')}`
-      : undefined;
-
   const stored = await deps.messageStore.append({
     provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
     userId: 'scheduler',
@@ -241,7 +214,6 @@ export async function handleTriggerNow(
     mentions: [],
     timestamp: Date.now(),
     threadId: invocation.targetThreadId,
-    ...(idempotencyKey ? { idempotencyKey } : {}),
   });
   const messageId = typeof stored === 'string' ? stored : stored.id;
 
@@ -272,6 +244,5 @@ export async function handleTriggerNow(
     evalCatId: invocation.evalCat.catId,
     invocationTriggered: true,
     triggerOutcome: outcome,
-    semanticSweepJobId,
   };
 }

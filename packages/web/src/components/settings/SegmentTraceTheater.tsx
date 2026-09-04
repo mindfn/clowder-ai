@@ -18,7 +18,6 @@ export interface TraceTheaterObservation {
 export function SegmentTraceTheater({
   segmentId,
   observations,
-  total,
   window,
   readiness,
   loading,
@@ -27,7 +26,6 @@ export function SegmentTraceTheater({
 }: {
   segmentId: string;
   observations: TraceTheaterObservation[];
-  total: number;
   window: { startMs: number; endMs: number } | null;
   readiness: SegmentTracingEvaluationView | null;
   loading?: boolean;
@@ -95,7 +93,7 @@ export function SegmentTraceTheater({
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">
-          生命线查询窗内本段 Tracing 明细（{total}）
+          生命线查询窗内本段 Tracing 明细
         </summary>
         <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
           点击记录查看完整现场
@@ -155,49 +153,56 @@ export function SegmentTraceTheater({
  * that the two coordinates or denominators are interchangeable.
  */
 function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
+  const objective = trigger.objective;
   return (
     <div className="space-y-2">
       <div>满足任一路即触发 Objective 评估</div>
-      {trigger.perObjective.map((objective) => (
-        <div key={objective.objectiveId} className="rounded-lg bg-[var(--console-card-bg)] p-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-mono">{objective.objectiveId}</span>
-            <SettingsBadge tone={objective.evalStatus === 'stalled' ? 'red' : 'slate'} size="xxs">
-              {objective.evalStatus}
+      <div className="rounded-lg bg-[var(--console-card-bg)] p-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-mono">{objective.objectiveId}</span>
+          <SettingsBadge tone={objective.evalStatus === 'stalled' ? 'red' : 'slate'} size="xxs">
+            {objective.evalStatus}
+          </SettingsBadge>
+          <SettingsBadge tone={objective.lifecycle === 'dormant' ? 'amber' : 'slate'} size="xxs">
+            {objective.lifecycle}
+          </SettingsBadge>
+          {objective.triggeredBy.map((route) => (
+            <SettingsBadge key={route} tone="blue" size="xxs">
+              {routeLabel(route)} 已触发
             </SettingsBadge>
-            {objective.triggeredBy.map((route) => (
-              <SettingsBadge key={route} tone="blue" size="xxs">
-                {routeLabel(route)} 已触发
-              </SettingsBadge>
-            ))}
-          </div>
-          <div className="mt-1 text-cafe-muted">
-            · 周期内累计 Tracing（Objective）{objective.cumulative.count}/{objective.cumulative.threshold} 条
-          </div>
-          <div className="text-cafe-muted">
-            · 周期内反例 {objective.counterexamples.count}/{objective.counterexamples.threshold} 条
-          </div>
-          <div className="text-cafe-muted">
-            · 距周期起点 {formatDuration(objective.cadence.elapsedMs)}/{formatDuration(objective.cadence.thresholdMs)}
-            {!objective.cadence.eligible ? '（至少需 1 条累计 Tracing）' : ''}
-          </div>
+          ))}
         </div>
-      ))}
+        {objective.health === 'zero-trace-fault' && (
+          <SettingsText as="div" variant="xs" tone="red" className="mt-1 font-medium">
+            采集故障：owner 线性池在本周期内没有 Tracing
+          </SettingsText>
+        )}
+        <div className="mt-1 text-cafe-muted">
+          · 周期内累计 Tracing（Objective）{objective.cumulative.count}/{objective.cumulative.threshold} 条
+        </div>
+        <div className="text-cafe-muted">
+          · 周期内反例 {objective.counterexamples.count}/{objective.counterexamples.threshold} 条
+        </div>
+        <div className="text-cafe-muted">
+          · 距周期起点 {formatDuration(objective.cadence.elapsedMs)}/{formatDuration(objective.cadence.thresholdMs)}
+          {!objective.cadence.eligible ? '（至少需 1 条累计 Tracing）' : ''}
+        </div>
+        <div className="text-cafe-muted">· 触发策略已调整 {objective.policyChangeCount} 次</div>
+      </div>
     </div>
   );
 }
 
-/** Cycle start = earliest per-Objective readiness window start; falls back to version window. */
+/** Cycle start comes from the segment's sole Objective; falls back to the version window. */
 function cycleStartMs(
   trigger: SegmentTracingEvaluationView['trigger'] | undefined,
   window: { startMs: number; endMs: number } | null,
 ): number | null {
-  const starts = trigger?.perObjective?.map((po) => po.cycleStartMs).filter((v): v is number => v > 0);
-  if (starts && starts.length > 0) return Math.min(...starts);
+  if (trigger?.objective.cycleStartMs && trigger.objective.cycleStartMs > 0) return trigger.objective.cycleStartMs;
   return window?.startMs ?? null;
 }
 
-function routeLabel(route: SegmentTracingEvaluationView['trigger']['perObjective'][number]['triggeredBy'][number]) {
+function routeLabel(route: SegmentTracingEvaluationView['trigger']['objective']['triggeredBy'][number]) {
   return { cumulative: '累计', counterexamples: '反例', cadence: '周期' }[route];
 }
 

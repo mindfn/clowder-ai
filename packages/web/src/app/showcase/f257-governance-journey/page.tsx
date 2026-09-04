@@ -54,22 +54,23 @@ const EVALUATION: SegmentEvaluationResponse = {
   window: WINDOW,
   tracing: {
     trigger: {
-      perObjective: [
-        {
-          objectiveId: 'tool-access-correct-use',
-          evalStatus: 'written',
-          cycleStartMs: WINDOW.start,
-          cycleEndMs: WINDOW.end,
-          triggeredBy: ['counterexamples'],
-          cumulative: { count: 146, threshold: 200 },
-          counterexamples: { count: 3, threshold: 3 },
-          cadence: {
-            elapsedMs: WINDOW.end - WINDOW.start,
-            thresholdMs: 7 * 24 * 60 * 60 * 1000,
-            eligible: true,
-          },
+      objective: {
+        objectiveId: 'tool-access-correct-use',
+        evalStatus: 'written',
+        lifecycle: 'active',
+        health: 'healthy',
+        policyChangeCount: 1,
+        cycleStartMs: WINDOW.start,
+        cycleEndMs: WINDOW.end,
+        triggeredBy: ['counterexamples'],
+        cumulative: { count: 146, threshold: 200 },
+        counterexamples: { count: 3, threshold: 3 },
+        cadence: {
+          elapsedMs: WINDOW.end - WINDOW.start,
+          thresholdMs: 7 * 24 * 60 * 60 * 1000,
+          eligible: true,
         },
-      ],
+      },
     },
     structuredCounterexamples: [
       {

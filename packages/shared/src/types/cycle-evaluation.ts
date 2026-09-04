@@ -15,6 +15,7 @@ export interface CycleEvaluationSubmission {
   cycleId: string;
   metrics: CycleMetricEvaluation[];
   overall: 'complete' | 'partial' | 'insufficient_evidence';
+  counterexampleRootCauses: { eventCount: number; rootCauseCount: number; howGrouped: string };
 }
 
 export interface CycleEvaluationAssignment {

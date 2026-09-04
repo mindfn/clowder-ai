@@ -31,6 +31,8 @@ const ITEM: ApprovalItem = {
       },
     },
     conclusions: [{ id: 'metric-a', conclusion: { kind: 'count', value: 3 } }],
+    metricVisuals: [{ id: 'metric-a', currentValue: 3, previousValue: 5, delta: -2, lowerIsBetter: true }],
+    hasComparisonBaseline: true,
     governanceReason: '反例显示内容需要收紧。',
     history: [{ cycleId: 'old-cycle', approval: { state: 'skipped' } }],
     rejectReasons: ['上一版没有解释边界。'],
@@ -83,7 +85,7 @@ describe('F257 governance card', () => {
       );
     });
 
-    for (const section of ['header', 'conclusions', 'changes', 'evidence', 'lineage']) {
+    for (const section of ['header', 'metrics', 'deltas', 'conclusions', 'changes', 'lineage']) {
       expect(container.querySelector(`[data-testid="f257-governance-${section}"]`)).not.toBeNull();
     }
     const text = container.textContent ?? '';
@@ -96,6 +98,28 @@ describe('F257 governance card', () => {
     expect(text).toContain('invocation-1');
     expect(container.querySelector('[data-testid="f257-governance-evidence-link"]')).not.toBeNull();
     expect(text).toContain('拒绝必须填写理由');
+    expect(text).toContain('5 → 3（-2）');
+    expect(text).toContain('不可挑批');
+  });
+
+  it('states that a first-cycle proposal has no comparison baseline', async () => {
+    const firstCycle = {
+      ...ITEM,
+      detail: { ...ITEM.detail, history: [], hasComparisonBaseline: false, isFirstCycle: true },
+    };
+    await act(async () => {
+      root.render(
+        <GenericApprovalRecommendation
+          item={firstCycle}
+          f193TargetThreadId=""
+          sourceThreadTitle="Harness Objective"
+          targetThreadTitle={null}
+          resolveCatName={(catId) => catId}
+        />,
+      );
+    });
+    expect(container.textContent).toContain('首轮评估，暂无可比较的历史基线');
+    expect(container.querySelector('[data-testid="f257-governance-first-cycle"]')).not.toBeNull();
   });
 
   it('offers approve/skip/reject and keeps reject disabled until a reason exists', async () => {

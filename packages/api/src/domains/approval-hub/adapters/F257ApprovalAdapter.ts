@@ -68,6 +68,7 @@ function summary(proposal: HarnessGovernanceProposal): string {
 }
 
 function detail(proposal: HarnessGovernanceProposal): Record<string, unknown> {
+  const visuals = metricVisuals(proposal);
   return {
     header: {
       objective: structuredClone(proposal.objective),
@@ -79,6 +80,9 @@ function detail(proposal: HarnessGovernanceProposal): Record<string, unknown> {
       triggerCounts: structuredClone(proposal.triggerCounts),
     },
     conclusions: structuredClone(proposal.evaluation.metrics),
+    metricVisuals: visuals,
+    hasComparisonBaseline: visuals.some((metric) => metric.previousValue !== null),
+    isFirstCycle: proposal.history.length === 0,
     governanceReason: proposal.reason,
     history: structuredClone(proposal.history),
     rejectReasons: [...proposal.rejectReasons],
@@ -87,4 +91,25 @@ function detail(proposal: HarnessGovernanceProposal): Record<string, unknown> {
     cardOrdinal: proposal.cardOrdinal,
     decisionReason: proposal.decisionReason,
   };
+}
+
+function metricVisuals(proposal: HarnessGovernanceProposal) {
+  return proposal.evaluation.metrics.map((metric) => {
+    const previous = proposal.history
+      .flatMap((cycle) => cycle.evaluation.metrics)
+      .find((candidate) => candidate.id === metric.id);
+    const currentValue = conclusionValue(metric.conclusion);
+    const previousValue = previous ? conclusionValue(previous.conclusion) : null;
+    return {
+      id: metric.id,
+      currentValue,
+      previousValue,
+      delta: previousValue === null ? null : currentValue - previousValue,
+      lowerIsBetter: metric.conclusion.kind !== 'semantic-label',
+    };
+  });
+}
+
+function conclusionValue(conclusion: HarnessGovernanceProposal['evaluation']['metrics'][number]['conclusion']): number {
+  return conclusion.kind === 'semantic-label' ? conclusion.count : conclusion.value;
 }

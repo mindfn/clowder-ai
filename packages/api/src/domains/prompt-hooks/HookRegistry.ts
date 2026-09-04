@@ -9,6 +9,7 @@
 import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
+  HookCondition,
   HookManifest,
   HookOverride,
   HookOverrideSnapshot,
@@ -16,6 +17,7 @@ import type {
   RegisteredHook,
   TraceEventDisabled,
 } from '@cat-cafe/shared';
+import { isHookCondition } from './hook-condition-policy.js';
 import { parseHookManifest } from './hook-manifest-parser.js';
 
 export class HookRegistry {
@@ -216,6 +218,16 @@ export class HookRegistry {
       return undefined;
     }
     return override.contentOverride;
+  }
+
+  /** Return a valid, permission-compatible data-only narrowing condition. */
+  getConditionOverride(hookId: string): HookCondition | undefined {
+    const hook = this.hooks.get(hookId);
+    const override = this.overrideSnapshot?.get(hookId);
+    if (!hook || !override?.conditionOverride || !isHookCondition(override.conditionOverride)) return undefined;
+    if (hook.manifest.governanceTier === 'immutable') return undefined;
+    if (hook.manifest.governanceTier === 'human-gated' && override.conditionSource !== 'operator') return undefined;
+    return override.conditionOverride;
   }
 
   /**

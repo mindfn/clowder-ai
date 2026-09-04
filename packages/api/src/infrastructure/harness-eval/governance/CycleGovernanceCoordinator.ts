@@ -1,6 +1,8 @@
 import type { CycleGovernanceSubmission, CycleRecord, HarnessGovernanceProposal } from '@cat-cafe/shared';
 import { CycleEvaluationCoordinator, type CycleEvaluationPrincipal } from '../evaluation/CycleEvaluationCoordinator.js';
+import { adaptCycleTriggerPolicy, cycleTriggerPolicyFor } from '../evaluation/cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from '../evaluation/ObjectiveEvaluationRuntime.js';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import {
   buildGovernanceAssignment,
   formatGovernanceAssignment,
@@ -80,7 +82,9 @@ export class CycleGovernanceCoordinator {
 
   async reconcileKnownCycles(now: number): Promise<void> {
     for (const ownerUserId of await this.deps.runtime.cycles.ownerUserIds()) {
-      for (const objective of this.deps.runtime.catalog.registry.objectives) {
+      for (const objective of this.deps.runtime.catalog.registry.objectives.filter(
+        (candidate) => candidate.lifecycle !== 'retired',
+      )) {
         try {
           await this.reconcileCycle(ownerUserId, objective.id, now);
         } catch (error) {
@@ -179,12 +183,18 @@ export class CycleGovernanceCoordinator {
     by: string,
   ) {
     await this.deps.executor.hydrate(record.objectiveId, { ...input, reason });
+    const adaptation = adaptCycleTriggerPolicy(this.deps.runtime.catalog, record, 'keep', writtenAt);
     const completed: CycleRecord = {
       ...record,
       governance: { decision: 'keep', reason, writtenAt, by },
+      triggerPolicyChange: adaptation.change,
+      objectiveLifecycle: adaptation.lifecycle,
       closedAt: writtenAt,
     };
-    const version = await this.deps.executor.currentVersion(record.objectiveId);
+    const version = await this.deps.executor.currentVersion(record.objectiveId, {
+      triggerPolicy: adaptation.change.after,
+      lifecycle: adaptation.lifecycle,
+    });
     const next = await this.deps.runtime.cycles.advance(record, completed, version);
     if (!next) throw new Error(`cycle_governance_conflict:${record.cycleId}`);
     return { outcome: 'written', cycleId: record.cycleId, decision: 'keep' as const, nextCycleId: next.cycleId };
@@ -196,8 +206,9 @@ export class CycleGovernanceCoordinator {
       (item) => item.id === objective?.evaluationModelId,
     );
     if (!model) throw new Error(`cycle_evaluation_model_not_found:${record.objectiveId}`);
+    const policy = cycleTriggerPolicyFor(this.deps.runtime.catalog, record);
     const [invocationIds, annotationLists] = await Promise.all([
-      this.deps.runtime.objectiveTraces.invocationIds(record.ownerUserId, record.objectiveId, record.windows),
+      this.deps.runtime.traces.ownerInvocationIds(record.ownerUserId, record.windows),
       Promise.all(
         record.windows.flatMap((window) =>
           model.metrics.map((metric) =>
@@ -215,12 +226,12 @@ export class CycleGovernanceCoordinator {
     const counterexamples = new Set(
       annotationLists
         .flat()
-        .filter((annotation) => annotation.polarity === 'counterexample')
+        .filter(isHighConfidenceCounterexample)
         .map((annotation) => annotation.incidentKey),
     );
     return {
-      cumulative: { count: invocationIds.length, threshold: model.cycleTrigger.cumulativeThreshold },
-      counterexamples: { count: counterexamples.size, threshold: model.cycleTrigger.counterexampleThreshold },
+      cumulative: { count: invocationIds.length, threshold: policy.cumulativeThreshold },
+      counterexamples: { count: counterexamples.size, threshold: policy.counterexampleThreshold },
     };
   }
 

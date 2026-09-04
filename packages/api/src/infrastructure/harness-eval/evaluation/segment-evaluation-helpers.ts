@@ -33,10 +33,9 @@ export function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, object
   return runtime.catalog.manifest.units.flatMap((unit) =>
     unit.objectives
       .filter((attachment) => attachment.objectiveId === objectiveId)
-      .map((attachment) => ({
+      .map(() => ({
         unitType: 'segment' as const,
         unitId: unit.unitId,
-        ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
       })),
   );
 }

@@ -316,11 +316,6 @@ export {
   skillConsumptionTools,
 } from './skill-consumption-tools.js';
 export {
-  handleSubmitSemanticSweepTool,
-  submitSemanticSweepInputSchema,
-  submitSemanticSweepTools,
-} from './submit-semantic-sweep-tool.js';
-export {
   describeHarnessUnitInputSchema,
   handleDescribeHarnessUnitTool,
   handleReadCycleTracesTool,

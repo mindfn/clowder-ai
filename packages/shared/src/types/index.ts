@@ -712,6 +712,8 @@ export {
 export type {
   CycleEvaluationStatus,
   CycleRecord,
+  CycleTriggerPolicy,
+  CycleTriggerPolicyChange,
   CycleTriggerRoute,
   CycleWindow,
   EvaluationSnapshot,
@@ -726,6 +728,7 @@ export type {
   MetricVerdictDecisionStatus,
   MetricVerdictRule,
   ObjectiveJudgment,
+  ObjectiveLifecycle,
   ObjectiveVerdictDecision,
   PendingTraceMarker,
   SegmentCycleSummary,
@@ -750,6 +753,7 @@ export type {
   HarnessUnitAddDraft,
 } from './harness-governance.js';
 export type {
+  HookCondition,
   HookOverride,
   HookOverrideSnapshot,
   HookOverrideSource,

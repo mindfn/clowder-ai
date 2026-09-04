@@ -13,6 +13,17 @@ const { HarnessUnitDirectoryWriter } = await import(
 );
 
 const roots = [];
+const VERSION_STATE = {
+  triggerPolicy: {
+    cumulativeThreshold: 200,
+    counterexampleThreshold: 3,
+    cadenceDays: 7,
+    minimumIntervalMs: 7_200_000,
+    consecutiveKeepCycles: 0,
+    consecutiveCadenceKeepCycles: 0,
+  },
+  lifecycle: 'active',
+};
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 async function harness() {
@@ -67,6 +78,7 @@ async function harness() {
   const hooks = new Map([['D1', { manifest, templatePath }]]);
   const versions = new Map([['D1', 1]]);
   const content = new Map();
+  const conditions = new Map();
   const enabled = new Map([['D1', true]]);
   const registry = {
     getHook: (id) => hooks.get(id),
@@ -74,6 +86,7 @@ async function harness() {
     isEnabled: (id) => enabled.get(id) ?? hooks.get(id)?.manifest.enabled ?? false,
     getActiveVersion: (id) => versions.get(id) ?? hooks.get(id)?.manifest.version ?? 0,
     getContentOverride: (id) => content.get(id),
+    getConditionOverride: (id) => conditions.get(id),
   };
   const writes = [];
   const overrideStore = {
@@ -98,6 +111,14 @@ async function harness() {
       writes.push(['modify', id, value]);
       content.set(id, value);
       versions.set(id, (versions.get(id) ?? 1) + 1);
+    },
+    async setConditionOverride(id, value) {
+      writes.push(['condition', id, value]);
+      conditions.set(id, value);
+    },
+    async clearConditionOverride(id) {
+      writes.push(['condition-clear', id]);
+      conditions.delete(id);
     },
     async activateVersion(id, version) {
       writes.push(['rollback', id, version]);
@@ -125,6 +146,13 @@ async function harness() {
         versions.set(added.unitId, 1);
       }
     },
+    async resolveObjectiveVersion(objectiveId) {
+      const refs = catalog.manifest.units
+        .filter((unit) => unit.objectives.some((objective) => objective.objectiveId === objectiveId))
+        .map((unit) => `${unit.unitId}@${versions.get(unit.unitId) ?? 1}`)
+        .sort();
+      return { version: `objective-${refs.join('-')}`, versionContentRef: `objective-versions:${refs.join(',')}` };
+    },
   });
   return { root, catalog, executor, writes, reloads: () => reloads };
 }
@@ -151,7 +179,7 @@ describe('F257 Harness governance executor', () => {
     assert.equal(changes[0].hookId, 'D1', 'catalog asset slug must never replace the canonical registry id');
     assert.equal(changes[0].beforeContent, 'v1 body');
 
-    const version = await context.executor.apply(proposal(changes), 'owner-1', 'Approved.');
+    const version = await context.executor.apply(proposal(changes), 'owner-1', 'Approved.', VERSION_STATE);
     assert.deepEqual(context.writes, [['modify', 'D1', 'v2 body']]);
     assert.equal(context.reloads(), 1);
     assert.match(version.versionContentRef, /D1@2/);
@@ -186,7 +214,7 @@ describe('F257 Harness governance executor', () => {
       reason: 'Add a missing guard.',
       v2Draft: { changes: [{ action: 'add', reason: 'Coverage gap.', unit }] },
     });
-    const version = await context.executor.apply(proposal(changes), 'owner-1', 'Approved.');
+    const version = await context.executor.apply(proposal(changes), 'owner-1', 'Approved.', VERSION_STATE);
 
     assert.equal(
       await readFile(join(context.root, 'assets', 'prompt-hooks', 'x1-new-rule', 'x1-new-rule.md'), 'utf8'),
@@ -236,7 +264,9 @@ describe('F257 Harness governance executor', () => {
         }),
       ),
     );
-    await Promise.all(drafts.map((changes) => context.executor.apply(proposal(changes), 'owner-1', 'Approved.')));
+    await Promise.all(
+      drafts.map((changes) => context.executor.apply(proposal(changes), 'owner-1', 'Approved.', VERSION_STATE)),
+    );
 
     const manifest = YAML.parse(
       await readFile(
@@ -245,5 +275,103 @@ describe('F257 Harness governance executor', () => {
       ),
     );
     assert.deepEqual(manifest.units.map((entry) => entry.unitId).sort(), ['D1', 'X1', 'X2']);
+  });
+
+  test('applies a whitelisted condition override without opening stage or order mutation', async () => {
+    const context = await harness();
+    const condition = { conditionRef: 'routing-mode-in', params: { values: ['serial'] } };
+    const changes = await context.executor.hydrate('obj', {
+      objectiveId: 'obj',
+      cycleId: 'cycle-1',
+      decision: 'evolve',
+      reason: 'Narrow the injection surface.',
+      v2Draft: { changes: [{ action: 'modify', unitId: 'D1', reason: 'Serial only.', proposedCondition: condition }] },
+    });
+    assert.equal(changes[0].proposedContent, undefined);
+    assert.deepEqual(changes[0].proposedCondition, condition);
+
+    await context.executor.apply(proposal(changes), 'owner-1', 'Approved.', VERSION_STATE);
+    assert.deepEqual(context.writes, [['condition', 'D1', condition]]);
+  });
+
+  test('preflights every action before the first mutation', async () => {
+    const context = await harness();
+    const changes = [
+      {
+        action: 'modify',
+        unitId: 'D1',
+        hookId: 'D1',
+        reason: 'Would otherwise write first.',
+        sourceVersion: 1,
+        beforeContent: 'v1 body',
+        proposedContent: 'v2 body',
+        beforeCondition: null,
+      },
+      {
+        action: 'add',
+        unitId: 'X1',
+        hookId: 'X1',
+        assetSlug: 'x1-conflict',
+        reason: 'Conflicts with D1 order.',
+        manifest: {
+          id: 'X1',
+          name: 'Conflict',
+          stage: 'per-turn',
+          order: 100,
+          version: 1,
+          enabled: true,
+          template: 'x1-conflict.md',
+          inputs: [],
+          disableable: true,
+          safetyTier: 'editable',
+          transparencyTier: 'visible-by-default',
+          governanceTier: 'auto-evolve',
+        },
+        content: 'conflict',
+        objectives: [{ objectiveId: 'obj' }],
+      },
+    ];
+    await assert.rejects(
+      context.executor.apply(proposal(changes), 'owner-1', 'Approved.', VERSION_STATE),
+      /cycle_governance_add_registry_conflict/,
+    );
+    assert.deepEqual(context.writes, []);
+  });
+
+  test('preflight rejects two additions that claim the same stage/order', async () => {
+    const context = await harness();
+    const addition = (unitId, assetSlug) => ({
+      action: 'add',
+      unitId,
+      hookId: unitId,
+      assetSlug,
+      reason: 'Add one guard.',
+      manifest: {
+        id: unitId,
+        name: unitId,
+        stage: 'per-turn',
+        order: 200,
+        version: 1,
+        enabled: true,
+        template: `${assetSlug}.md`,
+        inputs: [],
+        disableable: true,
+        safetyTier: 'editable',
+        transparencyTier: 'visible-by-default',
+        governanceTier: 'auto-evolve',
+      },
+      content: `${unitId} body`,
+      objectives: [{ objectiveId: 'obj' }],
+    });
+    await assert.rejects(
+      context.executor.apply(
+        proposal([addition('X1', 'x1-new-rule'), addition('X2', 'x2-new-rule')]),
+        'owner-1',
+        'Approved.',
+        VERSION_STATE,
+      ),
+      /cycle_governance_add_registry_conflict/,
+    );
+    await assert.rejects(() => readFile(join(context.root, 'assets', 'prompt-hooks', 'x1-new-rule', 'hook.yaml')));
   });
 });

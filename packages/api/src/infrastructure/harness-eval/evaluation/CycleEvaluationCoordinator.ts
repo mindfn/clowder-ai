@@ -78,6 +78,7 @@ export class CycleEvaluationCoordinator {
   async reconcileKnownCycles(now: number): Promise<void> {
     for (const ownerUserId of await this.deps.runtime.cycles.ownerUserIds()) {
       for (const objective of this.deps.runtime.catalog.registry.objectives) {
+        if (objective.lifecycle === 'retired') continue;
         try {
           await this.reconcileCycle(ownerUserId, objective.id, now);
         } catch (error) {
@@ -138,6 +139,7 @@ export class CycleEvaluationCoordinator {
     const evaluation: NonNullable<CycleRecord['evaluation']> = {
       metrics: structuredClone(input.metrics),
       overall: input.overall,
+      counterexampleRootCauses: structuredClone(input.counterexampleRootCauses),
       writtenAt: this.now(),
       by: principal.catId,
     };
@@ -215,6 +217,7 @@ export class CycleEvaluationCoordinator {
   async ensureObjectiveThread(objectiveId: string, ownerUserId: string): Promise<{ threadId: string; catId: CatId }> {
     const objective = this.deps.runtime.catalog.registry.objectives.find((item) => item.id === objectiveId);
     if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
+    if (objective.lifecycle === 'retired') throw new Error(`cycle_objective_retired:${objectiveId}`);
     const threadId = CycleEvaluationCoordinator.threadIdFor(objectiveId);
     await ensureEvalDomainThreads(
       this.deps.threadStore,
@@ -317,6 +320,7 @@ function sameSubmission(
   return (
     evaluation.by === catId &&
     evaluation.overall === input.overall &&
-    JSON.stringify(evaluation.metrics) === JSON.stringify(input.metrics)
+    JSON.stringify(evaluation.metrics) === JSON.stringify(input.metrics) &&
+    JSON.stringify(evaluation.counterexampleRootCauses) === JSON.stringify(input.counterexampleRootCauses)
   );
 }

@@ -25,11 +25,11 @@ export async function resolvePendingTraceMarkers(deps: {
 
   const markers = await deps.markerStore.listPending(deps.invocationId);
   let resolved = 0;
-  let requiresSemanticSweep = false;
+  let hasCandidateMarker = false;
   let unitEvaluationReady = false;
   for (const marker of markers) {
     const polarity = marker.polarity;
-    if (polarity === 'candidate') requiresSemanticSweep = true;
+    if (polarity === 'candidate') hasCandidateMarker = true;
     const incidentKey = traceMetricIncidentKey({
       ownerUserId: marker.ownerUserId,
       invocationId: marker.invocationId,
@@ -61,7 +61,7 @@ export async function resolvePendingTraceMarkers(deps: {
     await deps.markerStore.markResolved(marker.markerId, result.annotationId);
     resolved++;
   }
-  if (resolved > 0 && !requiresSemanticSweep) {
+  if (resolved > 0 && !hasCandidateMarker) {
     await deps.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, episode.terminal.invocationId);
   }
   return { resolved, waitingForTerminal: false, unitEvaluationReady };

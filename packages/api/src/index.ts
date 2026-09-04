@@ -807,18 +807,6 @@ async function main(): Promise<void> {
   const invocationQueue = new InvocationQueue();
   const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
 
-  // F257: bootstrap semantic sweep coordinator (needs messageStore + objective runtime).
-  // Must follow messageStore creation AND bootstrapObjectiveEvaluationRuntime.
-  if (redis) {
-    try {
-      const { bootstrapSemanticSweepCoordinator } = await import('./domains/prompt-hooks/trace-bootstrap.js');
-      bootstrapSemanticSweepCoordinator(redis, messageStore);
-      app.log.info('[api] F257: semantic sweep coordinator bootstrapped');
-    } catch (err) {
-      // Fail-open: degraded if objective runtime wasn't bootstrapped (e.g. catalog load failed).
-      app.log.warn(`[api] F257: semantic sweep coordinator bootstrap failed (degraded): ${String(err)}`);
-    }
-  }
   const invocationRecordStore = createInvocationRecordStore(redis);
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   // #1200 P2-3: wire cursor canonicalizer for v1→v2 async resolution
@@ -3461,9 +3449,7 @@ async function main(): Promise<void> {
   }
 
   // F257: resolve bootstrapped coordinators for eval-hub route wiring.
-  const { getTraceStore, getSemanticSweepCoordinator, getObjectiveEvaluationRuntime } = await import(
-    './domains/prompt-hooks/trace-bootstrap.js'
-  );
+  const { getTraceStore, getObjectiveEvaluationRuntime } = await import('./domains/prompt-hooks/trace-bootstrap.js');
   const objectiveEvaluationRuntime = getObjectiveEvaluationRuntime() ?? undefined;
   const cycleEvaluationCoordinator = objectiveEvaluationRuntime
     ? new (
@@ -3511,6 +3497,8 @@ async function main(): Promise<void> {
               resetPipelineSingleton();
               await refreshOverrideSnapshot();
             },
+            resolveObjectiveVersion: (objectiveId, state) =>
+              objectiveEvaluationRuntime.resolveVersion(objectiveId, state),
           });
           return new (
             await import('./infrastructure/harness-eval/governance/CycleGovernanceCoordinator.js')
@@ -3554,9 +3542,8 @@ async function main(): Promise<void> {
     lifecycleEventLog: reevalClosureEventLog,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
-    // F257: harness-ledger wiring — snapshot provider + optional semantic sweep.
+    // F257: harness-ledger snapshot and Objective-cycle wiring.
     guardRejectionLog,
-    semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
     cycleEvaluationCoordinator,
     harnessUnitDescriber,
     cycleGovernanceCoordinator,

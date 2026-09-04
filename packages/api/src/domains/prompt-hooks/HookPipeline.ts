@@ -27,6 +27,7 @@ import type {
   TraceEventSkipped,
 } from '@cat-cafe/shared';
 import type { HookRegistry } from './HookRegistry.js';
+import { matchesHookCondition } from './hook-condition-policy.js';
 
 // ---------------------------------------------------------------------------
 // Pipeline result
@@ -178,7 +179,23 @@ export class HookPipeline {
         continue;
       }
 
-      // 3. Resolve template variant + render content
+      // 3. A governed condition is an extra AND gate. Running it after the
+      // built-in resolver preserves the canonical resolver reason when both
+      // gates are false and never broadens the hook's injection surface.
+      const condition = this.registry.getConditionOverride(hookId);
+      if (condition && !matchesHookCondition(condition, input)) {
+        events.push({
+          hookId,
+          stage,
+          timestamp: ts,
+          status: 'skipped',
+          reasonCode: 'condition_override_not_matched',
+          reason: `Governed condition '${condition.conditionRef}' did not match`,
+        } as TraceEventSkipped);
+        continue;
+      }
+
+      // 4. Resolve template variant + render content
       const templateId = result.vars.TEMPLATE_VARIANT ?? hookId;
       const rendered = this.renderContent(hook, templateId, result.vars);
       if (!rendered) {
@@ -193,7 +210,7 @@ export class HookPipeline {
         continue;
       }
 
-      // 4. Produce patch + trace (override version → manifest version)
+      // 5. Produce patch + trace (override version → manifest version)
       patches.push({ hookId, content: rendered.content, order: hook.manifest.order });
       events.push({
         hookId,

@@ -237,7 +237,7 @@ export class InjectionTraceStore {
     startMs: number,
     endMs: number,
   ): Promise<TraceEpisode[]> {
-    await this.ensureOwnerEpisodeBackfill();
+    await this.ensureOwnerEpisodeBackfilled();
     const segmentIds = new Set(unitRefs.filter((ref) => ref.unitType === 'segment').map((ref) => ref.unitId));
     if (segmentIds.size === 0 || endMs <= startMs) return [];
     const invocationIds = await this.redis.zrangebyscore(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
@@ -257,14 +257,40 @@ export class InjectionTraceStore {
 
   /**
    * Count owner episodes in a time window without segment filtering.
-   *
-   * Legacy method kept for backward compatibility. Prefer countSegmentWindow
-   * for readiness checks — segment-level counting is the correct data model.
    */
   async countOwnerWindow(ownerUserId: string, startMs: number, endMs: number): Promise<number> {
-    await this.ensureOwnerEpisodeBackfill();
+    await this.ensureOwnerEpisodeBackfilled();
     if (endMs <= startMs) return 0;
     return this.redis.zcount(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
+  }
+
+  /** Return immutable owner-pool members for one or more frozen cycle windows. */
+  async ownerInvocationIds(ownerUserId: string, windows: Array<{ start: number; end: number }>): Promise<string[]> {
+    await this.ensureOwnerEpisodeBackfilled();
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const window of windows) {
+      if (window.end <= window.start) continue;
+      const invocationIds = await this.redis.zrangebyscore(ownerEpisodeKey(ownerUserId), window.start, window.end - 1);
+      for (const invocationId of invocationIds) {
+        if (seen.has(invocationId)) continue;
+        seen.add(invocationId);
+        ordered.push(invocationId);
+      }
+    }
+    return ordered;
+  }
+
+  /** Earliest durable invocation in the owner's single linear trace pool. */
+  async earliestOwnerEpisode(ownerUserId: string): Promise<number | null> {
+    await this.ensureOwnerEpisodeBackfilled();
+    const first = (await this.redis.zrange(ownerEpisodeKey(ownerUserId), 0, 0, 'WITHSCORES')) as string[];
+    if (first.length === 0) return null;
+    const terminalAt = Number(first[1]);
+    if (!Number.isFinite(terminalAt) || terminalAt < 0) {
+      throw new Error(`invalid_owner_trace_score:${ownerUserId}`);
+    }
+    return terminalAt;
   }
 
   /**
@@ -277,7 +303,7 @@ export class InjectionTraceStore {
    * (status=absent) are not observations and do not count.
    */
   async countSegmentWindow(ownerUserId: string, segmentId: string, startMs: number, endMs: number): Promise<number> {
-    await this.ensureOwnerEpisodeBackfill();
+    await this.ensureOwnerEpisodeBackfilled();
     if (endMs <= startMs) return 0;
     const invocationIds = await this.redis.zrangebyscore(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
     let count = 0;
@@ -291,7 +317,7 @@ export class InjectionTraceStore {
     return count;
   }
 
-  private async ensureOwnerEpisodeBackfill(): Promise<void> {
+  async ensureOwnerEpisodeBackfilled(): Promise<void> {
     if (!this.ownerEpisodeBackfillPromise) {
       this.ownerEpisodeBackfillPromise = this.backfillOwnerEpisodeIndexes().catch((error) => {
         this.ownerEpisodeBackfillPromise = null;

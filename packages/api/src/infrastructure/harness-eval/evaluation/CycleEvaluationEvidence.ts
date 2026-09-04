@@ -6,6 +6,7 @@ import type {
   TraceEpisode,
 } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage } from '../../../domains/cats/services/stores/ports/MessageStore.js';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
 /** Reads the immutable trace pool and validates evidence-bound cycle writeback. */
@@ -17,11 +18,7 @@ export class CycleEvaluationEvidence {
 
   async read(record: CycleRecord, input: { cursor: number; limit: number }): Promise<CycleTracePage> {
     const priority = await this.counterexampleMap(record);
-    const invocationIds = await this.runtime.objectiveTraces.invocationIds(
-      record.ownerUserId,
-      record.objectiveId,
-      record.windows,
-    );
+    const invocationIds = await this.runtime.traces.ownerInvocationIds(record.ownerUserId, record.windows);
     const available = new Set(invocationIds);
     const ordered = [
       ...[...priority.keys()].filter((invocationId) => available.has(invocationId)),
@@ -67,7 +64,21 @@ export class CycleEvaluationEvidence {
       for (const ref of metric.evidenceRefs) evidenceRefs.add(ref);
     }
     if (evidenceRefCount > 64) throw new Error(`cycle_evaluation_evidence_limit:${record.cycleId}`);
+    const counterexampleEventCount = (await this.counterexampleIncidentKeys(record)).size;
+    const grouping = input.counterexampleRootCauses;
+    if (
+      grouping.eventCount !== counterexampleEventCount ||
+      grouping.rootCauseCount > grouping.eventCount ||
+      (grouping.eventCount === 0 ? grouping.rootCauseCount !== 0 : grouping.rootCauseCount < 1)
+    ) {
+      throw new Error(`cycle_evaluation_counterexample_grouping:${record.cycleId}`);
+    }
     await Promise.all([...evidenceRefs].map((ref) => this.validateEvidenceRef(record, ref)));
+  }
+
+  private async counterexampleIncidentKeys(record: CycleRecord): Promise<Set<string>> {
+    const priority = await this.counterexampleMap(record);
+    return new Set([...priority.values()].flat());
   }
 
   private async counterexampleMap(record: CycleRecord): Promise<Map<string, string[]>> {
@@ -91,7 +102,7 @@ export class CycleEvaluationEvidence {
     );
     const annotations = lists
       .flat()
-      .filter((annotation: TraceAnnotation) => annotation.polarity === 'counterexample')
+      .filter((annotation: TraceAnnotation) => isHighConfidenceCounterexample(annotation))
       .sort((left, right) => left.createdAt - right.createdAt || left.incidentKey.localeCompare(right.incidentKey));
     const byInvocation = new Map<string, string[]>();
     for (const annotation of annotations) {
@@ -163,20 +174,12 @@ export class CycleEvaluationEvidence {
 
   private async validateEvidenceRef(record: CycleRecord, invocationId: string): Promise<void> {
     const episode = await this.runtime.traces.getEpisodeByInvocationId(invocationId);
-    const unitIds = new Set(
-      this.runtime.catalog.manifest.units
-        .filter((unit) => unit.objectives.some((objective) => objective.objectiveId === record.objectiveId))
-        .map((unit) => unit.unitId),
-    );
     const inWindow =
       episode &&
       record.windows.some(
         (window) => episode.terminal.terminalAt >= window.start && episode.terminal.terminalAt < window.end,
       );
-    const observed = episode?.summary.segments.some(
-      (segment) => unitIds.has(segment.segmentId) && segment.status === 'observed',
-    );
-    if (!episode || episode.terminal.ownerUserId !== record.ownerUserId || !inWindow || !observed) {
+    if (!episode || episode.terminal.ownerUserId !== record.ownerUserId || !inWindow) {
       throw new Error(`cycle_evaluation_invalid_evidence_ref:${invocationId}`);
     }
   }

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type {
   CycleGovernanceSubmission,
@@ -6,17 +5,25 @@ import type {
   HarnessGovernanceProposal,
   HarnessGovernanceProposalChange,
   HarnessUnitAddDraft,
+  HookCondition,
 } from '@cat-cafe/shared';
 import type { HookOverrideStore } from '../../../domains/prompt-hooks/HookOverrideStore.js';
 import type { HookRegistry } from '../../../domains/prompt-hooks/HookRegistry.js';
 import type { CycleVersionRef } from '../evaluation/CycleTriggerChecker.js';
 import type { EvaluationCatalog } from '../evaluation/evaluation-catalog.js';
+import type { ObjectiveVersionState } from '../evaluation/ObjectiveVersionStore.js';
 import type { HarnessUnitDirectoryWriter } from './HarnessUnitDirectoryWriter.js';
 
 type AddChange = Extract<HarnessGovernanceProposalChange, { action: 'add' }>;
 type EnablementChange = Extract<HarnessGovernanceProposalChange, { action: 'enable' | 'disable' }>;
 type ContentChange = Extract<HarnessGovernanceProposalChange, { action: 'modify' | 'rollback' }>;
 type RegisteredHook = NonNullable<ReturnType<HookRegistry['getHook']>>;
+type UnitState = RegisteredHook & {
+  enabled: boolean;
+  version: number;
+  content: string;
+  condition: HookCondition | null;
+};
 type OverrideAudit = { source: 'operator'; reason: string };
 
 export class HarnessGovernanceExecutor {
@@ -26,6 +33,7 @@ export class HarnessGovernanceExecutor {
       overrideStore: HookOverrideStore;
       getRegistry: () => HookRegistry | null;
       reloadPipeline: () => Promise<void>;
+      resolveObjectiveVersion: (objectiveId: string, state: ObjectiveVersionState) => Promise<CycleVersionRef>;
       unitWriter?: HarnessUnitDirectoryWriter;
     },
   ) {}
@@ -70,23 +78,47 @@ export class HarnessGovernanceExecutor {
     if (draft.action === 'add') return this.hydrateAdd(objectiveId, draft);
     const state = await this.requireUnit(objectiveId, draft.unitId);
     if (draft.action === 'enable' || draft.action === 'disable') {
-      if (draft.action === 'disable' && !state.manifest.disableable) {
-        throw new Error(`cycle_governance_disable_forbidden:${draft.unitId}`);
-      }
-      return {
-        action: draft.action,
-        unitId: draft.unitId,
-        hookId: state.manifest.id,
-        reason: draft.reason.trim(),
-        beforeEnabled: state.enabled,
-      };
+      return this.hydrateEnablement(objectiveId, draft, state);
     }
-    if (state.manifest.safetyTier === 'readonly' || draft.proposedContent.trim().length === 0) {
+    return this.hydrateModification(draft, state);
+  }
+
+  private hydrateEnablement(
+    objectiveId: string,
+    draft: Extract<HarnessGovernanceChangeDraft, { action: 'enable' | 'disable' }>,
+    state: UnitState,
+  ): EnablementChange {
+    if (draft.action === 'disable' && !state.manifest.disableable) {
+      throw new Error(`cycle_governance_disable_forbidden:${draft.unitId}`);
+    }
+    const remainingMemberCount = this.deps.catalog.manifest.units.filter(
+      (unit) => unit.unitId !== draft.unitId && unit.objectives.some((item) => item.objectiveId === objectiveId),
+    ).length;
+    return {
+      action: draft.action,
+      unitId: draft.unitId,
+      hookId: state.manifest.id,
+      reason: draft.reason.trim(),
+      beforeEnabled: state.enabled,
+      beforeContent: state.content,
+      objectiveImpact: { objectiveId, remainingMemberCount },
+    };
+  }
+
+  private hydrateModification(
+    draft: Extract<HarnessGovernanceChangeDraft, { action: 'modify' }>,
+    state: UnitState,
+  ): Extract<HarnessGovernanceProposalChange, { action: 'modify' }> {
+    const contentChanged = draft.proposedContent !== undefined && draft.proposedContent.trim() !== state.content.trim();
+    if (draft.proposedContent !== undefined && state.manifest.safetyTier === 'readonly') {
       throw new Error(`cycle_governance_modify_forbidden:${draft.unitId}`);
     }
-    if (draft.proposedContent.trim() === state.content.trim()) {
-      throw new Error(`cycle_governance_content_unchanged:${draft.unitId}`);
+    if (draft.proposedCondition !== undefined && state.manifest.governanceTier === 'immutable') {
+      throw new Error(`cycle_governance_condition_forbidden:${draft.unitId}`);
     }
+    const conditionChanged =
+      draft.proposedCondition !== undefined && !sameCondition(draft.proposedCondition, state.condition);
+    if (!contentChanged && !conditionChanged) throw new Error(`cycle_governance_change_unchanged:${draft.unitId}`);
     return {
       action: 'modify',
       unitId: draft.unitId,
@@ -94,7 +126,9 @@ export class HarnessGovernanceExecutor {
       reason: draft.reason.trim(),
       sourceVersion: state.version,
       beforeContent: state.content,
-      proposedContent: draft.proposedContent,
+      ...(contentChanged ? { proposedContent: draft.proposedContent } : {}),
+      beforeCondition: state.condition,
+      ...(conditionChanged ? { proposedCondition: draft.proposedCondition } : {}),
     };
   }
 
@@ -112,24 +146,55 @@ export class HarnessGovernanceExecutor {
     };
   }
 
-  async apply(proposal: HarnessGovernanceProposal, actorId: string, reason: string): Promise<CycleVersionRef> {
+  async apply(
+    proposal: HarnessGovernanceProposal,
+    actorId: string,
+    reason: string,
+    state: ObjectiveVersionState,
+  ): Promise<CycleVersionRef> {
+    await this.preflight(proposal);
     for (const change of proposal.changes) await this.applyChange(change, actorId, reason);
     await this.deps.reloadPipeline();
-    return this.currentVersion(proposal.objectiveId);
+    return this.currentVersion(proposal.objectiveId, state);
   }
 
-  async currentVersion(objectiveId: string): Promise<CycleVersionRef> {
-    const registry = this.requireRegistry();
-    const refs = this.deps.catalog.manifest.units
-      .filter((unit) => unit.objectives.some((objective) => objective.objectiveId === objectiveId))
-      .map((unit) => `${unit.unitId}@${registry.getActiveVersion(unit.unitId)}`)
-      .sort();
-    if (refs.length === 0) throw new Error(`cycle_objective_has_no_units:${objectiveId}`);
-    const versionContentRef = `hook-versions:${refs.join(',')}`;
-    return {
-      version: `v-${createHash('sha256').update(versionContentRef).digest('hex').slice(0, 16)}`,
-      versionContentRef,
-    };
+  /** Validate the complete card before the first mutation; operators approve the proposal as one action list. */
+  private async preflight(proposal: HarnessGovernanceProposal): Promise<void> {
+    const addedOrders = new Set<string>();
+    for (const change of proposal.changes) {
+      await this.preflightChange(proposal.objectiveId, change, addedOrders);
+    }
+  }
+
+  private async preflightChange(
+    objectiveId: string,
+    change: HarnessGovernanceProposalChange,
+    addedOrders: Set<string>,
+  ): Promise<void> {
+    if (change.action === 'add') return this.preflightAdd(objectiveId, change, addedOrders);
+    const state = await this.requireUnit(objectiveId, change.unitId);
+    if (change.action === 'enable' || change.action === 'disable') {
+      if (state.enabled !== change.beforeEnabled) throw new Error('harness_governance_enablement_changed');
+      return;
+    }
+    if (state.version !== change.sourceVersion || state.content !== change.beforeContent) {
+      throw new Error('harness_governance_source_version_changed');
+    }
+    if (change.action === 'modify' && !sameCondition(state.condition, change.beforeCondition)) {
+      throw new Error('harness_governance_condition_changed');
+    }
+  }
+
+  private preflightAdd(objectiveId: string, change: AddChange, addedOrders: Set<string>): void {
+    if (!this.deps.unitWriter) throw new Error('harness_governance_unit_writer_unavailable');
+    this.validateAdd(objectiveId, change);
+    const orderCoordinate = `${change.manifest.stage}:${change.manifest.order}`;
+    if (addedOrders.has(orderCoordinate)) throw new Error('cycle_governance_add_registry_conflict');
+    addedOrders.add(orderCoordinate);
+  }
+
+  async currentVersion(objectiveId: string, state: ObjectiveVersionState): Promise<CycleVersionRef> {
+    return this.deps.resolveObjectiveVersion(objectiveId, state);
   }
 
   private async hydrateRollback(
@@ -203,9 +268,17 @@ export class HarnessGovernanceExecutor {
     const version = await this.deps.overrideStore.getActiveVersion(change.hookId);
     const content = await this.effectiveContent(change.hookId);
     if (change.action === 'modify') {
-      if (content === change.proposedContent) return;
       if (version !== change.sourceVersion) throw new Error('harness_governance_source_version_changed');
-      await this.deps.overrideStore.setContentOverride(change.hookId, change.proposedContent, actorId, audit);
+      if (change.proposedContent !== undefined && content !== change.proposedContent) {
+        await this.deps.overrideStore.setContentOverride(change.hookId, change.proposedContent, actorId, audit);
+      }
+      if (change.proposedCondition !== undefined) {
+        if (change.proposedCondition === null) {
+          await this.deps.overrideStore.clearConditionOverride(change.hookId, actorId, audit);
+        } else {
+          await this.deps.overrideStore.setConditionOverride(change.hookId, change.proposedCondition, actorId, audit);
+        }
+      }
       return;
     }
     if (version === change.targetVersion && content === change.targetContent) return;
@@ -226,6 +299,7 @@ export class HarnessGovernanceExecutor {
       enabled: registry.isEnabled(unit.unitId),
       version: await this.deps.overrideStore.getActiveVersion(unit.unitId),
       content: await this.effectiveContent(unit.unitId),
+      condition: registry.getConditionOverride(unit.unitId) ?? null,
     };
   }
 
@@ -257,6 +331,10 @@ export class HarnessGovernanceExecutor {
     if (!registry) throw new Error('harness_governance_registry_unavailable');
     return registry;
   }
+}
+
+function sameCondition(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
 function changeCoordinate(draft: HarnessGovernanceChangeDraft): string {
