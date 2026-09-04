@@ -64,6 +64,8 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | DV-11 | 通过 PR 修改段 **base 正文不会推进版本指针** | `getActiveVersion()` 仅在存在 content override 时返回 `activeEpochVersion`，否则返回 manifest 静态 `version`。PR #151 修改 `cat-cafe-skills/refs/shared-rules.md`（S9 正文来源）后版本指针不变 → 评估窗口可横跨内容变更而不可见 | TC-11 | 未分配 | **待修**（低 severity，本轮不处理，记录防遗忘） |
 | DV-12 | 反例 distinct 去重粒度是**调用次数而非根因** | `trace-incident-key.ts:3-15` 的哈希输入含 `invocationId` → 同一根因连续犯 N 次被算作 N 个 distinct 反例。触发按事件计数，评估猫回写却按根因判定（`howCounted`："three distinct incidents are counted once each"）——两套口径，触发在评估看到数据前就打响 | TC-3 | 未分配 | **待修**（下一轮；本轮 M 冻结在出厂值 3） |
 
+F-11 修订说明（opus 2026-09-04）：原措辞「零 trace 的 Objective 显式报故障」写于 DV-8 未修时，彼时零 trace 由**归属过滤**造成。DV-8 修复后累计改读 owner 全量线性池，任何 Objective 的累计都 >0，原失败模式**结构上已不可达**。故重述为**采集健康**（池子本身为空）——守的是同一条 TC-18 底线（零数据不得伪装成评估中），但对准了修复后真实存在的失败模式。
+
 台账编号用 `DV-#`（Deviation）——**不要写成 `D-#`**：段 ID 已占用 `D1`–`D21`（per-turn 段），两者混用会把"偏离第 8 条"读成"D8 A2A 球权检查段"（2026-09-04 实际发生过）。
 
 台账更新规则：修一条改一条状态，附 PR 号；**不得在对话里声明"已修"而不改本表**。本轮六片合为唯一 PR（§14）：各行在该 PR 合入后统一改 fixed 并附 PR 号。
@@ -86,7 +88,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | F-8 | 单一路径：native 猫（Claude / Codex）与 pipeline 猫的 session-init 段 ID 集合一致；tracing 中不存在 L1–L7 独立 ID；`compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 与 manifest 协议已删除；native 猫启动零 L0 报错，system-prompt 文件由同一 pipeline 输出 | 代码树（`scripts/compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` + marker 引用归零）+ `assets/prompt-hooks/*/hook.yaml` 中 `stage: session-init` 的 hook 集合（S5 @ `16b016a0f`：22 个，L1–L7 为普通 hook）+ 隔离栈 API 日志零 L0 / session-prompt 错误 + 两条 trace summary（`injection-trace-summary:<threadId>:<turnId>`，`segments[].stage=session-init` 的 segmentId 集合 native == pipeline，且全部落在 registry；`delivery[].channel` native=`native-l0` / pipeline=`message-prepend`）+ 一次真实 native 猫 invocation（S5 gate：`@sonnet` 经 claude CLI 回复"好"）—— `scripts/f257-falsifiers/checks/f8.mjs` + `iso-f8-parity.sh` | complete-design §13 | S5 |
 | F-9 | **消融试验可跑**：禁用任一段后，该段所属 Objective 在后续窗口仍能累计 trace 并按三路触发；禁用事实（`pipelineStatus=disabled` / `disabledBy`）在评估语料中可见、未被过滤 | owner 线性池 `trace-owner-episode:<owner>` + CycleRecord + 评估语料分页 | TC-1 / TC-2 | 本轮 |
 | F-10 | **参数自适应可验证**：一次 `keep` 后 N（满足条件时 D）上调，新值连同旧值与依据结论写入 CycleRecord；一次 `rollback`/`evolve` 后下调；任何调整不低于出厂值 N=200 / M=3 / D=7 天；**M 本轮恒为 3** | CycleRecord 参数字段 + Console 触发进度 | TC-3 / TC-9 | 本轮 |
-| F-11 | **零 trace 不伪装成评估中**：无累计 trace 的 Objective 在 Console 显式呈现故障态，且与 `dormant` 可区分 | `GET /api/segment-evaluation/:segmentId` + 真实浏览器 | TC-18 | 本轮 |
+| F-11 | **采集健康,不是归属产物**：owner 线性池在窗口内为空（采集中断 / 全新实例）时，Console 必须显式呈现**采集故障态**，不得静默显示"评估中"；该状态与 `dormant`（三参数收敛且连续 keep）在读面可区分 | `GET /api/segment-evaluation/:segmentId` + 真实浏览器 | TC-18 | 跟进（**非本轮**） |
 
 ## 5. 与其它文档的关系
 
