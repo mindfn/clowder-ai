@@ -8,6 +8,7 @@ import type {
 } from '@cat-cafe/shared';
 
 import type { EvaluationModelDefinition, ObjectiveDefinition } from '../objective-registry.js';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 import { unitRefsForObjective } from './segment-evaluation-helpers.js';
 
@@ -81,7 +82,7 @@ export class SegmentEvaluationReadModel {
     // version/query window the operator selected in the lifeline.
     const cycleEnd = current?.cycleEnd ?? this.now();
     const [cumulativeCount, annotationLists] = await Promise.all([
-      this.runtime.objectiveTraces.countWindow(input.ownerUserId, objective.id, cycleStart, cycleEnd),
+      this.runtime.traces.countOwnerWindow(input.ownerUserId, cycleStart, cycleEnd),
       Promise.all(
         model.metrics.map((metric) =>
           this.runtime.annotations.queryMetricWindow(input.ownerUserId, objective.id, metric.id, cycleStart, cycleEnd),
@@ -89,7 +90,7 @@ export class SegmentEvaluationReadModel {
       ),
     ]);
     const counterexamples = distinctIncidents(
-      annotationLists.flat().filter((annotation) => annotation.polarity === 'counterexample'),
+      annotationLists.flat().filter((annotation) => isHighConfidenceCounterexample(annotation)),
     );
     const records = [...(current ? [current] : []), ...history];
     const latestEvaluated = records.find((record) => record.evaluation);

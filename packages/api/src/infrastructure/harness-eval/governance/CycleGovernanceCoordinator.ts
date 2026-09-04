@@ -1,6 +1,7 @@
 import type { CycleGovernanceSubmission, CycleRecord, HarnessGovernanceProposal } from '@cat-cafe/shared';
 import { CycleEvaluationCoordinator, type CycleEvaluationPrincipal } from '../evaluation/CycleEvaluationCoordinator.js';
 import type { ObjectiveEvaluationRuntime } from '../evaluation/ObjectiveEvaluationRuntime.js';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import {
   buildGovernanceAssignment,
   formatGovernanceAssignment,
@@ -197,7 +198,7 @@ export class CycleGovernanceCoordinator {
     );
     if (!model) throw new Error(`cycle_evaluation_model_not_found:${record.objectiveId}`);
     const [invocationIds, annotationLists] = await Promise.all([
-      this.deps.runtime.objectiveTraces.invocationIds(record.ownerUserId, record.objectiveId, record.windows),
+      this.deps.runtime.traces.ownerInvocationIds(record.ownerUserId, record.windows),
       Promise.all(
         record.windows.flatMap((window) =>
           model.metrics.map((metric) =>
@@ -215,7 +216,7 @@ export class CycleGovernanceCoordinator {
     const counterexamples = new Set(
       annotationLists
         .flat()
-        .filter((annotation) => annotation.polarity === 'counterexample')
+        .filter(isHighConfidenceCounterexample)
         .map((annotation) => annotation.incidentKey),
     );
     return {

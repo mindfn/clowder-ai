@@ -1,9 +1,9 @@
 import type { CycleRecord, CycleTriggerRoute, CycleWindow, TraceAnnotation } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
+import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { CycleRecordStore, isSkippedCycle } from './CycleRecordStore.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
-import type { ObjectiveTraceIndex } from './ObjectiveTraceIndex.js';
 
 export type CycleCheckResult =
   | { status: 'idle' | 'interval' | 'active'; record: CycleRecord }
@@ -21,8 +21,10 @@ export class CycleTriggerChecker {
     private readonly deps: {
       catalog: EvaluationCatalog;
       cycles: CycleRecordStore;
-      traces: Pick<InjectionTraceStore, 'getEpisodeByInvocationId'>;
-      objectiveTraces: Pick<ObjectiveTraceIndex, 'countWindow' | 'earliest' | 'ensureOwnerBackfilled' | 'indexEpisode'>;
+      traces: Pick<
+        InjectionTraceStore,
+        'countOwnerWindow' | 'earliestOwnerEpisode' | 'ensureOwnerEpisodeBackfilled' | 'getEpisodeByInvocationId'
+      >;
       annotations: Pick<TraceAnnotationStore, 'queryMetricWindow'>;
       resolveVersion: (objectiveId: string) => CycleVersionRef | Promise<CycleVersionRef>;
     },
@@ -33,7 +35,7 @@ export class CycleTriggerChecker {
   }
 
   async initializeOwner(ownerUserId: string, now: number): Promise<void> {
-    await this.deps.objectiveTraces.ensureOwnerBackfilled(ownerUserId, now);
+    await this.deps.traces.ensureOwnerEpisodeBackfilled();
     for (const objective of this.deps.catalog.registry.objectives) {
       await this.ensureCurrent(ownerUserId, objective.id, now);
     }
@@ -59,12 +61,7 @@ export class CycleTriggerChecker {
   async checkTrace(ownerUserId: string, invocationId: string, now: number): Promise<number> {
     const episode = await this.deps.traces.getEpisodeByInvocationId(invocationId);
     if (!episode || episode.terminal.ownerUserId !== ownerUserId) return 0;
-    const objectiveIds = await this.deps.objectiveTraces.indexEpisode(episode);
-    let requested = 0;
-    for (const objectiveId of objectiveIds) {
-      if ((await this.checkObjective(ownerUserId, objectiveId, now)).status === 'requested') requested++;
-    }
-    return requested;
+    return this.checkOwner(ownerUserId, now);
   }
 
   async checkObjective(ownerUserId: string, objectiveId: string, now: number): Promise<CycleCheckResult> {
@@ -82,12 +79,7 @@ export class CycleTriggerChecker {
       return { status: 'interval', record: current };
     }
 
-    const observedInvocationCount = await this.deps.objectiveTraces.countWindow(
-      ownerUserId,
-      objectiveId,
-      current.cycleStart,
-      now,
-    );
+    const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, current.cycleStart, now);
     const counterexamples = await this.distinctCounterexamples(
       ownerUserId,
       objectiveId,
@@ -128,7 +120,7 @@ export class CycleTriggerChecker {
     if (existing) return existing;
     const legacyStart = await this.deps.cycles.legacyCompletedWindowEnd(ownerUserId, objectiveId);
     if (legacyStart !== null && legacyStart > now) throw new Error(`cycle_start_after_now:${objectiveId}`);
-    const cycleStart = legacyStart ?? (await this.deps.objectiveTraces.earliest(ownerUserId, objectiveId, now)) ?? now;
+    const cycleStart = legacyStart ?? (await this.deps.traces.earliestOwnerEpisode(ownerUserId)) ?? now;
     const version = await this.deps.resolveVersion(objectiveId);
     return this.deps.cycles.initialize(ownerUserId, objectiveId, cycleStart, version);
   }
@@ -148,7 +140,7 @@ export class CycleTriggerChecker {
     return new Set(
       lists
         .flat()
-        .filter((annotation: TraceAnnotation) => annotation.polarity === 'counterexample')
+        .filter((annotation: TraceAnnotation) => isHighConfidenceCounterexample(annotation))
         .map((annotation) => annotation.incidentKey),
     );
   }

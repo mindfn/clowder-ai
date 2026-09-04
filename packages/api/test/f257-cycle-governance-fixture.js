@@ -173,12 +173,10 @@ async function harness() {
         return [];
       },
     },
-    objectiveTraces: {
-      async invocationIds() {
+    traces: {
+      async ownerInvocationIds() {
         return [];
       },
-    },
-    traces: {
       async getEpisodeByInvocationId() {
         return null;
       },

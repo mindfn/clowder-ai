@@ -224,6 +224,14 @@ function runtimeFor(redis, episodes) {
   const annotations = new TraceAnnotationStore(redis);
   const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
     traceStore: {
+      async countOwnerWindow(ownerUserId, startMs, endMs) {
+        return episodes.filter(
+          (item) =>
+            item.terminal.ownerUserId === ownerUserId &&
+            item.terminal.terminalAt >= startMs &&
+            item.terminal.terminalAt < endMs,
+        ).length;
+      },
       async queryUnitWindow(ownerUserId, unitRefs, startMs, endMs) {
         return episodes.filter(
           (item) =>

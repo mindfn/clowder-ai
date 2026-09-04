@@ -6,13 +6,11 @@ import { CycleRecordStore } from './CycleRecordStore.js';
 import { CycleTriggerChecker, type CycleVersionRef } from './CycleTriggerChecker.js';
 import { EvaluationIndexer } from './EvaluationIndexer.js';
 import { type EvaluationCatalog } from './evaluation-catalog.js';
-import { ObjectiveTraceIndex } from './ObjectiveTraceIndex.js';
 
 export class ObjectiveEvaluationRuntime {
   readonly indexer: EvaluationIndexer;
   readonly cycles: CycleRecordStore;
   readonly cycleChecker: CycleTriggerChecker;
-  readonly objectiveTraces: ObjectiveTraceIndex;
   readonly traces: InjectionTraceStore;
 
   constructor(
@@ -27,12 +25,10 @@ export class ObjectiveEvaluationRuntime {
     this.indexer = new EvaluationIndexer(catalog, annotations);
     this.traces = options.traceStore ?? new InjectionTraceStore(redis);
     this.cycles = new CycleRecordStore(redis);
-    this.objectiveTraces = new ObjectiveTraceIndex(redis, catalog, this.traces);
     this.cycleChecker = new CycleTriggerChecker({
       catalog,
       cycles: this.cycles,
       traces: this.traces,
-      objectiveTraces: this.objectiveTraces,
       annotations,
       resolveVersion:
         options.resolveVersion ??

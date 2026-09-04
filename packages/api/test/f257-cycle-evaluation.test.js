@@ -125,7 +125,7 @@ const catalog = {
   },
 };
 
-function trace(invocationId, terminalAt, inputMessageId = null) {
+function trace(invocationId, terminalAt, inputMessageId = null, status = 'observed') {
   return {
     terminal: {
       invocationId,
@@ -138,7 +138,16 @@ function trace(invocationId, terminalAt, inputMessageId = null) {
       outputMessageId: null,
       toolCalls: [{ toolName: 'example_tool', outcome: 'ok' }],
     },
-    summary: { segments: [{ segmentId: 'D1', status: 'observed', contentHash: 'sha256:x' }] },
+    summary: {
+      segments: [
+        {
+          segmentId: 'D1',
+          status,
+          contentHash: 'sha256:x',
+          ...(status === 'absent' ? { pipelineStatus: 'disabled', reasonCode: 'disabled_by_override' } : {}),
+        },
+      ],
+    },
   };
 }
 
@@ -160,12 +169,10 @@ async function harness({ now = 1_500, traces = [trace('inv-1', 500)], annotation
         return annotations;
       },
     },
-    objectiveTraces: {
-      async invocationIds() {
+    traces: {
+      async ownerInvocationIds() {
         return traces.map((episode) => episode.terminal.invocationId);
       },
-    },
-    traces: {
       async getEpisodeByInvocationId(id) {
         return traces.find((episode) => episode.terminal.invocationId === id) ?? null;
       },
@@ -240,6 +247,7 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     const annotations = [
       {
         polarity: 'counterexample',
+        source: 'structured-rule',
         incidentKey: 'incident-1',
         createdAt: 600,
         episodeRef: { invocationId: 'priority' },
@@ -257,6 +265,25 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     assert.equal(page.episodes[0].invocationId, 'priority');
     assert.equal(page.episodes[0].priority, 'counterexample');
     assert.equal(page.episodes[0].input.text, 'source input');
+  });
+
+  test('keeps disabled segment facts visible and accepts them as owner-pool evidence', async () => {
+    const context = await harness({ traces: [trace('disabled', 500, null, 'absent')] });
+    const page = await context.coordinator.readTraces(principal, {
+      objectiveId: 'obj',
+      cycleId: context.requested.cycleId,
+      cursor: 0,
+      limit: 10,
+    });
+    assert.deepEqual(page.episodes[0].segments, [
+      { segmentId: 'D1', status: 'absent', pipelineStatus: 'disabled', reasonCode: 'disabled_by_override' },
+    ]);
+    const input = {
+      ...submission,
+      cycleId: context.requested.cycleId,
+      metrics: [{ ...submission.metrics[0], evidenceRefs: ['disabled'] }],
+    };
+    assert.equal((await context.coordinator.submitEvaluation(principal, input)).outcome, 'written');
   });
 
   test('writes a complete evaluation once and makes an exact retry idempotent', async () => {

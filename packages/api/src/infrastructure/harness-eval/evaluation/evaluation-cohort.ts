@@ -1,4 +1,8 @@
 import type { MetricDefinition, TraceAnnotation } from '@cat-cafe/shared';
+import {
+  isHighConfidenceAnnotation,
+  isHighConfidenceCounterexample,
+} from '../trace-annotation/high-confidence-annotation.js';
 
 export function metricWindowStartFor(metric: MetricDefinition, now: number): number {
   if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
@@ -12,20 +16,20 @@ export function metricWindowStartFor(metric: MetricDefinition, now: number): num
 
 export function selectCandidates(metric: MetricDefinition, annotations: TraceAnnotation[]): TraceAnnotation[] {
   if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
-    return distinctByIncident(annotations.filter((annotation) => annotation.polarity === 'counterexample'));
+    return distinctByIncident(annotations.filter(isHighConfidenceCounterexample));
   }
   if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
     return distinctByIncident(
-      annotations.filter(
-        (annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample',
-      ),
+      annotations
+        .filter((annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample')
+        .filter(isHighConfidenceAnnotation),
     );
   }
   if (metric.trigger.kind === 'cadence') {
     return distinctByIncident(
-      annotations.filter(
-        (annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample',
-      ),
+      annotations
+        .filter((annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample')
+        .filter(isHighConfidenceAnnotation),
     );
   }
   throw new Error(`evaluation_trigger_not_supported:${metric.id}`);
