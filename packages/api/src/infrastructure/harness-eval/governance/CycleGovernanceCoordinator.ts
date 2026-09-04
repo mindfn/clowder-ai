@@ -81,7 +81,9 @@ export class CycleGovernanceCoordinator {
 
   async reconcileKnownCycles(now: number): Promise<void> {
     for (const ownerUserId of await this.deps.runtime.cycles.ownerUserIds()) {
-      for (const objective of this.deps.runtime.catalog.registry.objectives) {
+      for (const objective of this.deps.runtime.catalog.registry.objectives.filter(
+        (candidate) => candidate.lifecycle !== 'retired',
+      )) {
         try {
           await this.reconcileCycle(ownerUserId, objective.id, now);
         } catch (error) {

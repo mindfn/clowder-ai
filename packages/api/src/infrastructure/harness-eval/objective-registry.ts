@@ -21,6 +21,7 @@ export interface ObjectiveDefinition {
   label: string;
   statement: string;
   evaluationModelId: string;
+  lifecycle: 'active' | 'retired';
 }
 
 export interface ObjectiveRegistry {
@@ -107,6 +108,7 @@ const objective = z
     label: z.string().trim().min(1),
     statement: z.string().trim().min(1),
     evaluationModelId: slug,
+    lifecycle: z.enum(['active', 'retired']).default('active'),
   })
   .strict();
 const registrySchema = z

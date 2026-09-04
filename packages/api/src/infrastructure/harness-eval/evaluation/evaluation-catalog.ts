@@ -47,6 +47,7 @@ export function validateEvaluationCoordinate(
 ): string | null {
   const objective = catalog.registry.objectives.find((definition) => definition.id === coordinate.objectiveId);
   if (!objective) return `unknown objectiveId "${coordinate.objectiveId}"`;
+  if (objective.lifecycle === 'retired') return `Objective "${coordinate.objectiveId}" is retired`;
   if (!findMetricDefinition(catalog, coordinate.objectiveId, coordinate.metricId)) {
     return `metricId "${coordinate.metricId}" does not belong to Objective "${coordinate.objectiveId}"`;
   }
@@ -55,9 +56,7 @@ export function validateEvaluationCoordinate(
     const unit = catalog.manifest.units.find((definition) => definition.unitId === unitRef.unitId);
     if (!unit) return `unknown segment unitId "${unitRef.unitId}"`;
     const matches = unit.objectives.some(
-      (attachment) =>
-        attachment.objectiveId === coordinate.objectiveId &&
-        (attachment.clauseId ?? null) === (unitRef.clauseId ?? null),
+      (attachment) => attachment.objectiveId === coordinate.objectiveId && unitRef.clauseId === undefined,
     );
     if (!matches) {
       const unitCoordinate = `${unitRef.unitId}${unitRef.clauseId ? `.${unitRef.clauseId}` : ''}`;

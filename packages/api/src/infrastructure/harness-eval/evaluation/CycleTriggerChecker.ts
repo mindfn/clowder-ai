@@ -36,14 +36,14 @@ export class CycleTriggerChecker {
 
   async initializeOwner(ownerUserId: string, now: number): Promise<void> {
     await this.deps.traces.ensureOwnerEpisodeBackfilled();
-    for (const objective of this.deps.catalog.registry.objectives) {
+    for (const objective of activeObjectives(this.deps.catalog)) {
       await this.ensureCurrent(ownerUserId, objective.id, now);
     }
   }
 
   async checkOwner(ownerUserId: string, now: number): Promise<number> {
     let requested = 0;
-    for (const objective of this.deps.catalog.registry.objectives) {
+    for (const objective of activeObjectives(this.deps.catalog)) {
       const result = await this.checkObjective(ownerUserId, objective.id, now);
       if (result.status === 'requested') requested++;
     }
@@ -67,6 +67,7 @@ export class CycleTriggerChecker {
   async checkObjective(ownerUserId: string, objectiveId: string, now: number): Promise<CycleCheckResult> {
     const objective = this.deps.catalog.registry.objectives.find((item) => item.id === objectiveId);
     if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
+    if (objective.lifecycle === 'retired') throw new Error(`cycle_objective_retired:${objectiveId}`);
     const model = this.deps.catalog.registry.evaluationModels.find((item) => item.id === objective.evaluationModelId);
     if (!model) throw new Error(`cycle_evaluation_model_not_found:${objective.evaluationModelId}`);
 
@@ -144,6 +145,10 @@ export class CycleTriggerChecker {
         .map((annotation) => annotation.incidentKey),
     );
   }
+}
+
+function activeObjectives(catalog: EvaluationCatalog) {
+  return catalog.registry.objectives.filter((objective) => objective.lifecycle !== 'retired');
 }
 
 function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {
