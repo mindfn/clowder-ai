@@ -201,9 +201,11 @@
     const ctx = out.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.fillStyle = INK();
+    // Dots sit on a fixed grid, so they ship as grid indices; expand them back here.
+    const cell = global.ClowderPlateCatCell || 2;
     for (let i = 0; i < cat.dots.length; i += 3) {
       ctx.beginPath();
-      ctx.arc(cat.dots[i], cat.dots[i + 1], cat.dots[i + 2], 0, Math.PI * 2);
+      ctx.arc(cat.dots[i] * cell + cell / 2, cat.dots[i + 1] * cell + cell / 2, cat.dots[i + 2], 0, Math.PI * 2);
       ctx.fill();
     }
     return { canvas: out, w: cat.w, h: cat.h };

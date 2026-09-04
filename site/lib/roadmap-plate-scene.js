@@ -305,14 +305,17 @@
       return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
     };
     const at = (id) => centre(limbs.find((l) => l.id === id));
+    const withGround = (c) => ({ x: c.x, y: c.y * 0.55 + GROUND * 0.45 });
     const KEYS = [
       { p: 0, x: CX, y: GROUND - 30, z: 1.72 },
       { p: 0.1, x: CX, y: GROUND + 120, z: 1.85 },
       { p: 0.28, x: CX, y: GROUND - 190, z: 1.8 },
-      { p: 0.44, ...at('memory'), z: 1.85 },
-      { p: 0.57, ...at('harness'), z: 1.85 },
-      { p: 0.69, ...at('capability'), z: 1.85 },
-      { p: 0.8, ...at('life'), z: 1.85 },
+      // Limb chapters frame the limb *and* the ground under it: the cats walk over and stand up
+      // down there, and cropping them off at the bottom edge loses the whole point of the beat.
+      { p: 0.44, ...withGround(at('memory')), z: 1.55 },
+      { p: 0.57, ...withGround(at('harness')), z: 1.55 },
+      { p: 0.69, ...withGround(at('capability')), z: 1.55 },
+      { p: 0.8, ...withGround(at('life')), z: 1.55 },
       { p: 0.88, x: CX, y: GROUND - 90, z: 1.6 },
       { p: 0.95, x: CX, y: H / 2, z: 1 },
       { p: 1, x: CX, y: H / 2, z: 1 },
@@ -326,8 +329,11 @@
     // Fall back through the poses we would like to the ones the current sheet actually has.
     const FALLBACK = {
       reach: ['reach', 'stand', 'sit'],
-      look: ['look', 'sit'],
-      gaze: ['gaze', 'sit'],
+      'look-down': ['look-down', 'look', 'sit'],
+      'look-up': ['look-up', 'gaze', 'sit'],
+      'tail-up': ['tail-up', 'stand', 'sit'],
+      stretch: ['stretch', 'sit'],
+      jump: ['jump', 'walk', 'sit'],
       walk: ['walk', 'sit'],
     };
     function catSprite(i, pose) {
@@ -376,16 +382,36 @@
 
     // Only profile poses may be mirrored: flipping a front-facing portrait just moves the
     // collar charm to the wrong side without turning the cat toward anything.
-    const PROFILE = new Set(['walk', 'crouch', 'leap', 'look', 'gaze', 'reach']);
+    const PROFILE = new Set([
+      'walk',
+      'crouch',
+      'leap',
+      'jump',
+      'look',
+      'look-down',
+      'look-up',
+      'gaze',
+      'reach',
+      'stretch',
+      'tail-up',
+    ]);
 
-    /** Walking while they move, reaching up under the limb being drawn, watching otherwise. */
+    /**
+     * The story told through the canon's action vocabulary: heads down over the seed, up at the
+     * trunk as it rises, walking between limbs, on hind legs under the limb being drawn, and a
+     * stretch once the tree is finished.
+     */
     function catPose(p, i) {
       const x = catX(p, i);
       const step = x - catX(Math.max(0, p - 0.008), i);
+      const inward = x < CX ? 1 : -1;
+      const outward = x < CX ? -1 : 1;
       if (Math.abs(step) > 0.9) return { pose: 'walk', dir: step > 0 ? 1 : -1 };
-      if (p > 0.4 && p < 0.86) return { pose: 'reach', dir: x < CX ? -1 : 1 };
-      if (p < 0.34) return { pose: 'look', dir: x < CX ? 1 : -1 };
-      return { pose: 'gaze', dir: x < CX ? 1 : -1 };
+      if (p < 0.3) return { pose: 'look-down', dir: inward };
+      if (p < 0.4) return { pose: 'look-up', dir: inward };
+      if (p < 0.86) return { pose: 'reach', dir: outward };
+      if (p < 0.93) return { pose: 'stretch', dir: inward };
+      return { pose: i === 2 ? 'tail-up' : 'sit', dir: inward };
     }
 
     function catX(p, i) {

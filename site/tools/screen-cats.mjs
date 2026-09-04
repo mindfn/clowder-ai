@@ -20,7 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { readPixels } from './png-alpha.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SPRITES = join(HERE, '../assets/roadmap/cats');
+// The character canon is the truth source now; site/assets/roadmap/cats is the old cut-outs.
+const SPRITES = join(HERE, '../../docs/design/assets/character-canon/dist');
 const OUT = join(HERE, '../lib/roadmap-plate-cats.js');
 // Dot pitch, and the tone curve from coverage to dot radius. The first version had a 0.28
 // floor under coverage and a square-root curve, which drove every opaque pixel to near-maximum
@@ -29,7 +30,7 @@ const OUT = join(HERE, '../lib/roadmap-plate-cats.js');
 // those poses legible — they were never too complex to draw, they were being flattened here.
 const CELL = 2;
 const TONE_FLOOR = 0.02;
-const TONE_GAMMA = 0.7;
+const TONE_GAMMA = 0.6;
 // One world scale per cat, fixed by its sitting height, so a cat that stands up gets taller
 // instead of every pose being squashed into the same box.
 const CATS = [
@@ -37,7 +38,9 @@ const CATS = [
   { id: 'ragdoll', sit: 110 },
   { id: 'maine', sit: 134 },
 ];
-const POSES = ['sit', 'stand', 'walk', 'look', 'gaze', 'crouch', 'reach', 'leap'];
+// The canon has 38 actions per cat; the plate ships only the ones its story uses, because
+// every extra pose is ~24KB of dot data on the page.
+const POSES = ['sit', 'walk', 'look-down', 'look-up', 'reach', 'stretch', 'tail-up', 'jump'];
 const CELL_W = 192; // house atlas cell (packages/web/public/visible-cafe/skins/*/skin.json)
 const CELL_H = 208;
 
@@ -90,7 +93,7 @@ function screen(src, box, h) {
       const cover = (hits / (CELL * CELL)) * (TONE_FLOOR + (ink / hits) * (1 - TONE_FLOOR));
       const r = Math.min(CELL * 0.62, CELL * 0.62 * cover ** TONE_GAMMA);
       if (r < 0.18) continue;
-      dots.push(cx + CELL / 2, cy + CELL / 2, Math.round(r * 100) / 100);
+      dots.push(cx / CELL, cy / CELL, Math.round(r * 10) / 10);
     }
   }
   return { w, h, dots };
@@ -151,7 +154,7 @@ const body = screened
       `  ${c.id}: {\n${Object.entries(c.poses)
         .map(
           ([pose, s]) =>
-            `    ${pose}: { w: ${s.w}, h: ${s.h}, contact: ${JSON.stringify(s.contact)}, dots: [${s.dots.join(',')}] },`,
+            `    '${pose}': { w: ${s.w}, h: ${s.h}, contact: ${JSON.stringify(s.contact)}, dots: [${s.dots.join(',')}] },`,
         )
         .join('\n')}\n  },`,
   )
@@ -164,6 +167,7 @@ writeFileSync(
  * Flat triples of x, y, radius in plate units. Shipped as data rather than screened
  * in the browser so the plate also works when the page is opened straight off disk.
  */
+window.ClowderPlateCatCell = ${CELL};
 window.ClowderPlateCats = {
 ${body}
 };

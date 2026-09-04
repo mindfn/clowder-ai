@@ -283,7 +283,7 @@ describe('plate study opens straight off disk', () => {
       const block = new RegExp(`  ${id}: \\{([\\s\\S]*?)\\n  \\},`).exec(cats);
       assert.ok(block, `${id} must be screened`);
       const poses = [
-        ...block[1].matchAll(/(\w[\w-]*): \{ w: (\d+), h: (\d+), contact: (\{[^}]*\}), dots: \[([^\]]*)\]/g),
+        ...block[1].matchAll(/'?([\w-]+)'?: \{ w: (\d+), h: (\d+), contact: (\{[^}]*\}), dots: \[([^\]]*)\]/g),
       ];
       assert.ok(poses.length >= 1, `${id} needs at least one pose`);
       assert.ok(
