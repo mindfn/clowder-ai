@@ -221,6 +221,7 @@ const submission = {
     { id: 'metric-a', conclusion: { kind: 'count', value: 0, howCounted: 'inspected page' }, evidenceRefs: [] },
   ],
   overall: 'complete',
+  counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
 };
 
 describe('F257 cycle evaluation delivery and writeback', () => {

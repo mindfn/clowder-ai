@@ -268,18 +268,19 @@ describe('F257 SegmentEvaluationReadModel', () => {
     });
 
     assert.deepEqual(Object.keys(view.tracing).sort(), ['structuredCounterexamples', 'trigger']);
-    assert.deepEqual(view.tracing.trigger.perObjective, [
-      {
-        objectiveId: 'tool-access',
-        evalStatus: 'idle',
-        cycleStartMs: 100,
-        cycleEndMs: null,
-        triggeredBy: [],
-        cumulative: { count: 2, threshold: 200 },
-        counterexamples: { count: 1, threshold: 3 },
-        cadence: { elapsedMs: 200, thresholdMs: 604_800_000, eligible: true },
-      },
-    ]);
+    assert.deepEqual(view.tracing.trigger.objective, {
+      objectiveId: 'tool-access',
+      evalStatus: 'idle',
+      lifecycle: 'active',
+      health: 'healthy',
+      policyChangeCount: 0,
+      cycleStartMs: 100,
+      cycleEndMs: null,
+      triggeredBy: [],
+      cumulative: { count: 2, threshold: 200 },
+      counterexamples: { count: 1, threshold: 3 },
+      cadence: { elapsedMs: 200, thresholdMs: 604_800_000, eligible: true },
+    });
     assert.equal(view.tracing.structuredCounterexamples.length, 1);
     assert.equal('unclassifiedEpisodeCount' in view.tracing, false);
   });
@@ -320,7 +321,7 @@ describe('F257 SegmentEvaluationReadModel', () => {
     });
     const objective = view.objectives[0];
 
-    assert.equal(view.tracing.trigger.perObjective[0].cumulative.count, 1, 'trace after frozen cycleEnd is excluded');
+    assert.equal(view.tracing.trigger.objective.cumulative.count, 1, 'trace after frozen cycleEnd is excluded');
     assert.equal(objective.objectiveStatement, 'Use the right tool correctly');
     assert.equal(objective.metrics.length, 2, 'metric catalog is always visible');
     assert.equal(objective.metrics[0].latestConclusion.value, 1);

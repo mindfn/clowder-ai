@@ -281,6 +281,7 @@ const evaluationSubmission = (cycleId) => ({
   cycleId,
   metrics: [{ id: 'metric-a', conclusion: { kind: 'count', value: 0, howCounted: 'window scan' }, evidenceRefs: [] }],
   overall: 'complete',
+  counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
 });
 
 async function writeEvaluation(context) {
