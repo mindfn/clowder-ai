@@ -370,6 +370,52 @@
       { p: 1, x: HOME },
     ];
 
+    /**
+     * What a cat does when nobody is scrolling. Switching between staged poses is not the same
+     * as being alive, so once the plate is finished the cats run their own small loop: they doze,
+     * wake, wash, stretch, pace a few steps, and go back down. Each entry is a weight, a duration
+     * range in seconds, and an optional action it tends to lead into.
+     */
+    const IDLE = [
+      { pose: 'loaf', weight: 18, span: [5, 11] },
+      { pose: 'sleep', weight: 16, span: [9, 22], next: 'yawn' },
+      { pose: 'groom', weight: 14, span: [3, 6] },
+      { pose: 'sit', weight: 12, span: [3, 6] },
+      { pose: 'walk', weight: 12, span: [2.5, 5], pace: true },
+      { pose: 'look-up', weight: 8, span: [2, 4] },
+      { pose: 'yawn', weight: 5, span: [1.1, 1.6], next: 'stretch' },
+      { pose: 'stretch', weight: 6, span: [1.6, 2.4] },
+      { pose: 'tail-up', weight: 5, span: [2, 4] },
+    ];
+    const IDLE_TOTAL = IDLE.reduce((n, a) => n + a.weight, 0);
+    const idleRng = P.mulberry32(0xca7);
+    const idleState = CAT_IDS.map((_, i) => ({ until: -1, pose: 'sit', from: HOME[i], to: HOME[i], t0: 0, span: 1 }));
+
+    function pickIdle() {
+      let r = idleRng() * IDLE_TOTAL;
+      for (const a of IDLE) {
+        r -= a.weight;
+        if (r <= 0) return a;
+      }
+      return IDLE[0];
+    }
+
+    function idleStep(i, time) {
+      const st = idleState[i];
+      if (time < st.until) return st;
+      const forced = st.next && IDLE.find((a) => a.pose === st.next);
+      const act = forced || pickIdle();
+      st.next = act.next;
+      st.pose = act.pose;
+      st.t0 = time;
+      st.span = act.span[0] + idleRng() * (act.span[1] - act.span[0]);
+      st.until = time + st.span;
+      st.from = st.to;
+      // Pacing keeps them under the tree rather than wandering off the sheet.
+      st.to = act.pace ? Math.max(300, Math.min(W - 380, st.from + (idleRng() - 0.5) * 260)) : st.from;
+      return st;
+    }
+
     const smooth = (t) => t * t * (3 - 2 * t);
     function camera(p) {
       let i = 0;
@@ -423,7 +469,7 @@
       return P.lerp(a.x[i], b.x[i], t);
     }
 
-    function compose(p, annotate) {
+    function compose(p, annotate, live) {
       const cam = camera(p);
       view.setTransform(1, 0, 0, 1, 0, 0);
       view.clearRect(0, 0, canvas.width, canvas.height);
@@ -471,13 +517,33 @@
 
       // The cats are not part of the growth — they are the ones planting it. They stand around
       // the seed, then move under whichever limb is being drawn, then gather again at the end.
+      // Once the plate is finished and the page has settled, the cats stop being staged and
+      // start living: their own loop picks what to do and where to stand.
+      const idling = live && live.settled && p > 0.93;
       CAT_IDS.forEach((_, i) => {
-        const { pose, dir } = catPose(p, i);
+        let pose;
+        let dir;
+        let x;
+        if (idling) {
+          const st = idleStep(i, live.time);
+          const k = smooth(Math.max(0, Math.min(1, (live.time - st.t0) / Math.max(0.4, st.span * 0.7))));
+          x = P.lerp(st.from, st.to, k);
+          pose = st.to !== st.from && k < 1 ? 'walk' : st.pose;
+          dir = st.to !== st.from && k < 1 ? (st.to > st.from ? 1 : -1) : x < CX ? 1 : -1;
+        } else {
+          ({ pose, dir } = catPose(p, i));
+          x = catX(p, i);
+        }
         const cat = catSprite(i, pose);
         if (!cat) return;
-        const x = catX(p, i);
+        // Breathing: a slow rise and fall anchored at the feet, deeper when asleep. Costs no
+        // frames and is most of the difference between a placed sprite and a cat.
+        const rest = pose === 'sleep' || pose === 'curl' || pose === 'loaf';
+        const breath = live ? Math.sin(live.time * (rest ? 1.1 : 1.9) + i * 2.1) * (rest ? 0.016 : 0.008) : 0;
         view.save();
-        view.translate(x, GROUND - cat.h);
+        view.translate(x, GROUND);
+        view.scale(1, 1 + breath);
+        view.translate(0, -cat.h);
         // Profile sprites are drawn facing left; mirror to turn one toward what it is looking at.
         if (dir > 0 && PROFILE.has(cat.pose)) {
           view.translate(cat.w, 0);

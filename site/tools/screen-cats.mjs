@@ -40,7 +40,20 @@ const CATS = [
 ];
 // The canon has 38 actions per cat; the plate ships only the ones its story uses, because
 // every extra pose is ~24KB of dot data on the page.
-const POSES = ['sit', 'walk', 'look-down', 'look-up', 'reach', 'stretch', 'tail-up', 'jump'];
+const POSES = [
+  'sit',
+  'walk',
+  'look-down',
+  'look-up',
+  'reach',
+  'stretch',
+  'tail-up',
+  'jump',
+  'loaf',
+  'sleep',
+  'groom',
+  'yawn',
+];
 const CELL_W = 192; // house atlas cell (packages/web/public/visible-cafe/skins/*/skin.json)
 const CELL_H = 208;
 

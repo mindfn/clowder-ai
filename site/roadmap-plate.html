@@ -233,13 +233,19 @@
       }
 
       let progress = 0;
+      let lastMove = 0;
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
       function draw() {
         if (!scene) return;
         // Margin labels belong to the pulled-back sheet: while the camera is in close there are
         // no margins to point at, and the beat on the right names what is being drawn instead.
         const wide = progress >= 0.94;
         const [W] = scene.size;
-        scene.compose(progress, wide ? (ctx) => leaders(ctx, W, labels) : null);
+        scene.compose(progress, wide ? (ctx) => leaders(ctx, W, labels) : null, {
+          time: performance.now() / 1000,
+          // Settled means the reader has stopped scrolling; that is when the cats take over.
+          settled: !reduced && performance.now() - lastMove > 1100,
+        });
         for (const l of labels) l.el.classList.toggle('on', wide);
         document.getElementById('legend').classList.toggle('on', wide);
         document.getElementById('sheetHead').style.opacity = wide ? '1' : '0.32';
@@ -248,7 +254,9 @@
       function measure() {
         const r = track.getBoundingClientRect();
         const span = r.height - window.innerHeight;
-        progress = span > 0 ? Math.max(0, Math.min(1, -r.top / span)) : 0;
+        const next = span > 0 ? Math.max(0, Math.min(1, -r.top / span)) : 0;
+        if (Math.abs(next - progress) > 0.0002) lastMove = performance.now();
+        progress = next;
         beatEls.forEach((el) => {
           el.classList.toggle('on', Math.abs(progress - Number(el.dataset.at)) < 0.055);
         });
@@ -269,6 +277,15 @@
       });
       build();
       measure();
+      // The plate keeps ticking after the scroll stops: breathing never pauses, and once the
+      // tree is finished the cats run their own loop. Reduced motion freezes both.
+      if (!reduced) {
+        const tick = () => {
+          draw();
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }
     })();
   </script>
 </body>
