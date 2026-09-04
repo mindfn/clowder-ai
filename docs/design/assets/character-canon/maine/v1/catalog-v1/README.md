@@ -10,6 +10,10 @@ Consumer-owned support surfaces are absent from `climb`, `rub`, `headbutt`, and
 `perch`. Each of those rows has a `{cat}-{pose}.json` sidecar in `dist/` declaring
 the virtual wall or ledge contact in 192×208 cell pixels.
 
+`ground` is the default contact for all remaining poses. In particular, `knead`
+contains only the cat's alternating-paw motion; it does not bake in a cushion or
+other consumer-owned support surface.
+
 Identity invariants: big long-haired gray tabby body, broad bare ruff, ear tufts,
 bushy striped tail, green eye, and no collar or neck pendant. The green tea cup
 is a handheld semantic prop, never jewelry. These are identity signals, not a
