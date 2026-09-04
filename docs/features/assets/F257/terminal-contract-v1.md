@@ -29,21 +29,23 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 |---|---|---|
 | TC-1 | tracing 是 owner 级**单一线性池**；采集不做判定、不分组 | 引入第二个池 / 预分类后才入池 |
 | TC-2 | 结构化反例 / MCP 举报 = 池内**高置信度标记**，仅用于评估时优先阅读 | 把标记当证据准入门；无标记就不评 |
-| TC-3 | 触发三路 **anyOf**：周期内累计 ≥ N / 周期内去重反例 ≥ M / 距上次评估 ≥ D 天；N/M/D 与最小评估间隔（默认 2h）**按 Objective 可配**；**由系统触发** | 写成"三路都满足"；阈值全局硬编码；需要人点按钮；任一路被其它步骤前置阻塞；关闭周期后无最小间隔地连续触发 |
+| TC-3 | 触发三路 **anyOf**：周期内累计 ≥ N / 周期内去重反例 ≥ M / 距上次评估 ≥ D 天；N/M/D 与最小评估间隔（默认 2h）**按 Objective 可配**；**由系统触发**。**N/D 自适应，代码自决不经 LLM**：结论 `keep` → 升；`rollback`/`evolve` → 降；**D 额外要求「连续多次由 cadence 触发 且 每次都 keep」才可升**。**下限 = 出厂值 N=200 / M=3 / D=7 天**，任何调整不得低于它（N 的下限防样本不足导致 `insufficient_evidence` 空转；M 的下限防对个案过拟合）。**M 暂不自适应**——见 DV-12：`incidentKey` 含 `invocationId`，distinct 数的是调用次数而非根因数，口径修正前调它无意义 | 写成"三路都满足"；阈值全局硬编码；需要人点按钮；任一路被其它步骤前置阻塞；关闭周期后无最小间隔地连续触发；**参数降到出厂值以下**；**M 在根因级去重落地前就开始自适应** |
 | TC-4 | 冻结 = **只冻结时间窗**（start=上次周期终点，end=now）+ 目标/指标/版本引用；**不复制 tracing 数据** | snapshot 内嵌 episode 正文（现状 6 MB/个） |
 | TC-5 | 评估在**每个 Objective 专属的系统 thread** 中由其**默认成员**执行（不单独指定评估猫；不合理在 thread 侧改）；跨 Objective 可并发，同 Objective 严格串行；输入 = **评估目标（Objective statement）** + 时间窗 + 范围 + 指标；从池子按窗读取，反例优先 | 全域共用一个评估 thread；评估依赖预先分类结果；评估在主请求路径上跑；assignment 只列指标不声明目标 |
 | TC-6 | 评估必须**调工具回写 eval 状态**（每指标结论 + 整体结论） | 只在对话里说结论 |
 | TC-7 | 未回写 → 系统可观察 → **一条系统 message 重触发一次**（有界） | 无限续租/重试；同一 job 滚动上千代 |
 | TC-8 | 回写后**自动进入 governance**：再次触发同一评估 thread → 保持 / 回退 / 演进 | 停在 eval；需要人手动进 governance |
-| TC-9 | 仅"回退 / 演进"发**提案卡**（evolve 时含评估猫直接写的 v2 草案）；三选一 **approve / skip / reject**：approve、skip 进入下一周期；reject 附理由对同窗重评估并**必须产生新提案卡**——终态只有 approve/skip | 保持也发卡；reject 无理由；reject 自动进下一周期；reject 后不再出卡 |
+| TC-9 | 仅"回退 / 演进"发**提案卡**（evolve 时含评估猫直接写的 v2 草案）；三选一 **approve / skip / reject**：approve、skip 进入下一周期；reject 附理由对同窗重评估并**必须产生新提案卡**——终态只有 approve/skip。**一张卡内的多个动作是一个列表，范围 = 该 Objective 关联的全部成员段；审批必须原子**：approve = 全批，不可挑批；组合不合理走 reject 并声明理由（TC-17 的「合并 = 禁用A + 修改B」只批一半会留下不一致状态）。**N/D 的参数变更属无卡自动变更**（keep 不发卡），但**必须写入 CycleRecord**（旧值 / 新值 / 依据结论）且 Console 可见 | 保持也发卡；reject 无理由；reject 自动进下一周期；reject 后不再出卡；**挑着批一张卡里的部分动作**；**参数悄悄变更且无审计记录** |
 | TC-10 | 周期起点**始终刷新** = 本周期终点；skip / insufficient_evidence 不停住起点，而是让**下次评估逆序回看并纳入连续 skip 周期的时间窗**（连续 k 次 skip → 合并 k+1 个窗口） | skip 后起点不动导致累计触发立即重触发；下次评估只看本周期忽略前序 skip 数据 |
 | TC-11 | v1/v2/v3 的**评估**各自只看本版本时间窗，不做跨版本对比；**governance** 以本周期结论判断 keep/rollback/evolve，历史周期结论在同一 Objective thread 中天然可见、可参考 | 把"与上一版比较"当作当前版本的闭环条件 |
 | TC-12 | Console：Tracing 面只有两组——**周期内反例 / 周期内累计**，触发条件带进度（x/阈值、y/200、7 天）；无"待分类" | 出现全局管道数字；名词与数值口径不一致 |
-| TC-13 | Semantic Sweep（后台批量打标）若保留，只是**可选的反例发现器**，绝不能是主路径的一环或前置门 | "sweep 未清空就不评 Unit" |
+| TC-13 | **Semantic Sweep 已移除**（2026-09-04 operator 裁定）。理由三条：① **设计外路径**——最早两份设计文档零提及，后续 5 处提及全是约束句、无一需求句；② **目的未达成**——TC-2 给标记定的作用是「评估时不用从海量数据里筛」，而评估猫仍读全量；③ **与评估猫重复读同一批数据**。历史 `semantic-sweep` annotation **保留作审计**（AC-12），但不再影响触发、排序与治理 | 重新引入后台批量打标作为标记来源；把 sweep 产物计入触发阈值；因移除 sweep 而删除历史 annotation |
 | TC-14 | tracing 是自管的**不可变只增**数据：每周期只记录 时间窗、指标、结论、起始版本内容指针；**不需要 cursor receipt / evidence digest** | 为防"源漂移"复制或摘要正文 |
 | TC-16 | governance 活性：处于 governance 阶段、预期有提案卡、Objective thread 无成员运行且无挂起外部条件、却无卡 → 系统发一条提醒要求产卡，按天节流 | 无卡时无人知晓；或高频刷屏 |
 | TC-17 | 所有进化动作（禁用/修改/合并=禁用A+改B/新增=放入目录）都是运行时 overlay 或目录扫描动作；approve 后系统重扫 registry 并刷新 snapshot | 把合并/新增做成需人合入的 base 级 PR；新增段要重启才可见 |
 | TC-15 | 首周期起点：池中已有 tracing → 最早有效 trace 时间；没有 → 服务启动检查到缺失时写当前时间 | 首周期永远 not-ready；或从 0 起算 |
+| TC-18 | Objective 生命周期 `active / dormant / retired`。**dormant 是收敛的结果，不是人工标记**：判据 = N/D 升至高位且连续 `keep`（有证据的成熟）。**零 trace ≠ dormant**——那是采集或归属故障，必须显式报故障态，不得静默显示"评估中"。`retired` 保留历史结论与 trace，只是不再开新周期 | 把零数据的 Objective 显示成"评估中"；靠人工打 dormant 标记；retired 后删除历史 |
+| TC-19 | 提案卡呈现五段：**① 指标图像化 ② 指标变化差异 ③ 文字结论 ④ 动作列表（每动作带 diff） ⑤ approve / skip / reject**。非内容型动作同样必须有 diff：**禁用** → 左 = 当前全文 / 右 = 「此段将不再注入」+ **影响面**（所属 Objective 及其剩余成员段数）；**新增** → 左 = 空 / 右 = 新段全文 + 目标 stage/order；**修改** → 左右全文对比，可点开弹窗。**首轮无对比基线时必须明说**，不得渲染空图表 | 只给文字不给 diff；禁用/新增无 diff；禁用不显示影响面；首轮画空图表让人以为数据丢失 |
 
 ## 3. 现实现偏离台账（2026-09-02 运行实例实查，全部只读取证）
 
@@ -57,6 +59,10 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | DV-6 | 评估猫 invocation 被 F299 recorder `sourceRefs.max(64)` 打断（上游 #1390，8/25 入 base） | 域 thread 每 10 分钟重派 + `too_big` 报错 | 止血项 | sol · §14 S2：assignment 反例引用 ≤ 64 且按 32 KB 裁剪，回写 evidenceRefs ≤ 64（`CycleEvaluationContent` / `CycleEvaluationEvidence`） | **S2 done @ `0a96514fd5614`** |
 | DV-7 | Console 仍有"待分类"，两组命名不对 | `SegmentTraceTheater.tsx` L54/65/100 | TC-12 | sol · §14 S4；输入 = **只 cherry-pick `88cc67154`**（7 files +41/−46；对 develop_base@635acbc97 dry-run merge 零冲突），**勿 merge 整条 `fix/f257-tracing-two-groups`**（含 485 个 rebuild 前恢复文件） | **S4 done @ `6d5ff56ac`**（Fable gate：隔离栈 F-2 / F-6 + 真实浏览器 D1 / D14 三面；首轮 `096a9ec46` 一条 P1"同名两口径"→ `6d5ff56ac` 只改名词不改数） |
 | DV-8 | Objective trace 归属把段 `status === 'observed'` 当**证据准入门**：readiness 计数与评估语料**同读**这一过滤索引，窗口内 `absent` 的 episode 被整体排除出池 | `ObjectiveTraceIndex.ts:118` `if (segment.status !== 'observed') continue;`；`CycleEvaluationEvidence.ts:20` 语料同源 `objectiveTraces.invocationIds(...)`；运行实例实测 4 个 Objective（capability-boundary / collaboration-loop-boundedness / critical-analysis-quality / world-state-fidelity）trace=0、`cycleStart=2026-08-24`、`evalStatus=idle` 11 天未触发；D10 在 400 episode 抽样中 present 305 / observed 0 | TC-1（预分类后才入池）/ TC-2（把标记当证据准入门）/ TC-15（首周期永远 not-ready）；spec `2026-08-04` §0.1 estimator「冻结窗口内全部 eligible TraceEpisode（**含 observed/absent**）」、AC-3、AC-13 | 未分配 | **待修**（opus 2026-09-04 实查登记） |
+| DV-9 | Semantic Sweep 是**设计外路径且目的未达成** | 最早两份设计文档（`segment-harness-v0-draft.md` / `objective-driven-redesign-v1.md` 457 行）**零提及**；后续 5 处提及全为约束句（AC-19 / spec:166 / spec:377 / spec:430 / TC-13「若保留」），无一需求句。实测抽样 300 条 annotation：`semantic-sweep` 249 / `structured-rule` 51 / `mcp-marker` 0，反例中 sweep 占 52%；评估猫同期 `howCounted` 记录读了 1,343 episodes / 54 pages（与 sweep 重复读同一池） | TC-2 / TC-13 | 未分配 | **待修**（处置 = 移除，见改写后的 TC-13） |
+| DV-10 | 设计的主标记路径 `mcp-marker` **恒为 0** | `cat_cafe_report_harness_signal` 已实现、`/api/callbacks/harness-signals/report` 路由已注册，但**未装配进 `canonical-server-tools.ts`**；skill / 段 / 回调清单亦零声明。`tool_search` 精确查询该工具返回 `No matching deferred tools found`；Redis pending marker key 数 = 0 | AC-2 / TC-2 | 未分配 | **待修**（下一轮：self-tracing 与自标） |
+| DV-11 | 通过 PR 修改段 **base 正文不会推进版本指针** | `getActiveVersion()` 仅在存在 content override 时返回 `activeEpochVersion`，否则返回 manifest 静态 `version`。PR #151 修改 `cat-cafe-skills/refs/shared-rules.md`（S9 正文来源）后版本指针不变 → 评估窗口可横跨内容变更而不可见 | TC-11 | 未分配 | **待修**（低 severity，本轮不处理，记录防遗忘） |
+| DV-12 | 反例 distinct 去重粒度是**调用次数而非根因** | `trace-incident-key.ts:3-15` 的哈希输入含 `invocationId` → 同一根因连续犯 N 次被算作 N 个 distinct 反例。触发按事件计数，评估猫回写却按根因判定（`howCounted`："three distinct incidents are counted once each"）——两套口径，触发在评估看到数据前就打响 | TC-3 | 未分配 | **待修**（下一轮；本轮 M 冻结在出厂值 3） |
 
 台账编号用 `DV-#`（Deviation）——**不要写成 `D-#`**：段 ID 已占用 `D1`–`D21`（per-turn 段），两者混用会把"偏离第 8 条"读成"D8 A2A 球权检查段"（2026-09-04 实际发生过）。
 
@@ -78,6 +84,9 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | F-6 | Console 段详情页：无"待分类"；Tracing 面两组（周期内反例 n/M、周期内累计 m/N）+ 第三路 d/D 天 + 周期起点，名词与数值同口径；Eval 面平时只列指标目录、无假空态，有评估时显示 verdict 卡；Governance 面显示 decision / 理由 / 卡状态 / 版本链 | `GET /api/segment-evaluation/:segmentId?startMs=&endMs=`（S4 @ `6d5ff56ac`：`tracing.trigger.perObjective[]` 三路 lane（cumulative / counterexamples / cadence + cycleStartMs）与 `objectives[]`（metrics 目录、currentCycle、latestEvaluation、latestGovernance、versionChain），只读 CycleRecord + ObjectiveTraceIndex）+ 真实浏览器（Playwright）段详情 modal 三 tab（`SegmentTraceTheater` / `ObjectiveEvaluationPanel` / `ObjectiveGovernancePanel`）对隔离 / 运行实例 | TC-12 | S4 |
 | F-7 | 触发口径：三路 anyOf——累计 ≥ N、去重反例 ≥ M、cadence ≥ D 天（且累计 ≥ 1）任一满足即 `requested`；N/M/D/最小间隔来自该 Objective 评估模型定义（改定义即改行为，代码无硬编码）；同一 Objective `requested/retriggered` 期间不重复开启；周期关闭后最小间隔（默认 2h）内不再触发；首周期起点 = 最早有效 trace 时间，池空则服务启动写当前时间 | CycleRecord 读面 + 评估模型定义 + 隔离实例可调阈值 / 时钟 | TC-3/15 | S1 |
 | F-8 | 单一路径：native 猫（Claude / Codex）与 pipeline 猫的 session-init 段 ID 集合一致；tracing 中不存在 L1–L7 独立 ID；`compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` 与 manifest 协议已删除；native 猫启动零 L0 报错，system-prompt 文件由同一 pipeline 输出 | 代码树（`scripts/compile-system-prompt-l0.mjs` / `l0-compiler.ts` / `native-l0-trace.ts` + marker 引用归零）+ `assets/prompt-hooks/*/hook.yaml` 中 `stage: session-init` 的 hook 集合（S5 @ `16b016a0f`：22 个，L1–L7 为普通 hook）+ 隔离栈 API 日志零 L0 / session-prompt 错误 + 两条 trace summary（`injection-trace-summary:<threadId>:<turnId>`，`segments[].stage=session-init` 的 segmentId 集合 native == pipeline，且全部落在 registry；`delivery[].channel` native=`native-l0` / pipeline=`message-prepend`）+ 一次真实 native 猫 invocation（S5 gate：`@sonnet` 经 claude CLI 回复"好"）—— `scripts/f257-falsifiers/checks/f8.mjs` + `iso-f8-parity.sh` | complete-design §13 | S5 |
+| F-9 | **消融试验可跑**：禁用任一段后，该段所属 Objective 在后续窗口仍能累计 trace 并按三路触发；禁用事实（`pipelineStatus=disabled` / `disabledBy`）在评估语料中可见、未被过滤 | owner 线性池 `trace-owner-episode:<owner>` + CycleRecord + 评估语料分页 | TC-1 / TC-2 | 本轮 |
+| F-10 | **参数自适应可验证**：一次 `keep` 后 N（满足条件时 D）上调，新值连同旧值与依据结论写入 CycleRecord；一次 `rollback`/`evolve` 后下调；任何调整不低于出厂值 N=200 / M=3 / D=7 天；**M 本轮恒为 3** | CycleRecord 参数字段 + Console 触发进度 | TC-3 / TC-9 | 本轮 |
+| F-11 | **零 trace 不伪装成评估中**：无累计 trace 的 Objective 在 Console 显式呈现故障态，且与 `dormant` 可区分 | `GET /api/segment-evaluation/:segmentId` + 真实浏览器 | TC-18 | 本轮 |
 
 ## 5. 与其它文档的关系
 
