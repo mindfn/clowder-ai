@@ -45,10 +45,8 @@ export interface SegmentLifelineRoutesOptions {
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days cap
 /**
- * Cap on DETAIL rows only (sol R6 P1). Aggregate per-epoch counts
- * (observationCount/firedCount) are computed from a full-window scan and are
- * always exact — the cap must never turn an unsampled epoch into tracing:null
- * or present a truncated count as a total.
+ * Cap on injected-content DETAIL rows only (sol R6 P1). Aggregate per-epoch
+ * activity counts are computed from a full-window scan and are always exact.
  */
 const MAX_OBSERVATIONS = 100;
 
@@ -146,7 +144,7 @@ async function assembleLifelineData(
   windowStart: number,
   windowEnd: number,
 ): Promise<LifelineData> {
-  // 1. Collect raw observations (full-window scan; detail list capped)
+  // 1. Collect segment activity (full-window scan; fired detail list capped)
   const { observations, observationInputs, detailCapped } = await collectObservations(
     traceStore,
     segmentId,
@@ -246,12 +244,11 @@ interface SegmentObservation {
 }
 
 /**
- * Collect observations for the segment within the window (sol R6 P1).
+ * Collect activity for the segment within the window (sol R6 P1).
  *
- * Aggregate counting is a FULL-WINDOW scan — every matching row contributes
- * to observationInputs (exact per-epoch counts downstream). Only the DETAIL
- * row list is capped: the MAX_OBSERVATIONS most recent rows, with
- * `detailCapped` completeness provenance when rows were dropped.
+ * Every matching segment row contributes to exact per-epoch activity counts,
+ * including skipped and disabled rows. The replay DETAIL list is deliberately
+ * injection-only and capped to the most recent MAX_OBSERVATIONS rows.
  */
 async function collectObservations(
   store: InjectionTraceStore,
@@ -270,24 +267,26 @@ async function collectObservations(
   for (const threadId of threadIds) {
     const summaries = await store.queryWindow(threadId, startMs, endMs);
     for (const summary of summaries) {
-      const seg = summary.segments.find((s) => s.segmentId === segmentId && s.status === 'observed');
+      const seg = summary.segments.find((s) => s.segmentId === segmentId);
       if (!seg) continue;
-      allRows.push({
-        threadId: summary.threadId,
-        turnId: summary.turnId,
-        timestamp: summary.timestamp,
-        catId: summary.catId,
-        pipelineStatus: seg.pipelineStatus ?? 'observed',
-        version: seg.version ?? null,
-        charCount: seg.charCount,
-      });
+      const fired = isFiredTraceSegment(seg);
       observationInputs.push({
         timestamp: summary.timestamp,
         version: seg.version ?? null,
-        // Raw-trace semantics stay independent of the retired judgment engine:
-        // observe-only rows are observations, not injections.
-        fired: isFiredTraceSegment(seg),
+        fired,
+        disabled: seg.pipelineStatus === 'disabled',
       });
+      if (fired) {
+        allRows.push({
+          threadId: summary.threadId,
+          turnId: summary.turnId,
+          timestamp: summary.timestamp,
+          catId: summary.catId,
+          pipelineStatus: 'fired',
+          version: seg.version ?? null,
+          charCount: seg.charCount,
+        });
+      }
     }
   }
 

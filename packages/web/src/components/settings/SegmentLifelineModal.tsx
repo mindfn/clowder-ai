@@ -187,6 +187,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   loading={evaluationLoading}
                   error={evaluationError}
                   capped={lifeline.observationsCapped}
+                  activity={selectedEpoch.tracing}
                 />
               )}
               {selectedEpoch && selected?.stage === 'eval' && (

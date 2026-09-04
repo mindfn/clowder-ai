@@ -506,6 +506,48 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     await app.close();
   });
 
+  test('reports injection and disabled counts separately while detail rows stay injection-only', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+    const now = Date.now();
+
+    await store.persist(
+      makeSummary('thread-X', 'turn-fired', now - 2000, 'opus', [makeSegment('S-test')]),
+      makeDetail('thread-X', 'turn-fired'),
+    );
+    await store.persist(
+      makeSummary('thread-X', 'turn-disabled', now - 1000, 'opus', [
+        makeSegment('S-test', { status: 'absent', pipelineStatus: 'disabled' }),
+      ]),
+      makeDetail('thread-X', 'turn-disabled'),
+    );
+
+    const app = await buildLifelineApp(store);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test',
+      headers: SESSION_HEADERS,
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const body = JSON.parse(res.body);
+
+    assert.deepEqual(body.chain[0].tracing, {
+      observationCount: 2,
+      firedCount: 1,
+      disabledCount: 1,
+      firstAt: now - 2000,
+      lastAt: now - 1000,
+    });
+    assert.deepEqual(
+      body.observations.map(({ turnId, pipelineStatus }) => ({ turnId, pipelineStatus })),
+      [{ turnId: 'turn-fired', pipelineStatus: 'fired' }],
+      'the replay list named 注入明细 must not mix in disabled rows',
+    );
+
+    await app.close();
+  });
+
   test('returns 401 without session', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();

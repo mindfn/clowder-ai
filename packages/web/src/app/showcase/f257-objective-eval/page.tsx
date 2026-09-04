@@ -153,6 +153,7 @@ const chain: VersionEpoch[] = [
     tracing: {
       observationCount: observations.length,
       firedCount: observations.length,
+      disabledCount: 0,
       firstAt: observations[1].timestamp,
       lastAt: observations[0].timestamp,
     },
@@ -187,6 +188,7 @@ export default function F257ObjectiveEvalShowcase() {
           observations={versionObservations}
           window={{ startMs: WINDOW.start, endMs: WINDOW.end }}
           readiness={evaluation.tracing}
+          activity={chain[0].tracing}
         />
       )}
       {selected.stage === 'eval' && <ObjectiveEvaluationPanel data={evaluation} />}

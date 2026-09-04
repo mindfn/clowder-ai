@@ -114,6 +114,7 @@ describe('LifelineStageDetail replay flow', () => {
               tracing: {
                 observationCount: 1,
                 firedCount: 1,
+                disabledCount: 0,
                 firstAt: 1000,
                 lastAt: 1000,
               },

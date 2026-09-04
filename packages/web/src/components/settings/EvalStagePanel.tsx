@@ -36,6 +36,8 @@ interface TracingStageSummary {
   observationCount: number;
   /** 判据② P1 (sol R5): producer-semantics fired count (segment-judgment-engine isFired). */
   firedCount: number;
+  /** Exact rows where this segment was disabled in the current query window. */
+  disabledCount: number;
   firstAt: number | null;
   lastAt: number | null;
 }
@@ -125,7 +127,7 @@ function CoordinateContrastRow({
       {obsCount !== firedCount && (
         <InfoRow label="观测行数">
           <span className="font-mono">{obsCount}</span>
-          <span className="ml-1 text-cafe-muted">行（含 observe-only 未注入行，≠ 注入次数）</span>
+          <span className="ml-1 text-cafe-muted">行（含 observe-only / skipped / disabled，≠ 注入次数）</span>
         </InfoRow>
       )}
       <InfoRow label="查询窗口">
@@ -163,7 +165,7 @@ function EvalPendingMetrics({
         {obsCount !== firedCount && (
           <InfoRow label="观测行数">
             <span className="font-mono">{obsCount}</span>
-            <span className="ml-1 text-cafe-muted">行（含 observe-only 未注入行）</span>
+            <span className="ml-1 text-cafe-muted">行（含 observe-only / skipped / disabled）</span>
           </InfoRow>
         )}
         <InfoRow label="违规事件">
