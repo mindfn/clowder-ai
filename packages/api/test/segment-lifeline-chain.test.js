@@ -89,6 +89,27 @@ describe('buildVersionChain', () => {
     assert.equal(chain[0].status, 'tracing');
   });
 
+  test('disabled-only activity remains visible as tracing without an injection', () => {
+    const { chain } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [
+        { timestamp: 500, version: null, fired: false, disabled: true },
+        { timestamp: 750, version: null, fired: false, disabled: true },
+      ],
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].status, 'tracing');
+    assert.deepEqual(chain[0].tracing, {
+      observationCount: 2,
+      firedCount: 0,
+      disabledCount: 2,
+      firstAt: 500,
+      lastAt: 750,
+    });
+  });
+
   test('same-ms transitions honor event order', () => {
     const { chain } = buildVersionChain({
       manifestVersion: 1,
