@@ -172,7 +172,8 @@ describe('F293 actual-send routing preflight', () => {
       receipts.some((receipt) => receipt.target.targetCatId === 'opus' && receipt.target.disposition === 'rejected'),
     );
     assert.ok(
-      receipts.some((receipt) => receipt.target.targetCatId === 'codex' && receipt.target.disposition === 'warned'),
+      !receipts.some((receipt) => receipt.target.targetCatId === 'codex'),
+      'fail-open infrastructure degradation stays in routing telemetry instead of becoming chat content',
     );
   });
 
@@ -189,13 +190,11 @@ describe('F293 actual-send routing preflight', () => {
     }
 
     assert.ok(calls.includes('opus'));
-    const receipt = events
-      .filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight'))
-      .map((event) => JSON.parse(event.content))[0];
-    assert.equal(receipt.resolverState, 'degraded');
-    assert.equal(receipt.target.targetCatId, 'opus');
-    assert.equal(receipt.target.disposition, 'warned');
-    assert.deepEqual(receipt.target.alternatives, []);
+    assert.equal(
+      events.filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight')).length,
+      0,
+      'an unavailable advisory resolver must not manufacture a visible warning for an unchanged send',
+    );
   });
 
   test('completed response preflights before atomic ledger admission and leaves no rejected row', async () => {
@@ -279,12 +278,79 @@ describe('F293 actual-send routing preflight', () => {
     );
   });
 
+  test('failed A2A response atomically reports the durable failure to its exact predecessor', async () => {
+    const { commitFailedResponseAndEnqueueA2ACaller } = await import('../dist/routes/callback-a2a-trigger.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
+    const processing = messageStore.append({
+      from: { kind: 'agent', catId: 'bengal' },
+      threadId: 'thread-failed-report',
+      userId: 'owner-1',
+      content: '',
+      mentions: [],
+      origin: 'stream',
+      timestamp: 100,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '0000000000100:response-bengal',
+        from: { kind: 'agent', catId: 'bengal' },
+        invocationId: 'inv-bengal',
+        targetId: 'bengal',
+        inputEntryIds: ['entry-source'],
+        inputMessageIds: ['message-source'],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    const stored = await commitFailedResponseAndEnqueueA2ACaller(
+      {
+        invocationQueue: queue,
+        messageStore,
+        queueProcessor: { async requestDrain() {} },
+        socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
+        routingDispatchPreflight: {
+          preflight: async (input) => decision(input, { opus: 'allowed' }),
+        },
+        log: { error() {}, warn() {}, info() {} },
+      },
+      {
+        responseMessageId: processing.id,
+        invocationId: 'inv-bengal',
+        terminal: { status: 'failed', completedAt: 200, reason: 'provider_execution_failed' },
+        message: {
+          from: { kind: 'agent', catId: 'bengal' },
+          threadId: 'thread-failed-report',
+          userId: 'owner-1',
+          content: '@bengal 处理失败（PROVIDER_EXECUTION_FAILED）。\n来源消息：message-source。\nmodel unavailable',
+          mentions: [],
+          origin: 'stream',
+          timestamp: 200,
+        },
+        userId: 'owner-1',
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-failed-report',
+        reporterCatId: 'bengal',
+        predecessorCatId: 'opus',
+      },
+    );
+
+    assert.equal(stored.lifecycle.status, 'failed');
+    assert.match(stored.content, /model unavailable/);
+    const entries = queue.list('thread-failed-report', 'owner-1');
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].sourceCategory, 'a2a_failure');
+    assert.equal(entries[0].payload.messageId, stored.id);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'opus' });
+  });
+
   test('parallel mixed targets never invoke the rejected child', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const calls = [];
     const deps = routeDeps(
       { opus: service('opus', calls), codex: service('codex', calls) },
-      { preflight: async (input) => decision(input, { opus: 'rejected', codex: 'allowed' }) },
+      { preflight: async (input) => decision(input, { opus: 'rejected', codex: 'warned' }) },
     );
     const events = [];
     for await (const event of routeParallel(deps, ['opus', 'codex'], 'ideate', 'owner-1', 'thread-parallel')) {
@@ -293,13 +359,13 @@ describe('F293 actual-send routing preflight', () => {
 
     assert.ok(!calls.includes('opus'));
     assert.ok(calls.includes('codex'));
-    assert.ok(
-      events.some(
-        (event) =>
-          event.type === 'system_info' &&
-          event.content?.includes('routing_preflight') &&
-          JSON.parse(event.content).target.disposition === 'rejected',
-      ),
+    const receipts = events
+      .filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight'))
+      .map((event) => JSON.parse(event.content));
+    assert.deepEqual(
+      receipts.map((receipt) => [receipt.target.targetCatId, receipt.target.disposition]),
+      [['opus', 'rejected']],
+      'parallel fail-open degradation stays in routing telemetry instead of becoming chat content',
     );
   });
 
@@ -430,10 +496,7 @@ describe('F293 actual-send routing preflight', () => {
           target: JSON.parse(message.content).target.targetCatId,
           disposition: JSON.parse(message.content).target.disposition,
         })),
-      [
-        { threadId: 'thread-callback', target: 'opus', disposition: 'rejected' },
-        { threadId: 'thread-callback', target: 'codex', disposition: 'warned' },
-      ],
+      [{ threadId: 'thread-callback', target: 'opus', disposition: 'rejected' }],
     );
   });
 });

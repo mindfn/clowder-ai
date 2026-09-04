@@ -454,6 +454,80 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal((await store.list('thread-redis')).length, 2);
   });
 
+  it('atomically publishes a failed response with its exact predecessor report', async () => {
+    const queue = new InvocationQueue(store);
+    const response = await messageStore.append({
+      from: { kind: 'agent', catId: 'bengal' },
+      userId: 'owner-1',
+      content: '',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'thread-redis',
+      lifecycle: {
+        kind: 'response',
+        orderKey: '0000000000100:response-failed-report',
+        from: { kind: 'agent', catId: 'bengal' },
+        invocationId: 'invocation-failed-report',
+        targetId: 'bengal',
+        inputEntryIds: ['entry-source'],
+        inputMessageIds: ['message-source'],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    const content =
+      '@bengal 处理失败（PROVIDER_EXECUTION_FAILED）。\n来源消息：message-source。\nconfigured model unavailable';
+    const input = {
+      from: { kind: 'agent', catId: 'bengal' },
+      threadId: 'thread-redis',
+      userId: 'owner-1',
+      kind: 'message_wake',
+      ownerAuthProvenance: 'strict',
+      content,
+      messageId: response.id,
+      sourceId: response.id,
+      sourceCategory: 'a2a_failure',
+      targetCats: ['opus'],
+      intent: 'execute',
+      autoExecute: true,
+    };
+    const patch = {
+      invocationId: 'invocation-failed-report',
+      status: 'failed',
+      completedAt: 200,
+      reason: 'provider_execution_failed',
+      content,
+      mentions: [],
+      origin: 'stream',
+    };
+
+    const applied = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);
+    assert.equal(applied.outcome, 'enqueued');
+    assert.equal(applied.deduped, false);
+    assert.equal(applied.message.lifecycle.status, 'failed');
+    assert.match(applied.message.content, /configured model unavailable/);
+    assert.equal(typeof applied.message.visibilitySeq, 'number');
+    assert.deepEqual(applied.message.lifecycle.dispatchRefs, [{ targetId: 'opus', phase: 'assigned' }]);
+    assert.deepEqual(
+      (await store.list('thread-redis')).map((entry) => ({
+        target: entry.target,
+        sourceCategory: entry.sourceCategory,
+        messageId: entry.payload.messageId,
+      })),
+      [{ target: { kind: 'cat', catId: 'opus' }, sourceCategory: 'a2a_failure', messageId: response.id }],
+    );
+    assert.deepEqual(
+      (await messageStore.getByThreadAfter('thread-redis', undefined, undefined, 'owner-1')).map(
+        (message) => message.id,
+      ),
+      [response.id],
+    );
+
+    const replay = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);
+    assert.equal(replay.deduped, true);
+    assert.equal((await store.list('thread-redis')).length, 1);
+  });
+
   it('leaves a processing response unchanged when an outbound ledger identity conflicts', async () => {
     const queue = new InvocationQueue(store);
     const response = await messageStore.append({

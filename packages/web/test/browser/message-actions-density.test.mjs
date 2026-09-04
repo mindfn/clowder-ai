@@ -410,7 +410,7 @@ test('message actions occupy no resting layout and stay unpainted until asked fo
       'hover must keep message identity in the same dock',
     );
     assert.ok(hovered.actionTitles.includes('引用回复'), 'hover must preserve the reply action');
-    assert.ok(hovered.actionTitles.includes('从这里分支'), 'hover must preserve the direct branch action');
+    assert.ok(hovered.actionTitles.includes('创建分支'), 'hover must preserve the unified branch action');
     assert.ok(hovered.actionTitles.includes('删除'), 'hover must preserve the delete action');
     assert.equal(
       hovered.actionAriaLabels.includes('更多消息操作'),

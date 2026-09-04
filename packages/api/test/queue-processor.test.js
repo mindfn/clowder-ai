@@ -377,6 +377,62 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal(durable.delivery.failureReason, 'invocation_failed');
   });
 
+  it('does not enqueue a runtime-replacement continuation after the recovered turn completes', async () => {
+    const capsule = {
+      v: 1,
+      threadId: 'thread-1',
+      catId: 'opus',
+      invocationId: 'turn-recovered',
+      mode: 'independent',
+      a2aEnabled: true,
+      ballState: 'in_progress',
+      continuationReason: 'runtime_replacement',
+      createdAt: 2_000,
+      seal: { sessionId: 'session-old', sessionSeq: 2, reason: 'cli_session_replaced' },
+      replacement: {
+        cause: 'active_writer_reborn',
+        previousNativeThreadId: 'native-old',
+        detectedAt: 1_900,
+        attempt: 1,
+        diagnostics: {
+          observedAt: 1_900,
+          classification: 'native_active_turn_without_local_lease',
+          confidence: 'medium',
+          localHostLease: { state: 'not_observed', source: 'carrier_affinity' },
+          nativeThread: {
+            readOutcome: 'succeeded',
+            threadId: 'native-old',
+            status: 'active',
+            activeTurn: { turnId: 'turn-old', startedAt: 1_800 },
+          },
+          writerClientIdentity: 'unavailable',
+        },
+      },
+    };
+    let routeInvocations = 0;
+    const harness = createHarness({
+      routeExecution: async function* () {
+        routeInvocations++;
+        if (routeInvocations === 1) {
+          yield {
+            type: 'system_info',
+            catId: 'opus',
+            content: JSON.stringify({ type: 'session_seal_requested', continuityCapsule: capsule }),
+            timestamp: 2_000,
+          };
+        }
+        yield { type: 'done', catId: 'opus', isFinal: true, timestamp: 2_001 };
+      },
+    });
+    const admitted = await admitMessage(harness);
+
+    assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
+    await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
+
+    assert.deepEqual(harness.queue.list('thread-1', 'user-1'), []);
+    assert.equal(routeInvocations, 1, 'a completed recovery attempt must not create a second provider turn');
+  });
+
   it('terminalizes a canceled admitted row instead of rolling it back behind later work', async () => {
     let releaseProvider;
     let providerStarted;

@@ -23,7 +23,10 @@ import {
   successorResponsesAfterTerminalState,
   unresolvedSubjectWithoutActiveCustodyTotal,
 } from '../../../../../infrastructure/telemetry/instruments.js';
-import { commitCompletedResponseAndEnqueueA2ATargets } from '../../../../../routes/callback-a2a-trigger.js';
+import {
+  commitCompletedResponseAndEnqueueA2ATargets,
+  commitFailedResponseAndEnqueueA2ACaller,
+} from '../../../../../routes/callback-a2a-trigger.js';
 import { emitQueueUpdated, isPublicQueueEntry } from '../../../../../utils/queue-enrichment.js';
 import type { A2ADispatchDispositionService } from '../../../../ball-custody/A2ADispatchDispositionService.js';
 import type { ActionSuccessorLeaseStore } from '../../../../ball-custody/ActionSuccessorLeaseStore.js';
@@ -4253,6 +4256,20 @@ export class QueueProcessor {
               },
               input,
             ),
+          commitFailedA2AReport: (input: Parameters<NonNullable<RouteOptions['commitFailedA2AReport']>>[0]) =>
+            commitFailedResponseAndEnqueueA2ACaller(
+              {
+                socketManager: this.deps.socketManager,
+                invocationTracker: this.deps.invocationTracker,
+                ...(this.deps.deliveryCursorStore ? { deliveryCursorStore: this.deps.deliveryCursorStore } : {}),
+                queueProcessor: this,
+                messageStore,
+                invocationQueue: queue,
+                log,
+              },
+              input,
+            ),
+          ...(entry.sourceCategory === 'a2a_failure' ? { a2aFailureReport: true } : {}),
           // F254 B3: freshness re-invoke enqueue — strips freshnessContext before queueing
           // (queue only stores standard QueueEntry fields; context is for event-log correlation).
           freshnessReinvokeEnqueue: (e: any) => {
@@ -5123,7 +5140,7 @@ export class QueueProcessor {
           );
           continue;
         }
-        if (!(await this.shouldEnqueueContinuation(continuationCapsule, userId))) {
+        if (!(await this.shouldEnqueueContinuation(continuationCapsule, userId, finalStatus))) {
           log.info(
             { threadId, catId: continuationCapsule.catId },
             '[QueueProcessor] #836: reborn session — skipping continuation enqueue',
@@ -5218,11 +5235,19 @@ export class QueueProcessor {
     }
   }
 
-  private async shouldEnqueueContinuation(capsule: CollaborationContinuityCapsuleV1, userId: string): Promise<boolean> {
+  private async shouldEnqueueContinuation(
+    capsule: CollaborationContinuityCapsuleV1,
+    userId: string,
+    finalStatus: InvocationFinalStatus,
+  ): Promise<boolean> {
     // A handled dispatch continues inside the same Agent Client session. It is
     // terminal evidence for this Queue attempt, never admission for another
     // Queue row / InvocationRecord.
     if (capsule.continuationReason === 'dispatch_handled') return false;
+    // runtime_replacement describes how this attempt recovered its writer. Once
+    // that recovered attempt succeeds, replaying the capsule creates a second,
+    // source-less invocation and can publish a duplicate terminal bubble.
+    if (capsule.continuationReason === 'runtime_replacement' && finalStatus === 'succeeded') return false;
     if (!this.sessionContinuationCoordinator?.resolveSessionStrategy) return true;
     try {
       return (

@@ -1,11 +1,11 @@
 /**
- * F109 Phase A — Toast error tests for all 4 MessageActions UI paths.
+ * F109 Phase A — Toast error tests for MessageActions UI paths.
  *
  * Ensures `!res.ok` (business-logic 403/400) AND `catch` (network error)
  * both show a toast. This was the main silent-failure bug: fetch succeeds
  * but res.ok === false, never enters catch, no user feedback.
  *
- * Covers: confirmSoftDelete, confirmHardDelete, confirmBranch, confirmBranchDirect
+ * Covers: confirmSoftDelete and the unified editable branch action.
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -104,17 +104,6 @@ async function triggerAction(container: HTMLDivElement, buttonTitle: string, dia
   });
 }
 
-async function triggerDirectDialogAction(container: HTMLDivElement, buttonTitle: string, dialogTitle: string) {
-  const action = container.querySelector(`button[title="${buttonTitle}"]`) as HTMLButtonElement | null;
-  expect(action, `button[title="${buttonTitle}"] should exist`).not.toBeNull();
-  await act(async () => action?.click());
-  const dialog = findOpenDialog(dialogTitle);
-  expect(dialog, `dialog "${dialogTitle}" should be open`).toBeTruthy();
-  await act(async () => {
-    await dialog!.onConfirm?.();
-  });
-}
-
 // ---------- suite ----------
 
 describe('F109: MessageActions toast on errors', () => {
@@ -175,9 +164,24 @@ describe('F109: MessageActions toast on errors', () => {
     });
   });
 
-  // ── 2. Branch (from edit) ──
+  // ── 2. Unified editable branch ──
 
-  describe('confirmBranch (edit → branch)', () => {
+  describe('confirmBranch', () => {
+    async function triggerBranch(container: HTMLDivElement) {
+      const branchButtons = container.querySelectorAll('button[aria-label="创建分支"]');
+      expect(branchButtons).toHaveLength(1);
+      expect(container.querySelector('button[aria-label="编辑并创建分支"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="撤回并重新编辑"]')).toBeNull();
+      await act(async () => (branchButtons[0] as HTMLButtonElement).click());
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement | null;
+      expect(textarea?.value).toBe('hello');
+      const createButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === '创建分支',
+      ) as HTMLButtonElement | undefined;
+      expect(createButton).toBeTruthy();
+      await act(async () => createButton?.click());
+    }
+
     it('shows toast on !res.ok', async () => {
       apiFetchMock.mockResolvedValue({
         ok: false,
@@ -185,82 +189,22 @@ describe('F109: MessageActions toast on errors', () => {
         json: async () => ({ error: '无权对此对话创建分支' }),
       });
       renderActions(root);
-
-      // Edit button → opens textarea modal (not a ConfirmDialog)
-      const editBtn = container.querySelector('button[title="编辑 (创建分支)"]') as HTMLButtonElement;
-      expect(editBtn).not.toBeNull();
-      await act(async () => {
-        editBtn.click();
-      });
-
-      // Click the "保存" button inside the edit modal to trigger branch-confirm dialog
-      const saveBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === '保存',
-      ) as HTMLButtonElement | null;
-      expect(saveBtn).not.toBeNull();
-      await act(async () => {
-        saveBtn!.click();
-      });
-
-      // Now the branch-confirm dialog should be open
-      const dialog = findOpenDialog('创建分支');
-      expect(dialog).toBeTruthy();
-      await act(async () => {
-        await dialog!.onConfirm?.();
-      });
+      await triggerBranch(container);
 
       expect(addToastMock).toHaveBeenCalledOnce();
       expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '分支创建失败' });
       expect(pushMock).not.toHaveBeenCalled();
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/threads/thread-1/branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromMessageId: 'msg-1', editedContent: undefined, userId: 'user-1' }),
+      });
     });
 
     it('shows toast on network error (catch path)', async () => {
       apiFetchMock.mockRejectedValue(new Error('Network error'));
       renderActions(root);
-
-      const editBtn = container.querySelector('button[title="编辑 (创建分支)"]') as HTMLButtonElement;
-      await act(async () => {
-        editBtn.click();
-      });
-      const saveBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === '保存',
-      ) as HTMLButtonElement;
-      await act(async () => {
-        saveBtn.click();
-      });
-
-      const dialog = findOpenDialog('创建分支');
-      expect(dialog).toBeTruthy();
-      await act(async () => {
-        await dialog!.onConfirm?.();
-      });
-
-      expect(addToastMock).toHaveBeenCalledOnce();
-      expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '分支创建失败' });
-    });
-  });
-
-  // ── 3. Direct Branch ──
-
-  describe('confirmBranchDirect', () => {
-    it('shows toast on !res.ok', async () => {
-      apiFetchMock.mockResolvedValue({
-        ok: false,
-        status: 403,
-        json: async () => ({ error: '无权对此对话创建分支' }),
-      });
-      renderActions(root);
-      await triggerDirectDialogAction(container, '从这里分支', '从这里分支');
-
-      expect(addToastMock).toHaveBeenCalledOnce();
-      expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '分支创建失败' });
-      expect(pushMock).not.toHaveBeenCalled();
-    });
-
-    it('shows toast on network error (catch path)', async () => {
-      apiFetchMock.mockRejectedValue(new Error('Network error'));
-      renderActions(root);
-      await triggerDirectDialogAction(container, '从这里分支', '从这里分支');
+      await triggerBranch(container);
 
       expect(addToastMock).toHaveBeenCalledOnce();
       expect(addToastMock.mock.calls[0][0]).toMatchObject({ type: 'error', title: '分支创建失败' });
