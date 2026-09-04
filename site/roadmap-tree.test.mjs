@@ -282,17 +282,25 @@ describe('plate study opens straight off disk', () => {
     for (const id of ['siamese', 'ragdoll', 'maine']) {
       const block = new RegExp(`  ${id}: \\{([\\s\\S]*?)\\n  \\},`).exec(cats);
       assert.ok(block, `${id} must be screened`);
-      const poses = [...block[1].matchAll(/(\w+): \{ w: (\d+), h: (\d+), dots: \[([^\]]*)\]/g)];
+      const poses = [
+        ...block[1].matchAll(/(\w[\w-]*): \{ w: (\d+), h: (\d+), contact: (\{[^}]*\}), dots: \[([^\]]*)\]/g),
+      ];
       assert.ok(poses.length >= 1, `${id} needs at least one pose`);
       assert.ok(
         poses.some((m) => m[1] === 'sit'),
         `${id} needs a sit pose to fall back to`,
       );
-      for (const [, pose, w, h, dots] of poses) {
+      for (const [, pose, w, h, contact, dots] of poses) {
         const n = dots.split(',').length;
         assert.equal(n % 3, 0, `${id}/${pose} dots must be x,y,r triples`);
         assert.ok(n / 3 > 200, `${id}/${pose} needs enough dots to read, got ${n / 3}`);
         assert.ok(Number(w) > 20 && Number(h) > 20, `${id}/${pose} needs a real size`);
+        // Every pose declares where it touches the world; the thing touched is never in the sprite.
+        const side = JSON.parse(contact).side;
+        assert.ok(
+          ['ground', 'ledge', 'wall-left', 'wall-right'].includes(side),
+          `${id}/${pose} has an unknown contact side: ${side}`,
+        );
       }
     }
     const page = read('roadmap-plate.html');

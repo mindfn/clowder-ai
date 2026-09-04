@@ -14,7 +14,7 @@
  *
  *   node site/tools/screen-cats.mjs
  */
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPixels } from './png-alpha.mjs';
@@ -96,6 +96,26 @@ function screen(src, box, h) {
   return { w, h, dots };
 }
 
+/**
+ * Where the pose touches the world. Most poses stand on the ground, which is just the
+ * bottom of the measured box. Some do not: a cat on a branch has its tail below its paws,
+ * and a cat leaning on a surface touches it with its side. The surface itself never belongs
+ * to the sprite — it is the consumer's tree trunk, or the edge of your browser window — so
+ * the pose declares which edge is the contact and the consumer supplies the thing touched.
+ *
+ * Sidecar {cat}-{pose}.json, all optional:
+ *   { "contact": { "side": "ground" | "ledge" | "wall-left" | "wall-right", "at": <px in cell> } }
+ */
+function contactOf(id, pose, box) {
+  const file = join(SPRITES, `${id}-${pose}.json`);
+  if (!existsSync(file)) return { side: 'ground' };
+  const declared = JSON.parse(readFileSync(file, 'utf8')).contact;
+  if (!declared || declared.side === 'ground') return { side: 'ground' };
+  const axis = declared.side === 'ledge' ? box.y : box.x;
+  const span = declared.side === 'ledge' ? box.h : box.w;
+  return { side: declared.side, at: +(((declared.at ?? 0) - axis) / span).toFixed(4) };
+}
+
 /** Prefer a row strip, fall back to a single sprite. */
 function source(id, pose) {
   for (const name of [`${id}-${pose}-row.png`, `${id}-${pose}.png`]) {
@@ -118,7 +138,10 @@ const screened = CATS.map((cat) => {
   for (const pose of POSES) {
     const found = source(cat.id, pose);
     if (!found) continue;
-    poses[pose] = screen(found.src, found.box, Math.round(found.box.h * scale));
+    poses[pose] = {
+      ...screen(found.src, found.box, Math.round(found.box.h * scale)),
+      contact: contactOf(cat.id, pose, found.box),
+    };
   }
   return { id: cat.id, poses };
 });
@@ -126,7 +149,10 @@ const body = screened
   .map(
     (c) =>
       `  ${c.id}: {\n${Object.entries(c.poses)
-        .map(([pose, s]) => `    ${pose}: { w: ${s.w}, h: ${s.h}, dots: [${s.dots.join(',')}] },`)
+        .map(
+          ([pose, s]) =>
+            `    ${pose}: { w: ${s.w}, h: ${s.h}, contact: ${JSON.stringify(s.contact)}, dots: [${s.dots.join(',')}] },`,
+        )
         .join('\n')}\n  },`,
   )
   .join('\n');
