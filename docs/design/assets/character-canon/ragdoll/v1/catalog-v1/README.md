@@ -9,7 +9,11 @@ Status: **38-pose Ragdoll reference catalog**. The turnaround identity, look-dow
 - Every row is a one-frame 192×208 RGBA strip.
 - ragdoll-actions-preview-59x64.png is the real-display-size readability sheet, ordered exactly as the manifest.
 - High-resolution transparent masters live in masters/; consumer rows live in the shared dist/ directory.
-- Props appear only where the action would otherwise be ambiguous: climb/rub/headbutt contact surfaces, drink bowl, carry/present note, perch ledge, and the Ragdoll's notebook for work/read.
+- Consumer-owned support surfaces never appear in a sprite. `climb`, `rub`,
+  `headbutt`, and `perch` instead ship a `{cat}-{pose}.json` sidecar beside the
+  row in `dist/`; its `contact.side` and cell-pixel `contact.at` place the cat
+  against the consumer's wall or ledge. Handheld semantic props remain part of
+  actions such as drink, carry, present, work, and read.
 
 ## Vocabulary
 
@@ -31,7 +35,13 @@ Common prompt contract:
 
 > Use the operator-approved Ragdoll turnaround. Preserve the small fluffy silver-gray and cream Ragdoll, tabby markings, large blue eye, pink ears and nose, purple collar and flower pendant. Draw one complete left-facing side-view cat in 2D hand-drawn anime style with clean outlines. The silhouette must survive 59×64 display. Use transparent alpha; no scene, shadow, text, crop, duplicate cat, or fused limbs.
 
-Each call added only the named action's anatomical pose and the minimum required prop. Generated fake checkerboards were not accepted as transparency. site/tools/prepare-character-action.mjs removes only pale low-chroma background connected to the canvas edge, crops the resulting alpha, scales without changing aspect ratio, and pads to the house cell. site/tools/build-character-contact-sheet.mjs performs the required 59×64 batch check.
+Each call added only the named action's anatomical pose and the minimum required
+handheld prop. Generated fake checkerboards were not accepted as transparency.
+site/tools/prepare-character-action.mjs removes only pale low-chroma background
+connected to the canvas edge, crops the resulting alpha, scales without changing
+aspect ratio, and pads to the house cell. site/tools/build-character-contact-sheet.mjs
+performs the required 59×64 batch check. The four contact actions were reissued
+without their temporary support guides after the full-catalog review.
 
 ## Review lineage
 

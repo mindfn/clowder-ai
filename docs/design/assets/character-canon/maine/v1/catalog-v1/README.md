@@ -6,6 +6,15 @@ Maine Coon identity. Each action was generated separately, then processed by
 `site/tools/prepare-character-action.mjs` into a 192×208 RGBA row with a shared
 baseline. `maine-actions-preview-59x64.png` is the complete readability check.
 
-Identity invariants: big long-haired gray tabby body, broad ruff, ear tufts,
-bushy striped tail, green eye, and tea-cup pendant collar. These are identity
-signals, not a Ragdoll palette swap.
+Consumer-owned support surfaces are absent from `climb`, `rub`, `headbutt`, and
+`perch`. Each of those rows has a `{cat}-{pose}.json` sidecar in `dist/` declaring
+the virtual wall or ledge contact in 192×208 cell pixels.
+
+Identity invariants: big long-haired gray tabby body, broad bare ruff, ear tufts,
+bushy striped tail, green eye, and no collar or neck pendant. The green tea cup
+is a handheld semantic prop, never jewelry. These are identity signals, not a
+Ragdoll palette swap.
+
+Identity correction status: the four contact actions were reissued against this
+contract. The remaining rows inherited a pendant from the first catalog pass and
+must be reissued before the Maine catalog can pass its identity gate.
