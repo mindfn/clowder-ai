@@ -35,7 +35,6 @@ import {
   signalStudyTools,
   signalsTools,
   skillConsumptionTools,
-  submitSemanticSweepTools,
   unitEvaluationTools,
 } from './tools/index.js';
 
@@ -60,7 +59,6 @@ export const CANONICAL_TOOL_SOURCES = {
     ...gameActionTools,
     ...scheduleTools,
     ...shellTools,
-    ...submitSemanticSweepTools,
     ...unitEvaluationTools,
   ],
   memory: [

@@ -93,9 +93,6 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/evaluation/evaluator-runner.ts
   - packages/api/src/infrastructure/harness-eval/trace-annotation/PendingTraceMarkerStore.ts
   - packages/api/src/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.ts
-  - packages/api/src/infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.ts
-  - packages/api/src/infrastructure/harness-eval/trace-annotation/SemanticSweepJobStore.ts
-  - packages/api/src/infrastructure/harness-eval/trace-annotation/submit-semantic-sweep.ts
   - packages/api/src/infrastructure/harness-eval/guard-threshold-escalation.ts
   - packages/api/src/infrastructure/harness-eval/objective-registry.ts
   - packages/api/src/routes/callback-docs-routes.ts
@@ -131,7 +128,7 @@ doc_anchors:
   - docs/harness-feedback/registry/measurement-bundles.yaml
   - feature-discussions/2026-05-21-f192-phase-e-eval-hub-kickoff/README.md
   - sop-definitions/README.md
-static_scan_hints: [harness-eval, VerdictHandoffPacket, lifecycle-root.json, eval:verdict-lifecycle, reeval-closure, reeval-case, legacy_case_migrated, legacy-reeval-case-migration, repairDebtStatus, reevalDebtStatus, eval-case-v1, eval-domain, reeval, harness-fit-digest, Eval Hub, freshness-closure-replay, f254-freshness-replay, FreshnessReplayProvider, evalFreshnessLiveVerdict, no_data, rawArtifactSha256, SopDefinition, sop-definitions, predicate, friction, paw-feel, PawFeelDisposition, paw-feel-inbox, FrictionSignal, measurement-validity, measurement-certificate, measurement-bundle-result, same-version-replay, prospective_paired_capture, harness-ledger, TraceEpisode, TraceAnnotation, EvaluationSnapshot, MetricResult, EvaluationIndexer, SemanticSweep, segment-lifeline, ObjectiveRegistry, objective-registry, list_objectives, objectiveId, metricId]
+static_scan_hints: [harness-eval, VerdictHandoffPacket, lifecycle-root.json, eval:verdict-lifecycle, reeval-closure, reeval-case, legacy_case_migrated, legacy-reeval-case-migration, repairDebtStatus, reevalDebtStatus, eval-case-v1, eval-domain, reeval, harness-fit-digest, Eval Hub, freshness-closure-replay, f254-freshness-replay, FreshnessReplayProvider, evalFreshnessLiveVerdict, no_data, rawArtifactSha256, SopDefinition, sop-definitions, predicate, friction, paw-feel, PawFeelDisposition, paw-feel-inbox, FrictionSignal, measurement-validity, measurement-certificate, measurement-bundle-result, same-version-replay, prospective_paired_capture, harness-ledger, TraceEpisode, TraceAnnotation, EvaluationSnapshot, MetricResult, EvaluationIndexer, semantic-sweep-history, segment-lifeline, ObjectiveRegistry, objective-registry, list_objectives, objectiveId, metricId]
 cited_by:
   - F192 Phase E-pilot
   - F245 Phase A (paw-feel friction collector) + Phase B (cancel/user-feedback/eval-domain adapters + aggregator + clusterer + rollup input; domain registration + rollup sink land in Phase C)

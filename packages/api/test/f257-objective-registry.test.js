@@ -159,11 +159,7 @@ describe('F257 UnitEvaluationManifest', () => {
       source,
       /if \(catalogResult\.ok\)[\s\S]*bootstrapObjectiveEvaluationRuntime[\s\S]*else[\s\S]*app\.log\.warn/,
     );
-    assert.match(
-      source,
-      /const messageStore = createMessageStore[\s\S]*try \{[\s\S]*bootstrapSemanticSweepCoordinator[\s\S]*catch \(err\)[\s\S]*degraded/,
-      'semantic sweep bootstrap must run after MessageStore and degrade when the optional evaluation runtime is absent',
-    );
+    assert.doesNotMatch(source, /bootstrapSemanticSweepCoordinator|getSemanticSweepCoordinator/);
   });
 
   test('missing canonical units and unknown objectives fail closed', () => {

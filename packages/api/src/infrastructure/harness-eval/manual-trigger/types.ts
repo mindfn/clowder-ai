@@ -52,7 +52,6 @@ export interface ManualTriggerDeps {
    */
   wiredPublishDomains?: ReadonlySet<string>;
   guardRejectionLog?: GuardRejectionEventLog;
-  semanticSweepCoordinator?: import('../trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
 }
 
 export interface HandlerError {

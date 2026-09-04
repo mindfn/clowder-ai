@@ -66,6 +66,7 @@ metric_birth_certificate:
 
 ```ts
 type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
+// `semantic-sweep` is retained only so historical annotations remain readable.
 type AnnotationSource = 'mcp-marker' | 'structured-rule' | 'semantic-sweep';
 
 interface TraceEpisodeRef {
@@ -312,21 +313,16 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 4. 保留旧 DeviationEventLog 供其他消费者只读，但从此路径拆除；不迁移旧数据。
 5. 运行 API + MCP focused 测试；commit `feat(f257): bind harness signals to trace episodes`。
 
-### Task 3: Add structured and semantic annotation producers
+### Task 3: Add the structured annotation producer
 
 **Files:**
 - Create: `packages/api/src/infrastructure/harness-eval/trace-annotation/structured-rule-tagger.ts`
-- Create: `packages/api/src/infrastructure/harness-eval/trace-annotation/semantic-sweep.ts`
-- Create: `packages/api/src/infrastructure/harness-eval/trace-annotation/semantic-evaluator-packet.ts`
-- Modify: `packages/api/src/infrastructure/harness-eval/eval-cat-invocation.ts`
 - Test: `packages/api/test/harness-eval/structured-rule-tagger.test.js`
-- Test: `packages/api/test/harness-eval/semantic-sweep.test.js`
 
-1. 写红测：结构规则和 MCP 写相同 schema；未归属 episode 入 sweep；irrelevant/unscorable 不重复分析。
+1. 写红测：结构规则和 MCP 写相同 schema；规则只能读取不可变 episode。
 2. 实现纯函数规则注册表，规则只能输出 annotation draft，不能改 raw trace。
-3. 实现 owner-scoped unclassified index + cursor + snapshot packet；LLM 输出 strict schema，解析失败保持 retryable。
-4. 通过现有 eval-domain worker 异步投递；禁止从 route/QueueProcessor await LLM。
-5. 跑测试；commit `feat(f257): unify structured and semantic trace annotations`。
+3. `semantic-sweep` 不设生产者；仅保留 source 枚举以读取历史 annotation，历史记录不得进入触发、排序或治理。
+4. 跑测试；commit `feat(f257): bind structured trace annotations`。
 
 ### Task 4: Canonize 23 Objectives, 46 unit attachments, and metric models
 
