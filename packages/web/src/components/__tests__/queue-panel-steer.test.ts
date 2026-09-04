@@ -1,7 +1,7 @@
 /**
  * F047: QueuePanel steer UI
  * - Steer button shows only for queued entries
- * - Steer modal submits the sole cancel-and-restart action
+ * - Steer modal offers interrupting restart and non-interrupting delivery
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -289,7 +289,7 @@ describe('QueuePanel steer (F047)', () => {
     expect(container.querySelector('[data-testid="steer-q1"]')).not.toBeNull();
   });
 
-  it('shows the single Steer contract as stop current then restart from this exact message', () => {
+  it('offers both non-interrupting delivery and stop-then-restart for any selected member', async () => {
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
@@ -300,9 +300,17 @@ describe('QueuePanel steer (F047)', () => {
     act(() => steerBtn?.click());
 
     expect(container.textContent).toContain('opus');
+    expect(container.querySelector('[data-testid="steer-append"]')?.textContent).toBe('立即发送，不停止');
     expect(container.querySelector('[data-testid="steer-confirm"]')?.textContent).toBe('停止回复并发送');
     expect(container.textContent).not.toContain('旧回复会被停止');
     expect(container.textContent).not.toContain('提到队首');
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-append"]')?.click());
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/continue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: 'opus' }),
+    });
   });
 
   it('offers a non-interrupting reminder for an unread target with an active turn', async () => {

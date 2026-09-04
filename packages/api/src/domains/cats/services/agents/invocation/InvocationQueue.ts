@@ -16,6 +16,7 @@ import type {
   CatRoutingError,
   MessageFrom,
   QueueAuthorIntent,
+  QueueAuthorIntentFallbackReason,
   QueueReminderAttempt,
   QueueTargetAttemptTerminalReason,
   WaitContinuationCarrierV1,
@@ -633,6 +634,70 @@ export class InvocationQueue {
       };
     }
     return { outcome: 'claimed', entries: this.cacheLedgerClaim(claimed.entries, claimId), targetCatId };
+  }
+
+  /**
+   * Bind one public human message to the selected member and persist the
+   * author's non-interrupting delivery intent. This is the Queue-panel
+   * counterpart of composer admission: the same row either appends to the
+   * exact current run or remains ordinary next work without canceling it.
+   */
+  async bindContinueCurrentIntentDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: string,
+    authorIntent: QueueAuthorIntent,
+    at = Date.now(),
+  ): Promise<QueueEntry | null> {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (
+      !entry ||
+      entry.status !== 'queued' ||
+      entry.kind !== 'conversation_input' ||
+      entry.from.kind !== 'user' ||
+      isSystemPinnedQueueEntry(entry)
+    ) {
+      return null;
+    }
+    const assignsTargetlessConversation = entry.target.kind === 'unassigned';
+    if (!assignsTargetlessConversation && !isOrdinaryQueueTargetEligible(entry, targetCatId)) return null;
+
+    const claimId = randomUUID();
+    const claimed = await this.ledgerStore.claim(
+      threadId,
+      entryId,
+      claimId,
+      at,
+      assignsTargetlessConversation ? targetCatId : undefined,
+    );
+    if (claimed.outcome !== 'claimed' || !claimed.entries[0]) return null;
+    const replacement = structuredClone(claimed.entries[0]);
+    replacement.delivery.authorIntent = structuredClone(authorIntent);
+    const committed = await this.ledgerStore.commit(threadId, entryId, claimId, 'queued', at, replacement);
+    if (committed.outcome !== 'updated') {
+      await this.ledgerStore.restore(threadId, entryId, claimId, assignsTargetlessConversation);
+      return null;
+    }
+    const [bound] = this.cacheLedgerEntries([committed.entry]);
+    return bound ? structuredClone(bound) : null;
+  }
+
+  /** Record the truthful next-work fallback after an exact Append race. */
+  async fallbackQueuedAuthorIntentDurable(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    reason: QueueAuthorIntentFallbackReason,
+    at = Date.now(),
+  ): Promise<boolean> {
+    const result = await this.mutateQueuedLedgerEntry(threadId, userId, entryId, (row) => {
+      const intent = row.delivery.authorIntent;
+      if (!intent || intent.requested !== 'continue_current' || intent.fallbackAt !== undefined) return false;
+      row.delivery.authorIntent = { ...intent, fallbackAt: at, fallbackReason: reason };
+      return true;
+    });
+    return result?.changed ?? false;
   }
 
   async restoreClaimedEntries(threadId: string, entryIds: readonly string[]): Promise<boolean> {

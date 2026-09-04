@@ -608,6 +608,7 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
     next.lifecycle,
     lifecycleInputIdentityForStoredMessage(next),
     targetIds,
+    { allowFailedResponse: patch.status === 'failed' },
   );
   if (assigned.kind === 'conflict') {
     return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
@@ -758,6 +759,7 @@ export function assignLifecycleDispatchTargetsMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
   identity: Pick<LifecycleInputDispatchPatch, 'orderKey' | 'producerInvocationId'>,
   targetIds: readonly string[],
+  options: { allowFailedResponse?: boolean } = {},
 ): AssignLifecycleDispatchTargetsResult {
   if (targetIds.some((targetId) => !targetId) || new Set(targetIds).size !== targetIds.length) {
     return { kind: 'conflict' };
@@ -776,7 +778,10 @@ export function assignLifecycleDispatchTargetsMetadata(
   }
   if (
     current.kind === 'delivery_failure' ||
-    (current.kind === 'response' && current.status !== 'processing' && current.status !== 'completed')
+    (current.kind === 'response' &&
+      current.status !== 'processing' &&
+      current.status !== 'completed' &&
+      !(options.allowFailedResponse && current.status === 'failed'))
   ) {
     return { kind: 'conflict' };
   }

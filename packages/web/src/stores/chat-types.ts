@@ -830,7 +830,16 @@ export interface QueueEntry {
   /** F175: dequeue priority */
   priority?: 'urgent' | 'normal';
   /** F175: source category for visual grouping */
-  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'continuation' | 'issue' | 'freshness';
+  sourceCategory?:
+    | 'ci'
+    | 'review'
+    | 'conflict'
+    | 'scheduled'
+    | 'a2a'
+    | 'a2a_failure'
+    | 'continuation'
+    | 'issue'
+    | 'freshness';
   /** Queue-internal dedup key for continuation work. */
   continuationKey?: string;
   /** F175: explicit dequeue position from drag-reorder */

@@ -164,14 +164,14 @@ describe('MessageActions selection entry', () => {
     expect(copyId).not.toBeNull();
     expect(copyId?.tabIndex).toBe(0);
     expect(toolbar?.querySelector('button[title="引用回复"]')).not.toBeNull();
-    expect(toolbar?.querySelector('button[title="从这里分支"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[title="创建分支"]')).not.toBeNull();
     expect(toolbar?.querySelector('button[title="删除"]')).not.toBeNull();
     expect(toolbar?.querySelector('button[aria-label="更多消息操作"]')).toBeNull();
     expect(
       Array.from(toolbar?.querySelectorAll('button') ?? []).map(
         (button) => button.getAttribute('title') ?? button.getAttribute('aria-label'),
       ),
-    ).toEqual(['message-1', '引用回复', '多选消息', '从这里分支', '删除', '编辑 (创建分支)']);
+    ).toEqual(['message-1', '引用回复', '多选消息', '创建分支', '删除']);
     React.act(() => select?.click());
     expect(onEnterSelection).toHaveBeenCalledWith('message-1');
 
@@ -233,7 +233,7 @@ describe('MessageActions selection entry', () => {
     expect(toolbar?.querySelector('button[title="播放语音"]')).not.toBeNull();
     expect(toolbar?.querySelector('button[aria-label^="复制消息 ID:"]')).not.toBeNull();
     expect(toolbar?.querySelector('button[title="引用回复"]')).not.toBeNull();
-    expect(toolbar?.querySelector('button[title="从这里分支"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[title="创建分支"]')).not.toBeNull();
     expect(toolbar?.querySelector('button[title="删除"]')).not.toBeNull();
   });
 
@@ -355,7 +355,7 @@ describe('MessageActions selection entry', () => {
     expect(assistantCheckbox?.className).not.toContain('right-1');
   });
 
-  it('keeps one direct branch action and one delete action in the unified hover dock', () => {
+  it('keeps one branch action and one delete action in the unified hover dock', () => {
     React.act(() => {
       root.render(
         <MessageActions message={message()} threadId="thread-1" selectionEligible onEnterSelection={vi.fn()}>
@@ -364,7 +364,7 @@ describe('MessageActions selection entry', () => {
       );
     });
 
-    expect(container.querySelectorAll('button[title="从这里分支"]')).toHaveLength(1);
+    expect(container.querySelectorAll('button[title="创建分支"]')).toHaveLength(1);
     expect(container.querySelectorAll('button[title="删除"]')).toHaveLength(1);
     expect(container.querySelector('button[aria-label="更多消息操作"]')).toBeNull();
     expect(document.querySelector('[role="menu"]')).toBeNull();

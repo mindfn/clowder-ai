@@ -43,8 +43,10 @@ function buildDeps(overrides = {}) {
     processNext: mock.fn(async () => ({ started: false })),
     releaseSlot: mock.fn(() => {}),
     releaseThread: mock.fn(() => {}),
+    requestDrain: mock.fn(async () => {}),
     finalizeRemovedEntry: mock.fn(async () => true),
     appendExactEntry: mock.fn(async () => ({ outcome: 'appended', entry: {}, acceptedTargetIds: ['opus'] })),
+    tryAutoAppendExactEntry: mock.fn(async () => ({ outcome: 'appended', entry: {}, acceptedTargetIds: ['opus'] })),
   };
   queueProcessor.processClaimedSteerEntries = mock.fn(async (threadId, userId, entryIds) => ({
     started: true,
@@ -367,6 +369,67 @@ describe('Queue Management API', () => {
       entryId: queued.entry.id,
       ...payload,
     });
+  });
+
+  it('POST /queue/:entryId/continue appends to the exact active run without canceling it', async () => {
+    const queued = await enqueueDurableEntry(deps.invocationQueue, { targetCats: [] });
+    deps.invocationTracker.has.mock.mockImplementation((_threadId, catId) => catId === 'opus');
+    deps.invocationTracker.getUserId.mock.mockImplementation(() => 'user-a');
+    deps.invocationTracker.getExecutionId.mock.mockImplementation(() => 'turn-1');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/continue`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: { targetCatId: 'opus' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().outcome, 'appended');
+    assert.deepEqual(deps.queueProcessor.tryAutoAppendExactEntry.mock.calls[0].arguments[0], {
+      threadId: 't1',
+      userId: 'user-a',
+      entryId: queued.entry.id,
+    });
+    assert.equal(deps.invocationTracker.cancel.mock.calls.length, 0);
+    const bound = deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id);
+    assert.equal(bound?.target.catId, 'opus');
+    assert.equal(bound?.delivery.authorIntent?.requested, 'continue_current');
+    assert.equal(bound?.delivery.authorIntent?.boundParentInvocationId, 'turn-1');
+  });
+
+  it('POST /queue/:entryId/continue keeps unsupported active carriers as next work without canceling', async () => {
+    const queued = await enqueueDurableEntry(deps.invocationQueue, { targetCats: [] });
+    deps.invocationTracker.has.mock.mockImplementation((_threadId, catId) => catId === 'codex');
+    deps.invocationTracker.getUserId.mock.mockImplementation(() => 'user-a');
+    deps.invocationTracker.getExecutionId.mock.mockImplementation(() => 'turn-kimi');
+    deps.resolveCarrierCapability.mock.mockImplementation(() => ({
+      provider: 'other',
+      carrier: 'other',
+      deliverySemantics: 'unsupported',
+    }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/continue`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: { targetCatId: 'codex' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json(), {
+      outcome: 'queued',
+      targetCatId: 'codex',
+      effective: 'next_work',
+      reason: 'unsupported_carrier',
+    });
+    assert.equal(deps.queueProcessor.tryAutoAppendExactEntry.mock.calls.length, 0);
+    assert.equal(deps.invocationTracker.cancel.mock.calls.length, 0);
+    assert.equal(deps.queueProcessor.requestDrain.mock.calls.length, 1);
+    const bound = deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id);
+    assert.equal(bound?.target.catId, 'codex');
+    assert.equal(bound?.delivery.authorIntent?.requested, 'continue_current');
+    assert.equal(bound?.delivery.authorIntent?.fallbackReason, 'unsupported_carrier');
   });
 
   it('GET /queue keeps fan-out target lifecycle isolated per ledger row', async () => {

@@ -103,7 +103,16 @@ export interface QueueLedgerEntry {
   terminalAt?: number;
   retiringGroupId?: string;
   priority: 'urgent' | 'normal';
-  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'continuation' | 'issue' | 'freshness';
+  sourceCategory?:
+    | 'ci'
+    | 'review'
+    | 'conflict'
+    | 'scheduled'
+    | 'a2a'
+    | 'a2a_failure'
+    | 'continuation'
+    | 'issue'
+    | 'freshness';
   position?: number;
 }
 
@@ -306,7 +315,17 @@ function assertQueueClassification(entry: Partial<QueueLedgerEntry>): void {
     throw new Error('queue ledger status is invalid');
   }
   if (entry.priority !== 'urgent' && entry.priority !== 'normal') throw new Error('queue ledger priority is invalid');
-  const sourceCategories = ['ci', 'review', 'conflict', 'scheduled', 'a2a', 'continuation', 'issue', 'freshness'];
+  const sourceCategories = [
+    'ci',
+    'review',
+    'conflict',
+    'scheduled',
+    'a2a',
+    'a2a_failure',
+    'continuation',
+    'issue',
+    'freshness',
+  ];
   if (entry.sourceCategory !== undefined && !sourceCategories.includes(entry.sourceCategory)) {
     throw new Error('queue ledger source category is invalid');
   }

@@ -23,7 +23,6 @@ import { MessageActionSlotProvider } from './MessageActionSlot';
 import { SelectionAnnotationAction } from './SelectionAnnotationAction';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { TransferTargetPicker } from './TransferTargetPicker';
-import { TrueRecallActionButton } from './TrueRecallActionButton';
 import { TtsPlayButton } from './TtsPlayButton';
 import { useLegacyLocalReviewDisposition } from './useLegacyLocalReviewDisposition';
 import { useMessageAnnotationMarkers } from './useMessageAnnotationMarkers';
@@ -37,12 +36,7 @@ function showErrorToast(title: string, body?: Record<string, unknown>) {
   });
 }
 
-type DialogState =
-  | { type: 'none' }
-  | { type: 'soft-delete' }
-  | { type: 'edit'; editedContent: string }
-  | { type: 'branch-confirm'; editedContent: string }
-  | { type: 'branch-direct' };
+type DialogState = { type: 'none' } | { type: 'soft-delete' } | { type: 'branch-edit'; editedContent: string };
 
 interface MessageActionsProps {
   message: ChatMessage;
@@ -210,11 +204,9 @@ export function MessageActions({
 
   const handleSoftDelete = useCallback(() => setDialog({ type: 'soft-delete' }), []);
 
-  const handleEdit = useCallback(() => {
-    setDialog({ type: 'edit', editedContent: message.content });
+  const handleBranch = useCallback(() => {
+    setDialog({ type: 'branch-edit', editedContent: message.content });
   }, [message.content]);
-
-  const handleBranchDirect = useCallback(() => setDialog({ type: 'branch-direct' }), []);
 
   const confirmSoftDelete = useCallback(async () => {
     setDialog({ type: 'none' });
@@ -235,13 +227,10 @@ export function MessageActions({
     }
   }, [message.id, threadId, removeThreadMessage]);
 
-  const handleBranchConfirm = useCallback(() => {
-    if (dialog.type !== 'edit') return;
-    setDialog({ type: 'branch-confirm', editedContent: dialog.editedContent });
-  }, [dialog]);
-
+  const branchingRef = useRef(false);
   const confirmBranch = useCallback(async () => {
-    if (dialog.type !== 'branch-confirm') return;
+    if (dialog.type !== 'branch-edit' || branchingRef.current) return;
+    branchingRef.current = true;
     const { editedContent } = dialog;
     setDialog({ type: 'none' });
     try {
@@ -263,33 +252,10 @@ export function MessageActions({
       }
     } catch {
       showErrorToast('分支创建失败');
-    }
-  }, [dialog, message.id, message.content, threadId]);
-
-  const branchingRef = useRef(false);
-  const confirmBranchDirect = useCallback(async () => {
-    if (branchingRef.current) return;
-    branchingRef.current = true;
-    setDialog({ type: 'none' });
-    try {
-      const res = await apiFetch(`/api/threads/${threadId}/branch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fromMessageId: message.id, userId: getUserId() }),
-      });
-      if (res.ok) {
-        const { threadId: newThreadId } = await res.json();
-        pushThreadRouteWithHistory(newThreadId, typeof window !== 'undefined' ? window : undefined);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        showErrorToast('分支创建失败', body);
-      }
-    } catch {
-      showErrorToast('分支创建失败');
     } finally {
       branchingRef.current = false;
     }
-  }, [message.id, threadId]);
+  }, [dialog, message.id, message.content, threadId]);
 
   const close = useCallback(() => setDialog({ type: 'none' }), []);
 
@@ -423,10 +389,10 @@ export function MessageActions({
           <>
             <button
               type="button"
-              onClick={handleBranchDirect}
+              onClick={handleBranch}
               className="rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-accent"
-              title="从这里分支"
-              aria-label="从这里分支"
+              title="创建分支"
+              aria-label="创建分支"
             >
               <svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <circle cx="6" cy="5" r="2" strokeWidth={2} />
@@ -456,27 +422,6 @@ export function MessageActions({
                 />
               </svg>
             </button>
-            {isUser && (
-              <>
-                <TrueRecallActionButton message={message} threadId={threadId} />
-                <button
-                  type="button"
-                  onClick={handleEdit}
-                  className="p-1 rounded hover:bg-cafe-surface-elevated text-cafe-muted hover:text-conn-blue-text transition-colors"
-                  title="编辑 (创建分支)"
-                  aria-label="编辑并创建分支"
-                >
-                  <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                    />
-                  </svg>
-                </button>
-              </>
-            )}
           </>
         )}
       </div>
@@ -615,17 +560,17 @@ export function MessageActions({
         onCancel={close}
       />
 
-      {/* Edit: inline textarea */}
-      {dialog.type === 'edit' && (
-        <div
-          className="fixed inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={close}
-        >
-          <div
-            className="bg-cafe-surface rounded-xl shadow-xl p-6 max-w-lg w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-base font-semibold mb-2">编辑消息</h3>
+      {/* One branch action: optionally edit the copied message before creating. */}
+      {dialog.type === 'branch-edit' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <button
+            type="button"
+            aria-label="关闭创建分支"
+            className="absolute inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm"
+            onClick={close}
+          />
+          <div className="relative bg-cafe-surface rounded-xl shadow-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="text-base font-semibold mb-2">创建分支</h3>
             <textarea
               value={dialog.editedContent}
               onChange={(e) => setDialog({ ...dialog, editedContent: e.target.value })}
@@ -633,42 +578,24 @@ export function MessageActions({
             />
             <div className="flex justify-end gap-2">
               <button
+                type="button"
                 onClick={close}
                 className="px-4 py-2 text-sm text-cafe-secondary hover:bg-cafe-surface-elevated rounded-lg"
               >
                 取消
               </button>
               <button
-                onClick={handleBranchConfirm}
+                type="button"
+                onClick={confirmBranch}
                 disabled={!dialog.editedContent.trim()}
                 className="px-4 py-2 text-sm text-[var(--cafe-surface)] bg-conn-blue-text hover:bg-conn-blue-hover rounded-lg disabled:opacity-40"
               >
-                保存
+                创建分支
               </button>
             </div>
           </div>
         </div>
       )}
-
-      {/* Branch confirmation (from edit) */}
-      <ConfirmDialog
-        open={dialog.type === 'branch-confirm'}
-        title="创建分支"
-        message="编辑将从此消息创建一个新的对话分支。原对话保留不变。是否继续？"
-        confirmLabel="创建分支"
-        onConfirm={confirmBranch}
-        onCancel={close}
-      />
-
-      {/* Direct branch confirmation (no edit) */}
-      <ConfirmDialog
-        open={dialog.type === 'branch-direct'}
-        title="从这里分支"
-        message="将从此消息创建一个新的对话分支，复制到这条消息为止的所有历史。原对话保留不变。"
-        confirmLabel="创建分支"
-        onConfirm={confirmBranchDirect}
-        onCancel={close}
-      />
     </div>
   );
 }

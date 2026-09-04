@@ -4,6 +4,7 @@
  * GET    /api/threads/:threadId/queue               → 列出队列条目
  * DELETE /api/threads/:threadId/queue/:entryId       → 撤回条目
  * POST   /api/threads/:threadId/queue/:entryId/steer → Steer queued entry（取消当前轮并以同一消息立即启动）
+ * POST   /api/threads/:threadId/queue/:entryId/continue → 不打断当前轮：Append 或保留为下一件工作
  * POST   /api/threads/:threadId/queue/:entryId/append → Append queued entry into exact existing Active Run(s)
  * PATCH  /api/threads/:threadId/queue/:entryId/move → 重排序（上移/下移）
  * PATCH  /api/threads/:threadId/queue/reorder       → F175: 批量设置 position（拖拽重排）
@@ -60,6 +61,7 @@ import {
 import { resolveUserId } from '../utils/request-identity.js';
 import { type LiveExecutionCandidate, registerActiveExecutionRoutes } from './active-execution-routes.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
+import { resolveQueueAuthorIntentByCatId } from './message-disposition-admission.js';
 
 interface ManagedCommandWakeRecoveryLike {
   retireCarrier(messageIds: readonly string[], reason: 'withdrawn'): Promise<number>;
@@ -325,6 +327,8 @@ const steerBodySchema = z
     targetCatId: z.string().min(1).optional(),
   })
   .strict();
+
+const continueBodySchema = z.object({ targetCatId: z.string().min(1) }).strict();
 
 const appendBodySchema = z
   .object({
@@ -1215,6 +1219,107 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationId: resolution.invocationId,
         state: persisted.attempt.state,
         idempotent: persisted.idempotent,
+      };
+    },
+  );
+
+  // POST /api/threads/:threadId/queue/:entryId/continue
+  app.post<{ Params: { threadId: string; entryId: string } }>(
+    '/api/threads/:threadId/queue/:entryId/continue',
+    async (request, reply) => {
+      const { threadId, entryId } = request.params;
+      const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
+      if (!guard) return;
+      const parsed = continueBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        reply.status(400);
+        return { error: '请选择当前对话中的成员', code: 'CONTINUE_TARGET_REQUIRED' };
+      }
+
+      const entry = invocationQueue.list(threadId, guard.userId).find((candidate) => candidate.id === entryId);
+      if (!entry || !isPublicQueueEntry(entry)) {
+        reply.status(404);
+        return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
+      }
+      if (entry.status !== 'queued') {
+        reply.status(409);
+        return { error: '条目正在处理中，无法改派', code: 'ENTRY_PROCESSING' };
+      }
+      if (isSystemPinnedQueueEntry(entry) || entry.kind !== 'conversation_input' || entry.from.kind !== 'user') {
+        reply.status(409);
+        return { error: '该条目不支持不中断发送', code: 'ENTRY_CONTINUE_UNAVAILABLE' };
+      }
+
+      const targetCatId = parsed.data.targetCatId as CatId;
+      const currentTargets = queueEntryTargetCats(entry);
+      if (
+        !guard.thread.participants.includes(targetCatId) ||
+        (currentTargets.length > 0 && !currentTargets.includes(targetCatId))
+      ) {
+        reply.status(400);
+        return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_CONTINUE_TARGET' };
+      }
+
+      const authorIntent = resolveQueueAuthorIntentByCatId({
+        targetCats: [targetCatId],
+        requested: 'continue_current',
+        threadId,
+        userId: guard.userId,
+        invocationTracker: invocationTracker.getExecutionId
+          ? {
+              has: (candidateThreadId, catId) => invocationTracker.has(candidateThreadId, catId),
+              getUserId: (candidateThreadId, catId) => invocationTracker.getUserId(candidateThreadId, catId),
+              getExecutionId: (candidateThreadId, catId) =>
+                invocationTracker.getExecutionId?.(candidateThreadId, catId),
+            }
+          : undefined,
+        resolveCarrierCapability: opts.resolveCarrierCapability,
+      })[targetCatId];
+      if (!authorIntent) {
+        reply.status(409);
+        return { error: '无法保存发送意图', code: 'CONTINUE_STATE_CHANGED' };
+      }
+      const bound = await invocationQueue.bindContinueCurrentIntentDurable(
+        threadId,
+        guard.userId,
+        entryId,
+        targetCatId,
+        authorIntent,
+      );
+      if (!bound) {
+        reply.status(409);
+        return { error: '队列状态已变化，请刷新后重试', code: 'CONTINUE_STATE_CHANGED' };
+      }
+
+      if (authorIntent.fallbackAt === undefined) {
+        const append = await queueProcessor.tryAutoAppendExactEntry({ threadId, userId: guard.userId, entryId });
+        if (append.outcome === 'appended') return append;
+        if (append.reason === 'provider_rejected') {
+          reply.status(502);
+          return { error: '当前 Agent Client 拒绝了 Append；失败回执已保留', code: 'PROVIDER_REJECTED' };
+        }
+        await invocationQueue.fallbackQueuedAuthorIntentDurable(
+          threadId,
+          guard.userId,
+          entryId,
+          'parent_terminal_before_exposure',
+        );
+      }
+
+      void queueProcessor.requestDrain(threadId);
+      await emitQueueUpdated(
+        socketManager,
+        guard.userId,
+        threadId,
+        invocationQueue.list(threadId, guard.userId),
+        messageStore,
+        'continue_current_fallback',
+      );
+      return {
+        outcome: 'queued',
+        targetCatId,
+        effective: 'next_work',
+        reason: authorIntent.fallbackReason ?? 'parent_terminal_before_exposure',
       };
     },
   );

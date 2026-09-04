@@ -83,6 +83,7 @@ function createMockDeps(services, appendCalls) {
       getRecent: () => [],
       getMentionsFor: () => [],
       getBefore: () => [],
+      getById: async () => null,
       getByThread: () => [],
       getByThreadAfter: () => [],
       getByThreadBefore: () => [],
@@ -199,6 +200,44 @@ describe('route-serial error persistence (F5 reload)', () => {
       );
     });
   }
+
+  it('serial: reports a failed A2A response to the exact predecessor and suppresses recursive report carriers', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const deps = createMockDeps({ bengal: createErrorService('bengal', 'model unavailable') }, []);
+    const reports = [];
+    const commonOptions = {
+      a2aTriggerMessageId: 'source-from-opus',
+      a2aCallerCatId: 'opus',
+      onLifecycleInvocationStarted: async (input) => {
+        const admission = await lifecycleResponseStoreFor(input);
+        deps.messageStore = admission.store;
+        return { responseMessageId: admission.response.id, priorFrontierMessageId: null };
+      },
+      commitFailedA2AReport: async (input) => {
+        reports.push(input);
+        const current = await deps.messageStore.getById(input.responseMessageId);
+        return { ...current, content: input.message.content, lifecycle: { ...current.lifecycle, ...input.terminal } };
+      },
+    };
+
+    for await (const _ of routeSerial(deps, ['bengal'], 'please handle this', 'user1', 'thread1', commonOptions)) {
+      void _;
+    }
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].reporterCatId, 'bengal');
+    assert.equal(reports[0].predecessorCatId, 'opus');
+    assert.equal(reports[0].terminal.status, 'failed');
+    assert.match(reports[0].message.content, /model unavailable/);
+
+    reports.length = 0;
+    for await (const _ of routeSerial(deps, ['bengal'], 'failure report carrier', 'user1', 'thread1', {
+      ...commonOptions,
+      a2aFailureReport: true,
+    })) {
+      void _;
+    }
+    assert.equal(reports.length, 0, 'a failed report carrier must not recurse back to its reporter');
+  });
 
   it('persists error-only response as system message with Error: prefix', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');

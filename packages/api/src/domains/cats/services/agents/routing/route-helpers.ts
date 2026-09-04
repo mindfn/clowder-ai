@@ -322,6 +322,24 @@ export interface RouteOptions {
         callerTraceContext?: import('../../../../../infrastructure/telemetry/genai-semconv.js').CallerTraceContext;
       }) => Promise<StoredMessage>)
     | undefined;
+  /** Canonical failed-final path: terminalize the response and report it to the exact A2A predecessor. */
+  commitFailedA2AReport?:
+    | ((input: {
+        responseMessageId: string;
+        invocationId: string;
+        terminal: { status: 'failed'; completedAt: number; reason?: string };
+        message: AppendMessageInput;
+        userId: string;
+        ownerAuthProvenance: OwnerAuthProvenance;
+        threadId: string;
+        reporterCatId: CatId;
+        predecessorCatId: CatId;
+        parentInvocationId?: string;
+        callerTraceContext?: import('../../../../../infrastructure/telemetry/genai-semconv.js').CallerTraceContext;
+      }) => Promise<StoredMessage>)
+    | undefined;
+  /** Failure-report carriers never recursively report another failure to their source. */
+  a2aFailureReport?: boolean | undefined;
   /** ADR-008 S3: When provided, cursor boundaries are collected here instead of acking immediately.
    *  Caller acks after invocation succeeds. If absent, legacy immediate ack behavior. */
   cursorBoundaries?: Map<string, string>;

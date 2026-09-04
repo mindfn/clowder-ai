@@ -403,6 +403,75 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     },
     [addToast, setQueue, threadId],
   );
+  const handleContinueQueuedEntry = useCallback(
+    async (entry: (typeof queue)[number], targetCatId: string) => {
+      setAppendingEntryIds((current) => new Set(current).add(entry.id));
+      try {
+        const res = await apiFetch(`/api/threads/${threadId}/queue/${entry.id}/continue`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetCatId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          addToast({
+            type: 'error',
+            title: '发送失败',
+            message: data?.error ?? '消息没有发送，请刷新后重试。',
+            threadId,
+            duration: 5000,
+          });
+          return;
+        }
+        handleSteerCancel();
+        const current = useChatStore.getState();
+        const currentQueue =
+          current.currentThreadId === threadId ? current.queue : current.threadStates[threadId]?.queue;
+        if (data?.outcome === 'appended') {
+          setQueue(
+            threadId,
+            (currentQueue ?? []).filter((candidate) => candidate.id !== entry.id),
+          );
+          addToast({
+            type: 'success',
+            title: '已追加到当前回合',
+            message: '没有停止当前回复；消息已关联到现有回合。',
+            threadId,
+            duration: 3000,
+          });
+          return;
+        }
+        setQueue(
+          threadId,
+          (currentQueue ?? []).map((candidate) =>
+            candidate.id === entry.id ? { ...candidate, targetCats: [targetCatId] } : candidate,
+          ),
+        );
+        addToast({
+          type: 'success',
+          title: '已发送，不中断当前回复',
+          message: '当前接入无法直接追加时，这条消息会作为该成员的下一件工作。',
+          threadId,
+          duration: 3000,
+        });
+      } catch {
+        addToast({
+          type: 'error',
+          title: '发送失败',
+          message: '消息没有发送，请刷新后重试。',
+          threadId,
+          duration: 5000,
+        });
+      } finally {
+        setAppendingEntryIds((current) => {
+          const next = new Set(current);
+          next.delete(entry.id);
+          return next;
+        });
+      }
+    },
+    [addToast, handleSteerCancel, setQueue, threadId],
+  );
   const handleRemind = useCallback(
     async (entryId: string, targetCatId: string) => {
       const key = `${entryId}:${targetCatId}`;
@@ -494,11 +563,12 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       : (thread?.participants ?? [])
     : [];
   const selectedSteerTargets = selectedSteerTargetIds.map((targetId) => {
-    const appendRuns = selectedSteerEntry?.lifecycleActions?.append?.expectedRuns ?? [];
     return {
       id: targetId,
       label: resolveCatName(targetId),
-      canAppend: appendRuns.length === 1 && appendRuns[0]?.targetId === targetId,
+      // This is an author intent, not a promise that one live carrier can
+      // append. The server appends when possible and otherwise keeps next work.
+      canAppend: true,
     };
   });
 
@@ -516,7 +586,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         style={{ backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 10%, transparent)' }}
       >
         <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
+          <svg aria-hidden="true" className="w-4 h-4 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
             <path d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
           </svg>
           <span className="text-xs font-medium text-cafe-secondary">待处理</span>
@@ -529,6 +599,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         </div>
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={() => setCollapsed(!isCollapsed)}
             className="text-xs text-cafe-muted hover:text-cafe-secondary transition-colors"
           >
@@ -597,8 +668,8 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           onCancel={handleSteerCancel}
           onConfirm={handleSteerConfirm}
           onAppend={(targetId) => {
-            if (selectedSteerTargets.some((target) => target.id === targetId && target.canAppend)) {
-              void handleAppend(selectedSteerEntry);
+            if (selectedSteerTargets.some((target) => target.id === targetId)) {
+              void handleContinueQueuedEntry(selectedSteerEntry, targetId);
             }
           }}
         />

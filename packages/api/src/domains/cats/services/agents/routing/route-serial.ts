@@ -131,6 +131,7 @@ import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import {
+  isUserVisibleRoutingPreflightReceipt,
   preflightRoutingDispatch,
   routingDispatchPreflightReceipt,
 } from '../../../../routing-context/RoutingDispatchPreflightPort.js';
@@ -542,6 +543,7 @@ export async function* routeSerial(
     modeSystemPromptByCat,
     getQueuedFreshnessMessagesForCat,
     commitCompletedA2AWake,
+    commitFailedA2AReport,
     freshnessReinvokeEnqueue,
   } = options;
   const ownerAuthProvenance = options.ownerAuthProvenance ?? 'unknown';
@@ -880,7 +882,10 @@ export async function* routeSerial(
           ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
         });
         const receipt = routingDispatchPreflightReceipt(routingDispatchPreflightDecision, catId);
-        if (receipt.target.disposition !== 'allowed') {
+        // Only a rejected send changes user-visible behavior. Warned decisions
+        // remain available through routing evidence/telemetry without adding a
+        // synthetic chat message for an unchanged target.
+        if (isUserVisibleRoutingPreflightReceipt(receipt)) {
           yield {
             type: 'system_info',
             catId,
@@ -2806,7 +2811,7 @@ export async function* routeSerial(
             ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
           });
           const receipt = routingDispatchPreflightReceipt(remedialRoutingDispatchPreflightDecision, catId);
-          if (receipt.target.disposition !== 'allowed') {
+          if (isUserVisibleRoutingPreflightReceipt(receipt)) {
             remedialRoutingPreflightNotice = {
               type: 'system_info',
               catId,
@@ -4003,6 +4008,34 @@ export async function* routeSerial(
                     });
                   }
                 : undefined;
+            const failedA2AReportCommit =
+              lifecycleResponse?.status === 'failed' &&
+              a2aTriggerMessageId &&
+              options.a2aCallerCatId &&
+              !options.a2aFailureReport
+                ? async (message: AppendMessageInput) => {
+                    if (!commitFailedA2AReport) {
+                      throw new Error('failed response A2A report admission unavailable');
+                    }
+                    return commitFailedA2AReport({
+                      responseMessageId: lifecycleResponse.messageId,
+                      invocationId: ownInvocationId!,
+                      terminal: {
+                        status: 'failed',
+                        completedAt: lifecycleResponse.completedAt,
+                        ...(lifecycleResponse.reason ? { reason: lifecycleResponse.reason } : {}),
+                      },
+                      message,
+                      userId,
+                      ownerAuthProvenance,
+                      threadId,
+                      reporterCatId: catId,
+                      predecessorCatId: options.a2aCallerCatId as CatId,
+                      ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+                    });
+                  }
+                : undefined;
+            const lifecycleWakeCommit = completedA2AWakeCommit ?? failedA2AReportCommit;
             let storedMsg = null;
             if (deps.freshnessOutputCommitCoordinator && deps.deliveryCursorStore && ownInvocationId) {
               const decision = await deps.freshnessOutputCommitCoordinator.commit({
@@ -4016,7 +4049,7 @@ export async function* routeSerial(
                 freshnessSupplementId: options.freshnessSupplementId,
                 message: streamMessageInput,
                 ...(lifecycleResponse ? { lifecycleResponse } : {}),
-                ...(completedA2AWakeCommit ? { commitLifecycleResponse: completedA2AWakeCommit } : {}),
+                ...(lifecycleWakeCommit ? { commitLifecycleResponse: lifecycleWakeCommit } : {}),
                 replayUnsafeToolNames: findReplayUnsafeToolNames(collectedToolNames),
                 evaluateFreshness: evaluateStreamFreshness,
               });
@@ -4038,8 +4071,8 @@ export async function* routeSerial(
                 }
               }
             } else if (lifecycleResponse && ownInvocationId) {
-              storedMsg = completedA2AWakeCommit
-                ? await completedA2AWakeCommit(streamMessageInput)
+              storedMsg = lifecycleWakeCommit
+                ? await lifecycleWakeCommit(streamMessageInput)
                 : await commitLifecycleResponseFromAppendInput(
                     deps.messageStore,
                     lifecycleResponse.messageId,
@@ -4525,20 +4558,44 @@ export async function* routeSerial(
             };
             let storedErrorTools;
             if (lifecycleResponseMessageId && ownInvocationId) {
-              storedErrorTools = await commitLifecycleResponseFromAppendInput(
-                deps.messageStore,
-                lifecycleResponseMessageId,
-                ownInvocationId,
-                {
-                  status: catSignal?.aborted ? 'interrupted' : 'failed',
-                  completedAt: Math.max(Date.now(), invocationStartedAt),
-                  reason:
-                    typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                      ? doneMsg.errorCode
-                      : 'provider_error',
-                },
-                errorMessageInput,
-              );
+              const terminal = {
+                status: catSignal?.aborted ? ('interrupted' as const) : ('failed' as const),
+                completedAt: Math.max(Date.now(), invocationStartedAt),
+                reason:
+                  typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+                    ? doneMsg.errorCode
+                    : 'provider_error',
+              };
+              if (
+                terminal.status === 'failed' &&
+                a2aTriggerMessageId &&
+                options.a2aCallerCatId &&
+                !options.a2aFailureReport
+              ) {
+                if (!commitFailedA2AReport) {
+                  throw new Error('failed response A2A report admission unavailable');
+                }
+                storedErrorTools = await commitFailedA2AReport({
+                  responseMessageId: lifecycleResponseMessageId,
+                  invocationId: ownInvocationId,
+                  terminal: { ...terminal, status: 'failed' },
+                  message: errorMessageInput,
+                  userId,
+                  ownerAuthProvenance,
+                  threadId,
+                  reporterCatId: catId,
+                  predecessorCatId: options.a2aCallerCatId as CatId,
+                  ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+                });
+              } else {
+                storedErrorTools = await commitLifecycleResponseFromAppendInput(
+                  deps.messageStore,
+                  lifecycleResponseMessageId,
+                  ownInvocationId,
+                  terminal,
+                  errorMessageInput,
+                );
+              }
             } else {
               storedErrorTools = await deps.messageStore.append(errorMessageInput);
             }

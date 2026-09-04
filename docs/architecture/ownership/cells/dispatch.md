@@ -141,6 +141,12 @@ marks the Message delivered, then records exact `(messageId, targetCatId, childI
 and terminal handling together. Sibling target rows remain independent Queue work. Sparse, cross-thread,
 oversized-anchor, or unproven-child reads never consume a row.
 
+Routing preflight is not a second chat-message producer. A fail-open `warned` decision remains available in
+structured routing evidence and telemetry while leaving the requested target unchanged; only a `rejected`
+decision may emit a user-visible receipt. When a cat-authored A2A response fails, the failed response and one
+exact-predecessor `a2a_failure` row commit atomically. That row bypasses inferred mentions and ping-pong/depth
+heuristics, and cannot recursively create another failure report.
+
 Stop is the only user-facing termination. Running truth is the durable `TurnExecution` / ledger `processing`
 row plus a liveness witness (tracker slot or process owner); in-memory slots, tracker tombstones, and session
 locks are caches and cannot pin a thread busy by themselves. An exact Stop first cancels a live candidate; when
@@ -158,6 +164,12 @@ invocation outside Redis, then commit the claim to processing or restore it to t
 `ENTRY_PROCESSING` is the only business-state rejection. Reorder/promote are separate ledger operations,
 and prefix claim is all-or-nothing; a single dispatch may carry multiple prompt items but never concatenates
 their bodies or erases message identity.
+
+Append-without-stop is an author intent, not a UI capability promise. Both composer and Queue Steer expose the
+same intent. The server appends to an exact live carrier when supported; otherwise it preserves the Queue row
+as `next_work` with a durable fallback reason and never cancels the current execution. A successful
+`runtime_replacement` already completed its recovered attempt and must not enqueue a second source-less
+continuation.
 
 F175 owns comparator/order policy and F185 / ADR-034 own busy-gate stratification. `TurnExecutionStore`
 owns each real child lifecycle; `InvocationRecordStore` owns parent/aggregate execution truth;
@@ -211,6 +223,8 @@ transport failure into Queue replay.
 - Do not let Queue decide action uniqueness, wait ownership, freshness closure, connector transport policy,
   or callback authentication.
 - Do not infer seen/handled from notices, provider success, log text, or rendered prose.
+- Do not render fail-open routing warnings as chat messages, recursively report an `a2a_failure`, or enqueue a
+  new `runtime_replacement` continuation after the recovered attempt succeeded.
 - Do not return a full queued body before its exact active-child adoption is durable, and do not retire a
   sibling target row when another target adopts the same source.
 - Do not gate Stop on an in-memory live candidate or answer a user's Stop with 409 while the durable row still

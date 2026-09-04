@@ -40,6 +40,7 @@ import {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import {
   inferRoutingContextIntent,
+  isUserVisibleRoutingPreflightReceipt,
   preflightRoutingDispatch,
   type RoutingDispatchPreflightPort,
   routingDispatchPreflightReceipt,
@@ -268,12 +269,16 @@ export function emitA2ARoutingPreflightReceipts(
 ): void {
   if (!input.decision) return;
   for (const target of input.decision.targets) {
-    if (target.disposition === 'allowed') continue;
+    // A warned decision is fail-open infrastructure telemetry: the requested
+    // target is unchanged, so surfacing it as chat content only duplicates the
+    // per-send preflight and makes a healthy delivery look user-actionable.
+    const receipt = routingDispatchPreflightReceipt(input.decision, target.targetCatId);
+    if (!isUserVisibleRoutingPreflightReceipt(receipt)) continue;
     deps.socketManager.broadcastAgentMessage(
       {
         type: 'system_info',
         catId: input.receiptCatId,
-        content: JSON.stringify(routingDispatchPreflightReceipt(input.decision, target.targetCatId)),
+        content: JSON.stringify(receipt),
         timestamp: Date.now(),
       },
       input.threadId,
@@ -432,6 +437,110 @@ export async function commitCompletedResponseAndEnqueueA2ATargets(
     preplannedAdmission: plan,
     ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
     ...(preAdmittedEntries ? { preAdmittedEntries, preAdmittedReplayed } : {}),
+  });
+  return (await deps.messageStore.getById(stored.id)) ?? stored;
+}
+
+/**
+ * Atomically publish one failed lifecycle response and wake the exact A2A
+ * predecessor that supplied its source message. Failure propagation is a
+ * control-plane edge, not a new model-authored mention: it bypasses chat
+ * ping-pong/depth heuristics, while routing preflight may still reject an
+ * unavailable predecessor before any Queue row is admitted.
+ */
+export async function commitFailedResponseAndEnqueueA2ACaller(
+  deps: A2ATriggerDeps,
+  opts: {
+    responseMessageId: string;
+    invocationId: string;
+    terminal: Pick<LifecycleResponseTerminalPatch, 'status' | 'completedAt' | 'reason'> & { status: 'failed' };
+    message: AppendMessageInput;
+    userId: string;
+    ownerAuthProvenance: OwnerAuthProvenance;
+    threadId: string;
+    reporterCatId: CatId;
+    predecessorCatId: CatId;
+    parentInvocationId?: string;
+    callerTraceContext?: CallerTraceContext;
+  },
+): Promise<StoredMessage> {
+  if (!deps.messageStore) throw new Error('failed response A2A report requires MessageStore');
+  const routingPreflight = await preflightA2ATargets(deps, {
+    targetCats: [opts.predecessorCatId],
+    content: opts.message.content,
+    userId: opts.userId,
+  });
+  const accepted = routingPreflight.acceptedTargetCats.includes(opts.predecessorCatId);
+  if (!accepted) {
+    emitA2ARoutingPreflightReceipts(deps, {
+      decision: routingPreflight.decision,
+      receiptCatId: opts.reporterCatId,
+      threadId: opts.threadId,
+    });
+    return commitLifecycleResponseFromAppendInput(
+      deps.messageStore,
+      opts.responseMessageId,
+      opts.invocationId,
+      opts.terminal,
+      opts.message,
+    );
+  }
+  if (!deps.invocationQueue) throw new Error('failed response A2A report requires InvocationQueue');
+
+  const current = await deps.messageStore.getById(opts.responseMessageId);
+  if (!current) throw new Error(`lifecycle response not found: ${opts.responseMessageId}`);
+  const terminalPatch = lifecycleResponseTerminalPatchFromAppendInput(
+    current,
+    opts.invocationId,
+    opts.terminal,
+    opts.message,
+  );
+  const admission = await deps.invocationQueue.terminalizeResponseAndEnqueueDurable(
+    deps.messageStore,
+    opts.responseMessageId,
+    terminalPatch,
+    {
+      from: { kind: 'agent', catId: opts.reporterCatId },
+      threadId: opts.threadId,
+      userId: opts.userId,
+      kind: 'message_wake',
+      ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
+      content: opts.message.content,
+      messageId: opts.responseMessageId,
+      sourceId: opts.responseMessageId,
+      sourceCategory: 'a2a_failure',
+      targetCats: [opts.predecessorCatId],
+      intent: 'execute',
+      autoExecute: true,
+      a2aParentInvocationId: opts.parentInvocationId,
+      callerTraceContext: opts.callerTraceContext
+        ? wrapWithDispatchSpan(opts.callerTraceContext, 1, opts.reporterCatId)
+        : undefined,
+      a2aTriggerMessageId: opts.responseMessageId,
+    },
+  );
+  if (admission.outcome === 'full') throw new Error('failed response A2A report Queue admission is full');
+  const stored = admission.message;
+  await settleLifecycleResponseInputs(deps.messageStore, stored, opts.responseMessageId);
+
+  await enqueueA2ATargets(deps, {
+    targetCats: [opts.predecessorCatId],
+    content: opts.message.content,
+    userId: opts.userId,
+    ownerAuthProvenance: opts.ownerAuthProvenance,
+    threadId: opts.threadId,
+    triggerMessage: stored,
+    callerCatId: opts.reporterCatId,
+    ...(opts.parentInvocationId ? { parentInvocationId: opts.parentInvocationId } : {}),
+    ...(opts.callerTraceContext ? { callerTraceContext: opts.callerTraceContext } : {}),
+    preplannedAdmission: {
+      requestedTargetCats: [opts.predecessorCatId],
+      acceptedTargetCats: [opts.predecessorCatId],
+      streakTargetCats: [],
+    },
+    ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
+    preAdmittedEntries: admission.entries,
+    preAdmittedReplayed: admission.deduped,
   });
   return (await deps.messageStore.getById(stored.id)) ?? stored;
 }

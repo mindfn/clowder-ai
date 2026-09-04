@@ -43,6 +43,7 @@ import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import {
+  isUserVisibleRoutingPreflightReceipt,
   preflightRoutingDispatch,
   routingDispatchPreflightReceipt,
 } from '../../../../routing-context/RoutingDispatchPreflightPort.js';
@@ -189,7 +190,7 @@ export async function* routeParallel(
     routingDispatchPreflightDecision = routingPreflight;
     for (const targetCatId of requestedTargetCats) {
       const receipt = routingDispatchPreflightReceipt(routingPreflight, targetCatId);
-      if (receipt.target.disposition === 'allowed') continue;
+      if (!isUserVisibleRoutingPreflightReceipt(receipt)) continue;
       yield {
         type: 'system_info',
         catId: targetCatId,
@@ -1731,6 +1732,33 @@ export async function* routeParallel(
               systemInfoContents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
             })
           : undefined;
+      const failedA2AReportCommit =
+        lifecycleResponse?.status === 'failed' &&
+        options.a2aTriggerMessageId &&
+        exactA2ACallerCatId &&
+        !options.a2aFailureReport
+          ? async (message: AppendMessageInput) => {
+              if (!options.commitFailedA2AReport) {
+                throw new Error('failed response A2A report admission unavailable');
+              }
+              return options.commitFailedA2AReport({
+                responseMessageId: lifecycleResponse.messageId,
+                invocationId: ownInvId!,
+                terminal: {
+                  status: 'failed',
+                  completedAt: lifecycleResponse.completedAt,
+                  ...(lifecycleResponse.reason ? { reason: lifecycleResponse.reason } : {}),
+                },
+                message,
+                userId,
+                ownerAuthProvenance,
+                threadId,
+                reporterCatId: msg.catId as CatId,
+                predecessorCatId: exactA2ACallerCatId as CatId,
+                ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+              });
+            }
+          : undefined;
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(
           text || bufferedBlocks.length > 0 || (catToolEvents.get(msg.catId)?.length ?? 0) > 0,
@@ -1989,6 +2017,7 @@ export async function* routeParallel(
               freshnessSupplementId: options.freshnessSupplementId,
               message: streamMessageInput,
               ...(lifecycleResponse ? { lifecycleResponse } : {}),
+              ...(failedA2AReportCommit ? { commitLifecycleResponse: failedA2AReportCommit } : {}),
               replayUnsafeToolNames: findReplayUnsafeToolNames(catToolNames.get(msg.catId) ?? []),
               commitRecheckLimit: 10 + targetCats.length,
               evaluateFreshness: (priorFrontierMessageId) =>
@@ -2008,13 +2037,15 @@ export async function* routeParallel(
               storedMsg = await deps.messageStore.getById(outputCommitDecision.messageId);
             }
           } else if (lifecycleResponse && ownInvId) {
-            storedMsg = await commitLifecycleResponseFromAppendInput(
-              deps.messageStore,
-              lifecycleResponse.messageId,
-              ownInvId,
-              lifecycleResponse,
-              streamMessageInput,
-            );
+            storedMsg = failedA2AReportCommit
+              ? await failedA2AReportCommit(streamMessageInput)
+              : await commitLifecycleResponseFromAppendInput(
+                  deps.messageStore,
+                  lifecycleResponse.messageId,
+                  ownInvId,
+                  lifecycleResponse,
+                  streamMessageInput,
+                );
           } else {
             storedMsg = await deps.messageStore.append(streamMessageInput);
           }
@@ -2176,6 +2207,7 @@ export async function* routeParallel(
                 freshnessSupplementId: options.freshnessSupplementId,
                 message: noTextMessageInput,
                 ...(lifecycleResponse ? { lifecycleResponse } : {}),
+                ...(failedA2AReportCommit ? { commitLifecycleResponse: failedA2AReportCommit } : {}),
                 replayUnsafeToolNames,
                 commitRecheckLimit: 10 + targetCats.length,
                 evaluateFreshness: (priorFrontierMessageId) =>
@@ -2199,13 +2231,15 @@ export async function* routeParallel(
                 }
               }
             } else if (lifecycleResponse && ownInvId) {
-              storedNoText = await commitLifecycleResponseFromAppendInput(
-                deps.messageStore,
-                lifecycleResponse.messageId,
-                ownInvId,
-                lifecycleResponse,
-                noTextMessageInput,
-              );
+              storedNoText = failedA2AReportCommit
+                ? await failedA2AReportCommit(noTextMessageInput)
+                : await commitLifecycleResponseFromAppendInput(
+                    deps.messageStore,
+                    lifecycleResponse.messageId,
+                    ownInvId,
+                    lifecycleResponse,
+                    noTextMessageInput,
+                  );
             } else {
               // Reviewed read-only tool-only audit remains non-routable and does not become
               // a normal answer. Unknown or mutating tools enter the freshness gate above.
@@ -2312,13 +2346,15 @@ export async function* routeParallel(
             };
             let storedErrorTools;
             if (lifecycleResponse && ownInvId) {
-              storedErrorTools = await commitLifecycleResponseFromAppendInput(
-                deps.messageStore,
-                lifecycleResponse.messageId,
-                ownInvId,
-                lifecycleResponse,
-                errorMessageInput,
-              );
+              storedErrorTools = failedA2AReportCommit
+                ? await failedA2AReportCommit(errorMessageInput)
+                : await commitLifecycleResponseFromAppendInput(
+                    deps.messageStore,
+                    lifecycleResponse.messageId,
+                    ownInvId,
+                    lifecycleResponse,
+                    errorMessageInput,
+                  );
             } else {
               storedErrorTools = await deps.messageStore.append(errorMessageInput);
             }
