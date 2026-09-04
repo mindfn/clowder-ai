@@ -342,14 +342,16 @@
       const x = at(id).x;
       return spread.map((d) => Math.max(120, Math.min(W - 200, x + d)));
     };
-    const HOME = [452, 664, 748];
+    // Spaced by the profile sprites' real widths so nobody overlaps: one to the left of the
+    // seed, two to the right, all of them turned in toward it.
+    const HOME = [415, 660, 792];
     // Arrive before the beat and hold through it, so there is a stretch where the cats are
     // standing still under the limb rather than permanently in transit.
     const visit = (id, spread) => under(id, spread);
     const CAT_PLAN = [
       { p: 0, x: HOME },
-      { p: 0.1, x: [438, 660, 752] },
-      { p: 0.26, x: [428, 674, 764] },
+      { p: 0.1, x: [408, 664, 800] },
+      { p: 0.26, x: [396, 676, 812] },
       { p: 0.4, x: [...visit('memory', [-158, 26]), 700] },
       { p: 0.48, x: [...visit('memory', [-158, 26]), 700] },
       { p: 0.53, x: [520, ...visit('harness', [-42, 118])] },
