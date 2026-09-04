@@ -111,6 +111,21 @@ export interface ObjectiveVerdictDecision {
 
 export type CycleEvaluationStatus = 'idle' | 'requested' | 'retriggered' | 'written' | 'stalled';
 export type CycleTriggerRoute = 'cumulative' | 'counterexamples' | 'cadence';
+export type ObjectiveLifecycle = 'active' | 'dormant' | 'retired';
+export interface CycleTriggerPolicy {
+  cumulativeThreshold: number;
+  counterexampleThreshold: number;
+  cadenceDays: number;
+  minimumIntervalMs: number;
+  consecutiveKeepCycles: number;
+  consecutiveCadenceKeepCycles: number;
+}
+export interface CycleTriggerPolicyChange {
+  decision: 'keep' | 'rollback' | 'evolve';
+  before: CycleTriggerPolicy;
+  after: CycleTriggerPolicy;
+  appliedAt: number;
+}
 export interface CycleWindow {
   start: number;
   end: number;
@@ -127,6 +142,10 @@ export interface CycleRecord {
   cycleStart: number;
   cycleEnd?: number;
   evalStatus: CycleEvaluationStatus;
+  /** Policy used to decide this cycle. Missing only on pre-TC-3 historical rows. */
+  triggerPolicy?: CycleTriggerPolicy;
+  triggerPolicyChange?: CycleTriggerPolicyChange;
+  objectiveLifecycle?: Exclude<ObjectiveLifecycle, 'retired'>;
   windows: CycleWindow[];
   triggeredBy?: CycleTriggerRoute[];
   assignmentThreadId?: string;
@@ -145,6 +164,7 @@ export interface CycleRecord {
     overall: 'complete' | 'partial' | 'insufficient_evidence';
     writtenAt: number;
     by: string;
+    counterexampleRootCauses?: { eventCount: number; rootCauseCount: number; howGrouped: string };
   };
   governance?: { decision: 'keep' | 'rollback' | 'evolve'; reason: string; writtenAt: number; by: string };
   approval?: {
@@ -281,8 +301,11 @@ export interface SegmentMetricEvaluationView {
 
 export interface SegmentTracingEvaluationView {
   trigger: {
-    perObjective: Array<{
+    objective: {
       objectiveId: string;
+      lifecycle: ObjectiveLifecycle;
+      health: 'healthy' | 'zero-trace-fault';
+      policyChangeCount: number;
       evalStatus: CycleEvaluationStatus;
       cycleStartMs: number;
       cycleEndMs: number | null;
@@ -290,7 +313,7 @@ export interface SegmentTracingEvaluationView {
       cumulative: { count: number; threshold: number };
       counterexamples: { count: number; threshold: number };
       cadence: { elapsedMs: number; thresholdMs: number; eligible: boolean };
-    }>;
+    };
   };
   structuredCounterexamples: Array<{
     annotationId: string;

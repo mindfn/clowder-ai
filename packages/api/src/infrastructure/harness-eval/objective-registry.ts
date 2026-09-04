@@ -87,9 +87,9 @@ const metric = z
   .strict();
 const cycleTrigger = z
   .object({
-    cumulativeThreshold: z.number().int().positive(),
-    counterexampleThreshold: z.number().int().positive(),
-    cadenceDays: z.number().int().positive(),
+    cumulativeThreshold: z.number().int().min(200),
+    counterexampleThreshold: z.number().int().min(3),
+    cadenceDays: z.number().int().min(7),
     minimumIntervalMs: z.number().int().nonnegative(),
   })
   .strict();
