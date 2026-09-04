@@ -22,7 +22,14 @@ import { readPixels } from './png-alpha.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SPRITES = join(HERE, '../assets/roadmap/cats');
 const OUT = join(HERE, '../lib/roadmap-plate-cats.js');
-const CELL = 3; // dot pitch in plate units
+// Dot pitch, and the tone curve from coverage to dot radius. The first version had a 0.28
+// floor under coverage and a square-root curve, which drove every opaque pixel to near-maximum
+// radius: the interior of a pale cat went solid and any pose that reads through interior
+// structure (curled, tucked, occluded) collapsed into a blob. Widening the range is what makes
+// those poses legible — they were never too complex to draw, they were being flattened here.
+const CELL = 2;
+const TONE_FLOOR = 0.02;
+const TONE_GAMMA = 0.7;
 // One world scale per cat, fixed by its sitting height, so a cat that stands up gets taller
 // instead of every pose being squashed into the same box.
 const CATS = [
@@ -80,9 +87,9 @@ function screen(src, box, h) {
         }
       }
       if (!hits) continue;
-      const cover = (hits / (CELL * CELL)) * (0.28 + (ink / hits) * 0.95);
-      const r = Math.min(CELL * 0.62, CELL * 0.62 * Math.sqrt(cover));
-      if (r < 0.22) continue;
+      const cover = (hits / (CELL * CELL)) * (TONE_FLOOR + (ink / hits) * (1 - TONE_FLOOR));
+      const r = Math.min(CELL * 0.62, CELL * 0.62 * cover ** TONE_GAMMA);
+      if (r < 0.18) continue;
       dots.push(cx + CELL / 2, cy + CELL / 2, Math.round(r * 100) / 100);
     }
   }
