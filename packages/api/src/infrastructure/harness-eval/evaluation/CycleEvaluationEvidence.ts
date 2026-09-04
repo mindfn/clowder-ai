@@ -64,7 +64,21 @@ export class CycleEvaluationEvidence {
       for (const ref of metric.evidenceRefs) evidenceRefs.add(ref);
     }
     if (evidenceRefCount > 64) throw new Error(`cycle_evaluation_evidence_limit:${record.cycleId}`);
+    const counterexampleEventCount = (await this.counterexampleIncidentKeys(record)).size;
+    const grouping = input.counterexampleRootCauses;
+    if (
+      grouping.eventCount !== counterexampleEventCount ||
+      grouping.rootCauseCount > grouping.eventCount ||
+      (grouping.eventCount === 0 ? grouping.rootCauseCount !== 0 : grouping.rootCauseCount < 1)
+    ) {
+      throw new Error(`cycle_evaluation_counterexample_grouping:${record.cycleId}`);
+    }
     await Promise.all([...evidenceRefs].map((ref) => this.validateEvidenceRef(record, ref)));
+  }
+
+  private async counterexampleIncidentKeys(record: CycleRecord): Promise<Set<string>> {
+    const priority = await this.counterexampleMap(record);
+    return new Set([...priority.values()].flat());
   }
 
   private async counterexampleMap(record: CycleRecord): Promise<Map<string, string[]>> {

@@ -3,7 +3,9 @@ import type { InjectionTraceStore } from '../../../domains/prompt-hooks/Injectio
 import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { CycleRecordStore, isSkippedCycle } from './CycleRecordStore.js';
+import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
+import type { ObjectiveVersionState } from './ObjectiveVersionStore.js';
 
 export type CycleCheckResult =
   | { status: 'idle' | 'interval' | 'active'; record: CycleRecord }
@@ -26,7 +28,7 @@ export class CycleTriggerChecker {
         'countOwnerWindow' | 'earliestOwnerEpisode' | 'ensureOwnerEpisodeBackfilled' | 'getEpisodeByInvocationId'
       >;
       annotations: Pick<TraceAnnotationStore, 'queryMetricWindow'>;
-      resolveVersion: (objectiveId: string) => CycleVersionRef | Promise<CycleVersionRef>;
+      resolveVersion: (objectiveId: string, state: ObjectiveVersionState) => CycleVersionRef | Promise<CycleVersionRef>;
     },
   ) {}
 
@@ -74,9 +76,10 @@ export class CycleTriggerChecker {
     const current = await this.ensureCurrent(ownerUserId, objectiveId, now);
     if (current.evalStatus !== 'idle') return { status: 'active', record: current };
 
+    const policy = cycleTriggerPolicyFor(this.deps.catalog, current);
     const history = await this.deps.cycles.history(ownerUserId, objectiveId);
     const lastClosedAt = history[0]?.closedAt;
-    if (lastClosedAt !== undefined && now < lastClosedAt + model.cycleTrigger.minimumIntervalMs) {
+    if (lastClosedAt !== undefined && now < lastClosedAt + policy.minimumIntervalMs) {
       return { status: 'interval', record: current };
     }
 
@@ -89,12 +92,9 @@ export class CycleTriggerChecker {
       now,
     );
     const triggeredBy: CycleTriggerRoute[] = [];
-    if (observedInvocationCount >= model.cycleTrigger.cumulativeThreshold) triggeredBy.push('cumulative');
-    if (counterexamples.size >= model.cycleTrigger.counterexampleThreshold) triggeredBy.push('counterexamples');
-    if (
-      observedInvocationCount > 0 &&
-      now - current.cycleStart >= model.cycleTrigger.cadenceDays * 24 * 60 * 60 * 1000
-    ) {
+    if (observedInvocationCount >= policy.cumulativeThreshold) triggeredBy.push('cumulative');
+    if (counterexamples.size >= policy.counterexampleThreshold) triggeredBy.push('counterexamples');
+    if (observedInvocationCount > 0 && now - current.cycleStart >= policy.cadenceDays * 24 * 60 * 60 * 1000) {
       triggeredBy.push('cadence');
     }
     if (triggeredBy.length === 0) return { status: 'idle', record: current };
@@ -122,8 +122,17 @@ export class CycleTriggerChecker {
     const legacyStart = await this.deps.cycles.legacyCompletedWindowEnd(ownerUserId, objectiveId);
     if (legacyStart !== null && legacyStart > now) throw new Error(`cycle_start_after_now:${objectiveId}`);
     const cycleStart = legacyStart ?? (await this.deps.traces.earliestOwnerEpisode(ownerUserId)) ?? now;
-    const version = await this.deps.resolveVersion(objectiveId);
-    return this.deps.cycles.initialize(ownerUserId, objectiveId, cycleStart, version);
+    const objective = this.deps.catalog.registry.objectives.find((candidate) => candidate.id === objectiveId);
+    const model = this.deps.catalog.registry.evaluationModels.find(
+      (candidate) => candidate.id === objective?.evaluationModelId,
+    );
+    if (!model) throw new Error(`cycle_evaluation_model_not_found:${objectiveId}`);
+    const state = { triggerPolicy: initialCycleTriggerPolicy(model), lifecycle: 'active' as const };
+    const version = await this.deps.resolveVersion(objectiveId, state);
+    return this.deps.cycles.initialize(ownerUserId, objectiveId, cycleStart, version, {
+      triggerPolicy: state.triggerPolicy,
+      objectiveLifecycle: state.lifecycle,
+    });
   }
 
   private async distinctCounterexamples(

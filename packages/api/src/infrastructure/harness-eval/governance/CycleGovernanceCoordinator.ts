@@ -1,5 +1,6 @@
 import type { CycleGovernanceSubmission, CycleRecord, HarnessGovernanceProposal } from '@cat-cafe/shared';
 import { CycleEvaluationCoordinator, type CycleEvaluationPrincipal } from '../evaluation/CycleEvaluationCoordinator.js';
+import { adaptCycleTriggerPolicy, cycleTriggerPolicyFor } from '../evaluation/cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from '../evaluation/ObjectiveEvaluationRuntime.js';
 import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
 import {
@@ -182,12 +183,18 @@ export class CycleGovernanceCoordinator {
     by: string,
   ) {
     await this.deps.executor.hydrate(record.objectiveId, { ...input, reason });
+    const adaptation = adaptCycleTriggerPolicy(this.deps.runtime.catalog, record, 'keep', writtenAt);
     const completed: CycleRecord = {
       ...record,
       governance: { decision: 'keep', reason, writtenAt, by },
+      triggerPolicyChange: adaptation.change,
+      objectiveLifecycle: adaptation.lifecycle,
       closedAt: writtenAt,
     };
-    const version = await this.deps.executor.currentVersion(record.objectiveId);
+    const version = await this.deps.executor.currentVersion(record.objectiveId, {
+      triggerPolicy: adaptation.change.after,
+      lifecycle: adaptation.lifecycle,
+    });
     const next = await this.deps.runtime.cycles.advance(record, completed, version);
     if (!next) throw new Error(`cycle_governance_conflict:${record.cycleId}`);
     return { outcome: 'written', cycleId: record.cycleId, decision: 'keep' as const, nextCycleId: next.cycleId };
@@ -199,6 +206,7 @@ export class CycleGovernanceCoordinator {
       (item) => item.id === objective?.evaluationModelId,
     );
     if (!model) throw new Error(`cycle_evaluation_model_not_found:${record.objectiveId}`);
+    const policy = cycleTriggerPolicyFor(this.deps.runtime.catalog, record);
     const [invocationIds, annotationLists] = await Promise.all([
       this.deps.runtime.traces.ownerInvocationIds(record.ownerUserId, record.windows),
       Promise.all(
@@ -222,8 +230,8 @@ export class CycleGovernanceCoordinator {
         .map((annotation) => annotation.incidentKey),
     );
     return {
-      cumulative: { count: invocationIds.length, threshold: model.cycleTrigger.cumulativeThreshold },
-      counterexamples: { count: counterexamples.size, threshold: model.cycleTrigger.counterexampleThreshold },
+      cumulative: { count: invocationIds.length, threshold: policy.cumulativeThreshold },
+      counterexamples: { count: counterexamples.size, threshold: policy.counterexampleThreshold },
     };
   }
 

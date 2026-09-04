@@ -36,6 +36,13 @@ export const submitCycleEvaluationBodySchema = z
     cycleId: identifier,
     metrics: z.array(z.object({ id: identifier, conclusion, evidenceRefs }).strict()).min(1),
     overall: z.enum(['complete', 'partial', 'insufficient_evidence']),
+    counterexampleRootCauses: z
+      .object({
+        eventCount: z.number().int().nonnegative(),
+        rootCauseCount: z.number().int().nonnegative(),
+        howGrouped: z.string().trim().min(1).max(2_000),
+      })
+      .strict(),
   })
   .strict();
 
@@ -72,41 +79,82 @@ const hookManifest = z
   })
   .strict();
 const objectiveAttachment = z.object({ objectiveId: identifier, clauseId: identifier.optional() }).strict();
-const governanceChange = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('enable'), unitId: identifier, reason }).strict(),
-  z.object({ action: z.literal('disable'), unitId: identifier, reason }).strict(),
+const governedCondition = z.discriminatedUnion('conditionRef', [
   z
     .object({
-      action: z.literal('modify'),
-      unitId: identifier,
-      reason,
-      proposedContent: z
-        .string()
-        .trim()
-        .min(1)
-        .max(128 * 1024),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('add'),
-      reason,
-      unit: z
+      conditionRef: z.literal('routing-mode-in'),
+      params: z
         .object({
-          unitId: z.string().regex(/^[A-Z]+\\d+$/),
-          assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-          manifest: hookManifest,
-          content: z
-            .string()
-            .trim()
+          values: z
+            .array(z.enum(['independent', 'serial', 'parallel']))
             .min(1)
-            .max(128 * 1024),
-          objectives: z.array(objectiveAttachment).min(1).max(16),
+            .max(3),
         })
         .strict(),
     })
     .strict(),
+  z
+    .object({ conditionRef: z.literal('prompt-tag-present'), params: z.object({ value: identifier }).strict() })
+    .strict(),
+  z
+    .object({
+      conditionRef: z.literal('minimum-teammates'),
+      params: z.object({ count: z.number().int().min(0).max(64) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      conditionRef: z.literal('minimum-active-participants'),
+      params: z.object({ count: z.number().int().min(0).max(64) }).strict(),
+    })
+    .strict(),
+  ...(['voice-mode-is', 'mcp-available-is', 'a2a-enabled-is', 'direct-message-is'] as const).map((conditionRef) =>
+    z.object({ conditionRef: z.literal(conditionRef), params: z.object({ value: z.boolean() }).strict() }).strict(),
+  ),
 ]);
+const governanceChange = z
+  .discriminatedUnion('action', [
+    z.object({ action: z.literal('enable'), unitId: identifier, reason }).strict(),
+    z.object({ action: z.literal('disable'), unitId: identifier, reason }).strict(),
+    z
+      .object({
+        action: z.literal('modify'),
+        unitId: identifier,
+        reason,
+        proposedContent: z
+          .string()
+          .trim()
+          .min(1)
+          .max(128 * 1024)
+          .optional(),
+        proposedCondition: governedCondition.nullable().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal('add'),
+        reason,
+        unit: z
+          .object({
+            unitId: z.string().regex(/^[A-Z]+\\d+$/),
+            assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+            manifest: hookManifest,
+            content: z
+              .string()
+              .trim()
+              .min(1)
+              .max(128 * 1024),
+            objectives: z.array(objectiveAttachment).min(1).max(16),
+          })
+          .strict(),
+      })
+      .strict(),
+  ])
+  .superRefine((change, ctx) => {
+    if (change.action === 'modify' && change.proposedContent === undefined && change.proposedCondition === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'modify requires content or condition' });
+    }
+  });
 export const submitCycleGovernanceBodySchema = z
   .object({
     objectiveId: identifier,

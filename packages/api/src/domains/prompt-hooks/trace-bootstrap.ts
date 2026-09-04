@@ -5,10 +5,10 @@
  * Bootstrapped once at server startup when Redis is available.
  */
 
-import { createHash } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { EvaluationCatalog } from '../../infrastructure/harness-eval/evaluation/evaluation-catalog.js';
 import { ObjectiveEvaluationRuntime } from '../../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
+import { ObjectiveVersionStore } from '../../infrastructure/harness-eval/evaluation/ObjectiveVersionStore.js';
 import { PendingTraceMarkerStore } from '../../infrastructure/harness-eval/trace-annotation/PendingTraceMarkerStore.js';
 import { resolvePendingTraceMarkers } from '../../infrastructure/harness-eval/trace-annotation/resolve-pending-markers.js';
 import { deriveStructuredTraceAnnotations } from '../../infrastructure/harness-eval/trace-annotation/structured-rule-tagger.js';
@@ -32,25 +32,11 @@ export function bootstrapTraceStore(redis: RedisClient): void {
 
 export function bootstrapObjectiveEvaluationRuntime(redis: RedisClient, catalog: EvaluationCatalog): void {
   if (!_annotationStore || !_traceStore) throw new Error('trace_store_must_be_bootstrapped_first');
+  const versions = new ObjectiveVersionStore(redis, catalog, getCachedRegistry);
   _evaluationRuntime = new ObjectiveEvaluationRuntime(redis, catalog, _annotationStore, {
     traceStore: _traceStore,
-    resolveVersion: (objectiveId) => resolveCycleVersion(catalog, objectiveId),
+    resolveVersion: (objectiveId, state) => versions.resolve(objectiveId, state),
   });
-}
-
-export function resolveCycleVersion(catalog: EvaluationCatalog, objectiveId: string) {
-  const registry = getCachedRegistry();
-  if (!registry) throw new Error('hook_registry_not_initialized');
-  const refs = catalog.manifest.units
-    .filter((unit) => unit.objectives.some((objective) => objective.objectiveId === objectiveId))
-    .map((unit) => `${unit.unitId}@${registry.getActiveVersion(unit.unitId)}`)
-    .sort();
-  if (refs.length === 0) throw new Error(`cycle_objective_has_no_units:${objectiveId}`);
-  const versionContentRef = `hook-versions:${refs.join(',')}`;
-  return {
-    version: `v-${createHash('sha256').update(versionContentRef).digest('hex').slice(0, 16)}`,
-    versionContentRef,
-  };
 }
 
 /** Get the bootstrapped trace store (null if Redis unavailable). */

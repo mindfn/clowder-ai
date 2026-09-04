@@ -3497,6 +3497,8 @@ async function main(): Promise<void> {
               resetPipelineSingleton();
               await refreshOverrideSnapshot();
             },
+            resolveObjectiveVersion: (objectiveId, state) =>
+              objectiveEvaluationRuntime.resolveVersion(objectiveId, state),
           });
           return new (
             await import('./infrastructure/harness-eval/governance/CycleGovernanceCoordinator.js')

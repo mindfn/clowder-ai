@@ -9,12 +9,13 @@ import type {
 
 import type { EvaluationModelDefinition, ObjectiveDefinition } from '../objective-registry.js';
 import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 import { unitRefsForObjective } from './segment-evaluation-helpers.js';
 
 type ObjectiveProjection = {
   objective: SegmentObjectiveEvaluationView;
-  trigger: SegmentEvaluationResponse['tracing']['trigger']['perObjective'][number];
+  trigger: SegmentEvaluationResponse['tracing']['trigger']['objective'];
   counterexamples: TraceAnnotation[];
 };
 
@@ -34,13 +35,12 @@ export class SegmentEvaluationReadModel {
     const unit = this.runtime.catalog.manifest.units.find((candidate) => candidate.unitId === input.segmentId);
     if (!unit) throw new Error(`segment_evaluation_unit_not_found:${input.segmentId}`);
 
-    const projections = await Promise.all(
-      unit.objectives.map(async (attachment) => {
-        const objective = this.requireObjective(attachment.objectiveId);
-        const model = this.requireModel(objective.evaluationModelId);
-        return this.projectObjective(input, objective, model);
-      }),
-    );
+    const attachment = unit.objectives[0];
+    if (!attachment) throw new Error(`segment_evaluation_objective_missing:${input.segmentId}`);
+    const objective = this.requireObjective(attachment.objectiveId);
+    const model = this.requireModel(objective.evaluationModelId);
+    const projection = await this.projectObjective(input, objective, model);
+    const projections = [projection];
     const counterexamples = distinctIncidents(projections.flatMap((projection) => projection.counterexamples)).filter(
       (annotation) =>
         annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
@@ -50,7 +50,7 @@ export class SegmentEvaluationReadModel {
       segmentId: input.segmentId,
       window: { start: input.startMs, end: input.endMs },
       tracing: {
-        trigger: { perObjective: projections.map((projection) => projection.trigger) },
+        trigger: { objective: projection.trigger },
         structuredCounterexamples: counterexamples.map((annotation) => ({
           annotationId: annotation.annotationId,
           incidentKey: annotation.incidentKey,
@@ -81,6 +81,7 @@ export class SegmentEvaluationReadModel {
     // An open Objective cycle is live independently of whichever segment
     // version/query window the operator selected in the lifeline.
     const cycleEnd = current?.cycleEnd ?? this.now();
+    const policy = current ? cycleTriggerPolicyFor(this.runtime.catalog, current) : initialCycleTriggerPolicy(model);
     const [cumulativeCount, annotationLists] = await Promise.all([
       this.runtime.traces.countOwnerWindow(input.ownerUserId, cycleStart, cycleEnd),
       Promise.all(
@@ -105,14 +106,17 @@ export class SegmentEvaluationReadModel {
       trigger: {
         objectiveId: objective.id,
         evalStatus: current?.evalStatus ?? 'idle',
+        lifecycle: objective.lifecycle === 'retired' ? 'retired' : (current?.objectiveLifecycle ?? 'active'),
+        health: cumulativeCount === 0 ? 'zero-trace-fault' : 'healthy',
+        policyChangeCount: history.filter((record) => record.triggerPolicyChange !== undefined).length,
         cycleStartMs: cycleStart,
         cycleEndMs: current?.cycleEnd ?? null,
         triggeredBy: current?.triggeredBy ?? [],
-        cumulative: { count: cumulativeCount, threshold: model.cycleTrigger.cumulativeThreshold },
-        counterexamples: { count: counterexamples.length, threshold: model.cycleTrigger.counterexampleThreshold },
+        cumulative: { count: cumulativeCount, threshold: policy.cumulativeThreshold },
+        counterexamples: { count: counterexamples.length, threshold: policy.counterexampleThreshold },
         cadence: {
           elapsedMs: Math.max(0, cycleEnd - cycleStart),
-          thresholdMs: model.cycleTrigger.cadenceDays * 24 * 60 * 60 * 1000,
+          thresholdMs: policy.cadenceDays * 24 * 60 * 60 * 1000,
           eligible: cumulativeCount > 0,
         },
       },
@@ -127,22 +131,8 @@ export class SegmentEvaluationReadModel {
         unitRefs: unitRefsForObjective(this.runtime, objective.id),
         metrics: model.metrics.map((metric) => metricView(metric, latestMetrics.get(metric.id))),
         currentCycle: current ? toSummary(current) : null,
-        latestEvaluation: latestEvaluated?.evaluation
-          ? {
-              cycleId: latestEvaluated.cycleId,
-              overall: latestEvaluated.evaluation.overall,
-              writtenAt: latestEvaluated.evaluation.writtenAt,
-              by: latestEvaluated.evaluation.by,
-              windows: latestEvaluated.windows,
-            }
-          : null,
-        latestGovernance: latestGoverned?.governance
-          ? {
-              cycleId: latestGoverned.cycleId,
-              ...latestGoverned.governance,
-              approval: latestGoverned.approval ?? null,
-            }
-          : null,
+        latestEvaluation: latestEvaluationView(latestEvaluated),
+        latestGovernance: latestGovernanceView(latestGoverned),
         versionChain,
       },
     };
@@ -159,6 +149,26 @@ export class SegmentEvaluationReadModel {
     if (!model) throw new Error(`segment_evaluation_model_not_found:${modelId}`);
     return model;
   }
+}
+
+function latestEvaluationView(record: CycleRecord | undefined): SegmentObjectiveEvaluationView['latestEvaluation'] {
+  if (!record?.evaluation) return null;
+  return {
+    cycleId: record.cycleId,
+    overall: record.evaluation.overall,
+    writtenAt: record.evaluation.writtenAt,
+    by: record.evaluation.by,
+    windows: record.windows,
+  };
+}
+
+function latestGovernanceView(record: CycleRecord | undefined): SegmentObjectiveEvaluationView['latestGovernance'] {
+  if (!record?.governance) return null;
+  return {
+    cycleId: record.cycleId,
+    ...record.governance,
+    approval: record.approval ?? null,
+  };
 }
 
 function metricView(

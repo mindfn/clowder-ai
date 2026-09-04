@@ -22,6 +22,29 @@ const conclusionSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 const reason = z.string().trim().min(1).max(8_000);
+const governedCondition = z.discriminatedUnion('conditionRef', [
+  z.object({
+    conditionRef: z.literal('routing-mode-in'),
+    params: z.object({
+      values: z
+        .array(z.enum(['independent', 'serial', 'parallel']))
+        .min(1)
+        .max(3),
+    }),
+  }),
+  z.object({ conditionRef: z.literal('prompt-tag-present'), params: z.object({ value: identifier }) }),
+  z.object({
+    conditionRef: z.literal('minimum-teammates'),
+    params: z.object({ count: z.number().int().min(0).max(64) }),
+  }),
+  z.object({
+    conditionRef: z.literal('minimum-active-participants'),
+    params: z.object({ count: z.number().int().min(0).max(64) }),
+  }),
+  ...(['voice-mode-is', 'mcp-available-is', 'a2a-enabled-is', 'direct-message-is'] as const).map((conditionRef) =>
+    z.object({ conditionRef: z.literal(conditionRef), params: z.object({ value: z.boolean() }) }),
+  ),
+]);
 const hookManifest = z.object({
   id: z.string().regex(/^[A-Z]+\\d+$/),
   name: z.string().trim().min(1).max(200),
@@ -47,38 +70,46 @@ const hookManifest = z.object({
   governanceTier: z.enum(['immutable', 'human-gated', 'auto-evolve']),
   userExplanation: z.string().max(2_000).optional(),
 });
-const governanceChange = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('enable'), unitId: identifier, reason }),
-  z.object({ action: z.literal('disable'), unitId: identifier, reason }),
-  z.object({
-    action: z.literal('modify'),
-    unitId: identifier,
-    reason,
-    proposedContent: z
-      .string()
-      .trim()
-      .min(1)
-      .max(128 * 1024),
-  }),
-  z.object({
-    action: z.literal('add'),
-    reason,
-    unit: z.object({
-      unitId: z.string().regex(/^[A-Z]+\\d+$/),
-      assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-      manifest: hookManifest,
-      content: z
+const governanceChange = z
+  .discriminatedUnion('action', [
+    z.object({ action: z.literal('enable'), unitId: identifier, reason }),
+    z.object({ action: z.literal('disable'), unitId: identifier, reason }),
+    z.object({
+      action: z.literal('modify'),
+      unitId: identifier,
+      reason,
+      proposedContent: z
         .string()
         .trim()
         .min(1)
-        .max(128 * 1024),
-      objectives: z
-        .array(z.object({ objectiveId: identifier, clauseId: identifier.optional() }))
-        .min(1)
-        .max(16),
+        .max(128 * 1024)
+        .optional(),
+      proposedCondition: governedCondition.nullable().optional(),
     }),
-  }),
-]);
+    z.object({
+      action: z.literal('add'),
+      reason,
+      unit: z.object({
+        unitId: z.string().regex(/^[A-Z]+\\d+$/),
+        assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        manifest: hookManifest,
+        content: z
+          .string()
+          .trim()
+          .min(1)
+          .max(128 * 1024),
+        objectives: z
+          .array(z.object({ objectiveId: identifier, clauseId: identifier.optional() }))
+          .min(1)
+          .max(16),
+      }),
+    }),
+  ])
+  .superRefine((change, ctx) => {
+    if (change.action === 'modify' && change.proposedContent === undefined && change.proposedCondition === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'modify requires content or condition' });
+    }
+  });
 
 export const readCycleTracesInputSchema = {
   objectiveId: identifier.describe('Objective id from the cycle assignment.'),
@@ -97,6 +128,15 @@ export const submitCycleEvaluationInputSchema = {
   overall: z
     .enum(['complete', 'partial', 'insufficient_evidence'])
     .describe('Whether the evidence supports a complete, partial, or skipped evaluation.'),
+  counterexampleRootCauses: z
+    .object({
+      eventCount: z.number().int().nonnegative(),
+      rootCauseCount: z.number().int().nonnegative(),
+      howGrouped: z.string().trim().min(1).max(2_000),
+    })
+    .describe(
+      'Required audit bridge for the next M redesign: count all high-confidence counterexample events in the frozen windows, group them into semantic root causes, and explain the grouping.',
+    ),
 };
 
 export const describeHarnessUnitInputSchema = {
@@ -130,6 +170,7 @@ interface SubmitCycleEvaluationInput extends Record<string, unknown> {
   cycleId: string;
   metrics: Array<{ id: string; conclusion: z.infer<typeof conclusionSchema>; evidenceRefs: string[] }>;
   overall: 'complete' | 'partial' | 'insufficient_evidence';
+  counterexampleRootCauses: { eventCount: number; rootCauseCount: number; howGrouped: string };
 }
 
 interface DescribeHarnessUnitInput extends Record<string, unknown> {
@@ -178,7 +219,7 @@ export const unitEvaluationTools = [
   defineTool({
     name: 'cat_cafe_submit_cycle_evaluation',
     description:
-      'Write the structured per-metric conclusions for the exact F257 Objective cycle assigned to this invocation. The API validates metric coverage, conclusion kinds, evidence ownership, Objective membership, and cycle windows.',
+      'Write the structured per-metric conclusions and counterexample event-to-root-cause grouping for the exact F257 Objective cycle assigned to this invocation. The API validates metric coverage, conclusion kinds, grouping counts, evidence ownership, and cycle windows.',
     inputSchema: submitCycleEvaluationInputSchema,
     handler: handleSubmitCycleEvaluationTool,
     governance: {
