@@ -29,6 +29,7 @@
       "!docs/harness-feedback/bundles",
       "!docs/videos",
       "!packages/mcp-server/governance/mcp-surface-baseline.json",
+      "!site/lib/roadmap-plate-cats.js",
       "!site/tailwind.css"
     ]
   },
