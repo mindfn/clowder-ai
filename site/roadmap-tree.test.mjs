@@ -280,11 +280,20 @@ describe('plate study opens straight off disk', () => {
   it('ships the cats as screened dot data, loaded before the scene', () => {
     const cats = read('lib/roadmap-plate-cats.js');
     for (const id of ['siamese', 'ragdoll', 'maine']) {
-      const entry = new RegExp(`${id}: \\{ w: (\\d+), h: (\\d+), dots: \\[([^\\]]+)\\]`).exec(cats);
-      assert.ok(entry, `${id} must be screened`);
-      const dots = entry[3].split(',').length;
-      assert.equal(dots % 3, 0, `${id} dots must be x,y,r triples`);
-      assert.ok(dots / 3 > 200, `${id} needs enough dots to read as a cat, got ${dots / 3}`);
+      const block = new RegExp(`  ${id}: \\{([\\s\\S]*?)\\n  \\},`).exec(cats);
+      assert.ok(block, `${id} must be screened`);
+      const poses = [...block[1].matchAll(/(\w+): \{ w: (\d+), h: (\d+), dots: \[([^\]]*)\]/g)];
+      assert.ok(poses.length >= 1, `${id} needs at least one pose`);
+      assert.ok(
+        poses.some((m) => m[1] === 'sit'),
+        `${id} needs a sit pose to fall back to`,
+      );
+      for (const [, pose, w, h, dots] of poses) {
+        const n = dots.split(',').length;
+        assert.equal(n % 3, 0, `${id}/${pose} dots must be x,y,r triples`);
+        assert.ok(n / 3 > 200, `${id}/${pose} needs enough dots to read, got ${n / 3}`);
+        assert.ok(Number(w) > 20 && Number(h) > 20, `${id}/${pose} needs a real size`);
+      }
     }
     const page = read('roadmap-plate.html');
     assert.ok(

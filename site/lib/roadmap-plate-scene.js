@@ -317,26 +317,48 @@
       { p: 0.95, x: CX, y: H / 2, z: 1 },
       { p: 1, x: CX, y: H / 2, z: 1 },
     ];
-    // Cats are rasterised once from the shipped dot data, then walked around the sheet with the
-    // story: gathered round the seed, then standing under whichever limb is being drawn.
+    // Cats are rasterised from the shipped dot data (one sprite per pose, cached on first use),
+    // then walked around the sheet with the story: gathered round the seed, walking between
+    // limbs, standing up under whichever limb is being drawn.
     const screenedCats = global.ClowderPlateCats || {};
-    const catSprites = ['siamese', 'ragdoll', 'maine'].map((id) =>
-      screenedCats[id] ? P.screened(screenedCats[id], dpr) : null,
-    );
+    const CAT_IDS = ['siamese', 'ragdoll', 'maine'];
+    const catCache = new Map();
+    // Fall back through the poses we would like to the ones the current sheet actually has.
+    const FALLBACK = {
+      reach: ['reach', 'stand', 'sit'],
+      look: ['look', 'sit'],
+      gaze: ['gaze', 'sit'],
+      walk: ['walk', 'sit'],
+    };
+    function catSprite(i, pose) {
+      const poses = screenedCats[CAT_IDS[i]];
+      if (!poses) return null;
+      const use = (FALLBACK[pose] || [pose, 'sit']).find((name) => poses[name]) || 'sit';
+      const key = `${i}:${use}`;
+      if (!catCache.has(key)) catCache.set(key, { ...P.screened(poses[use], dpr), pose: use });
+      return catCache.get(key);
+    }
     const under = (id, spread) => {
       const x = at(id).x;
       return spread.map((d) => Math.max(120, Math.min(W - 200, x + d)));
     };
     const HOME = [452, 664, 748];
+    // Arrive before the beat and hold through it, so there is a stretch where the cats are
+    // standing still under the limb rather than permanently in transit.
+    const visit = (id, spread) => under(id, spread);
     const CAT_PLAN = [
       { p: 0, x: HOME },
       { p: 0.1, x: [438, 660, 752] },
-      { p: 0.28, x: [428, 674, 764] },
-      { p: 0.44, x: [...under('memory', [-78, 18]), 700] },
-      { p: 0.57, x: [520, ...under('harness', [-58, 42])] },
-      { p: 0.69, x: [...under('capability', [-78, 18]), 690] },
-      { p: 0.8, x: [530, ...under('life', [-58, 42])] },
-      { p: 0.95, x: HOME },
+      { p: 0.26, x: [428, 674, 764] },
+      { p: 0.4, x: [...visit('memory', [-158, 26]), 700] },
+      { p: 0.48, x: [...visit('memory', [-158, 26]), 700] },
+      { p: 0.53, x: [520, ...visit('harness', [-42, 118])] },
+      { p: 0.61, x: [520, ...visit('harness', [-42, 118])] },
+      { p: 0.65, x: [...visit('capability', [-158, 26]), 690] },
+      { p: 0.73, x: [...visit('capability', [-158, 26]), 690] },
+      { p: 0.77, x: [530, ...visit('life', [-42, 118])] },
+      { p: 0.84, x: [530, ...visit('life', [-42, 118])] },
+      { p: 0.92, x: HOME },
       { p: 1, x: HOME },
     ];
 
@@ -348,6 +370,20 @@
       const b = KEYS[i + 1];
       const k = smooth(Math.max(0, Math.min(1, (p - a.p) / (b.p - a.p))));
       return { x: P.lerp(a.x, b.x, k), y: P.lerp(a.y, b.y, k), z: P.lerp(a.z, b.z, k) };
+    }
+
+    // Only profile poses may be mirrored: flipping a front-facing portrait just moves the
+    // collar charm to the wrong side without turning the cat toward anything.
+    const PROFILE = new Set(['walk', 'crouch', 'leap', 'look', 'gaze', 'reach']);
+
+    /** Walking while they move, reaching up under the limb being drawn, watching otherwise. */
+    function catPose(p, i) {
+      const x = catX(p, i);
+      const step = x - catX(Math.max(0, p - 0.008), i);
+      if (Math.abs(step) > 0.9) return { pose: 'walk', dir: step > 0 ? 1 : -1 };
+      if (p > 0.4 && p < 0.86) return { pose: 'reach', dir: x < CX ? -1 : 1 };
+      if (p < 0.34) return { pose: 'look', dir: x < CX ? 1 : -1 };
+      return { pose: 'gaze', dir: x < CX ? 1 : -1 };
     }
 
     function catX(p, i) {
@@ -407,12 +443,15 @@
 
       // The cats are not part of the growth — they are the ones planting it. They stand around
       // the seed, then move under whichever limb is being drawn, then gather again at the end.
-      catSprites.forEach((cat, i) => {
+      CAT_IDS.forEach((_, i) => {
+        const { pose, dir } = catPose(p, i);
+        const cat = catSprite(i, pose);
         if (!cat) return;
         const x = catX(p, i);
         view.save();
         view.translate(x, GROUND - cat.h);
-        if (x > CX) {
+        // Profile sprites are drawn facing left; mirror to turn one toward what it is looking at.
+        if (dir > 0 && PROFILE.has(cat.pose)) {
           view.translate(cat.w, 0);
           view.scale(-1, 1);
         }

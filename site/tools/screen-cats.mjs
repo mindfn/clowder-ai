@@ -7,7 +7,7 @@
  *
  *   node site/tools/screen-cats.mjs
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPixels } from './png-alpha.mjs';
@@ -16,16 +16,18 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SPRITES = join(HERE, '../assets/roadmap/cats');
 const OUT = join(HERE, '../lib/roadmap-plate-cats.js');
 const CELL = 3; // dot pitch in plate units
+// One world scale per cat, fixed by its sitting height, so a cat that stands up gets taller
+// instead of every pose being squashed into the same box.
 const CATS = [
-  { id: 'siamese', height: 124 },
-  { id: 'ragdoll', height: 110 },
-  { id: 'maine', height: 134 },
+  { id: 'siamese', sit: 124 },
+  { id: 'ragdoll', sit: 110 },
+  { id: 'maine', sit: 134 },
 ];
+const POSES = ['sit', 'stand', 'walk', 'look', 'gaze', 'crouch', 'reach', 'leap'];
 
 /** Box-sample the sprite at the dot pitch; darker and more opaque means a fatter dot. */
-function screen(cat) {
-  const src = readPixels(join(SPRITES, `${cat.id}-sit.png`));
-  const h = cat.height;
+function screen(file, h) {
+  const src = readPixels(file);
   const w = Math.round((src.width / src.height) * h);
   const dots = [];
   for (let cy = 0; cy < h; cy += CELL) {
@@ -50,11 +52,27 @@ function screen(cat) {
       dots.push(cx + CELL / 2, cy + CELL / 2, Math.round(r * 100) / 100);
     }
   }
-  return { id: cat.id, w, h, dots };
+  return { w, h, dots };
 }
 
-const screened = CATS.map(screen);
-const body = screened.map((c) => `  ${c.id}: { w: ${c.w}, h: ${c.h}, dots: [${c.dots.join(',')}] },`).join('\n');
+const screened = CATS.map((cat) => {
+  const scale = cat.sit / readPixels(join(SPRITES, `${cat.id}-sit.png`)).height;
+  const poses = {};
+  for (const pose of POSES) {
+    const file = join(SPRITES, `${cat.id}-${pose}.png`);
+    if (!existsSync(file)) continue;
+    poses[pose] = screen(file, Math.round(readPixels(file).height * scale));
+  }
+  return { id: cat.id, poses };
+});
+const body = screened
+  .map(
+    (c) =>
+      `  ${c.id}: {\n${Object.entries(c.poses)
+        .map(([pose, s]) => `    ${pose}: { w: ${s.w}, h: ${s.h}, dots: [${s.dots.join(',')}] },`)
+        .join('\n')}\n  },`,
+  )
+  .join('\n');
 writeFileSync(
   OUT,
   `/* Clowder AI — canon cats screened for the roadmap plate.
@@ -68,4 +86,13 @@ ${body}
 };
 `,
 );
-process.stdout.write(`${screened.map((c) => `${c.id}=${c.dots.length / 3}`).join(' ')} dots\n-> ${OUT}\n`);
+process.stdout.write(
+  `${screened
+    .map(
+      (c) =>
+        `${c.id}: ${Object.entries(c.poses)
+          .map(([k, v]) => `${k}=${v.dots.length / 3}`)
+          .join(' ')}`,
+    )
+    .join('\n')}\n-> ${OUT}\n`,
+);
