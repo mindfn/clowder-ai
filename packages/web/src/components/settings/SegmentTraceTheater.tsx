@@ -73,7 +73,7 @@ export function SegmentTraceTheater({
 
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-          结构化反例 Tracing
+          反例唤醒信号
         </SettingsText>
         {!loading && (readiness?.structuredCounterexamples.length ?? 0) === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
@@ -92,7 +92,7 @@ export function SegmentTraceTheater({
                   {new Date(counterexample.createdAt).toLocaleString()}
                 </span>
                 <SettingsBadge tone="amber" size="xxs">
-                  明确反例
+                  反例信号
                 </SettingsBadge>
                 <span className="min-w-0 flex-1 truncate text-xs text-cafe-secondary">
                   {counterexample.rationale ?? counterexample.incidentKey}
@@ -190,7 +190,7 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
           · 周期内累计 Tracing（Objective）{objective.cumulative.count}/{objective.cumulative.threshold} 条
         </div>
         <div className="text-cafe-muted">
-          · 周期内反例 {objective.counterexamples.count}/{objective.counterexamples.threshold} 条
+          · 周期内重复反例事件 {objective.counterexamples.count}/{objective.counterexamples.threshold} 次
         </div>
         <div className="text-cafe-muted">
           · 距周期起点 {formatDuration(objective.cadence.elapsedMs)}/{formatDuration(objective.cadence.thresholdMs)}

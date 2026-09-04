@@ -31,6 +31,19 @@ const ITEM: ApprovalItem = {
       },
     },
     conclusions: [{ id: 'metric-a', conclusion: { kind: 'count', value: 3 } }],
+    coverageAssessment: {
+      status: 'gaps_found',
+      rationale: '检测规则漏掉一个自标事件。',
+      findings: [
+        {
+          kind: 'detector_gap',
+          basis: 'mcp-marker',
+          metricId: 'metric-a',
+          rationale: '当前结构化规则没有覆盖 invocation-1。',
+          evidenceRefs: ['invocation-1'],
+        },
+      ],
+    },
     metricVisuals: [{ id: 'metric-a', currentValue: 3, previousValue: 5, delta: -2, lowerIsBetter: true }],
     hasComparisonBaseline: true,
     governanceReason: '反例显示内容需要收紧。',
@@ -95,6 +108,8 @@ describe('F257 governance card', () => {
     expect(text).toContain('203/200');
     expect(text).toContain('cumulative / counterexamples');
     expect(text).toContain('上一版没有解释边界。');
+    expect(text).toContain('检测器缺口 · metric-a');
+    expect(text).toContain('当前结构化规则没有覆盖 invocation-1。');
     expect(text).toContain('invocation-1');
     expect(container.querySelector('[data-testid="f257-governance-evidence-link"]')).not.toBeNull();
     expect(text).toContain('拒绝必须填写理由');

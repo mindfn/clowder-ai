@@ -140,6 +140,7 @@ export class CycleEvaluationCoordinator {
       metrics: structuredClone(input.metrics),
       overall: input.overall,
       counterexampleRootCauses: structuredClone(input.counterexampleRootCauses),
+      coverageAssessment: structuredClone(input.coverageAssessment),
       writtenAt: this.now(),
       by: principal.catId,
     };
@@ -321,6 +322,7 @@ function sameSubmission(
     evaluation.by === catId &&
     evaluation.overall === input.overall &&
     JSON.stringify(evaluation.metrics) === JSON.stringify(input.metrics) &&
-    JSON.stringify(evaluation.counterexampleRootCauses) === JSON.stringify(input.counterexampleRootCauses)
+    JSON.stringify(evaluation.counterexampleRootCauses) === JSON.stringify(input.counterexampleRootCauses) &&
+    JSON.stringify(evaluation.coverageAssessment) === JSON.stringify(input.coverageAssessment)
   );
 }

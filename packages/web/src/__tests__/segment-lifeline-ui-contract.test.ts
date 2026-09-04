@@ -375,6 +375,10 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(evaluationSrc).toContain('currentCycle?.evalStatus');
     expect(evaluationSrc).toContain('latestEvaluation');
     expect(evaluationSrc).toContain('latestConclusion');
+    expect(evaluationSrc).toContain('检测覆盖');
+    expect(evaluationSrc).toContain('coverageAssessment');
+    expect(evaluationSrc).toContain('coverageFindingLabel');
+    expect(evaluationSrc).toContain('检测器缺口');
     expect(evaluationSrc).toContain('现在要做');
     expect(evaluationSrc).toContain('下次看什么');
     expect(evaluationSrc).toContain('openInvocationTrajectory');
@@ -412,9 +416,9 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     // co-creator 2026-08-26: exactly two groups — structured counterexamples +
     // windowed cumulative tracing; the owner-wide unclassified count is removed
     // from the segment view (it never participates in this Unit's trigger).
-    expect(theaterSrc).toContain('结构化反例 Tracing');
+    expect(theaterSrc).toContain('反例唤醒信号');
     expect(theaterSrc).toContain('周期内累计 Tracing（Objective）');
-    expect(theaterSrc).toContain('周期内反例');
+    expect(theaterSrc).toContain('周期内重复反例事件');
     expect(theaterSrc).toContain('本段注入明细');
     expect(theaterSrc).toContain('注入 {activity.firedCount} 次');
     expect(theaterSrc).toContain('禁用 {activity.disabledCount} 次');

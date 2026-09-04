@@ -31,6 +31,9 @@ export function buildGovernanceAssignment(
       overall: record.evaluation.overall,
       metrics: summarizeMetrics(record.evaluation.metrics),
       writtenAt: record.evaluation.writtenAt,
+      ...(record.evaluation.coverageAssessment
+        ? { coverageAssessment: structuredClone(record.evaluation.coverageAssessment) }
+        : {}),
     },
     history: history.flatMap(summarizeHistory).slice(0, MAX_HISTORY_CYCLES),
     rejectedProposalReasons: [...(record.rejectReasons ?? [])],
@@ -67,6 +70,9 @@ function summarizeHistory(record: CycleRecord): CycleGovernanceHistorySummary[] 
         overall: record.evaluation.overall,
         metrics: summarizeMetrics(record.evaluation.metrics),
         writtenAt: record.evaluation.writtenAt,
+        ...(record.evaluation.coverageAssessment
+          ? { coverageAssessment: structuredClone(record.evaluation.coverageAssessment) }
+          : {}),
       },
       ...(record.governance ? { governance: { ...record.governance } } : {}),
       ...(record.approval && record.approval.state !== 'pending'

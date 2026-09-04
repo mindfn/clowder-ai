@@ -463,6 +463,8 @@ export type {
 } from './cross-thread-coordination.js';
 export { isCrossThreadProvenance } from './cross-thread-coordination.js';
 export type {
+  CycleCoverageAssessment,
+  CycleCoverageFinding,
   CycleEvaluationAssignment,
   CycleEvaluationSubmission,
   CycleMetricConclusion,

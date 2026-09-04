@@ -33,6 +33,10 @@ HTTP callback route 是 MCP tool 的底层实现和维护者调试面，不是 s
 | 提交游戏行动 | `cat_cafe_submit_game_action` | `POST /api/callbacks/submit-game-action` |
 | 更新 workflow 告示牌 | `cat_cafe_update_workflow` | `POST /api/callbacks/update-workflow-sop` |
 | 开多猫 vote | `cat_cafe_start_vote` | `POST /api/callbacks/start-vote` |
+| 查 Harness Objective/Metric 坐标 | `cat_cafe_list_objectives` | `GET /api/callbacks/objectives` |
+| 自标当前 invocation 的 Harness 信号 | `cat_cafe_report_harness_signal` | `POST /api/callbacks/harness-signals/report` |
+
+`cat_cafe_report_harness_signal` 只接受当前 invocation principal。它写 pending marker，terminal 后绑定同一条 TraceEpisode；counterexample 可按 distinct invocation 计入 M 唤醒独立评估，但 marker 本身不是 metric truth，也不能直接改变 hook 或治理决定。正常使用先加载 `harness-self-report`，不要手写 callback。
 
 ## Tracking registration policy
 

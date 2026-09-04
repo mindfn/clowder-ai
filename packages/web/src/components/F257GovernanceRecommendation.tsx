@@ -11,6 +11,8 @@ export function F257GovernanceRecommendation({ item }: { item: ApprovalHubItem }
   const changes = asRecords(item.detail.changes);
   const evidenceRefs = Array.isArray(item.detail.evidenceRefs) ? item.detail.evidenceRefs.map(String) : [];
   const rejectReasons = Array.isArray(item.detail.rejectReasons) ? item.detail.rejectReasons.map(String) : [];
+  const coverageAssessment = asRecord(item.detail.coverageAssessment);
+  const coverageFindings = asRecords(coverageAssessment.findings);
   return (
     <div className="space-y-2" data-testid="f257-harness-governance-recommendation">
       <div className="space-y-1 rounded-md border border-cafe-subtle/30 p-2" data-testid="f257-governance-header">
@@ -43,6 +45,19 @@ export function F257GovernanceRecommendation({ item }: { item: ApprovalHubItem }
           </div>
         ))}
         {item.detail.governanceReason != null && <p>治理判断：{String(item.detail.governanceReason)}</p>}
+        {coverageAssessment.status != null && (
+          <div className="space-y-1">
+            <p>
+              检测覆盖：{coverageLabel(String(coverageAssessment.status))} ·{' '}
+              {String(coverageAssessment.rationale ?? '')}
+            </p>
+            {coverageFindings.map((finding, index) => (
+              <p key={`${String(finding.kind)}:${index}`} className="pl-3 text-cafe-muted">
+                {coverageFindingLabel(finding)}：{String(finding.rationale ?? '')}
+              </p>
+            ))}
+          </div>
+        )}
         {evidenceRefs.length > 0 ? (
           <details>
             <summary className="cursor-pointer opacity-70">证据引用（{evidenceRefs.length}）</summary>
@@ -88,6 +103,17 @@ export function F257GovernanceRecommendation({ item }: { item: ApprovalHubItem }
       </GovernanceSection>
     </div>
   );
+}
+
+function coverageLabel(status: string): string {
+  if (status === 'adequate') return '覆盖充分';
+  if (status === 'data_insufficient') return '数据不足';
+  return '发现覆盖缺口';
+}
+
+function coverageFindingLabel(finding: Record<string, unknown>): string {
+  if (finding.kind === 'metric_gap') return '指标缺口';
+  return finding.metricId ? `检测器缺口 · ${String(finding.metricId)}` : '检测器缺口';
 }
 
 function MetricVisual({ metric }: { metric: Record<string, unknown> }) {

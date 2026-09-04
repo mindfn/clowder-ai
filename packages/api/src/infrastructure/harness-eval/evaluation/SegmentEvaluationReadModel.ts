@@ -8,7 +8,10 @@ import type {
 } from '@cat-cafe/shared';
 
 import type { EvaluationModelDefinition, ObjectiveDefinition } from '../objective-registry.js';
-import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import {
+  counterexampleWakeKey,
+  isEvaluationPriorityCounterexample,
+} from '../trace-annotation/high-confidence-annotation.js';
 import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 import { unitRefsForObjective } from './segment-evaluation-helpers.js';
@@ -90,9 +93,7 @@ export class SegmentEvaluationReadModel {
         ),
       ),
     ]);
-    const counterexamples = distinctIncidents(
-      annotationLists.flat().filter((annotation) => isHighConfidenceCounterexample(annotation)),
-    );
+    const counterexamples = distinctWakeSignals(annotationLists.flat());
     const records = [...(current ? [current] : []), ...history];
     const latestEvaluated = records.find((record) => record.evaluation);
     const latestGoverned = records.find((record) => record.governance);
@@ -159,6 +160,9 @@ function latestEvaluationView(record: CycleRecord | undefined): SegmentObjective
     writtenAt: record.evaluation.writtenAt,
     by: record.evaluation.by,
     windows: record.windows,
+    ...(record.evaluation.coverageAssessment
+      ? { coverageAssessment: structuredClone(record.evaluation.coverageAssessment) }
+      : {}),
   };
 }
 
@@ -218,6 +222,19 @@ function distinctIncidents(annotations: TraceAnnotation[]): TraceAnnotation[] {
     .filter((annotation) => {
       if (seen.has(annotation.incidentKey)) return false;
       seen.add(annotation.incidentKey);
+      return true;
+    });
+}
+
+function distinctWakeSignals(annotations: TraceAnnotation[]): TraceAnnotation[] {
+  const seen = new Set<string>();
+  return [...annotations]
+    .filter(isEvaluationPriorityCounterexample)
+    .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
+    .filter((annotation) => {
+      const key = counterexampleWakeKey(annotation);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
 }

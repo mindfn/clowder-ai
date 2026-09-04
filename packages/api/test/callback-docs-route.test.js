@@ -22,6 +22,9 @@ describe('Callback Docs Routes', () => {
       const body = response.json();
       assert.ok(body.instructions, 'response should have instructions field');
       assert.ok(body.instructions.includes('# MCP Callbacks HTTP API Reference'), 'should contain refs heading');
+      assert.match(body.instructions, /cat_cafe_list_objectives/);
+      assert.match(body.instructions, /cat_cafe_report_harness_signal/);
+      assert.match(body.instructions, /marker 本身不是 metric truth/);
       assert.ok(!body.instructions.startsWith('---'), 'frontmatter should be stripped');
     } finally {
       await app.close();

@@ -1,5 +1,8 @@
 import type { CycleEvaluationAssignment, CycleRecord, TraceAnnotation } from '@cat-cafe/shared';
-import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import {
+  counterexampleWakeKey,
+  isEvaluationPriorityCounterexample,
+} from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { isSkippedCycle } from './CycleRecordStore.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
@@ -58,7 +61,8 @@ export function formatCycleAssignment(record: CycleRecord, assignment: CycleEval
     `Cycle: \`${record.cycleId}\``,
     'Read the immutable owner trace pool only through the named readPoolTool, starting with counterexample references.',
     'Submit every metric conclusion and the overall result with cat_cafe_submit_cycle_evaluation.',
-    'Also group every high-confidence counterexample event in the frozen windows into semantic root causes and submit eventCount, rootCauseCount, and howGrouped. This is audit evidence only; M remains fixed.',
+    'Also group every high-confidence counterexample wake event in the frozen windows into semantic root causes and submit eventCount, rootCauseCount, and howGrouped. eventCount follows the trigger coordinate: replayable structured annotations count by incidentKey, while MCP markers from multiple metrics in one invocation count once. This is audit evidence only; M remains fixed.',
+    'Assess detector coverage from the same full window. Report evidence-bound detector gaps, metric gaps, data insufficiency, or adequate coverage; this inferred assessment is diagnostic and never metric truth.',
     'Conversation text is not a writeback. Do not compare this cycle with another version.',
     '',
     '```json',
@@ -81,8 +85,10 @@ async function collectCounterexamples(
   );
   const unique = new Map<string, TraceAnnotation>();
   for (const annotation of lists.flat()) {
-    if (!isHighConfidenceCounterexample(annotation) || unique.has(annotation.incidentKey)) continue;
-    unique.set(annotation.incidentKey, annotation);
+    if (!isEvaluationPriorityCounterexample(annotation)) continue;
+    const wakeKey = counterexampleWakeKey(annotation);
+    if (!wakeKey || unique.has(wakeKey)) continue;
+    unique.set(wakeKey, annotation);
   }
   return [...unique.values()]
     .sort((left, right) => left.createdAt - right.createdAt || left.incidentKey.localeCompare(right.incidentKey))

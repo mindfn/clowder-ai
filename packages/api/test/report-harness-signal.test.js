@@ -180,7 +180,7 @@ describe('cat_cafe_report_harness_signal is a trace marker', () => {
     assert.equal((await stores.markerStore.listPending('inv-1')).length, 0);
   });
 
-  test('candidate marker stays a candidate and leaves the episode for semantic sweep', async () => {
+  test('candidate marker stays a candidate and leaves the episode available for coverage review', async () => {
     const { handler, stores, principal } = await setup();
     await handler.handleReportHarnessSignal(stores, principal, body({ polarity: 'candidate' }));
     await stores.traceStore.persist(summary, detail);

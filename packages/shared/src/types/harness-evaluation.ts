@@ -1,4 +1,4 @@
-import type { CycleMetricEvaluation } from './cycle-evaluation.js';
+import type { CycleCoverageAssessment, CycleMetricEvaluation } from './cycle-evaluation.js';
 import type { TraceEpisodeRef } from './injection-trace.js';
 import type { SegmentVerdict } from './segment-lifecycle.js';
 
@@ -165,6 +165,7 @@ export interface CycleRecord {
     writtenAt: number;
     by: string;
     counterexampleRootCauses?: { eventCount: number; rootCauseCount: number; howGrouped: string };
+    coverageAssessment?: CycleCoverageAssessment;
   };
   governance?: { decision: 'keep' | 'rollback' | 'evolve'; reason: string; writtenAt: number; by: string };
   approval?: {
@@ -365,6 +366,7 @@ export interface SegmentObjectiveEvaluationView {
     writtenAt: number;
     by: string;
     windows: CycleWindow[];
+    coverageAssessment?: CycleCoverageAssessment;
   } | null;
   latestGovernance: {
     cycleId: string;

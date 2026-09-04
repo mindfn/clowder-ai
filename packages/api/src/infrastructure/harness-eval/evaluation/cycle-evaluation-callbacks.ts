@@ -20,6 +20,40 @@ const conclusion = z.discriminatedUnion('kind', [
     })
     .strict(),
 ]);
+const coverageFinding = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('detector_gap'),
+      basis: z.enum(['mcp-marker', 'evaluator-observation']),
+      metricId: identifier,
+      rationale: z.string().trim().min(1).max(2_000),
+      evidenceRefs: z.array(identifier).min(1).max(16),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('metric_gap'),
+      basis: z.literal('evaluator-observation'),
+      rationale: z.string().trim().min(1).max(2_000),
+      evidenceRefs: z.array(identifier).min(1).max(16),
+    })
+    .strict(),
+]);
+const coverageAssessment = z
+  .object({
+    status: z.enum(['adequate', 'data_insufficient', 'gaps_found']),
+    rationale: z.string().trim().min(1).max(2_000),
+    findings: z.array(coverageFinding).max(16),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.status === 'gaps_found') !== value.findings.length > 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'gaps_found requires findings and only gaps_found may carry them',
+      });
+    }
+  });
 
 export const readCycleTracesBodySchema = z
   .object({
@@ -43,6 +77,7 @@ export const submitCycleEvaluationBodySchema = z
         howGrouped: z.string().trim().min(1).max(2_000),
       })
       .strict(),
+    coverageAssessment,
   })
   .strict();
 

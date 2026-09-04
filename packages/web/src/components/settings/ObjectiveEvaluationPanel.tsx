@@ -74,7 +74,12 @@ function MetricCatalog({ metrics }: { metrics: SegmentMetricEvaluationView[] }) 
 function VerdictCard({ objective }: { objective: SegmentObjectiveEvaluationView }) {
   const evaluation = objective.latestEvaluation;
   if (!evaluation) return null;
-  const evidenceRefs = [...new Set(objective.metrics.flatMap((metric) => metric.evidenceRefs))];
+  const evidenceRefs = [
+    ...new Set([
+      ...objective.metrics.flatMap((metric) => metric.evidenceRefs),
+      ...(evaluation.coverageAssessment?.findings.flatMap((finding) => finding.evidenceRefs) ?? []),
+    ]),
+  ];
   return (
     <section className="mt-4 rounded-xl bg-[var(--console-elevated-bg)] p-3" data-testid="cycle-verdict-card">
       <div className="flex flex-wrap items-center gap-2">
@@ -99,14 +104,26 @@ function VerdictCard({ objective }: { objective: SegmentObjectiveEvaluationView 
             {metric.latestConclusion ? conclusionLabel(metric.latestConclusion) : '本轮未回写'}
           </MetaRow>
         ))}
+        {evaluation.coverageAssessment && (
+          <>
+            <MetaRow label="检测覆盖">
+              {coverageStatusLabel(evaluation.coverageAssessment.status)} · {evaluation.coverageAssessment.rationale}
+            </MetaRow>
+            {evaluation.coverageAssessment.findings.map((finding, index) => (
+              <MetaRow key={`${finding.kind}:${index}`} label={coverageFindingLabel(finding)}>
+                {finding.rationale}
+              </MetaRow>
+            ))}
+          </>
+        )}
         <MetaRow label="现在要做">{nextActionLabel(objective)}</MetaRow>
         <MetaRow label="下次看什么">{nextObservationLabel(objective)}</MetaRow>
       </div>
       {evidenceRefs.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {evidenceRefs.map((ref) => {
-            const invocationId = ref.startsWith('invocation://') ? ref.slice('invocation://'.length) : null;
-            return invocationId ? (
+            const invocationId = ref.startsWith('invocation://') ? ref.slice('invocation://'.length) : ref;
+            return (
               <button
                 type="button"
                 key={ref}
@@ -115,16 +132,29 @@ function VerdictCard({ objective }: { objective: SegmentObjectiveEvaluationView 
               >
                 {invocationId}
               </button>
-            ) : (
-              <span key={ref} className="rounded-lg bg-[var(--console-card-bg)] px-2 py-1 font-mono text-micro">
-                {ref}
-              </span>
             );
           })}
         </div>
       )}
     </section>
   );
+}
+
+function coverageStatusLabel(
+  value: NonNullable<NonNullable<SegmentObjectiveEvaluationView['latestEvaluation']>['coverageAssessment']>['status'],
+): string {
+  if (value === 'adequate') return '覆盖充分';
+  if (value === 'data_insufficient') return '数据不足';
+  return '发现覆盖缺口';
+}
+
+function coverageFindingLabel(
+  finding: NonNullable<
+    NonNullable<SegmentObjectiveEvaluationView['latestEvaluation']>['coverageAssessment']
+  >['findings'][number],
+): string {
+  if (finding.kind === 'metric_gap') return '指标缺口';
+  return `检测器缺口 · ${finding.metricId}`;
 }
 
 function EvalStatusBadge({

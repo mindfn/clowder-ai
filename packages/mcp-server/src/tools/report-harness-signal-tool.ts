@@ -47,12 +47,12 @@ export const reportHarnessSignalTools = [
   defineTool({
     name: 'cat_cafe_report_harness_signal',
     description:
-      'F257: mark THIS authenticated invocation for Harness evaluation. This tool is a trigger, not a verdict writer: ' +
+      'F257: self-report a Harness signal from THIS authenticated invocation. Use when the current execution reveals a clear metric breach/success or a plausible issue worth later review; NOT for judging another cat, another invocation, or writing an evaluation conclusion. ' +
+      'Output: a pending marker bound to the current invocation at its terminal tracing seam. Counterexample markers from distinct invocations may reach M and wake independent Objective evaluation; same-invocation markers across metrics count once. ' +
       'the API waits until the current response reaches its terminal tracing seam, binds the marker to that exact TraceEpisode, ' +
-      'and then emits the same TraceAnnotation shape used by structured rules and periodic semantic analysis. ' +
+      'and then emits a priority TraceAnnotation. ' +
       'Use counterexample for a clear rule breach, positive for a clear success, and candidate when later semantic evaluation is needed. ' +
-      'The marker does not increment any metric before terminal binding. Counterexample metrics may be count-only: distinct episodes ' +
-      'reach their configured threshold without requiring a denominator or synthetic violation rate. ' +
+      'GOTCHA: high-confidence means worth prioritizing, not metric truth. A marker can only wake/read-prioritize evaluation; it can never directly change governance or a hook. ' +
       'Invocation callback auth is required; persistent agent-key auth is intentionally unsupported because it has no current trace.',
     inputSchema: reportHarnessSignalInputSchema,
     handler: handleReportHarnessSignalTool,

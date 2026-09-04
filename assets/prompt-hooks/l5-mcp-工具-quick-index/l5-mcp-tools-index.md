@@ -4,5 +4,6 @@
 **任务 / Rich block**：`cat_cafe_create_task` / `cat_cafe_update_task` / `cat_cafe_list_tasks`；`cat_cafe_create_rich_block` 先查 rules，字段名 `kind` / `v` / `id`
 **External case**：`cat_cafe_validate_community_route` 接/退 assigned pending route（凭据不进 shell）；`cat_cafe_record_external_review_verdict` 原子写 verdict + delivery custody
 **Drill / Limb**：`cat_cafe_read_session_digest/events/invocation_detail`；`limb_list_available` → `limb_list_tools` → `limb_invoke_tool`（nodeId 必须实查）
+**Harness 自标**：执行现场出现可指向既有 Objective/Metric 的明确信号时加载 `harness-self-report`；坐标不明先 `cat_cafe_list_objectives`，再用 `cat_cafe_report_harness_signal` 只标当前 invocation（线索/唤醒，不是 verdict）。
 
 未暴露的工具先用 `tool_search` 加载。详规按需读 `rich-blocks.md` / `memory-routing-partial.md`。

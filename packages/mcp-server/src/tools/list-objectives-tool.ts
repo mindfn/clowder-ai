@@ -71,8 +71,8 @@ export const listObjectivesTools = [
     name: 'cat_cafe_list_objectives',
     description:
       'F257: list registered Objectives with their Evaluation Model and Metric ids for cat_cafe_report_harness_signal. ' +
-      'Call this BEFORE report_harness_signal to pick a valid objectiveId instead of guessing — no more archaeology. ' +
-      'Read-only; the set grows as objectives are canonized.',
+      'Use when the current execution has a Harness signal but the exact objectiveId/metricId coordinate is not already known; NOT for browsing evaluation results. ' +
+      'Output: the valid Objective and Metric coordinates. GOTCHA: read-only discovery does not itself justify a report; never invent a coordinate or report merely because this list exists.',
     inputSchema: listObjectivesInputSchema,
     handler: handleListObjectives,
     governance: {

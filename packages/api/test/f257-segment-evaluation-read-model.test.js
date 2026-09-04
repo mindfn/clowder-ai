@@ -297,6 +297,19 @@ describe('F257 SegmentEvaluationReadModel', () => {
         overall: 'complete',
         writtenAt: 220,
         by: 'cat-eval',
+        coverageAssessment: {
+          status: 'gaps_found',
+          rationale: 'One detector gap remains.',
+          findings: [
+            {
+              kind: 'detector_gap',
+              basis: 'evaluator-observation',
+              metricId: 'failure-count',
+              rationale: 'The rule did not prioritize this episode.',
+              evidenceRefs: ['inv-1'],
+            },
+          ],
+        },
         metrics: [
           {
             id: 'failure-count',
@@ -327,6 +340,7 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(objective.metrics[0].latestConclusion.value, 1);
     assert.deepEqual(objective.metrics[0].evidenceRefs, ['invocation://inv-1']);
     assert.equal(objective.latestEvaluation.overall, 'complete');
+    assert.equal(objective.latestEvaluation.coverageAssessment.status, 'gaps_found');
     assert.equal(objective.latestGovernance.decision, 'evolve');
     assert.equal(objective.latestGovernance.by, 'cat-eval');
     assert.equal(objective.latestGovernance.approval.cardId, 'HGP-1');
