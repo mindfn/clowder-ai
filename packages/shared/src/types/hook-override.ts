@@ -15,6 +15,20 @@
 /** Who created this override: operator (human) or auto-eval (system). */
 export type HookOverrideSource = 'operator' | 'auto-eval';
 
+/**
+ * Safe, data-only conditions that may further narrow a hook's built-in resolver.
+ * They cannot change stage/order or execute arbitrary code.
+ */
+export type HookCondition =
+  | { conditionRef: 'routing-mode-in'; params: { values: Array<'independent' | 'serial' | 'parallel'> } }
+  | { conditionRef: 'prompt-tag-present'; params: { value: string } }
+  | { conditionRef: 'minimum-teammates'; params: { count: number } }
+  | { conditionRef: 'minimum-active-participants'; params: { count: number } }
+  | { conditionRef: 'voice-mode-is'; params: { value: boolean } }
+  | { conditionRef: 'mcp-available-is'; params: { value: boolean } }
+  | { conditionRef: 'a2a-enabled-is'; params: { value: boolean } }
+  | { conditionRef: 'direct-message-is'; params: { value: boolean } };
+
 /** Per-hook override state. Stored in Redis HASH per workspace. */
 export interface HookOverride {
   hookId: string;
@@ -34,6 +48,10 @@ export interface HookOverride {
   activeEpochVersion?: number;
   /** Who set contentOverride (field-level provenance, sol P1 fix). */
   contentSource?: HookOverrideSource;
+  /** Optional governance-controlled narrowing condition. */
+  conditionOverride?: HookCondition;
+  /** Who set conditionOverride. */
+  conditionSource?: HookOverrideSource;
   /**
    * Last operation source. Retained for backward compat but NOT reliable
    * for per-field provenance — use enabledSource/contentSource instead.
@@ -52,7 +70,15 @@ export interface HookOverride {
 // ---------------------------------------------------------------------------
 
 /** Possible override actions, recorded as change events. */
-export type OverrideAction = 'enable' | 'disable' | 'content-set' | 'content-clear' | 'rollback' | 'version-activate';
+export type OverrideAction =
+  | 'enable'
+  | 'disable'
+  | 'content-set'
+  | 'content-clear'
+  | 'condition-set'
+  | 'condition-clear'
+  | 'rollback'
+  | 'version-activate';
 
 /** Immutable record of an override change. TTL=0 (permanent, Iron Law 5). */
 export interface OverrideChangeEvent {

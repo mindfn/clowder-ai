@@ -85,6 +85,7 @@ function withOverrideMethods(mockRegistry) {
     getActiveVersion: (hookId) => hooksMap.get(hookId)?.manifest.version ?? 0,
     getDisabledBySource: () => 'manifest',
     getContentOverride: () => undefined,
+    getConditionOverride: () => undefined,
   };
 }
 
@@ -246,6 +247,29 @@ describe('HookPipeline', () => {
 
     assert.equal(result.patches.length, 1);
     assert.equal(result.events[0].status, 'fired');
+  });
+
+  it('applies a governed condition as a narrowing AND gate after the built-in resolver', () => {
+    const mockRegistry = withOverrideMethods({
+      getStageHooks: () => [
+        {
+          manifest: { id: 'D1', stage: 'per-turn', order: 100, version: 1, enabled: true, template: 't.md' },
+          dirPath: '/tmp/d1',
+          templatePath: '/tmp/d1/t.md',
+        },
+      ],
+    });
+    mockRegistry.getConditionOverride = () => ({ conditionRef: 'routing-mode-in', params: { values: ['serial'] } });
+    const resolver = new Map([['D1', { resolve: () => ({ status: 'fired', vars: {} }) }]]);
+    const pipeline = new pipelineMod.HookPipeline(mockRegistry, resolver, () => 'content');
+
+    const blocked = pipeline.executeStage('per-turn', makeInput({ mode: 'independent' }));
+    assert.equal(blocked.patches.length, 0);
+    assert.equal(blocked.events[0].status, 'skipped');
+    assert.equal(/** @type {any} */ (blocked.events[0]).reasonCode, 'condition_override_not_matched');
+
+    const allowed = pipeline.executeStage('per-turn', makeInput({ mode: 'serial' }));
+    assert.equal(allowed.patches.length, 1);
   });
 
   it('assemblePatches joins with double newline', () => {

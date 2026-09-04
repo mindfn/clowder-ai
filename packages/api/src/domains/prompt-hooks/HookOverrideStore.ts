@@ -6,25 +6,29 @@
  * Event recording + reconciliation extracted to hook-override-event-recorder.ts.
  */
 
-import type { HookManifest, HookOverride, HookOverrideSource, OverrideChangeEvent } from '@cat-cafe/shared';
+import type {
+  HookCondition,
+  HookManifest,
+  HookOverride,
+  HookOverrideSource,
+  OverrideChangeEvent,
+} from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import { HookOverrideContentStore } from './HookOverrideContentStore.js';
+import { isHookCondition } from './hook-condition-policy.js';
 import { HookOverrideEventRecorder, reconcileOverride } from './hook-override-event-recorder.js';
 
 /** Resolves a HookManifest by hookId. Returns undefined for unknown hooks. */
 export type ManifestLookup = (hookId: string) => HookManifest | undefined;
 
 const OVERRIDE_HASH = (ws: string) => `hook-override:${ws}`;
-/** P1-3: per-version content snapshot. HASH {epochVersion → content}. */
-const VERSION_SNAPSHOT = (ws: string, hookId: string) => `hook-override-versions:${ws}:${hookId}`;
-/** R7: atomic epoch counter for race-safe epochVersion assignment. */
-const EPOCH_COUNTER = (ws: string, hookId: string) => `hook-override-epoch-seq:${ws}:${hookId}`;
 
 /** Thrown when an override operation violates manifest safety constraints. */
 export class OverrideGateError extends Error {
   constructor(
     public readonly hookId: string,
     public readonly action: string,
-    public readonly gate: 'disableable' | 'safetyTier' | 'unknown-hook',
+    public readonly gate: 'disableable' | 'safetyTier' | 'governanceTier' | 'condition' | 'unknown-hook',
     public readonly manifestValue: string | boolean,
   ) {
     super(`Override rejected: hook '${hookId}' ${action} blocked by ${gate}=${String(manifestValue)}`);
@@ -34,6 +38,7 @@ export class OverrideGateError extends Error {
 
 export class HookOverrideStore {
   private readonly events: HookOverrideEventRecorder;
+  private readonly content: HookOverrideContentStore;
 
   constructor(
     private readonly redis: RedisClient,
@@ -41,6 +46,17 @@ export class HookOverrideStore {
     private readonly defaultWorkspaceId = 'default',
   ) {
     this.events = new HookOverrideEventRecorder(redis);
+    this.content = new HookOverrideContentStore({
+      redis,
+      events: this.events,
+      defaultWorkspaceId,
+      resolveManifest: (hookId) => this.resolveManifest(hookId),
+      assertContentEditable: (hookId, source) => this.assertContentEditable(hookId, source),
+      getOverride: (hookId, workspaceId) => this.getOverride(hookId, workspaceId),
+      writeOverride: async (workspaceId, hookId, override) => {
+        await this.redis.hset(OVERRIDE_HASH(workspaceId), hookId, JSON.stringify(override));
+      },
+    });
   }
 
   // -- Manifest resolution (fail-closed) ------------------------------------
@@ -67,6 +83,16 @@ export class HookOverrideStore {
     }
     if (manifest.safetyTier === 'limited-edit' && source !== 'operator') {
       throw new OverrideGateError(hookId, 'content-set', 'safetyTier', 'limited-edit');
+    }
+  }
+
+  private assertConditionEditable(hookId: string, source: HookOverrideSource): void {
+    const manifest = this.resolveManifest(hookId);
+    if (manifest.governanceTier === 'immutable') {
+      throw new OverrideGateError(hookId, 'condition-set', 'governanceTier', 'immutable');
+    }
+    if (manifest.governanceTier === 'human-gated' && source !== 'operator') {
+      throw new OverrideGateError(hookId, 'condition-set', 'governanceTier', 'human-gated');
     }
   }
 
@@ -122,39 +148,7 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    const source = opts?.source ?? 'operator';
-    this.assertContentEditable(hookId, source);
-    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
-    const existing = await this.getOverride(hookId, ws);
-
-    // epochVersion: monotonic, never resets (I1, I3). max(manifest, max_snapshot_key) + 1.
-    const manifest = this.resolveManifest(hookId);
-    const epochVersion = await this.nextEpochVersion(ws, hookId, manifest.version);
-
-    const override: HookOverride = {
-      ...(existing ?? {}),
-      hookId,
-      contentOverride: content,
-      contentVersion: (existing?.contentVersion ?? 0) + 1,
-      activeEpochVersion: epochVersion,
-      contentSource: source,
-      source,
-      updatedAt: Date.now(),
-      updatedBy: actorId,
-    };
-    await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    // Snapshot keyed by epochVersion (not contentVersion) — append-only (I4)
-    await this.redis.hset(VERSION_SNAPSHOT(ws, hookId), String(epochVersion), content);
-    await this.events.record(
-      ws,
-      hookId,
-      'content-set',
-      source,
-      actorId,
-      opts?.reason,
-      override.contentVersion,
-      epochVersion,
-    );
+    return this.content.set(hookId, content, actorId, opts);
   }
 
   async clearContentOverride(
@@ -162,20 +156,47 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    this.resolveManifest(hookId);
-    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
+    return this.content.clear(hookId, actorId, opts);
+  }
+
+  async setConditionOverride(
+    hookId: string,
+    condition: HookCondition,
+    actorId: string,
+    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
+  ): Promise<void> {
     const source = opts?.source ?? 'operator';
+    this.assertConditionEditable(hookId, source);
+    if (!isHookCondition(condition)) throw new OverrideGateError(hookId, 'condition-set', 'condition', 'invalid');
+    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const existing = await this.getOverride(hookId, ws);
-    if (!existing) return;
-    const { contentOverride: _, contentVersion: __, contentSource: _cs, activeEpochVersion: _aev, ...rest } = existing;
     const override: HookOverride = {
-      ...rest,
+      ...(existing ?? {}),
+      hookId,
+      conditionOverride: structuredClone(condition),
+      conditionSource: source,
       source,
       updatedAt: Date.now(),
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.events.record(ws, hookId, 'content-clear', source, actorId, opts?.reason);
+    await this.events.record(ws, hookId, 'condition-set', source, actorId, opts?.reason);
+  }
+
+  async clearConditionOverride(
+    hookId: string,
+    actorId: string,
+    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
+  ): Promise<void> {
+    const source = opts?.source ?? 'operator';
+    this.assertConditionEditable(hookId, source);
+    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
+    const existing = await this.getOverride(hookId, ws);
+    if (!existing?.conditionOverride) return;
+    const { conditionOverride: _, conditionSource: __, ...rest } = existing;
+    const override: HookOverride = { ...rest, hookId, source, updatedAt: Date.now(), updatedBy: actorId };
+    await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
+    await this.events.record(ws, hookId, 'condition-clear', source, actorId, opts?.reason);
   }
 
   async rollback(
@@ -200,57 +221,7 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    const manifest = this.resolveManifest(hookId);
-    const source = opts?.source ?? 'operator';
-    this.assertContentEditable(hookId, source);
-    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
-
-    // The manifest is the immutable base version and is intentionally not
-    // duplicated into the Redis snapshot hash. Activating it means clearing
-    // only the content override while preserving independent enablement state.
-    if (epochVersion === manifest.version) {
-      const existing = await this.getOverride(hookId, ws);
-      if (existing) {
-        const {
-          contentOverride: _,
-          contentVersion: __,
-          contentSource: ___,
-          activeEpochVersion: ____,
-          ...rest
-        } = existing;
-        const override: HookOverride = {
-          ...rest,
-          hookId,
-          source,
-          updatedAt: Date.now(),
-          updatedBy: actorId,
-        };
-        await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-      }
-      await this.events.record(ws, hookId, 'version-activate', source, actorId, opts?.reason, undefined, epochVersion);
-      return;
-    }
-
-    const content = await this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion));
-    if (content === null) {
-      throw new Error(`No content snapshot for hook '${hookId}' epochVersion ${epochVersion}`);
-    }
-
-    // Restore content; do NOT reset contentVersion (edit counter, not identity)
-    const existing = await this.getOverride(hookId, ws);
-    const override: HookOverride = {
-      ...(existing ?? {}),
-      hookId,
-      contentOverride: content,
-      contentVersion: existing?.contentVersion ?? 1,
-      activeEpochVersion: epochVersion,
-      contentSource: source,
-      source,
-      updatedAt: Date.now(),
-      updatedBy: actorId,
-    };
-    await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.events.record(ws, hookId, 'version-activate', source, actorId, opts?.reason, undefined, epochVersion);
+    return this.content.activate(hookId, epochVersion, actorId, opts);
   }
 
   /** List all stored version snapshots for a hook. */
@@ -258,35 +229,19 @@ export class HookOverrideStore {
     hookId: string,
     workspaceId?: string,
   ): Promise<Array<{ version: number; contentPreview: string }>> {
-    const ws = workspaceId ?? this.defaultWorkspaceId;
-    const all = await this.redis.hgetall(VERSION_SNAPSHOT(ws, hookId));
-    if (!all) return [];
-    return Object.entries(all)
-      .map(([v, content]) => ({
-        version: Number(v),
-        contentPreview: content.length > 120 ? `${content.slice(0, 120)}…` : content,
-      }))
-      .sort((a, b) => a.version - b.version);
+    return this.content.listVersions(hookId, workspaceId);
   }
 
   /** Read the immutable full-content snapshot for one epoch version. */
   async getVersionContent(hookId: string, epochVersion: number, workspaceId?: string): Promise<string | null> {
-    const ws = workspaceId ?? this.defaultWorkspaceId;
-    return this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion));
+    return this.content.getVersionContent(hookId, epochVersion, workspaceId);
   }
 
   // -- Read operations ------------------------------------------------------
 
   /** Current effective epoch version; the immutable manifest is the base. */
   async getActiveVersion(hookId: string, workspaceId?: string): Promise<number> {
-    const manifest = this.resolveManifest(hookId);
-    const override = await this.getOverride(hookId, workspaceId);
-    const activeVersion = override?.activeEpochVersion;
-    return override?.contentOverride !== undefined &&
-      typeof activeVersion === 'number' &&
-      Number.isInteger(activeVersion)
-      ? activeVersion
-      : manifest.version;
+    return this.content.getActiveVersion(hookId, workspaceId);
   }
 
   async getOverride(hookId: string, workspaceId?: string): Promise<HookOverride | null> {
@@ -339,25 +294,5 @@ export class HookOverrideStore {
     until?: number;
   }): Promise<OverrideChangeEvent[]> {
     return this.events.list(opts?.workspaceId ?? this.defaultWorkspaceId, opts);
-  }
-
-  // -- Internal helpers -----------------------------------------------------
-
-  /**
-   * Compute next monotonic epochVersion (I3, R7 atomicity fix).
-   *
-   * Uses SETNX + INCR for atomic counter: two concurrent setContentOverride()
-   * calls will always get distinct epoch versions. SETNX initializes the counter
-   * from max(manifestVersion, max_snapshot_key) on first use; INCR is atomic.
-   */
-  private async nextEpochVersion(ws: string, hookId: string, manifestVersion: number): Promise<number> {
-    const counterKey = EPOCH_COUNTER(ws, hookId);
-    // Initialize counter from snapshot state if it doesn't exist yet (SETNX = atomic)
-    const all = await this.redis.hgetall(VERSION_SNAPSHOT(ws, hookId));
-    const maxSnapshot = all ? Math.max(0, ...Object.keys(all).map(Number)) : 0;
-    const initial = Math.max(manifestVersion, maxSnapshot);
-    await this.redis.setnx(counterKey, String(initial));
-    // INCR: atomic increment, returns new value — safe under concurrency
-    return await this.redis.incr(counterKey);
   }
 }

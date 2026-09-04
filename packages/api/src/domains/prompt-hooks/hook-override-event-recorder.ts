@@ -5,6 +5,7 @@
 
 import type { HookOverride, HookOverrideSource, OverrideAction, OverrideChangeEvent } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import { isHookCondition } from './hook-condition-policy.js';
 
 // ---------------------------------------------------------------------------
 // Redis key helpers (shared with HookOverrideStore)
@@ -79,7 +80,9 @@ export class HookOverrideEventRecorder {
 // Reconciliation (pure function — decoupled from store class)
 // ---------------------------------------------------------------------------
 
-export type ManifestLookupFn = (hookId: string) => { disableable?: boolean; safetyTier?: string } | undefined;
+export type ManifestLookupFn = (
+  hookId: string,
+) => { disableable?: boolean; safetyTier?: string; governanceTier?: string } | undefined;
 
 /**
  * Reconcile a single override against current manifest constraints.
@@ -107,6 +110,16 @@ export function reconcileOverride(override: HookOverride, manifestLookup: Manife
     sanitized.contentSource !== 'operator'
   ) {
     const { contentOverride: _, contentVersion: __, contentSource: _cs, ...rest } = sanitized;
+    sanitized = rest as HookOverride;
+  }
+
+  if (
+    sanitized.conditionOverride !== undefined &&
+    (manifest.governanceTier === 'immutable' ||
+      !isHookCondition(sanitized.conditionOverride) ||
+      (manifest.governanceTier === 'human-gated' && sanitized.conditionSource !== 'operator'))
+  ) {
+    const { conditionOverride: _, conditionSource: _conditionSource, ...rest } = sanitized;
     sanitized = rest as HookOverride;
   }
 
