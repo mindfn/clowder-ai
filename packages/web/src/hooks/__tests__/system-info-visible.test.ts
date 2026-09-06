@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { formatSessionSealRequested, formatVisibleSystemInfo } from '../system-info-visible';
+import {
+  formatSessionSealRequested,
+  formatVisibleSystemInfo,
+  isSystemInfoProtocolPayload,
+} from '../system-info-visible';
+
+describe('isSystemInfoProtocolPayload', () => {
+  it('recognizes typed protocol envelopes (#1343 fail-closed)', () => {
+    expect(isSystemInfoProtocolPayload({ type: 'session_policy_execution', invocationId: 'inv_abc' })).toBe(true);
+    expect(isSystemInfoProtocolPayload({ type: 'context_health', catId: 'opus' })).toBe(true);
+    expect(isSystemInfoProtocolPayload({ type: 'task_progress' })).toBe(true);
+  });
+
+  it('rejects non-protocol payloads', () => {
+    expect(isSystemInfoProtocolPayload('plain text')).toBe(false);
+    expect(isSystemInfoProtocolPayload(null)).toBe(false);
+    expect(isSystemInfoProtocolPayload([{ type: 'array_item' }])).toBe(false);
+    expect(isSystemInfoProtocolPayload({ noTypeField: true })).toBe(false);
+  });
+});
 
 describe('formatSessionSealRequested', () => {
   it('describes runtime replacement as an in-turn recovery instead of a context seal', () => {
