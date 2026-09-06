@@ -137,6 +137,46 @@ export const submitCycleEvaluationInputSchema = {
     .describe(
       'Required audit bridge for the next M redesign: count all high-confidence counterexample events in the frozen windows, group them into semantic root causes, and explain the grouping.',
     ),
+  coverageAssessment: z
+    .object({
+      status: z.enum(['adequate', 'data_insufficient', 'gaps_found']),
+      rationale: z.string().trim().min(1).max(2_000),
+      findings: z
+        .array(
+          z.discriminatedUnion('kind', [
+            z
+              .object({
+                kind: z.literal('detector_gap'),
+                basis: z.enum(['mcp-marker', 'evaluator-observation']),
+                metricId: identifier,
+                rationale: z.string().trim().min(1).max(2_000),
+                evidenceRefs: z.array(identifier).min(1).max(16),
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal('metric_gap'),
+                basis: z.literal('evaluator-observation'),
+                rationale: z.string().trim().min(1).max(2_000),
+                evidenceRefs: z.array(identifier).min(1).max(16),
+              })
+              .strict(),
+          ]),
+        )
+        .max(16),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if ((value.status === 'gaps_found') !== value.findings.length > 0) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'gaps_found requires findings and only gaps_found may carry them',
+        });
+      }
+    })
+    .describe(
+      'Required inferred detector-coverage assessment from the same full window. It may identify detector/metric gaps, but is diagnostic only and never metric truth.',
+    ),
 };
 
 export const describeHarnessUnitInputSchema = {
@@ -171,6 +211,7 @@ interface SubmitCycleEvaluationInput extends Record<string, unknown> {
   metrics: Array<{ id: string; conclusion: z.infer<typeof conclusionSchema>; evidenceRefs: string[] }>;
   overall: 'complete' | 'partial' | 'insufficient_evidence';
   counterexampleRootCauses: { eventCount: number; rootCauseCount: number; howGrouped: string };
+  coverageAssessment: import('@cat-cafe/shared').CycleCoverageAssessment;
 }
 
 interface DescribeHarnessUnitInput extends Record<string, unknown> {
@@ -219,7 +260,7 @@ export const unitEvaluationTools = [
   defineTool({
     name: 'cat_cafe_submit_cycle_evaluation',
     description:
-      'Write the structured per-metric conclusions and counterexample event-to-root-cause grouping for the exact F257 Objective cycle assigned to this invocation. The API validates metric coverage, conclusion kinds, grouping counts, evidence ownership, and cycle windows.',
+      'Write the structured per-metric conclusions, counterexample event-to-root-cause grouping, and evidence-bound detector-coverage assessment for the exact F257 Objective cycle assigned to this invocation. Coverage findings are inferred diagnostics, never metric truth. The API validates metric coverage, conclusion kinds, grouping counts, evidence ownership, and cycle windows.',
     inputSchema: submitCycleEvaluationInputSchema,
     handler: handleSubmitCycleEvaluationTool,
     governance: {

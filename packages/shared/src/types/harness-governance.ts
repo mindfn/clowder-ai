@@ -1,4 +1,4 @@
-import type { CycleMetricEvaluation } from './cycle-evaluation.js';
+import type { CycleCoverageAssessment, CycleMetricEvaluation } from './cycle-evaluation.js';
 import type { CycleTriggerRoute, CycleWindow } from './harness-evaluation.js';
 import type { HookCondition } from './hook-override.js';
 import type { HookManifest } from './prompt-hook.js';
@@ -45,6 +45,7 @@ export interface CycleGovernanceHistorySummary {
     overall: 'complete' | 'partial' | 'insufficient_evidence';
     metrics: CycleMetricEvaluation[];
     writtenAt: number;
+    coverageAssessment?: CycleCoverageAssessment;
   };
   governance?: { decision: CycleGovernanceDecision; reason: string; writtenAt: number; by: string };
   approval?: { state: 'approved' | 'skipped' | 'rejected'; reason?: string; by?: string; at: number };
@@ -61,6 +62,7 @@ export interface CycleGovernanceAssignment {
     overall: 'complete' | 'partial';
     metrics: CycleMetricEvaluation[];
     writtenAt: number;
+    coverageAssessment?: CycleCoverageAssessment;
   };
   history: CycleGovernanceHistorySummary[];
   rejectedProposalReasons: string[];
@@ -146,6 +148,7 @@ export interface HarnessGovernanceProposal {
     overall: 'complete' | 'partial';
     metrics: CycleMetricEvaluation[];
     writtenAt: number;
+    coverageAssessment?: CycleCoverageAssessment;
   };
   history: CycleGovernanceHistorySummary[];
   rejectReasons: string[];

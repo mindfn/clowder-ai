@@ -6,16 +6,19 @@ import type {
   SegmentObjectiveEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
-
+import { isFiredTraceSegment } from '../../../domains/prompt-hooks/injection-trace-semantics.js';
 import type { EvaluationModelDefinition, ObjectiveDefinition } from '../objective-registry.js';
-import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import {
+  counterexampleWakeKey,
+  isEvaluationPriorityCounterexample,
+} from '../trace-annotation/high-confidence-annotation.js';
 import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 import { unitRefsForObjective } from './segment-evaluation-helpers.js';
 
 type ObjectiveProjection = {
   objective: SegmentObjectiveEvaluationView;
-  trigger: SegmentEvaluationResponse['tracing']['trigger']['objective'];
+  trigger: SegmentEvaluationResponse['tracing']['trigger'];
   counterexamples: TraceAnnotation[];
 };
 
@@ -50,7 +53,7 @@ export class SegmentEvaluationReadModel {
       segmentId: input.segmentId,
       window: { start: input.startMs, end: input.endMs },
       tracing: {
-        trigger: { objective: projection.trigger },
+        trigger: projection.trigger,
         structuredCounterexamples: counterexamples.map((annotation) => ({
           annotationId: annotation.annotationId,
           incidentKey: annotation.incidentKey,
@@ -69,7 +72,7 @@ export class SegmentEvaluationReadModel {
   }
 
   private async projectObjective(
-    input: { ownerUserId: string; startMs: number; endMs: number },
+    input: { ownerUserId: string; segmentId: string; startMs: number; endMs: number },
     objective: ObjectiveDefinition,
     model: EvaluationModelDefinition,
   ): Promise<ObjectiveProjection> {
@@ -82,17 +85,24 @@ export class SegmentEvaluationReadModel {
     // version/query window the operator selected in the lifeline.
     const cycleEnd = current?.cycleEnd ?? this.now();
     const policy = current ? cycleTriggerPolicyFor(this.runtime.catalog, current) : initialCycleTriggerPolicy(model);
-    const [cumulativeCount, annotationLists] = await Promise.all([
+    const [cumulativeCount, segmentEpisodes, annotationLists] = await Promise.all([
       this.runtime.traces.countOwnerWindow(input.ownerUserId, cycleStart, cycleEnd),
+      this.runtime.traces.queryUnitWindow(
+        input.ownerUserId,
+        [{ unitType: 'segment', unitId: input.segmentId }],
+        cycleStart,
+        cycleEnd,
+      ),
       Promise.all(
         model.metrics.map((metric) =>
           this.runtime.annotations.queryMetricWindow(input.ownerUserId, objective.id, metric.id, cycleStart, cycleEnd),
         ),
       ),
     ]);
-    const counterexamples = distinctIncidents(
-      annotationLists.flat().filter((annotation) => isHighConfidenceCounterexample(annotation)),
-    );
+    const counterexamples = distinctWakeSignals(annotationLists.flat());
+    const segmentRows = segmentEpisodes
+      .map((episode) => episode.summary.segments.find((segment) => segment.segmentId === input.segmentId))
+      .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
     const records = [...(current ? [current] : []), ...history];
     const latestEvaluated = records.find((record) => record.evaluation);
     const latestGoverned = records.find((record) => record.governance);
@@ -104,20 +114,28 @@ export class SegmentEvaluationReadModel {
 
     return {
       trigger: {
-        objectiveId: objective.id,
-        evalStatus: current?.evalStatus ?? 'idle',
-        lifecycle: objective.lifecycle === 'retired' ? 'retired' : (current?.objectiveLifecycle ?? 'active'),
-        health: cumulativeCount === 0 ? 'zero-trace-fault' : 'healthy',
-        policyChangeCount: history.filter((record) => record.triggerPolicyChange !== undefined).length,
-        cycleStartMs: cycleStart,
-        cycleEndMs: current?.cycleEnd ?? null,
-        triggeredBy: current?.triggeredBy ?? [],
-        cumulative: { count: cumulativeCount, threshold: policy.cumulativeThreshold },
-        counterexamples: { count: counterexamples.length, threshold: policy.counterexampleThreshold },
-        cadence: {
-          elapsedMs: Math.max(0, cycleEnd - cycleStart),
-          thresholdMs: policy.cadenceDays * 24 * 60 * 60 * 1000,
-          eligible: cumulativeCount > 0,
+        objective: {
+          objectiveId: objective.id,
+          evalStatus: current?.evalStatus ?? 'idle',
+          lifecycle: objective.lifecycle === 'retired' ? 'retired' : (current?.objectiveLifecycle ?? 'active'),
+          health: cumulativeCount === 0 ? 'zero-trace-fault' : 'healthy',
+          policyChangeCount: history.filter((record) => record.triggerPolicyChange !== undefined).length,
+          cycleStartMs: cycleStart,
+          cycleEndMs: current?.cycleEnd ?? null,
+          triggeredBy: current?.triggeredBy ?? [],
+          cumulative: { count: cumulativeCount, threshold: policy.cumulativeThreshold },
+          counterexamples: { count: counterexamples.length, threshold: policy.counterexampleThreshold },
+          cadence: {
+            elapsedMs: Math.max(0, cycleEnd - cycleStart),
+            thresholdMs: policy.cadenceDays * 24 * 60 * 60 * 1000,
+            eligible: cumulativeCount > 0,
+          },
+        },
+        segment: {
+          segmentId: input.segmentId,
+          observationCount: segmentRows.length,
+          injectionCount: segmentRows.filter(isFiredTraceSegment).length,
+          disabledCount: segmentRows.filter((segment) => segment.pipelineStatus === 'disabled').length,
         },
       },
       counterexamples,
@@ -159,6 +177,9 @@ function latestEvaluationView(record: CycleRecord | undefined): SegmentObjective
     writtenAt: record.evaluation.writtenAt,
     by: record.evaluation.by,
     windows: record.windows,
+    ...(record.evaluation.coverageAssessment
+      ? { coverageAssessment: structuredClone(record.evaluation.coverageAssessment) }
+      : {}),
   };
 }
 
@@ -218,6 +239,19 @@ function distinctIncidents(annotations: TraceAnnotation[]): TraceAnnotation[] {
     .filter((annotation) => {
       if (seen.has(annotation.incidentKey)) return false;
       seen.add(annotation.incidentKey);
+      return true;
+    });
+}
+
+function distinctWakeSignals(annotations: TraceAnnotation[]): TraceAnnotation[] {
+  const seen = new Set<string>();
+  return [...annotations]
+    .filter(isEvaluationPriorityCounterexample)
+    .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
+    .filter((annotation) => {
+      const key = counterexampleWakeKey(annotation);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
 }

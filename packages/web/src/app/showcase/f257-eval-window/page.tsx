@@ -20,6 +20,7 @@
  * keep capture output OUTSIDE the worktree (clean-worktree gate, sol R2 P2-4).
  */
 
+import type { VersionEpoch } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
 import { LifelineStageDetail } from '@/components/settings/LifelineStageDetail';
@@ -29,7 +30,7 @@ const EVAL_WINDOW = { startMs: 1_752_076_800_000, endMs: 1_752_163_200_000 };
 /** The CURRENT lifeline query window (last 7d — a different coordinate). */
 const QUERY_WINDOW = { startMs: 1_753_171_200_000, endMs: 1_753_776_000_000 };
 
-const epoch = {
+const epoch: VersionEpoch = {
   version: 1,
   origin: 'manifest',
   startedAt: EVAL_WINDOW.startMs - 86_400_000,
@@ -50,13 +51,15 @@ const epoch = {
     violationCount: 0,
     evaluatedAt: EVAL_WINDOW.endMs,
     evalWindow: EVAL_WINDOW,
+    evalWindowGap: null,
     denominatorKind: 'none',
+    denominatorGap: null,
   },
   governance: null,
   events: [],
 };
 
-const legacyEpoch = {
+const legacyEpoch: VersionEpoch = {
   ...epoch,
   version: 2,
   isActive: false,
@@ -68,7 +71,9 @@ const legacyEpoch = {
     violationCount: 0,
     evaluatedAt: EVAL_WINDOW.endMs,
     evalWindow: null,
+    evalWindowGap: 'legacy-missing',
     denominatorKind: null,
+    denominatorGap: 'legacy-missing',
   },
 };
 

@@ -145,6 +145,7 @@ describe('F257 harness unit and callback contracts', () => {
         metrics: [{ id: 'm', conclusion: { kind: 'count', value: 0, howCounted: 'checked' }, evidenceRefs: [] }],
         overall: 'complete',
         counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
+        coverageAssessment: { status: 'adequate', rationale: 'No coverage gap observed.', findings: [] },
       },
     );
     assert.deepEqual(submit, { status: 409, body: { error: 'cycle_evaluation_conflict' } });
@@ -162,12 +163,30 @@ describe('F257 harness unit and callback contracts', () => {
         metrics: [{ id: 'm', conclusion: { kind: 'count', value: 0, howCounted: 'checked' }, evidenceRefs: [] }],
         overall: 'complete',
         counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
+        coverageAssessment: { status: 'adequate', rationale: 'No coverage gap observed.', findings: [] },
       },
     );
     assert.deepEqual(oversized, {
       status: 400,
       body: { error: 'invalid_cycle_evaluation', message: 'cycle_record_too_large:cycle' },
     });
+
+    const missingCoverage = await handleSubmitCycleEvaluation(
+      {
+        async submitEvaluation() {
+          assert.fail('missing coverage assessment reached coordinator');
+        },
+      },
+      principal,
+      {
+        objectiveId: 'obj',
+        cycleId: 'cycle',
+        metrics: [{ id: 'm', conclusion: { kind: 'count', value: 0, howCounted: 'checked' }, evidenceRefs: [] }],
+        overall: 'complete',
+        counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
+      },
+    );
+    assert.equal(missingCoverage.status, 400);
   });
 
   test('accepts the structured governance shape and rejects unknown mutation fields', async () => {

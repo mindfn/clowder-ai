@@ -10,12 +10,35 @@ export interface CycleMetricEvaluation {
   evidenceRefs: string[];
 }
 
+export type CycleCoverageFinding =
+  | {
+      kind: 'detector_gap';
+      basis: 'mcp-marker' | 'evaluator-observation';
+      metricId: string;
+      rationale: string;
+      evidenceRefs: string[];
+    }
+  | {
+      kind: 'metric_gap';
+      basis: 'evaluator-observation';
+      rationale: string;
+      evidenceRefs: string[];
+    };
+
+/** Inferred diagnostic from the existing Objective evaluator; never metric truth. */
+export interface CycleCoverageAssessment {
+  status: 'adequate' | 'data_insufficient' | 'gaps_found';
+  rationale: string;
+  findings: CycleCoverageFinding[];
+}
+
 export interface CycleEvaluationSubmission {
   objectiveId: string;
   cycleId: string;
   metrics: CycleMetricEvaluation[];
   overall: 'complete' | 'partial' | 'insufficient_evidence';
   counterexampleRootCauses: { eventCount: number; rootCauseCount: number; howGrouped: string };
+  coverageAssessment: CycleCoverageAssessment;
 }
 
 export interface CycleEvaluationAssignment {
@@ -47,8 +70,16 @@ export interface CycleTracePage {
     threadId: string;
     catId: string;
     terminalKind: 'completed' | 'failed' | 'cancelled';
-    priority: 'counterexample' | 'ordinary';
+    priority: 'counterexample' | 'hint' | 'ordinary';
     incidentKeys?: string[];
+    signals?: Array<{
+      incidentKey: string;
+      source: 'mcp-marker' | 'structured-rule';
+      polarity: 'counterexample' | 'positive' | 'candidate';
+      confidence: number;
+      metricId: string;
+      rationale?: string;
+    }>;
     segments: Array<{
       segmentId: string;
       status: 'observed' | 'absent';

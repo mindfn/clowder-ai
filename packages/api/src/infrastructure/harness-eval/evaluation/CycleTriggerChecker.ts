@@ -1,6 +1,6 @@
 import type { CycleRecord, CycleTriggerRoute, CycleWindow, TraceAnnotation } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
-import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import { counterexampleWakeKey } from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { CycleRecordStore, isSkippedCycle } from './CycleRecordStore.js';
 import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
@@ -150,8 +150,8 @@ export class CycleTriggerChecker {
     return new Set(
       lists
         .flat()
-        .filter((annotation: TraceAnnotation) => isHighConfidenceCounterexample(annotation))
-        .map((annotation) => annotation.incidentKey),
+        .map((annotation: TraceAnnotation) => counterexampleWakeKey(annotation))
+        .filter((key): key is string => key !== null),
     );
   }
 }

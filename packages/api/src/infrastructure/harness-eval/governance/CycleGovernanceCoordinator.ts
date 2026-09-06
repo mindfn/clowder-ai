@@ -2,7 +2,7 @@ import type { CycleGovernanceSubmission, CycleRecord, HarnessGovernanceProposal 
 import { CycleEvaluationCoordinator, type CycleEvaluationPrincipal } from '../evaluation/CycleEvaluationCoordinator.js';
 import { adaptCycleTriggerPolicy, cycleTriggerPolicyFor } from '../evaluation/cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from '../evaluation/ObjectiveEvaluationRuntime.js';
-import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import { counterexampleWakeKey } from '../trace-annotation/high-confidence-annotation.js';
 import {
   buildGovernanceAssignment,
   formatGovernanceAssignment,
@@ -226,8 +226,8 @@ export class CycleGovernanceCoordinator {
     const counterexamples = new Set(
       annotationLists
         .flat()
-        .filter(isHighConfidenceCounterexample)
-        .map((annotation) => annotation.incidentKey),
+        .map((annotation) => counterexampleWakeKey(annotation))
+        .filter((key): key is string => key !== null),
     );
     return {
       cumulative: { count: invocationIds.length, threshold: policy.cumulativeThreshold },
@@ -329,5 +329,10 @@ function existingSubmission(record: CycleRecord, input: CycleGovernanceSubmissio
 }
 
 function uniqueEvidenceRefs(record: CycleRecord): string[] {
-  return [...new Set(record.evaluation?.metrics.flatMap((metric) => metric.evidenceRefs) ?? [])].slice(0, 64);
+  return [
+    ...new Set([
+      ...(record.evaluation?.metrics.flatMap((metric) => metric.evidenceRefs) ?? []),
+      ...(record.evaluation?.coverageAssessment?.findings.flatMap((finding) => finding.evidenceRefs) ?? []),
+    ]),
+  ].slice(0, 64);
 }

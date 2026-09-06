@@ -1,6 +1,6 @@
 'use client';
 
-import type { SegmentTracingEvaluationView, TracingStageSummary } from '@cat-cafe/shared';
+import type { SegmentTracingEvaluationView } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { SettingsBadge, SettingsText } from './primitives';
 import { SegmentReplayPanel } from './SegmentReplayPanel';
@@ -23,7 +23,6 @@ export function SegmentTraceTheater({
   loading,
   error,
   capped,
-  activity,
 }: {
   segmentId: string;
   observations: TraceTheaterObservation[];
@@ -32,7 +31,6 @@ export function SegmentTraceTheater({
   loading?: boolean;
   error?: string | null;
   capped?: boolean;
-  activity?: TracingStageSummary | null;
 }) {
   const [selected, setSelected] = useState<{
     threadId: string;
@@ -51,19 +49,6 @@ export function SegmentTraceTheater({
           </MetaRow>
           <MetaRow label="周期起点">{cycleStart ? new Date(cycleStart).toLocaleString() : '窗口未知'}</MetaRow>
         </div>
-        {activity && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-cafe-muted">
-            <span>本段查询窗</span>
-            <SettingsBadge tone="emerald" size="xxs">
-              注入 {activity.firedCount} 次
-            </SettingsBadge>
-            {activity.disabledCount > 0 && (
-              <SettingsBadge tone="amber" size="xxs">
-                禁用 {activity.disabledCount} 次
-              </SettingsBadge>
-            )}
-          </div>
-        )}
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">
             {error}
@@ -73,7 +58,7 @@ export function SegmentTraceTheater({
 
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-          结构化反例 Tracing
+          反例唤醒信号
         </SettingsText>
         {!loading && (readiness?.structuredCounterexamples.length ?? 0) === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
@@ -92,7 +77,7 @@ export function SegmentTraceTheater({
                   {new Date(counterexample.createdAt).toLocaleString()}
                 </span>
                 <SettingsBadge tone="amber" size="xxs">
-                  明确反例
+                  反例信号
                 </SettingsBadge>
                 <span className="min-w-0 flex-1 truncate text-xs text-cafe-secondary">
                   {counterexample.rationale ?? counterexample.incidentKey}
@@ -107,13 +92,21 @@ export function SegmentTraceTheater({
       </section>
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-        <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">本段注入明细</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-cafe">
+          <span>窗口累计注入 Tracing</span>
+          <span className="ml-2 text-cafe-secondary">
+            {trigger ? `${trigger.segment.injectionCount}/${trigger.objective.cumulative.count}` : '—/—'}
+          </span>
+          {trigger && trigger.segment.disabledCount > 0 && (
+            <span className="ml-2 text-xs font-normal text-cafe-muted">禁用 {trigger.segment.disabledCount} 次</span>
+          )}
+        </summary>
         <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
           点击记录查看完整现场
         </SettingsText>
         {observations.length === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前查询窗内本段暂无注入记录
+            当前周期窗内暂无注入记录
           </SettingsText>
         ) : (
           <div className="mt-2 space-y-1.5">
@@ -141,7 +134,7 @@ export function SegmentTraceTheater({
         )}
         {capped && (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前仅展示最近 100 次注入；上方计数仍为完整窗口精确聚合。
+            当前仅展示最近 100 次注入；标题计数仍为完整周期窗精确聚合。
           </SettingsText>
         )}
       </details>
@@ -169,37 +162,50 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
   const objective = trigger.objective;
   return (
     <div className="space-y-2">
-      <div>满足任一路即触发 Objective 评估</div>
-      <div className="rounded-lg bg-[var(--console-card-bg)] p-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono">{objective.objectiveId}</span>
-          {objective.evalStatus !== 'idle' && <EvaluationStatusBadge status={objective.evalStatus} />}
-          {objective.lifecycle !== 'active' && <LifecycleBadge lifecycle={objective.lifecycle} />}
-          {objective.triggeredBy.map((route) => (
-            <SettingsBadge key={route} tone="blue" size="xxs">
-              {routeLabel(route)} 已触发
-            </SettingsBadge>
-          ))}
-        </div>
-        {objective.health === 'zero-trace-fault' && (
-          <SettingsText as="div" variant="xs" tone="red" className="mt-1 font-medium">
-            采集故障：owner 线性池在本周期内没有 Tracing
-          </SettingsText>
-        )}
-        <div className="mt-1 text-cafe-muted">
-          · 周期内累计 Tracing（Objective）{objective.cumulative.count}/{objective.cumulative.threshold} 条
-        </div>
-        <div className="text-cafe-muted">
-          · 周期内反例 {objective.counterexamples.count}/{objective.counterexamples.threshold} 条
-        </div>
-        <div className="text-cafe-muted">
-          · 距周期起点 {formatDuration(objective.cadence.elapsedMs)}/{formatDuration(objective.cadence.thresholdMs)}
-          {!objective.cadence.eligible ? '（至少需 1 条累计 Tracing）' : ''}
-        </div>
-        {objective.policyChangeCount > 0 && (
-          <div className="text-cafe-muted">· 触发策略已调整 {objective.policyChangeCount} 次</div>
-        )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-cafe-secondary">{objective.objectiveId}</span>
+        <span className="text-cafe-muted">满足任一路即触发评估</span>
+        {objective.evalStatus !== 'idle' && <EvaluationStatusBadge status={objective.evalStatus} />}
+        {objective.lifecycle !== 'active' && <LifecycleBadge lifecycle={objective.lifecycle} />}
+        {objective.triggeredBy.map((route) => (
+          <SettingsBadge key={route} tone="blue" size="xxs">
+            {routeLabel(route)} 已触发
+          </SettingsBadge>
+        ))}
       </div>
+      {objective.health === 'zero-trace-fault' && (
+        <SettingsText as="div" variant="xs" tone="red" className="font-medium">
+          采集故障：owner 线性池在本周期内没有 Tracing
+        </SettingsText>
+      )}
+      <div className="grid gap-x-4 gap-y-1 text-cafe-muted sm:grid-cols-3">
+        <TriggerProgress
+          label="Objective 周期累计 Tracing"
+          value={`${objective.cumulative.count}/${objective.cumulative.threshold} 条`}
+        />
+        <TriggerProgress
+          label="重复反例事件"
+          value={`${objective.counterexamples.count}/${objective.counterexamples.threshold} 次`}
+        />
+        <TriggerProgress
+          label="周期进度"
+          value={`${formatDuration(objective.cadence.elapsedMs)}/${formatDuration(objective.cadence.thresholdMs)}${
+            !objective.cadence.eligible ? '（至少需 1 条 Tracing）' : ''
+          }`}
+        />
+      </div>
+      {objective.policyChangeCount > 0 && (
+        <div className="text-cafe-muted">触发策略已调整 {objective.policyChangeCount} 次</div>
+      )}
+    </div>
+  );
+}
+
+function TriggerProgress({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-micro text-cafe-muted">{label}</div>
+      <div className="mt-0.5 whitespace-nowrap text-xs text-cafe-secondary">{value}</div>
     </div>
   );
 }

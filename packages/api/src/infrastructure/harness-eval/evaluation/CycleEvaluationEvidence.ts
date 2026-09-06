@@ -1,4 +1,5 @@
 import type {
+  CycleCoverageAssessment,
   CycleEvaluationSubmission,
   CycleRecord,
   CycleTracePage,
@@ -6,7 +7,12 @@ import type {
   TraceEpisode,
 } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage } from '../../../domains/cats/services/stores/ports/MessageStore.js';
-import { isHighConfidenceCounterexample } from '../trace-annotation/high-confidence-annotation.js';
+import {
+  counterexampleWakeKey,
+  isEvaluationPriorityAnnotation,
+  isEvaluationPriorityCounterexample,
+  isReplayableStructuredAnnotation,
+} from '../trace-annotation/high-confidence-annotation.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
 /** Reads the immutable trace pool and validates evidence-bound cycle writeback. */
@@ -17,7 +23,7 @@ export class CycleEvaluationEvidence {
   ) {}
 
   async read(record: CycleRecord, input: { cursor: number; limit: number }): Promise<CycleTracePage> {
-    const priority = await this.counterexampleMap(record);
+    const priority = await this.priorityMap(record);
     const invocationIds = await this.runtime.traces.ownerInvocationIds(record.ownerUserId, record.windows);
     const available = new Set(invocationIds);
     const ordered = [
@@ -64,24 +70,19 @@ export class CycleEvaluationEvidence {
       for (const ref of metric.evidenceRefs) evidenceRefs.add(ref);
     }
     if (evidenceRefCount > 64) throw new Error(`cycle_evaluation_evidence_limit:${record.cycleId}`);
-    const counterexampleEventCount = (await this.counterexampleIncidentKeys(record)).size;
-    const grouping = input.counterexampleRootCauses;
-    if (
-      grouping.eventCount !== counterexampleEventCount ||
-      grouping.rootCauseCount > grouping.eventCount ||
-      (grouping.eventCount === 0 ? grouping.rootCauseCount !== 0 : grouping.rootCauseCount < 1)
-    ) {
-      throw new Error(`cycle_evaluation_counterexample_grouping:${record.cycleId}`);
-    }
+    const annotations = await this.annotations(record);
+    const counterexampleEventCount = new Set(
+      annotations.map((annotation) => counterexampleWakeKey(annotation)).filter((key): key is string => key !== null),
+    ).size;
+    validateCounterexampleGrouping(record, input.counterexampleRootCauses, counterexampleEventCount);
+    const coverageRefs = this.validateCoverageAssessment(record, input.coverageAssessment, model.metrics, annotations);
+    evidenceRefCount += coverageRefs.length;
+    if (evidenceRefCount > 64) throw new Error(`cycle_evaluation_evidence_limit:${record.cycleId}`);
+    for (const ref of coverageRefs) evidenceRefs.add(ref);
     await Promise.all([...evidenceRefs].map((ref) => this.validateEvidenceRef(record, ref)));
   }
 
-  private async counterexampleIncidentKeys(record: CycleRecord): Promise<Set<string>> {
-    const priority = await this.counterexampleMap(record);
-    return new Set([...priority.values()].flat());
-  }
-
-  private async counterexampleMap(record: CycleRecord): Promise<Map<string, string[]>> {
+  private async annotations(record: CycleRecord): Promise<TraceAnnotation[]> {
     const objective = this.runtime.catalog.registry.objectives.find((item) => item.id === record.objectiveId);
     const model = this.runtime.catalog.registry.evaluationModels.find(
       (item) => item.id === objective?.evaluationModelId,
@@ -100,18 +101,37 @@ export class CycleEvaluationEvidence {
         ),
       ),
     );
-    const annotations = lists
-      .flat()
-      .filter((annotation: TraceAnnotation) => isHighConfidenceCounterexample(annotation))
+    return lists.flat();
+  }
+
+  private async priorityMap(record: CycleRecord): Promise<Map<string, TraceAnnotation[]>> {
+    const annotations = (await this.annotations(record))
+      .filter(isEvaluationPriorityAnnotation)
       .sort((left, right) => left.createdAt - right.createdAt || left.incidentKey.localeCompare(right.incidentKey));
-    const byInvocation = new Map<string, string[]>();
+    const byInvocation = new Map<string, TraceAnnotation[]>();
     for (const annotation of annotations) {
       const invocationId = annotation.episodeRef.invocationId;
-      const keys = byInvocation.get(invocationId) ?? [];
-      if (!keys.includes(annotation.incidentKey)) keys.push(annotation.incidentKey);
-      byInvocation.set(invocationId, keys);
+      const signals = byInvocation.get(invocationId) ?? [];
+      if (!signals.some((candidate) => candidate.annotationId === annotation.annotationId)) signals.push(annotation);
+      byInvocation.set(invocationId, signals);
     }
     return byInvocation;
+  }
+
+  private validateCoverageAssessment(
+    record: CycleRecord,
+    assessment: CycleCoverageAssessment,
+    metrics: Array<{ id: string }>,
+    annotations: TraceAnnotation[],
+  ): string[] {
+    validateCoverageShape(record, assessment);
+    const metricIds = new Set(metrics.map((metric) => metric.id));
+    const refs: string[] = [];
+    for (const finding of assessment.findings) {
+      validateCoverageFinding(record, finding, metricIds, annotations);
+      refs.push(...finding.evidenceRefs);
+    }
+    return refs;
   }
 
   private async loadMessages(ownerUserId: string, episodes: TraceEpisode[]): Promise<Map<string, StoredMessage>> {
@@ -130,7 +150,7 @@ export class CycleEvaluationEvidence {
 
   private projectEpisode(
     episode: TraceEpisode,
-    priority: Map<string, string[]>,
+    priority: Map<string, TraceAnnotation[]>,
     messages: Map<string, StoredMessage>,
     objectiveId: string,
   ): CycleTracePage['episodes'][number] {
@@ -145,15 +165,30 @@ export class CycleEvaluationEvidence {
       return { messageId: stored.id, text: truncate(stored.content, 2_000) };
     };
     const calls = episode.terminal.toolCalls.map(({ toolName, outcome }) => ({ toolName, outcome }));
-    const incidentKeys = priority.get(episode.terminal.invocationId);
+    const signals = priority.get(episode.terminal.invocationId);
+    const incidentKeys = signals
+      ?.filter(isEvaluationPriorityCounterexample)
+      .map((annotation) => annotation.incidentKey);
     return {
       invocationId: episode.terminal.invocationId,
       terminalAt: episode.terminal.terminalAt,
       threadId: episode.terminal.threadId,
       catId: episode.terminal.catId,
       terminalKind: episode.terminal.terminalKind,
-      priority: incidentKeys ? 'counterexample' : 'ordinary',
-      ...(incidentKeys ? { incidentKeys } : {}),
+      priority: incidentKeys?.length ? 'counterexample' : signals?.length ? 'hint' : 'ordinary',
+      ...(incidentKeys?.length ? { incidentKeys } : {}),
+      ...(signals?.length
+        ? {
+            signals: signals.map((annotation) => ({
+              incidentKey: annotation.incidentKey,
+              source: annotation.source as 'mcp-marker' | 'structured-rule',
+              polarity: annotation.polarity as 'counterexample' | 'positive' | 'candidate',
+              confidence: annotation.confidence,
+              metricId: annotation.metricId,
+              ...(annotation.rationale ? { rationale: annotation.rationale } : {}),
+            })),
+          }
+        : {}),
       segments: episode.summary.segments
         .filter((segment) => unitIds.has(segment.segmentId))
         .map((segment) => ({
@@ -183,6 +218,79 @@ export class CycleEvaluationEvidence {
       throw new Error(`cycle_evaluation_invalid_evidence_ref:${invocationId}`);
     }
   }
+}
+
+function validateCounterexampleGrouping(
+  record: CycleRecord,
+  grouping: CycleEvaluationSubmission['counterexampleRootCauses'],
+  eventCount: number,
+): void {
+  const invalidRootCauseCount =
+    grouping.rootCauseCount > grouping.eventCount ||
+    (grouping.eventCount === 0 ? grouping.rootCauseCount !== 0 : grouping.rootCauseCount < 1);
+  if (grouping.eventCount !== eventCount || invalidRootCauseCount) {
+    throw new Error(`cycle_evaluation_counterexample_grouping:${record.cycleId}`);
+  }
+}
+
+function validateCoverageShape(record: CycleRecord, assessment: CycleCoverageAssessment): void {
+  const invalidFindingCount =
+    assessment.status === 'gaps_found' ? assessment.findings.length === 0 : assessment.findings.length !== 0;
+  if (!assessment.rationale.trim() || invalidFindingCount) {
+    throw new Error(`cycle_evaluation_coverage_invalid:${record.cycleId}`);
+  }
+  if (assessment.findings.length > 16) throw new Error(`cycle_evaluation_coverage_limit:${record.cycleId}`);
+}
+
+function validateCoverageFinding(
+  record: CycleRecord,
+  finding: CycleCoverageAssessment['findings'][number],
+  metricIds: Set<string>,
+  annotations: TraceAnnotation[],
+): void {
+  if (!finding.rationale.trim() || finding.evidenceRefs.length === 0) {
+    throw new Error(`cycle_evaluation_coverage_invalid:${record.cycleId}`);
+  }
+  if (finding.kind === 'detector_gap' && !metricIds.has(finding.metricId)) {
+    throw new Error(`cycle_evaluation_coverage_metric:${finding.metricId}`);
+  }
+  if (finding.kind === 'metric_gap' && finding.basis !== 'evaluator-observation') {
+    throw new Error(`cycle_evaluation_coverage_basis:${record.cycleId}`);
+  }
+  if (finding.basis === 'mcp-marker' && !hasMatchingMarker(finding, annotations)) {
+    throw new Error(`cycle_evaluation_coverage_marker_basis:${record.cycleId}`);
+  }
+  if (finding.kind === 'detector_gap' && hasReplayableDetector(finding, annotations)) {
+    throw new Error(`cycle_evaluation_coverage_detector_present:${finding.metricId}`);
+  }
+}
+
+function hasMatchingMarker(
+  finding: CycleCoverageAssessment['findings'][number],
+  annotations: TraceAnnotation[],
+): boolean {
+  return finding.evidenceRefs.some((invocationId) =>
+    annotations.some(
+      (annotation) =>
+        annotation.source === 'mcp-marker' &&
+        annotation.episodeRef.invocationId === invocationId &&
+        (finding.kind !== 'detector_gap' || annotation.metricId === finding.metricId),
+    ),
+  );
+}
+
+function hasReplayableDetector(
+  finding: Extract<CycleCoverageAssessment['findings'][number], { kind: 'detector_gap' }>,
+  annotations: TraceAnnotation[],
+): boolean {
+  return finding.evidenceRefs.some((invocationId) =>
+    annotations.some(
+      (annotation) =>
+        annotation.metricId === finding.metricId &&
+        annotation.episodeRef.invocationId === invocationId &&
+        isReplayableStructuredAnnotation(annotation),
+    ),
+  );
 }
 
 function conclusionKind(kind: string): 'count' | 'rate-badness' | 'semantic-label' {

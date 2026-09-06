@@ -222,6 +222,11 @@ const submission = {
   ],
   overall: 'complete',
   counterexampleRootCauses: { eventCount: 0, rootCauseCount: 0, howGrouped: 'No counterexamples.' },
+  coverageAssessment: {
+    status: 'adequate',
+    rationale: 'The inspected window is covered by the declared metrics and detectors.',
+    findings: [],
+  },
 };
 
 describe('F257 cycle evaluation delivery and writeback', () => {
@@ -247,10 +252,14 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     const episodes = [trace('ordinary', 400), trace('priority', 500, 'input-1')];
     const annotations = [
       {
+        annotationId: 'annotation-1',
         polarity: 'counterexample',
         source: 'structured-rule',
+        confidence: 1,
         incidentKey: 'incident-1',
         createdAt: 600,
+        objectiveId: 'obj',
+        metricId: 'metric-a',
         episodeRef: { invocationId: 'priority' },
       },
     ];
@@ -266,6 +275,36 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     assert.equal(page.episodes[0].invocationId, 'priority');
     assert.equal(page.episodes[0].priority, 'counterexample');
     assert.equal(page.episodes[0].input.text, 'source input');
+  });
+
+  test('prioritizes MCP candidate hints without treating them as counterexamples', async () => {
+    const episodes = [trace('ordinary', 400), trace('candidate', 500)];
+    const context = await harness({
+      traces: episodes,
+      annotations: [
+        {
+          annotationId: 'candidate-1',
+          polarity: 'candidate',
+          source: 'mcp-marker',
+          confidence: 0.6,
+          incidentKey: 'candidate-incident',
+          createdAt: 600,
+          objectiveId: 'obj',
+          metricId: 'metric-a',
+          episodeRef: { invocationId: 'candidate' },
+        },
+      ],
+    });
+    const page = await context.coordinator.readTraces(principal, {
+      objectiveId: 'obj',
+      cycleId: context.requested.cycleId,
+      cursor: 0,
+      limit: 1,
+    });
+    assert.equal(page.episodes[0].invocationId, 'candidate');
+    assert.equal(page.episodes[0].priority, 'hint');
+    assert.equal(page.episodes[0].signals[0].polarity, 'candidate');
+    assert.equal(page.episodes[0].incidentKeys, undefined);
   });
 
   test('keeps disabled segment facts visible and accepts them as owner-pool evidence', async () => {
@@ -291,8 +330,89 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     const context = await harness();
     const input = { ...submission, cycleId: context.requested.cycleId };
     assert.equal((await context.coordinator.submitEvaluation(principal, input)).outcome, 'written');
-    assert.equal((await context.cycles.current('owner-1', 'obj')).evalStatus, 'written');
+    const stored = await context.cycles.current('owner-1', 'obj');
+    assert.equal(stored.evalStatus, 'written');
+    assert.deepEqual(stored.evaluation.coverageAssessment, input.coverageAssessment);
     assert.equal((await context.coordinator.submitEvaluation(principal, input)).outcome, 'already_written');
+  });
+
+  test('accepts an evidence-bound detector gap and rejects an invented hard marker basis', async () => {
+    const marker = {
+      annotationId: 'marker-1',
+      episodeRef: { invocationId: 'inv-1' },
+      source: 'mcp-marker',
+      ruleId: 'mcp-marker',
+      objectiveId: 'obj',
+      metricId: 'metric-a',
+      unitRefs: [],
+      polarity: 'candidate',
+      confidence: 0.6,
+      incidentKey: 'marker-incident',
+      evidenceRefs: [],
+      createdAt: 600,
+    };
+    const accepted = await harness({ annotations: [marker] });
+    const coverageAssessment = {
+      status: 'gaps_found',
+      rationale: 'The self marker was not covered by a replayable detector.',
+      findings: [
+        {
+          kind: 'detector_gap',
+          basis: 'mcp-marker',
+          metricId: 'metric-a',
+          rationale: 'No structured rule matched this marked invocation.',
+          evidenceRefs: ['inv-1'],
+        },
+      ],
+    };
+    assert.equal(
+      (
+        await accepted.coordinator.submitEvaluation(principal, {
+          ...submission,
+          cycleId: accepted.requested.cycleId,
+          coverageAssessment,
+        })
+      ).outcome,
+      'written',
+    );
+
+    const rejected = await harness();
+    await assert.rejects(
+      rejected.coordinator.submitEvaluation(principal, {
+        ...submission,
+        cycleId: rejected.requested.cycleId,
+        coverageAssessment,
+      }),
+      /cycle_evaluation_coverage_marker_basis:/,
+    );
+
+    const alreadyCovered = await harness({
+      annotations: [
+        marker,
+        {
+          ...marker,
+          annotationId: 'structured-1',
+          source: 'structured-rule',
+          ruleId: 'rule-1',
+          polarity: 'counterexample',
+          confidence: 1,
+          incidentKey: 'structured-incident',
+        },
+      ],
+    });
+    await assert.rejects(
+      alreadyCovered.coordinator.submitEvaluation(principal, {
+        ...submission,
+        cycleId: alreadyCovered.requested.cycleId,
+        counterexampleRootCauses: {
+          eventCount: 1,
+          rootCauseCount: 1,
+          howGrouped: 'One replayable event.',
+        },
+        coverageAssessment,
+      }),
+      /cycle_evaluation_coverage_detector_present:metric-a/,
+    );
   });
 
   test('refuses an evaluation that would exceed the CycleRecord size ceiling', async () => {

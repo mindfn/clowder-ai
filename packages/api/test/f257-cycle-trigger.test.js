@@ -162,8 +162,13 @@ function createHarness({ episodes = [], annotations = [], cycleModel = model(), 
     cycles: store,
     traces,
     annotations: {
-      async queryMetricWindow(_owner, _objective, _metric, start, end) {
-        return annotations.filter((item) => item.createdAt >= start && item.createdAt < end);
+      async queryMetricWindow(_owner, _objective, metricId, start, end) {
+        return annotations.filter(
+          (item) =>
+            (item.metricId === undefined || item.metricId === metricId) &&
+            item.createdAt >= start &&
+            item.createdAt < end,
+        );
       },
     },
     resolveVersion: () => ({ version, versionContentRef: `hooks:d1-test@${version}` }),
@@ -235,10 +240,36 @@ describe('F257 CycleRecord trigger checker', () => {
 
   test('deduplicated counterexamples and cadence are independent trigger routes', async () => {
     const counterexamples = [
-      { createdAt: 1_100, polarity: 'counterexample', incidentKey: 'same', source: 'structured-rule' },
-      { createdAt: 1_200, polarity: 'counterexample', incidentKey: 'same', source: 'semantic-sweep' },
-      { createdAt: 1_300, polarity: 'counterexample', incidentKey: 'other', source: 'mcp-marker' },
-      { createdAt: 1_400, polarity: 'counterexample', incidentKey: 'ignored', source: 'semantic-sweep' },
+      {
+        createdAt: 1_100,
+        polarity: 'counterexample',
+        confidence: 1,
+        incidentKey: 'same',
+        source: 'structured-rule',
+      },
+      {
+        createdAt: 1_200,
+        polarity: 'counterexample',
+        confidence: 1,
+        incidentKey: 'same',
+        source: 'semantic-sweep',
+      },
+      {
+        createdAt: 1_300,
+        polarity: 'counterexample',
+        confidence: 1,
+        incidentKey: 'other',
+        source: 'mcp-marker',
+        objectiveId: 'obj',
+        episodeRef: { invocationId: 'marker-invocation' },
+      },
+      {
+        createdAt: 1_400,
+        polarity: 'counterexample',
+        confidence: 1,
+        incidentKey: 'ignored',
+        source: 'semantic-sweep',
+      },
     ];
     const counter = createHarness({ episodes: [episode('a', 1_000)], annotations: counterexamples });
     const counterResult = await counter.checker.checkObjective('owner-1', 'obj', 2_000);
@@ -250,6 +281,52 @@ describe('F257 CycleRecord trigger checker', () => {
     const cadenceResult = await cadence.checker.checkObjective('owner-1', 'obj', 1_000 + 7 * DAY);
     assert.equal(cadenceResult.status, 'requested');
     assert.deepEqual((await cadence.store.current('owner-1', 'obj')).triggeredBy, ['cadence']);
+  });
+
+  test('counts MCP counterexamples by distinct invocation across metrics', async () => {
+    const cycleModel = model({ cumulativeThreshold: 99, counterexampleThreshold: 2, cadenceDays: 365 });
+    cycleModel.metrics = ['metric-a', 'metric-b', 'metric-c'].map((id) => ({
+      id,
+      label: id,
+      kind: 'counter',
+      evaluator: { kind: 'code', ruleRef: id },
+      trigger: { kind: 'distinct-counterexamples', threshold: 2 },
+      verdictRule: { kind: 'counter-zero' },
+    }));
+    const annotations = [
+      {
+        createdAt: 1_100,
+        polarity: 'counterexample',
+        confidence: 1,
+        incidentKey: 'mcp-a',
+        source: 'mcp-marker',
+        metricId: 'metric-a',
+        objectiveId: 'obj',
+        episodeRef: { invocationId: 'inv-1' },
+      },
+      {
+        createdAt: 1_101,
+        polarity: 'counterexample',
+        confidence: 1,
+        incidentKey: 'mcp-b',
+        source: 'mcp-marker',
+        metricId: 'metric-b',
+        objectiveId: 'obj',
+        episodeRef: { invocationId: 'inv-1' },
+      },
+    ];
+    const context = createHarness({ episodes: [episode('inv-1', 1_000)], annotations, cycleModel });
+
+    assert.equal((await context.checker.checkObjective('owner-1', 'obj', 2_000)).status, 'idle');
+
+    annotations.push({
+      ...annotations[0],
+      createdAt: 2_100,
+      incidentKey: 'mcp-c',
+      episodeRef: { invocationId: 'inv-2' },
+    });
+    assert.equal((await context.checker.checkObjective('owner-1', 'obj', 3_000)).status, 'requested');
+    assert.deepEqual((await context.store.current('owner-1', 'obj')).triggeredBy, ['counterexamples']);
   });
 
   test('minimum interval blocks an immediate trigger and consecutive skips expand windows once', async () => {

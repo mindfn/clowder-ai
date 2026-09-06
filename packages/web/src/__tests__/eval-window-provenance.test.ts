@@ -15,12 +15,14 @@
  *     "评估窗口未知 / 分母未知", never guessed from evaluatedAt.
  */
 
+import type { EvalStageSummary, VersionEpoch } from '@cat-cafe/shared';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EvalStagePanel } from '../components/settings/EvalStagePanel';
 import { LifelineChainView } from '../components/settings/LifelineChainView';
 import { LifelineStageDetail } from '../components/settings/LifelineStageDetail';
+import { observationsForObjectiveCycle } from '../components/settings/SegmentLifelineModal';
 import { SegmentTraceTheater } from '../components/settings/SegmentTraceTheater';
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -30,7 +32,7 @@ const EVAL_WINDOW = { startMs: 1_649_999_999_000, endMs: 1_650_086_399_000 };
 /** The CURRENT lifeline query window (≈ last 7d — a different coordinate). */
 const QUERY_WINDOW = { startMs: 1_750_000_000_000, endMs: 1_750_604_800_000 };
 
-function makeEval(overrides: Record<string, unknown> = {}) {
+function makeEval(overrides: Partial<EvalStageSummary> = {}): EvalStageSummary {
   // Producer-reachable state ONLY (sol R2 P1-2): segment-judgment-engine
   // produceVerdict — injectionCount=0 → 'unmeasurable' + denominatorKind 'none'.
   // ('alive' + 0 + 'fired-count' is impossible under the authoritative producer.)
@@ -40,7 +42,9 @@ function makeEval(overrides: Record<string, unknown> = {}) {
     violationCount: 0,
     evaluatedAt: EVAL_WINDOW.endMs,
     evalWindow: EVAL_WINDOW,
+    evalWindowGap: null,
     denominatorKind: 'none',
+    denominatorGap: null,
     ...overrides,
   };
 }
@@ -76,7 +80,7 @@ function makeEnablementMatrix(): import('@cat-cafe/shared').SegmentEnablementMat
   };
 }
 
-function makeEpoch(overrides: Record<string, unknown> = {}) {
+function makeEpoch(overrides: Partial<VersionEpoch> = {}): VersionEpoch {
   return {
     version: 1,
     origin: 'manifest',
@@ -158,8 +162,8 @@ describe('判据② EvalStagePanel — the judgment OWN eval window', () => {
 
   it('undefined fields (older API response) degrade to the same fail-visible unknown', async () => {
     const legacy = makeEval();
-    delete (legacy as Record<string, unknown>).evalWindow;
-    delete (legacy as Record<string, unknown>).denominatorKind;
+    delete (legacy as unknown as Record<string, unknown>).evalWindow;
+    delete (legacy as unknown as Record<string, unknown>).denominatorKind;
     await render(createElement(EvalStagePanel, { version: 1, eval: legacy, tracing: null, guardMetrics: [] }));
     expect(container.textContent).toContain('评估窗口未知');
     expect(container.textContent).toContain('分母未知');
@@ -235,35 +239,55 @@ describe('F257 segment activity presentation', () => {
           cadence: { elapsedMs: 1000, thresholdMs: 7 * 24 * 60 * 60 * 1000, eligible: true },
           ...overrides,
         },
+        segment: {
+          segmentId: 'L4',
+          observationCount: 251,
+          injectionCount: 101,
+          disabledCount: 150,
+        },
       },
       structuredCounterexamples: [],
     };
   }
 
-  it('keeps default state quiet and separates pool Tracing from injection/disabled activity', async () => {
+  it('keeps default state quiet and shows cycle-aligned segment injection over Objective Tracing', async () => {
     await render(
       createElement(SegmentTraceTheater, {
         segmentId: 'L4',
         observations: [],
         window: QUERY_WINDOW,
         readiness: readiness(),
-        activity: {
-          observationCount: 251,
-          firedCount: 101,
-          disabledCount: 150,
-          firstAt: QUERY_WINDOW.startMs,
-          lastAt: QUERY_WINDOW.endMs - 1,
-        },
       }),
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('周期内累计 Tracing（Objective）251/200 条');
-    expect(text).toContain('注入 101 次');
+    expect(text).toContain('Objective 周期累计 Tracing251/200 条');
+    expect(text).toContain('窗口累计注入 Tracing101/251');
     expect(text).toContain('禁用 150 次');
-    expect(text).toContain('本段注入明细');
+    expect(text).not.toContain('本段查询窗');
+    expect(text).not.toContain('本段注入明细');
     expect(text).not.toContain('触发策略已调整 0 次');
     expect(text).not.toMatch(/\bidle\b/);
     expect(text).not.toMatch(/\bactive\b/);
+  });
+
+  it('keeps the expanded injection rows inside the same end-exclusive Objective cycle window', () => {
+    const cycleEndMs = QUERY_WINDOW.startMs + 100;
+    const trigger = readiness({ cycleEndMs }).trigger.objective;
+    const observations = [trigger.cycleStartMs - 1, trigger.cycleStartMs, cycleEndMs - 1, cycleEndMs].map(
+      (timestamp, index) => ({
+        threadId: `thread-${index}`,
+        turnId: `turn-${index}`,
+        timestamp,
+        catId: 'sol',
+        pipelineStatus: 'fired',
+        version: 1,
+        charCount: 10,
+      }),
+    );
+
+    expect(
+      observationsForObjectiveCycle(observations, trigger, QUERY_WINDOW.endMs).map((row) => row.timestamp),
+    ).toEqual([trigger.cycleStartMs, cycleEndMs - 1]);
   });
 
   it('shows only non-default states and localizes them', async () => {
@@ -287,7 +311,7 @@ describe('F257 segment activity presentation', () => {
 // ── 判据② P1-1 (sol R1): composed viewport — 18 vs 0 on two coordinates at once ──
 
 describe('判据② P1-1 composed render — chain + eval detail in ONE viewport', () => {
-  it('shows 注入 18 次 + query window AND eval 0+eval window+denominator in the same DOM', async () => {
+  it('keeps version line count-free while eval detail preserves its own window and denominator', async () => {
     await render(
       createElement(
         'div',
@@ -314,8 +338,9 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
       ),
     );
     const text = container.textContent ?? '';
-    // Chain: current tracing count visible
-    expect(text).toContain('注入 18 次');
+    // Version line is stage-only; the detail panel owns the query-window count.
+    expect(text).toContain('当前注入18次');
+    expect(text).not.toContain('版本生命线v1→注入');
     expect(text).not.toContain('tracing(18)');
     // Eval detail: historical eval count + its OWN coordinates
     expect(text).toContain('评估窗口');
@@ -333,6 +358,79 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
     expect(text).toContain('当前查询窗口');
     expect(text).toContain(fmt(QUERY_WINDOW.startMs));
     expect(text).toContain(fmt(QUERY_WINDOW.endMs));
+  });
+});
+
+describe('F257 version lifeline — version and Objective cycle are separate coordinates', () => {
+  const completedCycle = {
+    cycleId: 'cycle-keep-1',
+    version: 'objective-v1',
+    versionContentRef: 'objective:wait-wakeup-liveness@v1',
+    cycleStart: QUERY_WINDOW.startMs,
+    cycleEnd: QUERY_WINDOW.startMs + 10_000,
+    evalStatus: 'written' as const,
+    windows: [{ start: QUERY_WINDOW.startMs, end: QUERY_WINDOW.startMs + 10_000 }],
+    triggeredBy: ['cumulative' as const],
+    evaluation: { overall: 'complete' as const, writtenAt: QUERY_WINDOW.startMs + 9_000, by: 'evaluator' },
+    governance: {
+      decision: 'keep' as const,
+      reason: 'stable',
+      writtenAt: QUERY_WINDOW.startMs + 9_500,
+      by: 'evaluator',
+    },
+    approval: null,
+    rejectReasons: [],
+    closedAt: QUERY_WINDOW.startMs + 10_000,
+  };
+  const currentCycle = {
+    ...completedCycle,
+    cycleId: 'cycle-current-2',
+    cycleStart: QUERY_WINDOW.startMs + 10_000,
+    cycleEnd: null,
+    evalStatus: 'idle' as const,
+    windows: [],
+    triggeredBy: [],
+    evaluation: null,
+    governance: null,
+    closedAt: null,
+  };
+
+  it('renders a second tracing/eval/governance loop under the same v1 after keep', async () => {
+    await render(
+      createElement(LifelineChainView, {
+        chain: [makeEpoch()],
+        cycles: [completedCycle, currentCycle],
+        currentCycleId: currentCycle.cycleId,
+        selected: { version: 1, stage: 'tracing', cycleId: currentCycle.cycleId },
+        onSelect: () => {},
+      }),
+    );
+
+    expect(container.querySelectorAll('[data-stage="tracing"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-stage="eval"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-stage="governance"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-current="true"]')).toHaveLength(1);
+    expect(container.querySelector('[data-current="true"]')?.textContent).toBe('tracing');
+    expect(container.querySelectorAll('button[data-cycle-id="cycle-keep-1"]')).toHaveLength(0);
+    expect(container.querySelectorAll('button[data-cycle-id="cycle-current-2"]')).toHaveLength(3);
+  });
+
+  it('keeps every inactive node gray and never puts injection counts in the version line', async () => {
+    await render(
+      createElement(LifelineChainView, {
+        chain: [makeEpoch()],
+        cycles: [completedCycle, currentCycle],
+        currentCycleId: currentCycle.cycleId,
+        selected: { version: 1, stage: 'tracing', cycleId: currentCycle.cycleId },
+        onSelect: () => {},
+      }),
+    );
+
+    expect(container.textContent).not.toContain('注入 18 次');
+    for (const node of container.querySelectorAll('[data-current="false"]')) {
+      expect(node.innerHTML).toContain('bg-conn-slate-bg');
+      expect(node.innerHTML).not.toContain('!bg-cafe-accent');
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import type { ApprovalItem } from '@cat-cafe/shared';
+import type { ApprovalHubItem } from '@cat-cafe/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { anchoredApprovalNavigation } from '@/test-support/approval-navigation';
 
@@ -8,12 +8,13 @@ vi.mock('@/utils/api-client', () => ({ apiFetch: (...args: unknown[]) => mockApi
 import { isApprovalItemBatchDecidable } from '@/lib/approval-features';
 import { useApprovalHubStore } from '../approvalHubStore';
 
-const ITEM: ApprovalItem = {
+const ITEM: ApprovalHubItem = {
   proposalId: 'HGP-1',
   sourceFeatureId: 'F257',
   requesterCatId: 'system',
   ownerUserId: 'owner-1',
-  status: 'pending',
+  resolution: 'open',
+  materialization: { state: 'not_started' },
   summary: 'Harness 治理：演进 D1',
   detail: {},
   navigation: anchoredApprovalNavigation('thread_eval_f257_obj'),

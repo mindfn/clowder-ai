@@ -1709,6 +1709,34 @@
     "owner": "codex-sol"
   },
   {
+    "id": "capability-harness-self-report",
+    "kind": "capability",
+    "sourceRef": {
+      "path": "cat-cafe-skills/harness-self-report/SKILL.md",
+      "anchor": "Harness Self Report"
+    },
+    "structureSource": {
+      "path": "packages/mcp-server/src/tools/report-harness-signal-tool.ts",
+      "anchor": "cat_cafe_report_harness_signal"
+    },
+    "bodySource": {
+      "path": "cat-cafe-skills/harness-self-report/SKILL.md",
+      "anchor": "## 决策"
+    },
+    "contexts": ["eval", "feature_dev"],
+    "audience": ["cvo", "developer", "maintainer"],
+    "body": "猫在执行现场发现明确 Harness 信号时，可以自标当前 invocation；反例只会唤醒独立评估并优先阅读，不能直接改 hook 或替代治理结论。",
+    "action": {
+      "type": "open_source",
+      "label": "查看自标边界",
+      "sourceRef": {
+        "path": "cat-cafe-skills/harness-self-report/SKILL.md",
+        "anchor": "## 边界"
+      }
+    },
+    "owner": "codex-sol"
+  },
+  {
     "id": "feature-f257-segment-lifeline",
     "kind": "feature",
     "sourceRef": {

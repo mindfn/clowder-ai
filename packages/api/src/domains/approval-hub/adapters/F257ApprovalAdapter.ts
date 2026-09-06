@@ -80,6 +80,9 @@ function detail(proposal: HarnessGovernanceProposal): Record<string, unknown> {
       triggerCounts: structuredClone(proposal.triggerCounts),
     },
     conclusions: structuredClone(proposal.evaluation.metrics),
+    coverageAssessment: proposal.evaluation.coverageAssessment
+      ? structuredClone(proposal.evaluation.coverageAssessment)
+      : null,
     metricVisuals: visuals,
     hasComparisonBaseline: visuals.some((metric) => metric.previousValue !== null),
     isFirstCycle: proposal.history.length === 0,

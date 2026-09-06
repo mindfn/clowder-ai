@@ -71,6 +71,12 @@ const EVALUATION: SegmentEvaluationResponse = {
           eligible: true,
         },
       },
+      segment: {
+        segmentId: 'S13',
+        observationCount: 146,
+        injectionCount: 2,
+        disabledCount: 0,
+      },
     },
     structuredCounterexamples: [
       {

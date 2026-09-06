@@ -208,10 +208,12 @@ interface DiffViewerProps {
   filePath?: string;
   /** Compact mode for rich blocks (no file header, no mode toggle) */
   compact?: boolean;
+  /** Initial presentation mode for callers that already know the comparison task. */
+  initialMode?: 'unified' | 'split';
 }
 
-export function DiffViewer({ diff, filePath, compact }: DiffViewerProps) {
-  const [mode, setMode] = useState<'unified' | 'split'>('unified');
+export function DiffViewer({ diff, filePath, compact, initialMode = 'unified' }: DiffViewerProps) {
+  const [mode, setMode] = useState<'unified' | 'split'>(initialMode);
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
   const filtered = filePath ? files.filter((f) => f.path === filePath) : files;
@@ -231,6 +233,7 @@ export function DiffViewer({ diff, filePath, compact }: DiffViewerProps) {
           <button
             type="button"
             onClick={() => setMode('unified')}
+            aria-pressed={mode === 'unified'}
             className={`px-2 py-0.5 rounded text-micro font-medium transition-colors ${
               mode === 'unified'
                 ? 'bg-cafe-accent/80 text-[var(--cafe-surface)]'
@@ -242,6 +245,7 @@ export function DiffViewer({ diff, filePath, compact }: DiffViewerProps) {
           <button
             type="button"
             onClick={() => setMode('split')}
+            aria-pressed={mode === 'split'}
             className={`px-2 py-0.5 rounded text-micro font-medium transition-colors ${
               mode === 'split'
                 ? 'bg-cafe-accent/80 text-[var(--cafe-surface)]'
