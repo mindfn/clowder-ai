@@ -32,6 +32,7 @@ const QUERY_WINDOW = { startMs: 1_753_171_200_000, endMs: 1_753_776_000_000 };
 
 const epoch: VersionEpoch = {
   version: 1,
+  parentVersion: null,
   origin: 'manifest',
   startedAt: EVAL_WINDOW.startMs - 86_400_000,
   // unmeasurable → cycle returns to tracing (6b loop model): eval-pending, no governance.

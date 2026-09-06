@@ -186,6 +186,28 @@ describe('SegmentReplayPanel', () => {
     expect(document.body.textContent).toContain('不可获取');
   });
 
+  it('explains that old rows predate durable replay snapshots instead of showing a generic load failure', async () => {
+    apiFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    act(() => {
+      root.render(
+        <SegmentReplayPanel
+          segmentId="S-test"
+          threadId="t"
+          turnId="1"
+          catId="opus"
+          pipelineStatus="fired"
+          isOpen
+          onClose={() => {}}
+        />,
+      );
+    });
+    await flush();
+
+    expect(document.body.textContent).toContain('这条历史记录生成时尚未保存回放快照');
+    expect(document.body.textContent).not.toContain('回放加载失败');
+  });
+
   it('calls onClose when close button is clicked', async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseResponse });
     const onClose = vi.fn();

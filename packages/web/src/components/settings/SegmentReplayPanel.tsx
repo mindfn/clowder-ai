@@ -61,7 +61,7 @@ export function SegmentReplayPanel({
       const res = await apiFetch(`/api/segment-lifeline/${encodeURIComponent(segmentId)}/replay?${query}`);
       if (id !== reqRef.current) return;
       if (!res.ok) {
-        setError('回放加载失败');
+        setError(res.status === 404 ? '这条历史记录生成时尚未保存回放快照' : '回放加载失败');
         return;
       }
       setData((await res.json()) as SegmentReplayResponse);

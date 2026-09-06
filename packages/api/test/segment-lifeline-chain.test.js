@@ -49,11 +49,11 @@ describe('buildVersionChain', () => {
       currentContentVersion: 2,
     });
     assert.deepEqual(
-      chain.map(({ version, isActive }) => ({ version, isActive })),
+      chain.map(({ version, parentVersion, isActive }) => ({ version, parentVersion, isActive })),
       [
-        { version: 1, isActive: false },
-        { version: 2, isActive: false },
-        { version: 3, isActive: true },
+        { version: 1, parentVersion: null, isActive: false },
+        { version: 2, parentVersion: 1, isActive: false },
+        { version: 3, parentVersion: 1, isActive: true },
       ],
     );
   });

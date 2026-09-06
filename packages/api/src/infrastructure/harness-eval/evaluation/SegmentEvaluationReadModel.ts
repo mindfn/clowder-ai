@@ -20,7 +20,12 @@ type ObjectiveProjection = {
   objective: SegmentObjectiveEvaluationView;
   trigger: SegmentEvaluationResponse['tracing']['trigger'];
   counterexamples: TraceAnnotation[];
+  injections: SegmentEvaluationResponse['tracing']['injections'];
+  injectionsCapped: boolean;
+  window: { start: number; end: number };
 };
+
+const MAX_INJECTION_ROWS = 100;
 
 /** F257 S4: Console projection whose only cycle truth is CycleRecord. */
 export class SegmentEvaluationReadModel {
@@ -34,6 +39,7 @@ export class SegmentEvaluationReadModel {
     segmentId: string;
     startMs: number;
     endMs: number;
+    cycleId?: string;
   }): Promise<SegmentEvaluationResponse> {
     const unit = this.runtime.catalog.manifest.units.find((candidate) => candidate.unitId === input.segmentId);
     if (!unit) throw new Error(`segment_evaluation_unit_not_found:${input.segmentId}`);
@@ -51,9 +57,11 @@ export class SegmentEvaluationReadModel {
 
     return {
       segmentId: input.segmentId,
-      window: { start: input.startMs, end: input.endMs },
+      window: projection.window,
       tracing: {
         trigger: projection.trigger,
+        injections: projection.injections,
+        injectionsCapped: projection.injectionsCapped,
         structuredCounterexamples: counterexamples.map((annotation) => ({
           annotationId: annotation.annotationId,
           incidentKey: annotation.incidentKey,
@@ -72,19 +80,26 @@ export class SegmentEvaluationReadModel {
   }
 
   private async projectObjective(
-    input: { ownerUserId: string; segmentId: string; startMs: number; endMs: number },
+    input: { ownerUserId: string; segmentId: string; startMs: number; endMs: number; cycleId?: string },
     objective: ObjectiveDefinition,
     model: EvaluationModelDefinition,
   ): Promise<ObjectiveProjection> {
-    const [current, history] = await Promise.all([
+    const [current, history, requestedHistoryCycle, historyCount] = await Promise.all([
       this.runtime.cycles.current(input.ownerUserId, objective.id),
       this.runtime.cycles.history(input.ownerUserId, objective.id, 8),
+      input.cycleId ? this.runtime.cycles.historyCycle(input.ownerUserId, objective.id, input.cycleId) : null,
+      this.runtime.cycles.historyCount(input.ownerUserId, objective.id),
     ]);
-    const cycleStart = current?.cycleStart ?? input.startMs;
-    // An open Objective cycle is live independently of whichever segment
-    // version/query window the operator selected in the lifeline.
-    const cycleEnd = current?.cycleEnd ?? this.now();
-    const policy = current ? cycleTriggerPolicyFor(this.runtime.catalog, current) : initialCycleTriggerPolicy(model);
+    const selected = input.cycleId
+      ? current?.cycleId === input.cycleId
+        ? current
+        : requestedHistoryCycle
+      : (current ?? history[0] ?? null);
+    if (input.cycleId && !selected) throw new Error(`segment_evaluation_cycle_not_found:${input.cycleId}`);
+
+    const cycleStart = selected?.cycleStart ?? input.startMs;
+    const cycleEnd = selected?.cycleEnd ?? this.now();
+    const policy = selected ? cycleTriggerPolicyFor(this.runtime.catalog, selected) : initialCycleTriggerPolicy(model);
     const [cumulativeCount, segmentEpisodes, annotationLists] = await Promise.all([
       this.runtime.traces.countOwnerWindow(input.ownerUserId, cycleStart, cycleEnd),
       this.runtime.traces.queryUnitWindow(
@@ -103,26 +118,53 @@ export class SegmentEvaluationReadModel {
     const segmentRows = segmentEpisodes
       .map((episode) => episode.summary.segments.find((segment) => segment.segmentId === input.segmentId))
       .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
-    const records = [...(current ? [current] : []), ...history];
-    const latestEvaluated = records.find((record) => record.evaluation);
-    const latestGoverned = records.find((record) => record.governance);
+    const injections = segmentEpisodes
+      .flatMap((episode) => {
+        const segment = episode.summary.segments.find((candidate) => candidate.segmentId === input.segmentId);
+        if (!segment || !isFiredTraceSegment(segment)) return [];
+        return [
+          {
+            threadId: episode.summary.threadId,
+            turnId: episode.summary.turnId,
+            timestamp: episode.summary.timestamp,
+            catId: episode.summary.catId,
+            pipelineStatus: 'fired' as const,
+            version: segment.version ?? null,
+            charCount: segment.charCount,
+          },
+        ];
+      })
+      .sort((left, right) => right.timestamp - left.timestamp || right.turnId.localeCompare(left.turnId));
+    const selectedEvaluated = selected?.evaluation ? selected : undefined;
+    const selectedGoverned = selected?.governance ? selected : undefined;
     const latestMetrics = new Map(
-      (latestEvaluated?.evaluation?.metrics ?? []).map((metric) => [metric.id, metric] as const),
+      (selectedEvaluated?.evaluation?.metrics ?? []).map((metric) => [metric.id, metric] as const),
     );
-    const versionChain = [...history].reverse().map(toSummary);
-    if (current) versionChain.push(toSummary(current));
+    const cycleTotal = historyCount + (current ? 1 : 0);
+    const versionChain = [...history]
+      .reverse()
+      .map((record, index) => toSummary(record, historyCount - history.length + index + 1));
+    if (current) versionChain.push(toSummary(current, cycleTotal));
+    const selectedSummary = selected
+      ? (versionChain.find((cycle) => cycle.cycleId === selected.cycleId) ?? toSummary(selected))
+      : null;
 
     return {
+      window: { start: cycleStart, end: cycleEnd },
+      injections: injections.slice(0, MAX_INJECTION_ROWS),
+      injectionsCapped: injections.length > MAX_INJECTION_ROWS,
       trigger: {
         objective: {
           objectiveId: objective.id,
-          evalStatus: current?.evalStatus ?? 'idle',
-          lifecycle: objective.lifecycle === 'retired' ? 'retired' : (current?.objectiveLifecycle ?? 'active'),
+          evalStatus: selected?.evalStatus ?? 'idle',
+          lifecycle: objective.lifecycle === 'retired' ? 'retired' : (selected?.objectiveLifecycle ?? 'active'),
           health: cumulativeCount === 0 ? 'zero-trace-fault' : 'healthy',
-          policyChangeCount: history.filter((record) => record.triggerPolicyChange !== undefined).length,
+          policyChangeCount: history.filter(
+            (record) => record.cycleStart <= cycleStart && record.triggerPolicyChange !== undefined,
+          ).length,
           cycleStartMs: cycleStart,
-          cycleEndMs: current?.cycleEnd ?? null,
-          triggeredBy: current?.triggeredBy ?? [],
+          cycleEndMs: selected?.cycleEnd ?? null,
+          triggeredBy: selected?.triggeredBy ?? [],
           cumulative: { count: cumulativeCount, threshold: policy.cumulativeThreshold },
           counterexamples: { count: counterexamples.length, threshold: policy.counterexampleThreshold },
           cadence: {
@@ -148,9 +190,10 @@ export class SegmentEvaluationReadModel {
         ruleVersion: model.ruleVersion,
         unitRefs: unitRefsForObjective(this.runtime, objective.id),
         metrics: model.metrics.map((metric) => metricView(metric, latestMetrics.get(metric.id))),
-        currentCycle: current ? toSummary(current) : null,
-        latestEvaluation: latestEvaluationView(latestEvaluated),
-        latestGovernance: latestGovernanceView(latestGoverned),
+        selectedCycle: selectedSummary,
+        currentCycle: current ? toSummary(current, cycleTotal) : null,
+        latestEvaluation: latestEvaluationView(selectedEvaluated),
+        latestGovernance: latestGovernanceView(selectedGoverned),
         versionChain,
       },
     };
@@ -208,9 +251,10 @@ function metricView(
   };
 }
 
-function toSummary(record: CycleRecord): SegmentCycleSummary {
+function toSummary(record: CycleRecord, ordinal?: number): SegmentCycleSummary {
   return {
     cycleId: record.cycleId,
+    ...(ordinal !== undefined ? { ordinal } : {}),
     version: record.version,
     versionContentRef: record.versionContentRef,
     cycleStart: record.cycleStart,

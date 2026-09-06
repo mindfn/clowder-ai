@@ -49,58 +49,13 @@ export function ObjectiveGovernancePanel({ data }: { data: SegmentEvaluationResp
             </div>
           ) : (
             <SettingsText as="p" variant="xs" tone="muted" className="mt-3">
-              当前还没有 governance 决策。
+              {objective.selectedCycle?.evalStatus === 'written'
+                ? '本周期评估已回写，尚未形成 governance 决策。'
+                : '本周期尚未进入 governance。'}
             </SettingsText>
           )}
-          <VersionChain cycles={objective.versionChain} />
         </section>
       ))}
-    </div>
-  );
-}
-
-function VersionChain({ cycles }: { cycles: SegmentCycleSummary[] }) {
-  if (cycles.length === 0) return null;
-  return (
-    <div className="mt-4">
-      <SettingsText as="h4" variant="xs" tone="muted" className="font-semibold">
-        版本链
-      </SettingsText>
-      <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-        {cycles.map((cycle, index) => (
-          <div key={cycle.cycleId} className="flex shrink-0 items-center gap-2">
-            {index > 0 && <span className="text-cafe-muted">→</span>}
-            <article className="min-w-[220px] rounded-xl bg-[var(--console-card-bg)] p-3">
-              <div className="flex items-center gap-2">
-                <SettingsBadge tone={cycle.closedAt ? 'slate' : 'blue'} size="xxs">
-                  {cycle.version}
-                </SettingsBadge>
-                <span className="font-mono text-micro text-cafe-muted">{cycle.evalStatus}</span>
-              </div>
-              <div className="mt-2 space-y-1 text-xs text-cafe-secondary">
-                <div>{formatTs(cycle.cycleStart)} 起</div>
-                {cycle.evaluation && (
-                  <div>
-                    @{cycle.evaluation.by} · {overallLabel(cycle.evaluation.overall)}
-                  </div>
-                )}
-                {cycle.governance && (
-                  <div>
-                    @{cycle.governance.by} · {decisionLabel(cycle.governance.decision)} · {cycle.governance.reason}
-                  </div>
-                )}
-                {cycle.approval && (
-                  <div>
-                    {cycle.approval.by ? `@${cycle.approval.by} · ` : ''}
-                    {approvalLabel(cycle.approval.state)}
-                    {cycle.approval.reason ? ` · ${cycle.approval.reason}` : ''}
-                  </div>
-                )}
-              </div>
-            </article>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -123,10 +78,6 @@ function decisionTone(decision: NonNullable<SegmentCycleSummary['governance']>['
 
 function approvalLabel(state: NonNullable<SegmentCycleSummary['approval']>['state']) {
   return { pending: '待审批', approved: '已批准', skipped: '已跳过', rejected: '已拒绝' }[state];
-}
-
-function overallLabel(value: NonNullable<SegmentCycleSummary['evaluation']>['overall']) {
-  return { complete: '完整结论', partial: '部分结论', insufficient_evidence: '证据不足' }[value];
 }
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {

@@ -92,6 +92,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       segmentName: data.segmentName,
       activeVersion: data.activeEpoch?.version ?? data.manifestVersion,
       chain: data.chain,
+      versionActivations: data.versionActivations,
       currentStatus: deriveCurrentStatus(data.chain),
       window: { startMs: windowStart, endMs: windowEnd },
       // Retained for backward compat + detail views
@@ -118,6 +119,7 @@ interface LifelineData {
   segmentName: string;
   manifestVersion: number;
   chain: import('@cat-cafe/shared').VersionEpoch[];
+  versionActivations: import('@cat-cafe/shared').VersionActivation[];
   activeEpoch: import('@cat-cafe/shared').VersionEpoch | undefined;
   observations: SegmentObservation[];
   /** True when detail rows were dropped by MAX_OBSERVATIONS (counts stay exact). */
@@ -170,6 +172,10 @@ async function assembleLifelineData(
     observations: observationInputs,
     currentContentVersion: overrideState?.contentVersion ?? null,
   });
+  const versionActivations = timeline.flatMap((point) => {
+    const epoch = chain[point.epochIndex];
+    return epoch ? [{ timestamp: point.timestamp, version: epoch.version }] : [];
+  });
 
   // 6. Guard events — still collected for detail view
   const guardEvents = opts.guardRejectionLog
@@ -185,6 +191,7 @@ async function assembleLifelineData(
     segmentName,
     manifestVersion,
     chain,
+    versionActivations,
     activeEpoch: chain.find((e) => e.isActive) ?? chain[chain.length - 1],
     observations,
     observationsCapped: detailCapped,

@@ -1,6 +1,6 @@
 'use client';
 
-import type { SegmentEvaluationResponse, VersionEpoch } from '@cat-cafe/shared';
+import type { SegmentCycleSummary, SegmentEvaluationResponse, VersionEpoch } from '@cat-cafe/shared';
 import { useMemo, useState } from 'react';
 import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
 import { ObjectiveEvaluationPanel } from '@/components/settings/ObjectiveEvaluationPanel';
@@ -37,6 +37,8 @@ const evaluation: SegmentEvaluationResponse = {
         disabledCount: 0,
       },
     },
+    injections: [],
+    injectionsCapped: false,
     structuredCounterexamples: [
       {
         annotationId: 'annotation-s13-schema-failure',
@@ -93,6 +95,21 @@ const evaluation: SegmentEvaluationResponse = {
           evidenceRefs: [],
         },
       ],
+      selectedCycle: {
+        cycleId: 'cycle-s13-showcase',
+        version: 'S13@1',
+        versionContentRef: 'hook:S13@1',
+        cycleStart: WINDOW.start,
+        cycleEnd: WINDOW.end,
+        evalStatus: 'written',
+        windows: [WINDOW],
+        triggeredBy: ['counterexamples'],
+        evaluation: { overall: 'complete', writtenAt: WINDOW.end, by: 'cat-evaluator' },
+        governance: { decision: 'evolve', reason: '降低工具调用失败', writtenAt: WINDOW.end, by: 'cat-evaluator' },
+        approval: { cardId: 'HGP-showcase', state: 'pending', rejectCount: 0, at: WINDOW.end },
+        rejectReasons: [],
+        closedAt: null,
+      },
       currentCycle: {
         cycleId: 'cycle-s13-showcase',
         version: 'S13@1',
@@ -152,6 +169,7 @@ const observations = [
 const chain: VersionEpoch[] = [
   {
     version: 1,
+    parentVersion: null,
     origin: 'manifest',
     startedAt: WINDOW.start,
     status: 'tracing',
@@ -169,8 +187,33 @@ const chain: VersionEpoch[] = [
   },
 ];
 
+const SHOWCASE_PRIOR_CYCLE = evaluation.objectives[0]?.currentCycle;
+const SHOWCASE_CURRENT_CYCLE: SegmentCycleSummary | null = SHOWCASE_PRIOR_CYCLE
+  ? {
+      ...SHOWCASE_PRIOR_CYCLE,
+      cycleId: 'cycle-s13-current',
+      cycleStart: WINDOW.end,
+      cycleEnd: null,
+      evalStatus: 'idle',
+      windows: [],
+      triggeredBy: [],
+      evaluation: null,
+      governance: null,
+      approval: null,
+      closedAt: null,
+      ordinal: 2,
+    }
+  : null;
+const SHOWCASE_CYCLES = [SHOWCASE_PRIOR_CYCLE, SHOWCASE_CURRENT_CYCLE].filter(
+  (cycle): cycle is SegmentCycleSummary => cycle !== null,
+);
+
 export default function F257ObjectiveEvalShowcase() {
-  const [selected, setSelected] = useState<SelectedStage>({ version: 1, stage: 'tracing' });
+  const [selected, setSelected] = useState<SelectedStage>({
+    version: 1,
+    stage: 'tracing',
+    ...(SHOWCASE_CURRENT_CYCLE ? { cycleId: SHOWCASE_CURRENT_CYCLE.cycleId } : {}),
+  });
   const versionObservations = useMemo(
     () => observations.filter((observation) => observation.version === selected.version),
     [selected.version],
@@ -185,7 +228,14 @@ export default function F257ObjectiveEvalShowcase() {
         </p>
       </header>
 
-      <LifelineChainView chain={chain} selected={selected} onSelect={setSelected} />
+      <LifelineChainView
+        chain={chain}
+        cycles={SHOWCASE_CYCLES}
+        versionActivations={[{ timestamp: 0, version: 1 }]}
+        currentCycleId={SHOWCASE_CURRENT_CYCLE?.cycleId}
+        selected={selected}
+        onSelect={setSelected}
+      />
 
       {selected.stage === 'version' && <VersionContentPreview segmentId="S13" epoch={chain[0]} />}
       {selected.stage === 'tracing' && (

@@ -1450,6 +1450,7 @@ export type {
   SegmentReplayResponse,
   SegmentVerdict,
   TracingStageSummary,
+  VersionActivation,
   VersionEpoch,
   VersionEpochStatus,
   VersionOrigin,

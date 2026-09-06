@@ -90,7 +90,7 @@ function buildEpochsAndTimeline(
   manifestVersion: number,
   events: OverrideChangeEvent[],
 ): { epochs: VersionEpoch[]; timeline: ActivationPoint[] } {
-  const epochs: VersionEpoch[] = [createEpoch(manifestVersion, 'manifest', 0)];
+  const epochs: VersionEpoch[] = [createEpoch(manifestVersion, null, 'manifest', 0)];
   const timeline: ActivationPoint[] = [{ timestamp: 0, epochIndex: 0 }];
   // R9: track active epoch (not last-created). content-set/activate/rollback/clear update it.
   let activeIdx = 0;
@@ -110,7 +110,7 @@ function buildEpochsAndTimeline(
         detail: `v${active.version} → v${newVersion}`,
       });
 
-      const newEpoch = createEpoch(newVersion, origin, event.timestamp);
+      const newEpoch = createEpoch(newVersion, active.version, origin, event.timestamp);
       const newIndex = epochs.length;
       epochs.push(newEpoch);
       activeIdx = newIndex;
@@ -167,9 +167,15 @@ function buildEpochsAndTimeline(
   return { epochs, timeline };
 }
 
-function createEpoch(version: number, origin: VersionOrigin, startedAt: number): VersionEpoch {
+function createEpoch(
+  version: number,
+  parentVersion: number | null,
+  origin: VersionOrigin,
+  startedAt: number,
+): VersionEpoch {
   return {
     version,
+    parentVersion,
     origin,
     startedAt,
     status: 'idle',

@@ -18,7 +18,7 @@
 import type { EvalStageSummary, VersionEpoch } from '@cat-cafe/shared';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EvalStagePanel } from '../components/settings/EvalStagePanel';
 import { LifelineChainView } from '../components/settings/LifelineChainView';
 import { LifelineStageDetail } from '../components/settings/LifelineStageDetail';
@@ -83,6 +83,7 @@ function makeEnablementMatrix(): import('@cat-cafe/shared').SegmentEnablementMat
 function makeEpoch(overrides: Partial<VersionEpoch> = {}): VersionEpoch {
   return {
     version: 1,
+    parentVersion: null,
     origin: 'manifest',
     startedAt: 0,
     // unmeasurable → cycle returns to tracing (6b loop model): eval-pending, no governance.
@@ -246,6 +247,8 @@ describe('F257 segment activity presentation', () => {
           disabledCount: 150,
         },
       },
+      injections: [],
+      injectionsCapped: false,
       structuredCounterexamples: [],
     };
   }
@@ -260,9 +263,11 @@ describe('F257 segment activity presentation', () => {
       }),
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('Objective 周期累计 Tracing251/200 条');
-    expect(text).toContain('窗口累计注入 Tracing101/251');
+    expect(text).toContain('周期累计Tracing251/200 条');
+    expect(text).toContain('周期内注入Tracing101/251');
+    expect(text).toContain('周期内反例Tracing');
     expect(text).toContain('禁用 150 次');
+    expect(text).not.toContain('点击记录查看完整现场');
     expect(text).not.toContain('本段查询窗');
     expect(text).not.toContain('本段注入明细');
     expect(text).not.toContain('触发策略已调整 0 次');
@@ -395,7 +400,7 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     closedAt: null,
   };
 
-  it('renders a second tracing/eval/governance loop under the same v1 after keep', async () => {
+  it('compresses repeated cycles into one card and expands an exact cycle chooser', async () => {
     await render(
       createElement(LifelineChainView, {
         chain: [makeEpoch()],
@@ -406,13 +411,44 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
       }),
     );
 
-    expect(container.querySelectorAll('[data-stage="tracing"]')).toHaveLength(2);
-    expect(container.querySelectorAll('[data-stage="eval"]')).toHaveLength(2);
-    expect(container.querySelectorAll('[data-stage="governance"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-stage="tracing"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-stage="eval"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-stage="governance"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-current="true"]')).toHaveLength(1);
     expect(container.querySelector('[data-current="true"]')?.textContent).toBe('tracing');
+    expect(container.querySelectorAll('[data-cycle-group]')).toHaveLength(1);
+    expect(container.querySelector('[data-cycle-switcher]')?.textContent).toContain('第 2 周期');
+    expect(container.querySelector('[data-cycle-switcher]')?.textContent).toContain('选择');
+    expect(container.querySelector('[data-cycle-switcher]')?.textContent).not.toContain('共 2 次');
     expect(container.querySelectorAll('button[data-cycle-id="cycle-keep-1"]')).toHaveLength(0);
     expect(container.querySelectorAll('button[data-cycle-id="cycle-current-2"]')).toHaveLength(3);
+
+    act(() => (container.querySelector('[data-cycle-switcher]') as HTMLButtonElement).click());
+    expect(container.querySelectorAll('[data-cycle-option]')).toHaveLength(2);
+  });
+
+  it('lets the operator select a historical stage and moves the visual highlight away from the live stage', async () => {
+    const onSelect = vi.fn();
+    await render(
+      createElement(LifelineChainView, {
+        chain: [makeEpoch()],
+        cycles: [completedCycle, currentCycle],
+        currentCycleId: currentCycle.cycleId,
+        selected: { version: 1, stage: 'eval', cycleId: completedCycle.cycleId },
+        onSelect,
+      }),
+    );
+
+    const historicalEval = container.querySelector(
+      'button[data-cycle-id="cycle-keep-1"][data-stage="eval"]',
+    ) as HTMLButtonElement;
+    expect(historicalEval).toBeTruthy();
+    expect(historicalEval.getAttribute('aria-pressed')).toBe('true');
+    expect(historicalEval.innerHTML).toContain('!bg-cafe-accent');
+    expect(container.querySelector('button[data-cycle-id="cycle-current-2"]')).toBeNull();
+
+    act(() => historicalEval.click());
+    expect(onSelect).toHaveBeenCalledWith({ version: 1, stage: 'eval', cycleId: 'cycle-keep-1' });
   });
 
   it('keeps every inactive node gray and never puts injection counts in the version line', async () => {
@@ -431,6 +467,81 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
       expect(node.innerHTML).toContain('bg-conn-slate-bg');
       expect(node.innerHTML).not.toContain('!bg-cafe-accent');
     }
+  });
+
+  it('renders version ancestry vertically so rollback from v2 can branch v3 from v1', async () => {
+    const v1 = makeEpoch({ version: 1, parentVersion: null, isActive: false });
+    const v2 = makeEpoch({
+      version: 2,
+      parentVersion: 1,
+      origin: 'auto-iterate',
+      startedAt: 100,
+      isActive: false,
+    });
+    const v3 = makeEpoch({
+      version: 3,
+      parentVersion: 1,
+      origin: 'auto-iterate',
+      startedAt: 300,
+      isActive: true,
+    });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [v1, v2, v3],
+        selected: { version: 3, stage: 'version' },
+        onSelect: () => {},
+      }),
+    );
+
+    expect(container.querySelector('[data-version-tree]')).toBeTruthy();
+    expect(container.querySelectorAll('[data-parent-version="1"]')).toHaveLength(2);
+    expect(container.textContent).toContain('源自 v1');
+  });
+
+  it('assigns cycles by the activation timeline after an older version is reactivated', async () => {
+    const v1 = makeEpoch({ version: 1, parentVersion: null, startedAt: 0, isActive: false });
+    const v2 = makeEpoch({
+      version: 2,
+      parentVersion: 1,
+      origin: 'auto-iterate',
+      startedAt: 100,
+      isActive: false,
+    });
+    const v3 = makeEpoch({
+      version: 3,
+      parentVersion: 1,
+      origin: 'auto-iterate',
+      startedAt: 350,
+      isActive: true,
+    });
+    const cycleOnV2 = { ...completedCycle, cycleId: 'cycle-v2', cycleStart: 150, cycleEnd: 200 };
+    const cycleOnReturnedV1 = {
+      ...completedCycle,
+      cycleId: 'cycle-v1-return',
+      cycleStart: 300,
+      cycleEnd: 340,
+    };
+    const cycleOnV3 = { ...currentCycle, cycleId: 'cycle-v3', cycleStart: 400 };
+
+    await render(
+      createElement(LifelineChainView, {
+        chain: [v1, v2, v3],
+        cycles: [cycleOnV2, cycleOnReturnedV1, cycleOnV3],
+        versionActivations: [
+          { timestamp: 0, version: 1 },
+          { timestamp: 100, version: 2 },
+          { timestamp: 250, version: 1 },
+          { timestamp: 350, version: 3 },
+        ],
+        currentCycleId: cycleOnV3.cycleId,
+        selected: { version: 1, stage: 'governance', cycleId: cycleOnReturnedV1.cycleId },
+        onSelect: () => {},
+      }),
+    );
+
+    expect(container.querySelector('[data-version-node="1"] [data-cycle-group="cycle-v1-return"]')).toBeTruthy();
+    expect(container.querySelector('[data-version-node="2"] [data-cycle-group="cycle-v2"]')).toBeTruthy();
+    expect(container.querySelector('[data-version-node="3"] [data-cycle-group="cycle-v3"]')).toBeTruthy();
   });
 });
 

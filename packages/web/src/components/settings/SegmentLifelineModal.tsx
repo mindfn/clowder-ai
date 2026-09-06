@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  SegmentCycleSummary,
   SegmentEvaluationResponse,
   SegmentLifecycleResponse,
   SegmentTracingEvaluationView,
@@ -9,7 +10,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
-import { LifelineChainView, type SelectedStage } from './LifelineChainView';
+import { activeStageForCycle, activeVersionAt, LifelineChainView, type SelectedStage } from './LifelineChainView';
 import { ObjectiveEvaluationPanel } from './ObjectiveEvaluationPanel';
 import { ObjectiveGovernancePanel } from './ObjectiveGovernancePanel';
 import { SettingsBadge, SettingsText } from './primitives';
@@ -26,11 +27,14 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   const [lifeline, setLifeline] = useState<SegmentLifecycleResponse | null>(null);
   const [selected, setSelected] = useState<SelectedStage | null>(null);
   const [evaluation, setEvaluation] = useState<SegmentEvaluationResponse | null>(null);
+  const [cycles, setCycles] = useState<SegmentCycleSummary[]>([]);
+  const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
   const [evaluationLoading, setEvaluationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
   const lifelineRequestRef = useRef(0);
   const evaluationRequestRef = useRef(0);
+  const selectionInitializedRef = useRef(false);
 
   const invalidateRequests = useCallback(() => {
     lifelineRequestRef.current++;
@@ -50,6 +54,9 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       }
       const next = (await response.json()) as SegmentLifecycleResponse;
       setLifeline(next);
+      setCycles([]);
+      setCurrentCycleId(null);
+      selectionInitializedRef.current = false;
       setSelected({ version: next.activeVersion, stage: 'tracing' });
     } catch {
       if (requestId === lifelineRequestRef.current) setError('网络错误');
@@ -67,13 +74,44 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
     () => lifeline?.chain.find((epoch) => epoch.version === selected?.version) ?? null,
     [lifeline, selected?.version],
   );
-  const selectedWindow = useMemo(
-    () => (lifeline && selectedEpoch ? epochWindow(lifeline, selectedEpoch) : null),
-    [lifeline, selectedEpoch],
+  const selectedCycle = useMemo(
+    () => cycles.find((cycle) => cycle.cycleId === selected?.cycleId) ?? null,
+    [cycles, selected?.cycleId],
+  );
+  const selectedWindow = useMemo(() => {
+    if (!lifeline) return null;
+    if (selectedCycle) {
+      const endMs = selectedCycle.cycleEnd ?? lifeline.window.endMs;
+      return endMs > selectedCycle.cycleStart ? { startMs: selectedCycle.cycleStart, endMs } : null;
+    }
+    return selectedEpoch ? epochWindow(lifeline, selectedEpoch) : null;
+  }, [lifeline, selectedCycle, selectedEpoch]);
+  const evaluationQuery = selected?.cycleId
+    ? new URLSearchParams({ cycleId: selected.cycleId }).toString()
+    : selectedWindow
+      ? new URLSearchParams({
+          startMs: String(selectedWindow.startMs),
+          endMs: String(selectedWindow.endMs),
+        }).toString()
+      : null;
+  const selectedVersion = selected?.version ?? 1;
+
+  const handleSelect = useCallback(
+    (next: SelectedStage) => {
+      selectionInitializedRef.current = true;
+      const coordinateChanged = selected?.cycleId !== next.cycleId || selected?.version !== next.version;
+      if (coordinateChanged) {
+        evaluationRequestRef.current++;
+        setEvaluation(null);
+        setEvaluationError(null);
+      }
+      setSelected(next);
+    },
+    [selected?.cycleId, selected?.version],
   );
 
   useEffect(() => {
-    if (!selectedWindow) {
+    if (!evaluationQuery) {
       setEvaluation(null);
       setEvaluationError(null);
       setEvaluationLoading(false);
@@ -84,18 +122,36 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
     setEvaluation(null);
     setEvaluationError(null);
     setEvaluationLoading(true);
-    const query = new URLSearchParams({
-      startMs: String(selectedWindow.startMs),
-      endMs: String(selectedWindow.endMs),
-    });
-    void apiFetch(`/api/segment-evaluation/${encodeURIComponent(segmentId)}?${query.toString()}`)
+    void apiFetch(`/api/segment-evaluation/${encodeURIComponent(segmentId)}?${evaluationQuery}`)
       .then(async (response) => {
         if (requestId !== evaluationRequestRef.current) return;
         if (!response.ok) {
           setEvaluationError('该版本的评估数据加载失败');
           return;
         }
-        setEvaluation((await response.json()) as SegmentEvaluationResponse);
+        const next = (await response.json()) as SegmentEvaluationResponse;
+        const objective = next.objectives[0];
+        if (objective) {
+          setCycles(objective.versionChain);
+          setCurrentCycleId(objective.currentCycle?.cycleId ?? null);
+          if (!selectionInitializedRef.current) {
+            const defaultCycle = objective.currentCycle ?? objective.versionChain.at(-1) ?? null;
+            selectionInitializedRef.current = true;
+            if (defaultCycle) {
+              const defaultVersion = activeVersionAt(
+                lifeline?.versionActivations ?? [],
+                defaultCycle.cycleStart,
+                lifeline?.chain[0]?.version ?? lifeline?.activeVersion ?? selectedVersion,
+              );
+              setSelected({
+                version: defaultVersion ?? lifeline?.activeVersion ?? selectedVersion,
+                stage: activeStageForCycle(defaultCycle),
+                cycleId: defaultCycle.cycleId,
+              });
+            }
+          }
+        }
+        setEvaluation(next);
       })
       .catch(() => {
         if (requestId === evaluationRequestRef.current) setEvaluationError('网络错误');
@@ -103,7 +159,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       .finally(() => {
         if (requestId === evaluationRequestRef.current) setEvaluationLoading(false);
       });
-  }, [segmentId, selectedWindow]);
+  }, [evaluationQuery, lifeline, segmentId, selectedVersion]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -120,14 +176,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       ) ?? [],
     [lifeline, selected?.version],
   );
-  const cycleObservations = useMemo(() => {
-    const objective = evaluation?.tracing.trigger.objective;
-    if (!objective) return versionObservations;
-    return observationsForObjectiveCycle(versionObservations, objective, evaluation.window.end);
-  }, [evaluation?.tracing.trigger.objective, evaluation?.window.end, versionObservations]);
-  const cycleObservationsCapped = evaluation
-    ? evaluation.tracing.trigger.segment.injectionCount > cycleObservations.length
-    : lifeline?.observationsCapped;
+  const cycleObservations = evaluation?.tracing.injections ?? versionObservations;
+  const cycleObservationsCapped = evaluation?.tracing.injectionsCapped ?? lifeline?.observationsCapped;
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
@@ -186,10 +236,11 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
             <>
               <LifelineChainView
                 chain={lifeline.chain}
-                cycles={evaluation?.objectives[0]?.versionChain ?? []}
-                currentCycleId={evaluation?.objectives[0]?.currentCycle?.cycleId ?? null}
+                cycles={cycles}
+                versionActivations={lifeline.versionActivations}
+                currentCycleId={currentCycleId}
                 selected={selected}
-                onSelect={setSelected}
+                onSelect={handleSelect}
               />
               {selectedEpoch && selected?.stage === 'version' && (
                 <VersionContentPreview segmentId={segmentId} epoch={selectedEpoch} />

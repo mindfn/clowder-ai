@@ -78,6 +78,8 @@ const EVALUATION: SegmentEvaluationResponse = {
         disabledCount: 0,
       },
     },
+    injections: [],
+    injectionsCapped: false,
     structuredCounterexamples: [
       {
         annotationId: 'annotation-s13-schema-failure',
@@ -114,6 +116,7 @@ const EVALUATION: SegmentEvaluationResponse = {
           evidenceRefs: ['invocation://turn_schema_failure_3'],
         },
       ],
+      selectedCycle: CURRENT_CYCLE,
       currentCycle: CURRENT_CYCLE,
       latestEvaluation: {
         cycleId: CURRENT_CYCLE.cycleId,

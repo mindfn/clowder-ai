@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, test } from 'node:test';
 
-const { buildFromPipeline } = await import('../dist/domains/prompt-hooks/trace-bridge.js');
+const { buildFromPipeline, persistPipelineTraceArtifacts } = await import(
+  '../dist/domains/prompt-hooks/trace-bridge.js'
+);
 
 /** Replicate HookPipeline.assemblePatches exactly for test assertions. */
 function expectedAssembledHash(contents) {
@@ -263,5 +265,85 @@ describe('trace-bridge buildFromPipeline', () => {
 
     assert.ok(result);
     assert.equal(result.summary.sessionId, 'sess-42');
+  });
+
+  test('persists replay snapshots after the authoritative summary using event-time message anchors', async () => {
+    const writes = [];
+    const traceStore = {
+      async persist(summary, detail) {
+        writes.push({ kind: 'summary', summary, detail });
+      },
+      async persistReplaySnapshots(threadId, turnId, snapshots) {
+        assert.equal(writes[0]?.kind, 'summary', 'summary must exist before replay snapshots');
+        writes.push({ kind: 'replay', threadId, turnId, snapshots });
+      },
+    };
+    const messageStore = {
+      async getById(id) {
+        assert.equal(writes[0]?.kind, 'summary', 'replay enrichment must not precede the authoritative summary');
+        return id === 'message-anchor'
+          ? { id, threadId: META.threadId, timestamp: 200, role: 'user', content: 'current' }
+          : null;
+      },
+      async getByThreadBefore(threadId, beforeTimestamp, limit, excludeId, userId) {
+        assert.deepEqual(
+          { threadId, beforeTimestamp, limit, excludeId, userId },
+          {
+            threadId: META.threadId,
+            beforeTimestamp: 200,
+            limit: 19,
+            excludeId: 'message-anchor',
+            userId: 'owner-1',
+          },
+        );
+        return [{ id: 'message-before', threadId, timestamp: 100, role: 'assistant', content: 'before' }];
+      },
+    };
+    const session = makePipelineResult([{ id: 'S13', tokens: 10, content: 'injected' }]);
+
+    const result = await persistPipelineTraceArtifacts({
+      traceStore,
+      messageStore,
+      ownerUserId: 'owner-1',
+      messageAnchorId: 'message-anchor',
+      sessionResult: session,
+      turnResult: null,
+      meta: META,
+    });
+
+    assert.deepEqual(
+      writes.map((write) => write.kind),
+      ['summary', 'replay'],
+    );
+    assert.equal(result.summaryPersisted, true);
+    assert.equal(result.replayPersisted, true);
+    assert.equal(result.replaySnapshotCount, 1);
+    assert.deepEqual(writes[1].snapshots[0].surroundingMessageIds, ['message-before', 'message-anchor']);
+    assert.equal(writes[1].snapshots[0].messageAnchorId, 'message-anchor');
+    assert.equal(writes[1].snapshots[0].ownerUserId, 'owner-1');
+  });
+
+  test('reports a replay-only failure without hiding the durable summary from episode finalization', async () => {
+    let summaryPersisted = false;
+    const result = await persistPipelineTraceArtifacts({
+      traceStore: {
+        async persist() {
+          summaryPersisted = true;
+        },
+        async persistReplaySnapshots() {
+          throw new Error('redis replay write failed');
+        },
+      },
+      ownerUserId: 'owner-1',
+      messageAnchorId: null,
+      sessionResult: makePipelineResult([{ id: 'S13', content: 'injected' }]),
+      turnResult: null,
+      meta: META,
+    });
+
+    assert.equal(summaryPersisted, true);
+    assert.equal(result.summaryPersisted, true);
+    assert.equal(result.replayPersisted, false);
+    assert.match(String(result.replayError), /redis replay write failed/);
   });
 });

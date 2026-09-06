@@ -48,7 +48,7 @@ import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveM
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
-import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
+import { persistPipelineTraceArtifacts } from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import {
@@ -797,17 +797,31 @@ export async function* routeParallel(
       try {
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
-          const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
-
-          const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
-            ...traceMeta,
-            hasNativeL0,
-            sessionViaNativeCarrier: hasNativeL0,
-          });
-          if (pipelineResult) {
-            const persistPromise = traceStore
-              .persist(pipelineResult.summary, pipelineResult.detail)
-              .then(() => true as const)
+          if (pipelineSessionTrace || pipelineTurnTrace) {
+            const persistPromise = persistPipelineTraceArtifacts({
+              traceStore,
+              messageStore: deps.messageStore,
+              ownerUserId: userId,
+              messageAnchorId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
+              sessionResult: pipelineSessionTrace ?? null,
+              turnResult: pipelineTurnTrace ?? null,
+              meta: {
+                turnId: traceTurnId,
+                threadId,
+                catId: catId as string,
+                hasNativeL0,
+                sessionViaNativeCarrier: hasNativeL0,
+              },
+            })
+              .then((result) => {
+                if (result && !result.replayPersisted) {
+                  log.warn(
+                    { err: result.replayError, threadId, catId, replaySnapshotCount: result.replaySnapshotCount },
+                    '[F257] replay snapshot persist failed (degraded)',
+                  );
+                }
+                return result?.summaryPersisted ?? false;
+              })
               .catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
                 return false as const;
