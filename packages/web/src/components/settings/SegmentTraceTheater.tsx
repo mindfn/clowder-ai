@@ -43,11 +43,19 @@ export function SegmentTraceTheater({
   return (
     <div className="space-y-3" data-testid="segment-trace-theater">
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <MetaRow label="触发条件">
-            {loading ? '加载中…' : trigger ? <TriggerRules trigger={trigger} /> : '当前 Unit 尚无评估触发配置'}
-          </MetaRow>
-          <MetaRow label="周期起点">{cycleStart ? new Date(cycleStart).toLocaleString() : '窗口未知'}</MetaRow>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
+            触发条件（满足任一条件触发）
+          </SettingsText>
+          <div className="text-xs text-cafe-muted">
+            周期起点：
+            <span className="ml-1 text-cafe-secondary">
+              {cycleStart ? new Date(cycleStart).toLocaleString() : '窗口未知'}
+            </span>
+          </div>
+        </div>
+        <div className="mt-3">
+          {loading ? '加载中…' : trigger ? <TriggerRules trigger={trigger} /> : '当前 Unit 尚无评估触发配置'}
         </div>
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">
@@ -58,11 +66,11 @@ export function SegmentTraceTheater({
 
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-          反例唤醒信号
+          周期内反例Tracing
         </SettingsText>
         {!loading && (readiness?.structuredCounterexamples.length ?? 0) === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            周期内暂无明确反例；周期内 Tracing 仍持续累计。
+            周期内暂无明确反例；Tracing 仍持续累计。
           </SettingsText>
         ) : (
           <div className="mt-2 space-y-1.5">
@@ -93,7 +101,7 @@ export function SegmentTraceTheater({
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <summary className="cursor-pointer text-sm font-semibold text-cafe">
-          <span>窗口累计注入 Tracing</span>
+          <span>周期内注入Tracing</span>
           <span className="ml-2 text-cafe-secondary">
             {trigger ? `${trigger.segment.injectionCount}/${trigger.objective.cumulative.count}` : '—/—'}
           </span>
@@ -101,9 +109,6 @@ export function SegmentTraceTheater({
             <span className="ml-2 text-xs font-normal text-cafe-muted">禁用 {trigger.segment.disabledCount} 次</span>
           )}
         </summary>
-        <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-          点击记录查看完整现场
-        </SettingsText>
         {observations.length === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
             当前周期窗内暂无注入记录
@@ -134,7 +139,7 @@ export function SegmentTraceTheater({
         )}
         {capped && (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前仅展示最近 100 次注入；标题计数仍为完整周期窗精确聚合。
+            当前仅展示最近 100 次注入；上方计数仍为完整周期窗精确聚合。
           </SettingsText>
         )}
       </details>
@@ -163,8 +168,8 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-mono text-cafe-secondary">{objective.objectiveId}</span>
-        <span className="text-cafe-muted">满足任一路即触发评估</span>
+        <span className="w-[72px] shrink-0 text-xs text-cafe-muted">归属</span>
+        <span className="font-mono text-xs text-cafe-secondary">{objective.objectiveId}</span>
         {objective.evalStatus !== 'idle' && <EvaluationStatusBadge status={objective.evalStatus} />}
         {objective.lifecycle !== 'active' && <LifecycleBadge lifecycle={objective.lifecycle} />}
         {objective.triggeredBy.map((route) => (
@@ -180,15 +185,15 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
       )}
       <div className="grid gap-x-4 gap-y-1 text-cafe-muted sm:grid-cols-3">
         <TriggerProgress
-          label="Objective 周期累计 Tracing"
+          label="周期累计Tracing"
           value={`${objective.cumulative.count}/${objective.cumulative.threshold} 条`}
         />
         <TriggerProgress
-          label="重复反例事件"
+          label="周期反例Tracing"
           value={`${objective.counterexamples.count}/${objective.counterexamples.threshold} 次`}
         />
         <TriggerProgress
-          label="周期进度"
+          label="最大累计时间窗"
           value={`${formatDuration(objective.cadence.elapsedMs)}/${formatDuration(objective.cadence.thresholdMs)}${
             !objective.cadence.eligible ? '（至少需 1 条 Tracing）' : ''
           }`}
@@ -266,13 +271,4 @@ function formatDuration(value: number): string {
   if (days >= 1) return `${days.toFixed(days >= 10 ? 0 : 1)} 天`;
   const hours = value / (60 * 60 * 1000);
   return `${hours.toFixed(hours >= 10 ? 0 : 1)} 小时`;
-}
-
-function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-2 text-xs">
-      <span className="w-[72px] shrink-0 text-cafe-muted">{label}</span>
-      <span className="min-w-0 text-cafe-secondary">{children}</span>
-    </div>
-  );
 }

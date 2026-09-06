@@ -373,7 +373,7 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     for (const label of ['归属', '评估模型', '指标目录', '方向', '含义', '评估方式', '评估规则']) {
       expect(evaluationSrc).toContain(label);
     }
-    expect(evaluationSrc).toContain('currentCycle?.evalStatus');
+    expect(evaluationSrc).toContain('selectedCycle?.evalStatus');
     expect(evaluationSrc).toContain('latestEvaluation');
     expect(evaluationSrc).toContain('latestConclusion');
     expect(evaluationSrc).toContain('检测覆盖');
@@ -387,11 +387,11 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(evaluationSrc).not.toContain('MetricResult');
   });
 
-  it('shows CycleRecord governance and version provenance', () => {
-    for (const field of ['latestGovernance', 'decision', 'approval', 'versionChain', 'governance.by']) {
+  it('shows governance for the selected CycleRecord without duplicating the top lifecycle chain', () => {
+    for (const field of ['latestGovernance', 'decision', 'approval', 'selectedCycle', 'latestGovernance.by']) {
       expect(governanceSrc).toContain(field);
     }
-    expect(governanceSrc).toContain('版本链');
+    expect(governanceSrc).not.toContain('版本链');
     expect(governanceSrc).toContain('决策者');
     expect(modalSrc).not.toContain('EvalSourceWarning');
   });
@@ -413,19 +413,20 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).toContain('objective.cadence.elapsedMs');
     expect(theaterSrc).toContain('objective.cadence.thresholdMs');
     expect(theaterSrc).toContain('objective.triggeredBy');
-    expect(theaterSrc).toContain('满足任一路即触发');
+    expect(theaterSrc).toContain('满足任一条件触发');
     // co-creator 2026-08-26: exactly two groups — structured counterexamples +
     // windowed cumulative tracing; the owner-wide unclassified count is removed
     // from the segment view (it never participates in this Unit's trigger).
-    expect(theaterSrc).toContain('反例唤醒信号');
-    expect(theaterSrc).toContain('Objective 周期累计 Tracing');
-    expect(theaterSrc).toContain('重复反例事件');
-    expect(theaterSrc).toContain('窗口累计注入 Tracing');
+    expect(theaterSrc).toContain('周期内反例Tracing');
+    expect(theaterSrc).toContain('周期累计Tracing');
+    expect(theaterSrc).toContain('周期反例Tracing');
+    expect(theaterSrc).toContain('最大累计时间窗');
+    expect(theaterSrc).toContain('周期内注入Tracing');
     expect(theaterSrc).toContain('segment.injectionCount');
     expect(theaterSrc).toContain('segment.disabledCount');
     expect(theaterSrc).not.toContain('本段查询窗');
     expect(theaterSrc).not.toContain('本段注入明细');
-    expect(theaterSrc).toContain('周期内暂无明确反例；周期内 Tracing 仍持续累计');
+    expect(theaterSrc).toContain('周期内暂无明确反例；Tracing 仍持续累计');
     expect(theaterSrc).not.toContain('时间窗内累计 Tracing');
     expect(theaterSrc).not.toContain('待分类');
     expect(theaterSrc).not.toContain('unclassifiedEpisodeCount');
@@ -447,7 +448,7 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
     expect(modalSrc).toContain("selected?.stage === 'tracing'");
     expect(modalSrc).toContain('versionObservations');
-    expect(theaterSrc).toContain('点击记录查看完整现场');
+    expect(theaterSrc).not.toContain('点击记录查看完整现场');
     expect(theaterSrc).not.toContain('Tracing 回放剧场');
     expect(theaterSrc).not.toContain('每一场都是完整 TraceEpisode');
     expect(theaterSrc).toContain('SegmentReplayPanel');

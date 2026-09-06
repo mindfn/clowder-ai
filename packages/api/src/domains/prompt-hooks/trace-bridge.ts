@@ -28,6 +28,7 @@ import type {
 } from '@cat-cafe/shared';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { PipelineResult } from './HookPipeline.js';
+import type { InjectionTraceStore } from './InjectionTraceStore.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -51,6 +52,67 @@ const SURROUNDING_MESSAGE_LIMIT = 20;
 export interface SurroundingMessageCapture {
   ids: string[];
   gap: ReplayProvenanceGap | null;
+}
+
+export interface PipelineTracePersistenceResult {
+  summaryPersisted: true;
+  replayPersisted: boolean;
+  replaySnapshotCount: number;
+  replayError?: unknown;
+}
+
+/**
+ * Persist the compact authority trace and its immutable replay snapshots as one
+ * production operation. The summary is written first because replay storage is
+ * intentionally guarded against snapshots whose authority trace does not exist.
+ * A replay-only failure is reported separately and never hides an otherwise
+ * durable trace episode from evaluation.
+ */
+export async function persistPipelineTraceArtifacts(input: {
+  traceStore: Pick<InjectionTraceStore, 'persist' | 'persistReplaySnapshots'>;
+  messageStore?: IMessageStore;
+  ownerUserId: string;
+  messageAnchorId: string | null;
+  sessionResult: PipelineResult | null;
+  turnResult: PipelineResult | null;
+  meta: TraceBridgeMeta;
+}): Promise<PipelineTracePersistenceResult | null> {
+  const pipeline = buildFromPipeline(input.sessionResult, input.turnResult, input.meta);
+  if (!pipeline) return null;
+
+  await input.traceStore.persist(pipeline.summary, pipeline.detail);
+  let replaySnapshotCount = 0;
+  try {
+    const surrounding = await captureSurroundingMessageIds(
+      input.messageStore,
+      input.meta.threadId,
+      input.messageAnchorId,
+      input.ownerUserId,
+    );
+    const snapshots = buildReplaySnapshots(input.sessionResult, input.turnResult, {
+      threadId: input.meta.threadId,
+      turnId: input.meta.turnId,
+      catId: input.meta.catId,
+      timestamp: pipeline.summary.timestamp,
+      ownerUserId: input.ownerUserId,
+      messageAnchorId: input.messageAnchorId,
+      surroundingMessageIds: surrounding.ids,
+      surroundingMessagesGap: surrounding.gap,
+    });
+    replaySnapshotCount = snapshots.length;
+    if (snapshots.length === 0) {
+      return { summaryPersisted: true, replayPersisted: true, replaySnapshotCount: 0 };
+    }
+    await input.traceStore.persistReplaySnapshots(input.meta.threadId, input.meta.turnId, snapshots);
+    return { summaryPersisted: true, replayPersisted: true, replaySnapshotCount: snapshots.length };
+  } catch (replayError) {
+    return {
+      summaryPersisted: true,
+      replayPersisted: false,
+      replaySnapshotCount,
+      replayError,
+    };
+  }
 }
 
 /**

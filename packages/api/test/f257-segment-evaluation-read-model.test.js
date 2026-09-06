@@ -61,6 +61,9 @@ class FakeRedis {
       (score) => score >= Number(min) && score <= Number(max),
     ).length;
   }
+  async zcard(key) {
+    return (this.zsets.get(key) ?? new Map()).size;
+  }
   async zrange(key, start, end, withScores) {
     const rows = this.sorted(key);
     const selected = rows.slice(start, end < 0 ? undefined : end + 1);
@@ -252,6 +255,11 @@ async function seedCurrent(redis, cycle) {
   await redis.set('harness-cycle-current:owner-1:tool-access', JSON.stringify(cycle));
 }
 
+async function seedHistory(redis, cycle) {
+  await redis.set(`harness-cycle-history:owner-1:tool-access:${cycle.cycleId}`, JSON.stringify(cycle));
+  await redis.zadd('harness-cycle-history-index:owner-1:tool-access', cycle.closedAt, cycle.cycleId);
+}
+
 describe('F257 SegmentEvaluationReadModel', () => {
   test('projects two tracing groups and all three per-Objective trigger lanes from CycleRecord', async () => {
     const redis = new FakeRedis();
@@ -267,7 +275,12 @@ describe('F257 SegmentEvaluationReadModel', () => {
       endMs: 300,
     });
 
-    assert.deepEqual(Object.keys(view.tracing).sort(), ['structuredCounterexamples', 'trigger']);
+    assert.deepEqual(Object.keys(view.tracing).sort(), [
+      'injections',
+      'injectionsCapped',
+      'structuredCounterexamples',
+      'trigger',
+    ]);
     assert.deepEqual(view.tracing.trigger.objective, {
       objectiveId: 'tool-access',
       evalStatus: 'idle',
@@ -379,8 +392,96 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(objective.latestGovernance.by, 'cat-eval');
     assert.equal(objective.latestGovernance.approval.cardId, 'HGP-1');
     assert.deepEqual(
-      objective.versionChain.map((cycle) => cycle.version),
-      ['S13@1', 'S13@2'],
+      objective.versionChain.map((cycle) => [cycle.version, cycle.ordinal]),
+      [
+        ['S13@1', 1],
+        ['S13@2', 2],
+      ],
+    );
+  });
+
+  test('projects the selected cycle without leaking a previous verdict into the current tracing cycle', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, [episode(1, 150), episode(2, 250), episode(3, 350)]);
+    const prior = currentCycle({
+      cycleId: 'cycle-prior',
+      version: 'S13@1',
+      cycleStart: 100,
+      cycleEnd: 200,
+      evalStatus: 'written',
+      windows: [{ start: 100, end: 200 }],
+      triggeredBy: ['counterexamples'],
+      evaluation: {
+        overall: 'complete',
+        writtenAt: 210,
+        by: 'cat-eval',
+        metrics: [
+          {
+            id: 'failure-count',
+            conclusion: { kind: 'count', value: 1, howCounted: 'one incident' },
+            evidenceRefs: ['invocation://inv-1'],
+          },
+        ],
+      },
+      governance: { decision: 'keep', reason: 'stable', writtenAt: 220, by: 'cat-eval' },
+      closedAt: 200,
+    });
+    await seedHistory(redis, prior);
+    await seedCurrent(redis, currentCycle({ cycleStart: 200 }));
+
+    const currentView = await new SegmentEvaluationReadModel(runtime, () => 400).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 400,
+      cycleId: 'cycle-current',
+    });
+    const currentObjective = currentView.objectives[0];
+    assert.equal(currentObjective.selectedCycle.cycleId, 'cycle-current');
+    assert.equal(currentObjective.latestEvaluation, null);
+    assert.equal(currentObjective.latestGovernance, null);
+    assert.equal(currentObjective.metrics[0].latestConclusion, null);
+    assert.deepEqual(currentView.window, { start: 200, end: 400 });
+    assert.equal(currentView.tracing.trigger.objective.cumulative.count, 2);
+    assert.deepEqual(
+      currentView.tracing.injections.map((row) => row.turnId),
+      ['turn-3', 'turn-2'],
+    );
+
+    const priorView = await new SegmentEvaluationReadModel(runtime, () => 400).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 400,
+      cycleId: 'cycle-prior',
+    });
+    const priorObjective = priorView.objectives[0];
+    assert.equal(priorObjective.selectedCycle.cycleId, 'cycle-prior');
+    assert.equal(priorObjective.latestEvaluation.cycleId, 'cycle-prior');
+    assert.equal(priorObjective.latestGovernance.cycleId, 'cycle-prior');
+    assert.equal(priorObjective.metrics[0].latestConclusion.value, 1);
+    assert.deepEqual(priorView.window, { start: 100, end: 200 });
+    assert.equal(priorView.tracing.trigger.objective.cumulative.count, 1);
+    assert.deepEqual(
+      priorView.tracing.injections.map((row) => row.turnId),
+      ['turn-1'],
+    );
+  });
+
+  test('fails closed when an explicit cycle coordinate does not exist', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    await seedCurrent(redis, currentCycle());
+
+    await assert.rejects(
+      new SegmentEvaluationReadModel(runtime).read({
+        ownerUserId: 'owner-1',
+        segmentId: 'S13',
+        startMs: 0,
+        endMs: 300,
+        cycleId: 'cycle-missing',
+      }),
+      /segment_evaluation_cycle_not_found:cycle-missing/,
     );
   });
 

@@ -499,6 +499,7 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     // Verify other shared-contract fields are present
     assert.equal(body.segmentId, 'S-test');
     assert.ok('chain' in body);
+    assert.deepEqual(body.versionActivations, [{ timestamp: 0, version: 1 }]);
     assert.ok('activeVersion' in body);
     assert.ok('currentStatus' in body);
     assert.ok('window' in body);

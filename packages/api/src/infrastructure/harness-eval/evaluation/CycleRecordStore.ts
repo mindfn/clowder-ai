@@ -235,6 +235,10 @@ export class CycleRecordStore {
     return raw ? parseCycle(raw, key) : null;
   }
 
+  async historyCount(ownerUserId: string, objectiveId: string): Promise<number> {
+    return this.redis.zcard(historyIndexKey(ownerUserId, objectiveId));
+  }
+
   async history(ownerUserId: string, objectiveId: string, limit?: number): Promise<CycleRecord[]> {
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0))
       throw new Error('invalid_cycle_history_limit');

@@ -200,6 +200,8 @@ export type VersionOrigin = 'manifest' | 'auto-iterate' | 'user-create';
 /** A single version epoch in the lifecycle chain. */
 export interface VersionEpoch {
   version: number;
+  /** Version that was active when this immutable version was created. */
+  parentVersion: number | null;
   origin: VersionOrigin;
   startedAt: number;
   status: VersionEpochStatus;
@@ -208,6 +210,12 @@ export interface VersionEpoch {
   eval: EvalStageSummary | null;
   governance: GovernanceStageSummary | null;
   events: LifecycleEvent[];
+}
+
+/** One exact transition in the segment-version activation timeline. */
+export interface VersionActivation {
+  timestamp: number;
+  version: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +291,8 @@ export interface SegmentLifecycleResponse {
   segmentName: string;
   activeVersion: number;
   chain: VersionEpoch[];
+  /** Exact activation history, including rollback/reactivation of an older version. */
+  versionActivations: VersionActivation[];
   /** Backward-compat status summary. */
   currentStatus: 'idle' | 'tracing' | 'evaluated';
   /**

@@ -49,14 +49,15 @@ export const segmentEvaluationRoutes: FastifyPluginAsync<SegmentEvaluationRoutes
     if (!opts.runtime) return reply.status(503).send({ error: 'Objective evaluation runtime unavailable' });
 
     const { segmentId } = request.params as { segmentId: string };
-    const window = resolveEvaluationWindow(
-      request.query as { windowMs?: string; startMs?: string; endMs?: string },
-      Date.now(),
-    );
+    const query = request.query as { windowMs?: string; startMs?: string; endMs?: string; cycleId?: string };
+    const window = resolveEvaluationWindow(query, Date.now());
     if (!window) {
       return reply
         .status(400)
         .send({ error: 'Provide either a valid windowMs or a valid startMs/endMs pair within 30 days' });
+    }
+    if (query.cycleId !== undefined && (typeof query.cycleId !== 'string' || !query.cycleId.trim())) {
+      return reply.status(400).send({ error: 'cycleId must be a non-empty string' });
     }
     try {
       return reply.send(
@@ -65,11 +66,15 @@ export const segmentEvaluationRoutes: FastifyPluginAsync<SegmentEvaluationRoutes
           segmentId,
           startMs: window.startMs,
           endMs: window.endMs,
+          ...(query.cycleId ? { cycleId: query.cycleId } : {}),
         }),
       );
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('segment_evaluation_unit_not_found:')) {
         return reply.status(404).send({ error: 'Segment evaluation manifest entry not found' });
+      }
+      if (error instanceof Error && error.message.startsWith('segment_evaluation_cycle_not_found:')) {
+        return reply.status(404).send({ error: 'Objective evaluation cycle not found' });
       }
       throw error;
     }

@@ -30,11 +30,19 @@ export function ObjectiveEvaluationPanel({ data }: { data: SegmentEvaluationResp
             </MetaRow>
             <MetaRow label="评估目标">{objective.objectiveStatement}</MetaRow>
             <MetaRow label="评估状态">
-              <EvalStatusBadge status={objective.currentCycle?.evalStatus ?? 'idle'} />
+              <EvalStatusBadge status={objective.selectedCycle?.evalStatus ?? 'idle'} />
             </MetaRow>
           </div>
           <MetricCatalog metrics={objective.metrics} />
-          {objective.latestEvaluation && <VerdictCard objective={objective} />}
+          {objective.latestEvaluation ? (
+            <VerdictCard objective={objective} />
+          ) : (
+            <SettingsText as="p" variant="xs" tone="muted" className="mt-3">
+              {objective.selectedCycle?.evalStatus === 'idle'
+                ? '本周期尚未进入评估；当前仅展示指标定义。'
+                : '本周期尚未回写评估结论；当前仅展示指标定义。'}
+            </SettingsText>
+          )}
         </section>
       ))}
     </div>
@@ -84,7 +92,7 @@ function VerdictCard({ objective }: { objective: SegmentObjectiveEvaluationView 
     <section className="mt-4 rounded-xl bg-[var(--console-elevated-bg)] p-3" data-testid="cycle-verdict-card">
       <div className="flex flex-wrap items-center gap-2">
         <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-          最新评估结论
+          本周期评估结论
         </SettingsText>
         <SettingsBadge tone={evaluation.overall === 'complete' ? 'emerald' : 'amber'} size="xxs">
           {overallLabel(evaluation.overall)}
@@ -216,7 +224,7 @@ function nextActionLabel(objective: SegmentObjectiveEvaluationView): string {
 }
 
 function nextObservationLabel(objective: SegmentObjectiveEvaluationView): string {
-  const cycle = objective.currentCycle;
+  const cycle = objective.selectedCycle;
   return cycle ? `${formatTs(cycle.cycleStart)} 起的新周期 · ${cycle.evalStatus}` : '等待首个周期初始化';
 }
 

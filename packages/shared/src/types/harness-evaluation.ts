@@ -323,6 +323,17 @@ export interface SegmentTracingEvaluationView {
       disabledCount: number;
     };
   };
+  /** Fired segment rows from this exact Objective cycle, newest first. */
+  injections: Array<{
+    threadId: string;
+    turnId: string;
+    timestamp: number;
+    catId: string;
+    pipelineStatus: 'fired';
+    version: number | null;
+    charCount: number;
+  }>;
+  injectionsCapped: boolean;
   structuredCounterexamples: Array<{
     annotationId: string;
     incidentKey: string;
@@ -339,6 +350,8 @@ export interface SegmentTracingEvaluationView {
 
 export interface SegmentCycleSummary {
   cycleId: string;
+  /** Chronological Objective-cycle number (1-based), when known. */
+  ordinal?: number;
   version: string;
   versionContentRef: string;
   cycleStart: number;
@@ -366,6 +379,9 @@ export interface SegmentObjectiveEvaluationView {
   ruleVersion: string;
   unitRefs: EvaluationUnitRef[];
   metrics: SegmentMetricEvaluationView[];
+  /** Cycle whose tracing/eval/governance detail is projected in this response. */
+  selectedCycle: SegmentCycleSummary | null;
+  /** Live cycle coordinate, kept separate from the operator's selected history. */
   currentCycle: SegmentCycleSummary | null;
   latestEvaluation: {
     cycleId: string;

@@ -173,4 +173,17 @@ describe('F257 production segment lifecycle surface', () => {
       'production Console evaluation must read CycleRecord, not ObjectiveJudgment',
     );
   });
+
+  test('serial and parallel production routing persist replay snapshots with trace summaries', () => {
+    for (const route of ['route-serial.ts', 'route-parallel.ts']) {
+      const source = readFileSync(
+        new URL(`../src/domains/cats/services/agents/routing/${route}`, import.meta.url),
+        'utf8',
+      );
+      assert.match(source, /persistPipelineTraceArtifacts\(\{/);
+      assert.match(source, /messageStore:\s*deps\.messageStore/);
+      assert.match(source, /messageAnchorId:/);
+      assert.doesNotMatch(source, /\.persist\(pipelineResult\.summary, pipelineResult\.detail\)/);
+    }
+  });
 });
