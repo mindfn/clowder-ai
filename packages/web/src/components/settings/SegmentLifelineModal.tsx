@@ -1,6 +1,11 @@
 'use client';
 
-import type { SegmentEvaluationResponse, SegmentLifecycleResponse, VersionEpoch } from '@cat-cafe/shared';
+import type {
+  SegmentEvaluationResponse,
+  SegmentLifecycleResponse,
+  SegmentTracingEvaluationView,
+  VersionEpoch,
+} from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -68,10 +73,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   );
 
   useEffect(() => {
-    if (
-      (selected?.stage !== 'eval' && selected?.stage !== 'tracing' && selected?.stage !== 'governance') ||
-      !selectedWindow
-    ) {
+    if (!selectedWindow) {
       setEvaluation(null);
       setEvaluationError(null);
       setEvaluationLoading(false);
@@ -101,7 +103,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       .finally(() => {
         if (requestId === evaluationRequestRef.current) setEvaluationLoading(false);
       });
-  }, [segmentId, selected?.stage, selectedWindow]);
+  }, [segmentId, selectedWindow]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -118,6 +120,14 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       ) ?? [],
     [lifeline, selected?.version],
   );
+  const cycleObservations = useMemo(() => {
+    const objective = evaluation?.tracing.trigger.objective;
+    if (!objective) return versionObservations;
+    return observationsForObjectiveCycle(versionObservations, objective, evaluation.window.end);
+  }, [evaluation?.tracing.trigger.objective, evaluation?.window.end, versionObservations]);
+  const cycleObservationsCapped = evaluation
+    ? evaluation.tracing.trigger.segment.injectionCount > cycleObservations.length
+    : lifeline?.observationsCapped;
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
@@ -174,20 +184,25 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
           )}
           {!loading && !error && lifeline && (
             <>
-              <LifelineChainView chain={lifeline.chain} selected={selected} onSelect={setSelected} />
+              <LifelineChainView
+                chain={lifeline.chain}
+                cycles={evaluation?.objectives[0]?.versionChain ?? []}
+                currentCycleId={evaluation?.objectives[0]?.currentCycle?.cycleId ?? null}
+                selected={selected}
+                onSelect={setSelected}
+              />
               {selectedEpoch && selected?.stage === 'version' && (
                 <VersionContentPreview segmentId={segmentId} epoch={selectedEpoch} />
               )}
               {selectedEpoch && selected?.stage === 'tracing' && (
                 <SegmentTraceTheater
                   segmentId={segmentId}
-                  observations={versionObservations}
+                  observations={cycleObservations}
                   window={selectedWindow}
                   readiness={evaluation?.tracing ?? null}
                   loading={evaluationLoading}
                   error={evaluationError}
-                  capped={lifeline.observationsCapped}
-                  activity={selectedEpoch.tracing}
+                  capped={cycleObservationsCapped}
                 />
               )}
               {selectedEpoch && selected?.stage === 'eval' && (
@@ -235,6 +250,17 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       </div>
     </div>,
     document.body,
+  );
+}
+
+export function observationsForObjectiveCycle(
+  observations: SegmentLifecycleResponse['observations'],
+  objective: SegmentTracingEvaluationView['trigger']['objective'],
+  openCycleEndMs: number,
+): SegmentLifecycleResponse['observations'] {
+  const end = objective.cycleEndMs ?? openCycleEndMs;
+  return observations.filter(
+    (observation) => observation.timestamp >= objective.cycleStartMs && observation.timestamp < end,
   );
 }
 

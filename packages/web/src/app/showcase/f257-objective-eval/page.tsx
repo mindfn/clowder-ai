@@ -30,6 +30,12 @@ const evaluation: SegmentEvaluationResponse = {
         counterexamples: { count: 3, threshold: 3 },
         cadence: { elapsedMs: WINDOW.end - WINDOW.start, thresholdMs: 604_800_000, eligible: true },
       },
+      segment: {
+        segmentId: 'S13',
+        observationCount: 146,
+        injectionCount: 2,
+        disabledCount: 0,
+      },
     },
     structuredCounterexamples: [
       {
@@ -188,7 +194,6 @@ export default function F257ObjectiveEvalShowcase() {
           observations={versionObservations}
           window={{ startMs: WINDOW.start, endMs: WINDOW.end }}
           readiness={evaluation.tracing}
-          activity={chain[0].tracing}
         />
       )}
       {selected.stage === 'eval' && <ObjectiveEvaluationPanel data={evaluation} />}

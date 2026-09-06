@@ -281,8 +281,42 @@ describe('F257 SegmentEvaluationReadModel', () => {
       counterexamples: { count: 1, threshold: 3 },
       cadence: { elapsedMs: 200, thresholdMs: 604_800_000, eligible: true },
     });
+    assert.deepEqual(view.tracing.trigger.segment, {
+      segmentId: 'S13',
+      observationCount: 2,
+      injectionCount: 2,
+      disabledCount: 0,
+    });
     assert.equal(view.tracing.structuredCounterexamples.length, 1);
     assert.equal('unclassifiedEpisodeCount' in view.tracing, false);
+  });
+
+  test('uses the Objective cycle window for the segment injection numerator', async () => {
+    const beforeCycle = episode(1, 50);
+    const fired = episode(2, 150);
+    const disabled = episode(3, 200);
+    disabled.summary.segments[0].status = 'absent';
+    disabled.summary.segments[0].pipelineStatus = 'disabled';
+    const observedOnly = episode(4, 250);
+    observedOnly.summary.segments[0].pipelineStatus = 'observed';
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, [beforeCycle, fired, disabled, observedOnly]);
+    await seedCurrent(redis, currentCycle());
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.equal(view.tracing.trigger.objective.cumulative.count, 3);
+    assert.deepEqual(view.tracing.trigger.segment, {
+      segmentId: 'S13',
+      observationCount: 3,
+      injectionCount: 1,
+      disabledCount: 1,
+    });
   });
 
   test('uses frozen cycleEnd and surfaces metric catalog, latest verdict, governance, and version chain', async () => {

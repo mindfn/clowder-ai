@@ -315,6 +315,13 @@ export interface SegmentTracingEvaluationView {
       counterexamples: { count: number; threshold: number };
       cadence: { elapsedMs: number; thresholdMs: number; eligible: boolean };
     };
+    /** Segment activity measured over the exact same Objective cycle window. */
+    segment: {
+      segmentId: string;
+      observationCount: number;
+      injectionCount: number;
+      disabledCount: number;
+    };
   };
   structuredCounterexamples: Array<{
     annotationId: string;
