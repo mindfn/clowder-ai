@@ -101,7 +101,7 @@ describe('F280 PR wait cutover guards', () => {
     assert.doesNotMatch(review, /About Codex in GitHub|set up Codex|answer questions/);
   });
 
-  it('preserves complete multiline review content inside one quoted untrusted boundary', async () => {
+  it('preserves complete multiline review content inside the visible limit and one quoted boundary', async () => {
     const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
     const tail = 'ACTIONABLE_TAIL__must_not_be_silently_cut';
     const body = ['Review summary', '', '- first finding', `- ${'context '.repeat(80)}${tail}`].join('\n');
@@ -121,6 +121,42 @@ describe('F280 PR wait cutover guards', () => {
       'every body line stays quoted',
     );
     assert.match(review, new RegExp(tail));
+  });
+
+  it('bounds oversized external bodies with an explicit, quoted truncation marker', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const hiddenTail = 'TAIL_AFTER_LIMIT';
+    const review = externalResponseSummary({
+      surface: 'conversation comment',
+      id: 10,
+      author: 'attacker',
+      body: `${'x'.repeat(10_000)}${hiddenTail}`,
+    });
+
+    assert.ok(review.length < 9_000, 'persistent notification and agent context must stay bounded');
+    assert.doesNotMatch(review, new RegExp(hiddenTail));
+    assert.match(review, /> … \[truncated \d+ characters from original GitHub body\]$/);
+
+    const fenced = externalResponseSummary({
+      surface: 'conversation comment',
+      id: 10,
+      author: 'attacker',
+      body: `\`\`\`text\n${'x'.repeat(10_000)}`,
+    });
+    assert.match(fenced, /> ```\n>\n> … \[truncated \d+ characters from original GitHub body\]$/);
+  });
+
+  it('only removes the Codex help disclosure for a known bot author', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const attackerText = 'ATTACKER_TEXT_MUST_REMAIN_VISIBLE';
+    const review = externalResponseSummary({
+      surface: 'conversation comment',
+      id: 11,
+      author: 'not-the-codex-bot',
+      body: `<details><summary>About Codex in GitHub</summary>${attackerText}</details>`,
+    });
+
+    assert.match(review, new RegExp(attackerText));
   });
 
   it('keeps meaningful disclosure content while removing raw HTML elements', async () => {
@@ -156,5 +192,32 @@ describe('F280 PR wait cutover guards', () => {
 
     assert.match(review, /`<summary>label<\/summary>`/);
     assert.match(review, /> ```html\n> {3}<details>\n> \t<summary>label<\/summary>\n> {3}<\/details>\n> ```/);
+  });
+
+  it('restores dollar replacement patterns inside inline code byte-for-byte', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const body = "replacement tokens: ``$& $` $' $$``";
+    const review = externalResponseSummary({
+      surface: 'issue comment',
+      id: 12,
+      author: 'maintainer',
+      body,
+    });
+
+    assert.equal(review, `issue comment #12 by maintainer — [UNTRUSTED EXTERNAL CONTENT]\n> ${body}`);
+    assert.doesNotMatch(review, /\0/);
+  });
+
+  it('removes residual raw HTML tags outside code while retaining their text', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const review = externalResponseSummary({
+      surface: 'issue comment',
+      id: 13,
+      author: 'maintainer',
+      body: '<script>alert(1)</script><iframe>frame</iframe><mark>marked</mark>',
+    });
+
+    assert.match(review, /alert\(1\)framemarked/);
+    assert.doesNotMatch(review, /<\/?(?:script|iframe|mark)>/);
   });
 });
