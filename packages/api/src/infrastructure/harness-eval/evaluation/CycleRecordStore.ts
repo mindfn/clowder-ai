@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { CycleRecord, CycleTriggerPolicy } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import { isCycleTermination, isCycleWindow } from './cycle-record-validation.js';
 
 const CURRENT_PREFIX = 'harness-cycle-current:';
 const HISTORY_PREFIX = 'harness-cycle-history:';
@@ -45,7 +46,7 @@ function idleCycle(
   objectiveId: string,
   cycleStart: number,
   version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
-  state: Pick<CycleRecord, 'triggerPolicy' | 'objectiveLifecycle'> = {},
+  state: Pick<CycleRecord, 'triggerPolicy' | 'objectiveLifecycle' | 'carryoverWindows'> = {},
 ): CycleRecord {
   return {
     schemaVersion: 1,
@@ -80,14 +81,14 @@ function parseCycle(raw: string, key: string): CycleRecord {
     !Number.isFinite(record.cycleStart) ||
     record.cycleStart < 0 ||
     !Array.isArray(record.windows) ||
-    !record.windows.every(
-      (window) =>
-        Number.isFinite(window.start) && Number.isFinite(window.end) && window.start >= 0 && window.end >= window.start,
-    ) ||
+    !record.windows.every(isCycleWindow) ||
+    (record.carryoverWindows !== undefined &&
+      (!Array.isArray(record.carryoverWindows) || !record.carryoverWindows.every(isCycleWindow))) ||
     !['idle', 'requested', 'retriggered', 'written', 'stalled'].includes(record.evalStatus ?? '') ||
     (record.triggerPolicy !== undefined && !isTriggerPolicy(record.triggerPolicy)) ||
     (record.objectiveLifecycle !== undefined && !['active', 'dormant'].includes(record.objectiveLifecycle)) ||
-    (record.triggerPolicyChange !== undefined && !isTriggerPolicyChange(record.triggerPolicyChange))
+    (record.triggerPolicyChange !== undefined && !isTriggerPolicyChange(record.triggerPolicyChange)) ||
+    (record.termination !== undefined && !isCycleTermination(record.termination))
   ) {
     throw new Error(`invalid_cycle_record:${key}`);
   }
@@ -212,6 +213,51 @@ export class CycleRecordStore {
         ? { triggerPolicy: completed.triggerPolicyChange?.after ?? completed.triggerPolicy }
         : {}),
       ...(completed.objectiveLifecycle ? { objectiveLifecycle: completed.objectiveLifecycle } : {}),
+    });
+    const changed = (await this.redis.eval(
+      TRANSITION_CURRENT_LUA,
+      3,
+      currentKey(expected.ownerUserId, expected.objectiveId),
+      historyKey(expected.ownerUserId, expected.objectiveId, expected.cycleId),
+      historyIndexKey(expected.ownerUserId, expected.objectiveId),
+      expected.cycleId,
+      expected.evalStatus,
+      serializeCycle(completed),
+      'advance',
+      String(completed.closedAt),
+      serializeCycle(next),
+    )) as number;
+    return changed === 1 ? next : null;
+  }
+
+  /**
+   * Close an idle tracing cycle and open its replacement at the exact same
+   * timestamp. Redis performs the archive/current swap as one CAS so an eval
+   * request can never be overwritten by a late operator click.
+   */
+  async switchVersion(
+    expected: CycleRecord,
+    completed: CycleRecord,
+    version: Pick<CycleRecord, 'version' | 'versionContentRef'>,
+    carryoverWindows: CycleRecord['carryoverWindows'],
+  ): Promise<CycleRecord | null> {
+    if (
+      expected.evalStatus !== 'idle' ||
+      completed.evalStatus !== 'idle' ||
+      expected.ownerUserId !== completed.ownerUserId ||
+      expected.objectiveId !== completed.objectiveId ||
+      expected.cycleId !== completed.cycleId ||
+      completed.cycleEnd === undefined ||
+      completed.closedAt === undefined ||
+      !completed.termination ||
+      completed.termination.at !== completed.closedAt
+    ) {
+      return null;
+    }
+    const next = idleCycle(expected.ownerUserId, expected.objectiveId, completed.cycleEnd, version, {
+      ...(completed.triggerPolicy ? { triggerPolicy: completed.triggerPolicy } : {}),
+      ...(completed.objectiveLifecycle ? { objectiveLifecycle: completed.objectiveLifecycle } : {}),
+      ...(carryoverWindows?.length ? { carryoverWindows } : {}),
     });
     const changed = (await this.redis.eval(
       TRANSITION_CURRENT_LUA,

@@ -45,9 +45,14 @@ const CURRENT_CYCLE: SegmentCycleSummary = {
     writtenAt: WINDOW.end,
     by: 'cat-evaluator',
   },
-  governanceImpact: { changedUnitIds: ['S13'], selectedSegmentChanged: true },
+  governanceImpact: {
+    changedUnitIds: ['S13'],
+    selectedSegmentChanged: true,
+    changes: [{ action: 'modify', unitId: 'S13', sourceVersion: 1, targetVersion: 2 }],
+  },
   approval: { cardId: CANDIDATE_ID, state: 'pending', rejectCount: 0, at: WINDOW.end },
   rejectReasons: [],
+  termination: null,
   closedAt: null,
 };
 
@@ -64,6 +69,8 @@ const EVALUATION: SegmentEvaluationResponse = {
         policyChangeCount: 1,
         cycleStartMs: WINDOW.start,
         cycleEndMs: WINDOW.end,
+        lastClosedAtMs: null,
+        minimumIntervalMs: 7_200_000,
         triggeredBy: ['counterexamples'],
         cumulative: { count: 146, threshold: 200 },
         counterexamples: { count: 3, threshold: 3 },

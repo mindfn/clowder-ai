@@ -5,6 +5,9 @@ const { CycleEvaluationCoordinator, CYCLE_WRITEBACK_TIMEOUT_MS } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js'
 );
 const { CycleRecordStore } = await import('../dist/infrastructure/harness-eval/evaluation/CycleRecordStore.js');
+const { buildCycleAssignment, formatCycleAssignment } = await import(
+  '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationContent.js'
+);
 
 class FakeRedis {
   strings = new Map();
@@ -230,6 +233,70 @@ const submission = {
 };
 
 describe('F257 cycle evaluation delivery and writeback', () => {
+  test('keeps manual-switch evidence provenance separate from insufficient-evidence carry-forward', async () => {
+    const record = {
+      schemaVersion: 1,
+      cycleId: 'cycle-after-switch',
+      ownerUserId: 'owner-1',
+      objectiveId: 'obj',
+      version: 'objective-v2',
+      versionContentRef: 'hooks:d1@2',
+      cycleStart: 1_000,
+      cycleEnd: 2_000,
+      evalStatus: 'requested',
+      windows: [
+        {
+          start: 0,
+          end: 1_000,
+          provenance: {
+            kind: 'manual-version-switch',
+            sourceCycleId: 'cycle-before-switch',
+            sourceVersion: 'objective-v3',
+            sourceVersionContentRef: 'hooks:d1@3',
+            sourceSegmentId: 'D1',
+            sourceSegmentVersion: 3,
+          },
+        },
+        { start: 1_000, end: 2_000 },
+      ],
+    };
+    const assignment = await buildCycleAssignment(
+      {
+        catalog,
+        annotations: {
+          async queryMetricWindow() {
+            return [];
+          },
+        },
+        history: [
+          {
+            ...record,
+            cycleId: 'cycle-before-switch',
+            cycleStart: 0,
+            cycleEnd: 1_000,
+            evalStatus: 'idle',
+            windows: [],
+            termination: {
+              kind: 'manual-version-switch',
+              segmentId: 'D1',
+              fromVersion: 3,
+              toVersion: 2,
+              at: 1_000,
+              by: 'owner-1',
+              reason: 'switch current version',
+            },
+            closedAt: 1_000,
+          },
+        ],
+      },
+      record,
+    );
+
+    assert.equal(assignment.priorSkipReasons, undefined);
+    assert.equal(assignment.windows[0].provenance.sourceSegmentVersion, 3);
+    assert.match(formatCycleAssignment(record, assignment), /supplementary unconsumed evidence/);
+  });
+
   test('ensures a discoverable Objective thread and bounded reference-only assignment', async () => {
     const context = await harness();
     await context.coordinator.ensureAssignment(context.requested);

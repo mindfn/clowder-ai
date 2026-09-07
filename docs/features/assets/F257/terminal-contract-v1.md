@@ -5,7 +5,7 @@ status: authoritative
 supersedes:
   - feature-specs/2026-08-04-f257-objective-eval-redesign.md §0 / §2.4 中"冻结 raw corpus"的表述
   - F257-harness-ledger.md KD-21 中"触发时冻结 raw corpus"的表述
-source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32 / 06:42 / 07:17（thread_mrdip0u5aw4ysi97）
+source: co-creator 2026-08-20 / 08-21 / 08-26 / 09-02 04:07 / 04:50 / 06:09 / 06:32 / 06:42 / 07:17 / 09-07 08:17–08:55（thread_mrdip0u5aw4ysi97）
 recorded_by: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
@@ -19,7 +19,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 
 系统不断 check：周期内累计 ≥ 200，或周期内反例 ≥ 阈值，或距上次评估满 7 天——任一满足就**冻结一个时间窗**（起点 = 上次评估周期的结束时间，终点 = 现在），**不复制任何 tracing 数据**。然后拉起**固定的评估线程**，告诉它：时间窗、评估范围、指标；它去池子里拿这个时间窗的数据（反例优先）、按指标给出结论、**调工具回写 eval 状态**。如果它没回写，系统能观察到，用一条系统 message 再触发一次。
 
-回写后**自动进入 governance**：再次触发同一评估线程，决定 保持 / 回退 / 演进到下一版。回退或演进 → 给 operator 一张审批卡；点完（或跳过）都进入下一周期。~~跳过时周期起点不动（可能只是数据不够）~~（08-20 原话；**09-02 06:32 operator 自纠 → 以 TC-10 为准：起点始终刷新 = 本周期终点，skip 只改变下次评估的取数窗口**）；新周期起点 = 这次周期的终点。v1、v2、v3 各自独立评估，**没有跨版本对比**——governance 看的就是当前版本这个时间窗的指标结论。
+回写后**自动进入 governance**：再次触发同一评估线程，决定 保持 / 回退 / 演进到下一版。回退或演进 → 给 operator 一张审批卡；点完（或跳过）都进入下一周期。~~跳过时周期起点不动（可能只是数据不够）~~（08-20 原话；**09-02 06:32 operator 自纠 → 以 TC-10 为准：起点始终刷新 = 本周期终点，skip 只改变下次评估的取数窗口**）；新周期起点 = 这次周期的终点。v1、v2、v3 各自以当前版本为评估目标，**没有跨版本对比**——手动切版前尚未消费的数据可以保留真实版本来源，作为一次补充证据窗供新目标评估读取（TC-20）；governance 看的仍是当前版本本周期的指标结论。
 
 就这一个环，循环。
 
@@ -37,7 +37,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | TC-8 | 回写后**自动进入 governance**：再次触发同一评估 thread → 保持 / 回退 / 演进 | 停在 eval；需要人手动进 governance |
 | TC-9 | 仅"回退 / 演进"发**提案卡**（evolve 时含评估猫直接写的 v2 草案）；三选一 **approve / skip / reject**：approve、skip 进入下一周期；reject 附理由对同窗重评估并**必须产生新提案卡**——终态只有 approve/skip。**一张卡内的多个动作是一个列表，范围 = 该 Objective 关联的全部成员段；审批必须原子**：approve = 全批，不可挑批；组合不合理走 reject 并声明理由（TC-17 的「合并 = 禁用A + 修改B」只批一半会留下不一致状态）。**N/D 的参数变更属无卡自动变更**（keep 不发卡），但**必须写入 CycleRecord**（旧值 / 新值 / 依据结论）且 Console 可见 | 保持也发卡；reject 无理由；reject 自动进下一周期；reject 后不再出卡；**挑着批一张卡里的部分动作**；**参数悄悄变更且无审计记录** |
 | TC-10 | 周期起点**始终刷新** = 本周期终点；skip / insufficient_evidence 不停住起点，而是让**下次评估逆序回看并纳入连续 skip 周期的时间窗**（连续 k 次 skip → 合并 k+1 个窗口） | skip 后起点不动导致累计触发立即重触发；下次评估只看本周期忽略前序 skip 数据 |
-| TC-11 | v1/v2/v3 的**评估**各自只看本版本时间窗，不做跨版本对比；**governance** 以本周期结论判断 keep/rollback/evolve，历史周期结论在同一 Objective thread 中天然可见、可参考 | 把"与上一版比较"当作当前版本的闭环条件 |
+| TC-11 | v1/v2/v3 的**评估目标**各自绑定本周期版本，不做跨版本对比；本周期触发与 UI 统计只看本版本原生时间窗。手动切版前尚未消费的数据可按 TC-20 作为 provenance 明确的补充证据读取，但不能改写版本归属或参与新周期触发。**governance** 以本周期结论判断 keep/rollback/evolve，历史周期结论在同一 Objective thread 中天然可见、可参考 | 把"与上一版比较"当作当前版本的闭环条件；把补充窗冒充当前版本原生窗或计入触发 |
 | TC-12 | Console：Tracing 面只有两组——**周期内反例 / 周期内累计**，触发条件带当前有效策略进度（n/M、m/N、d/D）；无"待分类"。**周期坐标可点**（operator 2026-09-06 口述，PR #155 落地）：版本生命线是两条轴——**段版本祖先树**（`parentVersion` = 创建时的活动版本；回滚 / 激活旧版本只记激活点、不生成新版本；从旧版本再演进的新版本挂在该旧版本之下，v1→v2、回滚 v1、再 v1→v3 呈现为 v1 下两个分支）× **每版本的 Objective 周期序列**（同版本多周期不吃掉，默认只展示一张周期卡，**周期在版本内从 1 计数**（operator 2026-09-07：序号表示该版本经历了几个评估周期；读面 `ordinal` 仍是全局序号，只作附注），其余周期经下拉选择切换）；tracing / eval / governance 每个坐标可点，详情严格绑定所点 `cycleId`；**周期归属哪个段版本，以该周期 CycleRecord 的 `versionContentRef` 解析出的本段版本为唯一真相**（`hook-versions:C1@N,…` 取 `C1@N`；`harness-objective-version:<objective>:<digest>` 快照取 `units[].activeContentVersion`）——因为周期起点 = 上周期触发时刻，恒早于上周期 governance 的 apply 时刻，按"起点时刻活动版本"归属会把每个 evolve 之后的第一个周期错归到旧版本；激活时间线只用于注入观测行的归属；尚未到达的阶段只列指标目录，不显示任何其它周期的结论 | 出现全局管道数字；名词与数值口径不一致；仍把出厂值 3/200/7 天冒充当前有效阈值；把版本和周期压成一条横线或无限横向延伸；点击未到达阶段却显示上一周期结论；同版本第二周期被吃掉；v1→v2→回滚 v1→v3 画成 v2→v3 |
 | TC-13 | **Semantic Sweep 已移除**（2026-09-04 operator 裁定）。理由三条：① **设计外路径**——最早两份设计文档零提及，后续 5 处提及全是约束句、无一需求句；② **目的未达成**——TC-2 给标记定的作用是「评估时不用从海量数据里筛」，而评估猫仍读全量；③ **与评估猫重复读同一批数据**。历史 `semantic-sweep` annotation **保留作审计**（AC-12），但不再影响触发、排序与治理 | 重新引入后台批量打标作为标记来源；把 sweep 产物计入触发阈值；因移除 sweep 而删除历史 annotation |
 | TC-14 | tracing 是自管的**不可变只增**数据：每周期只记录 时间窗、指标、结论、起始版本内容指针；**不需要 cursor receipt / evidence digest** | 为防"源漂移"复制或摘要正文 |
@@ -46,6 +46,7 @@ tracing 是**一个线性累积的池子**，一直在采，不分组。结构�
 | TC-15 | 首周期起点：池中已有 tracing → 最早有效 trace 时间；没有 → 服务启动检查到缺失时写当前时间 | 首周期永远 not-ready；或从 0 起算 |
 | TC-18 | Objective 生命周期 `active / dormant / retired`。**dormant 是收敛的结果，不是人工标记**：判据 = N/D 升至高位且连续 `keep`（有证据的成熟）。**零 trace ≠ dormant**——那是采集或归属故障，必须显式报故障态，不得静默显示"评估中"。`retired` 保留历史结论与 trace，只是不再开新周期 | 把零数据的 Objective 显示成"评估中"；靠人工打 dormant 标记；retired 后删除历史 |
 | TC-19 | 提案卡呈现**四段**：**① 指标对比图（数值与变化合并在同一张图：上周期 / 本周期同轴并列 + delta，不拆成两段） ② 文字结论（人话；保留 `howCounted`，**不得泄露原始 JSON**） ③ 动作列表（**卡内只列摘要与影响面**） ④ approve / skip / reject（reject 未填理由时禁用）**。动作详情走**独立 portal 弹窗**（`createPortal` + `role="dialog"`），**默认左右对比**（`initialMode="split"`），呈现完整 before/after。非内容型动作同样必须有 diff：**禁用** → 左 = 当前全文 / 右 = 「此段将不再注入」+ **影响面**（所属 Objective 及动作后剩余成员段数）；**新增** → 左 = 空 / 右 = 新段全文 + 目标 stage/order；**修改** → 左右全文对比。**首轮无对比基线时必须明说**，不得渲染空图表 | 把指标数值与变化拆成两段；结论里泄露原始 JSON 或丢掉 `howCounted`；卡内直接铺开全文 diff；弹窗默认单栏；只给文字不给 diff；禁用/新增无 diff；禁用不显示影响面 |
+| TC-20 | **手动切换当前版本**（operator 2026-09-07）：只允许当前 Objective 周期处于 `tracing`（`evalStatus=idle`）时执行；`eval / governance` 期间服务端拒绝，不只靠按钮禁用。入口位于生命线中所选历史版本的版本内容区，按钮为「切换为当前版本」；确认弹窗只说明「切换后，将以该版本开启新周期并继续评估。」切换**不创建版本**：旧 tracing 周期在切换时刻以 `manual-version-switch` 明确终止并归档，所选版本成为 active，并以同一逻辑 `switchAt` 开启新周期（override 审计事件的实际写入时间允许晚数毫秒）。直接创建内容版本同样必须在成为 active 时同步收束旧周期并开启绑定新版本的新周期；旧式 `POST /api/prompt-hooks/:hookId/override {action:'rollback'}` 与独立「回滚至基线」按钮退出公开入口，回到 v1 统一选择 v1 版本卡上的切换动作，禁止遗留「active 已变、周期仍属旧版本」的入口。新周期的触发统计与 Console 明细只计 `[switchAt, now)`；旧周期中尚未消费的窗口可作为带 `sourceCycleId / sourceSegmentVersion / versionContentRef` 的**补充证据窗**进入下一次 assignment，但不得改写为新版本数据、不得计入新周期 N/M/D 触发。评估目标始终是当前版本；补充窗只扩大一次尚未消费证据的可读范围，不引入跨版本对比；governance 仍可结合线性 thread 历史。后续从旧版本演进仍使用全局单调的新版本号（如 v3 后切回 v2，再演进得到 v4，父版本为 v2）。Console 必须显示当前最短评估间隔与上次周期结束时间，解释「反例已达阈值但仍处于冷却」；历史 governance 必须显示精确版本边（如「演进 S13：v2 → v3」），兄弟段页面再补「本段未变」 | 只切 active 指针不换周期；创建内容版本后不换周期；保留可绕过周期边界的旧式 rollback action / 按钮；把旧周期计数显示在新周期；补充窗参与 N/M/D 触发；eval/governance 中仍可切换；把 v3 数据冒充 v2；从 v2 再演进复用 v3；只写「修改了 S13」而不写版本边；4/3 已满足却不显示 2 小时冷却原因 |
 
 ## 3. 现实现偏离台账（2026-09-02 运行实例实查，全部只读取证）
 
@@ -90,6 +91,7 @@ F-11 修订说明（opus 2026-09-04）：原措辞「零 trace 的 Objective 显
 | F-9 | **消融试验可跑**：禁用任一段后，该段所属 Objective 在后续窗口仍能累计 trace 并按三路触发；禁用事实（`pipelineStatus=disabled` / `disabledBy`）在评估语料中可见、未被过滤 | owner 线性池 `trace-owner-episode:<owner>` + CycleRecord + 评估语料分页 | TC-1 / TC-2 | **PR #152 complete**（真 Redis 6/6） |
 | F-10 | **参数自适应可验证**：一次 `keep` 后 N（满足条件时 D）上调，新值连同旧值与依据结论写入 CycleRecord；一次 `rollback`/`evolve` 后下调；任何调整不低于出厂值 N=200 / M=3 / D=7 天；**M 本轮恒为 3** | CycleRecord 参数字段 + Console 触发进度 | TC-3 / TC-9 | **PR #152 complete**（8/8） |
 | F-11 | **采集健康,不是归属产物**：owner 线性池在窗口内为空（采集中断 / 全新实例）时，Console 必须显式呈现**采集故障态**，不得静默显示"评估中"；该状态与 `dormant`（三参数收敛且连续 keep）在读面可区分 | `GET /api/segment-evaluation/:segmentId` + 真实浏览器 | TC-18 | **PR #152 complete**（隔离 API + 真实浏览器验证 `zero-trace-fault → healthy`） |
+| F-12 | 当前 v3 的 idle/tracing 周期积累反例后，手动切到 v2：历史 v3 周期有 `termination.kind=manual-version-switch`，新 current 周期的 `cycleStart=termination.at` 且内容快照指向 v2；旧窗带来源作为 supplementary window，但旧窗单独达到 M 不得触发，新窗达到 M 才进入 requested；requested/written/governance 任一阶段切换均返回 409 且 active version / current cycle 不变。生命线 v2 内容区显示「切换为当前版本」，弹窗文案简短；新周期 Console 只显示切换后计数，assignment 能看到来源明确的未消费旧窗；下次 evolve 创建 v4 且 `parentVersion=2` | CycleRecord current/history + hook override active/version events + assignment JSON + `GET /api/segment-evaluation/:segmentId?cycleId=` + 真实浏览器 | TC-11/12/20 | **iso verified @ `18347fad9`（Fable 09-07，thread 证据）** |
 
 ## 5. 与其它文档的关系
 

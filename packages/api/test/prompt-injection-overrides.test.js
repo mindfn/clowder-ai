@@ -60,10 +60,83 @@ function createFakeStore() {
     async getVersionContent(hookId, epochVersion) {
       return hookId === 'd21-决策树' && epochVersion === 2 ? 'D21 v2 full source content' : null;
     },
+    async getActiveVersion(hookId) {
+      return overrides.get(hookId)?.activeEpochVersion ?? 1;
+    },
   };
 }
 
-async function buildApp({ store = createFakeStore(), sessionUserId = OWNER, refreshOverrideSnapshot } = {}) {
+function createRuntime(store, evalStatus = 'idle') {
+  let current = {
+    schemaVersion: 1,
+    cycleId: 'cycle-live',
+    ownerUserId: OWNER,
+    objectiveId: 'wait-wakeup-liveness',
+    version: 'objective-v1',
+    versionContentRef: 'hooks:d21-决策树@1',
+    cycleStart: 100,
+    evalStatus,
+    triggerPolicy: {
+      cumulativeThreshold: 200,
+      counterexampleThreshold: 3,
+      cadenceDays: 7,
+      minimumIntervalMs: 2 * 60 * 60 * 1000,
+      consecutiveKeepCycles: 0,
+      consecutiveCadenceKeepCycles: 0,
+    },
+    objectiveLifecycle: 'active',
+    windows: [],
+  };
+  return {
+    catalog: {
+      registry: {
+        evaluationModels: [
+          {
+            id: 'model',
+            cycleTrigger: current.triggerPolicy,
+          },
+        ],
+        objectives: [{ id: current.objectiveId, evaluationModelId: 'model' }],
+      },
+      manifest: {
+        units: [{ unitId: 'd21-决策树', objectives: [{ objectiveId: current.objectiveId }] }],
+      },
+    },
+    cycles: {
+      async current() {
+        return current;
+      },
+      async switchVersion(_expected, completed, version, carryoverWindows) {
+        current = {
+          ...current,
+          ...version,
+          cycleId: `cycle-next-${completed.closedAt}`,
+          cycleStart: completed.closedAt,
+          carryoverWindows,
+        };
+        return current;
+      },
+    },
+    cycleChecker: {
+      async withObjectiveLock(_ownerUserId, _objectiveId, operation) {
+        return operation();
+      },
+    },
+    async resolveVersion() {
+      const activeVersion = await store.getActiveVersion('d21-决策树');
+      return { version: `objective-v${activeVersion}`, versionContentRef: `hooks:d21-决策树@${activeVersion}` };
+    },
+    async resolveSegmentVersion(versionContentRef) {
+      return Number(versionContentRef.match(/@([0-9]+)$/)?.[1] ?? 0);
+    },
+  };
+}
+
+async function buildApp(options = {}) {
+  const store = options.store ?? createFakeStore();
+  const sessionUserId = options.sessionUserId === undefined ? OWNER : options.sessionUserId;
+  const refreshOverrideSnapshot = options.refreshOverrideSnapshot ?? (async () => {});
+  const runtime = options.runtime ?? createRuntime(store);
   const app = Fastify();
   if (sessionUserId) {
     app.addHook('onRequest', (req, _reply, done) => {
@@ -71,7 +144,7 @@ async function buildApp({ store = createFakeStore(), sessionUserId = OWNER, refr
       done();
     });
   }
-  await app.register(promptInjectionOverrideRoutes, { overrideStore: store, refreshOverrideSnapshot });
+  await app.register(promptInjectionOverrideRoutes, { overrideStore: store, refreshOverrideSnapshot, runtime });
   await app.ready();
   return { app, store };
 }
@@ -186,21 +259,15 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     await app.close();
   });
 
-  it('rollback happy path clears the override', async () => {
+  it('rejects the legacy rollback action so version changes only use the cycle-aware version route', async () => {
     const { app, store } = await buildApp();
-    await app.inject({
-      method: 'POST',
-      url: '/api/prompt-hooks/d21-决策树/override',
-      payload: { action: 'disable', reason: 'trial' },
-    });
     const res = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-决策树/override',
       payload: { action: 'rollback', reason: 'trial regressed — instant revert' },
     });
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.json().override, null);
-    assert.equal(store.calls.at(-1).method, 'rollback');
+    assert.equal(res.statusCode, 400);
+    assert.equal(store.calls.length, 0);
     await app.close();
   });
 
@@ -228,29 +295,23 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     assert.equal(rejected.statusCode, 404);
     assert.equal(refreshCount, 1, 'rejected writes must not publish a new runtime snapshot');
 
-    const rolledBack = await app.inject({
-      method: 'POST',
-      url: '/api/prompt-hooks/d21-决策树/override',
-      payload: { action: 'rollback', reason: 'restore manifest behavior' },
-    });
-    assert.equal(rolledBack.statusCode, 200);
-    assert.equal(refreshCount, 2);
-
     const createdVersion = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-决策树/versions',
       payload: { content: 'v2 content', reason: 'create the bounded v2 trial' },
     });
     assert.equal(createdVersion.statusCode, 200);
-    assert.equal(refreshCount, 3);
+    assert.equal(createdVersion.json().transition.toVersion, 2);
+    assert.equal(refreshCount, 2);
 
     const activatedVersion = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-决策树/versions/activate',
-      payload: { epochVersion: 2, reason: 're-activate retained v2' },
+      payload: { epochVersion: 1, reason: 'switch the active v2 trial back to baseline' },
     });
     assert.equal(activatedVersion.statusCode, 200);
-    assert.equal(refreshCount, 4);
+    assert.equal(activatedVersion.json().transition.toVersion, 1);
+    assert.equal(refreshCount, 3);
     await app.close();
   });
 
@@ -273,15 +334,14 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     await app.close();
   });
 
-  it('unknown-hook rollback → 404 with no store write (terra P2: audit stream protection)', async () => {
+  it('legacy rollback is rejected before unknown-hook lookup and records no audit write', async () => {
     const { app, store } = await buildApp();
     const res = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/no-such-hook/override',
       payload: { action: 'rollback', reason: 'cleanup attempt' },
     });
-    assert.equal(res.statusCode, 404);
-    assert.equal(res.json().gate, 'unknown-hook');
+    assert.equal(res.statusCode, 400);
     assert.equal(store.calls.length, 0, 'rollback must not be recorded for unknown hook');
     await app.close();
   });
@@ -316,6 +376,46 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
       url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions/3/content',
     });
     assert.equal(missing.statusCode, 404);
+    await app.close();
+  });
+
+  it('refuses a version switch once evaluation has started without touching the override', async () => {
+    const store = createFakeStore();
+    const { app } = await buildApp({ store, runtime: createRuntime(store, 'requested') });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions/activate',
+      payload: { epochVersion: 2 },
+    });
+
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().code, 'evaluation_in_progress');
+    assert.equal(
+      store.calls.some((call) => call.method === 'activateVersion'),
+      false,
+    );
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
+      payload: { content: 'must not become active', reason: 'evaluation owns the current version' },
+    });
+    assert.equal(createResponse.statusCode, 409);
+    assert.equal(
+      store.calls.some((call) => call.method === 'setContentOverride'),
+      false,
+    );
+
+    const rollbackResponse = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/override',
+      payload: { action: 'rollback', reason: 'must not bypass the active evaluation' },
+    });
+    assert.equal(rollbackResponse.statusCode, 400);
+    assert.equal(
+      store.calls.some((call) => call.method === 'rollback'),
+      false,
+    );
     await app.close();
   });
 

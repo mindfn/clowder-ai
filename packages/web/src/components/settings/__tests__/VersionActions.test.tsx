@@ -4,7 +4,7 @@ import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActivateVersionButton, RollbackButton, ToggleOverrideButton } from '../VersionActions';
+import { ActivateVersionButton, ToggleOverrideButton } from '../VersionActions';
 
 const apiFetch = vi.fn();
 
@@ -111,11 +111,12 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(container.textContent).toContain('当前段 disableable=false，不可禁用');
   });
 
-  it('RollbackButton is disabled and shows reason when matrix disallows rollback', () => {
+  it('uses rollback permission when switching to the manifest v1 card', () => {
     act(() => {
       root.render(
-        <RollbackButton
+        <ActivateVersionButton
           hookId="S6"
+          epochVersion={1}
           onRefresh={() => {}}
           enablementMatrix={makeMatrix({
             runtimeOverride: {
@@ -217,6 +218,38 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(container.textContent).toContain('版本 v3 不在可激活历史版本列表中');
   });
 
+  it('ActivateVersionButton is disabled while the current cycle is evaluating', () => {
+    act(() => {
+      root.render(
+        <ActivateVersionButton
+          hookId="S6"
+          epochVersion={2}
+          currentEvalStatus="requested"
+          onRefresh={() => {}}
+          enablementMatrix={makeMatrix({
+            runtimeOverride: {
+              enabled: true,
+              hasOverride: true,
+              hasContentOverride: true,
+              hasVersionSnapshot: true,
+              availableEpochVersions: [2],
+              actions: {
+                disable: { allowed: true, reason: null, reasonCode: null },
+                enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+                rollback: { allowed: true, reason: null, reasonCode: null },
+                activateVersion: { allowed: true, reason: null, reasonCode: null },
+              },
+            },
+          })}
+        />,
+      );
+    });
+
+    const button = container.querySelector('button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(container.textContent).toContain('当前正在评估，完成后可切换版本');
+  });
+
   it('ToggleOverrideButton triggers API when allowed and reason provided', async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) });
     const onRefresh = vi.fn();
@@ -280,12 +313,19 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
 
     const button = container.querySelector('button') as HTMLButtonElement;
     expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe('切换为当前版本');
 
-    vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
-    vi.spyOn(window, 'prompt').mockReturnValueOnce('audit reason');
     act(() => {
       button.click();
     });
+    const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog).toBeTruthy();
+    expect(dialog.textContent).toContain('切换当前版本');
+    expect(dialog.textContent).toContain('切换后，将以该版本开启新周期并继续评估。');
+    const confirmButton = [...dialog.querySelectorAll('button')].find((candidate) =>
+      candidate.textContent?.includes('确认切换'),
+    ) as HTMLButtonElement;
+    act(() => confirmButton.click());
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
@@ -294,7 +334,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
       '/api/prompt-hooks/S6/versions/activate',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ epochVersion: 2, reason: 'audit reason' }),
+        body: JSON.stringify({ epochVersion: 2 }),
       }),
     );
     expect(onRefresh).toHaveBeenCalled();

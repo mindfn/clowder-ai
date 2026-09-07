@@ -18,6 +18,7 @@ export interface CycleVersionRef {
 
 export class CycleTriggerChecker {
   private requestedHandler?: (record: CycleRecord) => void;
+  private readonly mutationTails = new Map<string, Promise<void>>();
 
   constructor(
     private readonly deps: {
@@ -67,6 +68,35 @@ export class CycleTriggerChecker {
   }
 
   async checkObjective(ownerUserId: string, objectiveId: string, now: number): Promise<CycleCheckResult> {
+    return this.withObjectiveLock(ownerUserId, objectiveId, () =>
+      this.checkObjectiveUnlocked(ownerUserId, objectiveId, now),
+    );
+  }
+
+  /** Serialize eval-trigger and operator version-switch mutations in this API process. */
+  async withObjectiveLock<T>(ownerUserId: string, objectiveId: string, operation: () => Promise<T>): Promise<T> {
+    const key = `${ownerUserId}:${objectiveId}`;
+    const predecessor = this.mutationTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = predecessor.then(() => gate);
+    this.mutationTails.set(key, tail);
+    await predecessor;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.mutationTails.get(key) === tail) this.mutationTails.delete(key);
+    }
+  }
+
+  private async checkObjectiveUnlocked(
+    ownerUserId: string,
+    objectiveId: string,
+    now: number,
+  ): Promise<CycleCheckResult> {
     const objective = this.deps.catalog.registry.objectives.find((item) => item.id === objectiveId);
     if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
     if (objective.lifecycle === 'retired') throw new Error(`cycle_objective_retired:${objectiveId}`);
@@ -104,7 +134,7 @@ export class CycleTriggerChecker {
       ...current,
       cycleEnd: now,
       evalStatus: 'requested',
-      windows: [...priorSkipWindows(history), window],
+      windows: [...priorSkipWindows(history), ...(current.carryoverWindows ?? []), window],
       triggeredBy,
     };
     if (await this.deps.cycles.request(current, requested)) {

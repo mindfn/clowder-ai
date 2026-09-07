@@ -16,15 +16,22 @@ import {
 } from '../config/connector-secret-write-guards.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import { OverrideGateError } from '../domains/prompt-hooks/HookOverrideStore.js';
+import {
+  ManualVersionCycleError,
+  ManualVersionCycleService,
+} from '../infrastructure/harness-eval/evaluation/ManualVersionCycleService.js';
+import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 
 export interface PromptInjectionOverrideRoutesOptions {
   /** Undefined when redis is absent — routes answer 503 (observability infra off). */
   overrideStore: HookOverrideStore | undefined;
   /** Publish durable mutations into the synchronous prompt-pipeline snapshot before replying. */
   refreshOverrideSnapshot?: () => Promise<void>;
+  /** Required for cycle-aware historical version activation. */
+  runtime?: ObjectiveEvaluationRuntime;
 }
 
-const ACTIONS = ['enable', 'disable', 'rollback'] as const;
+const ACTIONS = ['enable', 'disable'] as const;
 type OverrideAction = (typeof ACTIONS)[number];
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -67,8 +74,7 @@ async function executeOverrideAction(
 ): Promise<void> {
   const actionOpts = { source: 'operator' as const, reason };
   if (action === 'enable') return store.enable(hookId, userId, actionOpts);
-  if (action === 'disable') return store.disable(hookId, userId, actionOpts);
-  return store.rollback(hookId, userId, actionOpts);
+  return store.disable(hookId, userId, actionOpts);
 }
 
 /**
@@ -91,11 +97,11 @@ function parseOverrideBody(raw: unknown): { action: OverrideAction; reason: stri
 function parseActivateBody(raw: unknown): { epochVersion: number; reason: string } | { error: string } {
   const body = isRecord(raw) ? raw : {};
   const epochVersion = typeof body.epochVersion === 'number' ? body.epochVersion : null;
-  if (epochVersion === null || !Number.isFinite(epochVersion) || epochVersion < 1) {
+  if (epochVersion === null || !Number.isSafeInteger(epochVersion) || epochVersion < 1) {
     return { error: 'epochVersion (positive integer) is required' };
   }
-  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
-  if (!reason) return { error: 'reason is required (audit trail)' };
+  const suppliedReason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  const reason = suppliedReason || `手动切换当前版本至 v${epochVersion}`;
   return { epochVersion, reason };
 }
 
@@ -122,10 +128,34 @@ function mapGateError(err: unknown, reply: FastifyReply): boolean {
   return false;
 }
 
+function mapManualSwitchError(err: unknown, reply: FastifyReply): boolean {
+  if (!(err instanceof ManualVersionCycleError)) return false;
+  const status = err.code === 'segment_not_found' ? 404 : 409;
+  const messages: Record<ManualVersionCycleError['code'], string> = {
+    segment_not_found: 'Segment evaluation manifest entry not found',
+    cycle_not_initialized: 'Objective evaluation cycle is not initialized',
+    evaluation_in_progress: '当前正在评估，完成后可切换版本',
+    version_already_active: '所选版本已经是当前版本',
+    version_cycle_mismatch: '当前版本与评估周期不一致，请先检查运行状态',
+    concurrent_transition: '评估已开始，请等待完成',
+    compensation_failed: '版本切换未完整落地，自动恢复失败，请停止操作并检查运行状态',
+  };
+  reply.status(status).send({ error: messages[err.code], code: err.code });
+  return true;
+}
+
 export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOverrideRoutesOptions> = async (
   app,
   opts,
 ) => {
+  const versionCycleService =
+    opts.overrideStore && opts.runtime && opts.refreshOverrideSnapshot
+      ? new ManualVersionCycleService({
+          runtime: opts.runtime,
+          overrideStore: opts.overrideStore,
+          refreshOverrideSnapshot: opts.refreshOverrideSnapshot,
+        })
+      : null;
   // Read surface: current overrides (lifeline "治理" nodes come from here + event stream).
   app.get('/api/prompt-hooks/overrides', async (request, reply) => {
     const userId = requireSession(request, reply);
@@ -207,17 +237,25 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
     if (!opts.overrideStore) {
       return reply.status(503).send({ error: 'override store unavailable (redis off)' });
     }
+    if (!versionCycleService) {
+      return reply.status(503).send({ error: 'Objective evaluation runtime unavailable' });
+    }
     const { hookId } = request.params as { hookId: string };
     const parsed = parseActivateBody(request.body);
     if ('error' in parsed) return reply.status(400).send({ error: parsed.error });
 
     try {
-      await opts.overrideStore.activateVersion(hookId, parsed.epochVersion, userId, { reason: parsed.reason });
-      await opts.refreshOverrideSnapshot?.();
+      const transition = await versionCycleService.switch({
+        ownerUserId: userId,
+        segmentId: hookId,
+        targetVersion: parsed.epochVersion,
+        actorId: userId,
+        reason: parsed.reason,
+      });
       const override = await opts.overrideStore.getOverride(hookId);
-      return reply.send({ ok: true, hookId, epochVersion: parsed.epochVersion, override });
+      return reply.send({ ok: true, hookId, epochVersion: parsed.epochVersion, override, transition });
     } catch (err) {
-      if (!mapGateError(err, reply)) throw err;
+      if (!mapGateError(err, reply) && !mapManualSwitchError(err, reply)) throw err;
     }
   });
 
@@ -228,18 +266,26 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
     if (!opts.overrideStore) {
       return reply.status(503).send({ error: 'override store unavailable (redis off)' });
     }
+    if (!versionCycleService) {
+      return reply.status(503).send({ error: 'Objective evaluation runtime unavailable' });
+    }
     const { hookId } = request.params as { hookId: string };
     const parsed = parseContentBody(request.body);
     if ('error' in parsed) return reply.status(400).send({ error: parsed.error });
 
     try {
-      await opts.overrideStore.setContentOverride(hookId, parsed.content, userId, { reason: parsed.reason });
-      await opts.refreshOverrideSnapshot?.();
+      const transition = await versionCycleService.create({
+        ownerUserId: userId,
+        segmentId: hookId,
+        content: parsed.content,
+        actorId: userId,
+        reason: parsed.reason,
+      });
       const versions = await opts.overrideStore.listVersions(hookId);
       const override = await opts.overrideStore.getOverride(hookId);
-      return reply.send({ ok: true, hookId, override, versions });
+      return reply.send({ ok: true, hookId, override, versions, transition });
     } catch (err) {
-      if (!mapGateError(err, reply)) throw err;
+      if (!mapGateError(err, reply) && !mapManualSwitchError(err, reply)) throw err;
     }
   });
 };

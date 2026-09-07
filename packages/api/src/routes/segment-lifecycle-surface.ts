@@ -43,6 +43,7 @@ export async function registerSegmentLifecycleSurface(
   await app.register(promptInjectionOverrideRoutes, {
     overrideStore: options.overrideStore,
     refreshOverrideSnapshot,
+    runtime: options.runtime,
   });
   await app.register(harnessGovernanceCandidateRoutes, {
     governance: options.governance,

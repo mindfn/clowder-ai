@@ -129,6 +129,19 @@ export interface CycleTriggerPolicyChange {
 export interface CycleWindow {
   start: number;
   end: number;
+  /**
+   * Present only when this window is supplementary evidence inherited from a
+   * different content coordinate. The native window for the selected cycle is
+   * always the unannotated [cycleStart, cycleEnd) window.
+   */
+  provenance?: {
+    kind: 'manual-version-switch';
+    sourceCycleId: string;
+    sourceVersion: string;
+    sourceVersionContentRef: string;
+    sourceSegmentId: string;
+    sourceSegmentVersion: number;
+  };
 }
 
 /** F257 TC-3/4/10/14: one compact, owner/objective-scoped evaluation cycle. */
@@ -146,6 +159,8 @@ export interface CycleRecord {
   triggerPolicy?: CycleTriggerPolicy;
   triggerPolicyChange?: CycleTriggerPolicyChange;
   objectiveLifecycle?: Exclude<ObjectiveLifecycle, 'retired'>;
+  /** Unconsumed supplementary evidence retained across an operator version switch. */
+  carryoverWindows?: CycleWindow[];
   windows: CycleWindow[];
   triggeredBy?: CycleTriggerRoute[];
   assignmentThreadId?: string;
@@ -177,6 +192,16 @@ export interface CycleRecord {
     at: number;
   };
   rejectReasons?: string[];
+  /** Explicit terminal reason for a tracing cycle closed by an operator version switch. */
+  termination?: {
+    kind: 'manual-version-switch';
+    segmentId: string;
+    fromVersion: number;
+    toVersion: number;
+    at: number;
+    by: string;
+    reason: string;
+  };
   closedAt?: number;
 }
 
@@ -310,6 +335,9 @@ export interface SegmentTracingEvaluationView {
       evalStatus: CycleEvaluationStatus;
       cycleStartMs: number;
       cycleEndMs: number | null;
+      /** Previous cycle close/settlement coordinate used by the cooldown gate. */
+      lastClosedAtMs: number | null;
+      minimumIntervalMs: number;
       triggeredBy: CycleTriggerRoute[];
       cumulative: { count: number; threshold: number };
       counterexamples: { count: number; threshold: number };
@@ -370,9 +398,16 @@ export interface SegmentCycleSummary {
   governanceImpact: {
     changedUnitIds: string[];
     selectedSegmentChanged: boolean;
+    changes: Array<{
+      action: 'enable' | 'disable' | 'modify' | 'rollback' | 'add';
+      unitId: string;
+      sourceVersion: number | null;
+      targetVersion: number | null;
+    }>;
   } | null;
   approval: CycleRecord['approval'] | null;
   rejectReasons: string[];
+  termination: CycleRecord['termination'] | null;
   closedAt: number | null;
 }
 

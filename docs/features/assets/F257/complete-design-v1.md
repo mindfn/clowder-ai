@@ -2,7 +2,7 @@
 feature: F257
 title: F257 Harness Ledger — 完整方案 v1（从 operator 模型往下推；proposal，待逐节确认）
 status: CONFIRMED（operator 2026-09-02 07:37）— 实施以本文 §14/§15 为准；把关人 Fable，实现 sol（不满意可换 kimi/ds）
-depends_on: terminal-contract-v1.md（TC-1~19）
+depends_on: terminal-contract-v1.md（TC-1~20）
 author: 宪宪(cat-8zfu14fb) 2026-09-02
 ---
 
@@ -23,7 +23,7 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 | 7a | decision = keep → 代码按 TC-3 上调 N（满足连续 cadence-only keep 条件时也上调 D），把 before/after/依据写入 CycleRecord；周期收束，**下一周期起点 = 本周期终点**；回到步 1 | 系统 | — |
 | 7b | decision = rollback / evolve → 代码按 TC-3 下调 N/D 并生成**提案卡**：动作列表可对该 Objective 的成员 hook 做 enable/disable/modify(content + condition params)/add，整卡只能全批或 reject；卡按 §5.1 展示指标、变化、结论、逐动作 diff；按钮三选一：**approve / skip（可附理由）/ reject（必须附理由）** | 系统 → operator | 卡 |
 | 8 | **approve** → 执行（rollback = 把 current version 指针切回上一版，没有别的动作；evolve = 激活 v2 草案）→ 进入下一周期。**skip**（评估可能有偏但暂无纠正办法 / 数据不够）→ 不执行，进入下一周期，理由存档供下次参考。**reject** → 不进入下一周期：拒绝理由作为约束追加进 assignment，**对同一窗口重新评估**（见 §1.1）。**周期起点始终刷新** = 本周期终点（否则累计触发会立即再触发）；skip 的影响不在起点，而在下次评估的取数范围（见 §1.1） | operator → 系统 | override 版本链 |
-| 9 | v2 周期与 v1 完全同流程；**评估阶段只看 v2 时间窗，不做跨版本对比**；**governance 阶段以本周期结论为依据判断 keep/rollback/evolve**——同一 Objective 始终在同一系统 thread，历史周期的评估结论天然在上下文里、高相关，可参考，但"与上一版比较"**不是**闭环条件 | — | — |
+| 9 | v2 周期与 v1 完全同流程；**评估目标绑定 v2，本周期触发与 UI 统计只看 v2 原生时间窗，不做跨版本对比**；若 v2 来自手动切版，切换前尚未消费的 v3 数据可按 §1.2 作为来源明确的补充证据读取，但不冒充 v2 数据；**governance 阶段以本周期结论为依据判断 keep/rollback/evolve**——同一 Objective 始终在同一系统 thread，历史周期的评估结论天然在上下文里、高相关，可参考，但"与上一版比较"**不是**闭环条件 | — | — |
 
 ### 1.1 skip 的取数规则（operator 06:32 修正，替代原"跳过不改起点"）
 
@@ -36,6 +36,16 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 未回写分支（步 5 或 6 超过 T=30 分钟没有回写）：系统投**一条**"你还没回写"的系统 message 重触发；再超过 T 仍无 → 周期记录 `evalStatus:stalled` + 告警到本 thread，**不再重试**，等人处理。
 
 ☑ 走查正确（07:37）
+
+### 1.2 手动切换当前版本（operator 2026-09-07）
+
+- 入口在生命线中**已选历史版本**的版本内容区，按钮「切换为当前版本」。它不是编辑内容，也不创建版本；确认文案只说「切换后，将以该版本开启新周期并继续评估。」
+- 只允许 `evalStatus=idle`。按钮显示状态只是第一层，服务端在同一 Objective 串行锁内重新读取 current CycleRecord；`requested / retriggered / written / stalled` 一律 409，防止切版覆盖正在进行的评估或治理。
+- 直接创建内容版本也必须经过同一周期边界：新版本成为 active 时同步归档旧 tracing 周期并建立绑定新版本的新周期，不能保留一条会让 active 指针与 CycleRecord 版本漂移的旁路。旧式 `POST /api/prompt-hooks/:hookId/override {action:'rollback'}` 与独立「回滚至基线」按钮退出公开入口；回到 v1 统一选择 v1 版本卡上的「切换为当前版本」。
+- 切换时以同一个逻辑 `switchAt` 收束两条轴：① override active 指针切到目标历史版本；② 当前 tracing 周期写 `termination:{kind:'manual-version-switch', fromVersion, toVersion, at, by, reason}` 并 append-only 归档；③ 建立 `cycleStart=switchAt`、新 Objective version snapshot 的 idle 周期。override 的审计事件按实际写入时间记录，允许比逻辑切换坐标晚数毫秒。CycleRecord 归档与 current 替换使用 Redis CAS；active 指针写入失败或 CAS 竞争失败时执行补偿，不能留下「版本已换、周期未换」的稳定状态。
+- 新周期的**原生窗**从 `switchAt` 开始：Console 周期计数、明细和 N/M/D 触发都只读原生窗。被终止周期尚未进入 evaluation 的数据不丢，作为带 `manual-version-switch` provenance 的补充窗随新周期保存；只有新周期原生窗触发后，它才进入 assignment 的可读证据范围。
+- evaluator 判断的目标仍是新 active 版本，不做「v2 比 v3 好多少」的跨版本对比；补充窗中的 episode 保留其真实 v3 / source cycle 来源。governance 再结合同一 Objective thread 的历史结论决定 keep / rollback / evolve。
+- 版本号全局单调、父链按创建时 active 版本：v3 后切回 v2，再演进产生 v4 且 `parentVersion=2`。被终止的 v3 周期在 governance 面显示停止/切换事实；正常 governance 动作显示精确边「演进 S13：v2 → v3」。
 
 ## 2. 状态：每个 Objective 只有一条"当前周期记录"
 
@@ -51,6 +61,8 @@ CycleRecord {
   objectiveLifecycle,                   // active|dormant|retired；零 trace 是故障，不是 dormant
   versionContentRef,                    // 起始版本的内容指针 = overlay 版本（天然存在，不复制内容）
   windows,                              // 本次评估实际取数窗口（含回看的 skip 周期）
+  carryoverWindows?,                    // 手动切版遗留的未消费补充证据；不参与新周期触发统计
+  termination?: { kind:'manual-version-switch', segmentId, fromVersion, toVersion, at, by, reason },
   closedAt?
 }
 ```
@@ -73,7 +85,7 @@ CycleRecord {
 
 ## 4. 评估 assignment 与回写工具
 
-- assignment 固定结构（≤ 32 KB）：`{objective:{id, statement /*评估目标，必填*/}, version, versionContentRef, windows:[{start,end}] /*含回看的 skip 周期*/, priorSkipReasons?, rejectReasons?, metrics:[{id,label,evaluator,ruleRef}], counterexamples:[{invocationId, incidentKey, rationale?}] (引用), readPoolTool: "cat_cafe_read_cycle_traces(objective, cursor?)"}`；投递到该 Objective 专属 thread，由默认成员评估。
+- assignment 固定结构（≤ 32 KB）：`{objective:{id, statement /*评估目标，必填*/}, version, versionContentRef, windows:[{start,end,provenance?}] /*含回看的 skip 周期，以及触发后才附入的手动切版补充证据*/, priorSkipReasons?, rejectReasons?, metrics:[{id,label,evaluator,ruleRef}], counterexamples:[{invocationId, incidentKey, rationale?}] (引用), readPoolTool: "cat_cafe_read_cycle_traces(objective, cursor?)"}`；投递到该 Objective 专属 thread，由默认成员评估。带 provenance 的补充窗必须保留原 source cycle / source segment version，不能被当作 skip 窗，也不能改写成当前版本数据。
 - 读池工具按窗分页返回 episode 摘要（段状态、input/output 截断、工具调用首尾），评估猫自行决定翻多少；**不预先分类、不等任何 sweep**。
 - 回写工具 `cat_cafe_submit_cycle_evaluation`：一个指标一条结论（结论类型沿用 judgment-schema-v2：count / rate-badness / semantic-label），同时结构化回写高置信反例事件数与语义根因数，整体 overall 三态 complete / partial / insufficient_evidence。
 - insufficient_evidence = "数据不够" → 等同 **skip**：进入下一周期，下次评估按 §1.1 回看纳入本窗口。
@@ -94,9 +106,9 @@ CycleRecord {
 
 ## 5. Console
 
-- **Tracing**：唯一 Objective 的周期起点；两组：`周期内高置信反例 n/M`、`owner 线性池周期内累计 m/N`；第三路 `距周期起点 d/D`。反例与 tracing 明细可回放，但段级查询窗总数不再作为并列触发数字。无"待分类"。
+- **Tracing**：唯一 Objective 的周期起点；两组：`周期内高置信反例 n/M`、`owner 线性池周期内累计 m/N`；第三路 `距周期起点 d/D`。同时显示当前有效的「最短评估间隔」与「上次周期结束」，阈值已满足但仍在冷却时给出最早可触发时间。反例与 tracing 明细可回放，但段级查询窗总数不再作为并列触发数字。无"待分类"。
 - **Eval**：**平时只显示指标目录**（每指标：名称、id、方向、含义、评估方式/规则——同 Eval Hub eval:a2a 的"指标说明"样式）；**结论只在实际评估发生时刷新**：有则显示最新 verdict 卡（结论 / 现在要做 / 下次看什么 / 证据引用），无则不显示假空态；evalStatus 可见。
-- **Governance**：decision + 理由；审批卡状态；版本链 v1→v2…（谁、何时、为何）。
+- **Governance**：decision + 理由；审批卡状态；版本链 v1→v2…（谁、何时、为何）；每个改变版本的周期显示精确动作边（例如「演进 S13：v2 → v3」），手动终止周期显示「切换 S13：v3 → v2」。
 
 ### 5.1 提案卡渲染（operator 07:31：审批时必须看得到内容）
 
@@ -174,6 +186,7 @@ CycleRecord {
 | 09-02 07:17 | 定位：这是基于规则段的 auto-harness 基建**穿刺**；跑通并按谱系管理后，其它组件与既有评估都要纳入同一体系 | §0 |
 | 09-02 07:31 | §12 通过；§13 走合一（删独立 L0 编译器，L1–L7 迁为普通段） | §12、§13、§6 |
 | 09-02 07:31 | 提案卡必须展示内容变更（逐段 diff）；渲染规格入 §5.1 | §5.1 |
+| 09-07 08:17–08:55 | Console 投影最短评估间隔与上次周期结束；手动历史版本切换只在 tracing 可用，切换会终止旧周期并从目标版本开新周期；新周期 UI/触发只计切换后原生窗，未消费旧数据以带版本来源的补充证据供下一次 eval 读取；governance 显示精确版本边 | §1.2、§2–§5、TC-20 |
 
 ## 11. 我自己的判断（不附和）：这个流程能否闭环
 

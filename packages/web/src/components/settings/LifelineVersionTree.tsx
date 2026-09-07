@@ -46,7 +46,7 @@ function VersionTreeRowFrame({ row, children }: { row: VersionTreeRow; children:
         data-version-card
         data-active-version={String(epoch.isActive)}
         className={`relative z-[1] flex w-fit min-w-0 items-center gap-1.5 rounded-xl px-2 py-1.5 transition-colors ${
-          epoch.isActive ? 'bg-[var(--console-active-bg)]' : 'bg-[var(--console-elevated-bg)]'
+          epoch.isActive ? 'bg-[var(--console-active-bg)]' : ''
         }`}
         style={{ marginInlineStart: `${depth * TREE_STEP_PX}px` }}
       >

@@ -8,12 +8,14 @@
  *   - Enable/Disable: toggle hook override state
  *   - Rollback: revert to manifest baseline (v1)
  *
- * Uses window.prompt for audit reason (avoids modal-in-modal).
- * API calls via apiFetch; parent refreshes data on success.
+ * Destructive override actions retain the audit-reason prompt. Historical
+ * version activation uses an in-product confirmation because it closes the
+ * tracing cycle and starts a new one through the cycle store CAS.
  */
 
-import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
+import type { CycleEvaluationStatus, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
 import { SettingsText } from './primitives';
 
@@ -100,35 +102,112 @@ export function ActivateVersionButton({
   epochVersion,
   onRefresh,
   enablementMatrix,
-}: VersionActionsProps & { epochVersion: number }) {
+  currentEvalStatus = 'idle',
+}: VersionActionsProps & { epochVersion: number; currentEvalStatus?: CycleEvaluationStatus }) {
   const runtime = enablementMatrix.runtimeOverride;
-  const perm = runtime.actions.activateVersion;
-  const versionAvailable = runtime.availableEpochVersions.includes(epochVersion);
-  const canActivate = perm.allowed && versionAvailable;
+  const perm = epochVersion === 1 ? runtime.actions.rollback : runtime.actions.activateVersion;
+  const versionAvailable = epochVersion === 1 || runtime.availableEpochVersions.includes(epochVersion);
+  const tracing = currentEvalStatus === 'idle';
+  const canActivate = tracing && perm.allowed && versionAvailable;
   const blockedReason = canActivate
     ? null
-    : !perm.allowed
-      ? perm.reason
-      : `版本 v${epochVersion} 不在可激活历史版本列表中`;
+    : !tracing
+      ? '当前正在评估，完成后可切换版本'
+      : !perm.allowed
+        ? perm.reason
+        : `版本 v${epochVersion} 不在可激活历史版本列表中`;
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const confirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/versions/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ epochVersion }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setError((body as { error?: string }).error ?? `操作失败 (${response.status})`);
+        return;
+      }
+      setConfirming(false);
+      onRefresh();
+    } catch {
+      setError('网络错误');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <ActionButton
-      label={`激活 v${epochVersion}`}
-      tone="emerald"
-      hookId={hookId}
-      confirmMsg={canActivate ? `确认激活版本 v${epochVersion}？` : undefined}
-      action={() => {
-        const reason = window.prompt('操作原因（审计追踪）：');
-        if (reason == null || reason.trim() === '') return Promise.resolve(null);
-        return apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/versions/activate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ epochVersion, reason }),
-        });
-      }}
-      onRefresh={onRefresh}
-      allowed={canActivate}
-      blockedReason={blockedReason}
-    />
+    <div>
+      <button
+        type="button"
+        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+        disabled={busy || !canActivate}
+        onClick={() => setConfirming(true)}
+        title={blockedReason ?? undefined}
+      >
+        切换为当前版本
+      </button>
+      {!canActivate && blockedReason && (
+        <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
+          {blockedReason}
+        </SettingsText>
+      )}
+      {error && (
+        <SettingsText as="p" variant="xs" tone="red" className="mt-1">
+          {error}
+        </SettingsText>
+      )}
+      {confirming &&
+        createPortal(
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
+            <button
+              type="button"
+              aria-label="取消切换"
+              className="absolute inset-0"
+              onClick={() => !busy && setConfirming(false)}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="version-switch-title"
+              className="relative w-full max-w-sm rounded-2xl bg-[var(--console-card-bg)] p-5 shadow-2xl"
+            >
+              <SettingsText as="h3" id="version-switch-title" variant="sm" tone="default" className="font-semibold">
+                切换当前版本
+              </SettingsText>
+              <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
+                切换后，将以该版本开启新周期并继续评估。
+              </SettingsText>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg px-3 py-1.5 text-xs text-cafe-secondary hover:bg-[var(--console-panel-bg)]"
+                  disabled={busy}
+                  onClick={() => setConfirming(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void confirm()}
+                >
+                  {busy ? '切换中…' : '确认切换'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
   );
 }
 
@@ -155,31 +234,6 @@ export function ToggleOverrideButton({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action, reason }),
-        });
-      }}
-      onRefresh={onRefresh}
-      allowed={perm.allowed}
-      blockedReason={perm.reason}
-    />
-  );
-}
-
-/** Action: rollback to manifest baseline (v1). */
-export function RollbackButton({ hookId, onRefresh, enablementMatrix }: VersionActionsProps) {
-  const perm = enablementMatrix.runtimeOverride.actions.rollback;
-  return (
-    <ActionButton
-      label="回滚至基线"
-      tone="amber"
-      hookId={hookId}
-      confirmMsg={perm.allowed ? '确认回滚到基线版本 (v1)？所有自定义内容将失效。' : undefined}
-      action={() => {
-        const reason = window.prompt('操作原因（审计追踪）：');
-        if (reason == null || reason.trim() === '') return Promise.resolve(null);
-        return apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/override`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'rollback', reason }),
         });
       }}
       onRefresh={onRefresh}

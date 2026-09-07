@@ -4,7 +4,7 @@
 
 import type { ActionableInfo, ActiveStage, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
-import { RollbackButton, ToggleOverrideButton } from './VersionActions';
+import { ToggleOverrideButton } from './VersionActions';
 
 interface GuardEvent {
   eventId: string;
@@ -81,14 +81,13 @@ export function GovernanceStagePanel({
         />
       )}
 
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4">
         <ToggleOverrideButton
           hookId={hookId}
           currentlyEnabled={effectiveEnabled}
           onRefresh={onRefresh}
           enablementMatrix={enablementMatrix}
         />
-        <RollbackButton hookId={hookId} onRefresh={onRefresh} enablementMatrix={enablementMatrix} />
       </div>
 
       <GuardEventsSection guardEvents={guardEvents} />
