@@ -1275,6 +1275,49 @@ export function applyMigrations(db: Database.Database): void {
     }
     db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(42, new Date().toISOString());
   }
+
+  // Column convergence for `dynamic_task_defs` — an INVARIANT, not a migration.
+  //
+  // Two independent lines each numbered a `dynamic_task_defs` migration 40: this fork's added
+  // `retry_attempts`, upstream's added `entrusted_work_reevaluation_json`. A database that ran one
+  // of them recorded version 40, so when the other line's code arrived its V40 body was already
+  // considered applied and never ran. `DynamicTaskStore` names both columns unconditionally, so
+  // every dynamic task insert failed against such a database — which is how a running instance
+  // lost `hold_ball` outright.
+  //
+  // This deliberately does NOT sit behind a version check. The whole failure is that the version
+  // counter made a false claim about history; guarding the repair with that same counter would
+  // reproduce the defect one number higher, and a database that reached the new version before
+  // being repaired could never heal. Asking the table what it actually has is the only question
+  // whose answer cannot have been corrupted by a collision.
+  //
+  // It records no version row either: a repair that converges to the declared shape is not a
+  // history event, and writing one would make an already-untrustworthy counter say more.
+  //
+  // Deliberately no try/catch. The existence check IS the guard, so a throw here means something
+  // genuinely unexpected — swallowing it is how the original defect stayed invisible long enough
+  // to reach a running instance.
+  //
+  // The table's own existence is checked first, and that is not defensive padding: callers that
+  // seed a partial schema and jump `schema_version` forward reach this code without ever creating
+  // `dynamic_task_defs`, and `PRAGMA table_info` answers for a missing table with an empty list —
+  // indistinguishable from a table that exists and lacks both columns. Asking about columns while
+  // assuming the table is the same mistake this repair exists to fix, one level up.
+  const hasDynamicTaskDefs =
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dynamic_task_defs'").get() !== undefined;
+  if (hasDynamicTaskDefs) {
+    const dynamicTaskColumns = new Set(
+      (db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as Array<{ name: string }>).map(
+        (column) => column.name,
+      ),
+    );
+    if (!dynamicTaskColumns.has('entrusted_work_reevaluation_json')) {
+      db.exec('ALTER TABLE dynamic_task_defs ADD COLUMN entrusted_work_reevaluation_json TEXT');
+    }
+    if (!dynamicTaskColumns.has('retry_attempts')) {
+      db.exec('ALTER TABLE dynamic_task_defs ADD COLUMN retry_attempts INTEGER DEFAULT 0');
+    }
+  }
 }
 
 /**
