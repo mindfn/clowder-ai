@@ -1,9 +1,11 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import { SegmentEvaluationReadModel } from '../infrastructure/harness-eval/evaluation/SegmentEvaluationReadModel.js';
+import type { HarnessGovernanceProposalStore } from '../infrastructure/harness-eval/governance/HarnessGovernanceProposalStore.js';
 
 export interface SegmentEvaluationRoutesOptions {
   runtime?: ObjectiveEvaluationRuntime;
+  proposals?: HarnessGovernanceProposalStore;
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -61,7 +63,7 @@ export const segmentEvaluationRoutes: FastifyPluginAsync<SegmentEvaluationRoutes
     }
     try {
       return reply.send(
-        await new SegmentEvaluationReadModel(opts.runtime).read({
+        await new SegmentEvaluationReadModel(opts.runtime, Date.now, opts.proposals).read({
           ownerUserId,
           segmentId,
           startMs: window.startMs,

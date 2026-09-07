@@ -97,6 +97,7 @@ const evaluation: SegmentEvaluationResponse = {
       ],
       selectedCycle: {
         cycleId: 'cycle-s13-showcase',
+        segmentVersion: 1,
         version: 'S13@1',
         versionContentRef: 'hook:S13@1',
         cycleStart: WINDOW.start,
@@ -106,12 +107,14 @@ const evaluation: SegmentEvaluationResponse = {
         triggeredBy: ['counterexamples'],
         evaluation: { overall: 'complete', writtenAt: WINDOW.end, by: 'cat-evaluator' },
         governance: { decision: 'evolve', reason: '降低工具调用失败', writtenAt: WINDOW.end, by: 'cat-evaluator' },
+        governanceImpact: { changedUnitIds: ['S13'], selectedSegmentChanged: true },
         approval: { cardId: 'HGP-showcase', state: 'pending', rejectCount: 0, at: WINDOW.end },
         rejectReasons: [],
         closedAt: null,
       },
       currentCycle: {
         cycleId: 'cycle-s13-showcase',
+        segmentVersion: 1,
         version: 'S13@1',
         versionContentRef: 'hook:S13@1',
         cycleStart: WINDOW.start,
@@ -121,6 +124,7 @@ const evaluation: SegmentEvaluationResponse = {
         triggeredBy: ['counterexamples'],
         evaluation: { overall: 'complete', writtenAt: WINDOW.end, by: 'cat-evaluator' },
         governance: { decision: 'evolve', reason: '降低工具调用失败', writtenAt: WINDOW.end, by: 'cat-evaluator' },
+        governanceImpact: { changedUnitIds: ['S13'], selectedSegmentChanged: true },
         approval: { cardId: 'HGP-showcase', state: 'pending', rejectCount: 0, at: WINDOW.end },
         rejectReasons: [],
         closedAt: null,
@@ -139,6 +143,7 @@ const evaluation: SegmentEvaluationResponse = {
         writtenAt: WINDOW.end,
         by: 'cat-evaluator',
         approval: { cardId: 'HGP-showcase', state: 'pending', rejectCount: 0, at: WINDOW.end },
+        impact: { changedUnitIds: ['S13'], selectedSegmentChanged: true },
       },
       versionChain: [],
     },
@@ -231,7 +236,6 @@ export default function F257ObjectiveEvalShowcase() {
       <LifelineChainView
         chain={chain}
         cycles={SHOWCASE_CYCLES}
-        versionActivations={[{ timestamp: 0, version: 1 }]}
         currentCycleId={SHOWCASE_CURRENT_CYCLE?.cycleId}
         selected={selected}
         onSelect={setSelected}

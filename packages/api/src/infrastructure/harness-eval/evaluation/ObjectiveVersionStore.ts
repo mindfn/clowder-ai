@@ -90,6 +90,52 @@ export class ObjectiveVersionStore {
   }
 }
 
+/**
+ * Resolve the segment coordinate frozen into a CycleRecord. New records point
+ * at an immutable Objective snapshot; pre-snapshot records embedded a compact
+ * comma-separated `unitId@version` list directly in the ref.
+ */
+export async function segmentVersionFromContentRef(
+  redis: RedisClient,
+  versionContentRef: string,
+  segmentId: string,
+): Promise<number | null> {
+  const legacy = legacySegmentVersion(versionContentRef, segmentId);
+  if (legacy !== null) return legacy;
+  if (!versionContentRef.startsWith('harness-objective-version:')) return null;
+
+  const raw = await redis.get(versionContentRef);
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!isRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.units)) return null;
+    const unit = value.units.find(
+      (candidate): candidate is Record<string, unknown> => isRecord(candidate) && candidate.unitId === segmentId,
+    );
+    return unit && Number.isSafeInteger(unit.activeContentVersion) && Number(unit.activeContentVersion) > 0
+      ? Number(unit.activeContentVersion)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function legacySegmentVersion(versionContentRef: string, segmentId: string): number | null {
+  const separator = versionContentRef.indexOf(':');
+  if (separator < 0) return null;
+  for (const token of versionContentRef.slice(separator + 1).split(',')) {
+    const match = token.trim().match(/^(.+)@v?(\d+)$/);
+    if (match?.[1] !== segmentId) continue;
+    const version = Number(match[2]);
+    return Number.isSafeInteger(version) && version > 0 ? version : null;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (value && typeof value === 'object') {

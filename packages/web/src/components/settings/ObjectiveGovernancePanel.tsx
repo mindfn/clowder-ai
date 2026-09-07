@@ -31,6 +31,11 @@ export function ObjectiveGovernancePanel({ data }: { data: SegmentEvaluationResp
               <MetaRow label="治理时间">{formatTs(objective.latestGovernance.writtenAt)}</MetaRow>
               <MetaRow label="决策者">@{objective.latestGovernance.by}</MetaRow>
               <MetaRow label="理由">{objective.latestGovernance.reason}</MetaRow>
+              {objective.latestGovernance.decision !== 'keep' && (
+                <MetaRow label="改动范围">
+                  {governanceImpactLabel(data.segmentId, objective.latestGovernance.impact)}
+                </MetaRow>
+              )}
               <MetaRow label="审批卡">
                 {objective.latestGovernance.approval ? (
                   <>
@@ -50,7 +55,9 @@ export function ObjectiveGovernancePanel({ data }: { data: SegmentEvaluationResp
           ) : (
             <SettingsText as="p" variant="xs" tone="muted" className="mt-3">
               {objective.selectedCycle?.evalStatus === 'written'
-                ? '本周期评估已回写，尚未形成 governance 决策。'
+                ? objective.selectedCycle.evaluation?.overall === 'insufficient_evidence'
+                  ? '证据不足，本周期不进入治理；已并入下一周期继续累计。'
+                  : '本周期评估已回写，尚未形成 governance 决策。'
                 : '本周期尚未进入 governance。'}
             </SettingsText>
           )}
@@ -58,6 +65,12 @@ export function ObjectiveGovernancePanel({ data }: { data: SegmentEvaluationResp
       ))}
     </div>
   );
+}
+
+function governanceImpactLabel(segmentId: string, impact: SegmentCycleSummary['governanceImpact']): string {
+  if (!impact) return '提案改动范围暂不可用';
+  const units = impact.changedUnitIds.join('、');
+  return impact.selectedSegmentChanged ? `改动 ${units}` : `改动 ${units}；本段 ${segmentId} 未变`;
 }
 
 function ApprovalBadge({ state }: { state: NonNullable<SegmentCycleSummary['approval']>['state'] }) {

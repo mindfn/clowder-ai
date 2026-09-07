@@ -369,6 +369,7 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
 describe('F257 version lifeline — version and Objective cycle are separate coordinates', () => {
   const completedCycle = {
     cycleId: 'cycle-keep-1',
+    segmentVersion: 1,
     version: 'objective-v1',
     versionContentRef: 'objective:wait-wakeup-liveness@v1',
     cycleStart: QUERY_WINDOW.startMs,
@@ -383,6 +384,7 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
       writtenAt: QUERY_WINDOW.startMs + 9_500,
       by: 'evaluator',
     },
+    governanceImpact: null,
     approval: null,
     rejectReasons: [],
     closedAt: QUERY_WINDOW.startMs + 10_000,
@@ -400,7 +402,7 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     closedAt: null,
   };
 
-  it('compresses repeated cycles into one card and expands an exact cycle chooser', async () => {
+  it('compresses repeated cycles into one card and uses a version-local cycle dropdown', async () => {
     await render(
       createElement(LifelineChainView, {
         chain: [makeEpoch()],
@@ -417,13 +419,13 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     expect(container.querySelectorAll('[data-current="true"]')).toHaveLength(1);
     expect(container.querySelector('[data-current="true"]')?.textContent).toBe('tracing');
     expect(container.querySelectorAll('[data-cycle-group]')).toHaveLength(1);
-    expect(container.querySelector('[data-cycle-switcher]')?.textContent).toContain('第 2 周期');
-    expect(container.querySelector('[data-cycle-switcher]')?.textContent).toContain('选择');
-    expect(container.querySelector('[data-cycle-switcher]')?.textContent).not.toContain('共 2 次');
+    const switcher = container.querySelector('[data-cycle-switcher]') as HTMLSelectElement;
+    expect(switcher.tagName).toBe('SELECT');
+    expect(switcher.value).toBe('cycle-current-2');
+    expect([...switcher.options].map((option) => option.textContent)).toEqual(['周期 1', '周期 2']);
     expect(container.querySelectorAll('button[data-cycle-id="cycle-keep-1"]')).toHaveLength(0);
     expect(container.querySelectorAll('button[data-cycle-id="cycle-current-2"]')).toHaveLength(3);
 
-    act(() => (container.querySelector('[data-cycle-switcher]') as HTMLButtonElement).click());
     expect(container.querySelectorAll('[data-cycle-option]')).toHaveLength(2);
   });
 
@@ -498,7 +500,7 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     expect(container.textContent).toContain('源自 v1');
   });
 
-  it('assigns cycles by the activation timeline after an older version is reactivated', async () => {
+  it('assigns cycles by the frozen segment version even when cycleStart precedes the evolve apply time', async () => {
     const v1 = makeEpoch({ version: 1, parentVersion: null, startedAt: 0, isActive: false });
     const v2 = makeEpoch({
       version: 2,
@@ -514,25 +516,26 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
       startedAt: 350,
       isActive: true,
     });
-    const cycleOnV2 = { ...completedCycle, cycleId: 'cycle-v2', cycleStart: 150, cycleEnd: 200 };
+    const cycleOnV2 = {
+      ...completedCycle,
+      cycleId: 'cycle-v2',
+      segmentVersion: 2,
+      cycleStart: 90,
+      cycleEnd: 200,
+    };
     const cycleOnReturnedV1 = {
       ...completedCycle,
       cycleId: 'cycle-v1-return',
+      segmentVersion: 1,
       cycleStart: 300,
       cycleEnd: 340,
     };
-    const cycleOnV3 = { ...currentCycle, cycleId: 'cycle-v3', cycleStart: 400 };
+    const cycleOnV3 = { ...currentCycle, cycleId: 'cycle-v3', segmentVersion: 3, cycleStart: 340 };
 
     await render(
       createElement(LifelineChainView, {
         chain: [v1, v2, v3],
         cycles: [cycleOnV2, cycleOnReturnedV1, cycleOnV3],
-        versionActivations: [
-          { timestamp: 0, version: 1 },
-          { timestamp: 100, version: 2 },
-          { timestamp: 250, version: 1 },
-          { timestamp: 350, version: 3 },
-        ],
         currentCycleId: cycleOnV3.cycleId,
         selected: { version: 1, stage: 'governance', cycleId: cycleOnReturnedV1.cycleId },
         onSelect: () => {},
@@ -542,6 +545,42 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     expect(container.querySelector('[data-version-node="1"] [data-cycle-group="cycle-v1-return"]')).toBeTruthy();
     expect(container.querySelector('[data-version-node="2"] [data-cycle-group="cycle-v2"]')).toBeTruthy();
     expect(container.querySelector('[data-version-node="3"] [data-cycle-group="cycle-v3"]')).toBeTruthy();
+  });
+
+  it('restarts the visible cycle number inside each segment version', async () => {
+    const v1 = makeEpoch({ version: 1, parentVersion: null, isActive: false });
+    const v2 = makeEpoch({ version: 2, parentVersion: 1, startedAt: 200, isActive: true });
+    const v1Cycle = { ...completedCycle, ordinal: 4, cycleId: 'cycle-global-4', segmentVersion: 1 };
+    const v2Cycle1 = {
+      ...completedCycle,
+      ordinal: 5,
+      cycleId: 'cycle-global-5',
+      segmentVersion: 2,
+      cycleStart: QUERY_WINDOW.startMs + 20_000,
+    };
+    const v2Cycle2 = {
+      ...currentCycle,
+      ordinal: 6,
+      cycleId: 'cycle-global-6',
+      segmentVersion: 2,
+      cycleStart: QUERY_WINDOW.startMs + 30_000,
+    };
+
+    await render(
+      createElement(LifelineChainView, {
+        chain: [v1, v2],
+        cycles: [v1Cycle, v2Cycle1, v2Cycle2],
+        currentCycleId: v2Cycle2.cycleId,
+        selected: { version: 2, stage: 'tracing', cycleId: v2Cycle2.cycleId },
+        onSelect: () => {},
+      }),
+    );
+
+    const v1Options = container.querySelector('[data-version-node="1"] select') as HTMLSelectElement;
+    const v2Options = container.querySelector('[data-version-node="2"] select') as HTMLSelectElement;
+    expect([...v1Options.options].map((option) => option.textContent)).toEqual(['周期 1']);
+    expect([...v2Options.options].map((option) => option.textContent)).toEqual(['周期 1', '周期 2']);
+    expect(v2Options.title).toContain('本版本周期 2');
   });
 });
 

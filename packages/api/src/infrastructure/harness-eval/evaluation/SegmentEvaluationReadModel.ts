@@ -7,6 +7,7 @@ import type {
   TraceAnnotation,
 } from '@cat-cafe/shared';
 import { isFiredTraceSegment } from '../../../domains/prompt-hooks/injection-trace-semantics.js';
+import type { HarnessGovernanceProposalStore } from '../governance/HarnessGovernanceProposalStore.js';
 import type { EvaluationModelDefinition, ObjectiveDefinition } from '../objective-registry.js';
 import {
   counterexampleWakeKey,
@@ -32,6 +33,7 @@ export class SegmentEvaluationReadModel {
   constructor(
     private readonly runtime: ObjectiveEvaluationRuntime,
     private readonly now: () => number = Date.now,
+    private readonly proposals?: Pick<HarnessGovernanceProposalStore, 'get'>,
   ) {}
 
   async read(input: {
@@ -141,12 +143,20 @@ export class SegmentEvaluationReadModel {
       (selectedEvaluated?.evaluation?.metrics ?? []).map((metric) => [metric.id, metric] as const),
     );
     const cycleTotal = historyCount + (current ? 1 : 0);
-    const versionChain = [...history]
-      .reverse()
-      .map((record, index) => toSummary(record, historyCount - history.length + index + 1));
-    if (current) versionChain.push(toSummary(current, cycleTotal));
+    const chronologicalHistory = [...history].reverse();
+    const versionChain = await Promise.all(
+      chronologicalHistory.map((record, index) =>
+        this.toSummary(record, input.segmentId, historyCount - history.length + index + 1),
+      ),
+    );
+    if (current) versionChain.push(await this.toSummary(current, input.segmentId, cycleTotal));
     const selectedSummary = selected
-      ? (versionChain.find((cycle) => cycle.cycleId === selected.cycleId) ?? toSummary(selected))
+      ? (versionChain.find((cycle) => cycle.cycleId === selected.cycleId) ??
+        (await this.toSummary(selected, input.segmentId)))
+      : null;
+    const currentSummary = current
+      ? (versionChain.find((cycle) => cycle.cycleId === current.cycleId) ??
+        (await this.toSummary(current, input.segmentId, cycleTotal)))
       : null;
 
     return {
@@ -191,9 +201,9 @@ export class SegmentEvaluationReadModel {
         unitRefs: unitRefsForObjective(this.runtime, objective.id),
         metrics: model.metrics.map((metric) => metricView(metric, latestMetrics.get(metric.id))),
         selectedCycle: selectedSummary,
-        currentCycle: current ? toSummary(current, cycleTotal) : null,
+        currentCycle: currentSummary,
         latestEvaluation: latestEvaluationView(selectedEvaluated),
-        latestGovernance: latestGovernanceView(selectedGoverned),
+        latestGovernance: latestGovernanceView(selectedGoverned, selectedSummary?.governanceImpact ?? null),
         versionChain,
       },
     };
@@ -209,6 +219,20 @@ export class SegmentEvaluationReadModel {
     const model = this.runtime.catalog.registry.evaluationModels.find((candidate) => candidate.id === modelId);
     if (!model) throw new Error(`segment_evaluation_model_not_found:${modelId}`);
     return model;
+  }
+
+  private async toSummary(record: CycleRecord, segmentId: string, ordinal?: number): Promise<SegmentCycleSummary> {
+    const [segmentVersion, proposal] = await Promise.all([
+      this.runtime.resolveSegmentVersion(record.versionContentRef, segmentId),
+      record.approval?.cardId && this.proposals ? this.proposals.get(record.approval.cardId) : null,
+    ]);
+    const changedUnitIds = proposal ? [...new Set(proposal.changes.map((change) => change.unitId))].sort() : null;
+    return toSummary(
+      record,
+      segmentVersion,
+      changedUnitIds ? { changedUnitIds, selectedSegmentChanged: changedUnitIds.includes(segmentId) } : null,
+      ordinal,
+    );
   }
 }
 
@@ -226,12 +250,16 @@ function latestEvaluationView(record: CycleRecord | undefined): SegmentObjective
   };
 }
 
-function latestGovernanceView(record: CycleRecord | undefined): SegmentObjectiveEvaluationView['latestGovernance'] {
+function latestGovernanceView(
+  record: CycleRecord | undefined,
+  impact: SegmentCycleSummary['governanceImpact'],
+): SegmentObjectiveEvaluationView['latestGovernance'] {
   if (!record?.governance) return null;
   return {
     cycleId: record.cycleId,
     ...record.governance,
     approval: record.approval ?? null,
+    impact,
   };
 }
 
@@ -251,10 +279,16 @@ function metricView(
   };
 }
 
-function toSummary(record: CycleRecord, ordinal?: number): SegmentCycleSummary {
+function toSummary(
+  record: CycleRecord,
+  segmentVersion: number | null,
+  governanceImpact: SegmentCycleSummary['governanceImpact'],
+  ordinal?: number,
+): SegmentCycleSummary {
   return {
     cycleId: record.cycleId,
     ...(ordinal !== undefined ? { ordinal } : {}),
+    segmentVersion,
     version: record.version,
     versionContentRef: record.versionContentRef,
     cycleStart: record.cycleStart,
@@ -270,6 +304,7 @@ function toSummary(record: CycleRecord, ordinal?: number): SegmentCycleSummary {
         }
       : null,
     governance: record.governance ?? null,
+    governanceImpact,
     approval: record.approval ?? null,
     rejectReasons: record.rejectReasons ?? [],
     closedAt: record.closedAt ?? null,

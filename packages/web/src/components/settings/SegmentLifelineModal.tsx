@@ -10,7 +10,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
-import { activeStageForCycle, activeVersionAt, LifelineChainView, type SelectedStage } from './LifelineChainView';
+import { activeStageForCycle, LifelineChainView, type SelectedStage } from './LifelineChainView';
 import { ObjectiveEvaluationPanel } from './ObjectiveEvaluationPanel';
 import { ObjectiveGovernancePanel } from './ObjectiveGovernancePanel';
 import { SettingsBadge, SettingsText } from './primitives';
@@ -138,13 +138,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
             const defaultCycle = objective.currentCycle ?? objective.versionChain.at(-1) ?? null;
             selectionInitializedRef.current = true;
             if (defaultCycle) {
-              const defaultVersion = activeVersionAt(
-                lifeline?.versionActivations ?? [],
-                defaultCycle.cycleStart,
-                lifeline?.chain[0]?.version ?? lifeline?.activeVersion ?? selectedVersion,
-              );
               setSelected({
-                version: defaultVersion ?? lifeline?.activeVersion ?? selectedVersion,
+                version: defaultCycle.segmentVersion ?? lifeline?.activeVersion ?? selectedVersion,
                 stage: activeStageForCycle(defaultCycle),
                 cycleId: defaultCycle.cycleId,
               });
@@ -237,7 +232,6 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
               <LifelineChainView
                 chain={lifeline.chain}
                 cycles={cycles}
-                versionActivations={lifeline.versionActivations}
                 currentCycleId={currentCycleId}
                 selected={selected}
                 onSelect={handleSelect}

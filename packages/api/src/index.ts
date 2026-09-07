@@ -3563,6 +3563,7 @@ async function main(): Promise<void> {
       threadStore,
       runtime,
       governance: cycleGovernanceCoordinator,
+      proposals: harnessGovernanceProposalStore,
     });
   }
   const { createEvalReleaseTruthResolver } = await import(

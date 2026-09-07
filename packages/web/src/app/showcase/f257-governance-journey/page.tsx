@@ -30,6 +30,7 @@ interface SelectedStage {
 
 const CURRENT_CYCLE: SegmentCycleSummary = {
   cycleId: 'cycle-s13-demo',
+  segmentVersion: 1,
   version: 'S13@1',
   versionContentRef: 'hook:S13@1',
   cycleStart: WINDOW.start,
@@ -44,6 +45,7 @@ const CURRENT_CYCLE: SegmentCycleSummary = {
     writtenAt: WINDOW.end,
     by: 'cat-evaluator',
   },
+  governanceImpact: { changedUnitIds: ['S13'], selectedSegmentChanged: true },
   approval: { cardId: CANDIDATE_ID, state: 'pending', rejectCount: 0, at: WINDOW.end },
   rejectReasons: [],
   closedAt: null,
@@ -132,6 +134,7 @@ const EVALUATION: SegmentEvaluationResponse = {
         writtenAt: WINDOW.end,
         by: 'cat-evaluator',
         approval: CURRENT_CYCLE.approval,
+        impact: CURRENT_CYCLE.governanceImpact,
       },
       versionChain: [CURRENT_CYCLE],
     },

@@ -352,6 +352,8 @@ export interface SegmentCycleSummary {
   cycleId: string;
   /** Chronological Objective-cycle number (1-based), when known. */
   ordinal?: number;
+  /** Segment content version frozen into this Objective cycle; null when legacy provenance cannot resolve it. */
+  segmentVersion: number | null;
   version: string;
   versionContentRef: string;
   cycleStart: number;
@@ -365,6 +367,10 @@ export interface SegmentCycleSummary {
     by: string;
   } | null;
   governance: CycleRecord['governance'] | null;
+  governanceImpact: {
+    changedUnitIds: string[];
+    selectedSegmentChanged: boolean;
+  } | null;
   approval: CycleRecord['approval'] | null;
   rejectReasons: string[];
   closedAt: number | null;
@@ -398,6 +404,7 @@ export interface SegmentObjectiveEvaluationView {
     writtenAt: number;
     by: string;
     approval: CycleRecord['approval'] | null;
+    impact: SegmentCycleSummary['governanceImpact'];
   } | null;
   versionChain: SegmentCycleSummary[];
 }

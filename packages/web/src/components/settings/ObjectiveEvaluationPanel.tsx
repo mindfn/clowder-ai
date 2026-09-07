@@ -102,6 +102,11 @@ function VerdictCard({ objective }: { objective: SegmentObjectiveEvaluationView 
         </SettingsText>
       </div>
       <div className="mt-3 space-y-1.5">
+        {evaluation.overall === 'insufficient_evidence' && (
+          <div className="rounded-lg bg-[var(--console-card-bg)] px-3 py-2 text-xs text-cafe-secondary">
+            证据不足，本周期不进入治理；已并入下一周期继续累计。
+          </div>
+        )}
         <MetaRow label="评估者">@{evaluation.by}</MetaRow>
         <MetaRow label="评估时间">{formatTs(evaluation.writtenAt)}</MetaRow>
         <MetaRow label="评估窗口">

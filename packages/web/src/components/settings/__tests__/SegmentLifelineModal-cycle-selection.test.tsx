@@ -4,6 +4,8 @@ import type { SegmentCycleSummary, SegmentEvaluationResponse, SegmentLifecycleRe
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ObjectiveEvaluationPanel } from '../ObjectiveEvaluationPanel';
+import { ObjectiveGovernancePanel } from '../ObjectiveGovernancePanel';
 import { SegmentLifelineModal } from '../SegmentLifelineModal';
 
 const apiFetch = vi.fn();
@@ -14,6 +16,7 @@ vi.mock('../../../utils/api-client', () => ({
 
 const prior: SegmentCycleSummary = {
   cycleId: 'cycle-prior',
+  segmentVersion: 1,
   version: 'objective-v1',
   versionContentRef: 'objective:test@v1',
   cycleStart: 100,
@@ -23,6 +26,7 @@ const prior: SegmentCycleSummary = {
   triggeredBy: ['cumulative'],
   evaluation: { overall: 'complete', writtenAt: 210, by: 'evaluator' },
   governance: { decision: 'keep', reason: '历史周期保持', writtenAt: 220, by: 'evaluator' },
+  governanceImpact: null,
   approval: null,
   rejectReasons: [],
   closedAt: 220,
@@ -157,6 +161,7 @@ function evaluationFor(selected: SegmentCycleSummary): SegmentEvaluationResponse
               writtenAt: 220,
               by: 'evaluator',
               approval: null,
+              impact: null,
             }
           : null,
         versionChain: [prior, current],
@@ -207,8 +212,11 @@ describe('SegmentLifelineModal cycle selection', () => {
     await flush();
     await flush();
 
-    act(() => (document.querySelector('[data-cycle-switcher]') as HTMLButtonElement).click());
-    act(() => (document.querySelector('[data-option-cycle-id="cycle-prior"]') as HTMLButtonElement).click());
+    const switcher = document.querySelector('[data-cycle-switcher]') as HTMLSelectElement;
+    act(() => {
+      switcher.value = 'cycle-prior';
+      switcher.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     await flush();
     const priorEval = document.querySelector(
       'button[data-cycle-id="cycle-prior"][data-stage="eval"]',
@@ -219,8 +227,10 @@ describe('SegmentLifelineModal cycle selection', () => {
     expect(document.body.textContent).toContain('本周期评估结论');
     expect(document.body.textContent).toContain('历史周期结论');
 
-    act(() => (document.querySelector('[data-cycle-switcher]') as HTMLButtonElement).click());
-    act(() => (document.querySelector('[data-option-cycle-id="cycle-current"]') as HTMLButtonElement).click());
+    act(() => {
+      switcher.value = 'cycle-current';
+      switcher.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     await flush();
     const currentEval = document.querySelector(
       'button[data-cycle-id="cycle-current"][data-stage="eval"]',
@@ -277,5 +287,48 @@ describe('SegmentLifelineModal cycle selection', () => {
     expect(
       document.querySelector('[data-version-node="2"] button[data-cycle-id="cycle-current"][data-stage="tracing"]'),
     ).toBeNull();
+  });
+
+  it('states when evolve changed sibling segments but left the selected segment unchanged', async () => {
+    const data = evaluationFor(prior);
+    const objective = data.objectives[0];
+    objective.latestGovernance = {
+      cycleId: prior.cycleId,
+      decision: 'evolve',
+      reason: '改进同一 Objective 下的兄弟段',
+      writtenAt: 220,
+      by: 'evaluator',
+      approval: null,
+      impact: { changedUnitIds: ['S13'], selectedSegmentChanged: false },
+    };
+
+    act(() => root.render(<ObjectiveGovernancePanel data={data} />));
+
+    expect(document.body.textContent).toContain('改动 S13；本段 D1 未变');
+  });
+
+  it('explains that an insufficient-evidence cycle skips governance and rolls its window forward', async () => {
+    const data = evaluationFor(prior);
+    const objective = data.objectives[0];
+    objective.selectedCycle = {
+      ...prior,
+      evaluation: { overall: 'insufficient_evidence', writtenAt: 210, by: 'evaluator' },
+      governance: null,
+      governanceImpact: null,
+    };
+    objective.latestEvaluation = {
+      cycleId: prior.cycleId,
+      overall: 'insufficient_evidence',
+      writtenAt: 210,
+      by: 'evaluator',
+      windows: prior.windows,
+    };
+    objective.latestGovernance = null;
+
+    act(() => root.render(<ObjectiveEvaluationPanel data={data} />));
+    expect(document.body.textContent).toContain('证据不足，本周期不进入治理；已并入下一周期继续累计。');
+
+    act(() => root.render(<ObjectiveGovernancePanel data={data} />));
+    expect(document.body.textContent).toContain('证据不足，本周期不进入治理；已并入下一周期继续累计。');
   });
 });

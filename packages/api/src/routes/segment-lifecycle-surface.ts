@@ -12,6 +12,7 @@ import { getCachedRegistry, refreshOverrideSnapshot } from '../domains/prompt-ho
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import type { CycleGovernanceCoordinator } from '../infrastructure/harness-eval/governance/CycleGovernanceCoordinator.js';
+import type { HarnessGovernanceProposalStore } from '../infrastructure/harness-eval/governance/HarnessGovernanceProposalStore.js';
 import { harnessGovernanceCandidateRoutes } from './harness-governance-candidate-routes.js';
 import { promptInjectionOverrideRoutes } from './prompt-injection-overrides.js';
 import { segmentEvaluationRoutes } from './segment-evaluation.js';
@@ -26,6 +27,7 @@ export interface SegmentLifecycleSurfaceOptions {
   threadStore?: IThreadStore;
   runtime?: ObjectiveEvaluationRuntime;
   governance?: CycleGovernanceCoordinator;
+  proposals?: HarnessGovernanceProposalStore;
 }
 
 /**
@@ -64,7 +66,7 @@ export async function registerSegmentLifecycleSurface(
       };
     },
   });
-  await app.register(segmentEvaluationRoutes, { runtime: options.runtime });
+  await app.register(segmentEvaluationRoutes, { runtime: options.runtime, proposals: options.proposals });
   await app.register(segmentLifelineReplayRoutes, {
     traceStore: options.traceStore,
     guardRejectionLog: options.guardRejectionLog,

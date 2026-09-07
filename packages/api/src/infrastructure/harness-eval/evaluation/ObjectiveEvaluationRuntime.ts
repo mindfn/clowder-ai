@@ -6,7 +6,7 @@ import { CycleRecordStore } from './CycleRecordStore.js';
 import { CycleTriggerChecker, type CycleVersionRef } from './CycleTriggerChecker.js';
 import { EvaluationIndexer } from './EvaluationIndexer.js';
 import { type EvaluationCatalog } from './evaluation-catalog.js';
-import type { ObjectiveVersionState } from './ObjectiveVersionStore.js';
+import { type ObjectiveVersionState, segmentVersionFromContentRef } from './ObjectiveVersionStore.js';
 
 export class ObjectiveEvaluationRuntime {
   readonly indexer: EvaluationIndexer;
@@ -19,7 +19,7 @@ export class ObjectiveEvaluationRuntime {
   ) => CycleVersionRef | Promise<CycleVersionRef>;
 
   constructor(
-    redis: RedisClient,
+    private readonly redis: RedisClient,
     readonly catalog: EvaluationCatalog,
     readonly annotations: TraceAnnotationStore,
     options: {
@@ -55,6 +55,10 @@ export class ObjectiveEvaluationRuntime {
 
   resolveVersion(objectiveId: string, state: ObjectiveVersionState): Promise<CycleVersionRef> {
     return Promise.resolve(this.resolveVersionFn(objectiveId, state));
+  }
+
+  resolveSegmentVersion(versionContentRef: string, segmentId: string): Promise<number | null> {
+    return segmentVersionFromContentRef(this.redis, versionContentRef, segmentId);
   }
 
   async append(annotation: TraceAnnotation): Promise<{
