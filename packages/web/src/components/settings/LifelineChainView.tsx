@@ -8,8 +8,8 @@
  * vertical so rollback branches remain truthful without an unbounded row.
  */
 
-import type { SegmentCycleSummary, VersionActivation, VersionEpoch } from '@cat-cafe/shared';
-import { useCallback, useState } from 'react';
+import type { SegmentCycleSummary, VersionEpoch } from '@cat-cafe/shared';
+import { useCallback } from 'react';
 import { SettingsBadge, SettingsText } from './primitives';
 import { explainVerdict } from './verdict-explanations';
 
@@ -22,7 +22,6 @@ export interface SelectedStage {
 interface LifelineChainViewProps {
   chain: VersionEpoch[];
   cycles?: SegmentCycleSummary[];
-  versionActivations?: VersionActivation[];
   currentCycleId?: string | null;
   selected: SelectedStage | null;
   onSelect: (stage: SelectedStage) => void;
@@ -31,7 +30,6 @@ interface LifelineChainViewProps {
 export function LifelineChainView({
   chain,
   cycles = [],
-  versionActivations = [],
   currentCycleId = null,
   selected,
   onSelect,
@@ -57,8 +55,8 @@ export function LifelineChainView({
         版本生命线
       </SettingsText>
       <div className="space-y-2" data-version-tree>
-        {chain.map((epoch, index) => {
-          const epochCycles = cyclesForEpoch(chain, index, cycles, versionActivations);
+        {chain.map((epoch) => {
+          const epochCycles = cyclesForEpoch(epoch, cycles);
           return (
             <EpochNode
               key={`${epoch.version}:${epoch.startedAt}`}
@@ -91,7 +89,6 @@ function EpochNode({
   onSelect: (version: number, stage: SelectedStage['stage'], cycleId?: string) => void;
   depth: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const selectedCycle = cycles.find((cycle) => cycle.cycleId === selected?.cycleId);
   const currentCycle = cycles.find((cycle) => cycle.cycleId === currentCycleId);
   const visibleCycle = selectedCycle ?? currentCycle ?? cycles.at(-1) ?? null;
@@ -125,15 +122,13 @@ function EpochNode({
             <CycleStages
               version={epoch.version}
               cycle={visibleCycle}
-              ordinal={visibleCycle.ordinal ?? visibleCycleIndex + 1}
-              total={cycles.length}
-              expanded={expanded}
+              localOrdinal={visibleCycleIndex + 1}
+              cycles={cycles}
               isCurrentCycle={
                 visibleCycle.cycleId === currentCycleId || (!currentCycleId && visibleCycle.closedAt == null)
               }
               selected={selected}
               onSelect={onSelect}
-              onToggle={() => setExpanded((value) => !value)}
             />
           </>
         ) : (
@@ -143,27 +138,6 @@ function EpochNode({
           </>
         )}
       </div>
-      {expanded && cycles.length > 1 && (
-        <div className="mt-2 flex flex-wrap gap-1.5" data-cycle-options>
-          {cycles.map((cycle, index) => (
-            <button
-              key={cycle.cycleId}
-              type="button"
-              data-cycle-option
-              data-option-cycle-id={cycle.cycleId}
-              aria-pressed={cycle.cycleId === visibleCycle?.cycleId}
-              className="rounded-full border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-2.5 py-1 text-xs text-cafe-secondary transition-colors hover:bg-[var(--console-hover-bg)]"
-              onClick={() => {
-                setExpanded(false);
-                onSelect(epoch.version, activeStageForCycle(cycle), cycle.cycleId);
-              }}
-            >
-              第 {cycle.ordinal ?? index + 1} 周期
-              {cycle.cycleId === currentCycleId ? ' · 当前' : ''}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -171,23 +145,19 @@ function EpochNode({
 function CycleStages({
   version,
   cycle,
-  ordinal,
-  total,
-  expanded,
+  localOrdinal,
+  cycles,
   isCurrentCycle,
   selected,
   onSelect,
-  onToggle,
 }: {
   version: number;
   cycle: SegmentCycleSummary;
-  ordinal: number;
-  total: number;
-  expanded: boolean;
+  localOrdinal: number;
+  cycles: SegmentCycleSummary[];
   isCurrentCycle: boolean;
   selected: SelectedStage | null;
   onSelect: (version: number, stage: SelectedStage['stage'], cycleId?: string) => void;
-  onToggle: () => void;
 }) {
   const currentStage = isCurrentCycle ? activeStageForCycle(cycle) : null;
   const stages: Array<{ stage: 'tracing' | 'eval' | 'governance'; title: string }> = [
@@ -221,25 +191,28 @@ function CycleStages({
           />
         </span>
       ))}
-      {total > 1 ? (
-        <button
-          type="button"
-          data-cycle-switcher
-          aria-expanded={expanded}
-          onClick={onToggle}
-          className="ml-1 rounded-full border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-2 py-0.5 text-micro text-cafe-muted transition-colors hover:bg-[var(--console-hover-bg)]"
-          title={`周期起点：${new Date(cycle.cycleStart).toLocaleString()}`}
-        >
-          第 {ordinal} 周期 · 选择
-        </button>
-      ) : (
-        <span
-          className="ml-1 rounded-full border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-2 py-0.5 text-micro text-cafe-muted"
-          title={`周期起点：${new Date(cycle.cycleStart).toLocaleString()}`}
-        >
-          第 {ordinal} 周期
-        </span>
-      )}
+      <select
+        data-cycle-switcher
+        aria-label={`v${version} 周期`}
+        value={cycle.cycleId}
+        onChange={(event) => {
+          const next = cycles.find((candidate) => candidate.cycleId === event.currentTarget.value);
+          if (next) onSelect(version, activeStageForCycle(next), next.cycleId);
+        }}
+        className="ml-1 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-2 py-0.5 text-micro text-cafe-secondary outline-none focus:border-cafe-accent"
+        title={`当前为本版本周期 ${localOrdinal}；周期起点：${new Date(cycle.cycleStart).toLocaleString()}`}
+      >
+        {cycles.map((candidate, index) => (
+          <option
+            key={candidate.cycleId}
+            data-cycle-option
+            data-option-cycle-id={candidate.cycleId}
+            value={candidate.cycleId}
+          >
+            周期 {index + 1}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -331,35 +304,10 @@ function StageBadge({
   );
 }
 
-function cyclesForEpoch(
-  chain: VersionEpoch[],
-  index: number,
-  cycles: SegmentCycleSummary[],
-  activations: VersionActivation[],
-): SegmentCycleSummary[] {
-  const epoch = chain[index];
-  if (activations.length > 0) {
-    return cycles
-      .filter((cycle) => activeVersionAt(activations, cycle.cycleStart, chain[0]?.version) === epoch.version)
-      .sort((left, right) => left.cycleStart - right.cycleStart || left.cycleId.localeCompare(right.cycleId));
-  }
-  const nextStartedAt = chain[index + 1]?.startedAt ?? Number.POSITIVE_INFINITY;
+function cyclesForEpoch(epoch: VersionEpoch, cycles: SegmentCycleSummary[]): SegmentCycleSummary[] {
   return cycles
-    .filter((cycle) => cycle.cycleStart >= epoch.startedAt && cycle.cycleStart < nextStartedAt)
+    .filter((cycle) => cycle.segmentVersion === epoch.version)
     .sort((left, right) => left.cycleStart - right.cycleStart || left.cycleId.localeCompare(right.cycleId));
-}
-
-export function activeVersionAt(
-  activations: VersionActivation[],
-  timestamp: number,
-  fallback?: number,
-): number | undefined {
-  let version = fallback;
-  for (const activation of activations) {
-    if (activation.timestamp > timestamp) break;
-    version = activation.version;
-  }
-  return version;
 }
 
 function versionDepth(epoch: VersionEpoch, chain: VersionEpoch[]): number {

@@ -329,14 +329,19 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
-  test('returns 403 for cross-user thread access', async () => {
+  test('returns 403 when the replay snapshot belongs to another user', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const redis = new FakeRedis();
     const traceStore = new InjectionTraceStore(redis);
     const messageStore = new MessageStore();
 
-    const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: { ownerUserId: 'other-user' },
+    });
     await seedTurn(traceStore, {
       threadId: snapshot.threadId,
       turnId: snapshot.turnId,
@@ -345,13 +350,37 @@ describe('segment-lifeline-replay route', () => {
     });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
-    const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore('other-user') });
+    const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore('system') });
     const res = await app.inject({
       method: 'GET',
       url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
       headers: SESSION_HEADERS,
     });
     assert.equal(res.statusCode, 403);
+    await app.close();
+  });
+
+  test('allows the snapshot owner to replay a system-created evaluation thread', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+    const snapshot = makeSnapshot({ threadId: 'thread_eval_tool-access', turnId: '1', segmentId: 'S-test' });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore('system') });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=thread_eval_tool-access&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
     await app.close();
   });
 

@@ -485,6 +485,106 @@ describe('F257 SegmentEvaluationReadModel', () => {
     );
   });
 
+  test('attributes the first post-evolve cycle to its frozen segment version instead of the earlier cycleStart activation', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    const prior = currentCycle({
+      cycleId: 'cycle-prior',
+      version: 'objective-old',
+      versionContentRef: 'hook-versions:S13@1',
+      cycleStart: 100,
+      cycleEnd: 200,
+      closedAt: 230,
+    });
+    await seedHistory(redis, prior);
+    await seedCurrent(
+      redis,
+      currentCycle({
+        cycleStart: 200,
+        version: 'objective-new',
+        versionContentRef: 'hook-versions:S13@2',
+      }),
+    );
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.deepEqual(
+      view.objectives[0].versionChain.map((cycle) => [cycle.cycleId, cycle.segmentVersion]),
+      [
+        ['cycle-prior', 1],
+        ['cycle-current', 2],
+      ],
+    );
+  });
+
+  test('resolves the segment version from an immutable Objective snapshot', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    const ref = 'harness-objective-version:tool-access:digest-v2';
+    await redis.set(
+      ref,
+      JSON.stringify({
+        schemaVersion: 1,
+        objective: { id: 'tool-access' },
+        units: [
+          { unitId: 'S13', activeContentVersion: 2 },
+          { unitId: 'C1', activeContentVersion: 4 },
+        ],
+      }),
+    );
+    await seedCurrent(redis, currentCycle({ version: 'objective-digest-v2', versionContentRef: ref }));
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.equal(view.objectives[0].currentCycle.segmentVersion, 2);
+  });
+
+  test('projects which proposal units changed and whether the selected segment stayed unchanged', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    await seedCurrent(
+      redis,
+      currentCycle({
+        evalStatus: 'written',
+        evaluation: { overall: 'complete', writtenAt: 220, by: 'cat-eval', metrics: [] },
+        governance: { decision: 'evolve', reason: 'tighten sibling guidance', writtenAt: 230, by: 'cat-eval' },
+        approval: { cardId: 'HGP-sibling', state: 'approved', rejectCount: 0, at: 240 },
+      }),
+    );
+    const proposals = {
+      async get(proposalId) {
+        assert.equal(proposalId, 'HGP-sibling');
+        return { changes: [{ unitId: 'C1' }, { unitId: 'L5' }, { unitId: 'C1' }] };
+      },
+    };
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300, proposals).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.deepEqual(view.objectives[0].selectedCycle.governanceImpact, {
+      changedUnitIds: ['C1', 'L5'],
+      selectedSegmentChanged: false,
+    });
+    assert.deepEqual(view.objectives[0].latestGovernance.impact, {
+      changedUnitIds: ['C1', 'L5'],
+      selectedSegmentChanged: false,
+    });
+  });
+
   test('resolves explicit version windows and rejects partial coordinates', () => {
     assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
     assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);

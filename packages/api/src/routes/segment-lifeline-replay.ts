@@ -5,8 +5,8 @@
  * variable bindings, nearby guard events, and captured conversation context
  * for a single (segmentId, threadId, turnId) observation.
  *
- * Auth: session-only (read surface, no mutation). Thread ownership is verified
- * via threadStore; cross-user access is rejected.
+ * Auth: session-only (read surface, no mutation). ReplaySnapshot.ownerUserId is
+ * the ownership truth; threadStore verifies that the referenced thread exists.
  *
  * Truth source: ReplaySnapshot (durable, owner-scoped, TTL=0). The compact
  * InjectionTraceSummary/detail is NOT the replay source; missing snapshots are
@@ -34,7 +34,7 @@ export interface SegmentLifelineReplayRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   /** Message store for surrounding conversation context. Absence = unavailable gap. */
   messageStore?: IMessageStore;
-  /** Thread store for ownership authorization. Absence = 503. */
+  /** Thread store for referenced-thread existence verification. Absence = 503. */
   threadStore?: IThreadStore;
 }
 
@@ -50,10 +50,9 @@ function requireSession(request: FastifyRequest, reply: FastifyReply): string | 
   return userId;
 }
 
-async function requireThreadAccess(
+async function requireThreadExists(
   threadStore: IThreadStore | undefined,
   threadId: string,
-  userId: string,
   reply: FastifyReply,
 ): Promise<boolean> {
   if (!threadStore) {
@@ -64,10 +63,6 @@ async function requireThreadAccess(
     const thread = await threadStore.get(threadId);
     if (!thread) {
       reply.status(404).send({ error: 'Thread not found' });
-      return false;
-    }
-    if (thread.createdBy !== userId) {
-      reply.status(403).send({ error: 'Access denied' });
       return false;
     }
     return true;
@@ -268,9 +263,9 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     if (!threadId || !turnId) {
       return reply.status(400).send({ error: 'threadId and turnId are required' });
     }
-
-    const hasAccess = await requireThreadAccess(opts.threadStore, threadId, userId, reply);
-    if (!hasAccess) return;
+    if (!opts.threadStore) {
+      return reply.status(503).send({ error: 'Thread store unavailable' });
+    }
 
     const snapshot = await opts.traceStore.getReplaySnapshot(threadId, turnId, segmentId);
     if (!snapshot) {
@@ -279,6 +274,9 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     if (snapshot.ownerUserId !== userId) {
       return reply.status(403).send({ error: 'Access denied' });
     }
+
+    const threadExists = await requireThreadExists(opts.threadStore, threadId, reply);
+    if (!threadExists) return;
 
     const contentValidation = validateStringField(snapshot.content);
     const sourceKindValidation = validateSourceKind(snapshot.contentSourceKind);
