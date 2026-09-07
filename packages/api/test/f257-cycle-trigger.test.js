@@ -3,6 +3,9 @@ import { describe, test } from 'node:test';
 
 const { CycleRecordStore } = await import('../dist/infrastructure/harness-eval/evaluation/CycleRecordStore.js');
 const { CycleTriggerChecker } = await import('../dist/infrastructure/harness-eval/evaluation/CycleTriggerChecker.js');
+const { ManualVersionCycleService } = await import(
+  '../dist/infrastructure/harness-eval/evaluation/ManualVersionCycleService.js'
+);
 
 class FakeRedis {
   strings = new Map();
@@ -188,6 +191,203 @@ function seedHistory(redis, record) {
 }
 
 describe('F257 CycleRecord trigger checker', () => {
+  test('manual version switch archives tracing and carries old evidence without using it to wake the new cycle', async () => {
+    const episodes = [episode('old-a', 100), episode('old-b', 200), episode('new-a', 600), episode('new-b', 700)];
+    const context = createHarness({ episodes });
+    const current = await context.store.initialize(
+      'owner-1',
+      'obj',
+      0,
+      { version: 'objective-v3', versionContentRef: 'hooks:D1@3' },
+      {
+        triggerPolicy: {
+          cumulativeThreshold: 3,
+          counterexampleThreshold: 2,
+          cadenceDays: 7,
+          minimumIntervalMs: 0,
+          consecutiveKeepCycles: 0,
+          consecutiveCadenceKeepCycles: 0,
+        },
+        objectiveLifecycle: 'active',
+      },
+    );
+    let activeVersion = 3;
+    const activations = [];
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: context.store,
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: 'objective-v2', versionContentRef: 'hooks:D1@2' };
+        },
+        async resolveSegmentVersion(versionContentRef) {
+          return Number(versionContentRef.match(/@([0-9]+)$/)?.[1] ?? 0);
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return activeVersion;
+        },
+        async activateVersion(_segmentId, version) {
+          activations.push(version);
+          activeVersion = version;
+        },
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 500,
+    });
+
+    const switched = await service.switch({
+      ownerUserId: 'owner-1',
+      segmentId: 'D1',
+      targetVersion: 2,
+      actorId: 'owner-1',
+      reason: '手动切换当前版本至 v2',
+    });
+    const archived = await context.store.historyCycle('owner-1', 'obj', current.cycleId);
+
+    assert.deepEqual(activations, [2]);
+    assert.equal(archived.cycleEnd, 500);
+    assert.deepEqual(archived.termination, {
+      kind: 'manual-version-switch',
+      segmentId: 'D1',
+      fromVersion: 3,
+      toVersion: 2,
+      at: 500,
+      by: 'owner-1',
+      reason: '手动切换当前版本至 v2',
+    });
+    assert.equal(switched.currentCycle.cycleStart, 500);
+    assert.equal(switched.currentCycle.versionContentRef, 'hooks:D1@2');
+    assert.deepEqual(switched.currentCycle.carryoverWindows, [
+      {
+        start: 0,
+        end: 500,
+        provenance: {
+          kind: 'manual-version-switch',
+          sourceCycleId: current.cycleId,
+          sourceVersion: 'objective-v3',
+          sourceVersionContentRef: 'hooks:D1@3',
+          sourceSegmentId: 'D1',
+          sourceSegmentVersion: 3,
+        },
+      },
+    ]);
+
+    const belowNativeThreshold = await context.checker.checkObjective('owner-1', 'obj', 800);
+    assert.equal(belowNativeThreshold.status, 'idle', 'old v3 evidence must not wake the new v2 cycle');
+    episodes.push(episode('new-c', 750));
+    const requested = await context.checker.checkObjective('owner-1', 'obj', 800);
+    assert.equal(requested.status, 'requested');
+    assert.deepEqual(requested.record.windows, [switched.currentCycle.carryoverWindows[0], { start: 500, end: 800 }]);
+    await assert.rejects(
+      service.switch({
+        ownerUserId: 'owner-1',
+        segmentId: 'D1',
+        targetVersion: 3,
+        actorId: 'owner-1',
+        reason: 'must wait',
+      }),
+      /manual_version_switch_evaluation_in_progress/,
+    );
+    assert.deepEqual(activations, [2], 'blocked switch must not mutate the active content version');
+  });
+
+  test('initializes a missing Objective cycle before switching the active content version', async () => {
+    const context = createHarness({ version: 'objective-v3' });
+    let activeVersion = 3;
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: context.store,
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: 'objective-v2', versionContentRef: 'hooks:D1@2' };
+        },
+        async resolveSegmentVersion(versionContentRef) {
+          return Number(versionContentRef.match(/(?:@|v)([0-9]+)$/)?.[1] ?? 0);
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return activeVersion;
+        },
+        async activateVersion(_segmentId, version) {
+          activeVersion = version;
+        },
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 500,
+    });
+
+    const switched = await service.switch({
+      ownerUserId: 'owner-1',
+      segmentId: 'D1',
+      targetVersion: 2,
+      actorId: 'owner-1',
+      reason: 'fresh runtime switch',
+    });
+
+    assert.equal(switched.fromVersion, 3);
+    assert.equal(switched.toVersion, 2);
+    assert.equal(switched.currentCycle.cycleStart, 500);
+    assert.equal((await context.store.history('owner-1', 'obj')).length, 1);
+  });
+
+  test('compensates the active version when the durable cycle CAS loses', async () => {
+    const context = createHarness();
+    await context.store.initialize('owner-1', 'obj', 0, {
+      version: 'objective-v3',
+      versionContentRef: 'hooks:D1@3',
+    });
+    let activeVersion = 3;
+    const activations = [];
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: {
+          current: (...args) => context.store.current(...args),
+          async switchVersion() {
+            return null;
+          },
+        },
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: 'objective-v2', versionContentRef: 'hooks:D1@2' };
+        },
+        async resolveSegmentVersion(versionContentRef) {
+          return Number(versionContentRef.match(/@([0-9]+)$/)?.[1] ?? 0);
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return activeVersion;
+        },
+        async activateVersion(_segmentId, version) {
+          activations.push(version);
+          activeVersion = version;
+        },
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 500,
+    });
+
+    await assert.rejects(
+      service.switch({
+        ownerUserId: 'owner-1',
+        segmentId: 'D1',
+        targetVersion: 2,
+        actorId: 'owner-1',
+        reason: 'switch with a losing CAS',
+      }),
+      /manual_version_switch_concurrent_transition/,
+    );
+    assert.deepEqual(activations, [2, 3]);
+    assert.equal(activeVersion, 3);
+    assert.equal((await context.store.current('owner-1', 'obj')).versionContentRef, 'hooks:D1@3');
+  });
+
   test('initializes the first cycle from the owner pool even when its segment is absent', async () => {
     const { checker, store } = createHarness({ episodes: [episode('absent-only', 100, 'absent')] });
     const result = await checker.checkObjective('owner-1', 'obj', 5_000);

@@ -289,6 +289,8 @@ describe('F257 SegmentEvaluationReadModel', () => {
       policyChangeCount: 0,
       cycleStartMs: 100,
       cycleEndMs: null,
+      lastClosedAtMs: null,
+      minimumIntervalMs: 7_200_000,
       triggeredBy: [],
       cumulative: { count: 2, threshold: 200 },
       counterexamples: { count: 1, threshold: 3 },
@@ -552,19 +554,32 @@ describe('F257 SegmentEvaluationReadModel', () => {
   test('projects which proposal units changed and whether the selected segment stayed unchanged', async () => {
     const redis = new FakeRedis();
     const { runtime } = runtimeFor(redis, []);
-    await seedCurrent(
+    await seedHistory(
       redis,
       currentCycle({
+        cycleId: 'cycle-sibling-evolve',
+        versionContentRef: 'hooks:S13@1,C1@1,L5@2',
+        cycleEnd: 200,
         evalStatus: 'written',
         evaluation: { overall: 'complete', writtenAt: 220, by: 'cat-eval', metrics: [] },
         governance: { decision: 'evolve', reason: 'tighten sibling guidance', writtenAt: 230, by: 'cat-eval' },
         approval: { cardId: 'HGP-sibling', state: 'approved', rejectCount: 0, at: 240 },
+        closedAt: 240,
       }),
+    );
+    await seedCurrent(
+      redis,
+      currentCycle({ cycleStart: 200, version: 'objective-v2', versionContentRef: 'hooks:S13@1,C1@2,L5@2' }),
     );
     const proposals = {
       async get(proposalId) {
         assert.equal(proposalId, 'HGP-sibling');
-        return { changes: [{ unitId: 'C1' }, { unitId: 'L5' }, { unitId: 'C1' }] };
+        return {
+          changes: [
+            { action: 'modify', unitId: 'C1', sourceVersion: 1 },
+            { action: 'disable', unitId: 'L5' },
+          ],
+        };
       },
     };
 
@@ -573,16 +588,35 @@ describe('F257 SegmentEvaluationReadModel', () => {
       segmentId: 'S13',
       startMs: 0,
       endMs: 300,
+      cycleId: 'cycle-sibling-evolve',
     });
 
     assert.deepEqual(view.objectives[0].selectedCycle.governanceImpact, {
       changedUnitIds: ['C1', 'L5'],
       selectedSegmentChanged: false,
+      changes: [
+        { action: 'modify', unitId: 'C1', sourceVersion: 1, targetVersion: 2 },
+        { action: 'disable', unitId: 'L5', sourceVersion: 2, targetVersion: 2 },
+      ],
     });
     assert.deepEqual(view.objectives[0].latestGovernance.impact, {
       changedUnitIds: ['C1', 'L5'],
       selectedSegmentChanged: false,
+      changes: [
+        { action: 'modify', unitId: 'C1', sourceVersion: 1, targetVersion: 2 },
+        { action: 'disable', unitId: 'L5', sourceVersion: 2, targetVersion: 2 },
+      ],
     });
+    assert.equal(view.tracing.trigger.objective.lastClosedAtMs, null, 'historical selection has no earlier cycle');
+    assert.equal(view.tracing.trigger.objective.minimumIntervalMs, 7_200_000);
+
+    const currentView = await new SegmentEvaluationReadModel(runtime, () => 300, proposals).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+    assert.equal(currentView.tracing.trigger.objective.lastClosedAtMs, 240);
   });
 
   test('resolves explicit version windows and rejects partial coordinates', () => {

@@ -29,6 +29,7 @@ const prior: SegmentCycleSummary = {
   governanceImpact: null,
   approval: null,
   rejectReasons: [],
+  termination: null,
   closedAt: 220,
 };
 
@@ -116,6 +117,8 @@ function evaluationFor(selected: SegmentCycleSummary): SegmentEvaluationResponse
           evalStatus: selected.evalStatus,
           cycleStartMs: selected.cycleStart,
           cycleEndMs: selected.cycleEnd,
+          lastClosedAtMs: isPrior ? null : prior.closedAt,
+          minimumIntervalMs: 7_200_000,
           triggeredBy: selected.triggeredBy,
           cumulative: { count: isPrior ? 200 : 26, threshold: 300 },
           counterexamples: { count: 0, threshold: 3 },
@@ -299,12 +302,38 @@ describe('SegmentLifelineModal cycle selection', () => {
       writtenAt: 220,
       by: 'evaluator',
       approval: null,
-      impact: { changedUnitIds: ['S13'], selectedSegmentChanged: false },
+      impact: {
+        changedUnitIds: ['S13'],
+        selectedSegmentChanged: false,
+        changes: [{ action: 'modify', unitId: 'S13', sourceVersion: 1, targetVersion: 2 }],
+      },
     };
 
     act(() => root.render(<ObjectiveGovernancePanel data={data} />));
 
-    expect(document.body.textContent).toContain('改动 S13；本段 D1 未变');
+    expect(document.body.textContent).toContain('演进 S13：v1 → v2；本段 D1 未变');
+  });
+
+  it('does not present a skipped proposal as an applied version edge', () => {
+    const data = evaluationFor(prior);
+    data.objectives[0].latestGovernance = {
+      cycleId: prior.cycleId,
+      decision: 'evolve',
+      reason: 'proposal was not accepted',
+      writtenAt: 220,
+      by: 'evaluator',
+      approval: { cardId: 'HGP-skipped', state: 'skipped', rejectCount: 0, at: 230 },
+      impact: {
+        changedUnitIds: ['S13'],
+        selectedSegmentChanged: false,
+        changes: [{ action: 'modify', unitId: 'S13', sourceVersion: 1, targetVersion: null }],
+      },
+    };
+
+    act(() => root.render(<ObjectiveGovernancePanel data={data} />));
+
+    expect(document.body.textContent).toContain('提案未应用，版本未变化');
+    expect(document.body.textContent).not.toContain('v1 → v1');
   });
 
   it('explains that an insufficient-evidence cycle skips governance and rolls its window forward', async () => {
@@ -330,5 +359,31 @@ describe('SegmentLifelineModal cycle selection', () => {
 
     act(() => root.render(<ObjectiveGovernancePanel data={data} />));
     expect(document.body.textContent).toContain('证据不足，本周期不进入治理；已并入下一周期继续累计。');
+  });
+
+  it('shows an operator version switch as an explicit stopped cycle', () => {
+    const data = evaluationFor(prior);
+    const objective = data.objectives[0];
+    objective.selectedCycle = {
+      ...prior,
+      governance: null,
+      governanceImpact: null,
+      termination: {
+        kind: 'manual-version-switch',
+        segmentId: 'D1',
+        fromVersion: 3,
+        toVersion: 2,
+        at: 230,
+        by: 'default-user',
+        reason: '信息不足，切回已验证版本',
+      },
+    };
+    objective.latestGovernance = null;
+
+    act(() => root.render(<ObjectiveGovernancePanel data={data} />));
+    expect(document.body.textContent).toContain('已停止');
+    expect(document.body.textContent).toContain('D1：v3 → v2');
+    expect(document.body.textContent).toContain('信息不足，切回已验证版本');
+    expect(document.body.textContent).not.toContain('历史周期保持');
   });
 });

@@ -15,6 +15,7 @@ import { ObjectiveEvaluationPanel } from './ObjectiveEvaluationPanel';
 import { ObjectiveGovernancePanel } from './ObjectiveGovernancePanel';
 import { SettingsBadge, SettingsText } from './primitives';
 import { SegmentTraceTheater } from './SegmentTraceTheater';
+import { ActivateVersionButton } from './VersionActions';
 
 interface SegmentLifelineModalProps {
   segmentId: string;
@@ -77,6 +78,10 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   const selectedCycle = useMemo(
     () => cycles.find((cycle) => cycle.cycleId === selected?.cycleId) ?? null,
     [cycles, selected?.cycleId],
+  );
+  const currentCycle = useMemo(
+    () => cycles.find((cycle) => cycle.cycleId === currentCycleId) ?? null,
+    [cycles, currentCycleId],
   );
   const selectedWindow = useMemo(() => {
     if (!lifeline) return null;
@@ -237,7 +242,13 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                 onSelect={handleSelect}
               />
               {selectedEpoch && selected?.stage === 'version' && (
-                <VersionContentPreview segmentId={segmentId} epoch={selectedEpoch} />
+                <VersionContentPreview
+                  segmentId={segmentId}
+                  epoch={selectedEpoch}
+                  currentEvalStatus={currentCycle?.evalStatus ?? 'idle'}
+                  enablementMatrix={lifeline.enablementMatrix}
+                  onRefresh={fetchLifeline}
+                />
               )}
               {selectedEpoch && selected?.stage === 'tracing' && (
                 <SegmentTraceTheater
@@ -327,7 +338,19 @@ interface VersionContentResponse {
   content: string;
 }
 
-export function VersionContentPreview({ segmentId, epoch }: { segmentId: string; epoch: VersionEpoch }) {
+export function VersionContentPreview({
+  segmentId,
+  epoch,
+  currentEvalStatus,
+  enablementMatrix,
+  onRefresh,
+}: {
+  segmentId: string;
+  epoch: VersionEpoch;
+  currentEvalStatus?: SegmentCycleSummary['evalStatus'];
+  enablementMatrix?: SegmentLifecycleResponse['enablementMatrix'];
+  onRefresh?: () => void;
+}) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -392,6 +415,17 @@ export function VersionContentPreview({ segmentId, epoch }: { segmentId: string;
         <pre className="mt-3 max-h-[440px] overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--console-card-bg)] p-4 font-mono text-xs leading-6 text-cafe-secondary">
           {content || '该版本没有可预览内容'}
         </pre>
+      )}
+      {!epoch.isActive && enablementMatrix && onRefresh && (
+        <div className="mt-3">
+          <ActivateVersionButton
+            hookId={segmentId}
+            epochVersion={epoch.version}
+            currentEvalStatus={currentEvalStatus ?? 'idle'}
+            enablementMatrix={enablementMatrix}
+            onRefresh={onRefresh}
+          />
+        </div>
       )}
     </section>
   );

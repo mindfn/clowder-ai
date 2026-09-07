@@ -1,4 +1,6 @@
 /** F257 TC-5/6: compact assignment and writeback contracts for one Objective cycle. */
+import type { CycleWindow } from './harness-evaluation.js';
+
 export type CycleMetricConclusion =
   | { kind: 'count'; value: number; howCounted: string }
   | { kind: 'rate-badness'; value: number; howCounted: string }
@@ -45,7 +47,8 @@ export interface CycleEvaluationAssignment {
   objective: { id: string; statement: string };
   version: string;
   versionContentRef: string;
-  windows: Array<{ start: number; end: number }>;
+  /** Native window plus any provenance-tagged supplementary evidence windows. */
+  windows: CycleWindow[];
   priorSkipReasons?: Array<{ cycleId: string; reason: string }>;
   rejectReasons?: string[];
   metrics: Array<{

@@ -47,11 +47,21 @@ export function SegmentTraceTheater({
           <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
             触发条件（满足任一条件触发）
           </SettingsText>
-          <div className="text-xs text-cafe-muted">
-            周期起点：
-            <span className="ml-1 text-cafe-secondary">
-              {cycleStart ? new Date(cycleStart).toLocaleString() : '窗口未知'}
-            </span>
+          <div className="grid gap-x-4 gap-y-1 text-xs text-cafe-muted sm:grid-cols-2">
+            <div>
+              周期起点：
+              <span className="ml-1 text-cafe-secondary">
+                {cycleStart !== null ? new Date(cycleStart).toLocaleString() : '窗口未知'}
+              </span>
+            </div>
+            <div>
+              上次周期结束：
+              <span className="ml-1 text-cafe-secondary">
+                {trigger?.objective.lastClosedAtMs !== null && trigger?.objective.lastClosedAtMs !== undefined
+                  ? new Date(trigger.objective.lastClosedAtMs).toLocaleString()
+                  : '首次周期'}
+              </span>
+            </div>
           </div>
         </div>
         <div className="mt-3">
@@ -165,6 +175,9 @@ export function SegmentTraceTheater({
  */
 function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
   const objective = trigger.objective;
+  const countThresholdSatisfied =
+    objective.cumulative.count >= objective.cumulative.threshold ||
+    objective.counterexamples.count >= objective.counterexamples.threshold;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -183,7 +196,7 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
           采集故障：owner 线性池在本周期内没有 Tracing
         </SettingsText>
       )}
-      <div className="grid gap-x-4 gap-y-1 text-cafe-muted sm:grid-cols-3">
+      <div className="grid gap-x-4 gap-y-1 text-cafe-muted sm:grid-cols-4">
         <TriggerProgress
           label="周期累计Tracing"
           value={`${objective.cumulative.count}/${objective.cumulative.threshold} 条`}
@@ -198,7 +211,19 @@ function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trig
             !objective.cadence.eligible ? '（至少需 1 条 Tracing）' : ''
           }`}
         />
+        <TriggerProgress label="最短评估间隔" value={formatDuration(objective.minimumIntervalMs)} />
       </div>
+      {countThresholdSatisfied &&
+        objective.lastClosedAtMs !== null &&
+        Date.now() < objective.lastClosedAtMs + objective.minimumIntervalMs && (
+          <div className="text-xs text-cafe-muted">
+            已满足的数量条件将在{' '}
+            <span className="text-cafe-secondary">
+              {new Date(objective.lastClosedAtMs + objective.minimumIntervalMs).toLocaleString()}
+            </span>{' '}
+            后触发评估
+          </div>
+        )}
       {objective.policyChangeCount > 0 && (
         <div className="text-cafe-muted">触发策略已调整 {objective.policyChangeCount} 次</div>
       )}
@@ -258,7 +283,7 @@ function cycleStartMs(
   trigger: SegmentTracingEvaluationView['trigger'] | undefined,
   window: { startMs: number; endMs: number } | null,
 ): number | null {
-  if (trigger?.objective.cycleStartMs && trigger.objective.cycleStartMs > 0) return trigger.objective.cycleStartMs;
+  if (trigger && trigger.objective.cycleStartMs >= 0) return trigger.objective.cycleStartMs;
   return window?.startMs ?? null;
 }
 
@@ -268,7 +293,10 @@ function routeLabel(route: SegmentTracingEvaluationView['trigger']['objective'][
 
 function formatDuration(value: number): string {
   const days = value / (24 * 60 * 60 * 1000);
-  if (days >= 1) return `${days.toFixed(days >= 10 ? 0 : 1)} 天`;
+  if (days >= 1) return `${formatMagnitude(days)} 天`;
   const hours = value / (60 * 60 * 1000);
-  return `${hours.toFixed(hours >= 10 ? 0 : 1)} 小时`;
+  return `${formatMagnitude(hours)} 小时`;
 }
+
+const formatMagnitude = (value: number) =>
+  Number.isInteger(value) ? String(value) : value.toFixed(value >= 10 ? 0 : 1);

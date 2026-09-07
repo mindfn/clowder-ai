@@ -15,6 +15,7 @@ import {
 } from '../trace-annotation/high-confidence-annotation.js';
 import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
+import { projectSegmentGovernanceImpact } from './SegmentGovernanceImpact.js';
 import { unitRefsForObjective } from './segment-evaluation-helpers.js';
 
 type ObjectiveProjection = {
@@ -145,9 +146,10 @@ export class SegmentEvaluationReadModel {
     const cycleTotal = historyCount + (current ? 1 : 0);
     const chronologicalHistory = [...history].reverse();
     const versionChain = await Promise.all(
-      chronologicalHistory.map((record, index) =>
-        this.toSummary(record, input.segmentId, historyCount - history.length + index + 1),
-      ),
+      chronologicalHistory.map((record, index) => {
+        const nextRecord = chronologicalHistory[index + 1] ?? current ?? undefined;
+        return this.toSummary(record, input.segmentId, historyCount - history.length + index + 1, nextRecord);
+      }),
     );
     if (current) versionChain.push(await this.toSummary(current, input.segmentId, cycleTotal));
     const selectedSummary = selected
@@ -158,6 +160,10 @@ export class SegmentEvaluationReadModel {
       ? (versionChain.find((cycle) => cycle.cycleId === current.cycleId) ??
         (await this.toSummary(current, input.segmentId, cycleTotal)))
       : null;
+    const lastClosedAt = history.find(
+      (record) =>
+        record.cycleId !== selected?.cycleId && record.cycleStart < cycleStart && record.closedAt !== undefined,
+    )?.closedAt;
 
     return {
       window: { start: cycleStart, end: cycleEnd },
@@ -174,6 +180,8 @@ export class SegmentEvaluationReadModel {
           ).length,
           cycleStartMs: cycleStart,
           cycleEndMs: selected?.cycleEnd ?? null,
+          lastClosedAtMs: lastClosedAt ?? null,
+          minimumIntervalMs: policy.minimumIntervalMs,
           triggeredBy: selected?.triggeredBy ?? [],
           cumulative: { count: cumulativeCount, threshold: policy.cumulativeThreshold },
           counterexamples: { count: counterexamples.length, threshold: policy.counterexampleThreshold },
@@ -221,18 +229,17 @@ export class SegmentEvaluationReadModel {
     return model;
   }
 
-  private async toSummary(record: CycleRecord, segmentId: string, ordinal?: number): Promise<SegmentCycleSummary> {
-    const [segmentVersion, proposal] = await Promise.all([
+  private async toSummary(
+    record: CycleRecord,
+    segmentId: string,
+    ordinal?: number,
+    nextRecord?: CycleRecord,
+  ): Promise<SegmentCycleSummary> {
+    const [segmentVersion, governanceImpact] = await Promise.all([
       this.runtime.resolveSegmentVersion(record.versionContentRef, segmentId),
-      record.approval?.cardId && this.proposals ? this.proposals.get(record.approval.cardId) : null,
+      projectSegmentGovernanceImpact(this.runtime, this.proposals, record, nextRecord, segmentId),
     ]);
-    const changedUnitIds = proposal ? [...new Set(proposal.changes.map((change) => change.unitId))].sort() : null;
-    return toSummary(
-      record,
-      segmentVersion,
-      changedUnitIds ? { changedUnitIds, selectedSegmentChanged: changedUnitIds.includes(segmentId) } : null,
-      ordinal,
-    );
+    return toSummary(record, segmentVersion, governanceImpact, ordinal);
   }
 }
 
@@ -307,6 +314,7 @@ function toSummary(
     governanceImpact,
     approval: record.approval ?? null,
     rejectReasons: record.rejectReasons ?? [],
+    termination: record.termination ?? null,
     closedAt: record.closedAt ?? null,
   };
 }

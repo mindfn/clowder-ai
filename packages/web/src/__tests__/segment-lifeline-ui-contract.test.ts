@@ -388,7 +388,7 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('shows governance for the selected CycleRecord without duplicating the top lifecycle chain', () => {
-    for (const field of ['latestGovernance', 'decision', 'approval', 'selectedCycle', 'latestGovernance.by']) {
+    for (const field of ['latestGovernance', 'decision', 'approval', 'selectedCycle', 'governance.by']) {
       expect(governanceSrc).toContain(field);
     }
     expect(governanceSrc).not.toContain('版本链');

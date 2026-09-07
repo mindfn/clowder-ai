@@ -22,8 +22,9 @@ export async function buildCycleAssignment(
   if (!objective) throw new Error(`cycle_objective_not_found:${record.objectiveId}`);
   const model = deps.catalog.registry.evaluationModels.find((item) => item.id === objective.evaluationModelId);
   if (!model) throw new Error(`cycle_evaluation_model_not_found:${objective.evaluationModelId}`);
+  const priorSkipWindowCount = Math.max(0, record.windows.filter((window) => !window.provenance).length - 1);
   const priorSkipReasons = deps.history
-    .slice(0, Math.max(0, record.windows.length - 1))
+    .slice(0, priorSkipWindowCount)
     .filter(isSkippedCycle)
     .reverse()
     .map((cycle) => ({ cycleId: cycle.cycleId, reason: skipReason(cycle) }));
@@ -55,6 +56,9 @@ export async function buildCycleAssignment(
 }
 
 export function formatCycleAssignment(record: CycleRecord, assignment: CycleEvaluationAssignment): string {
+  const supplementaryGuidance = assignment.windows.some((window) => window.provenance)
+    ? 'Windows carrying manual-version-switch provenance are supplementary unconsumed evidence from their declared source version. Keep that provenance intact, assess the current assignment version, and do not treat those windows as native current-version observations or as a cross-version comparison.'
+    : null;
   return [
     '## F257 Cycle Evaluation Assignment',
     '',
@@ -63,12 +67,15 @@ export function formatCycleAssignment(record: CycleRecord, assignment: CycleEval
     'Submit every metric conclusion and the overall result with cat_cafe_submit_cycle_evaluation.',
     'Also group every high-confidence counterexample wake event in the frozen windows into semantic root causes and submit eventCount, rootCauseCount, and howGrouped. eventCount follows the trigger coordinate: replayable structured annotations count by incidentKey, while MCP markers from multiple metrics in one invocation count once. This is audit evidence only; M remains fixed.',
     'Assess detector coverage from the same full window. Report evidence-bound detector gaps, metric gaps, data insufficiency, or adequate coverage; this inferred assessment is diagnostic and never metric truth.',
+    supplementaryGuidance,
     'Conversation text is not a writeback. Do not compare this cycle with another version.',
     '',
     '```json',
     JSON.stringify(assignment),
     '```',
-  ].join('\n');
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
 }
 
 async function collectCounterexamples(

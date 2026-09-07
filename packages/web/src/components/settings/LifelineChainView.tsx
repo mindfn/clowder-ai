@@ -298,6 +298,7 @@ function cyclesForEpoch(epoch: VersionEpoch, cycles: SegmentCycleSummary[]): Seg
 }
 
 export function activeStageForCycle(cycle: SegmentCycleSummary): 'tracing' | 'eval' | 'governance' {
+  if (cycle.termination) return 'governance';
   if (cycle.evalStatus === 'idle') return 'tracing';
   if (cycle.evalStatus === 'requested' || cycle.evalStatus === 'retriggered' || cycle.evalStatus === 'stalled') {
     return 'eval';

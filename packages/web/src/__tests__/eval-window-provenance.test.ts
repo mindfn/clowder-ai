@@ -234,6 +234,8 @@ describe('F257 segment activity presentation', () => {
           evalStatus: 'idle',
           cycleStartMs: QUERY_WINDOW.startMs,
           cycleEndMs: null,
+          lastClosedAtMs: QUERY_WINDOW.startMs - 10_000,
+          minimumIntervalMs: 7_200_000,
           triggeredBy: [],
           cumulative: { count: 251, threshold: 200 },
           counterexamples: { count: 0, threshold: 3 },
@@ -311,6 +313,45 @@ describe('F257 segment activity presentation', () => {
     expect(text).not.toMatch(/\bstalled\b/);
     expect(text).not.toMatch(/\bdormant\b/);
   });
+
+  it('explains why a met counterexample threshold still waits for the minimum interval', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000_000);
+    await render(
+      createElement(SegmentTraceTheater, {
+        segmentId: 'L4',
+        observations: [],
+        window: QUERY_WINDOW,
+        readiness: readiness({
+          counterexamples: { count: 4, threshold: 3 },
+          lastClosedAtMs: 10_000_000 - 60 * 60 * 1000,
+          minimumIntervalMs: 2 * 60 * 60 * 1000,
+        }),
+      }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('周期反例Tracing4/3 次');
+    expect(text).toContain('最短评估间隔2 小时');
+    expect(text).toContain('已满足的数量条件将在');
+    expect(text).toContain('后触发评估');
+  });
+
+  it('does not claim a quantity trigger is met merely because the interval is still cooling down', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(10_000_000);
+    await render(
+      createElement(SegmentTraceTheater, {
+        segmentId: 'L4',
+        observations: [],
+        window: QUERY_WINDOW,
+        readiness: readiness({
+          cumulative: { count: 30, threshold: 400 },
+          counterexamples: { count: 0, threshold: 3 },
+          lastClosedAtMs: 10_000_000 - 60 * 60 * 1000,
+          minimumIntervalMs: 2 * 60 * 60 * 1000,
+        }),
+      }),
+    );
+    expect(container.textContent).not.toContain('已满足的数量条件将在');
+  });
 });
 
 // ── 判据② P1-1 (sol R1): composed viewport — 18 vs 0 on two coordinates at once ──
@@ -387,6 +428,7 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     governanceImpact: null,
     approval: null,
     rejectReasons: [],
+    termination: null,
     closedAt: QUERY_WINDOW.startMs + 10_000,
   };
   const currentCycle = {
@@ -517,8 +559,9 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     expect(container.querySelector('[data-version-node="3"]')?.getAttribute('data-tree-depth')).toBe('2');
     expect(container.querySelector('[data-version-node="4"]')?.getAttribute('data-tree-depth')).toBe('2');
     expect(container.querySelector('[data-version-node="5"]')?.getAttribute('data-tree-depth')).toBe('3');
-    expect(container.querySelector('[data-version-node="4"] [data-version-card]')?.className).toContain(
-      'bg-[var(--console-elevated-bg)]',
+    expect(container.querySelector('[data-version-node="4"] [data-version-card]')?.className).not.toContain('bg-[');
+    expect(container.querySelector('[data-version-node="4"] [data-cycle-surface]')?.className).toContain(
+      'bg-[var(--console-card-bg)]',
     );
     expect(container.querySelector('[data-version-node="5"] [data-version-card]')?.className).toContain(
       'bg-[var(--console-active-bg)]',
