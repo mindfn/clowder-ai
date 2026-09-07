@@ -74,4 +74,87 @@ describe('F280 PR wait cutover guards', () => {
     assert.match(review, /\[UNTRUSTED EXTERNAL CONTENT\]/);
     assert.match(review, new RegExp(SOURCE_SENTINEL));
   });
+
+  it('renders the actionable Codex response without GitHub disclosure boilerplate or silent truncation', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const review = externalResponseSummary({
+      surface: 'conversation comment',
+      id: 5564124487,
+      author: 'chatgpt-codex-connector[bot]',
+      body: [
+        "Codex Review: Didn't find any major issues. Another round soon, please!",
+        '',
+        '**Reviewed commit:** `96be44ee86`',
+        '',
+        '<details> <summary>ℹ️ About Codex in GitHub</summary>',
+        '<br/>',
+        '',
+        '[Your team has set up Codex to review pull requests in this repo](https://example.test/settings).',
+        'Codex can also answer questions or update the PR.',
+        '</details>',
+      ].join('\n'),
+    });
+
+    assert.match(review, /Codex Review: Didn't find any major issues/);
+    assert.match(review, /\*\*Reviewed commit:\*\* `96be44ee86`/);
+    assert.doesNotMatch(review, /<\/?(?:details|summary|br)\b/i);
+    assert.doesNotMatch(review, /About Codex in GitHub|set up Codex|answer questions/);
+  });
+
+  it('preserves complete multiline review content inside one quoted untrusted boundary', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const tail = 'ACTIONABLE_TAIL__must_not_be_silently_cut';
+    const body = ['Review summary', '', '- first finding', `- ${'context '.repeat(80)}${tail}`].join('\n');
+
+    const review = externalResponseSummary({
+      surface: 'formal review CHANGES_REQUESTED',
+      id: 7,
+      author: 'maintainer',
+      body,
+    });
+    const [boundary, ...quotedBody] = review.split('\n');
+
+    assert.match(boundary, /\[UNTRUSTED EXTERNAL CONTENT\]$/);
+    assert.ok(quotedBody.length > 1, 'the review body should retain its readable line structure');
+    assert.ok(
+      quotedBody.every((line) => line === '>' || line.startsWith('> ')),
+      'every body line stays quoted',
+    );
+    assert.match(review, new RegExp(tail));
+  });
+
+  it('keeps meaningful disclosure content while removing raw HTML elements', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const review = externalResponseSummary({
+      surface: 'issue comment',
+      id: 8,
+      author: 'maintainer',
+      body: '<details><summary>Reproduction</summary><p>Important <strong>finding</strong></p></details>',
+    });
+
+    assert.match(review, /Reproduction/);
+    assert.match(review, /Important finding/);
+    assert.doesNotMatch(review, /<[^>]+>/);
+  });
+
+  it('preserves HTML examples inside fenced and inline code', async () => {
+    const { externalResponseSummary } = await import('../dist/domains/github-signals/GitHubTrackingEvent.js');
+    const review = externalResponseSummary({
+      surface: 'issue comment',
+      id: 9,
+      author: 'maintainer',
+      body: [
+        'Repro with `<summary>label</summary>`:',
+        '',
+        '```html',
+        '  <details>',
+        '\t<summary>label</summary>',
+        '  </details>',
+        '```',
+      ].join('\n'),
+    });
+
+    assert.match(review, /`<summary>label<\/summary>`/);
+    assert.match(review, /> ```html\n> {3}<details>\n> \t<summary>label<\/summary>\n> {3}<\/details>\n> ```/);
+  });
 });

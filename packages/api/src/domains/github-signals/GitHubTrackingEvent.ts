@@ -423,10 +423,96 @@ export function externalResponseSummary(input: {
   readonly author: string;
   readonly body: string;
 }): string {
-  const body =
-    input.body
-      .replace(/[\r\n\t ]+/g, ' ')
-      .trim()
-      .slice(0, 500) || '(no text)';
-  return `${input.surface} #${input.id} by ${input.author} — [UNTRUSTED EXTERNAL CONTENT] ${body}`;
+  const body = normalizeExternalResponseBody(input.body) || '(no text)';
+  const quotedBody = body
+    .split('\n')
+    .map((line) => (line ? `> ${line}` : '>'))
+    .join('\n');
+  return `${input.surface} #${input.id} by ${input.author} — [UNTRUSTED EXTERNAL CONTENT]\n${quotedBody}`;
+}
+
+const GITHUB_MARKDOWN_BLOCK_BREAK =
+  /<\s*(?:br\s*\/?|\/(?:blockquote|details|div|h[1-6]|li|ol|p|pre|summary|table|tbody|td|th|thead|tr|ul))\s*>/gi;
+const GITHUB_MARKDOWN_HTML_TAG =
+  /<\/?(?:a|abbr|b|blockquote|br|code|del|details|div|em|h[1-6]|hr|i|img|kbd|li|ol|p|pre|s|span|strong|sub|summary|sup|table|tbody|td|th|thead|tr|ul)\b[^>]*>/gi;
+const GITHUB_DETAILS_BLOCK = /<details\b[^>]*>[\s\S]*?<\/details\s*>/gi;
+const CODEX_GITHUB_HELP_SUMMARY = /<summary\b[^>]*>[\s\S]*?About\s+Codex\s+in\s+GitHub[\s\S]*?<\/summary\s*>/i;
+const MARKDOWN_FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
+
+/**
+ * GitHub returns comment bodies as source Markdown. That source is safe to persist, but it is
+ * not a ready-made chat fragment: raw HTML controls render literally and flattening Markdown
+ * destroys both lists and the trust boundary. Keep the complete meaningful body, remove only
+ * the Codex connector's known help disclosure, and strip presentation-only HTML while retaining
+ * its text. Code examples stay byte-for-byte intact. The caller quotes every resulting line so
+ * external Markdown cannot impersonate the surrounding wait outcome fields.
+ */
+function normalizeExternalResponseBody(source: string): string {
+  const normalized = source.replace(/\r\n?/g, '\n');
+  const cleaned = transformOutsideFencedCode(normalized, (markdown) =>
+    transformOutsideInlineCode(markdown, (prose) =>
+      prose
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(GITHUB_DETAILS_BLOCK, (block) => (CODEX_GITHUB_HELP_SUMMARY.test(block) ? '' : block))
+        .replace(GITHUB_MARKDOWN_BLOCK_BREAK, '\n')
+        .replace(GITHUB_MARKDOWN_HTML_TAG, ''),
+    ),
+  );
+
+  return cleaned
+    .replace(/^(?:[ \t]*\n)+/, '')
+    .replace(/(?:\n[ \t]*)+$/, '')
+    .trimEnd();
+}
+
+function transformOutsideFencedCode(source: string, transform: (markdown: string) => string): string {
+  const output: string[] = [];
+  let prose: string[] = [];
+  let fence: { character: string; length: number } | undefined;
+
+  const flushProse = () => {
+    if (prose.length === 0) return;
+    output.push(transform(prose.join('\n')));
+    prose = [];
+  };
+
+  for (const line of source.split('\n')) {
+    if (fence) {
+      output.push(line);
+      const marker = line.match(/^[ \t]{0,3}(`+|~+)[ \t]*$/)?.[1];
+      if (marker?.startsWith(fence.character) && marker.length >= fence.length) {
+        fence = undefined;
+      }
+      continue;
+    }
+
+    const opening = line.match(MARKDOWN_FENCE)?.[1];
+    if (!opening) {
+      prose.push(line);
+      continue;
+    }
+
+    flushProse();
+    output.push(line);
+    fence = { character: opening[0], length: opening.length };
+  }
+
+  flushProse();
+  return output.join('\n');
+}
+
+function transformOutsideInlineCode(source: string, transform: (markdown: string) => string): string {
+  let sentinel = '\0';
+  while (source.includes(sentinel)) sentinel += '\0';
+
+  const codeSpans: string[] = [];
+  const masked = source.replace(/(`+)[\s\S]*?\1/g, (code) => {
+    const index = codeSpans.push(code) - 1;
+    return `${sentinel}${index}${sentinel}`;
+  });
+  let transformed = transform(masked);
+  for (const [index, code] of codeSpans.entries()) {
+    transformed = transformed.replace(`${sentinel}${index}${sentinel}`, code);
+  }
+  return transformed;
 }
