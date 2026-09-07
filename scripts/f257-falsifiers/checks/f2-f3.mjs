@@ -28,6 +28,16 @@ const CYCLE_RECORD_FIELDS = new Set([
   'retriggeredAt',
   'stalledAlertMessageId',
   'stalledAt',
+  // S3 governance assignment / TC-16 reminder observability: ids + timestamps only.
+  'governanceAssignmentMessageId',
+  'governanceAssignedAt',
+  'governanceReminderMessageId',
+  'governanceRemindedAt',
+  // PR #152: TC-3 adaptive N/D policy (audited per cycle), TC-18 objective lifecycle, TC-9 reject reasons.
+  'triggerPolicy',
+  'triggerPolicyChange',
+  'objectiveLifecycle',
+  'rejectReasons',
 ]);
 
 // S1 declares the CycleRecord key template + read face in its commit message; bind here.

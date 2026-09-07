@@ -67,3 +67,30 @@ describe('F-8 code-tree residue', () => {
     }
   });
 });
+
+import { parseSegmentVersionRef } from './checks/f6-cycle-coordinates.mjs';
+
+describe('F-6 cycle→version attribution truth (TC-12 @ 2193221af)', () => {
+  it('reads the segment version out of a hook-versions ref', () => {
+    assert.deepEqual(parseSegmentVersionRef('hook-versions:C1@2,L5@1,S13@2', 'C1'), {
+      scheme: 'hook-versions',
+      version: 2,
+    });
+    assert.deepEqual(parseSegmentVersionRef('hook-versions:C1@2,L5@1,S13@2', 'S13'), {
+      scheme: 'hook-versions',
+      version: 2,
+    });
+    assert.deepEqual(parseSegmentVersionRef('hook-versions:C1@2,L5@1', 'S13'), {
+      scheme: 'hook-versions',
+      version: null,
+    });
+  });
+  it('defers objective-version snapshots to Redis and rejects unknown schemes', () => {
+    assert.deepEqual(parseSegmentVersionRef('harness-objective-version:tool-access-correct-use:abc', 'C1'), {
+      scheme: 'objective-version',
+      key: 'harness-objective-version:tool-access-correct-use:abc',
+    });
+    assert.equal(parseSegmentVersionRef('evaluation-model:em-x@1', 'C1'), null);
+    assert.equal(parseSegmentVersionRef(undefined, 'C1'), null);
+  });
+});
