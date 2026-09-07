@@ -158,7 +158,11 @@ function CycleStages({
   ];
 
   return (
-    <div data-cycle-group={cycle.cycleId} className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <div
+      data-cycle-group={cycle.cycleId}
+      data-cycle-surface
+      className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-lg bg-[var(--console-card-bg)] px-2 py-1"
+    >
       {stages.map(({ stage, title }, index) => (
         <span key={stage} className="flex shrink-0 items-center gap-1.5">
           {index > 0 && <Arrow />}
@@ -217,7 +221,11 @@ function LegacyCycleStages({
     { stage: 'governance' },
   ];
   return (
-    <div data-cycle-group={`legacy-v${epoch.version}`} className="flex shrink-0 items-center gap-1.5">
+    <div
+      data-cycle-group={`legacy-v${epoch.version}`}
+      data-cycle-surface
+      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--console-card-bg)] px-2 py-1"
+    >
       {stages.map(({ stage, title }) => (
         <span key={stage} className="flex shrink-0 items-center gap-1.5">
           {stage !== 'tracing' && <Arrow />}

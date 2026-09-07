@@ -604,9 +604,12 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
 
     const v1Options = container.querySelector('[data-version-node="1"] select') as HTMLSelectElement;
     const v2Options = container.querySelector('[data-version-node="2"] select') as HTMLSelectElement;
+    const v2CycleSurface = container.querySelector('[data-version-node="2"] [data-cycle-surface]');
     expect([...v1Options.options].map((option) => option.textContent)).toEqual(['周期 1']);
     expect([...v2Options.options].map((option) => option.textContent)).toEqual(['周期 1', '周期 2']);
     expect(v2Options.title).toContain('本版本周期 2');
+    expect(v2CycleSurface?.className).toContain('bg-[var(--console-card-bg)]');
+    expect(v2CycleSurface?.parentElement?.getAttribute('data-version-card')).not.toBeNull();
   });
 });
 
