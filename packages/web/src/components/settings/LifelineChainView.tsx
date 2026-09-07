@@ -10,6 +10,7 @@
 
 import type { SegmentCycleSummary, VersionEpoch } from '@cat-cafe/shared';
 import { useCallback } from 'react';
+import { LifelineVersionTree, type VersionTreeRow } from './LifelineVersionTree';
 import { SettingsBadge, SettingsText } from './primitives';
 import { explainVerdict } from './verdict-explanations';
 
@@ -26,18 +27,6 @@ interface LifelineChainViewProps {
   selected: SelectedStage | null;
   onSelect: (stage: SelectedStage) => void;
 }
-
-interface VersionTreeRow {
-  epoch: VersionEpoch;
-  depth: number;
-  parentVersion: number | null;
-  isLastSibling: boolean;
-  hasChildren: boolean;
-  ancestorContinuations: boolean[];
-}
-
-const TREE_STEP_PX = 56;
-const VERSION_CENTER_PX = 23;
 
 export function LifelineChainView({
   chain,
@@ -61,176 +50,80 @@ export function LifelineChainView({
     );
   }
 
-  const rows = flattenVersionTree(chain);
-
   return (
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
       <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
         版本生命线
       </SettingsText>
       <div className="overflow-x-auto pb-1">
-        <div className="min-w-max" data-version-tree>
-          {rows.map((row) => {
-            const { epoch } = row;
-            const epochCycles = cyclesForEpoch(epoch, cycles);
-            return (
-              <EpochNode
-                key={`${epoch.version}:${epoch.startedAt}`}
-                epoch={epoch}
-                cycles={epochCycles}
-                currentCycleId={currentCycleId}
-                selected={selected}
-                onSelect={handleSelect}
-                row={row}
-              />
-            );
-          })}
-        </div>
+        <LifelineVersionTree chain={chain}>
+          {(row) => (
+            <EpochNode
+              row={row}
+              cycles={cyclesForEpoch(row.epoch, cycles)}
+              currentCycleId={currentCycleId}
+              selected={selected}
+              onSelect={handleSelect}
+            />
+          )}
+        </LifelineVersionTree>
       </div>
     </div>
   );
 }
 
 function EpochNode({
-  epoch,
   cycles,
   currentCycleId,
   selected,
   onSelect,
   row,
 }: {
-  epoch: VersionEpoch;
   cycles: SegmentCycleSummary[];
   currentCycleId: string | null;
   selected: SelectedStage | null;
   onSelect: (version: number, stage: SelectedStage['stage'], cycleId?: string) => void;
   row: VersionTreeRow;
 }) {
-  const { depth, parentVersion, isLastSibling, hasChildren, ancestorContinuations } = row;
+  const { epoch, parentVersion } = row;
   const selectedCycle = cycles.find((cycle) => cycle.cycleId === selected?.cycleId);
   const currentCycle = cycles.find((cycle) => cycle.cycleId === currentCycleId);
   const visibleCycle = selectedCycle ?? currentCycle ?? cycles.at(-1) ?? null;
   const visibleCycleIndex = visibleCycle ? cycles.findIndex((cycle) => cycle.cycleId === visibleCycle.cycleId) : -1;
 
   return (
-    <div
-      data-version-node={epoch.version}
-      data-parent-version={epoch.parentVersion ?? undefined}
-      data-tree-depth={depth}
-      className="relative min-h-11 min-w-0 py-1"
-    >
-      <VersionTreeConnectors
-        version={epoch.version}
-        depth={depth}
-        parentVersion={parentVersion}
-        isLastSibling={isLastSibling}
-        hasChildren={hasChildren}
-        ancestorContinuations={ancestorContinuations}
+    <>
+      <StageBadge
+        label={`v${epoch.version}`}
+        stage="version"
+        title={parentVersion === null ? undefined : `v${epoch.version} · 源自 v${parentVersion}`}
+        selected={isSelected(selected, epoch.version, 'version')}
+        current={epoch.isActive && cycles.length === 0 && epoch.status === 'idle'}
+        onClick={() => onSelect(epoch.version, 'version')}
       />
-      <div
-        data-version-card
-        data-active-version={String(epoch.isActive)}
-        className={`relative z-[1] flex w-fit min-w-0 items-center gap-1.5 rounded-xl px-2 py-1.5 transition-colors ${
-          epoch.isActive ? 'bg-[var(--console-active-bg)]' : 'bg-[var(--console-elevated-bg)]'
-        }`}
-        style={{ marginInlineStart: `${depth * TREE_STEP_PX}px` }}
-      >
-        <StageBadge
-          label={`v${epoch.version}`}
-          stage="version"
-          selected={isSelected(selected, epoch.version, 'version')}
-          current={epoch.isActive && cycles.length === 0 && epoch.status === 'idle'}
-          onClick={() => onSelect(epoch.version, 'version')}
-        />
 
-        {visibleCycle ? (
-          <>
-            <Arrow />
-            <CycleStages
-              version={epoch.version}
-              cycle={visibleCycle}
-              localOrdinal={visibleCycleIndex + 1}
-              cycles={cycles}
-              isCurrentCycle={
-                visibleCycle.cycleId === currentCycleId || (!currentCycleId && visibleCycle.closedAt == null)
-              }
-              selected={selected}
-              onSelect={onSelect}
-            />
-          </>
-        ) : (
-          <>
-            <Arrow />
-            <LegacyCycleStages epoch={epoch} selected={selected} onSelect={onSelect} />
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function VersionTreeConnectors({
-  version,
-  depth,
-  parentVersion,
-  isLastSibling,
-  hasChildren,
-  ancestorContinuations,
-}: {
-  version: number;
-  depth: number;
-  parentVersion: number | null;
-  isLastSibling: boolean;
-  hasChildren: boolean;
-  ancestorContinuations: boolean[];
-}) {
-  const nodeCenter = depth * TREE_STEP_PX + VERSION_CENTER_PX;
-  const parentCenter = (depth - 1) * TREE_STEP_PX + VERSION_CENTER_PX;
-
-  return (
-    <span aria-hidden="true" className="pointer-events-none absolute inset-0 text-cafe-muted">
-      {ancestorContinuations.map((continues, level) =>
-        continues ? (
-          <span
-            // The level is structural and stable inside one ancestry path.
-            // biome-ignore lint/suspicious/noArrayIndexKey: connector rails have no entity identity
-            key={level}
-            data-version-ancestor-rail={level}
-            className="absolute inset-y-0 border-l border-[var(--console-border)]"
-            style={{ left: `${level * TREE_STEP_PX + VERSION_CENTER_PX}px` }}
+      {visibleCycle ? (
+        <>
+          <Arrow />
+          <CycleStages
+            version={epoch.version}
+            cycle={visibleCycle}
+            localOrdinal={visibleCycleIndex + 1}
+            cycles={cycles}
+            isCurrentCycle={
+              visibleCycle.cycleId === currentCycleId || (!currentCycleId && visibleCycle.closedAt == null)
+            }
+            selected={selected}
+            onSelect={onSelect}
           />
-        ) : null,
+        </>
+      ) : (
+        <>
+          <Arrow />
+          <LegacyCycleStages epoch={epoch} selected={selected} onSelect={onSelect} />
+        </>
       )}
-      {depth > 0 && parentVersion !== null && (
-        <span data-version-edge={`${parentVersion}:${version}`}>
-          <span
-            className="absolute top-0 border-l border-[var(--console-border)]"
-            style={{ left: `${parentCenter}px`, bottom: isLastSibling ? '50%' : 0 }}
-          />
-          <span
-            className="absolute border-t border-[var(--console-border)]"
-            style={{
-              left: `${parentCenter}px`,
-              top: '50%',
-              width: `${TREE_STEP_PX - VERSION_CENTER_PX - 4}px`,
-            }}
-          />
-          <span
-            className="absolute -translate-y-1/2 text-xs leading-none"
-            style={{ left: `${depth * TREE_STEP_PX - 7}px`, top: '50%' }}
-          >
-            ›
-          </span>
-        </span>
-      )}
-      {hasChildren && (
-        <span
-          data-version-child-rail={version}
-          className="absolute bottom-0 border-l border-[var(--console-border)]"
-          style={{ left: `${nodeCenter}px`, top: '50%' }}
-        />
-      )}
-    </span>
+    </>
   );
 }
 
@@ -394,58 +287,6 @@ function cyclesForEpoch(epoch: VersionEpoch, cycles: SegmentCycleSummary[]): Seg
   return cycles
     .filter((cycle) => cycle.segmentVersion === epoch.version)
     .sort((left, right) => left.cycleStart - right.cycleStart || left.cycleId.localeCompare(right.cycleId));
-}
-
-function flattenVersionTree(chain: VersionEpoch[]): VersionTreeRow[] {
-  const byVersion = new Map(chain.map((epoch) => [epoch.version, epoch] as const));
-  const childrenByParent = new Map<number, VersionEpoch[]>();
-  const roots: VersionEpoch[] = [];
-
-  for (const epoch of chain) {
-    const parentVersion = epoch.parentVersion;
-    if (parentVersion === null || parentVersion === epoch.version || !byVersion.has(parentVersion)) {
-      roots.push(epoch);
-      continue;
-    }
-    const siblings = childrenByParent.get(parentVersion) ?? [];
-    siblings.push(epoch);
-    childrenByParent.set(parentVersion, siblings);
-  }
-
-  const rows: VersionTreeRow[] = [];
-  const visited = new Set<number>();
-  const visit = (
-    epoch: VersionEpoch,
-    depth: number,
-    parentVersion: number | null,
-    isLastSibling: boolean,
-    ancestorContinuations: boolean[],
-  ) => {
-    if (visited.has(epoch.version)) return;
-    visited.add(epoch.version);
-    const children = (childrenByParent.get(epoch.version) ?? []).filter((child) => !visited.has(child.version));
-    rows.push({
-      epoch,
-      depth,
-      parentVersion,
-      isLastSibling,
-      hasChildren: children.length > 0,
-      ancestorContinuations,
-    });
-    children.forEach((child, index) => {
-      const childContinuations = depth === 0 ? [] : [...ancestorContinuations, !isLastSibling];
-      visit(child, depth + 1, epoch.version, index === children.length - 1, childContinuations);
-    });
-  };
-
-  roots.forEach((root, index) => {
-    visit(root, 0, null, index === roots.length - 1, []);
-  });
-  // Corrupt/cyclic ancestry must remain visible rather than silently dropping versions.
-  chain.forEach((epoch) => {
-    if (!visited.has(epoch.version)) visit(epoch, 0, null, true, []);
-  });
-  return rows;
 }
 
 export function activeStageForCycle(cycle: SegmentCycleSummary): 'tracing' | 'eval' | 'governance' {
