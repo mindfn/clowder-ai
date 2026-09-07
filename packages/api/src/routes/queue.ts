@@ -3,8 +3,10 @@
  *
  * GET    /api/threads/:threadId/queue               → 列出队列条目
  * DELETE /api/threads/:threadId/queue/:entryId       → 撤回条目
+ * GET    /api/threads/:threadId/queue/:entryId/targets → 读取同源逐目标终局/待处理真相
+ * POST   /api/threads/:threadId/queue/:entryId/targets → 原子绑定/扩展同源逐目标 Steer 工单
  * POST   /api/threads/:threadId/queue/:entryId/steer → Steer queued entry（取消当前轮并以同一消息立即启动）
- * POST   /api/threads/:threadId/queue/:entryId/continue → 不打断当前轮：Append 或保留为下一件工作
+ * POST   /api/threads/:threadId/queue/:entryId/continue → 立即引导当前回复，或保留为排队等待
  * POST   /api/threads/:threadId/queue/:entryId/append → Append queued entry into exact existing Active Run(s)
  * PATCH  /api/threads/:threadId/queue/:entryId/move → 重排序（上移/下移）
  * PATCH  /api/threads/:threadId/queue/reorder       → F175: 批量设置 position（拖拽重排）
@@ -40,6 +42,7 @@ import {
   projectLifecycleAppendCapability,
 } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
+import { projectQueueLedgerReceipt } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
@@ -62,6 +65,7 @@ import { resolveUserId } from '../utils/request-identity.js';
 import { type LiveExecutionCandidate, registerActiveExecutionRoutes } from './active-execution-routes.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
 import { resolveQueueAuthorIntentByCatId } from './message-disposition-admission.js';
+import { admitThreadParticipants } from './thread-participant-admission.js';
 
 interface ManagedCommandWakeRecoveryLike {
   retireCarrier(messageIds: readonly string[], reason: 'withdrawn'): Promise<number>;
@@ -79,6 +83,8 @@ export interface QueueRoutesOptions {
   invocationTracker: InvocationTrackerLike;
   /** Exact concrete provider carrier used by active-turn composer/reminder surfaces. */
   resolveCarrierCapability?: (catId: CatId) => FreshnessCarrierCapability | undefined;
+  /** Current roster availability, rechecked when a Steer plan is committed. */
+  isCatAvailable?: (catId: CatId) => boolean;
   /** Shared owner-aware session lock released by explicit terminal actions. */
   agentSessionMutex?: AgentSessionMutexLike;
   socketManager: SocketManager;
@@ -330,6 +336,31 @@ const steerBodySchema = z
 
 const continueBodySchema = z.object({ targetCatId: z.string().min(1) }).strict();
 
+const steerTargetsBodySchema = z
+  .object({
+    targets: z
+      .array(
+        z
+          .object({
+            targetCatId: z.string().min(1),
+            strategy: z.enum(['guide_reply', 'interrupt_reply']),
+            membershipAtOpen: z.enum(['member', 'admit']),
+          })
+          .strict(),
+      )
+      .min(1)
+      .superRefine((targets, context) => {
+        const seen = new Set<string>();
+        for (const target of targets) {
+          if (seen.has(target.targetCatId)) {
+            context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate target: ${target.targetCatId}` });
+          }
+          seen.add(target.targetCatId);
+        }
+      }),
+  })
+  .strict();
+
 const appendBodySchema = z
   .object({
     expectedQueueRevision: z.string().min(1),
@@ -386,7 +417,7 @@ function resolveReminderRequest(input: {
     return {
       ok: false,
       status: 409,
-      error: '当前猫的本轮提醒能力未声明，已按下一件工作处理',
+      error: '当前猫的本轮提醒能力未声明，已按排队等待处理',
       code: 'REMINDER_CAPABILITY_UNDECLARED',
     };
   }
@@ -1220,6 +1251,250 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         state: persisted.attempt.state,
         idempotent: persisted.idempotent,
       };
+    },
+  );
+
+  // GET /api/threads/:threadId/queue/:entryId/targets
+  // Read every durable scalar row for the same source message. The regular
+  // Queue projection is intentionally row-local, so it cannot tell the Steer
+  // modal that a sibling target has already reached a terminal state.
+  app.get<{ Params: { threadId: string; entryId: string } }>(
+    '/api/threads/:threadId/queue/:entryId/targets',
+    async (request, reply) => {
+      const { threadId, entryId } = request.params;
+      const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
+      if (!guard) return;
+
+      const anchor = invocationQueue
+        .list(threadId, guard.userId)
+        .find((candidate) => candidate.id === entryId && isPublicQueueEntry(candidate));
+      if (
+        !anchor ||
+        anchor.status !== 'queued' ||
+        anchor.kind !== 'conversation_input' ||
+        anchor.from.kind !== 'user' ||
+        !anchor.payload.messageId ||
+        isSystemPinnedQueueEntry(anchor)
+      ) {
+        reply.status(409);
+        return { error: '该消息当前不可 Steer', code: 'STEER_ENTRY_UNAVAILABLE' };
+      }
+
+      const sourceRows = (await invocationQueue.listAllDurable(threadId)).filter(
+        (candidate) =>
+          queueEntryOwnerId(candidate) === guard.userId && candidate.payload.sourceId === anchor.payload.sourceId,
+      );
+      const receipt = projectQueueLedgerReceipt(sourceRows);
+      const rowByTarget = new Map(
+        sourceRows.flatMap((candidate) =>
+          candidate.target.kind === 'cat' ? ([[candidate.target.catId, candidate]] as const) : [],
+        ),
+      );
+      return {
+        targets: (receipt?.targets ?? []).map((target) => ({
+          targetCatId: target.catId,
+          state: target.state,
+          actionable: rowByTarget.get(target.catId)?.status === 'queued',
+        })),
+      };
+    },
+  );
+
+  // POST /api/threads/:threadId/queue/:entryId/targets
+  // Resolve one source message into exact scalar source×target rows before the
+  // client applies per-target guide/interrupt actions. Existing admitted rows
+  // are reused; only genuinely new targets are atomically added.
+  app.post<{ Params: { threadId: string; entryId: string } }>(
+    '/api/threads/:threadId/queue/:entryId/targets',
+    async (request, reply) => {
+      const { threadId, entryId } = request.params;
+      const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
+      if (!guard) return;
+      const parsed = steerTargetsBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        reply.status(400);
+        return { error: '请选择至少一位当前对话成员', code: 'STEER_TARGETS_REQUIRED' };
+      }
+      if (!messageStore) {
+        reply.status(503);
+        return { error: 'Steer 目标映射暂不可用', code: 'STEER_TARGET_MAPPING_UNAVAILABLE' };
+      }
+
+      const currentEntries = invocationQueue.list(threadId, guard.userId);
+      const anchor = currentEntries.find((candidate) => candidate.id === entryId);
+      if (
+        !anchor ||
+        !isPublicQueueEntry(anchor) ||
+        anchor.status !== 'queued' ||
+        anchor.kind !== 'conversation_input' ||
+        anchor.from.kind !== 'user' ||
+        !anchor.payload.messageId ||
+        isSystemPinnedQueueEntry(anchor)
+      ) {
+        reply.status(409);
+        return { error: '该消息当前不可 Steer', code: 'STEER_ENTRY_UNAVAILABLE' };
+      }
+
+      const normalizedTargets = parsed.data.targets.map((target) => {
+        const capability = opts.resolveCarrierCapability?.(target.targetCatId as CatId);
+        return {
+          targetCatId: target.targetCatId,
+          membershipAtOpen: target.membershipAtOpen,
+          strategy:
+            target.strategy === 'guide_reply' && capability?.deliverySemantics !== 'exact_active_turn'
+              ? ('interrupt_reply' as const)
+              : target.strategy,
+        };
+      });
+      for (const target of normalizedTargets) {
+        const currentMember = guard.thread.participants.includes(target.targetCatId as CatId);
+        if (
+          opts.isCatAvailable?.(target.targetCatId as CatId) === false ||
+          (target.membershipAtOpen === 'member' && !currentMember)
+        ) {
+          reply.status(409);
+          return { error: '成员资格或可用状态已变化，请重新选择', code: 'STEER_TARGET_STATE_CHANGED' };
+        }
+      }
+
+      const durableRows = await invocationQueue.listAllDurable(threadId);
+      const sourceRows = durableRows.filter(
+        (candidate) =>
+          queueEntryOwnerId(candidate) === guard.userId && candidate.payload.sourceId === anchor.payload.sourceId,
+      );
+      const terminalTargets = new Set(
+        sourceRows.flatMap((candidate) =>
+          candidate.status === 'terminal' && candidate.target.kind === 'cat' ? [candidate.target.catId] : [],
+        ),
+      );
+      if (normalizedTargets.some((target) => terminalTargets.has(target.targetCatId))) {
+        reply.status(409);
+        return { error: '所选成员已处理这条消息，请按最新状态重新选择', code: 'STEER_TARGET_ALREADY_HANDLED' };
+      }
+
+      await admitThreadParticipants({
+        userId: guard.userId,
+        threadId,
+        targetCats: normalizedTargets
+          .filter((target) => target.membershipAtOpen === 'admit')
+          .map((target) => target.targetCatId as CatId),
+        threadStore,
+        socketManager,
+        emitPolicy: 'membership-changed',
+      });
+
+      const activeSourceRows = currentEntries.filter(
+        (candidate) => candidate.payload.sourceId === anchor.payload.sourceId && candidate.status === 'queued',
+      );
+      const mapped = new Map<string, string>();
+      for (const row of activeSourceRows) {
+        if (row.target.kind === 'cat') mapped.set(row.target.catId, row.id);
+      }
+      const unassigned = activeSourceRows.find((row) => row.target.kind === 'unassigned');
+      const bindTargetCatId = anchor.target.kind === 'cat' ? anchor.target.catId : normalizedTargets[0]?.targetCatId;
+      if (!bindTargetCatId) {
+        reply.status(409);
+        return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
+      }
+      const expectedQueuedEntryIds = normalizedTargets.flatMap((target) => {
+        const mappedEntryId = mapped.get(target.targetCatId);
+        return mappedEntryId && mappedEntryId !== anchor.id ? [mappedEntryId] : [];
+      });
+      const missing = normalizedTargets.filter(
+        (target) => !mapped.has(target.targetCatId) && (!unassigned || target.targetCatId !== bindTargetCatId),
+      );
+      const tracker = invocationTracker.getExecutionId
+        ? {
+            has: (candidateThreadId: string, catId: CatId) => invocationTracker.has(candidateThreadId, catId),
+            getUserId: (candidateThreadId: string, catId: CatId) =>
+              invocationTracker.getUserId(candidateThreadId, catId),
+            getExecutionId: (candidateThreadId: string, catId: CatId) =>
+              invocationTracker.getExecutionId?.(candidateThreadId, catId),
+          }
+        : undefined;
+      const buildExpansionInput = (targets: typeof normalizedTargets) => {
+        const authorIntentByCatId = Object.fromEntries(
+          targets.flatMap((target) => {
+            const intent = resolveQueueAuthorIntentByCatId({
+              targetCats: [target.targetCatId as CatId],
+              requested: target.strategy === 'guide_reply' ? 'continue_current' : 'next_work',
+              threadId,
+              userId: guard.userId,
+              invocationTracker: tracker,
+              resolveCarrierCapability: opts.resolveCarrierCapability,
+            })[target.targetCatId];
+            return intent ? [[target.targetCatId, intent] as const] : [];
+          }),
+        );
+        return {
+          threadId,
+          userId: guard.userId,
+          owner: anchor.owner,
+          sourceId: anchor.payload.messageId,
+          kind: anchor.kind,
+          ownerAuthProvenance: anchor.execution.ownerAuthProvenance,
+          content: anchor.payload.content,
+          messageId: anchor.payload.messageId,
+          from: anchor.from,
+          targetCats: targets.map((target) => target.targetCatId),
+          ...(anchor.payload.routingWarnings ? { routingWarnings: [...anchor.payload.routingWarnings] } : {}),
+          authorIntentByCatId,
+          intent: anchor.execution.intent,
+          autoExecute: anchor.execution.autoExecute,
+          priority: anchor.priority,
+          ...(anchor.sourceCategory ? { sourceCategory: anchor.sourceCategory } : {}),
+        };
+      };
+
+      if (unassigned || missing.length > 0 || expectedQueuedEntryIds.length > 0) {
+        try {
+          const expanded = await invocationQueue.mapQueuedMessageTargetsDurable(
+            messageStore,
+            anchor.payload.messageId,
+            unassigned?.id ?? anchor.id,
+            bindTargetCatId,
+            expectedQueuedEntryIds,
+            buildExpansionInput(missing),
+          );
+          if (expanded.outcome !== 'expanded' && expanded.outcome !== 'replayed') {
+            reply.status(409);
+            return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
+          }
+          for (const row of expanded.entries) {
+            if (row.target.kind === 'cat') mapped.set(row.target.catId, row.id);
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith('queued Message does not match')) {
+            reply.status(409);
+            return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
+          }
+          throw error;
+        }
+      }
+
+      const targets = normalizedTargets.flatMap((target) => {
+        const mappedEntryId = mapped.get(target.targetCatId);
+        return mappedEntryId
+          ? [{ targetCatId: target.targetCatId, strategy: target.strategy, entryId: mappedEntryId }]
+          : [];
+      });
+      if (targets.length !== normalizedTargets.length) {
+        reply.status(409);
+        return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
+      }
+      await emitQueueUpdated(
+        socketManager,
+        guard.userId,
+        threadId,
+        invocationQueue.list(threadId, guard.userId),
+        messageStore,
+        'steer_targets_resolved',
+      );
+      // Mapping is a durable Queue mutation in its own right. If the browser
+      // disappears before issuing the per-target follow-up commands, ordinary
+      // Queue liveness must still converge every newly added row.
+      void queueProcessor.requestDrain(threadId);
+      return { targets };
     },
   );
 

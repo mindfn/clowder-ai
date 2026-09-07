@@ -46,7 +46,8 @@ import { MessageDispositionSelector } from './MessageDispositionSelector';
 import { classifyFreshnessCarrierSupport } from './message-disposition-presentation';
 import { PathCompletionMenu } from './PathCompletionMenu';
 import { ReplyPreviewBar } from './ReplyPreviewBar';
-import type { SteerTargetOption } from './SteerQueuedEntryModal';
+import type { SteerTargetAction, SteerTargetOption } from './SteerQueuedEntryModal';
+import { parseSteerThreadCatProjection, type SteerThreadCatProjection } from './steer-target-selection';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import {
   getThreadDraft,
@@ -239,44 +240,6 @@ export function ChatInput({
     [canonicalExecutions],
   );
 
-  const allSteerTargets = useMemo<SteerTargetOption[]>(() => {
-    const byId = new Map(cats.map((cat) => [cat.id, cat]));
-    const seen = new Set<string>();
-    const targets: SteerTargetOption[] = [];
-    for (const execution of canonicalExecutions) {
-      if (seen.has(execution.catId)) continue;
-      seen.add(execution.catId);
-      const cat = byId.get(execution.catId);
-      targets.push({
-        id: execution.catId,
-        label: cat ? `@${cat.displayName}` : `@${execution.catId}`,
-        ...(cat?.avatar ? { avatar: cat.avatar } : {}),
-        // This is an author intent, not a snapshot of one live provider
-        // carrier. Admission appends when the exact run still accepts it and
-        // otherwise leaves the same message as ordinary next work.
-        canAppend: true,
-      });
-    }
-    return targets;
-  }, [canonicalExecutions, cats]);
-
-  const explicitlyAddressedActiveTargetIds = useMemo(() => {
-    const activeIds = new Set(allSteerTargets.map((target) => target.id));
-    return cats
-      .filter(
-        (cat) => activeIds.has(cat.id) && cat.mentionPatterns.some((pattern) => containsMentionToken(input, pattern)),
-      )
-      .map((cat) => cat.id);
-  }, [allSteerTargets, cats, input]);
-  const steerTargets = useMemo(
-    () =>
-      explicitlyAddressedActiveTargetIds.length > 0
-        ? allSteerTargets.filter((target) => explicitlyAddressedActiveTargetIds.includes(target.id))
-        : allSteerTargets,
-    [allSteerTargets, explicitlyAddressedActiveTargetIds],
-  );
-  const steerInitialTargetId = explicitlyAddressedActiveTargetIds[0] ?? steerTargets[0]?.id;
-
   const [showMentions, setShowMentions] = useState(false);
   const [showGameMenu, setShowGameMenu] = useState(false);
   const [gameStep, setGameStep] = useState<'list' | 'modes'>('list');
@@ -309,6 +272,108 @@ export function ChatInput({
     )[];
   }, [activeCatIds, catInvocations, whisperMode, whisperTargets]);
   const dispositionCarrierSupport = classifyFreshnessCarrierSupport(dispositionCarrierCapabilities);
+  const [threadCatProjection, setThreadCatProjection] = useState<
+    SteerThreadCatProjection & { threadId: string | null }
+  >({ threadId: null, participantActivity: [], fallbackTargetCatId: null });
+  const threadCatProjectionRequestRef = useRef(0);
+
+  const refreshThreadCatProjection = useCallback(async (): Promise<boolean> => {
+    const requestId = ++threadCatProjectionRequestRef.current;
+    if (!effectiveThreadId) {
+      setThreadCatProjection({ threadId: null, participantActivity: [], fallbackTargetCatId: null });
+      return true;
+    }
+    try {
+      const response = await apiFetch(`/api/threads/${encodeURIComponent(effectiveThreadId)}/cats`);
+      if (!response.ok) throw new Error(`Steer member projection failed (${response.status})`);
+      const body = await response.json();
+      if (threadCatProjectionRequestRef.current !== requestId) return false;
+      setThreadCatProjection({ threadId: effectiveThreadId, ...parseSteerThreadCatProjection(body) });
+      return true;
+    } catch {
+      if (threadCatProjectionRequestRef.current === requestId) {
+        setThreadCatProjection({ threadId: effectiveThreadId, participantActivity: [], fallbackTargetCatId: null });
+      }
+      return false;
+    }
+  }, [effectiveThreadId]);
+
+  useEffect(() => {
+    void refreshThreadCatProjection();
+    return () => {
+      threadCatProjectionRequestRef.current += 1;
+    };
+  }, [refreshThreadCatProjection]);
+
+  const threadParticipantActivity = useMemo(
+    () => (threadCatProjection.threadId === effectiveThreadId ? threadCatProjection.participantActivity : []),
+    [effectiveThreadId, threadCatProjection.participantActivity, threadCatProjection.threadId],
+  );
+  const threadParticipantIds = useMemo(
+    () => new Set(threadParticipantActivity.map((participant) => participant.catId)),
+    [threadParticipantActivity],
+  );
+
+  const explicitlyAddressedTargetIds = useMemo(
+    () =>
+      cats
+        .filter((cat) => cat.mentionPatterns.some((pattern) => containsMentionToken(input, pattern)))
+        .map((cat) => cat.id),
+    [cats, input],
+  );
+  const configuredDefaultResponderId = cats.find(
+    (cat) => cat.isDefaultResponder === true && cat.roster?.available !== false,
+  )?.id;
+  const fallbackTargetId = !effectiveThreadId
+    ? configuredDefaultResponderId
+    : threadCatProjection.threadId === effectiveThreadId
+      ? (threadCatProjection.fallbackTargetCatId ?? undefined)
+      : undefined;
+  const steerDefaultTargetIds = useMemo(
+    () =>
+      explicitlyAddressedTargetIds.length > 0
+        ? explicitlyAddressedTargetIds
+        : fallbackTargetId
+          ? [fallbackTargetId]
+          : [],
+    [explicitlyAddressedTargetIds, fallbackTargetId],
+  );
+  const steerTargets = useMemo<SteerTargetOption[]>(() => {
+    const byId = new Map(cats.map((cat) => [cat.id, cat]));
+    const orderedIds = new Set<string>();
+    for (const participant of threadParticipantActivity) orderedIds.add(participant.catId);
+    for (const catId of explicitlyAddressedTargetIds) orderedIds.add(catId);
+    for (const execution of canonicalExecutions) orderedIds.add(execution.catId);
+    if (fallbackTargetId) orderedIds.add(fallbackTargetId);
+    const defaultIds = new Set(steerDefaultTargetIds);
+    return [...orderedIds].flatMap((catId): SteerTargetOption[] => {
+      const cat = byId.get(catId);
+      if (!cat) return [];
+      return [
+        {
+          id: catId,
+          label: `@${cat.displayName}`,
+          ...(cat.avatar ? { avatar: cat.avatar } : {}),
+          canGuideReply: cat.messageDeliveryCapabilities?.guideReply === true,
+          hasCurrentReply: activeCatIds.has(catId),
+          defaultSelected: defaultIds.has(catId),
+          unavailable: cat.roster?.available === false,
+          disposition: messageDisposition.effective,
+          membershipAtOpen: threadParticipantIds.has(catId) ? 'member' : 'admit',
+        },
+      ];
+    });
+  }, [
+    activeCatIds,
+    canonicalExecutions,
+    cats,
+    explicitlyAddressedTargetIds,
+    messageDisposition.effective,
+    fallbackTargetId,
+    steerDefaultTargetIds,
+    threadParticipantActivity,
+    threadParticipantIds,
+  ]);
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);
@@ -411,7 +476,7 @@ export function ChatInput({
         // inheritance resolves again at server admission, closing hydration races.
         const declaredDisposition =
           options.forcedDisposition ??
-          (dispositionIsMeaningful && options.postAdmissionAction !== 'steer'
+          (dispositionIsMeaningful && options.postAdmissionAction?.kind !== 'steer'
             ? (messageDisposition.oneShot ?? undefined)
             : undefined);
         const settleAdmission = beginComposerDraftAdmission(draftSnapshot);
@@ -493,14 +558,14 @@ export function ChatInput({
 
   const handleSend = useCallback(() => doSend(), [doSend]);
   const handleSteerSend = useCallback(
-    (targetId: string) => doSend({ postAdmissionAction: 'steer', explicitTargetCats: [targetId] }),
-    [doSend],
-  );
-  const handleAppendSend = useCallback(
-    (targetId: string) =>
+    (actions: readonly SteerTargetAction[]) =>
       doSend({
-        explicitTargetCats: [targetId],
-        forcedDisposition: 'continue_current',
+        postAdmissionAction: {
+          kind: 'steer',
+          targets: actions.map(({ targetId, strategy }) => ({ targetId, strategy })),
+        },
+        explicitTargetCats: actions.map((action) => action.targetId),
+        forcedDisposition: 'next_work',
       }),
     [doSend],
   );
@@ -1121,8 +1186,8 @@ export function ChatInput({
                 ? '悄悄话...'
                 : hasActiveInvocation && !whisperTargetsAllIdle
                   ? messageDisposition.effective === 'continue_current'
-                    ? '接着当前工作补充...'
-                    : '继续输入，成为下一件工作...'
+                    ? '立即发送，引导回复...'
+                    : '继续输入，排队等待...'
                   : (placeholder ?? '输入消息... (@ 召唤猫猫 · /thread 引用对话)')
             }
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
@@ -1151,10 +1216,11 @@ export function ChatInput({
           onStop={() => void handleProjectedStop()}
           stopState={stopState}
           onQueueSend={handleSend}
+          activeDeliveryDisposition={messageDisposition.effective}
+          onSteerOpen={refreshThreadCatProjection}
           onSteerSend={handleSteerSend}
-          onAppendSend={handleAppendSend}
           steerTargets={steerTargets}
-          steerInitialTargetId={steerInitialTargetId}
+          steerInitialTargetIds={steerDefaultTargetIds}
           disabled={disabled}
           sendDisabled={sendTemporarilyDisabled}
           hasActiveInvocation={whisperTargetsAllIdle ? false : hasActiveInvocation}

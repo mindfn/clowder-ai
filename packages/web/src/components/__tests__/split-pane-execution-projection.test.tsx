@@ -118,7 +118,7 @@ describe('split-pane canonical execution projection', () => {
     const textarea = container.querySelector('textarea');
     if (!textarea) throw new Error('textarea missing');
     act(() => setTextareaValue(textarea, 'new work'));
-    expect(container.querySelector('[aria-label="排队发送"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="排队等待"]')).not.toBeNull();
     expect((container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null)?.disabled).toBe(
       false,
     );

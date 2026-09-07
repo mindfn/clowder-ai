@@ -6,9 +6,53 @@ import {
   type QueueLedgerEnqueueResult,
   type QueueLedgerEntry,
   type QueueLedgerStore,
+  type QueueLedgerTargetExpansionResult,
   type QueueLedgerTransitionResult,
   queueLedgerAdmissionsMatch,
 } from './QueueLedger.js';
+
+function assertTargetExpansionRows(
+  threadId: string,
+  bindTargetCatId: string,
+  expectedQueuedEntryIds: readonly string[],
+  siblingEntries: readonly QueueLedgerEntry[],
+): void {
+  for (const entry of siblingEntries) assertQueueLedgerEntry(entry);
+  const invalidSibling = siblingEntries.some(
+    (entry) =>
+      entry.threadId !== threadId ||
+      entry.status !== 'queued' ||
+      entry.target.kind !== 'cat' ||
+      entry.target.catId === bindTargetCatId,
+  );
+  const allIds = [...expectedQueuedEntryIds, ...siblingEntries.map((entry) => entry.id)];
+  const allTargets = siblingEntries.map((entry) => (entry.target.kind === 'cat' ? entry.target.catId : ''));
+  const duplicateIds = new Set(allIds).size !== allIds.length;
+  const duplicateTargets = new Set(allTargets).size !== allTargets.length;
+  if (invalidSibling || duplicateIds || duplicateTargets) throw new Error('invalid queue target expansion rows');
+}
+
+function resolveExpectedQueuedRows(
+  current: readonly QueueLedgerEntry[],
+  expectedQueuedEntryIds: readonly string[],
+  anchorSourceId: string,
+  bindTargetCatId: string,
+): QueueLedgerEntry[] | null {
+  const entries = expectedQueuedEntryIds.map((expectedId) => current.find((entry) => entry.id === expectedId));
+  if (
+    entries.some(
+      (entry) =>
+        !entry ||
+        entry.status !== 'queued' ||
+        entry.payload.sourceId !== anchorSourceId ||
+        entry.target.kind !== 'cat' ||
+        entry.target.catId === bindTargetCatId,
+    )
+  ) {
+    return null;
+  }
+  return entries as QueueLedgerEntry[];
+}
 
 export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
@@ -89,6 +133,78 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     maxQueuedUserEntries?: number,
   ): Promise<QueueLedgerEnqueueResult> {
     return this.enqueueNow(entries, maxQueuedUserEntries);
+  }
+
+  async expandTargets(
+    threadId: string,
+    entryId: string,
+    bindTargetCatId: string,
+    expectedQueuedEntryIds: readonly string[],
+    siblingEntries: readonly QueueLedgerEntry[],
+  ): Promise<QueueLedgerTargetExpansionResult> {
+    if (!bindTargetCatId) throw new Error('queue target expansion requires a target');
+    assertTargetExpansionRows(threadId, bindTargetCatId, expectedQueuedEntryIds, siblingEntries);
+    if (expectedQueuedEntryIds.includes(entryId) || siblingEntries.some((entry) => entry.id === entryId)) {
+      throw new Error('invalid queue target expansion rows');
+    }
+    const current = this.rows.get(threadId);
+    if (!current) return { outcome: 'not_found', entries: [] };
+    const anchor = current.find((entry) => entry.id === entryId);
+    if (!anchor) return { outcome: 'not_found', entries: [] };
+    if (anchor.status !== 'queued' || (anchor.target.kind === 'cat' && anchor.target.catId !== bindTargetCatId)) {
+      return { outcome: 'state_changed', entries: [] };
+    }
+    const expectedQueued = resolveExpectedQueuedRows(
+      current,
+      expectedQueuedEntryIds,
+      anchor.payload.sourceId,
+      bindTargetCatId,
+    );
+    if (!expectedQueued) return { outcome: 'state_changed', entries: [] };
+    const selectedTargetIds = [
+      bindTargetCatId,
+      ...expectedQueued.map((entry) => (entry.target.kind === 'cat' ? entry.target.catId : '')),
+      ...siblingEntries.map((entry) => (entry.target.kind === 'cat' ? entry.target.catId : '')),
+    ];
+    if (
+      new Set(selectedTargetIds).size !== selectedTargetIds.length ||
+      siblingEntries.some((entry) => entry.payload.sourceId !== anchor.payload.sourceId)
+    ) {
+      throw new Error('invalid queue target expansion rows');
+    }
+    const terminal = this.terminalRows.get(threadId);
+    const existing = siblingEntries.map(
+      (entry) => current.find((candidate) => candidate.id === entry.id) ?? terminal?.get(entry.id),
+    );
+    const existingEntries = existing.filter((entry): entry is QueueLedgerEntry => entry !== undefined);
+    if (existingEntries.length === siblingEntries.length && anchor.target.kind === 'cat') {
+      if (existingEntries.some((entry) => entry.status !== 'queued')) {
+        return { outcome: 'state_changed', entries: [] };
+      }
+      if (
+        existingEntries.every((entry, index) => {
+          const input = siblingEntries[index];
+          return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
+        })
+      ) {
+        return {
+          outcome: 'replayed',
+          entries: [anchor, ...expectedQueued, ...existingEntries].map(cloneQueueLedgerEntry),
+        };
+      }
+      return { outcome: 'conflict', entries: [] };
+    }
+    if (existingEntries.length > 0) {
+      return { outcome: 'conflict', entries: [] };
+    }
+    if (anchor.target.kind === 'unassigned') anchor.target = { kind: 'cat', catId: bindTargetCatId };
+    const inserted = siblingEntries.map(cloneQueueLedgerEntry);
+    current.push(...inserted);
+    this.indexEntries(threadId, inserted);
+    return {
+      outcome: 'expanded',
+      entries: [anchor, ...expectedQueued, ...inserted].map(cloneQueueLedgerEntry),
+    };
   }
 
   /** Roll back only rows created by the same synchronous memory admission. */

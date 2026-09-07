@@ -13,12 +13,46 @@ export interface WhisperOptions {
   whisperTo: string[];
 }
 
-export type PostAdmissionAction = 'steer';
+export interface PostAdmissionTargetAction {
+  targetId: string;
+  strategy: 'guide_reply' | 'interrupt_reply';
+}
+
+export interface PostAdmissionAction {
+  kind: 'steer';
+  targets: readonly PostAdmissionTargetAction[];
+}
 
 interface MessageAdmissionResponse {
   status?: string;
   entryId?: string;
+  entries?: Array<{ entryId: string; targetCatId: string }>;
   gameThreadId?: string;
+}
+
+async function applyOnePostAdmissionAction(
+  threadId: string,
+  entryId: string | undefined,
+  target: PostAdmissionTargetAction,
+): Promise<string | null> {
+  if (!entryId) return `${target.targetId}: 缺少精确队列工单`;
+  try {
+    const route = target.strategy === 'guide_reply' ? 'continue' : 'steer';
+    const response = await apiFetch(`/api/threads/${threadId}/queue/${entryId}/${route}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: target.targetId }),
+    });
+    if (response.ok || response.status === 404) return null;
+    const body = await response.json().catch(() => null);
+    // Admission already committed and immediately requested Queue drain. If
+    // that drain won, the user's immediate-send outcome is converging rather
+    // than failing and must not create a second system error bubble.
+    if (body?.code === 'ENTRY_PROCESSING' || body?.code === 'ENTRY_NOT_FOUND') return null;
+    return `${target.targetId}: ${body?.error ?? `Server error: ${response.status}`}`;
+  } catch (error) {
+    return `${target.targetId}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+  }
 }
 
 /**
@@ -61,18 +95,21 @@ export function useSendMessage(activeThreadId?: string) {
     [addMessageToThread],
   );
 
-  const steerAcceptedEntry = useCallback(
-    async (threadId: string, entryId: string): Promise<void> => {
-      try {
-        const response = await apiFetch(`/api/threads/${threadId}/queue/${entryId}/steer`, { method: 'POST' });
-        if (response.ok) return;
-        const body = await response.json().catch(() => null);
-        publishError(threadId, `消息已进入队列，但 Steer 未执行：${body?.error ?? `Server error: ${response.status}`}`);
-      } catch (error) {
-        publishError(
-          threadId,
-          `消息已进入队列，但 Steer 未执行：${error instanceof Error ? error.message : 'Unknown error'}`,
-        );
+  const applyPostAdmissionActions = useCallback(
+    async (
+      threadId: string,
+      entries: readonly { entryId: string; targetCatId: string }[],
+      action: PostAdmissionAction,
+    ): Promise<void> => {
+      const entryByTarget = new Map(entries.map((entry) => [entry.targetCatId, entry.entryId]));
+      const outcomes = await Promise.all(
+        action.targets.map((target) =>
+          applyOnePostAdmissionAction(threadId, entryByTarget.get(target.targetId), target),
+        ),
+      );
+      const failures = outcomes.filter((outcome): outcome is string => outcome !== null);
+      if (failures.length > 0) {
+        publishError(threadId, `消息已进入队列，但部分 Steer 未执行：${failures.join('；')}`);
       }
     },
     [publishError],
@@ -145,9 +182,10 @@ export function useSendMessage(activeThreadId?: string) {
         if (admission?.status !== 'game_started' && admission?.status !== 'queued') {
           throw new Error('Server did not return a canonical Queue admission');
         }
-        if (postAdmissionAction === 'steer') {
-          if (!admission.entryId) throw new Error('Steer admission did not return an exact Queue entry');
-          await steerAcceptedEntry(threadId, admission.entryId);
+        if (postAdmissionAction?.kind === 'steer') {
+          const entries = admission.entries ?? [];
+          if (entries.length === 0) throw new Error('Steer admission did not return exact per-target Queue entries');
+          await applyPostAdmissionActions(threadId, entries, postAdmissionAction);
         }
 
         setUploadStatus('idle');
@@ -166,7 +204,7 @@ export function useSendMessage(activeThreadId?: string) {
         return false;
       }
     },
-    [activeThreadId, createClientId, processCommand, publishError, steerAcceptedEntry],
+    [activeThreadId, applyPostAdmissionActions, createClientId, processCommand, publishError],
   );
 
   return { handleSend, uploadStatus, uploadError };

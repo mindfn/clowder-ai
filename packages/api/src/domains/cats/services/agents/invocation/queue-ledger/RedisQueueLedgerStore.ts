@@ -7,6 +7,7 @@ import {
   type QueueLedgerEnqueueResult,
   type QueueLedgerEntry,
   type QueueLedgerStore,
+  type QueueLedgerTargetExpansionResult,
   type QueueLedgerTransitionResult,
   queueLedgerAdmissionsMatch,
 } from './QueueLedger.js';
@@ -16,6 +17,7 @@ import {
   CLAIM_QUEUE_ROW_LUA,
   COMMIT_QUEUE_ROW_LUA,
   ENQUEUE_QUEUE_ROWS_LUA,
+  EXPAND_QUEUE_TARGET_ROWS_LUA,
   RESTORE_QUEUE_ROW_LUA,
 } from './queue-ledger-redis-scripts.js';
 
@@ -102,6 +104,58 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
       return { outcome: 'conflict', entries: [] };
     }
     return { outcome: 'replayed', entries: existing };
+  }
+
+  async expandTargets(
+    threadId: string,
+    entryId: string,
+    bindTargetCatId: string,
+    expectedQueuedEntryIds: readonly string[],
+    siblingEntries: readonly QueueLedgerEntry[],
+  ): Promise<QueueLedgerTargetExpansionResult> {
+    if (!bindTargetCatId) throw new Error('queue target expansion requires a target');
+    for (const entry of siblingEntries) assertQueueLedgerEntry(entry);
+    const raw = Number(
+      await this.redis.eval(
+        EXPAND_QUEUE_TARGET_ROWS_LUA,
+        3,
+        QueueLedgerKeys.entries(threadId),
+        QueueLedgerKeys.order(threadId),
+        QueueLedgerKeys.messageIndex(threadId),
+        entryId,
+        bindTargetCatId,
+        String(expectedQueuedEntryIds.length),
+        String(siblingEntries.length),
+        ...expectedQueuedEntryIds,
+        ...siblingEntries.map((entry) => JSON.stringify(entry)),
+      ),
+    );
+    if (raw === -2) return { outcome: 'not_found', entries: [] };
+    if (raw === 0) return { outcome: 'state_changed', entries: [] };
+    if (raw === -1) return { outcome: 'conflict', entries: [] };
+    if (raw !== 1 && raw !== 2) throw new Error(`unexpected queue target expansion outcome: ${raw}`);
+    const ids = [entryId, ...expectedQueuedEntryIds, ...siblingEntries.map((entry) => entry.id)];
+    const raws = await this.redis.hmget(QueueLedgerKeys.entries(threadId), ...ids);
+    if (raws.some((value) => typeof value !== 'string')) {
+      throw new Error('Queue target expansion identity vanished after atomic commit');
+    }
+    const entries = raws.map((value) => hydrateQueueLedgerEntry(value as string));
+    if (entries.some((entry) => entry.status !== 'queued')) {
+      return { outcome: 'state_changed', entries: [] };
+    }
+    const anchor = entries[0];
+    if (!anchor || anchor.target.kind !== 'cat' || anchor.target.catId !== bindTargetCatId) {
+      return { outcome: 'conflict', entries: [] };
+    }
+    if (
+      !entries.slice(1 + expectedQueuedEntryIds.length).every((entry, index) => {
+        const input = siblingEntries[index];
+        return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
+      })
+    ) {
+      return { outcome: 'conflict', entries: [] };
+    }
+    return { outcome: raw === 1 ? 'expanded' : 'replayed', entries };
   }
 
   async list(threadId: string): Promise<QueueLedgerEntry[]> {

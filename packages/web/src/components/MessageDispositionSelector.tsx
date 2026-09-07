@@ -14,8 +14,8 @@ import {
 } from './message-disposition-presentation';
 
 const DISPOSITION_LABEL: Record<MessageWorkDisposition, string> = {
-  next_work: '下一件工作',
-  continue_current: '接着当前工作',
+  next_work: '排队等待',
+  continue_current: '立即发送，引导回复',
 };
 
 const SOURCE_LABEL: Record<MessageDispositionPreferenceController['source'], string> = {
@@ -112,7 +112,7 @@ export function MessageDispositionSelector({
         aria-expanded={open}
         onClick={toggle}
         className="inline-flex items-center gap-1.5 rounded-full border border-cafe bg-cafe-surface px-2.5 py-1 text-xs font-medium text-cafe-secondary transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary"
-        title="选择这条消息进入当前工作，还是成为下一件工作"
+        title="选择默认消息分发方式"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-cocreator-primary)]" aria-hidden />
         <span>{DISPOSITION_LABEL[controller.effective]}</span>
@@ -130,7 +130,7 @@ export function MessageDispositionSelector({
           data-testid="message-disposition-popover"
         >
           <div className="mb-2">
-            <div className="text-sm font-semibold text-cafe-primary">这条消息要去哪？</div>
+            <div className="text-sm font-semibold text-cafe-primary">消息分发策略</div>
             <p className="mt-1 text-micro text-cafe-muted" data-provider-carrier-capability>
               {carrierCapabilities.length > 0
                 ? carrierCapabilities.map((c) => humanCarrierLabel(c)).join('；')
@@ -148,7 +148,7 @@ export function MessageDispositionSelector({
                 className="mt-1 text-xs leading-relaxed text-cafe-secondary"
                 data-testid="message-disposition-onboarding"
               >
-                “下一件工作”会等当前轮结束；“接着当前工作”允许当前轮在安全断点读取，但不等于已经读到。
+                “排队等待”按队列顺序处理；“立即发送，引导回复”只在成员正在回复且接入支持时引导当前回复。
               </p>
             )}
           </div>
@@ -203,10 +203,10 @@ export function MessageDispositionSelector({
                   <span className="block text-sm font-medium text-cafe-primary">{DISPOSITION_LABEL[disposition]}</span>
                   <span className="mt-0.5 block text-xs leading-relaxed text-cafe-muted">
                     {disposition === 'next_work'
-                      ? '当前轮不可见；当前轮结束后自然开始。'
+                      ? '按队列顺序等待处理，不向正在进行的回复追加消息。'
                       : carrierSupport === 'exact'
-                        ? '等待本轮在 provider safe-boundary 精确读取；未读到会自动转成下一件工作。'
-                        : '仍可选择；若当前接入无法追加，服务端会把它作为下一件工作启动。'}
+                        ? '成员正在回复时立即送入当前回复；没有可引导的回复时按队列顺序处理。'
+                        : '当前接入不支持引导正在进行的回复；消息将按队列顺序处理。'}
                   </span>
                 </span>
               </button>

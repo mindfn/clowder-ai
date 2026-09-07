@@ -566,6 +566,53 @@ export class InvocationQueue {
     };
   }
 
+  /**
+   * Atomically verify every already-selected scalar row, bind an optional
+   * targetless anchor, and add missing siblings. A terminal race therefore
+   * rejects the whole Steer mapping instead of leaving a partial fan-out.
+   */
+  async mapQueuedMessageTargetsDurable(
+    messageStore: Pick<IMessageStore, 'getById'>,
+    messageId: string,
+    entryId: string,
+    bindTargetCatId: string,
+    expectedQueuedEntryIds: readonly string[],
+    input: QueueEnqueueInput,
+  ) {
+    const source = await messageStore.getById(messageId);
+    if (
+      !source ||
+      source.threadId !== input.threadId ||
+      source.userId !== input.userId ||
+      source.content !== input.content ||
+      JSON.stringify(source.from) !== JSON.stringify(input.from) ||
+      (source.deliveryStatus !== 'queued' && source.deliveryStatus !== 'delivered')
+    ) {
+      throw new Error('queued Message does not match its target fan-out expansion');
+    }
+    const anchor = await this.ledgerStore.get(input.threadId, entryId);
+    if (!anchor) return { outcome: 'not_found' as const, entries: [] };
+    const siblingInput: QueueEnqueueInput = { ...input, sourceId: messageId, messageId };
+    const siblingRows =
+      siblingInput.targetCats.length > 0
+        ? this.createLedgerRows(siblingInput, messageId, anchor.enqueuedAt, messageId).map((row) => ({
+            ...row,
+            ...(anchor.position !== undefined ? { position: anchor.position } : {}),
+          }))
+        : [];
+    const result = await this.ledgerStore.expandTargets(
+      input.threadId,
+      entryId,
+      bindTargetCatId,
+      expectedQueuedEntryIds,
+      siblingRows,
+    );
+    if (result.outcome === 'expanded' || result.outcome === 'replayed') {
+      return { ...result, entries: this.cacheLedgerEntries(result.entries) };
+    }
+    return result;
+  }
+
   private findEntryAcrossUsers(threadId: string, entryId: string): QueueEntry | undefined {
     for (const queue of this.queues.values()) {
       if (!this.queueMatchesThread(queue, threadId)) continue;

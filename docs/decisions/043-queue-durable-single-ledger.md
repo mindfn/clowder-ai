@@ -97,7 +97,7 @@ Message 另外持久化一个不可变的发布事实 `timelinePublishedAtAppend
 
 ### D4 — 用 Lua 保证原子性
 
-拆成两个 key 后，「消息入库」与「入队」仍必须原子。队列自身由 5 个 Lua 转换保证：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix`（§6.4 前缀批处理需原子多条 claim）。另外有 3 条跨记录原子路径：新 Message + fan-out、已有 connector Message + fan-out、terminal response + outbound fan-out。任一路径失败都不得留下 ghost Message 或半组 Queue rows。
+拆成两个 key 后，「消息入库」与「入队」仍必须原子。队列自身由 6 类 Lua 转换保证：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix` / `expandTargets`（后者在同一事务重验已选 queued rows、绑定 targetless 原行首目标并追加其余标量 sibling）。另外有 3 条跨记录原子路径：新 Message + fan-out、已有 connector Message + fan-out、terminal response + outbound fan-out。任一路径失败都不得留下 ghost Message、未绑定原行或半组 Queue rows。
 
 Redis 的 `order` list 是 active 集合，terminal tombstone 只留在 `entries` hash 作为 receipt 真相；
 容量判定只遍历 `order`，不扫描历史 tombstone。入队同时原子维护 `messageId → entryIds` hash
@@ -127,10 +127,25 @@ cancel 正在跑的 invocation   ← I/O，进不了 Lua
 
 Steer 只需在条目上留 2 个标量：`steerRequestedAt?: number`（UI「Steer 中」回执态）、`steeredInvocationId?: string`（替补 run 归属证据）。
 
-Steer modal 的两个按钮表达作者意图，不表达一次易过期的 carrier capability snapshot：正常 Steer
-选择 `next_work` 并在仍 active 时走上述 preemption；“不中断继续发送”选择 `continue_current`，admission
-先尝试 exact Active Run Append，provider 不支持或 run 已结束时保留同一 Queue row，由普通 drain 启动。
-因此任一可选择的 active target 都必须显示不中断选项，前端不得因 `canAppend` 投影缺失而隐藏作者意图。
+消息默认分发与显式 Steer 是两层：默认设置只提供「排队等待」(`next_work`) 与「立即发送，引导回复」
+(`continue_current`)；产品默认是「排队等待」，用户可以在全局、thread 或单次作用域显式覆盖。Steer modal
+固定提供「立即发送，引导回复」与「立即发送，中断回复」。前者只在该成员的静态 client capability 支持
+exact active-turn append、且存在 exact current reply 时可选；能力由服务端随
+成员信息逐成员投影，前端不得硬编码或从本地活跃态猜测。不支持时 modal 原位说明「当前成员不支持追加消息
+引导回复」；默认 `continue_current` 则诚实保留为 `next_work`，不自动中断。没有 current reply 时也没有可引导
+对象，仍由普通 FIFO drain 处理。
+
+targetless input 也不例外地使用 Queue 的同一个 fallback resolver：只有作者请求「立即发送，引导回复」、该
+resolver 的当前结果拥有 exact current reply 且静态 capability 支持时，才把无目标 row 原子绑定后 Append；
+否则 row 保持 unassigned，继续由严格队首在稍后解析实际 target。前端、最近活动列表或任意 active member
+都不能替代这次精确匹配。
+
+Steer modal 可多选，成员候选为 thread participants、消息路由目标与 fallback 的并集去重；fallback 直接读取 Queue admission 同一个 head-time resolver 的只读投影（最近 completed response target，否则全局默认），Web 不另算；
+已由未读接管而终局的 source×target row 可见但禁选。每位成员可以分别选择 guide 或 interrupt；这不是一个
+批次统一策略，某个 target 的动作失败也不回滚已经接受动作的 sibling。打开 modal 不写状态，确认时服务端
+重新验证 terminal/availability；弹窗打开时已有的 member 若已被移出则 typed conflict，新增选择的可用成员只在确认时持久加入 thread；并把 targetless
+原行绑定与新 sibling fan-out 放进同一原子 cutover。初始 multi-target admission 仍 all-or-none；cutover 后各
+标量 row 独立执行和终局，某个 provider 失败不回滚 sibling。
 
 ### D6 — freshness carrier 是载荷标记，不是状态机
 

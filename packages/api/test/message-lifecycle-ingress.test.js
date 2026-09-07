@@ -121,7 +121,7 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
   });
 
-  it('defaults an exact running target to continue-current and offers the durable row to auto-append', async () => {
+  it('offers an explicitly guided exact running target to auto-append', async () => {
     dependencies.invocationTracker.has.mock.mockImplementation(() => true);
     dependencies.invocationTracker.getUserId = mock.fn(() => 'user-1');
     dependencies.invocationTracker.getExecutionId = mock.fn(() => 'parent-1');
@@ -140,7 +140,11 @@ describe('canonical message lifecycle ingress', () => {
       method: 'POST',
       url: '/api/messages',
       headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
-      payload: { content: 'append to the current writer', threadId: 'thread-1' },
+      payload: {
+        content: 'append to the current writer',
+        threadId: 'thread-1',
+        messageDisposition: 'continue_current',
+      },
     });
 
     assert.equal(response.statusCode, 202, response.body);
@@ -157,6 +161,47 @@ describe('canonical message lifecycle ingress', () => {
     assert.deepEqual(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls[0].arguments, [
       { threadId: 'thread-1', userId: 'user-1', entryId: entry.id },
     ]);
+  });
+
+  it('auto-appends every admitted scalar target row and returns their exact identities', async () => {
+    dependencies.router.resolveExplicitTargets.mock.mockImplementation(async (cats) => cats);
+    dependencies.invocationTracker.has.mock.mockImplementation(() => true);
+    dependencies.invocationTracker.getUserId = mock.fn(() => 'user-1');
+    dependencies.invocationTracker.getExecutionId = mock.fn((_threadId, catId) => `parent-${catId}`);
+    dependencies.router.freshnessCarrierCapability = mock.fn(() => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      deliverySemantics: 'exact_active_turn',
+    }));
+    dependencies.queueProcessor.tryAutoAppendExactEntry.mock.mockImplementation(async () => ({
+      outcome: 'appended',
+      acceptedTargetIds: ['opus', 'codex'],
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: {
+        content: 'guide both replies',
+        threadId: 'thread-1',
+        mentions: ['opus', 'codex'],
+        messageDisposition: 'continue_current',
+      },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    const body = response.json();
+    assert.equal(body.entries.length, 2);
+    assert.deepEqual(
+      body.entries.map((entry) => entry.targetCatId),
+      ['opus', 'codex'],
+    );
+    assert.deepEqual(
+      dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls.map((call) => call.arguments[0].entryId),
+      body.entries.map((entry) => entry.entryId),
+    );
+    assert.equal(new Set(body.entries.map((entry) => entry.entryId)).size, 2);
   });
 
   it('preserves an explicit next-work request without offering it to auto-append', async () => {
@@ -196,6 +241,136 @@ describe('canonical message lifecycle ingress', () => {
     assert.deepEqual(entry.target, { kind: 'unassigned' });
     assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].mentions, []);
     assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
+  });
+
+  it('guides the exact active fallback without rewriting an unmentioned source message', async () => {
+    dependencies.router.resolveTargetsAndIntent.mock.mockImplementation(async (_content, _threadId, options) => {
+      assert.equal(options.allowFallback, false);
+      return {
+        targetCats: [],
+        intent: { intent: 'execute' },
+        hasMentions: false,
+        routing_warnings: [],
+      };
+    });
+    dependencies.router.resolveConversationTargetsAtAdmission = mock.fn(async () => ['opus']);
+    dependencies.router.freshnessCarrierCapability = mock.fn(() => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      deliverySemantics: 'exact_active_turn',
+    }));
+    dependencies.invocationTracker.has.mock.mockImplementation(() => true);
+    dependencies.invocationTracker.getUserId = mock.fn(() => 'user-1');
+    dependencies.invocationTracker.getExecutionId = mock.fn(() => 'parent-1');
+    dependencies.queueProcessor.tryAutoAppendExactEntry.mock.mockImplementation(async () => ({
+      outcome: 'appended',
+      acceptedTargetIds: ['opus'],
+    }));
+    const participants = [];
+    dependencies.threadStore.get.mock.mockImplementation(async () => ({
+      id: 'thread-1',
+      createdBy: 'user-1',
+      participants: [...participants],
+    }));
+    dependencies.threadStore.addParticipants = mock.fn(async (_threadId, catIds) => {
+      for (const catId of catIds) if (!participants.includes(catId)) participants.push(catId);
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: {
+        content: 'guide whoever is already replying',
+        threadId: 'thread-1',
+        messageDisposition: 'continue_current',
+      },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    assert.deepEqual(dependencies.router.resolveConversationTargetsAtAdmission.mock.calls[0].arguments, [
+      [],
+      'thread-1',
+    ]);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.deepEqual(entry.target, { kind: 'cat', catId: 'opus' });
+    assert.deepEqual(entry.delivery.authorIntent, {
+      requested: 'continue_current',
+      boundParentInvocationId: 'parent-1',
+      carrierCapability: {
+        provider: 'openai_codex',
+        carrier: 'codex_app_server',
+        deliverySemantics: 'exact_active_turn',
+      },
+    });
+    assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].mentions, []);
+    assert.deepEqual(dependencies.threadStore.addParticipants.mock.calls[0].arguments, ['thread-1', ['opus']]);
+    assert.deepEqual(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls[0].arguments, [
+      { threadId: 'thread-1', userId: 'user-1', entryId: entry.id },
+    ]);
+    assert.deepEqual(response.json().entries, [{ entryId: entry.id, targetCatId: 'opus' }]);
+  });
+
+  it('leaves guided targetless work queued when the exact fallback has no current reply', async () => {
+    dependencies.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      targetCats: [],
+      intent: { intent: 'execute' },
+      hasMentions: false,
+      routing_warnings: [],
+    }));
+    dependencies.router.resolveConversationTargetsAtAdmission = mock.fn(async () => ['opus']);
+    dependencies.router.freshnessCarrierCapability = mock.fn(() => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      deliverySemantics: 'exact_active_turn',
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: {
+        content: 'queue when nobody is replying',
+        threadId: 'thread-1',
+        messageDisposition: 'continue_current',
+      },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.deepEqual(entry.target, { kind: 'unassigned' });
+    assert.deepEqual(response.json().entries, []);
+    assert.equal(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls.length, 0);
+  });
+
+  it('records a truthful queued fallback when the current reply ends before automatic Append', async () => {
+    dependencies.invocationTracker.has.mock.mockImplementation(() => true);
+    dependencies.invocationTracker.getUserId = mock.fn(() => 'user-1');
+    dependencies.invocationTracker.getExecutionId = mock.fn(() => 'parent-1');
+    dependencies.router.freshnessCarrierCapability = mock.fn(() => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      deliverySemantics: 'exact_active_turn',
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: {
+        content: 'queue if the reply closes at the cutover',
+        threadId: 'thread-1',
+        mentions: ['opus'],
+        messageDisposition: 'continue_current',
+      },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.equal(entry.delivery.authorIntent.requested, 'continue_current');
+    assert.equal(entry.delivery.authorIntent.boundParentInvocationId, 'parent-1');
+    assert.equal(entry.delivery.authorIntent.fallbackReason, 'parent_terminal_before_exposure');
+    assert.equal(typeof entry.delivery.authorIntent.fallbackAt, 'number');
   });
 
   it('routes a composer-selected member through the explicit target field without rewriting visible content', async () => {

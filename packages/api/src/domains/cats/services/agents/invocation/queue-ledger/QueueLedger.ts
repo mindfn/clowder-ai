@@ -121,6 +121,10 @@ export interface QueueLedgerEnqueueResult {
   entries: QueueLedgerEntry[];
 }
 
+export type QueueLedgerTargetExpansionResult =
+  | { outcome: 'expanded' | 'replayed'; entries: QueueLedgerEntry[] }
+  | { outcome: 'not_found' | 'state_changed' | 'conflict'; entries: [] };
+
 export type QueueLedgerClaimResult =
   | { outcome: 'claimed'; entries: QueueLedgerEntry[]; claimId: string }
   | { outcome: 'not_found' | 'state_changed' };
@@ -133,6 +137,14 @@ export type QueueLedgerCommitMode = 'queued' | 'processing' | 'processing_eviden
 
 export interface QueueLedgerStore {
   enqueue(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): Promise<QueueLedgerEnqueueResult>;
+  /** Atomically verify selected rows, bind an optional targetless anchor, and append missing scalar siblings. */
+  expandTargets(
+    threadId: string,
+    entryId: string,
+    bindTargetCatId: string,
+    expectedQueuedEntryIds: readonly string[],
+    siblingEntries: readonly QueueLedgerEntry[],
+  ): Promise<QueueLedgerTargetExpansionResult>;
   listThreadIds(): Promise<string[]>;
   list(threadId: string): Promise<QueueLedgerEntry[]>;
   /** Active rows plus terminal tombstones, used for durable receipt projection. */

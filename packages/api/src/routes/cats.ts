@@ -11,6 +11,7 @@ import {
   type CliConfig,
   type ClientId,
   catRegistry,
+  type FreshnessCarrierCapability,
   getCliEffortOptionsForProvider,
   getDefaultCliEffortForProvider,
   normalizeCliEffortForProvider,
@@ -34,6 +35,7 @@ import { resolveBoundAccountRefForCat } from '../config/cat-account-binding.js';
 import { bootstrapCatCatalog } from '../config/cat-catalog-store.js';
 import {
   getAcpConfig,
+  getDefaultCatId,
   getRoster,
   loadCatConfig,
   loadResolvedCatConfig,
@@ -508,11 +510,13 @@ async function toCatResponse(
   metadata: CatResponseMetadata,
   resolveEffectiveAccountRef: (cat: CatConfig) => Promise<string | undefined>,
   resolveContextCapacitySnapshot?: (catId: CatId) => InvocationCapacitySnapshot | undefined,
+  resolveCarrierCapability?: (catId: CatId) => FreshnessCarrierCapability | undefined,
 ) {
   const acpConfig = getAcpConfig(cat.id as string, projectRoot);
   const contextSnapshot = resolveContextCapacitySnapshot?.(cat.id);
   const contextCapability = contextSnapshot?.capability;
   const effectiveAccountRef = await resolveEffectiveAccountRef(cat);
+  const carrierCapability = resolveCarrierCapability?.(cat.id);
   return {
     id: cat.id,
     name: cat.name,
@@ -524,6 +528,10 @@ async function toCatResponse(
     accountRef: effectiveAccountRef,
     clientId: cat.clientId,
     defaultModel: cat.defaultModel,
+    isDefaultResponder: cat.id === getDefaultCatId(),
+    messageDeliveryCapabilities: {
+      guideReply: carrierCapability?.deliverySemantics === 'exact_active_turn',
+    },
     cli: cat.cli,
     // F254 D2: effective carrier truth — only for cats that actually dispatch
     // through the local Codex CLI. Generic ACP (getAcpConfig wins in the
@@ -672,6 +680,7 @@ async function cleanupBlockedMcpForAllProjects(projectRoot: string, deletedCatId
 interface CatsRoutesOptions {
   onCatalogChanged?: (cats: Record<string, CatConfig>) => Promise<void> | void;
   resolveContextCapacitySnapshot?: (catId: CatId) => InvocationCapacitySnapshot | undefined;
+  resolveCarrierCapability?: (catId: CatId) => FreshnessCarrierCapability | undefined;
 }
 
 export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opts) => {
@@ -733,6 +742,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
             resolveMetadata(cat.id),
             resolveEffectiveAccountRef,
             opts.resolveContextCapacitySnapshot,
+            opts.resolveCarrierCapability,
           ),
         ),
       ),

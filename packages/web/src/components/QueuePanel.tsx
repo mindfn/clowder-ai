@@ -4,7 +4,8 @@ import type { ActiveExecutionListResponse, FreshnessCarrierCapability } from '@c
 import { type QueueReminderAttemptState, SCHEDULER_TRIGGER_PREFIX } from '@cat-cafe/shared';
 import { closestCenter, DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCatData } from '@/hooks/useCatData';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
@@ -19,6 +20,12 @@ import {
   queueTargetStateEntries,
 } from './queue-receipt-projection';
 import { SteerQueuedEntryModal } from './SteerQueuedEntryModal';
+import {
+  parseSteerSourceTargetStates,
+  parseSteerThreadCatProjection,
+  type SteerSourceTargetState,
+  type SteerThreadCatProjection,
+} from './steer-target-selection';
 import { useQueueActionConvergence } from './useQueueActionConvergence';
 
 const COLLAPSE_THRESHOLD = 4;
@@ -123,9 +130,9 @@ interface QueuePanelProps {
 
 export function QueuePanel({ threadId }: QueuePanelProps) {
   const coCreator = useCoCreatorConfig();
+  const { cats } = useCatData();
   const resolveCatName = useCatNameResolver();
   const rawQueue = useChatStore((s) => s.queue);
-  const thread = useChatStore((s) => s.threads.find((candidate) => candidate.id === threadId));
   const queue = useMemo(() => rawQueue ?? [], [rawQueue]);
   const setQueue = useChatStore((s) => s.setQueue);
   const { activeInvocations, catInvocations } = useThreadLiveness(threadId);
@@ -136,6 +143,77 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const [remindingTargetKeys, setRemindingTargetKeys] = useState<Set<string>>(() => new Set());
   const [appendingEntryIds, setAppendingEntryIds] = useState<Set<string>>(() => new Set());
   const [collapsed, setCollapsed] = useState<boolean | null>(null);
+  const [steerContext, setSteerContext] = useState<
+    SteerThreadCatProjection & {
+      threadId: string | null;
+      entryId: string | null;
+      sourceTargets: SteerSourceTargetState[];
+      state: 'loading' | 'ready' | 'unavailable';
+    }
+  >({
+    threadId: null,
+    entryId: null,
+    participantActivity: [],
+    fallbackTargetCatId: null,
+    sourceTargets: [],
+    state: 'loading',
+  });
+
+  useEffect(() => {
+    if (!steerEntryId) {
+      setSteerContext({
+        threadId: null,
+        entryId: null,
+        participantActivity: [],
+        fallbackTargetCatId: null,
+        sourceTargets: [],
+        state: 'loading',
+      });
+      return;
+    }
+    let current = true;
+    setSteerContext({
+      threadId,
+      entryId: steerEntryId,
+      participantActivity: [],
+      fallbackTargetCatId: null,
+      sourceTargets: [],
+      state: 'loading',
+    });
+    void Promise.all([
+      apiFetch(`/api/threads/${encodeURIComponent(threadId)}/cats`),
+      apiFetch(`/api/threads/${encodeURIComponent(threadId)}/queue/${encodeURIComponent(steerEntryId)}/targets`),
+    ])
+      .then(async ([catsResponse, targetsResponse]) => {
+        if (!catsResponse.ok || !targetsResponse.ok) throw new Error('Steer context unavailable');
+        return Promise.all([catsResponse.json(), targetsResponse.json()]);
+      })
+      .then(([catsBody, targetsBody]) => {
+        if (!current) return;
+        setSteerContext({
+          threadId,
+          entryId: steerEntryId,
+          ...parseSteerThreadCatProjection(catsBody),
+          sourceTargets: parseSteerSourceTargetStates(targetsBody),
+          state: 'ready',
+        });
+      })
+      .catch(() => {
+        if (current) {
+          setSteerContext({
+            threadId,
+            entryId: steerEntryId,
+            participantActivity: [],
+            fallbackTargetCatId: null,
+            sourceTargets: [],
+            state: 'unavailable',
+          });
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [steerEntryId, threadId]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -403,75 +481,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     },
     [addToast, setQueue, threadId],
   );
-  const handleContinueQueuedEntry = useCallback(
-    async (entry: (typeof queue)[number], targetCatId: string) => {
-      setAppendingEntryIds((current) => new Set(current).add(entry.id));
-      try {
-        const res = await apiFetch(`/api/threads/${threadId}/queue/${entry.id}/continue`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ targetCatId }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          addToast({
-            type: 'error',
-            title: '发送失败',
-            message: data?.error ?? '消息没有发送，请刷新后重试。',
-            threadId,
-            duration: 5000,
-          });
-          return;
-        }
-        handleSteerCancel();
-        const current = useChatStore.getState();
-        const currentQueue =
-          current.currentThreadId === threadId ? current.queue : current.threadStates[threadId]?.queue;
-        if (data?.outcome === 'appended') {
-          setQueue(
-            threadId,
-            (currentQueue ?? []).filter((candidate) => candidate.id !== entry.id),
-          );
-          addToast({
-            type: 'success',
-            title: '已追加到当前回合',
-            message: '没有停止当前回复；消息已关联到现有回合。',
-            threadId,
-            duration: 3000,
-          });
-          return;
-        }
-        setQueue(
-          threadId,
-          (currentQueue ?? []).map((candidate) =>
-            candidate.id === entry.id ? { ...candidate, targetCats: [targetCatId] } : candidate,
-          ),
-        );
-        addToast({
-          type: 'success',
-          title: '已发送，不中断当前回复',
-          message: '当前接入无法直接追加时，这条消息会作为该成员的下一件工作。',
-          threadId,
-          duration: 3000,
-        });
-      } catch {
-        addToast({
-          type: 'error',
-          title: '发送失败',
-          message: '消息没有发送，请刷新后重试。',
-          threadId,
-          duration: 5000,
-        });
-      } finally {
-        setAppendingEntryIds((current) => {
-          const next = new Set(current);
-          next.delete(entry.id);
-          return next;
-        });
-      }
-    },
-    [addToast, handleSteerCancel, setQueue, threadId],
-  );
   const handleRemind = useCallback(
     async (entryId: string, targetCatId: string) => {
       const key = `${entryId}:${targetCatId}`;
@@ -557,20 +566,68 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const entryIds = visibleEntries.map((e) => e.id);
 
   const selectedSteerEntry = steerEntryId ? (queue.find((e) => e.id === steerEntryId) ?? null) : null;
-  const selectedSteerTargetIds = selectedSteerEntry
-    ? selectedSteerEntry.targetCats.length > 0
-      ? selectedSteerEntry.targetCats
-      : (thread?.participants ?? [])
-    : [];
-  const selectedSteerTargets = selectedSteerTargetIds.map((targetId) => {
-    return {
-      id: targetId,
-      label: resolveCatName(targetId),
-      // This is an author intent, not a promise that one live carrier can
-      // append. The server appends when possible and otherwise keeps next work.
-      canAppend: true,
-    };
-  });
+  const selectedSteerTargets = (() => {
+    if (!selectedSteerEntry) return [];
+    const currentContext =
+      steerContext.threadId === threadId &&
+      steerContext.entryId === selectedSteerEntry.id &&
+      steerContext.state === 'ready'
+        ? steerContext
+        : null;
+    if (!currentContext) return [];
+    const catById = new Map(cats.map((cat) => [cat.id, cat]));
+    const siblingEntries = queue.filter(
+      (candidate) =>
+        candidate.status === 'queued' &&
+        selectedSteerEntry.messageId &&
+        candidate.messageId === selectedSteerEntry.messageId,
+    );
+    const rowByTarget = new Map(
+      siblingEntries.flatMap((entry) => entry.targetCats.map((targetCatId) => [targetCatId, entry] as const)),
+    );
+    const receiptByTarget = new Map(
+      siblingEntries.flatMap((entry) =>
+        (entry.queueReceipt?.targets ?? []).map((target) => [target.catId, target] as const),
+      ),
+    );
+    const participantActivity = currentContext.participantActivity;
+    const participantIds = new Set(participantActivity.map((participant) => participant.catId));
+    const candidateIds = new Set<string>();
+    for (const participant of participantActivity) candidateIds.add(participant.catId);
+    for (const target of currentContext.sourceTargets) candidateIds.add(target.targetCatId);
+    for (const target of selectedSteerEntry.queueReceipt?.targets ?? []) candidateIds.add(target.catId);
+    for (const targetCatId of selectedSteerEntry.targetCats) candidateIds.add(targetCatId);
+    const fallbackId = currentContext.fallbackTargetCatId ?? undefined;
+    if (fallbackId) candidateIds.add(fallbackId);
+    const pendingTargetIds = new Set(siblingEntries.flatMap((entry) => entry.targetCats));
+    if (selectedSteerEntry.targetCats.length === 0 && fallbackId) pendingTargetIds.add(fallbackId);
+    return [...candidateIds].flatMap((targetId) => {
+      const cat = catById.get(targetId);
+      if (!cat) return [];
+      const receipt = receiptByTarget.get(targetId);
+      const sourceTarget = currentContext.sourceTargets.find((target) => target.targetCatId === targetId);
+      const processed = sourceTarget ? !sourceTarget.actionable : false;
+      const row = rowByTarget.get(targetId);
+      const hasCurrentReply = Boolean(
+        activeInvocationIdByCatId[targetId] &&
+          (!row || row.lifecycleActions?.append?.expectedRuns.some((run) => run.targetId === targetId)),
+      );
+      return [
+        {
+          id: targetId,
+          label: resolveCatName(targetId),
+          ...(cat.avatar ? { avatar: cat.avatar } : {}),
+          canGuideReply: cat.messageDeliveryCapabilities?.guideReply === true,
+          hasCurrentReply,
+          defaultSelected: pendingTargetIds.has(targetId) && !processed,
+          processed,
+          unavailable: cat.roster?.available === false,
+          disposition: receipt?.authorIntent?.requested ?? 'next_work',
+          membershipAtOpen: participantIds.has(targetId) ? ('member' as const) : ('admit' as const),
+        },
+      ];
+    });
+  })();
 
   return (
     <div
@@ -664,14 +721,13 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       {selectedSteerEntry && selectedSteerEntry.status === 'queued' && (
         <SteerQueuedEntryModal
           targets={selectedSteerTargets}
-          initialTargetId={selectedSteerTargets[0]?.id}
+          contextState={
+            steerContext.threadId === threadId && steerContext.entryId === selectedSteerEntry.id
+              ? steerContext.state
+              : 'loading'
+          }
           onCancel={handleSteerCancel}
           onConfirm={handleSteerConfirm}
-          onAppend={(targetId) => {
-            if (selectedSteerTargets.some((target) => target.id === targetId)) {
-              void handleContinueQueuedEntry(selectedSteerEntry, targetId);
-            }
-          }}
         />
       )}
     </div>

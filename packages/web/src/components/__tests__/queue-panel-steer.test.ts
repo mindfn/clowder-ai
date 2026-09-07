@@ -8,11 +8,38 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueueEntry } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { QueuePanel } from '../QueuePanel';
 
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => {
+    const cats = [
+      {
+        id: 'opus',
+        displayName: '布偶猫',
+        avatar: '/opus.png',
+        roster: { available: true },
+        isDefaultResponder: true,
+        messageDeliveryCapabilities: { guideReply: true },
+      },
+      {
+        id: 'codex',
+        displayName: '缅因猫',
+        avatar: '/codex.png',
+        roster: { available: true },
+        messageDeliveryCapabilities: { guideReply: false },
+      },
+    ];
+    return {
+      cats,
+      getCatById: (catId: string) => cats.find((cat) => cat.id === catId),
+    };
+  },
+}));
+
 vi.mock('@/utils/api-client', () => ({
-  apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({}) })),
+  apiFetch: vi.fn(),
 }));
 
 const NOW = Date.now();
@@ -46,6 +73,47 @@ function response(body: unknown, status = 200) {
   };
 }
 
+async function defaultApiFetch(path: string, init?: RequestInit) {
+  if (path.endsWith('/cats')) {
+    return response({
+      fallbackTargetCatId: 'opus',
+      participants: [
+        { catId: 'opus', lastMessageAt: 2, lastResponseHealthy: true },
+        { catId: 'codex', lastMessageAt: 1, lastResponseHealthy: true },
+      ],
+    });
+  }
+  if (path.endsWith('/targets')) {
+    if (init?.method !== 'POST') {
+      return response({
+        targets: [{ targetCatId: 'opus', state: 'queued', actionable: true }],
+      });
+    }
+    const body = JSON.parse(String(init?.body ?? '{}')) as {
+      targets?: Array<{
+        targetCatId: string;
+        strategy: 'guide_reply' | 'interrupt_reply';
+        membershipAtOpen: 'member' | 'admit';
+      }>;
+    };
+    return response({
+      targets: (body.targets ?? []).map((target, index) => ({
+        ...target,
+        entryId: index === 0 ? 'q1' : `q-${target.targetCatId}`,
+      })),
+    });
+  }
+  return response({ queue: [] });
+}
+
+async function openSteer(container: HTMLDivElement) {
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('[data-testid="steer-q1"]')?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 describe('QueuePanel steer (F047)', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -64,6 +132,9 @@ describe('QueuePanel steer (F047)', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    vi.mocked(apiFetch)
+      .mockReset()
+      .mockImplementation(defaultApiFetch as typeof apiFetch);
 
     useChatStore.setState({
       messages: [],
@@ -84,6 +155,7 @@ describe('QueuePanel steer (F047)', () => {
         },
       ],
     });
+    useToastStore.setState({ toasts: [] });
   });
 
   afterEach(() => {
@@ -131,25 +203,31 @@ describe('QueuePanel steer (F047)', () => {
 
     const steerBtn = container.querySelector('[data-testid="steer-q1"]') as HTMLButtonElement | null;
     expect(steerBtn).not.toBeNull();
-    act(() => steerBtn?.click());
+    await openSteer(container);
 
     expect(container.querySelector('[data-testid="steer-mode-promote"]')).toBeNull();
 
     const confirm = container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement | null;
     expect(confirm).not.toBeNull();
+    expect(confirm?.disabled).toBe(true);
 
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click();
+    });
     await act(async () => {
       confirm?.click();
     });
 
-    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/targets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
+      }),
+    });
     expect(apiFetch).toHaveBeenCalledWith(
       '/api/threads/thread-1/queue/q1/steer',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetCatId: 'opus' }),
-      }),
+      expect.objectContaining({ body: JSON.stringify({ targetCatId: 'opus' }) }),
     );
   });
 
@@ -159,17 +237,62 @@ describe('QueuePanel steer (F047)', () => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-q1"]')?.click());
+    await openSteer(container);
     expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
 
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-opus"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
 
-    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/steer', {
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/targets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetCatId: 'codex' }),
+      body: JSON.stringify({
+        targets: [
+          { targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+          { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+        ],
+      }),
+    });
+  });
+
+  it('falls back to the configured default responder when a new thread has no members or routing history', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/cats')) return response({ participants: [], fallbackTargetCatId: 'opus' }) as Response;
+      return defaultApiFetch(path, init) as Promise<Response>;
+    });
+    useChatStore.setState({
+      queue: [{ ...QUEUED_ENTRY, targetCats: [] }],
+      threads: [
+        {
+          id: 'thread-1',
+          projectPath: '/test',
+          title: 'New thread',
+          createdBy: 'test-user',
+          participants: [],
+          lastActiveAt: NOW,
+          createdAt: NOW,
+        },
+      ],
+    });
+    act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+
+    await openSteer(container);
+
+    expect(container.querySelector('[data-testid="steer-target-opus"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).toBeNull();
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/targets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'admit' }],
+      }),
     });
   });
 
@@ -254,30 +377,72 @@ describe('QueuePanel steer (F047)', () => {
   });
 
   it('closes a stale Steer confirmation and refreshes Queue truth after a 409', async () => {
-    vi.mocked(apiFetch)
-      .mockResolvedValueOnce(
-        response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中，无法 steer' }, 409) as Response,
-      )
-      .mockResolvedValueOnce(response({ queue: [], paused: false }) as Response);
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/cats')) {
+        return response({ participants: [{ catId: 'opus', lastMessageAt: 2, lastResponseHealthy: true }] }) as Response;
+      }
+      if (path.endsWith('/targets')) {
+        if (init?.method !== 'POST') {
+          return response({ targets: [{ targetCatId: 'opus', state: 'queued', actionable: true }] }) as Response;
+        }
+        return response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中，无法 steer' }, 409) as Response;
+      }
+      return response({ queue: [], paused: false }) as Response;
+    });
     useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-q1"]')?.click());
+    await openSteer(container);
     const confirm = container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]');
     expect(confirm).not.toBeNull();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
     await act(async () => confirm?.click());
 
     expect(container.querySelector('[data-testid="steer-confirm"]')).toBeNull();
-    expect(apiFetch).toHaveBeenCalledTimes(2);
-    expect(apiFetch).toHaveBeenNthCalledWith(1, '/api/threads/thread-1/queue/q1/steer', {
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/targets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetCatId: 'opus' }),
+      body: JSON.stringify({
+        targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
+      }),
     });
-    expect(apiFetch).toHaveBeenNthCalledWith(2, '/api/threads/thread-1/queue');
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue');
     expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it('treats a follow-up action that loses to ordinary drain as converged', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/cats')) {
+        return response({
+          fallbackTargetCatId: 'opus',
+          participants: [{ catId: 'opus', lastMessageAt: 2, lastResponseHealthy: true }],
+        }) as Response;
+      }
+      if (path.endsWith('/targets')) {
+        if (init?.method !== 'POST') {
+          return response({ targets: [{ targetCatId: 'opus', state: 'queued', actionable: true }] }) as Response;
+        }
+        return response({
+          targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', entryId: 'q1' }],
+        }) as Response;
+      }
+      if (path.endsWith('/queue/q1/steer')) {
+        return response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中' }, 409) as Response;
+      }
+      return response({ queue: [], paused: false }) as Response;
+    });
+    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });
+    act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+
+    await openSteer(container);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+
+    expect(container.querySelector('[data-testid="steer-confirm"]')).toBeNull();
+    expect(useChatStore.getState().queue).toEqual([]);
+    expect(useToastStore.getState().toasts.some((toast) => toast.title === '部分 Steer 未完成')).toBe(false);
   });
 
   it('keeps Steer available for an ordinary pending target', () => {
@@ -289,28 +454,133 @@ describe('QueuePanel steer (F047)', () => {
     expect(container.querySelector('[data-testid="steer-q1"]')).not.toBeNull();
   });
 
-  it('offers both non-interrupting delivery and stop-then-restart for any selected member', async () => {
-    useChatStore.setState({ queue: [QUEUED_ENTRY] });
+  it('offers guide and interrupt with exact per-member capability', async () => {
+    useChatStore.setState({
+      queue: [
+        {
+          ...QUEUED_ENTRY,
+          lifecycleActions: {
+            append: {
+              kind: 'append',
+              expectedQueueRevision: 'revision-1',
+              expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+            },
+          },
+        },
+      ],
+      activeInvocations: { 'turn-1': { catId: 'opus', mode: 'execute', startedAt: Date.now() } },
+    });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
     const steerBtn = container.querySelector('[data-testid="steer-q1"]') as HTMLButtonElement | null;
     expect(steerBtn).not.toBeNull();
-    act(() => steerBtn?.click());
+    await openSteer(container);
 
-    expect(container.textContent).toContain('opus');
-    expect(container.querySelector('[data-testid="steer-append"]')?.textContent).toBe('立即发送，不停止');
-    expect(container.querySelector('[data-testid="steer-confirm"]')?.textContent).toBe('停止回复并发送');
+    expect(container.textContent).toContain('布偶猫');
+    expect(container.querySelector('[data-testid="steer-guide-reply"]')?.textContent).toBe('立即发送，引导回复');
+    expect(container.querySelector('[data-testid="steer-interrupt-reply"]')?.textContent).toBe('立即发送，中断回复');
     expect(container.textContent).not.toContain('旧回复会被停止');
     expect(container.textContent).not.toContain('提到队首');
 
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-append"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
     expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/continue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetCatId: 'opus' }),
     });
+  });
+
+  it('preserves each scalar sibling disposition when choosing per-target strategies', async () => {
+    const opusEntry: QueueEntry = {
+      ...QUEUED_ENTRY,
+      queueReceipt: {
+        version: 1,
+        entryId: 'q1',
+        targets: [
+          {
+            catId: 'opus',
+            state: 'queued',
+            authorIntent: { requested: 'next_work', effective: 'next_work' },
+          },
+        ],
+        reminderAttempts: [],
+      },
+    };
+    const codexEntry: QueueEntry = {
+      ...QUEUED_ENTRY,
+      id: 'q-codex',
+      targetCats: ['codex'],
+      queueReceipt: {
+        version: 1,
+        entryId: 'q-codex',
+        targets: [
+          {
+            catId: 'codex',
+            state: 'queued',
+            authorIntent: { requested: 'continue_current', effective: 'next_work' },
+          },
+        ],
+        reminderAttempts: [],
+      },
+    };
+    useChatStore.setState({
+      queue: [opusEntry, codexEntry],
+      activeInvocations: {
+        'turn-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'turn-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+    });
+    act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+
+    await openSteer(container);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]')?.click());
+
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
+  it('shows a terminal sibling as processed while leaving the pending target selected', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/cats')) {
+        return response({
+          fallbackTargetCatId: 'opus',
+          participants: [
+            { catId: 'opus', lastMessageAt: 2 },
+            { catId: 'codex', lastMessageAt: 1 },
+          ],
+        }) as Response;
+      }
+      if (path.endsWith('/targets') && init?.method !== 'POST') {
+        return response({
+          targets: [
+            { targetCatId: 'opus', state: 'handled', actionable: false },
+            { targetCatId: 'codex', state: 'queued', actionable: true },
+          ],
+        }) as Response;
+      }
+      return defaultApiFetch(path, init) as Promise<Response>;
+    });
+    useChatStore.setState({
+      queue: [{ ...QUEUED_ENTRY, id: 'q-codex', targetCats: ['codex'] }],
+    });
+    act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="steer-q-codex"]')?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const opus = container.querySelector<HTMLButtonElement>('[data-testid="steer-target-opus"]');
+    const codex = container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]');
+    expect(opus?.disabled).toBe(true);
+    expect(opus?.textContent).toContain('已处理');
+    expect(codex?.disabled).toBe(false);
+    expect(codex?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('offers a non-interrupting reminder for an unread target with an active turn', async () => {
@@ -441,8 +711,8 @@ describe('QueuePanel steer (F047)', () => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
-    expect(container.textContent).toContain('下一件工作');
-    expect(container.textContent).toContain('当前接入不支持本轮读取/提醒');
+    expect(container.textContent).toContain('排队等待');
+    expect(container.textContent).toContain('当前接入不支持引导回复/提醒');
     expect(container.querySelector('[data-testid="remind-q1-opus"]')).toBeNull();
   });
 });

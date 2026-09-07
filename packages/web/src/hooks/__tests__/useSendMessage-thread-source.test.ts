@@ -28,7 +28,7 @@ vi.mock('@/stores/chatStore', () => {
   };
 });
 
-import { useSendMessage } from '@/hooks/useSendMessage';
+import { type PostAdmissionAction, useSendMessage } from '@/hooks/useSendMessage';
 
 function SendRunner({
   activeThreadId,
@@ -41,7 +41,7 @@ function SendRunner({
 }: {
   activeThreadId?: string;
   overrideThreadId?: string;
-  postAdmissionAction?: 'steer';
+  postAdmissionAction?: PostAdmissionAction;
   messageDisposition?: 'continue_current' | 'next_work';
   contextAttachments?: ContextAttachment[];
   explicitTargetCats?: string[];
@@ -222,7 +222,11 @@ describe('useSendMessage canonical Queue ingress', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 202,
-        json: async () => ({ status: 'queued', entryId: 'entry-steer' }),
+        json: async () => ({
+          status: 'queued',
+          entryId: 'entry-steer',
+          entries: [{ entryId: 'entry-steer', targetCatId: 'opus' }],
+        }),
       })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ started: true }) });
 
@@ -230,7 +234,10 @@ describe('useSendMessage canonical Queue ingress', () => {
       root.render(
         React.createElement(SendRunner, {
           activeThreadId: 'thread-route',
-          postAdmissionAction: 'steer',
+          postAdmissionAction: {
+            kind: 'steer',
+            targets: [{ targetId: 'opus', strategy: 'interrupt_reply' }],
+          },
           onDone: (value) => accepted.push(value),
         }),
       );
@@ -239,6 +246,8 @@ describe('useSendMessage canonical Queue ingress', () => {
     expect(mockApiFetch).toHaveBeenNthCalledWith(1, '/api/messages', expect.any(Object));
     expect(mockApiFetch).toHaveBeenNthCalledWith(2, '/api/threads/thread-route/queue/entry-steer/steer', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetCatId: 'opus' }),
     });
     expect(accepted).toEqual([true]);
     expect(mockAddMessageToThread).not.toHaveBeenCalled();
@@ -250,29 +259,33 @@ describe('useSendMessage canonical Queue ingress', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 202,
-        json: async () => ({ status: 'queued', entryId: 'entry-steer' }),
+        json: async () => ({
+          status: 'queued',
+          entryId: 'entry-steer',
+          entries: [{ entryId: 'entry-steer', targetCatId: 'opus' }],
+        }),
       })
       .mockResolvedValueOnce({
         ok: false,
         status: 409,
-        json: async () => ({ error: '条目正在处理中，无法 steer' }),
+        json: async () => ({ error: '条目正在处理中，无法 steer', code: 'ENTRY_PROCESSING' }),
       });
 
     await act(async () => {
       root.render(
         React.createElement(SendRunner, {
           activeThreadId: 'thread-route',
-          postAdmissionAction: 'steer',
+          postAdmissionAction: {
+            kind: 'steer',
+            targets: [{ targetId: 'opus', strategy: 'interrupt_reply' }],
+          },
           onDone: (value) => accepted.push(value),
         }),
       );
     });
 
     expect(accepted).toEqual([true]);
-    expect(mockAddMessageToThread).toHaveBeenCalledWith(
-      'thread-route',
-      expect.objectContaining({ content: expect.stringContaining('条目正在处理中') }),
-    );
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('uses a UUIDv4-shaped idempotency key when crypto.randomUUID is unavailable', async () => {

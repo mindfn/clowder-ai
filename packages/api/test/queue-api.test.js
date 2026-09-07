@@ -37,6 +37,12 @@ async function terminalizeFixtureCarrier(deps, queueProcessor, carrier, userId, 
 /** Build deps with stubs */
 function buildDeps(overrides = {}) {
   const invocationQueue = new InvocationQueue();
+  const threadFixture = {
+    id: 't1',
+    title: 'Test Thread',
+    createdBy: 'system',
+    participants: ['opus', 'codex'],
+  };
   let deps;
   const queueProcessor = {
     canReleaseSlotForUser: mock.fn(() => true),
@@ -61,12 +67,12 @@ function buildDeps(overrides = {}) {
   };
   deps = {
     threadStore: {
-      get: mock.fn(async (id) => ({
-        id,
-        title: 'Test Thread',
-        createdBy: 'system', // default: public thread
-        participants: ['opus', 'codex'],
-      })),
+      get: mock.fn(async (id) => ({ ...threadFixture, id, participants: [...threadFixture.participants] })),
+      addParticipants: mock.fn(async (_threadId, catIds) => {
+        for (const catId of catIds) {
+          if (!threadFixture.participants.includes(catId)) threadFixture.participants.push(catId);
+        }
+      }),
     },
     invocationQueue,
     queueProcessor,
@@ -82,6 +88,7 @@ function buildDeps(overrides = {}) {
       carrier: 'codex_app_server',
       deliverySemantics: 'exact_active_turn',
     })),
+    isCatAvailable: mock.fn(() => true),
     socketManager: {
       broadcastAgentMessage: mock.fn(),
       broadcastToRoom: mock.fn(),
@@ -665,6 +672,329 @@ describe('Queue Management API', () => {
     assert.equal(bound?.target.catId, 'codex');
     assert.equal(bound?.delivery.authorIntent?.requested, 'continue_current');
     assert.equal(bound?.delivery.authorIntent?.fallbackReason, 'unsupported_carrier');
+  });
+
+  it('POST /queue/:entryId/targets reuses an admitted row and atomically adds missing scalar targets', async () => {
+    const messageId = 'message-steer-targets';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: ['opus'],
+    });
+    assert.equal(await deps.invocationQueue.setPositionDurable('t1', 'user-a', queued.entry.id, 3), true);
+    deps.messageStore.getById.mock.mockImplementation(async (id) =>
+      id === messageId
+        ? {
+            id,
+            threadId: 't1',
+            userId: 'user-a',
+            content: 'hello',
+            from: { kind: 'user', userId: 'user-a' },
+            deliveryStatus: 'queued',
+            timestamp: 1,
+          }
+        : null,
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: {
+        targets: [
+          { targetCatId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' },
+          { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+        ],
+      },
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(
+      res.json().targets.map((target) => ({ targetCatId: target.targetCatId, strategy: target.strategy })),
+      [
+        { targetCatId: 'opus', strategy: 'guide_reply' },
+        { targetCatId: 'codex', strategy: 'interrupt_reply' },
+      ],
+    );
+    const rows = deps.invocationQueue.list('t1', 'user-a');
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map((entry) => entry.target.catId).sort(), ['codex', 'opus']);
+    assert.equal(rows[0].enqueuedAt, rows[1].enqueuedAt, 'new target siblings preserve source FIFO order');
+    assert.deepEqual(
+      rows.map((entry) => entry.position),
+      [3, 3],
+      'new target siblings preserve source position',
+    );
+    assert.equal(deps.queueProcessor.requestDrain.mock.calls.length, 1);
+  });
+
+  it('POST /queue/:entryId/targets atomically binds a targetless row while adding scalar siblings', async () => {
+    const messageId = 'message-steer-targetless-fanout';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: [],
+    });
+    deps.messageStore.getById.mock.mockImplementation(async (id) =>
+      id === messageId
+        ? {
+            id,
+            threadId: 't1',
+            userId: 'user-a',
+            content: 'hello',
+            from: { kind: 'user', userId: 'user-a' },
+            deliveryStatus: 'queued',
+            timestamp: 1,
+          }
+        : null,
+    );
+
+    const payload = {
+      targets: [
+        { targetCatId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' },
+        { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+      ],
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload,
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(
+      res.json().targets.map((target) => ({
+        entryId: target.entryId,
+        targetCatId: target.targetCatId,
+        strategy: target.strategy,
+      })),
+      [
+        { entryId: queued.entry.id, targetCatId: 'opus', strategy: 'guide_reply' },
+        {
+          entryId: res.json().targets[1].entryId,
+          targetCatId: 'codex',
+          strategy: 'interrupt_reply',
+        },
+      ],
+    );
+    const rows = deps.invocationQueue.list('t1', 'user-a');
+    assert.equal(rows.length, 2);
+    assert.deepEqual(
+      rows.map((entry) => entry.target).sort((left, right) => left.catId.localeCompare(right.catId)),
+      [
+        { kind: 'cat', catId: 'codex' },
+        { kind: 'cat', catId: 'opus' },
+      ],
+    );
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload,
+    });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(deps.invocationQueue.list('t1', 'user-a').length, 2);
+  });
+
+  it('POST /queue/:entryId/targets admits a newly selected available member into the thread at confirmation', async () => {
+    const messageId = 'message-steer-new-participant';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: [],
+    });
+    deps.messageStore.getById.mock.mockImplementation(async (id) =>
+      id === messageId
+        ? {
+            id,
+            threadId: 't1',
+            userId: 'user-a',
+            content: 'hello',
+            from: { kind: 'user', userId: 'user-a' },
+            deliveryStatus: 'queued',
+            timestamp: 1,
+          }
+        : null,
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: {
+        targets: [{ targetCatId: 'kimi', strategy: 'interrupt_reply', membershipAtOpen: 'admit' }],
+      },
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json().targets, [
+      { entryId: queued.entry.id, targetCatId: 'kimi', strategy: 'interrupt_reply' },
+    ]);
+    assert.deepEqual(deps.threadStore.addParticipants.mock.calls[0].arguments, ['t1', ['kimi']]);
+    assert.deepEqual((await deps.threadStore.get('t1')).participants, ['opus', 'codex', 'kimi']);
+    const membershipEvent = deps.socketManager.emitToUser.mock.calls.find(
+      (call) => call.arguments[1] === 'thread_updated',
+    );
+    assert.deepEqual(membershipEvent?.arguments[2], {
+      threadId: 't1',
+      participants: ['opus', 'codex', 'kimi'],
+    });
+  });
+
+  it('POST /queue/:entryId/targets rejects availability drift before fan-out', async () => {
+    const messageId = 'message-steer-unavailable';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: ['opus'],
+    });
+    deps.isCatAvailable.mock.mockImplementation((catId) => catId !== 'codex');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: {
+        targets: [
+          { targetCatId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' },
+          { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+        ],
+      },
+    });
+
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'STEER_TARGET_STATE_CHANGED');
+    assert.deepEqual(
+      deps.invocationQueue.list('t1', 'user-a').map((entry) => entry.target.catId),
+      ['opus'],
+    );
+  });
+
+  it('POST /queue/:entryId/targets normalizes stale unsupported guide requests to interrupt', async () => {
+    const messageId = 'message-steer-unsupported';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: ['opus'],
+    });
+    deps.resolveCarrierCapability.mock.mockImplementation(() => ({
+      provider: 'anthropic',
+      carrier: 'claude_print_sdk',
+      deliverySemantics: 'unsupported',
+    }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: {
+        targets: [{ targetCatId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' }],
+      },
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json().targets, [
+      { targetCatId: 'opus', strategy: 'interrupt_reply', entryId: queued.entry.id },
+    ]);
+  });
+
+  it('POST /queue/:entryId/targets rejects an already-terminal sibling without adding targets', async () => {
+    const messageId = 'message-steer-terminal';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: ['opus', 'codex'],
+    });
+    const opus = queued.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
+    const codex = queued.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex');
+    assert.ok(opus);
+    assert.ok(codex);
+    const claimed = await deps.invocationQueue.claimExactSteerEntryDurable('t1', 'user-a', opus.id, 'opus');
+    assert.equal(claimed.outcome, 'claimed');
+    assert.ok(
+      await deps.invocationQueue.removeProcessedAcrossUsersDurable('t1', opus.id, 'handled', 'terminal test fixture'),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${codex.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: {
+        targets: [
+          { targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+          { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+        ],
+      },
+    });
+
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'STEER_TARGET_ALREADY_HANDLED');
+    assert.deepEqual(
+      deps.invocationQueue.list('t1', 'user-a').map((entry) => entry.target.catId),
+      ['codex'],
+    );
+  });
+
+  it('GET /queue/:entryId/targets projects terminal siblings beside the remaining actionable row', async () => {
+    const messageId = 'message-steer-target-context';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: ['opus', 'codex'],
+    });
+    const opus = queued.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
+    const codex = queued.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex');
+    assert.ok(opus);
+    assert.ok(codex);
+    const claimed = await deps.invocationQueue.claimExactSteerEntryDurable('t1', 'user-a', opus.id, 'opus');
+    assert.equal(claimed.outcome, 'claimed');
+    assert.ok(
+      await deps.invocationQueue.removeProcessedAcrossUsersDurable('t1', opus.id, 'handled', 'context fixture'),
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/threads/t1/queue/${codex.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.deepEqual(res.json(), {
+      targets: [
+        { targetCatId: 'codex', state: 'queued', actionable: true },
+        { targetCatId: 'opus', state: 'handled', actionable: false },
+      ],
+    });
+  });
+
+  it('POST /queue/:entryId/targets rejects a member removed after the modal snapshot', async () => {
+    const messageId = 'message-steer-removed-member';
+    const queued = await enqueueDurableEntry(deps.invocationQueue, {
+      sourceId: messageId,
+      messageId,
+      targetCats: ['opus'],
+    });
+    deps.threadStore.get.mock.mockImplementation(async (id) => ({
+      id,
+      title: 'Test Thread',
+      createdBy: 'system',
+      participants: ['codex'],
+    }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: {
+        targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
+      },
+    });
+
+    assert.equal(res.statusCode, 409, res.body);
+    assert.equal(res.json().code, 'STEER_TARGET_STATE_CHANGED');
+    assert.equal(deps.threadStore.addParticipants.mock.calls.length, 0);
   });
 
   it('GET /queue keeps fan-out target lifecycle isolated per ledger row', async () => {

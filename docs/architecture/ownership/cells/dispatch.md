@@ -1,7 +1,7 @@
 ---
 cell_id: dispatch
 title: Dispatch / Queue
-summary: 按 thread 持久化的 QueueLedger、source×target 标量工单、有序 active index、terminal receipt tombstone、原子 admission/claim/commit/restore、Steer 两步切换、外部 wake 执行，以及 durable child/execution 投影。
+summary: 按 thread 持久化的 QueueLedger、source×target 标量工单、有序 active index、terminal receipt tombstone、原子 admission/claim/commit/restore/targetless fan-out、逐成员 Steer、外部 wake 执行，以及 durable child/execution 投影。
 canonical_features: [F047, F117, F167, F175, F177, F185, F247, F254, F264, F280, F295]
 code_anchors:
   - packages/shared/src/types/active-execution.ts
@@ -75,8 +75,9 @@ doc_anchors:
   - feature-specs/2026-08-12-1291-gate3-terminal-receipt-publication.md
   - feature-specs/2026-08-12-1291-gate4-wait-carrier-integration.md
   - feature-specs/2026-08-12-1291-gate5-retry-revalidation.md
-static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, QueueLedgerReceipt, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, getByMessageIds, timelinePublishedAtAppend, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, QueueMessageReceipt, QueueReceiptTarget, QueueReminderAttempt, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, terminalOutcome, bodyExposures, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute, reconcileInactiveLiveInvocation, EXECUTION_CONTROL_UNAVAILABLE]
+static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, QueueLedgerReceipt, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, getByMessageIds, timelinePublishedAtAppend, expandTargets, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, QueueMessageReceipt, QueueReceiptTarget, QueueReminderAttempt, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, terminalOutcome, bodyExposures, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute, reconcileInactiveLiveInvocation, EXECUTION_CONTROL_UNAVAILABLE]
 cited_by:
+  - {feature: F117-steer-per-target, date: 2026-09-07, delta: default delivery copy separates queueing from immediate guidance; static configured-client guide capability is projected per member; composer and Queue Steer support multi-select with per-target guide or interrupt; targetless binding plus sibling fan-out is one atomic ledger mutation}
   - {feature: F220-KD9-stop-ladder, date: 2026-09-03, delta: Stop is the only user-facing termination; an exact live cancel escalates server-side to per-target reconciliation of durable running truth instead of 409, an incomplete process-owner snapshot terminalizes the execution as failed instead of prompting, and force-reset is demoted to an internal thread-scoped reconciler}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: an exact full same-thread read adopts only that source-target scalar row into the current LifecycleActiveRun and response, publishes the Message to History, and terminalizes the row while siblings remain queued}
   - {feature: F117-ADR-043, date: 2026-09-03, delta: QueueLedger becomes the only durable Queue truth; deterministic source-by-target rows atomically admit Messages, retain terminal receipt tombstones outside active order, and drive live/history receipt projection through an exact message index}
@@ -166,9 +167,12 @@ invocation outside Redis, then commit the claim to processing or restore it to t
 and prefix claim is all-or-nothing; a single dispatch may carry multiple prompt items but never concatenates
 their bodies or erases message identity.
 
-Append-without-stop is an author intent, not a UI capability promise. Both composer and Queue Steer expose the
-same intent. The server appends to an exact live carrier when supported; otherwise it preserves the Queue row
-as `next_work` with a durable fallback reason and never cancels the current execution. A successful
+The default disposition is `next_work` (排队等待) or `continue_current` (立即发送，引导回复). Guide support is
+a static per-member client capability projected by the server; the UI must not hard-code it or infer it from
+local activity. Queue and composer Steer show both guide and interrupt actions, allow a per-target strategy for
+multi-select, and enable guide only for a supporting member with an exact current reply. Unsupported default
+guide preserves the row as `next_work` and never cancels the current execution. Targetless binding plus sibling
+fan-out is one durable mutation; after that cutover each scalar target proceeds independently. A successful
 `runtime_replacement` already completed its recovered attempt and must not enqueue a second source-less
 continuation.
 

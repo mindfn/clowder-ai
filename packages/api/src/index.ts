@@ -3073,6 +3073,7 @@ async function main(): Promise<void> {
     queueProcessor,
     invocationTracker,
     resolveCarrierCapability: (catId) => router.freshnessCarrierCapability(catId),
+    isCatAvailable: (catId) => isCatAvailable(catId),
     agentSessionMutex,
     socketManager,
     messageStore, // F117: for marking queued messages as canceled on withdraw/clear
@@ -3124,6 +3125,7 @@ async function main(): Promise<void> {
   }
   await app.register(catsRoutes, {
     resolveContextCapacitySnapshot: (catId) => router.contextCapacitySnapshot(catId),
+    resolveCarrierCapability: (catId) => router.freshnessCarrierCapability(catId),
   });
   await app.register(routingContextRoutes, {
     ...(routingContextRuntime ? { runtime: routingContextRuntime } : {}),
@@ -5123,6 +5125,8 @@ async function main(): Promise<void> {
       getCatDisplayName: (catId: string) => allCatConfigs[catId]?.displayName ?? catId,
       getAllCatIds: () => Object.keys(allCatConfigs),
       isCatAvailable: (catId: string) => isCatAvailable(catId),
+      resolveConversationFallbackTarget: async (threadId: string) =>
+        (await router.resolveConversationTargetsAtAdmission([], threadId))[0],
     });
   }
   await app.register(tasksRoutes, { taskStore, socketManager, waitLifecycleHolder });

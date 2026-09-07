@@ -31,6 +31,8 @@ vi.mock('@/hooks/useCatData', () => ({
         roleDescription: 'reviewer',
         avatar: '/opus.png',
         roster: { available: true },
+        isDefaultResponder: true,
+        messageDeliveryCapabilities: { guideReply: true },
       },
       {
         id: 'codex',
@@ -39,6 +41,7 @@ vi.mock('@/hooks/useCatData', () => ({
         roleDescription: 'reviewer',
         avatar: '/codex.png',
         roster: { available: true },
+        messageDeliveryCapabilities: { guideReply: false },
       },
     ],
     isLoading: false,
@@ -155,7 +158,13 @@ describe('F264 author message disposition selector', () => {
       },
     });
     useActiveExecutionStore.getState().reset();
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/api/threads/') && String(input).endsWith('/cats')) {
+        return jsonResponse({
+          fallbackTargetCatId: 'opus',
+          participants: [{ catId: 'opus', lastMessageAt: 1, lastResponseHealthy: true }],
+        });
+      }
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       const snapshot =
         body?.scope === 'thread'
@@ -217,7 +226,7 @@ describe('F264 author message disposition selector', () => {
 
     await renderThreadInput({ threadId: 'thread-1', onSend, hasActiveInvocation: true });
     const trigger = await chooseContinueCurrent();
-    expect(trigger.textContent).toContain('接着当前工作');
+    expect(trigger.textContent).toContain('立即发送，引导回复');
     await typeAndSend('顺手看一下问题 B');
 
     expect(onSend).toHaveBeenCalledWith(
@@ -228,7 +237,7 @@ describe('F264 author message disposition selector', () => {
       undefined,
       'continue_current',
     );
-    expect(trigger.textContent).toContain('下一件工作');
+    expect(trigger.textContent).toContain('排队等待');
   });
 
   it('retains a one-shot override when admission fails', async () => {
@@ -245,7 +254,7 @@ describe('F264 author message disposition selector', () => {
       undefined,
       'continue_current',
     );
-    expect(trigger.textContent).toContain('接着当前工作');
+    expect(trigger.textContent).toContain('立即发送，引导回复');
   });
 
   it('confirms that draft Steer stops the target reply before sending', async () => {
@@ -272,10 +281,17 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'steer', undefined, undefined, undefined, [
-      'opus',
-    ]);
-    expect(trigger.textContent).toContain('接着当前工作');
+    expect(onSend).toHaveBeenCalledWith(
+      '现在就换轨',
+      undefined,
+      undefined,
+      { kind: 'steer', targets: [{ targetId: 'opus', strategy: 'guide_reply' }] },
+      undefined,
+      'next_work',
+      undefined,
+      ['opus'],
+    );
+    expect(trigger.textContent).toContain('立即发送，引导回复');
   });
 
   it('lets an unaddressed draft choose one current member before stopping and sending', async () => {
@@ -290,11 +306,18 @@ describe('F264 author message disposition selector', () => {
     });
     await renderThreadInput({ threadId: 'thread-steer-target', onSend, hasActiveInvocation: true });
     act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '请现在处理这个'));
-    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
     act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[data-testid="steer-interrupt-reply"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[data-testid="steer-target-opus"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[data-testid="steer-interrupt-reply"]') as HTMLButtonElement).click());
     await act(async () => {
       (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
       await Promise.resolve();
@@ -304,11 +327,17 @@ describe('F264 author message disposition selector', () => {
       '请现在处理这个',
       undefined,
       undefined,
-      'steer',
+      {
+        kind: 'steer',
+        targets: [
+          { targetId: 'opus', strategy: 'interrupt_reply' },
+          { targetId: 'codex', strategy: 'interrupt_reply' },
+        ],
+      },
       undefined,
+      'next_work',
       undefined,
-      undefined,
-      ['codex'],
+      ['opus', 'codex'],
     );
   });
 
@@ -324,10 +353,15 @@ describe('F264 author message disposition selector', () => {
     });
     await renderThreadInput({ threadId: 'thread-steer-addressed', onSend, hasActiveInvocation: true });
     act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '@缅因猫 请现在改一下'));
-    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="steer-target-opus"]')).toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-interrupt-reply"]') as HTMLButtonElement).click());
     await act(async () => {
       (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
       await Promise.resolve();
@@ -337,15 +371,15 @@ describe('F264 author message disposition selector', () => {
       '@缅因猫 请现在改一下',
       undefined,
       undefined,
-      'steer',
+      { kind: 'steer', targets: [{ targetId: 'codex', strategy: 'interrupt_reply' }] },
       undefined,
-      undefined,
+      'next_work',
       undefined,
       ['codex'],
     );
   });
 
-  it('offers non-interrupting send as an intent even when the selected member has no active Append carrier', async () => {
+  it('shows guide capability per member and selects interrupt for an unsupported member', async () => {
     const onSend = vi.fn(async () => true);
     seedCanonicalExecutions('thread-steer-append', ['opus', 'codex'], ['opus']);
     useChatStore.setState({
@@ -357,27 +391,22 @@ describe('F264 author message disposition selector', () => {
       catInvocations: {},
     });
     await renderThreadInput({ threadId: 'thread-steer-append', onSend, hasActiveInvocation: true });
+    await chooseContinueCurrent();
     act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '补充一个约束'));
-    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
-
-    expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
-    act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
-    expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
     await act(async () => {
-      (container.querySelector('[data-testid="steer-append"]') as HTMLButtonElement).click();
+      (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith(
-      '补充一个约束',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      'continue_current',
-      undefined,
-      ['codex'],
-    );
+    expect(container.querySelector('[data-testid="steer-guide-reply"]')).not.toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.disabled).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(container.textContent).toContain('当前成员不支持追加消息引导回复');
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it('can persist the choice for this thread instead of changing every send', async () => {
@@ -403,7 +432,7 @@ describe('F264 author message disposition selector', () => {
       threadId: 'thread-4',
       disposition: 'continue_current',
     });
-    expect(trigger.textContent).toContain('接着当前工作');
+    expect(trigger.textContent).toContain('立即发送，引导回复');
 
     await act(async () => {
       trigger.click();
@@ -450,7 +479,7 @@ describe('F264 author message disposition selector', () => {
     });
     await renderThreadInput({ threadId: 'thread-6', onSend, hasActiveInvocation: true });
     const trigger = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    expect(trigger.textContent).toContain('下一件工作');
+    expect(trigger.textContent).toContain('排队等待');
     await act(async () => {
       trigger.click();
       await Promise.resolve();
@@ -461,11 +490,11 @@ describe('F264 author message disposition selector', () => {
     expect(continueOption.className).not.toContain('disabled:cursor-not-allowed');
     expect(continueOption.className).not.toContain('disabled:cursor-wait');
     expect(nextWorkOption.disabled).toBe(false);
-    expect(container.textContent).toContain('当前接入不支持本轮读取');
-    expect(container.textContent).toContain('服务端会把它作为下一件工作启动');
+    expect(container.textContent).toContain('当前接入不支持引导当前回复');
+    expect(container.textContent).toContain('消息将按队列顺序处理');
 
     act(() => continueOption.click());
-    expect(trigger.textContent).toContain('接着当前工作');
+    expect(trigger.textContent).toContain('立即发送，引导回复');
     await typeAndSend('接入不支持也保留我的意图');
     expect(onSend).toHaveBeenCalledWith(
       '接入不支持也保留我的意图',
@@ -557,7 +586,7 @@ describe('F264 author message disposition selector', () => {
     await renderThreadInput({ threadId: 'thread-b', onSend: vi.fn(), hasActiveInvocation: true });
 
     const triggerB = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    expect(triggerB.textContent).toContain('接着当前工作');
+    expect(triggerB.textContent).toContain('排队等待');
     expect(triggerB.textContent).toContain('产品默认');
     expect(triggerB.textContent).not.toContain('仅这一次');
     expect(triggerB.textContent).not.toContain('本 Thread');

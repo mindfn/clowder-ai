@@ -86,6 +86,104 @@ end
 return 1
 `;
 
+export const EXPAND_QUEUE_TARGET_ROWS_LUA = `
+local rowsKey = KEYS[1]
+local orderKey = KEYS[2]
+local messageIndexKey = KEYS[3]
+local anchorId = ARGV[1]
+local bindTargetCatId = ARGV[2]
+local expectedCount = tonumber(ARGV[3])
+local count = tonumber(ARGV[4])
+if not bindTargetCatId or bindTargetCatId == '' or not expectedCount or expectedCount < 0 or not count or count < 0 then
+  return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID')
+end
+local anchorRaw = redis.call('HGET', rowsKey, anchorId)
+if not anchorRaw then return -2 end
+local anchor = cjson.decode(anchorRaw)
+if anchor.status ~= 'queued' then return 0 end
+if anchor.target.kind == 'cat' and anchor.target.catId ~= bindTargetCatId then return 0 end
+
+local seenIds = { [anchorId] = true }
+local seenTargets = { [bindTargetCatId] = true }
+for i = 1, expectedCount do
+  local expectedId = ARGV[4 + i]
+  if not expectedId or expectedId == '' or seenIds[expectedId] then
+    return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID_EXPECTATION')
+  end
+  seenIds[expectedId] = true
+  local expectedRaw = redis.call('HGET', rowsKey, expectedId)
+  if not expectedRaw then return 0 end
+  local expected = cjson.decode(expectedRaw)
+  if expected.status ~= 'queued' or expected.threadId ~= anchor.threadId or expected.payload.sourceId ~= anchor.payload.sourceId or expected.target.kind ~= 'cat' or seenTargets[expected.target.catId] then
+    return 0
+  end
+  seenTargets[expected.target.catId] = true
+end
+
+local incoming = {}
+local existingCount = 0
+local messageIndexUpdates = {}
+for i = 1, count do
+  local raw = ARGV[4 + expectedCount + i]
+  local row = cjson.decode(raw)
+  if not row.id or seenIds[row.id] or row.threadId ~= anchor.threadId or row.status ~= 'queued' or row.payload.sourceId ~= anchor.payload.sourceId or row.target.kind ~= 'cat' or seenTargets[row.target.catId] then
+    return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID_ROW')
+  end
+  seenIds[row.id] = true
+  seenTargets[row.target.catId] = true
+  local existingRaw = redis.call('HGET', rowsKey, row.id)
+  if existingRaw then
+    local existingRow = cjson.decode(existingRaw)
+    if existingRow.status ~= 'queued' then return 0 end
+    existingCount = existingCount + 1
+  end
+  local messageId = row.payload and row.payload.messageId
+  if messageId and messageId ~= '' then
+    local update = messageIndexUpdates[messageId]
+    if not update then
+      update = { ids = {}, seen = {} }
+      local existingIndexRaw = redis.call('HGET', messageIndexKey, messageId)
+      if existingIndexRaw then
+        local decodedOk, decoded = pcall(cjson.decode, existingIndexRaw)
+        if not decodedOk or type(decoded) ~= 'table' then
+          return redis.error_reply('QUEUE_MESSAGE_INDEX_INVALID')
+        end
+        for j = 1, #decoded do
+          if type(decoded[j]) ~= 'string' or decoded[j] == '' or update.seen[decoded[j]] then
+            return redis.error_reply('QUEUE_MESSAGE_INDEX_INVALID')
+          end
+          update.seen[decoded[j]] = true
+          update.ids[#update.ids + 1] = decoded[j]
+        end
+      end
+      messageIndexUpdates[messageId] = update
+    end
+    if not update.seen[row.id] then
+      update.seen[row.id] = true
+      update.ids[#update.ids + 1] = row.id
+    end
+  end
+  incoming[i] = { id = row.id, raw = raw }
+end
+if existingCount == count and anchor.target.kind == 'cat' then return 2 end
+if existingCount ~= 0 then return -1 end
+
+if anchor.target.kind == 'unassigned' then
+  anchor.target = { kind = 'cat', catId = bindTargetCatId }
+  redis.call('HSET', rowsKey, anchorId, cjson.encode(anchor))
+elseif anchor.target.kind ~= 'cat' then
+  return -1
+end
+for i = 1, count do
+  redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
+  redis.call('RPUSH', orderKey, incoming[i].id)
+end
+for messageId, update in pairs(messageIndexUpdates) do
+  redis.call('HSET', messageIndexKey, messageId, cjson.encode(update.ids))
+end
+return 1
+`;
+
 export const CLAIM_QUEUE_ROW_LUA = `
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return {-1, ''} end

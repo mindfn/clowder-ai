@@ -1,13 +1,12 @@
 ---
 feature_ids: [F047]
-related_features: [F039]
+related_features: [F039, F117, F175]
 topics: [queue, steer, ux, chat]
 doc_kind: note
 created: 2026-02-28
-tips_exempt: 2026-09-03 ADR-043 renews the existing Queue Steer contract and removes stale gates without adding a new user action or discoverable capability
 ---
 
-# F047: Queue Steer（取消当前轮并以同一消息立即重启）
+# F047: Queue Steer（逐成员立即引导或中断回复）
 
 > **Status**: done（2026-07-12 语义修订） | **Owner**: Maine Coon/Maine Coon（Codex）
 > **Created**: 2026-02-28
@@ -18,40 +17,52 @@ tips_exempt: 2026-09-03 ADR-043 renews the existing Queue Steer contract and rem
 
 ## Why
 
-operator在 Codex 原生体验中使用 **Steer**：当消息在队列里等待时，点击 Steer 会让“那条排队消息”立刻进入猫的处理流程（而不是只能撤回/重排/再发一条）。
+operator 在 Codex 原生体验中使用 **Steer**：当消息在队列里等待时，点击 Steer 可以把同一条持久消息立即送给一个或多个成员，并逐成员选择“引导当前回复”或“中断当前回复”，而不是只能撤回、重排或再发一条。
 
 ## What
 
-- 在 QueuePanel 的 **queued** 条目上新增 **Steer** 按钮
-- 点击后只有一个 Steer 动作：取消目标猫当前 invocation（如有），并以**同一条持久 Queue 消息**立即启动一次
+- QueuePanel 的 **queued** 条目显示 **Steer** 按钮
+- 弹窗候选取 thread participants、消息路由目标与 Queue fallback 的去重并集；已处理目标可见但禁选
+- 支持多选，并为每个选中成员分别选择“立即发送，引导回复”或“立即发送，中断回复”
+- targetless 原行绑定与新增 source×target sibling fan-out 在同一持久 mutation 完成；随后各 target 独立执行和终局
 - 普通重排继续由 drag/move API 独立提供，不再借用 Steer 名称
 
 ## Acceptance Criteria
 
 - [x] AC-A1: 本文档需在本轮迁移后维持模板核心结构（Status/Why/What/Dependencies/Risk/Timeline）。
 - [x] `queued` 条目显示 Steer（`processing` 不显示）
-- [x] Steer 弹窗明确告知“取消当前轮并以同一消息立即重启”，且可取消操作
-- [x] 有猫在跑时先 cancel，再以被 Steer 的 exact Queue entry 启动一次；空闲时直接启动同一 entry
+- [x] Steer 弹窗始终显示“立即发送，引导回复”与“立即发送，中断回复”；能力/当前回复不满足时禁用引导并说明原因
+- [x] 候选集合包含 participants、路由目标与 exact Queue fallback；默认选中尚待处理的路由/fallback 目标，已处理目标禁选
+- [x] 多目标选择在确认时原子建立 source×target 标量 rows；每个 target 的 guide/interrupt 动作和终局彼此独立
+- [x] “引导回复”只投递给 exact current reply，不能引导时保留普通 Queue 语义且绝不自动 cancel
+- [x] “中断回复”有猫在跑时先 cancel，再以被 Steer 的 exact Queue row 启动；空闲时直接启动同一 row
 - [x] `{ mode: "promote" }` 被 API 拒绝；重排只走独立 move/reorder 交互
 - [x] Steer 不创建 supplement 或第二个 later carrier
-- [x] 具备 API/Web 测试覆盖（至少：权限、409 processing、promote reject、默认 immediate）
+- [x] 具备 API/Web/Redis 测试覆盖（权限、stale/terminal/membership conflict、原子 fan-out、逐成员 mixed strategy、promote reject、默认 immediate）
 
 ## Implementation
 
 ### Backend
 
-- Endpoint: `POST /api/threads/:threadId/queue/:entryId/steer`
-- Body: 空 body 或 `{ "mode": "immediate" }`；其他 mode 返回 400
+- `GET /api/threads/:threadId/queue/:entryId/targets`：读取同源逐目标 pending/terminal 真相
+- `POST /api/threads/:threadId/queue/:entryId/targets`：重验目标资格，原子绑定 targetless anchor / 扩展缺失 sibling，并返回逐目标 exact entry id
+- `POST /api/threads/:threadId/queue/:entryId/continue`：把 exact row 引导进当前回复；exact run 已变化时保留为排队等待
+- `POST /api/threads/:threadId/queue/:entryId/steer`：执行单个 target 的中断回复动作
+- `/steer` body 为空或 `{ "mode": "immediate", "targetCatId": "..." }`；其他 mode 返回 400
 - Rules:
   - 404 if entry not found in current user scope
   - 409 if entry is `processing` (processing steer out-of-scope)
-  - `immediate`: cancels active invocation (same user) and starts processing via QueueProcessor
+  - target mapping rejects terminal, availability or membership drift before any row action
+  - `continue`: append only to the exact supporting Active Run; otherwise keep normal Queue work
+  - `immediate`: cancel the exact target invocation (same user) and start that scalar row via QueueProcessor
 - WS: immediate execution follows normal Queue processing updates; no `steer_promote` action exists
 
 ### Frontend
 
 - `QueuePanel` queued entry row adds **Steer** button
-- Modal offers one explicit action: 取消当前猫，并以同一条消息立即重启
+- Modal lists the deduplicated member projection, permits multi-select, and stores one strategy per selected target
+- Static guide capability comes from the configured Agent Client via the server cat projection; Web must not hard-code it or infer it from recent speech
+- Queue rows do not duplicate capability explanations; the modal owns the selectable capability surface
 
 ### Reorder（F175 扩展）
 
@@ -64,7 +75,10 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 
 ## Key Decisions
 
-- Steer 不改动消息内容，也不表示 promote / supplement；它只做 cancel + exact-message restart
+- Steer 不改动消息内容，也不表示 promote / supplement；它只对同一 source message 的 exact scalar rows 做 guide 或 cancel + restart
+- 多目标 initial admission 是 all-or-none；cutover 后 sibling 独立，某 target 启动失败不取消已被其他 target 接受的动作
+- mixed strategy 是逐 target 的 UI 表达，不是 Queue 账本的新状态机；账本继续只保存标量 source×target rows
+- 打开弹窗只读；新增 thread member 只在确认时写入。弹窗打开后已被处理、移出 thread 或不可用的目标必须 typed conflict，不能复活旧 row
 - 排序是独立的 Queue 控制面，不属于 Steer
 - `processing` 不提供 Steer：运行中纠偏属于更大能力（需要运行中注入/重路由），本 feature 不扩大范围
 
@@ -72,7 +86,7 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 
 > **本节记录已落地的 ADR-043 语义。**
 
-本文档描述的 Steer 语义（cancel + 以同一 exact entry 重启、`processing` 是唯一业务状态拦截）保持不变。旧实现的三段式预留
+旧实现的 interrupt Steer（cancel + 以同一 exact entry 重启）仍保留，但不再是弹窗唯一动作。旧实现的三段式预留
 （`reserveExactUserEntry` → `beginExactSteerPreemption` → `activateExactSteerReservation`）已经删除。
 
 按 [ADR-043](../decisions/043-queue-durable-single-ledger.md) 已收敛为：
@@ -82,11 +96,11 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 - **`exactSteerBatch` 删除**：它防的「F175 吸走相邻条目」在 `QueueProcessor.ts:5382-5383` 已与持久的 `steerRequestedByCatIds` 重复检查；原子 claim 后其余用途消失。
 - **条目上只保留 2 个 Steer 标量**（fan-out 单目标后由 map 退化）：`steerRequestedAt`（UI「Steer 中」回执态）、`steeredInvocationId`（替补 run 归属证据）。
 
-### 不变量：Steer 只有一个业务拦截场景
+### Interrupt 动作的不变量
 
-**用户点击 Steer 时，唯一应当拦截的业务场景是「该条目已出队、正在触发」→ 409 `ENTRY_PROCESSING`。**
+对已经完成 target mapping 的单个 interrupt action，唯一应当拦截的 Queue 生命周期场景是“该 scalar row 已出队、正在触发”→ 409 `ENTRY_PROCESSING`。
 
-其余拒绝只允许是通用鉴权/归属/schema guard、系统固定位置约束，或真实基础设施失败（例如取消 I/O 失败）；这些不是另一套 Queue 生命周期。旧三段式产生的 `STEER_STATE_CHANGED` / `STEER_RESERVATION_LOST` / `STEER_RESERVATION_PERSIST_FAILED` / `QUEUE_BUSY` / `PRESTART_STATE_CHANGED` 已消失。并发抢先 claim 或条目已 processing 统一投影为 `ENTRY_PROCESSING`。
+target mapping 自身还必须重验 source×target terminal、membership 与 availability；这些是确认时的资格 fence，不是 interrupt claim 的第二套生命周期。其余 interrupt 拒绝只允许是通用鉴权/归属/schema guard、系统固定位置约束，或真实基础设施失败（例如取消 I/O 失败）。旧三段式产生的 `STEER_STATE_CHANGED` / `STEER_RESERVATION_LOST` / `STEER_RESERVATION_PERSIST_FAILED` / `QUEUE_BUSY` / `PRESTART_STATE_CHANGED` 已消失。并发抢先 claim 或条目已 processing 统一投影为 `ENTRY_PROCESSING`。
 
 新增任何 Steer 拒绝分支前，必须先证明它不是上述两类产物。
 
@@ -96,8 +110,9 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 
 ## Risk / Blast Radius
 
-- **状态机复杂度**：立即执行会触发 cancel → 需要确保 queue 不被错误 pause
-- **并发/互斥**：需要保持 QueueProcessor mutex 语义，不允许同 thread 并发执行两条
+- **原子映射**：targetless anchor 绑定与 sibling fan-out 不能留下 ghost/半组 rows
+- **状态机复杂度**：interrupt 会触发 cancel → 需要确保 queue 不被错误 pause；guide 不得暗中升级成 cancel
+- **并发/互斥**：需要保持 QueueProcessor mutex 语义；逐 target 动作可以独立终局，但同一 target 不能 double-start
 
 ## Review Gate
 

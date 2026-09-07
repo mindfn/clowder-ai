@@ -378,6 +378,132 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal((await store.get(source.threadId, entry.id)).status, 'terminal');
   });
 
+  it('atomically binds a targetless Message row and indexes every new scalar sibling', async () => {
+    const queue = new InvocationQueue(store);
+    const admitted = await queue.appendAndEnqueueDurable(
+      messageStore,
+      {
+        from: { kind: 'user', userId: 'owner-1' },
+        userId: 'owner-1',
+        content: 'targetless fan-out',
+        mentions: [],
+        timestamp: 100,
+        threadId: 'thread-redis',
+        idempotencyKey: 'targetless-fanout',
+        deliveryStatus: 'queued',
+      },
+      {
+        from: { kind: 'user', userId: 'owner-1' },
+        threadId: 'thread-redis',
+        userId: 'owner-1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'strict',
+        idempotencyKey: 'targetless-fanout',
+        content: 'targetless fan-out',
+        targetCats: [],
+        intent: 'execute',
+      },
+    );
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.equal(admitted.entry.target.kind, 'unassigned');
+    assert.equal(await queue.setPositionDurable('thread-redis', 'owner-1', admitted.entry.id, 2), true);
+
+    const expansionInput = {
+      from: { kind: 'user', userId: 'owner-1' },
+      threadId: 'thread-redis',
+      userId: 'owner-1',
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      content: 'targetless fan-out',
+      messageId: admitted.message.id,
+      sourceId: admitted.message.id,
+      targetCats: ['codex'],
+      intent: 'execute',
+    };
+    const expanded = await queue.mapQueuedMessageTargetsDurable(
+      messageStore,
+      admitted.message.id,
+      admitted.entry.id,
+      'opus',
+      [],
+      expansionInput,
+    );
+    assert.equal(expanded.outcome, 'expanded');
+    assert.deepEqual(
+      expanded.entries.map((entry) => entry.target),
+      [
+        { kind: 'cat', catId: 'opus' },
+        { kind: 'cat', catId: 'codex' },
+      ],
+    );
+    assert.equal(new Set(expanded.entries.map((entry) => entry.enqueuedAt)).size, 1);
+    assert.deepEqual(
+      expanded.entries.map((entry) => entry.position),
+      [2, 2],
+    );
+    assert.deepEqual(
+      (await store.getByMessageIds('thread-redis', [admitted.message.id])).get(admitted.message.id),
+      expanded.entries,
+    );
+
+    const replay = await queue.mapQueuedMessageTargetsDurable(
+      messageStore,
+      admitted.message.id,
+      admitted.entry.id,
+      'opus',
+      [],
+      expansionInput,
+    );
+    assert.equal(replay.outcome, 'replayed');
+    assert.equal((await store.list('thread-redis')).length, 2);
+
+    const sibling = expanded.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex');
+    assert.ok(sibling);
+    // One sibling may already have exposed the source on the timeline while
+    // another exact target row remains queued. The queued anchor, not the
+    // coarse Message delivery flag, owns whether another target can be added.
+    await messageStore.markDelivered(admitted.message.id, 400);
+    const expandedMappedAnchor = await queue.mapQueuedMessageTargetsDurable(
+      messageStore,
+      admitted.message.id,
+      admitted.entry.id,
+      'opus',
+      [sibling.id],
+      { ...expansionInput, targetCats: ['gemini'] },
+    );
+    assert.equal(expandedMappedAnchor.outcome, 'expanded');
+    assert.deepEqual(
+      expandedMappedAnchor.entries.map((entry) => entry.target),
+      [
+        { kind: 'cat', catId: 'opus' },
+        { kind: 'cat', catId: 'codex' },
+        { kind: 'cat', catId: 'gemini' },
+      ],
+    );
+    assert.deepEqual(
+      (await store.getByMessageIds('thread-redis', [admitted.message.id])).get(admitted.message.id),
+      expandedMappedAnchor.entries,
+    );
+
+    await store.claim('thread-redis', sibling.id, 'claim-expanded-sibling', 500);
+    await store.commit('thread-redis', sibling.id, 'claim-expanded-sibling', 'processing', 501);
+    await store.commit('thread-redis', sibling.id, '', 'terminal', 502);
+    assert.equal(
+      (
+        await queue.mapQueuedMessageTargetsDurable(
+          messageStore,
+          admitted.message.id,
+          admitted.entry.id,
+          'opus',
+          [sibling.id],
+          { ...expansionInput, targetCats: ['sonnet'] },
+        )
+      ).outcome,
+      'state_changed',
+    );
+    assert.equal(await store.get('thread-redis', queueEntryId(admitted.message.id, 'sonnet')), null);
+  });
+
   it('atomically terminalizes one response bubble with its outbound fan-out', async () => {
     const queue = new InvocationQueue(store);
     const response = (

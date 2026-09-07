@@ -25,6 +25,12 @@ export interface CatData {
   /** clowder-ai#340 P5: CLI client identity (renamed from provider). */
   clientId: string;
   defaultModel: string;
+  /** Runtime-configured responder used when a new thread has no routing history. */
+  isDefaultResponder?: boolean;
+  /** Static concrete-client delivery truth used before opening a Steer cutover. */
+  messageDeliveryCapabilities?: {
+    guideReply: boolean;
+  };
   cli?: {
     command?: string;
     outputFormat?: string;

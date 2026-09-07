@@ -236,7 +236,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 | E1 | 猫的历史回复不进入其他猫的未读 / `get_thread_context`（codex resume 只见 co-creator 消息） | 实现回归：退役 custody 脚本时丢掉了 terminal commit 的 visibility 分配 | 两个 terminal commit Lua 恢复 validate-before-write 的 `visibilitySeq` 分配；隔离 Redis 测试断言「猫回复对其他猫 cursor 可见」；存量数据 repair |
 | E2 | 被 @ 的成员头像不再脉冲，回复气泡固定「正在回复…」没有 tips | 设计取舍被验收否决：`833aa0587` 删除了 `PendingMemberBubble` / `CapabilityTipStrip` 消费者 | processing 态 lifecycle 回复行即新的 pending bubble：头像 `streaming` 脉冲 + `CapabilityTipStrip`；message 下小头像与回复气泡共用同一 `activeRun` 状态 |
 | E3 | 猫读到 queued 正文后工单仍留在队列 | 设计修正 | ADR-043 D8：无 filter 完整读取 = exact active child 接管该 source×target 行；A+B 各自独立；无持久 Message / typed custody 行保留 read→seen，读取不 503 |
-| E4 | 狸花猫 Steer 无「不中断继续发送」 | UI 门控错误 | ChatInput 与 QueuePanel 都始终提供作者意图；服务端能 exact append 就追加，目标已停止或 carrier 不支持时不取消当前回合、持久回退为 next_work 并在回执显示实际生效 |
+| E4 | 狸花猫 Steer 无「立即发送，引导回复」；旧设置把 append 能力与排队/立即意图混为一项 | UI 与契约错误 | 默认设置收敛为「排队等待 / 立即发送，引导回复」；Steer 固定为「立即发送，引导回复 / 立即发送，中断回复」，多选成员并逐成员选策略；静态 client capability 随成员信息投影，不支持或无 current reply 时禁用引导；targetless 绑定与 sibling fan-out 原子化 |
 | E5 | 失败正文与系统提示 / 恢复 continuation 重复成两个气泡；成员失败没有报回 source 成员 | 实现 | 失败细节合并进唯一 terminal failed response；成功的 `runtime_replacement` 不再续排 source-less continuation；成员来源的失败 response 与 exact `a2a_failure` 回报 row 原子提交，回报 row 禁止递归回报 |
 | E6 | 「执行中」与 QueuePanel「等待 xxx 当前回合」重复；气泡浮窗「查看轨迹」冗余；首个轨迹 chip 位置 | UI 冗余 | 去横幅、去按钮、轨迹 chip 置于引用 chip 之后 |
 | E7 | 「卡住了？强制重置」常驻 / 「运行状态待确认」红横幅 | 设计（补丁化逃生舱） | ADR-043 D9：停止是唯一动作；无活候选时服务端就地对账；进程快照不可用时按 failed 终局并沿 Phase C 失败传播回溯上游；无任何确认弹窗 |
@@ -300,7 +300,7 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-E1: 隔离 Redis 下，猫的 terminal 回复获得 `visibilitySeq` 并进入 `msg:visibility` index；另一只猫的 cursor 读（prompt 增量 / `get_thread_context`）返回该回复
 - [x] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
 - [x] AC-E3: 无 filter 完整读取接管 exact source×target 行（A+B 独立）；存在无 messageId / typed custody 的 queued 行时全量读仍 200；接管后原消息保持 authored 顺序（精确顺序断言）
-- [x] AC-E4: ChatInput / QueuePanel Steer 对任一可选 target 都提供「不中断继续发送」；服务端 exact append 时不取消当前回合，非 exact carrier 或终态竞态持久回退为 next_work 且回执显示 `fallbackReason`
+- [x] AC-E4: 默认设置只表达「排队等待 / 立即发送，引导回复」；ChatInput / QueuePanel Steer 对 participants、路由目标与 fallback 的去重并集提供多选，fallback 读取 Queue admission 同一个 head-time resolver 的只读投影（最近 completed response target，否则全局默认），不在 Web 猜测，并为每个未终局 target 独立选择「立即发送，引导回复 / 立即发送，中断回复」；静态 client capability 随成员信息返回，UI 不硬编码；引导只对 exact current reply 生效，不支持则禁用并说明；打开弹窗不写 membership，确认时才加入新选成员，弹窗打开后被移出的既有 member typed conflict；targetless 首目标绑定与其余标量 sibling 在同一 source cutover 原子完成，后续各 target 独立终局
 - [x] AC-E5: 失败 response 只呈现一次、且完整的失败正文（成员、源引用、原因与细节，含 provider 原文）；另一只猫的 cursor 读能读到该失败正文，无需用户转达；成功的 `runtime_replacement` 不生成 source-less continuation；cat source 的失败与 exact predecessor `a2a_failure` row 原子提交且不递归回报
 - [x] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
 - [x] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；不做平台兼容分支，Windows 子进程不可观测时同样走 fail 收敛；确认无 owner 的 read-repair 使用 `execution_owner_lost`，pre-start processing 超时使用 `prestart_timeout`；单个 child 失败不终局仍有 tracker/process-owner 见证的 sibling parent；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口

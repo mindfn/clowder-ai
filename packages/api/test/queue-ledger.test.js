@@ -147,6 +147,28 @@ describe('ADR-043 queue ledger', () => {
     assert.deepEqual(restored.entry.target, { kind: 'unassigned' });
   });
 
+  it('does not replay targetless fan-out after a sibling has reached terminal truth', async () => {
+    const store = new InMemoryQueueLedgerStore();
+    const targetless = row('message-1', 'placeholder', {
+      id: queueEntryId('message-1'),
+      target: { kind: 'unassigned' },
+    });
+    const sibling = row('message-1', 'codex');
+    await store.enqueue([targetless]);
+    assert.equal((await store.expandTargets('thread-1', targetless.id, 'opus', [], [sibling])).outcome, 'expanded');
+
+    await store.claim('thread-1', sibling.id, 'claim-sibling', 200);
+    await store.commit('thread-1', sibling.id, 'claim-sibling', 'processing', 201);
+    await store.commit('thread-1', sibling.id, '', 'terminal', 300);
+
+    const missing = row('message-1', 'gemini');
+    assert.equal(
+      (await store.expandTargets('thread-1', targetless.id, 'opus', [sibling.id], [missing])).outcome,
+      'state_changed',
+    );
+    assert.ok(!(await store.list('thread-1')).some((entry) => entry.id === missing.id));
+  });
+
   it('counts a fan-out group as one user queue message', async () => {
     const store = new InMemoryQueueLedgerStore();
     assert.equal((await store.enqueue([row('message-1', 'opus'), row('message-1', 'codex')], 1)).outcome, 'enqueued');

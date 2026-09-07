@@ -95,50 +95,50 @@ function makeEntry(
 describe('F264 Queue UX hierarchy — helper functions', () => {
   it('intentChip: continue_current → accent', () => {
     const chip = intentChip(makeIntent('continue_current', 'continue_current'));
-    expect(chip.text).toBe('接着当前工作');
+    expect(chip.text).toBe('立即发送，引导回复');
     expect(chip.tone).toBe('accent');
   });
 
   it('intentChip: next_work → neutral', () => {
     const chip = intentChip(makeIntent('next_work', 'next_work'));
-    expect(chip.text).toBe('下一件工作');
+    expect(chip.text).toBe('排队等待');
     expect(chip.tone).toBe('neutral');
   });
 
   it('intentChip: fallback continue→next → amber', () => {
     const chip = intentChip(makeIntent('continue_current', 'next_work'));
-    expect(chip.text).toBe('已转下一件工作');
+    expect(chip.text).toBe('已转排队等待');
     expect(chip.tone).toBe('amber');
   });
 
   it('secondaryTruth: undeclared support → fail-closed', () => {
     expect(secondaryTruth(makeIntent('continue_current', 'continue_current'), 'undeclared')).toBe(
-      '能力未声明，按下一件工作处理',
+      '能力未声明，按排队等待处理',
     );
   });
 
   it('secondaryTruth: unsupported support → fail-closed', () => {
     expect(secondaryTruth(makeIntent('continue_current', 'continue_current'), 'unsupported')).toBe(
-      '当前接入不支持本轮读取/提醒',
+      '当前接入不支持引导回复/提醒',
     );
   });
 
-  it('secondaryTruth: exact + continue_current → 等待本轮读取', () => {
-    expect(secondaryTruth(makeIntent('continue_current', 'continue_current'), 'exact')).toBe('等待本轮读取');
+  it('secondaryTruth: exact + continue_current → 等待当前回复读取', () => {
+    expect(secondaryTruth(makeIntent('continue_current', 'continue_current'), 'exact')).toBe('等待当前回复读取');
   });
 
-  it('secondaryTruth: exact + fallback → 本轮未读到 with reason', () => {
+  it('secondaryTruth: exact + fallback → 当前回复未读到 with reason', () => {
     const truth = secondaryTruth(
       makeIntent('continue_current', 'next_work', { fallbackReason: 'unsupported_carrier' }),
       'exact',
     );
-    expect(truth).toContain('本轮未读到');
+    expect(truth).toContain('当前回复未读到');
     expect(truth).toContain('接入不支持');
   });
 
   it('humanCarrierLabel: no raw enum on surface', () => {
-    expect(humanCarrierLabel(EXACT_CAP)).toBe('支持本轮读取');
-    expect(humanCarrierLabel(UNSUPPORTED_CAP)).toBe('当前接入不支持本轮读取');
+    expect(humanCarrierLabel(EXACT_CAP)).toBe('支持引导当前回复');
+    expect(humanCarrierLabel(UNSUPPORTED_CAP)).toBe('当前接入不支持引导当前回复');
     expect(humanCarrierLabel(UNDECLARED_CAP)).toBe('能力未声明');
     expect(humanCarrierLabel(undefined)).toBe('能力未声明');
   });
@@ -212,8 +212,8 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     renderQueuePanel();
 
     const text = container.textContent ?? '';
-    expect(text).toContain('接着当前工作');
-    expect(text).toContain('下一件工作');
+    expect(text).toContain('立即发送，引导回复');
+    expect(text).toContain('排队等待');
   });
 
   it('source contract: legacy user missing intent keeps next-work compatibility', () => {
@@ -224,7 +224,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     useChatStore.setState({ queue: [legacyUser] });
     renderQueuePanel();
 
-    expect(container.querySelector('[data-testid="intent-chip-q-legacy-user-opus"]')?.textContent).toBe('下一件工作');
+    expect(container.querySelector('[data-testid="intent-chip-q-legacy-user-opus"]')?.textContent).toBe('排队等待');
   });
 
   it.each([
@@ -239,8 +239,8 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     renderQueuePanel();
 
     expect(container.querySelector(`[data-testid="intent-chip-q-${source}-opus"]`)).toBeNull();
-    expect(container.textContent).not.toContain('下一件工作');
-    expect(container.textContent).not.toContain('接着当前工作');
+    expect(container.textContent).not.toContain('排队等待');
+    expect(container.textContent).not.toContain('立即发送，引导回复');
   });
 
   // Claim 2: raw provider/carrier/semantics not in visible surface by default
@@ -270,7 +270,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
   });
 
   // Claim 3: requested-current → fallback-next preserves historical intent + real fallback
-  it('claim 3: fallback continue→next shows 已转下一件工作 and 本轮未读到', () => {
+  it('claim 3: fallback continue→next shows 已转排队等待 and 当前回复未读到', () => {
     const entry = makeEntry('q-fallback', {
       content: 'fallback test',
       targetCats: ['opus'],
@@ -289,8 +289,8 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     renderQueuePanel();
 
     const text = container.textContent ?? '';
-    expect(text).toContain('已转下一件工作');
-    expect(text).toContain('本轮未读到');
+    expect(text).toContain('已转排队等待');
+    expect(text).toContain('当前回复未读到');
   });
 
   // Claim 4: unsupported/undeclared: explicitly fail-closed, no clickable Reminder
@@ -347,7 +347,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
       detail.remove();
     });
     const surfaceText = detailsClone.textContent ?? '';
-    const matches = surfaceText.match(/当前接入不支持本轮/g) ?? [];
+    const matches = surfaceText.match(/当前接入不支持引导回复/g) ?? [];
     expect(matches.length).toBe(1);
   });
 
@@ -419,8 +419,8 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     renderQueuePanel();
 
     const text = container.textContent ?? '';
-    expect(text).toContain('接着当前工作');
-    expect(text).toContain('下一件工作');
+    expect(text).toContain('立即发送，引导回复');
+    expect(text).toContain('排队等待');
     expect(text).toContain('当前接入不支持');
   });
 

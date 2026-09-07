@@ -26,7 +26,10 @@ import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { getThreadLiveInvocations } from '../domains/cats/services/agents/invocation/getThreadLiveInvocations.js';
-import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import {
+  type InvocationQueue,
+  queueEntryTargetCats,
+} from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
@@ -618,13 +621,13 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // intentionally idempotent) and publish the existing `thread_updated`
     // event through the user's always-joined room. This makes an unopened
     // thread update immediately without inventing another event or room.
-    const publishSidebarParticipants = async () => {
-      if (targetCats.length === 0) return;
+    const publishSidebarParticipants = async (participantCats: readonly CatId[] = targetCats) => {
+      if (participantCats.length === 0) return;
       if (opts.threadStore?.addParticipants) {
         await admitThreadParticipants({
           userId,
           threadId: resolvedThreadId,
-          targetCats,
+          targetCats: participantCats,
           threadStore: opts.threadStore,
           socketManager: opts.socketManager,
           emitPolicy: 'always',
@@ -633,7 +636,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       }
       opts.socketManager.emitToUser(userId, 'thread_updated', {
         threadId: resolvedThreadId,
-        participants: [...targetCats],
+        participants: [...participantCats],
       });
     };
     const publishAdmittedBundleParticipants = async () => {
@@ -744,20 +747,71 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       if (admittedMessageBundle) await publishAdmittedBundleParticipants();
 
-      if (
-        requestedDisposition === 'continue_current' &&
-        enqueueResult.entry &&
-        opts.queueProcessor?.tryAutoAppendExactEntry
-      ) {
-        await opts.queueProcessor.tryAutoAppendExactEntry({
-          threadId: resolvedThreadId,
-          userId,
-          entryId: enqueueResult.entry.id,
-        });
+      let admittedEntries = enqueueResult.entries ?? (enqueueResult.entry ? [enqueueResult.entry] : []);
+      const targetlessEntry =
+        requestedDisposition === 'continue_current' && targetCats.length === 0 && admittedEntries.length === 1
+          ? admittedEntries[0]
+          : undefined;
+      if (targetlessEntry?.target.kind === 'unassigned') {
+        try {
+          const [fallbackTargetCatId] = await router.resolveConversationTargetsAtAdmission([], resolvedThreadId);
+          if (fallbackTargetCatId) {
+            const fallbackIntent = resolveQueueAuthorIntentByCatId({
+              targetCats: [fallbackTargetCatId],
+              requested: 'continue_current',
+              threadId: resolvedThreadId,
+              userId,
+              invocationTracker: opts.invocationTracker,
+              resolveCarrierCapability: (catId) => resolveFreshnessCarrierCapabilityOrUndeclared(opts.router, catId),
+            })[fallbackTargetCatId];
+            // Targetless work remains head-time Queue work unless the exact
+            // fallback member has a currently running, append-capable reply.
+            // This preserves strict-head fallback selection while making the
+            // explicit "send now, guide reply" preference truthful.
+            if (fallbackIntent?.boundParentInvocationId) {
+              await publishSidebarParticipants([fallbackTargetCatId]);
+              const bound = await opts.invocationQueue.bindContinueCurrentIntentDurable(
+                resolvedThreadId,
+                userId,
+                targetlessEntry.id,
+                fallbackTargetCatId,
+                fallbackIntent,
+              );
+              if (bound) admittedEntries = [bound];
+            }
+          }
+        } catch (err) {
+          log.warn(
+            { err, threadId: resolvedThreadId, entryId: targetlessEntry.id },
+            'Immediate guide fallback resolution failed; preserving targetless Queue work',
+          );
+        }
       }
-      const admittedEntryStillQueued = enqueueResult.entry
-        ? opts.invocationQueue.getEntrySnapshot(resolvedThreadId, userId, enqueueResult.entry.id) !== null
-        : true;
+      if (requestedDisposition === 'continue_current' && opts.queueProcessor?.tryAutoAppendExactEntry) {
+        for (const admittedEntry of admittedEntries) {
+          if (admittedEntry.target.kind !== 'cat') continue;
+          const append = await opts.queueProcessor.tryAutoAppendExactEntry({
+            threadId: resolvedThreadId,
+            userId,
+            entryId: admittedEntry.id,
+          });
+          if (append.outcome === 'rejected') {
+            await opts.invocationQueue.fallbackQueuedAuthorIntentDurable(
+              resolvedThreadId,
+              userId,
+              admittedEntry.id,
+              'parent_terminal_before_exposure',
+            );
+          }
+        }
+      }
+      const admittedInvocationQueue = opts.invocationQueue;
+      const admittedEntryStillQueued =
+        admittedEntries.length === 0 ||
+        admittedEntries.some(
+          (admittedEntry) =>
+            admittedInvocationQueue.getEntrySnapshot(resolvedThreadId, userId, admittedEntry.id) !== null,
+        );
 
       // Emit queue update to this user only (privacy: scopeKey isolation)
       // appendExactEntry owns its own committed projection. Keep the generic
@@ -781,6 +835,10 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         status: 'queued',
         queuePosition: enqueueResult.queuePosition,
         entryId: enqueueResult.entry?.id,
+        entries: admittedEntries.flatMap((entry) => {
+          const targetCatId = queueEntryTargetCats(entry)[0];
+          return targetCatId ? [{ entryId: entry.id, targetCatId }] : [];
+        }),
         merged: false,
         ...(storedUserMessageId ? { userMessageId: storedUserMessageId } : {}),
         ...(admittedMessageBundle && storedUserMessageId ? { messageBundleId: storedUserMessageId } : {}),

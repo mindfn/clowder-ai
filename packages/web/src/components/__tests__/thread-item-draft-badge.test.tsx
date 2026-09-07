@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatInput, threadDrafts, threadImageDrafts } from '@/components/ChatInput';
 import { ThreadItem } from '@/components/ThreadSidebar/ThreadItem';
-import type { WhisperOptions } from '@/hooks/useSendMessage';
+import type { PostAdmissionAction, WhisperOptions } from '@/hooks/useSendMessage';
 import type { Thread } from '@/stores/chat-types';
 import { DEFAULT_THREAD_STATE, useChatStore } from '@/stores/chatStore';
 
@@ -54,7 +54,7 @@ vi.mock('@/components/ThreadSidebar/thread-utils', () => ({
 
 vi.mock('@/utils/api-client', () => ({
   API_URL: 'http://example.test',
-  apiFetch: vi.fn(),
+  apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({ participants: [] }) })),
 }));
 
 vi.mock('@/utils/compressImage', () => ({ compressImage: (f: File) => Promise.resolve(f) }));
@@ -71,7 +71,7 @@ type OnSend = (
   content: string,
   images?: File[],
   whisper?: WhisperOptions,
-  postAdmissionAction?: 'steer' | 'append',
+  postAdmissionAction?: PostAdmissionAction,
 ) => void;
 
 function makeThread(id: string, title: string): Thread {

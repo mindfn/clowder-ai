@@ -46,7 +46,8 @@ export type QueueAuthorIntentFallbackReason =
 
 /**
  * Immutable author request plus an append-only fail-closed fallback fact.
- * `continue_current` is only an exposure permission; it is never read/handled proof.
+ * `continue_current` requests immediate guidance of an exact current reply. It is
+ * still only delivery permission: neither the request nor exposure is read/handled proof.
  */
 export interface QueueAuthorIntent {
   requested: MessageWorkDisposition;
