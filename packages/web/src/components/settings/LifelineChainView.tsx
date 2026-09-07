@@ -36,8 +36,8 @@ interface VersionTreeRow {
   ancestorContinuations: boolean[];
 }
 
-const TREE_STEP_PX = 52;
-const VERSION_CENTER_PX = 16;
+const TREE_STEP_PX = 56;
+const VERSION_CENTER_PX = 23;
 
 export function LifelineChainView({
   chain,
@@ -128,8 +128,12 @@ function EpochNode({
         ancestorContinuations={ancestorContinuations}
       />
       <div
-        className="relative z-[1] flex min-w-0 items-center gap-1.5"
-        style={{ paddingInlineStart: `${depth * TREE_STEP_PX}px` }}
+        data-version-card
+        data-active-version={String(epoch.isActive)}
+        className={`relative z-[1] flex w-fit min-w-0 items-center gap-1.5 rounded-xl px-2 py-1.5 transition-colors ${
+          epoch.isActive ? 'bg-[var(--console-active-bg)]' : 'bg-[var(--console-elevated-bg)]'
+        }`}
+        style={{ marginInlineStart: `${depth * TREE_STEP_PX}px` }}
       >
         <StageBadge
           label={`v${epoch.version}`}
@@ -261,10 +265,7 @@ function CycleStages({
   ];
 
   return (
-    <div
-      data-cycle-group={cycle.cycleId}
-      className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-xl bg-[var(--console-elevated-bg)] px-2 py-1.5"
-    >
+    <div data-cycle-group={cycle.cycleId} className="flex min-w-0 flex-wrap items-center gap-1.5">
       {stages.map(({ stage, title }, index) => (
         <span key={stage} className="flex shrink-0 items-center gap-1.5">
           {index > 0 && <Arrow />}
@@ -323,10 +324,7 @@ function LegacyCycleStages({
     { stage: 'governance' },
   ];
   return (
-    <div
-      data-cycle-group={`legacy-v${epoch.version}`}
-      className="flex shrink-0 items-center gap-1.5 rounded-xl border border-[var(--console-border-soft)] px-2 py-1.5"
-    >
+    <div data-cycle-group={`legacy-v${epoch.version}`} className="flex shrink-0 items-center gap-1.5">
       {stages.map(({ stage, title }) => (
         <span key={stage} className="flex shrink-0 items-center gap-1.5">
           {stage !== 'tracing' && <Arrow />}

@@ -517,6 +517,12 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     expect(container.querySelector('[data-version-node="3"]')?.getAttribute('data-tree-depth')).toBe('2');
     expect(container.querySelector('[data-version-node="4"]')?.getAttribute('data-tree-depth')).toBe('2');
     expect(container.querySelector('[data-version-node="5"]')?.getAttribute('data-tree-depth')).toBe('3');
+    expect(container.querySelector('[data-version-node="4"] [data-version-card]')?.className).toContain(
+      'bg-[var(--console-elevated-bg)]',
+    );
+    expect(container.querySelector('[data-version-node="5"] [data-version-card]')?.className).toContain(
+      'bg-[var(--console-active-bg)]',
+    );
     expect(container.textContent).not.toContain('源自 v');
   });
 
