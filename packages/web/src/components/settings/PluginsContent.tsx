@@ -43,6 +43,16 @@ function pluginToggleFailure(data: { status?: string; error?: string }, actionLa
   return undefined;
 }
 
+export function resolvePluginManagerDesignGate(search: string, nodeEnv = process.env.NODE_ENV) {
+  const params = new URLSearchParams(search);
+  return {
+    resolved: true,
+    enabled: nodeEnv !== 'production' && params.get('pluginManagerDemo') === '1',
+    live: params.get('pluginManagerLive') === '1',
+    degradedCatalog: params.get('catalog') === 'degraded',
+  };
+}
+
 function RepositoryPluginCard({
   plugin,
   expanded,
@@ -171,13 +181,7 @@ export function PluginsContent() {
   );
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setDesignGate({
-      resolved: true,
-      enabled: process.env.NODE_ENV !== 'production' && params.get('pluginManagerDemo') === '1',
-      live: process.env.NODE_ENV !== 'production' && params.get('pluginManagerLive') === '1',
-      degradedCatalog: params.get('catalog') === 'degraded',
-    });
+    setDesignGate(resolvePluginManagerDesignGate(window.location.search));
   }, []);
 
   useEffect(() => {
