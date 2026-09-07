@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/utils/api-client';
-import { PluginsContent } from '../PluginsContent';
+import { PluginsContent, resolvePluginManagerDesignGate } from '../PluginsContent';
 
 const mockApiFetch = vi.mocked(apiFetch);
 const digest = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
@@ -143,6 +143,26 @@ async function flushEffects() {
     await Promise.resolve();
   });
 }
+
+describe('F202 Plugin Manager surface selection', () => {
+  it('keeps the live Manager reachable from the production start:direct build', () => {
+    expect(resolvePluginManagerDesignGate('?pluginManagerLive=1', 'production')).toEqual({
+      resolved: true,
+      enabled: false,
+      live: true,
+      degradedCatalog: false,
+    });
+  });
+
+  it('keeps the fixture-only design surface development-only', () => {
+    expect(resolvePluginManagerDesignGate('?pluginManagerDemo=1', 'production')).toEqual({
+      resolved: true,
+      enabled: false,
+      live: false,
+      degradedCatalog: false,
+    });
+  });
+});
 
 describe('F202 live Plugin Manager Console wiring', () => {
   let container: HTMLDivElement;
