@@ -471,7 +471,7 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     }
   });
 
-  it('renders version ancestry vertically so rollback from v2 can branch v3 from v1', async () => {
+  it('renders version ancestry as connector branches without repeating parent labels', async () => {
     const v1 = makeEpoch({ version: 1, parentVersion: null, isActive: false });
     const v2 = makeEpoch({
       version: 2,
@@ -482,22 +482,48 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
     });
     const v3 = makeEpoch({
       version: 3,
-      parentVersion: 1,
+      parentVersion: 2,
       origin: 'auto-iterate',
       startedAt: 300,
+      isActive: false,
+    });
+    const v4 = makeEpoch({
+      version: 4,
+      parentVersion: 2,
+      origin: 'auto-iterate',
+      startedAt: 400,
+      isActive: false,
+    });
+    const v5 = makeEpoch({
+      version: 5,
+      parentVersion: 4,
+      origin: 'auto-iterate',
+      startedAt: 500,
       isActive: true,
     });
     await render(
       createElement(LifelineChainView, {
-        chain: [v1, v2, v3],
-        selected: { version: 3, stage: 'version' },
+        chain: [v1, v2, v3, v4, v5],
+        selected: { version: 5, stage: 'version' },
         onSelect: () => {},
       }),
     );
 
     expect(container.querySelector('[data-version-tree]')).toBeTruthy();
-    expect(container.querySelectorAll('[data-parent-version="1"]')).toHaveLength(2);
-    expect(container.textContent).toContain('源自 v1');
+    expect(container.querySelector('[data-version-edge="1:2"]')).toBeTruthy();
+    expect(container.querySelector('[data-version-edge="2:3"]')).toBeTruthy();
+    expect(container.querySelector('[data-version-edge="2:4"]')).toBeTruthy();
+    expect(container.querySelector('[data-version-edge="4:5"]')).toBeTruthy();
+    expect(container.querySelector('[data-version-node="3"]')?.getAttribute('data-tree-depth')).toBe('2');
+    expect(container.querySelector('[data-version-node="4"]')?.getAttribute('data-tree-depth')).toBe('2');
+    expect(container.querySelector('[data-version-node="5"]')?.getAttribute('data-tree-depth')).toBe('3');
+    expect(container.querySelector('[data-version-node="4"] [data-version-card]')?.className).toContain(
+      'bg-[var(--console-elevated-bg)]',
+    );
+    expect(container.querySelector('[data-version-node="5"] [data-version-card]')?.className).toContain(
+      'bg-[var(--console-active-bg)]',
+    );
+    expect(container.textContent).not.toContain('源自 v');
   });
 
   it('assigns cycles by the frozen segment version even when cycleStart precedes the evolve apply time', async () => {
@@ -578,9 +604,12 @@ describe('F257 version lifeline — version and Objective cycle are separate coo
 
     const v1Options = container.querySelector('[data-version-node="1"] select') as HTMLSelectElement;
     const v2Options = container.querySelector('[data-version-node="2"] select') as HTMLSelectElement;
+    const v2CycleSurface = container.querySelector('[data-version-node="2"] [data-cycle-surface]');
     expect([...v1Options.options].map((option) => option.textContent)).toEqual(['周期 1']);
     expect([...v2Options.options].map((option) => option.textContent)).toEqual(['周期 1', '周期 2']);
     expect(v2Options.title).toContain('本版本周期 2');
+    expect(v2CycleSurface?.className).toContain('bg-[var(--console-card-bg)]');
+    expect(v2CycleSurface?.parentElement?.getAttribute('data-version-card')).not.toBeNull();
   });
 });
 
