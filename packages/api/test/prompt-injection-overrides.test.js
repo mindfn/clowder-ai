@@ -259,21 +259,15 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     await app.close();
   });
 
-  it('rollback happy path clears the override', async () => {
+  it('rejects the legacy rollback action so version changes only use the cycle-aware version route', async () => {
     const { app, store } = await buildApp();
-    await app.inject({
-      method: 'POST',
-      url: '/api/prompt-hooks/d21-决策树/override',
-      payload: { action: 'disable', reason: 'trial' },
-    });
     const res = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-决策树/override',
       payload: { action: 'rollback', reason: 'trial regressed — instant revert' },
     });
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.json().override, null);
-    assert.equal(store.calls.at(-1).method, 'rollback');
+    assert.equal(res.statusCode, 400);
+    assert.equal(store.calls.length, 0);
     await app.close();
   });
 
@@ -301,14 +295,6 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     assert.equal(rejected.statusCode, 404);
     assert.equal(refreshCount, 1, 'rejected writes must not publish a new runtime snapshot');
 
-    const rolledBack = await app.inject({
-      method: 'POST',
-      url: '/api/prompt-hooks/d21-决策树/override',
-      payload: { action: 'rollback', reason: 'restore manifest behavior' },
-    });
-    assert.equal(rolledBack.statusCode, 200);
-    assert.equal(refreshCount, 2);
-
     const createdVersion = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-决策树/versions',
@@ -316,7 +302,7 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     });
     assert.equal(createdVersion.statusCode, 200);
     assert.equal(createdVersion.json().transition.toVersion, 2);
-    assert.equal(refreshCount, 3);
+    assert.equal(refreshCount, 2);
 
     const activatedVersion = await app.inject({
       method: 'POST',
@@ -325,7 +311,7 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     });
     assert.equal(activatedVersion.statusCode, 200);
     assert.equal(activatedVersion.json().transition.toVersion, 1);
-    assert.equal(refreshCount, 4);
+    assert.equal(refreshCount, 3);
     await app.close();
   });
 
@@ -348,15 +334,14 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     await app.close();
   });
 
-  it('unknown-hook rollback → 404 with no store write (terra P2: audit stream protection)', async () => {
+  it('legacy rollback is rejected before unknown-hook lookup and records no audit write', async () => {
     const { app, store } = await buildApp();
     const res = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/no-such-hook/override',
       payload: { action: 'rollback', reason: 'cleanup attempt' },
     });
-    assert.equal(res.statusCode, 404);
-    assert.equal(res.json().gate, 'unknown-hook');
+    assert.equal(res.statusCode, 400);
     assert.equal(store.calls.length, 0, 'rollback must not be recorded for unknown hook');
     await app.close();
   });
@@ -418,6 +403,17 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     assert.equal(createResponse.statusCode, 409);
     assert.equal(
       store.calls.some((call) => call.method === 'setContentOverride'),
+      false,
+    );
+
+    const rollbackResponse = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/override',
+      payload: { action: 'rollback', reason: 'must not bypass the active evaluation' },
+    });
+    assert.equal(rollbackResponse.statusCode, 400);
+    assert.equal(
+      store.calls.some((call) => call.method === 'rollback'),
       false,
     );
     await app.close();

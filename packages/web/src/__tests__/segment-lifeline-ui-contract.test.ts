@@ -106,7 +106,7 @@ describe('segment lifeline: version operation buttons (①)', () => {
 
   it('LifelineStageDetail imports action button components', () => {
     expect(detailSrc).toContain('ActivateVersionButton');
-    expect(detailSrc).toContain('RollbackButton');
+    expect(detailSrc).not.toContain('RollbackButton');
     // ToggleOverrideButton moved to GovernanceStagePanel (extraction)
     const govSrc = readComponent('GovernanceStagePanel.tsx');
     expect(govSrc).toContain('ToggleOverrideButton');
@@ -222,15 +222,12 @@ describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
 
 describe('segment lifeline: v1 activate guard (R14 P1-3)', () => {
   const src = readComponent('LifelineStageDetail.tsx');
+  const actionsSrc = readComponent('VersionActions.tsx');
 
-  it('ActivateVersionButton only for version > 1', () => {
-    expect(src).toContain('epoch.version > 1');
-    expect(src).toMatch(/!epoch\.isActive && epoch\.version > 1/);
-  });
-
-  it('v1 shows RollbackButton instead of ActivateVersionButton', () => {
-    expect(src).toContain('epoch.version === 1');
-    expect(src).toMatch(/epoch\.version === 1[\s\S]*?RollbackButton/);
+  it('routes every inactive version through one cycle-aware activation action', () => {
+    expect(src).toMatch(/!epoch\.isActive && \([\s\S]*?ActivateVersionButton/);
+    expect(actionsSrc).toContain('epochVersion === 1 ? runtime.actions.rollback : runtime.actions.activateVersion');
+    expect(src).not.toContain('RollbackButton');
   });
 });
 
@@ -333,6 +330,7 @@ describe('segment lifeline: a11y entry point (P2-4)', () => {
 
 describe('segment evaluation: objective metrics and trace replay are the modal truth (F257 redesign)', () => {
   const modalSrc = readComponent('SegmentLifelineModal.tsx');
+  const versionContentSrc = readComponent('VersionContentPreview.tsx');
   const evaluationSrc = readComponent('ObjectiveEvaluationPanel.tsx');
   const governanceSrc = readComponent('ObjectiveGovernancePanel.tsx');
   const theaterSrc = readComponent('SegmentTraceTheater.tsx');
@@ -355,8 +353,8 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
 
   it('loads exact content when a version node is selected', () => {
     expect(modalSrc).toContain('VersionContentPreview');
-    expect(modalSrc).toContain('/api/prompt-injection/segment/');
-    expect(modalSrc).toMatch(/\/versions\/\$\{epoch\.version\}\/content/);
+    expect(versionContentSrc).toContain('/api/prompt-injection/segment/');
+    expect(versionContentSrc).toMatch(/\/versions\/\$\{epoch\.version\}\/content/);
   });
 
   it('makes selected lifecycle nodes visually and semantically explicit', () => {

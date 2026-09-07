@@ -58,7 +58,6 @@ export class ManualVersionCycleService {
 
   async switch(input: ManualVersionCycleInput): Promise<ManualVersionCycleResult> {
     const objectiveId = this.objectiveIdFor(input.segmentId);
-    await this.deps.runtime.cycleChecker.ensureObjectiveCurrent(input.ownerUserId, objectiveId, this.readNow());
 
     return this.deps.runtime.cycleChecker.withObjectiveLock(input.ownerUserId, objectiveId, () =>
       this.switchLocked(input, objectiveId),
@@ -67,7 +66,6 @@ export class ManualVersionCycleService {
 
   async create(input: ManualVersionCreateInput): Promise<ManualVersionCycleResult> {
     const objectiveId = this.objectiveIdFor(input.segmentId);
-    await this.deps.runtime.cycleChecker.ensureObjectiveCurrent(input.ownerUserId, objectiveId, this.readNow());
     return this.deps.runtime.cycleChecker.withObjectiveLock(input.ownerUserId, objectiveId, () =>
       this.createLocked(input, objectiveId),
     );

@@ -242,28 +242,3 @@ export function ToggleOverrideButton({
     />
   );
 }
-
-/** Action: rollback to manifest baseline (v1). */
-export function RollbackButton({ hookId, onRefresh, enablementMatrix }: VersionActionsProps) {
-  const perm = enablementMatrix.runtimeOverride.actions.rollback;
-  return (
-    <ActionButton
-      label="回滚至基线"
-      tone="amber"
-      hookId={hookId}
-      confirmMsg={perm.allowed ? '确认回滚到基线版本 (v1)？所有自定义内容将失效。' : undefined}
-      action={() => {
-        const reason = window.prompt('操作原因（审计追踪）：');
-        if (reason == null || reason.trim() === '') return Promise.resolve(null);
-        return apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/override`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'rollback', reason }),
-        });
-      }}
-      onRefresh={onRefresh}
-      allowed={perm.allowed}
-      blockedReason={perm.reason}
-    />
-  );
-}

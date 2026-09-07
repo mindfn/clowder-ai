@@ -41,8 +41,8 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 
 - 入口在生命线中**已选历史版本**的版本内容区，按钮「切换为当前版本」。它不是编辑内容，也不创建版本；确认文案只说「切换后，将以该版本开启新周期并继续评估。」
 - 只允许 `evalStatus=idle`。按钮显示状态只是第一层，服务端在同一 Objective 串行锁内重新读取 current CycleRecord；`requested / retriggered / written / stalled` 一律 409，防止切版覆盖正在进行的评估或治理。
-- 直接创建内容版本也必须经过同一周期边界：新版本成为 active 时同步归档旧 tracing 周期并建立绑定新版本的新周期，不能保留一条会让 active 指针与 CycleRecord 版本漂移的旁路。
-- 切换时以同一个 `switchAt` 收束两条轴：① override active 指针切到目标历史版本；② 当前 tracing 周期写 `termination:{kind:'manual-version-switch', fromVersion, toVersion, at, by, reason}` 并 append-only 归档；③ 建立 `cycleStart=switchAt`、新 Objective version snapshot 的 idle 周期。CycleRecord 归档与 current 替换使用 Redis CAS；active 指针写入失败或 CAS 竞争失败时执行补偿，不能留下「版本已换、周期未换」的稳定状态。
+- 直接创建内容版本也必须经过同一周期边界：新版本成为 active 时同步归档旧 tracing 周期并建立绑定新版本的新周期，不能保留一条会让 active 指针与 CycleRecord 版本漂移的旁路。旧式 `POST /api/prompt-hooks/:hookId/override {action:'rollback'}` 与独立「回滚至基线」按钮退出公开入口；回到 v1 统一选择 v1 版本卡上的「切换为当前版本」。
+- 切换时以同一个逻辑 `switchAt` 收束两条轴：① override active 指针切到目标历史版本；② 当前 tracing 周期写 `termination:{kind:'manual-version-switch', fromVersion, toVersion, at, by, reason}` 并 append-only 归档；③ 建立 `cycleStart=switchAt`、新 Objective version snapshot 的 idle 周期。override 的审计事件按实际写入时间记录，允许比逻辑切换坐标晚数毫秒。CycleRecord 归档与 current 替换使用 Redis CAS；active 指针写入失败或 CAS 竞争失败时执行补偿，不能留下「版本已换、周期未换」的稳定状态。
 - 新周期的**原生窗**从 `switchAt` 开始：Console 周期计数、明细和 N/M/D 触发都只读原生窗。被终止周期尚未进入 evaluation 的数据不丢，作为带 `manual-version-switch` provenance 的补充窗随新周期保存；只有新周期原生窗触发后，它才进入 assignment 的可读证据范围。
 - evaluator 判断的目标仍是新 active 版本，不做「v2 比 v3 好多少」的跨版本对比；补充窗中的 episode 保留其真实 v3 / source cycle 来源。governance 再结合同一 Objective thread 的历史结论决定 keep / rollback / evolve。
 - 版本号全局单调、父链按创建时 active 版本：v3 后切回 v2，再演进产生 v4 且 `parentVersion=2`。被终止的 v3 周期在 governance 面显示停止/切换事实；正常 governance 动作显示精确边「演进 S13：v2 → v3」。

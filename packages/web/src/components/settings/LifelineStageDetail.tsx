@@ -10,7 +10,7 @@ import { GovernanceStagePanel } from './GovernanceStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
 import { SegmentReplayPanel } from './SegmentReplayPanel';
-import { ActivateVersionButton, RollbackButton } from './VersionActions';
+import { ActivateVersionButton } from './VersionActions';
 
 interface VersionEpoch {
   version: number;
@@ -116,7 +116,13 @@ export function LifelineStageDetail({
   return (
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
       {selected.stage === 'version' && (
-        <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} enablementMatrix={enablementMatrix} />
+        <VersionDetail
+          epoch={epoch}
+          hookId={hookId}
+          onRefresh={onRefresh}
+          enablementMatrix={enablementMatrix}
+          activeStage={activeStage}
+        />
       )}
       {selected.stage === 'tracing' && (
         <TracingDetail
@@ -159,11 +165,13 @@ function VersionDetail({
   hookId,
   onRefresh,
   enablementMatrix,
+  activeStage,
 }: {
   epoch: VersionEpoch;
   hookId: string;
   onRefresh: () => void;
   enablementMatrix: SegmentEnablementMatrix;
+  activeStage: ActiveStage;
 }) {
   const originLabel =
     { manifest: '基线', 'auto-iterate': '自动迭代', 'user-create': '用户创建' }[epoch.origin] ?? epoch.origin;
@@ -191,19 +199,15 @@ function VersionDetail({
           <CreateVersionForm hookId={hookId} onRefresh={onRefresh} />
         </div>
       )}
-      {!epoch.isActive && epoch.version > 1 && (
+      {!epoch.isActive && (
         <div className="mt-3">
           <ActivateVersionButton
             hookId={hookId}
             epochVersion={epoch.version}
             onRefresh={onRefresh}
             enablementMatrix={enablementMatrix}
+            currentEvalStatus={activeStage === 'tracing' ? 'idle' : 'written'}
           />
-        </div>
-      )}
-      {!epoch.isActive && epoch.version === 1 && (
-        <div className="mt-3">
-          <RollbackButton hookId={hookId} onRefresh={onRefresh} enablementMatrix={enablementMatrix} />
         </div>
       )}
 

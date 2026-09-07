@@ -4,7 +4,7 @@ import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActivateVersionButton, RollbackButton, ToggleOverrideButton } from '../VersionActions';
+import { ActivateVersionButton, ToggleOverrideButton } from '../VersionActions';
 
 const apiFetch = vi.fn();
 
@@ -111,11 +111,12 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(container.textContent).toContain('当前段 disableable=false，不可禁用');
   });
 
-  it('RollbackButton is disabled and shows reason when matrix disallows rollback', () => {
+  it('uses rollback permission when switching to the manifest v1 card', () => {
     act(() => {
       root.render(
-        <RollbackButton
+        <ActivateVersionButton
           hookId="S6"
+          epochVersion={1}
           onRefresh={() => {}}
           enablementMatrix={makeMatrix({
             runtimeOverride: {

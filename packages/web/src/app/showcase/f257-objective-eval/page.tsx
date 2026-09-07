@@ -4,8 +4,8 @@ import type { SegmentCycleSummary, SegmentEvaluationResponse, VersionEpoch } fro
 import { useMemo, useState } from 'react';
 import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
 import { ObjectiveEvaluationPanel } from '@/components/settings/ObjectiveEvaluationPanel';
-import { VersionContentPreview } from '@/components/settings/SegmentLifelineModal';
 import { SegmentTraceTheater } from '@/components/settings/SegmentTraceTheater';
+import { VersionContentPreview } from '@/components/settings/VersionContentPreview';
 
 const WINDOW = {
   start: Date.UTC(2026, 6, 27, 12),

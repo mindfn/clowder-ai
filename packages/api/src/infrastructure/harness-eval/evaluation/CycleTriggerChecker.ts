@@ -73,11 +73,6 @@ export class CycleTriggerChecker {
     );
   }
 
-  /** Establish the first tracing cycle without evaluating trigger thresholds. */
-  async ensureObjectiveCurrent(ownerUserId: string, objectiveId: string, now: number): Promise<CycleRecord> {
-    return this.withObjectiveLock(ownerUserId, objectiveId, () => this.ensureCurrent(ownerUserId, objectiveId, now));
-  }
-
   /** Serialize eval-trigger and operator version-switch mutations in this API process. */
   async withObjectiveLock<T>(ownerUserId: string, objectiveId: string, operation: () => Promise<T>): Promise<T> {
     const key = `${ownerUserId}:${objectiveId}`;

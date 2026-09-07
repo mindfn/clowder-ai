@@ -294,47 +294,6 @@ describe('F257 CycleRecord trigger checker', () => {
     assert.deepEqual(activations, [2], 'blocked switch must not mutate the active content version');
   });
 
-  test('initializes a missing Objective cycle before switching the active content version', async () => {
-    const context = createHarness({ version: 'objective-v3' });
-    let activeVersion = 3;
-    const service = new ManualVersionCycleService({
-      runtime: {
-        catalog: catalog(),
-        cycles: context.store,
-        cycleChecker: context.checker,
-        async resolveVersion() {
-          return { version: 'objective-v2', versionContentRef: 'hooks:D1@2' };
-        },
-        async resolveSegmentVersion(versionContentRef) {
-          return Number(versionContentRef.match(/(?:@|v)([0-9]+)$/)?.[1] ?? 0);
-        },
-      },
-      overrideStore: {
-        async getActiveVersion() {
-          return activeVersion;
-        },
-        async activateVersion(_segmentId, version) {
-          activeVersion = version;
-        },
-      },
-      async refreshOverrideSnapshot() {},
-      now: () => 500,
-    });
-
-    const switched = await service.switch({
-      ownerUserId: 'owner-1',
-      segmentId: 'D1',
-      targetVersion: 2,
-      actorId: 'owner-1',
-      reason: 'fresh runtime switch',
-    });
-
-    assert.equal(switched.fromVersion, 3);
-    assert.equal(switched.toVersion, 2);
-    assert.equal(switched.currentCycle.cycleStart, 500);
-    assert.equal((await context.store.history('owner-1', 'obj')).length, 1);
-  });
-
   test('compensates the active version when the durable cycle CAS loses', async () => {
     const context = createHarness();
     await context.store.initialize('owner-1', 'obj', 0, {

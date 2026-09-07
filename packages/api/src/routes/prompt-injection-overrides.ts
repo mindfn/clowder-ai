@@ -31,7 +31,7 @@ export interface PromptInjectionOverrideRoutesOptions {
   runtime?: ObjectiveEvaluationRuntime;
 }
 
-const ACTIONS = ['enable', 'disable', 'rollback'] as const;
+const ACTIONS = ['enable', 'disable'] as const;
 type OverrideAction = (typeof ACTIONS)[number];
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -74,8 +74,7 @@ async function executeOverrideAction(
 ): Promise<void> {
   const actionOpts = { source: 'operator' as const, reason };
   if (action === 'enable') return store.enable(hookId, userId, actionOpts);
-  if (action === 'disable') return store.disable(hookId, userId, actionOpts);
-  return store.rollback(hookId, userId, actionOpts);
+  return store.disable(hookId, userId, actionOpts);
 }
 
 /**
