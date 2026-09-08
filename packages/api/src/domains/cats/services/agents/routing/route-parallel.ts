@@ -94,7 +94,7 @@ import { accumulateTextAggregate } from '../text-aggregation.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
-import { composeTerminalFailureContent, persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -1624,6 +1624,10 @@ export async function* routeParallel(
         }
       }
 
+      // A provider error with an admitted lifecycle response belongs to that
+      // response bubble. Keep accumulating it for terminal persistence, but do
+      // not project a second live-only system error surface.
+      if (effectiveMsg.type === 'error' && effectiveMsg.catId && catLifecycleResponse.has(effectiveMsg.catId)) continue;
       if (effectiveMsg.type === 'text' && !effectiveMsg.content) continue;
       // F194 Phase Z9 砚砚 R1 P1-1: stamp ownInvocationId on yielded events
       // (same as route-serial.ts). CLI text/done/tool events don't carry
@@ -1731,16 +1735,7 @@ export async function* routeParallel(
             }
           : undefined;
       const providerFailureText = catErrorText.get(msg.catId);
-      const terminalFailureContent =
-        lifecycleResponse && providerFailureText
-          ? composeTerminalFailureContent({
-              catId: msg.catId,
-              ...(bridgeTriggerMessageId ? { sourceMessageId: bridgeTriggerMessageId } : {}),
-              reason: lifecycleTerminalReason ?? lifecycleTerminalStatus,
-              providerFailureText,
-              systemInfoContents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
-            })
-          : undefined;
+      const terminalFailureContent = lifecycleResponse && providerFailureText ? providerFailureText : undefined;
       const failedA2AReportCommit =
         lifecycleResponse?.status === 'failed' &&
         options.a2aTriggerMessageId &&

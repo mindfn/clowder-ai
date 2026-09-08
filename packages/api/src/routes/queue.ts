@@ -137,23 +137,10 @@ function executionFailureExplanation(reason: ExecutionFailureReason): string {
   return reason === 'control_plane_unavailable' ? '执行控制面不可用' : '执行进程归属已丢失';
 }
 
-function completeExecutionFailureContent(
-  response: StoredMessage,
-  targetCatId: string,
-  reason: ExecutionFailureReason,
-): string {
+function completeExecutionFailureContent(response: StoredMessage, reason: ExecutionFailureReason): string {
   const existing = response.content.trim();
-  const inputMessageIds = response.lifecycle?.kind === 'response' ? response.lifecycle.inputMessageIds : [];
-  const sourceMessageIds = [response.replyTo, ...inputMessageIds].filter(
-    (messageId, index, values): messageId is string => Boolean(messageId) && values.indexOf(messageId) === index,
-  );
-  const failureLine = `@${targetCatId} 处理失败：${executionFailureExplanation(reason)}（${reason}）。`;
-  const sourceLine = sourceMessageIds.length > 0 ? `来源消息：${sourceMessageIds.join('、')}。` : undefined;
-  const missingContext = [
-    ...(!existing.includes(failureLine) ? [failureLine] : []),
-    ...(sourceLine && !existing.includes(sourceLine) ? [sourceLine] : []),
-  ];
-  return [existing, ...missingContext].filter(Boolean).join('\n\n');
+  const failureMessage = executionFailureExplanation(reason);
+  return [existing, ...(!existing.includes(failureMessage) ? [failureMessage] : [])].filter(Boolean).join('\n\n');
 }
 
 async function waitForControlPlaneRetry(): Promise<void> {
@@ -599,7 +586,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         status: 'failed',
         completedAt: Math.max(failedAt, response.lifecycle.startedAt),
         reason: failureReason,
-        content: completeExecutionFailureContent(response, input.catId, failureReason),
+        content: completeExecutionFailureContent(response, failureReason),
         ...(response.contentBlocks ? { contentBlocks: response.contentBlocks } : {}),
         ...(response.toolEvents ? { toolEvents: response.toolEvents } : {}),
         ...(response.metadata ? { metadata: response.metadata } : {}),

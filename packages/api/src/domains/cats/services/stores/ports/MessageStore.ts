@@ -615,7 +615,6 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
     next.lifecycle,
     lifecycleInputIdentityForStoredMessage(next),
     targetIds,
-    { allowFailedResponse: patch.status === 'failed' },
   );
   if (assigned.kind === 'conflict') {
     return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
@@ -748,7 +747,6 @@ export function assignLifecycleDispatchTargetsMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
   identity: Pick<LifecycleInputDispatchPatch, 'orderKey' | 'producerInvocationId'>,
   targetIds: readonly string[],
-  options: { allowFailedResponse?: boolean } = {},
 ): AssignLifecycleDispatchTargetsResult {
   if (targetIds.some((targetId) => !targetId) || new Set(targetIds).size !== targetIds.length) {
     return { kind: 'conflict' };
@@ -763,13 +761,10 @@ export function assignLifecycleDispatchTargetsMetadata(
       },
     };
   }
-  if (
-    current.kind === 'delivery_failure' ||
-    (current.kind === 'response' &&
-      current.status !== 'processing' &&
-      current.status !== 'completed' &&
-      !(options.allowFailedResponse && current.status === 'failed'))
-  ) {
+  // A response's terminal status describes its own execution. Once published,
+  // the same History message remains eligible to wake another member regardless
+  // of whether that execution completed, failed, was canceled, or was interrupted.
+  if (current.kind === 'delivery_failure') {
     return { kind: 'conflict' };
   }
   if (current.orderKey !== identity.orderKey || current.producerInvocationId !== identity.producerInvocationId) {
@@ -842,7 +837,7 @@ export function settleAssignedLifecycleDispatchFailureMetadata(
   dispatchedAt: number,
 ): LifecycleStoredMessageMetadata | null {
   if (
-    !isLifecycleDispatchSource(current) ||
+    !isLifecycleDispatchableSource(current) ||
     !failureMessageId ||
     targetIds.length === 0 ||
     targetIds.some((targetId) => !targetId) ||
@@ -876,13 +871,10 @@ type LifecycleInputDispatchMetadataResult =
       reason: Exclude<AdvanceLifecycleInputDispatchResult, { kind: 'applied' | 'replayed' | 'not_found' }>['reason'];
     };
 
-function isLifecycleDispatchSource(
+function isLifecycleDispatchableSource(
   lifecycle: LifecycleStoredMessageMetadata | undefined,
 ): lifecycle is Exclude<LifecycleStoredMessageMetadata, { kind: 'delivery_failure' }> {
-  return (
-    lifecycle?.kind === 'input' ||
-    (lifecycle?.kind === 'response' && (lifecycle.status === 'processing' || lifecycle.status === 'completed'))
-  );
+  return lifecycle?.kind === 'input' || lifecycle?.kind === 'response';
 }
 
 export function advanceLifecycleInputDispatchMetadata(
@@ -911,7 +903,7 @@ export function advanceLifecycleInputDispatchMetadata(
       },
     };
   }
-  if (!isLifecycleDispatchSource(current)) {
+  if (!isLifecycleDispatchableSource(current)) {
     return { kind: 'conflict', reason: 'not_input' };
   }
   if (current.orderKey !== patch.orderKey || current.producerInvocationId !== patch.producerInvocationId) {
@@ -1216,7 +1208,7 @@ export async function settleLifecycleResponseInputs(
   if (lifecycle?.kind === 'response') {
     for (const inputMessageId of lifecycle.inputMessageIds) {
       const inputMessage = await store.getById(inputMessageId);
-      if (!inputMessage || !isLifecycleDispatchSource(inputMessage.lifecycle)) continue;
+      if (!inputMessage || !isLifecycleDispatchableSource(inputMessage.lifecycle)) continue;
       const targetRef = inputMessage.lifecycle.dispatchRefs?.find((ref) => ref.targetId === lifecycle.targetId);
       if (!targetRef) continue;
       const settled = await store.advanceLifecycleInputDispatch(inputMessageId, {

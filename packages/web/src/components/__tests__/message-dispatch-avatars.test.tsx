@@ -282,6 +282,7 @@ describe('MessageDispatchAvatars', () => {
     expect(button?.getAttribute('aria-label')).toBe('布偶猫 已投递 · 09/07 13:02:14，跳转到对应回复');
     act(() => button?.click());
     expect(statusRow.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    expect(statusRow.dataset.lineageFocus).toBe('true');
     statusRow.remove();
   });
 

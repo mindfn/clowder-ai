@@ -1,8 +1,7 @@
 'use client';
 
 import type { ChatMessage } from '@/stores/chat-types';
-import { revealFoldedSourceAnchor } from '@/utils/folded-source-navigation';
-import { resolveMessageElements } from '@/utils/scrollToMessage';
+import { focusLineageMessage } from '@/utils/focusLineageMessage';
 
 export function projectAppendedInputReceipts(
   response: ChatMessage,
@@ -21,18 +20,6 @@ export function projectAppendedInputReceipts(
     const source = byId.get(messageId);
     return source && source.timestamp > startedAt ? [source] : [];
   });
-}
-
-function focusSourceMessage(sourceMessageId: string): void {
-  if (typeof document === 'undefined') return;
-  const node = resolveMessageElements([sourceMessageId])[0];
-  if (!node) return;
-  revealFoldedSourceAnchor(node);
-  const enclosingDetails = node.closest('details');
-  if (enclosingDetails) enclosingDetails.open = true;
-  node.dataset.lineageFocus = 'true';
-  node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  window.setTimeout(() => delete node.dataset.lineageFocus, 3200);
 }
 
 function formatReceiptTimestamp(timestamp: number): string {
@@ -94,7 +81,7 @@ export function AppendedInputReceipts({
                 <button
                   type="button"
                   className="shrink-0 font-medium text-[var(--color-cocreator-primary)] hover:underline"
-                  onClick={() => focusSourceMessage(source.id)}
+                  onClick={() => focusLineageMessage(source.id)}
                 >
                   查看消息
                 </button>

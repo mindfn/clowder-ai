@@ -364,7 +364,8 @@ function ChatMessageContent({
   // ADR-042 supplement speech is an ordinary additive reply. It may retain the
   // provider's stream provenance, but that provenance must not turn its body
   // into an internal CLI Output card.
-  const isStreamOrigin = message.origin === 'stream' && !message.extra?.supplement;
+  const isFailedLifecycleResponse = message.lifecycle?.kind === 'response' && message.lifecycle.status === 'failed';
+  const isStreamOrigin = message.origin === 'stream' && !message.extra?.supplement && !isFailedLifecycleResponse;
   // F194 Phase Z11 follow-up: ordinary post_msg speech is projected as a
   // separate callback bubble, but exact-key callback_final records can still
   // merge into the stream bubble as terminal updates. Projection exposes the

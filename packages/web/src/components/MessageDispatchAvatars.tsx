@@ -7,6 +7,7 @@ import {
   type LifecycleStoredMessageMetadata,
 } from '@cat-cafe/shared';
 import type { ChatMessage } from '@/stores/chat-types';
+import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { CatAvatar } from './CatAvatar';
 
 export interface MessageDispatchAvatarProjection {
@@ -138,13 +139,6 @@ function formatDispatchTime(timestamp: number): string {
   return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function jumpToStatusMessage(messageId: string): void {
-  const target = [...document.querySelectorAll<HTMLElement>('[data-message-id]')].find(
-    (element) => element.dataset.messageId === messageId,
-  );
-  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
 interface MessageDispatchAvatarsProps {
   message: ChatMessage;
   timelineMessages: readonly ChatMessage[];
@@ -186,7 +180,7 @@ export function MessageDispatchAvatars({
                 type="button"
                 aria-label={`${title}，跳转到对应回复`}
                 className="block rounded-full"
-                onClick={() => jumpToStatusMessage(projection.statusMessageId!)}
+                onClick={() => focusLineageMessage(projection.statusMessageId!)}
               >
                 <CatAvatar catId={projection.targetId} size={11} status={processing ? 'streaming' : undefined} />
               </button>

@@ -89,6 +89,10 @@ Queue 不再保存或投影 `notified/awakened/seen/handled/failed/terminal` 回
 
 用户与外部 connector 的 inline source 在尚未发生任何实际投递时不进入公开 History。第一次成功投递会把同一 source materialize 到 History，并追加第一个 `dispatchRef`；后续目标复用同一条 source bubble。Agent source 本来就在 History，不需要重复发布。
 
+公开 History message 的自身执行终态与它能否成为下一跳 source 正交：
+`completed / failed / canceled / interrupted` response 均可记录新的下游 `dispatchRef`，且不得改变自身终态。
+失败传播因此直接引用原 failed response；不复制正文，也不创建第二条失败通知。
+
 ### D3 — 一条 source message 只有一条 Queue Entry
 
 `QueueLedgerEntry.id = queueEntryId(sourceRecordId)`，不含 target。`targets: string[]` 是**仍待投递**的集合：投递一个成员只删除该成员；最后一个 target 离开后才删除整条 Queue Entry。多目标不会复制 source message，也不会在 UI 产生多个输入气泡。

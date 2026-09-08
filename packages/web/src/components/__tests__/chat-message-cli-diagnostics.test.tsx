@@ -164,6 +164,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       type: 'assistant',
       catId: 'opus',
       content: 'Error: init_failure: CLI crashed',
+      origin: 'stream',
       timestamp: 120,
       lifecycle: {
         kind: 'response',
@@ -182,6 +183,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     expect(container.querySelector('[data-lifecycle-terminal-status]')).toBeNull();
     expect(container.textContent).toContain('init_failure: CLI crashed');
     expect(container.textContent).toContain('布偶猫');
+    expect(container.textContent).not.toContain('CLI Output');
   });
 
   it('does not render a lifecycle delivery-failure carrier as a standalone system warning', () => {

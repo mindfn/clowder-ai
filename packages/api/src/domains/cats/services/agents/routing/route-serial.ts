@@ -205,7 +205,7 @@ import {
   resolveEventBackedRoutingExit,
 } from './guards/event-backed-routing-exit.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
-import { composeTerminalFailureContent, persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -2457,6 +2457,10 @@ export async function* routeSerial(
           if (effectiveMsg.type === 'done') {
             doneMsg = effectiveMsg; // Buffer — yield after A2A detection
           } else {
+            // Once the invocation owns a lifecycle response, provider failures
+            // terminalize that same bubble. Yielding a second error event would
+            // manufacture a transient system surface that disappears on reload.
+            if (effectiveMsg.type === 'error' && lifecycleResponseMessageId) continue;
             const streamEvent = toStreamEvent(effectiveMsg);
             if (!streamEvent) continue;
             yield streamEvent;
@@ -3344,21 +3348,7 @@ export async function* routeSerial(
 
       if (!actionOutputCommitAllowed && textContent) await scheduleTurnCustodyStopGate(false);
 
-      const terminalFailureContent =
-        lifecycleResponseMessageId && collectedErrorText
-          ? composeTerminalFailureContent({
-              catId: catId as string,
-              ...(turnTriggerMessageId ? { sourceMessageId: turnTriggerMessageId } : {}),
-              reason:
-                typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                  ? doneMsg.errorCode
-                  : catSignal?.aborted
-                    ? 'interrupted'
-                    : 'provider_error',
-              providerFailureText: collectedErrorText,
-              systemInfoContents: userFacingSystemInfoContents,
-            })
-          : undefined;
+      const terminalFailureContent = lifecycleResponseMessageId && collectedErrorText ? collectedErrorText : undefined;
 
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);

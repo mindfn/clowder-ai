@@ -341,6 +341,18 @@ describe('F293 actual-send routing preflight', () => {
     assert.equal(entries[0].sourceCategory, 'a2a_failure');
     assert.equal(entries[0].payload.messageId, stored.id);
     assert.deepEqual(entries[0].targets, ['opus']);
+
+    const dispatched = messageStore.advanceLifecycleInputDispatch(stored.id, {
+      orderKey: stored.lifecycle.orderKey,
+      producerInvocationId: stored.lifecycle.producerInvocationId,
+      targetId: 'opus',
+      phase: 'dispatched',
+      statusMessageId: 'response-opus',
+      dispatchedAt: 201,
+    });
+    assert.equal(dispatched.kind, 'applied');
+    assert.equal(dispatched.message.lifecycle.kind, 'response');
+    assert.equal(dispatched.message.lifecycle.status, 'failed');
   });
 
   test('parallel mixed targets never invoke the rejected child', async () => {

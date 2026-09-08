@@ -21,6 +21,17 @@ function createErrorService(catId, errorMsg) {
   };
 }
 
+function createMultipleErrorService(catId, errorMessages) {
+  return {
+    async *invoke() {
+      for (const error of errorMessages) {
+        yield { type: 'error', catId, error, timestamp: Date.now() };
+      }
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
 /** F212 Phase B (云端 codex P2-8): emit error with structured cliDiagnostics on metadata. */
 function createCliErrorWithDiagnosticsService(catId, errorMsg, cliDiagnostics) {
   return {
@@ -123,11 +134,20 @@ describe('route-serial error persistence (F5 reload)', () => {
         strategy === 'serial'
           ? (await import('../dist/domains/cats/services/agents/routing/route-serial.js')).routeSerial
           : (await import('../dist/domains/cats/services/agents/routing/route-parallel.js')).routeParallel;
-      const deps = createMockDeps({ gemini: createErrorService('gemini', 'init_failure: CLI crashed') }, []);
+      const deps = createMockDeps(
+        {
+          gemini: createMultipleErrorService('gemini', [
+            'init_failure: first provider attempt failed',
+            'init_failure: second provider attempt failed',
+          ]),
+        },
+        [],
+      );
       let lifecycleStore;
       let responseMessageId;
+      const yielded = [];
 
-      for await (const _ of route(deps, ['gemini'], 'hello', 'user1', 'thread1', {
+      for await (const event of route(deps, ['gemini'], 'hello', 'user1', 'thread1', {
         onLifecycleInvocationStarted: async (input) => {
           const admission = await lifecycleResponseStoreFor(input);
           lifecycleStore = admission.store;
@@ -136,7 +156,7 @@ describe('route-serial error persistence (F5 reload)', () => {
           return { responseMessageId: admission.response.id, priorFrontierMessageId: null };
         },
       })) {
-        void _;
+        yielded.push(event);
       }
 
       assert.ok(lifecycleStore, 'lifecycle store must be admitted before provider execution');
@@ -146,10 +166,18 @@ describe('route-serial error persistence (F5 reload)', () => {
       assert.equal(response?.from?.catId, 'gemini');
       assert.equal(response?.lifecycle?.kind, 'response');
       assert.equal(response?.lifecycle?.status, 'failed');
-      assert.match(response?.content ?? '', /init_failure: CLI crashed/);
+      assert.equal(
+        response?.content,
+        'init_failure: first provider attempt failed\ninit_failure: second provider attempt failed',
+      );
       assert.equal(
         messages.some((message) => message.from?.kind === 'system' && message.from.service === 'agent-error'),
         false,
+      );
+      assert.equal(
+        yielded.some((message) => message.type === 'error'),
+        false,
+        'a response-owned failure must update its canonical response instead of creating a live system error surface',
       );
     });
 

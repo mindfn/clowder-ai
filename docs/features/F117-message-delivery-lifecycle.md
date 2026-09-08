@@ -131,7 +131,7 @@ operator experience：
 - `completed / failed / canceled / interrupted` 在头像层都只是“结束”，统一为静止保留。
 - 成功不显示 badge、勾号、额外文案或“已随本轮完成”。
 - 失败或取消不在头像上新增符号；复用 canonical response 已有的轨迹/状态提示表达结果。
-- 头像 hover 显示 `MM/dd HH:mm:ss 已投递`，时间取 `dispatchRef.dispatchedAt`（实际投递时刻，不是完成时刻）；点击头像跳到 `statusMessageId` 指向的 exact response bubble。
+- 头像 hover 显示 `MM/dd HH:mm:ss 已投递`，时间取 `dispatchRef.dispatchedAt`（实际投递时刻，不是完成时刻）；点击头像跳到 `statusMessageId` 指向的 exact response bubble，并使用与「查看消息」相同的临时 lineage focus 标记目标。
 - 任一 canonical read 不完整或映射多义时，不显示未经证明的动态头像，也不退回旧 receipt、消息 kind、
   文本或 carrier 推断。
 
@@ -152,11 +152,17 @@ operator experience：
 - **成员唤起的 dispatch 失败**：failed response 与一条只投递给 exact source 成员的
   `a2a_failure` Queue row 原子提交；source 消息上该成员头像转静止（失败终态）。该 row 是失败传播边，
   不是新的模型 mention；它不走 ping-pong/depth 推断，且自身失败时不得递归生成第二条失败回报。
+  failed response 已经是公开 History message；它自身的失败终态不限制它作为下一跳 source。source 成员
+  读取 `a2a_failure` 时消费的就是该 exact response，不生成第二条可见失败通知。
   source 成员随后重分发给其他成员、或放弃并上报一条普通消息给用户——两者都是普通 History
   消息，走同一套头像+引用投影，不新增 UI。
 - **origin 唤起的 dispatch 失败**（source 为 user/GitHub/IM connector 等无上游、无法报回的来源）：投影为 `delivery failure result` 的用户可见 system message "唤起 xxx 失败"；不伪造 response 气泡、不挂动态头像。
 - 判据：**能报回 cat source 的 → 报回 + 普通消息；报不回的 origin → 才降级 system message。**
-- **失败正文必须完整（2026-09-03 验收补充）**：failed / interrupted 的 terminal response 正文携带成员、源消息引用与失败原因及细节（provider 错误原文、配额/token 耗尽、控制面不可用等），并与其它终态回复一样进入可见性索引——其他成员无需用户转达即可读到「谁在处理什么时失败、为什么」；细节不得只放进 system notice 或日志。
+- **失败正文必须完整且原样（2026-09-08 验收修正）**：failed terminal response 正文直接使用实际
+  client/provider 调用返回的错误 message；同一 logical dispatch 有多次底层错误时，按发生顺序合并在同一
+  response 正文。lifecycle 层不得翻译、概括、追加成员 id、来源消息 id、错误码说明或处置建议。成员由气泡
+  header 表达，source 由既有 reply 引用表达，终态由既有 trajectory 表达。失败正文与其它终态回复一样进入
+  可见性索引；不得另放进 system/provider notice、独立 live error 或只写日志。
 
 #### 重试与默认信息密度
 
@@ -318,7 +324,7 @@ Queue 的短暂 claimed 状态仍可存在于“原子取出 pending target → 
 - [x] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
 - [x] AC-E3: 无 filter 完整读取实际接管 exact target，并从同一 source entry 的 `targets[]` 删除；siblings 独立保留；无 Queue seen/handled row；读取仍 200；原消息保持 authored 顺序
 - [x] AC-E4: 默认设置只表达「排队等待 / 立即发送，引导回复」；ChatInput / QueuePanel Steer 对 participants、路由目标与 fallback 的去重并集提供多选，fallback 读取 Queue admission 同一个 head-time resolver 的只读投影（最近 completed response target，否则全局默认），不在 Web 猜测，并为每个 pending target 独立选择「立即发送，引导回复 / 立即发送，中断回复」；静态 client capability 随成员信息返回，UI 不硬编码；引导只对 exact current reply 生效，不支持则禁用并说明；打开弹窗不写 membership，确认时重读 live Queue+History，跳过已投递/不可用成员并加入新选成员；targetless 首目标与新增 targets 在同一 source entry 原子完成，后续各 target 独立终局
-- [x] AC-E5: 失败 response 只呈现一次、且完整的失败正文（成员、源引用、原因与细节，含 provider 原文）；另一只猫的 cursor 读能读到该失败正文，无需用户转达；成功的 `runtime_replacement` 不生成 source-less continuation；cat source 的失败与 exact predecessor `a2a_failure` row 原子提交且不递归回报
+- [x] AC-E5: 失败 response 只呈现一次；正文逐字采用实际 client/provider error message，同一 logical dispatch 的多次错误按发生顺序合入同一气泡，不由 lifecycle 层追加成员/source/error-code/建议；另一只猫的 cursor 读能读到同一 failed response 并可把它作为下游 source，无需用户转达；live 与 hydration 不生成第二条 system/provider error；成功的 `runtime_replacement` 不生成 source-less continuation；cat source 的失败与 exact predecessor `a2a_failure` row 原子提交且不递归回报
 - [x] AC-E6: QueuePanel 横幅、浮窗轨迹按钮移除；轨迹 chip 位置符合验收描述
 - [x] AC-E7: 对已确认死亡的 exact execution，Stop 返回 200 `reconciled` 而非 409；进程快照不完整时服务端有界重试后按 failed（reason `control_plane_unavailable`）终局并返回 200，失败沿 Phase C 失败传播回溯（源 dispatchRef settle、猫来源 A2A 报回、pre-start 走 `delivery_failure`）；不做平台兼容分支，Windows 子进程不可观测时同样走 fail 收敛；确认无 owner 的 read-repair 使用 `execution_owner_lost`，pre-start processing 超时使用 `prestart_timeout`；单个 child 失败不终局仍有 tracker/process-owner 见证的 sibling parent；`ForceResetDialog` 退役，`ThreadExecutionBar` 无常驻/卡死触发的强制重置入口、无「运行状态待确认」横幅；投影 read-repair 落地，pre-start 预留 TTL 收窄到 create→startAll 窗口
 - [x] AC-E8: UI 消息头像、Agent invocation 导航和 `cat_cafe_get_thread_context.situation` 共用 A79 exact predicate；返回 target/source/response/invocation，完整空集明确表示无其他成员执行，证据失配返回 `complete=false`；发言新近性只标「最近发言」，不得成为运行态 fallback

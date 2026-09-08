@@ -552,6 +552,51 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     ]);
   });
 
+  for (const status of ['failed', 'canceled', 'interrupted']) {
+    test(`records downstream dispatch on a ${status} response without changing its own terminal status`, async () => {
+      const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+      const store = new MessageStore();
+      const response = store.append(
+        canonicalTestMessageInput({
+          userId: 'owner-1',
+          threadId: 'thread-1',
+          catId: 'bengal',
+          content: 'provider returned its terminal result',
+          mentions: [],
+          timestamp: 100,
+          lifecycle: {
+            ...processingLifecycle,
+            targetId: 'bengal',
+            status,
+            completedAt: 100,
+            dispatchRefs: [],
+          },
+        }),
+      );
+
+      const dispatched = store.advanceLifecycleInputDispatch(response.id, {
+        orderKey: processingLifecycle.orderKey,
+        from: processingLifecycle.from,
+        targetId: 'opus',
+        phase: 'dispatched',
+        statusMessageId: 'response-predecessor',
+        dispatchedAt: 105,
+      });
+
+      assert.equal(dispatched.kind, 'applied');
+      assert.equal(dispatched.message.lifecycle.kind, 'response');
+      assert.equal(dispatched.message.lifecycle.status, status);
+      assert.deepEqual(dispatched.message.lifecycle.dispatchRefs, [
+        {
+          targetId: 'opus',
+          phase: 'dispatched',
+          statusMessageId: 'response-predecessor',
+          dispatchedAt: 105,
+        },
+      ]);
+    });
+  }
+
   test('records actual target dispatch while the response source is still processing', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();

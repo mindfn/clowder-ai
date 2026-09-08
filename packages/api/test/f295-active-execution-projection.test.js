@@ -977,7 +977,7 @@ describe('F295 active execution projection', () => {
           status: 'completed',
           startedAt: 90,
           completedAt: 100,
-          dispatchRefs: [{ targetId: 'kimi', phase: 'assigned' }],
+          dispatchRefs: [],
         },
       }),
     );
@@ -1005,7 +1005,7 @@ describe('F295 active execution projection', () => {
         userId: USER_ID,
         threadId: 'thread-a',
         catId: 'kimi',
-        content: '已完成一部分分析，日志提到 control_plane_unavailable。',
+        content: '已完成一部分分析。',
         mentions: [],
         timestamp: 110,
         replyTo: source.id,
@@ -1052,9 +1052,10 @@ describe('F295 active execution projection', () => {
     assert.equal(messageStore.getById(response.id).lifecycle.status, 'failed');
     assert.equal(messageStore.getById(response.id).lifecycle.reason, 'control_plane_unavailable');
     assert.match(messageStore.getById(response.id).content, /已完成一部分分析/);
-    assert.match(messageStore.getById(response.id).content, /@kimi 处理失败/);
-    assert.match(messageStore.getById(response.id).content, /control_plane_unavailable/);
-    assert.match(messageStore.getById(response.id).content, new RegExp(`来源消息：${source.id}`));
+    assert.match(messageStore.getById(response.id).content, /执行控制面不可用/);
+    assert.doesNotMatch(messageStore.getById(response.id).content, /@kimi 处理失败/);
+    assert.doesNotMatch(messageStore.getById(response.id).content, /control_plane_unavailable/);
+    assert.doesNotMatch(messageStore.getById(response.id).content, /来源消息：/);
     assert.deepEqual(messageStore.getById(source.id).lifecycle.dispatchRefs, [
       { targetId: 'kimi', phase: 'settled', statusMessageId: response.id },
     ]);
@@ -1079,10 +1080,7 @@ describe('F295 active execution projection', () => {
         lifecycle: {
           kind: 'input',
           orderKey: '200:source',
-          dispatchRefs: [
-            { targetId: 'opus5', phase: 'assigned' },
-            { targetId: 'kimi', phase: 'assigned' },
-          ],
+          dispatchRefs: [],
         },
       }),
     );
