@@ -52,7 +52,7 @@ export function HarnessGovernanceDecisionActions({
           type="button"
           onClick={() => onDecide('reject', trimmedNote)}
           disabled={busy || !trimmedNote}
-          className="rounded-md border border-semantic-critical bg-semantic-critical px-3 py-1 text-micro font-medium text-[var(--cafe-surface)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:border-semantic-critical/25 disabled:bg-semantic-critical-surface disabled:text-semantic-critical/60 disabled:opacity-100"
+          className="rounded-md border border-semantic-critical bg-semantic-critical px-3 py-1 text-micro font-medium text-[var(--cafe-surface)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:border-cafe-subtle/40 disabled:bg-cafe-surface disabled:text-cafe-muted disabled:opacity-100"
           data-testid="reject-btn"
         >
           {decidingState === 'rejecting' ? '...' : '拒绝并重评'}
