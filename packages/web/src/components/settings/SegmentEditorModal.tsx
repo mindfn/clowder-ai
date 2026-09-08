@@ -117,6 +117,7 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
                 <ConfirmCreate
                   activeVersion={editor.snapshot.lifeline.activeVersion}
                   baseVersion={editor.selectedVersion}
+                  targetVersion={editor.previewVersion ?? editor.snapshot.lifeline.activeVersion + 1}
                   saving={editor.saving}
                   onCancel={() => editor.setConfirming(false)}
                   onConfirm={() => void editor.applyNewVersion()}
@@ -144,12 +145,14 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
 function ConfirmCreate({
   activeVersion,
   baseVersion,
+  targetVersion,
   saving,
   onCancel,
   onConfirm,
 }: {
   activeVersion: number;
   baseVersion: number;
+  targetVersion: number;
   saving: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -157,7 +160,10 @@ function ConfirmCreate({
   return (
     <div className="rounded-2xl bg-[var(--console-active-bg)] p-4">
       <SettingsText tone="secondary">
-        将基于 v{baseVersion} 产生并应用新版本，当前 v{activeVersion} 周期将停止。
+        当前版本 v{activeVersion} → v{targetVersion}（基于 v{baseVersion}）
+      </SettingsText>
+      <SettingsText tone="muted" className="mt-1">
+        产生并应用新版本后，当前周期将停止。
       </SettingsText>
       <div className="mt-3 flex justify-end gap-2">
         <SettingsSecondaryButton disabled={saving} onClick={onCancel}>

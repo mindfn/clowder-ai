@@ -144,6 +144,10 @@ export function useVersionedSegmentEditor(segmentId: string) {
     const present = new Set(placeholders(draft));
     return placeholders(snapshot.content.baseContent).filter((name) => !present.has(name));
   }, [draft, snapshot]);
+  const previewVersion = useMemo(
+    () => (snapshot ? Math.max(...snapshot.lifeline.chain.map((epoch) => epoch.version)) + 1 : null),
+    [snapshot],
+  );
   const tracing = snapshot?.evalStatus === 'idle';
   const createPermission = snapshot?.content.enablementMatrix.runtimeOverride.actions.createVersion;
   const canCreate = Boolean(
@@ -168,6 +172,7 @@ export function useVersionedSegmentEditor(segmentId: string) {
     error,
     message,
     missing,
+    previewVersion,
     tracing,
     createPermission,
     canCreate,

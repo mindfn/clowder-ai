@@ -358,6 +358,50 @@ describe('F257 CycleRecord trigger checker', () => {
     assert.equal(archived.termination.baseVersion, 1);
   });
 
+  test('rejects a version transition at the current cycle start millisecond', async () => {
+    const context = createHarness();
+    await context.store.initialize('owner-1', 'obj', 100, {
+      version: 'objective-v2',
+      versionContentRef: 'hooks:D1@2',
+    });
+    let writes = 0;
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: context.store,
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: 'objective-v2', versionContentRef: 'hooks:D1@2' };
+        },
+        async resolveSegmentVersion() {
+          return 2;
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return 2;
+        },
+        async activateVersion() {
+          writes++;
+        },
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 100,
+    });
+
+    await assert.rejects(
+      service.switch({
+        ownerUserId: 'owner-1',
+        segmentId: 'D1',
+        targetVersion: 1,
+        actorId: 'owner-1',
+        reason: 'same millisecond',
+      }),
+      /manual_version_switch_concurrent_transition/,
+    );
+    assert.equal(writes, 0);
+  });
+
   test('rejects a stale editor active-version precondition before creating content', async () => {
     const context = createHarness();
     await context.store.initialize('owner-1', 'obj', 100, {

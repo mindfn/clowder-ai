@@ -112,7 +112,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('当前段 disableable=false，不可禁用');
   });
-
   it('uses rollback permission when switching to the manifest v1 card', () => {
     act(() => {
       root.render(
@@ -148,7 +147,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('当前段无覆盖可回滚');
   });
-
   it('ActivateVersionButton is disabled and shows reason when matrix disallows activateVersion', () => {
     act(() => {
       root.render(
@@ -194,7 +192,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('当前段 safetyTier=readonly，禁止激活版本');
   });
-
   it('ActivateVersionButton is disabled and shows reason when version is not in availableEpochVersions', () => {
     act(() => {
       root.render(
@@ -226,7 +223,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('版本 v3 不在可激活历史版本列表中');
   });
-
   it('ActivateVersionButton is disabled while the current cycle is evaluating', () => {
     act(() => {
       root.render(

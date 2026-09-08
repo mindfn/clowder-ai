@@ -28,6 +28,7 @@ const lifeline = {
   chain: [
     { version: 1, origin: 'manifest' },
     { version: 2, origin: 'user-create' },
+    { version: 3, origin: 'user-create' },
   ],
 };
 
@@ -124,9 +125,9 @@ describe('SegmentEditorModal version lifecycle editor', () => {
     });
     await flush();
     act(() => (document.querySelector('[data-testid="segment-editor-save"]') as HTMLButtonElement).click());
-    expect(document.body.textContent).toContain('当前 v2 周期将停止');
+    expect(document.body.textContent).toContain('当前版本 v2 → v4（基于 v1）');
 
-    apiFetch.mockResolvedValueOnce(jsonResponse({ transition: { fromVersion: 2, toVersion: 3, baseVersion: 1 } }));
+    apiFetch.mockResolvedValueOnce(jsonResponse({ transition: { fromVersion: 2, toVersion: 4, baseVersion: 1 } }));
     mockLoad();
     const confirm = [...document.querySelectorAll('button')].find((button) => button.textContent === '确认产生并应用');
     await act(async () => confirm?.click());

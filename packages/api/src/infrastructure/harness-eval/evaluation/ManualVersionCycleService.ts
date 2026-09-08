@@ -122,7 +122,7 @@ export class ManualVersionCycleService {
     ]);
     if (cycleSegmentVersion !== sourceVersion) throw new ManualVersionCycleError('version_cycle_mismatch');
     const switchedAt = this.readNow();
-    if (!Number.isFinite(switchedAt) || switchedAt < current.cycleStart) {
+    if (!Number.isFinite(switchedAt) || switchedAt <= current.cycleStart) {
       throw new ManualVersionCycleError('concurrent_transition');
     }
     return { current, sourceVersion, switchedAt };
