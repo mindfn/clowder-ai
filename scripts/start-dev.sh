@@ -580,19 +580,16 @@ fi
 if [ -n "${DATA_DIR-}" ]; then
     DATA_DIR="$(cat_cafe_absolute_path "$DATA_DIR")"
     export DATA_DIR
+    # Redis data/backup migration is DEFERRED to setup_storage() — it must
+    # only run after redis_ping confirms no server is using the legacy dirs.
+    # Moving the data dir under a running Redis corrupts it (#770 P1).
     _legacy_redis_data="$REDIS_DATA_DIR"
     _target_redis_data="${DATA_DIR}/redis"
-    if [ "$_legacy_redis_data" != "$_target_redis_data" ]; then
-        # Pre-start migration: move legacy Redis data before overriding the path
-        cat_cafe_migrate_data_root_dir_or_abort "Redis data" "$_legacy_redis_data" "$_target_redis_data"
-        REDIS_DATA_DIR="$_target_redis_data"
-    fi
-
     _legacy_redis_backup="$REDIS_BACKUP_DIR"
     _target_redis_backup="${DATA_DIR}/redis-backups"
-    if [ "$_legacy_redis_backup" != "$_target_redis_backup" ]; then
-        cat_cafe_migrate_data_root_dir_or_abort "Redis backups" "$_legacy_redis_backup" "$_target_redis_backup"
-        REDIS_BACKUP_DIR="$_target_redis_backup"
+    _REDIS_MIGRATION_PENDING=true
+    if [ "$_legacy_redis_data" = "$_target_redis_data" ] && [ "$_legacy_redis_backup" = "$_target_redis_backup" ]; then
+        _REDIS_MIGRATION_PENDING=false
     fi
 
     # .cat-cafe/ state directory: move writable config/state to DATA_DIR/cat-cafe/
@@ -1451,6 +1448,25 @@ setup_storage() {
         unset REDIS_URL
         export MEMORY_STORE=1
         return
+    fi
+
+    # #671/#770: migrate Redis data/backups into DATA_DIR — but only when no
+    # Redis server is answering on our port. Moving the data dir under a
+    # running server breaks its dir entry mid-write and corrupts the data,
+    # so a running server keeps the legacy paths and migration is retried
+    # on a later start after it stops.
+    if [ "${_REDIS_MIGRATION_PENDING:-false}" = true ]; then
+        if redis_ping; then
+            echo -e "${YELLOW}  [#671] Redis 运行中（旧数据目录），跳过 DATA_DIR 迁移；停止 Redis 后下次启动再迁${NC}"
+        else
+            cat_cafe_migrate_data_root_dir_or_abort "Redis data" "$_legacy_redis_data" "$_target_redis_data"
+            cat_cafe_migrate_data_root_dir_or_abort "Redis backups" "$_legacy_redis_backup" "$_target_redis_backup"
+            REDIS_DATA_DIR="$_target_redis_data"
+            REDIS_BACKUP_DIR="$_target_redis_backup"
+            REDIS_PIDFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.pid"
+            REDIS_LOGFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.log"
+            _REDIS_MIGRATION_PENDING=false
+        fi
     fi
 
     ensure_redis_dirs
