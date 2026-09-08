@@ -32,16 +32,23 @@ PROFILE="${USER_REDIS_PROFILE:-user}"
 
 # #671: When the global DATA_DIR root is set (unified data directory), derive
 # Redis paths from it — unless the user explicitly overrides via USER_REDIS_*.
-# NOTE: we capture the global DATA_DIR *before* overwriting it with the local
-# Redis data directory variable (unfortunately same name for historical reasons).
+# NOTE: we capture the global DATA_ROOT *before* overwriting DATA_DIR with the
+# local Redis data directory variable (unfortunately same name for historical
+# reasons). The actual migration is DEFERRED to maybe_migrate_to_data_root() so
+# it only runs after is_running confirms no server is using the legacy dirs —
+# moving data under a running Redis corrupts it (#770 P1).
 _GLOBAL_DATA_ROOT="${DATA_DIR-}"
 if [ -n "$_GLOBAL_DATA_ROOT" ]; then
   _GLOBAL_DATA_ROOT="$(cat_cafe_absolute_path "$_GLOBAL_DATA_ROOT")"
 fi
+_DATA_MIGRATION_PENDING=false
+_BACKUP_MIGRATION_PENDING=false
 if [ -n "$_GLOBAL_DATA_ROOT" ] && [ -z "${USER_REDIS_DATA_DIR-}" ]; then
   _legacy_user_redis_data="$HOME/.cat-cafe/redis-${PROFILE}"
   _target_user_redis_data="${_GLOBAL_DATA_ROOT}/redis-${PROFILE}"
-  cat_cafe_migrate_data_root_dir_or_abort "user Redis data" "$_legacy_user_redis_data" "$_target_user_redis_data"
+  if [ "$_legacy_user_redis_data" != "$_target_user_redis_data" ]; then
+    _DATA_MIGRATION_PENDING=true
+  fi
   DATA_DIR="$_target_user_redis_data"
 else
   DATA_DIR="${USER_REDIS_DATA_DIR:-$HOME/.cat-cafe/redis-${PROFILE}}"
@@ -49,7 +56,9 @@ fi
 if [ -n "$_GLOBAL_DATA_ROOT" ] && [ -z "${USER_REDIS_BACKUP_DIR-}" ]; then
   _legacy_user_redis_backup="$HOME/.cat-cafe/redis-backups/${PROFILE}"
   _target_user_redis_backup="${_GLOBAL_DATA_ROOT}/redis-backups/${PROFILE}"
-  cat_cafe_migrate_data_root_dir_or_abort "user Redis backups" "$_legacy_user_redis_backup" "$_target_user_redis_backup"
+  if [ "$_legacy_user_redis_backup" != "$_target_user_redis_backup" ]; then
+    _BACKUP_MIGRATION_PENDING=true
+  fi
   BACKUP_DIR="$_target_user_redis_backup"
 else
   BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
@@ -76,6 +85,26 @@ need_tools() {
 
 is_running() {
   redis-cli -p "$PORT" ping >/dev/null 2>&1
+}
+
+maybe_migrate_to_data_root() {
+  # #770 P1: never move Redis data under a running server. Migrate only when
+  # nothing answers on our port; while it runs, keep the legacy paths and
+  # defer the migration to a later invocation that finds it stopped.
+  if is_running; then
+    if [ "$_DATA_MIGRATION_PENDING" = true ] || [ "$_BACKUP_MIGRATION_PENDING" = true ]; then
+      echo "[user-redis] Redis running on port $PORT — DATA_DIR migration deferred until it is stopped"
+    fi
+    return 0
+  fi
+  if [ "$_DATA_MIGRATION_PENDING" = true ]; then
+    cat_cafe_migrate_data_root_dir_or_abort "user Redis data" "$_legacy_user_redis_data" "$_target_user_redis_data"
+    _DATA_MIGRATION_PENDING=false
+  fi
+  if [ "$_BACKUP_MIGRATION_PENDING" = true ]; then
+    cat_cafe_migrate_data_root_dir_or_abort "user Redis backups" "$_legacy_user_redis_backup" "$_target_user_redis_backup"
+    _BACKUP_MIGRATION_PENDING=false
+  fi
 }
 
 backup_snapshot() {
@@ -112,6 +141,8 @@ backup_snapshot() {
 }
 
 status() {
+  # Converge paths first when safe so the printed dir reflects reality.
+  maybe_migrate_to_data_root
   if ! is_running; then
     echo "[user-redis] stopped (port $PORT)"
     echo "[user-redis] data dir: $DATA_DIR"
@@ -137,6 +168,7 @@ status() {
 
 start() {
   need_tools
+  maybe_migrate_to_data_root
   ensure_dirs
 
   if is_running; then
@@ -183,6 +215,8 @@ stop() {
   backup_snapshot "pre-stop"
   redis-cli -p "$PORT" shutdown save >/dev/null 2>&1 || true
   echo "[user-redis] stopped (port $PORT)"
+  # Server is down — safe to converge on the DATA_DIR layout immediately.
+  maybe_migrate_to_data_root
 }
 
 usage() {
@@ -212,6 +246,7 @@ case "$ACTION" in
     status || true
     ;;
   backup)
+    maybe_migrate_to_data_root
     backup_snapshot "manual"
     ;;
   restore)
