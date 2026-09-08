@@ -130,17 +130,18 @@ This is not yet a Train B completion claim:
   wiring in the feature checkout. Configure remains a manifest-owned typed detail contribution, not a
   seventh generic Agent management operation. This direction approval is not the final phase-4 hands-on
   journey acceptance.
-- Plugins Train B now has an independently approved machine catalog and packed artifact set at exact
-  `clowder-ai-plugins` HEAD `03289dc0d0013ce75e90f2896b01baaf542e32a5`. The Core feature worktree
-  consumes that canonical validator/catalog through a machine-catalog provider while keeping Host grants
-  and auth policy separate and fail-closed. Exact Node 24.18.0/npm 11.16.0/zlib 1.3.1-e00f703 repacking
-  reproduced contract beta.13, SDK beta.9 and `video-analysis` alpha.0 release digests; isolated admission
-  accepted the canonical `plugin.yaml` and exact video tar into Host inventory.
+- Plugins Train B merged as `clowder-ai-plugins` commit
+  `73d77f7efddb7a0b53829e9d88ebab51e03bdb32`. Contract beta.13, SDK beta.9 and
+  `video-analysis` alpha.0 are public with the independently sealed integrities. The Core feature worktree
+  consumes the canonical machine catalog through the published beta.13 validator while keeping Host grants
+  separate and fail-closed. The catalog may contain later packages, but this Train B Host admission scope
+  projects only `dev.clowder.video-analysis`; absent Host policy means an entry is not exposed or installable.
 - Core production composition now owns fail-closed builtin dependency materialization: dependency-bearing
   packages must carry a publisher-owned lockfile-v3 `npm-shrinkwrap.json`, every locked package stays on the canonical
   npm registry with canonical sha512 integrity, and the Host runs script-free `npm ci`. It also owns the
-  builtin-contribution supervisor, repository-local/connector compatibility projection, canonical REST
-  registration and authenticated same-origin package-icon route. Paired isolated acceptance exercised
+  builtin-contribution supervisor, canonical REST registration and authenticated same-origin package-icon
+  route. Repository-local and connector manifests remain on their existing Settings journeys rather than
+  being presented as migrated package plugins. Paired isolated acceptance exercised
   catalog → install → Host config/secret binding → enable → real `video_analysis` → Host restart/resume →
   real call → disable → uninstall; the final instance was retired and the secret never entered inventory.
   `pluginManagerLive=1`
@@ -151,17 +152,15 @@ This is not yet a Train B completion claim:
   rows have no executable action and may only be removed with a revision fence. A rejection for an older
   catalog digest cannot hide a later replacement release. Package-owned SVG/PNG icons are served only after
   digest, manifest, package-boundary and media validation, with active-content confinement headers.
-- Production discovery still constructs `RefreshingOfficialPluginCatalog` from Core-owned
-  `OFFICIAL_PLUGIN_POLICIES`. The machine-catalog adapter is contract-tested but cannot be selected honestly
-  until deployment has an exact catalog index coordinate and the matching artifacts are published: the npm
-  registry currently stops at plugin-contract beta.12 and plugin-sdk beta.8, while `video-analysis` is not
-  published. The exact repository package also omits `npm-shrinkwrap.json`, so its current tar is admission-
-  valid but deliberately not runtime-materializable by the terminal Host boundary. Consequently a published
-  beta.13 catalog path, an integrity-closed video artifact, and final co-creator hands-on journey acceptance
-  remain open; no fallback validator, first-activation dependency guess, or fabricated catalog location is
-  introduced.
+- Production keeps the legacy Feishu-only `RefreshingOfficialPluginCatalog` for the existing specialized
+  routes, while the new Manager independently consumes the bounded HTTPS machine catalog and exact package
+  digests. Its list/search projection contains no repository-local or connector compatibility rows. Detail
+  reads may load a bounded, integrity-verified package-root `README.md`; list/search and Agent-facing discovery
+  use only the short manifest description. The published video alpha.0 package does not yet include that
+  README, so the Manager reports the omission honestly while a package follow-up is pending. Final
+  co-creator hands-on acceptance of this current Core generation remains open.
 
-External publication provenance: `[primary | npm registry + exact repository HEAD | checked 2026-09-01 |
+External publication provenance: `[primary | npm registry + exact repository HEAD | checked 2026-09-08 |
 Train B deployability | high confidence]`.
 
 ## What

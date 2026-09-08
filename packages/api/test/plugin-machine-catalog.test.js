@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { MachineOfficialPluginCatalog, OfficialPluginManagerCatalogAdapter } from '../dist/domains/plugin/index.js';
+import {
+  loadMachinePluginCatalog,
+  MachineOfficialPluginCatalog,
+  OfficialPluginManagerCatalogAdapter,
+} from '../dist/domains/plugin/index.js';
 
 const digest = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
 
@@ -104,7 +108,7 @@ test('projects canonical machine catalog release truth while Host policy remains
   });
 });
 
-test('fails closed when catalog validation or Host admission policy is missing', async () => {
+test('fails closed when catalog validation fails and omits entries outside Host admission scope', async () => {
   const invalid = new MachineOfficialPluginCatalog({
     loadCatalog: async () => rawCatalog(),
     validateCatalog: () => ({ valid: false, errors: [{ message: 'invalid' }] }),
@@ -126,9 +130,8 @@ test('fails closed when catalog validation or Host admission policy is missing',
   });
   assert.deepEqual(await missingPolicy.snapshot(), {
     entries: [],
-    status: 'degraded',
+    status: 'fresh',
     checkedAt: 3_000,
-    errorCode: 'CATALOG_POLICY_MISSING',
   });
 });
 
@@ -147,6 +150,7 @@ test('retains the last canonical machine catalog when a later read fails', async
         effectiveGrants: [],
       },
     ],
+    refreshTtlMs: 0,
     now: () => now,
   });
 
@@ -159,4 +163,83 @@ test('retains the last canonical machine catalog when a later read fails', async
   assert.equal(degraded.checkedAt, 5_000);
   assert.equal(degraded.entries[0].pluginId, 'dev.clowder.video-analysis');
   assert.equal(JSON.stringify(degraded).includes('private upstream detail'), false);
+});
+
+test('coalesces concurrent refreshes and reuses catalog truth within the refresh TTL', async () => {
+  let loadCount = 0;
+  let now = 6_000;
+  let releaseFirstLoad;
+  const firstLoad = new Promise((resolve) => {
+    releaseFirstLoad = resolve;
+  });
+  const provider = new MachineOfficialPluginCatalog({
+    loadCatalog: async () => {
+      loadCount += 1;
+      if (loadCount === 1) await firstLoad;
+      return rawCatalog();
+    },
+    validateCatalog: canonicalValidator,
+    hostPolicies: [
+      {
+        pluginId: 'dev.clowder.video-analysis',
+        effectiveGrants: [],
+      },
+    ],
+    refreshTtlMs: 1_000,
+    now: () => now,
+  });
+
+  const first = provider.snapshot();
+  const concurrent = provider.snapshot();
+  assert.equal(loadCount, 1);
+  releaseFirstLoad();
+  const [firstSnapshot, concurrentSnapshot] = await Promise.all([first, concurrent]);
+  assert.deepEqual(concurrentSnapshot, firstSnapshot);
+
+  now = 6_999;
+  assert.deepEqual(await provider.snapshot(), firstSnapshot);
+  assert.equal(loadCount, 1);
+
+  now = 7_001;
+  const refreshed = await provider.snapshot();
+  assert.equal(loadCount, 2);
+  assert.equal(refreshed.checkedAt, 7_001);
+});
+
+test('loads the configured machine catalog through a bounded HTTPS-only reader', async () => {
+  const catalog = rawCatalog();
+  const body = Buffer.from(JSON.stringify(catalog));
+  const loaded = await loadMachinePluginCatalog('https://raw.githubusercontent.com/example/catalog.json', {
+    fetchFn: async (_url, init) => {
+      assert.equal(init.redirect, 'error');
+      assert.equal(init.headers.accept, 'application/json');
+      return new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'content-length': String(body.byteLength) },
+      });
+    },
+  });
+
+  assert.deepEqual(loaded, catalog);
+  await assert.rejects(loadMachinePluginCatalog('http://raw.githubusercontent.com/example/catalog.json'), /HTTPS/);
+  await assert.rejects(
+    loadMachinePluginCatalog('https://example.com/catalog.json', {
+      fetchFn: async () => new Response('{}', { status: 200, headers: { 'content-type': 'text/plain' } }),
+    }),
+    /not JSON/,
+  );
+});
+
+test('rejects an oversized machine catalog before buffering it', async () => {
+  await assert.rejects(
+    loadMachinePluginCatalog('https://raw.githubusercontent.com/example/catalog.json', {
+      maxBytes: 32,
+      fetchFn: async () =>
+        new Response('{}', {
+          status: 200,
+          headers: { 'content-type': 'application/json', 'content-length': '33' },
+        }),
+    }),
+    /size limit/,
+  );
 });

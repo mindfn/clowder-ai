@@ -3979,14 +3979,10 @@ async function main(): Promise<void> {
     return verify(input, { ghToken: getGitHubToken() });
   };
 
-  let repositoryPluginManagerCompatibilityProvider:
-    | import('./domains/plugin/plugin-manager-compatibility.js').PluginManagerCompatibilityProvider
-    | undefined;
-
   // F202: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
-    const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
+    const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
     const { PluginResourceActivator, rehydrateEnabledPluginLimbs, rehydrateEnabledPluginSchedules } = await import(
       './domains/plugin/PluginResourceActivator.js'
     );
@@ -4020,47 +4016,6 @@ async function main(): Promise<void> {
       const githubManifest = pluginRegistry.getManifest('github');
       return githubManifest ? resolvePluginEnv([githubManifest]) : {};
     };
-    const compatibilityCapabilityKinds = {
-      skill: 'skill',
-      mcp: 'mcp',
-      limb: 'limb',
-      schedule: 'schedule',
-    } as const;
-    repositoryPluginManagerCompatibilityProvider = {
-      list: async () => {
-        const manifests = pluginRegistry.scan();
-        loadAllPluginConfigs(resolveActiveProjectRoot(), manifests);
-        const capabilities = await readCapabilitiesConfig(resolveActiveProjectRoot());
-        const env = resolvePluginEnv(manifests);
-        return manifests.map((manifest) => {
-          const info = pluginRegistry.getPluginInfo(manifest, capabilities, env);
-          const enabled = info.status === 'enabled' || info.status === 'partial';
-          return {
-            pluginId: info.id,
-            displayName: info.name,
-            version: info.version,
-            ...(info.description === undefined ? {} : { description: info.description }),
-            ...(info.icon === undefined ? {} : { icon: info.icon }),
-            ...(info.iconBg === undefined ? {} : { iconBg: info.iconBg }),
-            sourceAdapter: 'repository-local' as const,
-            configured: info.configured,
-            enabled,
-            live: info.resources.some((resource) => resource.enabled),
-            ...(info.docsUrl === undefined ? {} : { docsUrl: info.docsUrl }),
-            ...(info.setupSteps === undefined ? {} : { setupSteps: info.setupSteps }),
-            configFields: info.config,
-            capabilities: info.resources.map((resource) => ({
-              id: resourceCapId(info.id, resource),
-              kind: compatibilityCapabilityKinds[resource.type as keyof typeof compatibilityCapabilityKinds],
-              name: resource.name ?? resource.path ?? resource.type,
-              active: resource.enabled,
-              ...(resource.error === undefined ? {} : { description: resource.error }),
-            })),
-          };
-        });
-      },
-    };
-
     const limbAdapterRegistry = new Map<
       string,
       (yamlPath: string, pluginConfig: Record<string, string>) => Promise<ILimbNode>
@@ -4661,79 +4616,34 @@ async function main(): Promise<void> {
     await import('@clowder-ai/feishu-meeting-intake');
   const { registerOfficialPluginRoutes } = await import('./routes/plugin-official-routes.js');
   const officialPluginCatalog = new RefreshingOfficialPluginCatalog({ policies: OFFICIAL_PLUGIN_POLICIES });
-  const publishedFeishuManifest = (
-    (await import('@clowder-ai/feishu-meeting-intake/manifest', { with: { type: 'json' } })) as {
-      default: unknown;
-    }
-  ).default;
+  const { validatePluginCatalog } = await import('@clowder-ai/plugin-contract');
+  const { MachineOfficialPluginCatalog, OFFICIAL_PLUGIN_CATALOG_URL, loadMachinePluginCatalog } = await import(
+    './domains/plugin/machine-catalog-provider.js'
+  );
+  const pluginManagerCatalog = new MachineOfficialPluginCatalog({
+    loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
+    validateCatalog: validatePluginCatalog,
+    hostPolicies: [
+      {
+        pluginId: 'dev.clowder.video-analysis',
+        effectiveGrants: ['plugin.config.read', 'secret.read'],
+      },
+    ],
+  });
   const { FilesystemBuiltinPluginPackageMaterializer } = await import(
     './domains/plugin/builtin-package-materializer.js'
   );
   const { readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
-  const { PluginManagerCompatibilityAdapter } = await import('./domains/plugin/plugin-manager-compatibility.js');
-  const { buildConnectorStatusWithStoredConfig } = await import('./routes/connector-hub.js');
   const readBuiltinPluginValue = async (pluginInstanceId: string, key: string) => {
     const snapshot = await pluginRuntime.inventoryStore.snapshot();
     const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
     return instance ? readPluginConfig(pluginProjectRoot, instance.pluginId)[key] : undefined;
   };
-  const connectorPluginManagerCompatibilityProvider = {
-    list: async () => {
-      const { manifests, status } = buildConnectorStatusWithStoredConfig();
-      const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
-      return status.flatMap((connector) => {
-        const manifest = manifestById.get(connector.id);
-        if (!manifest) return [];
-        const valueFields = manifest.config.filter((field) => field.type !== 'operation');
-        const definitions = new Map(valueFields.map((field) => [field.envName, field]));
-        const running = connectorHubOpts.adapterRegistry?.has(connector.id) ?? false;
-        const icon = connector.icon?.src
-          ? { type: connector.icon.type === 'png' ? ('png' as const) : ('svg' as const), src: connector.icon.src }
-          : connector.icon?.iconId;
-        return [
-          {
-            pluginId: connector.id,
-            displayName: connector.name,
-            version: manifest.version,
-            ...(icon === undefined ? {} : { icon }),
-            ...(connector.themeColor === undefined ? {} : { iconBg: connector.themeColor }),
-            sourceAdapter: 'connector' as const,
-            configured: connector.configured,
-            enabled: running,
-            live: running,
-            ...(connector.docsUrl.length === 0 ? {} : { docsUrl: connector.docsUrl }),
-            setupSteps: connector.steps.map((step) => step.text),
-            configFields: connector.fields.flatMap((field) => {
-              const definition = definitions.get(field.envName);
-              return definition
-                ? [{ ...definition, sensitive: field.sensitive, currentValue: field.currentValue }]
-                : [];
-            }),
-            capabilities: [
-              {
-                id: `connector:${connector.id}`,
-                kind: 'connector' as const,
-                name: 'Messaging',
-                active: running,
-              },
-            ],
-          },
-        ];
-      });
-    },
-  };
-  const pluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
-    ...(repositoryPluginManagerCompatibilityProvider === undefined
-      ? []
-      : [repositoryPluginManagerCompatibilityProvider]),
-    connectorPluginManagerCompatibilityProvider,
-  ]);
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
     runtime: pluginRuntime,
-    catalogProvider: officialPluginCatalog,
-    catalogManifests: [publishedFeishuManifest],
+    catalogProvider: pluginManagerCatalog,
+    catalogManifests: [],
     auth: officialPluginAuth,
-    compatibility: pluginManagerCompatibility,
     builtinContributions: {
       materializer: new FilesystemBuiltinPluginPackageMaterializer({
         packagesRoot: pluginRuntime.paths.packagesRoot,

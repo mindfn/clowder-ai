@@ -51,11 +51,11 @@ importers:
         specifier: 0.1.0-alpha.9
         version: 0.1.0-alpha.9
       '@clowder-ai/plugin-contract':
-        specifier: 0.1.0-beta.12
-        version: 0.1.0-beta.12
+        specifier: 0.1.0-beta.13
+        version: 0.1.0-beta.13
       '@clowder-ai/plugin-sdk':
-        specifier: 0.1.0-beta.8
-        version: 0.1.0-beta.8
+        specifier: 0.1.0-beta.9
+        version: 0.1.0-beta.9
       '@fastify/cookie':
         specifier: '9'
         version: 9.4.0
@@ -1161,12 +1161,12 @@ packages:
       - require-from-string
       - sisteransi
 
-  '@clowder-ai/plugin-contract@0.1.0-beta.12':
-    resolution: {integrity: sha512-gMmtfTXSTE69617usXoAkO5fs9+WIZSHEQ4iHdSmCEn7FPDt7Aj71uFPYuPDrqVWABW9xXv5XdcNGHx6+AxOcQ==}
+  '@clowder-ai/plugin-contract@0.1.0-beta.13':
+    resolution: {integrity: sha512-kCJgPpw38nDW77FVMpNcIcJaLmbVya4U4l9vAiCm33zurJHah7rjgLCxS9bBugfggzePg1iADhflJz255NpAtg==}
     engines: {node: '>=20.0.0'}
 
-  '@clowder-ai/plugin-sdk@0.1.0-beta.8':
-    resolution: {integrity: sha512-zOeOccUCeQBskmyjGrGCONJwv351BQQecLfzLeK2elNz5hjn1+eXqnXJqhm3V9VRMVAlMIFL3rq/ufVozyLDLQ==}
+  '@clowder-ai/plugin-sdk@0.1.0-beta.9':
+    resolution: {integrity: sha512-+JsKwN5XKwVSxLPmM83OCb2nc5Qy7HAHzzK4FdXRm2gzY4nCC3jOLhFm+9nN3HC4SpsxfsdRM+dpfU8qMhe5GA==}
     engines: {node: '>=20.0.0'}
 
   '@codemirror/autocomplete@6.20.1':
@@ -7604,14 +7604,14 @@ snapshots:
 
   '@clowder-ai/feishu-meeting-intake@0.1.0-alpha.9': {}
 
-  '@clowder-ai/plugin-contract@0.1.0-beta.12':
+  '@clowder-ai/plugin-contract@0.1.0-beta.13':
     dependencies:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@clowder-ai/plugin-sdk@0.1.0-beta.8':
+  '@clowder-ai/plugin-sdk@0.1.0-beta.9':
     dependencies:
-      '@clowder-ai/plugin-contract': 0.1.0-beta.12
+      '@clowder-ai/plugin-contract': 0.1.0-beta.13
 
   '@codemirror/autocomplete@6.20.1':
     dependencies:

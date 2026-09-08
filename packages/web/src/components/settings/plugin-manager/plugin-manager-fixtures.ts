@@ -29,6 +29,7 @@ export interface PluginManagerDesignFixture {
   intent: PluginManagerIntentState;
   live: PluginManagerLiveState;
   capabilities: Array<{ name: string; description: string }>;
+  readmeMarkdown?: string;
   setupSteps?: string[];
   docsUrl?: string;
   configFields?: PluginManagerDetail['configFields'];

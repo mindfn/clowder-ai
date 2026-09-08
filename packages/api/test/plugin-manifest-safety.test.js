@@ -226,6 +226,13 @@ describe('parsePluginManifest security', () => {
     assert.equal(results[0].id, 'github');
   });
 
+  it('keeps the GitHub glyph on its package-owned dark background', () => {
+    const manifest = parsePluginManifest(fileURLToPath(new URL('../src/plugins/github/plugin.yaml', import.meta.url)));
+
+    assert.equal(manifest.icon, 'github');
+    assert.equal(manifest.iconBg, '#24292e');
+  });
+
   it('rejects symlinked plugin directories during scan', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const externalDir = mkdtempSync(join(os.tmpdir(), 'plugin-external-'));

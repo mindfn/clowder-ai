@@ -261,6 +261,15 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /createLarkCliFeishuArtifactInspector/);
   assert.match(source, /historyImport:/);
   assert.match(source, /createPluginManagerRuntimeComposition\(\{/);
+  assert.match(source, /new MachineOfficialPluginCatalog\(\{/);
+  assert.match(source, /validateCatalog: validatePluginCatalog/);
+  assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
+  const managerComposition = source.slice(managerCompositionIndex, recoveryIndex);
+  assert.doesNotMatch(
+    managerComposition,
+    /compatibility:/,
+    'Train B Manager must not project unmigrated repository and connector rows as package plugins',
+  );
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
   assert.match(source, /installer: pluginManagerRuntime\.officialInstaller/);

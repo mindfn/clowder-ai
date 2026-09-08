@@ -31,7 +31,7 @@ function metadataContractRuntime() {
   };
 }
 
-async function fixture({ icon, iconBytes, catalogOnly = false }) {
+async function fixture({ icon, iconBytes, readme, catalogOnly = false }) {
   const packageManifest = manifest({
     description: 'Verified package asset fixture',
     icon,
@@ -39,7 +39,10 @@ async function fixture({ icon, iconBytes, catalogOnly = false }) {
   });
   const archive = await packageArchive({
     packageManifest,
-    extraFiles: { [icon.src]: iconBytes },
+    extraFiles: {
+      [icon.src]: iconBytes,
+      ...(readme === undefined ? {} : { 'README.md': Buffer.from(readme) }),
+    },
   });
   const entry = catalogEntry(archive.integrity, {
     pluginId: packageManifest.pluginId,
@@ -126,6 +129,18 @@ describe('F202 Plugin Manager package assets', () => {
     assert.equal(asset.contentType, 'image/png');
     assert.deepEqual(asset.bytes, png);
     assert.deepEqual(await readdir(root), [], 'catalog discovery must leave no installed or staged package behind');
+  });
+
+  it('reads package-root README only on explicit detail demand', async () => {
+    const readme = '# Video Analysis\n\nDetailed human-facing usage and privacy notes.';
+    const { assets, packageManifest } = await fixture({
+      icon: { type: 'svg', src: 'assets/icon.svg' },
+      iconBytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+      readme,
+      catalogOnly: true,
+    });
+
+    assert.equal(await assets.readReadme(packageManifest.pluginId), readme);
   });
 
   it('fails closed when declared PNG bytes do not match their media type', async () => {

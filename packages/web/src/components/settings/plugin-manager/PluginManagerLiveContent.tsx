@@ -47,6 +47,7 @@ function designFixture(
           ? capability.description
           : capability.name,
     })),
+    ...(detail?.readmeMarkdown === undefined ? {} : { readmeMarkdown: detail.readmeMarkdown }),
     ...(detail?.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
     ...(detail?.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
     ...(detail?.configFields === undefined ? {} : { configFields: detail.configFields }),

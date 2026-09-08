@@ -3,6 +3,84 @@ import type { Capability } from '@clowder-ai/plugin-contract';
 import type { OfficialPluginCatalogEntry, OfficialPluginOwnerAuth } from './official-catalog.js';
 import type { OfficialPluginCatalogProvider, OfficialPluginCatalogSnapshot } from './official-catalog-provider.js';
 
+export const OFFICIAL_PLUGIN_CATALOG_URL =
+  'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json';
+
+const DEFAULT_CATALOG_TIMEOUT_MS = 5_000;
+const DEFAULT_CATALOG_MAX_BYTES = 256 * 1024;
+const DEFAULT_REFRESH_TTL_MS = 5 * 60_000;
+
+export interface LoadMachinePluginCatalogOptions {
+  readonly fetchFn?: typeof fetch;
+  readonly timeoutMs?: number;
+  readonly maxBytes?: number;
+}
+
+function assertCatalogUrl(value: string): URL {
+  const url = new URL(value);
+  if (url.protocol !== 'https:') throw new TypeError('Machine plugin catalog URL must use HTTPS');
+  if (url.username !== '' || url.password !== '') {
+    throw new TypeError('Machine plugin catalog URL must not contain credentials');
+  }
+  return url;
+}
+
+async function readBoundedCatalogJson(response: Response, maxBytes: number): Promise<unknown> {
+  const declaredLengthHeader = response.headers.get('content-length');
+  if (declaredLengthHeader !== null) {
+    const declaredLength = Number(declaredLengthHeader);
+    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > maxBytes) {
+      throw new TypeError('Machine plugin catalog exceeded the size limit');
+    }
+  }
+  if (!response.body) throw new TypeError('Machine plugin catalog response had no body');
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new TypeError('Machine plugin catalog exceeded the size limit');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+  } catch {
+    throw new TypeError('Machine plugin catalog was not valid JSON');
+  }
+}
+
+/** Fetches canonical discovery data through a fail-closed, bounded transport. */
+export async function loadMachinePluginCatalog(
+  catalogUrl: string,
+  options: LoadMachinePluginCatalogOptions = {},
+): Promise<unknown> {
+  const url = assertCatalogUrl(catalogUrl);
+  const fetchFn = options.fetchFn ?? fetch;
+  const response = await fetchFn(url, {
+    headers: { accept: 'application/json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_CATALOG_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new TypeError('Machine plugin catalog request failed');
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  const canonicalRawGitHubText = url.hostname === 'raw.githubusercontent.com' && contentType === 'text/plain';
+  if (contentType !== 'application/json' && !canonicalRawGitHubText) {
+    throw new TypeError('Machine plugin catalog response was not JSON');
+  }
+  return readBoundedCatalogJson(response, options.maxBytes ?? DEFAULT_CATALOG_MAX_BYTES);
+}
+
 /**
  * Projection of a catalog after the exact plugin-contract validator accepted it.
  * This boundary deliberately does not validate or duplicate catalog constraints.
@@ -41,6 +119,7 @@ export interface MachineOfficialPluginCatalogOptions {
   readonly validateCatalog: (value: unknown) => MachineCatalogValidationResult;
   /** Host-owned authority; catalog metadata is never allowed to widen this policy. */
   readonly hostPolicies: readonly MachineCatalogHostPolicy[];
+  readonly refreshTtlMs?: number;
   readonly now?: () => number;
 }
 
@@ -72,57 +151,75 @@ function projectEntry(
 export class MachineOfficialPluginCatalog implements OfficialPluginCatalogProvider {
   private readonly now: () => number;
   private readonly policies: ReadonlyMap<string, MachineCatalogHostPolicy>;
+  private readonly refreshTtlMs: number;
   private lastGoodEntries: readonly OfficialPluginCatalogEntry[] = [];
+  private lastAttemptAt: number | null = null;
+  private checkedAt: number | null = null;
+  private status: OfficialPluginCatalogSnapshot['status'] = 'bootstrap';
+  private errorCode: OfficialPluginCatalogSnapshot['errorCode'];
+  private inFlight: Promise<OfficialPluginCatalogSnapshot> | undefined;
 
   constructor(private readonly options: MachineOfficialPluginCatalogOptions) {
     this.now = options.now ?? Date.now;
     this.policies = new Map(options.hostPolicies.map((policy) => [policy.pluginId, policy]));
+    this.refreshTtlMs = options.refreshTtlMs ?? DEFAULT_REFRESH_TTL_MS;
   }
 
   async snapshot(): Promise<OfficialPluginCatalogSnapshot> {
-    const checkedAt = this.now();
+    const now = this.now();
+    if (this.inFlight) return this.inFlight;
+    if (this.lastAttemptAt !== null && now - this.lastAttemptAt < this.refreshTtlMs) return this.project();
+    this.lastAttemptAt = now;
+    this.inFlight = this.refresh(now).finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
+
+  private async refresh(checkedAt: number): Promise<OfficialPluginCatalogSnapshot> {
+    this.checkedAt = checkedAt;
     let raw: unknown;
     try {
       raw = await this.options.loadCatalog();
     } catch {
-      return {
-        entries: this.lastGoodEntries,
-        status: 'degraded',
-        checkedAt,
-        errorCode: 'CATALOG_FETCH_FAILED',
-      };
+      this.status = 'degraded';
+      this.errorCode = 'CATALOG_FETCH_FAILED';
+      return this.project();
     }
 
-    const validation = this.options.validateCatalog(raw);
+    let validation: MachineCatalogValidationResult;
+    try {
+      validation = this.options.validateCatalog(raw);
+    } catch {
+      this.status = 'degraded';
+      this.errorCode = 'CATALOG_CONTRACT_INVALID';
+      return this.project();
+    }
     if (!validation.valid) {
-      return {
-        entries: this.lastGoodEntries,
-        status: 'degraded',
-        checkedAt,
-        errorCode: 'CATALOG_CONTRACT_INVALID',
-      };
+      this.status = 'degraded';
+      this.errorCode = 'CATALOG_CONTRACT_INVALID';
+      return this.project();
     }
 
     const entries: OfficialPluginCatalogEntry[] = [];
-    let missingPolicy = false;
     for (const plugin of validation.catalog.plugins) {
       const policy = this.policies.get(plugin.pluginId);
-      if (!policy) {
-        missingPolicy = true;
-        continue;
-      }
+      if (!policy) continue;
       const entry = projectEntry(plugin, policy);
       if (entry) entries.push(entry);
     }
-    if (missingPolicy || entries.length !== validation.catalog.plugins.length) {
-      return {
-        entries: this.lastGoodEntries,
-        status: 'degraded',
-        checkedAt,
-        errorCode: 'CATALOG_POLICY_MISSING',
-      };
-    }
     this.lastGoodEntries = entries;
-    return { entries, status: 'fresh', checkedAt };
+    this.status = 'fresh';
+    this.errorCode = undefined;
+    return this.project();
+  }
+
+  private project(): OfficialPluginCatalogSnapshot {
+    return {
+      entries: this.lastGoodEntries,
+      status: this.status,
+      checkedAt: this.checkedAt,
+      ...(this.errorCode === undefined ? {} : { errorCode: this.errorCode }),
+    };
   }
 }
