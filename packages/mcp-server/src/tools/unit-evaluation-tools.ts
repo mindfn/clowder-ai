@@ -9,6 +9,7 @@ const defineTool = defineMcpMigrationFactory('unit-evaluation-tools.ts', undefin
 });
 
 const identifier = z.string().trim().min(1).max(200);
+const hookUnitId = z.string().regex(/^[A-Z]+\d+$/u);
 const evidenceRefs = z.array(identifier).max(64);
 const howCounted = z.string().trim().min(1).max(2_000);
 const conclusionSchema = z.discriminatedUnion('kind', [
@@ -46,13 +47,13 @@ const governedCondition = z.discriminatedUnion('conditionRef', [
   ),
 ]);
 const hookManifest = z.object({
-  id: z.string().regex(/^[A-Z]+\\d+$/),
+  id: hookUnitId,
   name: z.string().trim().min(1).max(200),
   stage: z.enum(['session-init', 'per-turn']),
   order: z.number().int().nonnegative(),
   version: z.literal(1),
   enabled: z.boolean(),
-  template: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\\.md$/),
+  template: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/u),
   inputs: z.array(identifier).max(32),
   variables: z
     .array(
@@ -90,7 +91,7 @@ const governanceChange = z
       action: z.literal('add'),
       reason,
       unit: z.object({
-        unitId: z.string().regex(/^[A-Z]+\\d+$/),
+        unitId: hookUnitId,
         assetSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
         manifest: hookManifest,
         content: z
