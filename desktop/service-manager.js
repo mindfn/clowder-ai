@@ -243,6 +243,80 @@ class ServiceManager {
       }
     };
 
+    // #671/#770: with DATA_DIR set, the API resolves writable state from
+    // DATA_DIR/cat-cafe instead of {projectRoot}/.cat-cafe. Relocate the
+    // state dir and plant a symlink at the original path so all in-process
+    // consumers keep working — mirrors the start-dev.sh protocol. A
+    // populated-target conflict aborts startup (shell: refuse + exit 1)
+    // rather than risking two divergent state dirs.
+    const catCafeLegacy = path.join(projectDir, '.cat-cafe');
+    const catCafeTarget = path.join(baseDir, 'data', 'cat-cafe');
+    const dirHasEntries = (dir) => {
+      try {
+        return fs.readdirSync(dir).length > 0;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      let legacyStat = null;
+      try {
+        legacyStat = fs.lstatSync(catCafeLegacy);
+      } catch {
+        // not created yet (fresh install)
+      }
+      let linkedTarget = null;
+      let isLinkEntry = legacyStat?.isSymbolicLink() === true;
+      if (legacyStat) {
+        // readlinkSync resolves both symlinks and (on Windows) NTFS junctions;
+        // a genuine directory throws EINVAL. Relative targets are anchored at
+        // the link's location.
+        try {
+          let raw = fs.readlinkSync(catCafeLegacy);
+          if (!path.isAbsolute(raw)) raw = path.resolve(path.dirname(catCafeLegacy), raw);
+          linkedTarget = path.resolve(raw);
+          isLinkEntry = true;
+        } catch {
+          // genuine directory
+        }
+      }
+      if (isLinkEntry && linkedTarget === catCafeTarget) {
+        // Already relocated by a previous launch — nothing to do.
+      } else {
+        const stateSource = linkedTarget ?? (legacyStat ? catCafeLegacy : null);
+        if (stateSource && dirHasEntries(stateSource)) {
+          if (dirHasEntries(catCafeTarget)) {
+            throw new Error(
+              `refusing to switch .cat-cafe state to DATA_DIR because both locations contain data: ${stateSource} vs ${catCafeTarget}`,
+            );
+          }
+          fs.mkdirSync(path.dirname(catCafeTarget), { recursive: true });
+          try {
+            fs.renameSync(stateSource, catCafeTarget);
+          } catch {
+            fs.cpSync(stateSource, catCafeTarget, { recursive: true });
+            fs.rmSync(stateSource, { recursive: true, force: true });
+          }
+          log(`Migrated .cat-cafe state: ${stateSource} -> ${catCafeTarget}`);
+        }
+        fs.mkdirSync(catCafeTarget, { recursive: true });
+        if (legacyStat) {
+          if (isLinkEntry) {
+            removeLink(catCafeLegacy);
+          } else if (fs.existsSync(catCafeLegacy)) {
+            // renameSync above already removed a moved dir — only an empty
+            // leftover needs rmdir.
+            fs.rmdirSync(catCafeLegacy);
+          }
+        }
+        fs.symlinkSync(catCafeTarget, catCafeLegacy, linkType);
+        log(`State ${linkType} created: ${catCafeLegacy} -> ${catCafeTarget}`);
+      }
+    } catch (err) {
+      log(`FATAL: failed to relocate .cat-cafe state to DATA_DIR: ${err.message}`);
+      throw err;
+    }
+
     for (const name of mirrors) {
       const src = path.join(this.root, name);
       const dst = path.join(projectDir, name);
@@ -420,14 +494,16 @@ class ServiceManager {
     const salt = this._getOrCreateTelemetrySalt(userDataDir);
     return {
       TELEMETRY_HMAC_SALT: salt,
-      EVIDENCE_DB: path.join(userDataDir, 'evidence.sqlite'),
-      TRANSCRIPT_DATA_DIR: path.join(userDataDir, 'data', 'transcripts'),
+      // #671 unified data roots. The API removed the legacy per-path vars
+      // (EVIDENCE_DB, TRANSCRIPT_DATA_DIR, UPLOAD_DIR, TTS_CACHE_DIR,
+      // CONNECTOR_MEDIA_DIR, AUDIT_LOG_DIR, CLI_RAW_ARCHIVE_DIR) — without
+      // the roots here a packaged install falls back to cwd/install-dir
+      // paths, and Program Files is read-only for non-admin users. DATA_DIR
+      // also drives resolveCatCafeStateDir, so _ensureUserDataDir relocates
+      // project/.cat-cafe into DATA_DIR/cat-cafe before the API starts.
+      DATA_DIR: path.join(userDataDir, 'data'),
+      CACHE_DIR: path.join(userDataDir, 'cache'),
       LOG_DIR: path.join(userDataDir, 'data', 'logs', 'api'),
-      UPLOAD_DIR: path.join(userDataDir, 'uploads'),
-      CONNECTOR_MEDIA_DIR: path.join(userDataDir, 'data', 'connector-media'),
-      TTS_CACHE_DIR: path.join(userDataDir, 'data', 'tts-cache'),
-      AUDIT_LOG_DIR: path.join(userDataDir, 'data', 'audit-logs'),
-      CLI_RAW_ARCHIVE_DIR: path.join(userDataDir, 'data', 'cli-raw-archive'),
     };
   }
 
@@ -636,7 +712,7 @@ class ServiceManager {
     log(`[${name}] spawn: ${cmd} ${args.join(' ')}`);
     log(`[${name}] cwd: ${opts.cwd || this.root}`);
     log(`[${name}] env: MEMORY_STORE=${env.MEMORY_STORE || 'unset'}, REDIS_URL=${env.REDIS_URL || 'unset'}`);
-    log(`[${name}] env: EVIDENCE_DB=${env.EVIDENCE_DB || 'unset'}, LOG_DIR=${env.LOG_DIR || 'unset'}`);
+    log(`[${name}] env: DATA_DIR=${env.DATA_DIR || 'unset'}, LOG_DIR=${env.LOG_DIR || 'unset'}`);
 
     const proc = spawn(cmd, args, {
       cwd: opts.cwd || this.root,

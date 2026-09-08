@@ -157,3 +157,83 @@ test('probes bundled plugin mirror and rebuilds it when the first read fails', a
     rmSync(userDataRoot, { recursive: true, force: true });
   }
 });
+
+test('_buildApiEnv passes unified data roots instead of dead legacy per-path vars', async () => {
+  const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-env-'));
+  try {
+    const manager = new ServiceManager(installRoot, { frontendPort: 3003, apiPort: 3004 });
+    const userDataDir = path.join(installRoot, 'user-data');
+    mkdirSync(userDataDir, { recursive: true });
+
+    const env = manager._buildApiEnv(userDataDir);
+
+    // #671 unified roots — the API no longer reads the per-path vars.
+    assert.equal(env.DATA_DIR, path.join(userDataDir, 'data'));
+    assert.equal(env.CACHE_DIR, path.join(userDataDir, 'cache'));
+    assert.equal(env.LOG_DIR, path.join(userDataDir, 'data', 'logs', 'api'));
+    for (const dead of [
+      'EVIDENCE_DB',
+      'TRANSCRIPT_DATA_DIR',
+      'UPLOAD_DIR',
+      'TTS_CACHE_DIR',
+      'CONNECTOR_MEDIA_DIR',
+      'AUDIT_LOG_DIR',
+      'CLI_RAW_ARCHIVE_DIR',
+    ]) {
+      assert.equal(env[dead], undefined, `${dead} was removed by #671 and must not be passed`);
+    }
+  } finally {
+    rmSync(installRoot, { recursive: true, force: true });
+  }
+});
+
+test('relocates populated project/.cat-cafe into DATA_DIR/cat-cafe and plants a symlink', async () => {
+  const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-state-'));
+  const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-state-user-'));
+  try {
+    const legacyState = path.join(userDataRoot, 'project', '.cat-cafe');
+    mkdirSync(legacyState, { recursive: true });
+    writeFileSync(path.join(legacyState, 'cat-catalog.json'), '{"cats":[]}\n', 'utf-8');
+
+    const manager = new ServiceManager(installRoot, { frontendPort: 3003, apiPort: 3004 });
+    manager._ensureUserDataDir(userDataRoot);
+
+    const target = path.join(userDataRoot, 'data', 'cat-cafe');
+    assert.equal(existsSync(path.join(target, 'cat-catalog.json')), true, 'state moved to DATA_DIR/cat-cafe');
+    assert.equal(existsSync(legacyState), true, 'original path still exists as a symlink');
+    assert.equal(
+      fs.realpathSync(legacyState),
+      fs.realpathSync(target),
+      'project/.cat-cafe resolves to DATA_DIR/cat-cafe',
+    );
+    // Second launch must be a no-op (idempotent).
+    manager._ensureUserDataDir(userDataRoot);
+    assert.equal(existsSync(path.join(target, 'cat-catalog.json')), true);
+  } finally {
+    rmSync(installRoot, { recursive: true, force: true });
+    rmSync(userDataRoot, { recursive: true, force: true });
+  }
+});
+
+test('refuses to relocate .cat-cafe when both legacy and DATA_DIR targets contain data', async () => {
+  const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-state-conflict-'));
+  const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-state-conflict-user-'));
+  try {
+    const legacyState = path.join(userDataRoot, 'project', '.cat-cafe');
+    const target = path.join(userDataRoot, 'data', 'cat-cafe');
+    mkdirSync(legacyState, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(legacyState, 'cat-catalog.json'), '{"from":"legacy"}\n', 'utf-8');
+    writeFileSync(path.join(target, 'cat-catalog.json'), '{"from":"target"}\n', 'utf-8');
+
+    const manager = new ServiceManager(installRoot, { frontendPort: 3003, apiPort: 3004 });
+    assert.throws(() => manager._ensureUserDataDir(userDataRoot), /both locations contain data/);
+
+    // Both copies untouched — no silent merge, no data loss.
+    assert.equal(fs.readFileSync(path.join(legacyState, 'cat-catalog.json'), 'utf-8'), '{"from":"legacy"}\n');
+    assert.equal(fs.readFileSync(path.join(target, 'cat-catalog.json'), 'utf-8'), '{"from":"target"}\n');
+  } finally {
+    rmSync(installRoot, { recursive: true, force: true });
+    rmSync(userDataRoot, { recursive: true, force: true });
+  }
+});
