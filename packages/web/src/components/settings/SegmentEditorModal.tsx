@@ -16,21 +16,28 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape') return;
+      if (editor.confirming) editor.setConfirming(false);
+      else onClose();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [editor.confirming, editor.setConfirming, onClose]);
 
   const handleDialogKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        if (editor.confirming) editor.setConfirming(false);
+        else onClose();
       }
     },
-    [onClose],
+    [editor.confirming, editor.setConfirming, onClose],
   );
+
+  const handleConfirmCreate = useCallback(async () => {
+    if (await editor.applyNewVersion()) onClose();
+  }, [editor.applyNewVersion, onClose]);
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
@@ -39,6 +46,7 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
         role="dialog"
         aria-modal="true"
         aria-labelledby="segment-editor-title"
+        data-testid="segment-editor-dialog"
         tabIndex={-1}
         className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
         onClick={(event) => event.stopPropagation()}
@@ -62,7 +70,6 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
         <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto">
           {editor.loading && <SettingsText tone="muted">加载中…</SettingsText>}
           {editor.error && <SettingsText tone="red">{editor.error}</SettingsText>}
-          {editor.message && <SettingsText tone="emerald">{editor.message}</SettingsText>}
 
           {editor.snapshot && editor.selectedVersion !== null && (
             <>
@@ -113,25 +120,25 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
                 <SettingsText tone="muted">{editor.createPermission.reason}</SettingsText>
               )}
 
-              {editor.confirming ? (
+              <div className="flex justify-end">
+                <SettingsPrimaryButton
+                  data-testid="segment-editor-save"
+                  disabled={!editor.canCreate || editor.saving}
+                  onClick={() => editor.setConfirming(true)}
+                >
+                  产生并应用新版本
+                </SettingsPrimaryButton>
+              </div>
+
+              {editor.confirming && (
                 <ConfirmCreate
                   activeVersion={editor.snapshot.lifeline.activeVersion}
                   baseVersion={editor.selectedVersion}
                   targetVersion={editor.previewVersion ?? editor.snapshot.lifeline.activeVersion + 1}
                   saving={editor.saving}
                   onCancel={() => editor.setConfirming(false)}
-                  onConfirm={() => void editor.applyNewVersion()}
+                  onConfirm={() => void handleConfirmCreate()}
                 />
-              ) : (
-                <div className="flex justify-end">
-                  <SettingsPrimaryButton
-                    data-testid="segment-editor-save"
-                    disabled={!editor.canCreate || editor.saving}
-                    onClick={() => editor.setConfirming(true)}
-                  >
-                    产生并应用新版本
-                  </SettingsPrimaryButton>
-                </div>
               )}
             </>
           )}
@@ -157,23 +164,49 @@ function ConfirmCreate({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  return (
-    <div className="rounded-2xl bg-[var(--console-active-bg)] p-4">
-      <SettingsText tone="secondary">
-        当前版本 v{activeVersion} → v{targetVersion}（基于 v{baseVersion}）
-      </SettingsText>
-      <SettingsText tone="muted" className="mt-1">
-        产生并应用新版本后，当前周期将停止。
-      </SettingsText>
-      <div className="mt-3 flex justify-end gap-2">
-        <SettingsSecondaryButton disabled={saving} onClick={onCancel}>
-          取消
-        </SettingsSecondaryButton>
-        <SettingsPrimaryButton disabled={saving} onClick={onConfirm}>
-          {saving ? '处理中…' : '确认产生并应用'}
-        </SettingsPrimaryButton>
+  return createPortal(
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
+      <button type="button" tabIndex={-1} aria-label="取消产生新版本" className="absolute inset-0" onClick={onCancel} />
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="segment-version-confirm-title"
+        data-testid="segment-version-confirm-dialog"
+        className="relative w-full max-w-[520px] rounded-2xl bg-[var(--console-card-bg)] p-6 shadow-[0_20px_48px_rgba(43,33,26,0.18)]"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            onCancel();
+          }
+        }}
+      >
+        <SettingsText
+          id="segment-version-confirm-title"
+          as="h2"
+          variant="base"
+          tone="default"
+          className="font-semibold"
+        >
+          产生并应用新版本
+        </SettingsText>
+        <SettingsText tone="secondary" className="mt-3">
+          当前版本 v{activeVersion} → v{targetVersion}（基于 v{baseVersion}）
+        </SettingsText>
+        <SettingsText tone="muted" className="mt-1">
+          产生并应用新版本后，当前周期将停止。
+        </SettingsText>
+        <div className="mt-5 flex justify-end gap-2">
+          <SettingsSecondaryButton disabled={saving} onClick={onCancel}>
+            取消
+          </SettingsSecondaryButton>
+          <SettingsPrimaryButton disabled={saving} onClick={onConfirm}>
+            {saving ? '处理中…' : '确认产生并应用'}
+          </SettingsPrimaryButton>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
