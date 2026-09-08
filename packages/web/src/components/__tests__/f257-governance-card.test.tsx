@@ -214,8 +214,10 @@ describe('F257 governance card', () => {
     });
     const reject = container.querySelector<HTMLButtonElement>('[data-testid="reject-btn"]');
     expect(reject?.disabled).toBe(true);
-    expect(reject?.className).toContain('disabled:bg-semantic-critical-surface');
-    expect(reject?.className).toContain('disabled:text-semantic-critical/60');
+    expect(reject?.className).toContain('disabled:bg-cafe-surface');
+    expect(reject?.className).toContain('disabled:border-cafe-subtle/40');
+    expect(reject?.className).toContain('disabled:text-cafe-muted');
+    expect(reject?.className).not.toContain('disabled:bg-semantic-critical-surface');
     expect(reject?.className).not.toContain('disabled:opacity-50');
     expect(container.querySelector('[data-testid="skip-btn"]')).not.toBeNull();
 
