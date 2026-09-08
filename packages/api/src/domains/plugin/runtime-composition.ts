@@ -642,6 +642,7 @@ export function createPluginManagerRuntimeComposition(
     compatibility,
     stateProjection,
     configuration,
+    documentation: { readme: (pluginId) => assets.readReadme(pluginId) },
     quarantine: new PluginPackageQuarantineManagerAdapter(quarantines),
     installer: {
       install: async ({ request, candidate }) => {

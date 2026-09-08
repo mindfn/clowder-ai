@@ -14,6 +14,7 @@ import type { OfficialPluginCatalogProvider } from './official-catalog-provider.
 import { downloadCatalogArchive } from './official-package-archive.js';
 
 const MAX_PLUGIN_ICON_BYTES = 1024 * 1024;
+const MAX_PLUGIN_README_BYTES = 256 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_IHDR = Buffer.from('IHDR');
 
@@ -42,6 +43,10 @@ export interface PluginManagerPackageAsset {
 
 export interface PluginManagerPackageAssetPort {
   readIcon(pluginId: string): Promise<PluginManagerPackageAsset>;
+}
+
+export interface PluginManagerPackageDocumentationPort {
+  readReadme(pluginId: string): Promise<string | undefined>;
 }
 
 export interface PluginManagerPackageAssetServiceOptions {
@@ -131,7 +136,10 @@ async function readVerifiedIcon(
 ): Promise<PluginManagerPackageAsset> {
   const icon = verifiedPackageIcon(located.manifest, expected);
   await located.verifyIntegrity();
-  const bytes = await readBoundedStableFile(await resolveDeclaredIconPath(located.rootDir, icon.src));
+  const bytes = await readBoundedStableFile(
+    await resolveDeclaredIconPath(located.rootDir, icon.src),
+    MAX_PLUGIN_ICON_BYTES,
+  );
   await located.verifyIntegrity();
 
   if (icon.type === 'png') assertPng(bytes);
@@ -177,16 +185,16 @@ async function resolveDeclaredIconPath(rootDir: string, source: string): Promise
   }
 }
 
-async function readBoundedStableFile(iconPath: string): Promise<Buffer> {
-  const handle = await open(iconPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)).catch((error) => {
-    throw new PluginManagerPackageAssetError('ASSET_NOT_FOUND', 'declared plugin icon is unavailable', {
+async function readBoundedStableFile(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)).catch((error) => {
+    throw new PluginManagerPackageAssetError('ASSET_NOT_FOUND', 'plugin package file is unavailable', {
       cause: error,
     });
   });
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.size === 0 || before.size > MAX_PLUGIN_ICON_BYTES) {
-      throw new PluginManagerPackageAssetError('INVALID_ASSET', 'declared plugin icon is not a bounded regular file');
+    if (!before.isFile() || before.size === 0 || before.size > maxBytes) {
+      throw new PluginManagerPackageAssetError('INVALID_ASSET', 'plugin package file is not a bounded regular file');
     }
     const bytes = await handle.readFile();
     const after = await handle.stat();
@@ -196,11 +204,53 @@ async function readBoundedStableFile(iconPath: string): Promise<Buffer> {
       before.size !== after.size ||
       before.mtimeMs !== after.mtimeMs
     ) {
-      throw new PluginManagerPackageAssetError('INVALID_ASSET', 'declared plugin icon changed while being read');
+      throw new PluginManagerPackageAssetError('INVALID_ASSET', 'plugin package file changed while being read');
     }
     return bytes;
   } finally {
     await handle.close();
+  }
+}
+
+function packageIdentityMatches(manifest: unknown, expected: PackageIdentity): boolean {
+  const identity = packageIdentity(manifest);
+  return identity?.pluginId === expected.pluginId && identity.version === expected.version;
+}
+
+async function resolvePackageReadmePath(rootDir: string): Promise<string | undefined> {
+  const root = await realpath(rootDir);
+  const declaredPath = resolve(root, 'README.md');
+  try {
+    const readmePath = await realpath(declaredPath);
+    if (!pathInside(root, readmePath)) {
+      throw new PluginManagerPackageAssetError('INVALID_ASSET', 'plugin README escapes the package root');
+    }
+    return readmePath;
+  } catch (error) {
+    if (error instanceof PluginManagerPackageAssetError) throw error;
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw new PluginManagerPackageAssetError('INVALID_ASSET', 'plugin README could not be resolved', {
+      cause: error,
+    });
+  }
+}
+
+async function readVerifiedReadme(
+  located: VerifiedPluginPackage,
+  expected: PackageIdentity,
+): Promise<string | undefined> {
+  if (!packageIdentityMatches(located.manifest, expected)) {
+    throw new PluginManagerPackageAssetError('INVALID_ASSET', 'package README identity does not match Host truth');
+  }
+  await located.verifyIntegrity();
+  const readmePath = await resolvePackageReadmePath(located.rootDir);
+  if (readmePath === undefined) return undefined;
+  const bytes = await readBoundedStableFile(readmePath, MAX_PLUGIN_README_BYTES);
+  await located.verifyIntegrity();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new PluginManagerPackageAssetError('INVALID_ASSET', 'plugin README is not valid UTF-8');
   }
 }
 
@@ -212,9 +262,12 @@ function inventoryIdentity(record: PluginPackageRecord): PackageIdentity {
   return identity;
 }
 
-export class PluginManagerPackageAssetService implements PluginManagerPackageAssetPort {
+export class PluginManagerPackageAssetService
+  implements PluginManagerPackageAssetPort, PluginManagerPackageDocumentationPort
+{
   private readonly fetchArchive: (entry: OfficialPluginCatalogEntry) => Promise<Uint8Array>;
   private readonly catalogPackages: FilesystemVerifiedPluginPackageLocator;
+  private readonly readmeCache = new Map<string, Promise<string | undefined>>();
 
   constructor(private readonly options: PluginManagerPackageAssetServiceOptions) {
     this.fetchArchive = options.fetchArchive ?? downloadCatalogArchive;
@@ -284,5 +337,74 @@ export class PluginManagerPackageAssetService implements PluginManagerPackageAss
     } finally {
       await located.release();
     }
+  }
+
+  async readReadme(pluginId: string): Promise<string | undefined> {
+    const snapshot = await this.options.inventory.snapshot();
+    const instance = snapshot.instances.find(
+      (candidate) => candidate.pluginId === pluginId && candidate.lifecycleState === 'installed',
+    );
+    const installed = instance
+      ? snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest)
+      : undefined;
+    if (installed) {
+      return this.cachedReadme(installed.packageDigest, async () => {
+        const located = await this.options.packages.resolveInstalledPackage(installed.packageDigest).catch((error) => {
+          throw new PluginManagerPackageAssetError('INVALID_ASSET', 'installed plugin package could not be verified', {
+            cause: error,
+          });
+        });
+        try {
+          return await readVerifiedReadme(located, inventoryIdentity(installed));
+        } finally {
+          await located.release();
+        }
+      });
+    }
+
+    let entry: OfficialPluginCatalogEntry | undefined;
+    try {
+      entry = (await this.options.catalog.snapshot()).entries.find((candidate) => candidate.pluginId === pluginId);
+    } catch (error) {
+      throw new PluginManagerPackageAssetError('CATALOG_UNAVAILABLE', 'plugin catalog is unavailable', {
+        cause: error,
+      });
+    }
+    if (!entry) throw new PluginManagerPackageAssetError('PLUGIN_NOT_FOUND', `unknown plugin ${pluginId}`);
+    return this.cachedReadme(entry.packageDigest, async () => {
+      let located: VerifiedPluginPackage;
+      try {
+        located = await this.catalogPackages.resolvePackageArchiveBytes(
+          entry.packageDigest,
+          await this.fetchArchive(entry),
+        );
+      } catch (error) {
+        throw new PluginManagerPackageAssetError('INVALID_ASSET', 'catalog plugin package could not be verified', {
+          cause: error,
+        });
+      }
+      try {
+        if (!officialPluginPresentationMatches(entry, located.manifest)) {
+          throw new PluginManagerPackageAssetError(
+            'INVALID_ASSET',
+            'package presentation metadata does not match catalog truth',
+          );
+        }
+        return await readVerifiedReadme(located, { pluginId: entry.pluginId, version: entry.version });
+      } finally {
+        await located.release();
+      }
+    });
+  }
+
+  private cachedReadme(packageDigest: string, load: () => Promise<string | undefined>): Promise<string | undefined> {
+    const existing = this.readmeCache.get(packageDigest);
+    if (existing) return existing;
+    const pending = load().catch((error) => {
+      this.readmeCache.delete(packageDigest);
+      throw error;
+    });
+    this.readmeCache.set(packageDigest, pending);
+    return pending;
   }
 }

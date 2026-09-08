@@ -56,6 +56,7 @@ function service({
   installer,
   lifecycle,
   configuration,
+  documentation,
 } = {}) {
   return new PluginManagerService({
     catalog: {
@@ -71,6 +72,7 @@ function service({
     ...(installer === undefined ? {} : { installer }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(configuration === undefined ? {} : { configuration }),
+    ...(documentation === undefined ? {} : { documentation }),
   });
 }
 
@@ -201,6 +203,27 @@ describe('F202 terminal Plugin Manager service', () => {
       () => manager.get('missing'),
       (error) => error?.code === 'PLUGIN_NOT_FOUND',
     );
+  });
+
+  it('loads package README only for explicit detail reads, never list or search', async () => {
+    const reads = [];
+    const manager = service({
+      documentation: {
+        readme: async (pluginId) => {
+          reads.push(pluginId);
+          return '# Video Analysis\n\nHuman-facing details.';
+        },
+      },
+    });
+
+    const listed = await manager.list();
+    assert.equal('readmeMarkdown' in listed.plugins[0], false);
+    assert.deepEqual(reads, []);
+    assert.equal(
+      (await manager.get(published.pluginId)).plugin.readmeMarkdown,
+      '# Video Analysis\n\nHuman-facing details.',
+    );
+    assert.deepEqual(reads, [published.pluginId]);
   });
 
   it('adds a typed Host configuration contribution and fences its mutation', async () => {
