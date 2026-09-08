@@ -121,10 +121,11 @@ export class ManualVersionCycleService {
       this.deps.runtime.resolveSegmentVersion(current.versionContentRef, input.segmentId),
     ]);
     if (cycleSegmentVersion !== sourceVersion) throw new ManualVersionCycleError('version_cycle_mismatch');
-    const switchedAt = this.readNow();
-    if (!Number.isFinite(switchedAt) || switchedAt <= current.cycleStart) {
+    const observedAt = this.readNow();
+    if (!Number.isFinite(observedAt) || observedAt < current.cycleStart) {
       throw new ManualVersionCycleError('concurrent_transition');
     }
+    const switchedAt = Math.max(observedAt, current.cycleStart + 1);
     return { current, sourceVersion, switchedAt };
   }
 
