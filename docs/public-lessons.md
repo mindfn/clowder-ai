@@ -2044,3 +2044,22 @@ created: 2026-02-26
 - 原理：**沉默不是通过。** 一个动作如果在失败时和成功时给出同样的输出，它就不能作为证据；换成一个失败时会喊的形式，成本几乎为零。
 
 - 关联：LL-013（commit 前必须检查暂存区）| LL-006（没有新鲜验证证据不得宣称完成）| LL-104（同形状要加约束）
+
+### LL-108: 版本章不是列——跨 lineage 共用的迁移计数器会静默跳过整块迁移
+
+- 状态：validated
+- 更新时间：2026-09-08
+
+- 坑：运行实例上所有猫的 `hold_ball` / 定时任务 / managed hold 写库一律 500：`table dynamic_task_defs has no column named entrusted_work_reevaluation_json`。只读查证 26 个在线 SQLite：全部 `schema_version=42`，其中 25 个没有这列；唯一健康的是当天新建的库。
+- 根因：`schema_version` 是上游与 fork **共用的一个整数计数器**。fork 在 08-17 用自家阶梯把库盖到 40；09-04 同步 #1434 带来上游 **V40 = 加这列**，`if (currentVersion < 40)` 对已盖章的库整块跳过；ALTER 又包在空 `catch {}` 里；V41/V42 照跑把章推到 42。三层沉默叠加：版本门跳过、catch 吞错、写路径直到第一次 INSERT 才炸。
+- 触发条件：fork 与上游各自新增编号迁移后做同步；任何"计数器 < N 为门、ALTER 为体、空 catch 收尾"的迁移块。上游最高章 41、fork 已到 42（`retry_attempts`）——下次同步必再撞一次。
+- 修复：`applyMigrations` 末尾加 `reconcileLadderColumns`：探 `PRAGMA table_info`，阶梯承诺过的列缺什么补什么；幂等、不写 `schema_version`、表不存在不碰（PR #161 `82d4f2e32`，merge `f012c6869`）。红→绿测试三件（新鲜库全列齐 / 盖章≥40 但缺列的库被修好且不伪造章 / 健康库多次跑不动），再对真实坏库的 `.backup` 副本验证：章仍 42、列出现、原本失败的 INSERT 成功，原库未动。
+- 防护：
+  1. 迁移的**终态断言按内容**（列 / 表 / 约束是否存在），不按章号；章号只是"跑过什么"的日志，不是"现在是什么"的真相。
+  2. ALTER 迁移不写空 catch：要么精确匹配 `duplicate column` 再吞，要么让它喊。
+  3. fork 自己的迁移用独立编号区间（例如 ≥ 1000）或按名寻址，别和上游抢同一条整数线。
+  4. 启动后一次 `PRAGMA table_info` 自检，比 26 个库各自沉默到第一次写入便宜得多。
+- 来源锚点：mindfn/clowder-ai PR #161（`82d4f2e32` → merge `f012c6869`）；`packages/api/src/domains/memory/schema-column-reconcile.ts`；thread `thread_mrdip0u5aw4ysi97` 消息 `000301`（根因取证）/ `000303`
+- 原理：**真相在对象里，不在计数器里。** 计数器可以被另一条历史线用同一个数字盖章；对象的形状不会撒谎。
+
+- 关联：LL-107（沉默不是通过）| LL-006（没有新鲜验证证据不得宣称完成）
