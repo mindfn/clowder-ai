@@ -189,7 +189,7 @@ Message 已进入成员可见 History，其他 target 的 Queue 责任仍由同�
 
 `prestartRetirement` **不消失**。窗口是 `invocationRecordStore.create` → `invocationTracker.startAll`，中间包含 freshness 预检、前缀吸收、session 准入。这个「已经 admission、但 tracker 里还没有」的空档由 **I/O 本身**造成，不是 Queue 持久状态，进不了 Lua。
 
-它会从 Steer 专用退化为 fan-out 组的通用 `retiringGroupId`。
+它会从 Steer 专用标记收敛为同一次原子 Queue claim 的通用 `retiringGroupId`，用于关联一起进入 pre-start 窗口的 FIFO prefix entries；它不表示多目标 fan-out。
 
 ## 顺带删除的死码
 
