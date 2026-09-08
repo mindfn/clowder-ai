@@ -47,7 +47,6 @@ export function useVersionedSegmentEditor(segmentId: string) {
   const [draft, setDraft] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const requestId = useRef(0);
 
   const load = useCallback(async () => {
@@ -82,7 +81,6 @@ export function useVersionedSegmentEditor(segmentId: string) {
       const currentRequest = ++requestId.current;
       setLoading(true);
       setError(null);
-      setMessage(null);
       setConfirming(false);
       try {
         const content =
@@ -102,11 +100,10 @@ export function useVersionedSegmentEditor(segmentId: string) {
     [segmentId, selectedVersion, snapshot],
   );
 
-  const applyNewVersion = useCallback(async () => {
-    if (!snapshot || selectedVersion === null) return;
+  const applyNewVersion = useCallback(async (): Promise<boolean> => {
+    if (!snapshot || selectedVersion === null) return false;
     setSaving(true);
     setError(null);
-    setMessage(null);
     try {
       const response = await apiFetch(`/api/prompt-hooks/${encodeURIComponent(segmentId)}/versions`, {
         method: 'POST',
@@ -125,19 +122,17 @@ export function useVersionedSegmentEditor(segmentId: string) {
       if (!response.ok || !payload.transition) {
         setError(payload.error ?? '新版本创建失败');
         setConfirming(false);
-        return;
+        return false;
       }
-      const transition = payload.transition;
-      setMessage(
-        `当前版本 v${transition.fromVersion} → v${transition.toVersion}（基于 v${transition.baseVersion ?? selectedVersion}）`,
-      );
-      await load();
+      return true;
     } catch {
       setError('新版本创建请求失败');
+      setConfirming(false);
+      return false;
     } finally {
       setSaving(false);
     }
-  }, [draft, load, segmentId, selectedVersion, snapshot]);
+  }, [draft, segmentId, selectedVersion, snapshot]);
 
   const missing = useMemo(() => {
     if (!snapshot) return [];
@@ -170,7 +165,6 @@ export function useVersionedSegmentEditor(segmentId: string) {
     confirming,
     setConfirming,
     error,
-    message,
     missing,
     previewVersion,
     tracing,

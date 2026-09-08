@@ -76,10 +76,24 @@ describe('SegmentEditorModal version lifecycle editor', () => {
     });
   }
 
-  async function renderEditor(evalStatus: 'idle' | 'requested' = 'idle') {
+  async function renderEditor(evalStatus: 'idle' | 'requested' = 'idle', onClose: () => void = () => {}) {
     mockLoad(evalStatus);
+    function EditorHost() {
+      const [open, setOpen] = React.useState(true);
+      if (!open) return null;
+      return (
+        <SegmentEditorModal
+          segmentId="S13"
+          segmentName="MCP 工具文档"
+          onClose={() => {
+            onClose();
+            setOpen(false);
+          }}
+        />
+      );
+    }
     act(() => {
-      root.render(<SegmentEditorModal segmentId="S13" segmentName="MCP 工具文档" onClose={() => {}} />);
+      root.render(<EditorHost />);
     });
     await flush();
   }
@@ -112,7 +126,8 @@ describe('SegmentEditorModal version lifecycle editor', () => {
   });
 
   it('creates one applied branch with explicit base and active-version precondition', async () => {
-    await renderEditor();
+    const onClose = vi.fn();
+    await renderEditor('idle', onClose);
     const select = document.querySelector('#segment-editor-version') as HTMLSelectElement;
     act(() => {
       select.value = '1';
@@ -126,9 +141,12 @@ describe('SegmentEditorModal version lifecycle editor', () => {
     await flush();
     act(() => (document.querySelector('[data-testid="segment-editor-save"]') as HTMLButtonElement).click());
     expect(document.body.textContent).toContain('当前版本 v2 → v4（基于 v1）');
+    const editorDialog = document.querySelector('[data-testid="segment-editor-dialog"]');
+    const confirmDialog = document.querySelector('[data-testid="segment-version-confirm-dialog"]');
+    expect(confirmDialog?.getAttribute('role')).toBe('alertdialog');
+    expect(editorDialog?.contains(confirmDialog)).toBe(false);
 
     apiFetch.mockResolvedValueOnce(jsonResponse({ transition: { fromVersion: 2, toVersion: 4, baseVersion: 1 } }));
-    mockLoad();
     const confirm = [...document.querySelectorAll('button')].find((button) => button.textContent === '确认产生并应用');
     await act(async () => confirm?.click());
     await flush();
@@ -140,6 +158,47 @@ describe('SegmentEditorModal version lifecycle editor', () => {
       baseVersion: 1,
       expectedActiveVersion: 2,
     });
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.querySelector('[data-testid="segment-version-confirm-dialog"]')).toBeNull();
+  });
+
+  it('cancels only the independent confirmation dialog', async () => {
+    const onClose = vi.fn();
+    await renderEditor('idle', onClose);
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    act(() => {
+      typeInto(textarea, 'edited active v2 {{VALUE}}');
+    });
+    await flush();
+    act(() => (document.querySelector('[data-testid="segment-editor-save"]') as HTMLButtonElement).click());
+
+    const cancel = [...document.querySelectorAll('button')].find((button) => button.textContent === '取消');
+    act(() => cancel?.click());
+
+    expect(document.querySelector('[data-testid="segment-version-confirm-dialog"]')).toBeNull();
+    expect(document.querySelector('[data-testid="segment-editor-dialog"]')).not.toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('keeps the editor open when applying the new version fails', async () => {
+    const onClose = vi.fn();
+    await renderEditor('idle', onClose);
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    act(() => {
+      typeInto(textarea, 'edited active v2 {{VALUE}}');
+    });
+    await flush();
+    act(() => (document.querySelector('[data-testid="segment-editor-save"]') as HTMLButtonElement).click());
+
+    apiFetch.mockResolvedValueOnce(jsonResponse({ error: 'version_create_failed' }, false));
+    const confirm = [...document.querySelectorAll('button')].find((button) => button.textContent === '确认产生并应用');
+    await act(async () => confirm?.click());
+    await flush();
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="segment-editor-dialog"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="segment-version-confirm-dialog"]')).toBeNull();
+    expect(document.body.textContent).toContain('version_create_failed');
   });
 
   it('disables editing once evaluation has started', async () => {
