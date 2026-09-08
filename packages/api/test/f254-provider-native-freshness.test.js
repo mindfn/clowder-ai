@@ -382,7 +382,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     );
   });
 
-  it('correlates a queued-only synthetic frontier with one exact scalar Queue identity', async () => {
+  it('correlates a queued-only synthetic frontier with exact source Queue identities', async () => {
     const queueMessageId = 'queued-message-1';
     const mergedMessageId = 'queued-message-2';
     const queueEntries = [
@@ -486,7 +486,7 @@ describe('F254 D2 provider-native freshness truth', () => {
         evidenceKind: 'queue_exact_read',
       }),
       0,
-      'reading a different scalar Queue row must not settle either notice',
+      'reading a different source Queue entry must not settle either notice',
     );
     assert.equal(
       await eventLog.markProviderNoticesSeen({

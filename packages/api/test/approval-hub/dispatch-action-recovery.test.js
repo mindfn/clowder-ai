@@ -584,14 +584,14 @@ test('approved carrier classification fails closed on conflicting source or ledg
   });
 
   const entry = {
-    version: 1,
+    version: 2,
     id: 'queue-entry-terra',
     threadId: proposal.targetThreadId,
     owner: { kind: 'user', userId: proposal.ownerUserId },
     kind: 'message_wake',
     from: { kind: 'agent', catId: proposal.senderCatId },
-    target: { kind: 'cat', catId: 'codex-terra' },
-    payload: { sourceId: carrier.id, messageId: carrier.id, content: proposal.content },
+    targets: ['codex-terra'],
+    payload: { sourceRecordId: carrier.id, messageId: carrier.id, content: proposal.content },
     execution: {
       intent: 'execute',
       ownerAuthProvenance: 'strict',
@@ -609,7 +609,7 @@ test('approved carrier classification fails closed on conflicting source or ledg
     classifyApprovedActionCarrier(
       proposal,
       carrier,
-      [{ ...entry, payload: { ...entry.payload, sourceId: 'another-source' } }],
+      [{ ...entry, payload: { ...entry.payload, sourceRecordId: 'another-source' } }],
       fence,
     ),
     { outcome: 'conflict', reason: 'carrier_receipt_conflict' },

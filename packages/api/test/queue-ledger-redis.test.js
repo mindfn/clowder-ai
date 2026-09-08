@@ -439,7 +439,7 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
     assert.equal((await store.list('thread-redis')).length, 1);
   });
 
-  it('terminalizes one response bubble while Queue stores one pending-target row and no assigned refs', async () => {
+  it('terminalizes one response bubble while Queue stores one source row with pending targets and no assigned refs', async () => {
     const queue = new InvocationQueue(store);
     const response = (
       await messageStore.appendAndObservePriorFrontier({

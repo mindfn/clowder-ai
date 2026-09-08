@@ -201,25 +201,23 @@ export function planA2AFanoutAdmission(
   const acceptedTargetCats: CatId[] = [];
   const streakTargetCats: CatId[] = [];
   let stop: A2AFanoutAdmissionPlan['stop'];
-  let predictedDepth =
+  const predictedDepth =
     opts.durableLineage?.depth ?? streakEntry?.a2aCount ?? invocationQueue.countAgentEntriesForThread(opts.threadId);
   const streakState = opts.durableLineage ?? streakEntry;
 
-  for (const catId of opts.targetCats) {
-    if (predictedDepth >= maxA2ADepth) {
-      stop = { reason: 'depth', catId, currentDepth: predictedDepth };
-      break;
-    }
-    if (streakCallerCatId && streakState) {
-      const streak = peekStreakOnPush(streakState, streakCallerCatId, catId, streakActivity);
+  const firstTargetCatId = opts.targetCats[0];
+  if (firstTargetCatId && predictedDepth >= maxA2ADepth) {
+    stop = { reason: 'depth', catId: firstTargetCatId, currentDepth: predictedDepth };
+  } else {
+    if (streakCallerCatId && streakState && firstTargetCatId) {
+      const streak = peekStreakOnPush(streakState, streakCallerCatId, firstTargetCatId, streakActivity);
       if (streak.wouldBlock) {
-        stop = { reason: 'pingpong', catId, pairCount: streak.count };
-        break;
+        stop = { reason: 'pingpong', catId: firstTargetCatId, pairCount: streak.count };
+      } else {
+        streakTargetCats.push(firstTargetCatId);
       }
-      streakTargetCats.push(catId);
     }
-    acceptedTargetCats.push(catId);
-    predictedDepth += 1;
+    if (!stop) acceptedTargetCats.push(...opts.targetCats);
   }
 
   return {
@@ -636,7 +634,10 @@ export async function enqueueA2ATargets(
     receiptCatId: fromCatId,
     threadId,
   });
-  const targetCats = [...routingPreflight.acceptedTargetCats];
+  const dispatchedTargetCats = new Set(
+    persistedQueueTrigger.lifecycle?.dispatchRefs?.map((dispatch) => dispatch.targetId) ?? [],
+  );
+  const targetCats = routingPreflight.acceptedTargetCats.filter((catId) => !dispatchedTargetCats.has(catId));
 
   // F153 Phase I (Maine Coon P1): Lazy-create mention_dispatch span + a2a.dispatch.count counter
   // ONLY when a target is about to actually dispatch (passes all guards and reaches a real enqueue
@@ -653,7 +654,7 @@ export async function enqueueA2ATargets(
 
   // ADR-043: the ledger row is the complete durable delivery work order. The
   // source message remains ordinary History and never carries Queue admission
-  // or per-target custody mirrors. One source/target pair has one deterministic
+  // or per-target custody mirrors. One source message has one deterministic
   // row, so replay converges in the ledger and distinct bodies are never merged.
   const admissionOptions: A2AFanoutAdmissionOptions = {
     targetCats,
@@ -677,11 +678,8 @@ export async function enqueueA2ATargets(
         }
       : undefined) ??
     (() => {
-      const replayTargets = new Set(
-        targetCats.filter((catId) =>
-          deps.invocationQueue?.getEntrySnapshot(threadId, opts.userId, queueEntryId(triggerMessageId, catId)),
-        ),
-      );
+      const replayEntry = deps.invocationQueue?.getEntrySnapshot(threadId, opts.userId, queueEntryId(triggerMessageId));
+      const replayTargets = new Set(targetCats.filter((catId) => replayEntry?.targets.includes(catId)));
       const freshTargets = targetCats.filter((catId) => !replayTargets.has(catId));
       const freshPlan = planA2AFanoutAdmission(deps, { ...admissionOptions, targetCats: freshTargets });
       const acceptedFresh = new Set(freshPlan.acceptedTargetCats);
@@ -709,7 +707,7 @@ export async function enqueueA2ATargets(
   if (plan.stop?.reason === 'depth') {
     log.warn(
       { threadId, triggerMessageId, currentDepth: plan.stop.currentDepth, catId: plan.stop.catId },
-      '[F122B] A2A callback: depth limit reached, skipping remaining targets',
+      '[F122B] A2A callback: depth limit reached, skipping source fan-out',
     );
   } else if (plan.stop?.reason === 'pingpong' && callerCatId) {
     const worklist = getWorklist(threadId, opts.parentInvocationId);
@@ -735,11 +733,8 @@ export async function enqueueA2ATargets(
     );
   }
 
-  const enqueued: CatId[] = [];
-  const coalesced: CatId[] = [];
-  const acceptedEntries: QueueEntry[] = [];
-  const queueDiagnostics: Array<{ catId: CatId; outcome: string; entryId?: string; createdAt?: number }> = [];
-  for (const catId of plan.acceptedTargetCats) {
+  const pendingAcceptedTargetCats = plan.acceptedTargetCats.filter((catId) => targetCats.includes(catId));
+  for (const catId of pendingAcceptedTargetCats) {
     if (plan.streakTargetCats.includes(catId) && callerCatId) {
       const worklist = getWorklist(threadId, opts.parentInvocationId);
       if (worklist) {
@@ -749,10 +744,19 @@ export async function enqueueA2ATargets(
         });
       }
     }
+  }
+
+  const enqueued: CatId[] = [];
+  const coalesced: CatId[] = [];
+  const acceptedEntries: QueueEntry[] = [];
+  const queueDiagnostics: Array<{ targetCats: CatId[]; outcome: string; entryId?: string; createdAt?: number }> = [];
+  const preAdmittedEntry = opts.preAdmittedEntries?.find((entry) =>
+    pendingAcceptedTargetCats.every((catId) => entry.targets.includes(catId)),
+  );
+  if (pendingAcceptedTargetCats.length > 0) {
     const idempotencyKey = opts.actionSuccessorFence
-      ? `action:${opts.actionSuccessorFence.leaseId}:${opts.actionSuccessorFence.generation}:${catId}`
-      : `a2a:${triggerMessageId}:${catId}`;
-    const preAdmittedEntry = opts.preAdmittedEntries?.find((entry) => entry.targets.includes(catId));
+      ? `action:${opts.actionSuccessorFence.leaseId}:${opts.actionSuccessorFence.generation}`
+      : `a2a:${triggerMessageId}`;
     const result = preAdmittedEntry
       ? {
           outcome: 'enqueued' as const,
@@ -769,7 +773,7 @@ export async function enqueueA2ATargets(
           messageId: triggerMessageId,
           sourceId: triggerMessageId,
           sourceCategory: 'a2a',
-          targetCats: [catId],
+          targetCats: pendingAcceptedTargetCats,
           intent: 'execute',
           autoExecute: true,
           a2aParentInvocationId: opts.parentInvocationId,
@@ -781,18 +785,18 @@ export async function enqueueA2ATargets(
           ...(opts.requiresExactCloudDispatchProvenance ? { requiresExactCloudDispatchProvenance: true } : {}),
         });
     queueDiagnostics.push({
-      catId,
+      targetCats: pendingAcceptedTargetCats,
       outcome: result.outcome,
       ...(result.entry ? { entryId: result.entry.id, createdAt: result.entry.enqueuedAt } : {}),
     });
-    if (result.outcome !== 'enqueued') continue;
-    if (result.deduped) {
-      coalesced.push(catId);
-      continue;
+    if (result.outcome === 'enqueued') {
+      if (result.deduped) {
+        coalesced.push(...pendingAcceptedTargetCats);
+      } else if (result.entry) {
+        enqueued.push(...pendingAcceptedTargetCats);
+        acceptedEntries.push(result.entry);
+      }
     }
-    if (!result.entry) continue;
-    enqueued.push(catId);
-    acceptedEntries.push(result.entry);
   }
 
   opts.onQueueEntriesAdmitted?.(acceptedEntries);

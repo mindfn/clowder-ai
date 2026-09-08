@@ -101,7 +101,7 @@ describe('F128 proposal approval — participant admission', () => {
     const threadId = approved.json().threadId;
     assert.deepEqual(await ctx.threadStore.getParticipants(threadId), ['kimi']);
     assert.deepEqual(
-      invocationQueue.list(threadId, 'alice').map((entry) => entry.target.catId),
+      invocationQueue.list(threadId, 'alice').flatMap((entry) => entry.targets),
       ['kimi'],
     );
   });

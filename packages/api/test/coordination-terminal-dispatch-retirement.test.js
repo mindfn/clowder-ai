@@ -109,25 +109,13 @@ describe('coordination terminal → ordinary A2A dispatch retirement', () => {
       true,
     );
     await queue.markProcessingSeen(terminal.threadId, terminal.userId, queued.id, 'fable5', 'terminal-child', seenAt);
-    const processing = queue.getEntrySnapshot(terminal.threadId, terminal.userId, queued.id);
-
     assert.equal((await gate.close(opened)).shouldBlock, true);
     assert.equal((await h.service.completeFromCoordinationTerminal(terminal.id)).outcome, 'applied');
     assert.ok(
-      await queue.removeProcessedAcrossUsersDurable(
-        terminal.threadId,
-        processing.id,
-        'handled',
-        undefined,
-        seenAt + 20,
-      ),
+      await queue.removeProcessedAcrossUsersDurable(terminal.threadId, queued.id, 'handled', undefined, seenAt + 20),
     );
     await h.messageStore.markDelivered(terminal.id, seenAt + 20);
-    const settled = await queue.getDurableEntry(terminal.threadId, processing.id);
-    assert.equal(settled.status, 'terminal');
-    assert.equal(settled.delivery.terminalOutcome, 'handled');
-    assert.equal(settled.delivery.awakenedInvocationId, 'terminal-child');
-    assert.equal(settled.delivery.seenInvocationId, 'terminal-child');
+    assert.equal(await queue.getDurableEntry(terminal.threadId, queued.id), null);
     assert.equal(h.messageStore.getById(terminal.id).deliveryStatus, 'delivered');
     assert.deepEqual(await gate.close(opened), {
       state: 'covered_active',

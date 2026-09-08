@@ -1,5 +1,5 @@
 /**
- * F148 fix: a scalar Queue invocation abort must still ack cursor progress
+ * F148 fix: a target attempt from one source Queue Entry must still ack cursor progress
  * collected before the terminal event.
  *
  * Root cause: QueueProcessor step 8 (abort check) returns 'canceled' before

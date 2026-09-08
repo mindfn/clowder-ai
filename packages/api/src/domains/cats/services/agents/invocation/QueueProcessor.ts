@@ -523,6 +523,11 @@ export type EntryCompleteHook = (
   responseText: string,
 ) => void;
 
+interface RegisteredEntryCompleteHook {
+  readonly hook: EntryCompleteHook;
+  readonly targetCatId?: string;
+}
+
 export type ContinuationEnqueueOutcome =
   | 'enqueued'
   | 'skipped_missing_capsule'
@@ -588,7 +593,7 @@ export class QueueProcessor {
    */
   private static readonly SUPPRESS_TTL_MS = 60_000;
   /** F122B B6: Per-entry completion hooks (for multi-mention response aggregation). */
-  private entryCompleteHooks = new Map<string, EntryCompleteHook>();
+  private entryCompleteHooks = new Map<string, RegisteredEntryCompleteHook[]>();
   /** F118: age threshold for explicit owner-reaper candidacy (default 75min). */
   private processingSlotTtlMs: number;
   private readonly sessionContinuationCoordinator?: SessionContinuationCoordinatorLike;
@@ -774,8 +779,10 @@ export class QueueProcessor {
    * Called by multi-mention dispatch to capture response text for aggregation.
    * Hook is auto-removed after invocation (one-shot).
    */
-  registerEntryCompleteHook(entryId: string, hook: EntryCompleteHook): void {
-    this.entryCompleteHooks.set(entryId, hook);
+  registerEntryCompleteHook(entryId: string, hook: EntryCompleteHook, targetCatId?: string): void {
+    const hooks = this.entryCompleteHooks.get(entryId) ?? [];
+    hooks.push({ hook, ...(targetCatId ? { targetCatId } : {}) });
+    this.entryCompleteHooks.set(entryId, hooks);
   }
 
   /** F122B B6: Remove a completion hook (e.g. on abort before execution). */
@@ -2728,21 +2735,20 @@ export class QueueProcessor {
       }
     }
 
-    const suppressedTarget = resolvedTargetCats.find((targetCatId) =>
-      this.isAutoResumeSuppressed(threadId, targetCatId),
-    );
-    if (suppressedTarget) {
-      this.emitContinuationDiagnostic(threadId, suppressedTarget, 'all_candidate_slots_busy', 1, comparatorHead.id);
-      return { started: false };
-    }
-
-    const busyTarget = resolvedTargetCats.find(
+    const selectedTargetCatId = resolvedTargetCats.find(
       (targetCatId) =>
-        this.processingSlots.has(QueueProcessor.slotKey(threadId, targetCatId)) ||
-        this.deps.invocationTracker.has(threadId, targetCatId),
+        !this.isAutoResumeSuppressed(threadId, targetCatId) &&
+        !this.processingSlots.has(QueueProcessor.slotKey(threadId, targetCatId)) &&
+        !this.deps.invocationTracker.has(threadId, targetCatId),
     );
-    if (busyTarget) {
-      this.emitContinuationDiagnostic(threadId, busyTarget, 'all_candidate_slots_busy', 1, comparatorHead.id);
+    if (!selectedTargetCatId) {
+      this.emitContinuationDiagnostic(
+        threadId,
+        resolvedTargetCats[0] ?? 'unknown',
+        'all_candidate_slots_busy',
+        resolvedTargetCats.length,
+        comparatorHead.id,
+      );
       return { started: false };
     }
 
@@ -2752,7 +2758,7 @@ export class QueueProcessor {
         : [];
     const claimedGroup = await this.deps.queue.markProcessingGroupAcrossUsersDurable(
       threadId,
-      { entryId: comparatorHead.id, targetCats: resolvedTargetCats },
+      { entryId: comparatorHead.id, targetCats: [selectedTargetCatId] },
       [comparatorHead.id, ...compatiblePrefix.map((candidate) => candidate.id)],
     );
     const entry = claimedGroup?.entry;
@@ -2761,10 +2767,7 @@ export class QueueProcessor {
       return { started: false };
     }
 
-    const eligibleTargetCats = queueEntryTargetCats(entry).filter((targetCatId) =>
-      isOrdinaryQueueTargetEligible(entry, targetCatId),
-    );
-    const entryCat = eligibleTargetCats[0] ?? resolvedTargetCats[0] ?? 'unknown';
+    const entryCat = selectedTargetCatId;
     const entrySk = QueueProcessor.slotKey(threadId, entryCat);
 
     if (this.processingSlots.has(entrySk) || this.deps.invocationTracker.has(threadId, entryCat)) {
@@ -2778,7 +2781,7 @@ export class QueueProcessor {
         entry,
         entrySk,
         entryCat,
-        eligibleTargetCats,
+        [entryCat],
         false,
         conversationBatchResolution,
         claimedGroup.members,
@@ -2862,20 +2865,20 @@ export class QueueProcessor {
       }
     }
 
-    const busyTarget = resolvedTargetCats.find(
+    const selectedTargetCatId = resolvedTargetCats.find(
       (catId) =>
-        this.processingSlots.has(QueueProcessor.slotKey(threadId, catId)) ||
-        this.deps.invocationTracker.has(threadId, catId),
+        !this.processingSlots.has(QueueProcessor.slotKey(threadId, catId)) &&
+        !this.deps.invocationTracker.has(threadId, catId),
     );
-    if (busyTarget) {
+    if (!selectedTargetCatId) {
       this.deps.log.info(
-        { event: 'queue_not_started', threadId, entryCat: busyTarget, reason: 'target_busy' },
+        { event: 'queue_not_started', threadId, entryCat: resolvedTargetCats[0], reason: 'target_busy' },
         '[QueueProcessor] processNext skipped: target slot busy',
       );
       return { started: false };
     }
 
-    const entryCat = resolvedTargetCats[0] ?? 'unknown';
+    const entryCat = selectedTargetCatId;
     const sk = QueueProcessor.slotKey(threadId, entryCat);
 
     const compatiblePrefix =
@@ -2885,7 +2888,7 @@ export class QueueProcessor {
     const claimedGroup = await this.deps.queue.markProcessingGroupDurable(
       threadId,
       userId,
-      { entryId: nextEntry.id, targetCats: resolvedTargetCats },
+      { entryId: nextEntry.id, targetCats: [selectedTargetCatId] },
       [nextEntry.id, ...compatiblePrefix.map((candidate) => candidate.id)],
     );
     const entry = claimedGroup?.entry;
@@ -2897,7 +2900,7 @@ export class QueueProcessor {
         entry,
         sk,
         entryCat,
-        resolvedTargetCats,
+        [selectedTargetCatId],
         false,
         conversationBatchResolution,
         claimedGroup.members,
@@ -3066,6 +3069,12 @@ export class QueueProcessor {
       isCanceled: (catId) => invocationTracker.getSlotState?.(threadId, catId) === 'canceled',
     });
     let responseText = '';
+    // F122B B6: completion hooks are registered before drain; keep their
+    // target-partitioned response buffer alive through finally settlement.
+    const entryCompleteHooks = (this.entryCompleteHooks.get(entry.id) ?? []).filter(
+      (registration) => !registration.targetCatId || targetCats.includes(registration.targetCatId),
+    );
+    const hookResponseTextByTarget = new Map<string, string>();
     const cursorBoundaries = new Map<string, string>();
     const continuationCapsules = new Map<string, CollaborationContinuityCapsuleV1>();
     // Cloud Codex P2: track consumed continuation so we can re-store on failure/cancel.
@@ -3329,16 +3338,22 @@ export class QueueProcessor {
       }
 
       // 1. Create InvocationRecord (before batching — avoid claiming entries on duplicate)
-      // Connector-sourced entries use connector-${messageId} to match the direct-execution
-      // idempotency path, so retries after queue processing are also caught persistently.
+      // Invocation identity is source × target: one source row can dispatch its
+      // pending targets independently without treating a sibling as a replay.
       const source = queueEntrySource(entry);
       const connectorReplayCarrier = source === 'connector' || entry.sourceCategory === 'scheduled';
+      const actionSuccessorKey =
+        entry.execution.actionSuccessorFence && entry.payload.sourceRecordId
+          ? actionSuccessorInvocationIdempotencyKey(entry.payload.sourceRecordId)
+          : undefined;
       const idempotencyKey =
         connectorReplayCarrier && messageId
-          ? `connector-${messageId}`
-          : entry.execution.actionSuccessorFence && entry.payload.sourceRecordId
-            ? actionSuccessorInvocationIdempotencyKey(entry.payload.sourceRecordId)
-            : `queue-${entry.id}`;
+          ? `connector-${messageId}:${primaryCat}`
+          : actionSuccessorKey
+            ? actionSuccessorKey.endsWith(`:${primaryCat}`)
+              ? actionSuccessorKey
+              : `${actionSuccessorKey}:${primaryCat}`
+            : `queue-${entry.id}:${primaryCat}`;
       const actionLeaseCarrier: InvocationActionLeaseCarrier = entry.execution.actionSuccessorFence
         ? {
             kind: 'action_successor',
@@ -4140,9 +4155,6 @@ export class QueueProcessor {
           );
         }
       }
-      // F122B B6: Collect response text for completion hook (multi-mention aggregation).
-      const hook = this.entryCompleteHooks.get(entry.id);
-
       // F088 fix: start streaming placeholder on external platforms
       if (this.deps.streamingHook && !entry.execution.actionSuccessorFence && !entry.execution.freshnessSupplementId) {
         streamStartPromise = this.deps.streamingHook
@@ -4500,14 +4512,19 @@ export class QueueProcessor {
           });
           intentModeBroadcast = true;
         }
-        if (hook && msg.catId === primaryCat && msg.type === 'text' && (msg as { content?: string }).content) {
+        if (
+          entryCompleteHooks.length > 0 &&
+          msg.catId === primaryCat &&
+          msg.type === 'text' &&
+          (msg as { content?: string }).content
+        ) {
           responseText = accumulateTextAggregate(
             responseText,
             (msg as { content?: string }).content!,
             (msg as { textMode?: 'append' | 'replace' }).textMode,
           );
         } else if (
-          hook &&
+          entryCompleteHooks.length > 0 &&
           entry.execution.requiresExactCloudDispatchProvenance &&
           msg.catId === primaryCat &&
           msg.type === 'system_info' &&
@@ -4515,6 +4532,35 @@ export class QueueProcessor {
         ) {
           const visibleNotice = userFacingSystemInfoNoticeContent((msg as { content?: string }).content!, primaryCat);
           if (visibleNotice) responseText = accumulateTextAggregate(responseText, visibleNotice, 'append');
+        }
+        if (
+          entryCompleteHooks.length > 0 &&
+          msg.catId &&
+          msg.type === 'text' &&
+          (msg as { content?: string }).content
+        ) {
+          hookResponseTextByTarget.set(
+            msg.catId,
+            accumulateTextAggregate(
+              hookResponseTextByTarget.get(msg.catId) ?? '',
+              (msg as { content?: string }).content!,
+              (msg as { textMode?: 'append' | 'replace' }).textMode,
+            ),
+          );
+        } else if (
+          entryCompleteHooks.length > 0 &&
+          entry.execution.requiresExactCloudDispatchProvenance &&
+          msg.catId &&
+          msg.type === 'system_info' &&
+          (msg as { content?: string }).content
+        ) {
+          const visibleNotice = userFacingSystemInfoNoticeContent((msg as { content?: string }).content!, msg.catId);
+          if (visibleNotice) {
+            hookResponseTextByTarget.set(
+              msg.catId,
+              accumulateTextAggregate(hookResponseTextByTarget.get(msg.catId) ?? '', visibleNotice, 'append'),
+            );
+          }
         }
         const continuationCapsule = extractContinuityCapsuleFromAgentMessage(msg);
         if (continuationCapsule) {
@@ -5191,14 +5237,28 @@ export class QueueProcessor {
         completionHookResponse = '';
       }
       // F122B B6: Fire completion hook (one-shot) and clean up
-      const completeHook = this.entryCompleteHooks.get(entry.id);
-      if (completeHook) {
-        this.entryCompleteHooks.delete(entry.id);
+      const registeredCompleteHooks = this.entryCompleteHooks.get(entry.id) ?? [];
+      const completeHooks = registeredCompleteHooks.filter(
+        (registration) => !registration.targetCatId || targetCats.includes(registration.targetCatId),
+      );
+      if (completeHooks.length > 0) {
+        const remainingHooks = registeredCompleteHooks.filter((registration) => !completeHooks.includes(registration));
+        if (remainingHooks.length > 0) this.entryCompleteHooks.set(entry.id, remainingHooks);
+        else this.entryCompleteHooks.delete(entry.id);
         if (!replayClaimLost) {
-          try {
-            completeHook(entry.id, completionHookStatus, completionHookResponse);
-          } catch {
-            /* best-effort: hook errors must not break queue chain */
+          for (const registration of completeHooks) {
+            const targetStatus = registration.targetCatId
+              ? (terminalDispositions.getTerminalStatus(registration.targetCatId) ??
+                (completionHookStatus === 'succeeded' ? 'failed' : completionHookStatus))
+              : completionHookStatus;
+            const targetResponse = registration.targetCatId
+              ? (hookResponseTextByTarget.get(registration.targetCatId) ?? '')
+              : completionHookResponse;
+            try {
+              registration.hook(entry.id, targetStatus, targetResponse);
+            } catch {
+              /* best-effort: hook errors must not break queue chain */
+            }
           }
         }
       }

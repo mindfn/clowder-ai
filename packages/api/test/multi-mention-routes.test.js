@@ -566,8 +566,8 @@ describe('Multi-Mention Routes', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(mockRouter.getExecutions().length, 0);
     const entries = invocationQueue.list('thread-1', 'user-1');
-    assert.equal(entries.length, 2);
-    assert.deepEqual(entries.map((entry) => entry.target.catId).sort(), ['codex', 'gemini']);
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0].targets.toSorted(), ['codex', 'gemini']);
   });
 
   test('includes multi-mention prefix in queued content', async () => {

@@ -584,7 +584,7 @@ export class InvocationQueue {
   }
 
   /**
-   * Atomically verify every already-selected scalar row, bind an optional
+   * Atomically verify the selected source entry, bind an optional
    * targetless anchor, and add missing siblings. A terminal race therefore
    * rejects the whole Steer mapping instead of leaving a partial fan-out.
    */
@@ -1204,14 +1204,7 @@ export class InvocationQueue {
     }
     const claimId = randomUUID();
     const claimedAt = Date.now();
-    const bindsTargetlessGroup = selected.every((entry) => entry?.targets.length === 0);
-    const claimed = await this.ledgerStore.claimPrefix(
-      threadId,
-      entryIds,
-      claimId,
-      claimedAt,
-      bindsTargetlessGroup ? selectedTargetCatId : undefined,
-    );
+    const claimed = await this.ledgerStore.claimPrefix(threadId, entryIds, claimId, claimedAt, selectedTargetCatId);
     if (claimed.outcome !== 'claimed') return null;
     const projected = this.cacheLedgerClaim(claimed.entries, claimId);
     const byId = new Map(projected.map((entry) => [entry.id, entry]));
@@ -1257,14 +1250,7 @@ export class InvocationQueue {
     }
     const claimId = randomUUID();
     const claimedAt = Date.now();
-    const bindsTargetlessGroup = selected.every((entry) => entry?.targets.length === 0);
-    const claimed = await this.ledgerStore.claimPrefix(
-      threadId,
-      entryIds,
-      claimId,
-      claimedAt,
-      bindsTargetlessGroup ? selectedTargetCatId : undefined,
-    );
+    const claimed = await this.ledgerStore.claimPrefix(threadId, entryIds, claimId, claimedAt, selectedTargetCatId);
     if (claimed.outcome !== 'claimed') return null;
     const projected = this.cacheLedgerClaim(claimed.entries, claimId);
     const byId = new Map(projected.map((entry) => [entry.id, entry]));

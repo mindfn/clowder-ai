@@ -353,9 +353,18 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
       userMessageId: messageId,
       status: 'queued',
     };
-    h.invocationRecords.set(`connector-${messageId}`, invocation);
+    h.invocationRecords.set(`connector-${messageId}:codex-sol`, invocation);
+    h.invocationRecords.set(`connector-${messageId}`, {
+      id: 'legacy-source-wide-invocation',
+      userMessageId: messageId,
+      status: 'succeeded',
+    });
     assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
-    assert.equal(h.tasks.get('hold-ball-task-1').enabled, true, 'bare queued metadata is not recoverable execution');
+    assert.equal(
+      h.tasks.get('hold-ball-task-1').enabled,
+      true,
+      'target-scoped queued metadata must win over an obsolete source-wide success record',
+    );
 
     invocation.status = 'failed';
     h.setNow(16_000);

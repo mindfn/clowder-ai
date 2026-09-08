@@ -421,6 +421,12 @@ export class ManagedCommandWakeRecoverySweep {
 
   private async findInvocationCarrier(parsed: ParsedManagedCommandWakeTask): Promise<InvocationRecord | null> {
     if (!parsed.command.messageId) return null;
+    const targetScoped = await this.deps.invocationRecordStore.getByIdempotencyKey(
+      parsed.threadId,
+      parsed.userId,
+      `connector-${parsed.command.messageId}:${parsed.catId}`,
+    );
+    if (targetScoped) return targetScoped;
     return this.deps.invocationRecordStore.getByIdempotencyKey(
       parsed.threadId,
       parsed.userId,

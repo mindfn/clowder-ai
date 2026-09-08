@@ -225,7 +225,7 @@ describe('post_message A2A mention invocation', () => {
 
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1);
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entries[0].targets, ['codex']);
     assert.equal(invocationRecordStore.getRecords().length, 0);
     assert.equal(mockRouter.getExecutions().length, 0);
   });
@@ -311,7 +311,7 @@ describe('post_message A2A mention invocation', () => {
 
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Content-before-mention should queue A2A for codex');
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entries[0].targets, ['codex']);
     assert.equal(mockRouter.getExecutions().length, 0);
   });
 
@@ -377,7 +377,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Should queue codex in its independent slot');
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entries[0].targets, ['codex']);
     assert.equal(invocationRecordStore.getRecords().length, 0);
   });
 
@@ -411,7 +411,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Should queue codex via targetCats');
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entries[0].targets, ['codex']);
     assert.equal(invocationRecordStore.getRecords().length, 0);
   });
 
@@ -457,7 +457,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Should queue only the valid target');
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entries[0].targets, ['codex']);
     assert.equal(invocationRecordStore.getRecords().length, 0);
   });
 
@@ -478,7 +478,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'single mention should enqueue exactly one target');
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' }, 'extra explicit target should be dropped');
+    assert.deepEqual(entries[0].targets, ['codex'], 'extra explicit target should be dropped');
     assert.equal(invocationRecordStore.getRecords().length, 0);
 
     const recent = messageStore.getRecent(10);

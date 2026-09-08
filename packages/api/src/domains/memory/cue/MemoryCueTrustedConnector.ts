@@ -27,11 +27,7 @@ export async function readTrustedConnectorMemoryCueSeeds(input: {
     return [];
   }
   if (stored.source?.connector === 'scheduler') {
-    if (
-      stored.userId !== 'scheduler' ||
-      from?.kind !== 'system' ||
-      stored.extra?.scheduler?.hiddenTrigger !== true
-    ) {
+    if (stored.userId !== 'scheduler' || from?.kind !== 'system' || stored.extra?.scheduler?.hiddenTrigger !== true) {
       return [];
     }
     const seed = catOwnedSeedSeedFromTrustedCarrier(

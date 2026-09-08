@@ -94,7 +94,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
       'enqueued content should start with user-typed content',
     );
     assert.deepEqual(
-      entries.map((entry) => entry.target.catId),
+      entries.flatMap((entry) => entry.targets),
       ['opus'],
     );
     assert.equal(entries[0].execution.intent, 'execute');
@@ -157,7 +157,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const entries = invocationQueue.list(body.threadId, 'alice');
     assert.equal(entries.length, 1);
     assert.deepEqual(
-      entries.map((entry) => entry.target.catId),
+      entries.flatMap((entry) => entry.targets),
       ['kimi'],
       'dispatch wakes ONLY preferredCats[0] (first cat); subsequent cats are driven by cat-side @-mentions ("他们自己决定下一个要把谁叫出来" — owner spec 2026-05-27)',
     );
@@ -336,7 +336,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
     assert.deepEqual(
-      entries.map((entry) => entry.target.catId),
+      entries.flatMap((entry) => entry.targets),
       ['kimi'],
       'preferredCats[0]=kimi wakes first, even though message body @s @codex — message @s are prompt-level narrative, dispatch follows card order',
     );

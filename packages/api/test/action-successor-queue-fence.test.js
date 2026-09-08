@@ -64,7 +64,8 @@ async function enqueueActionEntry(deps, overrides = {}) {
       ...overrides,
     }),
   );
-  const targetCatId = result.entry.target.catId;
+  const targetCatId = result.entry.targets[0];
+  assert.ok(targetCatId, 'action successor fixture must admit one target');
   const claimed = await deps.queue.markProcessingDurable('thread-a', 'user-1', {
     entryId: result.entry.id,
     targetCats: [targetCatId],

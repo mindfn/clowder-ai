@@ -625,8 +625,9 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
     assert.equal(parallel.statusCode, 200);
     assert.deepEqual(actionService.calls.at(-1).holderCatIds, ['codex', 'gpt52']);
     const entries = invocationQueue.list(target.id, 'user-1');
-    assert.equal(entries.length, 2);
-    assert.ok(entries.every((entry) => entry.execution.actionSuccessorFence?.leaseId === 'lease-review-1'));
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0].targets, ['codex', 'gpt52']);
+    assert.equal(entries[0].execution.actionSuccessorFence?.leaseId, 'lease-review-1');
   });
 
   test('agent-key action fails closed instead of posting or enqueueing an unfenced successor', async () => {

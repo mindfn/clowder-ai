@@ -531,19 +531,19 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 > Added 2026-07-01 | 详见 ADR-040
 
-当用户发消息给正在执行的猫时，消息进入排队状态（`queued`）。排队消息的读取（read）、处理（handled）、投递（delivered）、目标消费（target consumed）仍是四种不同证据；ADR-043 D8 规定 exact full-read journey 由一条 active-child adoption 路径一起提交这些相关转换：
+当用户发消息给正在执行的猫时，消息进入排队状态（`queued`）。Queue 只保存一条 source entry 及尚待投递的 `targets[]`；读取、实际投递与回复终局由各自的 History / execution owner 表达。ADR-043 D8 规定 exact full-read journey 通过一条 active-child adoption 路径提交相关转换：
 
 | 层 | 含义 | Scope | 影响其他猫？ |
 |----|------|-------|------------|
-| `delivery` | 第一只 exact child 接管后消息进入成员 thread history | message-level | 不消费其他 target |
-| `queued_seen` | exact child 获取了该 target 的完整正文 | source×target queue row | 否 |
-| `queued_handled` | 该 target 的正文已接入现有 response lifecycle / Active Run | source×target queue row | 否 |
-| `target_consumed` | 该 source×target row 已 terminal handled | source×target queue row | 否；sibling row 仍 queued |
+| `dispatchRef` | exact child 接管后，source→target 的实际投递时间、invocation 与 response identity 写入 History | source×target History lifecycle | 不消费其他 target |
+| body exposure | exact child 获得该 target 的完整正文 | exact response / Active Run evidence | 否 |
+| pending target removal | actual delivery 后从同一 Queue Entry 的 `targets[]` 删除该 target | one source Queue Entry | 否；siblings 仍 pending |
+| terminal response | completed / failed / canceled 原位终局同一 response bubble | exact target response lifecycle | 否 |
 
-**设计规则**：full queued read is an exact per-target adoption, not a passive peek. A+B 中 A 接管只终局 A；B 后续从同一可见 History source 接管自己的 row，最后没有剩余 target 才表现为 Queue 清空。Sparse/cross-thread/无法证明 active child 的读取不接管。
+**设计规则**：full queued read is an exact per-target adoption, not a passive peek. A+B 中 A 接管只从 source entry 删除 A 并写入 A 的 `dispatchRef`；B 后续从同一可见 History source 接管自己，最后没有剩余 target 才删除 Queue Entry。Sparse/cross-thread/无法证明 active child 的读取不接管。Queue 不保存 `queued_seen` / `queued_handled` / terminal tombstone。
 
 **关联 Feature**：
-- F254 消费 exact `queued_seen` / `queued_handled` 证据来抑制 freshness 重复提醒；转换本身由 F117/ADR-043 QueueProcessor 拥有
-- F086 拥有 canonical per-target `TargetStatus` 状态机
+- F254 消费 exact History dispatch / body-exposure evidence 来抑制 freshness 重复提醒，但不在 Queue 复制这些事实
+- F086/F264 从 `dispatchRefs` 与 response lifecycle 投影逐目标 UI 状态
 - F108 拥有独立 fan-out context cutoff 策略
 - F117/F039 定义 queued delivery lifecycle 底层语义

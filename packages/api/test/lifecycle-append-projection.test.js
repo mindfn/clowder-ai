@@ -13,7 +13,7 @@ function entry(overrides = {}) {
     owner: { kind: 'user', userId: 'user-1' },
     from: { kind: 'user', userId: 'user-1' },
     kind: 'conversation_input',
-    target: { kind: 'cat', catId: 'codex' },
+    targets: ['codex'],
     payload: { sourceRecordId: 'message-1', content: 'please continue', messageId: 'message-1' },
     execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: false },
     delivery: {},

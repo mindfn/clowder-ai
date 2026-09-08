@@ -145,7 +145,7 @@ describe('F128 chain protocol injection', () => {
     );
 
     assert.deepEqual(
-      entries.map((entry) => entry.target.catId),
+      entries.flatMap((entry) => entry.targets),
       ['kimi'],
       'serial proposal stays serial — only preferredCats[0] is woken, parent-title `#ideate` does NOT leak into parseIntent',
     );

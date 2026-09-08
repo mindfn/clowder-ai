@@ -263,9 +263,7 @@ describe('F293 actual-send routing preflight', () => {
 
     assert.equal(stored.lifecycle.status, 'completed');
     assert.deepEqual(
-      queue
-        .list('thread-deferred', 'owner-1')
-        .flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : [])),
+      queue.list('thread-deferred', 'owner-1').flatMap((entry) => entry.targets),
       ['terra'],
     );
     assert.ok(
@@ -342,7 +340,7 @@ describe('F293 actual-send routing preflight', () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].sourceCategory, 'a2a_failure');
     assert.equal(entries[0].payload.messageId, stored.id);
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'opus' });
+    assert.deepEqual(entries[0].targets, ['opus']);
   });
 
   test('parallel mixed targets never invoke the rejected child', async () => {
@@ -483,9 +481,7 @@ describe('F293 actual-send routing preflight', () => {
       ],
     );
     assert.deepEqual(
-      queue
-        .list('thread-callback', 'owner-1')
-        .flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : [])),
+      queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targets),
       ['codex'],
     );
     assert.deepEqual(

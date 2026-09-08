@@ -105,7 +105,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     assert.equal(entries[0].source, undefined);
     assert.equal(entries[0].execution.ownerAuthProvenance, 'strict');
     assert.equal(entries[0].execution.autoExecute, true);
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'opus' });
+    assert.deepEqual(entries[0].targets, ['opus']);
 
     const stored = messageStore.getById(source.id);
     assert.equal(stored?.deliveryStatus, 'queued');

@@ -135,8 +135,8 @@ describe(
       };
       assert.equal((await store.commitLifecycleAppendRejection(rejection)).kind, 'applied');
       assert.deepEqual((await store.getById(input.id)).lifecycle.dispatchRefs, [
-        { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
-        { targetId: 'codex', phase: 'settled', statusMessageId: failure.id },
+        { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id, dispatchedAt: 101 },
+        { targetId: 'codex', phase: 'settled', statusMessageId: failure.id, dispatchedAt: 102 },
       ]);
       assert.deepEqual((await store.getById(codex.id)).lifecycle.inputMessageIds, ['message-old']);
       assert.equal((await store.commitLifecycleAppendRejection(rejection)).kind, 'replayed');
@@ -345,7 +345,7 @@ describe(
       assert.equal((await store.getByThread(source.threadId)).length, 2);
     });
 
-    test('keeps public agent speech visible and atomically settles its assigned wake to the failure result', async () => {
+    test('keeps public agent speech visible and atomically records its failed dispatch result', async () => {
       const source = await store.append(
         canonicalFixture({
           userId: 'owner-redis',
@@ -358,7 +358,7 @@ describe(
           lifecycle: {
             kind: 'input',
             orderKey: '0000000000090:agent-wake',
-            dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+            dispatchRefs: [],
           },
         }),
       );
@@ -377,7 +377,7 @@ describe(
       assert.equal(applied.inputMessage.deliveryStatus, undefined);
       assert.equal(applied.inputMessage.deliveredAt, undefined);
       assert.deepEqual(applied.inputMessage.lifecycle.dispatchRefs, [
-        { targetId: 'codex', phase: 'settled', statusMessageId: applied.failureMessage.id },
+        { targetId: 'codex', phase: 'settled', statusMessageId: applied.failureMessage.id, dispatchedAt: 100 },
       ]);
       assert.deepEqual(
         (await store.getByThread(source.threadId)).map((message) => message.id),

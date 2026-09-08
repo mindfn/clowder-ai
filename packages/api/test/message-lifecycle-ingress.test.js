@@ -149,7 +149,7 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.delivery.authorIntent, {
+    assert.deepEqual(entry.delivery.authorIntentByTarget.opus, {
       requested: 'continue_current',
       boundParentInvocationId: 'parent-1',
       carrierCapability: {
@@ -163,7 +163,7 @@ describe('canonical message lifecycle ingress', () => {
     ]);
   });
 
-  it('auto-appends every admitted scalar target row and returns their exact identities', async () => {
+  it('auto-appends the admitted source row once and returns every exact target identity', async () => {
     dependencies.router.resolveExplicitTargets.mock.mockImplementation(async (cats) => cats);
     dependencies.invocationTracker.has.mock.mockImplementation(() => true);
     dependencies.invocationTracker.getUserId = mock.fn(() => 'user-1');
@@ -199,9 +199,9 @@ describe('canonical message lifecycle ingress', () => {
     );
     assert.deepEqual(
       dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls.map((call) => call.arguments[0].entryId),
-      body.entries.map((entry) => entry.entryId),
+      [body.entries[0].entryId],
     );
-    assert.equal(new Set(body.entries.map((entry) => entry.entryId)).size, 2);
+    assert.equal(new Set(body.entries.map((entry) => entry.entryId)).size, 1);
   });
 
   it('preserves an explicit next-work request without offering it to auto-append', async () => {
@@ -214,7 +214,7 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.equal(entry.delivery.authorIntent.requested, 'next_work');
+    assert.equal(entry.delivery.authorIntentByTarget.opus.requested, 'next_work');
     assert.equal(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls.length, 0);
   });
 
@@ -238,7 +238,7 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.target, { kind: 'unassigned' });
+    assert.deepEqual(entry.targets, []);
     assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].mentions, []);
     assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
   });
@@ -293,8 +293,8 @@ describe('canonical message lifecycle ingress', () => {
       'thread-1',
     ]);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.target, { kind: 'cat', catId: 'opus' });
-    assert.deepEqual(entry.delivery.authorIntent, {
+    assert.deepEqual(entry.targets, ['opus']);
+    assert.deepEqual(entry.delivery.authorIntentByTarget.opus, {
       requested: 'continue_current',
       boundParentInvocationId: 'parent-1',
       carrierCapability: {
@@ -338,7 +338,7 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.target, { kind: 'unassigned' });
+    assert.deepEqual(entry.targets, []);
     assert.deepEqual(response.json().entries, []);
     assert.equal(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls.length, 0);
   });
@@ -367,10 +367,10 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.equal(entry.delivery.authorIntent.requested, 'continue_current');
-    assert.equal(entry.delivery.authorIntent.boundParentInvocationId, 'parent-1');
-    assert.equal(entry.delivery.authorIntent.fallbackReason, 'parent_terminal_before_exposure');
-    assert.equal(typeof entry.delivery.authorIntent.fallbackAt, 'number');
+    assert.equal(entry.delivery.authorIntentByTarget.opus.requested, 'continue_current');
+    assert.equal(entry.delivery.authorIntentByTarget.opus.boundParentInvocationId, 'parent-1');
+    assert.equal(entry.delivery.authorIntentByTarget.opus.fallbackReason, 'parent_terminal_before_exposure');
+    assert.equal(typeof entry.delivery.authorIntentByTarget.opus.fallbackAt, 'number');
   });
 
   it('routes a composer-selected member through the explicit target field without rewriting visible content', async () => {
@@ -387,7 +387,7 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(dependencies.router.resolveTargetsAndIntent.mock.calls.length, 0);
     assert.deepEqual(dependencies.router.resolveExplicitTargets.mock.calls[0].arguments[0], ['codex']);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entry.targets, ['codex']);
     assert.equal(entry.payload.content, '正文里不需要补一个 @ 提及');
     assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].mentions, ['codex']);
   });
@@ -483,15 +483,12 @@ describe('canonical message lifecycle ingress', () => {
     });
 
     assert.equal(response.statusCode, 202, response.body);
-    assert.deepEqual(dependencies.invocationQueue.list('thread-1', 'user-1')[0].target, {
-      kind: 'cat',
-      catId: 'codex',
-    });
+    assert.deepEqual(dependencies.invocationQueue.list('thread-1', 'user-1')[0].targets, ['codex']);
     assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].whisperTo, ['codex']);
     assert.equal(dependencies.router.routeExecution.mock.calls.length, 0);
   });
 
-  it('fans an all-idle multi-target input into independent scalar Queue rows', async () => {
+  it('keeps an all-idle multi-target input in one source Queue row', async () => {
     dependencies.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
@@ -507,8 +504,8 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const entries = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.equal(entries.length, 2);
-    assert.deepEqual(entries.map((entry) => entry.target.catId).sort(), ['codex', 'opus']);
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0].targets.toSorted(), ['codex', 'opus']);
     assert.ok(entries.every((entry) => entry.payload.messageId === entries[0].payload.messageId));
     assert.equal(dependencies.invocationRecordStore.create.mock.calls.length, 0);
   });

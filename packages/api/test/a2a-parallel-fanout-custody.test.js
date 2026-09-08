@@ -1,8 +1,8 @@
 /**
  * Phase C: multi_mention is an ordinary lifecycle fan-out.
  *
- * Every target shares the caller's exact public response source, obtains its
- * own Queue carrier before drain, and projects through dispatchRefs. The retired
+ * Every target shares the caller's exact public response source and one Queue
+ * carrier before drain, then projects independently through dispatchRefs. The retired
  * “A ⇉ B（并行 N/M）” system-message path must stay absent.
  */
 
@@ -71,12 +71,15 @@ function createMockQueueProcessor() {
   const drains = [];
   const timeline = [];
   return {
-    registerEntryCompleteHook(entryId, hook) {
-      hooks.set(entryId, hook);
-      timeline.push(`custody:${entryId}`);
+    registerEntryCompleteHook(entryId, hook, targetCatId) {
+      const key = `${entryId}:${targetCatId ?? '*'}`;
+      hooks.set(key, { entryId, targetCatId, hook });
+      timeline.push(`custody:${key}`);
     },
     unregisterEntryCompleteHook(entryId) {
-      hooks.delete(entryId);
+      for (const [key, registration] of hooks) {
+        if (registration.entryId === entryId) hooks.delete(key);
+      }
     },
     requestDrain(threadId) {
       drains.push(threadId);
@@ -87,11 +90,12 @@ function createMockQueueProcessor() {
     getHooks: () => hooks,
     getDrains: () => drains,
     timeline,
-    simulateComplete(entryId, status, responseText) {
-      timeline.push(`terminal:${entryId}`);
-      const hook = hooks.get(entryId);
-      if (hook) hook(entryId, status, responseText);
-      hooks.delete(entryId);
+    simulateComplete(entryId, targetCatId, status, responseText) {
+      const key = `${entryId}:${targetCatId}`;
+      timeline.push(`terminal:${key}`);
+      const registration = hooks.get(key);
+      if (registration) registration.hook(entryId, status, responseText);
+      hooks.delete(key);
     },
   };
 }
@@ -164,7 +168,8 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     assert.equal(response.statusCode, 200, response.body);
 
     const entries = invocationQueue.list('thread-par-1', 'user-1');
-    assert.deepEqual(entries.map((entry) => entry.target.catId).sort(), ['codex', 'gemini']);
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0].targets.toSorted(), ['codex', 'gemini']);
     for (const entry of entries) {
       assert.equal(entry.kind, 'message_wake');
       assert.equal(entry.payload.messageId, source.id);
@@ -183,14 +188,14 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
   test('one terminal failure does not disturb its sibling carrier', async () => {
     const response = await dispatch();
     assert.equal(response.statusCode, 200, response.body);
-    const [failedEntryId, siblingEntryId] = [...queueProcessor.getHooks().keys()];
-    queueProcessor.simulateComplete(failedEntryId, 'failed', 'dispatch failed');
+    const [entry] = invocationQueue.list('thread-par-1', 'user-1');
+    queueProcessor.simulateComplete(entry.id, 'codex', 'failed', 'dispatch failed');
 
-    assert.ok(queueProcessor.getHooks().has(siblingEntryId));
-    assert.ok(invocationQueue.list('thread-par-1', 'user-1').some((entry) => entry.id === siblingEntryId));
+    assert.ok(queueProcessor.getHooks().has(`${entry.id}:gemini`));
+    assert.deepEqual(invocationQueue.list('thread-par-1', 'user-1')[0].targets.toSorted(), ['codex', 'gemini']);
   });
 
-  test('partial admission remains one lifecycle projection with failed target state', async () => {
+  test('source-row capacity never partially rejects sibling targets', async () => {
     for (let index = 0; index < 9; index += 1) {
       invocationQueue.enqueueDurableNow(
         canonicalTestQueueInput({
@@ -210,14 +215,15 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
 
     const response = await dispatch();
     assert.equal(response.statusCode, 200, response.body);
-    assert.equal(queueProcessor.getHooks().size, 1);
+    assert.equal(queueProcessor.getHooks().size, 2);
     const persistedSource = await messageStore.getById(source.id);
     assert.deepEqual(
       invocationQueue
         .list('thread-par-1', 'user-1')
         .filter((entry) => entry.payload.messageId === source.id)
-        .map((entry) => entry.target.catId),
-      ['codex'],
+        .flatMap((entry) => entry.targets)
+        .toSorted(),
+      ['codex', 'gemini'],
     );
     assert.equal(persistedSource.queueCustody, undefined);
   });

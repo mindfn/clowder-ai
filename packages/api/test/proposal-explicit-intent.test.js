@@ -80,12 +80,12 @@ describe('F128 explicit intent override (round-5)', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    assert.equal(entries.length, 3);
+    assert.equal(entries.length, 1);
     const enqueued = entries[0].payload.content;
 
     // Runtime behaviour: dispatch wakes ALL preferredCats in parallel.
     assert.deepEqual(
-      new Set(entries.map((entry) => entry.target.catId)),
+      new Set(entries.flatMap((entry) => entry.targets)),
       new Set(['kimi', 'gemini', 'codex']),
       'explicit #ideate must wake all preferredCats in parallel',
     );
@@ -180,10 +180,10 @@ describe('F128 explicit intent override (round-5)', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    assert.equal(entries.length, 3);
+    assert.equal(entries.length, 1);
 
     assert.deepEqual(
-      new Set(entries.map((entry) => entry.target.catId)),
+      new Set(entries.flatMap((entry) => entry.targets)),
       new Set(['kimi', 'gemini', 'codex']),
       'explicit #execute + preferredCats=[] + multi-target raw must preserve all router-resolved targets',
     );

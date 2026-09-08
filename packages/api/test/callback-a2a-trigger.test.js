@@ -62,7 +62,7 @@ async function enqueue(deps, triggerMessage, targetCats = ['codex']) {
 }
 
 describe('enqueueA2ATargets single durable ledger', () => {
-  it('fans one public Agent message into one deterministic scalar row per target', async () => {
+  it('fans one public Agent message into one deterministic source row with pending targets', async () => {
     const { deps, invocationQueue, messageStore, appendTrigger } = setup();
     const trigger = appendTrigger('a2a-source-1');
 
@@ -73,13 +73,10 @@ describe('enqueueA2ATargets single durable ledger', () => {
     assert.deepEqual(
       rows.map((row) => ({
         id: row.id,
-        target: row.target,
+        targets: row.targets,
         messageId: row.payload.messageId,
       })),
-      [
-        { id: queueEntryId(trigger.id, 'codex'), target: { kind: 'cat', catId: 'codex' }, messageId: trigger.id },
-        { id: queueEntryId(trigger.id, 'fable5'), target: { kind: 'cat', catId: 'fable5' }, messageId: trigger.id },
-      ],
+      [{ id: queueEntryId(trigger.id), targets: ['codex', 'fable5'], messageId: trigger.id }],
     );
     const persisted = messageStore.getById(trigger.id);
     assert.equal(persisted.queueCustody, undefined);
@@ -117,7 +114,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
     );
   });
 
-  it('applies the depth limit per scalar target before ledger admission', async () => {
+  it('applies the chain-depth limit once per source row without splitting its fan-out', async () => {
     const { deps, invocationQueue, appendTrigger } = setup();
     for (let index = 0; index < 9; index += 1) {
       invocationQueue.enqueueDurableNow(
@@ -141,7 +138,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
 
     const result = await enqueue(deps, trigger, ['codex', 'fable5']);
 
-    assert.deepEqual(result, { enqueued: ['codex'] });
+    assert.deepEqual(result, { enqueued: ['codex', 'fable5'] });
     assert.equal(invocationQueue.list('t1', 'u1').length, 10);
   });
 

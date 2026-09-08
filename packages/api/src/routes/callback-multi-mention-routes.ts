@@ -267,6 +267,7 @@ export interface MultiMentionRouteDeps {
         status: 'succeeded' | 'failed' | 'canceled' | 'canceled_by_user',
         responseText: string,
       ) => void,
+      targetCatId?: string,
     ): void;
     unregisterEntryCompleteHook?(entryId: string): void;
     markPromptMessagesSeen?(input: {
@@ -324,22 +325,26 @@ function registerMultiMentionCompletionHook(input: {
   log: FastifyBaseLogger;
 }): void {
   const orch = getMultiMentionOrchestrator();
-  input.queueProcessor.registerEntryCompleteHook?.(input.entryId, (_entryId, status, responseText) => {
-    if (status === 'canceled' || status === 'canceled_by_user') {
+  input.queueProcessor.registerEntryCompleteHook?.(
+    input.entryId,
+    (_entryId, status, responseText) => {
+      if (status === 'canceled' || status === 'canceled_by_user') {
+        input.log.info(
+          { requestId: input.requestId, catId: input.catId },
+          '[F122B B6] multi-mention queue entry canceled, skipping recordResponse',
+        );
+        return;
+      }
+      const finalResponse = responseText || (status === 'failed' ? '[dispatch error]' : '');
+      const newStatus = orch.recordResponse(input.requestId, input.catId, finalResponse);
       input.log.info(
-        { requestId: input.requestId, catId: input.catId },
-        '[F122B B6] multi-mention queue entry canceled, skipping recordResponse',
+        { requestId: input.requestId, catId: input.catId, newStatus, responseLength: finalResponse.length },
+        '[F122B B6] multi-mention queue response recorded',
       );
-      return;
-    }
-    const finalResponse = responseText || (status === 'failed' ? '[dispatch error]' : '');
-    const newStatus = orch.recordResponse(input.requestId, input.catId, finalResponse);
-    input.log.info(
-      { requestId: input.requestId, catId: input.catId, newStatus, responseLength: finalResponse.length },
-      '[F122B B6] multi-mention queue response recorded',
-    );
-    settleGroupIfComplete(input.deps, input.requestId, input.threadId, input.userId, input.log);
-  });
+      settleGroupIfComplete(input.deps, input.requestId, input.threadId, input.userId, input.log);
+    },
+    input.catId,
+  );
 }
 
 function planMultiMentionFanout(input: {
@@ -350,7 +355,7 @@ function planMultiMentionFanout(input: {
 }): A2AFanoutAdmissionPlan {
   const MAX_MM_DEPTH = 10;
   const acceptedTargetCats: CatId[] = [];
-  let predictedDepth = input.invocationQueue.countAgentEntriesForThread(input.threadId);
+  const predictedDepth = input.invocationQueue.countAgentEntriesForThread(input.threadId);
   let stop: A2AFanoutAdmissionPlan['stop'];
   for (const catId of input.targetCatIds) {
     if (predictedDepth >= MAX_MM_DEPTH) {
@@ -359,7 +364,6 @@ function planMultiMentionFanout(input: {
     }
     if (!input.actionFence && input.invocationQueue.hasQueuedAgentForCat(input.threadId, catId)) continue;
     acceptedTargetCats.push(catId);
-    predictedDepth += 1;
   }
   return {
     requestedTargetCats: [...input.targetCatIds],
@@ -448,18 +452,18 @@ async function dispatchViaQueue(
       ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
       onQueueEntriesAdmitted: (entries) => {
         for (const entry of entries) {
-          const catId = queueEntryTargetCats(entry)[0];
-          if (!catId) continue;
-          registerMultiMentionCompletionHook({
-            deps,
-            queueProcessor,
-            entryId: entry.id,
-            requestId,
-            catId: catId as CatId,
-            threadId,
-            userId,
-            log,
-          });
+          for (const catId of queueEntryTargetCats(entry)) {
+            registerMultiMentionCompletionHook({
+              deps,
+              queueProcessor,
+              entryId: entry.id,
+              requestId,
+              catId: catId as CatId,
+              threadId,
+              userId,
+              log,
+            });
+          }
         }
       },
     },

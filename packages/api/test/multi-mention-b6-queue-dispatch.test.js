@@ -131,11 +131,15 @@ function createMockQueueProcessor() {
   const hooks = new Map();
   const autoExecuteCalls = [];
   return {
-    registerEntryCompleteHook(entryId, hook) {
-      hooks.set(entryId, hook);
+    registerEntryCompleteHook(entryId, hook, targetCatId) {
+      const hookId = targetCatId ? `${entryId}:${targetCatId}` : entryId;
+      hooks.set(hookId, { entryId, hook, targetCatId });
     },
     unregisterEntryCompleteHook(entryId) {
-      hooks.delete(entryId);
+      if (hooks.delete(entryId)) return;
+      for (const [hookId, registration] of hooks) {
+        if (registration.entryId === entryId) hooks.delete(hookId);
+      }
     },
     requestDrain(threadId) {
       autoExecuteCalls.push(threadId);
@@ -143,11 +147,11 @@ function createMockQueueProcessor() {
     },
     getHooks: () => hooks,
     getAutoExecuteCalls: () => autoExecuteCalls,
-    simulateComplete(entryId, status, responseText) {
-      const hook = hooks.get(entryId);
-      if (hook) {
-        hook(entryId, status, responseText);
-        hooks.delete(entryId);
+    simulateComplete(hookId, status, responseText) {
+      const registration = hooks.get(hookId);
+      if (registration) {
+        registration.hook(registration.entryId, status, responseText);
+        hooks.delete(hookId);
       }
     },
   };
@@ -231,7 +235,7 @@ describe('B6: multi_mention queue dispatch', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     const body = res.json();
     assert.ok(body.requestId);
 
@@ -246,7 +250,7 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.equal(actionAdmissionCalls.length, 0, 'legacy unscoped request must remain backward compatible');
   });
 
-  test('preserves exact cloud source provenance and per-target lineage in every Queue carrier', async () => {
+  test('preserves exact cloud source provenance and target lineage in the source Queue carrier', async () => {
     const source = mockMessageStore.append({
       userId: 'user-1',
       catId: null,
@@ -275,46 +279,20 @@ describe('B6: multi_mention queue dispatch', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     const entries = invocationQueue.list('thread-1', 'user-1');
-    assert.equal(entries.length, 2);
-    assert.deepEqual(
-      entries.map((entry) => ({
-        targetCatId: queueEntryTargetCats(entry)[0],
-        parentInvocationId: entry.execution.a2aParentInvocationId,
-        sourceId: entry.payload.sourceRecordId,
-        requiresExactProvenance: entry.execution.requiresExactCloudDispatchProvenance,
-        provenance: entry.execution.cloudDispatchProvenance,
-      })),
-      [
-        {
-          targetCatId: 'codex',
-          parentInvocationId: creds.invocationId,
-          sourceId: callerResponse.id,
-          requiresExactProvenance: true,
-          provenance: {
-            sourceMessageId: source.id,
-            sourceSender: { kind: 'user', id: 'user-1' },
-            calledByCatId: 'opus',
-            intent: 'Review the exact source\n\n---\n\nPreserve this original context',
-          },
-        },
-        {
-          targetCatId: 'gpt-pro',
-          parentInvocationId: creds.invocationId,
-          sourceId: callerResponse.id,
-          requiresExactProvenance: true,
-          provenance: {
-            sourceMessageId: source.id,
-            sourceSender: { kind: 'user', id: 'user-1' },
-            calledByCatId: 'opus',
-            intent: 'Review the exact source\n\n---\n\nPreserve this original context',
-          },
-        },
-      ],
-    );
-    // Per-target rows must remain individually addressable under the shared sourceId.
-    assert.notEqual(entries[0].id, entries[1].id);
+    assert.equal(entries.length, 1);
+    const [entry] = entries;
+    assert.deepEqual(queueEntryTargetCats(entry), ['codex', 'gpt-pro']);
+    assert.equal(entry.execution.a2aParentInvocationId, creds.invocationId);
+    assert.equal(entry.payload.sourceRecordId, callerResponse.id);
+    assert.equal(entry.execution.requiresExactCloudDispatchProvenance, true);
+    assert.deepEqual(entry.execution.cloudDispatchProvenance, {
+      sourceMessageId: source.id,
+      sourceSender: { kind: 'user', id: 'user-1' },
+      calledByCatId: 'opus',
+      intent: 'Review the exact source\n\n---\n\nPreserve this original context',
+    });
   });
 
   test('rejects caller-visible but cloud-ineligible Queue provenance while local sibling stays independent', async () => {
@@ -348,22 +326,24 @@ describe('B6: multi_mention queue dispatch', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     const { requestId } = res.json();
     const entries = invocationQueue.list('thread-1', 'user-1');
-    // F117: QueueEntry.target is a structured union; resolve cat ids via the canonical accessor.
-    const localEntry = entries.find((entry) => queueEntryTargetCats(entry)[0] === 'codex');
-    const cloudEntry = entries.find((entry) => queueEntryTargetCats(entry)[0] === 'gpt-pro');
-    assert.ok(localEntry);
-    assert.ok(cloudEntry);
-    assert.equal(cloudEntry.execution.requiresExactCloudDispatchProvenance, true);
-    assert.equal(cloudEntry.execution.cloudDispatchProvenance, undefined);
-    assert.equal(cloudEntry.execution.a2aParentInvocationId, creds.invocationId);
+    assert.equal(entries.length, 1);
+    const [entry] = entries;
+    assert.deepEqual(queueEntryTargetCats(entry), ['codex', 'gpt-pro']);
+    assert.equal(entry.execution.requiresExactCloudDispatchProvenance, true);
+    assert.equal(entry.execution.cloudDispatchProvenance, undefined);
+    assert.equal(entry.execution.a2aParentInvocationId, creds.invocationId);
 
     const orch = getMultiMentionOrchestrator();
-    mockQueueProcessor.simulateComplete(cloudEntry.id, 'succeeded', '未发送给 @gpt-pro：精确来源不满足公开回程资格。');
+    mockQueueProcessor.simulateComplete(
+      `${entry.id}:gpt-pro`,
+      'succeeded',
+      '未发送给 @gpt-pro：精确来源不满足公开回程资格。',
+    );
     assert.equal(orch.getStatus(requestId), 'partial');
-    mockQueueProcessor.simulateComplete(localEntry.id, 'succeeded', 'Local sibling completed');
+    mockQueueProcessor.simulateComplete(`${entry.id}:codex`, 'succeeded', 'Local sibling completed');
 
     assert.equal(orch.getStatus(requestId), 'done');
     const flushMsg = mockMessageStore.getMessages().find((message) => message.content?.includes('Multi-Mention'));
@@ -831,7 +811,7 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.deepEqual(entry.from, { kind: 'agent', catId: 'opus' });
     assert.equal(entry.execution.autoExecute, true);
     assert.equal(entry.execution.ownerAuthProvenance, 'strict');
-    assert.deepEqual(entry.target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entry.targets, ['codex']);
     assert.ok(entry.payload.content.includes('[Multi-Mention from opus]'));
     assert.ok(entry.payload.content.includes('Test queue entry fields'));
   });
@@ -1301,7 +1281,83 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     assert.equal(hookResult.responseText, 'Hello from hook');
   });
 
-  test('dispatches one exact cloud child, returns its typed failure notice, and does not replay terminal work', async () => {
+  test('executeEntry partitions one source row into target-specific completion hooks', async () => {
+    const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
+
+    const queue = adaptInvocationQueue(new IQ());
+    const hookResults = new Map();
+    const invocationKeys = [];
+    const stubDeps = {
+      queue,
+      invocationTracker: {
+        start: () => new AbortController(),
+        startAll: () => new AbortController(),
+        tryStartThreadAll: () => new AbortController(),
+        complete: () => {},
+        completeAll: () => {},
+        has: () => false,
+      },
+      invocationRecordStore: {
+        create: (input) => {
+          invocationKeys.push(input.idempotencyKey);
+          return { outcome: 'created', invocationId: `inv-${input.targetCats[0]}` };
+        },
+        update: () => {},
+      },
+      router: {
+        resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
+        resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
+        async *routeExecution(_userId, _content, _threadId, _messageId, targetCats) {
+          const [catId] = targetCats;
+          yield { type: 'text', catId, content: `${catId} completed`, timestamp: Date.now() };
+          yield { type: 'done', catId, isFinal: true, timestamp: Date.now() };
+        },
+        ackCollectedCursors: () => Promise.resolve(),
+      },
+      socketManager: {
+        broadcastAgentMessage: () => {},
+        broadcastToRoom: () => {},
+        emitToUser: () => {},
+      },
+      messageStore: {
+        markDelivered: () => null,
+        getById: () => null,
+      },
+      log: { info: () => {}, warn: () => {}, error: () => {} },
+    };
+    const qp = new QP(stubDeps);
+    const result = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'test both targets',
+        source: 'agent',
+        targetCats: ['codex', 'gemini'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
+
+    for (const catId of ['codex', 'gemini']) {
+      qp.registerEntryCompleteHook(
+        result.entry.id,
+        (_entryId, status, responseText) => hookResults.set(catId, { status, responseText }),
+        catId,
+      );
+    }
+
+    await qp.requestDrain('thread-1');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    assert.deepEqual(hookResults.get('codex'), { status: 'succeeded', responseText: 'codex completed' });
+    assert.deepEqual(hookResults.get('gemini'), { status: 'succeeded', responseText: 'gemini completed' });
+    assert.deepEqual(invocationKeys, [`queue-${result.entry.id}:codex`, `queue-${result.entry.id}:gemini`]);
+  });
+
+  test('dispatches one exact cloud child, returns its typed failure notice, and retires the Queue carrier', async () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
@@ -1433,14 +1489,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       },
     ]);
 
-    const replay = enqueue();
-    assert.equal(replay.deduped, true);
-    assert.equal(replay.entry, undefined, 'a terminal ledger tombstone must not be projected as active work');
-    await qp.requestDrain('thread-1');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    assert.equal(routeCalls.length, 1, 'stable replay must not dispatch the exact child twice');
-    assert.equal(hookResults.length, 1, 'terminal replay must not synthesize a second completion');
+    assert.deepEqual(queue.list('thread-1', 'user-1'), [], 'delivered work must leave no Queue tombstone');
   });
 
   test('hook is auto-removed after firing (one-shot)', async () => {

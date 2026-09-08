@@ -149,14 +149,16 @@ describe('F167 ordinary A2A dispatch disposition', () => {
 
   test('an unrelated reverse handoff cannot retire a live inbound A2A carrier', async () => {
     const h = await harness({ sourceCatId: 'opus' });
-    const unrelated = h.messageStore.append({
-      userId: 'user-1',
-      catId: createCatId('codex-sol'),
-      content: '@fable-5 take unrelated work',
-      mentions: [createCatId('fable-5')],
-      timestamp: 1_500,
-      threadId: 'thread-1',
-    });
+    const unrelated = h.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: createCatId('codex-sol'),
+        content: '@fable-5 take unrelated work',
+        mentions: [createCatId('fable-5')],
+        timestamp: 1_500,
+        threadId: 'thread-1',
+      }),
+    );
     await h.ingest.record(
       buildHandedEvent({
         threadId: 'thread-1',
@@ -210,16 +212,18 @@ describe('F167 ordinary A2A dispatch disposition', () => {
         return auth(h);
       },
       async (h) => {
-        const replacement = h.messageStore.append({
-          userId: 'user-1',
-          catId: createCatId('codex-sol'),
-          content: '@opus continue the exact source',
-          mentions: [createCatId('opus')],
-          timestamp: 1_500,
-          threadId: 'thread-1',
-          replyTo: h.source.id,
-          extra: { causal: { kind: 'invocation_reply', triggerMessageId: h.source.id } },
-        });
+        const replacement = h.messageStore.append(
+          canonicalTestMessageInput({
+            userId: 'user-1',
+            catId: createCatId('codex-sol'),
+            content: '@opus continue the exact source',
+            mentions: [createCatId('opus')],
+            timestamp: 1_500,
+            threadId: 'thread-1',
+            replyTo: h.source.id,
+            extra: { causal: { kind: 'invocation_reply', triggerMessageId: h.source.id } },
+          }),
+        );
         await h.ingest.record(
           buildHandedEvent({
             threadId: 'thread-1',
@@ -372,15 +376,17 @@ describe('F167 ordinary A2A dispatch disposition', () => {
       subjectRef: 'pr:zts212653/cat-cafe#4099',
     };
     const matching = await harness({ sourceExtra: { coordination } });
-    const matchingSuccessor = matching.messageStore.append({
-      userId: 'user-1',
-      catId: createCatId('opus'),
-      content: '@codex-sol continue the same coordination',
-      mentions: [createCatId('codex-sol')],
-      timestamp: 1_500,
-      threadId: 'thread-1',
-      extra: { coordination: { ...coordination, hop: 2 } },
-    });
+    const matchingSuccessor = matching.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: createCatId('opus'),
+        content: '@codex-sol continue the same coordination',
+        mentions: [createCatId('codex-sol')],
+        timestamp: 1_500,
+        threadId: 'thread-1',
+        extra: { coordination: { ...coordination, hop: 2 } },
+      }),
+    );
     await matching.ingest.record(
       buildHandedEvent({
         threadId: 'thread-1',
@@ -396,21 +402,23 @@ describe('F167 ordinary A2A dispatch disposition', () => {
     );
 
     const divergent = await harness({ sourceExtra: { coordination } });
-    const divergentSuccessor = divergent.messageStore.append({
-      userId: 'user-1',
-      catId: createCatId('opus'),
-      content: '@codex-sol same id but a different subject',
-      mentions: [createCatId('codex-sol')],
-      timestamp: 1_500,
-      threadId: 'thread-1',
-      extra: {
-        coordination: {
-          ...coordination,
-          hop: 2,
-          subjectRef: 'pr:zts212653/cat-cafe#4100',
+    const divergentSuccessor = divergent.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: createCatId('opus'),
+        content: '@codex-sol same id but a different subject',
+        mentions: [createCatId('codex-sol')],
+        timestamp: 1_500,
+        threadId: 'thread-1',
+        extra: {
+          coordination: {
+            ...coordination,
+            hop: 2,
+            subjectRef: 'pr:zts212653/cat-cafe#4100',
+          },
         },
-      },
-    });
+      }),
+    );
     await divergent.ingest.record(
       buildHandedEvent({
         threadId: 'thread-1',

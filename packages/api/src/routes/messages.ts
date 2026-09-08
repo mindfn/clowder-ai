@@ -864,10 +864,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         status: 'queued',
         queuePosition: enqueueResult.queuePosition,
         entryId: enqueueResult.entry?.id,
-        entries: admittedEntries.flatMap((entry) => {
-          const targetCatId = queueEntryTargetCats(entry)[0];
-          return targetCatId ? [{ entryId: entry.id, targetCatId }] : [];
-        }),
+        entries: admittedEntries.flatMap((entry) =>
+          queueEntryTargetCats(entry).map((targetCatId) => ({ entryId: entry.id, targetCatId })),
+        ),
         merged: false,
         ...(storedUserMessageId ? { userMessageId: storedUserMessageId } : {}),
         ...(admittedMessageBundle && storedUserMessageId ? { messageBundleId: storedUserMessageId } : {}),

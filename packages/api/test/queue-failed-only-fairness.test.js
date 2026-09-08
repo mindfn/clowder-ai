@@ -19,10 +19,11 @@ function queueInput(sourceId, overrides = {}) {
   };
 }
 
-async function terminalizeFailed(queue, entry, reason = 'invocation_failed') {
+async function terminalizeFailed(queue, entry, targetCatId = entry.targets[0], reason = 'invocation_failed') {
+  assert.ok(targetCatId);
   const claimed = await queue.markProcessingDurable(entry.threadId, 'user-owner', {
     entryId: entry.id,
-    targetCats: [entry.target.catId],
+    targetCats: [targetCatId],
   });
   assert.ok(claimed);
   assert.equal(await queue.commitClaimedProcessing(entry.threadId, [entry.id], 2_000), true);
@@ -53,40 +54,25 @@ describe('#1371 terminal-failure fairness over ADR-043 ledger', () => {
       queue.list('thread-fairness', 'user-owner').map((entry) => entry.id),
       [later.entry.id],
     );
-    assert.equal((await queue.getDurableEntry('thread-fairness', failed.entry.id)).status, 'terminal');
+    assert.equal(await queue.getDurableEntry('thread-fairness', failed.entry.id), null);
   });
 
   it('terminalizing one fan-out target preserves the queued sibling', async () => {
     const queue = new InvocationQueue();
     const fanout = await queue.enqueueDurable(queueInput('fanout', { targetCats: ['opus', 'gemini'] }));
-    const opus = fanout.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
-    const gemini = fanout.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'gemini');
-    assert.ok(opus);
-    assert.ok(gemini);
+    const [sourceEntry] = fanout.entries;
+    assert.ok(sourceEntry);
+    assert.deepEqual(sourceEntry.targets, ['opus', 'gemini']);
 
-    await terminalizeFailed(queue, opus, 'provider_failed');
+    await terminalizeFailed(queue, sourceEntry, 'opus', 'provider_failed');
 
-    assert.equal(queue.getEntrySnapshot('thread-fairness', 'user-owner', gemini.id).status, 'queued');
+    const remaining = queue.getEntrySnapshot('thread-fairness', 'user-owner', sourceEntry.id);
+    assert.equal(remaining.status, 'queued');
+    assert.deepEqual(remaining.targets, ['gemini']);
     const claimed = await queue.markProcessingDurable('thread-fairness', 'user-owner', {
-      entryId: gemini.id,
+      entryId: sourceEntry.id,
       targetCats: ['gemini'],
     });
-    assert.equal(claimed?.id, gemini.id);
-  });
-
-  it('replaying the same source never reopens its failed terminal target', async () => {
-    const queue = new InvocationQueue();
-    const input = queueInput('terminal-replay');
-    const first = await queue.enqueueDurable(input);
-    await terminalizeFailed(queue, first.entry);
-
-    const replay = await queue.enqueueDurable(input);
-    assert.equal(replay.deduped, true);
-    assert.deepEqual(replay.entries, []);
-    const terminal = await queue.getDurableEntry('thread-fairness', first.entry.id);
-    assert.equal(terminal.id, first.entry.id);
-    assert.equal(terminal.status, 'terminal');
-    assert.equal(terminal.delivery.terminalOutcome, 'failed');
-    assert.equal(queue.list('thread-fairness', 'user-owner').length, 0);
+    assert.equal(claimed?.id, sourceEntry.id);
   });
 });

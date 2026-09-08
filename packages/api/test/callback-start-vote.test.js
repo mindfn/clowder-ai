@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
-import { adaptInvocationQueue, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import { adaptInvocationQueue } from './helpers/message-from-fixtures.js';
 
 describe('POST /api/callbacks/start-vote', () => {
   let registry;
@@ -428,10 +428,7 @@ describe('POST /api/callbacks/start-vote', () => {
     const [notification] = messageStore.getByThread(thread.id, 10, 'user-1');
     assert.ok(notification, 'vote notification must be durable');
     assert.equal(notification.deliveryStatus, undefined, 'Agent speech remains ordinary published History');
-    assert.deepEqual(notification.lifecycle.dispatchRefs, [
-      { targetId: 'codex', phase: 'assigned' },
-      { targetId: 'gemini', phase: 'assigned' },
-    ]);
+    assert.deepEqual(notification.lifecycle.dispatchRefs, []);
     assert.ok(
       queueEntries.every((entry) => entry.payload.messageId === notification.id),
       'every voter row must bind the exact atomically-published notification',
@@ -498,9 +495,10 @@ describe('POST /api/callbacks/start-vote', () => {
 
     assert.equal(res.statusCode, 200);
 
-    // F175: agent source bypasses MAX_QUEUE_DEPTH — all 6 voters should be enqueued
+    // F175: agent source bypasses MAX_QUEUE_DEPTH — all voters share one source row.
     const queueEntries = invocationQueue.listAutoExecute?.(thread.id) ?? [];
-    assert.equal(queueEntries.length, 6, 'all 6 voters should be enqueued (agent bypasses depth limit)');
+    assert.equal(queueEntries.length, 1, 'all voters should share one source Queue row');
+    assert.deepEqual(queueEntries[0].targets, ['codex', 'gemini', 'sonnet', 'gpt52', 'spark', 'antig-opus']);
 
     // No fallback needed — all fit in queue
     assert.equal(fallbackTargets.length, 0, 'no fallback needed when agent source bypasses depth limit');

@@ -182,7 +182,7 @@ describe('F193 AC-A5: KD-1 boundary regression', () => {
     assert.equal(queued.length, 1, 'cross-thread @opus must admit one target-thread Queue entry');
     assert.equal(queued[0]?.kind, 'message_wake');
     assert.deepEqual(
-      queued.map((entry) => entry.target.catId),
+      queued.flatMap((entry) => entry.targets),
       ['opus'],
       'same-name self-filter must NOT drop @opus on a cross-thread wake',
     );
