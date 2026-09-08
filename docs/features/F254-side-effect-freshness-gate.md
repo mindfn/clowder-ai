@@ -6,7 +6,7 @@ topics: [freshness, glass-box, supplement, inbox-notice, runtime-descriptor, sid
 doc_kind: spec
 created: 2026-06-27
 updated: 2026-09-05
-tips_exempt: Remote-compaction capacity recovery continues the already-authorized task automatically; it adds no user action, setting, or capability to discover.
+tips_exempt: 2026-09-08 renews the existing full-read adoption wording for F117's single-source Queue cutover; it changes no F254 user action, setting, or discoverable capability.
 ---
 
 # F254: Side-Effect Freshness Gate — 副作用出口 freshness 拦截
@@ -760,7 +760,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 - [x] AC-D2: re-invoke prompt 明确告知猫"你的上轮回复可能未反映最新消息，请调用无 filter 的 `get_thread_context` 查看完整 thread 后回应"
 - [x] AC-D3: stale 标记的 stream output 仍然正常存储和投递（fail-open，不丢失工作产出）
 - [x] AC-D4: stream output freshness check 记录 `stream_stale_detected` / `stream_fresh` 事件到 FreshnessAttentionEventLog（通过 `onEvent` callback 纯函数模式，route-serial 注入 `FreshnessAttentionEventLog.append`）
-  - ⚠️ **回归窗口 2026-07-08 ~ 2026-07-09**：intake #2816（`42e97cdf3`，clowder-ai#1075 整文件覆盖）切断了生产端接线（`index.ts` 不再构造 `FreshnessAttentionEventLog`，`AgentRouter` 不再转发进 `RouteStrategyDeps`），本 AC 在 main 上变成**打勾的死代码**——`deps.freshnessEventLog` 恒为 `undefined`，审计日志一条不写。字段 optional + 消费点条件分支 → `tsc --noEmit` 全程绿。**已由 PR #2823 恢复**，并新增 `test/f254-phase-d-eventlog-wiring.test.js` 守护接线本身（既有 f254-*.test.js 手搓 deps 直调 routeSerial、绕过 AgentRouter，结构上抓不到接线断裂）。
+  - ⚠️ **回归窗口 2026-07-08 ~ 2026-07-09**：intake #2816（`42e97cdf3`，上游 PR #1075 整文件覆盖）切断了生产端接线（`index.ts` 不再构造 `FreshnessAttentionEventLog`，`AgentRouter` 不再转发进 `RouteStrategyDeps`），本 AC 在 main 上变成**打勾的死代码**——`deps.freshnessEventLog` 恒为 `undefined`，审计日志一条不写。字段 optional + 消费点条件分支 → `tsc --noEmit` 全程绿。**已由 PR #2823 恢复**，并新增 `test/f254-phase-d-eventlog-wiring.test.js` 守护接线本身（既有 f254-*.test.js 手搓 deps 直调 routeSerial、绕过 AgentRouter，结构上抓不到接线断裂）。
 - [x] AC-D5: 猫的 stream output 是自回复（thread 中最新消息是自己发的）→ 不标 stale（self-message 排除，与 Phase A 一致）
 - [x] AC-D6: **D1.1 regression fix**：`stream output stale` 不得无条件强制 re-invoke。同一 stale set 必须 single-flight 去重；已有 queued/newer invocation/freshness/current-user same-cat pending coverage 时只标记 stale + 记录 skip，不 enqueue 第二次。**merged**: PR #2701 — D1 single-flight claim + enqueue-outcome release + current-user pending coverage
 - [x] AC-D7: **D1.1 ack path**：D1 re-invoke prompt 必须要求可推进 seenCursor 的读取路径（无 `catId`/keyword/messageId filter 的 `get_thread_context`），或实现独立 D1 ack 事件；`list_recent` / filtered context read 不能作为闭环完成凭据。**merged**: PR #2701 — prompt 指向 full `get_thread_context`
@@ -806,7 +806,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
     diagnostic path；已见 disconnect wording 分类为 network error。PR #3082（`7dd7a4d51`）。
   - [x] **AC-D14h Capacity checkpoint continuation**：`turn.completed(status=failed)` 且错误精确等于 provider
     model-capacity terminal（含已取证的 `Error running remote compact task: ` 前缀）时，允许在同一 native thread 开一个有界恢复 turn，但不得发送通用“继续”。pre-tool
-    恢复绑定 exact interrupted turn；post-tool 还必须同时具备 Clowder AI child invocation + prompt message IDs、
+    恢复绑定 exact interrupted turn；post-tool 还必须同时具备应用 child invocation + prompt message IDs、
     本轮进度（最新 `turn/plan/updated` 或本 invocation 已完成的 agent progress message）与逐 item terminal 账本。
     native plan 是可选事件，不再是唯一进度来源；没有任何进度、任一工具仍 in-flight 或 checkpoint 不完整即 fail closed；
     续接语义是 at-least-once，prompt 强制 verify-before-redo，不扩大 cwd/sandbox/approval/tool/授权边界。

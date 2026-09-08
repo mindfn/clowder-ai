@@ -5,7 +5,6 @@ import {
   isMessageFrom,
   type MessageFrom,
   type ProviderSemanticEvent,
-  type QueueMessageReceiptProjection,
 } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
@@ -34,7 +33,6 @@ import {
   hasStaleActiveThreadPresentation,
   reconcileQueueActiveInvocationProjection,
 } from './queue-active-invocation-reconciliation';
-import { normalizeQueueMessageReceiptProjections } from './queue-message-receipt-normalizer';
 import { refreshActiveExecutionProjection } from './useActiveExecutionProjection';
 // F173 Phase E: isInvocationReplaced 检查已下沉到 useAgentMessages.handleAgentMessage
 // dispatch entry，useSocket 不再做 active path drop guard。
@@ -249,7 +247,6 @@ export async function reconcileThreadWithServer(
   source: string,
   socketFallback?: {
     queue: import('../stores/chat-types').QueueEntry[];
-    messageReceipts: readonly QueueMessageReceiptProjection[];
   },
 ): Promise<void> {
   const data = await fetchQueueReconciliationSnapshot(threadId);
@@ -257,11 +254,7 @@ export async function reconcileThreadWithServer(
   const queue = Array.isArray(data?.queue) ? data.queue : socketFallback?.queue;
   const store = useChatStore.getState();
   if (queue) {
-    if (socketFallback?.messageReceipts.length) {
-      store.setQueue(threadId, queue, socketFallback.messageReceipts);
-    } else {
-      store.setQueue(threadId, queue);
-    }
+    store.setQueue(threadId, queue);
   }
   if (!data) return;
 
@@ -905,61 +898,41 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
     // replacing the thread-scoped Queue. Socket rows intentionally omit some
     // server-only actions (for example exact active-run Append), so committing
     // them first would create a false-negative action surface.
-    socket.on(
-      'queue_updated',
-      (data: { threadId: string; queue: unknown[]; action: string; messageReceipts?: unknown }) => {
-        void invalidateSidebarProjection();
-        const store = useChatStore.getState();
-        const queue = normalizeQueueEntries(data.queue);
-        const messageReceipts = normalizeQueueMessageReceiptProjections(data.messageReceipts);
-        if (messageReceipts.length > 0) {
-          const currentQueue =
-            data.threadId === store.currentThreadId ? store.queue : store.getThreadState(data.threadId).queue;
-          // Removed rows can carry terminal receipt truth that the next Queue
-          // snapshot no longer contains. Apply that truth immediately against
-          // the existing complete Queue; canonical hydration below owns the
-          // subsequent row replacement.
-          store.setQueue(data.threadId, currentQueue, messageReceipts);
-        }
-        const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
-        void reconcileThreadWithServer(
-          data.threadId,
-          () => getLiveQueueHydrateEpoch(data.threadId) !== epoch,
-          'QueueUpdated',
-          { queue, messageReceipts },
-        );
-        // F264: every durable user queue entry is owner-visible from admission.
-        // Hydrate the authoritative message so its receipt stays live and the
-        // same projection is recovered after F5. Connector/agent work remains
-        // queue-only and must not trigger a browser history read.
-        if (queue.some((entry) => entry.from.kind === 'user' && typeof entry.messageId === 'string')) {
-          store.requestStreamCatchUp(data.threadId);
-        }
-        // Queue processor started executing an entry: restore the coarse "active"
-        // marker immediately, then hydrate current-thread slot truth from /queue.
-        // This covers the gap where processing resumes before intent_mode lands:
-        // without slot hydration, the top single-cat cancel can stay hidden even
-        // though the server is already executing this thread.
-        if (data.action === 'processing') {
-          // A processing event is causally newer than any identity-matched
-          // terminal slot still cached for this thread. Retire only those proven
-          // stale slots before raising the coarse marker; preserve uncorrelated
-          // slots until canonical `/queue` supplies the new exact identity.
-          store.setThreadHasActiveInvocation(data.threadId, true);
-        }
-        if (isDebugEnabled()) {
-          const stateAfterUpdate = store.getThreadState(data.threadId);
-          recordInvocationEvent({
-            event: 'queue_updated',
-            threadId: data.threadId,
-            action: data.action,
-            queueLength: normalizeQueueForDebug(data.queue).length,
-            queueStatuses: getQueueStatusesForDebug(data.queue),
-            hasActiveInvocation: data.action === 'processing' ? true : stateAfterUpdate?.hasActiveInvocation,
-          });
-        }
-      },
-    );
+    socket.on('queue_updated', (data: { threadId: string; queue: unknown[]; action: string }) => {
+      void invalidateSidebarProjection();
+      const store = useChatStore.getState();
+      const queue = normalizeQueueEntries(data.queue);
+      const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
+      void reconcileThreadWithServer(
+        data.threadId,
+        () => getLiveQueueHydrateEpoch(data.threadId) !== epoch,
+        'QueueUpdated',
+        { queue },
+      );
+      // Queue processor started executing an entry: restore the coarse "active"
+      // marker immediately, then hydrate current-thread slot truth from /queue.
+      // This covers the gap where processing resumes before intent_mode lands:
+      // without slot hydration, the top single-cat cancel can stay hidden even
+      // though the server is already executing this thread.
+      if (data.action === 'processing') {
+        // A processing event is causally newer than any identity-matched
+        // terminal slot still cached for this thread. Retire only those proven
+        // stale slots before raising the coarse marker; preserve uncorrelated
+        // slots until canonical `/queue` supplies the new exact identity.
+        store.setThreadHasActiveInvocation(data.threadId, true);
+      }
+      if (isDebugEnabled()) {
+        const stateAfterUpdate = store.getThreadState(data.threadId);
+        recordInvocationEvent({
+          event: 'queue_updated',
+          threadId: data.threadId,
+          action: data.action,
+          queueLength: normalizeQueueForDebug(data.queue).length,
+          queueStatuses: getQueueStatusesForDebug(data.queue),
+          hasActiveInvocation: data.action === 'processing' ? true : stateAfterUpdate?.hasActiveInvocation,
+        });
+      }
+    });
     // F264: a cross-thread Queue carrier is visible as soon as durable admission
     // accepts it. This does not mark the message delivered; it only installs the
     // source bubble before exact execution liveness is projected.

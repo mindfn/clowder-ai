@@ -500,7 +500,6 @@ describe('ChatContainer mobile interactions', () => {
         targetCats: ['opus'],
         intent: 'execute',
         status: 'queued',
-        targetStates: { opus: 'queued' },
         createdAt: 1000,
       },
     ];

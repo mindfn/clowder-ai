@@ -67,68 +67,45 @@ function request(overrides = {}) {
   };
 }
 
-function ledgerEntryForTarget(targetCatId, state, overrides = {}) {
-  const currentLease = overrides.lease ?? lease({ holderCatIds: [targetCatId] });
+function ledgerEntryForTargets(targets, overrides = {}) {
+  const currentLease = overrides.lease ?? lease({ holderCatIds: targets });
   const fence = overrides.fence ?? buildActionSuccessorFence(currentLease, currentLease.dispatchId);
-  const terminal = ['interrupted', 'handled', 'withdrawn', 'failed'].includes(state);
-  const delivery = {};
-  if (state === 'notified') delivery.notifiedAt = 110;
-  if (state === 'awakened') {
-    delivery.awakenedInvocationId = `invocation-${targetCatId}`;
-    delivery.awakenedAt = 110;
-  }
-  if (state === 'seen') {
-    delivery.awakenedInvocationId = `invocation-${targetCatId}`;
-    delivery.awakenedAt = 110;
-    delivery.seenInvocationId = `invocation-${targetCatId}`;
-    delivery.seenAt = 115;
-  }
-  if (state === 'steering') delivery.steerRequestedAt = 115;
-  if (terminal) {
-    delivery.terminalOutcome = state;
-    if (state === 'handled') delivery.handledAt = 120;
-    else delivery.failedAt = 120;
-    if (state === 'interrupted') delivery.failureReason = 'runtime_restart';
-    if (state === 'failed') delivery.failureReason = 'invocation_failed';
-  }
+  const sourceRecordId = overrides.id ?? `message-${targets.join('-')}`;
   return {
-    version: 1,
-    id: overrides.id ?? `entry-${targetCatId}-${state}`,
+    version: 2,
+    id: overrides.id ?? `entry-${targets.join('-')}`,
     threadId: currentLease.holderThreadId,
     owner: { kind: 'user', userId: currentLease.tenantScope },
     kind: 'conversation_input',
     from: { kind: 'agent', catId: currentLease.predecessorCatId },
-    target: { kind: 'cat', catId: targetCatId },
+    targets,
     payload: {
-      sourceId: overrides.id ?? `message-${targetCatId}-${state}`,
+      sourceRecordId,
       content: 'Review exact HEAD',
-      messageId: overrides.id ?? `message-${targetCatId}-${state}`,
+      messageId: sourceRecordId,
     },
     execution: { intent: 'review', ownerAuthProvenance: 'strict', autoExecute: true, actionSuccessorFence: fence },
-    delivery,
-    status: terminal ? 'terminal' : 'queued',
+    delivery: {},
+    status: 'queued',
     enqueuedAt: 100,
-    ...(terminal ? { terminalAt: 120 } : {}),
     priority: 'normal',
     sourceCategory: 'a2a',
   };
 }
 
 describe('direct action successor carrier recovery', () => {
-  test('keeps safe_wait only when every exact-fence holder has live durable custody', () => {
+  test('keeps safe_wait only when every exact-fence holder remains pending in Queue', () => {
     const current = lease();
-    for (const state of ['queued', 'notified', 'awakened', 'seen', 'steering']) {
-      assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [ledgerEntryForTarget('opus5', state)]), {
-        disposition: 'live',
-        fence: buildActionSuccessorFence(current, current.dispatchId),
-      });
-    }
+    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [ledgerEntryForTargets(['opus5'])]), {
+      disposition: 'live',
+      fence: buildActionSuccessorFence(current, current.dispatchId),
+    });
   });
 
   test('recognizes a complete pre-CAS admission as live durable custody', () => {
     const current = lease();
     const fence = buildActionSuccessorFence(current, current.dispatchId);
-    const admission = ledgerEntryForTarget('opus5', 'queued', { id: 'message-admission', fence });
+    const admission = ledgerEntryForTargets(['opus5'], { id: 'message-admission', fence });
 
     assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [admission]), {
       disposition: 'live',
@@ -136,35 +113,19 @@ describe('direct action successor carrier recovery', () => {
     });
   });
 
-  test('recovers only when every exact holder carrier was interrupted by runtime restart', () => {
-    const current = lease();
-    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [ledgerEntryForTarget('opus5', 'interrupted')]), {
-      disposition: 'restart_interrupted',
-      fence: buildActionSuccessorFence(current, current.dispatchId),
-    });
-  });
-
-  test('fails closed for missing, terminal, failed, mixed, or wrong-fence custody', () => {
+  test('fails closed for missing, partially delivered, or wrong-fence custody', () => {
     const single = lease();
     assert.equal(classifyDirectActionSuccessorCarrier(single, []).disposition, 'unavailable');
-    for (const state of ['handled', 'withdrawn', 'failed']) {
-      assert.equal(
-        classifyDirectActionSuccessorCarrier(single, [ledgerEntryForTarget('opus5', state)]).disposition,
-        'unavailable',
-      );
-    }
 
     const parallel = lease({ mode: 'parallel', holderCatIds: ['opus5', 'kimi'], parallelIntent: 'independent review' });
     assert.equal(
-      classifyDirectActionSuccessorCarrier(parallel, [
-        ledgerEntryForTarget('opus5', 'interrupted', { lease: parallel }),
-        ledgerEntryForTarget('kimi', 'queued', { lease: parallel }),
-      ]).disposition,
+      classifyDirectActionSuccessorCarrier(parallel, [ledgerEntryForTargets(['kimi'], { lease: parallel })])
+        .disposition,
       'unavailable',
     );
     assert.equal(
       classifyDirectActionSuccessorCarrier(single, [
-        ledgerEntryForTarget('opus5', 'interrupted', {
+        ledgerEntryForTargets(['opus5'], {
           fence: { ...buildActionSuccessorFence(single, single.dispatchId), generation: 2 },
         }),
       ]).disposition,

@@ -73,7 +73,6 @@ describe('delivery-order transition atomicity (PR #1193)', { skip: redisIsolatio
   const createQueued = (userId, threadId, ts) =>
     store.append(
       canonicalTestMessageInput({
-        provenance: USER_PROVENANCE,
         userId,
         catId: null,
         content: `queued-msg-${ts}`,

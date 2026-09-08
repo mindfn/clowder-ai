@@ -185,7 +185,6 @@ async function commitRecall(
   preparation: RecallPreparation,
 ): Promise<RecallCommitResult> {
   const entryIds = carrier.entries.map((entry) => entry.id);
-  const exposures = carrier.entries.flatMap((entry) => entry.delivery.bodyExposures ?? []);
   try {
     const result = await context.opts.messageStore.recallMessageToComposerDraft(context.messageId, {
       ownerUserId: context.ownerUserId,
@@ -193,13 +192,12 @@ async function commitRecall(
       expectedDraftRevision: context.expectedDraftRevision,
       merge: context.merge,
       recalledAt: Date.now(),
-      exposures,
     });
     if (result.kind === 'recalled' || result.kind === 'already_recalled') {
       if (!(await context.opts.invocationQueue.commitClaimedMessageWithdrawal(context.threadId, entryIds))) {
         context.request.log.error(
           { threadId: context.threadId, messageId: context.messageId, entryIds },
-          'true recall committed; claimed Queue terminalization deferred to startup recovery',
+          'true recall committed; claimed Queue withdrawal deferred to restart hydration',
         );
       }
       return result;

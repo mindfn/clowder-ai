@@ -8,10 +8,10 @@ import {
   waitContinuationCarriersMatch,
 } from './wait-continuation-carrier.js';
 
-type WakeQueueEntry = Pick<QueueEntry, 'execution' | 'from' | 'payload' | 'sourceCategory' | 'target' | 'threadId'>;
+type WakeQueueEntry = Pick<QueueEntry, 'execution' | 'from' | 'payload' | 'sourceCategory' | 'targets' | 'threadId'>;
 
 function exactTargetCatId(entry: WakeQueueEntry): string | undefined {
-  return entry.target.kind === 'cat' ? entry.target.catId : undefined;
+  return entry.targets.length === 1 ? entry.targets[0] : undefined;
 }
 
 export function buildCrossThreadNoObligationWake(input: unknown): TurnCustodyWakeProvenance | undefined {

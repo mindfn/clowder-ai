@@ -2,6 +2,71 @@
  * ADR-043 queue mutations. Every script performs all validation before its
  * first write because Redis does not roll back writes made before a Lua error.
  */
+export const MIGRATE_QUEUE_LEDGER_V2_LUA = `
+local currentSchema = redis.call('GET', KEYS[4])
+if currentSchema == '2' then return 2 end
+
+local expectedEntries = cjson.decode(ARGV[1])
+local expectedOrder = cjson.decode(ARGV[2])
+local nextEntries = cjson.decode(ARGV[3])
+local nextOrder = cjson.decode(ARGV[4])
+local nextMessageIndex = cjson.decode(ARGV[5])
+if type(expectedEntries) ~= 'table' or type(expectedOrder) ~= 'table' or
+   type(nextEntries) ~= 'table' or type(nextOrder) ~= 'table' or type(nextMessageIndex) ~= 'table' then
+  return redis.error_reply('QUEUE_V2_MIGRATION_INVALID')
+end
+
+local currentPairs = redis.call('HGETALL', KEYS[1])
+if #currentPairs ~= #expectedEntries * 2 then return 0 end
+local currentById = {}
+for i = 1, #currentPairs, 2 do currentById[currentPairs[i]] = currentPairs[i + 1] end
+for i = 1, #expectedEntries do
+  local pair = expectedEntries[i]
+  if type(pair) ~= 'table' or type(pair[1]) ~= 'string' or type(pair[2]) ~= 'string' or
+     currentById[pair[1]] ~= pair[2] then return 0 end
+end
+
+local currentOrder = redis.call('LRANGE', KEYS[2], 0, -1)
+if #currentOrder ~= #expectedOrder then return 0 end
+for i = 1, #expectedOrder do if currentOrder[i] ~= expectedOrder[i] then return 0 end end
+
+-- Redis does not roll back writes when a Lua script raises. Validate every
+-- replacement pair before deleting the v1 hashes/lists.
+for i = 1, #nextEntries do
+  local pair = nextEntries[i]
+  if type(pair) ~= 'table' or type(pair[1]) ~= 'string' or type(pair[2]) ~= 'string' then
+    return redis.error_reply('QUEUE_V2_MIGRATION_INVALID_ENTRY')
+  end
+end
+for i = 1, #nextOrder do
+  if type(nextOrder[i]) ~= 'string' or nextOrder[i] == '' then
+    return redis.error_reply('QUEUE_V2_MIGRATION_INVALID_ORDER')
+  end
+end
+for messageId, entryIds in pairs(nextMessageIndex) do
+  if type(messageId) ~= 'string' or messageId == '' or type(entryIds) ~= 'table' then
+    return redis.error_reply('QUEUE_V2_MIGRATION_INVALID_MESSAGE_INDEX')
+  end
+  for i = 1, #entryIds do
+    if type(entryIds[i]) ~= 'string' or entryIds[i] == '' then
+      return redis.error_reply('QUEUE_V2_MIGRATION_INVALID_MESSAGE_INDEX')
+    end
+  end
+end
+
+redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
+for i = 1, #nextEntries do
+  local pair = nextEntries[i]
+  redis.call('HSET', KEYS[1], pair[1], pair[2])
+end
+for i = 1, #nextOrder do redis.call('RPUSH', KEYS[2], nextOrder[i]) end
+for messageId, entryIds in pairs(nextMessageIndex) do
+  redis.call('HSET', KEYS[3], messageId, cjson.encode(entryIds))
+end
+redis.call('SET', KEYS[4], '2')
+return 1
+`;
+
 export const ENQUEUE_QUEUE_ROWS_LUA = `
 local rowsKey = KEYS[1]
 local orderKey = KEYS[2]
@@ -22,7 +87,7 @@ for i = 1, count do
   if existing then
     existingCount = existingCount + 1
   end
-  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
   incoming[i] = { id = row.id, raw = raw, row = row }
 end
 if existingCount == count then return 2 end
@@ -67,7 +132,7 @@ if maxQueuedUsers and maxQueuedUsers >= 0 then
     if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
     local row = cjson.decode(currentRaw)
     if row.status == 'queued' and row.from and row.from.kind == 'user' then
-      queuedUserSources[row.payload.sourceId] = true
+      queuedUserSources[row.payload.sourceRecordId] = true
     end
   end
   for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
@@ -88,8 +153,6 @@ return 1
 
 export const EXPAND_QUEUE_TARGET_ROWS_LUA = `
 local rowsKey = KEYS[1]
-local orderKey = KEYS[2]
-local messageIndexKey = KEYS[3]
 local anchorId = ARGV[1]
 local bindTargetCatId = ARGV[2]
 local expectedCount = tonumber(ARGV[3])
@@ -98,93 +161,144 @@ if not bindTargetCatId or bindTargetCatId == '' or not expectedCount or expected
   return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID')
 end
 local anchorRaw = redis.call('HGET', rowsKey, anchorId)
-if not anchorRaw then return -2 end
+if not anchorRaw then return {-2, ''} end
 local anchor = cjson.decode(anchorRaw)
-if anchor.status ~= 'queued' then return 0 end
-if anchor.target.kind == 'cat' and anchor.target.catId ~= bindTargetCatId then return 0 end
+if anchor.status ~= 'queued' then return {0, ''} end
+if type(anchor.targets) ~= 'table' then return {-1, ''} end
 
-local seenIds = { [anchorId] = true }
-local seenTargets = { [bindTargetCatId] = true }
 for i = 1, expectedCount do
   local expectedId = ARGV[4 + i]
-  if not expectedId or expectedId == '' or seenIds[expectedId] then
-    return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID_EXPECTATION')
-  end
-  seenIds[expectedId] = true
-  local expectedRaw = redis.call('HGET', rowsKey, expectedId)
-  if not expectedRaw then return 0 end
-  local expected = cjson.decode(expectedRaw)
-  if expected.status ~= 'queued' or expected.threadId ~= anchor.threadId or expected.payload.sourceId ~= anchor.payload.sourceId or expected.target.kind ~= 'cat' or seenTargets[expected.target.catId] then
-    return 0
-  end
-  seenTargets[expected.target.catId] = true
+  if expectedId ~= anchorId then return {0, ''} end
 end
 
-local incoming = {}
-local existingCount = 0
-local messageIndexUpdates = {}
+local seenTargets = {}
+for i = 1, #anchor.targets do
+  local targetId = anchor.targets[i]
+  if type(targetId) ~= 'string' or targetId == '' or seenTargets[targetId] then return {-1, ''} end
+  seenTargets[targetId] = true
+end
+local changed = false
+if not seenTargets[bindTargetCatId] then
+  anchor.targets[#anchor.targets + 1] = bindTargetCatId
+  seenTargets[bindTargetCatId] = true
+  changed = true
+end
+
 for i = 1, count do
   local raw = ARGV[4 + expectedCount + i]
   local row = cjson.decode(raw)
-  if not row.id or seenIds[row.id] or row.threadId ~= anchor.threadId or row.status ~= 'queued' or row.payload.sourceId ~= anchor.payload.sourceId or row.target.kind ~= 'cat' or seenTargets[row.target.catId] then
+  if row.id ~= anchorId or row.threadId ~= anchor.threadId or row.status ~= 'queued' or row.payload.sourceRecordId ~= anchor.payload.sourceRecordId or type(row.targets) ~= 'table' then
     return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID_ROW')
   end
-  seenIds[row.id] = true
-  seenTargets[row.target.catId] = true
-  local existingRaw = redis.call('HGET', rowsKey, row.id)
-  if existingRaw then
-    local existingRow = cjson.decode(existingRaw)
-    if existingRow.status ~= 'queued' then return 0 end
-    existingCount = existingCount + 1
-  end
-  local messageId = row.payload and row.payload.messageId
-  if messageId and messageId ~= '' then
-    local update = messageIndexUpdates[messageId]
-    if not update then
-      update = { ids = {}, seen = {} }
-      local existingIndexRaw = redis.call('HGET', messageIndexKey, messageId)
-      if existingIndexRaw then
-        local decodedOk, decoded = pcall(cjson.decode, existingIndexRaw)
-        if not decodedOk or type(decoded) ~= 'table' then
-          return redis.error_reply('QUEUE_MESSAGE_INDEX_INVALID')
-        end
-        for j = 1, #decoded do
-          if type(decoded[j]) ~= 'string' or decoded[j] == '' or update.seen[decoded[j]] then
-            return redis.error_reply('QUEUE_MESSAGE_INDEX_INVALID')
-          end
-          update.seen[decoded[j]] = true
-          update.ids[#update.ids + 1] = decoded[j]
-        end
-      end
-      messageIndexUpdates[messageId] = update
-    end
-    if not update.seen[row.id] then
-      update.seen[row.id] = true
-      update.ids[#update.ids + 1] = row.id
+  for j = 1, #row.targets do
+    local targetId = row.targets[j]
+    if type(targetId) ~= 'string' or targetId == '' then return redis.error_reply('QUEUE_TARGET_EXPANSION_INVALID_ROW') end
+    if not seenTargets[targetId] then
+      anchor.targets[#anchor.targets + 1] = targetId
+      seenTargets[targetId] = true
+      changed = true
     end
   end
-  incoming[i] = { id = row.id, raw = raw }
+  if row.delivery and row.delivery.authorIntentByTarget then
+    anchor.delivery = anchor.delivery or {}
+    anchor.delivery.authorIntentByTarget = anchor.delivery.authorIntentByTarget or {}
+    for targetId, intent in pairs(row.delivery.authorIntentByTarget) do
+      anchor.delivery.authorIntentByTarget[targetId] = intent
+    end
+  end
 end
-if existingCount == count and anchor.target.kind == 'cat' then return 2 end
-if existingCount ~= 0 then return -1 end
+if not changed then return {2, cjson.encode({anchorRaw})} end
+anchorRaw = cjson.encode(anchor)
+redis.call('HSET', rowsKey, anchorId, anchorRaw)
+return {1, cjson.encode({anchorRaw})}
+`;
 
-if anchor.target.kind == 'unassigned' then
-  anchor.target = { kind = 'cat', catId = bindTargetCatId }
-  redis.call('HSET', rowsKey, anchorId, cjson.encode(anchor))
-elseif anchor.target.kind ~= 'cat' then
-  return -1
+export const RECONCILE_QUEUE_TARGETS_LUA = `
+local function encodeRow(value)
+  local encoded = cjson.encode(value)
+  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
+  return encoded
 end
-for i = 1, count do
-  redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
-  redis.call('RPUSH', orderKey, incoming[i].id)
+local id = ARGV[1]
+local addTargets = cjson.decode(ARGV[2])
+local removeTargets = cjson.decode(ARGV[3])
+local intentByTarget = cjson.decode(ARGV[4])
+if type(addTargets) ~= 'table' or type(removeTargets) ~= 'table' or type(intentByTarget) ~= 'table' then
+  return redis.error_reply('QUEUE_TARGET_RECONCILE_INVALID')
 end
-for messageId, update in pairs(messageIndexUpdates) do
-  redis.call('HSET', messageIndexKey, messageId, cjson.encode(update.ids))
+local raw = redis.call('HGET', KEYS[1], id)
+if not raw then return {-1, ''} end
+local row = cjson.decode(raw)
+if row.status ~= 'queued' then return {0, raw} end
+if type(row.targets) ~= 'table' then return redis.error_reply('QUEUE_TARGET_RECONCILE_INVALID_ROW') end
+
+local removeSet = {}
+for i = 1, #removeTargets do
+  local targetId = removeTargets[i]
+  if type(targetId) ~= 'string' or targetId == '' or removeSet[targetId] then
+    return redis.error_reply('QUEUE_TARGET_RECONCILE_INVALID')
+  end
+  removeSet[targetId] = true
 end
-return 1
+local addSet = {}
+for i = 1, #addTargets do
+  local targetId = addTargets[i]
+  if type(targetId) ~= 'string' or targetId == '' or addSet[targetId] or removeSet[targetId] then
+    return redis.error_reply('QUEUE_TARGET_RECONCILE_INVALID')
+  end
+  addSet[targetId] = true
+end
+
+local nextTargets = {}
+local present = {}
+for i = 1, #row.targets do
+  local targetId = row.targets[i]
+  if type(targetId) ~= 'string' or targetId == '' or present[targetId] then
+    return redis.error_reply('QUEUE_TARGET_RECONCILE_INVALID_ROW')
+  end
+  if not removeSet[targetId] then
+    nextTargets[#nextTargets + 1] = targetId
+    present[targetId] = true
+  end
+end
+for i = 1, #addTargets do
+  local targetId = addTargets[i]
+  if not present[targetId] then
+    nextTargets[#nextTargets + 1] = targetId
+    present[targetId] = true
+  end
+end
+
+row.delivery = row.delivery or {}
+local existingIntent = row.delivery.authorIntentByTarget or {}
+local nextIntent = {}
+for i = 1, #nextTargets do
+  local targetId = nextTargets[i]
+  if intentByTarget[targetId] then nextIntent[targetId] = intentByTarget[targetId]
+  elseif existingIntent[targetId] then nextIntent[targetId] = existingIntent[targetId] end
+end
+row.targets = nextTargets
+row.delivery.authorIntentByTarget = nextIntent
+local next = encodeRow(row)
+if next == raw then return {2, raw} end
+if #nextTargets == 0 then
+  redis.call('HDEL', KEYS[1], id)
+  redis.call('LREM', KEYS[2], 1, id)
+  local messageId = row.payload and row.payload.messageId
+  if messageId and messageId ~= '' then redis.call('HDEL', KEYS[3], messageId) end
+  return {1, ''}
+end
+redis.call('HSET', KEYS[1], id, next)
+return {1, next}
 `;
 
 export const CLAIM_QUEUE_ROW_LUA = `
+local function encodeRow(value)
+  local encoded = cjson.encode(value)
+  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
+  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
+  return encoded
+end
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
@@ -194,17 +308,32 @@ row.claimId = ARGV[2]
 row.claimedAt = tonumber(ARGV[3])
 local bindTargetCatId = ARGV[4]
 if bindTargetCatId and bindTargetCatId ~= '' then
-  if row.target.kind == 'cat' and row.target.catId ~= bindTargetCatId then return {0, raw} end
-  row.target = { kind = 'cat', catId = bindTargetCatId }
+  if type(row.targets) ~= 'table' then return {0, raw} end
+  local found = false
+  for i = 1, #row.targets do if row.targets[i] == bindTargetCatId then found = true end end
+  if #row.targets > 0 and not found then return {0, raw} end
+  if #row.targets == 0 then
+    row.targets = { bindTargetCatId }
+    row.claimedFromTargetless = true
+  end
+  row.claimedTargetIds = { bindTargetCatId }
+else
+  row.claimedTargetIds = row.targets
 end
 local steerRequestedAt = tonumber(ARGV[5])
 if steerRequestedAt then row.delivery.steerRequestedAt = steerRequestedAt end
-local next = cjson.encode(row)
+local next = encodeRow(row)
 redis.call('HSET', KEYS[1], ARGV[1], next)
 return {1, next}
 `;
 
 export const CLAIM_QUEUE_PREFIX_LUA = `
+local function encodeRow(value)
+  local encoded = cjson.encode(value)
+  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
+  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
+  return encoded
+end
 local count = tonumber(ARGV[1])
 if not count or count < 1 then return redis.error_reply('QUEUE_CLAIM_PREFIX_EMPTY') end
 local claimId = ARGV[2]
@@ -218,8 +347,11 @@ for i = 1, count do
   if not raw then return {-1, ''} end
   local row = cjson.decode(raw)
   if row.status ~= 'queued' then return {0, raw} end
-  if bindTargetCatId and bindTargetCatId ~= '' and row.target.kind == 'cat' and row.target.catId ~= bindTargetCatId then
-    return {0, raw}
+  if bindTargetCatId and bindTargetCatId ~= '' then
+    if type(row.targets) ~= 'table' then return {0, raw} end
+    local found = false
+    for j = 1, #row.targets do if row.targets[j] == bindTargetCatId then found = true end end
+    if #row.targets > 0 and not found then return {0, raw} end
   end
   rows[i] = { id = id, row = row }
 end
@@ -229,10 +361,16 @@ for i = 1, count do
   rows[i].row.claimId = claimId
   rows[i].row.claimedAt = claimedAt
   if bindTargetCatId and bindTargetCatId ~= '' then
-    rows[i].row.target = { kind = 'cat', catId = bindTargetCatId }
+    if #rows[i].row.targets == 0 then
+      rows[i].row.targets = { bindTargetCatId }
+      rows[i].row.claimedFromTargetless = true
+    end
+    rows[i].row.claimedTargetIds = { bindTargetCatId }
+  else
+    rows[i].row.claimedTargetIds = rows[i].row.targets
   end
   if steerRequestedAt then rows[i].row.delivery.steerRequestedAt = steerRequestedAt end
-  local next = cjson.encode(rows[i].row)
+  local next = encodeRow(rows[i].row)
   redis.call('HSET', KEYS[1], rows[i].id, next)
   encoded[i] = next
 end
@@ -240,6 +378,12 @@ return {1, cjson.encode(encoded)}
 `;
 
 export const COMMIT_QUEUE_ROW_LUA = `
+local function encodeRow(value)
+  local encoded = cjson.encode(value)
+  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
+  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
+  return encoded
+end
 local id = ARGV[1]
 local claimId = ARGV[2]
 local mode = ARGV[3]
@@ -249,23 +393,9 @@ local raw = redis.call('HGET', KEYS[1], id)
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
 
-if mode == 'processing_evidence' then
-  if row.status ~= 'processing' or not replacementRaw or replacementRaw == '' then return {0, raw} end
-  local nextRow = cjson.decode(replacementRaw)
-  if nextRow.id ~= id or nextRow.threadId ~= row.threadId then
-    return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
-  end
-  nextRow.status = 'processing'
-  nextRow.processingStartedAt = row.processingStartedAt
-  nextRow.claimId = nil
-  nextRow.claimedAt = nil
-  nextRow.terminalAt = nil
-  local next = cjson.encode(nextRow)
-  redis.call('HSET', KEYS[1], id, next)
-  return {1, next}
-end
+if mode == 'processing_evidence' or mode == 'terminal' then return {0, raw} end
 
-if mode == 'queued' or mode == 'processing' then
+if mode == 'queued' then
   if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
   local nextRow = row
   if replacementRaw and replacementRaw ~= '' then
@@ -274,25 +404,84 @@ if mode == 'queued' or mode == 'processing' then
       return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
     end
   end
-  nextRow.status = mode
-  if mode == 'processing' then
-    nextRow.processingStartedAt = at
-  else
-    nextRow.processingStartedAt = nil
-  end
+  nextRow.status = 'queued'
+  nextRow.processingStartedAt = nil
   nextRow.claimId = nil
   nextRow.claimedAt = nil
-  local next = cjson.encode(nextRow)
+  nextRow.claimedTargetIds = nil
+  nextRow.claimedFromTargetless = nil
+  local next = encodeRow(nextRow)
   redis.call('HSET', KEYS[1], id, next)
   return {1, next}
 end
-if mode == 'terminal' then
-  if row.status ~= 'processing' then return {0, raw} end
-elseif mode == 'withdrawn' then
-  if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
-else
+
+local function removeMessageIndex(rowToRemove)
+  local messageId = rowToRemove.payload and rowToRemove.payload.messageId
+  if not messageId or messageId == '' then return end
+  redis.call('HDEL', KEYS[3], messageId)
+end
+
+if mode == 'processing' then
+  if row.status ~= 'claimed' or row.claimId ~= claimId or type(row.claimedTargetIds) ~= 'table' or #row.claimedTargetIds == 0 then
+    return {0, raw}
+  end
+  local attempted = cjson.decode(raw)
+  if replacementRaw and replacementRaw ~= '' then
+    attempted = cjson.decode(replacementRaw)
+    if attempted.id ~= id or attempted.threadId ~= row.threadId then
+      return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
+    end
+  end
+  attempted.targets = row.claimedTargetIds
+  attempted.status = 'processing'
+  attempted.processingStartedAt = at
+  attempted.claimId = nil
+  attempted.claimedAt = nil
+  attempted.claimedTargetIds = nil
+  attempted.claimedFromTargetless = nil
+  attempted.terminalAt = nil
+
+  local claimed = {}
+  for i = 1, #row.claimedTargetIds do claimed[row.claimedTargetIds[i]] = true end
+  local remainingTargets = {}
+  for i = 1, #row.targets do
+    if not claimed[row.targets[i]] then remainingTargets[#remainingTargets + 1] = row.targets[i] end
+  end
+  if #remainingTargets == 0 then
+    redis.call('HDEL', KEYS[1], id)
+    redis.call('LREM', KEYS[2], 1, id)
+    removeMessageIndex(row)
+  else
+    row.targets = remainingTargets
+    row.status = 'queued'
+    row.processingStartedAt = nil
+    row.claimId = nil
+    row.claimedAt = nil
+    row.claimedTargetIds = nil
+    row.claimedFromTargetless = nil
+    row.terminalAt = nil
+    if row.delivery then
+      row.delivery.steerRequestedAt = nil
+      if row.delivery.authorIntentByTarget then
+        local remainingIntent = {}
+        for i = 1, #remainingTargets do
+          local targetId = remainingTargets[i]
+          if row.delivery.authorIntentByTarget[targetId] then
+            remainingIntent[targetId] = row.delivery.authorIntentByTarget[targetId]
+          end
+        end
+        row.delivery.authorIntentByTarget = remainingIntent
+      end
+    end
+    redis.call('HSET', KEYS[1], id, encodeRow(row))
+  end
+  return {1, encodeRow(attempted)}
+end
+
+if mode ~= 'withdrawn' then
   return redis.error_reply('QUEUE_COMMIT_INVALID_MODE')
 end
+if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
 if replacementRaw and replacementRaw ~= '' then
   local replacement = cjson.decode(replacementRaw)
   if replacement.id ~= id or replacement.threadId ~= row.threadId then
@@ -302,20 +491,24 @@ if replacementRaw and replacementRaw ~= '' then
 end
 row.status = 'terminal'
 row.terminalAt = at
-if mode == 'withdrawn' then
-  row.delivery.terminalOutcome = 'withdrawn'
-  row.delivery.failedAt = at
-  row.delivery.failureReason = 'source_withdrawn'
-end
 row.claimId = nil
 row.claimedAt = nil
-local terminal = cjson.encode(row)
-redis.call('HSET', KEYS[1], id, terminal)
+row.claimedTargetIds = nil
+row.claimedFromTargetless = nil
+local terminal = encodeRow(row)
+redis.call('HDEL', KEYS[1], id)
 redis.call('LREM', KEYS[2], 1, id)
+removeMessageIndex(row)
 return {1, terminal}
 `;
 
 export const RESTORE_QUEUE_ROW_LUA = `
+local function encodeRow(value)
+  local encoded = cjson.encode(value)
+  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
+  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
+  return encoded
+end
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
@@ -324,10 +517,12 @@ row.status = 'queued'
 row.claimId = nil
 row.claimedAt = nil
 row.delivery.steerRequestedAt = nil
-if ARGV[3] == '1' then
-  row.target = {kind = 'unassigned'}
+if ARGV[3] == '1' or row.claimedFromTargetless then
+  row.targets = cjson.decode('[]')
 end
-local next = cjson.encode(row)
+row.claimedTargetIds = nil
+row.claimedFromTargetless = nil
+local next = encodeRow(row)
 redis.call('HSET', KEYS[1], ARGV[1], next)
 return {1, next}
 `;

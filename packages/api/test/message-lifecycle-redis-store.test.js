@@ -91,15 +91,15 @@ describe(
         entryId: 'entry-append',
         inputMessageIds: [input.id],
         runs: [
-          { targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id },
-          { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id },
+          { targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id, dispatchedAt: 101 },
+          { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id, dispatchedAt: 102 },
         ],
       };
 
       assert.equal((await store.commitLifecycleAppendAdmission(admission)).kind, 'applied');
       assert.deepEqual((await store.getById(input.id)).lifecycle.dispatchRefs, [
-        { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
-        { targetId: 'codex', phase: 'dispatched', statusMessageId: codex.id },
+        { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id, dispatchedAt: 101 },
+        { targetId: 'codex', phase: 'dispatched', statusMessageId: codex.id, dispatchedAt: 102 },
       ]);
       assert.deepEqual((await store.getById(opus.id)).lifecycle.inputEntryIds, ['entry-old', 'entry-append']);
       assert.deepEqual((await store.getById(codex.id)).lifecycle.inputMessageIds, ['message-old', input.id]);

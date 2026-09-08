@@ -45,7 +45,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
           ...processingLifecycle,
           status: 'completed',
           completedAt: 100,
-          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+          dispatchRefs: [],
         },
       }),
     );
@@ -78,6 +78,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
         targetId: 'codex',
         phase: 'dispatched',
         statusMessageId: child.id,
+        dispatchedAt: 110,
       }).kind,
       'applied',
     );
@@ -98,7 +99,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
     );
 
     assert.deepEqual(store.getById(source.id).lifecycle.dispatchRefs, [
-      { targetId: 'codex', phase: 'settled', statusMessageId: child.id },
+      { targetId: 'codex', phase: 'settled', statusMessageId: child.id, dispatchedAt: 110 },
     ]);
     assert.equal(store.getById(child.id).replyTo, source.id, 'terminal commit must preserve exact source messageRef');
   });
@@ -236,7 +237,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
     assert.equal(applied.outcome, 'enqueued');
     assert.equal(applied.message.id, processing.id, 'completed final must reuse its processing bubble');
     assert.equal(applied.message.lifecycle.status, 'completed');
-    assert.deepEqual(applied.message.lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
+    assert.equal(applied.message.lifecycle.dispatchRefs, undefined);
     assert.equal(applied.entries.length, 1);
     assert.equal(applied.entries[0].payload.messageId, processing.id);
     assert.equal(
@@ -362,16 +363,16 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       entryId: 'entry-append',
       inputMessageIds: [input.id],
       runs: [
-        { targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id },
-        { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id },
+        { targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id, dispatchedAt: 101 },
+        { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id, dispatchedAt: 102 },
       ],
     };
 
     const applied = store.commitLifecycleAppendAdmission(admission);
     assert.equal(applied.kind, 'applied');
     assert.deepEqual(store.getById(input.id).lifecycle.dispatchRefs, [
-      { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
-      { targetId: 'codex', phase: 'dispatched', statusMessageId: codex.id },
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id, dispatchedAt: 101 },
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: codex.id, dispatchedAt: 102 },
     ]);
     assert.deepEqual(store.getById(opus.id).lifecycle.inputEntryIds, ['entry-old', 'entry-append']);
     assert.deepEqual(store.getById(codex.id).lifecycle.inputMessageIds, ['message-old', input.id]);
@@ -379,7 +380,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
 
     const wrongRun = store.commitLifecycleAppendAdmission({
       ...admission,
-      runs: [{ targetId: 'opus', invocationId: 'turn-stale', responseMessageId: opus.id }],
+      runs: [{ targetId: 'opus', invocationId: 'turn-stale', responseMessageId: opus.id, dispatchedAt: 103 }],
     });
     assert.deepEqual(wrongRun, { kind: 'conflict', reason: 'response_lifecycle_conflict' });
 
@@ -413,8 +414,8 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     };
     assert.equal(store.commitLifecycleAppendRejection(rejection).kind, 'applied');
     assert.deepEqual(store.getById(input.id).lifecycle.dispatchRefs, [
-      { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
-      { targetId: 'codex', phase: 'settled', statusMessageId: failure.id },
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id, dispatchedAt: 101 },
+      { targetId: 'codex', phase: 'settled', statusMessageId: failure.id, dispatchedAt: 102 },
     ]);
     assert.deepEqual(store.getById(codex.id).lifecycle.inputEntryIds, ['entry-old']);
     assert.deepEqual(store.getById(codex.id).lifecycle.inputMessageIds, ['message-old']);
@@ -462,7 +463,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     assert.equal(source.deliveryStatus, undefined);
     assert.equal(admission.entries.length, 1);
     assert.equal(admission.entries[0].payload.messageId, source.id);
-    assert.deepEqual(source.lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
+    assert.deepEqual(source.lifecycle.dispatchRefs, []);
     assert.equal(source.lifecycle.kind, 'input');
     assert.deepEqual(source.from, { kind: 'agent', catId: 'opus' });
     assert.deepEqual(observedAppend, source, 'append listeners must never observe speech without its wake admission');
@@ -491,12 +492,13 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       targetId: 'opus',
       phase: 'dispatched',
       statusMessageId: 'response-1',
+      dispatchedAt: 100,
     };
 
     const dispatched = store.advanceLifecycleInputDispatch(input.id, dispatchedPatch);
     assert.equal(dispatched.kind, 'applied');
     assert.deepEqual(dispatched.message.lifecycle.dispatchRefs, [
-      { targetId: 'opus', phase: 'dispatched', statusMessageId: 'response-1' },
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: 'response-1', dispatchedAt: 100 },
     ]);
     assert.equal(store.advanceLifecycleInputDispatch(input.id, dispatchedPatch).kind, 'replayed');
 
@@ -506,7 +508,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     });
     assert.equal(settled.kind, 'applied');
     assert.deepEqual(settled.message.lifecycle.dispatchRefs, [
-      { targetId: 'opus', phase: 'settled', statusMessageId: 'response-1' },
+      { targetId: 'opus', phase: 'settled', statusMessageId: 'response-1', dispatchedAt: 100 },
     ]);
     assert.equal(
       store.advanceLifecycleInputDispatch(input.id, { ...dispatchedPatch, phase: 'settled' }).kind,
@@ -514,7 +516,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     );
   });
 
-  test('advances an assigned target on a completed response without replacing that response lifecycle', async () => {
+  test('records actual target dispatch on a completed response without replacing that response lifecycle', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const response = store.append(
@@ -529,7 +531,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
           ...processingLifecycle,
           status: 'completed',
           completedAt: 100,
-          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+          dispatchRefs: [],
         },
       }),
     );
@@ -540,16 +542,17 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       targetId: 'codex',
       phase: 'dispatched',
       statusMessageId: 'response-2',
+      dispatchedAt: 105,
     });
     assert.equal(dispatched.kind, 'applied');
     assert.equal(dispatched.message.lifecycle.kind, 'response');
     assert.equal(dispatched.message.lifecycle.invocationId, 'invocation-1');
     assert.deepEqual(dispatched.message.lifecycle.dispatchRefs, [
-      { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-2' },
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-2', dispatchedAt: 105 },
     ]);
   });
 
-  test('advances an assigned target while the response source is still processing', async () => {
+  test('records actual target dispatch while the response source is still processing', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const response = store.append(
@@ -562,7 +565,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
         timestamp: 100,
         lifecycle: {
           ...processingLifecycle,
-          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+          dispatchRefs: [],
         },
       }),
     );
@@ -573,12 +576,13 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       targetId: 'codex',
       phase: 'dispatched',
       statusMessageId: 'response-2',
+      dispatchedAt: 105,
     });
     assert.equal(dispatched.kind, 'applied');
     assert.equal(dispatched.message.lifecycle.kind, 'response');
     assert.equal(dispatched.message.lifecycle.status, 'processing');
     assert.deepEqual(dispatched.message.lifecycle.dispatchRefs, [
-      { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-2' },
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-2', dispatchedAt: 105 },
     ]);
   });
 
@@ -600,6 +604,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       from: { kind: 'user', userId: 'owner-1' },
       targetId: 'opus',
       statusMessageId: 'response-1',
+      dispatchedAt: 100,
     };
 
     const skipped = store.advanceLifecycleInputDispatch(input.id, { ...base, phase: 'settled' });
@@ -629,7 +634,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
 });
 
 describe('MessageStore lifecycle pre-admission failure transaction', () => {
-  test('keeps public agent speech visible and settles its assigned wake to the failure result', async () => {
+  test('keeps public agent speech visible and records its failed delivery result', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const source = store.append(
@@ -644,7 +649,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
         lifecycle: {
           kind: 'input',
           orderKey: '90:entry-wake',
-          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+          dispatchRefs: [],
         },
       }),
     );
@@ -665,7 +670,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     assert.equal(applied.inputMessage.queueCustody, undefined, 'History must not mirror Queue state');
     assert.equal(applied.inputMessage.lifecycle.kind, 'input');
     assert.deepEqual(applied.inputMessage.lifecycle.dispatchRefs, [
-      { targetId: 'codex', phase: 'settled', statusMessageId: applied.failureMessage.id },
+      { targetId: 'codex', phase: 'settled', statusMessageId: applied.failureMessage.id, dispatchedAt: 100 },
     ]);
     assert.equal(applied.failureMessage.lifecycle.inputMessageId, source.id);
     assert.deepEqual(
@@ -679,7 +684,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     assert.deepEqual(replayed.inputMessage.lifecycle.dispatchRefs, applied.inputMessage.lifecycle.dispatchRefs);
   });
 
-  test('settles one rejected scalar target while preserving the sibling ledger target projection', async () => {
+  test('records one rejected target while leaving its pending sibling only in Queue', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const store = new MessageStore();
@@ -707,7 +712,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
       }),
     );
     const source = admission.message;
-    const kimiEntry = admission.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'kimi');
+    const kimiEntry = admission.entries.find((entry) => entry.targets.includes('kimi'));
     assert.ok(kimiEntry);
 
     const applied = store.commitLifecyclePreAdmissionFailure({
@@ -722,9 +727,9 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     assert.equal(applied.kind, 'applied');
     assert.equal(applied.inputMessage.queueCustody, undefined, 'History must not mirror Queue state');
     assert.deepEqual(applied.inputMessage.lifecycle.dispatchRefs, [
-      { targetId: 'codex', phase: 'assigned' },
-      { targetId: 'kimi', phase: 'settled', statusMessageId: applied.failureMessage.id },
+      { targetId: 'kimi', phase: 'settled', statusMessageId: applied.failureMessage.id, dispatchedAt: 100 },
     ]);
+    assert.deepEqual(admission.entries[0].targets, ['codex', 'kimi']);
     assert.deepEqual(applied.failureMessage.lifecycle.requestedTargets, ['kimi']);
   });
 

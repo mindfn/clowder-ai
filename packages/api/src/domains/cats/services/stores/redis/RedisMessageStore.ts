@@ -75,14 +75,13 @@ import {
   advanceLifecycleInputDispatchMetadata,
   applyStreamMetadataAugment,
   assertValidStoredMessageTimestamp,
-  COORDINATION_TERMINAL_SCAN_PAGE_SIZE,
   assignLifecycleDispatchTargetsMetadata,
+  COORDINATION_TERMINAL_SCAN_PAGE_SIZE,
   canonicalizeAppendMessageInput,
   DEFAULT_THREAD_ID,
   deriveGrowingSourceMessageRevision,
   generateSortableId,
   isDelivered,
-  isQueueLedgerTimelinePublishedAtAppend,
   isValidCustodyOfferTransition,
   lifecycleInputIdentityForStoredMessage,
   matchesLifecyclePreAdmissionFailure,
@@ -104,7 +103,7 @@ import {
   resolveThreadMessageVisibility,
 } from '../visibility.js';
 import { appendMessage } from './redis-message-append.js';
-import { CANCEL_LUA, DELIVER_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
+import { CANCEL_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
 import {
   appendMessageAndObservePriorFrontier,
   appendMessageIfThreadFrontier,
@@ -165,7 +164,7 @@ local incomingUserSources = {}
 for i = 1, count do
   local raw = ARGV[3 + i]
   local row = cjson.decode(raw)
-  if row.status ~= 'queued' or row.payload.sourceId ~= messageId or row.payload.messageId ~= messageId then
+  if row.status ~= 'queued' or row.payload.sourceRecordId ~= messageId or row.payload.messageId ~= messageId then
     return redis.error_reply('QUEUE_ADMISSION_INVALID_ROW')
   end
   if incomingIds[row.id] then return redis.error_reply('QUEUE_ADMISSION_DUPLICATE_ID') end
@@ -173,7 +172,7 @@ for i = 1, count do
   incoming[i] = { id = row.id, raw = raw, row = row }
   entryIds[i] = row.id
   if redis.call('HEXISTS', rowsKey, row.id) == 1 then existingCount = existingCount + 1 end
-  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
 end
 if existingCount == count then return 2 end
 if existingCount > 0 then return -1 end
@@ -192,7 +191,7 @@ if maxUserSources and maxUserSources >= 0 then
     if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
     local row = cjson.decode(currentRaw)
     if row.status == 'queued' and row.from and row.from.kind == 'user' then
-      queuedUserSources[row.payload.sourceId] = true
+      queuedUserSources[row.payload.sourceRecordId] = true
     end
   end
   for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
@@ -392,7 +391,7 @@ local incomingUserSources = {}
 for i = 1, count do
   local raw = ARGV[17 + i]
   local row = cjson.decode(raw)
-  if row.status ~= 'queued' or not row.payload or row.payload.sourceId ~= messageId or
+  if row.status ~= 'queued' or not row.payload or row.payload.sourceRecordId ~= messageId or
      row.payload.messageId ~= messageId then
     return redis.error_reply('QUEUE_ADMISSION_INVALID_ROW')
   end
@@ -400,7 +399,7 @@ for i = 1, count do
   incomingIds[row.id] = true
   incoming[i] = { id = row.id, raw = raw, row = row }
   entryIds[i] = row.id
-  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
 end
 
 for i = 1, count do
@@ -425,7 +424,7 @@ if expectedMode == 'absent' and maxUserSources and maxUserSources >= 0 then
     if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
     local row = cjson.decode(currentRaw)
     if row.status == 'queued' and row.from and row.from.kind == 'user' then
-      queuedUserSources[row.payload.sourceId] = true
+      queuedUserSources[row.payload.sourceRecordId] = true
     end
   end
   for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
@@ -754,8 +753,6 @@ if deliveryStatus ~= 'queued' then return {-3, 0} end
 local currentDraftRevision = tonumber(redis.call('HGET', KEYS[2], 'revision') or '0')
 if currentDraftRevision ~= tonumber(ARGV[3]) then return {0, currentDraftRevision} end
 
-local okExposures, exposures = pcall(cjson.decode, ARGV[6])
-if not okExposures or type(exposures) ~= 'table' then return redis.error_reply('INVALID_QUEUE_EXPOSURES') end
 local sourceText = redis.call('HGET', KEYS[1], 'content') or ''
 local existingText = redis.call('HGET', KEYS[2], 'text') or ''
 local nextText = sourceText
@@ -780,10 +777,7 @@ local nextReplyTo = ''
 if ARGV[4] == 'append' then nextReplyTo = redis.call('HGET', KEYS[2], 'replyTo') or '' end
 if nextReplyTo == '' then nextReplyTo = redis.call('HGET', KEYS[1], 'replyTo') or '' end
 
-local exposed = #exposures > 0
-
-local recall = { version = 1, exposure = exposed and 'seen' or 'none', recalledAt = tonumber(ARGV[5]) }
-if #exposures > 0 then recall.exposures = exposures end
+local recall = { version = 1, exposure = 'none', recalledAt = tonumber(ARGV[5]) }
 local nextDraftRevision = currentDraftRevision + 1
 
 -- All validation/derivation passed. Mutations below form the single terminal CAS.
@@ -805,28 +799,13 @@ redis.call('HSET', KEYS[1],
   '_tombstone', '1',
   'recall', cjson.encode(recall))
 local messageId = redis.call('HGET', KEYS[1], 'id')
-for keyIndex = 5, #KEYS do
+for keyIndex = 4, #KEYS do
   redis.call('ZREM', KEYS[keyIndex], messageId)
 end
-for _, exposure in ipairs(exposures) do
-  local field = tostring(exposure.targetCatId) .. string.char(0) .. tostring(exposure.invocationId)
-  local existingRaw = redis.call('HGET', KEYS[4], field)
-  local ids = cjson.decode('[]')
-  if existingRaw and existingRaw ~= '' then
-    local okExisting, existing = pcall(cjson.decode, existingRaw)
-    if okExisting and type(existing) == 'table' then ids = existing end
-  end
-  local found = false
-  for _, existingId in ipairs(ids) do if existingId == messageId then found = true end end
-  if not found then table.insert(ids, messageId) end
-  redis.call('HSET', KEYS[4], field, cjson.encode(ids))
-end
 redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo')
-if not exposed then
-  redis.call('ZREM', KEYS[3], redis.call('HGET', KEYS[1], 'id'))
-end
+redis.call('ZREM', KEYS[3], redis.call('HGET', KEYS[1], 'id'))
 
-return {1, exposed and 1 or 0, sourceText, existingText, nextDraftRevision}
+return {1, 0, sourceText, existingText, nextDraftRevision}
 `;
 
 const UPDATE_EXTRA_IF_NOT_RECALLED_LUA = `
@@ -1124,7 +1103,7 @@ export class RedisMessageStore {
       assertQueueLedgerEntry(entry);
       if (
         entry.threadId !== (input.threadId ?? DEFAULT_THREAD_ID) ||
-        entry.payload.sourceId !== messageId ||
+        entry.payload.sourceRecordId !== messageId ||
         entry.payload.messageId !== messageId
       ) {
         throw new Error('Queue admission row must be bound to its exact message identity');
@@ -1177,7 +1156,7 @@ export class RedisMessageStore {
       assertQueueLedgerEntry(entry);
       if (
         entry.threadId !== threadId ||
-        entry.payload.sourceId !== messageId ||
+        entry.payload.sourceRecordId !== messageId ||
         entry.payload.messageId !== messageId
       ) {
         throw new Error('Queue admission row must be bound to its exact existing message identity');
@@ -1239,7 +1218,7 @@ export class RedisMessageStore {
       assertQueueLedgerEntry(entry);
       if (
         entry.threadId !== threadId ||
-        entry.payload.sourceId !== messageId ||
+        entry.payload.sourceRecordId !== messageId ||
         entry.payload.messageId !== messageId
       ) {
         throw new Error('lifecycle Queue admission row must bind its exact response message');
@@ -1350,10 +1329,8 @@ export class RedisMessageStore {
     const id = reservedId ?? generateSortableId(msg.timestamp);
     const { idempotencyKey, ...payload } = msg;
     void idempotencyKey;
-    const timelinePublishedAtAppend = queue ? isQueueLedgerTimelinePublishedAtAppend(msg, queue.entries) : false;
     const stored: StoredMessage = {
       ...payload,
-      ...(timelinePublishedAtAppend ? { timelinePublishedAtAppend: true as const } : {}),
       id,
       threadId,
     };
@@ -1397,7 +1374,6 @@ export class RedisMessageStore {
     if (msg.source) hashFields.push('source', JSON.stringify(msg.source));
     if (msg.mentionsUser) hashFields.push('mentionsUser', '1');
     if (msg.deliveryStatus) hashFields.push('deliveryStatus', msg.deliveryStatus);
-    if (timelinePublishedAtAppend) hashFields.push('timelinePublishedAtAppend', '1');
     if (msg.replyTo) hashFields.push('replyTo', msg.replyTo);
     // Mention catIds for ZADD into per-cat mention sets
     const mentionCatIds = msg.mentions as readonly string[];
@@ -1624,18 +1600,16 @@ export class RedisMessageStore {
     const mentionKeys = [...new Set(beforeRecall?.mentions ?? [])].map((catId) => MessageKeys.mentions(catId));
     const result = (await this.redis.eval(
       RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA,
-      4 + mentionKeys.length,
+      3 + mentionKeys.length,
       MessageKeys.detail(id),
       MessageKeys.ownerComposerDraft(input.ownerUserId, input.threadId),
       MessageKeys.threadVisibility(input.threadId),
-      MessageKeys.queueExposureIndex(input.threadId),
       ...mentionKeys,
       input.ownerUserId,
       input.threadId,
       String(input.expectedDraftRevision),
       input.merge,
       String(input.recalledAt),
-      JSON.stringify(input.exposures ?? []),
     )) as [number, number, string?, string?, number?];
     const outcome = Number(result[0]);
     if (outcome === -1) return { kind: 'not_found' };
@@ -1657,7 +1631,7 @@ export class RedisMessageStore {
     const insertedStart = input.merge === 'append' && previousText ? previousText.length + 2 : 0;
     return {
       kind: 'recalled',
-      verdict: Number(result[1]) === 1 ? 'exposed' : 'zero_exposure',
+      verdict: 'zero_exposure',
       message,
       draft,
       insertedRange: { start: insertedStart, end: insertedStart + sourceText.length },
@@ -1718,7 +1692,6 @@ export class RedisMessageStore {
       ...(data.revealedAt ? { revealedAt: parseInt(data.revealedAt, 10) } : {}),
       ...(data.deliveredAt ? { deliveredAt: parseRedisNumber(data.deliveredAt) } : {}),
       ...(data.timelineOrderAt !== undefined ? { timelineOrderAt: parseRedisNumber(data.timelineOrderAt) } : {}),
-      ...(data.timelinePublishedAtAppend === '1' ? { timelinePublishedAtAppend: true as const } : {}),
       ...(data.deliveryStatus ? { deliveryStatus: data.deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
       ...(parsedRecall ? { recall: parsedRecall } : {}),
       ...(parsedSource ? { source: parsedSource } : {}),
@@ -2807,7 +2780,7 @@ export class RedisMessageStore {
     // but no messages (e.g. after all messages were individually deleted).
     pipeline.del(MessageKeys.threadVisibility(threadId));
     pipeline.del(MessageKeys.threadVisibilityMeta(threadId));
-    pipeline.del(MessageKeys.queueExposureIndex(threadId));
+    pipeline.del(MessageKeys.legacyQueueExposureIndex(threadId));
 
     // Note: We don't clean up global timeline, user timeline, or mention sets
     // as those will auto-expire via TTL. Cleaning them would be O(n) expensive.
@@ -3118,7 +3091,12 @@ export class RedisMessageStore {
     const settledSourceLifecycle =
       input.requestedTargets.length === 0
         ? assigned.lifecycle
-        : settleAssignedLifecycleDispatchFailureMetadata(assigned.lifecycle, input.requestedTargets, failureId);
+        : settleAssignedLifecycleDispatchFailureMetadata(
+            assigned.lifecycle,
+            input.requestedTargets,
+            failureId,
+            input.failedAt,
+          );
     if (!settledSourceLifecycle) {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
     }

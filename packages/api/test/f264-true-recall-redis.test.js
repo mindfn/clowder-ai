@@ -107,7 +107,7 @@ describe('F264 Gap F true recall contract (Redis store)', { skip: redisIsolation
     );
   });
 
-  it('preserves exact exposure lineage while hiding the body from default reads', async () => {
+  it('removes a stale legacy visibility member when recalling still-pending work', async () => {
     const message = await appendQueued();
     const visibilityKey = 'msg:visibility:thread-f264-gap-f-redis';
     await redis
@@ -123,37 +123,20 @@ describe('F264 Gap F true recall contract (Redis store)', { skip: redisIsolation
       expectedDraftRevision: 0,
       merge: 'replace',
       recalledAt: 2_000,
-      exposures: [{ targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 }],
     });
 
     assert.equal(result.kind, 'recalled');
-    assert.equal(result.verdict, 'exposed');
-    assert.deepEqual(result.message.recall.exposures, [
-      { targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 },
-    ]);
+    assert.equal(result.verdict, 'zero_exposure');
+    assert.equal(result.message.recall.exposures, undefined);
     const persisted = await store.getById(message.id);
-    assert.deepEqual(persisted.recall.exposures, [
-      { targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 },
-    ]);
+    assert.equal(persisted.recall.exposures, undefined);
     assert.equal((await store.getByThread('thread-f264-gap-f-redis')).length, 0);
     assert.equal(
-      (
-        await store.getByThread('thread-f264-gap-f-redis', 20, 'owner-redis', {
-          includeRecalledUserMessages: true,
-        })
-      ).length,
-      1,
+      (await store.getByThread('thread-f264-gap-f-redis', 20, 'owner-redis', { includeRecalledUserMessages: true }))
+        .length,
+      0,
     );
-    assert.equal(await redis.zscore(visibilityKey, message.id), publishedScore, 'recall retains the published cursor');
-    const [incrementalTombstone] = await store.getByThreadAfter(
-      'thread-f264-gap-f-redis',
-      undefined,
-      20,
-      'owner-redis',
-      { includeRecalledUserMessages: true },
-    );
-    assert.equal(incrementalTombstone.id, message.id);
-    assert.equal(incrementalTombstone.content, '');
+    assert.equal(await redis.zscore(visibilityKey, message.id), null);
   });
 
   it('does not mutate either hash when the draft revision is stale', async () => {
@@ -221,7 +204,6 @@ describe('F264 Gap F true recall contract (Redis store)', { skip: redisIsolation
       expectedDraftRevision: 0,
       merge: 'replace',
       recalledAt: 2_000,
-      exposures: [{ targetCatId: 'codex', invocationId: 'child-handled', seenAt: 1_500 }],
     });
     assert.equal(result.kind, 'not_recallable');
     assert.equal((await store.getById(message.id)).content, '修正后的正文');

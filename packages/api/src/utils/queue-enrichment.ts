@@ -12,16 +12,14 @@ import type {
   CatRoutingError,
   MessageContent,
   MessageFrom,
-  QueueMessageReceipt,
-  QueueMessageReceiptProjection,
+  QueueAuthorIntentReceipt,
+  QueueReminderAttempt,
 } from '@cat-cafe/shared';
 import {
   type QueueEntry,
   queueEntryOwnerId,
   queueEntryTargetCats,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
-import type { QueueLedgerEntry } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
-import { projectQueueLedgerReceipt } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 
@@ -43,11 +41,11 @@ export interface EnrichedQueueEntry {
   targetCats: string[];
   routingWarnings?: readonly CatRoutingError[];
   intent: string;
-  status: 'queued' | 'processing';
-  targetStates: Record<
-    string,
-    'queued' | 'notified' | 'awakened' | 'seen' | 'failed' | 'steering' | 'withdrawn' | 'handled'
-  >;
+  status: 'queued';
+  /** Pending-target delivery preference; actual delivery lives in History dispatchRefs. */
+  authorIntentByTarget?: Record<string, QueueAuthorIntentReceipt>;
+  /** Reminder requests remain scoped to targets that are still pending. */
+  reminderAttempts?: readonly QueueReminderAttempt[];
   createdAt: number;
   autoExecute: boolean;
   priority: QueueEntry['priority'];
@@ -55,17 +53,6 @@ export interface EnrichedQueueEntry {
   continuationKey?: string;
   position?: number;
   messagePreview?: QueueEntryMessagePreview;
-  queueReceipt?: QueueMessageReceipt;
-}
-
-export interface QueueUpdatePublicationOptions {
-  receiptMessageIds?: readonly string[];
-  receiptSource?: {
-    getDurableEntriesForMessages(
-      threadId: string,
-      messageIds: readonly string[],
-    ): Promise<Map<string, QueueLedgerEntry[]>>;
-  };
 }
 
 type QueueUpdateEmitter = Pick<SocketManager, 'emitToUser'>;
@@ -98,24 +85,23 @@ function publicationTailsFor(socketManager: QueueUpdateEmitter): Map<string, Pro
   return tails;
 }
 
-function projectTargetState(entry: QueueEntry): EnrichedQueueEntry['targetStates'][string] {
-  if (entry.status === 'terminal') {
-    if (entry.delivery.terminalOutcome === 'handled') return 'handled';
-    if (entry.delivery.terminalOutcome === 'withdrawn') return 'withdrawn';
-    return 'failed';
-  }
-  if (entry.delivery.steerRequestedAt !== undefined) return 'steering';
-  if (entry.delivery.failedAt !== undefined) return 'failed';
-  if (entry.delivery.seenAt !== undefined) return 'seen';
-  if (entry.delivery.awakenedInvocationId) return 'awakened';
-  if (entry.delivery.notifiedAt !== undefined) return 'notified';
-  return 'queued';
+function projectAuthorIntents(entry: QueueEntry): Record<string, QueueAuthorIntentReceipt> | undefined {
+  const projected = Object.fromEntries(
+    entry.targets.flatMap((targetId) => {
+      const intent = entry.delivery.authorIntentByTarget?.[targetId];
+      if (!intent) return [];
+      return [[targetId, { ...intent, effective: intent.fallbackAt ? 'next_work' : intent.requested }]];
+    }),
+  );
+  return Object.keys(projected).length > 0 ? projected : undefined;
 }
 
 export function projectPublicQueueEntry(entry: QueueEntry): EnrichedQueueEntry {
   const targetCats = queueEntryTargetCats(entry);
-  const targetStates = Object.fromEntries(targetCats.map((catId) => [catId, projectTargetState(entry)]));
-  const queueReceipt = projectQueueLedgerReceipt([entry]);
+  const authorIntentByTarget = projectAuthorIntents(entry);
+  const reminderAttempts = entry.delivery.reminderAttempts?.filter((attempt) =>
+    targetCats.includes(attempt.targetCatId),
+  );
   return {
     id: entry.id,
     threadId: entry.threadId,
@@ -127,19 +113,19 @@ export function projectPublicQueueEntry(entry: QueueEntry): EnrichedQueueEntry {
     targetCats,
     ...(entry.payload.routingWarnings ? { routingWarnings: structuredClone(entry.payload.routingWarnings) } : {}),
     intent: entry.execution.intent,
-    status: entry.status === 'queued' ? 'queued' : 'processing',
-    targetStates,
+    status: 'queued',
+    ...(authorIntentByTarget ? { authorIntentByTarget } : {}),
+    ...(reminderAttempts?.length ? { reminderAttempts: structuredClone(reminderAttempts) } : {}),
     createdAt: entry.enqueuedAt,
     autoExecute: entry.execution.autoExecute,
     priority: entry.priority,
     ...(entry.sourceCategory ? { sourceCategory: entry.sourceCategory } : {}),
-    ...(entry.sourceCategory === 'continuation' ? { continuationKey: entry.payload.sourceId } : {}),
+    ...(entry.sourceCategory === 'continuation' ? { continuationKey: entry.payload.sourceRecordId } : {}),
     ...(entry.position !== undefined ? { position: entry.position } : {}),
-    ...(queueReceipt ? { queueReceipt } : {}),
   };
 }
 
-/** Scalar ledger rows reference at most one History message. */
+/** One source entry references at most one History message. */
 function collectMessageIds(entry: Pick<EnrichedQueueEntry, 'messageId'>): string[] {
   return entry.messageId ? [entry.messageId] : [];
 }
@@ -205,36 +191,12 @@ async function enrichProjectedQueueEntries(
   }
 }
 
-async function projectMessageReceipts(
-  threadId: string,
-  messageIds: readonly string[],
-  receiptSource: NonNullable<QueueUpdatePublicationOptions['receiptSource']> | undefined,
-): Promise<QueueMessageReceiptProjection[]> {
-  if (!receiptSource) return [];
-  const uniqueMessageIds = [...new Set(messageIds.filter((messageId) => messageId.length > 0))];
-  try {
-    const entriesByMessage = await receiptSource.getDurableEntriesForMessages(threadId, uniqueMessageIds);
-    return uniqueMessageIds.flatMap((messageId) => {
-      const queueReceipt = projectQueueLedgerReceipt(entriesByMessage.get(messageId) ?? []);
-      return queueReceipt ? [{ messageId, queueReceipt }] : [];
-    });
-  } catch {
-    // Socket projection is recoverable from history hydration. An unavailable
-    // receipt source must not suppress the ordered Queue snapshot.
-    return [];
-  }
-}
-
 async function buildQueueUpdateProjectionWithinDeadline(
-  threadId: string,
   entries: QueueEntry[],
   messageStore: IMessageStore | null | undefined,
-  receiptMessageIds: readonly string[],
-  receiptSource: QueueUpdatePublicationOptions['receiptSource'],
-): Promise<{ queue: EnrichedQueueEntry[]; messageReceipts?: QueueMessageReceiptProjection[] }> {
+): Promise<{ queue: EnrichedQueueEntry[] }> {
   const projected = entries.filter(isPublicQueueEntry).map(projectPublicQueueEntry);
-  if (!messageStore && !receiptSource) return { queue: projected };
-  if (projected.length === 0 && receiptMessageIds.length === 0) return { queue: projected };
+  if (!messageStore || projected.length === 0) return { queue: projected };
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<undefined>((resolve) => {
@@ -242,13 +204,7 @@ async function buildQueueUpdateProjectionWithinDeadline(
     timer.unref?.();
   });
   try {
-    const update = Promise.all([
-      enrichProjectedQueueEntries(projected, messageStore),
-      projectMessageReceipts(threadId, receiptMessageIds, receiptSource),
-    ]).then(([queue, messageReceipts]) => ({
-      queue,
-      ...(messageReceipts.length > 0 ? { messageReceipts } : {}),
-    }));
+    const update = enrichProjectedQueueEntries(projected, messageStore).then((queue) => ({ queue }));
     return (await Promise.race([update, deadline])) ?? { queue: projected };
   } finally {
     if (timer) clearTimeout(timer);
@@ -268,21 +224,13 @@ export function emitQueueUpdated(
   entries: QueueEntry[],
   messageStore: IMessageStore | null | undefined,
   action: string,
-  options: QueueUpdatePublicationOptions = {},
 ): Promise<void> {
   const snapshot = freezeQueueSnapshot(entries);
-  const receiptMessageIds = [...new Set(options.receiptMessageIds ?? [])];
   const scopeKey = JSON.stringify([threadId, userId]);
   const tails = publicationTailsFor(socketManager);
   const previous = tails.get(scopeKey) ?? Promise.resolve();
   const publication = previous.then(async () => {
-    const payload = await buildQueueUpdateProjectionWithinDeadline(
-      threadId,
-      snapshot,
-      messageStore,
-      receiptMessageIds,
-      options.receiptSource,
-    );
+    const payload = await buildQueueUpdateProjectionWithinDeadline(snapshot, messageStore);
     socketManager.emitToUser(userId, 'queue_updated', {
       threadId,
       ...payload,

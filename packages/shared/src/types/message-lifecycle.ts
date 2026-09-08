@@ -71,9 +71,20 @@ export interface ReorderVisibleLifecycleEntriesCommand {
 }
 
 export type LifecycleDispatchRef =
-  | { readonly targetId: string; readonly phase: 'assigned' }
-  | { readonly targetId: string; readonly phase: 'dispatched'; readonly statusMessageId: string }
-  | { readonly targetId: string; readonly phase: 'settled'; readonly statusMessageId: string };
+  | {
+      readonly targetId: string;
+      readonly phase: 'dispatched';
+      readonly statusMessageId: string;
+      /** Missing only on hydrated pre-v2 refs; new writers always persist it. */
+      readonly dispatchedAt?: number;
+    }
+  | {
+      readonly targetId: string;
+      readonly phase: 'settled';
+      readonly statusMessageId: string;
+      /** Missing only on hydrated pre-v2 refs; new writers always persist it. */
+      readonly dispatchedAt?: number;
+    };
 
 export interface LifecycleMessageMetadata {
   readonly orderKey: string;
@@ -166,9 +177,10 @@ function isDispatchRef(value: unknown): value is LifecycleDispatchRef {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   if (!isNonEmptyString(candidate.targetId)) return false;
-  if (candidate.phase === 'assigned') return candidate.statusMessageId === undefined;
   return (
-    (candidate.phase === 'dispatched' || candidate.phase === 'settled') && isNonEmptyString(candidate.statusMessageId)
+    (candidate.phase === 'dispatched' || candidate.phase === 'settled') &&
+    isNonEmptyString(candidate.statusMessageId) &&
+    (candidate.dispatchedAt === undefined || isFiniteTimestamp(candidate.dispatchedAt))
   );
 }
 

@@ -34,7 +34,6 @@ import {
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import { InMemoryQueueLedgerStore } from '../../agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import {
-  type QueueBodyExposure,
   type QueueLedgerEntry,
   type QueueLedgerStore,
   queueLedgerAdmissionsMatch,
@@ -109,7 +108,14 @@ export interface MessageRecallMarker {
   exposure: 'none' | 'seen';
   recalledAt: number;
   /** Exact body-exposure witnesses only. Legacy seen flags never manufacture a timestamp. */
-  exposures?: readonly QueueBodyExposure[];
+  exposures?: readonly LegacyMessageBodyExposure[];
+}
+
+/** Read compatibility for recalls created before History became delivery truth. */
+export interface LegacyMessageBodyExposure {
+  targetCatId: string;
+  invocationId: string;
+  seenAt: number;
 }
 
 /** TTL=0 owner-authored composer state. The message body has no second durable copy after recall. */
@@ -146,14 +152,12 @@ export interface RecallMessageToComposerDraftInput {
   expectedDraftRevision: number;
   merge: 'replace' | 'append';
   recalledAt: number;
-  /** Exact read evidence copied from the claimed Queue ledger fan-out. */
-  exposures: readonly QueueBodyExposure[];
 }
 
 export type RecallMessageToComposerDraftResult =
   | {
       kind: 'recalled';
-      verdict: 'zero_exposure' | 'exposed';
+      verdict: 'zero_exposure';
       message: StoredMessage;
       draft: OwnerComposerDraft;
       insertedRange: { start: number; end: number };
@@ -253,6 +257,8 @@ export interface StoredMessage {
     rich?: RichMessageExtra;
     /** #1354 structured routing feedback retained from Queue payload into History. */
     routingWarnings?: readonly CatRoutingError[];
+    /** Fresh source created by an owner-authorized cloud delivery retry. */
+    cloudBridgeRetry?: import('@cat-cafe/shared').CloudBridgeRetryV1;
     /** #814/F224: explicit post_message callback bubble; history hydration must not merge it into stream output. */
     isExplicitPost?: boolean;
     /** F081 + F194 Phase Z3 dual id:
@@ -423,12 +429,6 @@ export interface StoredMessage {
   deliveredAt?: number;
   /** Stable timeline score when publication time differs from execution delivery time. */
   timelineOrderAt?: number;
-  /**
-   * The queued owner message was published in the timeline by its atomic
-   * conversation-input admission. This replaces the old custody-presence
-   * proxy without making Message reads depend on the Queue ledger.
-   */
-  timelinePublishedAtAppend?: true;
   /** F117: Delivery lifecycle status. undefined = legacy (treated as delivered) */
   deliveryStatus?: 'queued' | 'delivered' | 'canceled';
   /** F264 Gap F: content-free terminal recall truth; body custody lives only in owner composer draft. */
@@ -530,7 +530,6 @@ export type AppendMessageInput = Omit<
   | 'catId'
   | 'deliveredAt'
   | 'timelineOrderAt'
-  | 'timelinePublishedAtAppend'
   | 'deliveryStatus'
   | 'recall'
   | 'sourceParseFailure'
@@ -610,7 +609,7 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
   ) {
     return { kind: 'conflict', reason: 'invalid_terminal', message: structuredClone(current) };
   }
-  const targetIds = entries.flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : []));
+  const targetIds = entries.flatMap((entry) => entry.targets);
   const next = prepareLifecycleResponseTerminalMessage(current, patch);
   const assigned = assignLifecycleDispatchTargetsMetadata(
     next.lifecycle,
@@ -644,7 +643,7 @@ export function prepareQueueLedgerMessageAdmission(
   ) {
     throw new Error('atomic Message/Queue admission requires queued work or published Agent speech');
   }
-  const targetIds = entries.flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : []));
+  const targetIds = entries.flatMap((entry) => entry.targets);
   const assigned = assignLifecycleDispatchTargetsMetadata(
     storedIdentity.lifecycle,
     lifecycleInputIdentityForStoredMessage(storedIdentity),
@@ -654,23 +653,6 @@ export function prepareQueueLedgerMessageAdmission(
     throw new Error('atomic Message/Queue admission has conflicting lifecycle identity');
   }
   return { ...message, lifecycle: assigned.lifecycle };
-}
-
-/**
- * Only an atomic user conversation admission publishes queued owner work at
- * append time. The fact is persisted on Message so later reads never need to
- * infer publication from mutable Queue state.
- */
-export function isQueueLedgerTimelinePublishedAtAppend(
-  message: Pick<StoredMessage, 'from' | 'deliveryStatus'>,
-  entries: readonly QueueLedgerEntry[],
-): boolean {
-  return (
-    message.deliveryStatus === 'queued' &&
-    message.from?.kind === 'user' &&
-    entries.length > 0 &&
-    entries.every((entry) => entry.kind === 'conversation_input')
-  );
 }
 
 export interface LifecycleResponseTerminalPatch {
@@ -699,13 +681,12 @@ export type CommitLifecycleResponseTerminalResult =
     }
   | { kind: 'not_found' };
 
-export interface LifecycleInputDispatchPatch {
+export type LifecycleInputDispatchPatch = {
   orderKey: string;
   producerInvocationId?: string;
   targetId: string;
-  phase: 'dispatched' | 'settled';
   statusMessageId: string;
-}
+} & ({ phase: 'dispatched'; dispatchedAt: number } | { phase: 'settled' });
 
 export type AdvanceLifecycleInputDispatchResult =
   | { kind: 'applied' | 'replayed'; message: StoredMessage }
@@ -724,6 +705,8 @@ export interface LifecycleAppendAdmissionInput {
     targetId: string;
     invocationId: string;
     responseMessageId: string;
+    /** Exact time this source was admitted to the target response. */
+    dispatchedAt: number;
   }[];
 }
 
@@ -758,10 +741,8 @@ type AssignLifecycleDispatchTargetsResult =
   | { kind: 'conflict' };
 
 /**
- * Attach the recipient-side half of one public message wake without creating a
- * second message record. A response may itself become the source of a wake while
- * its producer is still running (for example multi_mention); its response identity
- * and terminal transition must survive unchanged.
+ * Ensure one source message has lifecycle identity without mirroring Queue
+ * routing intent into History. dispatchRefs are created only by actual delivery.
  */
 export function assignLifecycleDispatchTargetsMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
@@ -778,9 +759,7 @@ export function assignLifecycleDispatchTargetsMetadata(
       lifecycle: {
         kind: 'input',
         ...identity,
-        ...(targetIds.length > 0
-          ? { dispatchRefs: targetIds.map((targetId) => ({ targetId, phase: 'assigned' as const })) }
-          : {}),
+        dispatchRefs: [],
       },
     };
   }
@@ -797,17 +776,9 @@ export function assignLifecycleDispatchTargetsMetadata(
     return { kind: 'conflict' };
   }
   const refs = current.dispatchRefs ?? [];
-  const uniqueExistingTargets = new Set(refs.map((ref) => ref.targetId));
-  if (uniqueExistingTargets.size !== refs.length) return { kind: 'conflict' };
-  const missingTargets = targetIds.filter((targetId) => !uniqueExistingTargets.has(targetId));
-  if (missingTargets.length === 0) return { kind: 'replayed', lifecycle: current };
-  return {
-    kind: 'applied',
-    lifecycle: {
-      ...current,
-      dispatchRefs: [...refs, ...missingTargets.map((targetId) => ({ targetId, phase: 'assigned' as const }))],
-    },
-  };
+  return new Set(refs.map((ref) => ref.targetId)).size === refs.length
+    ? { kind: 'replayed', lifecycle: current }
+    : { kind: 'conflict' };
 }
 
 export interface LifecyclePreAdmissionFailureInput {
@@ -861,13 +832,14 @@ export function matchesLifecyclePreAdmissionFailure(
 /**
  * A public agent wake may fail before a response bubble exists. In that case
  * the delivery failure is the target's terminal status message, so the
- * recipient ref advances directly from assigned to settled while preserving
- * the source message's input/response identity.
+ * recipient ref is recorded directly as settled while preserving the source
+ * message's input/response identity.
  */
 export function settleAssignedLifecycleDispatchFailureMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
   targetIds: readonly string[],
   failureMessageId: string,
+  dispatchedAt: number,
 ): LifecycleStoredMessageMetadata | null {
   if (
     !isLifecycleDispatchSource(current) ||
@@ -880,19 +852,19 @@ export function settleAssignedLifecycleDispatchFailureMetadata(
   }
   const requested = new Set(targetIds);
   const refs = current.dispatchRefs ?? [];
-  if (
-    new Set(refs.map((ref) => ref.targetId)).size !== refs.length ||
-    targetIds.some((targetId) => !refs.some((ref) => ref.targetId === targetId && ref.phase === 'assigned'))
-  ) {
-    return null;
-  }
+  if (new Set(refs.map((ref) => ref.targetId)).size !== refs.length) return null;
+  if (targetIds.some((targetId) => refs.some((ref) => ref.targetId === targetId))) return null;
   return {
     ...current,
-    dispatchRefs: refs.map((ref) =>
-      requested.has(ref.targetId)
-        ? { targetId: ref.targetId, phase: 'settled' as const, statusMessageId: failureMessageId }
-        : ref,
-    ),
+    dispatchRefs: [
+      ...refs,
+      ...[...requested].map((targetId) => ({
+        targetId,
+        phase: 'settled' as const,
+        statusMessageId: failureMessageId,
+        dispatchedAt,
+      })),
+    ],
   };
 }
 
@@ -928,7 +900,14 @@ export function advanceLifecycleInputDispatchMetadata(
       kind: 'applied',
       lifecycle: {
         ...identity,
-        dispatchRefs: [{ targetId: patch.targetId, phase: 'dispatched', statusMessageId: patch.statusMessageId }],
+        dispatchRefs: [
+          {
+            targetId: patch.targetId,
+            phase: 'dispatched',
+            statusMessageId: patch.statusMessageId,
+            dispatchedAt: patch.dispatchedAt,
+          },
+        ],
       },
     };
   }
@@ -950,16 +929,34 @@ export function advanceLifecycleInputDispatchMetadata(
         ...current,
         dispatchRefs: [
           ...refs,
-          { targetId: patch.targetId, phase: 'dispatched', statusMessageId: patch.statusMessageId },
+          {
+            targetId: patch.targetId,
+            phase: 'dispatched',
+            statusMessageId: patch.statusMessageId,
+            dispatchedAt: patch.dispatchedAt,
+          },
         ],
       },
     };
   }
-  if (existing.phase === 'assigned') {
-    if (patch.phase !== 'dispatched') return { kind: 'conflict', reason: 'invalid_transition' };
-  } else if (existing.statusMessageId !== patch.statusMessageId) {
+  if (existing.statusMessageId !== patch.statusMessageId) {
     return { kind: 'conflict', reason: 'status_message_mismatch' };
   } else if (existing.phase === patch.phase) {
+    if (
+      existing.phase === 'dispatched' &&
+      patch.phase === 'dispatched' &&
+      existing.dispatchedAt === undefined &&
+      patch.dispatchedAt !== undefined
+    ) {
+      const nextRef: LifecycleDispatchRef = { ...existing, dispatchedAt: patch.dispatchedAt };
+      return {
+        kind: 'applied',
+        lifecycle: {
+          ...current,
+          dispatchRefs: refs.map((ref) => (ref.targetId === patch.targetId ? nextRef : ref)),
+        },
+      };
+    }
     return { kind: 'replayed' };
   } else if (existing.phase === 'settled' || patch.phase !== 'settled') {
     return { kind: 'conflict', reason: 'invalid_transition' };
@@ -968,6 +965,7 @@ export function advanceLifecycleInputDispatchMetadata(
     targetId: patch.targetId,
     phase: patch.phase,
     statusMessageId: patch.statusMessageId,
+    ...(existing.dispatchedAt !== undefined ? { dispatchedAt: existing.dispatchedAt } : {}),
   };
   return {
     kind: 'applied',
@@ -1024,7 +1022,9 @@ export function prepareLifecycleAppendAdmission(
     input.inputMessageIds.length === 0 ||
     new Set(input.inputMessageIds).size !== input.inputMessageIds.length ||
     input.runs.length === 0 ||
-    input.runs.some((run) => !run.targetId || !run.invocationId || !run.responseMessageId) ||
+    input.runs.some(
+      (run) => !run.targetId || !run.invocationId || !run.responseMessageId || !Number.isFinite(run.dispatchedAt),
+    ) ||
     new Set(input.runs.map((run) => run.targetId)).size !== input.runs.length ||
     new Set(input.runs.map((run) => run.responseMessageId)).size !== input.runs.length ||
     new Set([...input.inputMessageIds, ...input.runs.map((run) => run.responseMessageId)]).size !==
@@ -1042,12 +1042,13 @@ export function prepareLifecycleAppendAdmission(
   for (let index = 0; index < input.inputMessageIds.length; index += 1) {
     const message = messages[index]!;
     let lifecycle = message.lifecycle;
-    for (const run of input.runs) {
+    for (const [runIndex, run] of input.runs.entries()) {
       const transition = advanceLifecycleInputDispatchMetadata(lifecycle, {
         ...lifecycleInputIdentityForStoredMessage(message),
         targetId: run.targetId,
         phase: 'dispatched',
         statusMessageId: run.responseMessageId,
+        dispatchedAt: run.dispatchedAt,
       });
       if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
       if (transition.kind === 'applied') {
@@ -1114,7 +1115,7 @@ export function prepareLifecycleAppendRejection(
       lifecycles.push(lifecycle);
       continue;
     }
-    if (current.phase === 'assigned' || current.statusMessageId !== input.run.responseMessageId) {
+    if (current.phase !== 'dispatched' || current.statusMessageId !== input.run.responseMessageId) {
       return { kind: 'conflict', reason: 'lifecycle_conflict' };
     }
     replayed = false;
@@ -1122,7 +1123,12 @@ export function prepareLifecycleAppendRejection(
       ...lifecycle,
       dispatchRefs: refs.map((ref) =>
         ref.targetId === input.run.targetId
-          ? { targetId: input.run.targetId, phase: 'settled' as const, statusMessageId: failureMessageId }
+          ? {
+              targetId: input.run.targetId,
+              phase: 'settled' as const,
+              statusMessageId: failureMessageId,
+              dispatchedAt: ref.dispatchedAt,
+            }
           : ref,
       ),
     });
@@ -1266,10 +1272,13 @@ export function lifecycleResponseTerminalPatchFromAppendInput(
  */
 export function assertValidAppendDeliveryMetadata(msg: AppendMessageInput): void {
   const runtimeInput = msg as AppendMessageInput &
-    Partial<Pick<StoredMessage, 'deliveredAt' | 'timelineOrderAt' | 'timelinePublishedAtAppend' | 'deliveryStatus'>>;
+    Partial<Pick<StoredMessage, 'deliveredAt' | 'timelineOrderAt' | 'deliveryStatus'>> &
+    Record<string, unknown>;
   if (
     'deliveredAt' in runtimeInput ||
     'timelineOrderAt' in runtimeInput ||
+    // Reject the retired field as well: JavaScript callers must not resurrect
+    // append-time publication for an undelivered owner source.
     'timelinePublishedAtAppend' in runtimeInput ||
     (runtimeInput.deliveryStatus !== undefined && runtimeInput.deliveryStatus !== 'queued')
   ) {
@@ -2006,9 +2015,7 @@ export class MessageStore {
     }
     try {
       const prepared = prepareQueueLedgerMessageAdmission(msg, messageId, entries);
-      const message = this.appendWithReservedId(prepared, messageId, {
-        timelinePublishedAtAppend: isQueueLedgerTimelinePublishedAtAppend(prepared, entries),
-      });
+      const message = this.appendWithReservedId(prepared, messageId);
       return {
         outcome: 'enqueued',
         message,
@@ -2066,7 +2073,7 @@ export class MessageStore {
       entries.some(
         (entry) =>
           entry.threadId !== current.threadId ||
-          entry.payload.sourceId !== messageId ||
+          entry.payload.sourceRecordId !== messageId ||
           entry.payload.messageId !== messageId,
       )
     ) {
@@ -2092,7 +2099,7 @@ export class MessageStore {
   private appendWithReservedId(
     msg: AppendMessageInput,
     reservedId?: string,
-    options?: { timelinePublishedAtAppend?: boolean; deferVisibility?: boolean },
+    options?: { deferVisibility?: boolean },
   ): StoredMessage {
     const normalizedMessage = canonicalizeAppendMessageInput(msg);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
@@ -2116,7 +2123,6 @@ export class MessageStore {
     void idempotencyKey;
     const stored: StoredMessage = {
       ...payload,
-      ...(options?.timelinePublishedAtAppend ? { timelinePublishedAtAppend: true as const } : {}),
       id: reservedId ?? generateSortableId(normalizedMessage.timestamp),
       threadId,
     };
@@ -2321,20 +2327,17 @@ export class MessageStore {
 
     const projection = buildRecallDraft(msg, input, existingDraft, actualDraftRevision);
 
-    const exactExposures = structuredClone(input.exposures ?? []);
-    const wasExposed = exactExposures.length > 0;
     redactRecalledMessage(msg, {
       version: 1,
-      exposure: wasExposed ? 'seen' : 'none',
+      exposure: 'none',
       recalledAt: input.recalledAt,
-      ...(exactExposures.length > 0 ? { exposures: exactExposures } : {}),
     });
-    if (!wasExposed) this.visibilitySeq.delete(id);
+    this.visibilitySeq.delete(id);
     this.ownerComposerDrafts.set(draftKey, projection.draft);
 
     return {
       kind: 'recalled',
-      verdict: wasExposed ? 'exposed' : 'zero_exposure',
+      verdict: 'zero_exposure',
       message: structuredClone(msg),
       draft: structuredClone(projection.draft),
       insertedRange: projection.insertedRange,
@@ -2537,8 +2540,8 @@ export class MessageStore {
 
     // The canonical visibility index intentionally excludes queued user work.
     // A caller that explicitly requests those rows therefore needs the raw
-    // thread timeline domain. Mixing visibilitySeq with queued authoring time
-    // would skip exposed queued rows and break Memory/Redis parity.
+    // thread timeline domain. Mixing visibilitySeq with hidden queued authoring
+    // time would skip pending sources and break Memory/Redis parity.
     if (options?.includeQueuedUserMessages === true) {
       const ordered = this.messages
         .filter((msg) => msg.threadId === threadId)
@@ -3033,7 +3036,12 @@ export class MessageStore {
     const settledLifecycle =
       input.requestedTargets.length === 0
         ? assigned.lifecycle
-        : settleAssignedLifecycleDispatchFailureMetadata(assigned.lifecycle, input.requestedTargets, failureMessage.id);
+        : settleAssignedLifecycleDispatchFailureMetadata(
+            assigned.lifecycle,
+            input.requestedTargets,
+            failureMessage.id,
+            input.failedAt,
+          );
     if (!settledLifecycle) {
       const failureIndex = this.messages.findIndex((message) => message.id === failureMessage.id);
       if (failureIndex !== -1) this.messages.splice(failureIndex, 1);

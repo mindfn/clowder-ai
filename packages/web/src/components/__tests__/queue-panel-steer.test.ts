@@ -1,6 +1,6 @@
 /**
  * F047: QueuePanel steer UI
- * - Steer button shows only for queued entries
+ * - QueuePanel renders only durable pending entries
  * - Steer modal offers interrupting restart and non-interrupting delivery
  */
 import React, { act } from 'react';
@@ -58,13 +58,6 @@ const QUEUED_ENTRY: QueueEntry = {
   createdAt: NOW,
 };
 
-const PROCESSING_ENTRY: QueueEntry = {
-  ...QUEUED_ENTRY,
-  id: 'q2',
-  content: 'processing message',
-  status: 'processing',
-};
-
 function response(body: unknown, status = 200) {
   return {
     ok: status >= 200 && status < 300,
@@ -86,7 +79,8 @@ async function defaultApiFetch(path: string, init?: RequestInit) {
   if (path.endsWith('/targets')) {
     if (init?.method !== 'POST') {
       return response({
-        targets: [{ targetCatId: 'opus', state: 'queued', actionable: true }],
+        sourceRecordId: 'm1',
+        targets: [{ targetCatId: 'opus', state: 'pending', actionable: true }],
       });
     }
     const body = JSON.parse(String(init?.body ?? '{}')) as {
@@ -97,9 +91,9 @@ async function defaultApiFetch(path: string, init?: RequestInit) {
       }>;
     };
     return response({
-      targets: (body.targets ?? []).map((target, index) => ({
+      targets: (body.targets ?? []).map((target) => ({
         ...target,
-        entryId: index === 0 ? 'q1' : `q-${target.targetCatId}`,
+        entryId: 'q1',
       })),
     });
   }
@@ -164,24 +158,22 @@ describe('QueuePanel steer (F047)', () => {
     vi.clearAllMocks();
   });
 
-  it('renders Steer only for queued entries', () => {
-    useChatStore.setState({ queue: [QUEUED_ENTRY, PROCESSING_ENTRY] });
+  it('renders Steer for a durable pending entry', () => {
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
     const html = container.innerHTML;
     expect(html).toContain('Steer');
-    expect(container.querySelector('[data-testid="steer-q2"]')).toBeNull();
   });
 
-  it('renders only actionable per-target queue truth hydrated from the server', () => {
+  it('renders only pending targets and no Queue-owned terminal copy', () => {
     useChatStore.setState({
       queue: [
         {
           ...QUEUED_ENTRY,
           targetCats: ['opus', 'codex'],
-          targetStates: { opus: 'seen', codex: 'failed', gpt52: 'handled' },
         },
       ],
     });
@@ -189,9 +181,11 @@ describe('QueuePanel steer (F047)', () => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
-    expect(container.textContent).toContain('已读，但关联回合已结束；尚未确认处理完成');
-    expect(container.textContent).toContain('处理失败 · 已回队列');
-    expect(container.textContent).not.toContain('已处理 · 无可回溯证据');
+    expect(container.textContent).toContain('opus');
+    expect(container.textContent).toContain('codex');
+    expect(container.textContent?.match(/未投递 · 排队中/g)).toHaveLength(2);
+    expect(container.textContent).not.toContain('处理失败');
+    expect(container.textContent).not.toContain('已处理');
   });
 
   it('submits Steer as immediate cancel-and-restart without a promote choice', async () => {
@@ -222,6 +216,8 @@ describe('QueuePanel steer (F047)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        sourceRecordId: 'm1',
+        observedPendingTargetIds: ['opus'],
         targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
       }),
     });
@@ -232,6 +228,12 @@ describe('QueuePanel steer (F047)', () => {
   });
 
   it('lets a targetless queued message select an exact current-thread member', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/targets') && init?.method !== 'POST') {
+        return response({ sourceRecordId: 'm1', targets: [] }) as Response;
+      }
+      return defaultApiFetch(path, init) as Promise<Response>;
+    });
     useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetCats: [] }] });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
@@ -251,6 +253,8 @@ describe('QueuePanel steer (F047)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        sourceRecordId: 'm1',
+        observedPendingTargetIds: [],
         targets: [
           { targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
           { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
@@ -262,6 +266,9 @@ describe('QueuePanel steer (F047)', () => {
   it('falls back to the configured default responder when a new thread has no members or routing history', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
       if (path.endsWith('/cats')) return response({ participants: [], fallbackTargetCatId: 'opus' }) as Response;
+      if (path.endsWith('/targets') && init?.method !== 'POST') {
+        return response({ sourceRecordId: 'm1', targets: [] }) as Response;
+      }
       return defaultApiFetch(path, init) as Promise<Response>;
     });
     useChatStore.setState({
@@ -291,6 +298,8 @@ describe('QueuePanel steer (F047)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        sourceRecordId: 'm1',
+        observedPendingTargetIds: [],
         targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'admit' }],
       }),
     });
@@ -383,13 +392,16 @@ describe('QueuePanel steer (F047)', () => {
       }
       if (path.endsWith('/targets')) {
         if (init?.method !== 'POST') {
-          return response({ targets: [{ targetCatId: 'opus', state: 'queued', actionable: true }] }) as Response;
+          return response({
+            sourceRecordId: 'm1',
+            targets: [{ targetCatId: 'opus', state: 'pending', actionable: true }],
+          }) as Response;
         }
         return response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中，无法 steer' }, 409) as Response;
       }
       return response({ queue: [], paused: false }) as Response;
     });
-    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
@@ -405,6 +417,8 @@ describe('QueuePanel steer (F047)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        sourceRecordId: 'm1',
+        observedPendingTargetIds: ['opus'],
         targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
       }),
     });
@@ -422,7 +436,10 @@ describe('QueuePanel steer (F047)', () => {
       }
       if (path.endsWith('/targets')) {
         if (init?.method !== 'POST') {
-          return response({ targets: [{ targetCatId: 'opus', state: 'queued', actionable: true }] }) as Response;
+          return response({
+            sourceRecordId: 'm1',
+            targets: [{ targetCatId: 'opus', state: 'pending', actionable: true }],
+          }) as Response;
         }
         return response({
           targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', entryId: 'q1' }],
@@ -433,7 +450,7 @@ describe('QueuePanel steer (F047)', () => {
       }
       return response({ queue: [], paused: false }) as Response;
     });
-    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
 
     await openSteer(container);
@@ -446,7 +463,7 @@ describe('QueuePanel steer (F047)', () => {
   });
 
   it('keeps Steer available for an ordinary pending target', () => {
-    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetStates: { opus: 'queued' } }] });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
@@ -493,41 +510,17 @@ describe('QueuePanel steer (F047)', () => {
     });
   });
 
-  it('preserves each scalar sibling disposition when choosing per-target strategies', async () => {
-    const opusEntry: QueueEntry = {
+  it('preserves per-target disposition inside one source Queue row', async () => {
+    const entry: QueueEntry = {
       ...QUEUED_ENTRY,
-      queueReceipt: {
-        version: 1,
-        entryId: 'q1',
-        targets: [
-          {
-            catId: 'opus',
-            state: 'queued',
-            authorIntent: { requested: 'next_work', effective: 'next_work' },
-          },
-        ],
-        reminderAttempts: [],
-      },
-    };
-    const codexEntry: QueueEntry = {
-      ...QUEUED_ENTRY,
-      id: 'q-codex',
-      targetCats: ['codex'],
-      queueReceipt: {
-        version: 1,
-        entryId: 'q-codex',
-        targets: [
-          {
-            catId: 'codex',
-            state: 'queued',
-            authorIntent: { requested: 'continue_current', effective: 'next_work' },
-          },
-        ],
-        reminderAttempts: [],
+      targetCats: ['opus', 'codex'],
+      authorIntentByTarget: {
+        opus: { requested: 'next_work', effective: 'next_work' },
+        codex: { requested: 'continue_current', effective: 'next_work' },
       },
     };
     useChatStore.setState({
-      queue: [opusEntry, codexEntry],
+      queue: [entry],
       activeInvocations: {
         'turn-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
         'turn-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
@@ -543,7 +536,7 @@ describe('QueuePanel steer (F047)', () => {
     ).toBe('true');
   });
 
-  it('shows a terminal sibling as processed while leaving the pending target selected', async () => {
+  it('shows History-delivered targets as non-actionable while leaving the pending target selected', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
       if (path.endsWith('/cats')) {
         return response({
@@ -556,9 +549,10 @@ describe('QueuePanel steer (F047)', () => {
       }
       if (path.endsWith('/targets') && init?.method !== 'POST') {
         return response({
+          sourceRecordId: 'm1',
           targets: [
-            { targetCatId: 'opus', state: 'handled', actionable: false },
-            { targetCatId: 'codex', state: 'queued', actionable: true },
+            { targetCatId: 'opus', state: 'settled', actionable: false, dispatchedAt: 10 },
+            { targetCatId: 'codex', state: 'pending', actionable: true },
           ],
         }) as Response;
       }
@@ -578,7 +572,7 @@ describe('QueuePanel steer (F047)', () => {
     const opus = container.querySelector<HTMLButtonElement>('[data-testid="steer-target-opus"]');
     const codex = container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]');
     expect(opus?.disabled).toBe(true);
-    expect(opus?.textContent).toContain('已处理');
+    expect(opus?.textContent).toContain('已投递');
     expect(codex?.disabled).toBe(false);
     expect(codex?.getAttribute('aria-pressed')).toBe('true');
   });
@@ -588,13 +582,6 @@ describe('QueuePanel steer (F047)', () => {
       queue: [
         {
           ...QUEUED_ENTRY,
-          targetStates: { opus: 'queued' },
-          queueReceipt: {
-            version: 1,
-            entryId: 'q1',
-            targets: [{ catId: 'opus', state: 'queued' }],
-            reminderAttempts: [],
-          },
         },
       ],
       activeInvocations: {
@@ -635,22 +622,16 @@ describe('QueuePanel steer (F047)', () => {
       queue: [
         {
           ...QUEUED_ENTRY,
-          targetStates: { opus: 'notified' },
-          queueReceipt: {
-            version: 1,
-            entryId: 'q1',
-            targets: [{ catId: 'opus', state: 'notified' }],
-            reminderAttempts: [
-              {
-                id: 'reminder-1',
-                targetCatId: 'opus',
-                invocationId: 'inv-active',
-                state: 'delivered',
-                requestedAt: 1,
-                deliveredAt: 2,
-              },
-            ],
-          },
+          reminderAttempts: [
+            {
+              id: 'reminder-1',
+              targetCatId: 'opus',
+              invocationId: 'inv-active',
+              state: 'delivered',
+              requestedAt: 1,
+              deliveredAt: 2,
+            },
+          ],
         },
       ],
       activeInvocations: {
@@ -670,26 +651,16 @@ describe('QueuePanel steer (F047)', () => {
       queue: [
         {
           ...QUEUED_ENTRY,
-          targetStates: { opus: 'queued' },
-          queueReceipt: {
-            version: 1,
-            entryId: 'q1',
-            targets: [
-              {
-                catId: 'opus',
-                state: 'queued',
-                authorIntent: {
-                  requested: 'next_work',
-                  effective: 'next_work',
-                  carrierCapability: {
-                    provider: 'anthropic',
-                    carrier: 'claude_print_sdk',
-                    deliverySemantics: 'unsupported',
-                  },
-                },
+          authorIntentByTarget: {
+            opus: {
+              requested: 'next_work',
+              effective: 'next_work',
+              carrierCapability: {
+                provider: 'anthropic',
+                carrier: 'claude_print_sdk',
+                deliverySemantics: 'unsupported',
               },
-            ],
-            reminderAttempts: [],
+            },
           },
         },
       ],

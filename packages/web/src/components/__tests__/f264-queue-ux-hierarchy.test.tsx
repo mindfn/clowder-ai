@@ -1,4 +1,4 @@
-import type { FreshnessCarrierCapability, QueueAuthorIntentReceipt, QueueMessageReceipt } from '@cat-cafe/shared';
+import type { FreshnessCarrierCapability, QueueAuthorIntentReceipt } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,23 +37,15 @@ function makeIntent(
   return { requested, effective, ...extra };
 }
 
-function makeReceipt(
+function makeAuthorIntents(
   targets: Array<{
     catId: string;
-    state?: QueueMessageReceipt['targets'][number]['state'];
     authorIntent?: QueueAuthorIntentReceipt;
   }>,
-): QueueMessageReceipt {
-  return {
-    version: 1,
-    entryId: 'q1',
-    targets: targets.map((t) => ({
-      catId: t.catId,
-      state: t.state ?? 'queued',
-      authorIntent: t.authorIntent,
-    })),
-    reminderAttempts: [],
-  };
+): Record<string, QueueAuthorIntentReceipt> {
+  return Object.fromEntries(
+    targets.flatMap((target) => (target.authorIntent ? [[target.catId, target.authorIntent] as const] : [])),
+  );
 }
 
 function makeEntry(
@@ -61,8 +53,7 @@ function makeEntry(
   opts: {
     content?: string;
     targetCats?: string[];
-    queueReceipt?: QueueMessageReceipt;
-    targetStates?: Record<string, string>;
+    authorIntentByTarget?: Record<string, QueueAuthorIntentReceipt>;
     source?: 'user' | 'agent' | 'connector';
     callerCatId?: string;
     recoveryActions?: QueueEntry['recoveryActions'];
@@ -85,8 +76,7 @@ function makeEntry(
     intent: 'execute',
     status: 'queued',
     createdAt: NOW,
-    targetStates: opts.targetStates as QueueEntry['targetStates'],
-    queueReceipt: opts.queueReceipt,
+    authorIntentByTarget: opts.authorIntentByTarget,
     callerCatId: opts.callerCatId,
     recoveryActions: opts.recoveryActions,
   };
@@ -189,8 +179,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const continueEntry = makeEntry('q-continue', {
       content: '继续工作消息',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('continue_current', 'continue_current', { carrierCapability: EXACT_CAP }),
@@ -200,8 +189,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const nextEntry = makeEntry('q-next', {
       content: '下一件工作消息',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('next_work', 'next_work', { carrierCapability: EXACT_CAP }),
@@ -219,7 +207,6 @@ describe('F264 Queue UX hierarchy — component claims', () => {
   it('source contract: legacy user missing intent keeps next-work compatibility', () => {
     const legacyUser = makeEntry('q-legacy-user', {
       source: 'user',
-      targetStates: { opus: 'queued' },
     });
     useChatStore.setState({ queue: [legacyUser] });
     renderQueuePanel();
@@ -233,7 +220,6 @@ describe('F264 Queue UX hierarchy — component claims', () => {
   ] as const)('source contract: %s custody does not render a human author-intent chip', (source) => {
     const nonHuman = makeEntry(`q-${source}`, {
       source,
-      targetStates: { opus: 'queued' },
     });
     useChatStore.setState({ queue: [nonHuman] });
     renderQueuePanel();
@@ -248,8 +234,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-raw', {
       content: 'test raw enum hiding',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('continue_current', 'continue_current', { carrierCapability: EXACT_CAP }),
@@ -274,8 +259,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-fallback', {
       content: 'fallback test',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('continue_current', 'next_work', {
@@ -298,8 +282,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-undeclared', {
       content: 'undeclared test',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('continue_current', 'continue_current', { carrierCapability: UNDECLARED_CAP }),
@@ -319,8 +302,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-unsupported-dup', {
       content: 'unsupported dup test',
       targetCats: ['kimi'],
-      targetStates: { kimi: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'kimi',
           authorIntent: makeIntent('next_work', 'next_work', { carrierCapability: UNSUPPORTED_CAP }),
@@ -356,8 +338,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-exact', {
       content: 'exact reminder test',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('continue_current', 'continue_current', { carrierCapability: EXACT_CAP }),
@@ -388,8 +369,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-multi', {
       content: 'multi target test',
       targetCats: ['opus', 'kimi'],
-      targetStates: { opus: 'queued', kimi: 'queued' },
-      queueReceipt: makeReceipt([
+      authorIntentByTarget: makeAuthorIntents([
         {
           catId: 'opus',
           authorIntent: makeIntent('continue_current', 'continue_current', { carrierCapability: EXACT_CAP }),
@@ -429,7 +409,6 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     const entry = makeEntry('q-steer', {
       content: 'steer test',
       targetCats: ['opus'],
-      targetStates: { opus: 'queued' },
       recoveryActions: [
         {
           id: 'queue-steer:q-steer',

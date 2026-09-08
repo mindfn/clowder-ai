@@ -14,13 +14,9 @@ import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { composerInsertFromRecall, requestTrueRecall, TrueRecallRequestError } from '@/utils/true-recall';
 import { SortableQueueEntryRow } from './QueueEntryRow';
-import {
-  collectExactLiveInvocationIds,
-  projectQueueEntryForActions,
-  queueTargetStateEntries,
-} from './queue-receipt-projection';
 import { SteerQueuedEntryModal } from './SteerQueuedEntryModal';
 import {
+  parseSteerSourceRecordId,
   parseSteerSourceTargetStates,
   parseSteerThreadCatProjection,
   type SteerSourceTargetState,
@@ -148,6 +144,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       threadId: string | null;
       entryId: string | null;
       sourceTargets: SteerSourceTargetState[];
+      sourceRecordId: string | null;
       state: 'loading' | 'ready' | 'unavailable';
     }
   >({
@@ -156,6 +153,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     participantActivity: [],
     fallbackTargetCatId: null,
     sourceTargets: [],
+    sourceRecordId: null,
     state: 'loading',
   });
 
@@ -167,6 +165,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         participantActivity: [],
         fallbackTargetCatId: null,
         sourceTargets: [],
+        sourceRecordId: null,
         state: 'loading',
       });
       return;
@@ -178,6 +177,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       participantActivity: [],
       fallbackTargetCatId: null,
       sourceTargets: [],
+      sourceRecordId: null,
       state: 'loading',
     });
     void Promise.all([
@@ -195,6 +195,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           entryId: steerEntryId,
           ...parseSteerThreadCatProjection(catsBody),
           sourceTargets: parseSteerSourceTargetStates(targetsBody),
+          sourceRecordId: parseSteerSourceRecordId(targetsBody),
           state: 'ready',
         });
       })
@@ -206,6 +207,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
             participantActivity: [],
             fallbackTargetCatId: null,
             sourceTargets: [],
+            sourceRecordId: null,
             state: 'unavailable',
           });
         }
@@ -217,10 +219,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  const activeInvocationIds = useMemo(
-    () => collectExactLiveInvocationIds(activeInvocations, catInvocations),
-    [activeInvocations, catInvocations],
-  );
   const visibleEntries = useMemo(
     () =>
       queue
@@ -229,10 +227,8 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
             e.status === 'queued' &&
             !(e.sourceCategory === 'scheduled' && e.content.startsWith(SCHEDULER_TRIGGER_PREFIX)),
         )
-        .map((entry) => projectQueueEntryForActions(entry, activeInvocationIds))
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
         .sort(compareQueueEntries),
-    [activeInvocationIds, queue],
+    [queue],
   );
 
   // A2A queue visibility: explain WHY entries are queued (waiting behind the active turn) so the
@@ -241,17 +237,8 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   // oldest active turn. Recomputed when activeInvocations/visibleEntries change; elapsed reflects
   // the last store update (acceptable for v1 — no per-second tick).
   const waitInfo = useMemo(() => {
-    const dispatchTargetCatIds = visibleEntries.flatMap((entry) => {
-      const targetStates = queueTargetStateEntries(entry);
-      return targetStates.length > 0
-        ? targetStates
-            .filter(([, state]) => state !== 'seen' && state !== 'awakened' && state !== 'failed')
-            .map(([catId]) => catId)
-        : entry.targetCats;
-    });
-    const hasBroadcastEntry = visibleEntries.some(
-      (entry) => queueTargetStateEntries(entry).length === 0 && entry.targetCats.length === 0,
-    );
+    const dispatchTargetCatIds = visibleEntries.flatMap((entry) => entry.targetCats);
+    const hasBroadcastEntry = visibleEntries.some((entry) => entry.targetCats.length === 0);
     if (dispatchTargetCatIds.length === 0 && !hasBroadcastEntry) return null;
     return computeQueueWaitInfo(activeInvocations, dispatchTargetCatIds);
   }, [activeInvocations, visibleEntries]);
@@ -585,17 +572,12 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     const rowByTarget = new Map(
       siblingEntries.flatMap((entry) => entry.targetCats.map((targetCatId) => [targetCatId, entry] as const)),
     );
-    const receiptByTarget = new Map(
-      siblingEntries.flatMap((entry) =>
-        (entry.queueReceipt?.targets ?? []).map((target) => [target.catId, target] as const),
-      ),
-    );
     const participantActivity = currentContext.participantActivity;
     const participantIds = new Set(participantActivity.map((participant) => participant.catId));
     const candidateIds = new Set<string>();
     for (const participant of participantActivity) candidateIds.add(participant.catId);
     for (const target of currentContext.sourceTargets) candidateIds.add(target.targetCatId);
-    for (const target of selectedSteerEntry.queueReceipt?.targets ?? []) candidateIds.add(target.catId);
+    for (const targetId of Object.keys(selectedSteerEntry.authorIntentByTarget ?? {})) candidateIds.add(targetId);
     for (const targetCatId of selectedSteerEntry.targetCats) candidateIds.add(targetCatId);
     const fallbackId = currentContext.fallbackTargetCatId ?? undefined;
     if (fallbackId) candidateIds.add(fallbackId);
@@ -604,9 +586,8 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     return [...candidateIds].flatMap((targetId) => {
       const cat = catById.get(targetId);
       if (!cat) return [];
-      const receipt = receiptByTarget.get(targetId);
       const sourceTarget = currentContext.sourceTargets.find((target) => target.targetCatId === targetId);
-      const processed = sourceTarget ? !sourceTarget.actionable : false;
+      const delivered = sourceTarget ? sourceTarget.state !== 'pending' : false;
       const row = rowByTarget.get(targetId);
       const hasCurrentReply = Boolean(
         activeInvocationIdByCatId[targetId] &&
@@ -619,10 +600,11 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           ...(cat.avatar ? { avatar: cat.avatar } : {}),
           canGuideReply: cat.messageDeliveryCapabilities?.guideReply === true,
           hasCurrentReply,
-          defaultSelected: pendingTargetIds.has(targetId) && !processed,
-          processed,
+          defaultSelected: pendingTargetIds.has(targetId) && !delivered,
+          pending: sourceTarget?.state === 'pending' && sourceTarget.actionable,
+          delivered,
           unavailable: cat.roster?.available === false,
-          disposition: receipt?.authorIntent?.requested ?? 'next_work',
+          disposition: row?.authorIntentByTarget?.[targetId]?.requested ?? 'next_work',
           membershipAtOpen: participantIds.has(targetId) ? ('member' as const) : ('admit' as const),
         },
       ];
@@ -720,6 +702,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
 
       {selectedSteerEntry && selectedSteerEntry.status === 'queued' && (
         <SteerQueuedEntryModal
+          sourceRecordId={steerContext.sourceRecordId ?? selectedSteerEntry.messageId ?? ''}
           targets={selectedSteerTargets}
           contextState={
             steerContext.threadId === threadId && steerContext.entryId === selectedSteerEntry.id

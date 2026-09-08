@@ -184,7 +184,7 @@ export function useSendMessage(activeThreadId?: string) {
         }
         if (postAdmissionAction?.kind === 'steer') {
           const entries = admission.entries ?? [];
-          if (entries.length === 0) throw new Error('Steer admission did not return exact per-target Queue entries');
+          if (entries.length === 0) throw new Error('Steer admission did not return its canonical Queue entry');
           await applyPostAdmissionActions(threadId, entries, postAdmissionAction);
         }
 

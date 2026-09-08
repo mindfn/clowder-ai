@@ -411,6 +411,51 @@ describe('Queue Integration (E2E scenarios)', () => {
     assert.strictEqual(routerMock.calls[0].message, 'Review email content');
   });
 
+  it('E2E: connector admission honors an active cancel/reset suppression fence', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const messageStore = new MessageStore();
+    const sourceMessage = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: null,
+        from: { kind: 'external', connectorId: 'email' },
+        content: 'Do not restart after reset',
+        mentions: ['opus'],
+        origin: 'connector',
+        timestamp: Date.now(),
+        threadId: 'thread-1',
+        deliveryStatus: 'queued',
+      }),
+    );
+    const localProcessor = new QueueProcessor({
+      queue,
+      invocationTracker: trackerMock.tracker,
+      invocationRecordStore: recordMock.store,
+      router: routerMock.router,
+      socketManager: socketMock.manager,
+      messageStore,
+      log: noopLog(),
+    });
+    localProcessor.suppressAutoResume('thread-1', 'opus', ['cancelled-invocation']);
+    const trigger = new ConnectorInvokeTrigger({
+      router: routerMock.router,
+      socketManager: socketMock.manager,
+      invocationRecordStore: recordMock.store,
+      invocationTracker: trackerMock.tracker,
+      invocationQueue: queue,
+      queueProcessor: localProcessor,
+      messageStore,
+      log: noopLog(),
+    });
+
+    await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', sourceMessage.content, sourceMessage.id);
+    await settle();
+
+    assert.equal(routerMock.calls.length, 0, 'a late connector wake must not bypass the reset owner');
+    assert.equal(queue.findEntryWithMessageId('thread-1', sourceMessage.id)?.status, 'queued');
+    assert.equal(localProcessor.isAutoResumeSuppressed('thread-1', 'opus'), true);
+  });
+
   // ── RFC #1356: no-lost-wakeup drain on completion ──
 
   it('bugfix: autoExecute entry orphaned when target cat busy at enqueue → recovered on completion', async () => {

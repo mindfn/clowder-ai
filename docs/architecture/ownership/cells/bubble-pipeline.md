@@ -1,13 +1,13 @@
 ---
 cell_id: bubble-pipeline
 title: Bubble Pipeline
-summary: Provider-normalized semantic event 到用户可见 bubble 的单一投影边界；覆盖气泡 identity、reducer single-writer、live/hydration convergence、typed execution/freshness projection，以及从 QueueLedger 同源投影到原消息的 durable per-target receipt。
+summary: Provider-normalized semantic event 到用户可见 bubble 的单一投影边界；覆盖气泡 identity、reducer single-writer、live/hydration convergence、typed execution/freshness projection，以及 MessageStore dispatchRefs 驱动的实际投递头像与响应终态。
 canonical_features: [F177, F183, F254, F264]
 code_anchors:
   - packages/api/src/domains/cats/services/types.ts
   - packages/shared/src/types/bubble-pipeline.ts
   - packages/shared/src/types/turn-execution.ts
-  - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.ts
+  - packages/api/src/domains/cats/services/stores/ports/MessageStore.ts
   - packages/web/src/stores/bubble-reducer.ts
   - packages/web/src/stores/chatStore.ts
   - packages/web/src/hooks/useAgentMessages.ts
@@ -39,8 +39,9 @@ doc_anchors:
   - feature-specs/2026-07-31-f264-terminal-consumption-receipt.md
   - feature-specs/2026-08-04-f264-author-declared-message-disposition.md
   - feature-specs/2026-08-13-1291-gate6-live-terminal-receipt-consumption.md
-static_scan_hints: [AgentMessageType, system_info, provider_signal, BubbleEvent, bubbleKind, bubbleIdentity, BubbleReducer, bubble-event-adapter, formatVisibleSystemInfo, useAgentMessages, useChatHistory, useSocket, queue_updated, QueueLedgerReceipt, QueueMessageReceipt, QueueMessageReceiptProjection, messageReceipts, timelinePublishedAtAppend, TurnExecutionMessageProjection, executionKind, routing_guard, freshness_supplement, auxiliaryTurnExecutions, MessageDispatchAvatars, seenAt, handledAt, terminalOutcome, evidenceRef, lineage, originalMessageId, sourceInvocationId, chatStore, hydration, IndexedDB]
+static_scan_hints: [AgentMessageType, system_info, provider_signal, BubbleEvent, bubbleKind, bubbleIdentity, BubbleReducer, bubble-event-adapter, formatVisibleSystemInfo, useAgentMessages, useChatHistory, useSocket, queue_updated, dispatchRefs, dispatchedAt, statusMessageId, TurnExecutionMessageProjection, executionKind, routing_guard, freshness_supplement, auxiliaryTurnExecutions, MessageDispatchAvatars, lifecycleStatus, evidenceRef, lineage, originalMessageId, sourceInvocationId, chatStore, hydration, IndexedDB]
 cited_by:
+  - {feature: F117-canonical-source-entry, date: 2026-09-08, delta: the source bubble is materialized once at first actual delivery; MessageStore dispatchRefs own per-target delivery identity and time, while each exact response bubble owns processing and terminal state without Queue receipt projection}
   - {feature: F264-author-intent-steer-ui, date: 2026-09-03, delta: the Steer modal offers non-interrupting send as author intent for every selectable target; admission appends to an exact accepting run or preserves the same row for ordinary drain when the carrier is unavailable or already stopped}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: full queued-body adoption links the original source dispatchRef to the already-processing response so its member avatar and processing bubble appear on the original timeline message without copying or moving the body}
   - {feature: F117-ADR-043, date: 2026-09-03, delta: live queue updates and F5 history project the same QueueMessageReceipt from exact QueueLedger rows while MessageStore retains only body, coarse delivery state, and immutable timeline publication fact}
@@ -74,27 +75,30 @@ projections distinguish ordinary replies, routing guards, and freshness suppleme
 or creating duplicate bodies. Supplement state attaches only by exact `originalMessageId`, while a
 produced supplement remains its own timestamped reply.
 
-F264 attaches `QueueMessageReceipt` to the exact original message. ADR-043 makes QueueLedger rows the
-receipt truth: `QueueLedgerReceipt` projects target state, exact child/body exposure, terminal outcome,
-and reminder attempts. Live `queue_updated` carries additive `messageReceipts`; F5 history resolves the
-same rows through the ledger's exact `messageId → entryIds` index. Terminal receipts remain visible after
-the actionable row leaves active order without copying state into MessageStore or creating another writer.
+F264 delivery presentation now reads actual delivery truth from MessageStore `dispatchRefs[]`. A ref appears
+only after one exact source-to-target cutover and carries `dispatchedAt`, target identity, and the exact
+`statusMessageId`; later settlement updates that same ref from the canonical response lifecycle. Queue owns
+only pending targets and contributes no receipt, processing, exposure, or terminal projection.
 
-When a running member obtains a complete queued body through thread context, the server attaches that source
-to the member's existing response lifecycle and `LifecycleActiveRun` before retiring its scalar Queue row.
-The source's `dispatchRef.statusMessageId` therefore drives `MessageDispatchAvatars` and the existing
-processing response bubble on the original message. A sibling target remains assigned/queued until it adopts
-the same source independently; no duplicate source or synthetic processing bubble is created.
+The first actual delivery of a user or external inline source materializes its one History bubble. Additional
+targets append refs to the same source message, so a multi-target send never renders duplicate user bubbles.
+Agent-authored sources already in History reuse their existing bubble. A running member that adopts a complete
+queued body through thread context performs the same transition and links the source to its existing response;
+other targets remain pending in the single Queue entry.
 
-MessageStore owns body, coarse `deliveryStatus`, and the immutable `timelinePublishedAtAppend` fact.
-Only atomically admitted user `conversation_input` work keeps authored timeline order when later
-delivered; queued work that was not published at admission enters the timeline at `deliveredAt`.
-Live and hydrated bubbles must converge on that coordinate without content, timestamp, or log-text guesses.
+`MessageDispatchAvatars` is the two-stage projection of those refs: a dispatched target shows the member avatar,
+hover reveals the actual delivery timestamp, and activation navigates to the exact response bubble. The response
+bubble itself owns `processing`, streamed content, `completed`, `failed`, and `canceled`; a failure retains any
+partial content and appends its structured diagnostic. The source ref never manufactures a second response.
+
+Live socket updates and F5 hydration read the same MessageStore lifecycle. They must converge without content,
+timestamp, Queue receipt, or log-text guesses. A targetless user/external entry remains outside History until
+some real dispatch occurs; a source already in History does not need to be moved or copied.
 
 A bodyless processing response renders a lifecycle tip; once content streams, that same response identity
 becomes the bubble. Empty terminal responses use their typed lifecycle notice and remain available to peer
-context. Receipt evidence navigates the exact loaded invocation lineage without moving the original
-message or copying handled replies beneath it.
+context. Dispatch navigation follows exact persisted identities without moving the original message or
+copying handled replies beneath it.
 
 ## Use This When
 
@@ -103,19 +107,19 @@ message or copying handled replies beneath it.
 - Touching `useAgentMessages`, `bubble-reducer`, `chatStore`, `useSocket`, IndexedDB hydration, or
   bubble diagnostics.
 - Changing F254 supplement projection, typed child execution badges, or lifecycle tips.
-- Changing F264 receipt rendering, body-exposure labels, terminal outcomes, reminder attempts, or lineage
-  navigation.
-- Changing Message timeline visibility, `timelinePublishedAtAppend`, or delivery-order hydration.
+- Changing dispatch-avatar rendering, delivery timestamps, response terminal outcomes, reminders, or exact
+  response navigation.
+- Changing first-delivery source materialization or delivery-order hydration.
 
 ## Extend By
 
 - Normalize provider wire events before they reach the shared semantic projector; add positive and
   fail-closed fixtures for every new structured kind.
 - Route all message mutations through the reducer/single-writer boundary.
-- Attach supplements and receipts only by exact persisted identity, never by text or timestamp proximity.
-- Project receipts from QueueLedger rows for both live socket and F5 history; keep the frontend normalizer
-  structural and idempotent.
-- Add paired live/hydration tests whenever receipt state, lifecycle notice, or timeline ordering changes.
+- Attach supplements and dispatch refs only by exact persisted identity, never by text or timestamp proximity.
+- Project delivery avatars from MessageStore `dispatchRefs` for both live socket and F5 history; keep the
+  frontend normalizer structural and idempotent.
+- Add paired live/hydration tests whenever dispatch state, lifecycle notice, or timeline ordering changes.
 - Preserve one bubble identity as processing tip upgrades to streamed or terminal content.
 
 ## Do NOT Unify With
@@ -124,17 +128,16 @@ message or copying handled replies beneath it.
 - Do not render unknown protocol envelopes with `JSON.stringify` or infer semantics with an LLM.
 - Do not let provider lifecycle IDs replace the canonical bubble identity.
 - Do not use IndexedDB as online merge authority.
-- Do not copy Queue lifecycle into MessageStore or derive receipts from retired Message custody fields.
-- Do not remove or move an original message when freshness or receipt state changes.
-- Do not label notice delivery as body read, or provider success as handled without exact ledger evidence.
-- Do not use content/timestamp proximity to merge supplements, receipts, or terminal notices.
+- Do not copy Queue lifecycle into MessageStore or derive delivery from pending Queue targets.
+- Do not remove or move an original message when freshness or target lifecycle changes.
+- Do not label Queue admission as delivery, or provider success as handled without exact lifecycle evidence.
+- Do not use content/timestamp proximity to merge supplements, dispatch refs, or terminal notices.
 
 ## Static Scan Hints
 
 Watch for new or renamed `BubbleEvent`, `bubbleKind`, `bubbleIdentity`, `BubbleReducer`,
 `bubble-event-adapter`, `useAgentMessages`, `useChatHistory`, `useSocket`, `queue_updated`,
-`QueueLedgerReceipt`, `QueueMessageReceipt`, `QueueMessageReceiptProjection`, `messageReceipts`,
-`timelinePublishedAtAppend`, `TurnExecutionMessageProjection`, `executionKind`,
-`freshness_supplement`, `MessageDispatchAvatars`, `seenAt`, `handledAt`, `terminalOutcome`,
+`dispatchRefs`, `dispatchedAt`, `statusMessageId`, `TurnExecutionMessageProjection`, `executionKind`,
+`freshness_supplement`, `MessageDispatchAvatars`, `lifecycleStatus`,
 `originalMessageId`, `sourceInvocationId`, `chatStore`, hydration, IndexedDB, placeholder recovery,
 provider-specific render switches, raw JSON fallbacks, and direct message mutations.

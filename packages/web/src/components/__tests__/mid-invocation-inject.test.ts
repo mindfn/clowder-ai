@@ -203,10 +203,13 @@ describe('F24: mid-invocation message injection', () => {
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
 
-    expect(onConfirm).toHaveBeenCalledWith([
-      { targetId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' },
-      { targetId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
-    ]);
+    expect(onConfirm).toHaveBeenCalledWith({
+      observedPendingTargetIds: [],
+      actions: [
+        { targetId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' },
+        { targetId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+      ],
+    });
   });
 
   it('waits for the exact async fallback instead of guessing the first member', () => {
@@ -244,9 +247,10 @@ describe('F24: mid-invocation message injection', () => {
     expect(container.querySelector('[data-testid="steer-guide-reply"]')?.getAttribute('aria-pressed')).toBe('true');
 
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(onConfirm).toHaveBeenCalledWith([
-      { targetId: 'codex', strategy: 'guide_reply', membershipAtOpen: 'member' },
-    ]);
+    expect(onConfirm).toHaveBeenCalledWith({
+      observedPendingTargetIds: [],
+      actions: [{ targetId: 'codex', strategy: 'guide_reply', membershipAtOpen: 'member' }],
+    });
   });
 
   it('does not turn an explicitly selected guide into an interrupt when the current reply disappears', () => {
@@ -314,9 +318,10 @@ describe('F24: mid-invocation message injection', () => {
     expect(container.querySelector<HTMLButtonElement>('[data-testid="steer-target-opus"]')?.disabled).toBe(true);
     expect(container.textContent).toContain('不可用');
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(onConfirm).toHaveBeenCalledWith([
-      { targetId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
-    ]);
+    expect(onConfirm).toHaveBeenCalledWith({
+      observedPendingTargetIds: [],
+      actions: [{ targetId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
+    });
   });
 
   it('rejects stale steer confirmation when execution identity changes (A→B)', () => {

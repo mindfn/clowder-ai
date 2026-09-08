@@ -1,4 +1,3 @@
-import type { QueueMessageReceiptProjection } from '@cat-cafe/shared';
 import { create } from 'zustand';
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import { isBubbleInvariantStrictModeOn, recordBubbleInvariantViolation } from '@/debug/bubbleInvariantDiagnostics';
@@ -99,33 +98,6 @@ function mergeCatInvocationInfo(
     ...(parentChanged && !childIsExplicit ? { turnInvocationId: undefined } : {}),
     ...(parentChanged && !lifecycleIsExplicit ? { appServerLifecycle: undefined } : {}),
   };
-}
-
-function projectQueueReceiptsOntoMessages(
-  messages: ChatMessage[],
-  queue: QueueEntry[],
-  messageReceipts: readonly QueueMessageReceiptProjection[],
-): ChatMessage[] {
-  const receiptByMessageId = new Map<string, NonNullable<QueueEntry['queueReceipt']>>();
-  for (const entry of queue) {
-    if (!entry.queueReceipt) continue;
-    for (const messageId of [entry.messageId, ...entry.mergedMessageIds]) {
-      if (messageId) receiptByMessageId.set(messageId, entry.queueReceipt);
-    }
-  }
-  for (const projection of messageReceipts) {
-    receiptByMessageId.set(projection.messageId, projection.queueReceipt);
-  }
-  if (receiptByMessageId.size === 0) return messages;
-
-  let changed = false;
-  const projected = messages.map((message) => {
-    const receipt = receiptByMessageId.get(message.id);
-    if (!receipt || message.extra?.queueReceipt === receipt) return message;
-    changed = true;
-    return { ...message, extra: { ...message.extra, queueReceipt: receipt } };
-  });
-  return changed ? projected : messages;
 }
 
 function insertFreshnessClosureMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
@@ -255,26 +227,15 @@ function mirrorActiveFlat(
   return mirrorActiveToThreadStates(state, state.currentThreadId, patch);
 }
 
-function buildQueueStoreUpdate(
-  state: ChatState,
-  threadId: string,
-  queue: QueueEntry[],
-  messageReceipts: readonly QueueMessageReceiptProjection[],
-): Partial<ChatState> {
+function buildQueueStoreUpdate(state: ChatState, threadId: string, queue: QueueEntry[]): Partial<ChatState> {
   const activeThread = threadId === state.currentThreadId;
   const existing = activeThread ? undefined : (state.threadStates[threadId] ?? { ...DEFAULT_THREAD_STATE });
   const wasFull = activeThread ? state.queueFull : existing?.queueFull;
   const isShrinking = wasFull && queue.length < 5;
-  const messages = projectQueueReceiptsOntoMessages(
-    activeThread ? state.messages : (existing?.messages ?? []),
-    queue,
-    messageReceipts,
-  );
 
   if (activeThread) {
     const patch: Partial<ThreadState> = {
       queue,
-      messages,
       ...(isShrinking ? { queueFull: false, queueFullSource: undefined } : {}),
     };
     return { ...patch, ...mirrorActiveToThreadStates(state, threadId, patch) };
@@ -287,7 +248,6 @@ function buildQueueStoreUpdate(
       [threadId]: {
         ...nextThread,
         queue,
-        messages,
         ...(isShrinking ? { queueFull: false, queueFullSource: undefined } : {}),
         lastActivity: Date.now(),
       },
@@ -1191,7 +1151,7 @@ export interface ChatState {
   resetThreadInvocationState: (threadId: string) => void;
 
   // ── F39: Queue actions ──
-  setQueue: (threadId: string, queue: QueueEntry[], messageReceipts?: readonly QueueMessageReceiptProjection[]) => void;
+  setQueue: (threadId: string, queue: QueueEntry[]) => void;
   setQueueFull: (threadId: string, source: 'user' | 'connector') => void;
   /** Mark queued messages delivered, terminalize existing bubbles, and recover any missed live insert. */
   markMessagesDelivered: (
@@ -1397,8 +1357,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── F39: Queue actions ──
 
-  setQueue: (threadId, queue, messageReceipts = []) =>
-    set((state) => buildQueueStoreUpdate(state, threadId, queue, messageReceipts)),
+  setQueue: (threadId, queue) => set((state) => buildQueueStoreUpdate(state, threadId, queue)),
 
   setQueueFull: (threadId, source) =>
     set((state) => {
@@ -1424,9 +1383,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const idSet = new Set(messageIds);
       const serverMessageById = new Map(serverMessages?.map((message) => [message.id, message]));
       const updateMsgs = (msgs: ChatMessage[]) => {
-        // Terminalize existing timeline bubbles in place. The server projection
-        // carries the final per-target receipt; dropping it would leave an
-        // already-visible queued bubble permanently stuck at "queued".
+        // Publish the exact History message on first delivery, or refresh an
+        // already-visible source in place. Queue state never becomes message metadata.
         const updated = msgs.map((message) => {
           if (!idSet.has(message.id)) return message;
           const serverMessage = serverMessageById.get(message.id);

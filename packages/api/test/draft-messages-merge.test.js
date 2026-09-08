@@ -213,7 +213,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
     assert.equal(draft.catId, 'opus');
   });
 
-  it('hydrates only exposed recall tombstones and never returns their body', async () => {
+  it('never hydrates new pending-message recall tombstones or their body', async () => {
     const hidden = messageStore.append(
       canonicalTestMessageInput({
         userId: 'user-1',
@@ -225,12 +225,11 @@ describe('GET /api/messages — draft merge (#80)', () => {
         deliveryStatus: 'queued',
       }),
     );
-    const exposure = { targetCatId: 'opus', invocationId: 'child-read', seenAt: 1_500 };
-    const exposed = messageStore.append(
+    const second = messageStore.append(
       canonicalTestMessageInput({
         userId: 'user-1',
         catId: null,
-        content: 'exposed secret',
+        content: 'second pending secret',
         mentions: ['opus'],
         timestamp: 1_100,
         threadId: 'thread-1',
@@ -244,18 +243,16 @@ describe('GET /api/messages — draft merge (#80)', () => {
         expectedDraftRevision: 0,
         merge: 'replace',
         recalledAt: 2_000,
-        exposures: [],
       }).kind,
       'recalled',
     );
     assert.equal(
-      messageStore.recallMessageToComposerDraft(exposed.id, {
+      messageStore.recallMessageToComposerDraft(second.id, {
         ownerUserId: 'user-1',
         threadId: 'thread-1',
         expectedDraftRevision: 1,
         merge: 'replace',
         recalledAt: 2_100,
-        exposures: [exposure],
       }).kind,
       'recalled',
     );
@@ -273,12 +270,11 @@ describe('GET /api/messages — draft merge (#80)', () => {
       messages.some((message) => message.id === hidden.id),
       false,
     );
-    const tombstone = messages.find((message) => message.id === exposed.id);
-    assert.ok(tombstone);
-    assert.equal(tombstone.content, '');
-    assert.equal(tombstone.extra.recall.exposure, 'seen');
-    assert.deepEqual(tombstone.extra.recall.exposures, [exposure]);
-    assert.doesNotMatch(JSON.stringify(tombstone), /exposed secret/);
+    assert.equal(
+      messages.some((message) => message.id === second.id),
+      false,
+    );
+    assert.doesNotMatch(JSON.stringify(messages), /zero exposure secret|second pending secret/);
   });
 
   it('excludes drafts on paginated request (with before cursor)', async () => {

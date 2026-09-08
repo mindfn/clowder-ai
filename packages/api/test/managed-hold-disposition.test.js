@@ -19,10 +19,8 @@ import {
   ManagedHoldDispositionError,
   ManagedHoldDispositionService,
 } from '../dist/domains/ball-custody/ManagedHoldDispositionService.js';
-import { ManagedHoldReceiptService } from '../dist/domains/ball-custody/ManagedHoldReceiptService.js';
 import { TurnCustodyProjectionService } from '../dist/domains/ball-custody/TurnCustodyProjectionService.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { queueEntryId } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
@@ -118,6 +116,53 @@ function managedTask(overrides = {}) {
   };
 }
 
+async function deliverQueueCarrier({ queue, messageStore, stored, invocationId, at }) {
+  const entry = queue.findEntryWithMessageId('thread-1', stored.id);
+  assert.ok(entry);
+  const claimed = await queue.markProcessingByIdDurable('thread-1', entry.id, 'codex-sol');
+  assert.ok(claimed);
+  assert.equal(await queue.commitClaimedProcessing('thread-1', [claimed.id], at), true);
+  const delivered = messageStore.markDelivered(stored.id, at);
+  assert.equal(delivered?.deliveryStatus, 'delivered');
+  const response = messageStore.append(
+    canonicalTestMessageInput({
+      userId: 'user-1',
+      catId: 'codex-sol',
+      from: { kind: 'agent', catId: 'codex-sol' },
+      content: '',
+      mentions: [],
+      timestamp: at,
+      threadId: 'thread-1',
+      lifecycle: {
+        kind: 'response',
+        orderKey: `${at}:${invocationId}`,
+        invocationId,
+        targetId: 'codex-sol',
+        inputEntryIds: [],
+        inputMessageIds: [],
+        status: 'processing',
+        startedAt: at,
+      },
+    }),
+  );
+  const admission = messageStore.commitLifecycleAppendAdmission({
+    threadId: 'thread-1',
+    entryId: entry.id,
+    inputMessageIds: [stored.id],
+    runs: [
+      {
+        targetId: 'codex-sol',
+        invocationId,
+        responseMessageId: response.id,
+        dispatchedAt: at,
+      },
+    ],
+  });
+  assert.ok(admission.kind === 'applied' || admission.kind === 'replayed');
+  assert.ok(await queue.removeProcessedDurable('thread-1', 'user-1', entry.id));
+  return response;
+}
+
 async function harness({
   failDispositionAppendOnce = false,
   failDispositionProjectionOnce = false,
@@ -190,14 +235,10 @@ async function harness({
     priority: 'normal',
   });
   assert.ok(enqueue.entry);
-  await queue.markQueuedSeenDurable('thread-1', 'user-1', enqueue.entry.id, 'codex-sol', 'inv-1', 3_000);
-  const processing = await queue.markProcessingByIdDurable('thread-1', enqueue.entry.id, 'codex-sol');
-  assert.ok(processing);
-  assert.equal(await queue.commitClaimedProcessing('thread-1', [processing.id], 3_001), true);
+  await deliverQueueCarrier({ queue, messageStore, stored, invocationId: 'inv-1', at: 3_001 });
 
   const tasks = new Map([['task-1', task]]);
   let latest = true;
-  const receiptService = new ManagedHoldReceiptService({ queue, messageStore, now: () => now });
   const fencedIngest = beforeDispositionRecord
     ? {
         record: (event) => ingest.record(event),
@@ -216,7 +257,6 @@ async function harness({
     ballCustodyEventLog: eventLog,
     ballCustodyProjectionStore: projectionStore,
     ballCustody: fencedIngest,
-    receiptService,
     repairProjection: (subjectKey) => projector.rebuild(subjectKey),
     now: () => now,
   });
@@ -282,10 +322,13 @@ async function enqueueManagedWake(h, { taskId, invocationId, fireAt, at }) {
     priority: 'normal',
   });
   assert.ok(enqueue.entry);
-  await h.queue.markQueuedSeenDurable('thread-1', 'user-1', enqueue.entry.id, 'codex-sol', invocationId, at + 200);
-  const processing = await h.queue.markProcessingByIdDurable('thread-1', enqueue.entry.id, 'codex-sol');
-  assert.ok(processing);
-  assert.equal(await h.queue.commitClaimedProcessing('thread-1', [processing.id], at + 201), true);
+  await deliverQueueCarrier({
+    queue: h.queue,
+    messageStore: h.messageStore,
+    stored,
+    invocationId,
+    at: at + 201,
+  });
 
   await h.ingest.record(buildHeldEvent({ threadId: 'thread-1', catId: 'codex-sol', fireAt, at }));
   await h.ingest.record(
@@ -386,7 +429,7 @@ describe('F167 × F254 managed hold disposition', () => {
     assert.notEqual(projection.state, 'resolved');
   });
 
-  test('only the fenced producer writes one receipt + terminal event and releases the real stop gate', async () => {
+  test('only the fenced producer writes one terminal event and releases the real stop gate', async () => {
     const h = await harness();
     const gate = new TurnCustodyProjectionService({
       ballCustodyProjectionStore: h.projectionStore,
@@ -406,11 +449,9 @@ describe('F167 × F254 managed hold disposition', () => {
     assert.equal(first.outcome, 'applied');
     assert.equal((await gate.close(opened)).shouldBlock, false);
 
-    const receipt = await h.queue.getDurableEntry('thread-1', queueEntryId(h.stored.id, 'codex-sol'));
-    assert.equal(receipt.status, 'terminal');
-    assert.equal(receipt.delivery.seenInvocationId, 'inv-1');
     assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
     assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+    assert.equal(h.messageStore.getById(h.stored.id).lifecycle.dispatchRefs[0].targetId, 'codex-sol');
 
     const replay = await h.service.complete(auth(h), 'completed');
     assert.equal(replay.outcome, 'replayed');
@@ -421,12 +462,11 @@ describe('F167 × F254 managed hold disposition', () => {
     );
   });
 
-  test('generic Queue terminalization cannot write a managed-hold custody event', async () => {
+  test('delivery leaves no Queue terminal and cannot itself disposition custody', async () => {
     const h = await harness();
-    const entry = h.queue.list('thread-1', 'user-1')[0];
-
-    assert.ok(await h.queue.terminalizeEntryDurable('thread-1', 'user-1', entry.id));
-    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'queued');
+    assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+    assert.equal(await h.queue.getDurableEntry('thread-1', h.stored.id), null);
+    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
     assert.equal(
       (await h.eventLog.read('ball:thread:thread-1')).some((event) => event.kind === 'ball.hold_dispositioned'),
       false,
@@ -475,7 +515,7 @@ describe('F167 × F254 managed hold disposition', () => {
       (await h.eventLog.read('ball:thread:thread-1')).some((event) => event.kind === 'ball.hold_dispositioned'),
       false,
     );
-    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'queued');
+    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
   });
 
   test('repairs projection when the exact event append wins before projection persistence fails', async () => {
@@ -486,10 +526,7 @@ describe('F167 × F254 managed hold disposition', () => {
     assert.equal(result.outcome, 'applied');
     assert.equal((await h.projectionStore.get('ball:thread:thread-1')).state, 'resolved');
     assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
-    assert.equal(
-      (await h.queue.getDurableEntry('thread-1', queueEntryId(h.stored.id, 'codex-sol'))).status,
-      'terminal',
-    );
+    assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
     assert.equal(
       (await h.eventLog.read('ball:thread:thread-1')).filter((event) => event.kind === 'ball.hold_dispositioned')
         .length,
@@ -497,13 +534,13 @@ describe('F167 × F254 managed hold disposition', () => {
     );
   });
 
-  test('does not consume the exact receipt when the custody event was not appended', async () => {
+  test('a custody event failure does not recreate already-delivered Queue work', async () => {
     const h = await harness({ failDispositionAppendOnce: true });
 
     await assert.rejects(() => h.service.complete(auth(h), 'completed'), /event append failed/);
 
-    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'queued');
-    assert.equal(h.queue.list('thread-1', 'user-1').length, 1);
+    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
+    assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
     assert.equal(
       (await h.eventLog.read('ball:thread:thread-1')).some((event) => event.kind === 'ball.hold_dispositioned'),
       false,
@@ -527,18 +564,14 @@ describe('F167 × F254 managed hold disposition', () => {
     ]) {
       const h = await harness();
       await assert.rejects(() => h.service.complete(mutate(h), 'completed'), ManagedHoldDispositionError);
-      assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'queued');
+      assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
     }
   });
 
-  test('a dequeued managed wake is terminalized instead of restored to Queue', async () => {
+  test('a delivered managed wake stays outside Queue before custody disposition', async () => {
     const h = await harness();
-    const entry = h.queue.list('thread-1', 'user-1')[0];
-    assert.ok(await h.queue.terminalizeEntryDurable('thread-1', 'user-1', entry.id));
     assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
-    const terminal = await h.queue.getDurableEntry('thread-1', entry.id);
-    assert.equal(terminal.status, 'terminal');
-    assert.equal(terminal.delivery.seenInvocationId, 'inv-1');
+    assert.equal(h.messageStore.getById(h.stored.id).deliveryStatus, 'delivered');
     assert.equal(
       (await h.eventLog.read('ball:thread:thread-1')).some((event) => event.kind === 'ball.hold_dispositioned'),
       false,

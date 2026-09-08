@@ -44,28 +44,26 @@ export function classifyApprovedActionCarrier(
       ? { outcome: 'repairable' }
       : { outcome: 'conflict', reason: 'carrier_receipt_conflict' };
   }
-  const entryByTarget = new Map(entries.map((entry) => [entry.target.kind === 'cat' ? entry.target.catId : '', entry]));
+  const [entry] = entries;
   const ledgerMatches =
     message.deliveryStatus !== 'canceled' &&
-    entries.length === targetCats.length &&
-    targetCats.every((catId) => {
-      const entry = entryByTarget.get(catId);
-      return Boolean(
-        entry &&
-          entry.owner.kind === 'user' &&
-          entry.owner.userId === proposal.ownerUserId &&
-          entry.from.kind === 'agent' &&
-          entry.from.catId === proposal.senderCatId &&
-          entry.kind === 'message_wake' &&
-          entry.payload.messageId === message.id &&
-          entry.payload.sourceId === message.id &&
-          entry.payload.content === proposal.content &&
-          entry.execution.intent === 'execute' &&
-          entry.execution.autoExecute === true &&
-          entry.sourceCategory === 'a2a' &&
-          entry.execution.actionSuccessorFence &&
-          actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, fence),
-      );
-    });
+    entries.length === 1 &&
+    Boolean(
+      entry &&
+        sameOrderedStrings(entry.targets, targetCats) &&
+        entry.owner.kind === 'user' &&
+        entry.owner.userId === proposal.ownerUserId &&
+        entry.from.kind === 'agent' &&
+        entry.from.catId === proposal.senderCatId &&
+        entry.kind === 'message_wake' &&
+        entry.payload.messageId === message.id &&
+        entry.payload.sourceRecordId === message.id &&
+        entry.payload.content === proposal.content &&
+        entry.execution.intent === 'execute' &&
+        entry.execution.autoExecute === true &&
+        entry.sourceCategory === 'a2a' &&
+        entry.execution.actionSuccessorFence &&
+        actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, fence),
+    );
   return ledgerMatches ? { outcome: 'admitted' } : { outcome: 'conflict', reason: 'carrier_receipt_conflict' };
 }

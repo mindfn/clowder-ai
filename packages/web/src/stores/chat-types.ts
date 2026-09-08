@@ -13,8 +13,9 @@ import type {
   MessageFrom,
   ProviderSemanticEvent,
   PublishedFreshnessAnnotation,
-  QueueMessageReceipt,
+  QueueAuthorIntentReceipt,
   QueueRecoveryAction,
+  QueueReminderAttempt,
   ReplyPreview,
   SchedulerMessageExtra,
   TurnExecutionMessageProjection,
@@ -378,8 +379,8 @@ export interface ChatMessage {
     };
     /** Durable supplement lifecycle projected onto the published original. */
     freshnessSupplement?: FreshnessSupplementProjection;
-    /** F264: server-derived durable per-target message receipt. */
-    queueReceipt?: QueueMessageReceipt;
+    /** Fresh source created by an owner-authorized cloud delivery retry. */
+    cloudBridgeRetry?: import('@cat-cafe/shared').CloudBridgeRetryV1;
     /** F264 Gap F: content-free message recall truth projected for the owner timeline. */
     recall?: {
       version: 1;
@@ -806,12 +807,11 @@ export interface QueueEntry {
   /** #1354 structured routing feedback retained on the inline Queue payload. */
   routingWarnings?: readonly CatRoutingError[];
   intent: string;
-  status: 'queued' | 'processing';
-  /** F254 canonical per-target read projection, hydrated from GET /queue after F5. */
-  targetStates?: Record<
-    string,
-    'queued' | 'notified' | 'awakened' | 'seen' | 'failed' | 'steering' | 'withdrawn' | 'handled'
-  >;
+  status: 'queued';
+  /** Pending-target delivery preference. History dispatchRefs own actual delivery. */
+  authorIntentByTarget?: Record<string, QueueAuthorIntentReceipt>;
+  /** Reminder requests for targets that remain pending. */
+  reminderAttempts?: readonly QueueReminderAttempt[];
   createdAt: number;
   /** F122B: auto-execute without waiting for steer */
   autoExecute?: boolean;
@@ -838,8 +838,6 @@ export interface QueueEntry {
     contentBlocks?: ReadonlyArray<MessageContent>;
     replyTo?: string;
   };
-  /** F264: same durable receipt projection used by the terminal timeline bubble. */
-  queueReceipt?: QueueMessageReceipt;
   /** Server-owned executable recovery projection; absent only on legacy cached snapshots. */
   recoveryActions?: QueueRecoveryAction[];
   /** Server-authored explicit lifecycle actions; never inferred from client liveness. */

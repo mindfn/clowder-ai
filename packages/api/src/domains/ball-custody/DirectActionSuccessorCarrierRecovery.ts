@@ -1,7 +1,5 @@
-import type { QueueReceiptTargetState } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../cats/services/agents/invocation/InvocationQueue.js';
 import type { QueueLedgerEntry } from '../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
-import { projectQueueLedgerReceipt } from '../cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
 import {
   type ActionSuccessorAdmissionInput,
   type ActionSuccessorFence,
@@ -10,10 +8,6 @@ import {
 } from './ActionSuccessorAdmissionContract.js';
 import { canonicalizeActionTerminalPredicate } from './ActionTerminalPredicateCatalog.js';
 import type { ActionSuccessorLease } from './action-successor-state-machine.js';
-
-const LIVE_TARGET_STATES = new Set<QueueReceiptTargetState>(['queued', 'notified', 'awakened', 'seen', 'steering']);
-
-type ObservedCarrierState = QueueReceiptTargetState;
 
 export type DirectActionSuccessorCarrierUnavailableReason =
   | 'authority_mismatch'
@@ -90,12 +84,12 @@ function observeLedgerEntry(
   entry: QueueLedgerEntry,
   holders: readonly string[],
   fence: ActionSuccessorFence,
-  observed: Map<string, Set<ObservedCarrierState>>,
+  observed: Set<string>,
 ): void {
   if (!actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, fence)) return;
-  if (entry.target.kind !== 'cat' || !holders.includes(entry.target.catId)) return;
-  const target = projectQueueLedgerReceipt([entry])?.targets[0];
-  if (target) observed.get(entry.target.catId)?.add(target.state);
+  for (const targetId of entry.targets) {
+    if (holders.includes(targetId)) observed.add(targetId);
+  }
 }
 
 /** Classify only durable, exact-fence custody; message recency and process state are irrelevant. */
@@ -104,7 +98,7 @@ export function classifyDirectActionSuccessorCarrier(
   entries: readonly QueueLedgerEntry[],
 ): DirectActionSuccessorCarrierDecision {
   const fence = buildActionSuccessorFence(lease, lease.dispatchId);
-  const observed = new Map(lease.holderCatIds.map((catId) => [catId, new Set<ObservedCarrierState>()]));
+  const observed = new Set<string>();
 
   for (const entry of entries) {
     const ownerUserId = entry.owner.kind === 'user' ? entry.owner.userId : `system:${entry.owner.service}`;
@@ -112,25 +106,9 @@ export function classifyDirectActionSuccessorCarrier(
     observeLedgerEntry(entry, lease.holderCatIds, fence, observed);
   }
 
-  const holderStates = lease.holderCatIds.map((catId) => observed.get(catId) ?? new Set<ObservedCarrierState>());
-  const everyHolderLive = holderStates.every((states) => [...states].some((state) => LIVE_TARGET_STATES.has(state)));
-  if (everyHolderLive) return { disposition: 'live', fence };
-
-  const everyHolderRestartInterrupted = holderStates.every(
-    (states) => states.size > 0 && [...states].every((state) => state === 'interrupted'),
-  );
-  if (everyHolderRestartInterrupted) return { disposition: 'restart_interrupted', fence };
-
-  if (holderStates.some((states) => states.size === 0)) {
-    return { disposition: 'unavailable', reason: 'carrier_missing' };
-  }
-  if (holderStates.some((states) => states.has('handled') || states.has('withdrawn'))) {
-    return { disposition: 'unavailable', reason: 'carrier_terminal' };
-  }
-  if (holderStates.some((states) => states.has('failed'))) {
-    return { disposition: 'unavailable', reason: 'carrier_failed' };
-  }
-  return { disposition: 'unavailable', reason: 'carrier_mixed' };
+  return lease.holderCatIds.every((catId) => observed.has(catId))
+    ? { disposition: 'live', fence }
+    : { disposition: 'unavailable', reason: 'carrier_missing' };
 }
 
 export async function resolveDirectActionSuccessorCarrier(input: {

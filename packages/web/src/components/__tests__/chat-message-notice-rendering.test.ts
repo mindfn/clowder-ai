@@ -162,30 +162,6 @@ describe('ChatMessage notice rendering', () => {
       type: 'user',
       content: '@gpt-pro hello',
       timestamp: 1,
-      extra: {
-        queueReceipt: {
-          version: 1,
-          entryId: 'entry-needs-binding',
-          targets: [
-            {
-              catId: 'gpt-pro',
-              state: 'failed',
-              retryable: true,
-              attempts: [
-                {
-                  id: 'attempt-needs-binding',
-                  targetCatId: 'gpt-pro',
-                  sequence: 1,
-                  state: 'failed',
-                  createdAt: 1,
-                  updatedAt: 2,
-                },
-              ],
-            },
-          ],
-          reminderAttempts: [],
-        },
-      },
     } as ChatMessageType;
     const notice = {
       id: 'notice-needs-binding',

@@ -98,7 +98,7 @@ describe('coordination terminal → ordinary A2A dispatch retirement', () => {
     assert.ok(await queue.markProcessingByIdDurable(terminal.threadId, queued.id, 'fable5'));
     assert.equal(await queue.commitClaimedProcessing(terminal.threadId, [queued.id], seenAt - 2), true);
     assert.equal(
-      await queue.markProcessingAwakenedDurable(
+      await queue.markProcessingAwakened(
         terminal.threadId,
         terminal.userId,
         queued.id,
@@ -108,14 +108,7 @@ describe('coordination terminal → ordinary A2A dispatch retirement', () => {
       ),
       true,
     );
-    await queue.markProcessingSeenDurable(
-      terminal.threadId,
-      terminal.userId,
-      queued.id,
-      'fable5',
-      'terminal-child',
-      seenAt,
-    );
+    await queue.markProcessingSeen(terminal.threadId, terminal.userId, queued.id, 'fable5', 'terminal-child', seenAt);
     const processing = queue.getEntrySnapshot(terminal.threadId, terminal.userId, queued.id);
 
     assert.equal((await gate.close(opened)).shouldBlock, true);

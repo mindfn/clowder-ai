@@ -120,13 +120,13 @@ if queueRowCount > 0 then
     local item = queueRows[i]
     local row = item.row
     if not row.id or not row.threadId or row.threadId ~= threadId or row.status ~= 'queued' or
-       not row.payload or row.payload.sourceId ~= msgId or row.payload.messageId ~= msgId then
+       not row.payload or row.payload.sourceRecordId ~= msgId or row.payload.messageId ~= msgId then
       return redis.error_reply('QUEUE_ENQUEUE_INVALID_ROW')
     end
     if incomingIds[row.id] then return redis.error_reply('QUEUE_ENQUEUE_DUPLICATE_ID') end
     incomingIds[row.id] = true
     if redis.call('HEXISTS', KEYS[2], row.id) == 1 then return {-1, ''} end
-    if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+    if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
   end
   if redis.call('HEXISTS', KEYS[4], msgId) == 1 then return {-1, ''} end
   if queueMaxUserSources and queueMaxUserSources >= 0 then
@@ -137,7 +137,7 @@ if queueRowCount > 0 then
       if not currentRaw then return redis.error_reply('QUEUE_ORDER_ROW_MISSING') end
       local row = cjson.decode(currentRaw)
       if row.status == 'queued' and row.from and row.from.kind == 'user' then
-        queuedUserSources[row.payload.sourceId] = true
+        queuedUserSources[row.payload.sourceRecordId] = true
       end
     end
     for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
@@ -286,19 +286,13 @@ local threadId = redis.call('HGET', hash, 'threadId')
 local timestamp = redis.call('HGET', hash, 'timestamp')
 local catId = redis.call('HGET', hash, 'catId')
 local origin = redis.call('HGET', hash, 'origin')
-local source = redis.call('HGET', hash, 'source')
-local timelinePublishedAtAppend = redis.call('HGET', hash, 'timelinePublishedAtAppend')
 
--- Publication order: already-published real-cat speech and owner-visible
--- queued user receipts keep their authored timestamp; private queued work
--- enters the timeline at delivery. (Ported from original DELIVER_LUA.)
+-- Publication order: already-published real-cat speech keeps its authored
+-- timestamp. Undelivered owner work enters History only at actual delivery.
 local isRealCatSpeech = catId and catId ~= '' and catId ~= 'system'
   and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
-local isQueuedUserReceipt = (not catId or catId == '') and (not source or source == '')
-  and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
-  and timelinePublishedAtAppend == '1'
 local timelineScore = deliveredAt
-if isRealCatSpeech or isQueuedUserReceipt then
+if isRealCatSpeech then
   timelineScore = timestamp
 end
 

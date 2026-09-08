@@ -604,43 +604,6 @@ export function operationalKnowledgeCueSeeds(input: {
   return seeds;
 }
 
-/**
- * Bind every routeExecution ingress to the same atomic A2A slot-admission contract.
- * The returned controller is the parent batch gate; trackExternalSlot creates an
- * independent per-target controller while preserving exact cleanup ownership.
- */
-export type A2ASlotTrackingOptions = {
-  invocationController: NonNullable<RouteOptions['invocationController']>;
-  trackA2ASlot: NonNullable<RouteOptions['trackA2ASlot']>;
-  completeA2ASlots: NonNullable<RouteOptions['completeA2ASlots']>;
-};
-
-export function createA2ASlotTrackingBridge(
-  invocationTracker:
-    | {
-        trackExternalSlot?: InvocationTracker['trackExternalSlot'];
-        completeAll?: InvocationTracker['completeAll'];
-      }
-    | undefined,
-  invocationController: AbortController,
-  executionId?: string,
-): A2ASlotTrackingOptions {
-  return {
-    invocationController,
-    trackA2ASlot: (threadId, catId, userId, controller) => {
-      if (!invocationTracker?.trackExternalSlot || !invocationTracker.completeAll) {
-        throw new Error('A2A slot admission unavailable: InvocationTracker bridge missing');
-      }
-      return invocationTracker.trackExternalSlot(threadId, catId, controller, userId, [catId], executionId);
-    },
-    completeA2ASlots: (threadId, catIds, controller) => {
-      if (!invocationTracker?.completeAll) {
-        throw new Error('A2A slot cleanup unavailable: InvocationTracker bridge missing');
-      }
-      invocationTracker.completeAll(threadId, [...catIds], controller);
-    },
-  };
-}
 function canonicalDeferredBoundary(
   candidate: string | undefined,
   source: string,

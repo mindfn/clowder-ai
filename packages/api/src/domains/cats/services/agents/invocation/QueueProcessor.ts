@@ -874,8 +874,7 @@ export class QueueProcessor {
         return { outcome: 'rejected', reason: 'append_unavailable' };
       }
       const remainsBoundToRequestedParent = queueEntryTargetCats(entry).every((targetId) => {
-        const intent =
-          entry.target.kind === 'cat' && entry.target.catId === targetId ? entry.delivery.authorIntent : undefined;
+        const intent = entry.delivery.authorIntentByTarget?.[targetId];
         return (
           intent?.requested === 'continue_current' &&
           intent.fallbackAt === undefined &&
@@ -1007,7 +1006,7 @@ export class QueueProcessor {
         threadId: input.threadId,
         entryId: input.entryId,
         inputMessageIds,
-        runs: input.expectedRuns,
+        runs: input.expectedRuns.map((run) => ({ ...run, dispatchedAt: seenAt })),
       });
       if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
         throw new Error(
@@ -1142,8 +1141,8 @@ export class QueueProcessor {
 
   /**
    * Adopt full queued bodies that one exact active child has already requested.
-   * Each source×target row is retired immediately; sibling target rows remain
-   * independent Queue work, while Message lifecycle points at the existing
+   * Each adopted target leaves its source entry immediately; sibling targets
+   * remain pending there, while Message lifecycle points at the existing
    * processing response instead of creating a second invocation.
    */
   async adoptExposedQueuedEntries(input: {
@@ -1220,7 +1219,7 @@ export class QueueProcessor {
     if (!claimed) return { outcome: 'rejected', reason: 'state_changed', entryId: input.candidate.entryId };
 
     const messageIds = queueEntryMessageIds(claimed);
-    const newlySeen = claimed.delivery.seenAt === undefined;
+    const newlySeen = true;
     let lifecycleCommitted = false;
     let liveProjectionExtended = false;
     try {
@@ -1255,7 +1254,7 @@ export class QueueProcessor {
         threadId: input.threadId,
         entryId: claimed.id,
         inputMessageIds: messageIds,
-        runs: [input.run],
+        runs: [{ ...input.run, dispatchedAt: seenAt }],
       });
       if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
         invocationTracker.detachLifecycleActiveRunInputs?.(
@@ -1270,7 +1269,7 @@ export class QueueProcessor {
       }
       lifecycleCommitted = true;
 
-      const committed = await queue.commitClaimedExposureDurable(
+      const committed = await queue.commitClaimedAdoptionDurable(
         input.threadId,
         input.userId,
         claimed.id,
@@ -1897,35 +1896,21 @@ export class QueueProcessor {
    */
   async markPromptMessagesSeen(input: PromptMessagesExposedInput): Promise<readonly TurnCustodyWakeProvenance[]> {
     await this.ackPromptMentionCursors(input);
-    const entriesByMessage = await this.deps.queue.getDurableEntriesForMessages(input.threadId, input.messageIds);
-    for (const entry of [...entriesByMessage.values()].flat()) {
-      if (
-        queueEntryOwnerId(entry) !== input.userId ||
-        entry.target.kind !== 'cat' ||
-        entry.target.catId !== input.catId
-      ) {
-        continue;
-      }
-      const result =
-        entry.status === 'processing'
-          ? await this.deps.queue.markProcessingSeenDurable(
-              input.threadId,
-              input.userId,
-              entry.id,
-              input.catId,
-              input.invocationId,
-              input.seenAt,
-            )
-          : entry.status === 'queued'
-            ? await this.deps.queue.markQueuedSeenDurable(
-                input.threadId,
-                input.userId,
-                entry.id,
-                input.catId,
-                input.invocationId,
-                input.seenAt,
-              )
-            : undefined;
+    const attempts = this.deps.queue.findAdmittedEntriesForMessages(
+      input.threadId,
+      input.messageIds,
+      input.userId,
+      input.catId,
+    );
+    for (const entry of attempts) {
+      const result = await this.deps.queue.markProcessingSeen(
+        input.threadId,
+        input.userId,
+        entry.id,
+        input.catId,
+        input.invocationId,
+        input.seenAt,
+      );
       if (result?.newlySeen) recordQueuedSeenTelemetry();
     }
     return this.resolvePromptMessageCustodyWakes(input);
@@ -1967,19 +1952,15 @@ export class QueueProcessor {
    * to prompt exposure. This is intentionally separate from queued_seen.
    */
   async markPromptMessagesAwakened(input: PromptMessagesAwakenedInput): Promise<void> {
-    const entriesByMessage = await this.deps.queue.getDurableEntriesForMessages(input.threadId, input.messageIds);
-    const processing = [...entriesByMessage.values()]
-      .flat()
-      .filter(
-        (entry) =>
-          entry.status === 'processing' &&
-          queueEntryOwnerId(entry) === input.userId &&
-          entry.target.kind === 'cat' &&
-          entry.target.catId === input.catId,
-      );
-    for (const entry of processing) {
+    const attempts = this.deps.queue.findAdmittedEntriesForMessages(
+      input.threadId,
+      input.messageIds,
+      input.userId,
+      input.catId,
+    );
+    for (const entry of attempts) {
       if (
-        !(await this.deps.queue.markProcessingAwakenedDurable(
+        !(await this.deps.queue.markProcessingAwakened(
           input.threadId,
           input.userId,
           entry.id,
@@ -2169,7 +2150,7 @@ export class QueueProcessor {
     }
   }
 
-  /** Gate 2: the sole attempt-terminal writer for one operational Queue row. */
+  /** Forget one admitted process-local attempt after its response reaches terminal. */
   private async settleAttemptQueueEntry(attempted: QueueEntry, finalStatus: InvocationFinalStatus): Promise<void> {
     const terminal =
       finalStatus === 'succeeded'
@@ -2185,7 +2166,7 @@ export class QueueProcessor {
       terminal.outcome,
       'reason' in terminal ? terminal.reason : undefined,
     );
-    if (!removed) throw new Error(`Queue terminal commit lost processing entry ${attempted.id}`);
+    if (!removed) throw new Error(`admitted attempt cleanup lost source entry ${attempted.id}`);
   }
 
   /** Provider admission accepts only exact durable source custody or a source-less internal carrier. */
@@ -2745,6 +2726,14 @@ export class QueueProcessor {
             : await this.terminalizeUnavailableConversationHead(comparatorHead, 'explicit');
         return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
       }
+    }
+
+    const suppressedTarget = resolvedTargetCats.find((targetCatId) =>
+      this.isAutoResumeSuppressed(threadId, targetCatId),
+    );
+    if (suppressedTarget) {
+      this.emitContinuationDiagnostic(threadId, suppressedTarget, 'all_candidate_slots_busy', 1, comparatorHead.id);
+      return { started: false };
     }
 
     const busyTarget = resolvedTargetCats.find(
@@ -3347,8 +3336,8 @@ export class QueueProcessor {
       const idempotencyKey =
         connectorReplayCarrier && messageId
           ? `connector-${messageId}`
-          : entry.execution.actionSuccessorFence && entry.payload.sourceId
-            ? actionSuccessorInvocationIdempotencyKey(entry.payload.sourceId)
+          : entry.execution.actionSuccessorFence && entry.payload.sourceRecordId
+            ? actionSuccessorInvocationIdempotencyKey(entry.payload.sourceRecordId)
             : `queue-${entry.id}`;
       const actionLeaseCarrier: InvocationActionLeaseCarrier = entry.execution.actionSuccessorFence
         ? {
@@ -4037,7 +4026,7 @@ export class QueueProcessor {
             const capsule = prepared.consumedContinuation.capsule;
             const sameQueuedContinuation =
               entry.sourceCategory === 'continuation' &&
-              entry.payload.sourceId === QueueProcessor.continuationKey(capsule);
+              entry.payload.sourceRecordId === QueueProcessor.continuationKey(capsule);
             if (sameQueuedContinuation) {
               content = originalContent;
             }
@@ -4126,6 +4115,7 @@ export class QueueProcessor {
                 triggerMessage: stored,
                 ownerUserId: userId,
                 threadId,
+                targetCatId: primaryCat,
                 messageStore,
               })),
             );
@@ -4355,6 +4345,7 @@ export class QueueProcessor {
                 targetId: input.catId,
                 phase: 'dispatched',
                 statusMessageId: observed.message.id,
+                dispatchedAt: input.startedAt,
               });
               if (transition.kind !== 'applied' && transition.kind !== 'replayed') {
                 await messageStore.commitLifecycleResponseTerminal(observed.message.id, {

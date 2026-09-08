@@ -7,56 +7,13 @@ import {
   type QueueLedgerEntry,
   type QueueLedgerStore,
   type QueueLedgerTargetExpansionResult,
+  type QueueLedgerTargetReconcileResult,
   type QueueLedgerTransitionResult,
   queueLedgerAdmissionsMatch,
 } from './QueueLedger.js';
 
-function assertTargetExpansionRows(
-  threadId: string,
-  bindTargetCatId: string,
-  expectedQueuedEntryIds: readonly string[],
-  siblingEntries: readonly QueueLedgerEntry[],
-): void {
-  for (const entry of siblingEntries) assertQueueLedgerEntry(entry);
-  const invalidSibling = siblingEntries.some(
-    (entry) =>
-      entry.threadId !== threadId ||
-      entry.status !== 'queued' ||
-      entry.target.kind !== 'cat' ||
-      entry.target.catId === bindTargetCatId,
-  );
-  const allIds = [...expectedQueuedEntryIds, ...siblingEntries.map((entry) => entry.id)];
-  const allTargets = siblingEntries.map((entry) => (entry.target.kind === 'cat' ? entry.target.catId : ''));
-  const duplicateIds = new Set(allIds).size !== allIds.length;
-  const duplicateTargets = new Set(allTargets).size !== allTargets.length;
-  if (invalidSibling || duplicateIds || duplicateTargets) throw new Error('invalid queue target expansion rows');
-}
-
-function resolveExpectedQueuedRows(
-  current: readonly QueueLedgerEntry[],
-  expectedQueuedEntryIds: readonly string[],
-  anchorSourceId: string,
-  bindTargetCatId: string,
-): QueueLedgerEntry[] | null {
-  const entries = expectedQueuedEntryIds.map((expectedId) => current.find((entry) => entry.id === expectedId));
-  if (
-    entries.some(
-      (entry) =>
-        !entry ||
-        entry.status !== 'queued' ||
-        entry.payload.sourceId !== anchorSourceId ||
-        entry.target.kind !== 'cat' ||
-        entry.target.catId === bindTargetCatId,
-    )
-  ) {
-    return null;
-  }
-  return entries as QueueLedgerEntry[];
-}
-
 export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
-  private readonly terminalRows = new Map<string, Map<string, QueueLedgerEntry>>();
   private readonly messageRows = new Map<string, Map<string, Set<string>>>();
 
   private indexEntries(threadId: string, entries: readonly QueueLedgerEntry[]): void {
@@ -94,10 +51,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
       throw new Error('queue ledger enqueue ids must be unique');
     }
     const current = this.rows.get(threadId) ?? [];
-    const terminal = this.terminalRows.get(threadId);
-    const existing = entries.map(
-      (entry) => current.find((candidate) => candidate.id === entry.id) ?? terminal?.get(entry.id),
-    );
+    const existing = entries.map((entry) => current.find((candidate) => candidate.id === entry.id));
     const existingEntries = existing.filter((entry): entry is QueueLedgerEntry => entry !== undefined);
     if (existingEntries.length === entries.length) {
       return existingEntries.every((entry, index) => {
@@ -112,10 +66,10 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
       const queuedUserSources = new Set(
         current
           .filter((entry) => entry.from.kind === 'user' && entry.status === 'queued')
-          .map((entry) => entry.payload.sourceId),
+          .map((entry) => entry.payload.sourceRecordId),
       );
       const incomingUserSources = new Set(
-        entries.filter((entry) => entry.from.kind === 'user').map((entry) => entry.payload.sourceId),
+        entries.filter((entry) => entry.from.kind === 'user').map((entry) => entry.payload.sourceRecordId),
       );
       if (new Set([...queuedUserSources, ...incomingUserSources]).size > maxQueuedUserEntries) {
         return { outcome: 'full', entries: [] };
@@ -143,68 +97,91 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     siblingEntries: readonly QueueLedgerEntry[],
   ): Promise<QueueLedgerTargetExpansionResult> {
     if (!bindTargetCatId) throw new Error('queue target expansion requires a target');
-    assertTargetExpansionRows(threadId, bindTargetCatId, expectedQueuedEntryIds, siblingEntries);
-    if (expectedQueuedEntryIds.includes(entryId) || siblingEntries.some((entry) => entry.id === entryId)) {
-      throw new Error('invalid queue target expansion rows');
-    }
+    for (const entry of siblingEntries) assertQueueLedgerEntry(entry);
     const current = this.rows.get(threadId);
     if (!current) return { outcome: 'not_found', entries: [] };
     const anchor = current.find((entry) => entry.id === entryId);
     if (!anchor) return { outcome: 'not_found', entries: [] };
-    if (anchor.status !== 'queued' || (anchor.target.kind === 'cat' && anchor.target.catId !== bindTargetCatId)) {
+    if (anchor.status !== 'queued') {
       return { outcome: 'state_changed', entries: [] };
     }
-    const expectedQueued = resolveExpectedQueuedRows(
-      current,
-      expectedQueuedEntryIds,
-      anchor.payload.sourceId,
-      bindTargetCatId,
-    );
-    if (!expectedQueued) return { outcome: 'state_changed', entries: [] };
-    const selectedTargetIds = [
-      bindTargetCatId,
-      ...expectedQueued.map((entry) => (entry.target.kind === 'cat' ? entry.target.catId : '')),
-      ...siblingEntries.map((entry) => (entry.target.kind === 'cat' ? entry.target.catId : '')),
-    ];
     if (
-      new Set(selectedTargetIds).size !== selectedTargetIds.length ||
-      siblingEntries.some((entry) => entry.payload.sourceId !== anchor.payload.sourceId)
+      expectedQueuedEntryIds.some((expectedId) => expectedId !== entryId) ||
+      siblingEntries.some(
+        (entry) =>
+          entry.id !== entryId ||
+          entry.threadId !== threadId ||
+          entry.payload.sourceRecordId !== anchor.payload.sourceRecordId ||
+          entry.status !== 'queued',
+      )
     ) {
       throw new Error('invalid queue target expansion rows');
     }
-    const terminal = this.terminalRows.get(threadId);
-    const existing = siblingEntries.map(
-      (entry) => current.find((candidate) => candidate.id === entry.id) ?? terminal?.get(entry.id),
-    );
-    const existingEntries = existing.filter((entry): entry is QueueLedgerEntry => entry !== undefined);
-    if (existingEntries.length === siblingEntries.length && anchor.target.kind === 'cat') {
-      if (existingEntries.some((entry) => entry.status !== 'queued')) {
-        return { outcome: 'state_changed', entries: [] };
-      }
-      if (
-        existingEntries.every((entry, index) => {
-          const input = siblingEntries[index];
-          return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
-        })
-      ) {
-        return {
-          outcome: 'replayed',
-          entries: [anchor, ...expectedQueued, ...existingEntries].map(cloneQueueLedgerEntry),
-        };
-      }
-      return { outcome: 'conflict', entries: [] };
+    const requestedTargets = [bindTargetCatId, ...siblingEntries.flatMap((entry) => entry.targets)];
+    const nextTargets = [...new Set([...anchor.targets, ...requestedTargets])];
+    if (nextTargets.length === anchor.targets.length) {
+      return { outcome: 'replayed', entries: [cloneQueueLedgerEntry(anchor)] };
     }
-    if (existingEntries.length > 0) {
-      return { outcome: 'conflict', entries: [] };
-    }
-    if (anchor.target.kind === 'unassigned') anchor.target = { kind: 'cat', catId: bindTargetCatId };
-    const inserted = siblingEntries.map(cloneQueueLedgerEntry);
-    current.push(...inserted);
-    this.indexEntries(threadId, inserted);
+    anchor.targets = nextTargets;
     return {
       outcome: 'expanded',
-      entries: [anchor, ...expectedQueued, ...inserted].map(cloneQueueLedgerEntry),
+      entries: [cloneQueueLedgerEntry(anchor)],
     };
+  }
+
+  async reconcileTargets(
+    threadId: string,
+    entryId: string,
+    addTargetIds: readonly string[],
+    removeTargetIds: readonly string[],
+    authorIntentByTarget: Readonly<NonNullable<QueueLedgerEntry['delivery']['authorIntentByTarget']>> = {},
+  ): Promise<QueueLedgerTargetReconcileResult> {
+    const additions = [...new Set(addTargetIds)];
+    const removals = new Set(removeTargetIds);
+    if (
+      additions.some((targetId) => !targetId || removals.has(targetId)) ||
+      removals.has('') ||
+      additions.length !== addTargetIds.length ||
+      removals.size !== removeTargetIds.length
+    ) {
+      throw new Error('invalid Queue target reconciliation');
+    }
+    const current = this.rows.get(threadId);
+    const index = current?.findIndex((entry) => entry.id === entryId) ?? -1;
+    if (!current || index < 0) return { outcome: 'not_found' };
+    const row = current[index]!;
+    if (row.status !== 'queued') return { outcome: 'state_changed' };
+
+    const nextTargets = row.targets.filter((targetId) => !removals.has(targetId));
+    const present = new Set(nextTargets);
+    for (const targetId of additions) {
+      if (!present.has(targetId)) {
+        nextTargets.push(targetId);
+        present.add(targetId);
+      }
+    }
+    const nextIntent = Object.fromEntries(
+      nextTargets.flatMap((targetId) => {
+        const intent = authorIntentByTarget?.[targetId] ?? row.delivery.authorIntentByTarget?.[targetId];
+        return intent ? [[targetId, structuredClone(intent)] as const] : [];
+      }),
+    );
+    const unchanged =
+      nextTargets.length === row.targets.length &&
+      nextTargets.every((targetId, index) => row.targets[index] === targetId) &&
+      JSON.stringify(nextIntent) === JSON.stringify(row.delivery.authorIntentByTarget ?? {});
+    if (unchanged) return { outcome: 'replayed', entry: cloneQueueLedgerEntry(row) };
+
+    if (nextTargets.length === 0) {
+      current.splice(index, 1);
+      this.unindexEntries(threadId, [row]);
+      if (current.length === 0) this.rows.delete(threadId);
+      return { outcome: 'updated', entry: null };
+    }
+    row.targets = nextTargets;
+    row.delivery.authorIntentByTarget = nextIntent;
+    assertQueueLedgerEntry(row);
+    return { outcome: 'updated', entry: cloneQueueLedgerEntry(row) };
   }
 
   /** Roll back only rows created by the same synchronous memory admission. */
@@ -226,9 +203,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   }
 
   async listAll(threadId: string): Promise<QueueLedgerEntry[]> {
-    return [...(this.rows.get(threadId) ?? []), ...[...(this.terminalRows.get(threadId)?.values() ?? [])]].map(
-      cloneQueueLedgerEntry,
-    );
+    return this.list(threadId);
   }
 
   async getByMessageIds(threadId: string, messageIds: readonly string[]): Promise<Map<string, QueueLedgerEntry[]>> {
@@ -261,9 +236,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   }
 
   getNow(threadId: string, entryId: string): QueueLedgerEntry | null {
-    const entry =
-      this.rows.get(threadId)?.find((candidate) => candidate.id === entryId) ??
-      this.terminalRows.get(threadId)?.get(entryId);
+    const entry = this.rows.get(threadId)?.find((candidate) => candidate.id === entryId);
     return entry ? cloneQueueLedgerEntry(entry) : null;
   }
 
@@ -295,7 +268,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (selectedEntries.some((entry) => entry.status !== 'queued')) return { outcome: 'state_changed' };
     if (
       bindTargetCatId &&
-      selectedEntries.some((entry) => entry.target.kind === 'cat' && entry.target.catId !== bindTargetCatId)
+      selectedEntries.some((entry) => entry.targets.length > 0 && !entry.targets.includes(bindTargetCatId))
     ) {
       return { outcome: 'state_changed' };
     }
@@ -303,7 +276,10 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
       entry.status = 'claimed';
       entry.claimId = claimId;
       entry.claimedAt = claimedAt;
-      if (bindTargetCatId) entry.target = { kind: 'cat', catId: bindTargetCatId };
+      const wasTargetless = entry.targets.length === 0;
+      if (bindTargetCatId && wasTargetless) entry.targets = [bindTargetCatId];
+      entry.claimedTargetIds = bindTargetCatId ? [bindTargetCatId] : [...entry.targets];
+      if (bindTargetCatId && wasTargetless) entry.claimedFromTargetless = true;
       if (steerRequestedAt !== undefined) entry.delivery.steerRequestedAt = steerRequestedAt;
     }
     return { outcome: 'claimed', claimId, entries: selectedEntries.map(cloneQueueLedgerEntry) };
@@ -322,22 +298,10 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (!current || index < 0) return { outcome: 'not_found' };
     const entry = current[index];
     if (!entry) return { outcome: 'not_found' };
-    if (mode === 'processing_evidence') {
-      if (entry.status !== 'processing' || !replacement) return { outcome: 'state_changed' };
-      const next = cloneQueueLedgerEntry(replacement);
-      if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
-      next.status = 'processing';
-      next.processingStartedAt = entry.processingStartedAt;
-      delete next.claimId;
-      delete next.claimedAt;
-      delete next.terminalAt;
-      assertQueueLedgerEntry(next);
-      current[index] = next;
-      return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
-    }
-    if (mode === 'queued' || mode === 'processing') {
-      return this.commitClaimedState(current, index, entry, claimId, mode, at, replacement);
-    }
+    if (mode === 'processing_evidence' || mode === 'terminal') return { outcome: 'state_changed' };
+    if (mode === 'processing')
+      return this.commitClaimedTarget(threadId, current, index, entry, claimId, at, replacement);
+    if (mode === 'queued') return this.commitClaimedState(current, index, entry, claimId, at, replacement);
     return this.commitTerminalState(threadId, current, index, entry, claimId, mode, at, replacement);
   }
 
@@ -346,21 +310,79 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     index: number,
     entry: QueueLedgerEntry,
     claimId: string,
-    mode: 'queued' | 'processing',
     at: number,
     replacement?: QueueLedgerEntry,
   ): QueueLedgerTransitionResult {
     if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
     const next = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
     if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
-    next.status = mode;
+    next.status = 'queued';
     delete next.claimId;
     delete next.claimedAt;
-    if (mode === 'processing') next.processingStartedAt = at;
-    else delete next.processingStartedAt;
+    delete next.claimedTargetIds;
+    delete next.claimedFromTargetless;
+    delete next.processingStartedAt;
     assertQueueLedgerEntry(next);
     current[index] = next;
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
+  }
+
+  private commitClaimedTarget(
+    threadId: string,
+    current: QueueLedgerEntry[],
+    index: number,
+    entry: QueueLedgerEntry,
+    claimId: string,
+    at: number,
+    replacement?: QueueLedgerEntry,
+  ): QueueLedgerTransitionResult {
+    if (entry.status !== 'claimed' || entry.claimId !== claimId || !entry.claimedTargetIds?.length) {
+      return { outcome: 'state_changed' };
+    }
+    const claimedTargets = [...entry.claimedTargetIds];
+    const source = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
+    if (source.id !== entry.id || source.threadId !== entry.threadId) {
+      throw new Error('Queue commit identity mismatch');
+    }
+
+    const attempted = cloneQueueLedgerEntry(source);
+    attempted.targets = claimedTargets;
+    attempted.status = 'processing';
+    attempted.processingStartedAt = at;
+    delete attempted.claimId;
+    delete attempted.claimedAt;
+    delete attempted.claimedTargetIds;
+    delete attempted.claimedFromTargetless;
+    delete attempted.terminalAt;
+
+    const claimedSet = new Set(claimedTargets);
+    const remainingTargets = entry.targets.filter((targetId) => !claimedSet.has(targetId));
+    if (remainingTargets.length === 0) {
+      current.splice(index, 1);
+      this.unindexEntries(threadId, [entry]);
+      if (current.length === 0) this.rows.delete(threadId);
+    } else {
+      const remaining = cloneQueueLedgerEntry(entry);
+      remaining.targets = remainingTargets;
+      remaining.status = 'queued';
+      delete remaining.claimId;
+      delete remaining.claimedAt;
+      delete remaining.claimedTargetIds;
+      delete remaining.claimedFromTargetless;
+      delete remaining.processingStartedAt;
+      delete remaining.terminalAt;
+      delete remaining.delivery.steerRequestedAt;
+      if (remaining.delivery.authorIntentByTarget) {
+        remaining.delivery.authorIntentByTarget = Object.fromEntries(
+          Object.entries(remaining.delivery.authorIntentByTarget).filter(([targetId]) =>
+            remainingTargets.includes(targetId),
+          ),
+        );
+      }
+      assertQueueLedgerEntry(remaining);
+      current[index] = remaining;
+    }
+    return { outcome: 'updated', entry: attempted };
   }
 
   private commitTerminalState(
@@ -369,32 +391,24 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     index: number,
     entry: QueueLedgerEntry,
     claimId: string,
-    mode: 'terminal' | 'withdrawn',
+    mode: 'withdrawn',
     at: number,
     replacement?: QueueLedgerEntry,
   ): QueueLedgerTransitionResult {
-    if (mode === 'withdrawn') {
-      if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
-    } else if (entry.status !== 'processing') return { outcome: 'state_changed' };
+    if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
     const terminal = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
     if (terminal.id !== entry.id || terminal.threadId !== entry.threadId) {
       throw new Error('Queue commit identity mismatch');
     }
     terminal.status = 'terminal';
     terminal.terminalAt = at;
-    if (mode === 'withdrawn') {
-      terminal.delivery.terminalOutcome = 'withdrawn';
-      terminal.delivery.failedAt = at;
-      terminal.delivery.failureReason = 'source_withdrawn';
-    }
     delete terminal.claimId;
     delete terminal.claimedAt;
-    assertQueueLedgerEntry(terminal);
+    delete terminal.claimedTargetIds;
+    delete terminal.claimedFromTargetless;
     current.splice(index, 1);
+    this.unindexEntries(threadId, [entry]);
     if (current.length === 0) this.rows.delete(threadId);
-    const threadTerminalRows = this.terminalRows.get(threadId) ?? new Map<string, QueueLedgerEntry>();
-    threadTerminalRows.set(entry.id, terminal);
-    this.terminalRows.set(threadId, threadTerminalRows);
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(terminal) };
   }
 
@@ -411,7 +425,9 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     delete entry.claimId;
     delete entry.claimedAt;
     delete entry.delivery.steerRequestedAt;
-    if (restoreUnassignedTarget) entry.target = { kind: 'unassigned' };
+    if (restoreUnassignedTarget || entry.claimedFromTargetless) entry.targets = [];
+    delete entry.claimedTargetIds;
+    delete entry.claimedFromTargetless;
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(entry) };
   }
 }

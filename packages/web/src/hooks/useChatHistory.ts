@@ -316,7 +316,7 @@ function mergeMessageExtra(
     freshness: pick('freshness'),
     supplement: pick('supplement'),
     freshnessSupplement: pick('freshnessSupplement'),
-    queueReceipt: pick('queueReceipt'),
+    cloudBridgeRetry: pick('cloudBridgeRetry'),
     recall: pick('recall'),
     coordination: pick('coordination'),
     localReviewVerdict: pick('localReviewVerdict'),
@@ -1173,7 +1173,6 @@ export function useChatHistory(threadId: string) {
                 freshness?: NonNullable<ChatMessageData['extra']>['freshness'];
                 supplement?: NonNullable<ChatMessageData['extra']>['supplement'];
                 freshnessSupplement?: NonNullable<ChatMessageData['extra']>['freshnessSupplement'];
-                queueReceipt?: NonNullable<ChatMessageData['extra']>['queueReceipt'];
                 messageBundle?: NonNullable<ChatMessageData['extra']>['messageBundle'];
                 semanticEvent?: ProviderSemanticEvent;
               };
@@ -1251,7 +1250,6 @@ export function useChatHistory(threadId: string) {
                     m.extra?.freshness ||
                     m.extra?.supplement ||
                     m.extra?.freshnessSupplement ||
-                    m.extra?.queueReceipt ||
                     m.extra?.messageBundle ||
                     m.extra?.semanticEvent ||
                     cliDiag;
@@ -1273,7 +1271,6 @@ export function useChatHistory(threadId: string) {
                       ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
                       ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),
                       ...(m.extra?.freshnessSupplement ? { freshnessSupplement: m.extra.freshnessSupplement } : {}),
-                      ...(m.extra?.queueReceipt ? { queueReceipt: m.extra.queueReceipt } : {}),
                       ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),
                       ...(m.extra?.semanticEvent ? { semanticEvent: m.extra.semanticEvent } : {}),
                       ...(cliDiag ? { cliDiagnostics: cliDiag } : {}),

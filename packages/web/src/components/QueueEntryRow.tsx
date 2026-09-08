@@ -16,7 +16,6 @@ import {
   secondaryTruth,
 } from './message-disposition-presentation';
 import { QueueEntryActions } from './QueueEntryActions';
-import { UNSETTLED_SEEN_LABEL } from './queue-receipt-projection';
 import { RoutingWarningNotice } from './RoutingWarningNotice';
 
 const SOURCE_CATEGORY_LABEL: Record<string, string> = {
@@ -29,17 +28,6 @@ const SOURCE_CATEGORY_LABEL: Record<string, string> = {
   continuation: 'Continuation',
   freshness: 'Freshness',
 };
-
-const TARGET_STATE_LABEL = {
-  queued: '未读 · 排队中',
-  notified: '已提醒 · 尚未读取',
-  awakened: '已唤醒，但关联回合已结束；尚未读取消息正文',
-  seen: UNSETTLED_SEEN_LABEL,
-  failed: '处理失败 · 已回队列',
-  steering: 'Steer 中',
-  withdrawn: '已停止后续处理 · 历史保留',
-  handled: '已处理',
-} as const;
 
 const REMINDER_STATE_LABEL = {
   requested: '提醒已请求',
@@ -55,16 +43,8 @@ const INTENT_TONE_CLASS: Record<IntentChipTone, string> = {
   amber: 'bg-conn-amber-bg text-conn-amber-text',
 };
 
-function queueTargetStateLabel(entry: QueueEntry, catId: string, state: keyof typeof TARGET_STATE_LABEL): string {
-  if (state !== 'handled') return TARGET_STATE_LABEL[state];
-  const disposition = entry.queueReceipt?.targets.find((target) => target.catId === catId)?.outcome?.disposition;
-  if (disposition === 'responded') return '已由回复明确处理';
-  if (disposition === 'completed_with_turn') return '已随本轮完成';
-  return '已处理 · 无可回溯证据';
-}
-
 function latestReminderForTarget(entry: QueueEntry, catId: string) {
-  return (entry.queueReceipt?.reminderAttempts ?? []).reduce<QueueReminderAttempt | undefined>(
+  return (entry.reminderAttempts ?? []).reduce<QueueReminderAttempt | undefined>(
     (latest, attempt) =>
       attempt.targetCatId === catId && (!latest || attempt.requestedAt > latest.requestedAt) ? attempt : latest,
     undefined,
@@ -74,7 +54,6 @@ function latestReminderForTarget(entry: QueueEntry, catId: string) {
 function QueueTargetReceiptRow({
   entry,
   catId,
-  state,
   activeInvocationId,
   activeCarrierCapability,
   onRemind,
@@ -82,29 +61,23 @@ function QueueTargetReceiptRow({
 }: {
   entry: QueueEntry;
   catId: string;
-  state: keyof typeof TARGET_STATE_LABEL;
   activeInvocationId?: string;
   activeCarrierCapability?: FreshnessCarrierCapability;
   onRemind: (id: string, targetCatId: string) => void;
   isReminding: boolean;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
-  const reminderAttempts = entry.queueReceipt?.reminderAttempts ?? [];
+  const reminderAttempts = entry.reminderAttempts ?? [];
   const latestReminder = latestReminderForTarget(entry, catId);
   const alreadyAttemptedInActiveTurn = activeInvocationId
     ? reminderAttempts.some((attempt) => attempt.targetCatId === catId && attempt.invocationId === activeInvocationId)
     : false;
   const support: FreshnessCarrierSupport = classifyFreshnessCarrierSupport([activeCarrierCapability]);
-  const canRemind =
-    !!activeInvocationId &&
-    support === 'exact' &&
-    (state === 'queued' || state === 'notified') &&
-    !alreadyAttemptedInActiveTurn;
-  const targetReceipt = entry.queueReceipt?.targets.find((target) => target.catId === catId);
-  const authorIntent = entry.from.kind === 'user' ? targetReceipt?.authorIntent : undefined;
+  const canRemind = !!activeInvocationId && support === 'exact' && !alreadyAttemptedInActiveTurn;
+  const authorIntent = entry.from.kind === 'user' ? entry.authorIntentByTarget?.[catId] : undefined;
   const chip = entry.from.kind === 'user' ? intentChip(authorIntent) : undefined;
   const truth = entry.from.kind === 'user' ? secondaryTruth(authorIntent, support) : undefined;
-  const capability = targetReceipt?.authorIntent?.carrierCapability ?? activeCarrierCapability;
+  const capability = authorIntent?.carrierCapability ?? activeCarrierCapability;
 
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-0.5" data-queue-target-row={catId}>
@@ -125,7 +98,7 @@ function QueueTargetReceiptRow({
           {truth}
         </span>
       )}
-      <span className="text-micro text-cafe-muted whitespace-nowrap">{queueTargetStateLabel(entry, catId, state)}</span>
+      <span className="text-micro text-cafe-muted whitespace-nowrap">未投递 · 排队中</span>
       {latestReminder && (
         <span className="text-micro text-cafe-muted whitespace-nowrap">
           {REMINDER_STATE_LABEL[latestReminder.state]}
@@ -305,16 +278,15 @@ function QueueEntryRow({
             </span>
           )}
         </div>
-        {entry.targetStates && Object.keys(entry.targetStates).length > 0 && (
+        {entry.targetCats.length > 0 && (
           <div className="mt-1 text-micro">
-            {Object.entries(entry.targetStates).map(([catId, state]) => {
+            {entry.targetCats.map((catId) => {
               const remindKey = `${entry.id}:${catId}`;
               return (
                 <QueueTargetReceiptRow
                   key={catId}
                   entry={entry}
                   catId={catId}
-                  state={state}
                   activeInvocationId={activeInvocationIdByCatId[catId]}
                   activeCarrierCapability={activeCarrierCapabilityByCatId[catId]}
                   onRemind={onRemind}

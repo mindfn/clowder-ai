@@ -21,9 +21,10 @@ import {
   acceptedRevisionSchema,
   acceptedSourceRefSchema,
   asrPersonMemoryDynamicSceneEntryV1Schema,
-  catOwnedSeedCueCarrierV1Schema,
   CatRoutingErrorSchema,
+  catOwnedSeedCueCarrierV1Schema,
   deliveryDecisionCueCarrierV1Schema,
+  isCloudBridgeRetryV1,
   isLifecycleStoredMessageMetadata,
   isMessageFrom,
   isProviderSemanticEvent,
@@ -99,6 +100,30 @@ export function safeParseLifecycleMetadata(raw: string | undefined): LifecycleSt
   if (!raw) return undefined;
   try {
     const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const lifecycle = parsed as Record<string, unknown>;
+      if (Array.isArray(lifecycle.dispatchRefs)) {
+        // v1 wrote routing intent as `assigned`; that was never proof of
+        // delivery. Drop it while preserving actual dispatched/settled refs.
+        lifecycle.dispatchRefs = lifecycle.dispatchRefs.flatMap((value) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) return [value];
+          const ref = value as Record<string, unknown>;
+          if (ref.phase === 'assigned') return [];
+          if (
+            (ref.phase === 'dispatched' || ref.phase === 'settled') &&
+            typeof ref.targetId === 'string' &&
+            typeof ref.statusMessageId === 'string'
+          ) {
+            const canonical = { ...ref };
+            if (typeof canonical.dispatchedAt !== 'number' || !Number.isFinite(canonical.dispatchedAt)) {
+              delete canonical.dispatchedAt;
+            }
+            return [canonical];
+          }
+          return [value];
+        });
+      }
+    }
     if (!isLifecycleStoredMessageMetadata(parsed)) return undefined;
     const { from: _legacyFrom, ...canonical } = parsed as LifecycleStoredMessageMetadata & { from?: unknown };
     void _legacyFrom;
@@ -239,9 +264,9 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   systemKind: 'parsed';
   a2aRouting: 'parsed';
   custodyOfferV1: 'derived';
-  queueReceipt: 'derived';
   pluginMessage: 'parsed';
   routingWarnings: 'parsed';
+  cloudBridgeRetry: 'parsed';
 }>;
 
 function isNonEmptyString(value: unknown): value is string {
@@ -382,6 +407,11 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     const messageBundle = MessageBundleCarrierV1Schema.safeParse(parsed.messageBundle);
     if (messageBundle.success) {
       result.messageBundle = messageBundle.data;
+      hasField = true;
+    }
+
+    if (isCloudBridgeRetryV1(parsed.cloudBridgeRetry)) {
+      result.cloudBridgeRetry = parsed.cloudBridgeRetry;
       hasField = true;
     }
 

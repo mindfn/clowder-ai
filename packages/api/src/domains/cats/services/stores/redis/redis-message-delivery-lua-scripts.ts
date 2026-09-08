@@ -54,17 +54,13 @@ local threadId = redis.call('HGET', hash, 'threadId')
 local timestamp = redis.call('HGET', hash, 'timestamp')
 local catId = redis.call('HGET', hash, 'catId')
 local origin = redis.call('HGET', hash, 'origin')
-local source = redis.call('HGET', hash, 'source')
 
--- Preserve Clowder AI publication order: already-published real-cat speech and
--- owner-visible queued user receipts keep their authored timestamp; private
--- queued work enters the timeline at delivery.
+-- Preserve Clowder AI publication order only for already-published real-cat
+-- speech. Undelivered owner work enters History at actual delivery.
 local isRealCatSpeech = catId and catId ~= '' and catId ~= 'system'
   and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
-local isQueuedUserReceipt = (not catId or catId == '') and (not source or source == '')
-  and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
 local timelineScore = deliveredAt
-if isRealCatSpeech or isQueuedUserReceipt then
+if isRealCatSpeech then
   timelineScore = timestamp
 end
 

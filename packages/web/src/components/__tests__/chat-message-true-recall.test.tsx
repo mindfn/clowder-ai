@@ -100,7 +100,14 @@ describe('ChatMessage true recall tombstone', () => {
       lifecycle: {
         kind: 'input',
         orderKey: `${authoredAt}:message-folded-source`,
-        dispatchRefs: [{ targetId: 'codex', phase: 'settled', statusMessageId: 'message-terminal-surface' }],
+        dispatchRefs: [
+          {
+            targetId: 'codex',
+            phase: 'settled',
+            statusMessageId: 'message-terminal-surface',
+            dispatchedAt: 1_000,
+          },
+        ],
       },
     };
     const terminal: ChatMessageType = {
@@ -145,8 +152,7 @@ describe('ChatMessage true recall tombstone', () => {
     expect(container.querySelector('[data-folded-source-anchor="child-folded"]')).toBeNull();
     expect(container.querySelector('[data-testid="message-dispatch-avatars"]')).not.toBeNull();
     expect(container.querySelector('[data-folded-source="child-folded"]')).toBeNull();
-    expect(container.textContent?.match(/这段原消息必须留在作者位置/g)).toHaveLength(2);
-    expect(container.textContent).toContain('↩ You: 这段原消息必须留在作者位置');
+    expect(container.textContent?.match(/这段原消息必须留在作者位置/g)).toHaveLength(1);
     expect(container.textContent).toContain('You');
     expect(container.textContent).toContain('08:04');
     expect(container.textContent).not.toContain('已随本轮完成');
@@ -163,14 +169,6 @@ describe('ChatMessage true recall tombstone', () => {
       type: 'user',
       content: '这条仍待处理，不能为了消重隐藏',
       timestamp: 1,
-      extra: {
-        queueReceipt: {
-          version: 1,
-          entryId: 'entry-actionable-source',
-          targets: [{ catId: 'codex', state: 'seen', invocationId: 'child-actionable', seenAt: 10 }],
-          reminderAttempts: [],
-        },
-      },
     };
     useChatStore.setState({ messages: [actionable] });
 

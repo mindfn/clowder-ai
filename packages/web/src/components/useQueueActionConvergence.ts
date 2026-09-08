@@ -2,7 +2,7 @@
 
 /*
 Architecture cell: dispatch
-Queue actions consume the existing per-target eligibility and authoritative Queue projection.
+Queue actions consume per-target eligibility joined onto the authoritative source-entry Queue projection.
 */
 
 import { useCallback, useState } from 'react';
@@ -11,7 +11,7 @@ import { reconcileQueueActiveInvocationProjection } from '@/hooks/queue-active-i
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
-import type { SteerTargetAction } from './SteerQueuedEntryModal';
+import type { SteerSubmission } from './SteerQueuedEntryModal';
 
 function steerFailureMessage(status: number, code: unknown, error: unknown): string {
   if (code === 'ENTRY_PROCESSING') return '该消息正在处理，已刷新最新队列';
@@ -39,13 +39,15 @@ export function useQueueActionConvergence(threadId: string) {
   }, [setQueue, threadId]);
 
   const handleSteerConfirm = useCallback(
-    async (actions: readonly SteerTargetAction[]) => {
-      if (!steerEntryId || actions.length === 0) return;
+    async ({ sourceRecordId, observedPendingTargetIds, actions }: SteerSubmission) => {
+      if (!steerEntryId || !sourceRecordId || actions.length === 0) return;
       try {
         const mappingResponse = await apiFetch(`/api/threads/${threadId}/queue/${steerEntryId}/targets`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            sourceRecordId,
+            observedPendingTargetIds,
             targets: actions.map((action) => ({
               targetCatId: action.targetId,
               strategy: action.strategy,

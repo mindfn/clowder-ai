@@ -39,7 +39,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
           expectedDraftRevision: 0,
           merge: 'replace',
           recalledAt: 2_000,
-          exposures: [],
         }),
         { kind: 'unauthorized' },
       );
@@ -72,7 +71,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
         expectedDraftRevision: 0,
         merge: 'replace',
         recalledAt: 2_000,
-        exposures: [],
       }),
       { kind: 'not_recallable' },
     );
@@ -88,7 +86,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
       expectedDraftRevision: 0,
       merge: 'replace',
       recalledAt: 2_000,
-      exposures: [],
     });
 
     assert.equal(result.kind, 'recalled');
@@ -115,43 +112,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
     assert.equal(store.getOwnerComposerDraft('owner-1', 'thread-f264-gap-f').text, '修正后的正文');
   });
 
-  it('preserves content-free exact exposure truth from the claimed ledger rows', () => {
-    const store = new MessageStore();
-    const message = appendQueued(store);
-    store.visibilitySeq.set(message.id, 1_400);
-
-    const result = store.recallMessageToComposerDraft(message.id, {
-      ownerUserId: 'owner-1',
-      threadId: 'thread-f264-gap-f',
-      expectedDraftRevision: 0,
-      merge: 'replace',
-      recalledAt: 2_000,
-      exposures: [{ targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 }],
-    });
-
-    assert.equal(result.kind, 'recalled');
-    assert.equal(result.verdict, 'exposed');
-    assert.deepEqual(result.message.recall.exposures, [
-      { targetCatId: 'codex', invocationId: 'child-codex', seenAt: 1_500 },
-    ]);
-    assert.equal(result.message.queueCustody, undefined);
-    assert.equal(result.message.content, '');
-
-    const ownerHistory = store.getByThread('thread-f264-gap-f', 20, 'owner-1', {
-      includeQueuedUserMessages: true,
-      includeRecalledUserMessages: true,
-    });
-    assert.equal(ownerHistory.length, 1);
-    assert.equal(ownerHistory[0].id, message.id);
-    assert.equal(ownerHistory[0].content, '');
-    const [incrementalTombstone] = store.getByThreadAfter('thread-f264-gap-f', undefined, 20, 'owner-1', {
-      includeRecalledUserMessages: true,
-    });
-    assert.equal(incrementalTombstone.id, message.id);
-    assert.equal(incrementalTombstone.visibilitySeq, 1_400, 'recall retains the published cursor');
-    assert.equal(store.getByThread('thread-f264-gap-f').length, 0, 'cat/default reads never publish recalled body');
-  });
-
   it('keeps message, custody and both drafts unchanged on a stale draft revision', () => {
     const store = new MessageStore();
     const message = appendQueued(store);
@@ -170,7 +130,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
       expectedDraftRevision: 0,
       merge: 'append',
       recalledAt: 2_000,
-      exposures: [],
     });
 
     assert.deepEqual(result, { kind: 'draft_revision_mismatch', actualRevision: 1 });
@@ -196,7 +155,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
       expectedDraftRevision: 1,
       merge: 'append',
       recalledAt: 2_000,
-      exposures: [],
     });
     assert.equal(first.kind, 'recalled');
     assert.equal(first.draft.text, '已有草稿\n\n修正后的正文');
@@ -208,7 +166,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
       expectedDraftRevision: 2,
       merge: 'append',
       recalledAt: 3_000,
-      exposures: [],
     });
     assert.equal(second.kind, 'already_recalled');
     assert.equal(store.getOwnerComposerDraft('owner-1', 'thread-f264-gap-f').text, '已有草稿\n\n修正后的正文');
@@ -256,7 +213,6 @@ describe('F264 Gap F true recall contract (memory store)', () => {
       expectedDraftRevision: 0,
       merge: 'replace',
       recalledAt: 2_000,
-      exposures: [],
     });
     assert.equal(recalled.kind, 'recalled');
 

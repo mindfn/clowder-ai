@@ -1840,9 +1840,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 ...(queueProcessor ? { queueProcessor } : {}),
                 ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
                 ...(opts.ballCustody ? { ballCustody: opts.ballCustody } : {}),
-                ...(opts.routingDispatchPreflight
-                  ? { routingDispatchPreflight: opts.routingDispatchPreflight }
-                  : {}),
+                ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
                 log: app.log,
               },
               {
@@ -2135,6 +2133,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     const record = request.callbackAuth!;
     const actor = deriveCallbackActor(record);
+    const senderCatId = createCatId(actor.catId);
 
     const parsed = postMessageSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -3082,34 +3081,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reply.status(contentProjection.statusCode);
       return { kind: contentProjection.kind, message: contentProjection.message };
     }
-    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
-    const contentTargets = action || typedLocalReviewContinuationTarget ? [] : contentAnalysis.mentions;
-    const validExplicitTargets: CatId[] = [];
-    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
-    if (typedLocalReviewContinuationTarget) {
-      validExplicitTargets.push(typedLocalReviewContinuationTarget);
-    } else {
-      for (const id of explicitTargetCats ?? []) {
-        const resolved = resolveCatTarget(id);
-        if ('ok' in resolved) {
-          validExplicitTargets.push(createCatId(resolved.ok));
-        } else {
-          routing_warnings.push(resolved.error);
-          app.log.warn(
-            { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
-            '[callbacks/post-message] Dropped unavailable catId from targetCats',
-          );
-        }
-      }
-    }
-    const invocationPathMismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
-    if (invocationPathMismatch.held) {
-      return {
-        ...invocationPathMismatch.response,
-        ...(clientMessageId ? { clientMessageId } : {}),
-      };
-    }
-
     // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
     // A proven interrupted action carrier is the exception: its stable append key
     // lets the same request finish a crash-after-append recovery idempotently.
@@ -3184,6 +3155,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           );
         }
       }
+    }
+    const invocationPathMismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+    if (invocationPathMismatch.held) {
+      return {
+        ...invocationPathMismatch.response,
+        ...(clientMessageId ? { clientMessageId } : {}),
+      };
     }
     const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
@@ -3483,7 +3461,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       if (
         localReviewVerdict &&
         duplicateMsg.deliveryStatus === 'queued' &&
-        willEnqueueToQueue &&
+        hasA2AMentions &&
+        !!opts.invocationQueue &&
         !recoveredDuplicateCarrier
       ) {
         reply.status(503);
@@ -4520,9 +4499,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         .get(item.id)
         ?.find(
           (entry) =>
-            entry.status !== 'terminal' &&
-            (entry.target.kind === 'unassigned' ||
-              (entry.target.kind === 'cat' && entry.target.catId === principalCatId)),
+            entry.status !== 'terminal' && (entry.targets.length === 0 || entry.targets.includes(principalCatId)),
         );
       const queuedProjection = queueEntry ? { deliveryStatus: 'queued' as const, queueEntryId: queueEntry.id } : {};
       const anchored = anchorThreadMessage(item, {
@@ -4700,12 +4677,43 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const queuedSeenInvocationId = principal.invocationId;
       const seenAt = Date.now();
       const adoptExposedQueuedEntries = queueProcessor?.adoptExposedQueuedEntries?.bind(queueProcessor);
+      const candidateCustodyMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
+        typeof entry.messageId === 'string' ? [entry.messageId] : [],
+      );
+      let candidateCustodyWakes: readonly TurnCustodyWakeProvenance[] = [];
+      if (queueProcessor?.resolvePromptMessageCustodyWakes && candidateCustodyMessageIds.length > 0) {
+        try {
+          candidateCustodyWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
+            threadId: effectiveThreadId,
+            catId: principalCatId,
+            messageIds: candidateCustodyMessageIds,
+          });
+        } catch (err) {
+          app.log.error(
+            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+            '[F167] queued custody obligation resolution failed before full-body return',
+          );
+          reply.status(503);
+          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+        }
+      }
+      const custodyReservation =
+        candidateCustodyWakes.length > 0 ? turnCustodyAdoptionRegistry.reserve(principal.invocationId) : null;
+      if (candidateCustodyWakes.length > 0 && !custodyReservation) {
+        app.log.error(
+          { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
+          '[F167] active invocation has no turn custody adoption handler',
+        );
+        reply.status(409);
+        return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
+      }
       let adoptionAllowed = Boolean(adoptExposedQueuedEntries);
       if (adoptableQueuedEntries.length > 0 && opts.turnExecutionStore) {
         let exposureExecution: TurnExecutionRecord | null;
         try {
           exposureExecution = await opts.turnExecutionStore.get(principal.invocationId);
         } catch (err) {
+          await custodyReservation?.release();
           app.log.error(
             { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
             '[turn-execution] queued body adoption ledger read failed',
@@ -4761,6 +4769,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             continue;
           }
           if (adoption.reason === 'persistence_unavailable') {
+            await custodyReservation?.release();
             reply.status(503);
             return { error: 'Queued body adoption unavailable', code: 'QUEUE_ADOPTION_UNAVAILABLE' };
           }
@@ -4772,69 +4781,24 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...seenOnlyQueuedEntries.flatMap((entry) => (typeof entry.messageId === 'string' ? [entry.messageId] : [])),
         ...adoptedMessageIds,
       ];
-      if (queueProcessor?.resolvePromptMessageCustodyWakes && custodyMessageIds.length > 0) {
-        let adoptedWakes: readonly TurnCustodyWakeProvenance[];
+      if (custodyReservation) {
+        const deliveredIds = new Set(custodyMessageIds);
+        const adoptedWakes = candidateCustodyWakes.filter(
+          (wake) => wake.kind !== 'structured' || wake.protocol !== 'hold' || deliveredIds.has(wake.sourceMessageId),
+        );
         try {
-          adoptedWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
-            threadId: effectiveThreadId,
-            catId: principalCatId,
-            messageIds: custodyMessageIds,
-          });
+          if (adoptedWakes.length > 0) await custodyReservation.commit(adoptedWakes);
+          else await custodyReservation.release();
         } catch (err) {
           app.log.error(
             { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] queued custody obligation resolution failed before full-body return',
+            '[F167] queued custody adoption failed after delivery cutover',
           );
           reply.status(503);
           return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
         }
-        if (
-          adoptedWakes.length > 0 &&
-          !(await turnCustodyAdoptionRegistry.adopt(principal.invocationId, adoptedWakes))
-        ) {
-          app.log.error(
-            { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] active invocation has no turn custody adoption handler',
-          );
-          reply.status(409);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
       }
 
-      let receiptChanged = false;
-      try {
-        for (const entry of seenOnlyQueuedEntries) {
-          if (entry.alreadyExposed) continue;
-          const seen = await opts.invocationQueue.markQueuedSeenDurable(
-            effectiveThreadId,
-            principalUserId,
-            entry.entryId,
-            principalCatId,
-            queuedSeenInvocationId,
-            seenAt,
-          );
-          receiptChanged = seen.changed || receiptChanged;
-          if (seen.newlySeen) recordQueuedSeenTelemetry();
-        }
-      } catch (err) {
-        app.log.error(
-          { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-          '[F254] queued body seen persistence failed before full-body return',
-        );
-        reply.status(503);
-        return { error: 'Queued body receipt unavailable', code: 'QUEUE_RECEIPT_UNAVAILABLE' };
-      }
-
-      if (receiptChanged) {
-        await emitQueueUpdated(
-          socketManager,
-          principalUserId,
-          effectiveThreadId,
-          opts.invocationQueue.list(effectiveThreadId, principalUserId),
-          messageStore,
-          'queued_seen',
-        );
-      }
       if (opts.redis && custodyMessageIds.length > 0) {
         try {
           await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
@@ -5086,17 +5050,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
 
     // #699 P1-1: Enforce visibility — userId scope, publication status, whisper filtering
-    const durableRows = opts.invocationQueue
-      ? ((await opts.invocationQueue.getDurableEntriesForMessages(message.threadId, [message.id])).get(message.id) ??
-        [])
-      : [];
-    const hasDurableExposure = durableRows.some(
-      (entry) =>
-        entry.target.kind === 'cat' &&
-        entry.target.catId === principal.catId &&
-        entry.delivery.bodyExposures?.some((exposure) => exposure.targetCatId === principal.catId),
-    );
-    if (!isTimelinePublished(message) && !hasDurableExposure) {
+    if (!isTimelinePublished(message)) {
       reply.status(404);
       return { error: 'Message not found' };
     }
@@ -6741,37 +6695,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         // F254 AC-C2/C3: provider for descriptor derivation (reads carrierTier from state store)
         provider: resolveFreshnessDescriptorProvider(catRegistry.tryGet(principal.catId)?.config),
       });
-
-      if (notice && opts.invocationQueue) {
-        const queuedEntries = opts.invocationQueue.getQueuedFreshnessMessagesForCat(
-          principal.threadId,
-          principal.userId,
-          principal.catId,
-          { parentInvocationId: principal.parentInvocationId ?? principal.invocationId },
-        );
-        let changed = false;
-        const reminderInvocationId = principal.parentInvocationId ?? principal.invocationId;
-        for (const entry of queuedEntries) {
-          const entryChanged = await opts.invocationQueue.markQueuedNotifiedAndReminderDeliveredDurable(
-            principal.threadId,
-            principal.userId,
-            entry.entryId,
-            principal.catId,
-            reminderInvocationId,
-          );
-          changed = entryChanged || changed;
-        }
-        if (changed) {
-          await emitQueueUpdated(
-            socketManager,
-            principal.userId,
-            principal.threadId,
-            opts.invocationQueue.list(principal.threadId, principal.userId),
-            messageStore,
-            'queued_notified',
-          );
-        }
-      }
 
       return { notice };
     } catch (err) {

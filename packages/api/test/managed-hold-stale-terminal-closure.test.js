@@ -21,10 +21,8 @@ import {
   buildWakeConditionMetEvent,
 } from '../dist/domains/ball-custody/ball-custody-events.js';
 import { ManagedHoldDispositionService } from '../dist/domains/ball-custody/ManagedHoldDispositionService.js';
-import { ManagedHoldReceiptService } from '../dist/domains/ball-custody/ManagedHoldReceiptService.js';
 import { TurnCustodyProjectionService } from '../dist/domains/ball-custody/TurnCustodyProjectionService.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { queueEntryId } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
@@ -148,10 +146,39 @@ async function harness() {
       priority: 'normal',
     });
     assert.ok(enqueue.entry);
-    await queue.markQueuedSeenDurable(THREAD, USER, enqueue.entry.id, CAT, invocationId, at + 200);
     const processing = await queue.markProcessingByIdDurable(THREAD, enqueue.entry.id, CAT);
     assert.ok(processing);
     assert.equal(await queue.commitClaimedProcessing(THREAD, [processing.id], at + 201), true);
+    assert.equal(messageStore.markDelivered(stored.id, at + 201)?.deliveryStatus, 'delivered');
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER,
+        catId: CAT,
+        from: { kind: 'agent', catId: CAT },
+        content: '',
+        mentions: [],
+        timestamp: at + 201,
+        threadId: THREAD,
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${at + 201}:${invocationId}`,
+          invocationId,
+          targetId: CAT,
+          inputEntryIds: [],
+          inputMessageIds: [],
+          status: 'processing',
+          startedAt: at + 201,
+        },
+      }),
+    );
+    const admission = messageStore.commitLifecycleAppendAdmission({
+      threadId: THREAD,
+      entryId: enqueue.entry.id,
+      inputMessageIds: [stored.id],
+      runs: [{ targetId: CAT, invocationId, responseMessageId: response.id, dispatchedAt: at + 201 }],
+    });
+    assert.ok(admission.kind === 'applied' || admission.kind === 'replayed');
+    assert.ok(await queue.removeProcessedDurable(THREAD, USER, enqueue.entry.id));
 
     await ingest.record(buildHeldEvent({ threadId: THREAD, catId: CAT, fireAt: at + 90_000, at }));
     await ingest.record(
@@ -171,19 +198,6 @@ async function harness() {
   }
 
   let latestInvocationId = 'inv-1';
-  const realReceiptService = new ManagedHoldReceiptService({ queue, messageStore, now: () => now });
-  let failNextReceipt = false;
-  const receiptService = {
-    async complete(input) {
-      if (failNextReceipt) {
-        failNextReceipt = false;
-        // Production order writes the custody event first, then settles F264.
-        // This models the window where the event is durable but the receipt is not.
-        throw new Error('receipt write failed');
-      }
-      return realReceiptService.complete(input);
-    },
-  };
   const service = new ManagedHoldDispositionService({
     registry: { isLatest: async (id) => id === latestInvocationId },
     dynamicTaskStore: { getById: (id) => tasks.get(id) ?? null },
@@ -191,7 +205,6 @@ async function harness() {
     ballCustodyEventLog: eventLog,
     ballCustodyProjectionStore: projectionStore,
     ballCustody: ingest,
-    receiptService,
     repairProjection: (subjectKey) => projector.rebuild(subjectKey),
     now: () => now,
   });
@@ -210,7 +223,6 @@ async function harness() {
       ballCustodyEventLog: eventLog,
       ballCustodyProjectionStore: projectionStore,
       ballCustody: ingest,
-      receiptService,
       repairProjection: (subjectKey) => projector.rebuild(subjectKey),
       now: () => now,
     });
@@ -222,9 +234,6 @@ async function harness() {
     queue,
     messageStore,
     restartService,
-    failReceiptOnce() {
-      failNextReceipt = true;
-    },
     ingest,
     tasks,
     service,
@@ -454,57 +463,12 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     assert.equal(projection.heldUntil, beforeHeldUntil, 'the newer hold window is untouched');
   });
 
-  test('the same invocation repairs a receipt failure without a second terminal', async () => {
-    const h = await harness();
-    const { stored } = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
-
-    h.failReceiptOnce();
-    await assert.rejects(
-      () => h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled'),
-      'the receipt failure must surface, leaving the durable event in place',
-    );
-    assert.equal((await dispositionEvents(h)).length, 1, 'the custody terminal is already durable');
-
-    const retry = await h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled');
-
-    assert.equal(retry.outcome, 'replayed');
-    assert.equal((await dispositionEvents(h)).length, 1, 'exactly one terminal event for one wake');
-    assert.equal(h.messageStore.getById(stored.id).deliveryStatus, 'delivered');
-    assert.equal((await h.queue.getDurableEntry(THREAD, queueEntryId(stored.id, CAT))).status, 'terminal');
-  });
-
-  test('the same invocation repairs a retired wake receipt without touching the newer hold', async () => {
-    const h = await harness();
-    const first = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
-    await h.deliverWake({ taskId: 'task-2', invocationId: 'inv-2', at: 50_000 });
-
-    h.setLatest('inv-1');
-    h.failReceiptOnce();
-    await assert.rejects(() =>
-      h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: first.stored.id }), 'handled'),
-    );
-    assert.equal((await dispositionEvents(h)).length, 1);
-
-    const retry = await h.service.complete(
-      auth({ invocationId: 'inv-1', sourceMessageId: first.stored.id }),
-      'handled',
-    );
-
-    assert.equal(retry.outcome, 'replayed');
-    assert.equal(retry.retired, true);
-    assert.equal((await dispositionEvents(h)).length, 1, '#1366 AC: duplicate disposition creates no duplicate event');
-    const projection = await h.projectionStore.get(SUBJECT);
-    assert.notEqual(projection.state, 'resolved', 'the newer hold is still untouched');
-  });
-
-  test('the stop gate recognizes an existing terminal while the receipt is repaired', async () => {
+  test('the stop gate recognizes an existing terminal without a Queue receipt', async () => {
     const h = await harness();
     const { stored, taskId } = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
 
-    h.failReceiptOnce();
-    await assert.rejects(() =>
-      h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled'),
-    );
+    const first = await h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: stored.id }), 'handled');
+    assert.equal(first.outcome, 'applied');
     assert.equal((await dispositionEvents(h)).length, 1);
     assert.equal((await h.projectionStore.get(SUBJECT)).state, 'resolved');
 
@@ -517,26 +481,6 @@ describe('F167 stale/adopted managed-hold terminal closure (clowder-ai#1366)', (
     assert.notEqual(opened.state, 'unknown_legacy', 'an already-terminal wake is not unknown legacy');
     assert.equal(decision.shouldBlock, false, 'no managed_hold_disposition_missing for a settled wake');
     assert.equal((await dispositionEvents(h)).length, 1);
-  });
-
-  test('a successor invocation cannot steal a processing receipt from its exposed invocation', async () => {
-    const h = await harness();
-    const first = await h.deliverWake({ taskId: 'task-1', invocationId: 'inv-1', at: 2_000 });
-    await h.deliverWake({ taskId: 'task-2', invocationId: 'inv-2', at: 50_000 });
-
-    h.setLatest('inv-1');
-    h.failReceiptOnce();
-    await assert.rejects(() =>
-      h.service.complete(auth({ invocationId: 'inv-1', sourceMessageId: first.stored.id }), 'handled'),
-    );
-
-    h.setLatest('inv-3');
-    await assert.rejects(
-      () => h.service.complete(auth({ invocationId: 'inv-3', sourceMessageId: first.stored.id }), 'handled'),
-      (error) => error.code === 'managed_hold_receipt_carrier_mismatch',
-    );
-    assert.equal((await dispositionEvents(h)).length, 1);
-    assert.notEqual((await h.projectionStore.get(SUBJECT)).state, 'resolved', 'newer hold untouched');
   });
 
   test('two conflicting dispositions inside ONE invocation still linearize to one winner', async () => {

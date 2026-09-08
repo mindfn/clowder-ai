@@ -568,134 +568,99 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.equal(h.triggerCalls.length, 0, 'restart must not revive the retired producer');
   });
 
-  test('projects canceled, withdrawn, and terminal F264 receipts without crossing source thread', async () => {
+  test('projects canceled and terminal response bubbles without crossing source scope', async () => {
     const { resolveManagedCommandWakeEventCarrier } = await loadSweep();
-    const expected = { threadId: 'thread-1', catId: 'codex-sol' };
-    const entry = (overrides = {}) => ({
-      version: 1,
-      id: 'entry-managed',
+    const expected = { threadId: 'thread-1', userId: 'user-1', catId: 'codex-sol' };
+    const source = (overrides = {}) => ({
+      id: 'message-managed',
       threadId: 'thread-1',
-      owner: { kind: 'user', userId: 'user-1' },
-      kind: 'message_wake',
-      from: { kind: 'system', service: 'managed-command' },
-      target: { kind: 'cat', catId: 'codex-sol' },
-      payload: {
-        sourceId: 'message-managed',
-        content: 'done',
-        messageId: 'message-managed',
+      userId: 'user-1',
+      deliveryStatus: 'delivered',
+      lifecycle: {
+        kind: 'input',
+        orderKey: 'message-managed',
+        dispatchRefs: [
+          {
+            targetId: 'codex-sol',
+            phase: 'settled',
+            statusMessageId: 'response-managed',
+            dispatchedAt: 1_500,
+          },
+        ],
       },
-      execution: {
-        intent: 'execute',
-        ownerAuthProvenance: 'strict',
-        autoExecute: true,
+      ...overrides,
+    });
+    const response = (status, overrides = {}) => ({
+      id: 'response-managed',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      lifecycle: {
+        kind: 'response',
+        orderKey: 'response-managed',
+        invocationId: 'invocation-managed',
+        targetId: 'codex-sol',
+        inputEntryIds: ['entry-managed'],
+        inputMessageIds: ['message-managed'],
+        status,
+        startedAt: 1_500,
+        ...(status === 'processing' ? {} : { completedAt: 2_000 }),
       },
-      delivery: {},
-      status: 'queued',
-      enqueuedAt: 1_000,
-      priority: 'normal',
       ...overrides,
     });
 
     assert.deepEqual(
       resolveManagedCommandWakeEventCarrier(
-        { threadId: 'thread-1', userId: 'scheduler', deliveryStatus: 'canceled' },
-        undefined,
+        source({ deliveryStatus: 'canceled', lifecycle: undefined }),
+        null,
+        false,
         expected,
       ),
       { state: 'terminal', reason: 'canceled' },
     );
+    assert.deepEqual(resolveManagedCommandWakeEventCarrier(source(), response('completed'), false, expected), {
+      state: 'handled',
+      invocationId: 'invocation-managed',
+    });
+    assert.deepEqual(resolveManagedCommandWakeEventCarrier(source(), response('interrupted'), false, expected), {
+      state: 'terminal',
+      reason: 'terminal',
+    });
     assert.deepEqual(
       resolveManagedCommandWakeEventCarrier(
-        {
-          threadId: 'thread-1',
-          userId: 'scheduler',
-          deliveryStatus: 'queued',
-        },
-        entry({
-          status: 'terminal',
-          terminalAt: 2_000,
-          delivery: {
-            terminalOutcome: 'withdrawn',
-            failedAt: 2_000,
-            failureReason: 'source_withdrawn',
-          },
-        }),
-        expected,
-      ),
-      { state: 'terminal', reason: 'withdrawn' },
-    );
-    assert.deepEqual(
-      resolveManagedCommandWakeEventCarrier(
-        {
-          threadId: 'thread-1',
-          userId: 'scheduler',
-          deliveryStatus: 'queued',
-        },
-        entry({
-          status: 'terminal',
-          terminalAt: 2_000,
-          delivery: {
-            terminalOutcome: 'interrupted',
-            failedAt: 2_000,
-            failureReason: 'invocation_interrupted',
-          },
-        }),
-        expected,
-      ),
-      { state: 'terminal', reason: 'terminal' },
-    );
-    assert.deepEqual(
-      resolveManagedCommandWakeEventCarrier(
-        {
-          threadId: 'thread-foreign',
-          userId: 'scheduler',
-          deliveryStatus: 'queued',
-        },
-        entry({
-          status: 'terminal',
-          terminalAt: 2_000,
-          delivery: { terminalOutcome: 'handled', handledAt: 2_000 },
-        }),
+        source({ threadId: 'thread-foreign' }),
+        response('completed'),
+        false,
         expected,
       ),
       { state: 'missing' },
     );
     assert.deepEqual(
       resolveManagedCommandWakeEventCarrier(
-        {
-          threadId: 'thread-1',
-          userId: 'scheduler',
+        source({
           deliveryStatus: 'queued',
-        },
-        undefined,
+          lifecycle: { kind: 'input', orderKey: 'message-managed', dispatchRefs: [] },
+        }),
+        null,
+        true,
         expected,
       ),
-      { state: 'missing' },
+      { state: 'pending' },
     );
     assert.deepEqual(
       resolveManagedCommandWakeEventCarrier(
-        {
-          threadId: 'thread-1',
-          userId: 'scheduler',
-          deliveryStatus: 'queued',
-        },
-        entry({
-          id: 'entry-failed',
-          status: 'terminal',
-          terminalAt: 2_000,
-          delivery: {
-            terminalOutcome: 'failed',
-            attemptId: 'entry-failed:codex-sol:1',
-            seenInvocationId: 'invocation-missing-disposition',
-            failedAt: 2_000,
-            failureReason: 'invocation_failed',
+        source(),
+        response('failed', {
+          lifecycle: {
+            ...response('failed').lifecycle,
+            invocationId: 'invocation-missing-disposition',
           },
         }),
+        false,
         expected,
       ),
       {
         state: 'failed',
-        attemptId: 'entry-failed:codex-sol:1',
+        attemptId: 'message-managed:codex-sol:invocation-missing-disposition',
         attemptSequence: 1,
         invocationId: 'invocation-missing-disposition',
       },

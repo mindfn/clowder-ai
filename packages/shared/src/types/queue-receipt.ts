@@ -1,15 +1,3 @@
-export type QueueReceiptTargetState =
-  | 'queued'
-  | 'notified'
-  | 'awakened'
-  | 'seen'
-  | 'failed'
-  | 'interrupted'
-  | 'cancelled'
-  | 'steering'
-  | 'withdrawn'
-  | 'handled';
-
 export type QueueHandledDisposition = 'responded' | 'completed_with_turn' | 'managed_hold_disposition';
 
 export type MessageWorkDisposition = 'continue_current' | 'next_work';
@@ -177,37 +165,6 @@ export interface QueueTargetAttempt {
    */
   activeAppendAcceptedAt?: number;
   terminalReason?: QueueTargetAttemptTerminalReason;
-}
-
-export interface QueueReceiptTarget {
-  catId: string;
-  state: QueueReceiptTargetState;
-  authorIntent?: QueueAuthorIntentReceipt;
-  invocationId?: string;
-  /** Exact time the durable child invocation was created for this target. */
-  awakenedAt?: number;
-  /** Exact time this target's child invocation first received the persisted message body. */
-  seenAt?: number;
-  /** Exact time the author removed this target from actionable Queue custody. */
-  withdrawnAt?: number;
-  outcome?: QueueTargetOutcome;
-  /** Append-only target-local delivery history. Missing only on legacy receipts. */
-  attempts?: QueueTargetAttempt[];
-}
-
-export interface QueueMessageReceipt {
-  version: 1;
-  entryId: string;
-  /** The message started this invocation; it is not a work-period receipt surface. */
-  scope?: 'primary_trigger' | 'cross_thread_delivery';
-  targets: QueueReceiptTarget[];
-  reminderAttempts: QueueReminderAttempt[];
-}
-
-/** Message-bound receipt delta for live Queue publication after its actionable row disappears. */
-export interface QueueMessageReceiptProjection {
-  messageId: string;
-  queueReceipt: QueueMessageReceipt;
 }
 
 /** One server-projected Queue escape hatch, including its exact executable request. */

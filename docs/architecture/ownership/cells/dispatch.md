@@ -1,7 +1,7 @@
 ---
 cell_id: dispatch
 title: Dispatch / Queue
-summary: 按 thread 持久化的 QueueLedger、source×target 标量工单、有序 active index、terminal receipt tombstone、原子 admission/claim/commit/restore/targetless fan-out、逐成员 Steer、外部 wake 执行，以及 durable child/execution 投影。
+summary: 按 thread 持久化的 source Queue Entry、未投递 targets 集合、有序 active index、短时 claim、原子 admission/target 更新、逐成员 Steer、外部 wake 执行，以及 durable child/execution 投影。
 canonical_features: [F047, F117, F167, F175, F177, F185, F247, F254, F264, F280, F295]
 code_anchors:
   - packages/shared/src/types/active-execution.ts
@@ -12,11 +12,9 @@ code_anchors:
   - packages/api/src/domains/cats/services/agents/invocation/invoke-single-cat.ts
   - packages/api/src/domains/cats/services/agents/invocation/InvocationQueue.ts
   - packages/api/src/domains/cats/services/agents/invocation/QueueProcessor.ts
-  - packages/api/src/domains/cats/services/agents/invocation/QueueCarrierSourceProjection.ts
   - packages/api/src/domains/cats/services/agents/invocation/StartupReconciler.ts
   - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.ts
   - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerAdmission.ts
-  - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.ts
   - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.ts
   - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.ts
   - packages/api/src/domains/cats/services/agents/invocation/queue-ledger/queue-ledger-redis-scripts.ts
@@ -75,8 +73,9 @@ doc_anchors:
   - feature-specs/2026-08-12-1291-gate3-terminal-receipt-publication.md
   - feature-specs/2026-08-12-1291-gate4-wait-carrier-integration.md
   - feature-specs/2026-08-12-1291-gate5-retry-revalidation.md
-static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, QueueLedgerReceipt, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, getByMessageIds, timelinePublishedAtAppend, expandTargets, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, QueueMessageReceipt, QueueReceiptTarget, QueueReminderAttempt, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, terminalOutcome, bodyExposures, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute, reconcileInactiveLiveInvocation, EXECUTION_CONTROL_UNAVAILABLE]
+static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, sourceRecordId, targets, authorIntentByTarget, expandTargets, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, QueueReminderAttempt, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute, reconcileInactiveLiveInvocation, EXECUTION_CONTROL_UNAVAILABLE]
 cited_by:
+  - {feature: F117-canonical-source-entry, date: 2026-09-08, delta: Queue owns one source entry with only pending targets, order, author intent and a short reversible claim; actual delivery moves exact targets into MessageStore dispatchRefs while response and TurnExecution records own processing and terminal truth}
   - {feature: F117-steer-per-target, date: 2026-09-07, delta: default delivery copy separates queueing from immediate guidance; static configured-client guide capability is projected per member; composer and Queue Steer support multi-select with per-target guide or interrupt; targetless binding plus sibling fan-out is one atomic ledger mutation}
   - {feature: F220-KD9-stop-ladder, date: 2026-09-03, delta: Stop is the only user-facing termination; an exact live cancel escalates server-side to per-target reconciliation of durable running truth instead of 409, an incomplete process-owner snapshot terminalizes the execution as failed instead of prompting, and force-reset is demoted to an internal thread-scoped reconciler}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: an exact full same-thread read adopts only that source-target scalar row into the current LifecycleActiveRun and response, publishes the Message to History, and terminalizes the row while siblings remain queued}
@@ -110,38 +109,32 @@ cited_by:
 
 ## Canonical Owner
 
-ADR-043 / F117 own one durable, per-thread Queue ledger. Every persistent source fans out into deterministic
-`sourceId × targetCatId` scalar rows; targetless user work has one deterministic unassigned row. The ledger
-entry owns ordering, claim state, execution fences, delivery evidence, reminder attempts, and the immutable
-terminal outcome. `InvocationQueue` is only the in-process ordered cache/adapter over that ledger, never
-restart truth.
+ADR-043 / F117 own one durable Queue ledger per thread. One source message has one `QueueLedgerEntry`, whose
+`targets[]` is exactly the set of members still awaiting delivery. The entry owns source identity
+(`sourceId` plus `sourceRecordId`), ordering, immutable launch fences, per-target author intent, reminder
+attempts, revision, and a short reversible claim. It does not own response processing, terminal outcomes,
+body-exposure receipts, or handled state. `InvocationQueue` is only the in-process scheduling adapter over
+that ledger, never restart truth.
 
-Redis stores all rows in one thread-scoped entries hash, active row IDs in the order list, and an exact
-`messageId → entryIds` index for receipt hydration. Terminal tombstones remain in the entries hash for
-idempotency and F264 history, but never remain in active order. Capacity checks traverse active order only;
-history and socket receipt projection use the message index, so neither hot path scales with terminal
-history. Redis hydration validates every row before it can enter scheduling.
+Redis stores source entries in one thread-scoped hash and active entry IDs in the order list. Durable Queue
+state is `queued` plus a bounded `claimed` cutover. A claim is fenced by `claimId`: a failed pre-dispatch
+cutover restores the same entry and position; an actual delivery removes only that target; and an empty
+`targets[]` deletes the entry. Queue retains no processing/terminal tombstone. Retry is a new attempt in the
+owning lifecycle store, not resurrection of finished Queue state. Startup validates persisted rows and
+restores abandoned short claims before scheduling.
 
-The lifecycle is monotonic: `queued → claimed → processing → terminal`. Claim owns a durable `claimId`;
-commit/restore are fenced by that identity. Handled, failed, interrupted, cancelled, and withdrawn work
-becomes an immutable terminal tombstone and never re-enters Queue. A new attempt requires a new producer
-intent and persistent source. Startup reads the ledger directly, restores abandoned claimed rows, and
-terminalizes abandoned processing rows as `interrupted/runtime_restart` before resuming queued scopes.
+MessageStore owns the source body and its actual delivery projection. `dispatchRefs[]` records only real
+source-to-target deliveries, including `dispatchedAt`, response identity, and later settled outcome. A user
+or external inline source remains absent from History while it has no actual dispatch; its first delivered
+target materializes the one source bubble, and later targets extend the same message. Agent-authored sources
+already in History reuse that message. Queue and History therefore meet by exact source identity without
+copying the body or rendering one user message per target.
 
-MessageStore owns message body and coarse `deliveryStatus`, not Queue lifecycle. New user
-`conversation_input` work writes Message plus its complete fan-out atomically and records the immutable
-`timelinePublishedAtAppend` fact; delivery preserves authored timeline order only for that admitted
-publication. Connector adoption and terminal response plus outbound fan-out use their own atomic
-Message/ledger transactions. Partial fan-out, ghost Messages, and replay under a changed immutable identity
-fail closed.
-
-F264 receipts are projections of QueueLedger rows through `QueueLedgerReceipt`. Live Queue enrichment and
-F5 history both read the same ledger facts; receipt projection does not mutate MessageStore and terminal
-rows need not remain actionable. A complete same-thread read first proves the exact running child, claims
-that source×target row, attaches its source to the existing response lifecycle and `LifecycleActiveRun`,
-marks the Message delivered, then records exact `(messageId, targetCatId, childInvocationId, seenAt)` exposure
-and terminal handling together. Sibling target rows remain independent Queue work. Sparse, cross-thread,
-oversized-anchor, or unproven-child reads never consume a row.
+A complete same-thread unread adoption is the same delivery transition as ordinary dispatch: prove the
+exact running child, remove that exact target from the Queue entry, and append one `dispatchRef` tied to the
+existing response. Other pending targets remain in the same entry. Sparse, cross-thread, oversized-anchor,
+or unproven-child reads do not consume a target. There is no separate Queue `seen`, `handled`, or receipt
+writer.
 
 Routing preflight is not a second chat-message producer. A fail-open `warned` decision remains available in
 structured routing evidence and telemetry while leaving the requested target unchanged; only a `rejected`
@@ -149,10 +142,10 @@ decision may emit a user-visible receipt. When a cat-authored A2A response fails
 exact-predecessor `a2a_failure` row commit atomically. That row bypasses inferred mentions and ping-pong/depth
 heuristics, and cannot recursively create another failure report.
 
-Stop is the only user-facing termination. Running truth is the durable `TurnExecution` / ledger `processing`
-row plus a liveness witness (tracker slot or process owner); in-memory slots, tracker tombstones, and session
+Stop is the only user-facing termination. Running truth is the durable `TurnExecution` record plus a
+liveness witness (tracker slot or process owner); in-memory slots, tracker tombstones, and session
 locks are caches and cannot pin a thread busy by themselves. An exact Stop first cancels a live candidate; when
-the durable row still says running but no controllable candidate exists, the same request reconciles that
+the durable execution still says running but no controllable candidate exists, the same request reconciles that
 target (retire the pre-start reservation, cancel the running record, release the orphaned lock and slot,
 publish terminal) and returns `reconciled` rather than 409. An incomplete process-owner snapshot (`ps` failure,
 unreadable owner manifests, or a platform without `ps`; no platform compatibility branch) is
@@ -161,18 +154,20 @@ path, so ordinary failure propagation runs (source dispatchRef settlement, A2A r
 `delivery_failure` for pre-start); no confirmation dialog exists, and `force-reset` remains only an internal thread-scoped reconciler. The
 same reconciliation is reused at startup, on projection read, and on Stop (ADR-043 D9).
 
-Steer is the only preemption path: atomically claim the exact queued row, cancel the currently running
-invocation outside Redis, then commit the claim to processing or restore it to the original position.
-`ENTRY_PROCESSING` is the only business-state rejection. Reorder/promote are separate ledger operations,
-and prefix claim is all-or-nothing; a single dispatch may carry multiple prompt items but never concatenates
-their bodies or erases message identity.
+Steer is the only preemption path. The modal projects current participants plus routed/fallback members and
+joins pending Queue targets with already-dispatched History refs. Confirmation rereads live truth: targets
+delivered while the modal was open are skipped, additions/removals update the source entry, and each remaining
+selected target receives its chosen guide-or-interrupt strategy. Stale presentation state is not itself a
+business conflict. The short claim fences the exact server-side cutover; pre-dispatch failure restores Queue
+state, while provider outcomes after actual delivery settle independently in History.
 
 The default disposition is `next_work` (排队等待) or `continue_current` (立即发送，引导回复). Guide support is
 a static per-member client capability projected by the server; the UI must not hard-code it or infer it from
 local activity. Queue and composer Steer show both guide and interrupt actions, allow a per-target strategy for
 multi-select, and enable guide only for a supporting member with an exact current reply. Unsupported default
-guide preserves the row as `next_work` and never cancels the current execution. Targetless binding plus sibling
-fan-out is one durable mutation; after that cutover each scalar target proceeds independently. A successful
+guide preserves the target as `next_work` and never cancels the current execution. Targetless binding and
+multi-target updates mutate the one source entry atomically; after actual delivery each target proceeds
+independently. A successful
 `runtime_replacement` already completed its recovered attempt and must not enqueue a second source-less
 continuation.
 
@@ -181,70 +176,69 @@ owns each real child lifecycle; `InvocationRecordStore` owns parent/aggregate ex
 `InvocationRegistry` remains callback authentication only. F254 closure and supplement stores retain
 their own authority while Queue rows carry typed launch metadata. F167 action leases and F280 wait
 continuations remain owned by ball-custody stores; Queue may transport their exact immutable fences but
-cannot mint, retry, or reinterpret them. The retired Gate-5 bridge may not resurrect a terminal Queue row.
+cannot mint, retry, or reinterpret them. The retired Gate-5 bridge may not recreate completed Queue work.
 F247 cloud-only execution still creates a normal child and settles the exact source without turning a
 transport failure into Queue replay.
 
 ## Use This When
 
-- Changing Queue admission, fan-out, priority, ordering, capacity, claim/commit/restore, withdrawal, or
+- Changing Queue admission, target-set mutation, priority, ordering, capacity, claim/commit/restore, withdrawal, or
   restart behavior.
 - Adding a producer that persists Message and Queue work, or changing one of the three cross-record atomic
   admission transactions.
 - Changing Steer, append-without-stop, prestart retirement, or the `ENTRY_PROCESSING` conflict boundary.
-- Changing F264 receipt states, body exposure, reminders, history hydration, or socket
-  `messageReceipts`.
+- Changing the Queue-to-History dispatch cutover, unread adoption, reminders, or source materialization.
 - Changing F254 freshness carriers, F167 action-successor fences, F280 wait carriers, or other typed launch
   metadata transported by Queue.
 - Changing child execution lifecycle, busy-gate policy, wake provenance, or external connector admission.
 
 ## Extend By
 
-- Create rows through `QueueLedgerAdmission` and use deterministic `queueEntryId(sourceId, targetCatId)`;
-  never allocate an unrelated Queue identity.
+- Create entries through `QueueLedgerAdmission` and use the deterministic source identity; never allocate
+  one independent Queue identity per target.
 - Use `appendAndEnqueueDurable`, connector adoption, or terminal-response fan-out transactions whenever
   Message and Queue facts must appear together.
 - Add state transitions to `QueueLedgerStore` with Redis Lua that validates every precondition before its
   first write, plus matching in-memory and isolated-Redis tests.
-- Keep active-order scans bounded to the order list and exact receipt reads bounded to the message index.
-- Project public Queue DTOs and `QueueMessageReceipt` from ledger rows; do not copy their mutable state into
-  Message.
+- Keep active-order scans bounded to the order list and join actual dispatch state from MessageStore only
+  when a caller needs it.
+- Project public Queue DTOs from pending source entries; project dispatch avatars and terminal truth from
+  MessageStore/response lifecycle, not Queue fields.
 - Keep source authority in its owner store. Queue fields may transport an immutable fence, but start and
   terminal commit must revalidate it at the owning boundary.
-- Create every child in `TurnExecutionStore` before provider start and settle both child and Queue terminal
+- Create every child in `TurnExecutionStore` before provider start and settle child plus response lifecycle
   truth monotonically.
 
 ## Do NOT Unify With
 
-- Do not reintroduce `message.queueCustody`, per-cat maps, a second receipt ledger, or startup reconstruction
+- Do not reintroduce `message.queueCustody`, per-target Queue rows, a second receipt ledger, or startup reconstruction
   by scanning MessageStore.
-- Do not scan all terminal tombstones for admission capacity or per-page receipt hydration.
-- Do not delete terminal tombstones merely to bound active work; remove them from active order and retain
-  their idempotency/receipt truth.
-- Do not restore failed, cancelled, interrupted, handled, or withdrawn work to Queue. A retry is a new
-  producer action with a new source.
+- Do not persist Queue processing/terminal tombstones, body-exposure facts, or handled outcomes. Those facts
+  belong to TurnExecution, MessageStore dispatch refs, and response messages.
+- Do not restore failed, cancelled, interrupted, handled, or withdrawn attempts to Queue. A retry is a new
+  lifecycle attempt; pending targets remain pending only until actual dispatch or withdrawal.
 - Do not concatenate adjacent Queue bodies or let one row absorb another row's message identity.
 - Do not preempt before winning the durable claim, and do not turn Steer into promote/reorder.
 - Do not let Queue decide action uniqueness, wait ownership, freshness closure, connector transport policy,
   or callback authentication.
-- Do not infer seen/handled from notices, provider success, log text, or rendered prose.
+- Do not infer delivery/handled state from notices, provider success, log text, or rendered prose.
 - Do not render fail-open routing warnings as chat messages, recursively report an `a2a_failure`, or enqueue a
   new `runtime_replacement` continuation after the recovered attempt succeeded.
-- Do not return a full queued body before its exact active-child adoption is durable, and do not retire a
-  sibling target row when another target adopts the same source.
+- Do not return a full queued body before its exact active-child adoption is durable, and do not retire
+  sibling targets when another target adopts the same source.
 - Do not gate Stop on an in-memory live candidate or answer a user's Stop with 409 while the durable row still
   says running; reconcile or terminalize the exact target instead, and reserve 503 for persistence failure only.
-- Do not let an in-memory slot, tracker tombstone, or session lock pin a thread busy without a durable running
-  row and a liveness witness, and do not surface force-reset as a standing or stall-triggered user entry.
+- Do not let an in-memory slot, tracker tombstone, or session lock pin a thread busy without a durable
+  `TurnExecution` and a liveness witness, and do not surface force-reset as a standing or stall-triggered user entry.
 - Do not use the in-memory Queue cache as persistence or accept an unvalidated Redis row into scheduling.
 - Do not collapse user side-dispatch and external automated wakes into one busy-gate policy.
 
 ## Static Scan Hints
 
 Watch for new or renamed `QueueLedgerEntry`, `QueueLedgerStore`, `QueueLedgerAdmission`,
-`QueueLedgerReceipt`, `RedisQueueLedgerStore`, `InMemoryQueueLedgerStore`, `queueEntryId`,
-`getByMessageIds`, `timelinePublishedAtAppend`, `InvocationQueue`, `QueueProcessor`,
+`RedisQueueLedgerStore`, `InMemoryQueueLedgerStore`, `queueEntryId`, `sourceRecordId`, `targets`,
+`authorIntentByTarget`, `InvocationQueue`, `QueueProcessor`,
 `StartupReconciler`, `claimPrefix`, `claimExactSteerEntryDurable`, `restoreClaimedEntries`,
-`terminalOutcome`, `bodyExposures`, `messageReceipts`, `TurnExecutionStore`,
+`dispatchRefs`, `dispatchedAt`, `statusMessageId`, `TurnExecutionStore`,
 `InvocationRecordStore`, `actionSuccessorFence`, `waitContinuationCarrier`,
 `freshnessClosureId`, `freshnessSupplementId`, `sourceCategory`, `priority`, and `autoExecute`.

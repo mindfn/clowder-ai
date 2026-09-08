@@ -124,14 +124,6 @@ export class StartupReconciler {
     // this sweep. Atomic message+row admission makes orphan-message recovery and
     // message-custody reconstruction unnecessary.
     const orphanedMessageRecovery = 0;
-    const restartedProcessing = this.deps.invocationQueue
-      ? await this.deps.invocationQueue.terminalizeRestartedProcessing()
-      : { terminalized: 0, failedEntryIds: [] };
-    if (restartedProcessing.failedEntryIds.length > 0) {
-      this.deps.log.warn(
-        `[startup-reconciler] Failed to terminalize restarted processing Queue rows: ${restartedProcessing.failedEntryIds.join(',')}`,
-      );
-    }
     const queueResumeScopes = this.deps.invocationQueue?.listScopes() ?? [];
     let queueEntriesResumed = 0;
     if (this.deps.resumeQueue) {
@@ -171,7 +163,8 @@ export class StartupReconciler {
       queueEntriesResumed,
       queueResumeScopes,
       queueMessagesBackfilled: 0,
-      queueMessagesTerminalized: restartedProcessing.terminalized,
+      // Compatibility counter: schema v2 never persists processing/terminal Queue rows.
+      queueMessagesTerminalized: 0,
       durationMs,
     };
   }

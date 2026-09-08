@@ -5,7 +5,6 @@ import type {
   MessageFrom,
   QueueAuthorIntent,
   QueueReminderAttempt,
-  QueueTargetAttemptTerminalReason,
   WaitContinuationCarrierV1,
 } from '@cat-cafe/shared';
 import { isMessageFrom } from '@cat-cafe/shared';
@@ -17,15 +16,8 @@ import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 
 export type QueueOwner = { kind: 'user'; userId: string } | { kind: 'system'; service: string };
 
+/** `processing`/`terminal` are transient transition snapshots; durable rows are only queued or short-claimed. */
 export type QueueLedgerStatus = 'queued' | 'claimed' | 'processing' | 'terminal';
-export type QueueLedgerTarget = { kind: 'cat'; catId: string } | { kind: 'unassigned' };
-export type QueueLedgerTerminalOutcome = 'handled' | 'failed' | 'interrupted' | 'cancelled' | 'withdrawn';
-
-export interface QueueBodyExposure {
-  targetCatId: string;
-  invocationId: string;
-  seenAt: number;
-}
 
 export interface QueuePrestartRetirementIntent {
   id: string;
@@ -36,8 +28,8 @@ export interface QueuePrestartRetirementIntent {
 }
 
 export interface QueueLedgerPayload {
-  /** Persistent producer identity shared by every row in one fan-out group. */
-  sourceId: string;
+  /** Stable identity of the one source record represented by this Queue Entry. */
+  sourceRecordId: string;
   content: string;
   messageId?: string;
   routingWarnings?: readonly CatRoutingError[];
@@ -63,35 +55,24 @@ export interface QueueLedgerExecution {
 }
 
 export interface QueueLedgerDelivery {
-  authorIntent?: QueueAuthorIntent;
-  notifiedAt?: number;
-  awakenedInvocationId?: string;
-  awakenedAt?: number;
-  seenAt?: number;
-  seenInvocationId?: string;
-  bodyExposures?: readonly QueueBodyExposure[];
-  failedAt?: number;
-  failureReason?: QueueTargetAttemptTerminalReason;
-  attemptId?: string;
-  handledAt?: number;
-  terminalOutcome?: QueueLedgerTerminalOutcome;
+  authorIntentByTarget?: Record<string, QueueAuthorIntent>;
   steerRequestedAt?: number;
-  steeredInvocationId?: string;
   reminderAttempts?: readonly QueueReminderAttempt[];
 }
 
 /**
- * ADR-043 canonical row. Variable execution and receipt data is nested so the
- * queue lifecycle itself stays small and cannot grow another per-cat mirror.
+ * RFC #1356 canonical Queue record. One source has one durable Queue Entry;
+ * targets are the exact members whose delivery is still pending. History owns
+ * actual delivery receipts, so a target must leave this set when it is adopted.
  */
 export interface QueueLedgerEntry {
-  version: 1;
+  version: 2;
   id: string;
   threadId: string;
   owner: QueueOwner;
   kind: 'conversation_input' | 'message_wake' | 'private_input';
   from: MessageFrom;
-  target: QueueLedgerTarget;
+  targets: string[];
   payload: QueueLedgerPayload;
   execution: QueueLedgerExecution;
   delivery: QueueLedgerDelivery;
@@ -99,6 +80,10 @@ export interface QueueLedgerEntry {
   enqueuedAt: number;
   claimedAt?: number;
   claimId?: string;
+  /** Exact pending targets protected by the short reversible claim. */
+  claimedTargetIds?: string[];
+  /** The claimed target was resolved from a previously targetless entry. */
+  claimedFromTargetless?: boolean;
   processingStartedAt?: number;
   terminalAt?: number;
   retiringGroupId?: string;
@@ -125,6 +110,10 @@ export type QueueLedgerTargetExpansionResult =
   | { outcome: 'expanded' | 'replayed'; entries: QueueLedgerEntry[] }
   | { outcome: 'not_found' | 'state_changed' | 'conflict'; entries: [] };
 
+export type QueueLedgerTargetReconcileResult =
+  | { outcome: 'updated' | 'replayed'; entry: QueueLedgerEntry | null }
+  | { outcome: 'not_found' | 'state_changed' };
+
 export type QueueLedgerClaimResult =
   | { outcome: 'claimed'; entries: QueueLedgerEntry[]; claimId: string }
   | { outcome: 'not_found' | 'state_changed' };
@@ -137,7 +126,7 @@ export type QueueLedgerCommitMode = 'queued' | 'processing' | 'processing_eviden
 
 export interface QueueLedgerStore {
   enqueue(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): Promise<QueueLedgerEnqueueResult>;
-  /** Atomically verify selected rows, bind an optional targetless anchor, and append missing scalar siblings. */
+  /** Atomically bind an optional targetless entry and merge additional targets into that same source entry. */
   expandTargets(
     threadId: string,
     entryId: string,
@@ -145,11 +134,19 @@ export interface QueueLedgerStore {
     expectedQueuedEntryIds: readonly string[],
     siblingEntries: readonly QueueLedgerEntry[],
   ): Promise<QueueLedgerTargetExpansionResult>;
+  /** Atomically apply an explicit Steer target delta to one pending source record. */
+  reconcileTargets(
+    threadId: string,
+    entryId: string,
+    addTargetIds: readonly string[],
+    removeTargetIds: readonly string[],
+    authorIntentByTarget: Readonly<Record<string, QueueAuthorIntent>>,
+  ): Promise<QueueLedgerTargetReconcileResult>;
   listThreadIds(): Promise<string[]>;
   list(threadId: string): Promise<QueueLedgerEntry[]>;
-  /** Active rows plus terminal tombstones, used for durable receipt projection. */
+  /** Active Queue rows only. History owns delivery and terminal truth. */
   listAll(threadId: string): Promise<QueueLedgerEntry[]>;
-  /** Active or terminal rows for exact Message identities, without scanning thread history. */
+  /** Active Queue rows for exact Message identities, without scanning thread history. */
   getByMessageIds(threadId: string, messageIds: readonly string[]): Promise<Map<string, QueueLedgerEntry[]>>;
   get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null>;
   claim(
@@ -197,10 +194,9 @@ export function queueOwner(entry: { owner?: QueueOwner; userId?: string }): Queu
   return { kind: 'user', userId: entry.userId };
 }
 
-export function queueEntryId(sourcePersistentId: string, targetCatId?: string): string {
+export function queueEntryId(sourcePersistentId: string, _targetCatId?: string): string {
   if (!sourcePersistentId) throw new Error('queue entry identity requires a persistent source');
-  const targetIdentity = targetCatId || 'unassigned';
-  const digest = createHash('sha256').update(`${sourcePersistentId}\0${targetIdentity}`).digest('hex').slice(0, 32);
+  const digest = createHash('sha256').update(sourcePersistentId).digest('hex').slice(0, 32);
   return `queue:${digest}`;
 }
 
@@ -216,9 +212,6 @@ export function cloneQueueLedgerEntry(entry: QueueLedgerEntry): QueueLedgerEntry
 export function queueLedgerAdmissionsMatch(existing: QueueLedgerEntry, incoming: QueueLedgerEntry): boolean {
   const { callerTraceContext: _existingTrace, ...existingExecution } = existing.execution;
   const { callerTraceContext: _incomingTrace, ...incomingExecution } = incoming.execution;
-  const targetMatches =
-    isDeepStrictEqual(existing.target, incoming.target) ||
-    (incoming.target.kind === 'unassigned' && incoming.id === queueEntryId(incoming.payload.sourceId));
   return (
     existing.version === incoming.version &&
     existing.id === incoming.id &&
@@ -226,10 +219,10 @@ export function queueLedgerAdmissionsMatch(existing: QueueLedgerEntry, incoming:
     isDeepStrictEqual(existing.owner, incoming.owner) &&
     existing.kind === incoming.kind &&
     isDeepStrictEqual(existing.from, incoming.from) &&
-    targetMatches &&
+    isDeepStrictEqual(existing.targets, incoming.targets) &&
     isDeepStrictEqual(existing.payload, incoming.payload) &&
     isDeepStrictEqual(existingExecution, incomingExecution) &&
-    isDeepStrictEqual(existing.delivery.authorIntent, incoming.delivery.authorIntent) &&
+    isDeepStrictEqual(existing.delivery.authorIntentByTarget, incoming.delivery.authorIntentByTarget) &&
     existing.priority === incoming.priority &&
     existing.sourceCategory === incoming.sourceCategory
   );
@@ -248,10 +241,22 @@ function assertOptionalTimestamp(value: unknown, field: string): void {
 }
 
 function assertQueueLedgerState(entry: QueueLedgerEntry): void {
-  if (entry.status === 'queued' && (entry.claimId !== undefined || entry.claimedAt !== undefined)) {
+  if (
+    entry.status === 'queued' &&
+    (entry.claimId !== undefined ||
+      entry.claimedAt !== undefined ||
+      entry.claimedTargetIds !== undefined ||
+      entry.claimedFromTargetless !== undefined)
+  ) {
     throw new Error('queued ledger entry cannot carry a claim');
   }
-  if (entry.status === 'claimed' && (!entry.claimId || entry.claimedAt === undefined)) {
+  if (
+    entry.status === 'claimed' &&
+    (!entry.claimId ||
+      entry.claimedAt === undefined ||
+      !Array.isArray(entry.claimedTargetIds) ||
+      entry.claimedTargetIds.some((targetId) => !entry.targets.includes(targetId)))
+  ) {
     throw new Error('claimed ledger entry requires claim identity and timestamp');
   }
   if (entry.status === 'processing' && entry.processingStartedAt === undefined) {
@@ -273,16 +278,18 @@ function assertQueueOwner(value: unknown): asserts value is QueueOwner {
   throw new Error('queue ledger owner is incomplete');
 }
 
-function assertQueueTarget(value: unknown): asserts value is QueueLedgerTarget {
-  if (!isRecord(value)) throw new Error('queue ledger target is invalid');
-  const target = value as Partial<QueueLedgerTarget>;
-  if (target.kind === 'unassigned') return;
-  if (target.kind === 'cat' && typeof target.catId === 'string' && target.catId) return;
-  throw new Error('queue ledger target is invalid');
+function assertQueueTargets(value: unknown): asserts value is string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every((targetId) => typeof targetId === 'string' && targetId.length > 0) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error('queue ledger targets are invalid');
+  }
 }
 
 function assertQueuePayload(value: unknown): asserts value is QueueLedgerPayload {
-  if (!isRecord(value) || typeof value.sourceId !== 'string' || !value.sourceId) {
+  if (!isRecord(value) || typeof value.sourceRecordId !== 'string' || !value.sourceRecordId) {
     throw new Error('queue ledger payload identity is incomplete');
   }
   if (typeof value.content !== 'string') throw new Error('queue ledger payload content is invalid');
@@ -346,13 +353,13 @@ function assertQueueClassification(entry: Partial<QueueLedgerEntry>): void {
 export function assertQueueLedgerEntry(value: unknown): asserts value is QueueLedgerEntry {
   if (!isRecord(value)) throw new Error('queue ledger row is invalid');
   const entry = value as Partial<QueueLedgerEntry>;
-  if (entry.version !== 1) throw new Error('unsupported queue ledger entry version');
+  if (entry.version !== 2) throw new Error('unsupported queue ledger entry version');
   if (typeof entry.id !== 'string' || !entry.id || typeof entry.threadId !== 'string' || !entry.threadId) {
     throw new Error('queue ledger identity is incomplete');
   }
   assertQueueOwner(entry.owner);
   assertQueueClassification(entry);
-  assertQueueTarget(entry.target);
+  assertQueueTargets(entry.targets);
   if (!isMessageFrom(entry.from)) throw new Error('queue ledger sender is invalid');
   assertQueuePayload(entry.payload);
   assertQueueExecution(entry.execution);

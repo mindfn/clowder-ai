@@ -8,6 +8,11 @@ interface AdoptionEntry {
   tail: Promise<void>;
 }
 
+export interface TurnCustodyAdoptionReservation {
+  commit(wakes: readonly TurnCustodyWakeProvenance[]): Promise<void>;
+  release(): Promise<void>;
+}
+
 /**
  * Process-local bridge from an invocation-authenticated tool read back to the
  * route generator that owns the same child. Queue custody remains durable; the
@@ -33,17 +38,42 @@ export class TurnCustodyAdoptionRegistry {
 
   async adopt(invocationId: string, wakes: readonly TurnCustodyWakeProvenance[]): Promise<boolean> {
     if (wakes.length === 0) return true;
+    const reservation = this.reserve(invocationId);
+    if (!reservation) return false;
+    await reservation.commit(wakes);
+    return true;
+  }
+
+  /**
+   * Reserve the exact invocation handler before a caller commits an external
+   * delivery. Unregister waits for the reservation, so a provider turn cannot
+   * disappear between Queue/History cutover and custody-baseline adoption.
+   */
+  reserve(invocationId: string): TurnCustodyAdoptionReservation | null {
     const entry = this.handlers.get(invocationId);
-    if (!entry) return false;
-    let accepted = false;
+    if (!entry?.active) return null;
+
+    let decide!: (wakes: readonly TurnCustodyWakeProvenance[] | null) => void;
+    const decision = new Promise<readonly TurnCustodyWakeProvenance[] | null>((resolve) => {
+      decide = resolve;
+    });
+    let settled = false;
     const adoption = entry.tail.then(async () => {
-      if (!entry.active || this.handlers.get(invocationId) !== entry) return;
-      accepted = true;
-      await entry.handler(wakes);
+      const wakes = await decision;
+      if (wakes?.length) await entry.handler(wakes);
     });
     entry.tail = adoption.catch(() => undefined);
-    await adoption;
-    return accepted;
+
+    const settle = async (wakes: readonly TurnCustodyWakeProvenance[] | null): Promise<void> => {
+      if (settled) return;
+      settled = true;
+      decide(wakes);
+      await adoption;
+    };
+    return {
+      commit: (wakes) => settle(wakes),
+      release: () => settle(null),
+    };
   }
 
   resetForTest(): void {

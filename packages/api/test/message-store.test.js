@@ -228,7 +228,7 @@ describe('MessageStore', () => {
     assert.deepEqual(store.prepareQueueAdmission(canceled.id), { kind: 'conflict' });
   });
 
-  test('fan-out admission is idempotent and binds message delivery to the durable ledger', async () => {
+  test('fan-out admission is idempotent and publishes owner work only at first delivery', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const store = new MessageStore();
@@ -263,12 +263,13 @@ describe('MessageStore', () => {
     assert.equal(replay.outcome, 'enqueued');
     assert.equal(replay.deduped, true);
     assert.equal(replay.message.id, first.message.id);
-    assert.equal(first.message.timelinePublishedAtAppend, true);
+    assert.equal(first.message.timelinePublishedAtAppend, undefined);
     assert.equal(store.getById(first.message.id).deliveryStatus, 'queued');
+    assert.deepEqual(store.getByThread('thread-admission', 20, 'user-1'), []);
     assert.equal(queue.list('thread-admission', 'user-1').length, 1);
     const delivered = store.markDelivered(first.message.id, 201);
     assert.equal(delivered.deliveryTransitioned, true);
-    assert.equal(delivered.timelineOrderAt, first.message.timestamp);
+    assert.equal(delivered.timelineOrderAt, 201);
     assert.equal(store.getById(first.message.id).deliveryStatus, 'delivered');
   });
 

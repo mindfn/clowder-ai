@@ -699,8 +699,8 @@ export async function enqueueA2ATargets(
     throw new Error('A2A fan-out admission plan contains an unrequested target');
   }
   if (
-    opts.preAdmittedEntries?.some(
-      (entry) => entry.target.kind === 'cat' && !plan.acceptedTargetCats.includes(entry.target.catId as CatId),
+    opts.preAdmittedEntries?.some((entry) =>
+      entry.targets.some((targetId) => !plan.acceptedTargetCats.includes(targetId as CatId)),
     )
   ) {
     throw new Error('A2A routing preflight must run before atomic ledger admission');
@@ -752,9 +752,7 @@ export async function enqueueA2ATargets(
     const idempotencyKey = opts.actionSuccessorFence
       ? `action:${opts.actionSuccessorFence.leaseId}:${opts.actionSuccessorFence.generation}:${catId}`
       : `a2a:${triggerMessageId}:${catId}`;
-    const preAdmittedEntry = opts.preAdmittedEntries?.find(
-      (entry) => entry.target.kind === 'cat' && entry.target.catId === catId,
-    );
+    const preAdmittedEntry = opts.preAdmittedEntries?.find((entry) => entry.targets.includes(catId));
     const result = preAdmittedEntry
       ? {
           outcome: 'enqueued' as const,

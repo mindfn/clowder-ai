@@ -312,32 +312,6 @@ export function MessageActions({
     [threadId],
   );
 
-  const overflowMenuItems = (
-    <>
-      <button
-        type="button"
-        role="menuitem"
-        className="min-h-11 w-full px-3 py-2 text-left text-sm text-cafe-secondary transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary"
-        onClick={() => {
-          setOverflowOpen(false);
-          handleBranchDirect();
-        }}
-      >
-        从这里分支
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        className="min-h-11 w-full px-3 py-2 text-left text-sm text-conn-red-text transition-colors hover:bg-cafe-surface-elevated"
-        onClick={() => {
-          setOverflowOpen(false);
-          handleHardDelete();
-        }}
-      >
-        永久删除
-      </button>
-    </>
-  );
   const actionToolbar = (compactPresentation: boolean) => (
     <div
       data-quote-exclude

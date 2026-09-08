@@ -282,7 +282,7 @@ describe('B6: multi_mention queue dispatch', () => {
       entries.map((entry) => ({
         targetCatId: queueEntryTargetCats(entry)[0],
         parentInvocationId: entry.execution.a2aParentInvocationId,
-        sourceId: entry.payload.sourceId,
+        sourceId: entry.payload.sourceRecordId,
         requiresExactProvenance: entry.execution.requiresExactCloudDispatchProvenance,
         provenance: entry.execution.cloudDispatchProvenance,
       })),
@@ -402,7 +402,7 @@ describe('B6: multi_mention queue dispatch', () => {
     });
     const [entry] = invocationQueue.list('thread-1', 'user-1');
     assert.deepEqual(entry.execution.actionSuccessorFence, actionAdmissionResult.fence);
-    assert.equal(entry.payload.sourceId, entry.payload.messageId);
+    assert.equal(entry.payload.sourceRecordId, entry.payload.messageId);
   });
 
   test('confirms a returned generation only after its predecessor is enqueued', async () => {

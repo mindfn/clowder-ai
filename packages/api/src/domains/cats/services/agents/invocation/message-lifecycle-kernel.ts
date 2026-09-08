@@ -99,7 +99,8 @@ function sameDispatchRef(left: LifecycleDispatchRef, right: LifecycleDispatchRef
   return (
     left.targetId === right.targetId &&
     left.phase === right.phase &&
-    (left.phase === 'assigned' || (right.phase !== 'assigned' && left.statusMessageId === right.statusMessageId))
+    left.statusMessageId === right.statusMessageId &&
+    left.dispatchedAt === right.dispatchedAt
   );
 }
 
@@ -111,12 +112,25 @@ export function advanceDispatchRef(
   if (current.targetId !== next.targetId) return { outcome: 'conflict', reason: 'target_mismatch' };
   if (sameDispatchRef(current, next)) return { outcome: 'replayed', ref: current };
   if (current.phase === next.phase) {
+    if (
+      current.phase === 'dispatched' &&
+      current.statusMessageId === next.statusMessageId &&
+      current.dispatchedAt === undefined &&
+      next.dispatchedAt !== undefined
+    ) {
+      return { outcome: 'applied', ref: next };
+    }
     return { outcome: 'conflict', reason: 'status_mismatch' };
   }
-  if (current.phase === 'settled' || next.phase === 'assigned') {
+  if (current.phase === 'settled') {
     return { outcome: 'conflict', reason: 'phase_regression' };
   }
-  if (current.phase === 'dispatched' && next.phase === 'settled' && current.statusMessageId !== next.statusMessageId) {
+  if (
+    current.phase === 'dispatched' &&
+    next.phase === 'settled' &&
+    (current.statusMessageId !== next.statusMessageId ||
+      (next.dispatchedAt !== undefined && current.dispatchedAt !== next.dispatchedAt))
+  ) {
     return { outcome: 'conflict', reason: 'status_mismatch' };
   }
   return { outcome: 'applied', ref: next };

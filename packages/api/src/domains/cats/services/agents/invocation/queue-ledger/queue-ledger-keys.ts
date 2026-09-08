@@ -7,4 +7,5 @@ export const QueueLedgerKeys = {
   entries: (threadId: string) => `queue:{${threadTag(threadId)}}:entries`,
   order: (threadId: string) => `queue:{${threadTag(threadId)}}:order`,
   messageIndex: (threadId: string) => `queue:{${threadTag(threadId)}}:messages`,
+  schema: (threadId: string) => `queue:{${threadTag(threadId)}}:schema`,
 } as const;

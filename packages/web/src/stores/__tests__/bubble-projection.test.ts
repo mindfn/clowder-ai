@@ -133,7 +133,7 @@ describe('F194 Phase Z8 — projectCanonicalBubbles (AC-Z20)', () => {
       lifecycle: {
         kind: 'input',
         orderKey: '100:source-1',
-        dispatchRefs: [{ targetId: 'tabby', phase: 'settled', statusMessageId: 'final-failure' }],
+        dispatchRefs: [{ targetId: 'tabby', phase: 'settled', statusMessageId: 'final-failure', dispatchedAt: 1_000 }],
       },
     };
     const auxiliaryFailure: ChatMessage = {

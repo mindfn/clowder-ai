@@ -1,5 +1,4 @@
 import type { DynamicTaskDef } from '../../infrastructure/scheduler/DynamicTaskStore.js';
-import type { QueueLedgerEntry } from '../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import {
@@ -55,35 +54,62 @@ export type ManagedCommandWakeEventCarrier =
 
 export function resolveManagedCommandWakeEventCarrier(
   message: StoredMessage | null | undefined,
-  entry: QueueLedgerEntry | null | undefined,
-  expected: { threadId: string; catId: string },
+  response: StoredMessage | null | undefined,
+  pendingTarget: boolean,
+  expected: { threadId: string; userId: string; catId: string },
 ): ManagedCommandWakeEventCarrier {
-  if (!message || message.threadId !== expected.threadId) {
+  if (!message || message.threadId !== expected.threadId || message.userId !== expected.userId) {
     return { state: 'missing' };
   }
   if (message.deliveryStatus === 'canceled') return { state: 'terminal', reason: 'canceled' };
-  if (
-    !entry ||
-    entry.threadId !== expected.threadId ||
-    entry.target.kind !== 'cat' ||
-    entry.target.catId !== expected.catId
-  )
-    return { state: 'missing' };
-  const invocationId = entry.delivery.seenInvocationId ?? entry.delivery.awakenedInvocationId;
-  if (entry.status !== 'terminal') return { state: 'pending' };
-  if (entry.delivery.terminalOutcome === 'handled') {
-    return { state: 'handled', ...(invocationId ? { invocationId } : {}) };
+  const refs = message.lifecycle && 'dispatchRefs' in message.lifecycle ? (message.lifecycle.dispatchRefs ?? []) : [];
+  const matchingRefs = refs.filter((ref) => ref.targetId === expected.catId);
+  if (matchingRefs.length === 0) {
+    return message.deliveryStatus === 'queued' && pendingTarget ? { state: 'pending' } : { state: 'orphaned' };
   }
-  if (entry.delivery.terminalOutcome === 'failed') {
+  if (matchingRefs.length !== 1 || message.deliveryStatus !== 'delivered') return { state: 'orphaned' };
+  const ref = matchingRefs[0]!;
+  if (
+    !response ||
+    response.id !== ref.statusMessageId ||
+    response.threadId !== expected.threadId ||
+    response.userId !== expected.userId
+  ) {
+    return { state: 'orphaned' };
+  }
+  const lifecycle = response.lifecycle;
+  if (lifecycle?.kind === 'delivery_failure') {
+    if (lifecycle.inputMessageId !== message.id || !lifecycle.requestedTargets.includes(expected.catId)) {
+      return { state: 'orphaned' };
+    }
     return {
       state: 'failed',
-      attemptId: entry.delivery.attemptId ?? `${entry.id}:1`,
+      attemptId: `${message.id}:${expected.catId}:${response.id}`,
       attemptSequence: 1,
-      ...(invocationId ? { invocationId } : {}),
+      errorCode: lifecycle.reason,
     };
   }
-  const reason = entry.delivery.terminalOutcome === 'withdrawn' ? 'withdrawn' : 'terminal';
-  return { state: 'terminal', reason };
+  if (
+    lifecycle?.kind !== 'response' ||
+    lifecycle.targetId !== expected.catId ||
+    !lifecycle.inputMessageIds.includes(message.id)
+  ) {
+    return { state: 'orphaned' };
+  }
+  if (lifecycle.status === 'processing') return { state: 'pending' };
+  if (lifecycle.status === 'completed') return { state: 'handled', invocationId: lifecycle.invocationId };
+  if (lifecycle.status === 'failed') {
+    return {
+      state: 'failed',
+      attemptId: `${message.id}:${expected.catId}:${lifecycle.invocationId}`,
+      attemptSequence: 1,
+      invocationId: lifecycle.invocationId,
+    };
+  }
+  return {
+    state: 'terminal',
+    reason: lifecycle.status === 'canceled' ? 'canceled' : 'terminal',
+  };
 }
 
 export interface ManagedCommandWakeTrigger {

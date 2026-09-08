@@ -299,7 +299,7 @@ export function ChatInputActionButton({
             steerOpenSequenceRef.current += 1;
             setConfirmSteer(false);
           }}
-          onConfirm={(actions) => {
+          onConfirm={(submission) => {
             steerOpenSequenceRef.current += 1;
             setConfirmSteer(false);
             // Guard: only Steer if the execution identity that prompted
@@ -307,11 +307,12 @@ export function ChatInputActionButton({
             // hasActiveInvocation stays true but the execution set changed.
             const keyMatch = activeExecutionKey !== undefined && activeExecutionKey === steerBoundKeyRef.current;
             const currentTargetIds = new Set(
-              steerTargets.filter((target) => !target.processed).map((target) => target.id),
+              steerTargets.filter((target) => !target.delivered).map((target) => target.id),
             );
             const targetsStillAvailable =
-              actions.length > 0 && actions.every((action) => currentTargetIds.has(action.targetId));
-            if (hasActiveInvocation && keyMatch && targetsStillAvailable) onSteerSend?.(actions);
+              submission.actions.length > 0 &&
+              submission.actions.every((action) => currentTargetIds.has(action.targetId));
+            if (hasActiveInvocation && keyMatch && targetsStillAvailable) onSteerSend?.(submission.actions);
           }}
         />
       )}

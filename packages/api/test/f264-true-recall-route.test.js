@@ -311,12 +311,17 @@ describe('F264 Gap F true recall API', () => {
     assert.equal(harness.threadStore.get(THREAD_ID).title, message.content);
   });
 
-  it('rejects recall when any fan-out row has already left queued state', async () => {
+  it('rejects recall while the single pending Queue entry is claimed by another operation', async () => {
     const harness = createHarness();
     apps.push(harness.app);
     const { message, entries } = await appendQueued(harness, '已经出队的正文');
-    assert.ok(await harness.invocationQueue.markProcessingByIdDurable(THREAD_ID, entries[0].id, 'codex'));
-    assert.equal(await harness.invocationQueue.commitClaimedProcessing(THREAD_ID, [entries[0].id]), true);
+    const claim = await harness.invocationQueue.claimMessageEntriesForWithdrawal(
+      THREAD_ID,
+      OWNER_ID,
+      message.id,
+      1_500,
+    );
+    assert.equal(claim.outcome, 'claimed');
 
     const response = await harness.app.inject({
       method: 'POST',
@@ -329,7 +334,7 @@ describe('F264 Gap F true recall API', () => {
     assert.equal(response.json().code, 'ENTRY_PROCESSING');
     assert.equal(harness.messageStore.getById(message.id).content, '已经出队的正文');
     assert.equal(harness.messageStore.getOwnerComposerDraft(OWNER_ID, THREAD_ID), null);
-    assert.equal(harness.invocationQueue.list(THREAD_ID, OWNER_ID).length, 2);
+    assert.equal(harness.invocationQueue.list(THREAD_ID, OWNER_ID).length, 1);
   });
 
   it('fails before the canonical CAS and restores Queue when index suppression cannot be prepared', async () => {
@@ -388,7 +393,7 @@ describe('F264 Gap F true recall API', () => {
     assert.equal(harness.invocationQueue.list(THREAD_ID, OWNER_ID).length, 0);
   });
 
-  it('terminalizes an interrupted recall claim from the recalled message on startup', async () => {
+  it('removes an interrupted recall claim from the recalled message on startup', async () => {
     const harness = createHarness();
     apps.push(harness.app);
     const { message, entries } = await appendQueued(harness, '消息已提交但进程还没提交 Queue');
@@ -406,7 +411,6 @@ describe('F264 Gap F true recall API', () => {
         expectedDraftRevision: 0,
         merge: 'replace',
         recalledAt: 1_600,
-        exposures: [],
       }).kind,
       'recalled',
     );
@@ -415,7 +419,7 @@ describe('F264 Gap F true recall API', () => {
     assert.equal(await restarted.hydrateFromLedger(harness.messageStore), 0);
     assert.deepEqual(restarted.list(THREAD_ID, OWNER_ID), []);
     for (const entry of entries) {
-      assert.equal((await harness.ledgerStore.get(THREAD_ID, entry.id)).status, 'terminal');
+      assert.equal(await harness.ledgerStore.get(THREAD_ID, entry.id), null);
     }
   });
 
@@ -446,21 +450,10 @@ describe('F264 Gap F true recall API', () => {
     );
   });
 
-  it('keeps an exposed recall content-free while returning exact exposure truth', async () => {
+  it('keeps a pending recall content-free with zero exposure', async () => {
     const harness = createHarness();
     apps.push(harness.app);
-    const { message, entries } = await appendQueued(harness, '猫已经读过', ['codex']);
-    assert.deepEqual(
-      await harness.invocationQueue.markQueuedSeenDurable(
-        THREAD_ID,
-        OWNER_ID,
-        entries[0].id,
-        'codex',
-        'child-read',
-        1_500,
-      ),
-      { changed: true, newlySeen: true },
-    );
+    const { message } = await appendQueued(harness, '仍在等待投递', ['codex']);
 
     const response = await harness.app.inject({
       method: 'POST',
@@ -471,10 +464,8 @@ describe('F264 Gap F true recall API', () => {
 
     assert.equal(response.statusCode, 200, response.body);
     const body = response.json();
-    assert.equal(body.verdict, 'exposed');
-    assert.deepEqual(body.message.recall.exposures, [
-      { targetCatId: 'codex', invocationId: 'child-read', seenAt: 1_500 },
-    ]);
+    assert.equal(body.verdict, 'zero_exposure');
+    assert.equal(body.message.recall.exposures, undefined);
     assert.equal(body.message.content, undefined);
     assert.equal(harness.invocationQueue.list(THREAD_ID, OWNER_ID).length, 0);
   });

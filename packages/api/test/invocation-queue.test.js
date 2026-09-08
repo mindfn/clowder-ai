@@ -41,7 +41,7 @@ describe('InvocationQueue ADR-043 adapter', () => {
     );
   });
 
-  it('fans one source out into deterministic scalar rows and replays by row identity', async () => {
+  it('stores one deterministic source row with a pending target set and replays by source identity', async () => {
     const ledger = new InMemoryQueueLedgerStore();
     const queue = new InvocationQueue(ledger);
     const input = queueInput({ sourceId: 'fanout-source', messageId: 'fanout-message', targetCats: ['opus', 'codex'] });
@@ -49,30 +49,24 @@ describe('InvocationQueue ADR-043 adapter', () => {
     const first = await queue.enqueueDurable(input);
     const replay = await queue.enqueueDurable(input);
 
-    assert.equal(first.entries.length, 2);
+    assert.equal(first.entries.length, 1);
     assert.equal(replay.deduped, true);
     assert.deepEqual(
       replay.entries.map((entry) => entry.id),
       first.entries.map((entry) => entry.id),
     );
-    assert.deepEqual(
-      first.entries.map((entry) => entry.target),
-      [
-        { kind: 'cat', catId: 'opus' },
-        { kind: 'cat', catId: 'codex' },
-      ],
-    );
+    assert.deepEqual(first.entry.targets, ['opus', 'codex']);
     assert.ok(first.entries.every((entry) => entry.payload.messageId === 'fanout-message'));
     assert.ok(first.entries.every((entry) => !('targetCats' in entry)));
-    assert.equal(queue.list('thread-1', 'user-1').length, 2);
+    assert.equal(queue.list('thread-1', 'user-1').length, 1);
   });
 
-  it('represents a targetless conversation as one unassigned row', async () => {
+  it('represents a targetless conversation as one row with an empty pending target set', async () => {
     const queue = new InvocationQueue();
     const result = await queue.enqueueDurable(queueInput({ targetCats: [] }));
 
     assert.equal(result.entries.length, 1);
-    assert.deepEqual(result.entry.target, { kind: 'unassigned' });
+    assert.equal(result.entry.target, undefined);
     assert.deepEqual(queueEntryTargetCats(result.entry), []);
   });
 
@@ -120,13 +114,13 @@ describe('InvocationQueue ADR-043 adapter', () => {
 
     const claim = await queue.claimExactSteerEntryDurable('thread-1', 'user-1', selected.entry.id, 'codex', 1_000);
     assert.equal(claim.outcome, 'claimed');
-    assert.deepEqual(claim.entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(claim.entries[0].targets, ['codex']);
     assert.equal(claim.entries[0].delivery.steerRequestedAt, 1_000);
     assert.equal(await queue.restoreClaimedEntries('thread-1', [selected.entry.id]), true);
 
     const restored = queue.getEntrySnapshot('thread-1', 'user-1', selected.entry.id);
     assert.equal(restored.status, 'queued');
-    assert.deepEqual(restored.target, { kind: 'unassigned' });
+    assert.deepEqual(restored.targets, []);
     assert.equal(restored.delivery.steerRequestedAt, undefined);
     assert.deepEqual(
       queue.list('thread-1', 'user-1').map((entry) => entry.id),
@@ -158,11 +152,12 @@ describe('InvocationQueue ADR-043 adapter', () => {
     );
     assert.equal(new Set([claim.entry, ...claim.members].map((entry) => entry.retiringGroupId)).size, 1);
     assert.equal(await queue.commitClaimedProcessing('thread-1', [first.entry.id, second.entry.id], 2_000), true);
-    assert.equal(queue.getEntrySnapshot('thread-1', 'user-1', first.entry.id).status, 'processing');
-    assert.equal(queue.getEntrySnapshot('thread-1', 'user-1', second.entry.id).status, 'processing');
+    assert.equal(await queue.getDurableEntry('thread-1', first.entry.id), null);
+    assert.equal(await queue.getDurableEntry('thread-1', second.entry.id), null);
+    assert.equal(queue.findProcessingByCat('thread-1', 'opus').status, 'processing');
   });
 
-  it('terminalizes processing once and never revives the row', async () => {
+  it('removes admitted work from the durable Queue and settles only its process-local attempt', async () => {
     const queue = new InvocationQueue();
     const admitted = await queue.enqueueDurable(queueInput({ sourceId: 'terminal-once' }));
     const claim = await queue.markProcessingDurable('thread-1', 'user-1', {
@@ -183,13 +178,10 @@ describe('InvocationQueue ADR-043 adapter', () => {
     );
     assert.equal(queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
     assert.equal(await queue.removeProcessedAcrossUsersDurable('thread-1', admitted.entry.id), null);
-    const terminal = await queue.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(terminal.status, 'terminal');
-    assert.equal(terminal.delivery.terminalOutcome, 'failed');
-    assert.equal(terminal.delivery.failureReason, 'invocation_failed');
+    assert.equal(await queue.getDurableEntry('thread-1', admitted.entry.id), null);
   });
 
-  it('freezes and withdraws every scalar fan-out row for one message', async () => {
+  it('freezes and withdraws the one source row for every pending message target', async () => {
     const queue = new InvocationQueue();
     const admitted = await queue.enqueueDurable(
       queueInput({ sourceId: 'withdraw-source', messageId: 'withdraw-message', targetCats: ['opus', 'codex'] }),
@@ -197,7 +189,7 @@ describe('InvocationQueue ADR-043 adapter', () => {
     const claim = await queue.claimMessageEntriesForWithdrawal('thread-1', 'user-1', 'withdraw-message', 1_000);
 
     assert.equal(claim.outcome, 'claimed');
-    assert.equal(claim.entries.length, 2);
+    assert.equal(claim.entries.length, 1);
     assert.equal(
       await queue.commitClaimedMessageWithdrawal(
         'thread-1',
@@ -206,14 +198,10 @@ describe('InvocationQueue ADR-043 adapter', () => {
       true,
     );
     assert.equal(queue.list('thread-1', 'user-1').length, 0);
-    for (const entry of admitted.entries) {
-      const durable = await queue.getDurableEntry('thread-1', entry.id);
-      assert.equal(durable.status, 'terminal');
-      assert.equal(durable.delivery.terminalOutcome, 'withdrawn');
-    }
+    assert.equal(await queue.getDurableEntry('thread-1', admitted.entry.id), null);
   });
 
-  it('stores receipt state on the scalar target row without by-cat maps', async () => {
+  it('stores only pending reminder intent on the durable Queue row', async () => {
     const queue = new InvocationQueue();
     const admitted = await queue.enqueueDurable(queueInput({ sourceId: 'receipt-source' }));
     const requested = await queue.requestReminderDurable(
@@ -226,29 +214,24 @@ describe('InvocationQueue ADR-043 adapter', () => {
       100,
     );
     assert.equal(requested.idempotent, false);
-    assert.equal(
-      await queue.markQueuedNotifiedAndReminderDeliveredDurable(
-        'thread-1',
-        'user-1',
-        admitted.entry.id,
-        'opus',
-        'inv-1',
-        200,
-      ),
-      true,
+    const replayed = await queue.requestReminderDurable(
+      'thread-1',
+      'user-1',
+      admitted.entry.id,
+      'opus',
+      'inv-1',
+      'ignored-replay-id',
+      200,
     );
-    const seen = await queue.markQueuedSeenDurable('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-1', 300);
-
-    assert.deepEqual(seen, { changed: true, newlySeen: true });
+    assert.equal(replayed.idempotent, true);
+    assert.equal(replayed.attempt.id, 'reminder-1');
     const row = queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id);
-    assert.equal(row.delivery.seenAt, 300);
-    assert.equal(row.delivery.notifiedAt, undefined);
-    assert.deepEqual(row.delivery.bodyExposures, [{ targetCatId: 'opus', invocationId: 'inv-1', seenAt: 300 }]);
-    assert.equal(row.delivery.reminderAttempts[0].state, 'seen');
+    assert.equal(row.delivery.reminderAttempts[0].state, 'requested');
+    assert.equal('bodyExposures' in row.delivery, false);
     assert.ok(!('seenByCatIds' in row.delivery));
   });
 
-  it('persists awakened and seen evidence while the exact row remains processing', async () => {
+  it('keeps awakened and seen evidence only on the process-local admitted attempt', async () => {
     const queue = new InvocationQueue();
     const admitted = await queue.enqueueDurable(queueInput({ sourceId: 'processing-receipt-source' }));
     const processing = await queue.markProcessingDurable('thread-1', 'user-1', {
@@ -259,31 +242,23 @@ describe('InvocationQueue ADR-043 adapter', () => {
     assert.equal(await queue.commitClaimedProcessing('thread-1', [admitted.entry.id], 200), true);
 
     assert.equal(
-      await queue.markProcessingAwakenedDurable('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-processing', 210),
+      await queue.markProcessingAwakened('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-processing', 210),
       true,
     );
     assert.deepEqual(
-      await queue.markProcessingSeenDurable('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-processing', 220),
+      await queue.markProcessingSeen('thread-1', 'user-1', admitted.entry.id, 'opus', 'inv-processing', 220),
       { changed: true, newlySeen: true },
     );
 
-    const durable = await queue.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(durable.status, 'processing');
-    assert.equal(durable.processingStartedAt, 200);
-    assert.equal(durable.delivery.awakenedInvocationId, 'inv-processing');
-    assert.equal(durable.delivery.awakenedAt, 210);
-    assert.equal(durable.delivery.seenInvocationId, 'inv-processing');
-    assert.equal(durable.delivery.seenAt, 220);
+    assert.equal(await queue.getDurableEntry('thread-1', admitted.entry.id), null);
+    const attempt = queue.findProcessingByCat('thread-1', 'opus');
+    assert.equal(attempt.status, 'processing');
+    assert.equal(attempt.processingStartedAt, 200);
+    assert.equal('awakenedInvocationId' in attempt.delivery, false);
+    assert.equal('seenInvocationId' in attempt.delivery, false);
 
     assert.equal(
-      await queue.markProcessingAwakenedDurable(
-        'thread-1',
-        'user-1',
-        admitted.entry.id,
-        'codex',
-        'inv-processing',
-        230,
-      ),
+      await queue.markProcessingAwakened('thread-1', 'user-1', admitted.entry.id, 'codex', 'inv-processing', 230),
       false,
       'receipt evidence must remain target-bound',
     );
@@ -306,7 +281,7 @@ describe('InvocationQueue ADR-043 adapter', () => {
     assert.equal((await restarted.getDurableEntry('thread-1', admitted.entry.id)).status, 'queued');
   });
 
-  it('terminalizes admitted processing rows on restart instead of requeueing them', async () => {
+  it('does not reconstruct admitted attempts from Queue after restart', async () => {
     const ledger = new InMemoryQueueLedgerStore();
     const firstHost = new InvocationQueue(ledger);
     const admitted = await firstHost.enqueueDurable(queueInput({ sourceId: 'restart-processing' }));
@@ -319,12 +294,9 @@ describe('InvocationQueue ADR-043 adapter', () => {
     assert.equal(await firstHost.commitClaimedProcessing('thread-1', [admitted.entry.id], 1_000), true);
 
     const restarted = new InvocationQueue(ledger);
-    assert.equal(await restarted.hydrateFromLedger(), 1);
-    assert.deepEqual(await restarted.terminalizeRestartedProcessing(), { terminalized: 1, failedEntryIds: [] });
+    assert.equal(await restarted.hydrateFromLedger(), 0);
     assert.equal(restarted.list('thread-1', 'user-1').length, 0);
-    const durable = await restarted.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(durable.delivery.terminalOutcome, 'interrupted');
-    assert.equal(durable.delivery.failureReason, 'runtime_restart');
+    assert.equal(await restarted.getDurableEntry('thread-1', admitted.entry.id), null);
   });
 
   it('treats a live claim as busy but ignores an explicitly excluded Steer reservation', async () => {
@@ -349,10 +321,10 @@ describe('InvocationQueue ADR-043 adapter', () => {
     const admitted = await queue.enqueueDurable(queueInput({ sourceId: 'clone-source', content: 'original' }));
     const listed = queue.list('thread-1', 'user-1');
     listed[0].payload.content = 'mutated';
-    admitted.entry.delivery.seenAt = 123;
+    admitted.entry.delivery.authorIntentByTarget = {};
 
     const current = queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id);
     assert.equal(current.payload.content, 'original');
-    assert.equal(current.delivery.seenAt, undefined);
+    assert.equal(current.delivery.authorIntentByTarget, undefined);
   });
 });

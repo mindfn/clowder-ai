@@ -46,53 +46,54 @@ export function createQueueLedgerAdmission(input: QueueLedgerAdmissionInput): Qu
   if (new Set(input.targetCatIds).size !== input.targetCatIds.length) {
     throw new Error('Queue admission targets must be unique');
   }
-  const targets = input.targetCatIds.length > 0 ? input.targetCatIds : [undefined];
-  return targets.map((targetCatId) => ({
-    version: 1,
-    id: queueEntryId(input.sourceId, targetCatId),
-    threadId: input.threadId,
-    owner: structuredClone(input.owner),
-    kind: input.kind,
-    from: structuredClone(input.from),
-    target: targetCatId ? { kind: 'cat', catId: targetCatId } : { kind: 'unassigned' },
-    payload: {
-      sourceId: input.sourceId,
-      content: input.content,
-      ...(input.messageId ? { messageId: input.messageId } : {}),
-      ...(input.routingWarnings?.length ? { routingWarnings: structuredClone(input.routingWarnings) } : {}),
+  return [
+    {
+      version: 2,
+      id: queueEntryId(input.sourceId),
+      threadId: input.threadId,
+      owner: structuredClone(input.owner),
+      kind: input.kind,
+      from: structuredClone(input.from),
+      targets: [...input.targetCatIds],
+      payload: {
+        sourceRecordId: input.sourceId,
+        content: input.content,
+        ...(input.messageId ? { messageId: input.messageId } : {}),
+        ...(input.routingWarnings?.length ? { routingWarnings: structuredClone(input.routingWarnings) } : {}),
+      },
+      execution: {
+        intent: input.intent,
+        ownerAuthProvenance: input.ownerAuthProvenance,
+        autoExecute: input.autoExecute ?? false,
+        ...(input.a2aParentInvocationId ? { a2aParentInvocationId: input.a2aParentInvocationId } : {}),
+        ...(input.freshnessClosureId ? { freshnessClosureId: input.freshnessClosureId } : {}),
+        ...(input.freshnessSupplementId ? { freshnessSupplementId: input.freshnessSupplementId } : {}),
+        ...(input.freshnessSupplementLineageId
+          ? { freshnessSupplementLineageId: input.freshnessSupplementLineageId }
+          : {}),
+        ...(input.freshnessSupplementSeq ? { freshnessSupplementSeq: input.freshnessSupplementSeq } : {}),
+        ...(input.readOnlyToolPolicy ? { readOnlyToolPolicy: structuredClone(input.readOnlyToolPolicy) } : {}),
+        ...(input.actionSuccessorFence ? { actionSuccessorFence: structuredClone(input.actionSuccessorFence) } : {}),
+        ...(input.waitContinuationCarrier
+          ? { waitContinuationCarrier: structuredClone(input.waitContinuationCarrier) }
+          : {}),
+        ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
+        ...(input.callerTraceContext ? { callerTraceContext: structuredClone(input.callerTraceContext) } : {}),
+        ...(input.a2aTriggerMessageId ? { a2aTriggerMessageId: input.a2aTriggerMessageId } : {}),
+        ...(input.cloudDispatchProvenance
+          ? { cloudDispatchProvenance: structuredClone(input.cloudDispatchProvenance) }
+          : {}),
+        ...(input.requiresExactCloudDispatchProvenance ? { requiresExactCloudDispatchProvenance: true } : {}),
+      },
+      delivery: {
+        ...(input.authorIntentByCatId && Object.keys(input.authorIntentByCatId).length > 0
+          ? { authorIntentByTarget: structuredClone(input.authorIntentByCatId) }
+          : {}),
+      },
+      status: 'queued',
+      enqueuedAt: input.enqueuedAt,
+      priority: input.priority ?? 'normal',
+      ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
     },
-    execution: {
-      intent: input.intent,
-      ownerAuthProvenance: input.ownerAuthProvenance,
-      autoExecute: input.autoExecute ?? false,
-      ...(input.a2aParentInvocationId ? { a2aParentInvocationId: input.a2aParentInvocationId } : {}),
-      ...(input.freshnessClosureId ? { freshnessClosureId: input.freshnessClosureId } : {}),
-      ...(input.freshnessSupplementId ? { freshnessSupplementId: input.freshnessSupplementId } : {}),
-      ...(input.freshnessSupplementLineageId
-        ? { freshnessSupplementLineageId: input.freshnessSupplementLineageId }
-        : {}),
-      ...(input.freshnessSupplementSeq ? { freshnessSupplementSeq: input.freshnessSupplementSeq } : {}),
-      ...(input.readOnlyToolPolicy ? { readOnlyToolPolicy: structuredClone(input.readOnlyToolPolicy) } : {}),
-      ...(input.actionSuccessorFence ? { actionSuccessorFence: structuredClone(input.actionSuccessorFence) } : {}),
-      ...(input.waitContinuationCarrier
-        ? { waitContinuationCarrier: structuredClone(input.waitContinuationCarrier) }
-        : {}),
-      ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
-      ...(input.callerTraceContext ? { callerTraceContext: structuredClone(input.callerTraceContext) } : {}),
-      ...(input.a2aTriggerMessageId ? { a2aTriggerMessageId: input.a2aTriggerMessageId } : {}),
-      ...(input.cloudDispatchProvenance
-        ? { cloudDispatchProvenance: structuredClone(input.cloudDispatchProvenance) }
-        : {}),
-      ...(input.requiresExactCloudDispatchProvenance ? { requiresExactCloudDispatchProvenance: true } : {}),
-    },
-    delivery: {
-      ...(targetCatId && input.authorIntentByCatId?.[targetCatId]
-        ? { authorIntent: structuredClone(input.authorIntentByCatId[targetCatId]) }
-        : {}),
-    },
-    status: 'queued',
-    enqueuedAt: input.enqueuedAt,
-    priority: input.priority ?? 'normal',
-    ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
-  }));
+  ];
 }

@@ -355,7 +355,7 @@ describe('GET /api/messages', () => {
     });
   });
 
-  it('F264 hydrates a terminal receipt at the original user-message position', async () => {
+  it('publishes a queued user source only at actual delivery without a Queue receipt', async () => {
     const admission = await invocationQueue.appendAndEnqueueDurable(
       messageStore,
       canonicalTestMessageInput({
@@ -384,30 +384,21 @@ describe('GET /api/messages', () => {
     const queued = admission.message;
     const entry = admission.entry;
     assert.ok(entry);
-    assert.equal(queued.timelinePublishedAtAppend, true);
-    assert.equal((await queueLedgerStore.claim(queued.threadId, entry.id, 'claim-receipt', 1550)).outcome, 'claimed');
-    assert.equal(
-      (await queueLedgerStore.commit(queued.threadId, entry.id, 'claim-receipt', 'processing', 1550)).outcome,
-      'updated',
-    );
-    const processing = await queueLedgerStore.get(queued.threadId, entry.id);
-    assert.ok(processing);
+    assert.equal(queued.timelinePublishedAtAppend, undefined);
+
+    const beforeDelivery = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-receipt' });
+    assert.deepEqual(JSON.parse(beforeDelivery.body).messages, []);
+
     assert.equal(
       (
-        await queueLedgerStore.commit(queued.threadId, entry.id, '', 'terminal', 1700, {
-          ...processing,
-          delivery: {
-            ...processing.delivery,
-            attemptId: 'entry-receipt:opus:1',
-            seenAt: 1600,
-            seenInvocationId: 'inv-receipt',
-            bodyExposures: [{ targetCatId: 'opus', invocationId: 'inv-receipt', seenAt: 1600 }],
-            handledAt: 1700,
-            terminalOutcome: 'handled',
-          },
-          status: 'terminal',
-          terminalAt: 1700,
-        })
+        await invocationQueue.reconcileQueuedMessageTargetsDurable(
+          queued.threadId,
+          queued.userId,
+          entry.id,
+          [],
+          ['opus'],
+          {},
+        )
       ).outcome,
       'updated',
     );
@@ -416,33 +407,10 @@ describe('GET /api/messages', () => {
     const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-receipt' });
     const body = JSON.parse(res.body);
 
-    assert.deepEqual(body.messages[0].extra.queueReceipt, {
-      version: 1,
-      entryId: queued.id,
-      targets: [
-        {
-          catId: 'opus',
-          state: 'handled',
-          invocationId: 'inv-receipt',
-          seenAt: 1600,
-          attempts: [
-            {
-              id: 'entry-receipt:opus:1',
-              targetCatId: 'opus',
-              sequence: 1,
-              state: 'handled',
-              invocationId: 'inv-receipt',
-              createdAt: entry.enqueuedAt,
-              updatedAt: 1700,
-              seenAt: 1600,
-            },
-          ],
-        },
-      ],
-      reminderAttempts: [],
-    });
+    assert.equal(body.messages.length, 1);
+    assert.equal(body.messages[0].extra?.queueReceipt, undefined);
     assert.equal(body.messages[0].deliveredAt, 1700);
-    assert.equal(body.messages[0].timelineOrderAt, 1500);
+    assert.equal(body.messages[0].timelineOrderAt, 1700);
   });
 
   it('ADR-042 hydrates original freshness and supplement reply provenance', async () => {

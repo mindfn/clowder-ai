@@ -172,8 +172,8 @@ function bindActiveRun(
   return { invocationId, response, startedAt };
 }
 
-describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
-  it('claims, admits, and terminalizes one queued message without reviving it', async () => {
+describe('QueueProcessor over the source-row pending Queue', () => {
+  it('claims and removes admitted work from Queue without leaving a terminal tombstone', async () => {
     const harness = createHarness();
     const admitted = await admitMessage(harness);
 
@@ -181,16 +181,21 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal(started.started, true);
     await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
 
-    const durable = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(durable.status, 'terminal');
-    assert.equal(durable.delivery.terminalOutcome, 'handled', JSON.stringify(errorLog(harness)));
+    assert.equal(
+      await harness.queue.getDurableEntry('thread-1', admitted.entry.id),
+      null,
+      JSON.stringify(errorLog(harness)),
+    );
     assert.equal((await harness.messageStore.getById(admitted.message.id)).deliveryStatus, 'delivered');
   });
 
-  it('records the exact child awakening and prompt exposure on the processing receipt', async () => {
+  it('records child awakening and prompt exposure only on the process-local attempt', async () => {
     const childInvocationId = 'turn-receipt-evidence';
     const startedAt = Date.now();
-    const harness = createHarness({
+    let harness;
+    let observedAttempt;
+    let observedEvidence;
+    harness = createHarness({
       routeExecution: async function* (...args) {
         const [userId, , threadId, messageId, targetCats, , options] = args;
         await options.onLifecycleInvocationStarted({
@@ -209,6 +214,13 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
           messageIds: [messageId],
           seenAt: startedAt + 1,
         });
+        observedAttempt = harness.queue.findProcessingByCat(threadId, targetCats[0]);
+        observedEvidence = harness.queue.getAdmittedAttemptEvidence(
+          threadId,
+          observedAttempt.id,
+          targetCats[0],
+          userId,
+        );
         yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: startedAt + 2 };
       },
     });
@@ -217,25 +229,19 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
     await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
 
-    const durable = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(durable.status, 'terminal');
-    assert.equal(durable.delivery.terminalOutcome, 'handled');
-    assert.equal(durable.delivery.awakenedInvocationId, childInvocationId);
-    assert.equal(durable.delivery.awakenedAt, startedAt);
-    assert.equal(durable.delivery.seenInvocationId, childInvocationId);
-    assert.equal(durable.delivery.seenAt, startedAt + 1);
-    assert.deepEqual(durable.delivery.bodyExposures, [
-      { targetCatId: 'opus', invocationId: childInvocationId, seenAt: startedAt + 1 },
-    ]);
+    assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+    assert.equal(observedAttempt.status, 'processing');
+    assert.equal(observedEvidence.awakenedInvocationId, childInvocationId);
+    assert.equal(observedEvidence.awakenedAt, startedAt);
+    assert.equal(observedEvidence.seenInvocationId, childInvocationId);
+    assert.equal(observedEvidence.seenAt, startedAt + 1);
+    assert.equal('bodyExposures' in observedAttempt.delivery, false);
   });
 
   it('adopts an exactly exposed target into the current response and leaves sibling targets queued', async () => {
     const harness = createHarness();
     const admitted = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
-    const opusEntry = admitted.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
-    const codexEntry = admitted.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex');
-    assert.ok(opusEntry);
-    assert.ok(codexEntry);
+    const sourceEntry = admitted.entry;
 
     const { invocationId, response, startedAt } = bindActiveRun(harness);
 
@@ -244,29 +250,28 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
       userId: 'user-1',
       catId: 'opus',
       invocationId,
-      entries: [{ entryId: opusEntry.id, messageId: admitted.message.id }],
+      entries: [{ entryId: sourceEntry.id, messageId: admitted.message.id }],
       seenAt: startedAt + 1,
     });
 
-    assert.deepEqual(result, { outcome: 'adopted', adoptedEntryIds: [opusEntry.id] });
-    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', opusEntry.id), null);
-    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', codexEntry.id)?.status, 'queued');
-    const durable = await harness.queue.getDurableEntry('thread-1', opusEntry.id);
-    assert.equal(durable.status, 'terminal');
-    assert.equal(durable.delivery.terminalOutcome, 'handled');
-    assert.equal(durable.delivery.seenInvocationId, invocationId);
-    assert.deepEqual(durable.delivery.bodyExposures, [{ targetCatId: 'opus', invocationId, seenAt: startedAt + 1 }]);
+    assert.deepEqual(result, { outcome: 'adopted', adoptedEntryIds: [sourceEntry.id] });
+    const durable = await harness.queue.getDurableEntry('thread-1', sourceEntry.id);
+    assert.equal(durable.status, 'queued');
+    assert.deepEqual(durable.targets, ['codex']);
+    assert.equal(durable.delivery.seenInvocationId, undefined);
+    assert.equal('bodyExposures' in durable.delivery, false);
 
     const source = await harness.messageStore.getById(admitted.message.id);
     assert.equal(source.deliveryStatus, 'delivered');
-    assert.deepEqual(source.lifecycle.dispatchRefs, [
-      { targetId: 'opus', phase: 'dispatched', statusMessageId: response.id },
-      { targetId: 'codex', phase: 'assigned' },
-    ]);
+    assert.equal(source.lifecycle.dispatchRefs.length, 1);
+    assert.equal(source.lifecycle.dispatchRefs[0].targetId, 'opus');
+    assert.equal(source.lifecycle.dispatchRefs[0].phase, 'dispatched');
+    assert.equal(source.lifecycle.dispatchRefs[0].statusMessageId, response.id);
+    assert.equal(source.lifecycle.dispatchRefs[0].dispatchedAt, startedAt + 1);
     assert.deepEqual((await harness.messageStore.getById(response.id)).lifecycle.inputMessageIds, [
       admitted.message.id,
     ]);
-    assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputEntryIds, [opusEntry.id]);
+    assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputEntryIds, [sourceEntry.id]);
     assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds, [
       admitted.message.id,
     ]);
@@ -299,11 +304,11 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.deepEqual(harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds, []);
   });
 
-  it('keeps lifecycle-owned adoption in processing when terminal receipt persistence stays unavailable', async () => {
+  it('keeps lifecycle-owned adoption outside Queue when target removal persistence must fail closed', async () => {
     const harness = createHarness();
     const admitted = await admitMessage(harness);
     const { invocationId, response, startedAt } = bindActiveRun(harness);
-    const commitExposure = mock.method(harness.queue, 'commitClaimedExposureDurable', async () => null);
+    const commitExposure = mock.method(harness.queue, 'commitClaimedAdoptionDurable', async () => null);
     const terminalize = mock.method(harness.queue, 'removeProcessedDurable', async () => null);
 
     const result = await harness.processor.adoptExposedQueuedEntries({
@@ -322,7 +327,8 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
       reason: 'persistence_unavailable',
       entryId: admitted.entry.id,
     });
-    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id)?.status, 'processing');
+    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+    assert.equal(harness.queue.findProcessingByCat('thread-1', 'opus')?.status, 'processing');
     assert.equal((await harness.messageStore.getById(admitted.message.id)).deliveryStatus, 'delivered');
     assert.deepEqual((await harness.messageStore.getById(response.id)).lifecycle.inputMessageIds, [
       admitted.message.id,
@@ -360,7 +366,7 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal(content.includes('second author body'), false);
   });
 
-  it('terminalizes provider failure and never puts the admitted row back in Queue', async () => {
+  it('keeps provider failure out of Queue after admission', async () => {
     const harness = createHarness({
       routeExecution: async function* () {
         throw new Error('provider failed');
@@ -371,10 +377,7 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
     await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
 
-    const durable = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(durable.status, 'terminal');
-    assert.equal(durable.delivery.terminalOutcome, 'failed');
-    assert.equal(durable.delivery.failureReason, 'invocation_failed');
+    assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
   });
 
   it('does not enqueue a runtime-replacement continuation after the recovered turn completes', async () => {
@@ -433,7 +436,7 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal(routeInvocations, 1, 'a completed recovery attempt must not create a second provider turn');
   });
 
-  it('terminalizes a canceled admitted row instead of rolling it back behind later work', async () => {
+  it('keeps a canceled admitted attempt out of Queue instead of rolling it back behind later work', async () => {
     let releaseProvider;
     let providerStarted;
     const providerStartedPromise = new Promise((resolve) => {
@@ -456,9 +459,7 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     releaseProvider();
     await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', first.entry.id) === null);
 
-    const durable = await harness.queue.getDurableEntry('thread-1', first.entry.id);
-    assert.equal(durable.status, 'terminal');
-    assert.equal(durable.delivery.terminalOutcome, 'cancelled');
+    assert.equal(await harness.queue.getDurableEntry('thread-1', first.entry.id), null);
     assert.equal(
       harness.queue.list('thread-1', 'user-1').some((entry) => entry.id === first.entry.id),
       false,
@@ -469,12 +470,12 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     );
   });
 
-  it('starts an exact Steer claim and advances claimed to processing before provider execution', async () => {
+  it('commits an exact Steer target out of Queue before provider execution', async () => {
     let harness;
     let observedStatus;
     harness = createHarness({
       routeExecution: async function* () {
-        observedStatus = harness.queue.list('thread-1', 'user-1')[0]?.status;
+        observedStatus = harness.queue.findProcessingByCat('thread-1', 'opus')?.status;
         yield { type: 'done', catId: 'opus', isFinal: true, timestamp: Date.now() };
       },
     });
@@ -511,7 +512,7 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id).status, 'queued');
   });
 
-  it('terminalizes a public head when explicit routing resolves no target', async () => {
+  it('removes a public head and publishes failure when explicit routing resolves no target', async () => {
     const harness = createHarness();
     harness.router.resolveConversationTargetsAtAdmission.mock.mockImplementation(async () => []);
     const admitted = await admitMessage(harness);
@@ -519,7 +520,8 @@ describe('QueueProcessor over ADR-043 durable scalar ledger', () => {
     const result = await harness.processor.processNext('thread-1', 'user-1');
     assert.equal(result.started, false);
     await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
-    const durable = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
-    assert.equal(durable.delivery.terminalOutcome, 'failed');
+    assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+    const history = harness.messageStore.getByThread('thread-1');
+    assert.ok(history.some((message) => message.lifecycle?.kind === 'delivery_failure'));
   });
 });

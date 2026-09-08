@@ -15,7 +15,9 @@ vi.mock('../CatAvatar', () => ({
   ),
 }));
 
-const source = (phase: 'assigned' | 'dispatched' | 'settled', statusMessageId = 'response-1'): ChatMessage => ({
+const DISPATCHED_AT = new Date(2026, 8, 7, 13, 2, 14).getTime();
+
+const source = (phase: 'dispatched' | 'settled', statusMessageId = 'response-1'): ChatMessage => ({
   id: 'source-1',
   from: { kind: 'external', connectorId: 'github' },
   type: 'connector',
@@ -24,7 +26,7 @@ const source = (phase: 'assigned' | 'dispatched' | 'settled', statusMessageId = 
   lifecycle: {
     kind: 'input',
     orderKey: '100:source-1',
-    dispatchRefs: phase === 'assigned' ? [{ targetId: 'opus', phase }] : [{ targetId: 'opus', phase, statusMessageId }],
+    dispatchRefs: [{ targetId: 'opus', phase, statusMessageId, dispatchedAt: DISPATCHED_AT }],
   },
 });
 
@@ -63,21 +65,26 @@ const activeRun: LifecycleActiveRun = {
 };
 
 describe('projectMessageDispatchAvatars', () => {
-  it('renders no avatar for assigned work or incomplete active-run evidence', () => {
-    expect(projectMessageDispatchAvatars(source('assigned'), [source('assigned')], [activeRun])).toEqual([]);
-    expect(projectMessageDispatchAvatars(source('dispatched'), [response('processing')], [])).toEqual([]);
-    expect(
-      projectMessageDispatchAvatars(
-        source('dispatched'),
-        [response('processing')],
-        [{ ...activeRun, responseMessageId: 'another-response' }],
-      ),
-    ).toEqual([]);
+  it('projects an exact dispatchRef as delivered even before its response is visible', () => {
+    expect(projectMessageDispatchAvatars(source('dispatched'), [], [])).toEqual([
+      {
+        targetId: 'opus',
+        phase: 'delivered',
+        dispatchedAt: DISPATCHED_AT,
+        evidenceKey: `dispatch:opus:response-1:${DISPATCHED_AT}`,
+      },
+    ]);
   });
 
-  it('blinks only for the exact dispatched response and exact ActiveRun', () => {
+  it('blinks and links only for the exact processing response and ActiveRun', () => {
     expect(projectMessageDispatchAvatars(source('dispatched'), [response('processing')], [activeRun])).toEqual([
-      { targetId: 'opus', phase: 'processing', evidenceKey: 'message:response-1' },
+      {
+        targetId: 'opus',
+        phase: 'processing',
+        dispatchedAt: DISPATCHED_AT,
+        statusMessageId: 'response-1',
+        evidenceKey: 'message:response-1',
+      },
     ]);
   });
 
@@ -88,12 +95,15 @@ describe('projectMessageDispatchAvatars', () => {
     ['GitHub notice', { from: { kind: 'external', connectorId: 'github' }, type: 'connector', catId: undefined }],
     ['system row', { from: { kind: 'system', service: 'scheduler' }, type: 'system', catId: undefined }],
   ] as const)('uses the same exact lifecycle projection for a %s source', (_label, identity) => {
-    const candidate: ChatMessage = {
-      ...source('settled'),
-      ...identity,
-    } as ChatMessage;
+    const candidate = { ...source('settled'), ...identity } as ChatMessage;
     expect(projectMessageDispatchAvatars(candidate, [response('completed')], [])).toEqual([
-      { targetId: 'opus', phase: 'settled', evidenceKey: 'message:response-1' },
+      {
+        targetId: 'opus',
+        phase: 'settled',
+        dispatchedAt: DISPATCHED_AT,
+        statusMessageId: 'response-1',
+        evidenceKey: 'message:response-1',
+      },
     ]);
   });
 
@@ -104,11 +114,17 @@ describe('projectMessageDispatchAvatars', () => {
     'interrupted',
   ] as const)('keeps one outcome-neutral static avatar for a %s terminal response', (status) => {
     expect(projectMessageDispatchAvatars(source('settled'), [response(status)], [])).toEqual([
-      { targetId: 'opus', phase: 'settled', evidenceKey: 'message:response-1' },
+      {
+        targetId: 'opus',
+        phase: 'settled',
+        dispatchedAt: DISPATCHED_AT,
+        statusMessageId: 'response-1',
+        evidenceKey: 'message:response-1',
+      },
     ]);
   });
 
-  it('projects a linked pre-admission failure as static without inventing a response', () => {
+  it('projects an exact delivery failure as the linked settled surface', () => {
     const failure: ChatMessage = {
       id: 'failure-1',
       from: { kind: 'system', service: 'message_delivery' },
@@ -127,75 +143,51 @@ describe('projectMessageDispatchAvatars', () => {
       },
     };
     expect(projectMessageDispatchAvatars(source('settled', failure.id), [failure], [])).toEqual([
-      { targetId: 'opus', phase: 'settled', evidenceKey: `message:${failure.id}` },
-    ]);
-  });
-
-  it('restores a legacy assigned A2A avatar from one exact durable handled receipt', () => {
-    const legacy = source('assigned');
-    legacy.extra = {
-      queueReceipt: {
-        version: 1,
-        entryId: `fanout:${legacy.id}`,
-        targets: [
-          {
-            catId: 'opus',
-            state: 'handled',
-            invocationId: 'turn-legacy',
-            outcome: {
-              invocationId: 'turn-legacy',
-              disposition: 'completed_with_turn',
-              evidenceRef: { kind: 'turn_execution', invocationId: 'turn-legacy' },
-              handledAt: 140,
-            },
-          },
-        ],
-        reminderAttempts: [],
-      },
-    };
-
-    expect(projectMessageDispatchAvatars(legacy, [], [])).toEqual([
       {
         targetId: 'opus',
         phase: 'settled',
-        evidenceKey: `receipt:fanout:${legacy.id}:opus:turn-legacy`,
+        dispatchedAt: DISPATCHED_AT,
+        statusMessageId: failure.id,
+        evidenceKey: `message:${failure.id}`,
       },
     ]);
   });
 
-  it('does not infer a legacy assigned avatar from a non-terminal or ambiguous receipt', () => {
-    const legacy = source('assigned');
-    legacy.extra = {
-      queueReceipt: {
-        version: 1,
-        entryId: `fanout:${legacy.id}`,
-        targets: [
-          { catId: 'opus', state: 'seen', invocationId: 'turn-legacy' },
-          { catId: 'opus', state: 'handled', invocationId: 'turn-other' },
-        ],
-        reminderAttempts: [],
-      },
-    };
-
-    expect(projectMessageDispatchAvatars(legacy, [], [])).toEqual([]);
-  });
-
-  it('fails closed on target, source, status-message, or duplicate-target ambiguity', () => {
+  it('keeps wrong or incomplete response evidence delivery-only and non-clickable', () => {
     const wrongTarget = response('completed');
     if (wrongTarget.lifecycle?.kind !== 'response') throw new Error('fixture lost response lifecycle');
     wrongTarget.lifecycle = { ...wrongTarget.lifecycle, targetId: 'codex' };
-    expect(projectMessageDispatchAvatars(source('settled'), [wrongTarget], [])).toEqual([]);
-    expect(projectMessageDispatchAvatars(source('settled'), [response('completed', ['another-source'])], [])).toEqual(
-      [],
-    );
 
+    for (const timeline of [[wrongTarget], [response('completed', ['another-source'])], [response('processing')]]) {
+      expect(projectMessageDispatchAvatars(source('dispatched'), timeline, [])).toEqual([
+        {
+          targetId: 'opus',
+          phase: 'delivered',
+          dispatchedAt: DISPATCHED_AT,
+          evidenceKey: `dispatch:opus:response-1:${DISPATCHED_AT}`,
+        },
+      ]);
+    }
+  });
+
+  it('fails closed on duplicate dispatch refs for the same target', () => {
     const duplicate = source('settled');
-    if (!duplicate.lifecycle) throw new Error('fixture lost lifecycle');
+    if (duplicate.lifecycle?.kind !== 'input') throw new Error('fixture lost input lifecycle');
     duplicate.lifecycle = {
       ...duplicate.lifecycle,
       dispatchRefs: [
-        { targetId: 'opus', phase: 'settled', statusMessageId: 'response-1' },
-        { targetId: 'opus', phase: 'settled', statusMessageId: 'response-2' },
+        {
+          targetId: 'opus',
+          phase: 'settled',
+          statusMessageId: 'response-1',
+          dispatchedAt: DISPATCHED_AT,
+        },
+        {
+          targetId: 'opus',
+          phase: 'settled',
+          statusMessageId: 'response-2',
+          dispatchedAt: DISPATCHED_AT + 1,
+        },
       ],
     };
     expect(projectMessageDispatchAvatars(duplicate, [response('completed')], [])).toEqual([]);
@@ -230,7 +222,7 @@ describe('isLinkedDeliveryFailureCarrier', () => {
 
   it('absorbs only a failure with exact settled source refs for every requested target', () => {
     expect(isLinkedDeliveryFailureCarrier(failure(['opus']), [agentSource()])).toBe(true);
-    expect(isLinkedDeliveryFailureCarrier(failure(['opus']), [source('assigned')])).toBe(false);
+    expect(isLinkedDeliveryFailureCarrier(failure(['codex']), [agentSource()])).toBe(false);
   });
 
   it('keeps an origin failure visible even when its source avatar has settled', () => {
@@ -267,6 +259,49 @@ describe('MessageDispatchAvatars', () => {
     container.remove();
   });
 
+  it('shows actual delivery time and jumps only to an exact linked response', () => {
+    const statusRow = document.createElement('div');
+    statusRow.dataset.messageId = 'response-1';
+    statusRow.scrollIntoView = vi.fn();
+    document.body.appendChild(statusRow);
+
+    act(() => {
+      root.render(
+        <MessageDispatchAvatars
+          message={source('settled')}
+          timelineMessages={[response('completed')]}
+          activeRuns={[]}
+          getCatLabel={() => '布偶猫'}
+        />,
+      );
+    });
+
+    const item = container.querySelector('[data-dispatch-target="opus"]');
+    expect(item?.getAttribute('title')).toBe('布偶猫 已投递 · 09/07 13:02:14');
+    const button = container.querySelector('button');
+    expect(button?.getAttribute('aria-label')).toBe('布偶猫 已投递 · 09/07 13:02:14，跳转到对应回复');
+    act(() => button?.click());
+    expect(statusRow.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    statusRow.remove();
+  });
+
+  it('renders an unlinked delivered avatar as tooltip-only', () => {
+    act(() => {
+      root.render(
+        <MessageDispatchAvatars
+          message={source('dispatched')}
+          timelineMessages={[]}
+          activeRuns={[]}
+          getCatLabel={() => '布偶猫'}
+        />,
+      );
+    });
+    expect(container.querySelector('button')).toBeNull();
+    expect(container.querySelector('[data-dispatch-target="opus"]')?.getAttribute('title')).toBe(
+      '布偶猫 已投递 · 09/07 13:02:14',
+    );
+  });
+
   it('uses animation only for processing and adds no terminal outcome badge', () => {
     act(() => {
       root.render(
@@ -278,9 +313,7 @@ describe('MessageDispatchAvatars', () => {
         />,
       );
     });
-    const avatar = container.querySelector('[data-testid="cat-avatar"]');
-    expect(avatar?.getAttribute('data-status')).toBeNull();
-    expect(container.textContent).toBe('');
+    expect(container.querySelector('[data-testid="cat-avatar"]')?.getAttribute('data-status')).toBeNull();
     expect(container.querySelector('[data-dispatch-outcome]')).toBeNull();
 
     act(() => {

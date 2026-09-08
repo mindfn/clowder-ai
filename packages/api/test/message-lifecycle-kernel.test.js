@@ -203,27 +203,37 @@ describe('visible Queue reorder reducer', () => {
 
 describe('derived ref and terminal reducers', () => {
   it('allows only monotonic dispatch-ref transitions and idempotent replay', () => {
-    const assigned = { targetId: 'codex', phase: 'assigned' };
-    const dispatched = { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-1' };
-    const settled = { targetId: 'codex', phase: 'settled', statusMessageId: 'response-1' };
+    const dispatched = {
+      targetId: 'codex',
+      phase: 'dispatched',
+      statusMessageId: 'response-1',
+      dispatchedAt: 100,
+    };
+    const settled = { ...dispatched, phase: 'settled' };
+    const legacyDispatched = { ...dispatched, dispatchedAt: undefined };
 
-    assert.deepEqual(advanceDispatchRef(assigned, dispatched), { outcome: 'applied', ref: dispatched });
-    assert.deepEqual(advanceDispatchRef(assigned, settled), { outcome: 'applied', ref: settled });
     assert.deepEqual(advanceDispatchRef(dispatched, settled), { outcome: 'applied', ref: settled });
+    assert.deepEqual(advanceDispatchRef(legacyDispatched, dispatched), {
+      outcome: 'applied',
+      ref: dispatched,
+    });
     assert.deepEqual(advanceDispatchRef(settled, settled), { outcome: 'replayed', ref: settled });
     assert.equal(advanceDispatchRef(settled, dispatched).outcome, 'conflict');
-    assert.equal(
-      advanceDispatchRef(assigned, { targetId: 'opus', phase: 'settled', statusMessageId: 'failure-1' }).outcome,
-      'conflict',
-    );
+    assert.equal(advanceDispatchRef(dispatched, { ...settled, targetId: 'opus' }).outcome, 'conflict');
     assert.equal(
       advanceDispatchRef(dispatched, {
         targetId: 'codex',
         phase: 'dispatched',
         statusMessageId: 'response-2',
+        dispatchedAt: 100,
       }).outcome,
       'conflict',
       'one target cannot be relinked to a different response bubble',
+    );
+    assert.equal(
+      advanceDispatchRef(dispatched, { ...settled, dispatchedAt: 101 }).outcome,
+      'conflict',
+      'the actual delivery timestamp cannot be rewritten at settlement',
     );
   });
 

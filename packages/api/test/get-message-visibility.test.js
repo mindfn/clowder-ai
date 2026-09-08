@@ -307,14 +307,14 @@ describe('GET /api/callbacks/get-message visibility', () => {
     assert.equal(JSON.parse(res.body).message.content, 'published source-cat seed');
   });
 
-  test('does not expose browser-published queued user work through cat get-message cognition', async () => {
+  test('does not expose undelivered queued user work through cat get-message cognition', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const queued = messageStore.append(
       canonicalTestMessageInput({
         userId: 'user-1',
         catId: null,
-        content: 'visible to the owner timeline, not generally delivered to cats',
+        content: 'not published to History and not generally delivered to cats',
         mentions: ['opus'],
         timestamp: 1100,
         threadId: 'thread-browser-only-queued-user',
@@ -331,7 +331,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     assert.equal(res.statusCode, 404);
   });
 
-  test('returns durable queued user work only to a cat with an exact body-exposure witness', async () => {
+  test('never treats a queued receipt field as History publication authority', async () => {
     const app = await createApp();
     const exposedCaller = await registry.create('user-1', 'opus');
     const unexposedCaller = await registry.create('user-1', 'codex');
@@ -357,15 +357,8 @@ describe('GET /api/callbacks/get-message visibility', () => {
       targetCats: ['opus', 'codex'],
       intent: 'execute',
     });
-    const opusEntry = admission.entries.find((entry) => entry.target.catId === 'opus');
-    await invocationQueue.markQueuedSeenDurable(
-      queued.threadId,
-      'user-1',
-      opusEntry.id,
-      'opus',
-      'sealed-child-opus',
-      1150,
-    );
+    const opusEntry = admission.entry;
+    assert.ok(opusEntry);
 
     const exposed = await app.inject({
       method: 'GET',
@@ -375,10 +368,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
         'x-callback-token': exposedCaller.callbackToken,
       },
     });
-    assert.equal(exposed.statusCode, 200, exposed.body);
-    assert.equal(JSON.parse(exposed.body).message.speaker, 'co-creator');
-    assert.equal(JSON.parse(exposed.body).message.catId, null);
-    assert.equal(JSON.parse(exposed.body).message.threadId, queued.threadId);
+    assert.equal(exposed.statusCode, 404, exposed.body);
 
     const unexposed = await app.inject({
       method: 'GET',
@@ -388,7 +378,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
         'x-callback-token': unexposedCaller.callbackToken,
       },
     });
-    assert.equal(unexposed.statusCode, 404, "another target must not inherit the first cat's exposure");
+    assert.equal(unexposed.statusCode, 404);
   });
 
   test('get-message defaults to preview (bounded); mode=full returns complete content (F236 AC-B1/B2)', async () => {

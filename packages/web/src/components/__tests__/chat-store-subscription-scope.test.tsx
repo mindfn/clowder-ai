@@ -355,7 +355,7 @@ describe('SplitPaneView thread-state subscription', () => {
     expect(container.querySelector('[aria-label="Stop generation"]')).not.toBeNull();
   });
 
-  it('does not expose an actionable legacy Stop while an exact execution target is unavailable', () => {
+  it('keeps legacy Stop actionable through the exact reconciliation endpoint', () => {
     const threadId = 'split-disconnected-thread';
     const backgroundState = useChatStore.getState().getThreadState(threadId);
     useChatStore.setState({
@@ -396,7 +396,7 @@ describe('SplitPaneView thread-state subscription', () => {
 
     expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
     const stop = container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null;
-    expect(stop?.disabled).toBe(true);
+    expect(stop?.disabled).toBe(false);
   });
 
   it('cancels the exact canonical execution over REST instead of the legacy socket callback', async () => {

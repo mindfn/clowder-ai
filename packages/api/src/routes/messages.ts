@@ -13,14 +13,14 @@
  * POST 流程: 原子创建 InvocationRecord → 写入用户消息 → 回填 → reply 202 → background 执行
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   type CatId,
   catRegistry,
+  isCloudBridgeRecoveryV1,
   isCrossThreadProvenance,
   type MessageContent,
   type MessageWorkDisposition,
-  type QueueMessageReceipt,
 } from '@cat-cafe/shared';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
@@ -34,7 +34,6 @@ import type { InvocationRegistry } from '../domains/cats/services/agents/invocat
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
-import { projectQueueLedgerReceipt } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
 import { resetStreak } from '../domains/cats/services/agents/routing/WorklistRegistry.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import {
@@ -245,6 +244,33 @@ const getMessagesSchema = z.object({
   before: z.string().optional(),
   threadId: z.string().min(1).max(100).optional(),
 });
+
+const cloudDeliveryRetrySchema = z.object({
+  attemptId: z.string().min(1).max(512),
+});
+
+function cloudDeliveryRetryIdempotencyKey(sourceMessageId: string, targetCatId: string, attemptId: string): string {
+  const digest = createHash('sha256').update(`${sourceMessageId}\0${targetCatId}\0${attemptId}`).digest('hex');
+  return `cloud-delivery-retry:v1:${digest}`;
+}
+
+function hasExactCloudDeliveryRecoveryNotice(
+  messages: readonly StoredMessage[],
+  sourceMessageId: string,
+  targetCatId: string,
+  attemptId: string,
+): boolean {
+  return messages.some((message) => {
+    if (message.replyTo !== sourceMessageId || message.source?.connector !== 'cloud-bridge-status') return false;
+    const recovery = message.source.meta?.cloudBridgeRecovery;
+    return (
+      isCloudBridgeRecoveryV1(recovery) &&
+      recovery.sourceMessageId === sourceMessageId &&
+      recovery.targetCatId === targetCatId &&
+      recovery.dispatchInvocationId === attemptId
+    );
+  });
+}
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES = 5;
@@ -752,7 +778,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         requestedDisposition === 'continue_current' && targetCats.length === 0 && admittedEntries.length === 1
           ? admittedEntries[0]
           : undefined;
-      if (targetlessEntry?.target.kind === 'unassigned') {
+      if (targetlessEntry?.targets.length === 0) {
         try {
           const [fallbackTargetCatId] = await router.resolveConversationTargetsAtAdmission([], resolvedThreadId);
           if (fallbackTargetCatId) {
@@ -789,19 +815,22 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       }
       if (requestedDisposition === 'continue_current' && opts.queueProcessor?.tryAutoAppendExactEntry) {
         for (const admittedEntry of admittedEntries) {
-          if (admittedEntry.target.kind !== 'cat') continue;
+          if (admittedEntry.targets.length === 0) continue;
           const append = await opts.queueProcessor.tryAutoAppendExactEntry({
             threadId: resolvedThreadId,
             userId,
             entryId: admittedEntry.id,
           });
           if (append.outcome === 'rejected') {
-            await opts.invocationQueue.fallbackQueuedAuthorIntentDurable(
-              resolvedThreadId,
-              userId,
-              admittedEntry.id,
-              'parent_terminal_before_exposure',
-            );
+            for (const targetCatId of admittedEntry.targets) {
+              await opts.invocationQueue.fallbackQueuedAuthorIntentDurable(
+                resolvedThreadId,
+                userId,
+                admittedEntry.id,
+                targetCatId,
+                'parent_terminal_before_exposure',
+              );
+            }
           }
         }
       }
@@ -845,6 +874,133 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       };
     }
   });
+
+  // Retry is a fresh source/attempt. The failed History delivery remains immutable;
+  // Queue receives only the new pending work and never reopens a terminal row.
+  app.post<{ Params: { sourceMessageId: string; targetCatId: string } }>(
+    '/api/messages/:sourceMessageId/delivery-targets/:targetCatId/retry',
+    async (request, reply) => {
+      const parsed = cloudDeliveryRetrySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.status(400);
+        return { error: 'Retry 请求格式无效', code: 'INVALID_DELIVERY_RETRY_REQUEST' };
+      }
+      if (!opts.invocationQueue || !opts.queueProcessor) {
+        reply.status(503);
+        return { error: '消息投递暂不可用', code: 'DELIVERY_RETRY_UNAVAILABLE' };
+      }
+
+      const userId = resolveUserId(request, { defaultUserId: 'default-user' });
+      if (!userId) {
+        reply.status(401);
+        return { error: 'Identity required', code: 'IDENTITY_REQUIRED' };
+      }
+
+      const { sourceMessageId, targetCatId } = request.params;
+      const source = await opts.messageStore.getById(sourceMessageId);
+      const sender = source ? messageFrom(source) : undefined;
+      if (
+        !source ||
+        source.deletedAt ||
+        sender?.kind !== 'user' ||
+        sender.userId !== userId ||
+        !isTimelinePublished(source)
+      ) {
+        reply.status(404);
+        return { error: '原消息不存在或不可重试', code: 'DELIVERY_RETRY_SOURCE_NOT_FOUND' };
+      }
+
+      const resolvedTargets = await router.resolveExplicitTargets([targetCatId], source.threadId, { persist: false });
+      if (resolvedTargets.length !== 1 || resolvedTargets[0] !== targetCatId) {
+        reply.status(409);
+        return { error: '目标成员当前不可用', code: 'DELIVERY_RETRY_AUTHORITY_STALE' };
+      }
+
+      const threadMessages = await opts.messageStore.getByThread(source.threadId, 10_000, userId);
+      if (!hasExactCloudDeliveryRecoveryNotice(threadMessages, sourceMessageId, targetCatId, parsed.data.attemptId)) {
+        reply.status(409);
+        return { error: '原发送记录已经变化', code: 'DELIVERY_RETRY_AUTHORITY_STALE' };
+      }
+
+      const idempotencyKey = cloudDeliveryRetryIdempotencyKey(sourceMessageId, targetCatId, parsed.data.attemptId);
+      const existingRetry = await opts.messageStore.getByIdempotencyKey(userId, source.threadId, idempotencyKey);
+      if (existingRetry) {
+        reply.status(409);
+        return {
+          error: '这次发送已经重试过',
+          code: 'DELIVERY_RETRY_AUTHORITY_STALE',
+          retryMessageId: existingRetry.id,
+        };
+      }
+
+      const target = resolvedTargets[0]!;
+      const queueInput = {
+        from: { kind: 'user' as const, userId },
+        threadId: source.threadId,
+        userId,
+        kind: 'conversation_input' as const,
+        ownerAuthProvenance: 'strict' as const,
+        idempotencyKey,
+        content: source.content,
+        targetCats: [target],
+        authorIntentByCatId: resolveQueueAuthorIntentByCatId({
+          targetCats: [target],
+          requested: 'next_work',
+          threadId: source.threadId,
+          userId,
+          invocationTracker: opts.invocationTracker,
+          resolveCarrierCapability: (catId) => resolveFreshnessCarrierCapabilityOrUndeclared(opts.router, catId),
+        }),
+        intent: 'cloud_delivery_retry',
+      };
+      const admitted = await opts.invocationQueue.appendAndEnqueueDurable(
+        opts.messageStore,
+        {
+          from: queueInput.from,
+          userId,
+          content: source.content,
+          mentions: [target],
+          timestamp: Date.now(),
+          threadId: source.threadId,
+          idempotencyKey,
+          deliveryStatus: 'queued',
+          ...(source.contentBlocks ? { contentBlocks: source.contentBlocks } : {}),
+          ...(source.visibility ? { visibility: source.visibility } : {}),
+          ...(source.whisperTo ? { whisperTo: source.whisperTo } : {}),
+          ...(source.replyTo ? { replyTo: source.replyTo } : {}),
+          extra: {
+            cloudBridgeRetry: {
+              v: 1,
+              sourceMessageId,
+              targetCatId,
+              priorDispatchInvocationId: parsed.data.attemptId,
+            },
+          },
+        },
+        queueInput,
+      );
+      if (admitted.outcome === 'full') {
+        reply.status(429);
+        return { error: '消息队列已满', code: 'QUEUE_FULL' };
+      }
+
+      await emitQueueUpdated(
+        opts.socketManager,
+        userId,
+        source.threadId,
+        opts.invocationQueue.list(source.threadId, userId),
+        opts.messageStore,
+        admitted.outcome,
+      );
+      void opts.queueProcessor.requestDrain(source.threadId);
+      reply.status(202);
+      return {
+        status: 'queued',
+        retryMessageId: admitted.message.id,
+        entryId: admitted.entry?.id,
+      };
+    },
+  );
 
   // GET /api/messages - 获取历史消息
   app.get('/api/messages', async (request) => {
@@ -973,22 +1129,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       }
     }
 
-    const queueReceiptByMessage = new Map<string, QueueMessageReceipt>();
-    if (opts.invocationQueue) {
-      try {
-        const durableEntries = await opts.invocationQueue.getDurableEntriesForMessages(
-          resolvedThreadId,
-          page.map((message) => message.id),
-        );
-        for (const [messageId, entries] of durableEntries) {
-          const receipt = projectQueueLedgerReceipt(entries);
-          if (receipt) queueReceiptByMessage.set(messageId, receipt);
-        }
-      } catch (err) {
-        log.warn({ err, threadId: resolvedThreadId }, 'Queue ledger receipt history hydration failed');
-      }
-    }
-
     // Map chat messages (union type allows summary items to be pushed later)
     type TimelineItem = {
       id: string;
@@ -1039,7 +1179,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         m.extra?.turnExecution ||
         m.extra?.auxiliaryTurnExecutions ||
         supplementProjectionByOriginal.has(m.id) ||
-        queueReceiptByMessage.has(m.id) ||
         m.recall ||
         m.extra?.recovery
           ? {
@@ -1067,7 +1206,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                 ...(supplementProjectionByOriginal.has(m.id)
                   ? { freshnessSupplement: supplementProjectionByOriginal.get(m.id) }
                   : {}),
-                ...(queueReceiptByMessage.has(m.id) ? { queueReceipt: queueReceiptByMessage.get(m.id) } : {}),
                 ...(m.recall ? { recall: m.recall } : {}),
                 ...(m.extra?.recovery ? { recovery: projectRecoveryForHistory(m.extra.recovery) } : {}),
               },

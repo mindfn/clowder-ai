@@ -75,7 +75,7 @@ export async function terminalizePrestartProcessingGroup(
     try {
       if (!(await deps.commitCarrier(carrier))) throw new Error('ledger state changed');
     } catch (err) {
-      deps.log.error({ err, entryId: carrier.id }, 'Failed to terminalize superseded Queue ledger row');
+      deps.log.error({ err, entryId: carrier.id }, 'Failed to withdraw superseded Queue entry');
       return false;
     }
   }

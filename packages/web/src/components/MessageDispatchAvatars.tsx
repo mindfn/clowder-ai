@@ -11,7 +11,9 @@ import { CatAvatar } from './CatAvatar';
 
 export interface MessageDispatchAvatarProjection {
   targetId: string;
-  phase: 'processing' | 'settled';
+  phase: 'delivered' | 'processing' | 'settled';
+  dispatchedAt?: number;
+  statusMessageId?: string;
   evidenceKey: string;
 }
 
@@ -22,35 +24,26 @@ function exactMessageById(messages: readonly ChatMessage[], messageId: string): 
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-type StatusDispatchRef = Exclude<LifecycleDispatchRef, { readonly phase: 'assigned' }>;
-
-function settledProjection(ref: StatusDispatchRef): MessageDispatchAvatarProjection {
-  return { targetId: ref.targetId, phase: 'settled', evidenceKey: `message:${ref.statusMessageId}` };
-}
-
-function exactHandledReceiptProjection(
-  message: ChatMessage,
-  ref: Extract<LifecycleDispatchRef, { readonly phase: 'assigned' }>,
-): MessageDispatchAvatarProjection | null {
-  const receipt = message.extra?.queueReceipt;
-  if (!receipt) return null;
-  const targets = receipt.targets.filter((target) => target.catId === ref.targetId);
-  if (targets.length !== 1) return null;
-  const target = targets[0];
-  if (!target) return null;
-  const outcome = target.outcome;
-  if (
-    target.state !== 'handled' ||
-    !outcome ||
-    target.invocationId !== outcome.invocationId ||
-    outcome.evidenceRef.invocationId !== outcome.invocationId
-  ) {
-    return null;
-  }
+function deliveredProjection(ref: LifecycleDispatchRef): MessageDispatchAvatarProjection {
   return {
     targetId: ref.targetId,
-    phase: 'settled',
-    evidenceKey: `receipt:${receipt.entryId}:${ref.targetId}:${outcome.invocationId}`,
+    phase: 'delivered',
+    dispatchedAt: ref.dispatchedAt,
+    evidenceKey: `dispatch:${ref.targetId}:${ref.statusMessageId}:${ref.dispatchedAt}`,
+  };
+}
+
+function linkedProjection(
+  ref: LifecycleDispatchRef,
+  phase: 'processing' | 'settled',
+  linkedAt: number,
+): MessageDispatchAvatarProjection {
+  return {
+    targetId: ref.targetId,
+    phase,
+    dispatchedAt: ref.dispatchedAt ?? linkedAt,
+    statusMessageId: ref.statusMessageId,
+    evidenceKey: `message:${ref.statusMessageId}`,
   };
 }
 
@@ -61,13 +54,12 @@ function projectDispatchRef(
   statusLifecycle: LifecycleStoredMessageMetadata,
   activeRuns: readonly LifecycleActiveRun[],
 ): MessageDispatchAvatarProjection | null {
-  if (ref.phase === 'assigned') return null;
   if (statusLifecycle.kind === 'delivery_failure') {
     const exactFailure =
       ref.phase === 'settled' &&
       statusLifecycle.inputMessageId === sourceMessageId &&
       statusLifecycle.requestedTargets.includes(ref.targetId);
-    return exactFailure ? settledProjection(ref) : null;
+    return exactFailure ? linkedProjection(ref, 'settled', statusLifecycle.createdAt) : null;
   }
   if (
     statusLifecycle.kind !== 'response' ||
@@ -77,7 +69,9 @@ function projectDispatchRef(
     return null;
   }
   if (ref.phase === 'settled') {
-    return TERMINAL_RESPONSE_STATUSES.has(statusLifecycle.status) ? settledProjection(ref) : null;
+    return TERMINAL_RESPONSE_STATUSES.has(statusLifecycle.status)
+      ? linkedProjection(ref, 'settled', statusLifecycle.startedAt)
+      : null;
   }
   if (statusLifecycle.status !== 'processing') return null;
   return hasExactLifecycleProcessingDispatch({
@@ -87,7 +81,7 @@ function projectDispatchRef(
     responseLifecycle: statusLifecycle,
     activeRuns,
   })
-    ? { targetId: ref.targetId, phase: 'processing', evidenceKey: `message:${ref.statusMessageId}` }
+    ? linkedProjection(ref, 'processing', statusLifecycle.startedAt)
     : null;
 }
 
@@ -106,15 +100,11 @@ export function projectMessageDispatchAvatars(
 
   return refs.flatMap((ref): MessageDispatchAvatarProjection[] => {
     if (targetCounts.get(ref.targetId) !== 1) return [];
-    if (ref.phase === 'assigned') {
-      const projection = exactHandledReceiptProjection(message, ref);
-      return projection ? [projection] : [];
-    }
     const statusMessage = exactMessageById(timelineMessages, ref.statusMessageId);
     const statusLifecycle = statusMessage?.lifecycle;
-    if (!statusLifecycle) return [];
-    const projection = projectDispatchRef(message.id, refs, ref, statusLifecycle, activeRuns);
-    return projection ? [projection] : [];
+    if (!statusLifecycle) return [deliveredProjection(ref)];
+    const linked = projectDispatchRef(message.id, refs, ref, statusLifecycle, activeRuns);
+    return [linked ?? deliveredProjection(ref)];
   });
 }
 
@@ -142,6 +132,19 @@ export function isLinkedDeliveryFailureCarrier(
   );
 }
 
+function formatDispatchTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function jumpToStatusMessage(messageId: string): void {
+  const target = [...document.querySelectorAll<HTMLElement>('[data-message-id]')].find(
+    (element) => element.dataset.messageId === messageId,
+  );
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 interface MessageDispatchAvatarsProps {
   message: ChatMessage;
   timelineMessages: readonly ChatMessage[];
@@ -167,14 +170,29 @@ export function MessageDispatchAvatars({
       {projections.map((projection) => {
         const label = getCatLabel(projection.targetId);
         const processing = projection.phase === 'processing';
+        const title =
+          projection.dispatchedAt === undefined
+            ? `${label} 已投递`
+            : `${label} 已投递 · ${formatDispatchTime(projection.dispatchedAt)}`;
         return (
           <li
             key={`${projection.targetId}:${projection.evidenceKey}`}
             data-dispatch-target={projection.targetId}
             data-dispatch-phase={projection.phase}
-            title={processing ? `${label} 正在处理` : `${label} 已处理`}
+            title={title}
           >
-            <CatAvatar catId={projection.targetId} size={11} status={processing ? 'streaming' : undefined} />
+            {projection.statusMessageId ? (
+              <button
+                type="button"
+                aria-label={`${title}，跳转到对应回复`}
+                className="block rounded-full"
+                onClick={() => jumpToStatusMessage(projection.statusMessageId!)}
+              >
+                <CatAvatar catId={projection.targetId} size={11} status={processing ? 'streaming' : undefined} />
+              </button>
+            ) : (
+              <CatAvatar catId={projection.targetId} size={11} status={processing ? 'streaming' : undefined} />
+            )}
           </li>
         );
       })}

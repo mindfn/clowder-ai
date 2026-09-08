@@ -313,48 +313,38 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       type: 'user',
       content: '失败前已经读取的补充',
       timestamp: 100,
-      extra: {
-        queueReceipt: {
-          version: 1,
-          entryId: 'entry-gap-f-error',
-          targets: [
-            {
-              catId: 'opus',
-              state: 'seen',
-              invocationId,
-              seenAt: 120,
-              attempts: [
-                {
-                  id: 'entry-gap-f-error:opus:1',
-                  targetCatId: 'opus',
-                  sequence: 1,
-                  state: 'appended',
-                  createdAt: 100,
-                  updatedAt: 120,
-                  invocationId,
-                  seenAt: 120,
-                  activeAppendAcceptedAt: 115,
-                },
-              ],
-            },
-          ],
-          reminderAttempts: [],
-        },
+      lifecycle: {
+        kind: 'input',
+        orderKey: '100:source-gap-f-error',
+        dispatchRefs: [{ targetId: 'opus', phase: 'settled', statusMessageId: 'msg-err', dispatchedAt: 115 }],
       },
     } as ChatMessageType;
-    const terminalMessage = makeErrorMessage({
-      cliDiagnostics: {
-        reasonCode: 'auth_failed',
-        publicSummary: 'API 认证失败',
-        publicHint: '检查 API key',
-        debugRef: { command: 'codex', exitCode: 1, signal: null, invocationId },
-      },
-      turnExecution: {
+    const terminalMessage: ChatMessageType = {
+      ...makeErrorMessage({
+        cliDiagnostics: {
+          reasonCode: 'auth_failed',
+          publicSummary: 'API 认证失败',
+          publicHint: '检查 API key',
+          debugRef: { command: 'codex', exitCode: 1, signal: null, invocationId },
+        },
+        turnExecution: {
+          invocationId,
+          parentInvocationId: 'parent-gap-f-error',
+          executionKind: 'ordinary',
+        },
+      }),
+      lifecycle: {
+        kind: 'response',
+        orderKey: `120:${invocationId}`,
         invocationId,
-        parentInvocationId: 'parent-gap-f-error',
-        executionKind: 'ordinary',
+        targetId: 'opus',
+        inputEntryIds: ['entry-gap-f-error'],
+        inputMessageIds: [sourceMessage.id],
+        status: 'failed',
+        startedAt: 115,
+        completedAt: 120,
       },
-    });
+    };
     chatStoreState.messages = [sourceMessage, terminalMessage];
 
     render(terminalMessage);

@@ -15,12 +15,10 @@ export async function retireConsumedCoordinationTerminal(
   const sourceMessageId = message.extra.causal?.triggerMessageId;
   if (!sourceMessageId) return 'skipped';
   const source = await messageStore.getById(sourceMessageId);
-  if (
-    source?.extra?.coordination?.phase !== 'active' ||
-    !source.catId ||
-    !message.queueCustody?.handledByCatIds.includes(source.catId)
-  )
-    return 'skipped';
+  const sourceDispatchSettled = message.lifecycle?.dispatchRefs?.some(
+    (dispatch) => dispatch.targetId === source?.catId && dispatch.phase === 'settled',
+  );
+  if (source?.extra?.coordination?.phase !== 'active' || !source.catId || !sourceDispatchSettled) return 'skipped';
   if (!service) throw new Error('a2a_dispatch_disposition_service_unavailable');
   return (await service.completeFromCoordinationTerminal(messageId)).outcome;
 }

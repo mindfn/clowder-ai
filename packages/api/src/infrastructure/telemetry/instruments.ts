@@ -1070,7 +1070,7 @@ export const freshnessQueuedSeen = lazy(() =>
   }),
 );
 
-/** Queued handled: an exact active child durably adopted one source-target row. */
+/** Queued handled: an exact active child durably adopted one pending target from its source entry. */
 export const freshnessQueuedHandled = lazy(() =>
   meter().createCounter('cat_cafe.freshness.queued_handled', {
     description: 'F254 queued handled closures committed by exact active-child full-read adoption',

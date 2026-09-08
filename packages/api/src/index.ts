@@ -63,7 +63,7 @@ import { createDispatchProposalStore } from './domains/approval-hub/stores/facto
 import { createEntityProposalStore } from './domains/approval-hub/stores/factories/EntityProposalStoreFactory.js';
 import { classifyApprovedActionCarrier } from './domains/ball-custody/ActionSuccessorRecoverySweep.js';
 import type { ManagedCommandWakeRecoverySweep } from './domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
-import { createManagedCommandWakeQueueAdapter } from './domains/ball-custody/managed-command-wake-queue-adapter.js';
+import { createManagedCommandWakeCarrierAdapter } from './domains/ball-custody/managed-command-wake-carrier-adapter.js';
 import { RedisWaitTerminationStore } from './domains/ball-custody/RedisWaitTerminationStore.js';
 import { WaitTerminationService } from './domains/ball-custody/WaitTerminationService.js';
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
@@ -954,7 +954,7 @@ async function main(): Promise<void> {
         replaceAutomationStateIfGeneration: (taskId, input) =>
           taskStore.replaceAutomationStateIfGeneration(taskId, input),
       },
-      publishQueue: ({ threadId, userId, receiptMessageIds }) =>
+      publishQueue: ({ threadId, userId }) =>
         emitQueueUpdated(
           socketManager!,
           userId,
@@ -962,7 +962,6 @@ async function main(): Promise<void> {
           invocationQueue.list(threadId, userId),
           messageStore,
           'action_successor_terminal',
-          { receiptMessageIds, receiptSource: invocationQueue },
         ),
     });
     const completionService = new actionCompletionMod.ActionSuccessorCompletionService(
@@ -2573,9 +2572,7 @@ async function main(): Promise<void> {
           existingMessage.id,
         ) ?? [])
       : [];
-    const existingTargets = new Set(
-      existingEntries.flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : [])),
-    );
+    const existingTargets = new Set(existingEntries.flatMap((entry) => entry.targets));
     const freshTargetCatIds = targetCatIds.filter((catId) => !existingTargets.has(catId));
     const routingPreflight = await preflightA2ATargets(
       routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {},
@@ -3090,22 +3087,6 @@ async function main(): Promise<void> {
     invocationRecordStore,
     turnExecutionStore,
   });
-  const legacyLocalReviewDispositionService = actionSuccessorLeaseStore
-    ? new (
-        await import('./domains/ball-custody/LegacyLocalReviewDispositionService.js')
-      ).LegacyLocalReviewDispositionService({
-        messageStore,
-        leaseStore: actionSuccessorLeaseStore,
-        invocationRecordStore,
-        turnExecutionStore,
-        enqueueContinuation: createLegacyLocalReviewContinuationQueueAdapter({
-          messageStore,
-          queueProcessor,
-          invocationQueue,
-        }),
-      })
-    : undefined;
-
   await app.register(messageActionsRoutes, {
     messageStore,
     socketManager,
@@ -4362,20 +4343,7 @@ async function main(): Promise<void> {
     | import('./domains/ball-custody/ManagedHoldDispositionService.js').ManagedHoldDispositionService
     | undefined;
   if (ballCustodyIngest && ballCustodyEventLog && ballCustodyProjectionStore) {
-    const [{ ManagedHoldReceiptService }, { ManagedHoldDispositionService }] = await Promise.all([
-      import('./domains/ball-custody/ManagedHoldReceiptService.js'),
-      import('./domains/ball-custody/ManagedHoldDispositionService.js'),
-    ]);
-    const receiptService = new ManagedHoldReceiptService({
-      queue: invocationQueue,
-      messageStore,
-      onSettled: ({ threadId, sourceMessageId }) => {
-        socketManager?.broadcastToRoom(`thread:${threadId}`, 'message_receipt_updated', {
-          threadId,
-          messageId: sourceMessageId,
-        });
-      },
-    });
+    const { ManagedHoldDispositionService } = await import('./domains/ball-custody/ManagedHoldDispositionService.js');
     managedHoldDispositionService = new ManagedHoldDispositionService({
       registry,
       dynamicTaskStore,
@@ -4383,7 +4351,6 @@ async function main(): Promise<void> {
       ballCustodyEventLog,
       ballCustodyProjectionStore,
       ballCustody: ballCustodyIngest,
-      receiptService,
       ...(ballCustodyProjector
         ? { repairProjection: (subjectKey: string) => ballCustodyProjector!.rebuild(subjectKey) }
         : {}),
@@ -6317,7 +6284,7 @@ async function main(): Promise<void> {
       taskRunner: taskRunnerV2,
       invocationRecordStore,
       getInvokeTrigger: () => invokeTrigger,
-      ...createManagedCommandWakeQueueAdapter({
+      ...createManagedCommandWakeCarrierAdapter({
         messageStore,
         invocationRecordStore,
         invocationQueue,

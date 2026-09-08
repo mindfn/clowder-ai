@@ -552,7 +552,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
       assert.equal(result.decision, 'forward');
     });
 
-    it('forwards after same cat has marked the queued entry seen', async () => {
+    it('forwards after History delivery removes the exact pending target', async () => {
       const queue = adaptInvocationQueue(new queueModule.InvocationQueue());
       const enqueued = queue.enqueue(
         canonicalTestQueueInput({
@@ -567,8 +567,9 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
         }),
       );
       assert.equal(
-        (await queue.markQueuedSeenDurable(threadId, userId, enqueued.entry.id, catId, invocationId)).changed,
-        true,
+        (await queue.reconcileQueuedMessageTargetsDurable(threadId, userId, enqueued.entry.id, [], [catId], {}))
+          .outcome,
+        'updated',
       );
 
       const cursorStore = makeMockCursorStore(msg1);
@@ -955,7 +956,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
       assert.equal(result, null, 'target reply to this cat handoff should not create a freshness notice');
     });
 
-    it('returns null after same cat has marked the queued entry seen', async () => {
+    it('returns null after History delivery removes the exact pending target', async () => {
       const queue = adaptInvocationQueue(new queueModule.InvocationQueue());
       const enqueued = queue.enqueue(
         canonicalTestQueueInput({
@@ -970,8 +971,9 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
         }),
       );
       assert.equal(
-        (await queue.markQueuedSeenDurable(threadId, userId, enqueued.entry.id, catId, invocationId)).changed,
-        true,
+        (await queue.reconcileQueuedMessageTargetsDurable(threadId, userId, enqueued.entry.id, [], [catId], {}))
+          .outcome,
+        'updated',
       );
 
       const checker = new unseenCheckerModule.ThreadUnseenChecker({

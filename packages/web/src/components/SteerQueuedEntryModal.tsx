@@ -12,6 +12,12 @@ export interface SteerTargetAction {
   membershipAtOpen: 'member' | 'admit';
 }
 
+export interface SteerSubmission {
+  sourceRecordId?: string;
+  observedPendingTargetIds: string[];
+  actions: SteerTargetAction[];
+}
+
 export interface SteerTargetOption {
   id: string;
   label: string;
@@ -20,10 +26,12 @@ export interface SteerTargetOption {
   canGuideReply: boolean;
   /** Exact current-reply projection. Guide requires both this and canGuideReply. */
   hasCurrentReply?: boolean;
-  /** Pending routed/fallback targets begin selected; processed targets never do. */
+  /** Pending routed/fallback targets begin selected; delivered targets never do. */
   defaultSelected?: boolean;
-  /** Durable receipt truth: visible for context, but no longer actionable. */
-  processed?: boolean;
+  /** This target was in Queue custody when the modal loaded. */
+  pending?: boolean;
+  /** History dispatch truth: visible for context, but no longer actionable. */
+  delivered?: boolean;
   /** Current roster truth: visible for context, but cannot be selected. */
   unavailable?: boolean;
   disposition?: MessageWorkDisposition;
@@ -32,7 +40,7 @@ export interface SteerTargetOption {
 }
 
 function canGuide(target: SteerTargetOption): boolean {
-  return target.canGuideReply && target.hasCurrentReply === true && !target.processed && !target.unavailable;
+  return target.canGuideReply && target.hasCurrentReply === true && !target.delivered && !target.unavailable;
 }
 
 function guideUnavailableReason(target: SteerTargetOption): string | null {
@@ -58,22 +66,24 @@ function resolveDefaultTargetIds(
 }
 
 export function SteerQueuedEntryModal({
+  sourceRecordId,
   targets = [],
   initialTargetIds,
   contextState = 'ready',
   onCancel,
   onConfirm,
 }: {
+  sourceRecordId?: string;
   targets?: readonly SteerTargetOption[];
   initialTargetIds?: readonly string[];
   contextState?: 'loading' | 'ready' | 'unavailable';
   onCancel: () => void;
-  onConfirm: (actions: readonly SteerTargetAction[]) => void;
+  onConfirm: (submission: SteerSubmission) => void;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const userInteractedRef = useRef(false);
   const actionableTargets = useMemo(
-    () => targets.filter((target) => !target.processed && !target.unavailable),
+    () => targets.filter((target) => !target.delivered && !target.unavailable),
     [targets],
   );
   const defaultTargetIds = useMemo(
@@ -93,7 +103,7 @@ export function SteerQueuedEntryModal({
     ),
   );
   const focusedTarget = targets.find(
-    (target) => target.id === focusedTargetId && !target.processed && !target.unavailable,
+    (target) => target.id === focusedTargetId && !target.delivered && !target.unavailable,
   );
   const focusedStrategy = focusedTarget ? strategyByTargetId[focusedTarget.id] : undefined;
   const focusedGuideUnavailableReason = focusedTarget ? guideUnavailableReason(focusedTarget) : null;
@@ -140,7 +150,7 @@ export function SteerQueuedEntryModal({
   }, [onCancel]);
 
   const toggleTarget = (target: SteerTargetOption) => {
-    if (target.processed || target.unavailable) return;
+    if (target.delivered || target.unavailable) return;
     userInteractedRef.current = true;
     if (selectedTargetIds.has(target.id) && focusedTargetId !== target.id) {
       setFocusedTargetId(target.id);
@@ -163,7 +173,7 @@ export function SteerQueuedEntryModal({
   };
 
   const selectedActionableTargets = targets.filter(
-    (target) => !target.processed && !target.unavailable && selectedTargetIds.has(target.id),
+    (target) => !target.delivered && !target.unavailable && selectedTargetIds.has(target.id),
   );
   const actions = selectedActionableTargets.flatMap((target): SteerTargetAction[] => {
     const requested = strategyByTargetId[target.id];
@@ -202,7 +212,7 @@ export function SteerQueuedEntryModal({
                   key={target.id}
                   type="button"
                   aria-pressed={selected}
-                  disabled={target.processed || target.unavailable}
+                  disabled={target.delivered || target.unavailable}
                   data-testid={`steer-target-${target.id}`}
                   onClick={() => toggleTarget(target)}
                   className={`flex items-center gap-2 rounded-full border px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -217,8 +227,8 @@ export function SteerQueuedEntryModal({
                     <AvatarImageWithFallback src={target.avatar} alt="" className="h-5 w-5 rounded-full object-cover" />
                   )}
                   <span>{target.label}</span>
-                  {target.processed ? <span className="text-[11px] text-cafe-muted">已处理</span> : null}
-                  {target.unavailable ? <span className="text-[11px] text-cafe-muted">不可用</span> : null}
+                  {target.delivered ? <span className="text-xs text-cafe-muted">已投递</span> : null}
+                  {target.unavailable ? <span className="text-xs text-cafe-muted">不可用</span> : null}
                   {selected ? <span aria-hidden="true">✓</span> : null}
                 </button>
               );
@@ -286,7 +296,13 @@ export function SteerQueuedEntryModal({
             type="button"
             data-testid="steer-confirm"
             disabled={actions.length === 0 || actions.length !== selectedActionableTargets.length}
-            onClick={() => onConfirm(actions)}
+            onClick={() =>
+              onConfirm({
+                ...(sourceRecordId ? { sourceRecordId } : {}),
+                observedPendingTargetIds: targets.filter((target) => target.pending).map((target) => target.id),
+                actions,
+              })
+            }
             className="text-sm px-5 py-2 rounded-full bg-[var(--color-cocreator-primary)] text-[var(--cafe-surface)] hover:opacity-90 transition-colors disabled:opacity-40"
           >
             确认发送{actions.length > 1 ? `（${actions.length}）` : ''}

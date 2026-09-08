@@ -46,10 +46,9 @@ describe('whole-message selection rules', () => {
     ).toBe(false);
   });
 
-  it('offers visible managed-hold receipts but keeps other connector and hidden scheduler rows out', () => {
+  it('offers visible managed-hold sources but keeps other connector and hidden scheduler rows out', () => {
     const managedReceipt = message({
       type: 'connector',
-      extra: { queueReceipt: { version: 1, entryId: 'entry-1', targets: [], reminderAttempts: [] } },
       source: {
         connector: 'hold-ball',
         label: '持球结果',
@@ -59,12 +58,11 @@ describe('whole-message selection rules', () => {
     });
 
     expect(isMessageSelectableForBundle(managedReceipt)).toBe(true);
-    expect(isMessageSelectableForBundle({ ...managedReceipt, extra: undefined })).toBe(false);
+    expect(isMessageSelectableForBundle({ ...managedReceipt, extra: undefined })).toBe(true);
     expect(
       isMessageSelectableForBundle({
         ...managedReceipt,
         extra: {
-          queueReceipt: { version: 1, entryId: 'entry-1', targets: [], reminderAttempts: [] },
           scheduler: { hiddenTrigger: true },
         },
       }),
@@ -73,7 +71,6 @@ describe('whole-message selection rules', () => {
       isMessageSelectableForBundle({
         ...managedReceipt,
         extra: {
-          queueReceipt: { version: 1, entryId: 'entry-1', targets: [], reminderAttempts: [] },
           scheduler: {},
         },
       }),

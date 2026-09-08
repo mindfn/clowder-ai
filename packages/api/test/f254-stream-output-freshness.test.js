@@ -632,7 +632,7 @@ describe('F254 Phase D — checkStreamOutputFreshness', () => {
     assert.deepEqual(result.unseenMessageIds, [msgId2]);
   });
 
-  it('does not report queued stale after same cat has marked the queued entry seen', async () => {
+  it('does not report queued stale after History delivery removes the exact pending target', async () => {
     await cursorStore.ackSeenCursor(userId, catId, threadId, msgId1);
     const queue = adaptInvocationQueue(new InvocationQueue());
     const enqueued = queue.enqueue(
@@ -648,8 +648,8 @@ describe('F254 Phase D — checkStreamOutputFreshness', () => {
       }),
     );
     assert.equal(
-      (await queue.markQueuedSeenDurable(threadId, userId, enqueued.entry.id, catId, 'inv-seen')).changed,
-      true,
+      (await queue.reconcileQueuedMessageTargetsDurable(threadId, userId, enqueued.entry.id, [], [catId], {})).outcome,
+      'updated',
     );
 
     const messageStore = createMockMessageStore([{ id: msgId1, catId: null, content: 'original', threadId }]);

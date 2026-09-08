@@ -1,4 +1,4 @@
-import type { BallCustodyEvent, CatId } from '@cat-cafe/shared';
+import type { BallCustodyEvent } from '@cat-cafe/shared';
 import type { InvocationRecord } from '../cats/services/agents/invocation/InvocationRegistry.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { IBallCustodyEventLog } from './BallCustodyEventLog.js';
@@ -9,7 +9,6 @@ import {
   holdDispositionEventSourceId,
   type ManagedHoldDisposition,
 } from './ball-custody-events.js';
-import { ManagedHoldReceiptError, type ManagedHoldReceiptService } from './ManagedHoldReceiptService.js';
 import type { ManagedCommandWakeDynamicTaskStore } from './managed-command-wake-lifecycle.js';
 import { parseManagedCommandWakeTask } from './managed-command-wake-lifecycle.js';
 import { classifyManagedHoldWake, findWakeTerminal } from './managed-hold-supersession.js';
@@ -38,7 +37,6 @@ interface ManagedHoldDispositionDeps {
   readonly ballCustodyEventLog: Pick<IBallCustodyEventLog, 'read'>;
   readonly ballCustodyProjectionStore: Pick<IBallCustodyProjectionStore, 'get'>;
   readonly ballCustody: IBallCustodyFencedIngest;
-  readonly receiptService: Pick<ManagedHoldReceiptService, 'complete'>;
   readonly repairProjection?: (subjectKey: string) => Promise<void>;
   readonly now?: () => number;
 }
@@ -86,7 +84,6 @@ export class ManagedHoldDispositionService {
     if (prior) {
       const canonical = this.assertReplayableTerminal(prior, auth, sourceMessageId, taskId, disposition);
       await this.repairProjectionIfNeeded(subjectKey, events, prior);
-      await this.completeReceipt(auth, sourceMessageId, taskId);
       return {
         outcome: 'replayed',
         disposition: canonical,
@@ -96,6 +93,11 @@ export class ManagedHoldDispositionService {
         retired: prior.payload.retired === true,
       };
     }
+
+    // Queue custody ends at dispatch. A new terminal may therefore be authored
+    // only by the exact response that History records as having received this
+    // wake; Queue exposure/terminal fields are intentionally not consulted.
+    await this.assertDeliveredToInvocation(auth, sourceMessageId);
 
     // clowder-ai#1366: a late or superseded wake still needs a deterministic
     // terminal. Refusing it (the old behaviour) left no `ball.hold_dispositioned`
@@ -132,10 +134,6 @@ export class ManagedHoldDispositionService {
       (event) => event.sourceEventId === eventSourceId,
     );
     this.assertMatchingDispositionEvent(committed, auth, sourceMessageId, taskId, disposition);
-    // Consume F264 only after the append-only custody truth is durable. If the
-    // receipt write fails, replay repairs it from the exact event; the inverse
-    // ordering could delete the only Queue carrier before any terminal event exists.
-    await this.completeReceipt(auth, sourceMessageId, taskId);
     return { outcome: 'applied', disposition, invocationId: auth.invocationId, sourceMessageId, taskId, retired };
   }
 
@@ -196,6 +194,30 @@ export class ManagedHoldDispositionService {
     const projection = await this.deps.ballCustodyProjectionStore.get(subjectKey);
     if ((projection?.state !== 'active' && projection?.state !== 'blocked') || projection.holder !== catId) {
       throw new ManagedHoldDispositionError('managed_hold_disposition_holder_mismatch');
+    }
+  }
+
+  private async assertDeliveredToInvocation(
+    auth: Pick<InvocationRecord, 'invocationId' | 'userId' | 'catId' | 'threadId'>,
+    sourceMessageId: string,
+  ): Promise<void> {
+    const source = await this.deps.messageStore.getById(sourceMessageId);
+    const refs = source?.lifecycle && 'dispatchRefs' in source.lifecycle ? (source.lifecycle.dispatchRefs ?? []) : [];
+    const matching = refs.filter((ref) => ref.targetId === auth.catId && ref.phase === 'dispatched');
+    if (source?.deliveryStatus !== 'delivered' || matching.length !== 1) {
+      throw new ManagedHoldDispositionError('managed_hold_disposition_delivery_mismatch');
+    }
+    const response = await this.deps.messageStore.getById(matching[0]!.statusMessageId);
+    if (
+      !response ||
+      response.userId !== auth.userId ||
+      response.threadId !== auth.threadId ||
+      response.lifecycle?.kind !== 'response' ||
+      response.lifecycle.targetId !== auth.catId ||
+      response.lifecycle.invocationId !== auth.invocationId ||
+      !response.lifecycle.inputMessageIds.includes(sourceMessageId)
+    ) {
+      throw new ManagedHoldDispositionError('managed_hold_disposition_delivery_mismatch');
     }
   }
 
@@ -304,29 +326,6 @@ export class ManagedHoldDispositionService {
     const projection = await this.deps.ballCustodyProjectionStore.get(subjectKey);
     if (!reopenedAfterDisposition && projection?.state !== 'resolved') {
       await this.deps.repairProjection(subjectKey);
-    }
-  }
-
-  private async completeReceipt(
-    auth: Pick<InvocationRecord, 'invocationId' | 'userId' | 'catId' | 'threadId'>,
-    sourceMessageId: string,
-    taskId: string,
-  ): Promise<void> {
-    try {
-      await this.deps.receiptService.complete({
-        threadId: auth.threadId,
-        userId: auth.userId,
-        catId: auth.catId as CatId,
-        invocationId: auth.invocationId,
-        sourceMessageId,
-        taskId,
-        handledAt: this.now(),
-      });
-    } catch (error) {
-      if (error instanceof ManagedHoldReceiptError) {
-        throw new ManagedHoldDispositionError(error.code);
-      }
-      throw error;
     }
   }
 }

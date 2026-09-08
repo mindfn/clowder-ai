@@ -157,26 +157,10 @@ describe('MessageNavigator', () => {
     const source: ChatMessageData = {
       ...makeMsg('m-folded', 'user'),
       content: '这段正文只允许在 canonical child 显示',
-      extra: {
-        queueReceipt: {
-          version: 1,
-          entryId: 'entry-folded',
-          targets: [
-            {
-              catId: 'codex-sol',
-              state: 'handled',
-              invocationId: 'child-folded',
-              seenAt: 10,
-              outcome: {
-                invocationId: 'child-folded',
-                disposition: 'completed_with_turn',
-                evidenceRef: { kind: 'invocation_lineage', invocationId: 'child-folded' },
-                handledAt: 20,
-              },
-            },
-          ],
-          reminderAttempts: [],
-        },
+      lifecycle: {
+        kind: 'input',
+        orderKey: '10:m-folded',
+        dispatchRefs: [{ targetId: 'codex-sol', phase: 'settled', statusMessageId: 'm-terminal', dispatchedAt: 10 }],
       },
     };
     const terminal: ChatMessageData = {

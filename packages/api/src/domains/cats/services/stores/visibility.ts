@@ -115,7 +115,7 @@ export function resolveThreadMessageVisibility(
     return (
       isDeliveredMessage(message) ||
       (options?.includeQueuedCatMessages === true && isQueuedCatTimelineMessage(message)) ||
-      (options?.includeQueuedUserMessages === true && isQueuedUserTimelineMessage(message)) ||
+      (options?.includeQueuedUserMessages === true && isQueuedOwnerWork(message)) ||
       (options?.includeRecalledUserMessages === true && isOwnerVisibleRecalledUserMessage(message))
     );
   };
@@ -126,22 +126,13 @@ export function resolveThreadMessageVisibility(
  * published when authored, even if recipient execution custody ends later.
  */
 export function resolveDeliveryTimelineScore(message: StoredMessage, deliveredAt: number): number {
-  return isTimelinePublished(message) ||
-    isQueuedUserTimelineMessage(message) ||
-    isQueuedOwnerConnectorTimelineMessage(message)
-    ? message.timestamp
-    : deliveredAt;
+  return isTimelinePublished(message) ? message.timestamp : deliveredAt;
 }
 
 /** Match the Redis timeline score when constructing pagination cursors in memory. */
 export function getTimelineOrderTime(message: StoredMessage): number {
   if (message.timelineOrderAt !== undefined) return message.timelineOrderAt;
-  if (
-    isQueuedCatTimelineMessage(message) ||
-    isQueuedUserTimelineMessage(message) ||
-    isQueuedOwnerConnectorTimelineMessage(message)
-  )
-    return message.timestamp;
+  if (isQueuedCatTimelineMessage(message)) return message.timestamp;
   return message.deliveredAt ?? message.timestamp;
 }
 
@@ -161,36 +152,14 @@ function isQueuedCatTimelineMessage(message: StoredMessage): boolean {
   return message.deliveryStatus === 'queued' && isRealCatSpeech(message);
 }
 
-/**
- * Owner-facing timeline publication for durable queued user work. This is kept
- * separate from `isTimelinePublished`: callback/context/prompt readers must not
- * learn an undelivered body merely because the browser can render its receipt.
- */
-function isQueuedUserTimelineMessage(message: StoredMessage): boolean {
+/** Explicit administrative reads may inspect queued owner work. This predicate
+ * never publishes the row into the ordinary History timeline. */
+function isQueuedOwnerWork(message: StoredMessage): boolean {
+  const from = messageFrom(message);
   return (
     message.deliveryStatus === 'queued' &&
-    message.timelinePublishedAtAppend === true &&
-    messageFrom(message).kind === 'user' &&
-    message.origin !== 'briefing'
-  );
-}
-
-/**
- * Host-attributed connector ingress is already an owner-visible receipt at
- * admission. Keep it browser-only until delivery just like queued user work:
- * prompt/context readers must not learn it through `isTimelinePublished`, but
- * the owner must see the source bubble before the target cat starts replying.
- * System/scheduler connectors remain behind their dedicated visibility gates.
- */
-function isQueuedOwnerConnectorTimelineMessage(message: StoredMessage): boolean {
-  return (
-    message.deliveryStatus === 'queued' &&
-    message.catId === null &&
-    message.source !== undefined &&
-    message.userId !== 'system' &&
-    message.userId !== 'scheduler' &&
     message.origin !== 'briefing' &&
-    message.timelinePublishedAtAppend === true
+    (from.kind === 'user' || from.kind === 'external' || from.kind === 'plugin')
   );
 }
 

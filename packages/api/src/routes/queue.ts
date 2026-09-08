@@ -42,7 +42,7 @@ import {
   projectLifecycleAppendCapability,
 } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
-import { projectQueueLedgerReceipt } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
+import { queueEntryId } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
@@ -88,7 +88,7 @@ export interface QueueRoutesOptions {
   /** Shared owner-aware session lock released by explicit terminal actions. */
   agentSessionMutex?: AgentSessionMutexLike;
   socketManager: SocketManager;
-  /** MessageStore supplies receipt hydration; Queue withdrawal never deletes author history. */
+  /** MessageStore supplies History preview/lifecycle truth; Queue withdrawal never deletes author history. */
   messageStore?: IMessageStore;
   /** F194 Phase B: canonical liveness read sources (record + draft). When omitted,
    *  GET /queue's activeInvocations falls back to legacy tracker-only enumeration
@@ -338,6 +338,8 @@ const continueBodySchema = z.object({ targetCatId: z.string().min(1) }).strict()
 
 const steerTargetsBodySchema = z
   .object({
+    sourceRecordId: z.string().min(1),
+    observedPendingTargetIds: z.array(z.string().min(1)),
     targets: z
       .array(
         z
@@ -359,7 +361,12 @@ const steerTargetsBodySchema = z
         }
       }),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.observedPendingTargetIds).size !== value.observedPendingTargetIds.length) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate observed pending target' });
+    }
+  });
 
 const appendBodySchema = z
   .object({
@@ -1129,7 +1136,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(404);
         return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
-      if (entry.status === 'processing') {
+      if (entry.status !== 'queued') {
         reply.status(409);
         return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
@@ -1184,7 +1191,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationQueue.list(threadId, guard.userId),
         messageStore,
         'removed',
-        { receiptMessageIds: removed ? queueEntryMessageIds(removed) : [], receiptSource: invocationQueue },
       );
 
       return { removed: removed ? projectPublicQueueEntry(removed) : removed };
@@ -1255,9 +1261,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
   );
 
   // GET /api/threads/:threadId/queue/:entryId/targets
-  // Read every durable scalar row for the same source message. The regular
-  // Queue projection is intentionally row-local, so it cannot tell the Steer
-  // modal that a sibling target has already reached a terminal state.
+  // Join the one pending Queue target set with actual History dispatch refs.
+  // Queue never manufactures delivered or terminal target state.
   app.get<{ Params: { threadId: string; entryId: string } }>(
     '/api/threads/:threadId/queue/:entryId/targets',
     async (request, reply) => {
@@ -1272,7 +1277,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         !anchor ||
         anchor.status !== 'queued' ||
         anchor.kind !== 'conversation_input' ||
-        anchor.from.kind !== 'user' ||
         !anchor.payload.messageId ||
         isSystemPinnedQueueEntry(anchor)
       ) {
@@ -1280,30 +1284,35 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         return { error: '该消息当前不可 Steer', code: 'STEER_ENTRY_UNAVAILABLE' };
       }
 
-      const sourceRows = (await invocationQueue.listAllDurable(threadId)).filter(
-        (candidate) =>
-          queueEntryOwnerId(candidate) === guard.userId && candidate.payload.sourceId === anchor.payload.sourceId,
-      );
-      const receipt = projectQueueLedgerReceipt(sourceRows);
-      const rowByTarget = new Map(
-        sourceRows.flatMap((candidate) =>
-          candidate.target.kind === 'cat' ? ([[candidate.target.catId, candidate]] as const) : [],
-        ),
-      );
+      const source = await messageStore?.getById(anchor.payload.messageId);
+      if (!source || source.threadId !== threadId || source.userId !== guard.userId) {
+        reply.status(409);
+        return { error: '该消息当前不可 Steer', code: 'STEER_SOURCE_UNAVAILABLE' };
+      }
+      const pending = new Set(anchor.targets);
+      const dispatchRefs = source.lifecycle?.dispatchRefs ?? [];
+      const dispatched = new Map(dispatchRefs.map((ref) => [ref.targetId, ref]));
+      const targetIds = [...new Set([...pending, ...dispatched.keys()])];
       return {
-        targets: (receipt?.targets ?? []).map((target) => ({
-          targetCatId: target.catId,
-          state: target.state,
-          actionable: rowByTarget.get(target.catId)?.status === 'queued',
+        sourceRecordId: source.id,
+        targets: targetIds.map((targetCatId) => ({
+          targetCatId,
+          state: dispatched.get(targetCatId)?.phase ?? 'pending',
+          actionable: pending.has(targetCatId) && !dispatched.has(targetCatId),
+          ...(dispatched.get(targetCatId)?.dispatchedAt !== undefined
+            ? { dispatchedAt: dispatched.get(targetCatId)!.dispatchedAt }
+            : {}),
+          ...(dispatched.get(targetCatId)?.statusMessageId
+            ? { statusMessageId: dispatched.get(targetCatId)!.statusMessageId }
+            : {}),
         })),
       };
     },
   );
 
   // POST /api/threads/:threadId/queue/:entryId/targets
-  // Resolve one source message into exact scalar source×target rows before the
-  // client applies per-target guide/interrupt actions. Existing admitted rows
-  // are reused; only genuinely new targets are atomically added.
+  // Merge explicit modal edits into current Queue + History truth. Delivery
+  // that wins while the modal is open is an idempotent no-op, not a conflict.
   app.post<{ Params: { threadId: string; entryId: string } }>(
     '/api/threads/:threadId/queue/:entryId/targets',
     async (request, reply) => {
@@ -1320,16 +1329,33 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         return { error: 'Steer 目标映射暂不可用', code: 'STEER_TARGET_MAPPING_UNAVAILABLE' };
       }
 
+      const { sourceRecordId, observedPendingTargetIds } = parsed.data;
+      if (queueEntryId(sourceRecordId) !== entryId) {
+        reply.status(400);
+        return { error: 'Steer 来源身份不匹配', code: 'STEER_SOURCE_IDENTITY_MISMATCH' };
+      }
+      const source = await messageStore.getById(sourceRecordId);
+      if (
+        !source ||
+        source.threadId !== threadId ||
+        source.userId !== guard.userId ||
+        !source.from ||
+        source.recall ||
+        source.deliveryStatus === 'canceled'
+      ) {
+        reply.status(409);
+        return { error: '该消息当前不可 Steer', code: 'STEER_ENTRY_UNAVAILABLE' };
+      }
+
       const currentEntries = invocationQueue.list(threadId, guard.userId);
       const anchor = currentEntries.find((candidate) => candidate.id === entryId);
       if (
-        !anchor ||
-        !isPublicQueueEntry(anchor) ||
-        anchor.status !== 'queued' ||
-        anchor.kind !== 'conversation_input' ||
-        anchor.from.kind !== 'user' ||
-        !anchor.payload.messageId ||
-        isSystemPinnedQueueEntry(anchor)
+        anchor &&
+        (!isPublicQueueEntry(anchor) ||
+          anchor.status !== 'queued' ||
+          anchor.kind !== 'conversation_input' ||
+          anchor.payload.messageId !== sourceRecordId ||
+          isSystemPinnedQueueEntry(anchor))
       ) {
         reply.status(409);
         return { error: '该消息当前不可 Steer', code: 'STEER_ENTRY_UNAVAILABLE' };
@@ -1346,63 +1372,24 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
               : target.strategy,
         };
       });
-      for (const target of normalizedTargets) {
+      const alreadyDispatched = new Set((source.lifecycle?.dispatchRefs ?? []).map((ref) => ref.targetId));
+      const eligibleTargets = normalizedTargets.filter((target) => {
+        if (alreadyDispatched.has(target.targetCatId)) return false;
         const currentMember = guard.thread.participants.includes(target.targetCatId as CatId);
-        if (
+        return !(
           opts.isCatAvailable?.(target.targetCatId as CatId) === false ||
           (target.membershipAtOpen === 'member' && !currentMember)
-        ) {
-          reply.status(409);
-          return { error: '成员资格或可用状态已变化，请重新选择', code: 'STEER_TARGET_STATE_CHANGED' };
-        }
-      }
-
-      const durableRows = await invocationQueue.listAllDurable(threadId);
-      const sourceRows = durableRows.filter(
-        (candidate) =>
-          queueEntryOwnerId(candidate) === guard.userId && candidate.payload.sourceId === anchor.payload.sourceId,
-      );
-      const terminalTargets = new Set(
-        sourceRows.flatMap((candidate) =>
-          candidate.status === 'terminal' && candidate.target.kind === 'cat' ? [candidate.target.catId] : [],
-        ),
-      );
-      if (normalizedTargets.some((target) => terminalTargets.has(target.targetCatId))) {
-        reply.status(409);
-        return { error: '所选成员已处理这条消息，请按最新状态重新选择', code: 'STEER_TARGET_ALREADY_HANDLED' };
-      }
-
-      await admitThreadParticipants({
-        userId: guard.userId,
-        threadId,
-        targetCats: normalizedTargets
-          .filter((target) => target.membershipAtOpen === 'admit')
-          .map((target) => target.targetCatId as CatId),
-        threadStore,
-        socketManager,
-        emitPolicy: 'membership-changed',
+        );
       });
-
-      const activeSourceRows = currentEntries.filter(
-        (candidate) => candidate.payload.sourceId === anchor.payload.sourceId && candidate.status === 'queued',
-      );
-      const mapped = new Map<string, string>();
-      for (const row of activeSourceRows) {
-        if (row.target.kind === 'cat') mapped.set(row.target.catId, row.id);
-      }
-      const unassigned = activeSourceRows.find((row) => row.target.kind === 'unassigned');
-      const bindTargetCatId = anchor.target.kind === 'cat' ? anchor.target.catId : normalizedTargets[0]?.targetCatId;
-      if (!bindTargetCatId) {
-        reply.status(409);
-        return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
-      }
-      const expectedQueuedEntryIds = normalizedTargets.flatMap((target) => {
-        const mappedEntryId = mapped.get(target.targetCatId);
-        return mappedEntryId && mappedEntryId !== anchor.id ? [mappedEntryId] : [];
-      });
-      const missing = normalizedTargets.filter(
-        (target) => !mapped.has(target.targetCatId) && (!unassigned || target.targetCatId !== bindTargetCatId),
-      );
+      const selectedIds = new Set(eligibleTargets.map((target) => target.targetCatId));
+      const observedPending = new Set(observedPendingTargetIds);
+      const addTargetIds = [...selectedIds].filter((targetId) => !observedPending.has(targetId));
+      const removeTargetIds = [
+        ...new Set([
+          ...observedPendingTargetIds.filter((targetId) => !selectedIds.has(targetId)),
+          ...alreadyDispatched,
+        ]),
+      ].filter((targetId) => !addTargetIds.includes(targetId));
       const tracker = invocationTracker.getExecutionId
         ? {
             has: (candidateThreadId: string, catId: CatId) => invocationTracker.has(candidateThreadId, catId),
@@ -1412,75 +1399,114 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
               invocationTracker.getExecutionId?.(candidateThreadId, catId),
           }
         : undefined;
-      const buildExpansionInput = (targets: typeof normalizedTargets) => {
-        const authorIntentByCatId = Object.fromEntries(
-          targets.flatMap((target) => {
-            const intent = resolveQueueAuthorIntentByCatId({
-              targetCats: [target.targetCatId as CatId],
-              requested: target.strategy === 'guide_reply' ? 'continue_current' : 'next_work',
-              threadId,
-              userId: guard.userId,
-              invocationTracker: tracker,
-              resolveCarrierCapability: opts.resolveCarrierCapability,
-            })[target.targetCatId];
-            return intent ? [[target.targetCatId, intent] as const] : [];
-          }),
-        );
-        return {
-          threadId,
-          userId: guard.userId,
-          owner: anchor.owner,
-          sourceId: anchor.payload.messageId,
-          kind: anchor.kind,
-          ownerAuthProvenance: anchor.execution.ownerAuthProvenance,
-          content: anchor.payload.content,
-          messageId: anchor.payload.messageId,
-          from: anchor.from,
-          targetCats: targets.map((target) => target.targetCatId),
-          ...(anchor.payload.routingWarnings ? { routingWarnings: [...anchor.payload.routingWarnings] } : {}),
-          authorIntentByCatId,
-          intent: anchor.execution.intent,
-          autoExecute: anchor.execution.autoExecute,
-          priority: anchor.priority,
-          ...(anchor.sourceCategory ? { sourceCategory: anchor.sourceCategory } : {}),
-        };
-      };
+      const authorIntentByCatId = Object.fromEntries(
+        eligibleTargets.flatMap((target) => {
+          const intent = resolveQueueAuthorIntentByCatId({
+            targetCats: [target.targetCatId as CatId],
+            requested: target.strategy === 'guide_reply' ? 'continue_current' : 'next_work',
+            threadId,
+            userId: guard.userId,
+            invocationTracker: tracker,
+            resolveCarrierCapability: opts.resolveCarrierCapability,
+          })[target.targetCatId];
+          return intent ? [[target.targetCatId, intent] as const] : [];
+        }),
+      );
+      const buildQueueInput = (targetCats: string[]) => ({
+        threadId,
+        userId: guard.userId,
+        owner: { kind: 'user' as const, userId: guard.userId },
+        sourceId: source.id,
+        kind: 'conversation_input' as const,
+        ownerAuthProvenance: 'strict' as const,
+        content: source.content,
+        messageId: source.id,
+        from: source.from!,
+        targetCats,
+        ...(source.extra?.routingWarnings ? { routingWarnings: [...source.extra.routingWarnings] } : {}),
+        authorIntentByCatId,
+        intent: anchor?.execution.intent ?? 'execute',
+        autoExecute: anchor?.execution.autoExecute ?? true,
+        priority: anchor?.priority ?? 'normal',
+        ...(anchor?.sourceCategory
+          ? { sourceCategory: anchor.sourceCategory }
+          : source.from?.kind === 'agent'
+            ? { sourceCategory: 'a2a' as const }
+            : {}),
+      });
 
-      if (unassigned || missing.length > 0 || expectedQueuedEntryIds.length > 0) {
+      let reconciled = await invocationQueue.reconcileQueuedMessageTargetsDurable(
+        threadId,
+        guard.userId,
+        entryId,
+        addTargetIds,
+        removeTargetIds,
+        authorIntentByCatId,
+      );
+      if (reconciled.outcome === 'not_found' && addTargetIds.length > 0) {
         try {
-          const expanded = await invocationQueue.mapQueuedMessageTargetsDurable(
-            messageStore,
-            anchor.payload.messageId,
-            unassigned?.id ?? anchor.id,
-            bindTargetCatId,
-            expectedQueuedEntryIds,
-            buildExpansionInput(missing),
-          );
-          if (expanded.outcome !== 'expanded' && expanded.outcome !== 'replayed') {
-            reply.status(409);
-            return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
+          const admitted = await invocationQueue.enqueueDurable(buildQueueInput(addTargetIds));
+          if (admitted.outcome === 'full') {
+            reply.status(429);
+            return { error: '消息队列已满', code: 'QUEUE_FULL' };
           }
-          for (const row of expanded.entries) {
-            if (row.target.kind === 'cat') mapped.set(row.target.catId, row.id);
-          }
+          reconciled = { outcome: 'updated' as const, entry: admitted.entry ?? null };
         } catch (error) {
-          if (error instanceof Error && error.message.startsWith('queued Message does not match')) {
-            reply.status(409);
-            return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
-          }
-          throw error;
+          if (!(error instanceof Error) || !error.message.startsWith('Queue admission identity conflict')) throw error;
+          reconciled = await invocationQueue.reconcileQueuedMessageTargetsDurable(
+            threadId,
+            guard.userId,
+            entryId,
+            addTargetIds,
+            removeTargetIds,
+            authorIntentByCatId,
+          );
         }
       }
-
-      const targets = normalizedTargets.flatMap((target) => {
-        const mappedEntryId = mapped.get(target.targetCatId);
-        return mappedEntryId
-          ? [{ targetCatId: target.targetCatId, strategy: target.strategy, entryId: mappedEntryId }]
-          : [];
-      });
-      if (targets.length !== normalizedTargets.length) {
+      if (reconciled.outcome === 'state_changed') {
+        // Claims are short reversible reservations. Yield once so the winning
+        // delivery removes its exact target, then merge against current truth.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        reconciled = await invocationQueue.reconcileQueuedMessageTargetsDurable(
+          threadId,
+          guard.userId,
+          entryId,
+          addTargetIds,
+          removeTargetIds,
+          authorIntentByCatId,
+        );
+      }
+      if (reconciled.outcome === 'state_changed') {
         reply.status(409);
-        return { error: '目标工单映射已变化，请刷新后重试', code: 'STEER_TARGET_MAPPING_CHANGED' };
+        return { error: 'Steer 正在与投递收敛，请重试', code: 'STEER_DELIVERY_IN_FLIGHT' };
+      }
+      const pendingAfter = new Set('entry' in reconciled ? (reconciled.entry?.targets ?? []) : []);
+      const targets = eligibleTargets
+        .filter((target) => pendingAfter.has(target.targetCatId))
+        .map((target) => ({ targetCatId: target.targetCatId, strategy: target.strategy, entryId }));
+      try {
+        await admitThreadParticipants({
+          userId: guard.userId,
+          threadId,
+          targetCats: eligibleTargets
+            .filter((target) => target.membershipAtOpen === 'admit')
+            .map((target) => target.targetCatId as CatId),
+          threadStore,
+          socketManager,
+          emitPolicy: 'membership-changed',
+        });
+      } catch (error) {
+        request.log.error(
+          { error, threadId, entryId, targets },
+          'Steer target changes committed; participant admission remains retryable',
+        );
+        reply.status(503);
+        return {
+          error: '目标工单已保存，成员加入尚未完成；请重试同一操作',
+          code: 'STEER_PARTICIPANT_ADMISSION_PENDING',
+          mappingCommitted: true,
+          targets,
+        };
       }
       await emitQueueUpdated(
         socketManager,
@@ -1494,7 +1520,12 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // disappears before issuing the per-target follow-up commands, ordinary
       // Queue liveness must still converge every newly added row.
       void queueProcessor.requestDrain(threadId);
-      return { targets };
+      return {
+        targets,
+        skippedAlreadyDispatched: normalizedTargets
+          .filter((target) => alreadyDispatched.has(target.targetCatId))
+          .map((target) => target.targetCatId),
+      };
     },
   );
 
@@ -1577,6 +1608,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           threadId,
           guard.userId,
           entryId,
+          targetCatId,
           'parent_terminal_before_exposure',
         );
       }
@@ -1619,7 +1651,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(404);
         return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
-      if (entry.status === 'processing') {
+      if (entry.status !== 'queued') {
         reply.status(409);
         return { error: '条目正在处理中，无法 steer', code: 'ENTRY_PROCESSING' };
       }
@@ -1719,7 +1751,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(404);
         return { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
-      if (entry.status === 'processing') {
+      if (entry.status !== 'queued') {
         reply.status(409);
         return { error: '正在处理中的条目不可移动', code: 'ENTRY_PROCESSING' };
       }
@@ -1787,8 +1819,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(400);
         return { error: `Cannot reorder entry ${entryId} (not found)` };
       }
-      if (entry.status === 'processing') {
-        reply.status(400);
+      if (entry.status !== 'queued') {
+        reply.status(409);
         return { error: `Cannot reorder entry ${entryId} (processing)` };
       }
       if (isSystemPinnedQueueEntry(entry)) {
@@ -1880,7 +1912,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       invocationQueue.list(threadId, guard.userId),
       messageStore,
       'cleared',
-      { receiptMessageIds: cleared.flatMap(queueEntryMessageIds), receiptSource: invocationQueue },
     );
 
     return { cleared: cleared.map(projectPublicQueueEntry) };
