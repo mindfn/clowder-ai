@@ -73,11 +73,6 @@ export interface PluginManagerConfigurationPort {
   configure(pluginId: string, pluginInstanceId: string, request: PluginManagerConfigureRequest): Promise<void>;
 }
 
-export interface PluginManagerDocumentationPort {
-  /** Package-owned human documentation. List/search projections must never call this port. */
-  readme(pluginId: string): Promise<string | undefined>;
-}
-
 export interface PluginManagerServiceOptions {
   readonly catalog: PluginManagerCatalogPort;
   readonly inventory: Pick<PluginInventoryStore, 'snapshot'>;
@@ -87,7 +82,6 @@ export interface PluginManagerServiceOptions {
   readonly lifecycle?: PluginManagerLifecyclePort;
   readonly quarantine?: PluginManagerQuarantinePort;
   readonly configuration?: PluginManagerConfigurationPort;
-  readonly documentation?: PluginManagerDocumentationPort;
 }
 
 export type PluginManagerServiceErrorCode =
@@ -169,16 +163,12 @@ export class PluginManagerService {
     const projected = result.entries.find((candidate) => candidate.plugin.pluginId === pluginId);
     if (!projected) throw new PluginManagerServiceError('PLUGIN_NOT_FOUND', `Unknown plugin ${pluginId}`);
     const detail = projected.detail ?? detailFromListItem(projected.plugin);
-    const [configurationFields, readmeMarkdown] = await Promise.all([
-      this.options.configuration?.fields(pluginId),
-      this.options.documentation?.readme(pluginId).catch(() => undefined),
-    ]);
-    const configuredDetail =
-      configurationFields === undefined
-        ? detail
-        : { ...detail, configFields: configurationFields.map((field) => structuredClone(field)) };
+    const configurationFields = await this.options.configuration?.fields(pluginId);
     return {
-      plugin: readmeMarkdown === undefined ? configuredDetail : { ...configuredDetail, readmeMarkdown },
+      plugin:
+        configurationFields === undefined
+          ? detail
+          : { ...detail, configFields: configurationFields.map((field) => structuredClone(field)) },
       catalog: result.response.catalog,
     };
   }

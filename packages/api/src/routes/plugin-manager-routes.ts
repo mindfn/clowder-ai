@@ -19,6 +19,7 @@ import {
   LocalPluginPackageAdmissionError,
   PluginManagerPackageAssetError,
   type PluginManagerPackageAssetPort,
+  type PluginManagerPackageDocumentationPort,
   type PluginManagerService,
   PluginManagerServiceError,
 } from '../domains/plugin/index.js';
@@ -26,7 +27,12 @@ import { MAX_PLUGIN_PACKAGE_BYTES } from '../domains/plugin/official-package-arc
 import { OfficialPluginInstallError } from '../domains/plugin/official-package-errors.js';
 import type { CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook } from './callback-auth-prehandler.js';
-import { pluginAccessError, requirePluginReadAccess, requirePluginWriteAccess } from './plugin-access-guards.js';
+import {
+  pluginAccessError,
+  requirePluginOwnerLocalAccess,
+  requirePluginReadAccess,
+  requirePluginWriteAccess,
+} from './plugin-access-guards.js';
 
 type PluginManagerRouteService = Pick<
   PluginManagerService,
@@ -36,6 +42,7 @@ type PluginManagerRouteService = Pick<
 export interface PluginManagerRouteOptions {
   readonly manager: PluginManagerRouteService;
   readonly asset?: PluginManagerPackageAssetPort;
+  readonly documentation?: PluginManagerPackageDocumentationPort;
   readonly auditLog?: Pick<EventAuditLog, 'append'>;
   readonly callbackRegistry?: CallbackAuthRegistry;
 }
@@ -306,6 +313,30 @@ export function registerPluginManagerRoutes(app: FastifyInstance, options: Plugi
       return reply.status(500).send({ error: 'Plugin package asset failed', code: 'ASSET_FAILED' });
     }
   });
+
+  app.get<{ Params: { pluginId: string } }>(
+    '/api/plugin-manager/plugins/:pluginId/documentation',
+    async (request, reply) => {
+      const access = requirePluginOwnerLocalAccess(request, 'read');
+      if ('error' in access) return pluginAccessError(reply, access);
+      const parsedId = pluginIdSchema.safeParse(request.params.pluginId);
+      if (!parsedId.success) return invalidRequest(reply);
+      if (!options.documentation) {
+        return reply
+          .status(503)
+          .send({ error: 'Plugin package documentation is unavailable', code: 'DOCUMENTATION_UNAVAILABLE' });
+      }
+      try {
+        const readmeMarkdown = await options.documentation.readReadme(parsedId.data);
+        return readmeMarkdown === undefined ? {} : { readmeMarkdown };
+      } catch (error) {
+        if (error instanceof PluginManagerPackageAssetError) {
+          return reply.status(packageAssetStatus(error.code)).send({ error: error.message, code: error.code });
+        }
+        return reply.status(500).send({ error: 'Plugin package documentation failed', code: 'DOCUMENTATION_FAILED' });
+      }
+    },
+  );
 
   app.get<{ Params: { pluginId: string } }>('/api/plugin-manager/plugins/:pluginId', async (request, reply) => {
     const access = requirePluginReadAccess(request, accessOptions);

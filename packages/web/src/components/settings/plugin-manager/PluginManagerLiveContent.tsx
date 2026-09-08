@@ -3,6 +3,7 @@
 import type {
   PluginManagerDetail,
   PluginManagerDetailResponse,
+  PluginManagerDocumentationResponse,
   PluginManagerListItem,
   PluginManagerListResponse,
 } from '@cat-cafe/shared';
@@ -13,13 +14,15 @@ import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const POLL_INTERVAL_MS = 5_000;
 
+type ConsolePluginManagerDetail = PluginManagerDetail & { readonly readmeMarkdown?: string };
+
 function packageName(plugin: PluginManagerListItem): string {
   return plugin.source.packageName ?? plugin.pluginId;
 }
 
 function designFixture(
   plugin: PluginManagerListItem,
-  detail: PluginManagerDetail | undefined,
+  detail: ConsolePluginManagerDetail | undefined,
 ): PluginManagerDesignFixture {
   const capabilities = detail?.capabilities ?? plugin.capabilitySummary;
   return {
@@ -74,6 +77,31 @@ function isDetailResponse(value: unknown): value is PluginManagerDetailResponse 
   if (!value || typeof value !== 'object') return false;
   const candidate = value as { plugin?: { pluginId?: unknown }; catalog?: { status?: unknown } };
   return typeof candidate.plugin?.pluginId === 'string' && typeof candidate.catalog?.status === 'string';
+}
+
+function isDocumentationResponse(value: unknown): value is PluginManagerDocumentationResponse {
+  if (!value || typeof value !== 'object') return false;
+  const readmeMarkdown = (value as { readmeMarkdown?: unknown }).readmeMarkdown;
+  return readmeMarkdown === undefined || typeof readmeMarkdown === 'string';
+}
+
+async function fetchDocumentation(path: string): Promise<string | undefined> {
+  const response = await apiFetch(`${path}/documentation`).catch(() => undefined);
+  if (!response?.ok) return undefined;
+  const value: unknown = await response.json().catch(() => undefined);
+  return isDocumentationResponse(value) ? value.readmeMarkdown : undefined;
+}
+
+async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Promise<ConsolePluginManagerDetail> {
+  const path = `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}`;
+  const [response, readmeMarkdown] = await Promise.all([
+    afterMutation ? apiFetch(path, undefined, { afterCurrentGet: true }) : apiFetch(path),
+    fetchDocumentation(path),
+  ]);
+  if (!response.ok) throw new Error(`detail request failed (${response.status})`);
+  const value: unknown = await response.json();
+  if (!isDetailResponse(value)) throw new Error('detail response is invalid');
+  return readmeMarkdown === undefined ? value.plugin : { ...value.plugin, readmeMarkdown };
 }
 
 async function fetchManagerList(search: string, afterMutation: boolean): Promise<PluginManagerListResponse> {
@@ -133,7 +161,7 @@ function configurationRequest(
 
 export function PluginManagerLiveContent() {
   const [snapshot, setSnapshot] = useState<PluginManagerListResponse | null>(null);
-  const [detail, setDetail] = useState<PluginManagerDetail | undefined>();
+  const [detail, setDetail] = useState<ConsolePluginManagerDetail | undefined>();
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selectedId = useRef<string | null>(null);
@@ -145,15 +173,9 @@ export function PluginManagerLiveContent() {
   const loadDetail = useCallback(async (pluginId: string, afterMutation = false) => {
     const generation = ++detailGeneration.current;
     try {
-      const path = `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}`;
-      const response = afterMutation
-        ? await apiFetch(path, undefined, { afterCurrentGet: true })
-        : await apiFetch(path);
-      if (!response.ok) throw new Error(`detail request failed (${response.status})`);
-      const value: unknown = await response.json();
-      if (!isDetailResponse(value)) throw new Error('detail response is invalid');
+      const value = await fetchManagerDetail(pluginId, afterMutation);
       if (!mounted.current || generation !== detailGeneration.current) return;
-      setDetail(value.plugin);
+      setDetail(value);
     } catch {
       if (!mounted.current || generation !== detailGeneration.current) return;
       setDetail(undefined);

@@ -41,7 +41,7 @@ const listed = {
   catalog: { status: 'degraded', refreshedAt: 1_000, message: 'stale cache' },
 };
 
-async function harness({ overrides = {}, auditAppend, callbackRegistry, upload = false, asset } = {}) {
+async function harness({ overrides = {}, auditAppend, callbackRegistry, upload = false, asset, documentation } = {}) {
   const calls = [];
   const audits = [];
   const manager = {
@@ -83,6 +83,7 @@ async function harness({ overrides = {}, auditAppend, callbackRegistry, upload =
   const routeOptions = {
     manager,
     ...(asset ? { asset } : {}),
+    ...(documentation ? { documentation } : {}),
     ...(callbackRegistry ? { callbackRegistry } : {}),
     auditLog: {
       append: async (event) => {
@@ -124,6 +125,51 @@ test('serves package icons as authenticated same-origin resources with active-co
     assert.match(response.headers['content-security-policy'], /sandbox/);
     assert.deepEqual(response.rawPayload, bytes);
     assert.deepEqual(calls, [], 'asset reads do not add a seventh Manager operation');
+  } finally {
+    await app.close();
+  }
+});
+
+test('serves package README only to the direct owner Console without adding an Agent Manager operation', async () => {
+  const reads = [];
+  const { app, calls } = await harness({
+    callbackRegistry: verifiedCallbackRegistry(),
+    documentation: {
+      readReadme: async (pluginId) => {
+        reads.push(pluginId);
+        return '# Video Analysis\n\nHuman-facing details.';
+      },
+    },
+  });
+  try {
+    const path = '/api/plugin-manager/plugins/official.video/documentation';
+    assert.equal((await app.inject({ method: 'GET', url: path })).statusCode, 401);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: path,
+          headers: {
+            host: 'localhost:3004',
+            origin: 'http://localhost:3004',
+            'x-invocation-id': 'inv-plugin',
+            'x-callback-token': 'callback-secret',
+          },
+          remoteAddress: '127.0.0.1',
+        })
+      ).statusCode,
+      401,
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: path,
+      headers: writeHeaders,
+      remoteAddress: '127.0.0.1',
+    });
+    assert.equal(response.statusCode, 200, response.payload);
+    assert.deepEqual(response.json(), { readmeMarkdown: '# Video Analysis\n\nHuman-facing details.' });
+    assert.deepEqual(reads, ['official.video']);
+    assert.deepEqual(calls, []);
   } finally {
     await app.close();
   }

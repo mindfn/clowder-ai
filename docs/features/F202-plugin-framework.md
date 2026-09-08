@@ -154,10 +154,11 @@ This is not yet a Train B completion claim:
   digest, manifest, package-boundary and media validation, with active-content confinement headers.
 - Production keeps the legacy Feishu-only `RefreshingOfficialPluginCatalog` for the existing specialized
   routes, while the new Manager independently consumes the bounded HTTPS machine catalog and exact package
-  digests. Its list/search projection contains no repository-local or connector compatibility rows. Detail
-  reads may load a bounded, integrity-verified package-root `README.md`; list/search and Agent-facing discovery
-  use only the short manifest description. The published video alpha.0 package does not yet include that
-  README, so the Manager reports the omission honestly while a package follow-up is pending. Final
+  digests. Its list/search projection contains no repository-local or connector compatibility rows. The
+  owner Console detail may load a bounded, integrity-verified package-root `README.md` through a direct-local
+  route; all six Agent management operations, including `plugin_get`, use only the short manifest description.
+  The published video alpha.0 package does not yet include that README, so the Manager reports the omission
+  honestly while a package follow-up is pending. Final
   co-creator hands-on acceptance of this current Core generation remains open.
 
 External publication provenance: `[primary | npm registry + exact repository HEAD | checked 2026-09-08 |

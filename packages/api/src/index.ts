@@ -5047,6 +5047,7 @@ async function main(): Promise<void> {
     registerPluginManagerRoutes(managerApp, {
       manager: pluginManagerRuntime.manager,
       asset: pluginManagerRuntime.assets,
+      documentation: pluginManagerRuntime.assets,
       callbackRegistry: registry,
     });
   });
