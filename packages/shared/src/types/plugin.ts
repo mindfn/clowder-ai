@@ -261,8 +261,6 @@ export interface PluginManagerListItem {
 
 export interface PluginManagerDetail extends PluginManagerListItem {
   capabilities: PluginManagerCapability[];
-  /** Human-facing package README, fetched only for an explicit detail read. */
-  readmeMarkdown?: string;
   docsUrl?: string;
   setupSteps?: string[];
   configFields: PluginManagerConfigField[];
@@ -282,6 +280,11 @@ export interface PluginManagerListResponse {
 export interface PluginManagerDetailResponse {
   plugin: PluginManagerDetail;
   catalog: PluginManagerCatalogProjection;
+}
+
+/** Console-only human documentation; intentionally excluded from the Agent Manager projection. */
+export interface PluginManagerDocumentationResponse {
+  readmeMarkdown?: string;
 }
 
 export type PluginManagerInstallRequest =

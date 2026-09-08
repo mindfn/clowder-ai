@@ -1197,6 +1197,7 @@ export type {
   PluginManagerDetail,
   PluginManagerDetailResponse,
   PluginManagerDiagnostic,
+  PluginManagerDocumentationResponse,
   PluginManagerInstallRequest,
   PluginManagerIntentState,
   PluginManagerListItem,

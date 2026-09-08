@@ -195,6 +195,9 @@ describe('F202 live Plugin Manager Console wiring', () => {
     mockApiFetch.mockImplementation(async (url) => {
       if (url === '/api/plugin-manager/plugins') return json(response());
       if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') {
+        return json({ readmeMarkdown: '# Video Analysis\n\nHuman-facing details.' });
+      }
       return json({}, 404);
     });
 
@@ -203,6 +206,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
 
     expect(container.textContent).toContain('Video Analysis');
     expect(container.textContent).toContain('分析远程视频。');
+    expect(container.textContent).toContain('Human-facing details.');
     expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins');
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins')).toBe(false);
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins/official')).toBe(false);
