@@ -6,10 +6,11 @@
  *
  * Templates support:
  * - Simple {{VAR}} placeholder substitution
- * - .local overlay files for user customization (Checkpoint C)
+ * - Legacy `.local` overlays as a read-compatible baseline (Checkpoint C)
  *
  * Overlay priority: .cat-cafe/prompt-overlays/{id}.local.{ext} > assets/prompt-templates/{id}.{ext}
- * Every template-backed segment has a derived writable overlay filename.
+ * New writes go through the F257 version lifecycle; this loader does not make
+ * the legacy filesystem overlay a public mutation plane.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -224,7 +225,7 @@ export const TEMPLATE_FILES: Record<string, { base: string; local: string; varia
   D8: { base: 'a2a-ball-check.md', local: '' },
   D21: { base: 'handoff-decision-tree.md', local: '' },
   // ── Tier A: simple variable substitution (F237 template unification) ──
-  S1: { base: 's1-identity.md', local: '' }, // F237: identity is config-driven, not user-editable
+  S1: { base: 's1-identity.md', local: '' },
   S2: { base: 's2-restrictions.md', local: '' },
   S8: { base: 's8-cvo-reference.md', local: '' },
   D1: { base: 'd1-identity-anchor.md', local: '' },

@@ -38,6 +38,7 @@ function makeMatrix(overrides: Partial<SegmentEnablementMatrix> = {}): SegmentEn
         enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
         rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
         activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+        createVersion: { allowed: true, reason: null, reasonCode: null },
       },
     },
     ...overrides,
@@ -99,6 +100,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                   reason: '当前段无保留版本可激活',
                   reasonCode: 'no-version-snapshot',
                 },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -134,6 +136,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                   reason: '当前段无保留版本可激活',
                   reasonCode: 'no-version-snapshot',
                 },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -175,6 +178,11 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                   reason: '当前段 safetyTier=readonly，禁止激活版本',
                   reasonCode: 'safety-tier-readonly',
                 },
+                createVersion: {
+                  allowed: false,
+                  reason: '当前段 safetyTier=readonly，禁止产生新版本',
+                  reasonCode: 'safety-tier-readonly',
+                },
               },
             },
           })}
@@ -206,6 +214,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                 enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
                 rollback: { allowed: true, reason: null, reasonCode: null },
                 activateVersion: { allowed: true, reason: null, reasonCode: null },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -238,6 +247,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                 enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
                 rollback: { allowed: true, reason: null, reasonCode: null },
                 activateVersion: { allowed: true, reason: null, reasonCode: null },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -304,6 +314,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                 enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
                 rollback: { allowed: true, reason: null, reasonCode: null },
                 activateVersion: { allowed: true, reason: null, reasonCode: null },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}

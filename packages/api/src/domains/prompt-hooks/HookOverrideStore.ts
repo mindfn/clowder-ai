@@ -146,7 +146,7 @@ export class HookOverrideStore {
     hookId: string,
     content: string,
     actorId: string,
-    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
+    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string; parentVersion?: number },
   ): Promise<void> {
     return this.content.set(hookId, content, actorId, opts);
   }
@@ -235,6 +235,11 @@ export class HookOverrideStore {
   /** Read the immutable full-content snapshot for one epoch version. */
   async getVersionContent(hookId: string, epochVersion: number, workspaceId?: string): Promise<string | null> {
     return this.content.getVersionContent(hookId, epochVersion, workspaceId);
+  }
+
+  /** True for the immutable manifest baseline or a stored epoch snapshot. */
+  async hasVersion(hookId: string, epochVersion: number, workspaceId?: string): Promise<boolean> {
+    return this.content.hasVersion(hookId, epochVersion, workspaceId);
   }
 
   // -- Read operations ------------------------------------------------------

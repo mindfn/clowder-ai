@@ -306,6 +306,23 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal('unclassifiedEpisodeCount' in view.tracing, false);
   });
 
+  test('treats an empty freshly switched tracing cycle as healthy', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    await seedCurrent(redis, currentCycle({ cycleStart: 300 }));
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.equal(view.tracing.trigger.objective.health, 'healthy');
+    assert.equal(view.tracing.trigger.objective.cumulative.count, 0);
+    assert.equal(view.tracing.trigger.segment.observationCount, 0);
+  });
+
   test('uses the Objective cycle window for the segment injection numerator', async () => {
     const beforeCycle = episode(1, 50);
     const fired = episode(2, 150);

@@ -4,7 +4,6 @@
 
 import type { ActionableInfo, ActiveStage, GuardMetric, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useState } from 'react';
-import { CreateVersionForm } from './CreateVersionForm';
 import { EvalStagePanel } from './EvalStagePanel';
 import { GovernanceStagePanel } from './GovernanceStagePanel';
 import type { SelectedStage } from './LifelineChainView';
@@ -194,11 +193,6 @@ function VersionDetail({
         </InfoRow>
       </div>
 
-      {epoch.isActive && (
-        <div className="mt-3">
-          <CreateVersionForm hookId={hookId} onRefresh={onRefresh} />
-        </div>
-      )}
       {!epoch.isActive && (
         <div className="mt-3">
           <ActivateVersionButton

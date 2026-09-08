@@ -5,7 +5,7 @@ import type { HookOverrideEventRecorder } from './hook-override-event-recorder.j
 const VERSION_SNAPSHOT = (ws: string, hookId: string) => `hook-override-versions:${ws}:${hookId}`;
 const EPOCH_COUNTER = (ws: string, hookId: string) => `hook-override-epoch-seq:${ws}:${hookId}`;
 
-type Options = { source?: HookOverrideSource; workspaceId?: string; reason?: string };
+type Options = { source?: HookOverrideSource; workspaceId?: string; reason?: string; parentVersion?: number };
 
 /** Content/version sub-store extracted from HookOverrideStore's governance facade. */
 export class HookOverrideContentStore {
@@ -50,6 +50,7 @@ export class HookOverrideContentStore {
       opts?.reason,
       override.contentVersion,
       epochVersion,
+      opts?.parentVersion,
     );
   }
 
@@ -144,6 +145,13 @@ export class HookOverrideContentStore {
   async getVersionContent(hookId: string, epochVersion: number, workspaceId?: string): Promise<string | null> {
     const ws = workspaceId ?? this.deps.defaultWorkspaceId;
     return this.deps.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion));
+  }
+
+  async hasVersion(hookId: string, epochVersion: number, workspaceId?: string): Promise<boolean> {
+    const manifest = this.deps.resolveManifest(hookId);
+    if (epochVersion === manifest.version) return true;
+    const ws = workspaceId ?? this.deps.defaultWorkspaceId;
+    return (await this.deps.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion))) !== null;
   }
 
   async getActiveVersion(hookId: string, workspaceId?: string): Promise<number> {

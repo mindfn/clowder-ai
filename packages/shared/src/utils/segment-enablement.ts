@@ -7,13 +7,14 @@
  * The matrix is split into two independent storage planes so no action name is
  * overloaded:
  *   - localOverlay  → filesystem `.local` overlay files (editor / backup / reset)
- *   - runtimeOverride → Redis-backed HookOverrideStore (disable/enable/rollback/activateVersion)
+ *   - runtimeOverride → Redis-backed HookOverrideStore
+ *     (disable/enable/rollback/activateVersion/createVersion)
  */
 
 import type { HookManifest, SafetyTier } from '../types/prompt-hook.js';
 
 export type SegmentLocalOverlayAction = 'edit' | 'restoreBackup' | 'reset';
-export type SegmentRuntimeOverrideAction = 'disable' | 'enable' | 'rollback' | 'activateVersion';
+export type SegmentRuntimeOverrideAction = 'disable' | 'enable' | 'rollback' | 'activateVersion' | 'createVersion';
 
 export interface SegmentActionPermission {
   allowed: boolean;
@@ -80,38 +81,15 @@ export interface ResolveSegmentEnablementMatrixInput {
 export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMatrixInput): SegmentEnablementMatrix {
   const { segmentId, safetyTier, allowLocalOverride, disableable, localOverlay, runtimeOverride } = input;
 
-  const noOverlayPath = !allowLocalOverride;
-  // Local template overlays are explicit owner-authored source edits. They are
-  // a different control plane from Redis runtime content/version overrides:
-  // safetyTier continues to constrain runtime activation below, but must not
-  // turn an otherwise writable local template into a read-only document.
-  const canEditContent = !noOverlayPath;
-
+  const legacyLocalWriteBlocked: SegmentActionPermission = {
+    allowed: false,
+    reason: '本地覆盖写入已迁移到版本生命周期，请产生并应用新版本',
+    reasonCode: 'versioned-editor-required',
+  };
   const localActions: Record<SegmentLocalOverlayAction, SegmentActionPermission> = {
-    edit: {
-      allowed: canEditContent,
-      reason: canEditContent ? null : '当前段无本地覆盖路径，不可编辑',
-      reasonCode: canEditContent ? null : 'no-local-overlay-path',
-    },
-    restoreBackup: {
-      allowed: localOverlay.hasBackup && canEditContent,
-      reason: localOverlay.hasBackup
-        ? canEditContent
-          ? null
-          : '当前段无本地覆盖路径，不可恢复备份'
-        : '当前段无备份文件',
-      reasonCode:
-        localOverlay.hasBackup && canEditContent
-          ? null
-          : !localOverlay.hasBackup
-            ? 'no-backup'
-            : 'no-local-overlay-path',
-    },
-    reset: {
-      allowed: localOverlay.hasOverlay,
-      reason: localOverlay.hasOverlay ? null : '当前段无本地覆盖可重置',
-      reasonCode: localOverlay.hasOverlay ? null : 'no-local-overlay',
-    },
+    edit: legacyLocalWriteBlocked,
+    restoreBackup: legacyLocalWriteBlocked,
+    reset: legacyLocalWriteBlocked,
   };
 
   const runtimeActions: Record<SegmentRuntimeOverrideAction, SegmentActionPermission> = {
@@ -153,6 +131,11 @@ export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMa
           : !runtimeOverride.hasVersionSnapshot
             ? 'no-version-snapshot'
             : 'safety-tier-readonly',
+    },
+    createVersion: {
+      allowed: safetyTier !== 'readonly',
+      reason: safetyTier === 'readonly' ? '当前段 safetyTier=readonly，禁止产生新版本' : null,
+      reasonCode: safetyTier === 'readonly' ? 'safety-tier-readonly' : null,
     },
   };
 

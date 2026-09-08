@@ -34,6 +34,8 @@ export function isCycleTermination(value: unknown): boolean {
     (termination.fromVersion ?? 0) > 0 &&
     Number.isSafeInteger(termination.toVersion) &&
     (termination.toVersion ?? 0) > 0 &&
+    (termination.baseVersion === undefined ||
+      (Number.isSafeInteger(termination.baseVersion) && (termination.baseVersion ?? 0) > 0)) &&
     typeof termination.at === 'number' &&
     Number.isFinite(termination.at) &&
     termination.at >= 0 &&

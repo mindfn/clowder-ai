@@ -95,6 +95,7 @@ describe('LifelineStageDetail replay flow', () => {
         enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
         rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
         activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+        createVersion: { allowed: true, reason: null, reasonCode: null },
       },
     },
   };

@@ -142,7 +142,12 @@ function episode(id, terminalAt, status = 'observed') {
   };
 }
 
-function createHarness({ episodes = [], annotations = [], cycleModel = model(), version = 'v4' } = {}) {
+function createHarness({
+  episodes = [],
+  annotations = [],
+  cycleModel = model({ minimumIntervalMs: 0 }),
+  version = 'v4',
+} = {}) {
   const redis = new FakeRedis();
   const store = new CycleRecordStore(redis);
   const evaluationCatalog = catalog(cycleModel);
@@ -294,6 +299,172 @@ describe('F257 CycleRecord trigger checker', () => {
     assert.deepEqual(activations, [2], 'blocked switch must not mutate the active content version');
   });
 
+  test('creates and activates a new version from a historical base without an intermediate activation', async () => {
+    const context = createHarness();
+    const current = await context.store.initialize('owner-1', 'obj', 100, {
+      version: 'objective-v2',
+      versionContentRef: 'hooks:D1@2',
+    });
+    let activeVersion = 2;
+    const writes = [];
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: context.store,
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: `objective-v${activeVersion}`, versionContentRef: `hooks:D1@${activeVersion}` };
+        },
+        async resolveSegmentVersion(versionContentRef) {
+          return Number(versionContentRef.match(/@(\d+)$/)?.[1] ?? 0);
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return activeVersion;
+        },
+        async hasVersion(_segmentId, version) {
+          return [1, 2, 3].includes(version);
+        },
+        async setContentOverride(_segmentId, content, _actorId, opts) {
+          writes.push({ kind: 'create', content, parentVersion: opts?.parentVersion });
+          activeVersion = 4;
+        },
+        async activateVersion(_segmentId, version) {
+          writes.push({ kind: 'activate', version });
+          activeVersion = version;
+        },
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 500,
+    });
+
+    const created = await service.create({
+      ownerUserId: 'owner-1',
+      segmentId: 'D1',
+      content: 'v4 based on v1',
+      baseVersion: 1,
+      expectedActiveVersion: 2,
+      actorId: 'owner-1',
+      reason: '用户编辑',
+    });
+    const archived = await context.store.historyCycle('owner-1', 'obj', current.cycleId);
+
+    assert.deepEqual(writes, [{ kind: 'create', content: 'v4 based on v1', parentVersion: 1 }]);
+    assert.equal(created.fromVersion, 2);
+    assert.equal(created.toVersion, 4);
+    assert.equal(created.baseVersion, 1);
+    assert.equal(created.currentCycle.versionContentRef, 'hooks:D1@4');
+    assert.equal(archived.termination.baseVersion, 1);
+  });
+
+  test('rejects a stale editor active-version precondition before creating content', async () => {
+    const context = createHarness();
+    await context.store.initialize('owner-1', 'obj', 100, {
+      version: 'objective-v3',
+      versionContentRef: 'hooks:D1@3',
+    });
+    let writes = 0;
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: context.store,
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: 'objective-v3', versionContentRef: 'hooks:D1@3' };
+        },
+        async resolveSegmentVersion() {
+          return 3;
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return 3;
+        },
+        async hasVersion() {
+          return true;
+        },
+        async setContentOverride() {
+          writes++;
+        },
+        async activateVersion() {},
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 500,
+    });
+
+    await assert.rejects(
+      service.create({
+        ownerUserId: 'owner-1',
+        segmentId: 'D1',
+        content: 'stale edit',
+        baseVersion: 1,
+        expectedActiveVersion: 2,
+        actorId: 'owner-1',
+        reason: '用户编辑',
+      }),
+      /manual_version_switch_active_version_changed/,
+    );
+    assert.equal(writes, 0);
+  });
+
+  test('compensates when a multi-step version write changes active state before throwing', async () => {
+    const context = createHarness();
+    await context.store.initialize('owner-1', 'obj', 100, {
+      version: 'objective-v2',
+      versionContentRef: 'hooks:D1@2',
+    });
+    let activeVersion = 2;
+    const activations = [];
+    const service = new ManualVersionCycleService({
+      runtime: {
+        catalog: catalog(),
+        cycles: context.store,
+        cycleChecker: context.checker,
+        async resolveVersion() {
+          return { version: `objective-v${activeVersion}`, versionContentRef: `hooks:D1@${activeVersion}` };
+        },
+        async resolveSegmentVersion(versionContentRef) {
+          return Number(versionContentRef.match(/@(\d+)$/)?.[1] ?? 0);
+        },
+      },
+      overrideStore: {
+        async getActiveVersion() {
+          return activeVersion;
+        },
+        async hasVersion() {
+          return true;
+        },
+        async setContentOverride() {
+          activeVersion = 4;
+          throw new Error('event write failed after active changed');
+        },
+        async activateVersion(_segmentId, version) {
+          activations.push(version);
+          activeVersion = version;
+        },
+      },
+      async refreshOverrideSnapshot() {},
+      now: () => 500,
+    });
+
+    await assert.rejects(
+      service.create({
+        ownerUserId: 'owner-1',
+        segmentId: 'D1',
+        content: 'partial v4',
+        baseVersion: 1,
+        expectedActiveVersion: 2,
+        actorId: 'owner-1',
+        reason: '用户编辑',
+      }),
+      /event write failed after active changed/,
+    );
+    assert.equal(activeVersion, 2);
+    assert.deepEqual(activations, [2]);
+    assert.equal((await context.store.current('owner-1', 'obj')).versionContentRef, 'hooks:D1@2');
+  });
+
   test('compensates the active version when the durable cycle CAS loses', async () => {
     const context = createHarness();
     await context.store.initialize('owner-1', 'obj', 0, {
@@ -388,7 +559,7 @@ describe('F257 CycleRecord trigger checker', () => {
     const episodes = Array.from({ length: 1_530 }, (_, index) => episode(`old-${index}`, index + 1));
     const { checker, store } = createHarness({
       episodes,
-      cycleModel: model({ cumulativeThreshold: 1_531, cadenceDays: 365 }),
+      cycleModel: model({ cumulativeThreshold: 1_531, cadenceDays: 365, minimumIntervalMs: 0 }),
     });
 
     await checker.initializeOwner('owner-1', 2_000);
@@ -443,7 +614,12 @@ describe('F257 CycleRecord trigger checker', () => {
   });
 
   test('counts MCP counterexamples by distinct invocation across metrics', async () => {
-    const cycleModel = model({ cumulativeThreshold: 99, counterexampleThreshold: 2, cadenceDays: 365 });
+    const cycleModel = model({
+      cumulativeThreshold: 99,
+      counterexampleThreshold: 2,
+      cadenceDays: 365,
+      minimumIntervalMs: 0,
+    });
     cycleModel.metrics = ['metric-a', 'metric-b', 'metric-c'].map((id) => ({
       id,
       label: id,
@@ -491,6 +667,7 @@ describe('F257 CycleRecord trigger checker', () => {
   test('minimum interval blocks an immediate trigger and consecutive skips expand windows once', async () => {
     const { redis, checker, store } = createHarness({
       episodes: [episode('a', 201), episode('b', 202), episode('c', 203)],
+      cycleModel: model(),
     });
     seedHistory(redis, {
       schemaVersion: 1,
@@ -525,15 +702,15 @@ describe('F257 CycleRecord trigger checker', () => {
     });
     await store.initialize('owner-1', 'obj', 200, { version: 'v4', versionContentRef: 'hooks:d1-test@v4' });
 
-    const blocked = await checker.checkObjective('owner-1', 'obj', 210 + 2 * 60 * 60 * 1000 - 1);
+    const blocked = await checker.checkObjective('owner-1', 'obj', 200 + 2 * 60 * 60 * 1000 - 1);
     assert.equal(blocked.status, 'interval');
 
-    const requested = await checker.checkObjective('owner-1', 'obj', 210 + 2 * 60 * 60 * 1000);
+    const requested = await checker.checkObjective('owner-1', 'obj', 200 + 2 * 60 * 60 * 1000);
     assert.equal(requested.status, 'requested');
     assert.deepEqual((await store.current('owner-1', 'obj')).windows, [
       { start: 0, end: 100 },
       { start: 100, end: 200 },
-      { start: 200, end: 7_200_210 },
+      { start: 200, end: 7_200_200 },
     ]);
   });
 });

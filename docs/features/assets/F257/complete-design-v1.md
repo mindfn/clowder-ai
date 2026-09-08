@@ -46,6 +46,7 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 - 新周期的**原生窗**从 `switchAt` 开始：Console 周期计数、明细和 N/M/D 触发都只读原生窗。被终止周期尚未进入 evaluation 的数据不丢，作为带 `manual-version-switch` provenance 的补充窗随新周期保存；只有新周期原生窗触发后，它才进入 assignment 的可读证据范围。
 - evaluator 判断的目标仍是新 active 版本，不做「v2 比 v3 好多少」的跨版本对比；补充窗中的 episode 保留其真实 v3 / source cycle 来源。governance 再结合同一 Objective thread 的历史结论决定 keep / rollback / evolve。
 - 版本号全局单调、父链按创建时 active 版本：v3 后切回 v2，再演进产生 v4 且 `parentVersion=2`。被终止的 v3 周期在 governance 面显示停止/切换事实；正常 governance 动作显示精确边「演进 S13：v2 → v3」。
+- 正式 template Hook 的编辑走同一周期边界：弹窗默认 active 版本，可下拉选择历史版本作为编辑基底；「产生并应用新版本」一步创建全局单调的新版本并直接激活。active=v2、base=v1 时得到 v4(parent=v1)，activation 只记 v2→v4，不伪造 v1 激活；旧周期写「当前版本 v2 → v4（基于 v1）」。M1/M2/N2 等补充投影只展示格式说明/示例，不进入评估与回放。
 
 ## 2. 状态：每个 Objective 只有一条"当前周期记录"
 
@@ -77,7 +78,7 @@ CycleRecord {
 - 触发点：每条 trace 落盘后（已有终态缝回调）+ 每小时 cron 兜底（覆盖"7 天"这一路）。
 - 三路 anyOf 口径：`累计 = owner 线性池中 terminalAt ∈ [cycleStart, now) 的全部 episode 数`，不得按段或 `observed/absent` 过滤；`反例 = 同窗内归属该 Objective、且 source∈{structured-rule,mcp-marker} 的 counterexample 去重 incidentKey 数`；`cadence = now − cycleStart ≥ D 且累计 ≥ 1`。
 - 幂等/并发：**同一 Objective 严格串行**（`evalStatus ∈ {requested, retriggered}` 时不重复开启；CAS 写周期记录）；**不同 Objective 各自 thread、各自周期，可并发互不冲突**。
-- 评估进行中新到的 trace/反例**不丢**：它们落在下一周期（cycleEnd 之后）；本周期关闭后下一周期可能立即满足阈值 → 允许立即再触发，但受**最小评估间隔**约束（默认 2 小时，可按 Objective 配置），避免高频评估。
+- 评估进行中新到的 trace/反例**不丢**：它们落在下一周期（cycleEnd 之后）；新周期可能很快满足数量阈值，但仍需经过从 `cycleStart` 起算的**最短采集评估时间**（默认 2 小时，可按 Objective 配置），避免用过短采集窗口进入评估。
 - 三个阈值与最小间隔均为**每 Objective 可配**；registry 提供出厂下限，CycleRecord 保存当前有效策略。N/D 由已完成周期的 decision 确定性调整，M 本轮固定；"200 / 3 / 7 天 / 2 小时"是出厂值，不是每轮重置值。
 - **首周期起点**：该 Objective 从未评估过时——池中已有 tracing → 取最早有效 trace 的时间；池中没有（如上游新装）→ 服务启动检查到缺首周期起点时写入当前时间。
 
@@ -106,7 +107,7 @@ CycleRecord {
 
 ## 5. Console
 
-- **Tracing**：唯一 Objective 的周期起点；两组：`周期内高置信反例 n/M`、`owner 线性池周期内累计 m/N`；第三路 `距周期起点 d/D`。同时显示当前有效的「最短评估间隔」与「上次周期结束」，阈值已满足但仍在冷却时给出最早可触发时间。反例与 tracing 明细可回放，但段级查询窗总数不再作为并列触发数字。无"待分类"。
+- **Tracing**：唯一 Objective 的周期起点；两组：`周期内高置信反例 n/M`、`owner 线性池周期内累计 m/N`；第三路 `距周期起点 d/D`。显示「最短采集评估时间」，冷却边界固定为 `cycleStart + minimumIntervalMs`；数量阈值已满足但仍在采集期时显示「最早可评估时间」。不再显示等同/近似于本周期起点的「上次周期结束」，新周期 0 条是正常状态，不推断为采集故障。反例与 tracing 明细可回放，但段级查询窗总数不再作为并列触发数字。无"待分类"。
 - **Eval**：**平时只显示指标目录**（每指标：名称、id、方向、含义、评估方式/规则——同 Eval Hub eval:a2a 的"指标说明"样式）；**结论只在实际评估发生时刷新**：有则显示最新 verdict 卡（结论 / 现在要做 / 下次看什么 / 证据引用），无则不显示假空态；evalStatus 可见。
 - **Governance**：decision + 理由；审批卡状态；版本链 v1→v2…（谁、何时、为何）；每个改变版本的周期显示精确动作边（例如「演进 S13：v2 → v3」），手动终止周期显示「切换 S13：v3 → v2」。
 
@@ -187,6 +188,7 @@ CycleRecord {
 | 09-02 07:31 | §12 通过；§13 走合一（删独立 L0 编译器，L1–L7 迁为普通段） | §12、§13、§6 |
 | 09-02 07:31 | 提案卡必须展示内容变更（逐段 diff）；渲染规格入 §5.1 | §5.1 |
 | 09-07 08:17–08:55 | Console 投影最短评估间隔与上次周期结束；手动历史版本切换只在 tracing 可用，切换会终止旧周期并从目标版本开新周期；新周期 UI/触发只计切换后原生窗，未消费旧数据以带版本来源的补充证据供下一次 eval 读取；governance 显示精确版本边 | §1.2、§2–§5、TC-20 |
+| 09-08 10:18–11:09 | 去掉重复的「上次周期结束」，冷却语义改为从本周期起点计算的「最短采集评估时间」；新周期零数据不是采集故障；所有正式 template 段允许 operator 版本化编辑，从任意历史版本编辑时直接产生并应用新分支版本；M1/M2/N2 等补充投影只展示格式说明/示例，不出现评估回放入口 | §1.2、§5、TC-18/20 |
 
 ## 11. 我自己的判断（不附和）：这个流程能否闭环
 

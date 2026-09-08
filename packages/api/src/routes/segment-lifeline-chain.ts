@@ -101,16 +101,18 @@ function buildEpochsAndTimeline(
     if (event.action === 'content-set') {
       const newVersion = event.epochVersion ?? epochs[epochs.length - 1].version + 1; // monotonic fallback
       const origin: VersionOrigin = event.source === 'operator' ? 'user-create' : 'auto-iterate';
+      const parentVersion = event.parentVersion ?? active.version;
+      const parent = epochs.find((epoch) => epoch.version === parentVersion) ?? active;
 
-      active.events.push({
+      parent.events.push({
         eventId: event.eventId,
         kind: origin === 'user-create' ? 'user-create' : 'auto-iterate',
         timestamp: event.timestamp,
         actorId: event.actorId,
-        detail: `v${active.version} → v${newVersion}`,
+        detail: `v${parentVersion} → v${newVersion}`,
       });
 
-      const newEpoch = createEpoch(newVersion, active.version, origin, event.timestamp);
+      const newEpoch = createEpoch(newVersion, parentVersion, origin, event.timestamp);
       const newIndex = epochs.length;
       epochs.push(newEpoch);
       activeIdx = newIndex;

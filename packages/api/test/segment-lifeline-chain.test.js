@@ -58,6 +58,44 @@ describe('buildVersionChain', () => {
     );
   });
 
+  test('content-set can branch from an explicit historical parent without activating it first', () => {
+    const { chain, timeline } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 3, parentVersion: 1 }),
+      ],
+      observations: [],
+      currentContentVersion: 3,
+    });
+
+    assert.deepEqual(
+      chain.map(({ version, parentVersion, isActive }) => ({ version, parentVersion, isActive })),
+      [
+        { version: 1, parentVersion: null, isActive: false },
+        { version: 2, parentVersion: 1, isActive: false },
+        { version: 3, parentVersion: 1, isActive: true },
+      ],
+    );
+    assert.deepEqual(
+      timeline.map(({ epochIndex }) => epochIndex),
+      [0, 1, 2],
+      'the activation timeline must jump directly from v2 to v3; v1 is only the parent',
+    );
+  });
+
+  test('an unresolved explicit parent remains visible instead of being rewritten to the active version', () => {
+    const { chain } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2, parentVersion: 9 })],
+      observations: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain[1].parentVersion, 9);
+    assert.equal(chain[0].events[0].detail, 'v9 → v2');
+  });
+
   test('observations follow the activation timeline, including rollback', () => {
     const { chain } = buildVersionChain({
       manifestVersion: 1,
