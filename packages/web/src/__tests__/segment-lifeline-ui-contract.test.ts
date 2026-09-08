@@ -249,46 +249,6 @@ describe('segment lifeline: null overrideState handling (R14 P1-4)', () => {
   });
 });
 
-describe('segment lifeline: create version form (R15 P1)', () => {
-  const formSrc = readComponent('CreateVersionForm.tsx');
-  const detailSrc = readComponent('LifelineStageDetail.tsx');
-
-  it('CreateVersionForm calls POST /versions endpoint', () => {
-    expect(formSrc).toContain('/api/prompt-hooks/');
-    expect(formSrc).toContain('/versions');
-    expect(formSrc).toContain("method: 'POST'");
-  });
-
-  it('CreateVersionForm has content textarea and reason input', () => {
-    expect(formSrc).toContain('textarea');
-    expect(formSrc).toContain('cv-content');
-    expect(formSrc).toContain('cv-reason');
-  });
-
-  it('CreateVersionForm sends content and reason in body', () => {
-    expect(formSrc).toContain('content: content.trim()');
-    expect(formSrc).toContain('reason: reason.trim()');
-  });
-
-  it('CreateVersionForm requires non-empty content and reason', () => {
-    expect(formSrc).toContain('!content.trim() || !reason.trim()');
-  });
-
-  it('LifelineStageDetail shows CreateVersionForm for active epoch', () => {
-    expect(detailSrc).toContain('CreateVersionForm');
-    expect(detailSrc).toContain('epoch.isActive');
-  });
-
-  it('CreateVersionForm has cancel button that resets state', () => {
-    expect(formSrc).toContain('handleCancel');
-    expect(formSrc).toContain('取消');
-  });
-
-  it('CreateVersionForm has audit trail label', () => {
-    expect(formSrc).toContain('审计追踪');
-  });
-});
-
 describe('segment lifeline: cancel aborts mutation (R14 P2-1)', () => {
   const src = readComponent('VersionActions.tsx');
 
@@ -325,6 +285,30 @@ describe('segment lifeline: a11y entry point (P2-4)', () => {
   it('lifeline button has type="button"', () => {
     // Explicit type prevents accidental form submission
     expect(src).toMatch(/<button[\s\S]*?type="button"/);
+  });
+});
+
+describe('F257 versioned editor and supplemental segment presentation', () => {
+  const rowsSrc = readComponent('StageDetailPanels.tsx');
+  const editorSrc = `${readComponent('SegmentEditorModal.tsx')}\n${readComponent('useVersionedSegmentEditor.ts')}`;
+  const formatSrc = readComponent('SegmentFormatModal.tsx');
+
+  it('removes obsolete per-segment mode badges and lifecycle entry points from supplemental rows', () => {
+    expect(rowsSrc).not.toContain('resolveSegmentTags');
+    expect(rowsSrc).not.toContain("label: '只读'");
+    expect(rowsSrc).toContain("s.sourceType === 'template'");
+    expect(rowsSrc).toContain('SegmentFormatModal');
+    expect(formatSrc).toContain('格式示例');
+    for (const id of ['M1', 'M2', 'N2']) expect(formatSrc).toContain(`${id}:`);
+  });
+
+  it('edits an explicit version baseline and creates one applied lifecycle version', () => {
+    expect(editorSrc).toContain('/api/segment-lifeline/');
+    expect(editorSrc).toContain('/versions/');
+    expect(editorSrc).toContain('baseVersion');
+    expect(editorSrc).toContain('expectedActiveVersion');
+    expect(editorSrc).toContain('产生并应用新版本');
+    expect(editorSrc).not.toContain("method: 'PUT'");
   });
 });
 
@@ -431,8 +415,9 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).not.toContain('原始 Tracing 记录');
     // Cycle start uses the CycleRecord-backed sole Objective start.
     expect(theaterSrc).toContain('trigger.objective.cycleStartMs');
-    expect(theaterSrc).toContain('采集故障：owner 线性池在本周期内没有 Tracing');
-    expect(theaterSrc).toContain('objective.policyChangeCount > 0');
+    expect(theaterSrc).not.toContain('采集故障：owner 线性池在本周期内没有 Tracing');
+    expect(theaterSrc).not.toContain('objective.policyChangeCount > 0');
+    expect(theaterSrc).toContain('最短采集评估时间');
     expect(theaterSrc).toContain("objective.evalStatus !== 'idle'");
     expect(theaterSrc).toContain("objective.lifecycle !== 'active'");
     expect(theaterSrc).toContain('评估停滞');

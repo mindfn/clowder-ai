@@ -21,6 +21,7 @@ import {
   ManualVersionCycleService,
 } from '../infrastructure/harness-eval/evaluation/ManualVersionCycleService.js';
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
+import { validateCanonicalVersionContent } from './prompt-injection-version-content.js';
 
 export interface PromptInjectionOverrideRoutesOptions {
   /** Undefined when redis is absent — routes answer 503 (observability infra off). */
@@ -29,6 +30,8 @@ export interface PromptInjectionOverrideRoutesOptions {
   refreshOverrideSnapshot?: () => Promise<void>;
   /** Required for cycle-aware historical version activation. */
   runtime?: ObjectiveEvaluationRuntime;
+  /** Test seam; production defaults to canonical template source validation. */
+  validateVersionContent?: (hookId: string, content: string) => string | null;
 }
 
 const ACTIONS = ['enable', 'disable'] as const;
@@ -105,13 +108,45 @@ function parseActivateBody(raw: unknown): { epochVersion: number; reason: string
   return { epochVersion, reason };
 }
 
-function parseContentBody(raw: unknown): { content: string; reason: string } | { error: string } {
+function parseContentBody(
+  raw: unknown,
+): { content: string; reason: string; baseVersion: number; expectedActiveVersion: number } | { error: string } {
   const body = isRecord(raw) ? raw : {};
   const content = typeof body.content === 'string' ? body.content : null;
   if (!content) return { error: 'content (string) is required' };
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   if (!reason) return { error: 'reason is required (audit trail)' };
-  return { content, reason };
+  const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : null;
+  if (baseVersion === null || !Number.isSafeInteger(baseVersion) || baseVersion < 1) {
+    return { error: 'baseVersion (positive integer) is required' };
+  }
+  const expectedActiveVersion = typeof body.expectedActiveVersion === 'number' ? body.expectedActiveVersion : null;
+  if (expectedActiveVersion === null || !Number.isSafeInteger(expectedActiveVersion) || expectedActiveVersion < 1) {
+    return { error: 'expectedActiveVersion (positive integer) is required' };
+  }
+  return { content, reason, baseVersion, expectedActiveVersion };
+}
+
+function parseValidatedContentBody(
+  raw: unknown,
+  hookId: string,
+  validate: (hookId: string, content: string) => string | null,
+):
+  | { content: string; reason: string; baseVersion: number; expectedActiveVersion: number }
+  | { error: string; code: string } {
+  const parsed = parseContentBody(raw);
+  if ('error' in parsed) return { ...parsed, code: 'invalid_version_request' };
+  const validationError = validate(hookId, parsed.content);
+  return validationError ? { error: validationError, code: 'invalid_version_content' } : parsed;
+}
+
+function resolveVersionCreationDependencies(
+  opts: PromptInjectionOverrideRoutesOptions,
+  service: ManualVersionCycleService | null,
+): { store: HookOverrideStore; service: ManualVersionCycleService } | { error: string } {
+  if (!opts.overrideStore) return { error: 'override store unavailable (redis off)' };
+  if (!service) return { error: 'Objective evaluation runtime unavailable' };
+  return { store: opts.overrideStore, service };
 }
 
 /** Map store errors to HTTP status codes. Returns null if not a known gate error. */
@@ -130,12 +165,14 @@ function mapGateError(err: unknown, reply: FastifyReply): boolean {
 
 function mapManualSwitchError(err: unknown, reply: FastifyReply): boolean {
   if (!(err instanceof ManualVersionCycleError)) return false;
-  const status = err.code === 'segment_not_found' ? 404 : 409;
+  const status = err.code === 'segment_not_found' || err.code === 'base_version_not_found' ? 404 : 409;
   const messages: Record<ManualVersionCycleError['code'], string> = {
     segment_not_found: 'Segment evaluation manifest entry not found',
     cycle_not_initialized: 'Objective evaluation cycle is not initialized',
     evaluation_in_progress: '当前正在评估，完成后可切换版本',
     version_already_active: '所选版本已经是当前版本',
+    active_version_changed: '当前版本已变化，请重新载入后再编辑',
+    base_version_not_found: '作为编辑基础的版本不存在',
     version_cycle_mismatch: '当前版本与评估周期不一致，请先检查运行状态',
     concurrent_transition: '评估已开始，请等待完成',
     compensation_failed: '版本切换未完整落地，自动恢复失败，请停止操作并检查运行状态',
@@ -263,26 +300,28 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
   app.post('/api/prompt-hooks/:hookId/versions', async (request, reply) => {
     const userId = requireWriteAuth(request, reply);
     if (!userId) return;
-    if (!opts.overrideStore) {
-      return reply.status(503).send({ error: 'override store unavailable (redis off)' });
-    }
-    if (!versionCycleService) {
-      return reply.status(503).send({ error: 'Objective evaluation runtime unavailable' });
-    }
+    const dependencies = resolveVersionCreationDependencies(opts, versionCycleService);
+    if ('error' in dependencies) return reply.status(503).send(dependencies);
     const { hookId } = request.params as { hookId: string };
-    const parsed = parseContentBody(request.body);
-    if ('error' in parsed) return reply.status(400).send({ error: parsed.error });
+    const parsed = parseValidatedContentBody(
+      request.body,
+      hookId,
+      opts.validateVersionContent ?? validateCanonicalVersionContent,
+    );
+    if ('error' in parsed) return reply.status(400).send(parsed);
 
     try {
-      const transition = await versionCycleService.create({
+      const transition = await dependencies.service.create({
         ownerUserId: userId,
         segmentId: hookId,
         content: parsed.content,
+        baseVersion: parsed.baseVersion,
+        expectedActiveVersion: parsed.expectedActiveVersion,
         actorId: userId,
         reason: parsed.reason,
       });
-      const versions = await opts.overrideStore.listVersions(hookId);
-      const override = await opts.overrideStore.getOverride(hookId);
+      const versions = await dependencies.store.listVersions(hookId);
+      const override = await dependencies.store.getOverride(hookId);
       return reply.send({ ok: true, hookId, override, versions, transition });
     } catch (err) {
       if (!mapGateError(err, reply) && !mapManualSwitchError(err, reply)) throw err;

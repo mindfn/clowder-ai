@@ -1,87 +1,20 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
-import {
-  getTemplateFileInfo,
-  getTemplateOverlayPath,
-  TEMPLATE_FILES,
-  TEMPLATES_DIR,
-} from '../dist/domains/cats/services/context/prompt-template-loader.js';
+import { TEMPLATE_FILES } from '../dist/domains/cats/services/context/prompt-template-loader.js';
 import { parseHookManifest } from '../dist/domains/prompt-hooks/hook-manifest-parser.js';
 import { promptInjectionRoutes } from '../dist/routes/prompt-injection.js';
 
 const TEST_USER_ID = 'test-user';
 const AUTH_HEADERS = { 'x-cat-cafe-user': TEST_USER_ID };
-const LOCAL_WRITE_HEADERS = {
-  host: '127.0.0.1:3004',
-  origin: 'http://127.0.0.1:3003',
-};
 
 async function buildApp() {
   const app = Fastify({ logger: false });
   await app.register(promptInjectionRoutes);
   await app.ready();
   return app;
-}
-
-async function buildSessionApp() {
-  const app = Fastify({ logger: false });
-  app.addHook('onRequest', (req, _reply, done) => {
-    req.sessionUserId = TEST_USER_ID;
-    done();
-  });
-  await app.register(promptInjectionRoutes);
-  await app.ready();
-  return app;
-}
-
-async function withDefaultOwnerUserId(value, fn) {
-  const prev = process.env.DEFAULT_OWNER_USER_ID;
-  if (value === null) delete process.env.DEFAULT_OWNER_USER_ID;
-  else process.env.DEFAULT_OWNER_USER_ID = value;
-  try {
-    return await fn();
-  } finally {
-    if (prev === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
-    else process.env.DEFAULT_OWNER_USER_ID = prev;
-  }
-}
-
-function snapshotFile(path) {
-  return existsSync(path) ? readFileSync(path, 'utf-8') : null;
-}
-
-function restoreFile(path, content) {
-  if (content === null) {
-    if (existsSync(path)) unlinkSync(path);
-    return;
-  }
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content, 'utf-8');
-}
-
-async function withPreservedOverlay(segmentId, fn) {
-  const fileInfo = getTemplateFileInfo(segmentId);
-  assert.ok(fileInfo?.local, `${segmentId} should have a local overlay path`);
-  const localPath = getTemplateOverlayPath(segmentId);
-  assert.ok(localPath, `${segmentId} should resolve a writable overlay path`);
-  const bakPath = `${localPath}.bak`;
-  const assetLocalPath = join(TEMPLATES_DIR, fileInfo.local);
-  const assetBakPath = `${assetLocalPath}.bak`;
-  const localSnapshot = snapshotFile(localPath);
-  const bakSnapshot = snapshotFile(bakPath);
-  const assetLocalSnapshot = snapshotFile(assetLocalPath);
-  const assetBakSnapshot = snapshotFile(assetBakPath);
-  try {
-    await fn();
-  } finally {
-    restoreFile(localPath, localSnapshot);
-    restoreFile(bakPath, bakSnapshot);
-    restoreFile(assetLocalPath, assetLocalSnapshot);
-    restoreFile(assetBakPath, assetBakSnapshot);
-  }
 }
 
 describe('prompt-injection variable metadata', () => {
@@ -178,143 +111,6 @@ describe('prompt-injection variable metadata', () => {
       } finally {
         await app.close();
       }
-    });
-  });
-
-  describe('PUT /api/prompt-injection/segment/:id/override', () => {
-    it('saves source with placeholders and rejects expanded runtime value in payload', async () => {
-      await withDefaultOwnerUserId(TEST_USER_ID, async () => {
-        await withPreservedOverlay('S13', async () => {
-          const app = await buildSessionApp();
-          try {
-            // Raw source must retain HTML comment bytes; stripping is a UI preview concern only.
-            const sourceWithPlaceholder =
-              '<!-- @segment S13 --><!-- Variable: {{RICH_BLOCK_SHORT}} -->\nRich block short: {{RICH_BLOCK_SHORT}}';
-            const expandedValue = 'Rich block short: <xml/>';
-
-            const saveRes = await app.inject({
-              method: 'PUT',
-              url: '/api/prompt-injection/segment/S13/override',
-              headers: LOCAL_WRITE_HEADERS,
-              payload: { content: sourceWithPlaceholder },
-            });
-            assert.equal(saveRes.statusCode, 200, `expected 200, got ${saveRes.statusCode}: ${saveRes.body}`);
-
-            // Now verify GET still returns the source with placeholder and comment bytes
-            const getRes = await app.inject({
-              method: 'GET',
-              url: '/api/prompt-injection/segment/S13/content',
-              headers: AUTH_HEADERS,
-            });
-            const body = JSON.parse(getRes.body);
-            assert.ok(body.content.includes('{{RICH_BLOCK_SHORT}}'), 'saved content should retain placeholder');
-            assert.ok(body.content.includes('<!-- @segment S13 -->'), 'saved content should retain HTML comment bytes');
-
-            // Expanded value should not be persisted as override
-            const badSaveRes = await app.inject({
-              method: 'PUT',
-              url: '/api/prompt-injection/segment/S13/override',
-              headers: LOCAL_WRITE_HEADERS,
-              payload: { content: expandedValue },
-            });
-            assert.equal(
-              badSaveRes.statusCode,
-              400,
-              `expected 400 for expanded value, got ${badSaveRes.statusCode}: ${badSaveRes.body}`,
-            );
-          } finally {
-            await app.close();
-          }
-        });
-      });
-    });
-
-    it('rejects a legacy expanded overlay without placeholders and allows recovery with canonical source', async () => {
-      await withDefaultOwnerUserId(TEST_USER_ID, async () => {
-        await withPreservedOverlay('S13', async () => {
-          const app = await buildSessionApp();
-          try {
-            const localPath = getTemplateOverlayPath('S13');
-            assert.ok(localPath);
-            // Simulate a legacy overlay that already contains an expanded runtime value.
-            const expandedOverlay = 'Rich block short: <xml/>';
-            writeFileSync(localPath, expandedOverlay, 'utf-8');
-
-            // Re-saving the expanded value must be rejected against the canonical base template.
-            const badRes = await app.inject({
-              method: 'PUT',
-              url: '/api/prompt-injection/segment/S13/override',
-              headers: LOCAL_WRITE_HEADERS,
-              payload: { content: expandedOverlay },
-            });
-            assert.equal(badRes.statusCode, 400, `expected 400, got ${badRes.statusCode}: ${badRes.body}`);
-
-            // Recovery: saving canonical source with the required placeholder succeeds.
-            const canonicalSource = '<!-- S13 source -->\nRich block short: {{RICH_BLOCK_SHORT}}';
-            const goodRes = await app.inject({
-              method: 'PUT',
-              url: '/api/prompt-injection/segment/S13/override',
-              headers: LOCAL_WRITE_HEADERS,
-              payload: { content: canonicalSource },
-            });
-            assert.equal(goodRes.statusCode, 200, `expected 200, got ${goodRes.statusCode}: ${goodRes.body}`);
-
-            const getRes = await app.inject({
-              method: 'GET',
-              url: '/api/prompt-injection/segment/S13/content',
-              headers: AUTH_HEADERS,
-            });
-            const body = JSON.parse(getRes.body);
-            assert.ok(body.content.includes('{{RICH_BLOCK_SHORT}}'), 'recovered content should retain placeholder');
-          } finally {
-            await app.close();
-          }
-        });
-      });
-    });
-
-    it('rejects restore-backup when .bak contains expanded runtime values', async () => {
-      await withDefaultOwnerUserId(TEST_USER_ID, async () => {
-        await withPreservedOverlay('S13', async () => {
-          const app = await buildSessionApp();
-          try {
-            const localPath = getTemplateOverlayPath('S13');
-            assert.ok(localPath);
-            const canonicalSource = 'Rich block short: {{RICH_BLOCK_SHORT}}';
-            const expandedBackup = 'Rich block short: <legacy-expanded/>';
-
-            // Save canonical source so a .bak file is created on the next save.
-            await app.inject({
-              method: 'PUT',
-              url: '/api/prompt-injection/segment/S13/override',
-              headers: LOCAL_WRITE_HEADERS,
-              payload: { content: canonicalSource },
-            });
-
-            // Overwrite .bak with a legacy expanded value.
-            writeFileSync(`${localPath}.bak`, expandedBackup, 'utf-8');
-
-            // Restore must reject the expanded backup against the immutable base template.
-            const restoreRes = await app.inject({
-              method: 'POST',
-              url: '/api/prompt-injection/segment/S13/restore-backup',
-              headers: LOCAL_WRITE_HEADERS,
-            });
-            assert.equal(restoreRes.statusCode, 400, `expected 400, got ${restoreRes.statusCode}: ${restoreRes.body}`);
-
-            // Current overlay must remain canonical.
-            const getRes = await app.inject({
-              method: 'GET',
-              url: '/api/prompt-injection/segment/S13/content',
-              headers: AUTH_HEADERS,
-            });
-            const body = JSON.parse(getRes.body);
-            assert.ok(body.content.includes('{{RICH_BLOCK_SHORT}}'), 'overlay should still contain placeholder');
-          } finally {
-            await app.close();
-          }
-        });
-      });
     });
   });
 

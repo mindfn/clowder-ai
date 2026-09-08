@@ -75,6 +75,7 @@ function makeEnablementMatrix(): import('@cat-cafe/shared').SegmentEnablementMat
         enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
         rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
         activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+        createVersion: { allowed: true, reason: null, reasonCode: null },
       },
     },
   };
@@ -273,6 +274,7 @@ describe('F257 segment activity presentation', () => {
     expect(text).not.toContain('本段查询窗');
     expect(text).not.toContain('本段注入明细');
     expect(text).not.toContain('触发策略已调整 0 次');
+    expect(text).not.toContain('采集故障');
     expect(text).not.toMatch(/\bidle\b/);
     expect(text).not.toMatch(/\bactive\b/);
   });
@@ -309,7 +311,7 @@ describe('F257 segment activity presentation', () => {
     const text = container.textContent ?? '';
     expect(text).toContain('评估停滞');
     expect(text).toContain('已休眠');
-    expect(text).toContain('触发策略已调整 2 次');
+    expect(text).not.toContain('触发策略已调整');
     expect(text).not.toMatch(/\bstalled\b/);
     expect(text).not.toMatch(/\bdormant\b/);
   });
@@ -323,16 +325,15 @@ describe('F257 segment activity presentation', () => {
         window: QUERY_WINDOW,
         readiness: readiness({
           counterexamples: { count: 4, threshold: 3 },
-          lastClosedAtMs: 10_000_000 - 60 * 60 * 1000,
+          cycleStartMs: 10_000_000 - 60 * 60 * 1000,
           minimumIntervalMs: 2 * 60 * 60 * 1000,
         }),
       }),
     );
     const text = container.textContent ?? '';
     expect(text).toContain('周期反例Tracing4/3 次');
-    expect(text).toContain('最短评估间隔2 小时');
-    expect(text).toContain('已满足的数量条件将在');
-    expect(text).toContain('后触发评估');
+    expect(text).toContain('最短采集评估时间2 小时');
+    expect(text).toContain('最早可评估时间');
   });
 
   it('does not claim a quantity trigger is met merely because the interval is still cooling down', async () => {
@@ -345,12 +346,12 @@ describe('F257 segment activity presentation', () => {
         readiness: readiness({
           cumulative: { count: 30, threshold: 400 },
           counterexamples: { count: 0, threshold: 3 },
-          lastClosedAtMs: 10_000_000 - 60 * 60 * 1000,
+          cycleStartMs: 10_000_000 - 60 * 60 * 1000,
           minimumIntervalMs: 2 * 60 * 60 * 1000,
         }),
       }),
     );
-    expect(container.textContent).not.toContain('已满足的数量条件将在');
+    expect(container.textContent).not.toContain('最早可评估时间');
   });
 });
 

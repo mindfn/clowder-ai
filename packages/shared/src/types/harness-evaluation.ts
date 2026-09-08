@@ -198,6 +198,8 @@ export interface CycleRecord {
     segmentId: string;
     fromVersion: number;
     toVersion: number;
+    /** Historical content version used as the new version's parent, when distinct from the active source. */
+    baseVersion?: number;
     at: number;
     by: string;
     reason: string;
@@ -335,7 +337,7 @@ export interface SegmentTracingEvaluationView {
       evalStatus: CycleEvaluationStatus;
       cycleStartMs: number;
       cycleEndMs: number | null;
-      /** Previous cycle close/settlement coordinate used by the cooldown gate. */
+      /** Historical settlement coordinate retained for response compatibility; not used by the collection gate. */
       lastClosedAtMs: number | null;
       minimumIntervalMs: number;
       triggeredBy: CycleTriggerRoute[];

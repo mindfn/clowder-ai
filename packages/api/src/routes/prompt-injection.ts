@@ -1,17 +1,16 @@
 /**
  * Prompt Injection Template Overlay API (F237 Checkpoint C)
  *
- * Endpoints for reading, editing, previewing, and resetting
- * prompt injection template overlays (.local files).
+ * Read/preview surface for prompt injection templates. Legacy `.local`
+ * mutations remain registered only to fail closed and direct callers to the
+ * cycle-aware version lifecycle.
  *
  * GET  /api/prompt-injection/segment/:id/content — current effective content
  * POST /api/prompt-injection/segment/:id/preview — compile preview with vars
- * PUT  /api/prompt-injection/segment/:id/override — save .local overlay
- * DELETE /api/prompt-injection/segment/:id/override — reset to default
+ * PUT/DELETE /api/prompt-injection/segment/:id/override — retired (409)
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { HookVariableDef, SafetyTier, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
@@ -30,7 +29,6 @@ import {
 } from '../domains/cats/services/context/prompt-template-loader.js';
 import { RICH_BLOCK_SHORT } from '../domains/cats/services/context/rich-block-rules.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
-import { resetPipelineSingleton } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { getHookManifest, getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
 
@@ -70,88 +68,17 @@ function requireOverlayWriteAuth(request: import('fastify').FastifyRequest): Ove
   return { ok: true, userId };
 }
 
+const VERSIONED_EDITOR_REQUIRED = {
+  code: 'versioned_editor_required',
+  error: '段内容编辑已迁移到版本生命周期，请使用产生并应用新版本',
+} as const;
+
 /**
  * Validate that YAML content parses to a mapping of string values.
  * Returns an error message or null if valid.
  * Used by both save and restore-backup paths (P2 audit: same gate on all write paths).
  */
-function validateYamlStringMapping(content: string): string | null {
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(content);
-  } catch (e) {
-    return `Invalid YAML: ${e instanceof Error ? e.message : String(e)}`;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return 'YAML must be a mapping (object), not a scalar or list';
-  }
-  for (const [key, val] of Object.entries(parsed)) {
-    if (typeof val !== 'string') {
-      return `Value for key "${key}" must be a string, got ${typeof val}`;
-    }
-  }
-  return null;
-}
-
-function removeIfExists(path: string): void {
-  if (existsSync(path)) unlinkSync(path);
-}
-
-function tmpPathFor(path: string): string {
-  return `${path}.${process.pid}.${process.hrtime.bigint()}.tmp`;
-}
-
-function atomicWriteFileSync(path: string, content: string): void {
-  const tmpPath = tmpPathFor(path);
-  try {
-    writeFileSync(tmpPath, content, 'utf-8');
-    renameSync(tmpPath, path);
-  } finally {
-    removeIfExists(tmpPath);
-  }
-}
-
-function atomicCopyFileSync(sourcePath: string, targetPath: string): void {
-  const tmpPath = tmpPathFor(targetPath);
-  try {
-    copyFileSync(sourcePath, tmpPath);
-    renameSync(tmpPath, targetPath);
-  } finally {
-    removeIfExists(tmpPath);
-  }
-}
-
-function invalidatePromptPipeline(): void {
-  resetPipelineSingleton();
-}
-
-/** Extract {{NAME}} placeholders from a template source string. */
-function extractPlaceholders(content: string): string[] {
-  const vars: string[] = [];
-  for (const m of content.matchAll(/\{\{(\w+)\}\}/g)) {
-    if (!vars.includes(m[1])) vars.push(m[1]);
-  }
-  return vars;
-}
-
-/**
- * Reject content that has replaced runtime-expanded values back into the source.
- * The saved source must retain every {{NAME}} placeholder present in the
- * immutable base template. Using the current effective overlay as reference
- * would let a legacy expanded overlay be re-saved without placeholders.
- */
-function validateSourcePlaceholders(content: string, referenceContent: string): string | null {
-  const required = extractPlaceholders(referenceContent);
-  if (required.length === 0) return null;
-  const present = new Set(extractPlaceholders(content));
-  const missing = required.filter((name) => !present.has(name));
-  if (missing.length === 0) return null;
-  return `Missing required placeholders: ${missing.map((n) => `{{${n}}}`).join(', ')}`;
-}
-
 type RouteError = { status: number; error: string };
-type OverlaySaveResult = { status: number; saved: true; path: string } | RouteError;
-type OverlayRestoreResult = { status: number; restored: true } | RouteError;
 
 function isRouteError(result: unknown): result is RouteError {
   return typeof result === 'object' && result !== null && 'error' in result;
@@ -184,89 +111,6 @@ function renderPreview(
 
   const vars = resolveVars(id);
   return { status: 200, rendered: renderTemplate(stripComments(content), vars) };
-}
-
-function saveOverlay(id: string, content: string, meta: SegmentMeta): OverlaySaveResult {
-  if (typeof content !== 'string' || content.trim().length === 0) {
-    return { status: 400, error: 'Missing or empty content field' };
-  }
-
-  // Validate YAML segments parse to a string-valued mapping
-  if (meta.ext === 'yaml') {
-    const yamlErr = validateYamlStringMapping(content);
-    if (yamlErr) {
-      return { status: 400, error: yamlErr };
-    }
-  }
-
-  // Reject runtime-expanded values being written back as source.
-  // Use the immutable base template as reference, not the current effective
-  // overlay — otherwise a legacy expanded overlay could be re-saved.
-  const baseContent = getTemplateRawContent(id, false) ?? '';
-  const placeholderErr = validateSourcePlaceholders(content, baseContent);
-  if (placeholderErr) {
-    return { status: 400, error: placeholderErr };
-  }
-
-  const fileInfo = getTemplateFileInfo(id);
-  if (!fileInfo) {
-    return { status: 500, error: 'Template file info not found' };
-  }
-
-  const localPath = getTemplateOverlayPath(id);
-  if (!localPath) {
-    return { status: 500, error: 'Template overlay path not found' };
-  }
-  mkdirSync(dirname(localPath), { recursive: true });
-
-  // Backup existing .local to .local.bak before overwriting
-  if (existsSync(localPath)) {
-    const bakPath = `${localPath}.bak`;
-    atomicCopyFileSync(localPath, bakPath);
-  }
-
-  atomicWriteFileSync(localPath, content);
-  invalidatePromptPipeline();
-
-  return { status: 200, saved: true, path: fileInfo.local };
-}
-
-function restoreOverlay(id: string, meta: SegmentMeta): OverlayRestoreResult {
-  const fileInfo = getTemplateFileInfo(id);
-  if (!fileInfo?.local) {
-    return { status: 500, error: 'Template file info not found' };
-  }
-
-  const localPath = getTemplateOverlayPath(id);
-  if (!localPath) {
-    return { status: 500, error: 'Template overlay path not found' };
-  }
-
-  const bakPath = `${localPath}.bak`;
-  if (!existsSync(bakPath)) {
-    return { status: 404, error: 'No backup file exists' };
-  }
-
-  // Validate backup content before restoring (P2-7: same gate as save path)
-  const bakContent = readFileSync(bakPath, 'utf-8');
-  if (meta.ext === 'yaml') {
-    const yamlErr = validateYamlStringMapping(bakContent);
-    if (yamlErr) {
-      return { status: 400, error: `Backup file is invalid — ${yamlErr}` };
-    }
-  }
-
-  // Reject backups that contain runtime-expanded values instead of placeholders.
-  const baseContent = getTemplateRawContent(id, false) ?? '';
-  const placeholderErr = validateSourcePlaceholders(bakContent, baseContent);
-  if (placeholderErr) {
-    return { status: 400, error: `Backup file is invalid — ${placeholderErr}` };
-  }
-
-  atomicCopyFileSync(bakPath, localPath);
-  invalidatePromptPipeline();
-
-  return { status: 200, restored: true };
 }
 
 // ── Route options ────────────────────────────────────────────
@@ -457,12 +301,7 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
     },
   );
 
-  /**
-   * PUT /api/prompt-injection/segment/:id/override
-   * Save .local overlay file. Only allowed for allowLocalOverride: true segments.
-   * Body: { content: string }
-   * Backs up existing .local to .local.bak before overwriting.
-   */
+  /** Legacy mutation route retained as an authenticated fail-closed boundary. */
   app.put<{ Params: { id: string }; Body: { content: string } }>(
     '/api/prompt-injection/segment/:id/override',
     async (request, reply) => {
@@ -471,85 +310,30 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
         reply.status(auth.status);
         return { error: auth.error };
       }
-      const { id } = request.params;
-      const meta = resolveSegmentMeta(id);
-      if (!meta) {
-        reply.status(404);
-        return { error: `Segment ${id} is not template-backed` };
-      }
-      if (!meta.allowLocalOverride) {
-        reply.status(403);
-        return { error: `Segment ${id} has no writable local overlay` };
-      }
-
-      const { content } = request.body ?? {};
-      const result = saveOverlay(id, content, meta);
-      reply.status(result.status);
-      return isRouteError(result) ? { error: result.error } : { segmentId: id, saved: true, path: result.path };
+      reply.status(409);
+      return VERSIONED_EDITOR_REQUIRED;
     },
   );
 
-  /**
-   * DELETE /api/prompt-injection/segment/:id/override
-   * Remove .local overlay, reverting to default template.
-   */
+  /** Legacy reset cannot bypass the version/cycle transition. */
   app.delete<{ Params: { id: string } }>('/api/prompt-injection/segment/:id/override', async (request, reply) => {
     const auth = requireOverlayWriteAuth(request);
     if (!auth.ok) {
       reply.status(auth.status);
       return { error: auth.error };
     }
-    const { id } = request.params;
-    const meta = resolveSegmentMeta(id);
-    if (!meta) {
-      reply.status(404);
-      return { error: `Segment ${id} is not template-backed` };
-    }
-    if (!meta.allowLocalOverride) {
-      reply.status(403);
-      return { error: `Segment ${id} has no writable local overlay` };
-    }
-
-    const fileInfo = getTemplateFileInfo(id);
-    if (!fileInfo?.local) {
-      return { segmentId: id, deleted: false, reason: 'No overlay path defined' };
-    }
-
-    const localPath = getTemplateOverlayPath(id);
-    if (!localPath) {
-      return { segmentId: id, deleted: false, reason: 'No overlay path defined' };
-    }
-    if (existsSync(localPath)) {
-      unlinkSync(localPath);
-      invalidatePromptPipeline();
-      return { segmentId: id, deleted: true };
-    }
-    return { segmentId: id, deleted: false, reason: 'No override file exists' };
+    reply.status(409);
+    return VERSIONED_EDITOR_REQUIRED;
   });
 
-  /**
-   * POST /api/prompt-injection/segment/:id/restore-backup
-   * Restore .local from .local.bak (one-click rollback to previous version).
-   */
+  /** Legacy backup restore cannot bypass the version/cycle transition. */
   app.post<{ Params: { id: string } }>('/api/prompt-injection/segment/:id/restore-backup', async (request, reply) => {
     const auth = requireOverlayWriteAuth(request);
     if (!auth.ok) {
       reply.status(auth.status);
       return { error: auth.error };
     }
-    const { id } = request.params;
-    const meta = resolveSegmentMeta(id);
-    if (!meta) {
-      reply.status(404);
-      return { error: `Segment ${id} is not template-backed` };
-    }
-    if (!meta.allowLocalOverride) {
-      reply.status(403);
-      return { error: `Segment ${id} is readonly` };
-    }
-
-    const result = restoreOverlay(id, meta);
-    reply.status(result.status);
-    return isRouteError(result) ? { error: result.error } : { segmentId: id, restored: true };
+    reply.status(409);
+    return VERSIONED_EDITOR_REQUIRED;
   });
 };

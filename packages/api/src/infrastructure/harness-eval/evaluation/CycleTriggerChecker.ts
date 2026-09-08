@@ -107,11 +107,11 @@ export class CycleTriggerChecker {
     if (current.evalStatus !== 'idle') return { status: 'active', record: current };
 
     const policy = cycleTriggerPolicyFor(this.deps.catalog, current);
-    const history = await this.deps.cycles.history(ownerUserId, objectiveId);
-    const lastClosedAt = history[0]?.closedAt;
-    if (lastClosedAt !== undefined && now < lastClosedAt + policy.minimumIntervalMs) {
+    if (now < current.cycleStart + policy.minimumIntervalMs) {
       return { status: 'interval', record: current };
     }
+
+    const history = await this.deps.cycles.history(ownerUserId, objectiveId);
 
     const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, current.cycleStart, now);
     const counterexamples = await this.distinctCounterexamples(

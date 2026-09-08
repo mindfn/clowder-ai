@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 
 import { OverrideGateError } from '../dist/domains/prompt-hooks/HookOverrideStore.js';
 import { promptInjectionOverrideRoutes } from '../dist/routes/prompt-injection-overrides.js';
+import { validateCanonicalVersionContent } from '../dist/routes/prompt-injection-version-content.js';
 
 const OWNER = 'test-owner';
 
@@ -62,6 +63,9 @@ function createFakeStore() {
     },
     async getActiveVersion(hookId) {
       return overrides.get(hookId)?.activeEpochVersion ?? 1;
+    },
+    async hasVersion(_hookId, epochVersion) {
+      return epochVersion >= 1 && epochVersion <= 2;
     },
   };
 }
@@ -137,6 +141,7 @@ async function buildApp(options = {}) {
   const sessionUserId = options.sessionUserId === undefined ? OWNER : options.sessionUserId;
   const refreshOverrideSnapshot = options.refreshOverrideSnapshot ?? (async () => {});
   const runtime = options.runtime ?? createRuntime(store);
+  const validateVersionContent = options.validateVersionContent ?? (() => null);
   const app = Fastify();
   if (sessionUserId) {
     app.addHook('onRequest', (req, _reply, done) => {
@@ -144,7 +149,12 @@ async function buildApp(options = {}) {
       done();
     });
   }
-  await app.register(promptInjectionOverrideRoutes, { overrideStore: store, refreshOverrideSnapshot, runtime });
+  await app.register(promptInjectionOverrideRoutes, {
+    overrideStore: store,
+    refreshOverrideSnapshot,
+    runtime,
+    validateVersionContent,
+  });
   await app.ready();
   return { app, store };
 }
@@ -153,6 +163,12 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
   before(() => {
     // Owner gate: configured owner must match session user for writes.
     process.env.DEFAULT_OWNER_USER_ID = OWNER;
+  });
+
+  it('validates version source against canonical placeholders and YAML shape', () => {
+    assert.match(validateCanonicalVersionContent('S13', 'expanded rich block'), /Missing required placeholders/);
+    assert.match(validateCanonicalVersionContent('S6', 'not-a-mapping'), /mapping/);
+    assert.equal(validateCanonicalVersionContent('S6', 'ragdoll: "{{RICH_BLOCK_SHORT}}"'), null);
   });
 
   it('401 without session (read + write)', async () => {
@@ -298,7 +314,12 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     const createdVersion = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-决策树/versions',
-      payload: { content: 'v2 content', reason: 'create the bounded v2 trial' },
+      payload: {
+        content: 'v2 content',
+        reason: 'create the bounded v2 trial',
+        baseVersion: 1,
+        expectedActiveVersion: 1,
+      },
     });
     assert.equal(createdVersion.statusCode, 200);
     assert.equal(createdVersion.json().transition.toVersion, 2);
@@ -312,6 +333,68 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     assert.equal(activatedVersion.statusCode, 200);
     assert.equal(activatedVersion.json().transition.toVersion, 1);
     assert.equal(refreshCount, 3);
+    await app.close();
+  });
+
+  it('creates from an explicit base version and guards the active version seen by the editor', async () => {
+    const store = createFakeStore();
+    const { app } = await buildApp({ store });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
+      payload: {
+        content: 'new branch content',
+        reason: '用户编辑',
+        baseVersion: 1,
+        expectedActiveVersion: 1,
+      },
+    });
+
+    assert.equal(created.statusCode, 200);
+    assert.equal(created.json().transition.baseVersion, 1);
+    const write = store.calls.find((call) => call.method === 'setContentOverride');
+    assert.equal(write.opts.parentVersion, 1);
+
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
+      payload: { content: 'x', reason: '用户编辑', baseVersion: 0, expectedActiveVersion: 1 },
+    });
+    assert.equal(invalid.statusCode, 400);
+
+    const stale = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
+      payload: { content: 'stale', reason: '用户编辑', baseVersion: 1, expectedActiveVersion: 1 },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.json().code, 'active_version_changed');
+
+    const missingBase = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
+      payload: { content: 'missing base', reason: '用户编辑', baseVersion: 99, expectedActiveVersion: 2 },
+    });
+    assert.equal(missingBase.statusCode, 404);
+    assert.equal(missingBase.json().code, 'base_version_not_found');
+    await app.close();
+  });
+
+  it('rejects invalid source before creating a version', async () => {
+    const store = createFakeStore();
+    const { app } = await buildApp({ store, validateVersionContent: () => 'Missing required placeholders: {{VALUE}}' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
+      payload: { content: 'expanded value', reason: '用户编辑', baseVersion: 1, expectedActiveVersion: 1 },
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().code, 'invalid_version_content');
+    assert.equal(
+      store.calls.some((call) => call.method === 'setContentOverride'),
+      false,
+    );
     await app.close();
   });
 
@@ -398,7 +481,12 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     const createResponse = await app.inject({
       method: 'POST',
       url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions',
-      payload: { content: 'must not become active', reason: 'evaluation owns the current version' },
+      payload: {
+        content: 'must not become active',
+        reason: 'evaluation owns the current version',
+        baseVersion: 1,
+        expectedActiveVersion: 1,
+      },
     });
     assert.equal(createResponse.statusCode, 409);
     assert.equal(

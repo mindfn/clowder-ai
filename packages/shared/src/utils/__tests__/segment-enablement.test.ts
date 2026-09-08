@@ -22,7 +22,13 @@ const DEFAULT_INPUT: ResolveSegmentEnablementMatrixInput = {
 };
 
 const ALL_LOCAL_ACTIONS: SegmentLocalOverlayAction[] = ['edit', 'restoreBackup', 'reset'];
-const ALL_RUNTIME_ACTIONS: SegmentRuntimeOverrideAction[] = ['disable', 'enable', 'rollback', 'activateVersion'];
+const ALL_RUNTIME_ACTIONS: SegmentRuntimeOverrideAction[] = [
+  'disable',
+  'enable',
+  'rollback',
+  'activateVersion',
+  'createVersion',
+];
 
 function allowedLocalActions(matrix: ReturnType<typeof resolveSegmentEnablementMatrix>): SegmentLocalOverlayAction[] {
   return ALL_LOCAL_ACTIONS.filter((a) => matrix.localOverlay.actions[a].allowed);
@@ -48,37 +54,38 @@ function runtimeReasonCode(
 describe('resolveSegmentEnablementMatrix', () => {
   it('editable + allowLocalOverride + disableable + enabled baseline', () => {
     const m = resolveSegmentEnablementMatrix(DEFAULT_INPUT);
-    expect(allowedLocalActions(m).sort()).toEqual(['edit'].sort());
-    expect(allowedRuntimeActions(m).sort()).toEqual(['disable'].sort());
-    expect(m.localOverlay.actions.edit.reasonCode).toBeNull();
+    expect(allowedLocalActions(m)).toEqual([]);
+    expect(allowedRuntimeActions(m).sort()).toEqual(['createVersion', 'disable'].sort());
+    expect(m.localOverlay.actions.edit.reasonCode).toBe('versioned-editor-required');
     expect(m.runtimeOverride.actions.disable.reasonCode).toBeNull();
     expect(runtimeReasonCode(m, 'enable')).toBe('already-enabled');
     expect(runtimeReasonCode(m, 'rollback')).toBe('no-override');
-    expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
+    expect(localReasonCode(m, 'restoreBackup')).toBe('versioned-editor-required');
     expect(runtimeReasonCode(m, 'activateVersion')).toBe('no-version-snapshot');
   });
 
-  it('readonly does not block an owner-authored local overlay', () => {
+  it('readonly blocks version creation and legacy local writes', () => {
     const m = resolveSegmentEnablementMatrix({ ...DEFAULT_INPUT, safetyTier: 'readonly' });
-    expect(allowedLocalActions(m)).toEqual(['edit']);
+    expect(allowedLocalActions(m)).toEqual([]);
     expect(allowedRuntimeActions(m)).toEqual(['disable']);
-    expect(localReasonCode(m, 'edit')).toBeNull();
-    expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
+    expect(runtimeReasonCode(m, 'createVersion')).toBe('safety-tier-readonly');
+    expect(localReasonCode(m, 'edit')).toBe('versioned-editor-required');
+    expect(localReasonCode(m, 'restoreBackup')).toBe('versioned-editor-required');
     expect(runtimeReasonCode(m, 'activateVersion')).toBe('no-version-snapshot');
   });
 
   it('allowLocalOverride=false blocks edit/restore even when editable', () => {
     const m = resolveSegmentEnablementMatrix({ ...DEFAULT_INPUT, allowLocalOverride: false });
     expect(allowedLocalActions(m)).toEqual([]);
-    expect(allowedRuntimeActions(m)).toEqual(['disable']);
-    expect(localReasonCode(m, 'edit')).toBe('no-local-overlay-path');
-    expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
+    expect(allowedRuntimeActions(m).sort()).toEqual(['createVersion', 'disable'].sort());
+    expect(localReasonCode(m, 'edit')).toBe('versioned-editor-required');
+    expect(localReasonCode(m, 'restoreBackup')).toBe('versioned-editor-required');
   });
 
-  it('disableable=false blocks disable but leaves edit intact', () => {
+  it('disableable=false blocks disable while version creation stays available', () => {
     const m = resolveSegmentEnablementMatrix({ ...DEFAULT_INPUT, disableable: false });
-    expect(allowedLocalActions(m)).toEqual(['edit']);
-    expect(allowedRuntimeActions(m)).toEqual([]);
+    expect(allowedLocalActions(m)).toEqual([]);
+    expect(allowedRuntimeActions(m)).toEqual(['createVersion']);
     expect(runtimeReasonCode(m, 'disable')).toBe('not-disableable');
   });
 
@@ -93,13 +100,13 @@ describe('resolveSegmentEnablementMatrix', () => {
         availableEpochVersions: [],
       },
     });
-    expect(allowedLocalActions(m).sort()).toEqual(['edit'].sort());
-    expect(allowedRuntimeActions(m).sort()).toEqual(['enable', 'rollback'].sort());
+    expect(allowedLocalActions(m)).toEqual([]);
+    expect(allowedRuntimeActions(m).sort()).toEqual(['createVersion', 'enable', 'rollback'].sort());
     expect(runtimeReasonCode(m, 'disable')).toBe('already-disabled');
     expect(runtimeReasonCode(m, 'enable')).toBeNull();
   });
 
-  it('content override enables rollback; version snapshot enables activateVersion', () => {
+  it('content override enables rollback; version snapshot enables activateVersion without reviving local writes', () => {
     const m = resolveSegmentEnablementMatrix({
       ...DEFAULT_INPUT,
       localOverlay: { hasOverlay: true, hasBackup: true },
@@ -111,37 +118,38 @@ describe('resolveSegmentEnablementMatrix', () => {
         availableEpochVersions: [2, 3],
       },
     });
-    expect(allowedLocalActions(m).sort()).toEqual(['edit', 'reset', 'restoreBackup'].sort());
-    expect(allowedRuntimeActions(m).sort()).toEqual(['activateVersion', 'disable', 'rollback'].sort());
+    expect(allowedLocalActions(m)).toEqual([]);
+    expect(allowedRuntimeActions(m).sort()).toEqual(['activateVersion', 'createVersion', 'disable', 'rollback'].sort());
   });
 
-  it('readonly and allowLocalOverride=true keeps local editing available', () => {
+  it('legacy local writes stay blocked even when an overlay path exists', () => {
     const m = resolveSegmentEnablementMatrix({
       ...DEFAULT_INPUT,
       safetyTier: 'readonly',
       allowLocalOverride: true,
     });
-    expect(allowedLocalActions(m)).toEqual(['edit']);
-    expect(localReasonCode(m, 'edit')).toBeNull();
-    // restoreBackup is blocked by the absence of a backup before safetyTier is reached.
-    expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
+    expect(allowedLocalActions(m)).toEqual([]);
+    expect(localReasonCode(m, 'edit')).toBe('versioned-editor-required');
+    expect(localReasonCode(m, 'restoreBackup')).toBe('versioned-editor-required');
   });
 
-  it('readonly + no overlay path is blocked only by the missing writable path', () => {
+  it('legacy local writes report the versioned editor regardless of filesystem state', () => {
     const m = resolveSegmentEnablementMatrix({
       ...DEFAULT_INPUT,
       safetyTier: 'readonly',
       allowLocalOverride: false,
       localOverlay: { hasOverlay: false, hasBackup: true },
     });
-    expect(localReasonCode(m, 'edit')).toBe('no-local-overlay-path');
-    expect(localReasonCode(m, 'restoreBackup')).toBe('no-local-overlay-path');
+    expect(localReasonCode(m, 'edit')).toBe('versioned-editor-required');
+    expect(localReasonCode(m, 'restoreBackup')).toBe('versioned-editor-required');
   });
 
-  it('limited-edit does not block matrix edit (source gate enforced server-side)', () => {
+  it('limited-edit permits version creation but not legacy local writes', () => {
     const m = resolveSegmentEnablementMatrix({ ...DEFAULT_INPUT, safetyTier: 'limited-edit' });
-    expect(m.localOverlay.actions.edit.allowed).toBe(true);
+    expect(m.localOverlay.actions.edit.allowed).toBe(false);
+    expect(m.localOverlay.actions.edit.reasonCode).toBe('versioned-editor-required');
     expect(m.runtimeOverride.actions.activateVersion.allowed).toBe(false);
+    expect(m.runtimeOverride.actions.createVersion.allowed).toBe(true);
     expect(runtimeReasonCode(m, 'activateVersion')).toBe('no-version-snapshot');
   });
 

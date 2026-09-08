@@ -174,7 +174,10 @@ export class SegmentEvaluationReadModel {
           objectiveId: objective.id,
           evalStatus: selected?.evalStatus ?? 'idle',
           lifecycle: objective.lifecycle === 'retired' ? 'retired' : (selected?.objectiveLifecycle ?? 'active'),
-          health: cumulativeCount === 0 ? 'zero-trace-fault' : 'healthy',
+          // An empty fresh cycle is a normal tracing state, not evidence of a
+          // collector failure. Only an independently observed fault may make
+          // this field unhealthy in a future contract.
+          health: 'healthy',
           policyChangeCount: history.filter(
             (record) => record.cycleStart <= cycleStart && record.triggerPolicyChange !== undefined,
           ).length,

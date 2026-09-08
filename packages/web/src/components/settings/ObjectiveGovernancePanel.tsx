@@ -59,7 +59,9 @@ function GovernanceOutcome({
         <MetaRow label="停止时间">{formatTs(termination.at)}</MetaRow>
         <MetaRow label="操作人">@{termination.by}</MetaRow>
         <MetaRow label="版本切换">
-          {termination.segmentId}：v{termination.fromVersion} → v{termination.toVersion}
+          {termination.baseVersion == null
+            ? `${termination.segmentId}：v${termination.fromVersion} → v${termination.toVersion}`
+            : `当前版本 v${termination.fromVersion} → v${termination.toVersion}（基于 v${termination.baseVersion}）`}
         </MetaRow>
         <MetaRow label="说明">{termination.reason}</MetaRow>
       </div>

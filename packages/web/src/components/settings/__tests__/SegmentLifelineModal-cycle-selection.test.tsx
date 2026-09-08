@@ -83,6 +83,7 @@ const lifeline: SegmentLifecycleResponse = {
         enable: { allowed: false, reason: 'readonly', reasonCode: 'readonly' },
         rollback: { allowed: false, reason: 'readonly', reasonCode: 'readonly' },
         activateVersion: { allowed: false, reason: 'readonly', reasonCode: 'readonly' },
+        createVersion: { allowed: false, reason: 'readonly', reasonCode: 'readonly' },
       },
     },
   },
@@ -385,5 +386,29 @@ describe('SegmentLifelineModal cycle selection', () => {
     expect(document.body.textContent).toContain('D1：v3 → v2');
     expect(document.body.textContent).toContain('信息不足，切回已验证版本');
     expect(document.body.textContent).not.toContain('历史周期保持');
+  });
+
+  it('shows a direct branch edit as current version to new version based on the selected history', () => {
+    const data = evaluationFor(prior);
+    const objective = data.objectives[0];
+    objective.selectedCycle = {
+      ...prior,
+      governance: null,
+      governanceImpact: null,
+      termination: {
+        kind: 'manual-version-switch',
+        segmentId: 'D1',
+        fromVersion: 2,
+        toVersion: 4,
+        baseVersion: 1,
+        at: 230,
+        by: 'default-user',
+        reason: '基于 v1 编辑并应用新版本',
+      },
+    };
+    objective.latestGovernance = null;
+
+    act(() => root.render(<ObjectiveGovernancePanel data={data} />));
+    expect(document.body.textContent).toContain('当前版本 v2 → v4（基于 v1）');
   });
 });

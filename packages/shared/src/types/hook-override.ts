@@ -99,6 +99,11 @@ export interface OverrideChangeEvent {
    * and version-activate target resolution. Absent on pre-R6 events.
    */
   epochVersion?: number;
+  /**
+   * Parent epoch used to create this version. Absent on legacy content-set
+   * events, where the then-active version remains the inferred parent.
+   */
+  parentVersion?: number;
 }
 
 // ---------------------------------------------------------------------------

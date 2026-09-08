@@ -8,6 +8,8 @@ export type ManualVersionCycleErrorCode =
   | 'cycle_not_initialized'
   | 'evaluation_in_progress'
   | 'version_already_active'
+  | 'active_version_changed'
+  | 'base_version_not_found'
   | 'version_cycle_mismatch'
   | 'concurrent_transition'
   | 'compensation_failed';
@@ -29,6 +31,8 @@ interface ManualVersionCycleInput {
 
 interface ManualVersionCreateInput extends Omit<ManualVersionCycleInput, 'targetVersion'> {
   content: string;
+  baseVersion: number;
+  expectedActiveVersion: number;
 }
 
 interface ManualVersionCycleResult {
@@ -37,6 +41,7 @@ interface ManualVersionCycleResult {
   toVersion: number;
   archivedCycleId: string;
   currentCycle: CycleRecord;
+  baseVersion?: number;
 }
 
 /**
@@ -50,7 +55,10 @@ export class ManualVersionCycleService {
   constructor(
     private readonly deps: {
       runtime: ObjectiveEvaluationRuntime;
-      overrideStore: Pick<HookOverrideStore, 'activateVersion' | 'getActiveVersion' | 'setContentOverride'>;
+      overrideStore: Pick<
+        HookOverrideStore,
+        'activateVersion' | 'getActiveVersion' | 'hasVersion' | 'setContentOverride'
+      >;
       refreshOverrideSnapshot: () => Promise<void>;
       now?: () => number;
     },
@@ -85,10 +93,17 @@ export class ManualVersionCycleService {
 
   private async createLocked(input: ManualVersionCreateInput, objectiveId: string): Promise<ManualVersionCycleResult> {
     const { current, sourceVersion, switchedAt } = await this.prepare(input, objectiveId);
+    if (sourceVersion !== input.expectedActiveVersion) {
+      throw new ManualVersionCycleError('active_version_changed');
+    }
+    if (!(await this.deps.overrideStore.hasVersion(input.segmentId, input.baseVersion))) {
+      throw new ManualVersionCycleError('base_version_not_found');
+    }
     return this.mutateAndTransition(input, objectiveId, current, sourceVersion, switchedAt, async () => {
       await this.deps.overrideStore.setContentOverride(input.segmentId, input.content, input.actorId, {
         source: 'operator',
         reason: input.reason,
+        parentVersion: input.baseVersion,
       });
       return this.deps.overrideStore.getActiveVersion(input.segmentId);
     });
@@ -106,15 +121,16 @@ export class ManualVersionCycleService {
       this.deps.runtime.resolveSegmentVersion(current.versionContentRef, input.segmentId),
     ]);
     if (cycleSegmentVersion !== sourceVersion) throw new ManualVersionCycleError('version_cycle_mismatch');
-    const switchedAt = this.readNow();
-    if (!Number.isFinite(switchedAt) || switchedAt < current.cycleStart) {
+    const observedAt = this.readNow();
+    if (!Number.isFinite(observedAt) || observedAt < current.cycleStart) {
       throw new ManualVersionCycleError('concurrent_transition');
     }
+    const switchedAt = Math.max(observedAt, current.cycleStart + 1);
     return { current, sourceVersion, switchedAt };
   }
 
   private async mutateAndTransition(
-    input: Omit<ManualVersionCycleInput, 'targetVersion'>,
+    input: Omit<ManualVersionCycleInput, 'targetVersion'> & { baseVersion?: number },
     objectiveId: string,
     current: CycleRecord,
     sourceVersion: number,
@@ -146,9 +162,18 @@ export class ManualVersionCycleService {
         toVersion: targetVersion,
         archivedCycleId: current.cycleId,
         currentCycle: next,
+        ...(input.baseVersion == null ? {} : { baseVersion: input.baseVersion }),
       };
     } catch (error) {
-      if (mutationCompleted) {
+      let shouldCompensate = mutationCompleted;
+      if (!mutationCompleted) {
+        try {
+          shouldCompensate = (await this.deps.overrideStore.getActiveVersion(input.segmentId)) !== sourceVersion;
+        } catch {
+          throw new ManualVersionCycleError('compensation_failed');
+        }
+      }
+      if (shouldCompensate) {
         try {
           await this.deps.overrideStore.activateVersion(input.segmentId, sourceVersion, input.actorId, {
             source: 'operator',
@@ -179,7 +204,7 @@ export class ManualVersionCycleService {
 
 function completedCycle(
   current: CycleRecord,
-  input: Omit<ManualVersionCycleInput, 'targetVersion'>,
+  input: Omit<ManualVersionCycleInput, 'targetVersion'> & { baseVersion?: number },
   sourceVersion: number,
   targetVersion: number,
   switchedAt: number,
@@ -192,6 +217,7 @@ function completedCycle(
       segmentId: input.segmentId,
       fromVersion: sourceVersion,
       toVersion: targetVersion,
+      ...(input.baseVersion == null ? {} : { baseVersion: input.baseVersion }),
       at: switchedAt,
       by: input.actorId,
       reason: input.reason,

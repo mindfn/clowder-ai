@@ -38,6 +38,7 @@ function makeMatrix(overrides: Partial<SegmentEnablementMatrix> = {}): SegmentEn
         enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
         rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
         activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+        createVersion: { allowed: true, reason: null, reasonCode: null },
       },
     },
     ...overrides,
@@ -99,6 +100,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                   reason: '当前段无保留版本可激活',
                   reasonCode: 'no-version-snapshot',
                 },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -110,7 +112,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('当前段 disableable=false，不可禁用');
   });
-
   it('uses rollback permission when switching to the manifest v1 card', () => {
     act(() => {
       root.render(
@@ -134,6 +135,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                   reason: '当前段无保留版本可激活',
                   reasonCode: 'no-version-snapshot',
                 },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -145,7 +147,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('当前段无覆盖可回滚');
   });
-
   it('ActivateVersionButton is disabled and shows reason when matrix disallows activateVersion', () => {
     act(() => {
       root.render(
@@ -175,6 +176,11 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                   reason: '当前段 safetyTier=readonly，禁止激活版本',
                   reasonCode: 'safety-tier-readonly',
                 },
+                createVersion: {
+                  allowed: false,
+                  reason: '当前段 safetyTier=readonly，禁止产生新版本',
+                  reasonCode: 'safety-tier-readonly',
+                },
               },
             },
           })}
@@ -186,7 +192,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('当前段 safetyTier=readonly，禁止激活版本');
   });
-
   it('ActivateVersionButton is disabled and shows reason when version is not in availableEpochVersions', () => {
     act(() => {
       root.render(
@@ -206,6 +211,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                 enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
                 rollback: { allowed: true, reason: null, reasonCode: null },
                 activateVersion: { allowed: true, reason: null, reasonCode: null },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -217,7 +223,6 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(button.disabled).toBe(true);
     expect(container.textContent).toContain('版本 v3 不在可激活历史版本列表中');
   });
-
   it('ActivateVersionButton is disabled while the current cycle is evaluating', () => {
     act(() => {
       root.render(
@@ -238,6 +243,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                 enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
                 rollback: { allowed: true, reason: null, reasonCode: null },
                 activateVersion: { allowed: true, reason: null, reasonCode: null },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}
@@ -304,6 +310,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
                 enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
                 rollback: { allowed: true, reason: null, reasonCode: null },
                 activateVersion: { allowed: true, reason: null, reasonCode: null },
+                createVersion: { allowed: true, reason: null, reasonCode: null },
               },
             },
           })}

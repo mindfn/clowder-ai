@@ -1591,6 +1591,23 @@ describe('P1-3 R6: epochVersion-based version management', () => {
     assert.equal(events[0].contentVersion, 1, 'contentVersion is edit count (1)');
   });
 
+  test('content-set events preserve an explicit historical parent version', async () => {
+    const s1 = makeManifest('S1-parent');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const store = new mod.HookOverrideStore(fakeRedis, (id) => (id === s1.id ? s1 : undefined));
+
+    await store.setContentOverride(s1.id, 'v2', 'u1');
+    await store.setContentOverride(s1.id, 'v3-from-v1', 'u1', { parentVersion: 1 });
+
+    const events = await store.listEvents({ limit: 100 });
+    assert.equal(events[1].epochVersion, 3);
+    assert.equal(events[1].parentVersion, 1);
+    assert.equal(await store.hasVersion(s1.id, 1), true, 'manifest baseline is a valid version coordinate');
+    assert.equal(await store.hasVersion(s1.id, 3), true, 'stored snapshots are valid version coordinates');
+    assert.equal(await store.hasVersion(s1.id, 99), false);
+  });
+
   test('activateVersion throws for nonexistent epochVersion', async () => {
     const s1 = makeManifest('S1-nosnap');
     const fakeRedis = new FakeRedis();

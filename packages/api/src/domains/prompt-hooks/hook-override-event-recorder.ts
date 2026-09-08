@@ -33,6 +33,7 @@ export class HookOverrideEventRecorder {
     reason?: string,
     contentVersion?: number,
     epochVersion?: number,
+    parentVersion?: number,
   ): Promise<void> {
     const timestamp = Date.now();
     const seq = this.eventSeq++;
@@ -48,6 +49,7 @@ export class HookOverrideEventRecorder {
       ...(reason ? { reason } : {}),
       ...(contentVersion != null ? { contentVersion } : {}),
       ...(epochVersion != null ? { epochVersion } : {}),
+      ...(parentVersion != null ? { parentVersion } : {}),
     };
     // TTL=0: audit events are permanent (Iron Law 5, sol P1-2 fix)
     await this.redis.set(EVENT_KEY(workspaceId, eventId), JSON.stringify(event));
