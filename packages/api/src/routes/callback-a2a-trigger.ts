@@ -637,6 +637,12 @@ export async function enqueueA2ATargets(
     persistedQueueTrigger.lifecycle?.dispatchRefs?.map((dispatch) => dispatch.targetId) ?? [],
   );
   const targetCats = routingPreflight.acceptedTargetCats.filter((catId) => !dispatchedTargetCats.has(catId));
+  if (targetCats.length === 0) {
+    return {
+      enqueued: [],
+      ...(routingPreflight.decision ? { routingPreflight: routingPreflight.decision } : {}),
+    };
+  }
 
   // F153 Phase I (Maine Coon P1): Lazy-create mention_dispatch span + a2a.dispatch.count counter
   // ONLY when a target is about to actually dispatch (passes all guards and reaches a real enqueue

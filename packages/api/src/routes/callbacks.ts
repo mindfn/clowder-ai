@@ -2770,7 +2770,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     let actionFence: ActionSuccessorFence | undefined;
     let actionAdmissionOutcome: ActionSuccessorCarrierAdmissionOutcome | undefined;
-    let interruptedActionCarrierRecoveryKey: string | undefined;
     const actionCarrierDisposition: ActionSuccessorCarrierDisposition | undefined = action
       ? action.returnToPredecessor
         ? 'return'
@@ -2855,19 +2854,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             if (carrier.disposition === 'live') {
               return { status: 'safe_wait', actionLease: admission.lease, clientMessageId };
             }
-            if (carrier.disposition === 'restart_interrupted') {
-              actionAdmissionOutcome = 'replayed';
-              actionFence = carrier.fence;
-              interruptedActionCarrierRecoveryKey = `action-carrier-recovery:${carrier.fence.leaseId}:${carrier.fence.generation}`;
-            } else {
-              reply.status(409);
-              return {
-                status: 'action_carrier_unavailable',
-                reason: carrier.reason,
-                actionLease: admission.lease,
-                clientMessageId,
-              };
-            }
+            reply.status(409);
+            return {
+              status: 'action_carrier_unavailable',
+              reason: carrier.reason,
+              actionLease: admission.lease,
+              clientMessageId,
+            };
           } else if (admission.outcome !== 'replayed') {
             return { status: admission.outcome, actionLease: admission.lease, clientMessageId };
           } else {
@@ -2938,11 +2931,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return { kind: contentProjection.kind, message: contentProjection.message };
     }
     // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
-    // A proven interrupted action carrier is the exception: its stable append key
-    // lets the same request finish a crash-after-append recovery idempotently.
     if (clientMessageId && !localReviewVerdict) {
       const isFirstSeen = await registry.claimClientMessageId(invocationId, clientMessageId);
-      if (!isFirstSeen && !interruptedActionCarrierRecoveryKey) {
+      if (!isFirstSeen) {
         if (actionFence && actionCarrierDisposition === 'return') {
           const accepted = hasQueuedActionSuccessorFence(
             opts.invocationQueue,
@@ -3241,7 +3232,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
     const duplicateMsg =
       durableLocalReviewDuplicate ??
-      (!localReviewVerdict && !hasDedupBlockingRoutingWarnings && !interruptedActionCarrierRecoveryKey
+      (!localReviewVerdict && !hasDedupBlockingRoutingWarnings
         ? await findRecentExactCallbackDuplicate(messageStore, {
             threadId: effectiveThreadId,
             userId: actor.userId,
@@ -3385,25 +3376,24 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
     // Race-safe backstop: the exact-duplicate scan above is check-then-act, so an atomic content
     // claim makes the at-most-once decision (root cause of the byte-identical duplicate bug).
-    const contentDuplicate =
-      interruptedActionCarrierRecoveryKey || localReviewVerdict
-        ? null
-        : await claimCallbackContentOrDuplicate(messageStore, {
-            threadId: effectiveThreadId,
-            userId: actor.userId,
-            catId: actor.catId,
-            content: persistedContent,
-            ...(richBlocks.length > 0 ? { richBlocks } : {}),
-            mentions,
-            ...(mentionsUser ? { mentionsUser } : {}),
-            ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-            isExplicitPost: isStandaloneExplicitPost,
-            ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-            ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
-            ...(clientMessageId ? { clientMessageId } : {}),
-            now,
-            hasRoutingWarnings: hasDedupBlockingRoutingWarnings,
-          });
+    const contentDuplicate = localReviewVerdict
+      ? null
+      : await claimCallbackContentOrDuplicate(messageStore, {
+          threadId: effectiveThreadId,
+          userId: actor.userId,
+          catId: actor.catId,
+          content: persistedContent,
+          ...(richBlocks.length > 0 ? { richBlocks } : {}),
+          mentions,
+          ...(mentionsUser ? { mentionsUser } : {}),
+          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+          isExplicitPost: isStandaloneExplicitPost,
+          ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
+          ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
+          ...(clientMessageId ? { clientMessageId } : {}),
+          now,
+          hasRoutingWarnings: hasDedupBlockingRoutingWarnings,
+        });
     if (contentDuplicate) {
       if (actionFence && actionAdmissionOutcome !== 'replayed' && actionCarrierDisposition !== 'return') {
         await opts.actionSuccessorAdmissionService?.markUnavailable({
@@ -3426,9 +3416,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       threadId: effectiveThreadId,
       extra: persistedExtra,
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-      ...(interruptedActionCarrierRecoveryKey || localReviewFactMessageIdempotencyKey
-        ? { idempotencyKey: interruptedActionCarrierRecoveryKey ?? localReviewFactMessageIdempotencyKey }
-        : {}),
+      ...(localReviewFactMessageIdempotencyKey ? { idempotencyKey: localReviewFactMessageIdempotencyKey } : {}),
     };
     let atomicAdmission: Awaited<ReturnType<typeof appendA2ASourceWithLedgerAdmission>>;
     let persistedReplay = false;
@@ -3496,7 +3484,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           },
           {
             targetCats: mentions,
-            content: interruptedActionCarrierRecoveryKey ? storedMsg.content : storedContent,
+            content: storedContent,
             userId: actor.userId,
             threadId: effectiveThreadId,
             triggerMessage: storedMsg,
@@ -3517,17 +3505,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ),
       enqueueFailureMessage: '[invocation-callback] wake admission failed',
     });
-
-    if (interruptedActionCarrierRecoveryKey && deliveryDecision.enqueueFailed) {
-      reply.status(503);
-      return {
-        kind: 'action_carrier_recovery_pending',
-        message:
-          'The replacement carrier has durable Queue admission, but delivery is not committed. Runtime startup reconciliation is required to restore Queue delivery; retrying this clientMessageId only confirms the admission.',
-        messageId: storedMsg.id,
-        ...(clientMessageId ? { clientMessageId } : {}),
-      };
-    }
 
     if (localReviewVerdict && deliveryDecision.enqueueFailed) {
       reply.status(503);

@@ -442,6 +442,8 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
   assert.equal(queued.length, 1);
   const recovered = messageStore.getById(triggerMessage.id);
   assert.equal(recovered.deliveryStatus, undefined, 'public Agent speech stays published while custody is queued');
+  assert.equal(recovered.lifecycle.kind, 'input', 'existing-source admission initializes History lifecycle identity');
+  assert.deepEqual(recovered.lifecycle.dispatchRefs, []);
   assert.equal(recovered.queueCustody, undefined, 'History must not mirror Queue ledger state');
   assert.equal(queued[0].payload.messageId, recovered.id);
   assert.deepEqual(queued[0].execution.actionSuccessorFence, {

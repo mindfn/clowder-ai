@@ -652,16 +652,28 @@ export function prepareQueueLedgerMessageAdmission(
   ) {
     throw new Error('atomic Message/Queue admission requires queued work or published Agent speech');
   }
+  return { ...message, lifecycle: prepareQueueLedgerSourceLifecycle(storedIdentity, entries) };
+}
+
+/** Prepare the History half of existing-source Queue admission without changing its visibility. */
+export function prepareQueueLedgerSourceLifecycle(
+  message: StoredMessage,
+  entries: readonly QueueLedgerEntry[],
+): LifecycleStoredMessageMetadata {
   const targetIds = entries.flatMap((entry) => entry.targets);
+  const dispatchedTargets = new Set(message.lifecycle?.dispatchRefs?.map((ref) => ref.targetId) ?? []);
+  if (targetIds.some((targetId) => dispatchedTargets.has(targetId))) {
+    throw new Error('atomic Message/Queue admission cannot replay an already dispatched source target');
+  }
   const assigned = assignLifecycleDispatchTargetsMetadata(
-    storedIdentity.lifecycle,
-    lifecycleInputIdentityForStoredMessage(storedIdentity),
+    message.lifecycle,
+    lifecycleInputIdentityForStoredMessage(message),
     targetIds,
   );
   if (assigned.kind === 'conflict') {
     throw new Error('atomic Message/Queue admission has conflicting lifecycle identity');
   }
-  return { ...message, lifecycle: assigned.lifecycle };
+  return assigned.lifecycle;
 }
 
 export interface LifecycleResponseTerminalPatch {
@@ -2041,19 +2053,23 @@ export class MessageStore {
     }
     const message = this.messages.find((candidate) => candidate.id === messageId);
     if (!message) throw new Error(`Queue source message does not exist: ${messageId}`);
+    const lifecycle = prepareQueueLedgerSourceLifecycle(message, entries);
     const admitted = ledgerStore.enqueueNow(entries, maxQueuedUserEntries);
     if (admitted.outcome === 'full') return { outcome: 'full' };
     if (admitted.outcome === 'conflict') {
       throw new Error(`Queue admission identity conflict for existing message ${messageId}`);
     }
     if (admitted.outcome === 'replayed') {
+      message.lifecycle = structuredClone(lifecycle);
       return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: true };
     }
-    if (message.deliveryStatus !== undefined && message.deliveryStatus !== 'queued') {
+    const preservesPublishedAgent = message.deliveryStatus === undefined && messageFrom(message).kind === 'agent';
+    if (message.deliveryStatus === 'delivered' || message.deliveryStatus === 'canceled') {
       ledgerStore.removeEnqueuedNow(admitted.entries);
       throw new Error(`Queue source message already has delivery ownership: ${messageId}`);
     }
-    message.deliveryStatus = 'queued';
+    message.lifecycle = structuredClone(lifecycle);
+    if (!preservesPublishedAgent) message.deliveryStatus = 'queued';
     return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: false };
   }
 

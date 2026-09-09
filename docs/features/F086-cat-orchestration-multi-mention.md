@@ -6,7 +6,7 @@ topics: [collaboration, routing, mcp, multi-mention, orchestration, meta-cogniti
 doc_kind: done
 created: 2026-03-08
 completed: 2026-03-09
-tips_exempt: "Renewed 2026-09-04 for the current F308 public-link projection only; no user-facing capability or action changed."
+tips_exempt: "Renewed 2026-09-09 for the F117/ADR-043 lifecycle calibration: exact-target replay prevention, Queue/History identity convergence, and MCP Freshness/HELD retirement harden existing multi-mention delivery without adding a new user-invokable action or discovery surface."
 ---
 
 # F086 Cat Orchestration — 猫猫自主协作 + 元认知系统

@@ -12,17 +12,17 @@ import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadSt
 import { callbacksRoutes } from '../dist/routes/callbacks.js';
 
 const action = {
-  subjectRef: 'pr:owner/repo#4058',
-  actionFamily: 'review',
-  successorSlot: 'reviewer',
+  subjectRef: 'subject:task:task-4058',
+  actionFamily: 'implement',
+  successorSlot: 'implementer',
   mode: 'single',
-  terminalPredicate: { kind: 'review_delivered', headSha: 'a'.repeat(40) },
+  terminalPredicate: { kind: 'task_done' },
 };
 
 function carrierLease(sourceThreadId, targetThreadId) {
   return {
     leaseId: 'lease-review-4058',
-    key: 'user-1|pr:owner/repo#4058|review|reviewer',
+    key: 'user-1|subject:task:task-4058|implement|implementer',
     tenantScope: 'user-1',
     subjectRef: action.subjectRef,
     actionFamily: action.actionFamily,
@@ -104,7 +104,6 @@ describe('direct action carrier restart recovery', () => {
   let lease;
   let unavailable;
   let registry;
-  let queueDrainError;
 
   beforeEach(async () => {
     app = Fastify();
@@ -117,7 +116,6 @@ describe('direct action carrier restart recovery', () => {
     auth = await registry.create('user-1', 'opus', source.id);
     lease = carrierLease(source.id, target.id);
     unavailable = [];
-    queueDrainError = undefined;
 
     await app.register(callbacksRoutes, {
       registry,
@@ -132,9 +130,7 @@ describe('direct action carrier restart recovery', () => {
         get: () => null,
       },
       queueProcessor: {
-        async requestDrain() {
-          if (queueDrainError) throw queueDrainError;
-        },
+        async requestDrain() {},
         async tryAutoExecute() {},
       },
       actionSuccessorAdmissionService: {
@@ -176,25 +172,15 @@ describe('direct action carrier restart recovery', () => {
     assert.equal(invocationQueue.list(target.id, 'user-1').length, 1);
   });
 
-  test('reuses the original generation once after runtime interruption', async () => {
+  test('fails closed after runtime interruption instead of reconstructing a terminal Queue receipt', async () => {
     await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
     const response = await post('review-4058-recover-interrupted');
 
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().status, 'ok');
-    assert.deepEqual(response.json().actionLease, {
-      leaseId: lease.leaseId,
-      generation: lease.generation,
-      outcome: 'replayed',
-    });
-    const [replacement] = invocationQueue.list(target.id, 'user-1');
-    assert.deepEqual(replacement.execution.actionSuccessorFence, buildActionSuccessorFence(lease, lease.dispatchId));
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().status, 'action_carrier_unavailable');
+    assert.equal(response.json().reason, 'carrier_missing');
+    assert.equal(invocationQueue.list(target.id, 'user-1').length, 0);
     assert.deepEqual(unavailable, []);
-
-    const messageCount = messageStore.getByThreadIncludingQueued(target.id, 20, 'user-1').length;
-    const laterReentry = await post('review-4058-after-recovery');
-    assert.equal(laterReentry.json().status, 'safe_wait');
-    assert.equal(messageStore.getByThreadIncludingQueued(target.id, 20, 'user-1').length, messageCount);
   });
 
   test('same-client retry observes an atomically admitted replacement carrier', async () => {
@@ -237,21 +223,5 @@ describe('direct action carrier restart recovery', () => {
     const [queued] = invocationQueue.list(target.id, 'user-1');
     assert.equal(queued.payload.messageId, replacement.message.id);
     assert.deepEqual(queued.execution.actionSuccessorFence, fence);
-  });
-
-  test('503 names startup reconciliation instead of promising same-client retry delivery', async () => {
-    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
-    queueDrainError = new Error('simulated crash after durable admission');
-
-    const response = await post('review-4058-admitted-uncommitted');
-
-    assert.equal(response.statusCode, 503);
-    assert.deepEqual(response.json(), {
-      kind: 'action_carrier_recovery_pending',
-      message:
-        'The replacement carrier has durable Queue admission, but delivery is not committed. Runtime startup reconciliation is required to restore Queue delivery; retrying this clientMessageId only confirms the admission.',
-      messageId: response.json().messageId,
-      clientMessageId: 'review-4058-admitted-uncommitted',
-    });
   });
 });

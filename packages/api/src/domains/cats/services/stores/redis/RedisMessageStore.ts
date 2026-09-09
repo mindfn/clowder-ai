@@ -91,6 +91,7 @@ import {
   prepareLifecycleResponseTerminalMessage,
   prepareLifecycleResponseTerminalWithLedgerTargets,
   prepareQueueLedgerMessageAdmission,
+  prepareQueueLedgerSourceLifecycle,
   settleAssignedLifecycleDispatchFailureMetadata,
 } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
@@ -160,6 +161,7 @@ local incoming = {}
 local entryIds = {}
 local existingCount = 0
 local incomingIds = {}
+local incomingTargets = {}
 local incomingUserSources = {}
 for i = 1, count do
   local raw = ARGV[3 + i]
@@ -171,15 +173,49 @@ for i = 1, count do
   incomingIds[row.id] = true
   incoming[i] = { id = row.id, raw = raw, row = row }
   entryIds[i] = row.id
+  for _, targetId in ipairs(row.targets or {}) do incomingTargets[targetId] = true end
   if redis.call('HEXISTS', rowsKey, row.id) == 1 then existingCount = existingCount + 1 end
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
 end
-if existingCount == count then return 2 end
-if existingCount > 0 then return -1 end
+if existingCount > 0 and existingCount ~= count then return -1 end
+
+local incomingLifecycleRaw = ARGV[4 + count]
+local incomingLifecycleOk, incomingLifecycle = pcall(cjson.decode, incomingLifecycleRaw or '')
+if not incomingLifecycleOk or type(incomingLifecycle) ~= 'table' then
+  return redis.error_reply('QUEUE_ADMISSION_INVALID_LIFECYCLE')
+end
+local storedLifecycleRaw = redis.call('HGET', messageKey, 'lifecycle')
+local lifecycleNeedsSet = not storedLifecycleRaw or storedLifecycleRaw == ''
+if not lifecycleNeedsSet then
+  local storedLifecycleOk, storedLifecycle = pcall(cjson.decode, storedLifecycleRaw)
+  if
+    not storedLifecycleOk or
+    type(storedLifecycle) ~= 'table' or
+    storedLifecycle.kind == 'delivery_failure' or
+    storedLifecycle.orderKey ~= incomingLifecycle.orderKey or
+    storedLifecycle.producerInvocationId ~= incomingLifecycle.producerInvocationId
+  then
+    return -4
+  end
+  for _, dispatchRef in ipairs(storedLifecycle.dispatchRefs or {}) do
+    if incomingTargets[dispatchRef.targetId] then return -5 end
+  end
+end
+
+if existingCount == count then
+  if lifecycleNeedsSet then redis.call('HSET', messageKey, 'lifecycle', incomingLifecycleRaw) end
+  return 2
+end
 if redis.call('HEXISTS', messageIndexKey, messageId) == 1 then return -1 end
 
 local deliveryStatus = redis.call('HGET', messageKey, 'deliveryStatus')
-if deliveryStatus and deliveryStatus ~= '' and deliveryStatus ~= 'queued' then
+local preservePublishedAgent = false
+if not deliveryStatus or deliveryStatus == '' then
+  local rawFrom = redis.call('HGET', messageKey, 'from')
+  local decoded, storedFrom = pcall(cjson.decode, rawFrom or '')
+  if not decoded or type(storedFrom) ~= 'table' then return -3 end
+  preservePublishedAgent = storedFrom.kind == 'agent'
+elseif deliveryStatus ~= 'queued' then
   return -3
 end
 
@@ -200,7 +236,8 @@ if maxUserSources and maxUserSources >= 0 then
   if queuedUserCount > maxUserSources then return 0 end
 end
 
-redis.call('HSET', messageKey, 'deliveryStatus', 'queued')
+if lifecycleNeedsSet then redis.call('HSET', messageKey, 'lifecycle', incomingLifecycleRaw) end
+if not preservePublishedAgent then redis.call('HSET', messageKey, 'deliveryStatus', 'queued') end
 for i = 1, count do
   redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
   redis.call('RPUSH', orderKey, incoming[i].id)
@@ -1162,6 +1199,9 @@ export class RedisMessageStore {
         throw new Error('Queue admission row must be bound to its exact existing message identity');
       }
     }
+    const source = await this.getById(messageId);
+    if (!source) throw new Error(`Queue source message does not exist: ${messageId}`);
+    const sourceLifecycle = prepareQueueLedgerSourceLifecycle(source, entries);
     const outcome = Number(
       await this.redis.eval(
         ENQUEUE_EXISTING_MESSAGE_WITH_LEDGER_LUA,
@@ -1174,11 +1214,14 @@ export class RedisMessageStore {
         maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
         String(entries.length),
         ...entries.map((entry) => JSON.stringify(entry)),
+        JSON.stringify(sourceLifecycle),
       ),
     );
     if (outcome === 0) return { outcome: 'full' };
     if (outcome === -2) throw new Error(`Queue source message does not exist: ${messageId}`);
     if (outcome === -3) throw new Error(`Queue source message already has delivery ownership: ${messageId}`);
+    if (outcome === -4) throw new Error(`Queue source message has conflicting lifecycle identity: ${messageId}`);
+    if (outcome === -5) throw new Error(`Queue source target was already dispatched: ${messageId}`);
     if (outcome === -1) throw new Error(`Queue admission identity conflict for existing message ${messageId}`);
     if (outcome !== 1 && outcome !== 2)
       throw new Error(`unexpected existing Message/Queue admission result: ${outcome}`);

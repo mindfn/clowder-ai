@@ -19,7 +19,6 @@ export type DirectActionSuccessorCarrierUnavailableReason =
 
 export type DirectActionSuccessorCarrierDecision =
   | { disposition: 'live'; fence: ActionSuccessorFence }
-  | { disposition: 'restart_interrupted'; fence: ActionSuccessorFence }
   | { disposition: 'unavailable'; reason: DirectActionSuccessorCarrierUnavailableReason };
 
 function sameMembers(left: readonly string[], right: readonly string[]): boolean {

@@ -94,7 +94,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
     assert.equal(invocationQueue.list('t1', 'u1')[0].id, queueEntryId(trigger.id, 'codex'));
   });
 
-  it('rejects a consumed source instead of recreating Queue work after its row is gone', async () => {
+  it('skips a consumed source instead of recreating Queue work after its row is gone', async () => {
     const { deps, invocationQueue, messageStore, appendTrigger, events } = setup();
     const trigger = appendTrigger('a2a-source-consumed');
 
@@ -107,10 +107,22 @@ describe('enqueueA2ATargets single durable ledger', () => {
     });
     assert.equal(claim.status, 'claimed');
     assert.equal(await invocationQueue.commitClaimedProcessing('t1', [row.id], Date.now()), true);
+    const lifecycle = messageStore.getById(trigger.id)?.lifecycle;
+    assert.ok(lifecycle);
+    assert.equal(
+      messageStore.advanceLifecycleInputDispatch(trigger.id, {
+        orderKey: lifecycle.orderKey,
+        ...(lifecycle.producerInvocationId ? { producerInvocationId: lifecycle.producerInvocationId } : {}),
+        targetId: 'codex',
+        phase: 'dispatched',
+        statusMessageId: 'a2a-source-consumed-response',
+        dispatchedAt: Date.now(),
+      }).kind,
+      'applied',
+    );
     assert.ok(await invocationQueue.removeProcessedAcrossUsersDurable('t1', row.id, 'succeeded'));
-    assert.equal(messageStore.markDelivered(trigger.id, Date.now())?.deliveryTransitioned, true);
 
-    await assert.rejects(enqueue(deps, trigger), /already has delivery ownership/);
+    assert.deepEqual(await enqueue(deps, trigger), { enqueued: [] });
     assert.equal(invocationQueue.list('t1', 'u1').length, 0);
     assert.deepEqual(events, ['append', 'drain']);
   });

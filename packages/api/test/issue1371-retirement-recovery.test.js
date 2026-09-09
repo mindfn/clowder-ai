@@ -10,9 +10,16 @@ import { runTerminalQueueHarness } from './helpers/issue1371-terminal-queue-harn
 const log = () => ({ info: mock.fn(), warn: mock.fn() });
 
 test('#1371: crash after message commit reconstructs exact retirement without provider replay', async () => {
-  const { h, terminal, deps, queue } = await runTerminalQueueHarness('retirement unavailable');
+  const { h, terminal, source, response, deps, queue } = await runTerminalQueueHarness('retirement unavailable');
   assert.equal(queue.list(terminal.threadId, terminal.userId).length, 0);
-  assert.deepEqual(h.messageStore.getById(terminal.id).queueCustody.handledByCatIds, ['fable5']);
+  assert.deepEqual(source.lifecycle.dispatchRefs, [
+    {
+      targetId: 'fable5',
+      phase: 'settled',
+      statusMessageId: response.id,
+      dispatchedAt: 1_760,
+    },
+  ]);
   assert.equal(h.eventLog.events.filter((event) => event.kind === 'ball.dispatch_dispositioned').length, 0);
   // Discard process-local recovery state. Reopen serialized message facts, the
   // existing event log and its projector; the old invocation is no longer latest.
@@ -39,7 +46,7 @@ test('#1371: crash after message commit reconstructs exact retirement without pr
   assert.deepEqual(await recovery.runPage(), { inspected: 1, applied: 0, failed: 0 });
   assert.equal(h.eventLog.events.filter((event) => event.kind === 'ball.dispatch_dispositioned').length, 1);
   assert.equal(deps.router.routeExecution.mock.calls.length, 1, 'recovery must never run the source body again');
-  assert.deepEqual(records.get(terminal.id).queueCustody, h.messageStore.getById(terminal.id).queueCustody);
+  assert.deepEqual(records.get(terminal.id).lifecycle, h.messageStore.getById(terminal.id).lifecycle);
 });
 
 test('#1371: one failing source does not starve later pages and is retried on the next pass', async () => {
@@ -110,7 +117,7 @@ test('#1371: memory scan reads bounded pages and freezes the current pass bounda
     store.append({
       userId: 'u',
       threadId: 't',
-      catId: 'opus',
+      from: { kind: 'agent', catId: 'opus' },
       mentions: [],
       content: 'terminal',
       timestamp: index + 1,

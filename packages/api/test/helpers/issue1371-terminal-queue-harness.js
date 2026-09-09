@@ -2,11 +2,8 @@ import { mock } from 'node:test';
 import { buildHandedCvoEvent } from '../../dist/domains/ball-custody/ball-custody-events.js';
 import { InvocationQueue } from '../../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationTracker } from '../../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
-import {
-  createInitialCrossThreadQueuedMessageCustody,
-  QueuedMessageCustodyCoordinator,
-} from '../../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { commitLifecycleResponseFromAppendInput } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { createA2ADispositionHarness } from './a2a-dispatch-disposition-harness.js';
 
 export async function runTerminalQueueHarness(scenario = 'active control') {
@@ -25,14 +22,13 @@ export async function runTerminalQueueHarness(scenario = 'active control') {
     targetCats: ['codex-sol'],
   };
   const terminal = h.messageStore.append({
+    from: { kind: 'agent', catId: 'codex-sol' },
     userId: 'user-1',
-    catId: 'codex-sol',
     content: '@fable5 terminal result',
     mentions: ['fable5'],
     timestamp: 1_750,
     threadId: 'thread-origin',
     origin: 'callback',
-    deliveryStatus: 'queued',
     extra: {
       crossPost: { sourceThreadId: 'thread-1', sourceInvocationId: 'inv-1' },
       coordination: { id: 'coord-review', phase: 'terminal', hop: 2, subjectRef: 'task:review' },
@@ -53,46 +49,90 @@ export async function runTerminalQueueHarness(scenario = 'active control') {
       }),
     );
   }
+
   const queue = new InvocationQueue();
+  const invocationTracker = new InvocationTracker();
+  const invocationRecords = new Map();
+  const invocationRecordStore = {
+    create: async (input) => {
+      const invocationId = 'inv-stub';
+      const record = {
+        id: invocationId,
+        ...input,
+        userMessageId: null,
+        status: 'queued',
+        createdAt: 1_755,
+        updatedAt: 1_755,
+      };
+      invocationRecords.set(invocationId, record);
+      return { outcome: 'created', invocationId };
+    },
+    get: async (invocationId) => invocationRecords.get(invocationId) ?? null,
+    update: async (invocationId, patch) => {
+      const current = invocationRecords.get(invocationId);
+      if (!current) return null;
+      if (patch.expectedStatus && current.status !== patch.expectedStatus) return null;
+      const { expectedStatus: _expectedStatus, ...changes } = patch;
+      const next = { ...current, ...changes, updatedAt: 1_770 };
+      invocationRecords.set(invocationId, next);
+      return next;
+    },
+  };
+  let responseMessageId;
   const deps = {
     queue,
     messageStore: h.messageStore,
     a2aDispatchDispositionService: h.service,
-    queueCustodyCoordinator: new QueuedMessageCustodyCoordinator({ messageStore: h.messageStore }),
-    invocationTracker: new InvocationTracker(),
-    invocationRecordStore: {
-      create: async () => ({ outcome: 'created', invocationId: 'inv-stub' }),
-      update: async () => {},
-    },
+    invocationTracker,
+    invocationRecordStore,
     socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
     log: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
     router: {
       routeExecution: mock.fn(async function* (...args) {
-        await args[6].onPromptMessagesExposed({
+        const options = args[6];
+        const childInvocationId = 'terminal-child';
+        const lifecycleAdmission = await options.onLifecycleInvocationStarted({
           threadId: terminal.threadId,
           userId: terminal.userId,
           catId: 'fable5',
-          invocationId: 'terminal-child',
+          invocationId: childInvocationId,
+          parentInvocationId: options.parentInvocationId,
+          startedAt: 1_760,
+        });
+        responseMessageId = lifecycleAdmission.responseMessageId;
+        await options.onPromptMessagesExposed({
+          threadId: terminal.threadId,
+          userId: terminal.userId,
+          catId: 'fable5',
+          invocationId: childInvocationId,
           messageIds: [terminal.id],
-          seenAt: 1_760,
+          seenAt: 1_761,
         });
-        h.messageStore.append({
-          userId: terminal.userId,
-          catId: 'fable5',
-          content: 'Review finished.',
-          mentions: [],
-          timestamp: 1_765,
-          threadId: terminal.threadId,
-          replyTo: terminal.id,
-          extra: {
-            causal: { kind: 'invocation_reply', triggerMessageId: terminal.id },
-            stream: { invocationId: 'inv-stub', turnInvocationId: 'terminal-child' },
+        await commitLifecycleResponseFromAppendInput(
+          h.messageStore,
+          responseMessageId,
+          childInvocationId,
+          { status: 'completed', completedAt: 1_765 },
+          {
+            from: { kind: 'agent', catId: 'fable5' },
+            userId: terminal.userId,
+            content: 'Review finished.',
+            mentions: [],
+            timestamp: 1_765,
+            threadId: terminal.threadId,
+            replyTo: terminal.id,
+            origin: 'stream',
+            extra: {
+              causal: { kind: 'invocation_reply', triggerMessageId: terminal.id },
+              stream: { invocationId: 'inv-stub', turnInvocationId: childInvocationId },
+            },
           },
-        });
+        );
         yield {
           type: 'done',
           catId: 'fable5',
-          invocationId: 'terminal-child',
+          invocationId: childInvocationId,
+          isFinal: true,
           timestamp: 1_770,
           turnCustodyTerminalWitness: {
             kind: 'terminal_silent',
@@ -104,12 +144,15 @@ export async function runTerminalQueueHarness(scenario = 'active control') {
       ackCollectedCursors: async () => {},
     },
   };
-  const { entry } = queue.enqueue({
+  const admitted = await queue.enqueueExistingMessageDurable(h.messageStore, terminal.id, {
+    from: terminal.from,
     threadId: terminal.threadId,
     userId: terminal.userId,
+    kind: 'message_wake',
     ownerAuthProvenance: 'unknown',
     content: terminal.content,
-    source: 'agent',
+    messageId: terminal.id,
+    sourceId: terminal.id,
     sourceCategory: 'a2a',
     targetCats: ['fable5'],
     intent: 'execute',
@@ -118,25 +161,12 @@ export async function runTerminalQueueHarness(scenario = 'active control') {
     a2aParentInvocationId: 'inv-1',
     a2aTriggerMessageId: terminal.id,
   });
-  queue.backfillMessageId(terminal.threadId, terminal.userId, entry.id, terminal.id);
+  const entry = admitted.entry;
   const queued = queue.getEntrySnapshot(terminal.threadId, terminal.userId, entry.id);
-  h.messageStore.initializeQueueCustody(
-    terminal.id,
-    createInitialCrossThreadQueuedMessageCustody(terminal.id, [queued]),
-  );
   const processor = new QueueProcessor(deps);
-  const result = await processor.executeEntry(queue.markProcessing(terminal.threadId, terminal.userId));
-  await processor.onInvocationComplete(
-    terminal.threadId,
-    'fable5',
-    result.status,
-    result.invocationId,
-    result.successfulCatIds,
-    result.primaryEntryRequeued,
-    result.terminalInvocationIdByCatId,
-    result.attemptedQueueEntryIds,
-    result.terminalConsumptionByInvocationId,
-  );
-  const custody = h.messageStore.getById(terminal.id).queueCustody;
-  return { h, terminal, queue, deps, entry, queued, processor, result, custody };
+  const attempt = await queue.markProcessingByIdDurable(terminal.threadId, entry.id, 'fable5');
+  const result = await processor.executeEntry(attempt);
+  const source = h.messageStore.getById(terminal.id);
+  const response = responseMessageId ? h.messageStore.getById(responseMessageId) : null;
+  return { h, terminal, source, response, queue, deps, entry, queued, processor, result };
 }

@@ -2181,6 +2181,32 @@ export class QueueProcessor {
       'reason' in terminal ? terminal.reason : undefined,
     );
     if (!removed) throw new Error(`admitted attempt cleanup lost source entry ${attempted.id}`);
+    await this.retireConsumedCoordinationTerminals(attempted);
+  }
+
+  /**
+   * Retire the predecessor dispatch only from the same History fact that proves
+   * this target actually consumed the terminal coordination source. Queue
+   * cleanup alone is not evidence: a pre-start rejection also removes a row.
+   */
+  private async retireConsumedCoordinationTerminals(attempted: QueueEntry): Promise<void> {
+    const service = this.deps.a2aDispatchDispositionService;
+    if (attempted.sourceCategory !== 'a2a' || !service) return;
+    for (const messageId of exactA2ASourceMessageIds(attempted)) {
+      try {
+        const source = await this.deps.messageStore.getById(messageId);
+        const targetConsumed = source?.lifecycle?.dispatchRefs?.some(
+          (ref) => ref.phase === 'settled' && attempted.targets.includes(ref.targetId),
+        );
+        if (source?.extra?.coordination?.phase !== 'terminal' || !targetConsumed) continue;
+        await service.completeFromCoordinationTerminal(messageId);
+      } catch (err) {
+        this.deps.log.warn(
+          { err, threadId: attempted.threadId, entryId: attempted.id, messageId },
+          '[QueueProcessor] consumed coordination terminal retirement deferred to durable recovery',
+        );
+      }
+    }
   }
 
   /** Provider admission accepts only exact durable source custody or a source-less internal carrier. */
@@ -2614,8 +2640,8 @@ export class QueueProcessor {
         (entry, index) =>
           entry.id !== entryIds[index] ||
           entry.status !== 'claimed' ||
-          queueEntryTargetCats(entry).length !== 1 ||
-          queueEntryTargetCats(entry)[0] !== targetCatId,
+          entry.claimedTargetIds?.length !== 1 ||
+          entry.claimedTargetIds[0] !== targetCatId,
       )
     ) {
       return { started: false };

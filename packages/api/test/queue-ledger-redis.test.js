@@ -372,6 +372,104 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
     assert.equal(await redis.zscore('msg:thread:thread-redis', hidden.id), '500');
   });
 
+  it('adds Queue custody to published Agent speech without hiding the History source', async () => {
+    const queue = new InvocationQueue(store);
+    const source = await messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'owner-1',
+      content: '@codex inspect this result',
+      mentions: ['codex'],
+      timestamp: 100,
+      threadId: 'thread-redis',
+      idempotencyKey: 'published-agent-source',
+    });
+
+    const admitted = await queue.enqueueExistingMessageDurable(messageStore, source.id, {
+      from: { kind: 'agent', catId: 'opus' },
+      threadId: 'thread-redis',
+      userId: 'owner-1',
+      kind: 'message_wake',
+      ownerAuthProvenance: 'strict',
+      content: source.content,
+      messageId: source.id,
+      sourceId: source.id,
+      sourceCategory: 'a2a',
+      targetCats: ['codex'],
+      intent: 'execute',
+      autoExecute: true,
+    });
+
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.equal(admitted.message.deliveryStatus, undefined);
+    assert.equal(admitted.message.lifecycle.kind, 'input');
+    assert.deepEqual(admitted.message.lifecycle.dispatchRefs, []);
+    assert.deepEqual(admitted.entry.targets, ['codex']);
+    const stored = await messageStore.getById(source.id);
+    assert.equal(stored.deliveryStatus, undefined);
+    assert.equal(stored.lifecycle.kind, 'input');
+    assert.deepEqual(
+      (await messageStore.getByThreadAfter('thread-redis', undefined, undefined, 'owner-1')).map(
+        (message) => message.id,
+      ),
+      [source.id],
+    );
+  });
+
+  it('admits one fresh external source once and rejects the same target after History records dispatch', async () => {
+    const queue = new InvocationQueue(store);
+    const source = await messageStore.append({
+      from: { kind: 'external', connectorId: 'github' },
+      userId: 'owner-1',
+      content: 'fresh connector event',
+      mentions: ['opus'],
+      timestamp: 100,
+      threadId: 'thread-redis',
+      idempotencyKey: 'fresh-external-source',
+    });
+    const input = {
+      from: source.from,
+      threadId: source.threadId,
+      userId: source.userId,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      content: source.content,
+      messageId: source.id,
+      sourceId: source.id,
+      targetCats: ['opus'],
+      intent: 'execute',
+      autoExecute: true,
+    };
+
+    const admitted = await queue.enqueueExistingMessageDurable(messageStore, source.id, input);
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.equal(admitted.message.deliveryStatus, 'queued');
+    assert.deepEqual(admitted.message.lifecycle.dispatchRefs, []);
+
+    const claimed = await queue.markProcessingDurable(source.threadId, source.userId, {
+      entryId: admitted.entry.id,
+      targetCats: ['opus'],
+    });
+    assert.equal(claimed.status, 'claimed');
+    assert.equal(await queue.commitClaimedProcessing(source.threadId, [admitted.entry.id], 200), true);
+    const dispatched = await messageStore.advanceLifecycleInputDispatch(source.id, {
+      orderKey: admitted.message.lifecycle.orderKey,
+      ...(admitted.message.lifecycle.producerInvocationId
+        ? { producerInvocationId: admitted.message.lifecycle.producerInvocationId }
+        : {}),
+      targetId: 'opus',
+      phase: 'dispatched',
+      statusMessageId: 'external-response',
+      dispatchedAt: 200,
+    });
+    assert.equal(dispatched.kind, 'applied');
+
+    await assert.rejects(
+      queue.enqueueExistingMessageDurable(messageStore, source.id, input),
+      /cannot replay an already dispatched source target/,
+    );
+    assert.equal(await store.get(source.threadId, admitted.entry.id), null);
+  });
+
   it('expands a targetless source on the same row and preserves FIFO metadata', async () => {
     const queue = new InvocationQueue(store);
     const admitted = await queue.appendAndEnqueueDurable(
