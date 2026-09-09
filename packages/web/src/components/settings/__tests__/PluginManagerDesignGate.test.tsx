@@ -48,7 +48,8 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     const github = container.querySelector('[data-plugin-id="github"]');
     const video = container.querySelector('[data-plugin-id="video-analysis"]');
     expect(github?.getAttribute('aria-current')).toBe('true');
-    expect(github?.className).toContain('!bg-[var(--console-active-bg)]');
+    expect((github as HTMLElement | null)?.style.backgroundColor).toBe('var(--console-active-bg)');
+    expect(github?.className).not.toContain('!bg-');
     expect(github?.className).not.toContain('ring-1');
     expect(video?.getAttribute('aria-current')).toBeNull();
 
@@ -56,7 +57,8 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
 
     expect(github?.getAttribute('aria-current')).toBeNull();
     expect(video?.getAttribute('aria-current')).toBe('true');
-    expect(video?.className).toContain('!bg-[var(--console-active-bg)]');
+    expect((video as HTMLElement | null)?.style.backgroundColor).toBe('var(--console-active-bg)');
+    expect(video?.className).not.toContain('!bg-');
     expect(video?.className).not.toContain('ring-1');
   });
 

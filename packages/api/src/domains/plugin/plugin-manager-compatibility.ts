@@ -72,7 +72,7 @@ export interface PluginManagerCompatibilityProvider {
 }
 
 export interface RepositoryPluginManagerCompatibilityProviderOptions {
-  readonly excludedPluginIds?: readonly string[];
+  readonly loadSuppressedPluginIds?: () => Promise<readonly string[]> | readonly string[];
 }
 
 function isManagerCapabilityKind(value: string): value is PluginManagerCapability['kind'] {
@@ -84,19 +84,19 @@ function isManagerCapabilityKind(value: string): value is PluginManagerCapabilit
  * These rows remain read-only until Train C materializes them in Host inventory.
  */
 export class RepositoryPluginManagerCompatibilityProvider implements PluginManagerCompatibilityProvider {
-  private readonly excludedPluginIds: ReadonlySet<string>;
-
   constructor(
     private readonly loadPlugins: () => Promise<readonly PluginInfo[]> | readonly PluginInfo[],
-    options: RepositoryPluginManagerCompatibilityProviderOptions = {},
-  ) {
-    this.excludedPluginIds = new Set(options.excludedPluginIds ?? []);
-  }
+    private readonly options: RepositoryPluginManagerCompatibilityProviderOptions = {},
+  ) {}
 
   async list(): Promise<readonly PluginManagerCompatibilityRecord[]> {
-    const plugins = await this.loadPlugins();
+    const [plugins, suppressedPluginIds] = await Promise.all([
+      this.loadPlugins(),
+      this.options.loadSuppressedPluginIds?.() ?? [],
+    ]);
+    const suppressed = new Set(suppressedPluginIds);
     return plugins
-      .filter((plugin) => !this.excludedPluginIds.has(plugin.id))
+      .filter((plugin) => !suppressed.has(plugin.id))
       .map((plugin) => {
         const capabilities: PluginManagerCapability[] = plugin.resources.flatMap((resource) => {
           if (!isManagerCapabilityKind(resource.type)) return [];
@@ -133,6 +133,20 @@ export class RepositoryPluginManagerCompatibilityProvider implements PluginManag
 
 function projectCompatibilityRecord(record: PluginManagerCompatibilityRecord): PluginManagerDetail {
   const capabilities = record.capabilities.map((capability) => ({ ...capability }));
+  const repositoryLocal = record.sourceAdapter === 'repository-local';
+  const source = repositoryLocal
+    ? {
+        kind: 'compatibility' as const,
+        adapter: 'repository-local' as const,
+        packageName: `repository-local:${record.pluginId}`,
+        trust: 'first-party' as const,
+      }
+    : {
+        kind: 'compatibility' as const,
+        adapter: 'connector' as const,
+        packageName: `connector:${record.pluginId}`,
+        trust: 'local-trusted' as const,
+      };
   return {
     pluginId: record.pluginId,
     pluginInstanceId: null,
@@ -140,13 +154,8 @@ function projectCompatibilityRecord(record: PluginManagerCompatibilityRecord): P
     ...(record.description === undefined ? {} : { description: record.description }),
     ...(record.icon === undefined ? {} : { icon: record.icon }),
     ...(record.iconBg === undefined ? {} : { iconBg: record.iconBg }),
-    publisher: record.publisher ?? 'Clowder AI',
-    source: {
-      kind: 'compatibility',
-      adapter: record.sourceAdapter,
-      packageName: `${record.sourceAdapter}:${record.pluginId}`,
-      trust: 'first-party',
-    },
+    publisher: record.publisher ?? (repositoryLocal ? 'Clowder AI' : 'Local Host'),
+    source,
     availableVersion: record.version,
     installedVersion: record.version,
     packageDigest: null,

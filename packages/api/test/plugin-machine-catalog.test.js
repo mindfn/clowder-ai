@@ -58,6 +58,7 @@ test('projects canonical machine catalog release truth while Host policy remains
     hostPolicies: [
       {
         pluginId: 'dev.clowder.video-analysis',
+        replacesRepositoryPluginId: 'video-analysis',
         effectiveGrants: ['events.publish'],
       },
     ],
@@ -75,6 +76,7 @@ test('projects canonical machine catalog release truth while Host policy remains
       version: '0.1.0-alpha.0',
       archiveUrl: 'https://registry.npmjs.org/@clowder-ai/video-analysis/-/video-analysis-0.1.0-alpha.0.tgz',
       packageDigest: digest,
+      replacesRepositoryPluginId: 'video-analysis',
       effectiveGrants: ['events.publish'],
       presentation: {
         displayName: 'Video Analysis',

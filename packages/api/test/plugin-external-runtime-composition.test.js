@@ -264,12 +264,17 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /new MachineOfficialPluginCatalog\(\{/);
   assert.match(source, /validateCatalog: validatePluginCatalog/);
   assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  const managerComposition = source.slice(managerCompositionIndex, recoveryIndex);
+  assert.match(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
+  const managerCompatibilityIndex = source.indexOf('const repositoryPluginManagerCompatibility =');
+  const managerComposition = source.slice(managerCompatibilityIndex, recoveryIndex);
+  assert.ok(managerCompatibilityIndex >= 0, 'repository compatibility must be composed after catalog policy exists');
   assert.match(
     managerComposition,
     /compatibility:\s*repositoryPluginManagerCompatibility/,
     'Train B Manager must project real repository plugins through its read-only compatibility boundary',
   );
+  assert.match(managerComposition, /loadSuppressedPluginIds:/);
+  assert.match(managerComposition, /entry\.replacesRepositoryPluginId/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
   assert.match(source, /installer: pluginManagerRuntime\.officialInstaller/);

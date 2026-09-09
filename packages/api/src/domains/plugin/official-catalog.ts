@@ -18,6 +18,8 @@ export interface OfficialPluginCatalogEntry {
   readonly distribution: 'registry' | 'bundled';
   readonly archiveUrl: string;
   readonly packageDigest: string;
+  /** Host-owned migration identity hidden when this catalog row is discoverable. */
+  readonly replacesRepositoryPluginId?: string;
   readonly effectiveGrants: readonly Capability[];
   readonly ownerAuth?: OfficialPluginOwnerAuth;
   /** Canonical discovery presentation. Host grants and installation truth remain separate. */

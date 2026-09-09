@@ -3979,9 +3979,7 @@ async function main(): Promise<void> {
     return verify(input, { ghToken: getGitHubToken() });
   };
 
-  let repositoryPluginManagerCompatibility:
-    | import('./domains/plugin/plugin-manager-service.js').PluginManagerCompatibilityPort
-    | undefined;
+  let loadRepositoryPluginInfo: (() => Promise<readonly import('@cat-cafe/shared').PluginInfo[]>) | undefined;
 
   // F202: Plugin framework — discovery + config + resource activation
   {
@@ -4008,7 +4006,9 @@ async function main(): Promise<void> {
     const { resolveStartupCliConfigContext } = await import('./config/capabilities/startup-cli-config.js');
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'packages', 'api', 'src', 'plugins');
-    const { loadAllPluginConfigs, resolvePluginEnv } = await import('./domains/plugin/plugin-config-store.js');
+    const { loadAllPluginConfigs, readPluginEnvSnapshot, resolvePluginEnv } = await import(
+      './domains/plugin/plugin-config-store.js'
+    );
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
     const scannedManifests = pluginRegistry.getAllManifests();
@@ -4016,22 +4016,13 @@ async function main(): Promise<void> {
     app.log.info(
       `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
     );
-    const { PluginManagerCompatibilityAdapter, RepositoryPluginManagerCompatibilityProvider } = await import(
-      './domains/plugin/plugin-manager-compatibility.js'
-    );
-    repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
-      new RepositoryPluginManagerCompatibilityProvider(
-        async () => {
-          const manifests = pluginRegistry.scan();
-          const projectRoot = resolveActiveProjectRoot();
-          loadAllPluginConfigs(projectRoot, manifests);
-          const capabilities = await readCapabilitiesConfig(projectRoot);
-          const envSnapshot = resolvePluginEnv(manifests);
-          return manifests.map((manifest) => pluginRegistry.getPluginInfo(manifest, capabilities, envSnapshot));
-        },
-        { excludedPluginIds: ['video-analysis'] },
-      ),
-    ]);
+    loadRepositoryPluginInfo = async () => {
+      const manifests = pluginRegistry.scan();
+      const projectRoot = resolveActiveProjectRoot();
+      const capabilities = await readCapabilitiesConfig(projectRoot);
+      const envSnapshot = readPluginEnvSnapshot(projectRoot, manifests);
+      return manifests.map((manifest) => pluginRegistry.getPluginInfo(manifest, capabilities, envSnapshot));
+    };
     getGitHubPluginEnv = () => {
       const githubManifest = pluginRegistry.getManifest('github');
       return githubManifest ? resolvePluginEnv([githubManifest]) : {};
@@ -4646,6 +4637,7 @@ async function main(): Promise<void> {
     hostPolicies: [
       {
         pluginId: 'dev.clowder.video-analysis',
+        replacesRepositoryPluginId: 'video-analysis',
         effectiveGrants: ['plugin.config.read', 'secret.read'],
       },
     ],
@@ -4659,13 +4651,25 @@ async function main(): Promise<void> {
     const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
     return instance ? readPluginConfig(pluginProjectRoot, instance.pluginId)[key] : undefined;
   };
+  if (loadRepositoryPluginInfo === undefined) {
+    throw new Error('Repository plugin discovery must be ready before Plugin Manager composition');
+  }
+  const { PluginManagerCompatibilityAdapter, RepositoryPluginManagerCompatibilityProvider } = await import(
+    './domains/plugin/plugin-manager-compatibility.js'
+  );
+  const repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
+    new RepositoryPluginManagerCompatibilityProvider(loadRepositoryPluginInfo, {
+      loadSuppressedPluginIds: async () =>
+        (await pluginManagerCatalog.snapshot()).entries.flatMap((entry) =>
+          entry.replacesRepositoryPluginId === undefined ? [] : [entry.replacesRepositoryPluginId],
+        ),
+    }),
+  ]);
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
     runtime: pluginRuntime,
     catalogProvider: pluginManagerCatalog,
     catalogManifests: [],
-    ...(repositoryPluginManagerCompatibility === undefined
-      ? {}
-      : { compatibility: repositoryPluginManagerCompatibility }),
+    compatibility: repositoryPluginManagerCompatibility,
     auth: officialPluginAuth,
     builtinContributions: {
       materializer: new FilesystemBuiltinPluginPackageMaterializer({
