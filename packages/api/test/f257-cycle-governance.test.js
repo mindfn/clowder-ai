@@ -83,10 +83,14 @@ describe('F257 cycle governance closure', () => {
     assert.deepEqual(record.rejectReasons, ['Need stronger evidence.']);
     assert.equal(context.deliveries.length, 2, 'reject must deliver a fresh evaluation assignment generation');
     assert.match(context.deliveries[1].content, /Need stronger evidence\./);
+    assert.match(context.deliveries[1].content, /current CycleRecord is awaiting a fresh evaluation writeback/);
+    assert.match(context.deliveries[1].content, /Earlier governance cards in this thread are settled history/);
 
     context.clock.now += 1_000;
     await writeEvaluation(context);
     assert.equal(context.deliveries.length, 3, 'reevaluation must deliver a fresh governance assignment generation');
+    assert.match(context.deliveries[2].content, /current CycleRecord is awaiting a fresh governance writeback/);
+    assert.match(context.deliveries[2].content, /Do not reuse an earlier proposalId/);
     record = await context.cycles.current('owner-1', 'obj');
     const second = await context.governance.submitGovernance(principal, {
       objectiveId: 'obj',

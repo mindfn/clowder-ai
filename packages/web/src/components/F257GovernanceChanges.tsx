@@ -16,10 +16,10 @@ export function F257GovernanceChanges({ changes }: { changes: Array<Record<strin
         {changes.map((change, index) => (
           <li
             key={`${String(change.unitId ?? 'unit')}-${index}`}
-            className="flex flex-col gap-2 rounded-lg border border-cafe-subtle/40 bg-cafe-muted/35 p-3 sm:flex-row sm:items-center"
+            className="rounded-lg border border-cafe-subtle/40 bg-cafe-muted/35 p-3"
             data-testid="f257-governance-change"
           >
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-md bg-cafe-accent/10 px-2 py-0.5 font-semibold text-cafe-accent">
                   {actionLabel(change.action)}
@@ -27,16 +27,18 @@ export function F257GovernanceChanges({ changes }: { changes: Array<Record<strin
                 <span className="font-mono font-semibold">{String(change.unitId ?? '未知段')}</span>
               </div>
               {change.reason != null && <p className="mt-1 break-words text-cafe-muted">{String(change.reason)}</p>}
-              <p className="mt-1 text-cafe-secondary">{changeImpactSummary(change)}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-cafe-secondary">
+                {changeImpactSummary(change) !== '修改段内容' && <span>{changeImpactSummary(change)}</span>}
+                <button
+                  type="button"
+                  onClick={() => setSelected(change)}
+                  className="rounded px-1 font-medium text-cafe-accent underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent"
+                  data-testid="f257-governance-open-diff"
+                >
+                  {changeDetailLabel(change)}
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelected(change)}
-              className="shrink-0 rounded-lg border border-cafe px-3 py-1.5 font-semibold text-cafe transition-colors hover:bg-cafe-surface"
-              data-testid="f257-governance-open-diff"
-            >
-              查看左右差异
-            </button>
           </li>
         ))}
       </ol>
@@ -199,6 +201,17 @@ function changeImpactSummary(change: Record<string, unknown>): string {
   return '修改段内容';
 }
 
+function changeDetailLabel(change: Record<string, unknown>): string {
+  if (change.action === 'add') return '查看新增段内容';
+  if (change.action === 'disable' || change.action === 'enable') return '查看段内容与状态';
+  if (change.action === 'rollback') return '查看版本差异';
+  const contentChanged = stringField(change, 'proposedContent') !== undefined;
+  const conditionChanged = change.proposedCondition !== undefined;
+  if (contentChanged) return '查看段内容';
+  if (conditionChanged) return '查看触发条件';
+  return '查看差异';
+}
+
 function actionLabel(action: unknown): string {
   if (action === 'modify') return '修改';
   if (action === 'disable') return '禁用';
@@ -216,16 +229,41 @@ function formatCondition(value: unknown): string {
   return `条件：${conditionRef}${params}`;
 }
 
-function fullContentDiff(unitId: string, before: string, after: string): string {
+export function fullContentDiff(unitId: string, before: string, after: string): string {
   const beforeLines = before ? before.split('\n') : [];
   const afterLines = after ? after.split('\n') : [];
+  let commonPrefix = 0;
+  while (
+    commonPrefix < beforeLines.length &&
+    commonPrefix < afterLines.length &&
+    beforeLines[commonPrefix] === afterLines[commonPrefix]
+  ) {
+    commonPrefix++;
+  }
+  let commonSuffix = 0;
+  while (
+    commonSuffix < beforeLines.length - commonPrefix &&
+    commonSuffix < afterLines.length - commonPrefix &&
+    beforeLines[beforeLines.length - 1 - commonSuffix] === afterLines[afterLines.length - 1 - commonSuffix]
+  ) {
+    commonSuffix++;
+  }
+  const beforeMiddleEnd = beforeLines.length - commonSuffix;
+  const afterMiddleEnd = afterLines.length - commonSuffix;
+  const lines = [
+    ...beforeLines.slice(0, commonPrefix).map((line) => ` ${line}`),
+    ...beforeLines.slice(commonPrefix, beforeMiddleEnd).map((line) => `-${line}`),
+    ...afterLines.slice(commonPrefix, afterMiddleEnd).map((line) => `+${line}`),
+    ...beforeLines.slice(beforeMiddleEnd).map((line) => ` ${line}`),
+  ];
+  const beforeStart = beforeLines.length === 0 ? 0 : 1;
+  const afterStart = afterLines.length === 0 ? 0 : 1;
   return [
     `diff --git a/${unitId}.md b/${unitId}.md`,
     `--- a/${unitId}.md`,
     `+++ b/${unitId}.md`,
-    `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
-    ...beforeLines.map((line) => `-${line}`),
-    ...afterLines.map((line) => `+${line}`),
+    `@@ -${beforeStart},${beforeLines.length} +${afterStart},${afterLines.length} @@`,
+    ...lines,
   ].join('\n');
 }
 

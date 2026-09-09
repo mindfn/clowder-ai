@@ -59,6 +59,9 @@ export function formatCycleAssignment(record: CycleRecord, assignment: CycleEval
   const supplementaryGuidance = assignment.windows.some((window) => window.provenance)
     ? 'Windows carrying manual-version-switch provenance are supplementary unconsumed evidence from their declared source version. Keep that provenance intact, assess the current assignment version, and do not treat those windows as native current-version observations or as a cross-version comparison.'
     : null;
+  const rejectionGuidance = assignment.rejectReasons?.length
+    ? 'This assignment is authoritative: the current CycleRecord is awaiting a fresh evaluation writeback. Earlier governance cards in this thread are settled history. Do not treat their conversation text as a pending proposal or skip this writeback.'
+    : null;
   return [
     '## F257 Cycle Evaluation Assignment',
     '',
@@ -68,6 +71,7 @@ export function formatCycleAssignment(record: CycleRecord, assignment: CycleEval
     'Also group every high-confidence counterexample wake event in the frozen windows into semantic root causes and submit eventCount, rootCauseCount, and howGrouped. eventCount follows the trigger coordinate: replayable structured annotations count by incidentKey, while MCP markers from multiple metrics in one invocation count once. This is audit evidence only; M remains fixed.',
     'Assess detector coverage from the same full window. Report evidence-bound detector gaps, metric gaps, data insufficiency, or adequate coverage; this inferred assessment is diagnostic and never metric truth.',
     supplementaryGuidance,
+    rejectionGuidance,
     'Conversation text is not a writeback. Do not compare this cycle with another version.',
     '',
     '```json',

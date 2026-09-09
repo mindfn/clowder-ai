@@ -44,6 +44,9 @@ export function buildGovernanceAssignment(
 }
 
 export function formatGovernanceAssignment(record: CycleRecord, assignment: CycleGovernanceAssignment): string {
+  const rejectionGuidance = assignment.rejectedProposalReasons.length
+    ? 'This assignment is authoritative: the current CycleRecord is awaiting a fresh governance writeback. Earlier proposal cards in this thread are settled history. Do not reuse an earlier proposalId or infer pending state from conversation text.'
+    : null;
   return [
     '## F257 Cycle Governance Assignment',
     '',
@@ -51,12 +54,15 @@ export function formatGovernanceAssignment(record: CycleRecord, assignment: Cycl
     'Choose keep, rollback, or evolve from the written evaluation and historical cycle summaries below.',
     'For rollback/evolve, inspect every affected unit with cat_cafe_describe_harness_unit, then include the full structured draft.',
     'Merge means disable the source unit and modify the destination unit. Do not mutate any hook directly.',
+    rejectionGuidance,
     'Submit the decision with cat_cafe_submit_cycle_governance. Conversation text is not a writeback.',
     '',
     '```json',
     JSON.stringify(assignment),
     '```',
-  ].join('\n');
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
 }
 
 function summarizeHistory(record: CycleRecord): CycleGovernanceHistorySummary[] {
