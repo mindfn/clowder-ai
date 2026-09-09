@@ -42,6 +42,24 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(container.textContent).not.toContain('需处理');
   });
 
+  it('uses a filled accessible selection state without the persistent accent outline', async () => {
+    await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
+
+    const github = container.querySelector('[data-plugin-id="github"]');
+    const video = container.querySelector('[data-plugin-id="video-analysis"]');
+    expect(github?.getAttribute('aria-current')).toBe('true');
+    expect(github?.className).toContain('!bg-[var(--console-active-bg)]');
+    expect(github?.className).not.toContain('ring-1');
+    expect(video?.getAttribute('aria-current')).toBeNull();
+
+    await act(async () => button(container, '视频分析')?.click());
+
+    expect(github?.getAttribute('aria-current')).toBeNull();
+    expect(video?.getAttribute('aria-current')).toBe('true');
+    expect(video?.className).toContain('!bg-[var(--console-active-bg)]');
+    expect(video?.className).not.toContain('ring-1');
+  });
+
   it('searches across installed and uninstalled plugins', async () => {
     await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
     const search = container.querySelector('input[aria-label="搜索插件"]');

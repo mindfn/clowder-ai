@@ -265,10 +265,10 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /validateCatalog: validatePluginCatalog/);
   assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
   const managerComposition = source.slice(managerCompositionIndex, recoveryIndex);
-  assert.doesNotMatch(
+  assert.match(
     managerComposition,
-    /compatibility:/,
-    'Train B Manager must not project unmigrated repository and connector rows as package plugins',
+    /compatibility:\s*repositoryPluginManagerCompatibility/,
+    'Train B Manager must project real repository plugins through its read-only compatibility boundary',
   );
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
