@@ -110,7 +110,11 @@ function PluginListRow({
     <article
       data-plugin-id={plugin.id}
       data-plugin-list-row="true"
-      className={`${settingsResourceCardClass} h-[88px] overflow-hidden ${selected ? 'ring-1 ring-[var(--cafe-accent)]' : ''}`}
+      role="listitem"
+      aria-current={selected ? 'true' : undefined}
+      className={`${settingsResourceCardClass} h-[88px] overflow-hidden transition-colors ${
+        selected ? '!bg-[var(--console-active-bg)]' : 'hover:bg-[var(--console-hover-bg)]'
+      }`}
     >
       <div className={`${settingsResourceRowClass} h-full w-full`}>
         <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={onSelect}>
@@ -228,7 +232,12 @@ export function PluginManagerContent({
           <SettingsText as="p" variant="sm" tone="default" className="px-1 font-semibold">
             插件列表
           </SettingsText>
-          <div data-plugin-scroll-region="list" className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          <div
+            data-plugin-scroll-region="list"
+            role="list"
+            aria-label="插件列表"
+            className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+          >
             {loading && (
               <div data-testid="plugin-manager-loading" className="space-y-2">
                 {[0, 1, 2].map((item) => (

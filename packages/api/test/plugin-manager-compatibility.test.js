@@ -1,9 +1,74 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { PluginManagerCompatibilityAdapter } from '../dist/domains/plugin/index.js';
+import {
+  PluginManagerCompatibilityAdapter,
+  RepositoryPluginManagerCompatibilityProvider,
+} from '../dist/domains/plugin/index.js';
 
 describe('F202 Plugin Manager migration compatibility', () => {
+  it('projects current repository plugins as read-only Manager rows and excludes migrated identities', async () => {
+    const provider = new RepositoryPluginManagerCompatibilityProvider(
+      async () => [
+        {
+          id: 'github',
+          name: 'GitHub',
+          version: '1.0.0',
+          description: 'Repository automation',
+          icon: 'github',
+          iconBg: '#24292e',
+          docsUrl: 'https://cli.github.com/manual/gh_auth_login',
+          setupSteps: ['Log in with gh'],
+          status: 'enabled',
+          configured: true,
+          config: [],
+          resources: [{ type: 'schedule', name: 'repo-scan', enabled: true }],
+          hasHealthCheck: false,
+        },
+        {
+          id: 'video-analysis',
+          name: 'Legacy video analysis',
+          version: '1.0.0',
+          status: 'configured',
+          configured: true,
+          config: [],
+          resources: [{ type: 'mcp', name: 'video-analysis-toolset', enabled: false }],
+          hasHealthCheck: false,
+        },
+      ],
+      { excludedPluginIds: ['video-analysis'] },
+    );
+
+    const rows = await provider.list();
+
+    assert.deepEqual(rows, [
+      {
+        pluginId: 'github',
+        displayName: 'GitHub',
+        version: '1.0.0',
+        description: 'Repository automation',
+        icon: 'github',
+        iconBg: '#24292e',
+        publisher: 'Clowder AI',
+        sourceAdapter: 'repository-local',
+        configured: true,
+        enabled: true,
+        live: true,
+        docsUrl: 'https://cli.github.com/manual/gh_auth_login',
+        setupSteps: ['Log in with gh'],
+        configFields: [],
+        capabilities: [
+          {
+            id: 'plugin:github:repo-scan',
+            kind: 'schedule',
+            name: 'repo-scan',
+            active: true,
+          },
+        ],
+      },
+    ]);
+  });
+
   it('projects repository-local and connector rows without inventing Host mutation authority', async () => {
     const adapter = new PluginManagerCompatibilityAdapter([
       {

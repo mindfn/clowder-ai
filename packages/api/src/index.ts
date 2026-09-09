@@ -4288,6 +4288,10 @@ async function main(): Promise<void> {
     return verify(input, { ghToken: getGitHubToken() });
   };
 
+  let repositoryPluginManagerCompatibility:
+    | import('./domains/plugin/plugin-manager-service.js').PluginManagerCompatibilityPort
+    | undefined;
+
   // F202: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
@@ -4321,6 +4325,22 @@ async function main(): Promise<void> {
     app.log.info(
       `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
     );
+    const { PluginManagerCompatibilityAdapter, RepositoryPluginManagerCompatibilityProvider } = await import(
+      './domains/plugin/plugin-manager-compatibility.js'
+    );
+    repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
+      new RepositoryPluginManagerCompatibilityProvider(
+        async () => {
+          const manifests = pluginRegistry.scan();
+          const projectRoot = resolveActiveProjectRoot();
+          loadAllPluginConfigs(projectRoot, manifests);
+          const capabilities = await readCapabilitiesConfig(projectRoot);
+          const envSnapshot = resolvePluginEnv(manifests);
+          return manifests.map((manifest) => pluginRegistry.getPluginInfo(manifest, capabilities, envSnapshot));
+        },
+        { excludedPluginIds: ['video-analysis'] },
+      ),
+    ]);
     getGitHubPluginEnv = () => {
       const githubManifest = pluginRegistry.getManifest('github');
       return githubManifest ? resolvePluginEnv([githubManifest]) : {};
@@ -5024,6 +5044,9 @@ async function main(): Promise<void> {
     runtime: pluginRuntime,
     catalogProvider: pluginManagerCatalog,
     catalogManifests: [],
+    ...(repositoryPluginManagerCompatibility === undefined
+      ? {}
+      : { compatibility: repositoryPluginManagerCompatibility }),
     auth: officialPluginAuth,
     builtinContributions: {
       materializer: new FilesystemBuiltinPluginPackageMaterializer({

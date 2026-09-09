@@ -1,11 +1,13 @@
 import type {
   PluginDescription,
   PluginIconSpec,
+  PluginInfo,
   PluginManagerCapability,
   PluginManagerConfigField,
   PluginManagerDetail,
   ValueConfigField,
 } from '@cat-cafe/shared';
+import { resourceCapId } from './PluginRegistry.js';
 import type { PluginManagerCompatibilityPort } from './plugin-manager-service.js';
 
 export type PluginManagerCompatibilitySource = 'repository-local' | 'connector';
@@ -67,6 +69,66 @@ function projectCompatibilityConfigField(field: CompatibilityConfigField): Plugi
 
 export interface PluginManagerCompatibilityProvider {
   list(): Promise<readonly PluginManagerCompatibilityRecord[]>;
+}
+
+export interface RepositoryPluginManagerCompatibilityProviderOptions {
+  readonly excludedPluginIds?: readonly string[];
+}
+
+function isManagerCapabilityKind(value: string): value is PluginManagerCapability['kind'] {
+  return value === 'skill' || value === 'mcp' || value === 'limb' || value === 'schedule';
+}
+
+/**
+ * Projects the existing repository manifest registry into the unified Manager.
+ * These rows remain read-only until Train C materializes them in Host inventory.
+ */
+export class RepositoryPluginManagerCompatibilityProvider implements PluginManagerCompatibilityProvider {
+  private readonly excludedPluginIds: ReadonlySet<string>;
+
+  constructor(
+    private readonly loadPlugins: () => Promise<readonly PluginInfo[]> | readonly PluginInfo[],
+    options: RepositoryPluginManagerCompatibilityProviderOptions = {},
+  ) {
+    this.excludedPluginIds = new Set(options.excludedPluginIds ?? []);
+  }
+
+  async list(): Promise<readonly PluginManagerCompatibilityRecord[]> {
+    const plugins = await this.loadPlugins();
+    return plugins
+      .filter((plugin) => !this.excludedPluginIds.has(plugin.id))
+      .map((plugin) => {
+        const capabilities: PluginManagerCapability[] = plugin.resources.flatMap((resource) => {
+          if (!isManagerCapabilityKind(resource.type)) return [];
+          return [
+            {
+              id: resourceCapId(plugin.id, resource),
+              kind: resource.type,
+              name: resource.name ?? resource.path ?? resource.type,
+              active: resource.enabled,
+            },
+          ];
+        });
+        const runtimeEnabled = plugin.status === 'enabled' || plugin.status === 'partial';
+        return {
+          pluginId: plugin.id,
+          displayName: plugin.name,
+          version: plugin.version,
+          ...(plugin.description === undefined ? {} : { description: plugin.description }),
+          ...(plugin.icon === undefined ? {} : { icon: plugin.icon }),
+          ...(plugin.iconBg === undefined ? {} : { iconBg: plugin.iconBg }),
+          publisher: 'Clowder AI',
+          sourceAdapter: 'repository-local' as const,
+          configured: plugin.configured,
+          enabled: runtimeEnabled,
+          live: runtimeEnabled,
+          ...(plugin.docsUrl === undefined ? {} : { docsUrl: plugin.docsUrl }),
+          ...(plugin.setupSteps === undefined ? {} : { setupSteps: [...plugin.setupSteps] }),
+          configFields: plugin.config.map((field) => ({ ...field })),
+          capabilities,
+        };
+      });
+  }
 }
 
 function projectCompatibilityRecord(record: PluginManagerCompatibilityRecord): PluginManagerDetail {
