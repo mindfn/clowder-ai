@@ -594,7 +594,12 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
   patch: LifecycleResponseTerminalPatch,
   entries: readonly QueueLedgerEntry[],
 ):
-  | { kind: 'prepared'; message: StoredMessage; lifecycleReplayed: boolean }
+  | {
+      kind: 'prepared';
+      message: StoredMessage;
+      entries: QueueLedgerEntry[];
+      lifecycleReplayed: boolean;
+    }
   | Exclude<CommitLifecycleResponseTerminalResult, { kind: 'applied' | 'replayed' }> {
   if (current.lifecycle?.kind !== 'response') {
     return { kind: 'conflict', reason: 'not_response', message: structuredClone(current) };
@@ -609,7 +614,12 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
   ) {
     return { kind: 'conflict', reason: 'invalid_terminal', message: structuredClone(current) };
   }
-  const targetIds = entries.flatMap((entry) => entry.targets);
+  const dispatchedTargets = new Set(current.lifecycle.dispatchRefs?.map((ref) => ref.targetId) ?? []);
+  const pendingEntries = entries.flatMap((entry) => {
+    const targets = entry.targets.filter((targetId) => !dispatchedTargets.has(targetId));
+    return targets.length > 0 ? [{ ...entry, targets }] : [];
+  });
+  const targetIds = pendingEntries.flatMap((entry) => entry.targets);
   const next = prepareLifecycleResponseTerminalMessage(current, patch);
   const assigned = assignLifecycleDispatchTargetsMetadata(
     next.lifecycle,
@@ -621,10 +631,10 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
   }
   next.lifecycle = assigned.lifecycle;
   if (current.lifecycle.status === 'processing') {
-    return { kind: 'prepared', message: next, lifecycleReplayed: false };
+    return { kind: 'prepared', message: next, entries: pendingEntries, lifecycleReplayed: false };
   }
   return isDeepStrictEqual(current, next)
-    ? { kind: 'prepared', message: next, lifecycleReplayed: true }
+    ? { kind: 'prepared', message: next, entries: pendingEntries, lifecycleReplayed: true }
     : { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
 }
 
@@ -2073,7 +2083,18 @@ export class MessageStore {
     }
     const prepared = prepareLifecycleResponseTerminalWithLedgerTargets(current, patch, entries);
     if (prepared.kind !== 'prepared') return prepared;
-    const admitted = ledgerStore.enqueueNow(entries, maxQueuedUserEntries);
+    if (prepared.entries.length === 0) {
+      if (entries.some((entry) => ledgerStore.getNow(entry.threadId, entry.id) !== null)) {
+        return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
+      }
+      return {
+        kind: prepared.lifecycleReplayed ? 'replayed' : 'applied',
+        message: structuredClone(prepared.message),
+        entries: [],
+        ledgerReplayed: true,
+      };
+    }
+    const admitted = ledgerStore.enqueueNow(prepared.entries, maxQueuedUserEntries);
     if (admitted.outcome === 'full') return { kind: 'full' };
     if (admitted.outcome === 'conflict') {
       return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };

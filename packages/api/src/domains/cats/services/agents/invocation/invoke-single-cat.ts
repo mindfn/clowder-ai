@@ -1332,7 +1332,7 @@ export interface InvocationParams {
   readonly onAgentClientActiveRunReady?: (input: {
     catId: CatId;
     dispatcher: import('../../types.js').AgentClientActiveRunDispatcher;
-  }) => (() => void) | void;
+  }) => (() => void) | undefined;
   /** Scope-free seeds are bound only after this child invocation id exists. */
   readonly memoryCueOpportunitySeeds?: readonly MemoryCueOpportunitySeed[];
   /** F276 trial: source-only ASR scenes bound to their exact owner trigger message. */

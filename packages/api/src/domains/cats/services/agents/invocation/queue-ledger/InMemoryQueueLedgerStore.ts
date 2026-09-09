@@ -1,3 +1,4 @@
+import { commitInMemoryQueueLedgerEntry } from './InMemoryQueueLedgerCommit.js';
 import {
   assertQueueLedgerEntry,
   cloneQueueLedgerEntry,
@@ -293,123 +294,16 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     at: number,
     replacement?: QueueLedgerEntry,
   ): Promise<QueueLedgerTransitionResult> {
-    const current = this.rows.get(threadId);
-    const index = current?.findIndex((entry) => entry.id === entryId) ?? -1;
-    if (!current || index < 0) return { outcome: 'not_found' };
-    const entry = current[index];
-    if (!entry) return { outcome: 'not_found' };
-    if (mode === 'processing_evidence' || mode === 'terminal') return { outcome: 'state_changed' };
-    if (mode === 'processing')
-      return this.commitClaimedTarget(threadId, current, index, entry, claimId, at, replacement);
-    if (mode === 'queued') return this.commitClaimedState(current, index, entry, claimId, at, replacement);
-    return this.commitTerminalState(threadId, current, index, entry, claimId, mode, at, replacement);
-  }
-
-  private commitClaimedState(
-    current: QueueLedgerEntry[],
-    index: number,
-    entry: QueueLedgerEntry,
-    claimId: string,
-    at: number,
-    replacement?: QueueLedgerEntry,
-  ): QueueLedgerTransitionResult {
-    if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
-    const next = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
-    if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
-    next.status = 'queued';
-    delete next.claimId;
-    delete next.claimedAt;
-    delete next.claimedTargetIds;
-    delete next.claimedFromTargetless;
-    delete next.processingStartedAt;
-    assertQueueLedgerEntry(next);
-    current[index] = next;
-    return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
-  }
-
-  private commitClaimedTarget(
-    threadId: string,
-    current: QueueLedgerEntry[],
-    index: number,
-    entry: QueueLedgerEntry,
-    claimId: string,
-    at: number,
-    replacement?: QueueLedgerEntry,
-  ): QueueLedgerTransitionResult {
-    if (entry.status !== 'claimed' || entry.claimId !== claimId || !entry.claimedTargetIds?.length) {
-      return { outcome: 'state_changed' };
-    }
-    const claimedTargets = [...entry.claimedTargetIds];
-    const source = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
-    if (source.id !== entry.id || source.threadId !== entry.threadId) {
-      throw new Error('Queue commit identity mismatch');
-    }
-
-    const attempted = cloneQueueLedgerEntry(source);
-    attempted.targets = claimedTargets;
-    attempted.status = 'processing';
-    attempted.processingStartedAt = at;
-    delete attempted.claimId;
-    delete attempted.claimedAt;
-    delete attempted.claimedTargetIds;
-    delete attempted.claimedFromTargetless;
-    delete attempted.terminalAt;
-
-    const claimedSet = new Set(claimedTargets);
-    const remainingTargets = entry.targets.filter((targetId) => !claimedSet.has(targetId));
-    if (remainingTargets.length === 0) {
-      current.splice(index, 1);
-      this.unindexEntries(threadId, [entry]);
-      if (current.length === 0) this.rows.delete(threadId);
-    } else {
-      const remaining = cloneQueueLedgerEntry(entry);
-      remaining.targets = remainingTargets;
-      remaining.status = 'queued';
-      delete remaining.claimId;
-      delete remaining.claimedAt;
-      delete remaining.claimedTargetIds;
-      delete remaining.claimedFromTargetless;
-      delete remaining.processingStartedAt;
-      delete remaining.terminalAt;
-      delete remaining.delivery.steerRequestedAt;
-      if (remaining.delivery.authorIntentByTarget) {
-        remaining.delivery.authorIntentByTarget = Object.fromEntries(
-          Object.entries(remaining.delivery.authorIntentByTarget).filter(([targetId]) =>
-            remainingTargets.includes(targetId),
-          ),
-        );
-      }
-      assertQueueLedgerEntry(remaining);
-      current[index] = remaining;
-    }
-    return { outcome: 'updated', entry: attempted };
-  }
-
-  private commitTerminalState(
-    threadId: string,
-    current: QueueLedgerEntry[],
-    index: number,
-    entry: QueueLedgerEntry,
-    claimId: string,
-    mode: 'withdrawn',
-    at: number,
-    replacement?: QueueLedgerEntry,
-  ): QueueLedgerTransitionResult {
-    if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
-    const terminal = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
-    if (terminal.id !== entry.id || terminal.threadId !== entry.threadId) {
-      throw new Error('Queue commit identity mismatch');
-    }
-    terminal.status = 'terminal';
-    terminal.terminalAt = at;
-    delete terminal.claimId;
-    delete terminal.claimedAt;
-    delete terminal.claimedTargetIds;
-    delete terminal.claimedFromTargetless;
-    current.splice(index, 1);
-    this.unindexEntries(threadId, [entry]);
-    if (current.length === 0) this.rows.delete(threadId);
-    return { outcome: 'updated', entry: cloneQueueLedgerEntry(terminal) };
+    return commitInMemoryQueueLedgerEntry({
+      rows: this.rows,
+      unindexEntries: (currentThreadId, entries) => this.unindexEntries(currentThreadId, entries),
+      threadId,
+      entryId,
+      claimId,
+      mode,
+      at,
+      ...(replacement ? { replacement } : {}),
+    });
   }
 
   async restore(

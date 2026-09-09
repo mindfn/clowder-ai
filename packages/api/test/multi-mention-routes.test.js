@@ -339,10 +339,11 @@ describe('Multi-Mention Routes', () => {
     await freshnessApp.close();
   });
 
-  test('holds multi-mention on unread visible other-cat stream-origin speech in play mode', async () => {
+  test('multi-mention does not hide a dispatch behind unread-message state', async () => {
     const freshnessApp = Fastify({ logger: false });
     registerCallbackAuthHook(freshnessApp, mockRegistry);
     const causalMessageStore = createMockMessageStore();
+    appendTestLifecycleResponseSource(causalMessageStore, creds);
     const baseline = causalMessageStore.append({
       userId: 'user-1',
       catId: null,
@@ -372,6 +373,8 @@ describe('Multi-Mention Routes', () => {
       router: mockRouter,
       invocationRecordStore: mockInvocationRecordStore,
       invocationTracker: mockInvocationTracker,
+      invocationQueue: adaptInvocationQueue(new InvocationQueue()),
+      queueProcessor: createMockQueueProcessor(),
       deliveryCursorStore: {
         async getSeenCursor() {
           return baseline.id;
@@ -389,21 +392,26 @@ describe('Multi-Mention Routes', () => {
       method: 'POST',
       url: '/api/callbacks/multi-mention',
       headers: { 'x-invocation-id': creds.invocationId, 'x-callback-token': creds.callbackToken },
-      payload: { targets: ['codex'], question: 'must read first', callbackTo: 'opus' },
+      payload: { targets: ['codex'], question: 'dispatch without inbox side effects', callbackTo: 'opus' },
     });
 
     assert.equal(res.statusCode, 200);
-    assert.equal(JSON.parse(res.body).status, 'held');
-    assert.equal(JSON.parse(res.body).reason, 'newer_messages_available');
+    assert.equal(JSON.parse(res.body).status, 'running');
     await freshnessApp.close();
   });
 
-  test('checks queued continue-current work against the callback outer parent', async () => {
+  test('multi-mention does not let queued continue-current work veto dispatch', async () => {
     const freshnessApp = Fastify({ logger: false });
     registerCallbackAuthHook(freshnessApp, mockRegistry);
     const parentInvocationId = 'parent-multi-freshness';
     const parentCreds = mockRegistry.register('opus', 'thread-multi-parent', 'user-1', parentInvocationId);
     const queueMessageStore = createMockMessageStore();
+    appendTestLifecycleResponseSource(queueMessageStore, {
+      ...parentCreds,
+      threadId: 'thread-multi-parent',
+      userId: 'user-1',
+      catId: 'opus',
+    });
     queueMessageStore.getByThreadAfter = async () => [];
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const invocationQueue = adaptInvocationQueue(new InvocationQueue());
@@ -430,6 +438,7 @@ describe('Multi-Mention Routes', () => {
       invocationRecordStore: mockInvocationRecordStore,
       invocationTracker: mockInvocationTracker,
       invocationQueue,
+      queueProcessor: createMockQueueProcessor(),
       deliveryCursorStore: { getSeenCursor: async () => 'seen-cursor' },
       turnExecutionStore: {
         async get(invocationId) {
@@ -457,14 +466,13 @@ describe('Multi-Mention Routes', () => {
       },
       payload: {
         targets: ['codex'],
-        question: 'Do not start before reading current work',
+        question: 'Start without making this tool an inbox reader',
         callbackTo: 'opus',
       },
     });
 
     assert.equal(res.statusCode, 200);
-    assert.equal(JSON.parse(res.body).status, 'held');
-    assert.equal(JSON.parse(res.body).reason, 'newer_messages_available');
+    assert.equal(JSON.parse(res.body).status, 'running');
     await freshnessApp.close();
   });
 
@@ -585,6 +593,21 @@ describe('Multi-Mention Routes', () => {
     const [entry] = invocationQueue.list('thread-1', 'user-1');
     assert.ok(entry.payload.content.includes('[Multi-Mention from opus]'));
     assert.ok(entry.payload.content.includes('What is your opinion?'));
+    const source = await mockMessageStore.getById(entry.payload.sourceRecordId);
+    assert.ok(source, 'Queue source must be a real History message');
+    assert.equal(entry.payload.messageId, source.id);
+    assert.equal(entry.payload.content, source.content);
+    const callerResponse = await mockMessageStore.getByIdempotencyKey(
+      'user-1',
+      'thread-1',
+      `message-lifecycle-response:${creds.invocationId}`,
+    );
+    assert.ok(callerResponse);
+    assert.equal(source.replyTo, callerResponse.id);
+    assert.deepEqual(source.extra?.causal, {
+      kind: 'invocation_reply',
+      triggerMessageId: callerResponse.id,
+    });
   });
 
   test('uses default timeout when not specified', async () => {

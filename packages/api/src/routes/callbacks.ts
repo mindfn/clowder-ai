@@ -87,20 +87,8 @@ import { extractRichFromText } from '../domains/cats/services/agents/routing/ric
 import { buildVoteNotification } from '../domains/cats/services/agents/routing/vote-intercept.js';
 import { buildCloudReturnMessageIdempotencyKey } from '../domains/cats/services/cloud-bridge/cloud-return-message.js';
 import { getSenderName } from '../domains/cats/services/context/ContextAssembler.js';
-import { checkFreshnessForNotice } from '../domains/cats/services/freshness/checkFreshnessForNotice.js';
-import {
-  checkFreshnessForPostMessage,
-  createQueueChecker,
-  decideCrossThreadFreshnessGate,
-} from '../domains/cats/services/freshness/checkFreshnessForPostMessage.js';
 import { FreshnessAttentionEventLog } from '../domains/cats/services/freshness/FreshnessAttentionEventLog.js';
-import { FreshnessInvocationStateStore } from '../domains/cats/services/freshness/FreshnessInvocationStateStore.js';
 import { recordQueuedSeenTelemetry } from '../domains/cats/services/freshness/freshness-queue-telemetry.js';
-import {
-  descriptorFromDriver,
-  descriptorFromProviderFallback,
-  resolveFreshnessDescriptorProvider,
-} from '../domains/cats/services/freshness/RuntimeCapabilityDescriptor.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
 import {
   classifyLocalReviewLoopBrake,
@@ -1129,8 +1117,6 @@ const postMessageSchema = z.object({
   reviewSubjectRef: reviewSubjectRefSchema.optional(),
   acceptedSourceRef: acceptedSourceRefSchema.optional(),
   acceptedRevision: acceptedRevisionSchema.optional(),
-  // F254 Phase A: acknowledge held — escape hatch to force-send despite unseen messages
-  acknowledgeHeld: z.boolean().optional(),
   // F167 Phase S: structured subject/action/slot successor identity.
   action: actionSuccessorMetadataSchema.optional(),
   // F246 Workstream 2: authority proposed for later operator promotion.
@@ -2154,7 +2140,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reviewSubjectRef,
       acceptedSourceRef,
       acceptedRevision,
-      acknowledgeHeld,
       action,
       proposedAction,
       streamDisposition,
@@ -2723,17 +2708,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           subjectRef: action.subjectRef,
         }
       : explicitCoordination;
-    const crossThreadFreshnessPolicy = decideCrossThreadFreshnessGate({
-      isCrossThread,
-      ...(effectClass ? { effectClass } : {}),
-      ...(explicitCoordination?.id
-        ? { coordinationId: explicitCoordination.id }
-        : incomingCrossThreadHint?.coordination?.id
-          ? { coordinationId: incomingCrossThreadHint.coordination.id }
-          : {}),
-      ...(replyTo ? { replyToMessageId: replyTo } : {}),
-    });
-
     // Resolve the ordinary carrier's canonical targets before any policy that
     // can claim, buffer, queue, or emit it. The proposal store's index is
     // deny-only; canonical fields are revalidated inside the store lookup.
@@ -2792,124 +2766,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (negativeAuthorizationFence) {
       reply.status(negativeAuthorizationFence.statusCode);
       return negativeAuthorizationFence.body;
-    }
-
-    // F254 Phase A: Freshness gate — hold post_message if cat has unseen messages
-    // in the target thread. Uses independent seenCursor (NOT deliveryCursor — AC-A9).
-    // Gate is fail-open: no cursor → forward; error → forward (log + continue).
-    //
-    // Placement: AFTER all validation checks that can reject the request —
-    // resolveScopedThreadId (403), cross_post_no_routing (400), assign_work (400).
-    // The gate must not run before these or it would return 'held' instead of
-    // the correct error contract (gpt52 R1-P2 + R2-P2).
-    if (deliveryCursorStore && crossThreadFreshnessPolicy.mode === 'gate') {
-      try {
-        // Build visibility filter aligned with thread-context's canIncludeContextItem.
-        // ALWAYS applied (not just play mode) — deleted/briefing/undelivered messages
-        // must be excluded in ALL modes to prevent false holds and preview leaks (gpt52 R2-P1).
-        const needsFreshnessPlayFilter = threadStore
-          ? await (async () => {
-              const thread = await threadStore.get(effectiveThreadId);
-              return !!thread && (thread.thinkingMode ?? 'debug') === 'play';
-            })()
-          : false;
-        const freshnessViewer = needsFreshnessPlayFilter
-          ? { type: 'cat' as const, catId: createCatId(actor.catId) }
-          : { type: 'user' as const };
-
-        const messageFilter = (msg: Record<string, unknown>): boolean => {
-          // Baseline visibility (applies in ALL modes):
-          if (msg.deletedAt) return false;
-          if (!isDelivered(msg as unknown as Parameters<typeof isDelivered>[0])) return false;
-          // #1200 codex R11 P1: system-generated messages (persisted error badges)
-          // are display-only — route-helpers.ts:744-745 excludes them from freshness.
-          if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
-          if (msg.origin === 'briefing') return false;
-          // Play-mode privacy visibility. `origin` is transport provenance;
-          // persisted cat speech remains freshness-relevant.
-          if (needsFreshnessPlayFilter) {
-            if (!canViewMessage(msg as unknown as Parameters<typeof canViewMessage>[0], freshnessViewer)) return false;
-          }
-          if (isCrossThread && crossThreadFreshnessPolicy.reason === 'cross_thread_causal_overlap') {
-            const coordinationId = explicitCoordination?.id ?? incomingCrossThreadHint?.coordination?.id;
-            const messageExtra = msg.extra as
-              | {
-                  coordination?: { id?: string };
-                  crossPost?: { coordination?: { id?: string } };
-                }
-              | undefined;
-            const messageCoordinationId = messageExtra?.coordination?.id ?? messageExtra?.crossPost?.coordination?.id;
-            const coordinationMatches = Boolean(coordinationId && messageCoordinationId === coordinationId);
-            const replyMatches = Boolean(replyTo && (msg.id === replyTo || msg.replyTo === replyTo));
-            if (!coordinationMatches && !replyMatches) return false;
-          }
-          return true;
-        };
-
-        // AC-A7: wire event log for recording held/forward decisions (P1 fix gpt52 R1)
-        const freshnessEventLog = opts.redis ? new FreshnessAttentionEventLog(opts.redis) : undefined;
-
-        // F254 AC-C2/C3: Derive RuntimeCapabilityDescriptor from stored carrierTier.
-        // carrierTier is stored in FreshnessInvocationStateStore at invocation start;
-        // when not yet stored (pre-wiring), descriptor is undefined → backward compat.
-        // Provider-only fallback (gpt52 terminal review P1/R2): non-Claude
-        // services may not write carrierTier, so derive from the most specific
-        // provider marker when available (e.g. openai-chatgpt-pro cloud-only).
-        const actorCatConfig = catRegistry.tryGet(actor.catId);
-        const actorProvider = resolveFreshnessDescriptorProvider(actorCatConfig?.config);
-        let freshnessDescriptor;
-        if (opts.redis && invocationId) {
-          const freshnessStateStore = new FreshnessInvocationStateStore(opts.redis);
-          const freshnessState = await freshnessStateStore.get(invocationId);
-          if (freshnessState?.carrierTier) {
-            freshnessDescriptor = descriptorFromDriver(actorProvider, freshnessState.carrierTier);
-          } else {
-            freshnessDescriptor = descriptorFromProviderFallback(actorProvider);
-          }
-        } else {
-          freshnessDescriptor = descriptorFromProviderFallback(actorProvider);
-        }
-
-        const freshnessDecision = await checkFreshnessForPostMessage({
-          userId: actor.userId,
-          catId: actor.catId as CatId,
-          threadId: effectiveThreadId,
-          invocationId,
-          // AC-A6: cross_post_message uses its own toolName for audit trail
-          toolName: isCrossThread ? 'cross_post_message' : 'post_message',
-          cursorStore: deliveryCursorStore,
-          messageStore,
-          acknowledgeHeld,
-          messageFilter,
-          eventLog: freshnessEventLog,
-          // F254 queue-aware gate: detect queued messages hidden by isDelivered()
-          queueChecker: opts.invocationQueue
-            ? createQueueChecker(opts.invocationQueue, { parentInvocationId: effectiveInvId })
-            : undefined,
-          // F254 AC-C3: descriptor parameterizes held/notice behavior per carrier tier
-          descriptor: freshnessDescriptor,
-          ...(turnExecution?.causal?.coveredMessageIds
-            ? { coveredMessageIds: turnExecution.causal.coveredMessageIds }
-            : {}),
-        });
-        if (freshnessDecision.decision === 'held') {
-          return {
-            status: 'held',
-            reason: 'newer_messages_available',
-            unseenCount: freshnessDecision.unseenCount,
-            previews: freshnessDecision.previews ?? [],
-            omittedCount: freshnessDecision.omittedCount ?? 0,
-            actions: ['read_latest', 'revise', 'send_with_acknowledge'],
-            ...(clientMessageId ? { clientMessageId } : {}),
-          };
-        }
-      } catch (err) {
-        // Fail-open: if freshness check errors, log and continue (don't block the cat)
-        app.log.warn(
-          { err, catId: actor.catId, threadId: effectiveThreadId },
-          '[F254] freshness gate error, fail-open',
-        );
-      }
     }
 
     let actionFence: ActionSuccessorFence | undefined;
@@ -3790,11 +3646,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       deliveryDecision.enqueueAttempted,
     );
 
-    // F254: seenCursor is NOT pushed on send. Sending ≠ reading — advancing the
-    // cursor here would hide messages that arrived between the freshness check and
-    // the actual send (TOCTOU race, gpt52 P1-3). Self-message exclusion in
-    // FreshnessGateService handles the "don't hold on own messages" case.
-
     return {
       status: suppressTerminalRouting ? 'terminal_ack_recorded' : 'ok',
       threadId: effectiveThreadId,
@@ -3804,15 +3655,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(clientMessageId ? { clientMessageId } : {}),
       ...(routing_warnings.length > 0 ? { routing_warnings } : {}),
       ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-      ...(isCrossThread && crossThreadFreshnessPolicy.mode === 'bypass'
-        ? {
-            freshness: {
-              gate: 'bypassed',
-              reason: crossThreadFreshnessPolicy.reason,
-              senderLagPossible: true,
-            },
-          }
-        : {}),
       ...(actionFence && actionAdmissionOutcome
         ? {
             actionLease: {
@@ -4178,8 +4020,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return getKeywordScore(item) > 0;
     };
 
-    // Must mirror the freshness gate: unread-delta selection and seen-cursor
-    // advancement are two views of the same visibility contract.
+    // Unread-delta selection and seen-cursor advancement are two views of the
+    // same visibility contract. This cursor remains read evidence; it is no
+    // longer consulted by post_message to block an outbound side effect.
     const isFreshnessRelevant = (item: Awaited<ReturnType<typeof messageStore.getByThread>>[number]): boolean => {
       if (item.deletedAt) return false;
       if (!isDelivered(item)) return false;
@@ -4877,8 +4720,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     });
     // #1200 Sol R3: visibility-domain seenCursor advancement.
     //
-    // F254 AC-A2: seenCursor must advance when cat reads via thread-context.
-    // Disabling it causes repeated freshness hold/reinvoke — it's a regression.
+    // seenCursor must advance when a cat reads via thread-context so later
+    // incremental reads start after the exact visibility-contiguous prefix.
     //
     // Safety: time-domain pages from getByThreadBefore are NOT visibility-contiguous.
     // Late-delivered Q may have older timestamp but higher visibilitySeq. With limit=N,
@@ -4888,8 +4731,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // flawed — invisible messages (deleted/briefing/whisper) create permanent gaps.
     // Fix: do a separate VISIBILITY-DOMAIN read via getByThreadAfter, then walk through
     // results checking whether each freshness-relevant message was in the cat's page.
-    // Skip freshness-irrelevant messages (deleted, briefing, invisible whispers) —
-    // these don't trigger the freshness gate, so advancing past them is safe.
+    // Skip unread-irrelevant messages (deleted, briefing, invisible whispers),
+    // so advancing past them cannot hide readable conversation content.
     //
     // #1200 Sol R2: seenCursor re-enabled with visibility-contiguous advance.
     // computeVisibilityContiguousAdvance walks through returned messages in
@@ -4950,7 +4793,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
           for (const msg of visWindow) {
             if (!isFreshnessRelevant(msg)) {
-              // Not counted by freshness gate → safe to advance past
+              // Not counted as unread conversation input → safe to advance past
               advanceTo = msg;
               continue;
             }
@@ -4985,8 +4828,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           );
         }
       } catch (err) {
-        // Fail-open: seenCursor advancement is best-effort. If it fails,
-        // the freshness gate may re-hold but no data is lost.
+        // Fail-open: seenCursor advancement is best-effort. If it fails, a later
+        // incremental read may repeat content, but no data is lost.
         app.log.warn(
           { err, catId: principalCatId, threadId: effectiveThreadId },
           '[#1200] seenCursor visibility-domain advance failed, fail-open',
@@ -6607,14 +6450,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       invocationRecordStore,
       ...(invocationTracker ? { invocationTracker } : {}),
       ...(opts.turnExecutionStore ? { turnExecutionStore: opts.turnExecutionStore } : {}),
-      // F254 AC-A6: pass deliveryCursorStore for freshness gate on multi_mention
-      ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
-      // F254 AC-A7: pass event log for recording held/forward decisions (P1 fix gpt52 R1)
-      ...(opts.redis ? { freshnessEventLog: new FreshnessAttentionEventLog(opts.redis) } : {}),
-      // F254 AC-C2: pass Redis for carrierTier lookup in descriptor derivation
-      ...(opts.redis ? { redis: opts.redis } : {}),
-      // F254 R2: pass threadStore for play-mode visibility filter in freshness gate
-      ...(threadStore ? { threadStore } : {}),
       ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
       ...(queueProcessor ? { queueProcessor } : {}),
       ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
@@ -6627,145 +6462,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       socketManager.setMultiMentionOrchestrator(getMultiMentionOrchestrator());
     }
   }
-
-  // ── F254 Phase B1: Freshness notice check ─────────────────────────
-  // Called by MCP server after read-only tool calls (frequency-gated).
-  // Returns a content-free notice if the cat has unseen messages.
-  // Only works for invocation-kind principals (need threadId + invocationId).
-  app.post('/api/callbacks/freshness-notice-check', async (request, reply) => {
-    const principal = requireCallbackPrincipal(request, reply);
-    if (!principal) return;
-
-    // B1 only works for invocation principals (have threadId + invocationId)
-    if (principal.kind !== 'invocation') {
-      return { notice: null };
-    }
-
-    const body = request.body as { toolName?: string; isReadOnly?: boolean } | undefined;
-    const toolName = body?.toolName ?? 'unknown';
-    const isReadOnly = body?.isReadOnly ?? false;
-
-    const { redis } = opts;
-    if (!redis || !deliveryCursorStore) {
-      return { notice: null };
-    }
-
-    try {
-      // Build messageFilter (must match Phase A — P0 constraint)
-      const needsPlayFilter = threadStore
-        ? await (async () => {
-            const thread = await threadStore.get(principal.threadId);
-            return !!thread && (thread.thinkingMode ?? 'debug') === 'play';
-          })()
-        : false;
-      const freshnessViewer = needsPlayFilter
-        ? { type: 'cat' as const, catId: createCatId(principal.catId) }
-        : { type: 'user' as const };
-
-      const messageFilter = (msg: Record<string, unknown>): boolean => {
-        if (msg.deletedAt) return false;
-        if (!isDelivered(msg as unknown as Parameters<typeof isDelivered>[0])) return false;
-        // #1200 codex R11 P1: system-generated messages (persisted error badges)
-        // are display-only — route-helpers.ts:744-745 excludes them from freshness.
-        if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
-        if (msg.origin === 'briefing') return false;
-        if (needsPlayFilter) {
-          if (!canViewMessage(msg as unknown as Parameters<typeof canViewMessage>[0], freshnessViewer)) return false;
-        }
-        return true;
-      };
-
-      const notice = await checkFreshnessForNotice({
-        userId: principal.userId,
-        catId: principal.catId,
-        threadId: principal.threadId,
-        invocationId: principal.invocationId,
-        toolName,
-        isReadOnly,
-        cursorStore: deliveryCursorStore,
-        messageStore,
-        redis,
-        messageFilter,
-        // F254 queue-aware gate: detect queued messages hidden by isDelivered()
-        queueChecker: opts.invocationQueue
-          ? createQueueChecker(opts.invocationQueue, {
-              parentInvocationId: principal.parentInvocationId ?? principal.invocationId,
-            })
-          : undefined,
-        // F254 AC-C2/C3: provider for descriptor derivation (reads carrierTier from state store)
-        provider: resolveFreshnessDescriptorProvider(catRegistry.tryGet(principal.catId)?.config),
-      });
-
-      return { notice };
-    } catch (err) {
-      // Fail-open: notice check errors should never block tool execution
-      app.log.warn({ err, catId: principal.catId, toolName }, '[F254-B1] freshness notice check error, fail-open');
-      return { notice: null };
-    }
-  });
-
-  // ── F254 Phase B2: Freshness hold_ball reminder ────────────────────
-  // Called by MCP server after successful hold_ball. Checks for
-  // unresolved notices (delivered but not acked) and returns a reminder.
-  app.post('/api/callbacks/freshness-hold-ball-reminder', async (request, reply) => {
-    const principal = requireCallbackPrincipal(request, reply);
-    if (!principal) return;
-
-    if (principal.kind !== 'invocation') {
-      return { reminder: null };
-    }
-
-    const { redis } = opts;
-    if (!redis) {
-      return { reminder: null };
-    }
-
-    try {
-      const { FreshnessAttentionEventLog } = await import(
-        '../domains/cats/services/freshness/FreshnessAttentionEventLog.js'
-      );
-      const { FreshnessNoticeService } = await import('../domains/cats/services/freshness/FreshnessNoticeService.js');
-
-      const eventLog = new FreshnessAttentionEventLog(redis);
-      // B2 only needs eventLog (for unresolved query + deferred recording).
-      // stateStore and unseenChecker are unused by checkHoldBallReminder,
-      // but the constructor requires them — provide no-op stubs.
-      const noopStateStore = {
-        get: async () => null,
-        incrementToolCallCount: async () => 0,
-        recordNoticeDelivered: async () => {},
-        getUnresolvedNotices: async () => [],
-      };
-      const noopUnseenChecker = { checkUnseen: async () => null };
-      const service = new FreshnessNoticeService(noopStateStore, eventLog, noopUnseenChecker);
-
-      // P1-2 fix: fetch current seenCursor so notices where
-      // maxMessageId <= cursor are treated as implicitly resolved
-      const currentSeenCursor = deliveryCursorStore
-        ? await deliveryCursorStore.getSeenCursor(principal.userId, principal.catId, principal.threadId)
-        : undefined;
-
-      // #1200 Sol R7: pass canonicalizeCursor so legacy events (v1 maxMessageId,
-      // no maxCursor) get resolved via messageStore lookup — same resolver as
-      // createFreshnessReinvokeCheck. Both consumers now share the same path.
-      const canonicalize = messageStore.canonicalizeCursor
-        ? (msgId: string, tid: string) => Promise.resolve(messageStore.canonicalizeCursor!(msgId, tid))
-        : undefined;
-
-      const reminder = await service.checkHoldBallReminder({
-        invocationId: principal.invocationId,
-        threadId: principal.threadId,
-        catId: principal.catId,
-        currentSeenCursor: currentSeenCursor ?? null,
-        canonicalizeCursor: canonicalize,
-      });
-
-      return { reminder };
-    } catch (err) {
-      app.log.warn({ err, catId: principal.catId }, '[F254-B2] hold_ball reminder check error, fail-open');
-      return { reminder: null };
-    }
-  });
 
   // F088 Phase J2: Document generation callback routes
   registerCallbackDocumentRoutes(app, { registry, socketManager, threadStore });

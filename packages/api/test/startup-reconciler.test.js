@@ -883,7 +883,7 @@ describe('StartupReconciler', () => {
     assert.equal(result.running, 1);
   });
 
-  test('ADR-043: restart terminalizes stale processing ledger rows and resumes only queued work', async () => {
+  test('ADR-043: restart resumes pending Queue work without reconstructing already-claimed work', async () => {
     const ledger = new InMemoryQueueLedgerStore();
     const queue = new InvocationQueue(ledger);
     const processingAdmission = queue.enqueueDurableNow(
@@ -905,6 +905,11 @@ describe('StartupReconciler', () => {
     );
     assert.ok(claimed);
     assert.equal(await queue.commitClaimedProcessing('thread-ledger-restart', [claimed.id]), true);
+    assert.equal(
+      await ledger.get('thread-ledger-restart', claimed.id),
+      null,
+      'History owns processing/terminal truth after Queue releases its claim',
+    );
 
     queue.enqueueDurableNow(
       canonicalTestQueueInput({
@@ -927,13 +932,13 @@ describe('StartupReconciler', () => {
     });
     const result = await reconciler.reconcileOrphans();
 
-    assert.equal(result.queueMessagesTerminalized, 1);
+    assert.equal(result.queueMessagesTerminalized, 0);
     assert.deepEqual(result.queueResumeScopes, [{ threadId: 'thread-ledger-restart', userId: 'user-1' }]);
     assert.deepEqual(
       queue.list('thread-ledger-restart', 'user-1').map((entry) => entry.payload.messageId),
       ['queued-source'],
     );
-    assert.equal((await ledger.get('thread-ledger-restart', claimed.id)).status, 'terminal');
+    assert.equal(await ledger.get('thread-ledger-restart', claimed.id), null);
   });
 
   // ── Phase A (original) tests continue ──

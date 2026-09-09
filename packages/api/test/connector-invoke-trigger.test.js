@@ -49,12 +49,15 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
   let drains;
   /** @type {ConnectorInvokeTrigger} */
   let trigger;
+  /** @type {Map<string, any>} */
+  let waitTasks;
 
   beforeEach(() => {
     queue = new InvocationQueue();
     messageStore = new MessageStore();
     sockets = socketHarness();
     drains = [];
+    waitTasks = new Map();
     trigger = new ConnectorInvokeTrigger({
       socketManager: sockets.manager,
       invocationQueue: queue,
@@ -64,6 +67,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
         },
       }),
       messageStore,
+      waitTaskStore: { get: async (taskId) => waitTasks.get(taskId) ?? null },
       log: noopLog(),
     });
   });
@@ -230,6 +234,26 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
         meta: { waitContinuationCarrier: carrier },
       },
     });
+    waitTasks.set(carrier.waitId, {
+      id: carrier.waitId,
+      kind: 'pr_tracking',
+      threadId: source.threadId,
+      userId: source.userId,
+      ownerCatId: 'opus',
+      automationState: {
+        waitOutcome: {
+          v: 1,
+          outcomeId: carrier.outcomeId,
+          generation: 3,
+          subjectRef: 'pr:owner/repo#7',
+          ownerFence: carrier.ownerFence,
+          reason: 'matched',
+          at: 3,
+          delivery: 'pending',
+          actor: { kind: 'system' },
+        },
+      },
+    });
 
     await trigger.trigger(
       source.threadId,
@@ -242,6 +266,83 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     );
 
     assert.deepEqual(queue.list(source.threadId, source.userId)[0].execution.waitContinuationCarrier, carrier);
+  });
+
+  it('rejects a replayed github-wait source after its exact outcome was delivered', async () => {
+    const carrier = {
+      v: 1,
+      waitId: 'task-pr-stale',
+      outcomeId: 'wait:pr:owner/repo#7:g4:matched',
+      ownerFence: { kind: 'containing_task', generation: 4 },
+    };
+    const source = appendSource('stale-wait', {
+      source: { connector: 'github-wait', label: 'GitHub Wait', meta: { waitContinuationCarrier: carrier } },
+    });
+    waitTasks.set(carrier.waitId, {
+      id: carrier.waitId,
+      kind: 'pr_tracking',
+      threadId: source.threadId,
+      userId: source.userId,
+      ownerCatId: 'opus',
+      automationState: {
+        waitOutcome: {
+          v: 1,
+          outcomeId: carrier.outcomeId,
+          generation: 4,
+          subjectRef: 'pr:owner/repo#7',
+          ownerFence: carrier.ownerFence,
+          reason: 'matched',
+          at: 4,
+          delivery: 'delivered',
+          actor: { kind: 'system' },
+        },
+      },
+    });
+
+    await assert.rejects(
+      trigger.trigger(source.threadId, /** @type {any} */ ('opus'), source.userId, source.content, source.id),
+      /continuation is stale/,
+    );
+    assert.equal(queue.list(source.threadId, source.userId).length, 0);
+    assert.deepEqual(drains, []);
+  });
+
+  it('rejects a github-wait carrier from an obsolete task generation', async () => {
+    const carrier = {
+      v: 1,
+      waitId: 'task-pr-regenerated',
+      outcomeId: 'wait:pr:owner/repo#7:g4:matched',
+      ownerFence: { kind: 'containing_task', generation: 4 },
+    };
+    const source = appendSource('old-generation', {
+      source: { connector: 'github-wait', label: 'GitHub Wait', meta: { waitContinuationCarrier: carrier } },
+    });
+    waitTasks.set(carrier.waitId, {
+      id: carrier.waitId,
+      kind: 'pr_tracking',
+      threadId: source.threadId,
+      userId: source.userId,
+      ownerCatId: 'opus',
+      automationState: {
+        waitOutcome: {
+          v: 1,
+          outcomeId: 'wait:pr:owner/repo#7:g5:matched',
+          generation: 5,
+          subjectRef: 'pr:owner/repo#7',
+          ownerFence: { kind: 'containing_task', generation: 5 },
+          reason: 'matched',
+          at: 5,
+          delivery: 'pending',
+          actor: { kind: 'system' },
+        },
+      },
+    });
+
+    await assert.rejects(
+      trigger.trigger(source.threadId, /** @type {any} */ ('opus'), source.userId, source.content, source.id),
+      /continuation is stale/,
+    );
+    assert.equal(queue.list(source.threadId, source.userId).length, 0);
   });
 
   it('fails closed when the source owner or thread does not match the trigger', async () => {

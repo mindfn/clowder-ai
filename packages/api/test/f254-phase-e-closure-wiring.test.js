@@ -47,12 +47,12 @@ describe('F254 Phase E production wiring guard', () => {
     assert.match(adapter, /redundantCommittedAttemptCount/);
   });
 
-  it('keeps ordinary queued messages single-owned while freshness only projects notice state', () => {
+  it('retires post-message freshness/HELD side effects while preserving output truth refinement', () => {
     const callbacks = source('routes/callbacks.ts');
     const refiner = source('domains/cats/services/freshness/glass-box/FreshnessOutputRefiner.ts');
-    assert.match(callbacks, /notice && opts\.invocationQueue/);
-    assert.match(callbacks, /markQueuedNotified/);
-    assert.match(callbacks, /queued_notified/);
+    assert.doesNotMatch(callbacks, /checkFreshnessForPostMessage/);
+    assert.doesNotMatch(callbacks, /acknowledgeHeld/);
+    assert.doesNotMatch(callbacks, /markQueuedNotified/);
     assert.match(refiner, /freshness\.reason === 'queued_messages'/);
     assert.match(refiner, /return committedDecision/);
   });

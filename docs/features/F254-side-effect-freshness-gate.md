@@ -5,19 +5,43 @@ related_decisions: [040, 041, 042, 043]
 topics: [freshness, glass-box, supplement, inbox-notice, runtime-descriptor, side-effect-gate, codex-app-server, lifecycle, liveness, ax]
 doc_kind: spec
 created: 2026-06-27
-updated: 2026-09-05
+updated: 2026-09-09
 tips_exempt: 2026-09-08 renews the existing full-read adoption wording for F117's single-source Queue cutover; it changes no F254 user action, setting, or discoverable capability.
 ---
 
 # F254: Side-Effect Freshness Gate — 副作用出口 freshness 拦截
 
-> **Status**: in-progress, **D2 live app-server canary lifecycle/parity hardening + E-C complete** (**ADR-042 glass-box publish-then-supplement merged via PR #2906 (`ace5412c0`); durable Queue custody / migration / replayable `eval:freshness` merged via PR #2912 (`07f46f5aa`); D2 default-off provider-native carrier merged via PR #3004 (`680ab702f`); typed causal provenance + durable child lifecycle merged via PR #3036 (`9ae942beb`). The operator has explicitly enabled `CAT_CAFE_CODEX_CARRIER=app_server` in the live runtime canary. PR #3079 (`3b83fb43c`) fixed LF-only JSONL framing plus pump rejection isolation; PR #3082 (`7dd7a4d51`) restored provider-neutral Codex diagnostics; PR #3097 (`54aef5e74`) merged AC-D14 lifecycle parity/no-replay after Terra exact-HEAD review; PR #3285 (`65ef23d17`) merged exact capacity checkpoint continuation after gpt52 exact-HEAD review. Code default remains `exec_json`; broad rollout is still gated by AC-D15~D17 and explicit rollout authorization. 2026-08-04 normal-runtime UAT proves the live app-server path is loaded, but also proves Codex 0.146.0 protocol drift: a completed `collabAgentToolCall/wait` crossed four real boundaries without a notice because the classifier/eval census knows only command/file/MCP/dynamic. F264 owns the separate author-intent visibility and capability-aware UI close gate.**) | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
+> **Status**: partially superseded — **Phase A HELD + Phase B1 MCP piggyback + Phase B2 hold reminder retired by F117/#1398 on 2026-09-09**; dedicated stream-output/catch-closure/glass-box supplement work remains historical or independently owned as marked below. Live delivery capability now follows each member's canonical `carrier`, not a global Codex environment selector. | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
 
 Architecture cell: ball-custody, dispatch, bubble-pipeline, transport, harness-eval
 
 Map delta: completed
 
 Map delta why: ADR-042 changes the durable responsibility from withheld replacement to one published original plus bounded supplement sequences, with explicit ownership edges into dispatch, bubble-pipeline, and transport.
+
+### 2026-09-09 F117 supersession: retire the MCP side-effect gate
+
+The co-creator's #1398 acceptance found that Phase A/B1/B2 made an ordinary write tool carry three unrelated duties:
+checking the caller's inbox, refusing the requested send, and teaching the model how to recover. That produced the exact
+human/Agent split this family was meant to prevent: the user saw a normal thread while a headless client saw
+`Message NOT sent (HELD)` and had to discover another read action before it could speak.
+
+Current authority is F117 Phase F and ADR-043 D6:
+
+- `post_message`, `cross_post_message`, and `multi_mention` are pure explicit sends. They do not check freshness, do not
+  return HELD, do not accept `acknowledgeHeld`, and do not append inbox/hold-ball instructions to MCP results.
+- Runtime input capability belongs to the selected member `carrier`. Claude `sdk`, Codex `app_server`, and OpenCode
+  `server` can accept input in the live session; a one-shot `cli` cannot and must leave the message pending for ordinary
+  FIFO drain. No carrier silently falls back to another.
+- The only member-config compatibility boundary is `carrier → legacy top-level transport → cli`. Provider, route,
+  capability, and UI code consume only canonical `carrier`; the old global `CAT_CAFE_CODEX_CARRIER` selector is retired.
+- Exact source delivery and replay safety come from F117 History `dispatchRefs` joined with Queue pending targets, not
+  from `seenCursor`, MCP send attempts, or a new consumed-receipt ledger.
+
+The remainder of this document is an evolution record. Sections that describe Phase A HELD, B1 piggyback, B2 reminder,
+`acknowledgeHeld`, or global `exec_json/app_server` selection are **historical, not active runtime requirements**. Dedicated
+stream-output detection, catch-closure evidence, and glass-box supplement lifecycles are not implicitly deleted; they remain
+valid only where their own owner still invokes them and they must not be reattached to the MCP write path.
 
 ### 2026-09-03 ADR-043 acceptance correction: full queued read = exact active-child adoption
 
@@ -77,15 +101,15 @@ operator 愿景审计把原始洞察补全：gate 放在工具/路由层确实�
 
 ## Current State / 现状基线
 
-### 2026-07-19/20 D2 live app-server canary：transport 已止血，lifecycle parity 已落 main、尚未激活本次合入
+### 2026-07-19/20 D2 live app-server canary（历史运行记录；全局 selector 已退役）
 
 Architecture cell: transport
 
 Map delta: none — 本轮仅补齐现有 Codex app-server adapter 的 lifecycle parity，不新增 transport owner。
 
-当前代码默认 carrier 仍是 `exec_json`；运营者已在 live runtime 显式配置
+当时代码默认 carrier 是 `exec_json`；运营者曾在 live runtime 显式配置
 `CAT_CAFE_CODEX_CARRIER=app_server` 并完成重启，因此本节描述的是**真实 canary 运行态**，不是“代码已合入
-但尚未上线”。
+但尚未上线”。2026-09-09 后该全局开关不再是 active 配置；当前真相是每个成员自己的 canonical `carrier`。
 
 两次独立 API crash 已定位并修复：Codex 输出的合法 LF-delimited JSON record 内含 U+2028/U+2029，
 Node `readline` 把它们误作行边界；pump rejection 又在 carrier close 之前形成未处理窗口。PR #3079
@@ -380,7 +404,7 @@ app-server mode 下正数 timeout 也必须走 protocol interrupt，而不是直
 
 ---
 
-### Phase A: Freshness Gate（副作用出口拦截 MVP）
+### Phase A: Freshness Gate（副作用出口拦截 MVP；历史实现，2026-09-09 已退役）
 
 **最高价值 + 基础设施最成熟 → 先做。**
 
@@ -468,7 +492,7 @@ type FreshnessDecisionEvent = {
 
 F233 的 `BallCustodyProjector` 可读取 freshness 事件流做统计聚合（哪些猫经常被 hold、hold 后选择 revise 还是 force-send），但 freshness 事件**不是** `BallCustodyEvent` 联合的成员。
 
-### Phase B: Content-Free Inbox Notice + 防无视（三层重设计）
+### Phase B: Content-Free Inbox Notice + 防无视（三层重设计；B1/B2 已退役）
 
 > **三层协同（ADR-031）**：Phase B 设计经过 opus + opus-47 + codex 独立讨论收敛（2026-06-28 Mode B）。核心变化：AC-A7 从"审计日志"升级为 B1/B2（工具层）和 B3/B4（harness 层）之间的**通信基础设施**——没有它，两层是断开的系统。
 >
@@ -725,7 +749,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 
 <!-- 立项愿景硬度自检（F216→F219）：每条 AC trace 回 Why（猫发消息时不知道世界变了 → 拦住让猫知道）-->
 
-### Phase A（Freshness Gate MVP）
+### Phase A（Freshness Gate MVP；历史验收记录，active wiring 已退役）
 
 - [x] AC-A1: 猫调 `post_message` 时，如果 thread 有猫未看过的消息（`latestMessageId > seenCursor`），返回 held 信封而非执行发送——**用独立 seenCursor seq 游标判断，不用 timestamp，不用 deliveryCursor**
 - [x] AC-A2: 猫 turn 中途通过无 filter 的 full `get_thread_context` 读过新消息后，seenCursor 推进，再调 `post_message` 不被 hold（**零误 hold 验证**）
@@ -737,11 +761,11 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 - [x] AC-A8: Redis-backed 测试覆盖游标读写 + held 决策（不用纯 in-memory 假绿）
 - [x] AC-A9: **seenCursor 隔离回归**：推进 seenCursor **不得**影响 deliveryCursor 或 `fetchAfterCursor` 增量注入逻辑（回归测试：push seenCursor → 验证 deliveryCursor 不变 → 验证下次 invoke 增量注入不跳消息）
 
-### Phase B（Content-Free Notice + 防无视，三层重设计）
+### Phase B（Content-Free Notice + 防无视，三层重设计；B1/B2 active wiring 已退役）
 
 - [x] AC-B0: FreshnessAttentionEventLog（封闭联合类型 + kind discriminator，独立于 F233）+ Redis per-invocation operational state（TTL = invocation timeout）+ F233 projector 可选读取接口
-- [x] AC-B1: 猫调只读工具时，如果当前 thread 有未读消息，返回值附加 content-free notice。频率限制：每 5 次工具调用最多 1 次 + max-per-invocation cap=3。messageFilter 复用 Phase A（P0）。scope = 当前 thread only。notice 持久化到事件流。时序：seenCursor ack 后再检查
-- [x] AC-B2: 猫调 hold_ball 时，如果有 unresolved notices，返回值附加提醒。不阻塞 hold_ball。选择延期退出时记录 `notice_deferred` 事件
+- [x] AC-B1（历史，已退役）: 猫调只读工具时附加 content-free notice；#1398 后 MCP result 不再承担 inbox notice
+- [x] AC-B2（历史，已退役）: 猫调 hold_ball 时附加 unresolved reminder；#1398 后 hold_ball result 不再承担 freshness 教学
 - [x] AC-B3: 猫 invocation 结束时，seenCursor < threadLatestMessageId AND 有 unresolved 高优先级 notice → 触发一次 re-invoke。高优先级 = 人类消息 / 显式 @ / 球权变化。Rate limit: per (cat, thread) per hour cap=3。挂钩 invoke-single-cat terminal event。**merged**: PR #2650 — routing wiring（`route-serial` 消费 `metadata.freshnessReinvoke` + 队列 invocation + cursor-based notice filter + score-aware seenCursorCaughtUp）
 - [x] AC-B4: Skip re-invoke 客观判据（5 项可测试条件）：seenCursor 已追上 / newer invocation queued / 球权转移(F233 dep) / self-message only / quota exhausted。每个 skip 记录 `reinvoke_skipped` 事件。**merged**: PR #2650 — `reinvoke_triggered` + `reinvoke_skipped` 事件写入 FreshnessAttentionEventLog（fail-open）
 - [x] AC-B5: Eval 指标：notice→ack 转化率（seenCursor 同 invocation 内推进）、notice→defer 率、re-invoke 触发率+有效性（re-invoke 后有回复？）、误唤醒率、token 成本。**merged**: PR #2668 — 7 OTel counters (gate_held/forward, notice_attached/acked/deferred, reinvoke_triggered/skipped) with per-notice granularity alignment. Token cost + reinvoke effectiveness correlation deferred to Phase C eval adapter.
@@ -961,7 +985,7 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 
 | 风险 | 缓解 |
 |------|------|
-| 误 hold 导致猫猫体验退化（被频繁拦截） | seq 游标（不是 timestamp）+ fail-open + `acknowledgeHeld` escape hatch + 显式排除自己发的消息 |
+| ~~误 hold 导致猫猫体验退化~~（历史 Phase A） | #1398 已移除 HELD 与 `acknowledgeHeld`，callback/MCP 写工具不再拦截发送 |
 | held 信封撑爆 context（大量未读时） | DEFAULT_HELD_CONTEXT_LIMIT=3 + omittedCount |
 | seenCursor 性能（每次副作用工具多一次 Redis 查询） | 复用 DeliveryCursorStore 基础设施（已有内存缓存层），独立 key 前缀，单 key GET |
 | **seenCursor 误推 deliveryCursor 导致消息跳过**（B1 blocker 根因） | seenCursor 独立 key 前缀，AC-A9 回归测试；代码 review 重点检查项 |
@@ -1001,8 +1025,8 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
 - **Activation signal**: 猫调副作用 MCP 工具 + thread 有 unseen 消息 → held 信封
 
 ### Friction Metric
-- **误 hold 率**：猫已看过消息但仍被 hold 的比例（目标：趋近 0%——独立 seenCursor 应消除大部分此类，但跨 thread cursor 初始化等边缘场景可能残留极少数）
-- **acknowledgeHeld 使用率**：猫选择强制发送的比例（高 = held 信息不够有用，或 hold 太频繁）
+- ~~**误 hold 率**~~：历史 Phase A 指标；#1398 退役 HELD 后不再作为 active metric
+- ~~**acknowledgeHeld 使用率**~~：历史 Phase A 指标；参数与 active schema 已删除
 - **re-invoke 触发率**：Phase B.c 自动 re-invoke 的频率（高 = 猫经常无视 notice，notice 设计需改进）
 - **queued adoption 完整性**：兼容 telemetry 名称 `cat_cafe.freshness.queued_seen` 与 `cat_cafe.freshness.queued_handled` 应在 exact full-read adoption 上同步增长；它们度量 History/body-exposure cutover，不是 Queue 字段。差值非零表示持久化/接线缺口，不再解释为等待 invocation success
 - **eval:freshness registry**：`docs/harness-feedback/eval-domains/eval-freshness.yaml` 注册并启用 F254 freshness eval 域；`f254-freshness-replay` adapter 从 server-owned fixtures 或 durable closure truth 生成有界 replay artifact，publish generator 只消费其派生 metrics / samples / provenance。零 eligible data 必须输出 `no_data`，避免 silent-green。
@@ -1015,6 +1039,10 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
   keep/tune/sunset 检查：startup failure 是否下降，duplicate accepted turn 必须为 0。
 
 ### Regression Fixture
+
+> 下列 1–6 是已退役 Phase A/B1/B2 的历史回归，不再代表当前期望；当前 callback/MCP 期望是发送不因
+> inbox 状态被 HELD。7 以后仅在其对应 stream/closure owner 仍接线时有效。新的 carrier 与 exact replay
+> fixtures 归 F117 Phase F。
 1. 猫 invoke 后 thread 有新消息 → 猫调 post_message → 收到 held（不是正常发送）
 2. 猫 invoke 后 thread 有新消息 → 猫先做无 filter 的 full get_thread_context → 再 post_message → 正常发送（seenCursor 已推进，不 hold）
 3. 新 thread 首次 invoke，无 seenCursor → post_message → 正常发送（fail-open）
@@ -1046,22 +1074,24 @@ Map delta why: 本轮只修正现有 Web closure projection / hydration 的时�
     in-flight tool 与 post-tool missing-plan 分别产生 typed blocked terminal；预算耗尽只暴露最终断点卡。
 
 ### Sunset Signal
-- 如果 3 个月内 held 决策事件中 `decision: 'held'` 占比 < 1%（几乎没有 stale 场景发生），说明这个 feature 的价值不大，考虑简化或移除
-- 如果 `acknowledgeHeld` 使用率持续 > 50%（猫总是强制发送），说明 hold 机制打扰大于帮助，需要重新审视判据
+
+Phase A/B1/B2 的 sunset 已在 2026-09-09 由 #1398 执行：问题不是命中率阈值，而是职责放错层。运行中输入
+现由 carrier/Queue 负责，MCP 写工具保持纯粹。其余 stream/closure/supplement 子系统各按自己的 active
+owner 与指标决定是否继续，不得用已退役的 held/acknowledgeHeld 指标证明存续。
 
 ## 需求点 Checklist
 
 | # | 需求 | Phase | AC | 测试 | 状态 |
 |---|------|-------|-----|------|------|
-| R1 | seq 游标 freshness check | A | AC-A1 | Redis-backed | ✅ |
-| R2 | 零误 hold（看过不 hold） | A | AC-A2 | 游标推进验证 | ✅ |
-| R3 | fail-open | A | AC-A3 | null cursor 测试 | ✅ |
-| R4 | held context cap=3 | A | AC-A4 | 多消息场景 | ✅ |
-| R5 | acknowledgeHeld escape | A | AC-A5 | force send 测试 | ✅ |
-| R6 | cross_post 覆盖 | A | AC-A6 | 跨 thread + multi_mention 测试 | ✅ |
+| R1 | seq 游标 freshness check | A | AC-A1 | Redis-backed | 🪦 retired by F117/#1398 |
+| R2 | 零误 hold（看过不 hold） | A | AC-A2 | 游标推进验证 | 🪦 retired by F117/#1398 |
+| R3 | fail-open | A | AC-A3 | null cursor 测试 | 🪦 retired by F117/#1398 |
+| R4 | held context cap=3 | A | AC-A4 | 多消息场景 | 🪦 retired by F117/#1398 |
+| R5 | acknowledgeHeld escape | A | AC-A5 | force send 测试 | 🪦 retired by F117/#1398 |
+| R6 | cross_post 覆盖 | A | AC-A6 | 跨 thread + multi_mention 测试 | 🪦 retired by F117/#1398 |
 | R7 | FreshnessAttentionEventLog（独立事件流） | B | AC-B0 | 封闭联合 + kind discriminator + projector 接口 | ✅ |
-| R8 | content-free notice | B | AC-B1 | 只读工具附加 + 频率限制 + messageFilter 复用 | ✅ |
-| R9 | turn-end notice | B | AC-B2 | hold_ball 附加 + defer 记录 | ✅ |
+| R8 | content-free notice | B | AC-B1 | 只读工具附加 + 频率限制 + messageFilter 复用 | 🪦 retired by F117/#1398 |
+| R9 | turn-end notice | B | AC-B2 | hold_ball 附加 + defer 记录 | 🪦 retired by F117/#1398 |
 | R10 | re-invoke 兜底 | B | AC-B3/B4 | 高优先级触发 + 客观 skip 判据 + audit events | ✅ |
 | R14 | per-invocation operational state | B | AC-B0 | Redis-backed counters + TTL | ✅ |
 | R15 | eval 指标 | B | AC-B5 | 转化率/defer率/触发率/成本 | ✅ |

@@ -262,6 +262,28 @@ describe('MessageStore lifecycle response terminal CAS', () => {
       ).message.id,
       processing.id,
     );
+
+    assert.ok(await queue.terminalizeEntryDurable('thread-1', 'owner-1', applied.entry.id));
+    assert.equal(
+      store.advanceLifecycleInputDispatch(processing.id, {
+        orderKey: applied.message.lifecycle.orderKey,
+        producerInvocationId: applied.message.lifecycle.producerInvocationId,
+        targetId: 'codex',
+        phase: 'dispatched',
+        statusMessageId: 'response-codex',
+        dispatchedAt: 210,
+      }).kind,
+      'applied',
+    );
+    const afterDispatchReplay = await queue.terminalizeResponseAndEnqueueDurable(
+      store,
+      processing.id,
+      terminalPatch({ content: '@codex review', mentions: ['codex'] }),
+      input,
+    );
+    assert.equal(afterDispatchReplay.deduped, true);
+    assert.deepEqual(afterDispatchReplay.entries, []);
+    assert.equal(queue.list('thread-1', 'owner-1').length, 0, 'History terminal truth must prevent re-admission');
     assert.equal(store.getByThread('thread-1', 10, 'owner-1').length, 1, 'no copied Agent message may be appended');
   });
 

@@ -411,12 +411,15 @@ export interface AgentContextCapability {
 
 /** F296 B0: concrete provider transport identity, independent of route/origin. */
 export type ProviderCarrier =
-  | { readonly provider: 'claude'; readonly carrier: 'print_sdk' | 'bg_daemon' | 'interactive_pty' | 'api_key' }
+  | {
+      readonly provider: 'claude';
+      readonly carrier: 'print_sdk' | 'agent_sdk' | 'bg_daemon' | 'interactive_pty' | 'api_key';
+    }
   | { readonly provider: 'codex'; readonly carrier: 'exec_json' | 'app_server' }
   | { readonly provider: 'gemini'; readonly carrier: 'gemini_cli' | 'antigravity_adapter' }
   | { readonly provider: 'antigravity'; readonly carrier: 'cdp_bridge' }
   | { readonly provider: 'kimi'; readonly carrier: 'stream_json' }
-  | { readonly provider: 'opencode'; readonly carrier: 'run_json' }
+  | { readonly provider: 'opencode'; readonly carrier: 'run_json' | 'server' }
   | { readonly provider: 'acp'; readonly carrier: 'acp'; readonly backend: 'opencode' | 'unknown' }
   | { readonly provider: 'catagent'; readonly carrier: 'direct_api' }
   | { readonly provider: 'a2a'; readonly carrier: 'remote' }
@@ -694,8 +697,8 @@ export interface AgentContextBinding {
 
 /** Provider-native identity for one exact, still-open Agent Client run. */
 export interface AgentClientActiveRunHandle {
-  readonly provider: 'openai_codex' | 'anthropic_acp' | 'other';
-  readonly carrier: 'codex_app_server' | 'acp' | 'other';
+  readonly provider: 'openai_codex' | 'anthropic' | 'anthropic_acp' | 'opencode' | 'other';
+  readonly carrier: 'codex_app_server' | 'claude_agent_sdk' | 'opencode_server' | 'acp' | 'other';
   readonly threadId: string;
   readonly turnId: string;
 }
@@ -732,7 +735,7 @@ export interface AgentClientActiveRunDispatcher {
 export interface AgentClientActiveRunDispatchRegistration {
   readonly invocationId: string;
   /** Return a release hook that removes this exact live handle from its registry. */
-  register(dispatcher: AgentClientActiveRunDispatcher): (() => void) | void;
+  register(dispatcher: AgentClientActiveRunDispatcher): (() => void) | undefined;
 }
 
 /** ADR-042 automatic supplement execution: provider + callback layers must enforce this, not prompt prose. */

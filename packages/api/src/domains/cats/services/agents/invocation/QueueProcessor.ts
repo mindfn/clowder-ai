@@ -1421,7 +1421,14 @@ export class QueueProcessor {
     reservation: ProcessingSlotReservation,
   ): Promise<'requeued' | 'terminalized' | 'released' | 'blocked'> {
     if (reservation.trackerStarted) return 'blocked';
-    const current = this.deps.queue.getEntrySnapshot(threadId, reservation.userId, reservation.entryId);
+    // A successful Queue claim commit removes the durable pending row and
+    // retains only the process-local admitted carrier until execution starts.
+    // Recovery therefore has to inspect the same pending-or-admitted view as
+    // pre-start retirement; a durable-only snapshot would silently release a
+    // stale processing reservation without recording its History failure.
+    const current = this.deps.queue
+      .getProcessingGroupAcrossUsers(threadId, reservation.entryId)
+      ?.find((entry) => queueEntryOwnerId(entry) === reservation.userId);
     if (!current) return 'released';
     if (current.status === 'claimed') {
       if (!(await this.deps.queue.rollbackProcessingDurable(threadId, reservation.entryId))) return 'blocked';

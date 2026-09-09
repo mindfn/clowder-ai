@@ -285,7 +285,14 @@ describe('B6: multi_mention queue dispatch', () => {
     const [entry] = entries;
     assert.deepEqual(queueEntryTargetCats(entry), ['codex', 'gpt-pro']);
     assert.equal(entry.execution.a2aParentInvocationId, creds.invocationId);
-    assert.equal(entry.payload.sourceRecordId, callerResponse.id);
+    const dispatchSource = mockMessageStore.getById(entry.payload.sourceRecordId);
+    assert.ok(dispatchSource, 'Queue sourceRecordId must resolve to the public multi-mention source');
+    assert.equal(dispatchSource.replyTo, callerResponse.id);
+    assert.equal(dispatchSource.extra?.causal?.triggerMessageId, callerResponse.id);
+    assert.equal(
+      dispatchSource.content,
+      '[Multi-Mention from opus]\n\nReview the exact source\n\n---\n\nPreserve this original context',
+    );
     assert.equal(entry.execution.requiresExactCloudDispatchProvenance, true);
     assert.deepEqual(entry.execution.cloudDispatchProvenance, {
       sourceMessageId: source.id,

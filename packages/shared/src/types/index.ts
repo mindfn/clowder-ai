@@ -260,6 +260,12 @@ export type {
   Roster,
   RosterEntry,
 } from './cat-breed.js';
+export {
+  CAT_CARRIERS,
+  type CatCarrier,
+  catClientSupportsCarrier,
+  getCatCarrierOptions,
+} from './cat-carrier.js';
 // F182: Cat routing error types
 export type { CatAlternative, CatRoutingError } from './cat-routing.js';
 export { CatAlternativeSchema, CatRoutingErrorSchema } from './cat-routing.js';

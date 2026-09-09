@@ -8,7 +8,7 @@ created: 2026-09-02
 
 # ADR-043: 消息队列 = 独立持久化的有序工单账本
 
-> **Status**: implemented locally; acceptance follow-up under review | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
+> **Status**: implemented locally; carrier/replay acceptance follow-up under review | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
 > **Supersedes (设计层)**: F039 / F122 / F175 / F047 中关于队列状态与 Steer 预留的描述
 
 ## 背景
@@ -109,6 +109,12 @@ Queue 自身由 Lua/CAS 转换保证：`enqueue`、按 target 的 `claim/commit/
 2. 从 Queue Entry 的 `targets[]` 删除该 target；
 3. 若第 2 步遇到进程故障，重放先 join History，发现 target 已 dispatched 后只做幂等清理，绝不再次唤起。
 
+这个 join 以 exact `sourceRecordId × targetCatId` 为键，并在 Memory/Redis 的 lifecycle terminal + Queue
+transaction 中原子判定；不能先做一次易失 read，再凭旧快照 enqueue。A2A、connector 与恢复路径重放一个
+已消费 source 时，只允许清理残留 Queue target。multi-mention 也必须先创建正文一致的真实 Agent History
+source，再将该 source 与同一 `targets[]` entry 原子 admission；callback response 只是 parent lineage，不能
+让它的 id 指向另一段只存在于 Queue 的 synthetic 正文。
+
 因此 all-or-none 只约束**初始 admission**，不约束 provider start。一个 target 投递或启动失败，不回滚已经被 sibling 接受的投递；每个 response bubble 独立终局。
 
 Redis `order` 只索引当前待处理 entry；`messageId → entryId` 只为定位尚待投递的 source，不承担历史 receipt 查询。History 分页与头像投影只读 Message lifecycle。
@@ -141,11 +147,20 @@ Steer modal 可多选，成员候选为 thread participants、路由目标与 fa
 
 已经被未读接管或其他 dispatch 投递的成员直接跳过，不能复活；用户从旧快照取消一个已投递成员也没有副作用。仍 pending 的 remove/add 在同一 source row 上合并，新加入成员只在确认时加入 thread。普通状态变化不是整批 revision conflict；每个仍可执行 target 随后独立 guide/interrupt，失败不回滚 sibling。
 
-### D6 — freshness carrier 是载荷标记，不是状态机
+### D6 — 副作用出口不再承担 freshness 门卫；专用 continuation 仍是显式载荷
 
-5 个字段写一次、起跑读一次即消费，**不进持久 custody**（custody 三文件 grep `freshness` 零命中），重启靠从 closure store 重新入队。归类同 `sourceCategory`。
+F254 Phase A HELD、B1 MCP-result piggyback 与 B2 hold-ball reminder 已由 #1398 退役。callback/MCP 写工具
+是纯发送原语：不在 `post_message` 时检查 inbox、不阻止发送、不接受 `acknowledgeHeld`，也不在工具结果中
+注入读取教学。运行中正文由所选 carrier 的真实能力承接：live carrier 可向 exact active session append 或
+interrupt；单轮 CLI 不谎报 append，消息继续 pending 并由正常 FIFO drain 开下一轮。
 
-`freshnessRequiredFrontierMessageId` **纯写不读，直接删**（全仓 5 处 src 命中：1 声明 + 1 类型 + 1 透传 + 2 写入，零读点）。
+这不等于删除独立的 scheduled/freshness/continuation 工作。它们若由自己的 owner 显式创建，仍以 typed Queue
+payload 写一次、起跑读一次，并由对应 store 重建；这些字段是任务输入，不是 `post_message` 的隐藏状态机，
+也不得重新生长成 Queue receipt。已证明纯写不读的 `freshnessRequiredFrontierMessageId` 继续删除。
+
+成员接入方式只有顶层 canonical `carrier`。兼容读取只在配置边界执行
+`carrier → legacy top-level transport → cli`；下游 provider/capability/UI 不得再读旧字段或全局环境开关，
+且一个 carrier 的失败不得静默 fallback 到另一个。
 
 ### D7 — Queue 没有 terminal row；重做是新的用户意图
 
@@ -191,7 +206,7 @@ Message 已进入成员可见 History，其他 target 的 Queue 责任仍由同�
 
 ## 不会简化的部分（诚实边界）
 
-`prestartRetirement` **不消失**。窗口是 `invocationRecordStore.create` → `invocationTracker.startAll`，中间包含 freshness 预检、前缀吸收、session 准入。这个「已经 admission、但 tracker 里还没有」的空档由 **I/O 本身**造成，不是 Queue 持久状态，进不了 Lua。
+`prestartRetirement` **不消失**。窗口是 `invocationRecordStore.create` → `invocationTracker.startAll`，中间包含 routing/visibility 预检、前缀吸收、session 准入。这个「已经 admission、但 tracker 里还没有」的空档由 **I/O 本身**造成，不是 Queue 持久状态，进不了 Lua。
 
 它会从 Steer 专用标记收敛为同一次原子 Queue claim 的通用 `retiringGroupId`，用于关联一起进入 pre-start 窗口的 FIFO prefix entries；它不表示多目标 fan-out。
 

@@ -494,6 +494,33 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
     const replay = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);
     assert.equal(replay.deduped, true);
     assert.equal((await store.list('thread-redis')).length, 1);
+
+    assert.ok(await queue.terminalizeEntryDurable('thread-redis', 'owner-1', applied.entry.id));
+    assert.equal(
+      (
+        await messageStore.advanceLifecycleInputDispatch(response.id, {
+          orderKey: applied.message.lifecycle.orderKey,
+          producerInvocationId: applied.message.lifecycle.producerInvocationId,
+          targetId: 'codex',
+          phase: 'dispatched',
+          statusMessageId: 'response-codex',
+          dispatchedAt: 210,
+        })
+      ).kind,
+      'applied',
+    );
+    const afterDispatchReplay = await queue.terminalizeResponseAndEnqueueDurable(
+      messageStore,
+      response.id,
+      patch,
+      input,
+    );
+    assert.equal(afterDispatchReplay.deduped, false);
+    assert.deepEqual(afterDispatchReplay.entry.targets, ['sonnet']);
+    assert.deepEqual(
+      (await store.list('thread-redis')).map((entry) => entry.targets),
+      [['sonnet']],
+    );
   });
 
   it('leaves a processing response unchanged when its one outbound Queue identity conflicts', async () => {

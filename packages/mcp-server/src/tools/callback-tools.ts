@@ -448,14 +448,6 @@ export const postMessageInputSchema = {
         ACTION_SUBJECT_REF_DESCRIPTION,
     ),
   agentKeyCatId: agentKeyCatIdSchema,
-  // F254 Phase A: acknowledge held — force send even when there are unseen messages
-  acknowledgeHeld: z
-    .boolean()
-    .optional()
-    .describe(
-      'F254 Freshness Gate escape hatch. Set to true to force-send your message even when the thread has unseen messages. ' +
-        'Use only after you have reviewed the held envelope previews and decided your message is still appropriate.',
-    ),
 };
 
 export type PostMessageRegistrationPrincipal = 'invocation' | 'agent-key' | 'unconfigured';
@@ -557,8 +549,8 @@ export const getThreadContextInputSchema = {
       'Response projection mode. "anchor" (DEFAULT — omit for normal browsing): token-lean previews with drillDown pointers to full content. ' +
         '"full": returns complete message bodies inside a bounded aggregate page; use nextCursor when hasMore=true. A persisted message larger than the page is returned as an honest anchor with a precise drill pointer; a transient queued body without a persisted message anchor remains unseen and says to retry after persistence. ' +
         'An oversized workflow SOP is likewise returned as an honest anchor that points to cat_cafe_get_workflow_sop instead of overflowing the aggregate envelope. ' +
-        'Use "full" whenever a freshness catch asks you to consume the contiguous unread set: current-thread reads prefer the unread delta, and only complete bodies advance queued-read evidence. ' +
-        'GOTCHA: anchor previews are not a freshness closure and cannot prove queued messages were handled.',
+        'Use "full" for an explicit complete catch-up: current-thread reads prefer the unread delta, and only complete bodies advance queued-read evidence. ' +
+        'GOTCHA: anchor previews do not consume queued bodies and cannot prove queued messages were handled.',
     ),
   agentKeyCatId: agentKeyCatIdSchema,
 };
@@ -879,11 +871,6 @@ export const crossPostMessageInputSchema = {
         PROPOSED_ACTION_EXECUTABLE_CONTRACT_DESCRIPTION,
     ),
   agentKeyCatId: agentKeyCatIdSchema,
-  // F254 Phase A: acknowledge held — force send even when there are unseen messages
-  acknowledgeHeld: z
-    .boolean()
-    .optional()
-    .describe('F254 Freshness Gate escape hatch. Force-send despite unseen messages in the target thread.'),
 };
 
 export const listTasksInputSchema = {
@@ -955,7 +942,6 @@ async function _executePostMessage(
     acceptedRevision?: string | undefined;
     action?: ActionSuccessorRequestMetadata | undefined;
     proposedAction?: ActionSuccessorRequestMetadata | undefined;
-    acknowledgeHeld?: boolean | undefined;
   },
   transportOptions?: CallbackTransportOptions,
 ): Promise<ToolResult> {
@@ -1012,7 +998,6 @@ async function _executePostMessage(
           ...(input.acceptedRevision ? { acceptedRevision: input.acceptedRevision } : {}),
           ...(input.action ? { action: input.action } : {}),
           ...(input.proposedAction ? { proposedAction: input.proposedAction } : {}),
-          ...(input.acknowledgeHeld ? { acknowledgeHeld: true } : {}),
         },
         {
           enableOutbox: true,
@@ -1034,31 +1019,6 @@ async function _executePostMessage(
           'Message was NOT delivered: this invocation has been superseded by a newer one for the same thread. ' +
             'Your message was silently discarded by the server (stale_ignored). ' +
             'Include the message content in your stdout response instead.',
-        );
-      }
-
-      // F254 Phase A: Detect held — server returned 200 but message was NOT sent
-      // because the cat has unseen messages in the thread (freshness gate).
-      if (data?.status === 'held') {
-        const previews = (data.previews ?? []) as Array<{ from: string; messageId: string; preview: string }>;
-        const previewLines = previews.map(
-          (p: { from: string; preview: string }) =>
-            `  [${p.from}]: "${p.preview.slice(0, 100)}${p.preview.length > 100 ? '…' : ''}"`,
-        );
-        const omitted = (data.omittedCount ?? 0) as number;
-        const omittedLine = omitted > 0 ? `  ...and ${omitted} more message(s)\n` : '';
-
-        return errorResult(
-          `⚠️ Message NOT sent (HELD)\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `Reason: You have ${data.unseenCount ?? 'unknown'} unseen message(s) in this thread.\n\n` +
-            (previewLines.length > 0
-              ? `Recent messages you haven't read:\n${previewLines.join('\n')}\n${omittedLine}\n`
-              : '') +
-            `Your options:\n` +
-            `1. Call cat_cafe_list_recent or cat_cafe_get_thread_context to read the new messages first\n` +
-            `2. Revise your message based on what you learn, then call post_message again\n` +
-            `3. Call post_message with acknowledgeHeld: true to force-send your original message as-is`,
         );
       }
     } catch {
@@ -1134,7 +1094,6 @@ export async function handlePostMessage(
     acceptedRevision?: string | undefined;
     agentKeyCatId?: string | undefined;
     action?: ActionSuccessorRequestMetadata | undefined;
-    acknowledgeHeld?: boolean | undefined;
   },
   transportOptions?: CallbackTransportOptions,
 ): Promise<ToolResult> {
@@ -1607,7 +1566,6 @@ export async function handleCrossPostMessage(input: {
   acceptedRevision?: string | undefined;
   action?: ActionSuccessorRequestMetadata | undefined;
   proposedAction?: ActionSuccessorRequestMetadata | undefined;
-  acknowledgeHeld?: boolean | undefined;
 }): Promise<ToolResult> {
   if (containsPawFeelMarker(input.content)) {
     return errorResult(
@@ -1716,7 +1674,6 @@ export async function handleCrossPostMessage(input: {
     ...(input.acceptedRevision ? { acceptedRevision: input.acceptedRevision } : {}),
     ...(input.action ? { action: input.action } : {}),
     ...(input.proposedAction ? { proposedAction: input.proposedAction } : {}),
-    ...(input.acknowledgeHeld ? { acknowledgeHeld: true } : {}),
   });
 }
 
@@ -3125,7 +3082,7 @@ export async function handleHoldBall(input: {
       isError: true,
     };
   }
-  const result = await callbackPost(
+  return callbackPost(
     '/api/callbacks/hold-ball',
     {
       reason: input.reason,
@@ -3136,29 +3093,6 @@ export async function handleHoldBall(input: {
     },
     agentKeyOptions(input),
   );
-
-  // F254 B2: Check for unresolved freshness notices after successful hold_ball.
-  // If the cat has unacknowledged notices, append a reminder to the result.
-  // Fail-open: reminder errors never block hold_ball.
-  if (!result.isError && getCallbackConfig(agentKeyOptions(input))) {
-    try {
-      const reminderResult = await callbackPost(
-        '/api/callbacks/freshness-hold-ball-reminder',
-        {},
-        agentKeyOptions(input),
-      );
-      if (!reminderResult.isError) {
-        const data = JSON.parse((reminderResult.content[0] as { text: string }).text);
-        if (data?.reminder?.text) {
-          result.content = [...result.content, { type: 'text', text: `\n\n${data.reminder.text}` }];
-        }
-      }
-    } catch {
-      // Fail-open: reminder check errors should never block hold_ball
-    }
-  }
-
-  return result;
 }
 
 export async function handleCompleteManagedHold(input: { disposition: 'handled' | 'completed' }): Promise<ToolResult> {
@@ -3364,11 +3298,11 @@ export const callbackTools = [
     name: 'cat_cafe_get_thread_context',
     description:
       'Read messages from one thread, with token-lean anchor previews by default and optional full bodies, ranked keywords, or a bounded window around messageId. ' +
-      'Use when: browsing the current conversation, reading a different known threadId, finding relevant messages inside that thread, opening context around a known messageId, or a freshness notice asks you to catch up. ' +
+      'Use when: browsing the current conversation, reading a different known threadId, finding relevant messages inside that thread, opening context around a known messageId, or explicitly catching up. ' +
       'NOT for: finding features, decisions, plans, lessons, or unknown threads across project knowledge; use search_evidence or list_threads first. ' +
       'Output: a bounded aggregate envelope with threadId, ordered messages, hasMore, and nextCursor when continuation is required; anchor mode includes drillDown pointers, while responseMode="full" returns complete bodies per ordinary item and includes same-target queued bodies. ' +
       'When available, situation reports exact lifecycle-backed active runs (target, source messages, response, invocation); situation.complete=false means runtime evidence could not be fully joined, so do not infer execution from recent speech. ' +
-      'GOTCHA: keyword ranking is best-effort over a bounded recent scan; scanCapped=true means older history may contain additional matches. A single item larger than the full-page budget falls back to an honest anchor; drill an oversized workflow SOP with cat_cafe_get_workflow_sop using the returned threadId. Anchor mode does not consume queued bodies or close freshness responsibility; for a freshness catch, use responseMode="full" with no catId/keyword/messageId filters and follow nextCursor until hasMore=false. Pass threadId only to read a different thread; omit it for the current thread.',
+      'GOTCHA: keyword ranking is best-effort over a bounded recent scan; scanCapped=true means older history may contain additional matches. A single item larger than the full-page budget falls back to an honest anchor; drill an oversized workflow SOP with cat_cafe_get_workflow_sop using the returned threadId. Anchor mode does not consume queued bodies; for a complete catch-up, use responseMode="full" with no catId/keyword/messageId filters and follow nextCursor until hasMore=false. Pass threadId only to read a different thread; omit it for the current thread.',
     inputSchema: getThreadContextInputSchema,
     handler: handleGetThreadContext,
     governance: {

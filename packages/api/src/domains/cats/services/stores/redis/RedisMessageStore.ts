@@ -1234,17 +1234,30 @@ export class RedisMessageStore {
       const prepared = prepareLifecycleResponseTerminalWithLedgerTargets(current, patch, entries);
       if (prepared.kind !== 'prepared') return prepared;
 
+      if (prepared.entries.length === 0) {
+        const activeRows = await Promise.all(entries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+        if (activeRows.some((entry) => entry !== null)) {
+          return { kind: 'conflict', reason: 'different_terminal', message: current };
+        }
+        return {
+          kind: prepared.lifecycleReplayed ? 'replayed' : 'applied',
+          message: prepared.message,
+          entries: [],
+          ledgerReplayed: true,
+        };
+      }
+
       const currentRaws = await this.redis.hmget(
         QueueLedgerKeys.entries(threadId!),
-        ...entries.map((entry) => entry.id),
+        ...prepared.entries.map((entry) => entry.id),
       );
       const presentCount = currentRaws.filter((raw) => typeof raw === 'string').length;
-      if (presentCount !== 0 && presentCount !== entries.length) {
+      if (presentCount !== 0 && presentCount !== prepared.entries.length) {
         return { kind: 'conflict', reason: 'different_terminal', message: current };
       }
-      if (presentCount === entries.length) {
+      if (presentCount === prepared.entries.length) {
         const existing = currentRaws.map((raw) => hydrateQueueLedgerEntry(raw as string));
-        if (!existing.every((entry, index) => queueLedgerAdmissionsMatch(entry, entries[index]!))) {
+        if (!existing.every((entry, index) => queueLedgerAdmissionsMatch(entry, prepared.entries[index]!))) {
           return { kind: 'conflict', reason: 'different_terminal', message: current };
         }
       }
@@ -1266,9 +1279,9 @@ export class RedisMessageStore {
           MessageKeys.threadVisibilityMeta(threadId!),
           ...lifecycleResponseTerminalLuaArgs(patch, terminalMessageForLua, expectedLifecycleRaw),
           maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
-          String(entries.length),
+          String(prepared.entries.length),
           expectedMode,
-          ...entries.map((entry) => JSON.stringify(entry)),
+          ...prepared.entries.map((entry) => JSON.stringify(entry)),
           ...currentRaws.map((raw) => raw ?? ''),
         ),
       );
@@ -1277,7 +1290,11 @@ export class RedisMessageStore {
       if (outcome === -1) return { kind: 'not_found' };
       if (outcome === -2) return { kind: 'conflict', reason: 'not_response', message: current };
       if (outcome === -3) return { kind: 'conflict', reason: 'invocation_mismatch', message: current };
-      if (outcome === -4 || outcome === -5) {
+      // A concurrent source→target dispatch changes only lifecycle.dispatchRefs.
+      // Re-read so the next pass can subtract that target from Queue admission;
+      // a genuinely different terminal is rejected by the pure prepare step.
+      if (outcome === -4) continue;
+      if (outcome === -5) {
         return { kind: 'conflict', reason: 'different_terminal', message: current };
       }
       if (![1, 2, 3, 4].includes(outcome)) {
@@ -1285,7 +1302,7 @@ export class RedisMessageStore {
       }
       const message = await this.getById(messageId);
       if (!message) throw new Error(`lifecycle response disappeared after Queue admission: ${messageId}`);
-      const persisted = await Promise.all(entries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+      const persisted = await Promise.all(prepared.entries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
       if (persisted.some((entry) => entry === null)) {
         throw new Error(`lifecycle Queue admission rows disappeared after commit: ${messageId}`);
       }

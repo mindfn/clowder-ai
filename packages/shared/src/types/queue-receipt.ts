@@ -3,12 +3,14 @@ export type QueueHandledDisposition = 'responded' | 'completed_with_turn' | 'man
 export type MessageWorkDisposition = 'continue_current' | 'next_work';
 
 /** Exact provider + concrete transport truth used by composer, Queue and receipts. */
-export type FreshnessCarrierProvider = 'openai_codex' | 'anthropic' | 'kimi' | 'other';
+export type FreshnessCarrierProvider = 'openai_codex' | 'anthropic' | 'opencode' | 'kimi' | 'other';
 export type FreshnessCarrier =
   | 'codex_app_server'
   | 'codex_exec_json'
+  | 'claude_agent_sdk'
   | 'claude_print_sdk'
   | 'claude_stream_json'
+  | 'opencode_server'
   | 'kimi_stream_json'
   | 'mcp_result_piggyback'
   | 'other';

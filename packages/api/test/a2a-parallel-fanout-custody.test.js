@@ -1,8 +1,9 @@
 /**
  * Phase C: multi_mention is an ordinary lifecycle fan-out.
  *
- * Every target shares the caller's exact public response source and one Queue
- * carrier before drain, then projects independently through dispatchRefs. The retired
+ * Every target shares one exact public Agent source and one Queue carrier before
+ * drain. The caller's response is only the parent lineage; the source body is the
+ * exact multi_mention work that every target receives. The retired
  * “A ⇉ B（并行 N/M）” system-message path must stay absent.
  */
 
@@ -104,7 +105,7 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
   let app;
   let registry;
   let creds;
-  let source;
+  let callerResponse;
   let messageStore;
   let invocationQueue;
   let queueProcessor;
@@ -115,7 +116,7 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     registry = createMockRegistry();
     creds = registry.register('opus', 'thread-par-1', 'user-1');
     messageStore = new MessageStore();
-    source = appendLifecycleSource(messageStore, creds);
+    callerResponse = appendLifecycleSource(messageStore, creds);
     invocationQueue = new InvocationQueue();
     queueProcessor = createMockQueueProcessor();
     socketMessages = [];
@@ -170,18 +171,21 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     const entries = invocationQueue.list('thread-par-1', 'user-1');
     assert.equal(entries.length, 1);
     assert.deepEqual(entries[0].targets.toSorted(), ['codex', 'gemini']);
+    const sourceId = entries[0].payload.messageId;
     for (const entry of entries) {
       assert.equal(entry.kind, 'message_wake');
-      assert.equal(entry.payload.messageId, source.id);
-      assert.equal(entry.execution.a2aTriggerMessageId, source.id);
+      assert.equal(entry.payload.messageId, sourceId);
+      assert.equal(entry.execution.a2aTriggerMessageId, sourceId);
     }
     assert.equal(queueProcessor.getHooks().size, 2);
     assert.equal(queueProcessor.getDrains().length, 1);
     const firstDrain = queueProcessor.timeline.findIndex((item) => item.startsWith('drain:'));
     assert.equal(queueProcessor.timeline.slice(0, firstDrain).filter((item) => item.startsWith('custody:')).length, 2);
 
-    const persistedSource = await messageStore.getById(source.id);
-    assert.equal(persistedSource.id, source.id);
+    const persistedSource = await messageStore.getById(sourceId);
+    assert.equal(persistedSource.id, sourceId);
+    assert.equal(persistedSource.content, '[Multi-Mention from opus]\n\n独立看一眼');
+    assert.equal(persistedSource.replyTo, callerResponse.id);
     assert.equal(persistedSource.queueCustody, undefined);
   });
 
@@ -216,15 +220,20 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     const response = await dispatch();
     assert.equal(response.statusCode, 200, response.body);
     assert.equal(queueProcessor.getHooks().size, 2);
-    const persistedSource = await messageStore.getById(source.id);
+    const [sourceEntry] = invocationQueue
+      .list('thread-par-1', 'user-1')
+      .filter((entry) => entry.targets.includes('codex') && entry.targets.includes('gemini'));
+    const persistedSource = await messageStore.getById(sourceEntry.payload.messageId);
     assert.deepEqual(
       invocationQueue
         .list('thread-par-1', 'user-1')
-        .filter((entry) => entry.payload.messageId === source.id)
+        .filter((entry) => entry.payload.messageId === persistedSource.id)
         .flatMap((entry) => entry.targets)
         .toSorted(),
       ['codex', 'gemini'],
     );
+    assert.equal(persistedSource.content, '[Multi-Mention from opus]\n\n独立看一眼');
+    assert.equal(persistedSource.replyTo, callerResponse.id);
     assert.equal(persistedSource.queueCustody, undefined);
   });
 

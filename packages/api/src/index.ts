@@ -35,7 +35,6 @@ import {
   toAllCatConfigs,
 } from './config/cat-config-loader.js';
 import { getCatModel } from './config/cat-models.js';
-import { resolveCodexCarrierTruth } from './config/codex-cli.js';
 import { configEventBus } from './config/config-event-bus.js';
 import { resolveFrontendBaseUrl, resolveFrontendCorsOrigins } from './config/frontend-origin.js';
 import { resolveRuntimeDeploymentRevision } from './config/runtime-deployment-revision.js';
@@ -120,19 +119,24 @@ import {
   getOrCreateCodexAppServerPool,
 } from './domains/cats/services/agents/providers/codex-app-server-pool-registry.js';
 import { clearL0Cache, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
+import {
+  closeStaleOpenCodeServerHosts,
+  getOrCreateOpenCodeServerHost,
+  type OpenCodeServerHostRegistry,
+} from './domains/cats/services/agents/providers/OpenCodeServerHost.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { createPostCompactContextProjector } from './domains/cats/services/agents/routing/post-compact-context-projector.js';
 import { reconcileFreshnessClosuresAtStartup } from './domains/cats/services/freshness/closure/FreshnessClosureStartupReconciler.js';
 import { RedisFreshnessClosureStore } from './domains/cats/services/freshness/closure/RedisFreshnessClosureStore.js';
 import { createFreshnessReinvokeCheck } from './domains/cats/services/freshness/createFreshnessReinvokeCheck.js';
-import { createProviderNativeFreshnessFactory } from './domains/cats/services/freshness/createProviderNativeFreshnessFactory.js';
 import { FreshnessAttentionEventLog } from './domains/cats/services/freshness/FreshnessAttentionEventLog.js';
-import { FreshnessInvocationStateStore } from './domains/cats/services/freshness/FreshnessInvocationStateStore.js';
 import { FreshnessOutputCommitCoordinator } from './domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { reconcileFreshnessSupplementsAtStartup } from './domains/cats/services/freshness/glass-box/FreshnessSupplementStartupReconciler.js';
 import {
   AgentRouter,
   AuditEventTypes,
+  ClaudeAgentService,
+  ClaudeSdkAgentService,
   CodexAgentService,
   createDraftStore,
   createInvocationRecordStore,
@@ -144,6 +148,7 @@ import {
   KimiAgentService,
   MemoryGovernanceStore,
   OpenCodeAgentService,
+  OpenCodeServerAgentService,
 } from './domains/cats/services/index.js';
 import { FileProfileRepository } from './domains/cats/services/profile/ProfileRepository.js';
 import {
@@ -1885,6 +1890,9 @@ async function main(): Promise<void> {
   const acpPoolRegistry: AcpPoolRegistry = new Map();
   // F254: Codex app-server warm hosts are profile-scoped and survive catalog refreshes.
   const codexAppServerPoolRegistry: CodexAppServerPoolRegistry = new Map();
+  // OpenCode server hosts are also profile-scoped: a member reuses one live
+  // server across invocations while catalog refreshes retire removed profiles.
+  const openCodeServerHostRegistry: OpenCodeServerHostRegistry = new Map();
 
   // ── F32-b: AgentRegistry (catId → AgentService) — one instance per cat ──
   // Each cat gets its own AgentService instance with its catId + model.
@@ -1896,6 +1904,7 @@ async function main(): Promise<void> {
     const projectRoot = resolveActiveProjectRoot();
     const activeAcpProfileIds = new Set<string>();
     const activeCodexProfileIds = new Set<string>();
+    const activeOpenCodeServerProfileIds = new Set<string>();
     for (const [id, config] of Object.entries(configs)) {
       const catId = config.id;
       // F32-b P1 fix: do NOT pass model here — let constructors resolve via
@@ -1903,10 +1912,14 @@ async function main(): Promise<void> {
       let service: AgentService;
 
       // ── F161: Generic ACP transport path (provider-agnostic) ──
-      // Any clientId with an `acp` config section uses AcpAgentService.
-      // This check runs BEFORE the clientId switch — ACP is a transport, not a provider.
-      const acpConfig = getAcpConfig(id, projectRoot);
-      if (acpConfig) {
+      // Carrier selection is resolved once by cat-config-loader. The ACP block
+      // below contains only launch details; its mere presence is not routing truth.
+      const acpConfig = config.carrier === 'acp' ? getAcpConfig(id, projectRoot) : undefined;
+      if (config.carrier === 'acp') {
+        if (!acpConfig) {
+          app.log.warn(`[api] Cat "${id}" selects carrier=acp but has no ACP config. It will not be routable.`);
+          continue;
+        }
         activeAcpProfileIds.add(id);
         const acpService = await createAcpServiceForConfig({
           projectRoot,
@@ -1923,25 +1936,17 @@ async function main(): Promise<void> {
         switch (config.clientId) {
           // ── Provider-specific CLI paths (non-ACP) ──
           case 'anthropic': {
-            // F198 Phase B Step 3 canary: env-gated carrier selection.
-            // CAT_CAFE_CLAUDE_CARRIER=bg_daemon → --bg carrier (subscription
-            // quota, R1 救宪宪). Unset/other → -p (current production default).
-            const { createClaudeAgentServiceForCanary } = await import(
-              './domains/cats/services/agents/providers/claude-carrier-factory.js'
-            );
-            service = createClaudeAgentServiceForCanary(catId);
+            service =
+              config.carrier === 'sdk' ? new ClaudeSdkAgentService({ catId }) : new ClaudeAgentService({ catId });
             break;
           }
           case 'openai': {
             activeCodexProfileIds.add(id);
             const appServerHostPool = getOrCreateCodexAppServerPool(codexAppServerPoolRegistry, id);
-            // F254 D2: carrier truth resolved once via the shared helper —
-            // per-cat cli.carrier > CAT_CAFE_CODEX_CARRIER env > exec_json default.
-            // Same helper feeds GET /api/cats so Hub display == runtime behavior.
             service = new CodexAgentService({
               catId,
               appServerHostPool,
-              carrierMode: resolveCodexCarrierTruth(config.cli?.carrier).effective,
+              carrierMode: config.carrier === 'app_server' ? 'app_server' : 'exec_json',
             });
             break;
           }
@@ -1964,7 +1969,15 @@ async function main(): Promise<void> {
             });
             break;
           case 'opencode':
-            service = new OpenCodeAgentService({ catId });
+            if (config.carrier === 'server') {
+              activeOpenCodeServerProfileIds.add(id);
+              service = new OpenCodeServerAgentService({
+                catId,
+                host: getOrCreateOpenCodeServerHost(openCodeServerHostRegistry, id),
+              });
+            } else {
+              service = new OpenCodeAgentService({ catId });
+            }
             break;
           case 'catagent': {
             const { CatAgentService } = await import(
@@ -1999,6 +2012,7 @@ async function main(): Promise<void> {
     await closeStaleCodexAppServerPools(codexAppServerPoolRegistry, activeCodexProfileIds, (err, profileId) => {
       app.log.warn({ err, profileId }, 'Codex app-server registry sync failed to close stale member pool');
     });
+    await closeStaleOpenCodeServerHosts(openCodeServerHostRegistry, activeOpenCodeServerProfileIds);
     if (router) router.refreshFromRegistry(agentRegistry);
 
     // Pre-compile L0 system prompts for all registered cats in parallel.
@@ -2282,18 +2296,6 @@ async function main(): Promise<void> {
       })
     : undefined;
 
-  // F254 Phase C: Freshness state store for carrier tier persistence.
-  // Shared instance — lightweight (just holds a Redis ref, no state).
-  const freshnessStateStore = redis ? new FreshnessInvocationStateStore(redis) : undefined;
-  const providerNativeFreshnessFactory = redis
-    ? createProviderNativeFreshnessFactory({
-        redis,
-        cursorStore: deliveryCursorStore,
-        messageStore,
-        threadStore,
-        getQueue: () => invocationQueueRef,
-      })
-    : undefined;
   // F254 Phase D (AC-D4): Freshness event log for stream output audit trail.
   const freshnessEventLog = redis ? new FreshnessAttentionEventLog(redis) : undefined;
   const freshnessClosureStore = redis ? new RedisFreshnessClosureStore(redis) : undefined;
@@ -2469,8 +2471,6 @@ async function main(): Promise<void> {
     ...(a2aDispatchDispositionService ? { a2aDispatchDispositionService } : {}),
     ...(freshnessReinvokeCheck ? { freshnessReinvokeCheck } : {}),
     turnExecutionStore,
-    ...(freshnessStateStore ? { freshnessStateStore } : {}),
-    ...(providerNativeFreshnessFactory ? { providerNativeFreshnessFactory } : {}),
     runtimeInteractionPort: runtimeInteractionRuntime.service,
     ...(freshnessEventLog ? { freshnessEventLog } : {}),
     ...(freshnessOutputCommitCoordinator ? { freshnessOutputCommitCoordinator } : {}),
@@ -5787,10 +5787,8 @@ async function main(): Promise<void> {
     `[api] F142-B: CommandRegistry loaded (${commandRegistry.getAll().length} commands, ${skillCommandMap.size} skills)`,
   );
 
-  // Commands route needs opus service for task extraction.
+  // Commands route needs the configured opus service for task extraction.
   // Lazy-init: empty catalog (first-run) has no opus entry yet — defer until first use.
-  // 砚砚 Step-3 P2 (2026-05-14): route through canary factory so this path
-  // also honors CAT_CAFE_CLAUDE_CARRIER=bg_daemon when canary flips.
   // 砚砚 Step-3 P1 re-review: invoke() must directly return AsyncIterable
   // (not Promise<AsyncIterable>), otherwise `for await (... of svc.invoke())`
   // crashes at runtime. Use sync generator wrapper that defers async setup
@@ -5802,10 +5800,11 @@ async function main(): Promise<void> {
       // before first yield, then delegates.
       return (async function* opusLazyInvoke() {
         if (!_opusService) {
-          const { createClaudeAgentServiceForCanary } = await import(
-            './domains/cats/services/agents/providers/claude-carrier-factory.js'
-          );
-          _opusService = createClaudeAgentServiceForCanary('opus' as CatId);
+          const opusConfig = catRegistry.tryGet('opus')?.config;
+          _opusService =
+            opusConfig?.carrier === 'sdk'
+              ? new ClaudeSdkAgentService({ catId: 'opus' as CatId })
+              : new ClaudeAgentService({ catId: 'opus' as CatId });
         }
         yield* _opusService.invoke(prompt, options);
       })();
@@ -5966,6 +5965,13 @@ async function main(): Promise<void> {
       await pool.closeAll();
     }
     codexAppServerPoolRegistry.clear();
+  });
+
+  // Live OpenCode server carriers are profile-scoped children owned by this API
+  // process. Retire every remaining host on shutdown; catalog refreshes already
+  // close profiles that disappear while the API stays live.
+  app.addHook('onClose', async () => {
+    await closeStaleOpenCodeServerHosts(openCodeServerHostRegistry, new Set());
   });
 
   // F101: register onClose hook BEFORE listen (Fastify forbids addHook after listen).
@@ -6253,6 +6259,7 @@ async function main(): Promise<void> {
     invocationQueue,
     queueProcessor,
     messageStore,
+    waitTaskStore: taskStore,
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
     log: app.log,
   });

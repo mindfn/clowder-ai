@@ -89,7 +89,7 @@ export interface A2ATriggerDeps {
    *  Same-turn handoffs remain independent scalar ledger rows. */
   invocationQueue?: Pick<
     InvocationQueue,
-    | 'enqueueDurable'
+    | 'enqueueExistingMessageDurable'
     | 'appendAndEnqueueDurable'
     | 'terminalizeResponseAndEnqueueDurable'
     | 'countAgentEntriesForThread'
@@ -598,7 +598,6 @@ export async function enqueueA2ATargets(
   if (
     !persistedQueueTrigger ||
     persistedQueueTrigger.from?.kind !== 'agent' ||
-    persistedQueueTrigger.deliveryStatus === 'queued' ||
     persistedQueueTrigger.deliveryStatus === 'canceled' ||
     persistedQueueTrigger.visibility === 'whisper' ||
     persistedQueueTrigger.recall ||
@@ -763,7 +762,7 @@ export async function enqueueA2ATargets(
           entry: preAdmittedEntry,
           deduped: opts.preAdmittedReplayed === true,
         }
-      : await deps.invocationQueue.enqueueDurable({
+      : await deps.invocationQueue.enqueueExistingMessageDurable(deps.messageStore, triggerMessageId, {
           from: { kind: 'agent', catId: fromCatId },
           threadId,
           userId: opts.userId,
@@ -787,7 +786,7 @@ export async function enqueueA2ATargets(
     queueDiagnostics.push({
       targetCats: pendingAcceptedTargetCats,
       outcome: result.outcome,
-      ...(result.entry ? { entryId: result.entry.id, createdAt: result.entry.enqueuedAt } : {}),
+      ...('entry' in result && result.entry ? { entryId: result.entry.id, createdAt: result.entry.enqueuedAt } : {}),
     });
     if (result.outcome === 'enqueued') {
       if (result.deduped) {

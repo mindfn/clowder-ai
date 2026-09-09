@@ -1,6 +1,6 @@
 ---
 feature_ids: [F117]
-related_features: [F039, F173, F183, F264]
+related_features: [F039, F086, F122, F173, F183, F254, F264]
 related_decisions: [043]
 topics: [message, queue, delivery, lifecycle, context]
 doc_kind: spec
@@ -10,7 +10,7 @@ tips_exempt: 2026-09-03 Phase E renews automatic owner-timeline, Stop, and cat-d
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: implementing — PR #1398 已按 2026-09-07 co-creator 验收反馈收敛为单 source Queue Entry + History actual-dispatch lifecycle；待本轮 exact-HEAD review、worktree 体验与 fork soak | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: implementing — PR #1398 已按 2026-09-09 co-creator 验收反馈收敛为单 source Queue Entry + History actual-dispatch lifecycle，并完成 carrier 能力真相与副作用出口去门卫化；待本轮 exact-HEAD review、worktree 体验与 fork soak | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -264,6 +264,67 @@ Queue 的短暂 claimed 状态仍可存在于“原子取出 pending target → 
 | E9 | fail-open 路由 preflight 每次发送都产生「需注意」聊天提示，且同一次发送重复 | 可见性边界错误 | `warned` 只进入结构化 routing evidence / telemetry；只有确实改变投递结果的 `rejected` 才生成用户可见 receipt |
 | E10 | History 仍提供旧「撤回并编辑」，并同时存在直接分支 / 编辑分支两个入口 | 旧模型残留 | terminal History 不再撤回 Queue 工单；只保留一个「创建分支」入口，打开预填正文的编辑确认，正文未改也可直接确认创建 |
 
+### Phase F: Carrier 能力真相与副作用出口收敛（normative，2026-09-09）
+
+#### F.1 配置只有一个 canonical 坐标
+
+成员配置统一使用顶层 `carrier`，Hub 文案统一为「接入方式」。兼容只允许存在于成员配置读取边界：
+
+```text
+carrier → legacy top-level transport → cli
+```
+
+读取完成后，所有 registry、provider、route、capability 与 Web 代码只接收 canonical `carrier`；不得继续读取
+`transport`、`cli.carrier`、`codexCarrier`、`adapterMode` 或全局 `CAT_CAFE_CODEX_CARRIER`。兼容层不替换无效值、
+不跨 provider 猜测，也不静默切到另一种接入方式。
+
+| client | 合法 carrier | 能力边界 |
+|---|---|---|
+| Claude | `cli`, `sdk` | `sdk` 是 live session，可在执行中接收新增正文与显式中断；`cli` 是单轮进程 |
+| Codex | `cli`, `app_server` | `app_server` 是 live session；`cli` 是单轮进程 |
+| Kimi | `cli`, `acp` | 本轮不新增 Kimi live adapter；只保留既有显式选项 |
+| OpenCode | `cli`, `acp`, `server` | `server` 复用同一 session 接收后续正文与显式中断 |
+| Gemini | `cli`, `acp` | 由显式配置选择 |
+| generic ACP | `acp` | 不允许伪装成 CLI |
+| 其他 client | `cli` | 只有单轮能力 |
+
+这些选项彼此平级，不是 fallback 链。选择的 carrier 启动、鉴权或协议失败时，本次 response 原位 failed；
+不得偷偷改用另一 carrier 后继续执行。
+
+#### F.2 `post_message` 是纯发送，不是 inbox 门卫
+
+F254 Phase A HELD、B1 MCP-result piggyback 与 B2 hold-ball reminder 在本轮退役。`post_message`、
+`cross_post_message`、`multi_mention` 只执行调用方明确请求的写入/分发：
+
+- 不顺便检查调用猫的 inbox 或 freshness；
+- 不因存在 unseen message 拒绝本次发送；
+- 不返回 `Message NOT sent (HELD)`；
+- 不提供 `acknowledgeHeld` 绕过参数；
+- 不在工具结果里教育模型调用另一个 MCP 工具补救。
+
+这不是放弃运行中消息，而是把责任放回 delivery/carrier：支持 live input 的 carrier 由 QueueProcessor 对 exact
+active invocation 执行 append 或 interrupt；单轮 CLI 对 append 诚实报告不支持，消息继续作为 pending Queue
+工作，待当前执行结束后由正常 FIFO drain 启动下一轮。MCP 工具不再代偿 provider transport 的能力差异。
+
+`guide_reply` 的保证边界是：正文进入同一 active client session/execution，并在该 session 的下一次模型输入边界
+参与推理；它不声称能改写一个已经发出的底层 LLM HTTP 请求。`interrupt_reply` 则先对 exact active run 发协议
+中断，再把正文交给同一成员的新一轮处理。
+
+#### F.3 source × target replay 必须在持久真相上 fail closed
+
+任何 Queue admission、A2A、multi-mention、connector wait continuation 或恢复路径，在唤起 target 前都必须以
+History `dispatchRefs` 对 exact `sourceRecordId × targetCatId` 做原子 join/CAS：
+
+1. 若该 target 已有 actual dispatch（无论 response 正在执行还是已终局），只清理残留 pending target，绝不再次唤起；
+2. multi-mention 必须先创建一条正文完全一致、可引用的真实 Agent History source，再将它与同一 `targets[]`
+   Queue entry 原子提交；callback response 只作为父 lineage，不能拿它的 id 指向另一段 synthetic Queue 正文；
+3. wait/connector carrier 必须同时匹配 canonical task 的 thread、owner、当前 outcome identity、fence 与 generation，
+   且 outcome 尚未 delivery terminal；历史 generation、已送达 outcome 或旧 connector message 不得重新准入；
+4. 重放可以幂等清理脏 Queue index，但不能生成第二个 response、第二条 source message或第二次 provider side effect。
+
+Queue pending 与 History actual dispatch 仍是两个 owner；一致性依赖固定提交顺序和单调幂等 join，不新增第三套
+“已消费 connector”receipt ledger。
+
 ## Acceptance Criteria
 
 ### Phase A（后端 — deliveryStatus 真相源） ✅
@@ -332,10 +393,21 @@ Queue 的短暂 claimed 状态仍可存在于“原子取出 pending target → 
 - [x] AC-E10: terminal History 无「撤回并编辑」；只保留一个「创建分支」入口，以原正文预填编辑框，正文不变也可确认创建
 - [ ] AC-E11: co-creator 在 feature worktree 完成上述完整旅程体验验收，随后合入 fork 并通过 soak；在这两道硬门前不得推进上游 merge
 
+### Phase F（carrier 与副作用出口，2026-09-09）— 代码与测试完成，待跨族复审 / worktree 体验
+
+- [x] AC-F1: 成员配置只向下游暴露 canonical `carrier`；唯一兼容读取顺序为 `carrier → transport → cli`，非法 client/carrier 组合 fail closed
+- [x] AC-F2: Claude `sdk` 与 OpenCode `server` 使用各自官方 live protocol，在 exact active session 上支持 guide/interrupt；单轮 `cli` 不谎报 append 能力，且任何 carrier 失败都不静默 fallback
+- [x] AC-F3: `post_message` / `cross_post_message` / `multi_mention` 不检查 inbox、不 HELD、不接受 `acknowledgeHeld`、不附加 freshness/hold-ball 教学；F254 Phase A/B1/B2 active wiring 退役
+- [x] AC-F4: A2A 与 response terminal admission 在 exact `sourceRecordId × targetCatId` 已有 History dispatch 时幂等 no-op；已消费 Queue source replay 不产生第二次唤起
+- [x] AC-F5: multi-mention 的 Queue source 是一条真实、正文一致、可引用的 Agent History message；callback response 只作 parent lineage，不能充当 synthetic source identity
+- [x] AC-F6: connector wait continuation 在准入前验证 canonical task 的 exact outcome、fence、generation 与 delivery terminal；历史或已交付 carrier fail closed
+- [ ] AC-F7: co-creator 在 feature worktree 验证 live carrier append/interrupt、单轮排队、multi-mention lineage 与 connector replay；随后进入 fork soak
+
 ## Scope Boundary
 
 - **In scope**: undelivered user message 对 cat cognition (`callback / thread context / prompt / pending-mentions`) 的泄漏，以及 canceled message 对 owner timeline/history 的 resurfacing
 - **Phase C in scope**: 所有公开 History source 的统一 dispatch 头像、response lineage、terminal 与 retry 投影
+- **Phase F in scope**: canonical member carrier、live append/interrupt、MCP 发送工具去门卫化，以及 A2A / multi-mention / connector 的 exact source×target replay 防线
 - **Out of scope but related**: `cat_cafe_post_message` callback 路由的 @mention 解析/路由异常（走 `callbacks.ts`，不经过 queue/delivery lifecycle）
 
 ## Dependencies
@@ -370,6 +442,9 @@ Why: actual dispatch/terminal 已从 Queue receipt 完整迁出，避免两个 c
 | KD-9 | 验收否决 `833aa0587` 对 pending bubble / tips 的删除：processing 回复行承接脉冲头像与 tips，两个尺寸共用一份 `activeRun` 状态 | co-creator：用户要看见被触发成员在动，且不需要两套定制 | 2026-09-03 |
 | KD-10 | 停止是唯一用户动作；投影与真相不一致由服务端对账，不由用户「强制重置」 | co-creator：用户只有在运行/未运行两态；force-reset 是对多 SoT 分叉的补丁（F220 KD-3 曾推迟根因），根因已由 F194 / TurnExecution / ADR-043 关闭，剩余归 reconciler（ADR-043 D9） | 2026-09-03 |
 | KD-11 | Agent 与 UI 共享 A79 exact lifecycle predicate；扩展现有 `get_thread_context`，不新增执行状态 MCP | co-creator：人和猫应看到、理解同一生命周期；工具数量不应因同一只读事实增加。最近发言与运行态必须在文案和证据层彻底分开 | 2026-09-04 |
+| KD-12 | `carrier` 是唯一接入方式配置；兼容只在配置读取边界，选项彼此平级且不 fallback | client 能力必须由实际 transport 决定，不能让 UI、provider 与全局 env 各维护一套真相 | 2026-09-09 |
+| KD-13 | 退役 MCP side-effect freshness gate；运行中正文由 live carrier 接住，单轮 carrier 继续排队 | `post_message` 顺便查 inbox、阻止发送并教学补救把 transport 缺口转嫁给工具，制造 Agent/用户视图分叉 | 2026-09-09 |
+| KD-14 | 重放防线以 History exact source×target dispatch 与 wait outcome generation 为准 | 已处理 connector source 被旧 Queue/回调重新准入时，只有持久 execution truth 能阻止重复 side effect | 2026-09-09 |
 
 ## Review Gate
 

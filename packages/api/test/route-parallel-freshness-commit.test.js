@@ -67,27 +67,31 @@ describe('F254 Phase E — route-parallel output commit', () => {
     const deliveryCursorStore = new DeliveryCursorStore();
     const prompts = [];
     let invocationSequence = 0;
-    const source = await messageStore.append({
-      userId: 'user-1',
-      catId: null,
-      content: '@codex-sol @fable-5 think independently',
-      mentions: ['codex-sol', 'fable-5'],
-      timestamp: 100,
-      threadId: 'thread-1',
-    });
-    const sibling = await messageStore.append({
-      userId: 'user-1',
-      catId: 'codex-sol',
-      content: 'SOL COMPLETE PARALLEL BODY sentinel-tail',
-      mentions: [],
-      origin: 'stream',
-      timestamp: 150,
-      threadId: 'thread-1',
-      extra: {
-        stream: { parallelBatchId: 'original-parallel-batch' },
-        causal: { kind: 'invocation_reply', triggerMessageId: source.id },
-      },
-    });
+    const source = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: null,
+        content: '@codex-sol @fable-5 think independently',
+        mentions: ['codex-sol', 'fable-5'],
+        timestamp: 100,
+        threadId: 'thread-1',
+      }),
+    );
+    const sibling = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: 'codex-sol',
+        content: 'SOL COMPLETE PARALLEL BODY sentinel-tail',
+        mentions: [],
+        origin: 'stream',
+        timestamp: 150,
+        threadId: 'thread-1',
+        extra: {
+          stream: { parallelBatchId: 'original-parallel-batch' },
+          causal: { kind: 'invocation_reply', triggerMessageId: source.id },
+        },
+      }),
+    );
     const deps = {
       services: {
         'fable-5': {
@@ -131,14 +135,16 @@ describe('F254 Phase E — route-parallel output commit', () => {
     }
     assert.ok(!prompts[0].includes(sibling.content));
 
-    const synthesis = await messageStore.append({
-      userId: 'user-1',
-      catId: null,
-      content: '@fable-5 synthesize the two parallel answers',
-      mentions: ['fable-5'],
-      timestamp: 200,
-      threadId: 'thread-1',
-    });
+    const synthesis = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: null,
+        content: '@fable-5 synthesize the two parallel answers',
+        mentions: ['fable-5'],
+        timestamp: 200,
+        threadId: 'thread-1',
+      }),
+    );
     for await (const _event of routeParallel(deps, ['fable-5'], synthesis.content, 'user-1', 'thread-1', {
       currentUserMessageId: synthesis.id,
       thinkingMode: 'play',

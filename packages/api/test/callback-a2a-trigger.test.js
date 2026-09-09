@@ -94,6 +94,27 @@ describe('enqueueA2ATargets single durable ledger', () => {
     assert.equal(invocationQueue.list('t1', 'u1')[0].id, queueEntryId(trigger.id, 'codex'));
   });
 
+  it('rejects a consumed source instead of recreating Queue work after its row is gone', async () => {
+    const { deps, invocationQueue, messageStore, appendTrigger, events } = setup();
+    const trigger = appendTrigger('a2a-source-consumed');
+
+    await enqueue(deps, trigger);
+    const [row] = invocationQueue.list('t1', 'u1');
+    assert.ok(row);
+    const claim = await invocationQueue.markProcessingDurable('t1', 'u1', {
+      entryId: row.id,
+      targetCats: ['codex'],
+    });
+    assert.equal(claim.status, 'claimed');
+    assert.equal(await invocationQueue.commitClaimedProcessing('t1', [row.id], Date.now()), true);
+    assert.ok(await invocationQueue.removeProcessedAcrossUsersDurable('t1', row.id, 'succeeded'));
+    assert.equal(messageStore.markDelivered(trigger.id, Date.now())?.deliveryTransitioned, true);
+
+    await assert.rejects(enqueue(deps, trigger), /already has delivery ownership/);
+    assert.equal(invocationQueue.list('t1', 'u1').length, 0);
+    assert.deepEqual(events, ['append', 'drain']);
+  });
+
   it('keeps distinct source bodies as distinct work orders instead of concatenating them', async () => {
     const { deps, invocationQueue, appendTrigger } = setup();
     const first = appendTrigger('a2a-source-first');

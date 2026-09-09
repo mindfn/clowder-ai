@@ -391,7 +391,7 @@ export interface RouteOptions {
     | ((input: {
         catId: CatId;
         dispatcher: import('../../types.js').AgentClientActiveRunDispatcher;
-      }) => (() => void) | void)
+      }) => (() => void) | undefined)
     | undefined;
   /** F254 Phase E stable sibling-exclusion identity for one parallel fan-out. */
   parallelBatchId?: string | undefined;

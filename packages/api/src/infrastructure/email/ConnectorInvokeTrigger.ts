@@ -13,11 +13,15 @@ import {
   hasManagedCommandWakeActionLeaseRef,
   resolveManagedCommandWakeActionLeaseAdmission,
 } from '../../domains/ball-custody/managed-command-wake-action-lease-admission.js';
-import { waitContinuationCarrierFromStoredMessage } from '../../domains/ball-custody/wait-continuation-carrier.js';
+import {
+  assertCurrentWaitContinuationCarrier,
+  waitContinuationCarrierFromStoredMessage,
+} from '../../domains/ball-custody/wait-continuation-carrier.js';
 import type { InvocationQueue } from '../../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { QueueProcessor } from '../../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { messageFrom } from '../../domains/cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../../domains/cats/services/stores/ports/MessageStore.js';
+import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { SocketManager } from '../../infrastructure/websocket/index.js';
 import { emitQueueUpdated, enrichQueueEntries } from '../../utils/queue-enrichment.js';
 
@@ -30,6 +34,8 @@ export interface ConnectorInvokeTriggerOptions {
   readonly messageStore: IMessageStore;
   /** Canonical owner used to validate a managed-command wake's frozen action generation. */
   readonly actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'get'>;
+  /** Canonical wait generation/outcome truth for github-wait continuation admission. */
+  readonly waitTaskStore?: Pick<ITaskStore, 'get'>;
   readonly log: FastifyBaseLogger;
 }
 
@@ -109,6 +115,13 @@ export class ConnectorInvokeTrigger {
     }
 
     const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
+    if (waitContinuationCarrier) {
+      await assertCurrentWaitContinuationCarrier(this.opts.waitTaskStore, waitContinuationCarrier, {
+        threadId: input.threadId,
+        userId: input.userId,
+        catId: input.catId,
+      });
+    }
     const actionLeaseAdmission = hasManagedCommandWakeActionLeaseRef(sourceMessage)
       ? await resolveManagedCommandWakeActionLeaseAdmission(
           sourceMessage,

@@ -520,7 +520,7 @@ describe('Callback Routes', () => {
     });
   });
 
-  test('POST post-message checks queued continue-current work against the callback outer parent', async () => {
+  test('POST post-message does not turn queued continue-current work into a hidden send veto', async () => {
     const { DeliveryCursorStore } = await import('../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const deliveryCursorStore = new DeliveryCursorStore();
@@ -556,19 +556,20 @@ describe('Callback Routes', () => {
       method: 'POST',
       url: '/api/callbacks/post-message',
       headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
-      payload: { content: 'do not publish before reading current work' },
+      payload: { content: 'publish independently of unread work' },
     });
 
     assert.equal(response.statusCode, 200);
-    assert.equal(JSON.parse(response.body).status, 'held');
-    assert.equal(JSON.parse(response.body).reason, 'newer_messages_available');
+    assert.equal(JSON.parse(response.body).status, 'ok');
     assert.equal(
-      messageStore.getByThread(threadId, 10, 'user-1').some((message) => message.content.includes('do not publish')),
-      false,
+      messageStore
+        .getByThread(threadId, 10, 'user-1')
+        .some((message) => message.content.includes('publish independently')),
+      true,
     );
   });
 
-  test('POST post-message holds on unread visible other-cat stream-origin speech in play mode', async () => {
+  test('POST post-message remains a send primitive when other-cat speech is unread', async () => {
     const { DeliveryCursorStore } = await import('../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js');
     const deliveryCursorStore = new DeliveryCursorStore();
     const thread = threadStore.create('user-1', 'Persisted cat freshness');
@@ -598,12 +599,17 @@ describe('Callback Routes', () => {
       method: 'POST',
       url: '/api/callbacks/post-message',
       headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
-      payload: { content: 'must read the cat answer first' },
+      payload: { content: 'send without an inbox side effect' },
     });
 
     assert.equal(response.statusCode, 200);
-    assert.equal(JSON.parse(response.body).status, 'held');
-    assert.equal(JSON.parse(response.body).reason, 'newer_messages_available');
+    assert.equal(JSON.parse(response.body).status, 'ok');
+    assert.equal(
+      messageStore
+        .getByThread(thread.id, 10, 'user-1')
+        .some((message) => message.content === 'send without an inbox side effect'),
+      true,
+    );
   });
 
   test('POST post-message rejects auth and durable child scope mismatch', async () => {

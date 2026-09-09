@@ -17,6 +17,7 @@ const {
   getDefaultCatId,
   buildCatIdToBreedIndex,
   getCatEffort,
+  resolveCatCarrier,
   getAcpConfig,
   getCatFamily,
   bootstrapDefaultCatCatalog,
@@ -93,17 +94,20 @@ describe('cat-config-loader', () => {
       }
     });
 
-    it('rejects cli.carrier on non-openai variants but keeps it for openai', () => {
-      const bad = validConfig();
-      bad.breeds[0].variants[0].cli = { command: 'claude', outputFormat: 'stream-json', carrier: 'app_server' };
-      assert.throws(() => loadCatConfig(writeTempConfig(bad)), /codex-only/i);
+    it('resolves the canonical member carrier at the config boundary only', () => {
+      assert.equal(resolveCatCarrier({ carrier: 'sdk', transport: 'acp' }), 'sdk');
+      assert.equal(resolveCatCarrier({ transport: 'acp' }), 'acp');
+      assert.equal(resolveCatCarrier({ cli: { carrier: 'app_server' } }), 'cli');
+      assert.equal(resolveCatCarrier({ acp: { command: 'opencode', startupArgs: ['acp'] } }), 'cli');
+      assert.equal(resolveCatCarrier({}), 'cli');
 
-      const good = validConfig();
-      good.breeds[0].variants[0].clientId = 'openai';
-      good.breeds[0].variants[0].defaultModel = 'gpt-5.6-sol';
-      good.breeds[0].variants[0].cli = { command: 'codex', outputFormat: 'json', carrier: 'app_server' };
-      const loaded = loadCatConfig(writeTempConfig(good));
-      assert.equal(loaded.breeds[0].variants[0].cli.carrier, 'app_server');
+      const config = validConfig();
+      config.breeds[0].variants[0].carrier = 'sdk';
+      config.breeds[0].variants[0].transport = 'acp';
+      const loaded = loadCatConfig(writeTempConfig(config));
+      const resolved = toAllCatConfigs(loaded).opus;
+      assert.equal(resolved.carrier, 'sdk');
+      assert.equal(resolved.cli.carrier, undefined, 'provider CLI config must not retain carrier selection');
     });
 
     it('loads default project config when no path/env provided', () => {

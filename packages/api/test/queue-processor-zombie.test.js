@@ -73,7 +73,10 @@ async function enqueueClaimed(deps, content = 'recover me', commitProcessing = f
   }).entry;
   assert.ok(entry);
   assert.ok(await deps.queue.markProcessingByIdDurable('t1', entry.id, 'opus'));
-  if (commitProcessing) assert.equal(await deps.queue.commitClaimedProcessing('t1', [entry.id]), true);
+  if (commitProcessing) {
+    assert.equal(await deps.queue.commitClaimedProcessing('t1', [entry.id]), true);
+    return entry;
+  }
   return deps.queue.getEntrySnapshot('t1', 'u1', entry.id);
 }
 
@@ -141,9 +144,11 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     assert.equal(await processor.reapStalePrestartReservations(), 1);
     assert.equal(/** @type {any} */ (processor).processingSlots.has(slotKey('t1', 'opus')), false);
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id), null);
-    const ledger = await deps.queue.ledgerStore.get('t1', entry.id);
-    assert.equal(ledger.status, 'terminal');
-    assert.equal(ledger.delivery.failureReason, 'prestart_timeout');
+    assert.equal(
+      await deps.queue.ledgerStore.get('t1', entry.id),
+      null,
+      'Queue releases processing/terminal rows; History owns the failure truth',
+    );
     const source = messageStore.getById(admitted.message.id);
     const failure = messageStore
       .getRecent(10, 'system')
@@ -189,7 +194,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
       'retired',
     );
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id), null);
-    assert.equal((await deps.queue.ledgerStore.get('t1', entry.id)).status, 'terminal');
+    assert.equal(await deps.queue.ledgerStore.get('t1', entry.id), null);
     const source = messageStore.getById(admitted.message.id);
     assert.equal(source.deliveryStatus, 'delivered');
     assert.equal(source.lifecycle.dispatchRefs[0].phase, 'settled');
@@ -227,7 +232,8 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     t.mock.timers.tick(SHORT_TTL + 1);
 
     assert.equal(await processor.reapStalePrestartReservations(), 0);
-    assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id)?.status, 'processing');
+    assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id), null);
+    assert.equal(await deps.queue.ledgerStore.get('t1', entry.id), null);
     assert.deepEqual(processor.listStaleProcessingLeases(), [
       {
         threadId: 't1',

@@ -36,7 +36,7 @@ function entry(overrides = {}) {
     kind: 'message_wake',
     from,
     sourceCategory,
-    target: { kind: 'cat', catId: 'codex-sol' },
+    targets: ['codex-sol'],
     payload: { sourceId: 'message-1', messageId: 'message-1', content: 'wake' },
     execution: {
       intent: 'execute',

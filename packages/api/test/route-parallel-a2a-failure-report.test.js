@@ -116,8 +116,7 @@ describe('routeParallel failed A2A reporting', () => {
     );
     for (const report of reports) {
       assert.equal(report.terminal.status, 'failed');
-      assert.match(report.message.content, /configured model unavailable/);
-      assert.match(report.message.content, /source-from-fable/);
+      assert.equal(report.message.content, 'configured model unavailable');
     }
   });
 });

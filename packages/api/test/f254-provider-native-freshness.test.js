@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { getCodexCarrierMode } from '../dist/config/codex-cli.js';
 import { ClaudeAgentService } from '../dist/domains/cats/services/agents/providers/ClaudeAgentService.js';
 import { CodexAgentService } from '../dist/domains/cats/services/agents/providers/CodexAgentService.js';
 import { CodexAppServerClient } from '../dist/domains/cats/services/agents/providers/CodexAppServerClient.js';
@@ -1036,12 +1035,6 @@ describe('F254 D2 provider-native freshness truth', () => {
       wire.writes.some((write) => write.method === 'thread/start'),
       false,
     );
-  });
-
-  it('keeps exec_json as default and selects app_server only by explicit opt-in', () => {
-    assert.equal(getCodexCarrierMode({}), 'exec_json');
-    assert.equal(getCodexCarrierMode({ CAT_CAFE_CODEX_CARRIER: 'unknown' }), 'exec_json');
-    assert.equal(getCodexCarrierMode({ CAT_CAFE_CODEX_CARRIER: ' app_server ' }), 'app_server');
   });
 
   it('reports carrier capability without extrapolating MCP coverage', () => {
