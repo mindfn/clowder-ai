@@ -23,11 +23,57 @@ describe('GET /api/config/dir-list', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/config/dir-list?path=/tmp',
-        headers: { 'x-forwarded-for': '192.168.1.50' },
+        headers: { 'x-forwarded-for': '192.168.1.50', host: 'evil.example' },
       });
 
       assert.equal(res.statusCode, 403);
-      assert.match(JSON.parse(res.payload).error, /direct loopback/);
+      assert.match(JSON.parse(res.payload).error, /trusted local API request/);
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects requests with a non-loopback Host header (malicious-webpage CSRF)', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-dir-list-'));
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, { projectRoot: tempRoot, auditLog: { append: async () => {} } });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/config/dir-list?path=/tmp',
+        headers: { host: 'evil.example' },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(JSON.parse(res.payload).error, /trusted local API request/);
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects requests with a non-local Origin header (malicious-webpage CSRF)', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-dir-list-'));
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, { projectRoot: tempRoot, auditLog: { append: async () => {} } });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/config/dir-list?path=/tmp',
+        headers: { origin: 'https://evil.example' },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(JSON.parse(res.payload).error, /trusted local API request/);
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });

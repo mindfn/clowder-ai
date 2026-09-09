@@ -1492,6 +1492,8 @@ describe('#770 PR-A: section projection + control metadata', () => {
       'DATA_DIR',
       'CACHE_DIR',
       'CAT_CAFE_DATA_DIR',
+      'ANNOTATION_DATA_DIR',
+      'DOCS_ROOT',
       'LOG_DIR',
       'GENSHIN_VOICE_DIR',
       'CHARACTER_VOICE_DIR',

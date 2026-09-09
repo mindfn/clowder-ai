@@ -1,9 +1,11 @@
 'use client';
 
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '@/utils/api-client';
 import { DirPickerField } from './DirPickerField';
 import type { EnvVar } from './EnvSubComponents';
-import { SettingsCodeField, SettingsSection } from './primitives';
+import { initialDraftValue, isEditableVariable, isMaskedUrlVariable } from './EnvSubComponents';
+import { SettingsCodeField, SettingsPrimaryButton, SettingsSection, SettingsStatusStrip } from './primitives';
 
 const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security'];
 
@@ -53,9 +55,9 @@ function resolveControlType(variable: EnvVar): 'text' | 'toggle' | 'dropdown' | 
   );
 }
 
-/** 展示性控件：本视图全部只读、无保存通道，控件一律 disabled/readOnly，仅用于
+/** 只读分支：非 editable 变量无保存通道，控件一律 disabled/readOnly，仅用于
  *  以控件形态传达当前值（对齐 Codex 设置页行样式）。 */
-function SettingControl({ variable }: { variable: EnvVar }) {
+function ReadOnlySettingControl({ variable }: { variable: EnvVar }) {
   const control = resolveControlType(variable);
   const value = variable.currentValue ?? variable.defaultValue;
   const label = variable.label ?? variable.name;
@@ -85,9 +87,91 @@ function SettingControl({ variable }: { variable: EnvVar }) {
   }
 }
 
-function SettingItem({ variable }: { variable: EnvVar }) {
+/** 可编辑分支：draft 驱动；toggle 写回 '1'/'0'。 */
+function EditableSettingControl({
+  variable,
+  draft,
+  onDraftChange,
+}: {
+  variable: EnvVar;
+  draft: string;
+  onDraftChange: (name: string, value: string) => void;
+}) {
+  const control = resolveControlType(variable);
+  const label = variable.label ?? variable.name;
+
+  switch (control) {
+    case 'toggle': {
+      const on = isEffectivelyOn({ ...variable, currentValue: draft || null });
+      return (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={label}
+          onClick={() => onDraftChange(variable.name, on ? '0' : '1')}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full ${
+            on ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'
+          }`}
+        >
+          <span
+            className={`inline-block h-3.5 w-3.5 rounded-full bg-cafe-white transition-transform ${
+              on ? 'translate-x-4' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      );
+    }
+    case 'dropdown': {
+      const options = variable.allowedValues ?? [];
+      return (
+        <select
+          aria-label={label}
+          value={draft}
+          onChange={(e) => onDraftChange(variable.name, e.target.value)}
+          className="h-9 w-full rounded-lg border border-transparent bg-[var(--console-field-bg)] px-3 text-compact text-cafe"
+        >
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+          {draft && !options.includes(draft) && <option value={draft}>{draft}（当前值）</option>}
+        </select>
+      );
+    }
+    case 'dirpicker':
+      return (
+        <DirPickerField
+          value={draft}
+          onChange={(path) => onDraftChange(variable.name, path)}
+          placeholder={variable.defaultValue}
+          aria-label={label}
+        />
+      );
+    default:
+      return (
+        <SettingsCodeField
+          aria-label={label}
+          value={draft}
+          onChange={(e) => onDraftChange(variable.name, e.target.value)}
+        />
+      );
+  }
+}
+
+function SettingItem({
+  variable,
+  draft,
+  onDraftChange,
+}: {
+  variable: EnvVar;
+  draft: string | undefined;
+  onDraftChange: (name: string, value: string) => void;
+}) {
   const label = variable.label ?? variable.name;
   const control = resolveControlType(variable);
+  const editable = isEditableVariable(variable);
 
   return (
     <div className="flex items-start justify-between gap-4 py-3">
@@ -96,7 +180,11 @@ function SettingItem({ variable }: { variable: EnvVar }) {
         {variable.description && <div className="mt-0.5 text-xs text-cafe-muted leading-5">{variable.description}</div>}
       </div>
       <div className={control === 'toggle' ? 'shrink-0' : 'min-w-0 max-w-[50%] flex-1'}>
-        <SettingControl variable={variable} />
+        {editable ? (
+          <EditableSettingControl variable={variable} draft={draft ?? ''} onDraftChange={onDraftChange} />
+        ) : (
+          <ReadOnlySettingControl variable={variable} />
+        )}
       </div>
     </div>
   );
@@ -105,6 +193,7 @@ function SettingItem({ variable }: { variable: EnvVar }) {
 interface SystemSettingsViewProps {
   variables: EnvVar[];
   groupLabels: Record<string, string>;
+  onSaved?: () => void;
 }
 
 function groupVariablesByGroup(variables: EnvVar[], groupLabels: Record<string, string>) {
@@ -152,7 +241,23 @@ function CollapsibleAdvancedSection({
   );
 }
 
-export function SystemSettingsView({ variables, groupLabels }: SystemSettingsViewProps) {
+export function SystemSettingsView({ variables, groupLabels, onSaved }: SystemSettingsViewProps) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saveState, setSaveState] = useState<{ saving: boolean; error: string | null; success: string | null }>({
+    saving: false,
+    error: null,
+    success: null,
+  });
+
+  // (Re)initialize drafts whenever the fetched variables change (mount + post-save refetch).
+  useEffect(() => {
+    setDrafts(
+      Object.fromEntries(
+        variables.filter(isEditableVariable).map((variable) => [variable.name, initialDraftValue(variable)]),
+      ),
+    );
+  }, [variables]);
+
   const { runtimeVars, restartVars } = useMemo(() => {
     const runtime: EnvVar[] = [];
     const restart: EnvVar[] = [];
@@ -169,13 +274,58 @@ export function SystemSettingsView({ variables, groupLabels }: SystemSettingsVie
   const runtimeGroups = useMemo(() => groupVariablesByGroup(runtimeVars, groupLabels), [runtimeVars, groupLabels]);
   const restartGroups = useMemo(() => groupVariablesByGroup(restartVars, groupLabels), [restartVars, groupLabels]);
 
+  const editableVariables = useMemo(() => variables.filter(isEditableVariable), [variables]);
+  const changedUpdates = editableVariables
+    .map((variable) => ({
+      name: variable.name,
+      value: drafts[variable.name] ?? '',
+      baselineValue: initialDraftValue(variable),
+      maskedUrl: isMaskedUrlVariable(variable),
+      restartRequired: variable.restartRequired === true,
+    }))
+    .filter((variable) => variable.value !== variable.baselineValue)
+    .filter((variable) => !variable.maskedUrl || variable.value.trim().length > 0);
+  const isDirty = changedUpdates.length > 0;
+  const pendingRestartCount = changedUpdates.filter((variable) => variable.restartRequired).length;
+
+  const handleDraftChange = (name: string, value: string) => {
+    setDrafts((prev) => ({ ...prev, [name]: value }));
+    setSaveState((prev) => ({ ...prev, error: null, success: null }));
+  };
+
+  const handleSave = async () => {
+    if (!isDirty || saveState.saving) return;
+    setSaveState({ saving: true, error: null, success: null });
+    try {
+      const res = await apiFetch('/api/config/env', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: changedUpdates.map(({ name, value }) => ({ name, value })) }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setSaveState({ saving: false, error: body.error ?? '保存失败', success: null });
+        return;
+      }
+      setSaveState({ saving: false, error: null, success: '已写回 .env，重启后生效' });
+      onSaved?.();
+    } catch {
+      setSaveState({ saving: false, error: '保存失败', success: null });
+    }
+  };
+
   return (
     <div className="space-y-4">
       {runtimeGroups.map((group) => (
         <SettingsSection key={group.key} title={group.label} description={group.description}>
           <div className="divide-y divide-[var(--console-border-soft)]">
             {group.variables.map((variable) => (
-              <SettingItem key={variable.name} variable={variable} />
+              <SettingItem
+                key={variable.name}
+                variable={variable}
+                draft={drafts[variable.name]}
+                onDraftChange={handleDraftChange}
+              />
             ))}
           </div>
         </SettingsSection>
@@ -188,12 +338,32 @@ export function SystemSettingsView({ variables, groupLabels }: SystemSettingsVie
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-cafe-muted">{group.label}</h4>
               <div className="divide-y divide-[var(--console-border-soft)] rounded-md border border-[var(--console-border-soft)]">
                 {group.variables.map((variable) => (
-                  <SettingItem key={variable.name} variable={variable} />
+                  <SettingItem
+                    key={variable.name}
+                    variable={variable}
+                    draft={drafts[variable.name]}
+                    onDraftChange={handleDraftChange}
+                  />
                 ))}
               </div>
             </div>
           ))}
         </CollapsibleAdvancedSection>
+      )}
+
+      {editableVariables.length > 0 && (
+        <div className="space-y-2">
+          {pendingRestartCount > 0 && (
+            <SettingsStatusStrip tone="warn">{pendingRestartCount} 项变更需重启生效</SettingsStatusStrip>
+          )}
+          <div className="flex flex-wrap items-center gap-3">
+            <SettingsPrimaryButton onClick={handleSave} disabled={!isDirty || saveState.saving}>
+              {saveState.saving ? '保存中...' : '保存到 .env'}
+            </SettingsPrimaryButton>
+            {saveState.error && <SettingsStatusStrip tone="error">{saveState.error}</SettingsStatusStrip>}
+            {saveState.success && <SettingsStatusStrip tone="success">{saveState.success}</SettingsStatusStrip>}
+          </div>
+        </div>
       )}
     </div>
   );

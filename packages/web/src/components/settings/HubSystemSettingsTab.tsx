@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import type { EnvVar } from './EnvSubComponents';
 import { SettingsStatusStrip } from './primitives';
@@ -15,7 +15,7 @@ export function HubSystemSettingsTab() {
   const [data, setData] = useState<SystemSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     apiFetch('/api/config/env-summary?surface=system')
       .then(async (response) => {
         if (response.ok) {
@@ -27,8 +27,12 @@ export function HubSystemSettingsTab() {
       .catch(() => setError('无法连接服务'));
   }, []);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
   if (error) return <SettingsStatusStrip tone="error">{error}</SettingsStatusStrip>;
   if (!data) return <SettingsStatusStrip tone="info">加载系统设置…</SettingsStatusStrip>;
 
-  return <SystemSettingsView variables={data.variables} groupLabels={data.groups} />;
+  return <SystemSettingsView variables={data.variables} groupLabels={data.groups} onSaved={load} />;
 }

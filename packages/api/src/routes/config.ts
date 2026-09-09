@@ -43,7 +43,7 @@ import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadS
 // `PATCH /api/config/env` LOG_DIR edit — env-summary would lie about effective path.
 import { LOG_DIR_PATH } from '../infrastructure/logger.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
-import { isDirectLoopbackRequest } from '../utils/loopback-request.js';
+import { isDirectLoopbackRequest, isTrustedLocalApiRequest } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
@@ -313,9 +313,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   // Loopback-only (same guard family as sensitive env writes) — the listing
   // exposes absolute host paths, so proxied/remote clients must not read it.
   app.get('/api/config/dir-list', async (request, reply) => {
-    if (!isDirectLoopbackRequest(request)) {
+    // #770 review hardening: isTrustedLocalApiRequest also validates Host and
+    // Origin (isDirectLoopbackRequest only checks socket IP + proxy headers, so
+    // a malicious webpage could otherwise hit localhost and read host paths).
+    if (!isTrustedLocalApiRequest(request)) {
       reply.status(403);
-      return { error: 'Directory listing requires a direct loopback request' };
+      return { error: 'Directory listing requires a trusted local API request' };
     }
     const { path: rawPath } = request.query as { path?: string };
     if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {

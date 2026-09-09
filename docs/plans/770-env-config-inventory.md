@@ -108,10 +108,10 @@ created: 2026-08-12
 | storage | SUMMARY_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | BACKLOG_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | DRAFT_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | DATA_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 持久数据根目录 |
-| storage | CACHE_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 可重建缓存根目录 |
-| storage | ANNOTATION_DATA_DIR | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级存储路径，保留在 System view |
-| storage | DOCS_ROOT | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级文档根目录，保留在 System view |
+| storage | DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 持久数据根目录 |
+| storage | CACHE_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 可重建缓存根目录 |
+| storage | ANNOTATION_DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级存储路径，保留在 System view |
+| storage | DOCS_ROOT | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级文档根目录，保留在 System view |
 | storage | VISIBILITY_CURSOR_V2 | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署级 activation gate |
 
 ## 猫猫预算 (2)
@@ -137,7 +137,7 @@ created: 2026-08-12
 | cli | MODE_SWITCH_REQUIRES_APPROVAL | none | yes | no | no UI write | text | yes | none | 无 | 不进 UI | [DEPRECATED] Mode consumer 在 registry backfill (b58106d0d4) 之前已由 F101 移除 (2dfece9873)；当前 tree 无 live consumer。registry 条目保留，永不进入 curated projection |
 | cli | CAT_CAFE_TMUX_AGENT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
 | cli | CAT_CAFE_TMUX_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
-| cli | CAT_CAFE_DATA_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| cli | CAT_CAFE_DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | cli | CAT_CAFE_CALLBACK_TOKEN | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 每 invocation 注入的 callback auth secret，内部运行时身份凭证，不进任何 UI |
 | cli | CAT_CAFE_CALLBACK_OUTBOX_ENABLED | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | callback outbox 内部调优 |
 | cli | CAT_CAFE_CALLBACK_OUTBOX_DIR | none | yes | no | no UI write | dirpicker | no | none | 无 | 不进 UI | callback outbox 内部调优 |
