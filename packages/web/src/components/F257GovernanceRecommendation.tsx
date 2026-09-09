@@ -10,7 +10,9 @@ export function F257GovernanceRecommendation({ item }: { item: ApprovalHubItem }
   const history = asRecords(item.detail.history);
   const changes = asRecords(item.detail.changes);
   const evidenceRefs = Array.isArray(item.detail.evidenceRefs) ? item.detail.evidenceRefs.map(String) : [];
-  const rejectReasons = Array.isArray(item.detail.rejectReasons) ? item.detail.rejectReasons.map(String) : [];
+  const latestRejectReason = Array.isArray(item.detail.rejectReasons)
+    ? item.detail.rejectReasons.map(String).at(-1)
+    : undefined;
   const coverageAssessment = asRecord(item.detail.coverageAssessment);
   const coverageFindings = asRecords(coverageAssessment.findings);
   return (
@@ -84,7 +86,7 @@ export function F257GovernanceRecommendation({ item }: { item: ApprovalHubItem }
         <p>批准会原子接受整张卡的动作列表，不可挑批；组合不合适请拒绝并说明理由。</p>
         <p>跳过会保留当前版本并进入下一周期。</p>
         <p>拒绝必须填写理由，系统将对同一窗口重新评估并生成新卡。</p>
-        {rejectReasons.length > 0 && <p>上次拒绝理由：{rejectReasons.join('；')}</p>}
+        {latestRejectReason !== undefined && <p>上一轮拒绝理由：{latestRejectReason}</p>}
         {item.detail.decisionReason != null && <p>本卡处理理由：{String(item.detail.decisionReason)}</p>}
       </GovernanceSection>
     </div>
