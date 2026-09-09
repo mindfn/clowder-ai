@@ -17,9 +17,10 @@ import {
   rehydrateEnabledPluginLimbs,
   withPersistedLimbNodeId,
 } from '../dist/domains/plugin/PluginResourceActivator.js';
-import { writePluginConfig } from '../dist/domains/plugin/plugin-config-store.js';
+import { resolvePluginEnv, writePluginConfig } from '../dist/domains/plugin/plugin-config-store.js';
 import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
 import { registerPluginRoutes } from '../dist/routes/plugin-routes.js';
+import { _clearActiveRootCacheForTest } from '../dist/utils/active-project-root.js';
 
 const require = createRequire(import.meta.url);
 const fsModule = require('node:fs');
@@ -2422,6 +2423,48 @@ describe('plugin routes safety', () => {
       assert.equal(deps.pluginRegistry.scanCount, 1);
     } finally {
       await app.close();
+    }
+  });
+
+  it('serves plugin reads without replacing the active runtime config cache', async () => {
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const projectRoot = mkdtempSync(join(os.tmpdir(), 'plugin-route-projection-'));
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = projectRoot;
+    _clearActiveRootCacheForTest();
+    const deps = createRouteDeps({
+      config: [{ type: 'input', envName: 'ROUTE_CACHE_KEY', label: 'Key', required: true }],
+    });
+    writePluginConfig(projectRoot, deps.manifest.id, [{ name: 'ROUTE_CACHE_KEY', value: 'active-runtime-value' }]);
+    writeFileSync(
+      join(projectRoot, '.cat-cafe', 'plugin-config', `${deps.manifest.id}.json`),
+      `${JSON.stringify({ ROUTE_CACHE_KEY: null })}\n`,
+      'utf8',
+    );
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {},
+      pluginsDir: '/tmp/plugins',
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/plugins',
+        headers: { 'x-test-session-user': 'viewer-user' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(resolvePluginEnv([deps.manifest]).ROUTE_CACHE_KEY, 'active-runtime-value');
+    } finally {
+      await app.close();
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+      _clearActiveRootCacheForTest();
     }
   });
 
