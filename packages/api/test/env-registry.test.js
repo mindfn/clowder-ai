@@ -22,6 +22,7 @@ import {
   inferEnvControl,
   isEditableEnvVar,
   isEditableEnvVarName,
+  isRestartRequiredEnvVar,
   isSensitiveEditableEnvVar,
   maskUrlCredentials,
   parseBoolEnv,
@@ -143,22 +144,26 @@ describe('env-registry', () => {
     assert.equal(redis.maskMode, 'url');
   });
 
-  it('keeps API server port bootstrap-only while allowing preview gateway hot edits', () => {
+  it('allows both server port vars to be edited from Hub with restart-required semantics (#770)', () => {
     const apiPort = ENV_VARS.find((v) => v.name === 'API_SERVER_PORT');
     const previewPort = ENV_VARS.find((v) => v.name === 'PREVIEW_GATEWAY_PORT');
     assert.ok(apiPort, 'API_SERVER_PORT should be in registry');
     assert.ok(previewPort, 'PREVIEW_GATEWAY_PORT should be in registry');
-    assert.equal(apiPort.runtimeEditable, false);
+    assert.equal(apiPort.runtimeEditable, true);
     assert.equal(previewPort.runtimeEditable, true);
+    assert.equal(apiPort.restartRequired, true);
+    assert.equal(previewPort.restartRequired, true);
+    assert.equal(apiPort.control, 'number');
   });
 
-  it('marks CAT_TEMPLATE_PATH and REDIS_URL as bootstrap-only in hub env editor', () => {
+  it('marks CAT_TEMPLATE_PATH as bootstrap-only while REDIS_URL is restart-fenced editable (#770)', () => {
     const templatePath = ENV_VARS.find((v) => v.name === 'CAT_TEMPLATE_PATH');
     const redisUrl = ENV_VARS.find((v) => v.name === 'REDIS_URL');
     assert.ok(templatePath, 'CAT_TEMPLATE_PATH should be in registry');
     assert.ok(redisUrl, 'REDIS_URL should be in registry');
     assert.equal(templatePath.runtimeEditable, false);
-    assert.equal(redisUrl.runtimeEditable, false);
+    assert.equal(redisUrl.runtimeEditable, true);
+    assert.equal(redisUrl.restartRequired, true);
   });
 
   it('registers the F255 awakened lease as bootstrap-only runtime configuration', () => {
@@ -221,10 +226,11 @@ describe('env-registry', () => {
     assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
   });
 
-  it('marks DEFAULT_OWNER_USER_ID as non-editable (trust anchor)', () => {
+  it('marks DEFAULT_OWNER_USER_ID as a restart-fenced editable trust anchor (#770)', () => {
     const def = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(def, 'DEFAULT_OWNER_USER_ID should be in registry');
-    assert.equal(def.runtimeEditable, false, 'trust anchor must not be editable from Hub');
+    assert.equal(def.runtimeEditable, true, 'trust anchor is writable from Hub');
+    assert.equal(def.restartRequired, true, 'PATCH persists to .env but never hot-updates the live trust anchor');
   });
 
   it('locks startup-only telemetry vars as non-editable and hot-reloadable ones as editable (F153 Phase K)', () => {
@@ -281,7 +287,7 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
-  it('keeps security-boundary variables read-only', () => {
+  it('opens security-boundary variables for Hub writes (#770 round 3: no disabled dead controls)', () => {
     for (const name of [
       'PROJECT_ALLOWED_ROOTS',
       'PROJECT_ALLOWED_ROOTS_APPEND',
@@ -290,21 +296,25 @@ describe('#770: curated System Settings projection', () => {
     ]) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain registered`);
-      assert.equal(definition.runtimeEditable, false);
+      assert.equal(definition.runtimeEditable, true, `${name} must be editable from the System page`);
       assert.equal(definition.settingsGroup, 'security');
     }
+    // Trust anchor stays restart-fenced: the write lands in .env but the running
+    // process keeps the old value until restart (no privilege bootstrap at runtime).
+    const owner = ENV_VARS.find((candidate) => candidate.name === 'DEFAULT_OWNER_USER_ID');
+    assert.equal(owner.restartRequired, true);
   });
 
-  it('projects DEFAULT_OWNER_USER_ID as a restart-required trust anchor without opening a write path', () => {
+  it('projects DEFAULT_OWNER_USER_ID as a restart-required trust anchor with a fenced write path', () => {
     const definition = ENV_VARS.find((candidate) => candidate.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(definition, 'DEFAULT_OWNER_USER_ID must remain registered');
     assert.ok(SYSTEM_VARS.has(definition.name), 'trust anchor must be visible in the curated System surface');
-    assert.equal(definition.runtimeEditable, false, 'trust anchor must remain fail-closed for generic env writes');
-    assert.equal(isEditableEnvVar(definition), false);
+    assert.equal(definition.runtimeEditable, true, 'write path is open (runtimeEditable)');
+    assert.equal(isEditableEnvVar(definition), true);
+    assert.equal(definition.restartRequired, true, 'but PATCH must not hot-update the live anchor');
     assert.equal(definition.settingsGroup, 'security');
-    assert.equal(definition.restartRequired, true);
     assert.ok(definition.label, 'trust anchor needs a user-facing label');
-    assert.match(definition.description, /单用户/, 'read-only projection must explain unset single-user semantics');
+    assert.match(definition.description, /单用户/, 'projection must explain unset single-user semantics');
   });
 
   it('builds a System summary without shrinking the canonical registry', () => {
@@ -415,7 +425,7 @@ describe('#770: GET /api/config/env-summary?surface=system', () => {
       assert.equal(curatedBody.paths, undefined);
       const owner = curatedBody.variables.find((entry) => entry.name === 'DEFAULT_OWNER_USER_ID');
       assert.ok(owner, 'curated API surface must include the owner trust anchor');
-      assert.equal(owner.runtimeEditable, false);
+      assert.equal(owner.runtimeEditable, true);
       assert.equal(owner.settingsGroup, 'security');
       assert.equal(owner.restartRequired, true);
 
@@ -904,11 +914,13 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('rejects API_SERVER_PORT from hub writes but keeps PREVIEW_GATEWAY_PORT editable', async () => {
+  it('accepts API_SERVER_PORT hub writes and persists them without hot-updating the listener (#770)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
     writeFileSync(envFilePath, 'API_SERVER_PORT=3003\nPREVIEW_GATEWAY_PORT=4100\n', 'utf8');
+    const savedApiPort = process.env.API_SERVER_PORT;
+    delete process.env.API_SERVER_PORT;
 
     const app = Fastify({ logger: false });
     try {
@@ -927,8 +939,7 @@ describe('PATCH /api/config/env (route)', () => {
           updates: [{ name: 'API_SERVER_PORT', value: '3203' }],
         },
       });
-      assert.equal(apiPortRes.statusCode, 400);
-      assert.match(JSON.parse(apiPortRes.payload).error, /not editable/i);
+      assert.equal(apiPortRes.statusCode, 200);
 
       const previewPortRes = await app.inject({
         method: 'PATCH',
@@ -941,19 +952,25 @@ describe('PATCH /api/config/env (route)', () => {
       assert.equal(previewPortRes.statusCode, 200);
 
       const nextEnv = readFileSync(envFilePath, 'utf8');
-      assert.match(nextEnv, /API_SERVER_PORT=3003/);
+      assert.match(nextEnv, /API_SERVER_PORT=3203/);
       assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4200/);
+      // Both ports are restartRequired: the running process must keep serving on
+      // the old port until restart (no listener desync).
+      assert.equal(process.env.API_SERVER_PORT, undefined, 'restart-required var must not be hot-updated');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
+      if (savedApiPort === undefined) delete process.env.API_SERVER_PORT;
+      else process.env.API_SERVER_PORT = savedApiPort;
     }
   });
 
-  it('rejects REDIS_URL from hub writes because runtime redis clients are bootstrapped at startup', async () => {
+  it('accepts REDIS_URL hub writes and persists them without hot-updating runtime clients (#770)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
     writeFileSync(envFilePath, 'REDIS_URL=redis://localhost:6399/15\n', 'utf8');
+    process.env.REDIS_URL = 'redis://localhost:6399/15';
 
     const app = Fastify({ logger: false });
     try {
@@ -973,21 +990,26 @@ describe('PATCH /api/config/env (route)', () => {
         },
       });
 
-      assert.equal(res.statusCode, 400);
-      const body = JSON.parse(res.payload);
-      assert.match(body.error, /not editable/i);
-      assert.equal(readFileSync(envFilePath, 'utf8'), 'REDIS_URL=redis://localhost:6399/15\n');
+      assert.equal(res.statusCode, 200);
+      assert.match(readFileSync(envFilePath, 'utf8'), /REDIS_URL=redis:\/\/localhost:6398\/15/);
+      // restartRequired: bootstrapped redis clients keep the old connection string.
+      assert.equal(process.env.REDIS_URL, 'redis://localhost:6399/15');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
+      delete process.env.REDIS_URL;
     }
   });
 
-  it('rejects filesystem policy and owner trust-anchor writes through the generic env endpoint', async () => {
+  it('accepts filesystem-policy and owner trust-anchor writes, fencing the trust anchor from hot updates (#770)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
     writeFileSync(envFilePath, '', 'utf8');
+    const savedOwner = process.env.DEFAULT_OWNER_USER_ID;
+    const savedRoots = process.env.PROJECT_ALLOWED_ROOTS;
+    delete process.env.DEFAULT_OWNER_USER_ID;
+    delete process.env.PROJECT_ALLOWED_ROOTS;
 
     const app = Fastify({ logger: false });
     try {
@@ -1010,12 +1032,24 @@ describe('PATCH /api/config/env (route)', () => {
           headers: { 'x-cat-cafe-user': 'codex' },
           payload: { updates: [{ name, value: '/tmp/untrusted' }] },
         });
-        assert.equal(response.statusCode, 400, `${name} must be rejected`);
-        assert.match(JSON.parse(response.payload).error, /not editable/i);
+        assert.equal(response.statusCode, 200, `${name} must be accepted`);
       }
+
+      const nextEnv = readFileSync(envFilePath, 'utf8');
+      assert.match(nextEnv, /PROJECT_ALLOWED_ROOTS=\/tmp\/untrusted/);
+      assert.match(nextEnv, /DEFAULT_OWNER_USER_ID=\/tmp\/untrusted/);
+      // DEFAULT_OWNER_USER_ID is restartRequired: the live process must NOT pick
+      // up the new anchor — a session cannot make itself owner at runtime.
+      assert.equal(process.env.DEFAULT_OWNER_USER_ID, undefined, 'trust anchor must not be hot-updated');
+      // PROJECT_* policy vars have no restartRequired: they hot-update immediately.
+      assert.equal(process.env.PROJECT_ALLOWED_ROOTS, '/tmp/untrusted');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
+      if (savedOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = savedOwner;
+      if (savedRoots === undefined) delete process.env.PROJECT_ALLOWED_ROOTS;
+      else process.env.PROJECT_ALLOWED_ROOTS = savedRoots;
     }
   });
 
@@ -1177,7 +1211,7 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
     }
   });
 
-  it('security SYSTEM_VARS are explicitly runtimeEditable: false', () => {
+  it('security SYSTEM_VARS are explicitly runtimeEditable: true (#770 round 3)', () => {
     for (const name of [
       'PROJECT_ALLOWED_ROOTS',
       'PROJECT_ALLOWED_ROOTS_APPEND',
@@ -1186,7 +1220,7 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
     ]) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
-      assert.equal(def.runtimeEditable, false, `${name} must not be editable`);
+      assert.equal(def.runtimeEditable, true, `${name} must be editable from the System page`);
       assert.equal(def.settingsGroup, 'security');
     }
   });
@@ -1307,19 +1341,22 @@ describe('#770: DEFAULT_OWNER_USER_ID trust-anchor projection', () => {
     assert.ok(SYSTEM_VARS.has('DEFAULT_OWNER_USER_ID'));
   });
 
-  it('DEFAULT_OWNER_USER_ID projection is read-only with restart-required semantics', () => {
+  it('DEFAULT_OWNER_USER_ID projection is editable with restart-required trust-anchor semantics', () => {
     const def = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(def, 'DEFAULT_OWNER_USER_ID should be in registry');
-    // Trust anchor: the owner gate derives ALL identity checks from this value.
-    // Allowing runtime edits would let a session grant itself ownership
-    // (privilege bootstrap paradox) — must stay editable only via .env + restart.
-    assert.equal(def.runtimeEditable, false);
+    // #770 round 3: the write path is open so the System page renders a real
+    // control. The trust-anchor protection is carried by restartRequired — the
+    // PATCH handler persists to .env but never hot-updates process.env, so a
+    // session cannot make itself owner of the RUNNING process (privilege
+    // bootstrap would require a restart, which is a local operator action).
+    assert.equal(def.runtimeEditable, true);
     assert.equal(def.restartRequired, true);
+    assert.equal(isRestartRequiredEnvVar(def.name), true, 'PATCH must fence the trust anchor from hot updates');
     assert.equal(def.settingsGroup, 'security');
     assert.ok(def.label, 'needs a human-friendly label for the System page');
     assert.ok(
       def.description.includes('单用户'),
-      'description must explain the unset ⇒ single-user-mode semantics so the read-only value is interpretable',
+      'description must explain the unset ⇒ single-user-mode semantics so the value is interpretable',
     );
   });
 });
@@ -1483,8 +1520,13 @@ describe('#770 PR-A: section projection + control metadata', () => {
   });
 
   it('inferEnvControl defaults plain text vars to text', () => {
+    const templatePath = ENV_VARS.find((v) => v.name === 'CAT_TEMPLATE_PATH');
+    assert.equal(inferEnvControl(templatePath), 'text');
+  });
+
+  it('inferEnvControl respects explicit number control metadata (#770)', () => {
     const apiPort = ENV_VARS.find((v) => v.name === 'API_SERVER_PORT');
-    assert.equal(inferEnvControl(apiPort), 'text');
+    assert.equal(inferEnvControl(apiPort), 'number');
   });
 
   it('marks directory-type vars with control: dirpicker', () => {

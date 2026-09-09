@@ -32,7 +32,9 @@ export interface EnvVar {
   deprecated?: string;
   allowedValues?: string[];
   /** #770: explicit UI control type from the env registry; renderer infers it when absent. */
-  control?: 'text' | 'toggle' | 'dropdown' | 'dirpicker';
+  control?: 'text' | 'number' | 'toggle' | 'dropdown' | 'dirpicker';
+  /** Input placeholder shown when no current value is set (human-readable default hint). */
+  placeholder?: string;
   currentValue: string | null;
   label?: string;
   settingsGroup?: string;
@@ -276,7 +278,7 @@ function EnvVarValueControl({
       <DirPickerField
         value={draft}
         onChange={(path) => onDraftChange(variable.name, path)}
-        placeholder={variable.defaultValue}
+        placeholder={variable.placeholder ?? variable.defaultValue}
         aria-label={variable.name}
       />
     );
@@ -295,7 +297,7 @@ function EnvVarValueControl({
             : '输入密钥'
           : isMaskedUrlVariable(variable)
             ? '保持当前值（已脱敏）'
-            : variable.defaultValue
+            : (variable.placeholder ?? variable.defaultValue)
       }
     />
   );

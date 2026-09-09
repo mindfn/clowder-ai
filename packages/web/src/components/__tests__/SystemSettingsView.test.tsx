@@ -27,16 +27,44 @@ const EDITABLE_DIR_VAR: EnvVar = {
 };
 
 const READONLY_VAR: EnvVar = {
-  name: 'API_SERVER_PORT',
-  defaultValue: '3004',
-  description: 'API 服务端口',
-  category: 'server',
+  name: 'KIMI_CONFIG_FILE',
+  defaultValue: '(平台默认)',
+  description: 'Kimi 配置文件路径',
+  category: 'kimi',
   sensitive: false,
   runtimeEditable: false,
-  label: 'API 端口',
+  label: 'Kimi 配置',
   settingsGroup: 'network',
+  currentValue: '/etc/kimi/config.json',
+};
+
+const NUMBER_VAR: EnvVar = {
+  name: 'MESSAGE_TTL_SECONDS',
+  defaultValue: '604800',
+  placeholder: '604800 = 7天',
+  description: '消息过期时间（秒）',
+  category: 'storage',
+  sensitive: false,
+  runtimeEditable: true,
+  label: '消息过期时间',
+  settingsGroup: 'lifecycle',
   restartRequired: true,
-  currentValue: '3002',
+  control: 'number',
+  currentValue: null,
+};
+
+const TOGGLE_VAR: EnvVar = {
+  name: 'MEMORY_STORE',
+  defaultValue: '(未设置)',
+  description: '当 Redis 不可用时允许以内存模式启动',
+  category: 'storage',
+  sensitive: false,
+  runtimeEditable: true,
+  label: '内存模式（后备）',
+  settingsGroup: 'storage',
+  restartRequired: true,
+  booleanSemantics: { defaultOn: false, trueWhen: 'exactOne' },
+  currentValue: null,
 };
 
 const GROUP_LABELS = { storage: '存储', network: '网络' };
@@ -166,15 +194,47 @@ describe('SystemSettingsView', () => {
     expect(onSaved).toHaveBeenCalled();
   });
 
-  it('keeps non-editable vars as disabled/readOnly display', async () => {
+  it('keeps non-editable vars as plain text display — no disabled dead controls', async () => {
     await renderView([EDITABLE_DIR_VAR, READONLY_VAR]);
 
-    const readonlyInput = container.querySelector('input[aria-label="API 端口"]') as HTMLInputElement;
-    expect(readonlyInput).toBeTruthy();
-    expect(readonlyInput.readOnly).toBe(true);
-    expect(readonlyInput.value).toBe('3002');
-    // The read-only var's own row has no interactive picker button.
-    expect(readonlyInput.closest('.flex.items-start')?.querySelector('button')).toBeNull();
+    // No input control is rendered for a non-editable var at all.
+    expect(container.querySelector('input[aria-label="Kimi 配置"]')).toBeNull();
+    const row = Array.from(container.querySelectorAll('.flex.items-start')).find((el) =>
+      el.textContent?.includes('Kimi 配置'),
+    );
+    expect(row).toBeTruthy();
+    expect(row?.textContent).toContain('/etc/kimi/config.json');
+    // And no disabled control anywhere on the page.
+    expect(row?.querySelector(':disabled')).toBeNull();
+  });
+
+  it('renders number-control vars as a number input with the placeholder hint', async () => {
+    await renderView([NUMBER_VAR]);
+
+    const input = container.querySelector('input[aria-label="消息过期时间"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.type).toBe('number');
+    expect(input.disabled).toBe(false);
+    expect(input.placeholder).toBe('604800 = 7天');
+    expect(input.value).toBe('');
+  });
+
+  it('renders security/storage toggles as clickable switches without disabled', async () => {
+    await renderView([TOGGLE_VAR]);
+
+    const toggle = container.querySelector('button[role="switch"][aria-label="内存模式（后备）"]') as HTMLButtonElement;
+    expect(toggle).toBeTruthy();
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('offers the .env escape hatch link at the top of the page', async () => {
+    await renderView([EDITABLE_DIR_VAR]);
+
+    const link = Array.from(container.querySelectorAll('button, a')).find(
+      (el) => el.textContent?.trim() === '打开 .env ↗',
+    );
+    expect(link).toBeTruthy();
   });
 
   it('shows an error strip when the save PATCH fails', async () => {

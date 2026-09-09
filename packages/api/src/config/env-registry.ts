@@ -12,8 +12,6 @@
  * The "环境 & 文件" tab picks it up automatically.
  */
 
-import { DEFAULT_CLI_TIMEOUT_LABEL } from '../utils/cli-timeout.js';
-
 /** Semantic groups used by the curated System Settings projection. */
 export type SettingsGroupKey = 'network' | 'storage' | 'lifecycle' | 'runtime' | 'security';
 
@@ -58,6 +56,13 @@ export interface EnvDefinition {
   name: string;
   /** Default value description (for display, not logic) */
   defaultValue: string;
+  /**
+   * Placeholder text for the editor input when no current value is set. Used when
+   * `defaultValue` is a real value (e.g. '604800') and the human-readable hint
+   * (e.g. '604800 = 7天') should only appear as an input placeholder, not as a
+   * fake "current value".
+   */
+  placeholder?: string;
   /** Human-readable description (Chinese) */
   description: string;
   /** Grouping category */
@@ -105,7 +110,7 @@ export interface EnvDefinition {
    * explicitly marked `control: 'dirpicker'` to avoid misclassifying file
    * paths such as `CHROME_EXECUTABLE_PATH`.
    */
-  control?: 'text' | 'toggle' | 'dropdown' | 'dirpicker';
+  control?: 'text' | 'number' | 'toggle' | 'dropdown' | 'dirpicker';
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
@@ -148,11 +153,12 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'API 服务端口',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     exampleRecommended: true,
     label: '服务端口',
     settingsGroup: 'network',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'PREVIEW_GATEWAY_PORT',
@@ -171,7 +177,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '监听地址',
     settingsGroup: 'network',
     restartRequired: true,
@@ -183,7 +189,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '允许局域网/Tailscale 设备访问（手机、平板等）。开启后，来自 192.168.x.x / 10.x.x.x / Tailscale 100.x.x.x 的浏览器可以正常连接。注意：会信任整个私网内的所有设备。修改后需重启服务生效',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     exampleRecommended: true,
     label: '允许局域网访问',
     settingsGroup: 'network',
@@ -192,12 +198,13 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
-    defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
+    defaultValue: '',
+    placeholder: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
     description:
       'Legacy allowlist 模式：设置后切换为 allowlist，仅允许列出的根目录（按系统路径分隔符分隔；配合 PROJECT_ALLOWED_ROOTS_APPEND=true 可追加默认 roots）。未设置时使用 denylist 模式（见 PROJECT_DENIED_ROOTS）。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '目录白名单',
     settingsGroup: 'security',
     // NOT dirpicker: project-path.ts splits this on node:path delimiter into a
@@ -210,19 +217,20 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 true 则将 PROJECT_ALLOWED_ROOTS 追加到默认根目录（home, /tmp, /workspace 等）而非覆盖',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '追加白名单',
     settingsGroup: 'security',
     booleanSemantics: { defaultOn: false, trueWhen: 'exactTrue' },
   },
   {
     name: 'PROJECT_DENIED_ROOTS',
-    defaultValue: '(平台默认系统目录)',
+    defaultValue: '',
+    placeholder: '(平台默认系统目录)',
     description:
       'Denylist 模式下额外拦截的目录（按系统路径分隔符分隔，会合并到平台默认拦截列表）。仅在未设置 PROJECT_ALLOWED_ROOTS 时生效。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '目录黑名单',
     settingsGroup: 'security',
     // NOT dirpicker: project-path.ts splits this on node:path delimiter into a
@@ -231,12 +239,13 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'FRONTEND_URL',
-    defaultValue: '(自动检测)',
+    defaultValue: '',
+    placeholder: '自动检测',
     description:
       '前端固定地址（有反向代理或固定域名时设置，如 https://cafe.example.com）。本机和局域网直连通常不需要改',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '前端 URL',
     settingsGroup: 'network',
     restartRequired: true,
@@ -247,20 +256,22 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '前端端口',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '前端端口',
     settingsGroup: 'network',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'DEFAULT_OWNER_USER_ID',
-    defaultValue: '(未设置 = 单用户本地模式)',
+    defaultValue: '',
+    placeholder: '未设置 = 单用户本地模式',
     description:
       '所有者信任锚点：未设置时为单用户本地模式（依赖 loopback 保护）；设置后特权操作按此 ID 做 owner 校验。' +
-      '仅可通过编辑 .env 并重启修改——Hub 内可写会造成权限自举（会话可将自己设为 owner），故永久只读',
+      '修改后需重启服务生效（PATCH 不会热更新此变量）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '所有者用户 ID',
     settingsGroup: 'security',
     restartRequired: true,
@@ -561,7 +572,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '日志级别（Pino 消费：fatal / error / warn / info / debug / trace / silent）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     exampleRecommended: true,
     label: '日志级别',
     settingsGroup: 'runtime',
@@ -588,11 +599,11 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'PREVIEW_GATEWAY_ENABLED',
-    defaultValue: '1（启用）',
+    defaultValue: '1',
     description: '设为 0 禁用 Preview Gateway（F120）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '网页预览',
     settingsGroup: 'network',
     restartRequired: true,
@@ -704,12 +715,13 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- storage ---
   {
     name: 'REDIS_URL',
-    defaultValue: '(未设置)',
+    defaultValue: '',
+    placeholder: '未设置（需同时开启内存模式才能启动）',
     description: '数据库连接地址。未设置时需要同时开启“内存模式”才能启动',
     category: 'storage',
     sensitive: false,
     maskMode: 'url',
-    runtimeEditable: false,
+    runtimeEditable: true,
     exampleRecommended: true,
     label: '数据库连接',
     settingsGroup: 'storage',
@@ -721,7 +733,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Redis key 命名空间前缀，用于多实例隔离',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '数据库前缀',
     settingsGroup: 'storage',
     restartRequired: true,
@@ -750,7 +762,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '当 Redis 不可用时允许以内存模式启动。已配置 Redis 时此选项不改变存储后端',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '内存模式（后备）',
     settingsGroup: 'storage',
     restartRequired: true,
@@ -758,70 +770,82 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'MESSAGE_TTL_SECONDS',
-    defaultValue: '604800 (7天)',
+    defaultValue: '604800',
+    placeholder: '604800 = 7天',
     description:
       '消息过期时间（秒）。默认 604800（7天）。设为 0 或负数 → 消息永不过期。注意：过期的 Redis 消息不影响已索引的 evidence_passages（Phase I 保证永久性）。',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '消息过期时间',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'THREAD_TTL_SECONDS',
-    defaultValue: '604800 (7天)',
+    defaultValue: '604800',
+    placeholder: '604800 = 7天',
     description: '对话过期时间',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: 'Thread 保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'TASK_TTL_SECONDS',
-    defaultValue: '604800 (7天)',
+    defaultValue: '604800',
+    placeholder: '604800 = 7天',
     description: '任务过期时间',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '任务保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'SUMMARY_TTL_SECONDS',
-    defaultValue: '604800 (7天)',
+    defaultValue: '604800',
+    placeholder: '604800 = 7天',
     description: '摘要过期时间',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '摘要保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'BACKLOG_TTL_SECONDS',
-    defaultValue: '(无过期)',
+    defaultValue: '',
+    placeholder: '留空 = 无过期',
     description: 'Backlog 过期时间',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '待办保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'DRAFT_TTL_SECONDS',
-    defaultValue: '(无过期)',
+    defaultValue: '',
+    placeholder: '留空 = 无过期',
     description: '草稿过期时间',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: '草稿保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'DATA_DIR',
@@ -891,10 +915,11 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'A2A 猫猫互调最大深度',
     category: 'budget',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: 'A2A 最大深度',
     settingsGroup: 'runtime',
     restartRequired: true,
+    control: 'number',
   },
   {
     name: 'WEB_PUSH_TIMEOUT_MS',
@@ -908,13 +933,15 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- cli ---
   {
     name: 'CLI_TIMEOUT_MS',
-    defaultValue: DEFAULT_CLI_TIMEOUT_LABEL,
+    defaultValue: '0',
+    placeholder: '0 = 默认关闭（仅人工取消）',
     description: 'CLI 自动终止超时（0 = 关闭，仅人工取消）',
     category: 'cli',
     sensitive: false,
-    runtimeEditable: false,
+    runtimeEditable: true,
     label: 'CLI 超时',
     settingsGroup: 'runtime',
+    control: 'number',
   },
   {
     name: 'OPENCODE_DB',
@@ -2368,7 +2395,7 @@ export function buildEnvSummary(): Array<EnvDefinition & { currentValue: string 
   });
 }
 
-export type EnvControlType = 'text' | 'toggle' | 'dropdown' | 'dirpicker';
+export type EnvControlType = 'text' | 'number' | 'toggle' | 'dropdown' | 'dirpicker';
 
 /**
  * Infer the best UI control for an env var from its metadata.

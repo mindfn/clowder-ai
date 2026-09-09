@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { DirPickerField } from './DirPickerField';
 import type { EnvVar } from './EnvSubComponents';
-import { initialDraftValue, isEditableVariable, isMaskedUrlVariable } from './EnvSubComponents';
+import { HubFileLink, initialDraftValue, isEditableVariable, isMaskedUrlVariable } from './EnvSubComponents';
 import { SettingsCodeField, SettingsPrimaryButton, SettingsSection, SettingsStatusStrip } from './primitives';
 
 const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security'];
@@ -31,60 +31,10 @@ function isEffectivelyOn(variable: EnvVar): boolean {
   }
 }
 
-function ReadOnlyToggle({ on, label }: { on: boolean; label: string }) {
-  return (
-    <span
-      role="img"
-      aria-label={`${label}: ${on ? '开启' : '关闭'}`}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full ${
-        on ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'
-      }`}
-    >
-      <span
-        className={`inline-block h-3.5 w-3.5 rounded-full bg-cafe-white transition-transform ${
-          on ? 'translate-x-4' : 'translate-x-0.5'
-        }`}
-      />
-    </span>
-  );
-}
-
-function resolveControlType(variable: EnvVar): 'text' | 'toggle' | 'dropdown' | 'dirpicker' {
+function resolveControlType(variable: EnvVar): 'text' | 'number' | 'toggle' | 'dropdown' | 'dirpicker' {
   return (
     variable.control ?? (variable.booleanSemantics ? 'toggle' : variable.allowedValues?.length ? 'dropdown' : 'text')
   );
-}
-
-/** 只读分支：非 editable 变量无保存通道，控件一律 disabled/readOnly，仅用于
- *  以控件形态传达当前值（对齐 Codex 设置页行样式）。 */
-function ReadOnlySettingControl({ variable }: { variable: EnvVar }) {
-  const control = resolveControlType(variable);
-  const value = variable.currentValue ?? variable.defaultValue;
-  const label = variable.label ?? variable.name;
-
-  switch (control) {
-    case 'toggle':
-      return <ReadOnlyToggle on={isEffectivelyOn(variable)} label={label} />;
-    case 'dropdown':
-      return (
-        <select
-          disabled
-          aria-label={label}
-          value={value}
-          className="h-9 rounded-lg border border-transparent bg-[var(--console-field-bg)] px-3 text-compact text-cafe-muted"
-        >
-          {(variable.allowedValues ?? []).map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      );
-    case 'dirpicker':
-      return <DirPickerField value={value} disabled aria-label={label} />;
-    default:
-      return <SettingsCodeField readOnly aria-label={label} value={value} />;
-  }
 }
 
 /** 可编辑分支：draft 驱动；toggle 写回 '1'/'0'。 */
@@ -145,8 +95,18 @@ function EditableSettingControl({
         <DirPickerField
           value={draft}
           onChange={(path) => onDraftChange(variable.name, path)}
-          placeholder={variable.defaultValue}
+          placeholder={variable.placeholder ?? variable.defaultValue}
           aria-label={label}
+        />
+      );
+    case 'number':
+      return (
+        <SettingsCodeField
+          type="number"
+          aria-label={label}
+          value={draft}
+          placeholder={variable.placeholder ?? (variable.defaultValue || undefined)}
+          onChange={(e) => onDraftChange(variable.name, e.target.value)}
         />
       );
     default:
@@ -154,6 +114,7 @@ function EditableSettingControl({
         <SettingsCodeField
           aria-label={label}
           value={draft}
+          placeholder={variable.placeholder ?? (variable.defaultValue || undefined)}
           onChange={(e) => onDraftChange(variable.name, e.target.value)}
         />
       );
@@ -183,7 +144,9 @@ function SettingItem({
         {editable ? (
           <EditableSettingControl variable={variable} draft={draft ?? ''} onDraftChange={onDraftChange} />
         ) : (
-          <ReadOnlySettingControl variable={variable} />
+          <span className="block truncate font-mono text-sm text-cafe-muted" title={variable.currentValue ?? undefined}>
+            {variable.currentValue ?? '未设置'}
+          </span>
         )}
       </div>
     </div>
@@ -316,6 +279,9 @@ export function SystemSettingsView({ variables, groupLabels, onSaved }: SystemSe
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <HubFileLink relPath=".env" label="打开 .env ↗" />
+      </div>
       {runtimeGroups.map((group) => (
         <SettingsSection key={group.key} title={group.label} description={group.description}>
           <div className="divide-y divide-[var(--console-border-soft)]">

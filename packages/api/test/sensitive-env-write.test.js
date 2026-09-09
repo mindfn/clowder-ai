@@ -220,11 +220,12 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
-  it('rejects DEFAULT_OWNER_USER_ID edits (trust anchor protection, P1 fix)', async () => {
+  it('accepts DEFAULT_OWNER_USER_ID edits but never hot-updates the live trust anchor (#770 round 3)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
     writeFileSync(envFilePath, 'DEFAULT_OWNER_USER_ID=you\n', 'utf8');
+    setEnv('DEFAULT_OWNER_USER_ID', 'you');
 
     const app = Fastify({ logger: false });
     try {
@@ -242,8 +243,13 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
         payload: { updates: [{ name: 'DEFAULT_OWNER_USER_ID', value: 'attacker' }] },
       });
 
-      assert.equal(res.statusCode, 400);
-      assert.match(JSON.parse(res.payload).error, /not editable/);
+      // #770 round 3 policy change: the write path is open (System page must
+      // render a real control), but restartRequired fences it — the value lands
+      // in .env while the RUNNING process keeps 'you' as owner. A session still
+      // cannot make itself owner at runtime; taking effect needs a restart.
+      assert.equal(res.statusCode, 200);
+      assert.match(readFileSync(envFilePath, 'utf8'), /DEFAULT_OWNER_USER_ID=attacker/);
+      assert.equal(process.env.DEFAULT_OWNER_USER_ID, 'you', 'live trust anchor must not change');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });

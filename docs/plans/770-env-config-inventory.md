@@ -34,16 +34,16 @@ created: 2026-08-12
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| server | API_SERVER_PORT | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | API_SERVER_PORT | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PREVIEW_GATEWAY_PORT | system | yes | yes | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | API_SERVER_HOST | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | CORS_ALLOW_PRIVATE_NETWORK | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | PROJECT_ALLOWED_ROOTS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | PROJECT_ALLOWED_ROOTS_APPEND | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | PROJECT_DENIED_ROOTS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | FRONTEND_URL | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | FRONTEND_PORT | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | DEFAULT_OWNER_USER_ID | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | owner/trust-anchor，security group，只读，restartRequired；未设置 ⇒ 单用户本地模式（#1340 投影结论） |
+| server | API_SERVER_HOST | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | CORS_ALLOW_PRIVATE_NETWORK | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | PROJECT_ALLOWED_ROOTS | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | PROJECT_ALLOWED_ROOTS_APPEND | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | PROJECT_DENIED_ROOTS | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | FRONTEND_URL | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | FRONTEND_PORT | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | DEFAULT_OWNER_USER_ID | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | owner/trust-anchor，security group，只读，restartRequired；未设置 ⇒ 单用户本地模式（#1340 投影结论） |
 | server | CAT_CAFE_USER_ID | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_F255_AWAKENED_LEASE_MS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_HOME | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
@@ -69,10 +69,10 @@ created: 2026-08-12
 | server | RUNTIME_REPO_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | WORKSPACE_LINKED_ROOTS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | ANTHROPIC_API_KEY | accounts | no | no | module-managed | text | no | equivalent | HubAccountsTab.tsx → `/api/accounts` → accounts/credentials store → account resolver/resolveEnvMap → provider env injection | 清出 System | 由统一账户/凭证系统管理；env 仅作 bootstrap/fallback |
-| server | LOG_LEVEL | system | yes | no | read-only | dropdown | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | LOG_LEVEL | system | yes | no | editable | dropdown | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | LOG_DIR | ops | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 日志目录；不进通用 projection |
 | server | DEBUG | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
-| server | PREVIEW_GATEWAY_ENABLED | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | PREVIEW_GATEWAY_ENABLED | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | CHROME_EXECUTABLE_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | GAME_NARRATOR_ENABLED | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
 | server | COMMUNITY_PUBLISH_DEFAULT_REPO | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
@@ -97,17 +97,17 @@ created: 2026-08-12
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| storage | REDIS_URL | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | REDIS_KEY_PREFIX | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | REDIS_URL | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | REDIS_KEY_PREFIX | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | REDIS_DATA_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | Redis 数据目录，由 shell 启动脚本在 API 前设置；DATA_DIR 设置后覆盖 |
 | storage | REDIS_BACKUP_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | Redis 备份目录，由 shell 启动脚本在 API 前设置；DATA_DIR 设置后覆盖 |
-| storage | MEMORY_STORE | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | MESSAGE_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | THREAD_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | TASK_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | SUMMARY_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | BACKLOG_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | DRAFT_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | MEMORY_STORE | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | MESSAGE_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | THREAD_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | TASK_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | SUMMARY_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | BACKLOG_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | DRAFT_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 持久数据根目录 |
 | storage | CACHE_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 可重建缓存根目录 |
 | storage | ANNOTATION_DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级存储路径，保留在 System view |
@@ -118,14 +118,14 @@ created: 2026-08-12
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| budget | MAX_A2A_DEPTH | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | A2A 预算阈值，保留在 System view |
+| budget | MAX_A2A_DEPTH | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | A2A 预算阈值，保留在 System view |
 | budget | WEB_PUSH_TIMEOUT_MS | notify | yes | no | read-only | text | no | none | 无 | 不进 UI | Web Push 超时；不进通用 projection |
 
 ## CLI (36)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cli | CLI_TIMEOUT_MS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| cli | CLI_TIMEOUT_MS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | cli | CAT_CAFE_SUPERVISOR_PARENT_PID | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 运行时注入 |
 | cli | CAT_CAFE_SUPERVISOR_POLL_MS | none | no | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
 | cli | CAT_CAFE_SUPERVISOR_KILL_GRACE_MS | none | no | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
