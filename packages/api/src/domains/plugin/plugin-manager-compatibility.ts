@@ -90,10 +90,7 @@ export class RepositoryPluginManagerCompatibilityProvider implements PluginManag
   ) {}
 
   async list(): Promise<readonly PluginManagerCompatibilityRecord[]> {
-    const [plugins, suppressedPluginIds] = await Promise.all([
-      this.loadPlugins(),
-      this.options.loadSuppressedPluginIds?.() ?? [],
-    ]);
+    const [plugins, suppressedPluginIds] = await Promise.all([this.loadPlugins(), this.loadSuppressedPluginIds()]);
     const suppressed = new Set(suppressedPluginIds);
     return plugins
       .filter((plugin) => !suppressed.has(plugin.id))
@@ -128,6 +125,14 @@ export class RepositoryPluginManagerCompatibilityProvider implements PluginManag
           capabilities,
         };
       });
+  }
+
+  private async loadSuppressedPluginIds(): Promise<readonly string[]> {
+    try {
+      return (await this.options.loadSuppressedPluginIds?.()) ?? [];
+    } catch {
+      return [];
+    }
   }
 }
 
