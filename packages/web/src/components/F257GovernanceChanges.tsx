@@ -13,34 +13,37 @@ export function F257GovernanceChanges({ changes }: { changes: Array<Record<strin
   return (
     <>
       <ol className="space-y-2" data-testid="f257-governance-action-list">
-        {changes.map((change, index) => (
-          <li
-            key={`${String(change.unitId ?? 'unit')}-${index}`}
-            className="rounded-lg border border-cafe-subtle/40 bg-cafe-muted/35 p-3"
-            data-testid="f257-governance-change"
-          >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-cafe-accent/10 px-2 py-0.5 font-semibold text-cafe-accent">
-                  {actionLabel(change.action)}
-                </span>
-                <span className="font-mono font-semibold">{String(change.unitId ?? '未知段')}</span>
+        {changes.map((change, index) => {
+          const impactSummary = changeImpactSummary(change);
+          return (
+            <li
+              key={`${String(change.unitId ?? 'unit')}-${index}`}
+              className="rounded-lg border border-cafe-subtle/40 bg-cafe-muted/35 p-3"
+              data-testid="f257-governance-change"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-cafe-accent/10 px-2 py-0.5 font-semibold text-cafe-accent">
+                    {actionLabel(change.action)}
+                  </span>
+                  <span className="font-mono font-semibold">{String(change.unitId ?? '未知段')}</span>
+                </div>
+                {change.reason != null && <p className="mt-1 break-words text-cafe-muted">{String(change.reason)}</p>}
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-cafe-secondary">
+                  {impactSummary !== null && <span>{impactSummary}</span>}
+                  <button
+                    type="button"
+                    onClick={() => setSelected(change)}
+                    className="rounded px-1 font-medium text-cafe-accent underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent"
+                    data-testid="f257-governance-open-diff"
+                  >
+                    {changeDetailLabel(change)}
+                  </button>
+                </div>
               </div>
-              {change.reason != null && <p className="mt-1 break-words text-cafe-muted">{String(change.reason)}</p>}
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-cafe-secondary">
-                {changeImpactSummary(change) !== '修改段内容' && <span>{changeImpactSummary(change)}</span>}
-                <button
-                  type="button"
-                  onClick={() => setSelected(change)}
-                  className="rounded px-1 font-medium text-cafe-accent underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent"
-                  data-testid="f257-governance-open-diff"
-                >
-                  {changeDetailLabel(change)}
-                </button>
-              </div>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ol>
       {selected && <GovernanceDiffDialog change={selected} onClose={close} />}
     </>
@@ -51,6 +54,7 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
   const comparisons = comparisonBlocks(change);
+  const impactSummary = changeImpactSummary(change);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -123,9 +127,9 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
               />
             </section>
           ))}
-          <div className="rounded-lg border border-cafe-subtle/40 bg-cafe-muted/35 p-3 text-sm">
-            {changeImpactSummary(change)}
-          </div>
+          {impactSummary !== null && (
+            <div className="rounded-lg border border-cafe-subtle/40 bg-cafe-muted/35 p-3 text-sm">{impactSummary}</div>
+          )}
         </div>
       </section>
     </div>,
@@ -181,7 +185,7 @@ function comparisonBlocks(change: Record<string, unknown>): Array<{
   return blocks;
 }
 
-function changeImpactSummary(change: Record<string, unknown>): string {
+function changeImpactSummary(change: Record<string, unknown>): string | null {
   if (change.action === 'add') {
     const manifest = asRecord(change.manifest);
     const objectiveIds = asRecords(change.objectives).map((item) => String(item.objectiveId));
@@ -198,7 +202,7 @@ function changeImpactSummary(change: Record<string, unknown>): string {
   const conditionChanged = change.proposedCondition !== undefined;
   if (contentChanged && conditionChanged) return '同时修改段内容与触发条件';
   if (conditionChanged) return '修改触发条件';
-  return '修改段内容';
+  return null;
 }
 
 function changeDetailLabel(change: Record<string, unknown>): string {
@@ -252,8 +256,10 @@ export function fullContentDiff(unitId: string, before: string, after: string): 
   const afterMiddleEnd = afterLines.length - commonSuffix;
   const lines = [
     ...beforeLines.slice(0, commonPrefix).map((line) => ` ${line}`),
-    ...beforeLines.slice(commonPrefix, beforeMiddleEnd).map((line) => `-${line}`),
-    ...afterLines.slice(commonPrefix, afterMiddleEnd).map((line) => `+${line}`),
+    ...minimalLineDiff(
+      beforeLines.slice(commonPrefix, beforeMiddleEnd),
+      afterLines.slice(commonPrefix, afterMiddleEnd),
+    ),
     ...beforeLines.slice(beforeMiddleEnd).map((line) => ` ${line}`),
   ];
   const beforeStart = beforeLines.length === 0 ? 0 : 1;
@@ -265,6 +271,66 @@ export function fullContentDiff(unitId: string, before: string, after: string): 
     `@@ -${beforeStart},${beforeLines.length} +${afterStart},${afterLines.length} @@`,
     ...lines,
   ].join('\n');
+}
+
+const MAX_LINE_DIFF_CELLS = 250_000;
+
+function minimalLineDiff(beforeLines: string[], afterLines: string[]): string[] {
+  const rowWidth = afterLines.length + 1;
+  const cellCount = (beforeLines.length + 1) * rowWidth;
+  if (cellCount > MAX_LINE_DIFF_CELLS) {
+    return [...beforeLines.map((line) => `-${line}`), ...afterLines.map((line) => `+${line}`)];
+  }
+
+  return renderMinimalLineDiff(
+    beforeLines,
+    afterLines,
+    rowWidth,
+    buildLcsLengthTable(beforeLines, afterLines, rowWidth),
+  );
+}
+
+function buildLcsLengthTable(beforeLines: string[], afterLines: string[], rowWidth: number): Uint32Array {
+  const lcsLengths = new Uint32Array((beforeLines.length + 1) * rowWidth);
+  for (let beforeIndex = beforeLines.length - 1; beforeIndex >= 0; beforeIndex--) {
+    for (let afterIndex = afterLines.length - 1; afterIndex >= 0; afterIndex--) {
+      const cell = beforeIndex * rowWidth + afterIndex;
+      lcsLengths[cell] =
+        beforeLines[beforeIndex] === afterLines[afterIndex]
+          ? lcsLengths[cell + rowWidth + 1] + 1
+          : Math.max(lcsLengths[cell + rowWidth], lcsLengths[cell + 1]);
+    }
+  }
+  return lcsLengths;
+}
+
+function renderMinimalLineDiff(
+  beforeLines: string[],
+  afterLines: string[],
+  rowWidth: number,
+  lcsLengths: Uint32Array,
+): string[] {
+  const lines: string[] = [];
+  let beforeIndex = 0;
+  let afterIndex = 0;
+  while (beforeIndex < beforeLines.length && afterIndex < afterLines.length) {
+    if (beforeLines[beforeIndex] === afterLines[afterIndex]) {
+      lines.push(` ${beforeLines[beforeIndex]}`);
+      beforeIndex++;
+      afterIndex++;
+    } else if (
+      lcsLengths[(beforeIndex + 1) * rowWidth + afterIndex] >= lcsLengths[beforeIndex * rowWidth + afterIndex + 1]
+    ) {
+      lines.push(`-${beforeLines[beforeIndex]}`);
+      beforeIndex++;
+    } else {
+      lines.push(`+${afterLines[afterIndex]}`);
+      afterIndex++;
+    }
+  }
+  while (beforeIndex < beforeLines.length) lines.push(`-${beforeLines[beforeIndex++]}`);
+  while (afterIndex < afterLines.length) lines.push(`+${afterLines[afterIndex++]}`);
+  return lines;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

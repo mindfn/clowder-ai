@@ -165,6 +165,15 @@ describe('F257 governance card', () => {
     expect(lines.filter((line) => line.type === 'add').map((line) => line.content)).toEqual(['新增终止门。']);
   });
 
+  it('keeps unchanged lines as context when content changes in multiple places', () => {
+    const diff = fullContentDiff('D8.content', 'a\nb\nc\nd\ne', 'a\nX\nc\nY\ne');
+    const lines = parseUnifiedDiff(diff)[0].hunks[0].lines;
+
+    expect(lines.filter((line) => line.type === 'context').map((line) => line.content)).toEqual(['a', 'c', 'e']);
+    expect(lines.filter((line) => line.type === 'remove').map((line) => line.content)).toEqual(['b', 'd']);
+    expect(lines.filter((line) => line.type === 'add').map((line) => line.content)).toEqual(['X', 'Y']);
+  });
+
   it('states that a first-cycle proposal has no comparison baseline', async () => {
     const firstCycle = {
       ...ITEM,
