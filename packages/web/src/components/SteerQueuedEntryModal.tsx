@@ -49,8 +49,8 @@ function guideUnavailableReason(target: SteerTargetOption): string | null {
   return null;
 }
 
-function defaultStrategy(target: SteerTargetOption): SteerDeliveryStrategy | undefined {
-  return target.disposition === 'continue_current' && canGuide(target) ? 'guide_reply' : 'interrupt_reply';
+function defaultStrategy(target: SteerTargetOption): SteerDeliveryStrategy {
+  return canGuide(target) ? 'guide_reply' : 'interrupt_reply';
 }
 
 function resolveDefaultTargetIds(

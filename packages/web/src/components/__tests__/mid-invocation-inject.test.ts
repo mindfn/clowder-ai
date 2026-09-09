@@ -209,6 +209,36 @@ describe('F24: mid-invocation message injection', () => {
     });
   });
 
+  it('prefers guiding an active reply even when the member default is Queue', () => {
+    const onConfirm = vi.fn();
+    act(() => {
+      root.render(
+        React.createElement(SteerQueuedEntryModal, {
+          targets: [
+            {
+              id: 'codex',
+              label: '缅因猫',
+              canGuideReply: true,
+              hasCurrentReply: true,
+              defaultSelected: true,
+              disposition: 'next_work',
+            },
+          ],
+          onCancel: vi.fn(),
+          onConfirm,
+        }),
+      );
+    });
+
+    expect(container.querySelector('[data-testid="steer-guide-reply"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.disabled).toBe(false);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(onConfirm).toHaveBeenCalledWith({
+      observedPendingTargetIds: [],
+      actions: [{ targetId: 'codex', strategy: 'guide_reply', membershipAtOpen: 'member' }],
+    });
+  });
+
   it('changes the focused member without dropping other selections and preserves mixed strategies', () => {
     const onConfirm = vi.fn();
     act(() => {
