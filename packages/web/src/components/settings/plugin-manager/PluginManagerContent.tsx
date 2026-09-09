@@ -113,8 +113,9 @@ function PluginListRow({
       role="listitem"
       aria-current={selected ? 'true' : undefined}
       className={`${settingsResourceCardClass} h-[88px] overflow-hidden transition-colors ${
-        selected ? '!bg-[var(--console-active-bg)]' : 'hover:bg-[var(--console-hover-bg)]'
+        selected ? '' : 'hover:bg-[var(--console-hover-bg)]'
       }`}
+      style={selected ? { backgroundColor: 'var(--console-active-bg)' } : undefined}
     >
       <div className={`${settingsResourceRowClass} h-full w-full`}>
         <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={onSelect}>

@@ -109,6 +109,7 @@ export type MachineCatalogValidationResult =
 
 export interface MachineCatalogHostPolicy {
   readonly pluginId: string;
+  readonly replacesRepositoryPluginId?: string;
   readonly effectiveGrants: readonly Capability[];
   readonly ownerAuth?: OfficialPluginOwnerAuth;
 }
@@ -136,6 +137,9 @@ function projectEntry(
     version: release.version,
     archiveUrl: release.artifact.tarballUrl,
     packageDigest: release.artifact.integrity,
+    ...(policy.replacesRepositoryPluginId === undefined
+      ? {}
+      : { replacesRepositoryPluginId: policy.replacesRepositoryPluginId }),
     effectiveGrants: policy.effectiveGrants,
     ...(policy.ownerAuth === undefined ? {} : { ownerAuth: policy.ownerAuth }),
     presentation: {

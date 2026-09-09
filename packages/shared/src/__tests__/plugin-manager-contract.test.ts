@@ -67,6 +67,23 @@ describe('F202 terminal Plugin Manager contract', () => {
     }>();
   });
 
+  it('keeps compatibility trust coupled to its source adapter', () => {
+    expectTypeOf<
+      Extract<PluginManagerPackageSource, { kind: 'compatibility'; adapter: 'repository-local' }>
+    >().toEqualTypeOf<{
+      kind: 'compatibility';
+      adapter: 'repository-local';
+      packageName: string;
+      trust: 'first-party';
+    }>();
+    expectTypeOf<Extract<PluginManagerPackageSource, { kind: 'compatibility'; adapter: 'connector' }>>().toEqualTypeOf<{
+      kind: 'compatibility';
+      adapter: 'connector';
+      packageName: string;
+      trust: 'local-trusted';
+    }>();
+  });
+
   it('lists capabilities on the detail without granting authority from labels', () => {
     expectTypeOf<PluginManagerDetail['capabilities'][number]['kind']>().toEqualTypeOf<
       | 'mcp'

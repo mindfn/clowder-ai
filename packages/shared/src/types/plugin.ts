@@ -164,9 +164,16 @@ export type PluginManagerPackageSource =
   | {
       /** Train B read-only bridge. Train C replaces this row with Host inventory provenance. */
       kind: 'compatibility';
-      adapter: 'repository-local' | 'connector';
+      adapter: 'repository-local';
       packageName: string;
       trust: 'first-party';
+    }
+  | {
+      /** Connector bridges are locally admitted, but they are not bundled first-party code. */
+      kind: 'compatibility';
+      adapter: 'connector';
+      packageName: string;
+      trust: 'local-trusted';
     }
   | {
       /** Pre-provenance inventory retained for safe disable/uninstall only. */

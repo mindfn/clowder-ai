@@ -36,7 +36,7 @@ describe('F202 Plugin Manager migration compatibility', () => {
           hasHealthCheck: false,
         },
       ],
-      { excludedPluginIds: ['video-analysis'] },
+      { loadSuppressedPluginIds: async () => ['video-analysis'] },
     );
 
     const rows = await provider.list();
@@ -137,6 +137,13 @@ describe('F202 Plugin Manager migration compatibility', () => {
     });
     assert.equal(rows[0].capabilities[0].active, true);
     assert.equal(rows[0].configFields[0].currentValue, '••••••');
+    assert.deepEqual(rows[1].source, {
+      kind: 'compatibility',
+      adapter: 'connector',
+      packageName: 'connector:telegram',
+      trust: 'local-trusted',
+    });
+    assert.equal(rows[1].publisher, 'Local Host');
     assert.equal(rows[1].config, 'incomplete');
     assert.equal(rows[1].intent, 'disabled');
   });
