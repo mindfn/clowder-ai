@@ -83,9 +83,6 @@ export function F257GovernanceRecommendation({ item }: { item: ApprovalHubItem }
 
       <GovernanceSection title="4 · 人工决策" testId="f257-governance-lineage">
         <p>提案轮次：{String(item.detail.cardOrdinal ?? 1)}</p>
-        <p>批准会原子接受整张卡的动作列表，不可挑批；组合不合适请拒绝并说明理由。</p>
-        <p>跳过会保留当前版本并进入下一周期。</p>
-        <p>拒绝必须填写理由，系统将对同一窗口重新评估并生成新卡。</p>
         {latestRejectReason !== undefined && <p>上一轮拒绝理由：{latestRejectReason}</p>}
         {item.detail.decisionReason != null && <p>本卡处理理由：{String(item.detail.decisionReason)}</p>}
       </GovernanceSection>

@@ -121,7 +121,9 @@ describe('F257 governance card', () => {
     expect(text).toContain('当前结构化规则没有覆盖 invocation-1。');
     expect(text).toContain('invocation-1');
     expect(container.querySelector('[data-testid="f257-governance-evidence-link"]')).not.toBeNull();
-    expect(text).toContain('拒绝必须填写理由');
+    expect(text).not.toContain('批准会原子接受整张卡的动作列表');
+    expect(text).not.toContain('跳过会保留当前版本并进入下一周期');
+    expect(text).not.toContain('拒绝必须填写理由');
     expect(text).toContain('上周期');
     expect(text).toContain('本周期');
     expect(text).toContain('-2');
@@ -130,7 +132,7 @@ describe('F257 governance card', () => {
     expect(text).toContain('3 次');
     expect(text).toContain('逐条核对本周期反例后，共确认 3 次。');
     expect(text).not.toContain('{"kind"');
-    expect(text).toContain('不可挑批');
+    expect(text).toContain('提案轮次：2');
 
     const diffButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
     expect(diffButton?.textContent).toContain('查看段内容');
