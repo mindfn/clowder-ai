@@ -3137,10 +3137,9 @@ async function main(): Promise<void> {
     groundingSampleStore: getGroundingSampleStore(),
   });
   // F192 Phase E-hub: harness eval verdict lifecycle surface.
-  // F192 OQ-21: late-bound holder for ConnectorInvokeTrigger — eval-hub routes
-  // register before invokeTrigger is created (line ~2600). Manual trigger route
-  // resolves the live trigger at request time via this holder, so the provider
-  // returns null until index.ts wires it after invokeTrigger construction.
+  // F192 OQ-21: holder for ConnectorInvokeTrigger — eval-hub routes register
+  // before invokeTrigger is created. Route handlers resolve it at request time;
+  // production binds it below before listen starts accepting those requests.
   const invokeTriggerHolder: {
     current: ConnectorInvokeTrigger | null;
     get(): ConnectorInvokeTrigger | null;
@@ -5980,6 +5979,36 @@ async function main(): Promise<void> {
   let designGateThresholdObserver: { close(): void } | null = null;
   app.addHook('onClose', async () => designGateThresholdObserver?.close());
 
+  // F140/F257: every accepted decision that schedules another cat turn must
+  // have a live wake boundary. Fastify starts accepting ordinary user routes
+  // as soon as listen succeeds, so bind the shared trigger before that point;
+  // otherwise a reject can durably enter requested state and then surface
+  // cycle_invoke_trigger_unavailable to the operator during startup.
+  const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
+  const invokeTrigger = new ConnectorInvokeTrigger({
+    router,
+    socketManager,
+    invocationRecordStore,
+    invocationTracker,
+    invocationQueue,
+    queueProcessor,
+    queueCustodyCoordinator,
+    messageStore,
+    actionSuccessorLeaseStore,
+    threadMetaLookup: async (threadId) => {
+      const thread = await threadStore.get(threadId);
+      if (!thread) return undefined;
+      return {
+        threadShortId: threadId.slice(0, 15),
+        threadTitle: thread.title ?? undefined,
+        deepLinkUrl: buildThreadDeepLink(frontendBaseUrl, threadId),
+      };
+    },
+    log: app.log,
+  });
+  taskRunnerV2.setInvokeTrigger(invokeTrigger);
+  invokeTriggerHolder.current = invokeTrigger;
+
   // #603: Preload governance overlay (.local / .local-override)
   // Start listening
   let address: string;
@@ -6215,30 +6244,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // F140 Phase 3b: connector invoke trigger (auto-invoke cat after review feedback delivery via polling)
-  const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
-  const invokeTrigger = new ConnectorInvokeTrigger({
-    router,
-    socketManager,
-    invocationRecordStore,
-    invocationTracker,
-    invocationQueue,
-    queueProcessor,
-    queueCustodyCoordinator,
-    messageStore,
-    actionSuccessorLeaseStore,
-    threadMetaLookup: async (threadId) => {
-      const thread = await threadStore.get(threadId);
-      if (!thread) return undefined;
-      return {
-        threadShortId: threadId.slice(0, 15),
-        threadTitle: thread.title ?? undefined,
-        deepLinkUrl: buildThreadDeepLink(frontendBaseUrl, threadId),
-      };
-    },
-    log: app.log,
-  });
-
   const { LimbTranscriptCatDelivery } = await import('./domains/limb/LimbTranscriptCatDelivery.js');
   limbTranscriptDelivery = new LimbTranscriptCatDelivery({
     isKnownCat: (catId) => catRegistry.tryGet(catId) !== undefined,
@@ -6374,16 +6379,6 @@ async function main(): Promise<void> {
 
   // F140 Phase E.3 cleanup (2026-04-25): email/IMAP watcher source files removed.
   // Polling (ReviewFeedbackTaskSpec) is the sole truth source for review feedback.
-
-  // F139 Phase 4b: late-bind invokeTrigger so templates can wake cats
-  taskRunnerV2.setInvokeTrigger(invokeTrigger);
-
-  // F192 OQ-21: late-bind invokeTrigger for manual eval trigger endpoint.
-  // eval-hub routes registered at line ~1543 (before invokeTrigger existed);
-  // the holder pattern lets `POST /api/eval-domains/:domainId/trigger-now`
-  // resolve the live trigger at request time. Without this bind, the route
-  // returns 503 instead of waking the eval cat.
-  invokeTriggerHolder.current = invokeTrigger;
 
   // F257 TC-3/15: initialize first cycles and run the cadence route hourly.
   if (redis) {
