@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 
+import {
+  PluginManagerCompatibilityAdapter,
+  RepositoryPluginManagerCompatibilityProvider,
+} from '../dist/domains/plugin/plugin-manager-compatibility.js';
 import { PluginManagerService } from '../dist/domains/plugin/plugin-manager-service.js';
 
 function digest(value) {
@@ -188,6 +192,45 @@ describe('F202 terminal Plugin Manager service', () => {
       refreshedAt: null,
       message: 'Plugin catalog is unavailable.',
     });
+  });
+
+  it('keeps repository compatibility visible when its shared catalog suppression read fails', async () => {
+    const catalog = { snapshot: async () => Promise.reject(new Error('offline')) };
+    const compatibility = new PluginManagerCompatibilityAdapter([
+      new RepositoryPluginManagerCompatibilityProvider(
+        async () => [
+          {
+            id: 'github',
+            name: 'GitHub',
+            version: '1.0.0',
+            status: 'enabled',
+            configured: true,
+            config: [],
+            resources: [{ type: 'mcp', name: 'github-toolset', enabled: true }],
+            hasHealthCheck: false,
+          },
+        ],
+        {
+          loadSuppressedPluginIds: async () =>
+            (await catalog.snapshot()).entries.flatMap((entry) =>
+              entry.replacesRepositoryPluginId === undefined ? [] : [entry.replacesRepositoryPluginId],
+            ),
+        },
+      ),
+    ]);
+    const manager = new PluginManagerService({
+      catalog,
+      inventory: { snapshot: async () => emptyInventory },
+      compatibility,
+    });
+
+    const result = await manager.list();
+
+    assert.deepEqual(
+      result.plugins.map((plugin) => plugin.pluginId),
+      ['github'],
+    );
+    assert.equal(result.catalog.status, 'unavailable');
   });
 
   it('gets the same projection used by list and reports an unknown plugin honestly', async () => {
