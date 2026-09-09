@@ -268,10 +268,11 @@ export const ENV_VARS: EnvDefinition[] = [
     placeholder: '未设置 = 单用户本地模式',
     description:
       '所有者信任锚点：未设置时为单用户本地模式（依赖 loopback 保护）；设置后特权操作按此 ID 做 owner 校验。' +
-      '修改后需重启服务生效（PATCH 不会热更新此变量）',
+      '仅可手工编辑 .env 并重启：Hub 可写会造成权限自举（未鉴权 PATCH 写入 owner → 重启后劫持特权写），' +
+      '且该变量非 sensitive 导致 PATCH 鉴权块整段跳过。右上角「打开 .env ↗」是它的出口。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: true,
+    runtimeEditable: false,
     label: '所有者用户 ID',
     settingsGroup: 'security',
     restartRequired: true,
@@ -1121,11 +1122,13 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'CAT_CAFE_DATA_DIR',
     defaultValue: '~/.cat-cafe',
-    description: '猫猫数据的默认根目录。会话记录和上传目录可通过各自设置单独指定',
+    description:
+      '平台级全局数据目录（accounts/credentials 等平台状态，默认 ~/.cat-cafe）。' +
+      '与 DATA_DIR（repo 数据根：缓存/会话/上传等业务数据）区分，两者互不影响',
     category: 'cli',
     sensitive: false,
     runtimeEditable: true,
-    label: '数据根目录',
+    label: '平台数据目录（~/.cat-cafe）',
     settingsGroup: 'storage',
     restartRequired: true,
     control: 'dirpicker',

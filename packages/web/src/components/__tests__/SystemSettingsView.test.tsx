@@ -150,11 +150,13 @@ describe('SystemSettingsView', () => {
 
     await renderView([EDITABLE_DIR_VAR, READONLY_VAR], onSaved);
 
-    const input = container.querySelector('input[aria-label="数据根目录"]') as HTMLInputElement;
-    expect(input).toBeTruthy();
-    expect(input.readOnly).toBe(true);
-    expect(input.value).toBe('/data');
-    const pickButton = findButton(container, '选择…');
+    const pathText = Array.from(container.querySelectorAll('span')).find(
+      (el) => el.getAttribute('aria-label') === '数据根目录',
+    );
+    expect(pathText).toBeTruthy();
+    expect(pathText?.textContent).toBe('/data');
+    expect(container.querySelector('input[aria-label="数据根目录"]')).toBeNull();
+    const pickButton = findButton(container, '修改');
     expect(pickButton).toBeTruthy();
     expect(pickButton?.disabled).toBe(false);
 
@@ -176,7 +178,10 @@ describe('SystemSettingsView', () => {
     });
     await flushEffects();
 
-    expect((container.querySelector('input[aria-label="数据根目录"]') as HTMLInputElement).value).toBe('/data/vault');
+    const updatedText = Array.from(container.querySelectorAll('span')).find(
+      (el) => el.getAttribute('aria-label') === '数据根目录',
+    );
+    expect(updatedText?.textContent).toBe('/data/vault');
     expect(container.textContent).toContain('1 项变更需重启生效');
 
     await act(async () => {
@@ -268,7 +273,7 @@ describe('SystemSettingsView', () => {
     });
 
     await act(async () => {
-      findButton(container, '选择…')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      findButton(container, '修改')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flushEffects();
     await act(async () => {

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
-import { formInputClass } from '../mcp-form-helpers';
 
 interface DirPickerFieldProps {
   value: string;
@@ -144,20 +143,22 @@ export function DirPickerField({
 
   return (
     <div className="flex items-center gap-2">
-      <input
-        readOnly
-        value={value}
-        placeholder={placeholder}
+      <span
         aria-label={ariaLabel}
-        className={`flex-1 ${formInputClass}`}
-      />
+        title={value || undefined}
+        className={`min-w-0 flex-1 truncate rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3 py-1.5 font-mono text-xs ${
+          value ? 'text-cafe' : 'text-cafe-muted'
+        }`}
+      >
+        {value || placeholder || '未设置'}
+      </span>
       {!disabled && hasDesktopBridge() && (
         <button
           type="button"
           onClick={() => void handleElectronPick()}
           className="shrink-0 rounded-full border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-4 py-1.5 text-xs font-semibold text-cafe transition hover:bg-[var(--console-hover-bg)]"
         >
-          选择…
+          修改
         </button>
       )}
       {!disabled && !hasDesktopBridge() && (
@@ -166,7 +167,7 @@ export function DirPickerField({
           onClick={() => setModalOpen(true)}
           className="shrink-0 rounded-full border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-4 py-1.5 text-xs font-semibold text-cafe transition hover:bg-[var(--console-hover-bg)]"
         >
-          选择…
+          修改
         </button>
       )}
       {modalOpen && (

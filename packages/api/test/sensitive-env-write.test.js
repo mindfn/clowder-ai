@@ -220,7 +220,7 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
-  it('accepts DEFAULT_OWNER_USER_ID edits but never hot-updates the live trust anchor (#770 round 3)', async () => {
+  it('rejects DEFAULT_OWNER_USER_ID edits from Hub — trust anchor is not editable (#770 round 4)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -243,12 +243,15 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
         payload: { updates: [{ name: 'DEFAULT_OWNER_USER_ID', value: 'attacker' }] },
       });
 
-      // #770 round 3 policy change: the write path is open (System page must
-      // render a real control), but restartRequired fences it — the value lands
-      // in .env while the RUNNING process keeps 'you' as owner. A session still
-      // cannot make itself owner at runtime; taking effect needs a restart.
-      assert.equal(res.statusCode, 200);
-      assert.match(readFileSync(envFilePath, 'utf8'), /DEFAULT_OWNER_USER_ID=attacker/);
+      // #770 round 4 (opus review P1-A): the variable is NOT sensitive, so the
+      // PATCH auth block (session 401 / loopback+owner 403) never runs for it.
+      // If the registry left it editable, this unauthenticated request would
+      // write the anchor into .env and bootstrap owner privileges on restart.
+      // The only fence is the editability gate — it must fail closed.
+      assert.equal(res.statusCode, 400);
+      assert.match(res.payload, /not editable/);
+      assert.match(readFileSync(envFilePath, 'utf8'), /DEFAULT_OWNER_USER_ID=you/);
+      assert.doesNotMatch(readFileSync(envFilePath, 'utf8'), /attacker/);
       assert.equal(process.env.DEFAULT_OWNER_USER_ID, 'you', 'live trust anchor must not change');
     } finally {
       await app.close();

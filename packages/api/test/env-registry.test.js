@@ -226,11 +226,12 @@ describe('env-registry', () => {
     assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
   });
 
-  it('marks DEFAULT_OWNER_USER_ID as a restart-fenced editable trust anchor (#770)', () => {
+  it('marks DEFAULT_OWNER_USER_ID as a Hub-read-only trust anchor (#770 round 4)', () => {
     const def = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(def, 'DEFAULT_OWNER_USER_ID should be in registry');
-    assert.equal(def.runtimeEditable, true, 'trust anchor is writable from Hub');
-    assert.equal(def.restartRequired, true, 'PATCH persists to .env but never hot-updates the live trust anchor');
+    assert.equal(def.runtimeEditable, false, 'trust anchor must not be writable from Hub');
+    assert.equal(def.restartRequired, true, 'only a manual .env edit + restart can move the anchor');
+    assert.equal(isEditableEnvVar(def), false, 'PATCH must reject the trust anchor (fail closed)');
   });
 
   it('locks startup-only telemetry vars as non-editable and hot-reloadable ones as editable (F153 Phase K)', () => {
@@ -287,31 +288,36 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
-  it('opens security-boundary variables for Hub writes (#770 round 3: no disabled dead controls)', () => {
+  it('opens filesystem-policy variables for Hub writes (#770 round 3: no disabled dead controls)', () => {
     for (const name of [
       'PROJECT_ALLOWED_ROOTS',
       'PROJECT_ALLOWED_ROOTS_APPEND',
       'PROJECT_DENIED_ROOTS',
-      'DEFAULT_OWNER_USER_ID',
     ]) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain registered`);
       assert.equal(definition.runtimeEditable, true, `${name} must be editable from the System page`);
       assert.equal(definition.settingsGroup, 'security');
     }
-    // Trust anchor stays restart-fenced: the write lands in .env but the running
-    // process keeps the old value until restart (no privilege bootstrap at runtime).
+  });
+
+  it('keeps DEFAULT_OWNER_USER_ID visible but Hub-read-only (#770 round 4: unauthenticated PATCH bootstrap)', () => {
     const owner = ENV_VARS.find((candidate) => candidate.name === 'DEFAULT_OWNER_USER_ID');
+    assert.ok(owner, 'trust anchor must remain registered');
+    assert.equal(owner.runtimeEditable, false, 'trust anchor must not be writable from Hub');
+    assert.equal(isEditableEnvVar(owner), false, 'PATCH must reject the trust anchor (fail closed)');
     assert.equal(owner.restartRequired, true);
+    assert.equal(owner.settingsGroup, 'security');
+    assert.ok(owner.description.includes('.env'), 'description must point at the manual .env exit');
   });
 
   it('projects DEFAULT_OWNER_USER_ID as a restart-required trust anchor with a fenced write path', () => {
     const definition = ENV_VARS.find((candidate) => candidate.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(definition, 'DEFAULT_OWNER_USER_ID must remain registered');
     assert.ok(SYSTEM_VARS.has(definition.name), 'trust anchor must be visible in the curated System surface');
-    assert.equal(definition.runtimeEditable, true, 'write path is open (runtimeEditable)');
-    assert.equal(isEditableEnvVar(definition), true);
-    assert.equal(definition.restartRequired, true, 'but PATCH must not hot-update the live anchor');
+    assert.equal(definition.runtimeEditable, false, 'write path is CLOSED from Hub (#770 round 4)');
+    assert.equal(isEditableEnvVar(definition), false);
+    assert.equal(definition.restartRequired, true, 'only a manual .env edit + restart can move the anchor');
     assert.equal(definition.settingsGroup, 'security');
     assert.ok(definition.label, 'trust anchor needs a user-facing label');
     assert.match(definition.description, /单用户/, 'projection must explain unset single-user semantics');
@@ -425,7 +431,7 @@ describe('#770: GET /api/config/env-summary?surface=system', () => {
       assert.equal(curatedBody.paths, undefined);
       const owner = curatedBody.variables.find((entry) => entry.name === 'DEFAULT_OWNER_USER_ID');
       assert.ok(owner, 'curated API surface must include the owner trust anchor');
-      assert.equal(owner.runtimeEditable, true);
+      assert.equal(owner.runtimeEditable, false, 'trust anchor is Hub-read-only (#770 round 4)');
       assert.equal(owner.settingsGroup, 'security');
       assert.equal(owner.restartRequired, true);
 
@@ -1001,7 +1007,7 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('accepts filesystem-policy and owner trust-anchor writes, fencing the trust anchor from hot updates (#770)', async () => {
+  it('accepts filesystem-policy writes but rejects the owner trust anchor from Hub writes (#770 round 4)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -1024,7 +1030,6 @@ describe('PATCH /api/config/env (route)', () => {
         'PROJECT_ALLOWED_ROOTS',
         'PROJECT_ALLOWED_ROOTS_APPEND',
         'PROJECT_DENIED_ROOTS',
-        'DEFAULT_OWNER_USER_ID',
       ]) {
         const response = await app.inject({
           method: 'PATCH',
@@ -1035,12 +1040,24 @@ describe('PATCH /api/config/env (route)', () => {
         assert.equal(response.statusCode, 200, `${name} must be accepted`);
       }
 
+      // The trust anchor is NOT sensitive, so the PATCH auth block (session 401 /
+      // loopback+owner 403 / resolveOwnerGate) never runs for it — the only fence
+      // is the registry editability gate. It must fail closed here even with a
+      // forged header identity (#770 round 4, opus review P1-A: such a PATCH
+      // could otherwise write the anchor into .env and bootstrap owner
+      // privileges on the next restart).
+      const ownerResponse = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'attacker' },
+        payload: { updates: [{ name: 'DEFAULT_OWNER_USER_ID', value: '/tmp/untrusted' }] },
+      });
+      assert.equal(ownerResponse.statusCode, 400, 'trust anchor writes must be rejected from Hub');
+      assert.match(ownerResponse.payload, /not editable/);
+
       const nextEnv = readFileSync(envFilePath, 'utf8');
       assert.match(nextEnv, /PROJECT_ALLOWED_ROOTS=\/tmp\/untrusted/);
-      assert.match(nextEnv, /DEFAULT_OWNER_USER_ID=\/tmp\/untrusted/);
-      // DEFAULT_OWNER_USER_ID is restartRequired: the live process must NOT pick
-      // up the new anchor — a session cannot make itself owner at runtime.
-      assert.equal(process.env.DEFAULT_OWNER_USER_ID, undefined, 'trust anchor must not be hot-updated');
+      assert.doesNotMatch(nextEnv, /DEFAULT_OWNER_USER_ID/, 'rejected write must not land in .env');
       // PROJECT_* policy vars have no restartRequired: they hot-update immediately.
       assert.equal(process.env.PROJECT_ALLOWED_ROOTS, '/tmp/untrusted');
     } finally {
@@ -1211,18 +1228,21 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
     }
   });
 
-  it('security SYSTEM_VARS are explicitly runtimeEditable: true (#770 round 3)', () => {
+  it('security SYSTEM_VARS are explicitly runtimeEditable: true, except the trust anchor (#770 round 4)', () => {
     for (const name of [
       'PROJECT_ALLOWED_ROOTS',
       'PROJECT_ALLOWED_ROOTS_APPEND',
       'PROJECT_DENIED_ROOTS',
-      'DEFAULT_OWNER_USER_ID',
     ]) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
       assert.equal(def.runtimeEditable, true, `${name} must be editable from the System page`);
       assert.equal(def.settingsGroup, 'security');
     }
+    const owner = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
+    assert.ok(owner, 'trust anchor should be in registry');
+    assert.equal(owner.runtimeEditable, false, 'trust anchor must not be editable from the System page');
+    assert.equal(owner.settingsGroup, 'security');
   });
 
   it('buildSystemEnvSummary returns only SYSTEM_VARS entries', () => {
@@ -1341,23 +1361,25 @@ describe('#770: DEFAULT_OWNER_USER_ID trust-anchor projection', () => {
     assert.ok(SYSTEM_VARS.has('DEFAULT_OWNER_USER_ID'));
   });
 
-  it('DEFAULT_OWNER_USER_ID projection is editable with restart-required trust-anchor semantics', () => {
+  it('DEFAULT_OWNER_USER_ID projection is Hub-read-only with restart-required trust-anchor semantics', () => {
     const def = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(def, 'DEFAULT_OWNER_USER_ID should be in registry');
-    // #770 round 3: the write path is open so the System page renders a real
-    // control. The trust-anchor protection is carried by restartRequired — the
-    // PATCH handler persists to .env but never hot-updates process.env, so a
-    // session cannot make itself owner of the RUNNING process (privilege
-    // bootstrap would require a restart, which is a local operator action).
-    assert.equal(def.runtimeEditable, true);
+    // #770 round 4 (opus review P1-A): the write path is CLOSED. The variable is
+    // not sensitive, so the PATCH auth block never runs for it — leaving it
+    // runtimeEditable would allow an unauthenticated PATCH to write the anchor
+    // into .env and bootstrap owner privileges on the next restart. The manual
+    // .env edit + restart (via the 打开 .env escape hatch) is the only write path.
+    assert.equal(def.runtimeEditable, false);
+    assert.equal(isEditableEnvVar(def), false, 'PATCH must reject the trust anchor');
     assert.equal(def.restartRequired, true);
-    assert.equal(isRestartRequiredEnvVar(def.name), true, 'PATCH must fence the trust anchor from hot updates');
+    assert.equal(isRestartRequiredEnvVar(def.name), true, 'restart fencing still applies to manual edits');
     assert.equal(def.settingsGroup, 'security');
     assert.ok(def.label, 'needs a human-friendly label for the System page');
     assert.ok(
       def.description.includes('单用户'),
       'description must explain the unset ⇒ single-user-mode semantics so the value is interpretable',
     );
+    assert.ok(def.description.includes('.env'), 'description must point at the manual .env exit');
   });
 });
 

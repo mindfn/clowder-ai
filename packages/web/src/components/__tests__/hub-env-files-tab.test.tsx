@@ -434,11 +434,15 @@ describe('HubEnvFilesTab', () => {
     });
     await flushEffects();
 
-    const input = container.querySelector('input[aria-label="DEMO_DATA_DIR"]') as HTMLInputElement;
-    expect(input).toBeTruthy();
-    expect(input.readOnly).toBe(true);
-    expect(input.value).toBe('/tmp/data');
-    const pickButtons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent === '选择…');
+    // Round 4 (P1-B): the value is echoed as plain text with a 「修改」 button,
+    // not a readonly input.
+    expect(container.querySelector('input[aria-label="DEMO_DATA_DIR"]')).toBeNull();
+    const pathText = Array.from(container.querySelectorAll('span')).find(
+      (el) => el.getAttribute('aria-label') === 'DEMO_DATA_DIR',
+    );
+    expect(pathText).toBeTruthy();
+    expect(pathText?.textContent).toBe('/tmp/data');
+    const pickButtons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent === '修改');
     expect(pickButtons).toHaveLength(1);
   });
 });

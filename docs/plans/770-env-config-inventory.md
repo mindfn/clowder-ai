@@ -43,7 +43,7 @@ created: 2026-08-12
 | server | PROJECT_DENIED_ROOTS | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | FRONTEND_URL | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | FRONTEND_PORT | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | DEFAULT_OWNER_USER_ID | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | owner/trust-anchor，security group，只读，restartRequired；未设置 ⇒ 单用户本地模式（#1340 投影结论） |
+| server | DEFAULT_OWNER_USER_ID | system | yes | no | read-only (Hub) | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System（纯文本展示） | owner/trust-anchor，security group，Hub 只读 + restartRequired（#770 round 4 / opus P1-A：非 sensitive 导致 PATCH 鉴权块跳过，可写会权限自举）；仅手工 .env + 重启，未设置 ⇒ 单用户本地模式 |
 | server | CAT_CAFE_USER_ID | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_F255_AWAKENED_LEASE_MS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_HOME | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
@@ -137,7 +137,7 @@ created: 2026-08-12
 | cli | MODE_SWITCH_REQUIRES_APPROVAL | none | yes | no | no UI write | text | yes | none | 无 | 不进 UI | [DEPRECATED] Mode consumer 在 registry backfill (b58106d0d4) 之前已由 F101 移除 (2dfece9873)；当前 tree 无 live consumer。registry 条目保留，永不进入 curated projection |
 | cli | CAT_CAFE_TMUX_AGENT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
 | cli | CAT_CAFE_TMUX_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
-| cli | CAT_CAFE_DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| cli | CAT_CAFE_DATA_DIR | system | yes | yes | editable | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | label「平台数据目录（~/.cat-cafe）」：平台级全局目录（accounts/credentials），与 DATA_DIR（repo 数据根）区分（#770 round 4 去重） |
 | cli | CAT_CAFE_CALLBACK_TOKEN | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 每 invocation 注入的 callback auth secret，内部运行时身份凭证，不进任何 UI |
 | cli | CAT_CAFE_CALLBACK_OUTBOX_ENABLED | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | callback outbox 内部调优 |
 | cli | CAT_CAFE_CALLBACK_OUTBOX_DIR | none | yes | no | no UI write | dirpicker | no | none | 无 | 不进 UI | callback outbox 内部调优 |

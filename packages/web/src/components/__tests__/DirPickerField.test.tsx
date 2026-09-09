@@ -25,7 +25,7 @@ async function flushEffects() {
 }
 
 function pickButton(container: HTMLElement): HTMLButtonElement {
-  const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '选择…');
+  const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '修改');
   expect(button).toBeTruthy();
   return button as HTMLButtonElement;
 }
@@ -58,15 +58,29 @@ describe('DirPickerField', () => {
     vi.clearAllMocks();
   });
 
-  it('hides the picker button when disabled', async () => {
+  it('renders the value as plain text (not a readonly input) and hides the picker button when disabled', async () => {
     await act(async () => {
       root.render(React.createElement(DirPickerField, { value: '/data', disabled: true }));
     });
     await flushEffects();
 
-    const input = container.querySelector('input') as HTMLInputElement;
-    expect(input.value).toBe('/data');
+    expect(container.querySelector('input')).toBeNull();
+    const text = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === '/data');
+    expect(text).toBeTruthy();
+    expect(text?.getAttribute('title')).toBe('/data');
     expect(Array.from(container.querySelectorAll('button'))).toHaveLength(0);
+  });
+
+  it('shows the placeholder in muted text when no value is set', async () => {
+    await act(async () => {
+      root.render(React.createElement(DirPickerField, { value: '', placeholder: '~/.cat-cafe' }));
+    });
+    await flushEffects();
+
+    expect(container.querySelector('input')).toBeNull();
+    const text = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === '~/.cat-cafe');
+    expect(text).toBeTruthy();
+    expect(text?.className).toContain('text-cafe-muted');
   });
 
   it('uses the electron bridge in desktop mode and returns the picked path', async () => {
