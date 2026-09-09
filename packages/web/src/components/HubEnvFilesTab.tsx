@@ -181,21 +181,23 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
     <div className="space-y-4">
       <PageIntro />
       <StorageModeStatus mode={storageMode} />
-      <EnvVarsSection
-        categories={
-          excludeCategories
-            ? Object.fromEntries(Object.entries(data.categories).filter(([k]) => !excludeCategories.includes(k)))
-            : data.categories
-        }
-        variables={
-          excludeCategories ? dumpVariables.filter((v) => !excludeCategories.includes(v.category)) : dumpVariables
-        }
-        drafts={drafts}
-        isDirty={isDirty}
-        saveState={saveState}
-        onDraftChange={handleDraftChange}
-        onSave={handleSave}
-      />
+      {dumpVariables.length > 0 && (
+        <EnvVarsSection
+          categories={
+            excludeCategories
+              ? Object.fromEntries(Object.entries(data.categories).filter(([k]) => !excludeCategories.includes(k)))
+              : data.categories
+          }
+          variables={
+            excludeCategories ? dumpVariables.filter((v) => !excludeCategories.includes(v.category)) : dumpVariables
+          }
+          drafts={drafts}
+          isDirty={isDirty}
+          saveState={saveState}
+          onDraftChange={handleDraftChange}
+          onSave={handleSave}
+        />
+      )}
       <ConfigFilesSection projectRoot={data.paths.projectRoot} />
       <DataDirsSection dataDirs={data.paths.dataDirs} projectRoot={data.paths.projectRoot} />
     </div>

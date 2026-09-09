@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { describe, test } = require('node:test');
 
-function loadBridge({ readyResult = null } = {}) {
+function loadBridge({ readyResult = null, pickResult = '/Users/test/projects' } = {}) {
   const exposed = {};
   const sent = [];
   const invoked = [];
@@ -21,6 +21,7 @@ function loadBridge({ readyResult = null } = {}) {
     }
     if (channel === 'desktop-update:settings:get') return { autoCheck: true };
     if (channel === 'desktop-update:settings:set-auto-check') return { autoCheck: payload };
+    if (channel === 'desktop:pick-directory') return pickResult;
     throw new Error(`Unexpected invoke channel: ${channel}`);
   };
   const contextBridge = {
@@ -101,6 +102,16 @@ describe('desktop preload update bridge', () => {
     assert.throws(() => bridge.sendUpdatePromptAction('open-url', 'https://evil.example'), /invalid/i);
     assert.equal('openExternal' in bridge, false);
     assert.equal('openUrl' in bridge, false);
+  });
+
+  test('exposes a narrow directory-picker invoke that round-trips the main-process result', async () => {
+    const { bridge, invoked } = loadBridge();
+
+    assert.equal(await bridge.pickDirectory(), '/Users/test/projects');
+    assert.deepEqual(invoked, [['desktop:pick-directory', undefined]]);
+
+    const cancelled = loadBridge({ pickResult: null });
+    assert.equal(await cancelled.bridge.pickDirectory(), null);
   });
 
   test('exposes only typed automatic-update preference calls', async () => {

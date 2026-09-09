@@ -49,6 +49,7 @@ describe('DesktopUpdatePrompt', () => {
       updatePromptReady: ready,
       sendUpdatePromptAction: sendAction,
       getUpdateSettings: vi.fn(async () => ({ autoCheck: true })),
+      pickDirectory: vi.fn(async () => null),
       setUpdateAutoCheck: vi.fn(async (enabled) => ({ autoCheck: enabled })),
     };
   });

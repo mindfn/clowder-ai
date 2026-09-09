@@ -81,6 +81,17 @@ const MOCK_ENV_SUMMARY = {
       runtimeEditable: true,
       currentValue: 'http://localhost:5000',
     },
+    // A dirpicker-control var: renders the directory picker instead of a plain text field.
+    {
+      name: 'DEMO_DATA_DIR',
+      defaultValue: '/tmp/data',
+      description: '测试用数据目录',
+      category: 'storage',
+      sensitive: false,
+      runtimeEditable: true,
+      control: 'dirpicker',
+      currentValue: '/tmp/data',
+    },
   ],
   paths: {
     projectRoot: '/tmp/project',
@@ -377,5 +388,57 @@ describe('HubEnvFilesTab', () => {
 
     resolvePatch(jsonResponse({ ok: true }));
     await flushEffects();
+  });
+
+  it('does not render the empty EnvVarsSection shell when the dump has no variables', async () => {
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env-summary' && !init?.method) {
+        return Promise.resolve(jsonResponse({ categories: {}, variables: [], paths: MOCK_ENV_SUMMARY.paths }));
+      }
+      if (path === '/api/config/env-summary?surface=system' && !init?.method) {
+        return Promise.resolve(jsonResponse({ groups: {}, variables: [] }));
+      }
+      if (path === '/api/system/status' && !init?.method) {
+        return Promise.resolve(jsonResponse(MOCK_SYSTEM_STATUS_REDIS));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(React.createElement(HubEnvFilesTab));
+    });
+    await flushEffects();
+
+    const sectionTitles = Array.from(container.querySelectorAll('h3')).map((node) => node.textContent?.trim());
+    expect(sectionTitles).not.toContain('环境变量');
+    expect(container.textContent).not.toContain('URL 型连接串当前值已脱敏');
+    expect(container.textContent).not.toContain('保存到 .env');
+    // Other sections remain.
+    expect(sectionTitles).toContain('配置文件');
+    expect(sectionTitles).toContain('数据目录');
+  });
+
+  it('renders the 打开 .env escape hatch next to the save button', async () => {
+    await act(async () => {
+      root.render(React.createElement(HubEnvFilesTab));
+    });
+    await flushEffects();
+
+    const link = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '打开 .env ↗');
+    expect(link).toBeTruthy();
+  });
+
+  it('renders a directory picker for editable dirpicker-control vars', async () => {
+    await act(async () => {
+      root.render(React.createElement(HubEnvFilesTab));
+    });
+    await flushEffects();
+
+    const input = container.querySelector('input[aria-label="DEMO_DATA_DIR"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.readOnly).toBe(true);
+    expect(input.value).toBe('/tmp/data');
+    const pickButtons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent === '选择…');
+    expect(pickButtons).toHaveLength(1);
   });
 });

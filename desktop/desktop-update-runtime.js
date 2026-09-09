@@ -2,6 +2,7 @@
 
 const UpdateManager = require('./update-manager');
 const { UpdatePromptController } = require('./update-prompt-controller');
+const { DirectoryPickerController } = require('./directory-picker-controller');
 const { safeErrorMessage } = require('./update-network-diagnostics');
 
 function createDesktopUpdateRuntime({
@@ -24,6 +25,7 @@ function createDesktopUpdateRuntime({
   startServices,
 }) {
   let updater;
+  const directoryPicker = new DirectoryPickerController({ ipcMain, dialog });
   const updatePrompt = new UpdatePromptController({
     ipcMain,
     getMainWindow,
@@ -86,7 +88,7 @@ function createDesktopUpdateRuntime({
     arch,
   });
 
-  return { updater, updatePrompt };
+  return { updater, updatePrompt, directoryPicker };
 }
 
 module.exports = { createDesktopUpdateRuntime };

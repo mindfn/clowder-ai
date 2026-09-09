@@ -31,6 +31,7 @@ describe('DesktopUpdateSettingsPanel', () => {
       sendUpdatePromptAction: () => {},
       getUpdateSettings,
       setUpdateAutoCheck,
+      pickDirectory: async () => null,
     };
   });
 

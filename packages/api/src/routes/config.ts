@@ -5,9 +5,9 @@
  * GET   /api/config/env-summary  — 返回用户可配的 env 变量及当前值 (F12)
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { catRegistry } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -307,6 +307,35 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
         LOG_DIR: process.env.LOG_DIR ?? null,
       },
     };
+  });
+
+  // #770: directory listing for the browser fallback of the dirpicker control.
+  // Loopback-only (same guard family as sensitive env writes) — the listing
+  // exposes absolute host paths, so proxied/remote clients must not read it.
+  app.get('/api/config/dir-list', async (request, reply) => {
+    if (!isDirectLoopbackRequest(request)) {
+      reply.status(403);
+      return { error: 'Directory listing requires a direct loopback request' };
+    }
+    const { path: rawPath } = request.query as { path?: string };
+    if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {
+      reply.status(400);
+      return { error: 'Query param "path" is required' };
+    }
+    const targetPath = resolve(rawPath);
+    try {
+      const dirents = readdirSync(targetPath, { withFileTypes: true });
+      const entries = dirents
+        .filter((dirent) => dirent.isDirectory())
+        .map((dirent) => ({ name: dirent.name, path: resolve(targetPath, dirent.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 500);
+      return { path: targetPath, parent: dirname(targetPath), entries };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      reply.status(code === 'ENOENT' ? 404 : 400);
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   app.patch('/api/config/env', async (request, reply) => {

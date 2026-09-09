@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     return ipcRenderer.invoke('desktop-update:settings:set-auto-check', enabled);
   },
   updatePromptReady: () => ipcRenderer.invoke('desktop-update:ready'),
+  pickDirectory: () => ipcRenderer.invoke('desktop:pick-directory'),
   sendUpdatePromptAction: (action, version) => {
     if (!UPDATE_ACTIONS.has(action) || typeof version !== 'string') {
       throw new TypeError('Invalid desktop update action');

@@ -1,8 +1,9 @@
 'use client';
 
 import { type ReactNode, useMemo, useState } from 'react';
+import { DirPickerField } from './DirPickerField';
 import type { EnvVar } from './EnvSubComponents';
-import { SettingsSection } from './primitives';
+import { SettingsCodeField, SettingsSection } from './primitives';
 
 const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security'];
 
@@ -46,45 +47,56 @@ function ReadOnlyToggle({ on, label }: { on: boolean; label: string }) {
   );
 }
 
-function HelpTip({ text }: { text: string }) {
+function resolveControlType(variable: EnvVar): 'text' | 'toggle' | 'dropdown' | 'dirpicker' {
   return (
-    <span className="group relative inline-flex items-center">
-      <span
-        className="flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-cafe text-[0.5625rem] leading-none text-cafe-muted"
-        title={text}
-      >
-        ?
-      </span>
-      <span
-        className="invisible absolute left-1/2 top-full z-50 mt-1.5 w-max max-w-xs -translate-x-1/2 rounded-md border border-cafe bg-cafe-surface-elevated px-2.5 py-1.5 text-xs text-cafe-secondary opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100"
-        aria-hidden
-      >
-        {text}
-      </span>
-    </span>
+    variable.control ?? (variable.booleanSemantics ? 'toggle' : variable.allowedValues?.length ? 'dropdown' : 'text')
   );
+}
+
+/** 展示性控件：本视图全部只读、无保存通道，控件一律 disabled/readOnly，仅用于
+ *  以控件形态传达当前值（对齐 Codex 设置页行样式）。 */
+function SettingControl({ variable }: { variable: EnvVar }) {
+  const control = resolveControlType(variable);
+  const value = variable.currentValue ?? variable.defaultValue;
+  const label = variable.label ?? variable.name;
+
+  switch (control) {
+    case 'toggle':
+      return <ReadOnlyToggle on={isEffectivelyOn(variable)} label={label} />;
+    case 'dropdown':
+      return (
+        <select
+          disabled
+          aria-label={label}
+          value={value}
+          className="h-9 rounded-lg border border-transparent bg-[var(--console-field-bg)] px-3 text-compact text-cafe-muted"
+        >
+          {(variable.allowedValues ?? []).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      );
+    case 'dirpicker':
+      return <DirPickerField value={value} disabled aria-label={label} />;
+    default:
+      return <SettingsCodeField readOnly aria-label={label} value={value} />;
+  }
 }
 
 function SettingItem({ variable }: { variable: EnvVar }) {
   const label = variable.label ?? variable.name;
-  const displayValue = variable.currentValue ?? variable.defaultValue;
+  const control = resolveControlType(variable);
 
   return (
     <div className="flex items-start justify-between gap-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-cafe">{label}</span>
-          {variable.description && <HelpTip text={variable.description} />}
-        </div>
+        <div className="text-sm font-medium text-cafe">{label}</div>
+        {variable.description && <div className="mt-0.5 text-xs text-cafe-muted leading-5">{variable.description}</div>}
       </div>
-      <div className={`text-right ${variable.booleanSemantics ? 'shrink-0' : 'min-w-0 max-w-[50%] overflow-hidden'}`}>
-        {variable.booleanSemantics ? (
-          <ReadOnlyToggle on={isEffectivelyOn(variable)} label={label} />
-        ) : (
-          <span className="block truncate font-mono text-sm text-cafe-secondary" title={displayValue}>
-            {displayValue}
-          </span>
-        )}
+      <div className={control === 'toggle' ? 'shrink-0' : 'min-w-0 max-w-[50%] flex-1'}>
+        <SettingControl variable={variable} />
       </div>
     </div>
   );

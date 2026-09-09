@@ -2,6 +2,7 @@
 
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
+import { DirPickerField } from './DirPickerField';
 import {
   SettingsBadge,
   SettingsBreadcrumb,
@@ -30,6 +31,8 @@ export interface EnvVar {
   targetWritePolicy?: 'editable' | 'read-only' | 'read-only-opt-in' | 'module-managed' | 'no-ui-write';
   deprecated?: string;
   allowedValues?: string[];
+  /** #770: explicit UI control type from the env registry; renderer infers it when absent. */
+  control?: 'text' | 'toggle' | 'dropdown' | 'dirpicker';
   currentValue: string | null;
   label?: string;
   settingsGroup?: string;
@@ -138,7 +141,7 @@ export function PageIntro() {
   );
 }
 
-function HubFileLink({ relPath, label }: { relPath: string; label: string }) {
+export function HubFileLink({ relPath, label }: { relPath: string; label: string }) {
   const setOpenFile = useChatStore((s) => s.setWorkspaceOpenFile);
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -259,6 +262,45 @@ function EnvCategoryGroup({ label, count, children }: { label: string; count: nu
   );
 }
 
+function EnvVarValueControl({
+  variable,
+  draft,
+  onDraftChange,
+}: {
+  variable: EnvVar;
+  draft: string;
+  onDraftChange: (name: string, value: string) => void;
+}) {
+  if (variable.control === 'dirpicker') {
+    return (
+      <DirPickerField
+        value={draft}
+        onChange={(path) => onDraftChange(variable.name, path)}
+        placeholder={variable.defaultValue}
+        aria-label={variable.name}
+      />
+    );
+  }
+  return (
+    <SettingsCodeField
+      aria-label={variable.name}
+      type={isSensitiveEditable(variable) ? 'password' : 'text'}
+      autoComplete={isSensitiveEditable(variable) ? 'off' : undefined}
+      value={draft}
+      onChange={(e) => onDraftChange(variable.name, e.target.value)}
+      placeholder={
+        isSensitiveEditable(variable)
+          ? variable.currentValue
+            ? '已设置（留空不修改）'
+            : '输入密钥'
+          : isMaskedUrlVariable(variable)
+            ? '保持当前值（已脱敏）'
+            : variable.defaultValue
+      }
+    />
+  );
+}
+
 export function EnvVarsSection({
   categories,
   variables,
@@ -325,22 +367,7 @@ export function EnvVarsSection({
                 </div>
                 {isEditableVariable(v) ? (
                   <div className="space-y-1">
-                    <SettingsCodeField
-                      aria-label={v.name}
-                      type={isSensitiveEditable(v) ? 'password' : 'text'}
-                      autoComplete={isSensitiveEditable(v) ? 'off' : undefined}
-                      value={drafts[v.name] ?? ''}
-                      onChange={(e) => onDraftChange(v.name, e.target.value)}
-                      placeholder={
-                        isSensitiveEditable(v)
-                          ? v.currentValue
-                            ? '已设置（留空不修改）'
-                            : '输入密钥'
-                          : isMaskedUrlVariable(v)
-                            ? '保持当前值（已脱敏）'
-                            : v.defaultValue
-                      }
-                    />
+                    <EnvVarValueControl variable={v} draft={drafts[v.name] ?? ''} onDraftChange={onDraftChange} />
                   </div>
                 ) : (
                   <SettingsReadOnlyField>只读变量（认证凭证 / 仅启动期生效）</SettingsReadOnlyField>
@@ -357,6 +384,7 @@ export function EnvVarsSection({
         <SettingsPrimaryButton onClick={onSave} disabled={!isDirty || saveState.saving}>
           {saveState.saving ? '保存中...' : '保存到 .env'}
         </SettingsPrimaryButton>
+        <HubFileLink relPath=".env" label="打开 .env ↗" />
         {saveState.error && <SettingsStatusStrip tone="error">{saveState.error}</SettingsStatusStrip>}
         {saveState.success && <SettingsStatusStrip tone="success">{saveState.success}</SettingsStatusStrip>}
       </div>
