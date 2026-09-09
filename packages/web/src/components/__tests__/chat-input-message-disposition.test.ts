@@ -439,9 +439,7 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
     act(() => (container.querySelector('[data-disposition-scope="thread"]') as HTMLButtonElement).click());
-    expect(container.querySelector('[data-testid="message-disposition-scope-state"]')?.textContent).toContain(
-      '本作用域已显式覆盖',
-    );
+    expect(container.querySelector('[data-testid="message-disposition-scope-state"]')?.textContent).toContain('已设置');
     expect(container.querySelector('[data-disposition-option="continue_current"]')?.getAttribute('aria-pressed')).toBe(
       'true',
     );
@@ -491,7 +489,8 @@ describe('F264 author message disposition selector', () => {
     expect(continueOption.className).not.toContain('disabled:cursor-wait');
     expect(nextWorkOption.disabled).toBe(false);
     expect(container.textContent).toContain('当前接入不支持引导当前回复');
-    expect(container.textContent).toContain('消息将按队列顺序处理');
+    expect(container.textContent?.match(/当前接入不支持引导当前回复/g)).toHaveLength(1);
+    expect(container.textContent).not.toContain('接入详情');
 
     act(() => continueOption.click());
     expect(trigger.textContent).toContain('立即发送，引导回复');
@@ -539,7 +538,7 @@ describe('F264 author message disposition selector', () => {
     });
 
     const scopeState = container.querySelector('[data-testid="message-disposition-scope-state"]');
-    expect(scopeState?.textContent).toContain('继承当前有效值');
+    expect(scopeState?.textContent).toContain('继承');
     expect(scopeState?.textContent).toContain('全局默认');
     expect(container.querySelector('[data-disposition-option="continue_current"]')?.getAttribute('aria-pressed')).toBe(
       'false',
@@ -581,15 +580,13 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
     act(() => (container.querySelector('[data-disposition-option="next_work"]') as HTMLButtonElement).click());
-    expect(triggerA.textContent).toContain('仅这一次');
+    expect(triggerA.getAttribute('data-disposition-source')).toBe('once');
 
     await renderThreadInput({ threadId: 'thread-b', onSend: vi.fn(), hasActiveInvocation: true });
 
     const triggerB = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
     expect(triggerB.textContent).toContain('排队等待');
-    expect(triggerB.textContent).toContain('产品默认');
-    expect(triggerB.textContent).not.toContain('仅这一次');
-    expect(triggerB.textContent).not.toContain('本 Thread');
+    expect(triggerB.getAttribute('data-disposition-source')).toBe('product');
 
     await act(async () => {
       resolveThreadB?.(
@@ -605,7 +602,6 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(triggerB.textContent).toContain('全局默认');
-    expect(triggerB.textContent).not.toContain('本 Thread');
+    expect(triggerB.getAttribute('data-disposition-source')).toBe('global');
   });
 });

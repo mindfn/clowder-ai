@@ -50,8 +50,7 @@ function guideUnavailableReason(target: SteerTargetOption): string | null {
 }
 
 function defaultStrategy(target: SteerTargetOption): SteerDeliveryStrategy | undefined {
-  if (target.disposition !== 'continue_current') return undefined;
-  return canGuide(target) ? 'guide_reply' : 'interrupt_reply';
+  return target.disposition === 'continue_current' && canGuide(target) ? 'guide_reply' : 'interrupt_reply';
 }
 
 function resolveDefaultTargetIds(
@@ -102,8 +101,10 @@ export function SteerQueuedEntryModal({
       }),
     ),
   );
+  const soleSelectedTargetId = selectedTargetIds.size === 1 ? selectedTargetIds.values().next().value : undefined;
+  const effectiveFocusedTargetId = soleSelectedTargetId ?? focusedTargetId;
   const focusedTarget = targets.find(
-    (target) => target.id === focusedTargetId && !target.delivered && !target.unavailable,
+    (target) => target.id === effectiveFocusedTargetId && !target.delivered && !target.unavailable,
   );
   const focusedStrategy = focusedTarget ? strategyByTargetId[focusedTarget.id] : undefined;
   const focusedGuideUnavailableReason = focusedTarget ? guideUnavailableReason(focusedTarget) : null;
@@ -152,7 +153,7 @@ export function SteerQueuedEntryModal({
   const toggleTarget = (target: SteerTargetOption) => {
     if (target.delivered || target.unavailable) return;
     userInteractedRef.current = true;
-    if (selectedTargetIds.has(target.id) && focusedTargetId !== target.id) {
+    if (selectedTargetIds.has(target.id) && effectiveFocusedTargetId !== target.id) {
       setFocusedTargetId(target.id);
       return;
     }
@@ -206,7 +207,7 @@ export function SteerQueuedEntryModal({
           <div className="flex flex-wrap gap-2">
             {targets.map((target) => {
               const selected = selectedTargetIds.has(target.id);
-              const focused = target.id === focusedTargetId;
+              const focused = target.id === effectiveFocusedTargetId;
               return (
                 <button
                   key={target.id}

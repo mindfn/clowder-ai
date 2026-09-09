@@ -92,6 +92,8 @@ describe('live member carriers', () => {
     assert.match(sdkOptions.systemPrompt, /compiled L0/);
     assert.match(sdkOptions.systemPrompt, /route identity/);
     assert.equal(sdkOptions.permissionMode, 'plan');
+    assert.equal(sdkOptions.extraArgs, undefined, 'the SDK carrier must not synthesize unsupported Claude CLI flags');
+    assert.equal(sdkOptions.env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
 
     const appended = await registration.dispatcher.dispatch(
       { text: 'append body' },
@@ -118,6 +120,27 @@ describe('live member carriers', () => {
     events.close();
     assert.equal((await output.next()).value.type, 'done');
     assert.equal(registration.released, true);
+  });
+
+  it('Claude SDK surfaces sanitized stderr instead of replacing it with a generic process-exit message', async () => {
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ options }) => ({
+        interrupt: async () => {},
+        async *[Symbol.asyncIterator]() {
+          options.stderr?.("error: unknown option '--effort'\n");
+          throw new Error('Claude Code process exited with code 1');
+        },
+      }),
+    });
+
+    const messages = [];
+    for await (const message of service.invoke('initial body')) messages.push(message);
+
+    const failure = messages.find((message) => message.type === 'error');
+    assert.equal(failure.error, "error: unknown option '--effort'");
   });
 
   it('Claude SDK rejects a steer whose provider interrupt never acknowledges', async () => {
@@ -227,9 +250,37 @@ describe('live member carriers', () => {
       properties: {
         sessionID: 'oc-session-1',
         messageID: latestMessageId,
-        partID: 'part-1',
+        partID: 'part-user',
         field: 'text',
-        delta: 'done',
+        delta: 'Dispatch Mission Context must not enter the response bubble',
+      },
+    });
+    events.push({
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          id: 'part-user-complete',
+          sessionID: 'oc-session-1',
+          messageID: latestMessageId,
+          type: 'text',
+          text: 'the complete user prompt must not enter the response bubble either',
+        },
+      },
+    });
+    events.push({
+      type: 'message.updated',
+      properties: { info: { id: 'assistant-1', sessionID: 'oc-session-1', role: 'assistant' } },
+    });
+    events.push({
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          id: 'part-assistant',
+          sessionID: 'oc-session-1',
+          messageID: 'assistant-1',
+          type: 'text',
+          text: 'done',
+        },
       },
     });
     events.push({ type: 'session.idle', properties: { sessionID: 'oc-session-1' } });

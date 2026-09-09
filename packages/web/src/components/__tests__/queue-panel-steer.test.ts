@@ -203,11 +203,8 @@ describe('QueuePanel steer (F047)', () => {
 
     const confirm = container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement | null;
     expect(confirm).not.toBeNull();
-    expect(confirm?.disabled).toBe(true);
-
-    act(() => {
-      container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click();
-    });
+    expect(confirm?.disabled).toBe(false);
+    expect(container.querySelector('[data-testid="steer-interrupt-reply"]')?.getAttribute('aria-pressed')).toBe('true');
     await act(async () => {
       confirm?.click();
     });

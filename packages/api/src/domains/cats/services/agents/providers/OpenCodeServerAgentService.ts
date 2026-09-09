@@ -192,6 +192,7 @@ export class OpenCodeServerAgentService implements L0InjectableAgentService {
     let latestMessageId = `msg_${randomUUID()}`;
     let latestMessageSeen = false;
     const textByPart = new Map<string, string>();
+    const messageRoles = new Map<string, string>();
     const emittedTools = new Set<string>();
     const completedUsageMessages = new Set<string>();
 
@@ -281,8 +282,12 @@ export class OpenCodeServerAgentService implements L0InjectableAgentService {
                 ? info.id
                 : undefined;
         if (eventMessageId === latestMessageId) latestMessageSeen = true;
+        if (type === 'message.updated' && typeof info?.id === 'string' && typeof info.role === 'string') {
+          messageRoles.set(info.id, info.role);
+        }
 
         if (type === 'message.part.delta' && properties?.field === 'text' && typeof properties.delta === 'string') {
+          if (!eventMessageId || messageRoles.get(eventMessageId) !== 'assistant') continue;
           const partId = typeof properties.partID === 'string' ? properties.partID : 'unknown';
           textByPart.set(partId, `${textByPart.get(partId) ?? ''}${properties.delta}`);
           yield {
@@ -295,6 +300,7 @@ export class OpenCodeServerAgentService implements L0InjectableAgentService {
           continue;
         }
         if (type === 'message.part.updated' && part?.type === 'text' && typeof part.text === 'string') {
+          if (!eventMessageId || messageRoles.get(eventMessageId) !== 'assistant') continue;
           const partId = typeof part.id === 'string' ? part.id : 'unknown';
           const previous = textByPart.get(partId) ?? '';
           const delta = part.text.startsWith(previous) ? part.text.slice(previous.length) : part.text;
@@ -305,6 +311,7 @@ export class OpenCodeServerAgentService implements L0InjectableAgentService {
           continue;
         }
         if (type === 'message.part.updated' && part?.type === 'tool' && typeof part.id === 'string') {
+          if (!eventMessageId || messageRoles.get(eventMessageId) !== 'assistant') continue;
           if (emittedTools.has(part.id)) continue;
           const state = record(part.state);
           if (state?.status !== 'running' && state?.status !== 'completed' && state?.status !== 'error') continue;

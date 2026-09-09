@@ -187,6 +187,15 @@ describe('QueueProcessor over the source-row pending Queue', () => {
       JSON.stringify(errorLog(harness)),
     );
     assert.equal((await harness.messageStore.getById(admitted.message.id)).deliveryStatus, 'delivered');
+    const processingProjection = harness.socketManager.emitToUser.mock.calls.find(
+      (call) => call.arguments[1] === 'queue_updated' && call.arguments[2]?.action === 'processing',
+    );
+    assert.ok(processingProjection, 'provider admission must publish a processing projection');
+    assert.deepEqual(
+      processingProjection.arguments[2].queue,
+      [],
+      'History admission and Queue retirement must reach the browser in the same projection',
+    );
   });
 
   it('records child awakening and prompt exposure only on the process-local attempt', async () => {

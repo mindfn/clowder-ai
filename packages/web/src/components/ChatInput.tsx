@@ -1021,11 +1021,7 @@ export function ChatInput({
   return (
     <div className="relative bg-[var(--console-shell-bg)] safe-area-bottom">
       {dispositionIsMeaningful && (
-        <MessageDispositionSelector
-          controller={messageDisposition}
-          carrierSupport={dispositionCarrierSupport}
-          carrierCapabilities={dispositionCarrierCapabilities}
-        />
+        <MessageDispositionSelector controller={messageDisposition} carrierSupport={dispositionCarrierSupport} />
       )}
 
       {contextPickerMode && (

@@ -4016,9 +4016,6 @@ export class QueueProcessor {
       // 5. intent_mode deferred to first CLI event (#768: avoid "replying" when CLI never starts)
       let intentModeBroadcast = false;
 
-      // 6. Emit queue_updated (processing)
-      await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), messageStore, 'processing');
-
       for (const queueEntryId of [entry.id, ...batchedEntryIds]) {
         const queueEntry =
           queue.getEntrySnapshot(threadId, userId, queueEntryId) ?? (queueEntryId === entry.id ? entry : null);
@@ -4238,6 +4235,10 @@ export class QueueProcessor {
         return current;
       });
       await this.admitQueueEntriesForProvider(admissionEntries);
+      // Publish processing only after the same durable admission moved the
+      // source into History and retired its Queue custody. Emitting before
+      // admission left browsers holding a stale queued row for the full run.
+      await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), messageStore, 'processing');
 
       const HEARTBEAT_INTERVAL_MS = 30_000;
       heartbeatInterval = setInterval(() => {

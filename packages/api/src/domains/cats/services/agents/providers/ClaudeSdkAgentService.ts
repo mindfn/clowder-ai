@@ -11,6 +11,7 @@ import {
 import { type CatId, createCatId } from '@cat-cafe/shared';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
 import type {
   AgentClientActiveRunHandle,
   AgentFreshnessCarrierCapability,
@@ -49,6 +50,13 @@ interface ClaudeSdkAgentServiceOptions {
 }
 
 const DEFAULT_ACTIVE_RUN_CONTROL_TIMEOUT_MS = 15_000;
+const MAX_SDK_STDERR_CHARS = 4_000;
+
+function toClaudeSdkEffortLevel(effort: string): string {
+  // The SDK-bundled Claude runtime currently exposes low/medium/high. Map
+  // Clowder's maximum Anthropic preset to that carrier's highest native tier.
+  return effort === 'max' ? 'high' : effort;
+}
 
 async function withActiveRunControlDeadline<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -218,6 +226,10 @@ export class ClaudeSdkAgentService implements AgentService {
       for (const key of SUBSCRIPTION_MODE_DENY_KEYS) envOverrides[key] = null;
     }
     if (readOnly) envOverrides.CAT_CAFE_READONLY = 'true';
+    // The bundled Claude Code runtime reads effort from this environment key.
+    // `extraArgs: { effort }` becomes `--effort`, which the bundled CLI does
+    // not expose and therefore makes the SDK invocation exit before init.
+    envOverrides.CLAUDE_CODE_EFFORT_LEVEL = toClaudeSdkEffortLevel(effort);
 
     const abortController = new AbortController();
     const abort = () => abortController.abort(options?.signal?.reason);
@@ -225,6 +237,7 @@ export class ClaudeSdkAgentService implements AgentService {
     if (options?.signal?.aborted) abort();
 
     const input = new AsyncInputQueue<SDKUserMessage>();
+    let stderrBuffer = '';
     let activeSessionId = options?.sessionId ?? '';
     const initialMessageId = randomUUID();
     const sdkOptions: ClaudeSdkOptions = {
@@ -247,7 +260,9 @@ export class ClaudeSdkAgentService implements AgentService {
       ...(!readOnly && mcpResolution
         ? { mcpServers: mcpResolution.servers as Record<string, McpServerConfig>, strictMcpConfig: true }
         : {}),
-      extraArgs: { effort },
+      stderr: (data) => {
+        stderrBuffer = `${stderrBuffer}${data}`.slice(-MAX_SDK_STDERR_CHARS);
+      },
     };
 
     const metadata: MessageMetadata = { provider: 'anthropic', model: effectiveModel };
@@ -322,10 +337,11 @@ export class ClaudeSdkAgentService implements AgentService {
       }
     } catch (err) {
       if (!abortController.signal.aborted) {
+        const stderr = sanitizeCliStderr(stderrBuffer).trim();
         yield {
           type: 'error',
           catId: this.catId,
-          error: err instanceof Error ? err.message : String(err),
+          error: stderr || (err instanceof Error ? err.message : String(err)),
           metadata,
           timestamp: Date.now(),
         };

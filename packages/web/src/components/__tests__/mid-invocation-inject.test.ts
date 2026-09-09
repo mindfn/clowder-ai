@@ -153,14 +153,60 @@ describe('F24: mid-invocation message injection', () => {
     expect(container.textContent).toContain('@布偶猫');
     expect(container.textContent).toContain('立即发送，中断回复');
 
-    expect((container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).disabled).toBe(true);
-    act(() => {
-      (container.querySelector('[data-testid="steer-interrupt-reply"]') as HTMLButtonElement).click();
-    });
+    expect((container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).disabled).toBe(false);
     act(() => {
       (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
     });
     expect(onSteerSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the sole selected member focused and gives an unsupported target an immediate Steer action', () => {
+    const onConfirm = vi.fn();
+    const targets = [
+      {
+        id: 'codex',
+        label: '缅因猫',
+        canGuideReply: true,
+        hasCurrentReply: true,
+        disposition: 'continue_current' as const,
+      },
+      {
+        id: 'kimi',
+        label: '狸花猫',
+        canGuideReply: false,
+        hasCurrentReply: true,
+        disposition: 'next_work' as const,
+      },
+    ];
+    act(() => {
+      root.render(
+        React.createElement(SteerQueuedEntryModal, {
+          targets,
+          onCancel: vi.fn(),
+          onConfirm,
+        }),
+      );
+    });
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-kimi"]')?.click());
+    act(() => {
+      root.render(
+        React.createElement(SteerQueuedEntryModal, {
+          targets: targets.map((target) => ({ ...target })),
+          onCancel: vi.fn(),
+          onConfirm,
+        }),
+      );
+    });
+
+    expect(container.textContent).toContain('发送给 狸花猫');
+    expect(container.querySelector('[data-testid="steer-interrupt-reply"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.disabled).toBe(false);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(onConfirm).toHaveBeenCalledWith({
+      observedPendingTargetIds: [],
+      actions: [{ targetId: 'kimi', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
+    });
   });
 
   it('changes the focused member without dropping other selections and preserves mixed strategies', () => {
