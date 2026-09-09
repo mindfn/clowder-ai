@@ -147,6 +147,33 @@ describe('F257 governance card', () => {
     expect(dialog?.querySelector('button[aria-pressed="true"]')?.textContent).toContain('Side-by-side');
   });
 
+  it('shows only the immediately previous rejection reason on the current card', async () => {
+    const repeatedRejectionItem: ApprovalHubItem = {
+      ...ITEM,
+      detail: {
+        ...ITEM.detail,
+        cardOrdinal: 4,
+        rejectReasons: ['第一轮拒绝理由', '第二轮拒绝理由', '第三轮拒绝理由'],
+      },
+    };
+    await act(async () => {
+      root.render(
+        <GenericApprovalRecommendation
+          item={repeatedRejectionItem}
+          f193TargetThreadId=""
+          sourceThreadTitle="Harness Objective"
+          targetThreadTitle={null}
+          resolveCatName={(catId) => catId}
+        />,
+      );
+    });
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('上一轮拒绝理由：第三轮拒绝理由');
+    expect(text).not.toContain('第一轮拒绝理由');
+    expect(text).not.toContain('第二轮拒绝理由');
+  });
+
   it('shows an appended paragraph as context plus additions instead of deleting the whole current segment', () => {
     const diff = fullContentDiff(
       'D8.content',
