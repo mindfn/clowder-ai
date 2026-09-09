@@ -428,3 +428,22 @@ PR-A previously carried a 42-var module projection. After sol's source audit on 
 - `MODULE_SECTION_PROJECTION` is intentionally empty in PR-A. It remains the only source of truth for which non-system vars appear in which section; ownership metadata in the registry must **not** be interpreted as an automatic projection.
 
 **Verification:** `MODULE_SECTION_PROJECTION` contains exactly 0 vars in every non-system section; the unit test asserts this. `SYSTEM_VARS` and section keys/labels remain unchanged. Deprecated vars continue to be excluded from all section summaries.
+
+## 上游新增（rebase 同步 2026-09-09）(14)
+
+| category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| server | CAT_CAFE_DEPLOYMENT_ID | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| cli | CAT_CAFE_CLI_PROCESS_CONTEXT | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| cli | CAT_CAFE_MANAGED_RUNNER_COMMAND | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| cli | CAT_CAFE_MANAGED_JOB_LOG_PATH | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| cli | CAT_CAFE_MANAGED_JOB_DESCRIPTOR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| cli | CAT_CAFE_MANAGED_RUNNER_CWD | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_SERVICE_HOST | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_SERVICE_PORT | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_SERVICE_DATA_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_SERVICE_ALLOWED_HOST_ORIGINS | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_SERVICE_PUBLIC_URL | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_GITHUB_CLIENT_ID | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| connector | COLLECTIVE_GITHUB_CLIENT_SECRET | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |
+| frontend | NEXT_PUBLIC_COLLECTIVE_SERVICE_URL | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游新增（rebase 同步）：内部/部署级/凭证，.env 可配，不进 curated UI |

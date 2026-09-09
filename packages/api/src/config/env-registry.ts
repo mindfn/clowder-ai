@@ -1636,6 +1636,7 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- collective service ---
   {
     name: 'COLLECTIVE_SERVICE_HOST',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '127.0.0.1',
     description: '独立 Collective Service 监听地址（仅 Service 进程读取）',
     category: 'connector',
@@ -1645,6 +1646,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'COLLECTIVE_SERVICE_PORT',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '5201',
     description: '独立 Collective Service 端口；不得使用 Clowder AI runtime 3003/3004',
     category: 'connector',
@@ -1654,6 +1656,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'COLLECTIVE_SERVICE_DATA_DIR',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '~/.cat-cafe/collective-service',
     description: 'Collective Service 身份、成员、连接与事件日志的持久化目录',
     category: 'connector',
@@ -1663,6 +1666,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'COLLECTIVE_SERVICE_ALLOWED_HOST_ORIGINS',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '(空)',
     description: '允许嵌入并配对的 Clowder AI Web origin，多个用逗号分隔',
     category: 'connector',
@@ -1672,6 +1676,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'COLLECTIVE_SERVICE_PUBLIC_URL',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '(监听地址)',
     description: 'Human 登录回调与分享链接使用的外部 Collective Service URL',
     category: 'connector',
@@ -1681,6 +1686,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'COLLECTIVE_GITHUB_CLIENT_ID',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '(未设置)',
     description: 'Collective Service 的 GitHub OAuth App client ID',
     category: 'connector',
@@ -1690,6 +1696,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'COLLECTIVE_GITHUB_CLIENT_SECRET',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '(未设置)',
     description: 'Collective Service 的 GitHub OAuth App client secret',
     category: 'connector',
@@ -1710,6 +1717,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'NEXT_PUBLIC_COLLECTIVE_SERVICE_URL',
+    hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: 'http://localhost:5201',
     description: 'Clowder AI「进入 Collective」默认打开的独立 Service 地址',
     category: 'frontend',
