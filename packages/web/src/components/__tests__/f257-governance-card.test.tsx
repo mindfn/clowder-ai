@@ -3,8 +3,10 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { anchoredApprovalNavigation } from '@/test-support/approval-navigation';
+import { fullContentDiff } from '../F257GovernanceChanges';
 import { GenericApprovalRecommendation } from '../GenericApprovalRecommendation';
 import { HarnessGovernanceDecisionActions } from '../HarnessGovernanceDecisionActions';
+import { parseUnifiedDiff } from '../workspace/DiffViewer';
 
 const ITEM: ApprovalHubItem = {
   proposalId: 'HGP-1',
@@ -131,7 +133,10 @@ describe('F257 governance card', () => {
     expect(text).toContain('不可挑批');
 
     const diffButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
-    expect(diffButton?.textContent).toContain('查看左右差异');
+    expect(diffButton?.textContent).toContain('查看段内容');
+    expect(text).not.toContain('查看左右差异');
+    expect(text).not.toContain('修改段内容');
+    expect(container.querySelector('[data-testid="f257-governance-change"]')?.className).not.toContain('sm:flex-row');
     await act(async () => diffButton?.click());
     const dialog = document.body.querySelector('[data-testid="f257-governance-diff-dialog"]');
     expect(dialog).not.toBeNull();
@@ -140,6 +145,33 @@ describe('F257 governance card', () => {
     expect(dialog?.textContent).toContain('old content');
     expect(dialog?.textContent).toContain('new content');
     expect(dialog?.querySelector('button[aria-pressed="true"]')?.textContent).toContain('Side-by-side');
+  });
+
+  it('shows an appended paragraph as context plus additions instead of deleting the whole current segment', () => {
+    const diff = fullContentDiff(
+      'D8.content',
+      '<!-- D8 -->\n\n现有球权规则。\n',
+      '<!-- D8 -->\n\n现有球权规则。\n\n新增终止门。',
+    );
+    const lines = parseUnifiedDiff(diff)[0].hunks[0].lines;
+
+    expect(lines.filter((line) => line.type === 'remove')).toHaveLength(0);
+    expect(lines.filter((line) => line.type === 'context').map((line) => line.content)).toEqual([
+      '<!-- D8 -->',
+      '',
+      '现有球权规则。',
+      '',
+    ]);
+    expect(lines.filter((line) => line.type === 'add').map((line) => line.content)).toEqual(['新增终止门。']);
+  });
+
+  it('keeps unchanged lines as context when content changes in multiple places', () => {
+    const diff = fullContentDiff('D8.content', 'a\nb\nc\nd\ne', 'a\nX\nc\nY\ne');
+    const lines = parseUnifiedDiff(diff)[0].hunks[0].lines;
+
+    expect(lines.filter((line) => line.type === 'context').map((line) => line.content)).toEqual(['a', 'c', 'e']);
+    expect(lines.filter((line) => line.type === 'remove').map((line) => line.content)).toEqual(['b', 'd']);
+    expect(lines.filter((line) => line.type === 'add').map((line) => line.content)).toEqual(['X', 'Y']);
   });
 
   it('states that a first-cycle proposal has no comparison baseline', async () => {
