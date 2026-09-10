@@ -85,6 +85,7 @@ export function catalogEntry(integrity, overrides = {}) {
     packageName: '@clowder-ai/official-test-source',
     version: '0.1.0-alpha.1',
     pluginId: 'official.test-source',
+    distribution: 'registry',
     archiveUrl: 'https://registry.npmjs.org/@clowder-ai/official-test-source/-/official-test-source-0.1.0-alpha.1.tgz',
     packageDigest: integrity,
     effectiveGrants: ['events.publish'],

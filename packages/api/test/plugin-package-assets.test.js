@@ -20,7 +20,7 @@ afterEach(async () => {
 
 function metadataContractRuntime() {
   return {
-    manifestContractVersion: '0.1.0',
+    manifestContractVersions: ['0.1.0'],
     validateEffectiveGrants,
     validateManifest(value) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return validateManifest(value);

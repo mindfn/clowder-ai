@@ -135,6 +135,7 @@ function projectEntry(
     pluginId: plugin.pluginId,
     packageName: release.artifact.packageName,
     version: release.version,
+    distribution: 'registry',
     archiveUrl: release.artifact.tarballUrl,
     packageDigest: release.artifact.integrity,
     ...(policy.replacesRepositoryPluginId === undefined

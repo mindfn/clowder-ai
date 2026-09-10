@@ -1,5 +1,5 @@
 import { type SignalSchemaCatalog, validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
-import { PLUGIN_CONTRACT_VERSION, requestedCapabilitiesForManifest } from './contract-policy.js';
+import { PLUGIN_MANIFEST_CONTRACT_VERSIONS, requestedCapabilitiesForManifest } from './contract-policy.js';
 import type { PackageAdmissionContractRuntime } from './manifest-verifier.js';
 import type {
   ActivationState,
@@ -36,7 +36,7 @@ const RUNTIME_ERROR_CODES = new Set<PluginRuntimeErrorCode>([
 const MAX_PROCESS_EXIT_CODE = 0xffff_ffff;
 
 const defaultContractRuntime: PackageAdmissionContractRuntime = {
-  manifestContractVersion: PLUGIN_CONTRACT_VERSION,
+  manifestContractVersions: PLUGIN_MANIFEST_CONTRACT_VERSIONS,
   validateManifest,
   validateEffectiveGrants,
 };
@@ -178,7 +178,7 @@ function parsePackage(value: unknown, index: number, contract: PackageAdmissionC
   ) {
     corrupt(`packages[${index}] identity does not match its manifest`);
   }
-  if (record.contractVersion !== contract.manifestContractVersion) {
+  if (!contract.manifestContractVersions.includes(record.contractVersion)) {
     corrupt(`packages[${index}] contract version is not supported by this Host`);
   }
   for (const declaration of record.manifest.signals?.provides ?? []) {
