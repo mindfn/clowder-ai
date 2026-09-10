@@ -413,10 +413,10 @@
     }));
     const ANIM_FPS = 7; // frames per second for multi-frame poses
     const CAT_GAP = 132; // cats keep this much room; three of them pacing will otherwise merge
-    // A pose is a different drawing, so swapping it in one paint makes a cat appear to pop from
-    // one silhouette into another. Keep that hand-off short: it reads as a natural shift of
-    // weight, rather than an opaque dissolve or a second cat standing beside the first.
-    const ACTION_CROSSFADE = 0.22;
+    // A pose is a different drawing. A dissolve makes two halftone silhouettes visible at once,
+    // so hand off under a brief weight shift instead: compress, switch at the lowest point, then
+    // recover. There is never more than one drawn cat.
+    const ACTION_SQUASH_DURATION = 0.09;
     const poseState = CAT_IDS.map(() => null);
 
     function pickIdle() {
@@ -470,8 +470,9 @@
     // grooming, looking, yawning and stretching get a restrained weight shift. This is not a
     // substitute for limb animation (walk has real frames), only the connective tissue between
     // the generated action drawings.
-    function motionFor(pose, time, i) {
+    function motionFor(pose, time, i, started) {
       const phase = time + i * 1.7;
+      const actionAge = Math.max(0, time - started);
       if (pose === 'groom')
         return {
           x: Math.sin(phase * 3.2) * 0.8,
@@ -479,34 +480,49 @@
           r: Math.sin(phase * 3.2) * 0.035,
           sy: 1,
         };
-      if (pose === 'yawn')
-        return { x: 0, y: Math.sin(phase * 2.4) * -0.9, r: -0.045 + Math.sin(phase * 2.4) * 0.018, sy: 1 };
-      if (pose === 'stretch')
-        return { x: Math.sin(phase * 1.4) * 0.7, y: 0, r: Math.sin(phase * 1.4) * 0.018, sy: 1.025 };
+      if (pose === 'yawn') {
+        const k = Math.sin(Math.min(1, actionAge / 1.25) * Math.PI);
+        return { x: 0, y: -0.9 * k, r: -0.045 * k, sy: 1 };
+      }
+      if (pose === 'stretch') {
+        const k = Math.sin(Math.min(1, actionAge / 1.8) * Math.PI);
+        return { x: Math.sin(phase * 1.4) * 0.7 * k, y: 0, r: Math.sin(phase * 1.4) * 0.018 * k, sy: 1 + 0.025 * k };
+      }
       if (pose === 'look-up' || pose === 'look-down') return { x: 0, y: 0, r: Math.sin(phase * 1.5) * 0.018, sy: 1 };
       return { x: 0, y: 0, r: 0, sy: 1 };
     }
 
     function transitionFor(i, next, live) {
-      if (!live) return [{ ...next, alpha: 1 }];
+      if (!live) return [{ ...next, squash: 1, started: 0 }];
       const prior = poseState[i];
       if (!prior) {
-        poseState[i] = { to: next, from: null, started: live.time };
-        return [{ ...next, alpha: 1 }];
+        poseState[i] = { to: next, toStarted: live.time, from: null, started: live.time };
+        return [{ ...next, squash: 1, started: live.time }];
       }
-      if (prior.to.pose !== next.pose) poseState[i] = { to: next, from: prior.to, started: live.time };
-      else prior.to = next;
+      if (prior.to.pose !== next.pose) {
+        poseState[i] = {
+          to: next,
+          toStarted: live.time,
+          from: prior.to,
+          fromStarted: prior.toStarted,
+          started: live.time,
+        };
+      } else prior.to = next;
       const state = poseState[i];
-      const k = Math.max(0, Math.min(1, (live.time - state.started) / ACTION_CROSSFADE));
-      if (!state.from || k >= 1) {
-        state.from = null;
-        return [{ ...next, alpha: 1 }];
+      if (!state.from) return [{ ...next, squash: 1, started: state.toStarted }];
+      const elapsed = live.time - state.started;
+      if (elapsed < ACTION_SQUASH_DURATION) {
+        const k = Math.max(0, Math.min(1, elapsed / ACTION_SQUASH_DURATION));
+        return [{ ...state.from, squash: 1 - 0.04 * smooth(k), started: state.fromStarted }];
       }
-      const ease = smooth(k);
-      return [
-        { ...state.from, alpha: 1 - ease },
-        { ...next, alpha: ease },
-      ];
+      if (elapsed < ACTION_SQUASH_DURATION * 2) {
+        const k = Math.max(0, Math.min(1, (elapsed - ACTION_SQUASH_DURATION) / ACTION_SQUASH_DURATION));
+        return [{ ...next, squash: 0.96 + 0.04 * smooth(k), started: state.toStarted }];
+      }
+      if (state.from) {
+        state.from = null;
+      }
+      return [{ ...next, squash: 1, started: state.toStarted }];
     }
     function camera(p) {
       let i = 0;
@@ -639,12 +655,13 @@
           const breath = live ? Math.sin(live.time * (rest ? 1.1 : 1.9) + i * 2.1) * (rest ? 0.016 : 0.008) : 0;
           // Walking has real leg frames; its step rhythm keeps those frames from sliding.
           const bob = live && stage.pose === 'walk' ? Math.abs(Math.sin(live.time * 4.4 + i * 1.7)) * -1.6 : 0;
-          const motion = live ? motionFor(stage.pose, live.time, i) : motionFor(stage.pose, 0, i);
+          const motion = live
+            ? motionFor(stage.pose, live.time, i, stage.started)
+            : motionFor(stage.pose, 0, i, stage.started);
           view.save();
-          view.globalAlpha *= stage.alpha;
           view.translate(stage.x + motion.x, GROUND + bob + motion.y);
           view.rotate(motion.r);
-          view.scale(1, (1 + breath) * motion.sy);
+          view.scale(1, (1 + breath) * motion.sy * stage.squash);
           view.translate(0, -cat.h);
           // Profile sprites are drawn facing left; mirror to turn one toward what it is looking at.
           if (stage.dir > 0 && PROFILE.has(cat.pose)) {

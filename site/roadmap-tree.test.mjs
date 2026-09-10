@@ -310,18 +310,21 @@ describe('plate study opens straight off disk', () => {
     );
   });
 
-  it('softens action changes and gives held poses restrained renderer motion', () => {
+  it('changes actions under one compressed silhouette and gives held poses return-to-rest motion', () => {
     const scene = read('lib/roadmap-plate-scene.js');
-    assert.match(scene, /const ACTION_CROSSFADE = 0\.22/, 'pose changes need a brief crossfade');
+    assert.match(scene, /const ACTION_SQUASH_DURATION = 0\.09/, 'pose changes need a short compression phase');
     assert.match(scene, /function transitionFor\(i, next, live\)/, 'pose state needs a transition model');
-    assert.match(scene, /function motionFor\(pose, time, i\)/, 'held poses need an action-specific motion model');
+    assert.match(
+      scene,
+      /function motionFor\(pose, time, i, started\)/,
+      'held poses need an action-specific motion model',
+    );
     for (const pose of ['groom', 'yawn', 'stretch', 'look-up', 'look-down']) {
       assert.match(scene, new RegExp(`pose === '${pose}'`), `${pose} needs connective motion`);
     }
-    assert.match(
-      scene,
-      /for \(const stage of transitionFor\(i, \{ pose, dir, x \}, live\)\)/,
-      'renderer must draw both sides of an action hand-off',
-    );
+    assert.match(scene, /squash: 1 - 0\.04 \* smooth\(k\)/, 'the outgoing pose needs to settle at the switch point');
+    assert.match(scene, /squash: 0\.96 \+ 0\.04 \* smooth\(k\)/, 'the incoming pose needs to return to rest');
+    assert.doesNotMatch(scene, /globalAlpha \*= stage\.alpha/, 'different action silhouettes must never overlap');
+    assert.doesNotMatch(scene, /ACTION_CROSSFADE/, 'a pose change is not a scene dissolve');
   });
 });
