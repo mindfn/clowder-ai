@@ -250,6 +250,8 @@ interface DiffViewerProps {
   wrapLines?: boolean;
   /** Column headings rendered inside the split table so they stay aligned. */
   splitHeaders?: { before: string; after: string };
+  /** Suppress the file-path bar when the caller has no authoritative path. */
+  hideFilePath?: boolean;
 }
 
 export function DiffViewer({
@@ -259,6 +261,7 @@ export function DiffViewer({
   initialMode = 'unified',
   wrapLines,
   splitHeaders,
+  hideFilePath,
 }: DiffViewerProps) {
   const [mode, setMode] = useState<'unified' | 'split'>(initialMode);
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
@@ -308,7 +311,7 @@ export function DiffViewer({
       )}
       {filtered.map((file) => (
         <div key={file.path} className="rounded border border-[var(--console-border-soft)] overflow-hidden">
-          {!compact && (
+          {!compact && !hideFilePath && (
             <div className="bg-[var(--ws-editor-bg)] px-3 py-1.5 text-xs font-mono text-cafe-muted console-divider-b truncate">
               {file.path}
             </div>

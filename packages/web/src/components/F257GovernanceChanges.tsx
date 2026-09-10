@@ -116,7 +116,12 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
                 {comparison.label}
               </h3>
               <DiffViewer
-                diff={fullContentDiff(comparison.path, comparison.before, comparison.after)}
+                diff={fullContentDiff(
+                  comparison.path ?? `${String(change.unitId ?? 'unit')} · ${comparison.label}`,
+                  comparison.before,
+                  comparison.after,
+                )}
+                hideFilePath={comparison.path === null}
                 initialMode="split"
                 wrapLines
                 splitHeaders={{ before: '应用前', after: '应用后' }}
@@ -133,40 +138,77 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
   );
 }
 
-export function comparisonBlocks(change: Record<string, unknown>): Array<{
+interface ComparisonBlock {
   id: string;
   label: string;
-  path: string;
+  /** Real repository path, or null when the card cannot know it. */
+  path: string | null;
   before: string;
   after: string;
-}> {
+}
+
+export function comparisonBlocks(change: Record<string, unknown>): ComparisonBlock[] {
   const action = String(change.action ?? '');
   const beforeContent = stringField(change, 'beforeContent') ?? '';
-  const blocks: Array<{ id: string; label: string; path: string; before: string; after: string }> = [];
-  const assetSlug =
-    stringField(change, 'assetSlug') ?? stringField(change, 'hookId') ?? String(change.unitId ?? 'unit');
-  const assetDir = `assets/prompt-hooks/${assetSlug}`;
+  // sol delta @91aa4b428: only `add` carries an authoritative assetSlug — the
+  // writer creates the directory from it. For an existing segment the change
+  // carries hookId = manifest.id ("L4"), the registry says "l4-iron-laws", and
+  // the directory on disk is "l4-五条铁律": three different values, none of them
+  // derivable from the card. Print no path rather than a plausible wrong one.
+  const assetSlug = stringField(change, 'assetSlug');
+  const assetDir = assetSlug ? `assets/prompt-hooks/${assetSlug}` : null;
 
-  if (action === 'add') {
-    // sol @ ccd01dabf (P2-C): name the files HarnessUnitDirectoryWriter really
-    // writes, and never drop manifest fields on the way to the operator.
-    const manifest = asRecord(change.manifest);
-    const template = stringField(manifest, 'template') ?? 'content.md';
+  const blocks = selectBlocks(change, action, beforeContent, assetSlug, assetDir);
+
+  if (change.proposedCondition !== undefined) {
     blocks.push({
+      id: 'condition',
+      label: '触发条件',
+      path: assetDir && `${assetDir}/hook.yaml`,
+      before: formatCondition(change.beforeCondition),
+      after: formatCondition(change.proposedCondition),
+    });
+  }
+  if (blocks.length === 0) {
+    blocks.push({ id: 'state', label: '状态', path: assetDir, before: '当前状态', after: '应用提议后的状态' });
+  }
+  return blocks;
+}
+
+function selectBlocks(
+  change: Record<string, unknown>,
+  action: string,
+  beforeContent: string,
+  assetSlug: string | undefined,
+  assetDir: string | null,
+): ComparisonBlock[] {
+  if (action === 'add' && assetSlug) return addArtifactBlocks(change, assetSlug);
+  if (action === 'disable' || action === 'enable') return enablementBlocks(change, action, beforeContent, assetDir);
+  const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
+  if (afterContent === undefined) return [];
+  return [{ id: 'content', label: '段正文', path: assetDir, before: beforeContent, after: afterContent }];
+}
+
+/** The three artifacts HarnessUnitDirectoryWriter actually writes for an add. */
+function addArtifactBlocks(change: Record<string, unknown>, assetSlug: string): ComparisonBlock[] {
+  const manifest = asRecord(change.manifest);
+  const template = stringField(manifest, 'template') ?? 'content.md';
+  return [
+    {
       id: 'content',
       label: '段正文',
-      path: `${assetDir}/${template}`,
+      path: `assets/prompt-hooks/${assetSlug}/${template}`,
       before: '',
       after: stringField(change, 'content') ?? '',
-    });
-    blocks.push({
+    },
+    {
       id: 'manifest',
       label: 'Hook 清单',
-      path: `${assetDir}/hook.yaml`,
+      path: `assets/prompt-hooks/${assetSlug}/hook.yaml`,
       before: '',
       after: formatStructured(manifest),
-    });
-    blocks.push({
+    },
+    {
       id: 'registry',
       label: '评估单元注册表',
       path: 'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
@@ -177,41 +219,31 @@ export function comparisonBlocks(change: Record<string, unknown>): Array<{
         unitState: 'evaluable',
         objectives: asRecords(change.objectives),
       }),
-    });
-  } else if (action === 'disable' || action === 'enable') {
-    // The body is NOT removed by enable/disable — only injection changes.
-    // sol @ ccd01dabf (P2-B): beforeEnabled is the authoritative prior state.
-    // The executor does not reject a no-op, so an invented before-state can
-    // contradict the card; deriving both sides makes a no-op read as a no-op.
-    blocks.push({
+    },
+  ];
+}
+
+/**
+ * Enable/disable changes injection, never the body. sol @ ccd01dabf (P2-B):
+ * `beforeEnabled` is authoritative and the executor does not reject a no-op,
+ * so both sides are derived — a no-op then compares equal and reads as one.
+ */
+function enablementBlocks(
+  change: Record<string, unknown>,
+  action: string,
+  beforeContent: string,
+  assetDir: string | null,
+): ComparisonBlock[] {
+  return [
+    {
       id: 'state',
       label: '启用状态',
-      path: `${assetDir}/hook.yaml → enabled`,
+      path: assetDir && `${assetDir}/hook.yaml`,
       before: enablementLabel(change.beforeEnabled),
       after: enablementLabel(action === 'enable'),
-    });
-    blocks.push({ id: 'content', label: '段正文', path: `${assetDir}/`, before: beforeContent, after: beforeContent });
-  } else {
-    const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
-    if (afterContent !== undefined) {
-      blocks.push({ id: 'content', label: '段正文', path: `${assetDir}/`, before: beforeContent, after: afterContent });
-    }
-  }
-
-  if (change.proposedCondition !== undefined) {
-    blocks.push({
-      id: 'condition',
-      label: '触发条件',
-      path: `${assetDir}/hook.yaml → condition`,
-      before: formatCondition(change.beforeCondition),
-      after: formatCondition(change.proposedCondition),
-    });
-  }
-
-  if (blocks.length === 0) {
-    blocks.push({ id: 'state', label: '状态', path: assetDir, before: '当前状态', after: '应用提议后的状态' });
-  }
-  return blocks;
+    },
+    { id: 'content', label: '段正文', path: assetDir, before: beforeContent, after: beforeContent },
+  ];
 }
 
 function enablementLabel(value: unknown): string {
@@ -225,6 +257,19 @@ function enablementLabel(value: unknown): string {
  * from the approval diff. Structured indentation keeps it readable without
  * falling back to raw JSON.
  */
+const AMBIGUOUS_SCALAR = /[\n\r\t#]|:\s|^\s|\s$|^$|^[-?:,[\]{}&*!|>'"%@`]|^(?:true|false|null|~|-?\d+(?:\.\d+)?)$/i;
+
+/**
+ * sol delta @91aa4b428: String() on every scalar let a value containing a
+ * newline or ": " become a new top-level key, and made the string "true"
+ * indistinguishable from the boolean. Ambiguous scalars are JSON-quoted, which
+ * is both reversible and valid YAML double-quoted style.
+ */
+function formatScalar(value: unknown): string {
+  if (typeof value === 'string' && AMBIGUOUS_SCALAR.test(value)) return JSON.stringify(value);
+  return String(value);
+}
+
 function formatStructured(value: unknown, indent = 0): string {
   const pad = '  '.repeat(indent);
   if (Array.isArray(value)) {
@@ -233,7 +278,7 @@ function formatStructured(value: unknown, indent = 0): string {
       .map((item) =>
         item !== null && typeof item === 'object'
           ? `${pad}-\n${formatStructured(item, indent + 1)}`
-          : `${pad}- ${String(item)}`,
+          : `${pad}- ${formatScalar(item)}`,
       )
       .join('\n');
   }
@@ -244,12 +289,12 @@ function formatStructured(value: unknown, indent = 0): string {
       .map(([key, item]) =>
         item !== null && typeof item === 'object'
           ? `${pad}${key}:\n${formatStructured(item, indent + 1)}`
-          : `${pad}${key}: ${String(item)}`,
+          : `${pad}${key}: ${formatScalar(item)}`,
       )
       .join('\n');
   }
   if (value === null || value === undefined) return `${pad}（未给出）`;
-  return `${pad}${String(value)}`;
+  return `${pad}${formatScalar(value)}`;
 }
 
 function changeImpactSummary(change: Record<string, unknown>): string | null {
