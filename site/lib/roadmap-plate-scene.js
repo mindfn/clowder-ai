@@ -394,7 +394,9 @@
       { pose: 'sleep', weight: 16, span: [9, 22] },
       { pose: 'groom', weight: 14, span: [3, 6] },
       { pose: 'sit', weight: 12, span: [3, 6] },
-      { pose: 'walk', weight: 12, span: [2.5, 5], pace: true },
+      // A pace's duration is derived from how far it goes (see idleStep); this span is only
+      // the bound on that derivation, so a very short or very long hop still reads as a walk.
+      { pose: 'walk', weight: 12, span: [0.9, 3.5], pace: true },
       { pose: 'look-up', weight: 8, span: [2, 4] },
       { pose: 'yawn', weight: 5, span: [1.1, 1.6] },
       { pose: 'stretch', weight: 6, span: [1.6, 2.4] },
@@ -422,6 +424,11 @@
       span: 1,
     }));
     const CAT_GAP = 132; // cats keep this much room; three of them pacing will otherwise merge
+    // One four-frame cycle carries a cat about one body length, and a sprite's body is its box
+    // minus the tail at the rear. Everything about walking is measured against this: the leg
+    // frame, the shoulder bob, the tail swing, and how long a pace takes.
+    const strideOf = (cat) => cat.w * (1 - (TAIL_SPLIT.walk || 0));
+    const STRIDES_PER_SECOND = 1.25; // an unhurried amble, and the floor for legible legs
     // A pose is a different drawing. A dissolve makes two halftone silhouettes visible at once,
     // so hand off under a brief weight shift instead: compress, switch at the lowest point, then
     // recover. There is never more than one drawn cat.
@@ -441,6 +448,43 @@
       return choices[0];
     }
 
+    /**
+     * Somewhere to walk to: under the tree, and not inside another cat. Returns the cat's own
+     * position when there is nowhere worth going, which is the caller's signal to stay put.
+     */
+    function paceTarget(i, from) {
+      let best = from;
+      let bestGap = -1;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        // Walking at a cat's speed makes each pace shorter in time, so let it cover more of the
+        // ground the cats already have: a stroll rather than a dart.
+        const want = Math.max(300, Math.min(W - 380, from + (idleRng() - 0.5) * 360));
+        const gap = idleState.reduce(
+          (min, other, k) => (k === i ? min : Math.min(min, Math.abs(want - other.to))),
+          Number.POSITIVE_INFINITY,
+        );
+        if (gap > bestGap) {
+          bestGap = gap;
+          best = want;
+        }
+        if (gap >= CAT_GAP) break;
+      }
+      return Math.abs(best - from) < CAT_GAP / 2 ? from : best;
+    }
+
+    /**
+     * How long an action lasts. Distance, duration and leg frequency are one system, not three
+     * rolls: rolling distance and duration independently left the cats crossing a fifth of a
+     * body length a second, and honest legs then have to crawl. A pace walks its distance at a
+     * cat's speed and lets the duration fall out; everything else just picks a length.
+     */
+    function actionSpan(i, act, from, to) {
+      const [lo, hi] = act.span;
+      if (!act.pace || to === from) return lo + idleRng() * (hi - lo);
+      const speed = strideOf(catSprite(i, 'walk') || { w: 128 }) * STRIDES_PER_SECOND;
+      return Math.max(lo, Math.min(hi, Math.abs(to - from) / speed));
+    }
+
     function idleStep(i, time) {
       const st = idleState[i];
       if (time < st.until) return st;
@@ -448,31 +492,12 @@
       st.from = st.to;
       // Pacing keeps them under the tree, and out of each other: without a separation rule three
       // wandering cats end up standing inside one another.
-      if (act.pace) {
-        let best = st.from;
-        let bestGap = -1;
-        for (let attempt = 0; attempt < 6; attempt += 1) {
-          const want = Math.max(300, Math.min(W - 380, st.from + (idleRng() - 0.5) * 260));
-          const gap = idleState.reduce(
-            (min, other, k) => (k === i ? min : Math.min(min, Math.abs(want - other.to))),
-            Number.POSITIVE_INFINITY,
-          );
-          if (gap > bestGap) {
-            bestGap = gap;
-            best = want;
-          }
-          if (gap >= CAT_GAP) break;
-        }
-        // No usable destination means no walk. Do not animate legs under a stationary body.
-        if (Math.abs(best - st.from) < CAT_GAP / 2) act = pickIdle(st.pose, true);
-        else st.to = best;
-      }
-      if (!act.pace) {
-        st.to = st.from;
-      }
+      st.to = act.pace ? paceTarget(i, st.from) : st.from;
+      // Nowhere to go means no walk. Do not animate legs under a stationary body.
+      if (act.pace && st.to === st.from) act = pickIdle(st.pose, true);
       st.pose = act.pose;
       st.t0 = time;
-      st.span = act.span[0] + idleRng() * (act.span[1] - act.span[0]);
+      st.span = actionSpan(i, act, st.from, st.to);
       st.until = time + st.span;
       return st;
     }
@@ -588,7 +613,11 @@
       const b = CAT_PLAN[k + 1];
       const t = smooth(Math.max(0, Math.min(1, (p - a.p) / (b.p - a.p))));
       const x = P.lerp(a.x[i], b.x[i], t);
-      return { x, travelled: Math.abs(x - a.x[i]) };
+      // Path length so far, not distance into this leg: measuring per leg would snap the walk
+      // back to its first frame every time the plan reaches a keyframe.
+      let travelled = Math.abs(x - a.x[i]);
+      for (let j = 0; j < k; j += 1) travelled += Math.abs(CAT_PLAN[j + 1].x[i] - CAT_PLAN[j].x[i]);
+      return { x, travelled };
     }
 
     const catX = (p, i) => catPath(p, i).x;
@@ -663,9 +692,9 @@
         for (const stage of transitionFor(i, { pose, dir, x, travelled }, live)) {
           const cat = catSprite(i, stage.pose);
           if (!cat) continue;
-          // A stride is a fraction of the actual sprite width. Tying the legs to distance—not
-          // wall time—keeps a slow cat from skidding and lets a fast one take proportionate steps.
-          const stride = cat.w * 0.55;
+          // Tying the legs to distance—not wall time—keeps a slow cat from skidding and lets a
+          // fast one take proportionate steps, at any speed the story or the idle loop asks for.
+          const stride = strideOf(cat);
           const gaitPhase = (stage.travelled / stride) * Math.PI * 2;
           const cel =
             live && cat.frames.length > 1

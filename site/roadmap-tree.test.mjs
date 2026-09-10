@@ -342,7 +342,12 @@ describe('plate study opens straight off disk', () => {
 
   it('drives every walk cue from distance rather than the wall clock', () => {
     const scene = read('lib/roadmap-plate-scene.js');
-    assert.match(scene, /const stride = cat\.w \* 0\.55/, 'walk needs a stride measured from its body');
+    assert.match(
+      scene,
+      /const strideOf = \(cat\) => cat\.w \* \(1 - \(TAIL_SPLIT\.walk/,
+      'a stride is one body length',
+    );
+    assert.match(scene, /const stride = strideOf\(cat\)/, 'the drawn walk measures against that stride');
     assert.match(
       scene,
       /Math\.floor\(\(stage\.travelled \/ stride\) \* cat\.frames\.length\)/,
@@ -358,6 +363,37 @@ describe('plate study opens straight off disk', () => {
       scene,
       /if \(!choices\.length\) return IDLE\.find\(\(a\) => a\.pose === 'sit'\)/,
       'future action maps need a safe idle fallback',
+    );
+  });
+
+  it("walks a paced cat at a cat's speed instead of rolling its duration", () => {
+    const scene = read('lib/roadmap-plate-scene.js');
+    assert.match(
+      scene,
+      /Math\.max\(lo, Math\.min\(hi, Math\.abs\(to - from\) \/ speed\)\)/,
+      'a pace lasts as long as its distance takes at walking speed',
+    );
+    assert.match(
+      scene,
+      /strideOf\(catSprite\(i, 'walk'\) \|\| \{ w: 128 \}\) \* STRIDES_PER_SECOND/,
+      'walking speed is strides a second',
+    );
+    assert.match(
+      scene,
+      /if \(!act\.pace \|\| to === from\) return lo \+ idleRng\(\)/,
+      'a held pose still picks its own length',
+    );
+    const walkRow = scene.match(/\{ pose: 'walk', weight: \d+, span: \[([\d.]+), ([\d.]+)\]/);
+    assert.ok(walkRow, 'the idle table still declares a walk');
+    assert.ok(Number(walkRow[1]) >= 0.5 && Number(walkRow[2]) <= 4, 'the derived pace stays inside legible bounds');
+  });
+
+  it('measures a story walk along the whole path, not one plan leg', () => {
+    const scene = read('lib/roadmap-plate-scene.js');
+    assert.match(
+      scene,
+      /for \(let j = 0; j < k; j \+= 1\) travelled \+= Math\.abs\(CAT_PLAN\[j \+ 1\]\.x\[i\] - CAT_PLAN\[j\]\.x\[i\]\)/,
+      'crossing a keyframe must not snap the legs back to frame one',
     );
   });
 });
