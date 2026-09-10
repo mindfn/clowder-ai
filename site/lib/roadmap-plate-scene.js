@@ -386,21 +386,31 @@
     /**
      * What a cat does when nobody is scrolling. Switching between staged poses is not the same
      * as being alive, so once the plate is finished the cats run their own small loop: they doze,
-     * wake, wash, stretch, pace a few steps, and go back down. Each entry is a weight, a duration
-     * range in seconds, and an optional action it tends to lead into.
+     * wake, wash, stretch, pace a few steps, and go back down. The adjacency graph matters as
+     * much as the individual drawings: a loaf cannot snap straight to an upright pose.
      */
     const IDLE = [
       { pose: 'loaf', weight: 18, span: [5, 11] },
-      { pose: 'sleep', weight: 16, span: [9, 22], next: 'yawn' },
+      { pose: 'sleep', weight: 16, span: [9, 22] },
       { pose: 'groom', weight: 14, span: [3, 6] },
       { pose: 'sit', weight: 12, span: [3, 6] },
       { pose: 'walk', weight: 12, span: [2.5, 5], pace: true },
       { pose: 'look-up', weight: 8, span: [2, 4] },
-      { pose: 'yawn', weight: 5, span: [1.1, 1.6], next: 'stretch' },
+      { pose: 'yawn', weight: 5, span: [1.1, 1.6] },
       { pose: 'stretch', weight: 6, span: [1.6, 2.4] },
       { pose: 'tail-up', weight: 5, span: [2, 4] },
     ];
-    const IDLE_TOTAL = IDLE.reduce((n, a) => n + a.weight, 0);
+    const IDLE_NEXT = {
+      sit: ['loaf', 'groom', 'walk', 'look-up', 'tail-up'],
+      loaf: ['sleep', 'sit'],
+      sleep: ['yawn'],
+      yawn: ['stretch'],
+      stretch: ['sit'],
+      groom: ['sit'],
+      'look-up': ['sit'],
+      'tail-up': ['sit'],
+      walk: ['sit'],
+    };
     const idleRng = P.mulberry32(0xca7);
     // Stagger the first decision so the three of them do not all change at the same instant.
     const idleState = CAT_IDS.map((_, i) => ({
@@ -419,25 +429,22 @@
     const ACTION_SQUASH_DURATION = 0.09;
     const poseState = CAT_IDS.map(() => null);
 
-    function pickIdle() {
-      let r = idleRng() * IDLE_TOTAL;
-      for (const a of IDLE) {
+    function pickIdle(from, still = false) {
+      const next = new Set(IDLE_NEXT[from] || ['sit']);
+      const choices = IDLE.filter((a) => next.has(a.pose) && (!still || !a.pace));
+      const total = choices.reduce((n, a) => n + a.weight, 0);
+      let r = idleRng() * total;
+      for (const a of choices) {
         r -= a.weight;
         if (r <= 0) return a;
       }
-      return IDLE[0];
+      return choices[0];
     }
 
     function idleStep(i, time) {
       const st = idleState[i];
       if (time < st.until) return st;
-      const forced = st.next && IDLE.find((a) => a.pose === st.next);
-      const act = forced || pickIdle();
-      st.next = act.next;
-      st.pose = act.pose;
-      st.t0 = time;
-      st.span = act.span[0] + idleRng() * (act.span[1] - act.span[0]);
-      st.until = time + st.span;
+      let act = pickIdle(st.pose);
       st.from = st.to;
       // Pacing keeps them under the tree, and out of each other: without a separation rule three
       // wandering cats end up standing inside one another.
@@ -456,10 +463,17 @@
           }
           if (gap >= CAT_GAP) break;
         }
-        st.to = best;
-      } else {
+        // No usable destination means no walk. Do not animate legs under a stationary body.
+        if (Math.abs(best - st.from) < CAT_GAP / 2) act = pickIdle(st.pose, true);
+        else st.to = best;
+      }
+      if (!act.pace) {
         st.to = st.from;
       }
+      st.pose = act.pose;
+      st.t0 = time;
+      st.span = act.span[0] + idleRng() * (act.span[1] - act.span[0]);
+      st.until = time + st.span;
       return st;
     }
 
@@ -633,7 +647,7 @@
         let x;
         if (idling) {
           const st = idleStep(i, live.time);
-          const k = smooth(Math.max(0, Math.min(1, (live.time - st.t0) / Math.max(0.4, st.span * 0.7))));
+          const k = smooth(Math.max(0, Math.min(1, (live.time - st.t0) / st.span)));
           x = P.lerp(st.from, st.to, k);
           pose = st.to !== st.from && k < 1 ? 'walk' : st.pose;
           dir = st.to !== st.from && k < 1 ? (st.to > st.from ? 1 : -1) : x < CX ? 1 : -1;

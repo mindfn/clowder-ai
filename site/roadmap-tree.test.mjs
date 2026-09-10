@@ -327,4 +327,16 @@ describe('plate study opens straight off disk', () => {
     assert.doesNotMatch(scene, /globalAlpha \*= stage\.alpha/, 'different action silhouettes must never overlap');
     assert.doesNotMatch(scene, /ACTION_CROSSFADE/, 'a pose change is not a scene dissolve');
   });
+
+  it('uses adjacent idle actions and never turns a completed pace into walking in place', () => {
+    const scene = read('lib/roadmap-plate-scene.js');
+    assert.match(scene, /const IDLE_NEXT = \{/, 'idle behavior needs an adjacency graph');
+    assert.match(scene, /sleep: \['yawn'\]/, 'sleep needs to wake through a yawn');
+    assert.match(scene, /yawn: \['stretch'\]/, 'yawn needs to lead into a stretch');
+    assert.match(scene, /stretch: \['sit'\]/, 'stretch needs to settle through sit');
+    assert.match(scene, /loaf: \['sleep', 'sit'\]/, 'rest poses need a nearby exit');
+    assert.match(scene, /let act = pickIdle\(st\.pose\)/, 'the next action must be chosen from the current pose');
+    assert.match(scene, /\(live\.time - st\.t0\) \/ st\.span/, 'a paced walk must use its complete action span');
+    assert.doesNotMatch(scene, /st\.span \* 0\.7/, 'a paced walk must not arrive early then walk in place');
+  });
 });
