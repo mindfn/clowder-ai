@@ -444,6 +444,8 @@ export interface SegmentObjectiveEvaluationView {
     impact: SegmentCycleSummary['governanceImpact'];
   } | null;
   versionChain: SegmentCycleSummary[];
+  /** True when older cycles exist beyond the projected chain and are not shown. */
+  versionChainCapped: boolean;
 }
 
 export interface SegmentEvaluationResponse {
