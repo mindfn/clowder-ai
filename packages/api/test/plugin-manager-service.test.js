@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import {
   PluginManagerCompatibilityAdapter,
   RepositoryPluginManagerCompatibilityProvider,
-} from '../dist/domains/plugin/plugin-manager-compatibility.js';
+} from '../dist/domains/plugin/manager/plugin-manager-compatibility.js';
 import { PluginManagerService } from '../dist/domains/plugin/plugin-manager-service.js';
 
 function digest(value) {

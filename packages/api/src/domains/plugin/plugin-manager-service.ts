@@ -13,12 +13,12 @@ import type {
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
 import type { PluginInventoryStore } from './host-inventory/ports.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
+import { PluginPackageQuarantineStoreError } from './manager/plugin-package-quarantine.js';
 import {
   type PluginManagerCatalogCandidate,
   type PluginManagerProjectionOverrides,
   projectPluginManagerCatalogCandidate,
 } from './plugin-manager-projection.js';
-import { PluginPackageQuarantineStoreError } from './plugin-package-quarantine.js';
 
 export interface PluginManagerCatalogSnapshot {
   readonly candidates: readonly PluginManagerCatalogCandidate[];

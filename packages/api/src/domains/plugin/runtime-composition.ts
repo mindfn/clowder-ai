@@ -11,10 +11,6 @@ import {
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
 import { HybridPluginRuntimeSupervisor } from './builtin-runtime/hybrid-supervisor.js';
-import {
-  BuiltinPluginContributionSupervisor,
-  type BuiltinPluginContributionSupervisorOptions,
-} from './builtin-contribution-supervisor.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
 import type { PluginRuntimeLifecyclePort } from './external-plugin-lifecycle-types.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
@@ -28,13 +24,22 @@ import { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-verifier.js';
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
-import { LocalPluginPackageAdmission } from './local-package-admission.js';
+import {
+  BuiltinPluginContributionSupervisor,
+  type BuiltinPluginContributionSupervisorOptions,
+} from './manager/builtin-contribution-supervisor.js';
+import { LocalPluginPackageAdmission } from './manager/local-package-admission.js';
+import { CompositePluginManagerCompatibilityPort } from './manager/plugin-manager-compatibility.js';
+import { HostPluginConfigurationService } from './manager/plugin-manager-configuration.js';
+import { PluginManagerPackageAssetService } from './manager/plugin-package-assets.js';
+import {
+  FilePluginPackageQuarantineStore,
+  PluginPackageQuarantineManagerAdapter,
+} from './manager/plugin-package-quarantine.js';
 import { type OfficialPluginCatalogEntry, officialPluginPresentationMatches } from './official-catalog.js';
 import type { OfficialPluginCatalogProvider } from './official-catalog-provider.js';
 import { OfficialPluginPackageInstaller } from './official-package-installer.js';
 import type { OfficialPluginAuthPort, OfficialPluginAuthStatus } from './official-plugin-auth.js';
-import { CompositePluginManagerCompatibilityPort } from './plugin-manager-compatibility.js';
-import { HostPluginConfigurationService } from './plugin-manager-configuration.js';
 import {
   type PluginManagerCatalogCandidate,
   projectPluginManagerCatalogCandidate,
@@ -47,11 +52,6 @@ import {
   PluginManagerServiceError,
   type PluginManagerStateProjectionPort,
 } from './plugin-manager-service.js';
-import { PluginManagerPackageAssetService } from './plugin-package-assets.js';
-import {
-  FilePluginPackageQuarantineStore,
-  PluginPackageQuarantineManagerAdapter,
-} from './plugin-package-quarantine.js';
 
 export interface PluginRuntimePersistencePaths {
   readonly inventorySnapshotPath: string;

@@ -4629,7 +4629,7 @@ async function main(): Promise<void> {
   const officialPluginCatalog = new RefreshingOfficialPluginCatalog({ policies: OFFICIAL_PLUGIN_POLICIES });
   const { validatePluginCatalog } = await import('@clowder-ai/plugin-contract');
   const { MachineOfficialPluginCatalog, OFFICIAL_PLUGIN_CATALOG_URL, loadMachinePluginCatalog } = await import(
-    './domains/plugin/machine-catalog-provider.js'
+    './domains/plugin/manager/machine-catalog-provider.js'
   );
   const pluginManagerCatalog = new MachineOfficialPluginCatalog({
     loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
@@ -4643,7 +4643,7 @@ async function main(): Promise<void> {
     ],
   });
   const { FilesystemBuiltinPluginPackageMaterializer } = await import(
-    './domains/plugin/builtin-package-materializer.js'
+    './domains/plugin/manager/builtin-package-materializer.js'
   );
   const { readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
   const readBuiltinPluginValue = async (pluginInstanceId: string, key: string) => {
@@ -4655,7 +4655,7 @@ async function main(): Promise<void> {
     throw new Error('Repository plugin discovery must be ready before Plugin Manager composition');
   }
   const { PluginManagerCompatibilityAdapter, RepositoryPluginManagerCompatibilityProvider } = await import(
-    './domains/plugin/plugin-manager-compatibility.js'
+    './domains/plugin/manager/plugin-manager-compatibility.js'
   );
   const repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
     new RepositoryPluginManagerCompatibilityProvider(loadRepositoryPluginInfo, {

@@ -2,13 +2,13 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
+import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
+import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
+import { stageVerifiedPackageArchive } from '../external-runtime/package-staging.js';
 import type {
   BuiltinPluginPackageMaterializer,
   MaterializedBuiltinPluginPackage,
 } from './builtin-contribution-supervisor.js';
-import { packageDirectoryName } from './external-runtime/filesystem-package-locator.js';
-import type { PluginManifestValidator } from './external-runtime/package-staging.js';
-import { stageVerifiedPackageArchive } from './external-runtime/package-staging.js';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_INSTALL_TIMEOUT_MS = 5 * 60_000;
