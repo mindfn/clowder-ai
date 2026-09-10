@@ -37,6 +37,19 @@ const lifecycleRevisionSchema = z
   .safe()
   .min(1)
   .describe('Exact lifecycleRevision returned by the latest plugin_list or plugin_get.');
+const contributionIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  .describe('Exact active contribution id returned by plugin_list_tools.');
+const contributionToolNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .describe('Exact dynamic tool name returned by plugin_list_tools.');
 const canonicalDigestSchema = z
   .string()
   .refine((value) => {
@@ -84,6 +97,15 @@ export const pluginSearchInputSchema = {
   query: z.string().trim().min(1).max(200).describe('Search verified plugin metadata and capabilities.'),
 };
 export const pluginGetInputSchema = { pluginId: pluginIdSchema };
+export const pluginListToolsInputSchema = { pluginId: pluginIdSchema };
+export const pluginCallInputSchema = {
+  pluginId: pluginIdSchema,
+  contributionId: contributionIdSchema,
+  toolName: contributionToolNameSchema,
+  arguments: z
+    .record(z.unknown())
+    .describe('Arguments constructed from the exact inputSchema returned by plugin_list_tools.'),
+};
 export const pluginInstallInputSchema = { request: pluginInstallRequestSchema };
 export const pluginSetEnabledInputSchema = {
   pluginId: pluginIdSchema,
@@ -99,6 +121,13 @@ export interface PluginManagerClient {
   list(): Promise<unknown>;
   search(query: string): Promise<unknown>;
   get(pluginId: string): Promise<unknown>;
+  listTools(pluginId: string): Promise<unknown>;
+  call(
+    pluginId: string,
+    contributionId: string,
+    toolName: string,
+    args: Readonly<Record<string, unknown>>,
+  ): Promise<unknown>;
   install(request: PluginManagerInstallRequest): Promise<unknown>;
   setEnabled(pluginId: string, request: PluginManagerSetEnabledRequest): Promise<unknown>;
   uninstall(pluginId: string, request: PluginManagerUninstallRequest): Promise<unknown>;
@@ -167,6 +196,13 @@ export function createPluginManagerHttpClient(options: PluginManagerHttpClientOp
       return request(`/api/plugin-manager/plugins/search?${params.toString()}`);
     },
     get: (pluginId) => request(`/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}`),
+    listTools: (pluginId) => request(`/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/contributions/tools`),
+    call: (pluginId, contributionId, toolName, args) =>
+      mutation(`/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/contributions/call`, {
+        contributionId,
+        toolName,
+        arguments: { ...args },
+      }),
     install: (installRequest) => mutation('/api/plugin-manager/plugins/install', installRequest),
     setEnabled: (pluginId, setEnabledRequest) =>
       mutation(`/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/set-enabled`, setEnabledRequest),
@@ -179,6 +215,13 @@ type PluginManagementHandlers = {
   list(input: Record<string, never>): Promise<ToolResult>;
   search(input: { query: string }): Promise<ToolResult>;
   get(input: { pluginId: string }): Promise<ToolResult>;
+  listTools(input: { pluginId: string }): Promise<ToolResult>;
+  call(input: {
+    pluginId: string;
+    contributionId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }): Promise<ToolResult>;
   install(input: { request: PluginManagerInstallRequest }): Promise<ToolResult>;
   setEnabled(input: { pluginId: string; enabled: boolean; expectedRevision: number }): Promise<ToolResult>;
   uninstall(input: { pluginId: string; expectedRevision: number }): Promise<ToolResult>;
@@ -197,6 +240,9 @@ export function createPluginManagementHandlers(client: PluginManagerClient): Plu
     list: async () => asToolResult(() => client.list()),
     search: async ({ query }) => asToolResult(() => client.search(query)),
     get: async ({ pluginId }) => asToolResult(() => client.get(pluginId)),
+    listTools: async ({ pluginId }) => asToolResult(() => client.listTools(pluginId)),
+    call: async ({ pluginId, contributionId, toolName, arguments: args }) =>
+      asToolResult(() => client.call(pluginId, contributionId, toolName, args)),
     install: async ({ request }) => asToolResult(() => client.install(request)),
     setEnabled: async ({ pluginId, enabled, expectedRevision }) =>
       asToolResult(() => client.setEnabled(pluginId, { enabled, expectedRevision })),
@@ -266,6 +312,44 @@ export const pluginManagementTools = [
     },
   }),
   defineTool({
+    name: 'plugin_list_tools',
+    description:
+      'List callable tool schemas from one currently active Host-supervised plugin. Use when the user asks to use an installed plugin capability and after plugin_get confirms it is enabled/running. NOT for: catalog discovery, lifecycle changes, or guessing a tool schema. Output: active contribution ids, exact dynamic tool names, descriptions, and input schemas; no plugin process or authority is created.',
+    inputSchema: pluginListToolsInputSchema,
+    handler: handlers.listTools,
+    governance: {
+      implementationExport: 'handlePluginListTools',
+      action: 'list-tools',
+      risk: { level: 'read', openWorld: true },
+      runtimeProfiles: ['full', 'readonly'],
+      targetExposure: 'lazy-discoverable',
+      standaloneReason: {
+        disposition: 'accepted-boundary',
+        kind: 'progressive-disclosure',
+        admissionRef: SPEC_REF,
+      },
+    },
+  }),
+  defineTool({
+    name: 'plugin_call',
+    description:
+      "Invoke one exact tool on a currently active Host-supervised plugin contribution. Use only when the user asks to perform that plugin capability after reading its schema with plugin_list_tools. NOT for: install, configuration, lifecycle changes, direct MCP process launch, or guessed arguments. Output/side effect: returns the plugin MCP result and may cause the dynamic tool's declared external effects; Host rechecks live instance and grant authority before every call, and secrets remain inside Host supervision.",
+    inputSchema: pluginCallInputSchema,
+    handler: handlers.call,
+    governance: {
+      implementationExport: 'handlePluginCall',
+      action: 'invoke',
+      risk: { level: 'write', openWorld: true },
+      runtimeProfiles: ['full'],
+      targetExposure: 'lazy-discoverable',
+      standaloneReason: {
+        disposition: 'accepted-boundary',
+        kind: 'side-effect-boundary',
+        admissionRef: SPEC_REF,
+      },
+    },
+  }),
+  defineTool({
     name: 'plugin_install',
     description:
       'Install a catalog candidate or local directory/archive through Host package admission and inventory. Use only when the user explicitly asks to install/add that plugin. NOT for: arbitrary npm search, enable, update, repair, or bypassing package verification. Output/side effect: admits an immutable verified package and disabled instance, returning its ids; catalog requests require the exact observed version/digest, and local code is never imported into the API process.',
@@ -327,6 +411,8 @@ export const pluginManagementTools = [
 export const handlePluginList = handlers.list;
 export const handlePluginSearch = handlers.search;
 export const handlePluginGet = handlers.get;
+export const handlePluginListTools = handlers.listTools;
+export const handlePluginCall = handlers.call;
 export const handlePluginInstall = handlers.install;
 export const handlePluginSetEnabled = handlers.setEnabled;
 export const handlePluginUninstall = handlers.uninstall;

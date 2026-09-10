@@ -63,14 +63,17 @@ update/repair.
 
 Typed configuration is a detail contribution with its own revision-fenced REST path. It is consumed by
 the same `PluginManagerService` and Console detail, but intentionally does not expand the six Agent
-management tools. `plugin-manager-composition.test.js`, `plugin-manager-routes.test.js`, and
+management tools. Enabled dynamic capabilities use the separate governed `plugin_list_tools` →
+`plugin_call` path, which delegates to the same Host supervisor that owns contribution liveness and grants.
+`plugin-manager-composition.test.js`, `plugin-manager-routes.test.js`, and
 `PluginManagerContent.test.tsx` guard field projection, validation, secret masking, audit redaction and save.
 
 Characterization/contract test: `plugin-manager-service.test.js` plus
 `plugin-manager-projection.test.js`.
 
-Code-derived consumer census: the `rg` command above must resolve the route registration, six Agent tools
-and the live Console container to the same Manager service boundary.
+Code-derived consumer census: the `rg` command above must resolve the route registration, six Agent
+management tools, two contribution tools and the live Console container to the same Host-owned Manager and
+supervisor boundaries.
 
 Migration/restart/rollback evidence: `plugin-manager-restart.test.js`; compatibility and admitted exact
 packages are protected against disappearance/double-run across restart. A dependency-bearing builtin is

@@ -1,12 +1,7 @@
-import {
-  type Capability,
-  type PluginManifest,
-  validateEffectiveGrants,
-  validateManifest,
-} from '@clowder-ai/plugin-contract';
+import { type Capability, type PluginManifest } from '@clowder-ai/plugin-contract';
 import {
   canonicalCapabilities,
-  PLUGIN_MANIFEST_CONTRACT_VERSIONS,
+  DEFAULT_PLUGIN_CONTRACT_RUNTIME,
   requestedCapabilitiesForManifest,
 } from './contract-policy.js';
 import { isCanonicalPackageDigest } from './snapshot.js';
@@ -35,16 +30,10 @@ export interface PackageAdmissionContractRuntime {
   readonly validateEffectiveGrants: (values: readonly string[]) => boolean;
 }
 
-const defaultContractRuntime: PackageAdmissionContractRuntime = {
-  manifestContractVersions: PLUGIN_MANIFEST_CONTRACT_VERSIONS,
-  validateManifest,
-  validateEffectiveGrants,
-};
-
 export function verifyPackageAdmission(
   candidate: PackageAdmissionCandidate,
   now: number,
-  contract: PackageAdmissionContractRuntime = defaultContractRuntime,
+  contract: PackageAdmissionContractRuntime = DEFAULT_PLUGIN_CONTRACT_RUNTIME,
 ): VerifiedPackageAdmission {
   const validation = contract.validateManifest(candidate.manifest);
   if (!validation.valid) {

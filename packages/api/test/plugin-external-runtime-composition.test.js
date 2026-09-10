@@ -274,8 +274,11 @@ test('production composition constructs and recovers K-2D but exposes no startup
     'Train B Manager must project real repository plugins through its read-only compatibility boundary',
   );
   assert.match(managerComposition, /loadSuppressedPluginIds:/);
-  assert.match(managerComposition, /entry\.replacesRepositoryPluginId/);
+  assert.match(managerComposition, /resolveRepositoryReplacementPluginIds\(/);
+  assert.match(managerComposition, /pluginRuntime\.inventoryStore\.snapshot\(\)/);
+  assert.match(managerComposition, /instance\.lifecycleState === 'installed'/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
+  assert.match(source, /contributions: pluginManagerRuntime\.builtinSupervisor/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
   assert.match(source, /installer: pluginManagerRuntime\.officialInstaller/);
   assert.doesNotMatch(source, /new OfficialPluginPackageInstaller\(/);

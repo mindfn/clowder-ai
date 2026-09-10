@@ -66,7 +66,10 @@ Manager row without exposing repository-local, official-package and connector im
    policy without deleting unrelated or default-persistent user data.
 6. Agents can inspect and operate the same state through exactly six management tools:
    `plugin_list`, `plugin_search`, `plugin_get`, `plugin_install`, `plugin_set_enabled`, and
-   `plugin_uninstall`. They do not receive a separate registry or stronger authority than the Console.
+   `plugin_uninstall`. For an enabled builtin contribution, `plugin_list_tools` exposes the exact
+   runtime-discovered schemas and `plugin_call` invokes one selected tool through the existing Host
+   supervisor. They do not receive a separate registry, process launcher, secret path, or stronger authority
+   than the Console.
 
 **Failure journey:** catalog failure never hides an installed plugin; a rejected package is quarantined
 and never becomes enableable; config, auth, desired activation and live runtime failures remain separate
@@ -87,7 +90,8 @@ package assets from a same-origin URL. Console source categories never select a 
 
 - Deliver the final single Plugin Manager in Core, including catalog discovery, Host inventory projection,
   local directory/archive admission, installation, configuration/auth visibility, enable/disable,
-  uninstall, capability listing, runtime diagnostics and the six Agent tools.
+  uninstall, capability listing, runtime diagnostics, the six Agent management tools, and the two governed
+  contribution discovery/invocation tools.
 - Catalog publication truth lives in `clowder-ai-plugins`; Core validates configured origin, exact version,
   digest, provenance and trust policy. A catalog row is never installation or activation truth.
 - Host inventory owns installed package, instance, grant and activation truth; supervisor/Broker own live
@@ -116,7 +120,8 @@ The detailed state census, invariants, Design Gate and TDD sequence live in
 
 The feature worktree now contains the shared closed projection contract, one
 `PluginManagerService`, safe local directory/archive admission, the six canonical management operations
-through REST and Agent, a revision-fenced typed configuration contribution, bounded multipart upload,
+through REST and Agent, two Host-supervised contribution discovery/invocation operations, a revision-fenced
+typed configuration contribution, bounded multipart upload,
 and production composition over the existing Host inventory,
 Broker, supervisor, official installer and owner-auth port. Focused tests exercise catalog degradation,
 revision fences, local path non-persistence, auth fail-closed recovery, uninstall failure, and the full
@@ -130,7 +135,9 @@ This is not yet a Train B completion claim:
   defect is covered by a Red→Green regression. `pluginManagerDemo=1` remains the fixture surface and
   `pluginManagerLive=1` now exercises canonical REST list/detail/install/configure/set-enabled/uninstall
   wiring in the feature checkout. Configure remains a manifest-owned typed detail contribution, not a
-  seventh generic Agent management operation. This direction approval is not the final phase-4 hands-on
+  seventh generic Agent management operation. Dynamic plugin tools instead remain behind the governed
+  `plugin_list_tools` → `plugin_call` path and the same live contribution authority used by Manager status.
+  This direction approval is not the final phase-4 hands-on
   journey acceptance.
 - Plugins Train B merged as `clowder-ai-plugins` commit
   `73d77f7efddb7a0b53829e9d88ebab51e03bdb32`. Contract beta.13, SDK beta.9 and
@@ -143,9 +150,11 @@ This is not yet a Train B completion claim:
   npm registry with canonical sha512 integrity, and the Host runs script-free `npm ci`. It also owns the
   builtin-contribution supervisor, canonical REST registration and authenticated same-origin package-icon
   route. Repository-local and connector manifests remain on their existing Settings journeys rather than
-  being presented as migrated package plugins. Paired isolated acceptance exercised
-  catalog → install → Host config/secret binding → enable → real `video_analysis` → Host restart/resume →
-  real call → disable → uninstall; the final instance was retired and the secret never entered inventory.
+  being presented as migrated package plugins. Earlier paired isolated acceptance exercised catalog →
+  install → Host config/secret binding → enable → supervisor-held real `video_analysis` call → Host
+  restart/resume → real call → disable → uninstall; the final instance was retired and the secret never
+  entered inventory. The current `plugin_list_tools` → `plugin_call` indirection is covered at the
+  composition/restart boundary and remains part of the open current-generation hands-on acceptance.
   `pluginManagerLive=1`
   consumes that composition in the feature checkout. Per the Train B/Train C boundary, production Settings
   still keeps the existing panels as its default until the aggregate Train C cutover preserves specialized
@@ -156,9 +165,11 @@ This is not yet a Train B completion claim:
   digest, manifest, package-boundary and media validation, with active-content confinement headers.
 - Production keeps the legacy Feishu-only `RefreshingOfficialPluginCatalog` for the existing specialized
   routes, while the new Manager independently consumes the bounded HTTPS machine catalog and exact package
-  digests. Its list/search projection contains no repository-local or connector compatibility rows. The
+  digests. Its list/search projection includes repository-local plugins as read-only compatibility rows;
+  connector compatibility remains a Train C cutover concern rather than being represented by fixtures. The
   owner Console detail may load a bounded, integrity-verified package-root `README.md` through a direct-local
   route; all six Agent management operations, including `plugin_get`, use only the short manifest description.
+  Contribution discovery and invocation expose only live tool schemas/results and never read the README.
   The published video alpha.0 package does not yet include that README, so the Manager reports the omission
   honestly while a package follow-up is pending. Final
   co-creator hands-on acceptance of this current Core generation remains open.

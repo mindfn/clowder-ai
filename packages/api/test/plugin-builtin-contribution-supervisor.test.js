@@ -107,8 +107,18 @@ async function harness({ manifest = exactManifest(), config = {}, secrets = {}, 
       start: async (spec) => {
         launches.push(structuredClone(spec));
         return {
-          tools: [{ name: 'video_analysis' }],
-          callTool: async () => ({ content: [{ type: 'text', text: 'fixture' }] }),
+          tools: [
+            {
+              name: 'video_analysis',
+              description: 'Analyze a remote video.',
+              inputSchema: {
+                type: 'object',
+                properties: { videoUrl: { type: 'string' } },
+                required: ['videoUrl'],
+              },
+            },
+          ],
+          callTool: async (name, args) => ({ content: [{ type: 'text', text: JSON.stringify({ name, args }) }] }),
           close: async () => {
             closes += 1;
           },
@@ -152,12 +162,34 @@ test('activates a typed MCP contribution with Host config/secret bindings and re
   });
   assert.equal((await h.store.snapshot()).instances[0].runtimeState, 'healthy');
   assert.equal(JSON.stringify(await h.store.snapshot()).includes('isolated-secret'), false);
+  assert.deepEqual(await h.supervisor.listPluginTools('dev.clowder.video-analysis'), [
+    {
+      contributionId: 'video-analysis-toolset',
+      name: 'video_analysis',
+      description: 'Analyze a remote video.',
+      inputSchema: {
+        type: 'object',
+        properties: { videoUrl: { type: 'string' } },
+        required: ['videoUrl'],
+      },
+    },
+  ]);
   assert.deepEqual(
-    await h.supervisor.callTool('pi_video', 'video-analysis-toolset', 'video_analysis', {
+    await h.supervisor.callPluginTool('dev.clowder.video-analysis', 'video-analysis-toolset', 'video_analysis', {
       videoUrl: 'https://media.example/video.mp4',
       prompt: 'summarize',
     }),
-    { content: [{ type: 'text', text: 'fixture' }] },
+    {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            name: 'video_analysis',
+            args: { videoUrl: 'https://media.example/video.mp4', prompt: 'summarize' },
+          }),
+        },
+      ],
+    },
   );
 
   await h.supervisor.stop('pi_video', 'owner_disabled');
@@ -165,6 +197,7 @@ test('activates a typed MCP contribution with Host config/secret bindings and re
   assert.equal(h.closes(), 1);
   assert.equal(h.releases(), 1);
   assert.equal((await h.store.snapshot()).instances[0].runtimeState, 'stopped');
+  await assert.rejects(h.supervisor.listPluginTools('dev.clowder.video-analysis'), /is not active/);
 });
 
 test('rechecks the grant fence before every tool call and tears down stale authority', async () => {
@@ -180,7 +213,7 @@ test('rechecks the grant fence before every tool call and tears down stale autho
   });
 
   await assert.rejects(
-    h.supervisor.callTool('pi_video', 'video-analysis-toolset', 'video_analysis', {}),
+    h.supervisor.callPluginTool('dev.clowder.video-analysis', 'video-analysis-toolset', 'video_analysis', {}),
     /lost live contribution authority/,
   );
 

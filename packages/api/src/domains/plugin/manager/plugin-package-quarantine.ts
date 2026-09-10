@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { PluginManagerDetail, PluginManagerPackageSource } from '@cat-cafe/shared';
+import { PluginInventoryError } from '../host-inventory/types.js';
 
 export const PLUGIN_PACKAGE_QUARANTINE_SCHEMA_VERSION = 1 as const;
 
@@ -17,6 +18,20 @@ export type PluginPackageQuarantineFailureCode =
   | 'INVALID_MANIFEST'
   | 'CONTRACT_VERSION_MISMATCH'
   | 'INVALID_GRANT';
+
+const inventoryQuarantineFailureCodes = new Set<PluginPackageQuarantineFailureCode>([
+  'INVALID_MANIFEST',
+  'CONTRACT_VERSION_MISMATCH',
+  'INVALID_GRANT',
+]);
+
+export function quarantineFailureCodeFromInventoryError(
+  error: unknown,
+): PluginPackageQuarantineFailureCode | undefined {
+  if (!(error instanceof PluginInventoryError)) return undefined;
+  const code = error.code as PluginPackageQuarantineFailureCode;
+  return inventoryQuarantineFailureCodes.has(code) ? code : undefined;
+}
 
 export type PluginPackageQuarantineSource =
   | {

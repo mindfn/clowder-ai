@@ -1,5 +1,5 @@
-import { type SignalSchemaCatalog, validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
-import { PLUGIN_MANIFEST_CONTRACT_VERSIONS, requestedCapabilitiesForManifest } from './contract-policy.js';
+import type { SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
+import { DEFAULT_PLUGIN_CONTRACT_RUNTIME, requestedCapabilitiesForManifest } from './contract-policy.js';
 import type { PackageAdmissionContractRuntime } from './manifest-verifier.js';
 import type {
   ActivationState,
@@ -34,12 +34,6 @@ const RUNTIME_ERROR_CODES = new Set<PluginRuntimeErrorCode>([
   'UNEXPECTED_RUNTIME_FAILURE',
 ]);
 const MAX_PROCESS_EXIT_CODE = 0xffff_ffff;
-
-const defaultContractRuntime: PackageAdmissionContractRuntime = {
-  manifestContractVersions: PLUGIN_MANIFEST_CONTRACT_VERSIONS,
-  validateManifest,
-  validateEffectiveGrants,
-};
 
 function corrupt(message: string): never {
   throw new PluginInventoryError('CORRUPT_SNAPSHOT', message);
@@ -336,7 +330,7 @@ function validateGrantReferences(
 
 export function parsePluginInventorySnapshot(
   value: unknown,
-  contract: PackageAdmissionContractRuntime = defaultContractRuntime,
+  contract: PackageAdmissionContractRuntime = DEFAULT_PLUGIN_CONTRACT_RUNTIME,
 ): PluginInventorySnapshot {
   const raw = object(value, 'inventory');
   requireSupportedCollections(raw);

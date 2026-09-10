@@ -60,6 +60,7 @@ function service({
   installer,
   lifecycle,
   configuration,
+  quarantine,
 } = {}) {
   return new PluginManagerService({
     catalog: {
@@ -75,7 +76,42 @@ function service({
     ...(installer === undefined ? {} : { installer }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(configuration === undefined ? {} : { configuration }),
+    ...(quarantine === undefined ? {} : { quarantine }),
   });
+}
+
+function quarantinedPublished() {
+  return {
+    pluginId: published.pluginId,
+    pluginInstanceId: null,
+    displayName: published.displayName,
+    description: published.description,
+    publisher: published.publisher,
+    source: {
+      kind: 'catalog',
+      catalogId: published.catalogId,
+      packageName: published.packageName,
+      trust: 'official',
+    },
+    availableVersion: published.version,
+    installedVersion: null,
+    packageDigest: published.packageDigest,
+    artifact: 'quarantined',
+    config: 'invalid',
+    auth: 'not-required',
+    intent: 'disabled',
+    live: 'stopped',
+    lifecycleRevision: 1,
+    capabilitySummary: [],
+    actions: {
+      install: false,
+      setEnabled: false,
+      uninstall: true,
+      blockingReasons: ['package-quarantined'],
+    },
+    capabilities: [],
+    configFields: [],
+  };
 }
 
 function installedInventory(overrides = {}) {
@@ -321,6 +357,32 @@ describe('F202 terminal Plugin Manager service', () => {
     });
     assert.deepEqual(result, { pluginId: published.pluginId, pluginInstanceId: 'pi_video' });
     assert.equal(calls.length, 1);
+  });
+
+  it('rejects installation while the selected catalog release is quarantined', async () => {
+    const calls = [];
+    const manager = service({
+      installer: {
+        install: async (input) => {
+          calls.push(input);
+          return { pluginId: published.pluginId, pluginInstanceId: 'pi_video' };
+        },
+      },
+      quarantine: {
+        list: async () => [quarantinedPublished()],
+        remove: async () => undefined,
+      },
+    });
+
+    await assert.rejects(
+      manager.install({
+        source: { kind: 'catalog', catalogId: published.catalogId },
+        expectedVersion: published.version,
+        expectedDigest: published.packageDigest,
+      }),
+      (error) => error?.code === 'ACTION_NOT_ALLOWED',
+    );
+    assert.equal(calls.length, 0);
   });
 
   it('checks lifecycle revision and action policy before enable', async () => {

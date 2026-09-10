@@ -5,6 +5,8 @@ import {
   loadMachinePluginCatalog,
   MachineOfficialPluginCatalog,
   OfficialPluginManagerCatalogAdapter,
+  RepositoryPluginManagerCompatibilityProvider,
+  resolveRepositoryReplacementPluginIds,
 } from '../dist/domains/plugin/index.js';
 
 const digest = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
@@ -111,6 +113,33 @@ test('projects canonical machine catalog release truth while Host policy remains
   });
 });
 
+test('selects the newest validated release independently of catalog array order', async () => {
+  const catalog = rawCatalog();
+  catalog.plugins[0].versions = [
+    catalog.plugins[0].versions[0],
+    {
+      ...catalog.plugins[0].versions[0],
+      version: '0.1.0-alpha.2',
+      artifact: {
+        ...catalog.plugins[0].versions[0].artifact,
+        version: '0.1.0-alpha.2',
+        tarballUrl: 'https://registry.npmjs.org/@clowder-ai/video-analysis/-/video-analysis-0.1.0-alpha.2.tgz',
+        integrity: `sha512-${Buffer.alloc(64, 8).toString('base64')}`,
+      },
+    },
+  ];
+  const provider = new MachineOfficialPluginCatalog({
+    loadCatalog: async () => catalog,
+    validateCatalog: canonicalValidator,
+    hostPolicies: [{ pluginId: 'dev.clowder.video-analysis', effectiveGrants: [] }],
+    now: () => 1_500,
+  });
+
+  const snapshot = await provider.snapshot();
+  assert.equal(snapshot.entries[0].version, '0.1.0-alpha.2');
+  assert.equal(snapshot.entries[0].packageDigest, `sha512-${Buffer.alloc(64, 8).toString('base64')}`);
+});
+
 test('fails closed when catalog validation fails and omits entries outside Host admission scope', async () => {
   const invalid = new MachineOfficialPluginCatalog({
     loadCatalog: async () => rawCatalog(),
@@ -136,6 +165,65 @@ test('fails closed when catalog validation fails and omits entries outside Host 
     status: 'fresh',
     checkedAt: 3_000,
   });
+});
+
+test('keeps an installed Host replacement authoritative during a cold catalog outage', async () => {
+  const hostPolicies = [
+    {
+      pluginId: 'dev.clowder.video-analysis',
+      replacesRepositoryPluginId: 'video-analysis',
+      effectiveGrants: ['events.publish'],
+    },
+  ];
+  const catalog = new MachineOfficialPluginCatalog({
+    loadCatalog: async () => Promise.reject(new Error('offline')),
+    validateCatalog: canonicalValidator,
+    hostPolicies,
+    now: () => 3_000,
+  });
+  const inventory = {
+    snapshot: async () => ({
+      schemaVersion: 1,
+      packages: [],
+      instances: [
+        {
+          pluginId: 'dev.clowder.video-analysis',
+          pluginInstanceId: 'pi_video',
+          lifecycleState: 'installed',
+        },
+      ],
+      grants: [],
+    }),
+  };
+  const compatibility = new RepositoryPluginManagerCompatibilityProvider(
+    async () => [
+      {
+        id: 'video-analysis',
+        name: 'Video Analysis (repository)',
+        version: '0.0.0',
+        status: 'disabled',
+        configured: false,
+        config: [],
+        resources: [],
+        hasHealthCheck: false,
+      },
+    ],
+    {
+      loadSuppressedPluginIds: async () => {
+        const [catalogSnapshot, inventorySnapshot] = await Promise.all([catalog.snapshot(), inventory.snapshot()]);
+        return resolveRepositoryReplacementPluginIds(
+          hostPolicies,
+          catalogSnapshot.entries,
+          inventorySnapshot.instances
+            .filter((instance) => instance.lifecycleState === 'installed')
+            .map((instance) => instance.pluginId),
+        );
+      },
+    },
+  );
+
+  assert.deepEqual(await compatibility.list(), []);
+  assert.equal((await catalog.snapshot()).status, 'degraded');
 });
 
 test('retains the last canonical machine catalog when a later read fails', async () => {

@@ -25,12 +25,27 @@ async function root(label) {
   return path;
 }
 
-async function harness({ packageManifest = manifest(), offline = () => false, contract } = {}) {
+async function harness({
+  packageManifest = manifest(),
+  offline = () => false,
+  contract,
+  machinePresentation = false,
+} = {}) {
   const projectRoot = await root('cat-cafe-f202-manager-composition-');
   const archive = await packageArchive({ packageManifest });
   const entry = catalogEntry(archive.integrity, {
     pluginId: packageManifest.pluginId,
     version: packageManifest.version,
+    ...(machinePresentation
+      ? {
+          presentation: {
+            displayName: packageManifest.name,
+            description: packageManifest.description,
+            icon: packageManifest.icon,
+            publisher: 'Clowder AI',
+          },
+        }
+      : {}),
   });
   const provider = {
     snapshot: async () => {
@@ -60,22 +75,7 @@ function contributionContractRuntime() {
   return {
     manifestContractVersions: ['0.1.0'],
     validateEffectiveGrants,
-    validateManifest(value) {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return validateManifest(value);
-      const manifest = structuredClone(value);
-      const {
-        configuration: _configuration,
-        contributions: _contributions,
-        icon: _icon,
-        description: _description,
-        ...base
-      } = manifest;
-      base.features = Array.isArray(base.features)
-        ? base.features.map(({ contributions: _references, ...feature }) => feature)
-        : base.features;
-      const validation = validateManifest(base);
-      return validation.valid ? { valid: true, manifest } : validation;
-    },
+    validateManifest,
   };
 }
 
@@ -319,6 +319,8 @@ describe('F202 Plugin Manager runtime composition', () => {
     let catalogOffline = false;
     const packageManifest = manifest({
       runtime: { transport: 'builtin' },
+      description: 'Runs the fixture capability through a Host-supervised contribution.',
+      icon: 'github',
       contributions: [
         {
           type: 'mcp',
@@ -341,6 +343,7 @@ describe('F202 Plugin Manager runtime composition', () => {
       packageManifest,
       contract,
       offline: () => catalogOffline,
+      machinePresentation: true,
     });
     const materializedRoot = await root('cat-cafe-f202-builtin-materialized-');
     await mkdir(join(materializedRoot, 'dist'), { recursive: true });
@@ -349,7 +352,9 @@ describe('F202 Plugin Manager runtime composition', () => {
     const composition = createPluginManagerRuntimeComposition({
       runtime,
       catalogProvider: provider,
-      catalogManifests: [packageManifest],
+      // Production discovery has release metadata only; the verified package manifest
+      // becomes authoritative after inventory admission.
+      catalogManifests: [],
       fetchOfficialArchive: async () => archive.bytes,
       builtinContributions: {
         materializer: {
@@ -367,8 +372,18 @@ describe('F202 Plugin Manager runtime composition', () => {
           start: async (spec) => {
             launches.push(structuredClone(spec));
             return {
-              tools: [{ name: 'fixture_tool' }],
-              callTool: async () => ({ ok: true }),
+              tools: [
+                {
+                  name: 'fixture_tool',
+                  description: 'Run the fixture capability.',
+                  inputSchema: {
+                    type: 'object',
+                    properties: { value: { type: 'string' } },
+                    required: ['value'],
+                  },
+                },
+              ],
+              callTool: async (name, args) => ({ ok: true, name, args }),
               close: async () => {},
             };
           },
@@ -390,6 +405,24 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.deepEqual(running.capabilitySummary, [
       { id: 'events.publish', kind: 'events', name: 'Source', active: true },
     ]);
+    assert.deepEqual(await composition.builtinSupervisor.listPluginTools(entry.pluginId), [
+      {
+        contributionId: 'fixture-tools',
+        name: 'fixture_tool',
+        description: 'Run the fixture capability.',
+        inputSchema: {
+          type: 'object',
+          properties: { value: { type: 'string' } },
+          required: ['value'],
+        },
+      },
+    ]);
+    assert.deepEqual(
+      await composition.builtinSupervisor.callPluginTool(entry.pluginId, 'fixture-tools', 'fixture_tool', {
+        value: 'real-call',
+      }),
+      { ok: true, name: 'fixture_tool', args: { value: 'real-call' } },
+    );
 
     catalogOffline = true;
     const degraded = await composition.manager.list();
@@ -405,5 +438,77 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.deepEqual(stopped.capabilitySummary, [
       { id: 'events.publish', kind: 'events', name: 'Source', active: false },
     ]);
+    await assert.rejects(composition.builtinSupervisor.listPluginTools(entry.pluginId), /is not active/);
+  });
+
+  it('surfaces a typed diagnostic when a builtin contribution cannot start', async () => {
+    const packageManifest = manifest({
+      runtime: { transport: 'builtin' },
+      description: 'Runs the fixture capability through a Host-supervised contribution.',
+      icon: 'github',
+      contributions: [
+        {
+          type: 'mcp',
+          id: 'fixture-tools',
+          runtime: { transport: 'stdio', entrypoint: 'dist/entrypoint.js' },
+        },
+      ],
+      features: [
+        {
+          id: 'source',
+          name: 'Source',
+          resources: [],
+          contributions: [{ type: 'mcp', id: 'fixture-tools' }],
+          capabilities: ['events.publish'],
+        },
+      ],
+    });
+    const contract = contributionContractRuntime();
+    const { archive, entry, provider, runtime } = await harness({
+      packageManifest,
+      contract,
+      machinePresentation: true,
+    });
+    const materializedRoot = await root('cat-cafe-f202-builtin-start-failure-');
+    await mkdir(join(materializedRoot, 'dist'), { recursive: true });
+    await writeFile(join(materializedRoot, 'dist/entrypoint.js'), '// builtin fixture\n', 'utf8');
+    const composition = createPluginManagerRuntimeComposition({
+      runtime,
+      catalogProvider: provider,
+      catalogManifests: [],
+      fetchOfficialArchive: async () => archive.bytes,
+      builtinContributions: {
+        materializer: {
+          resolve: async () => ({
+            rootDir: materializedRoot,
+            verifyIntegrity: async () => {},
+            release: async () => {},
+          }),
+        },
+        configuration: {
+          readConfig: async () => undefined,
+          readSecret: async () => undefined,
+        },
+        runtime: {
+          start: async () => {
+            throw new Error('secret-bearing child failure');
+          },
+        },
+      },
+    });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+
+    await assert.rejects(
+      () => composition.manager.setEnabled(entry.pluginId, { enabled: true, expectedRevision: 2 }),
+      (error) => error?.code === 'RUNTIME_START_FAILED',
+    );
+    const failed = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(failed.live, 'stopped');
+    assert.equal(failed.diagnostic?.code, 'UNEXPECTED_RUNTIME_FAILURE');
+    assert.equal(failed.diagnostic?.revision, 5);
   });
 });
