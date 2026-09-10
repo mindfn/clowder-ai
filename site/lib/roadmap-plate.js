@@ -194,21 +194,50 @@
    * current ink. Screening in the browser would mean reading a sprite back out of a canvas,
    * which a file:// page is not allowed to do — so the dots arrive as data instead.
    */
-  function screened(cat, dpr) {
-    const out = document.createElement('canvas');
-    out.width = Math.ceil(cat.w * dpr);
-    out.height = Math.ceil(cat.h * dpr);
-    const ctx = out.getContext('2d');
+  function surface(w, h, dpr) {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil(w * dpr));
+    c.height = Math.max(1, Math.ceil(h * dpr));
+    const ctx = c.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.fillStyle = INK();
-    // Dots sit on a fixed grid, so they ship as grid indices; expand them back here.
+    return { canvas: c, ctx };
+  }
+
+  /**
+   * Rasterise a screened pose in the current ink, split into a body and a tail.
+   *
+   * The tail is the one part of a cat that is never still, and it is the cheapest thing to
+   * animate: sprites are profiles drawn facing left, so the rear is simply the right end of the
+   * box. Splitting it out once means motion costs a transform per frame instead of redrawing a
+   * couple of thousand dots. `split` is the fraction of the width that counts as rear; poses
+   * where the tail is wrapped around the body pass 0 and stay whole.
+   */
+  function screened(cat, dpr, split) {
     const cell = global.ClowderPlateCatCell || 2;
+    const cut = split ? cat.w * (1 - split) : Infinity;
+    const body = surface(cat.w, cat.h, dpr);
+    const tail = split ? surface(cat.w, cat.h, dpr) : null;
+    let pivotY = 0;
+    let tailDots = 0;
     for (let i = 0; i < cat.dots.length; i += 3) {
+      const x = cat.dots[i] * cell + cell / 2;
+      const y = cat.dots[i + 1] * cell + cell / 2;
+      const ctx = tail && x >= cut ? tail.ctx : body.ctx;
+      if (ctx !== body.ctx) {
+        pivotY += y;
+        tailDots += 1;
+      }
       ctx.beginPath();
-      ctx.arc(cat.dots[i] * cell + cell / 2, cat.dots[i + 1] * cell + cell / 2, cat.dots[i + 2], 0, Math.PI * 2);
+      ctx.arc(x, y, cat.dots[i + 2], 0, Math.PI * 2);
       ctx.fill();
     }
-    return { canvas: out, w: cat.w, h: cat.h };
+    return {
+      canvas: body.canvas,
+      w: cat.w,
+      h: cat.h,
+      tail: tailDots > 40 ? { canvas: tail.canvas, x: cut, y: pivotY / tailDots } : null,
+    };
   }
 
   global.ClowderRoadmapPlate = {

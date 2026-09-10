@@ -336,12 +336,25 @@
       jump: ['jump', 'walk', 'sit'],
       walk: ['walk', 'sit'],
     };
+    // How much of the rear counts as tail, per pose. Poses where the tail is wrapped around the
+    // body or tucked under it get 0 and stay whole — splitting those would swing half a cat.
+    const TAIL_SPLIT = {
+      sit: 0.3,
+      stand: 0.28,
+      walk: 0.3,
+      'look-down': 0.3,
+      'look-up': 0.3,
+      'tail-up': 0.26,
+      alert: 0.28,
+    };
     function catSprite(i, pose) {
       const poses = screenedCats[CAT_IDS[i]];
       if (!poses) return null;
       const use = (FALLBACK[pose] || [pose, 'sit']).find((name) => poses[name]) || 'sit';
       const key = `${i}:${use}`;
-      if (!catCache.has(key)) catCache.set(key, { ...P.screened(poses[use], dpr), pose: use });
+      if (!catCache.has(key)) {
+        catCache.set(key, { ...P.screened(poses[use], dpr, TAIL_SPLIT[use] || 0), pose: use });
+      }
       return catCache.get(key);
     }
     const under = (id, spread) => {
@@ -389,7 +402,16 @@
     ];
     const IDLE_TOTAL = IDLE.reduce((n, a) => n + a.weight, 0);
     const idleRng = P.mulberry32(0xca7);
-    const idleState = CAT_IDS.map((_, i) => ({ until: -1, pose: 'sit', from: HOME[i], to: HOME[i], t0: 0, span: 1 }));
+    // Stagger the first decision so the three of them do not all change at the same instant.
+    const idleState = CAT_IDS.map((_, i) => ({
+      until: i * 1.9,
+      pose: 'sit',
+      from: HOME[i],
+      to: HOME[i],
+      t0: 0,
+      span: 1,
+    }));
+    const CAT_GAP = 132; // cats keep this much room; three of them pacing will otherwise merge
 
     function pickIdle() {
       let r = idleRng() * IDLE_TOTAL;
@@ -411,8 +433,27 @@
       st.span = act.span[0] + idleRng() * (act.span[1] - act.span[0]);
       st.until = time + st.span;
       st.from = st.to;
-      // Pacing keeps them under the tree rather than wandering off the sheet.
-      st.to = act.pace ? Math.max(300, Math.min(W - 380, st.from + (idleRng() - 0.5) * 260)) : st.from;
+      // Pacing keeps them under the tree, and out of each other: without a separation rule three
+      // wandering cats end up standing inside one another.
+      if (act.pace) {
+        let best = st.from;
+        let bestGap = -1;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const want = Math.max(300, Math.min(W - 380, st.from + (idleRng() - 0.5) * 260));
+          const gap = idleState.reduce(
+            (min, other, k) => (k === i ? min : Math.min(min, Math.abs(want - other.to))),
+            Number.POSITIVE_INFINITY,
+          );
+          if (gap > bestGap) {
+            bestGap = gap;
+            best = want;
+          }
+          if (gap >= CAT_GAP) break;
+        }
+        st.to = best;
+      } else {
+        st.to = st.from;
+      }
       return st;
     }
 
@@ -540,8 +581,10 @@
         // frames and is most of the difference between a placed sprite and a cat.
         const rest = pose === 'sleep' || pose === 'curl' || pose === 'loaf';
         const breath = live ? Math.sin(live.time * (rest ? 1.1 : 1.9) + i * 2.1) * (rest ? 0.016 : 0.008) : 0;
+        // Walking is still one drawing, but a step rhythm under it stops it from sliding.
+        const bob = live && pose === 'walk' ? Math.abs(Math.sin(live.time * 4.4 + i * 1.7)) * -1.6 : 0;
         view.save();
-        view.translate(x, GROUND);
+        view.translate(x, GROUND + bob);
         view.scale(1, 1 + breath);
         view.translate(0, -cat.h);
         // Profile sprites are drawn facing left; mirror to turn one toward what it is looking at.
@@ -550,6 +593,18 @@
           view.scale(-1, 1);
         }
         view.drawImage(cat.canvas, 0, 0, cat.w, cat.h);
+        if (cat.tail && live) {
+          // A tail is never still: a small swing about its root, faster when the cat is walking.
+          const swing = Math.sin(live.time * (pose === 'walk' ? 4.4 : 1.6) + i * 1.7) * (pose === 'walk' ? 0.09 : 0.05);
+          view.save();
+          view.translate(cat.tail.x, cat.tail.y);
+          view.rotate(swing);
+          view.translate(-cat.tail.x, -cat.tail.y);
+          view.drawImage(cat.tail.canvas, 0, 0, cat.w, cat.h);
+          view.restore();
+        } else if (cat.tail) {
+          view.drawImage(cat.tail.canvas, 0, 0, cat.w, cat.h);
+        }
         view.restore();
       });
       if (annotate) annotate(view, cam);
