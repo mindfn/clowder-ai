@@ -114,6 +114,9 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
             <section key={comparison.id} className="space-y-2">
               <h3 data-testid="f257-governance-comparison-label" className="text-sm font-semibold text-cafe">
                 {comparison.label}
+                <span className="ml-2 text-xs font-normal text-cafe-muted">
+                  · {OPERATION_LABEL[comparison.operation]}
+                </span>
               </h3>
               <DiffViewer
                 diff={fullContentDiff(
@@ -121,7 +124,7 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
                   comparison.before,
                   comparison.after,
                 )}
-                hideFilePath={comparison.path === null}
+                hideFileMeta={comparison.operation === 'runtime'}
                 initialMode="split"
                 wrapLines
                 splitHeaders={{ before: '应用前', after: '应用后' }}
@@ -138,14 +141,29 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
   );
 }
 
+/**
+ * What the executor actually does to this artifact. sol delta @a525247dc: the
+ * writer creates the body and hook.yaml but APPENDS to the existing registry,
+ * and enable/disable/modify only touch the runtime store — rendering all of
+ * them as empty→full hid exactly the 新增/修改 distinction lang asked for.
+ */
+type ArtifactOperation = 'create' | 'append' | 'runtime';
+
 interface ComparisonBlock {
   id: string;
   label: string;
-  /** Real repository path, or null when the card cannot know it. */
+  /** Real repository path, or null when no file is involved / knowable. */
   path: string | null;
+  operation: ArtifactOperation;
   before: string;
   after: string;
 }
+
+const OPERATION_LABEL: Record<ArtifactOperation, string> = {
+  create: '新建文件',
+  append: '在既有文件中追加注册项',
+  runtime: '运行时状态（不写文件）',
+};
 
 export function comparisonBlocks(change: Record<string, unknown>): ComparisonBlock[] {
   const action = String(change.action ?? '');
@@ -165,12 +183,20 @@ export function comparisonBlocks(change: Record<string, unknown>): ComparisonBlo
       id: 'condition',
       label: '触发条件',
       path: assetDir && `${assetDir}/hook.yaml`,
+      operation: 'runtime',
       before: formatCondition(change.beforeCondition),
       after: formatCondition(change.proposedCondition),
     });
   }
   if (blocks.length === 0) {
-    blocks.push({ id: 'state', label: '状态', path: assetDir, before: '当前状态', after: '应用提议后的状态' });
+    blocks.push({
+      id: 'state',
+      label: '状态',
+      path: assetDir,
+      operation: 'runtime',
+      before: '当前状态',
+      after: '应用提议后的状态',
+    });
   }
   return blocks;
 }
@@ -186,7 +212,16 @@ function selectBlocks(
   if (action === 'disable' || action === 'enable') return enablementBlocks(change, action, beforeContent, assetDir);
   const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
   if (afterContent === undefined) return [];
-  return [{ id: 'content', label: '段正文', path: assetDir, before: beforeContent, after: afterContent }];
+  return [
+    {
+      id: 'content',
+      label: '段正文',
+      path: assetDir,
+      operation: 'runtime',
+      before: beforeContent,
+      after: afterContent,
+    },
+  ];
 }
 
 /** The three artifacts HarnessUnitDirectoryWriter actually writes for an add. */
@@ -198,6 +233,7 @@ function addArtifactBlocks(change: Record<string, unknown>, assetSlug: string): 
       id: 'content',
       label: '段正文',
       path: `assets/prompt-hooks/${assetSlug}/${template}`,
+      operation: 'create',
       before: '',
       after: stringField(change, 'content') ?? '',
     },
@@ -205,6 +241,7 @@ function addArtifactBlocks(change: Record<string, unknown>, assetSlug: string): 
       id: 'manifest',
       label: 'Hook 清单',
       path: `assets/prompt-hooks/${assetSlug}/hook.yaml`,
+      operation: 'create',
       before: '',
       after: formatStructured(manifest),
     },
@@ -212,6 +249,7 @@ function addArtifactBlocks(change: Record<string, unknown>, assetSlug: string): 
       id: 'registry',
       label: '评估单元注册表',
       path: 'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
+      operation: 'append',
       before: '',
       after: formatStructured({
         unitId: String(change.unitId ?? '未知段'),
@@ -239,10 +277,18 @@ function enablementBlocks(
       id: 'state',
       label: '启用状态',
       path: assetDir && `${assetDir}/hook.yaml`,
+      operation: 'runtime',
       before: enablementLabel(change.beforeEnabled),
       after: enablementLabel(action === 'enable'),
     },
-    { id: 'content', label: '段正文', path: assetDir, before: beforeContent, after: beforeContent },
+    {
+      id: 'content',
+      label: '段正文',
+      path: assetDir,
+      operation: 'runtime',
+      before: beforeContent,
+      after: beforeContent,
+    },
   ];
 }
 

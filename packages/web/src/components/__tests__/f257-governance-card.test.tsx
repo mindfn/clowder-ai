@@ -1,4 +1,4 @@
-import type { ApprovalHubItem } from '@cat-cafe/shared';
+import type { ApprovalHubItem, HarnessGovernanceProposalChange } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -353,10 +353,11 @@ describe('F257 governance card', () => {
     expect(cell?.className).not.toContain('overflow-x-auto');
   });
 
+  // HarnessGovernanceExecutor.hydrateAdd sets hookId = unitId (not the slug).
   const FULL_ADD_CHANGE = {
     unitId: 'D22',
     action: 'add',
-    hookId: 'd22-termination-gate',
+    hookId: 'D22',
     assetSlug: 'd22-termination-gate',
     reason: '补入终止门',
     content: '新段正文',
@@ -378,7 +379,7 @@ describe('F257 governance card', () => {
     },
     // HarnessUnitDirectoryWriter.validate rejects clauseId on add.
     objectives: [{ objectiveId: 'tool-access' }],
-  };
+  } satisfies HarnessGovernanceProposalChange;
 
   // P2-C (sol @ ccd01dabf): the dialog must name the files the executor really
   // writes, and must not silently drop object/array manifest fields.
@@ -469,5 +470,35 @@ describe('F257 governance card', () => {
     // a boolean stays bare so it remains distinguishable from the string "true"
     expect(after).toMatch(/enabled: true(\n|$)/);
     expect(after).toContain('safetyTier: editable');
+  });
+
+  // sol delta @a525247dc (P2): enable/disable/modify/rollback write the runtime
+  // override/version store — no file is touched — so the whole file framing is
+  // false, not just the path.
+  it('drops all file metadata for comparisons that touch no file', async () => {
+    const dialog = await openDiffDialog([
+      { unitId: 'L4', hookId: 'L4', action: 'disable', beforeEnabled: true, beforeContent: 'body' },
+    ]);
+    expect(dialog?.textContent).not.toContain('file changed');
+    expect(dialog?.textContent).not.toContain('files changed');
+    expect(dialog?.textContent).not.toContain('assets/prompt-hooks');
+  });
+
+  // sol delta @a525247dc (P2): the writer creates the body + hook.yaml but
+  // APPENDS to the existing unit-evaluation-manifest.yaml. Rendering all three
+  // as empty→full hides exactly the 新增/修改 distinction lang asked for.
+  it('distinguishes newly created artifacts from an appended registry entry', () => {
+    expect(comparisonBlocks(FULL_ADD_CHANGE).map((block) => block.operation)).toEqual(['create', 'create', 'append']);
+  });
+
+  it('keeps runtime-only changes labelled as runtime rather than file writes', () => {
+    const blocks = comparisonBlocks({
+      unitId: 'L4',
+      hookId: 'L4',
+      action: 'disable',
+      beforeEnabled: true,
+      beforeContent: 'b',
+    });
+    expect(blocks.every((block) => block.operation === 'runtime')).toBe(true);
   });
 });

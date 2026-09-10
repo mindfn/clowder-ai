@@ -250,8 +250,12 @@ interface DiffViewerProps {
   wrapLines?: boolean;
   /** Column headings rendered inside the split table so they stay aligned. */
   splitHeaders?: { before: string; after: string };
-  /** Suppress the file-path bar when the caller has no authoritative path. */
-  hideFilePath?: boolean;
+  /**
+   * Suppress every file-level affordance. Some comparisons (F257 runtime
+   * override / version-store changes) touch no file at all, so a path bar or a
+   * "1 file changed" counter would assert something untrue.
+   */
+  hideFileMeta?: boolean;
 }
 
 export function DiffViewer({
@@ -261,7 +265,7 @@ export function DiffViewer({
   initialMode = 'unified',
   wrapLines,
   splitHeaders,
-  hideFilePath,
+  hideFileMeta,
 }: DiffViewerProps) {
   const [mode, setMode] = useState<'unified' | 'split'>(initialMode);
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
@@ -304,14 +308,16 @@ export function DiffViewer({
           >
             Side-by-side
           </button>
-          <span className="ml-auto text-micro text-cafe-secondary">
-            {filtered.length} file{filtered.length !== 1 ? 's' : ''} changed
-          </span>
+          {!hideFileMeta && (
+            <span className="ml-auto text-micro text-cafe-secondary">
+              {filtered.length} file{filtered.length !== 1 ? 's' : ''} changed
+            </span>
+          )}
         </div>
       )}
       {filtered.map((file) => (
         <div key={file.path} className="rounded border border-[var(--console-border-soft)] overflow-hidden">
-          {!compact && !hideFilePath && (
+          {!compact && !hideFileMeta && (
             <div className="bg-[var(--ws-editor-bg)] px-3 py-1.5 text-xs font-mono text-cafe-muted console-divider-b truncate">
               {file.path}
             </div>
