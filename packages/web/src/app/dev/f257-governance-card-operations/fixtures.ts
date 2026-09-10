@@ -24,7 +24,9 @@ export const ADD_CHANGE = {
     id: 'D22',
     name: '终止门',
     stage: 'per-turn',
-    order: 2200,
+    // per-turn is occupied contiguously to 2400 (R1@2200, R2@2300, N1@2400);
+    // HarnessGovernanceExecutor.validateAdd rejects a duplicate stage/order.
+    order: 2500,
     version: 1,
     enabled: true,
     template: 'content.md',
