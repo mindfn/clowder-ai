@@ -1954,6 +1954,19 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         if (cloudReturnGrantClaim && cloudReturnGrantStore) {
           await cloudReturnGrantStore.release(cloudReturnGrantClaim);
         }
+        if (localReviewVerdict && a2aAdmissionPlan) {
+          app.log.warn(
+            { err: error, threadId: effectiveThreadId, clientMessageId },
+            '[agent-key/post-message] atomic local-review admission unavailable',
+          );
+          reply.status(503);
+          return {
+            kind: 'review_delivery_pending',
+            message:
+              'The review fact was not published; retry the same clientMessageId for atomic author wake admission.',
+            ...(clientMessageId ? { clientMessageId } : {}),
+          };
+        }
         throw error;
       }
       const storedMsg = atomicAdmission.message;
@@ -3410,24 +3423,41 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     };
     let atomicAdmission: Awaited<ReturnType<typeof appendA2ASourceWithLedgerAdmission>>;
     let persistedReplay = false;
-    if (a2aAdmissionPlan) {
-      atomicAdmission = await appendA2ASourceWithLedgerAdmission(
-        { messageStore, invocationQueue: opts.invocationQueue },
-        appendInput,
-        {
-          plan: a2aAdmissionPlan,
-          ownerAuthProvenance: record.ownerAuthProvenance,
-          parentInvocationId: record.parentInvocationId,
-          callerTraceContext: record.traceContext,
-          ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
-        },
-      );
-    } else if (appendInput.idempotencyKey) {
-      const result = await messageStore.appendIdempotent(appendInput);
-      atomicAdmission = { message: result.message };
-      persistedReplay = result.idempotent;
-    } else {
-      atomicAdmission = { message: await messageStore.append(appendInput) };
+    try {
+      if (a2aAdmissionPlan) {
+        atomicAdmission = await appendA2ASourceWithLedgerAdmission(
+          { messageStore, invocationQueue: opts.invocationQueue },
+          appendInput,
+          {
+            plan: a2aAdmissionPlan,
+            ownerAuthProvenance: record.ownerAuthProvenance,
+            parentInvocationId: record.parentInvocationId,
+            callerTraceContext: record.traceContext,
+            ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+          },
+        );
+      } else if (appendInput.idempotencyKey) {
+        const result = await messageStore.appendIdempotent(appendInput);
+        atomicAdmission = { message: result.message };
+        persistedReplay = result.idempotent;
+      } else {
+        atomicAdmission = { message: await messageStore.append(appendInput) };
+      }
+    } catch (error) {
+      if (localReviewVerdict && a2aAdmissionPlan) {
+        app.log.warn(
+          { err: error, threadId: effectiveThreadId, clientMessageId },
+          '[invocation-callback] atomic local-review admission unavailable',
+        );
+        reply.status(503);
+        return {
+          kind: 'review_delivery_pending',
+          message:
+            'The review fact was not published; retry the same clientMessageId for atomic author wake admission.',
+          ...(clientMessageId ? { clientMessageId } : {}),
+        };
+      }
+      throw error;
     }
     const storedMsg = atomicAdmission.message;
     if (persistedReplay || atomicAdmission.preAdmittedReplayed) {

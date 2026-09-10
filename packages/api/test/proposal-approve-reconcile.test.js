@@ -3,9 +3,11 @@
  * F128 / #1406 B1: proposal seed reconcile — exactly-once dispatch.
  *
  * Sol's hard requirement: queue-full, processNext-throw, and processNext
- * started:false must each reconcile on retry, drive the single seed to a
- * terminal delivery state, and never produce duplicate thread messages or
- * duplicate invocations.
+ * started:false must each reconcile on retry, drive the single seed through
+ * Queue exactly once, and never produce duplicate thread messages or
+ * duplicate invocations. Published agent speech keeps its timeline visibility
+ * separate from owner-delivery projection; Queue terminalization is not allowed
+ * to rewrite it to a user-delivery terminal.
  */
 
 import assert from 'node:assert/strict';
@@ -20,20 +22,40 @@ const router = {
 };
 
 /**
- * Simulate real delivery by mutating the durable message to delivered and
- * dequeuing its queue entry. The production QueueProcessor would do this
- * through transitionQueueCustody; for exactly-once dispatch tests we only
- * care that the seed reaches a terminal state without duplicate wakes.
+ * Simulate one successful Queue execution by terminalizing its durable entry.
+ * The production QueueProcessor records response/lifecycle evidence before
+ * doing this; this proposal test only owns exactly-once seed admission and must
+ * not emulate retired owner-delivery projection on published agent speech.
  *
- * Crucially, we only mark delivered when the message already has queue
- * custody. Part 2's `ensureExistingSeedAdmitted` is what creates that custody
- * for a queue-full seed; without it this helper would be a no-op and the
- * queue-full test would fail with repeated redispatches.
+ * Crucially, we only terminalize when the message already has Queue custody.
+ * Part 2's `ensureExistingSeedAdmitted` is what creates that custody for a
+ * queue-full seed; without it this helper would be a no-op and the queue-full
+ * test would fail with repeated redispatches.
  */
 async function simulateDelivery(ctx, invocationQueue, threadId, userId) {
   const entry = invocationQueue.list(threadId, userId)[0];
   if (entry?.payload.messageId) {
-    await ctx.messageStore.markDelivered(entry.payload.messageId, Date.now());
+    const source = await ctx.messageStore.getById(entry.payload.messageId);
+    assert.equal(source?.lifecycle?.kind, 'input');
+    const targetId = entry.targets[0];
+    assert.ok(targetId);
+    const dispatched = await ctx.messageStore.advanceLifecycleInputDispatch(source.id, {
+      orderKey: source.lifecycle.orderKey,
+      ...(source.lifecycle.producerInvocationId ? { producerInvocationId: source.lifecycle.producerInvocationId } : {}),
+      targetId,
+      phase: 'dispatched',
+      statusMessageId: `proposal-response:${entry.id}`,
+      dispatchedAt: Date.now(),
+    });
+    assert.ok(['applied', 'replayed'].includes(dispatched.kind));
+    const settled = await ctx.messageStore.advanceLifecycleInputDispatch(source.id, {
+      orderKey: source.lifecycle.orderKey,
+      ...(source.lifecycle.producerInvocationId ? { producerInvocationId: source.lifecycle.producerInvocationId } : {}),
+      targetId,
+      phase: 'settled',
+      statusMessageId: `proposal-response:${entry.id}`,
+    });
+    assert.ok(['applied', 'replayed'].includes(settled.kind));
     await invocationQueue.terminalizeEntryDurable(threadId, userId, entry.id, 'handled');
   }
   return { started: true };
@@ -45,7 +67,7 @@ const threadReadOptions = {
 };
 
 describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
-  test('queue-full seed is reconciled once and driven to terminal delivery', async () => {
+  test('queue-full seed is reconciled and processed exactly once', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const invocationQueue = new InvocationQueue();
     let proposalEnqueueAttempt = 0;
@@ -109,7 +131,11 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     // Exactly one seed message, one successful processNext, no residual queue entry.
     const timeline = await ctx.messageStore.getByThread(childId, 10, 'alice', threadReadOptions);
     assert.equal(timeline.length, 1, 'must materialize exactly one seed message');
-    assert.equal(timeline[0].deliveryStatus, 'delivered', 'seed must reach terminal delivery');
+    assert.equal(
+      timeline[0].deliveryStatus,
+      undefined,
+      'published agent seed must not be rewritten as owner-delivered content',
+    );
     assert.equal(processCalls.length, 1, 'must wake the target exactly once');
     assert.equal(invocationQueue.size(childId, 'alice'), 0, 'queue must be empty after delivery');
   });
@@ -172,7 +198,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
 
     const timeline = await ctx.messageStore.getByThread(childId, 10, 'alice', threadReadOptions);
     assert.equal(timeline.length, 1, 'must keep exactly one seed message');
-    assert.equal(timeline[0].deliveryStatus, 'delivered');
+    assert.equal(timeline[0].deliveryStatus, 'queued');
     assert.equal(processCalls.length, 2, 'first throw + one successful redispatch');
     assert.equal(invocationQueue.size(childId, 'alice'), 0);
   });
@@ -229,12 +255,12 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
 
     const timeline = await ctx.messageStore.getByThread(childId, 10, 'alice', threadReadOptions);
     assert.equal(timeline.length, 1, 'must keep exactly one seed message');
-    assert.equal(timeline[0].deliveryStatus, 'delivered');
+    assert.equal(timeline[0].deliveryStatus, 'queued');
     assert.equal(processCalls.length, 2, 'first no-start + one successful redispatch');
     assert.equal(invocationQueue.size(childId, 'alice'), 0);
   });
 
-  test('legacy queue-full seed is repaired and driven to terminal delivery exactly once', async () => {
+  test('legacy queue-full seed is repaired and processed exactly once', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const invocationQueue = new InvocationQueue();
     const processCalls = [];
@@ -302,7 +328,11 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     // Exactly one seed message, one successful processNext, no residual queue entry.
     const timeline = await ctx.messageStore.getByThread(child.id, 10, 'alice', threadReadOptions);
     assert.equal(timeline.length, 1, 'must keep exactly one legacy seed message');
-    assert.equal(timeline[0].deliveryStatus, 'delivered', 'legacy seed must reach terminal delivery');
+    assert.equal(
+      timeline[0].deliveryStatus,
+      undefined,
+      'published legacy agent seed must not be rewritten as owner-delivered content',
+    );
     assert.equal(processCalls.length, 1, 'must wake the target exactly once');
     assert.equal(invocationQueue.size(child.id, 'alice'), 0, 'queue must be empty after delivery');
   });

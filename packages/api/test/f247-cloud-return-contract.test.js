@@ -532,7 +532,8 @@ describe('F247 source-bound Remote MCP return contract', () => {
     const entries = invocationQueue.list(thread.id, 'alice');
     assert.equal(entries.length, 1);
     assert.equal(entries[0].payload.messageId, persisted.id);
-    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
+    assert.deepEqual(entries[0].from, { kind: 'agent', catId: 'gpt-pro' });
+    assert.deepEqual(entries[0].targets, ['codex']);
     assert.equal(entries[0].payload.content, persisted.content);
     assert.equal(broadcasts.length, 0);
     assert.equal((await store.getById(persisted.id)).replyTo, source.id);

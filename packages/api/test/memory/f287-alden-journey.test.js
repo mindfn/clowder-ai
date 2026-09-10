@@ -392,7 +392,6 @@ describe('F287 D1 Alden golden journey', { concurrency: false }, () => {
     for (const result of [serial, parallel]) {
       assert.equal(result.calls.length, 1, 'one resolver call per actual cat invocation');
       assert.equal(result.calls[0].seeds.length, 2, 'one Entity seed and one explicit approved Taste seed');
-      assert.match(result.calls[0].seeds[0].payload.sourceRevision, /^sha256:[a-f0-9]{64}$/);
       // Caller-supplied seeds precede route-detected subject_seen seeds (route-serial.ts assembly order).
       assert.deepEqual(result.calls[0].seeds[0], {
         kind: 'approved_taste_invoked',
@@ -401,9 +400,9 @@ describe('F287 D1 Alden golden journey', { concurrency: false }, () => {
         payload: {
           triggerKey: 'ELI5',
           sourceMessageId: 'message-current',
-          sourceRevision: result.calls[0].seeds[0].payload.sourceRevision,
         },
       });
+      assert.match(result.calls[0].seeds[1].payload.sourceRevision, /^sha256:[0-9a-f]{64}$/);
       assert.deepEqual(result.calls[0].seeds[1], {
         kind: 'subject_seen',
         producer: 'entity_nudge',
@@ -412,6 +411,7 @@ describe('F287 D1 Alden golden journey', { concurrency: false }, () => {
           entityId: 'person:alden',
           matchedAlias: 'Alden',
           sourceMessageId: 'message-current',
+          sourceRevision: result.calls[0].seeds[1].payload.sourceRevision,
         },
       });
       assert.deepEqual(result.calls[0].serverScope, {

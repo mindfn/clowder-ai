@@ -214,7 +214,7 @@ function createMockDeps(services, appendCalls, feedbackWrites, broadcasts) {
 }
 
 describe('route-serial notice contract', () => {
-  it('keeps prose-inline @handles as text instead of manufacturing routing feedback', async () => {
+  it('keeps an inline action @handle as text while persisting routing feedback', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];
     const feedbackWrites = [];
@@ -224,10 +224,11 @@ describe('route-serial notice contract', () => {
     for await (const _msg of routeSerial(deps, ['opus'], 'review this', 'user1', 'thread-1')) {
     }
 
-    assert.equal(feedbackWrites.length, 0);
+    assert.equal(feedbackWrites.length, 1);
+    assert.deepEqual(feedbackWrites[0].payload.items, [{ targetCatId: 'codex', reason: 'inline_action' }]);
     assert.equal(
       appendCalls.some((msg) => ['routing-syntax-hint', 'inline-mention-hint'].includes(msg.source?.connector)),
-      false,
+      true,
     );
     assert.equal(
       broadcasts.some(
@@ -235,7 +236,7 @@ describe('route-serial notice contract', () => {
           entry.event === 'connector_message' &&
           ['routing-syntax-hint', 'inline-mention-hint'].includes(entry.payload.message.source?.connector),
       ),
-      false,
+      true,
     );
   });
 

@@ -550,6 +550,12 @@ interface AutoResumeSuppression {
 interface ThreadDrainState {
   dirty: boolean;
   owner?: Promise<void>;
+  /**
+   * A newer, unrelated cancellation may finish while an older cancel-all
+   * identity is still waiting for its exact terminal. That old fence must stay
+   * consumable, but it must not strand work released by the newer invocation.
+   */
+  bypassSuppressionForCatIds?: Set<string>;
 }
 
 interface ConversationBatchResolution {
@@ -2444,7 +2450,14 @@ export class QueueProcessor {
       );
       return;
     }
-    if (this.hasDispatchableQueuedForThread(threadId)) await this.requestDrain(threadId);
+    if (this.hasDispatchableQueuedForThread(threadId)) {
+      await this.requestDrain(
+        threadId,
+        this.isAutoResumeSuppressedByDifferentExecution(sk, invocationId)
+          ? { bypassSuppressionForCatId: catId }
+          : undefined,
+      );
+    }
   }
 
   /**
@@ -2520,6 +2533,12 @@ export class QueueProcessor {
     return true;
   }
 
+  private isAutoResumeSuppressedByDifferentExecution(slotKey: string, invocationId: string | undefined): boolean {
+    if (!invocationId || this.autoResumeSuppressionRemainingMs(slotKey) === 0) return false;
+    const suppression = this.suppressedAutoResume.get(slotKey);
+    return Boolean(suppression && !suppression.hasAnonymousFence && !suppression.executionIds.has(invocationId));
+  }
+
   /**
    * User-level entry: co-creator manually triggers processing their next entry.
    */
@@ -2532,10 +2551,14 @@ export class QueueProcessor {
    * it is running only set dirty; the current owner must observe that bit before
    * it can retire, so enqueue/terminal/reorder races cannot lose the last wake.
    */
-  requestDrain(threadId: string): Promise<void> {
+  requestDrain(threadId: string, options?: { bypassSuppressionForCatId?: string }): Promise<void> {
     const state = this.threadDrains.get(threadId) ?? { dirty: false };
     this.threadDrains.set(threadId, state);
     state.dirty = true;
+    if (options?.bypassSuppressionForCatId) {
+      if (!state.bypassSuppressionForCatIds) state.bypassSuppressionForCatIds = new Set();
+      state.bypassSuppressionForCatIds.add(options.bypassSuppressionForCatId);
+    }
     if (!state.owner) {
       const owner = this.runDrain(threadId, state).finally(() => {
         if (state.owner === owner) state.owner = undefined;
@@ -2550,8 +2573,10 @@ export class QueueProcessor {
   private async runDrain(threadId: string, state: ThreadDrainState): Promise<void> {
     while (true) {
       state.dirty = false;
+      const bypassSuppressionForCatIds = new Set(state.bypassSuppressionForCatIds);
+      state.bypassSuppressionForCatIds?.clear();
       while (true) {
-        const result = await this.tryExecuteNextAcrossUsers(threadId);
+        const result = await this.tryExecuteNextAcrossUsers(threadId, bypassSuppressionForCatIds);
         if (!result.started && !result.progressed) break;
       }
       if (!state.dirty) return;
@@ -2658,7 +2683,10 @@ export class QueueProcessor {
     return true;
   }
 
-  private async tryExecuteNextAcrossUsers(threadId: string): Promise<QueueAdmissionAttempt> {
+  private async tryExecuteNextAcrossUsers(
+    threadId: string,
+    bypassSuppressionForCatIds: ReadonlySet<string> = new Set(),
+  ): Promise<QueueAdmissionAttempt> {
     const comparatorHead = this.deps.queue.peekOldestAcrossUsers(threadId);
     if (!comparatorHead) {
       this.emitContinuationDiagnostic(threadId, 'unknown', classifyContinuationOutcome(0), 0);
@@ -2704,7 +2732,7 @@ export class QueueProcessor {
 
     const selectedTargetCatId = resolvedTargetCats.find(
       (targetCatId) =>
-        !this.isAutoResumeSuppressed(threadId, targetCatId) &&
+        (bypassSuppressionForCatIds.has(targetCatId) || !this.isAutoResumeSuppressed(threadId, targetCatId)) &&
         !this.processingSlots.has(QueueProcessor.slotKey(threadId, targetCatId)) &&
         !this.deps.invocationTracker.has(threadId, targetCatId),
     );

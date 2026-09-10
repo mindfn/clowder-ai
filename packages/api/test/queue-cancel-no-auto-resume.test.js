@@ -274,6 +274,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
   // auto-resume (backward compat for single-cat cancel scenarios).
   // ─────────────────────────────────────────────────────────────────────────
   it('canceled_by_user still auto-resumes when suppressAutoResume is NOT active', async () => {
+    const requestDrain = mock.method(processor, 'requestDrain', async () => {});
     const entry1 = enqueueEntry(deps.queue);
     enqueueEntry(deps.queue, { content: 'second' });
 
@@ -283,12 +284,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user');
 
     // entry2 should have been picked up (auto-resume is the default)
-    const remaining = deps.queue.list('t1', 'u1');
-    // At least one entry should be processing or the router should have been called
-    assert.ok(
-      deps.router.routeExecution.mock.callCount() > 0 || remaining.some((e) => e.status === 'processing'),
-      'Without suppress, canceled_by_user should auto-resume the next entry',
-    );
+    assert.equal(requestDrain.mock.callCount(), 1, 'without suppression, completion must request the canonical drain');
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -344,23 +340,24 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
   // an older invocation's terminal marker.
   // ─────────────────────────────────────────────────────────────────────────
   it('multi-cat cancelAll does NOT leave stale suppress on secondary cats', async () => {
+    const requestDrain = mock.method(processor, 'requestDrain', async () => {});
     // Simulate cancelAll fencing both slots for the old aggregate invocation.
     processor.suppressAutoResume('t1', 'opus', ['inv-old-aggregate']);
     processor.suppressAutoResume('t1', 'codex', ['inv-old-aggregate']);
 
     // Enqueue an entry for codex
-    const codexEntry = enqueueEntry(deps.queue, { targetCats: ['codex'], content: 'codex msg' });
+    enqueueEntry(deps.queue, { targetCats: ['codex'], content: 'codex msg' });
 
     // codex invocation completes with canceled_by_user (new per-cat cancel)
     await processor.onInvocationComplete('t1', 'codex', 'canceled_by_user', 'inv-new-codex', []);
     await new Promise((r) => setTimeout(r, 50));
 
     // INVARIANT: codex should auto-resume normally (no stale suppress)
-    const remaining = deps.queue.list('t1', 'u1');
-    const codexStatus = remaining.find((e) => e.id === codexEntry.id);
-    assert.ok(
-      deps.router.routeExecution.mock.callCount() > 0 || (codexStatus && codexStatus.status === 'processing'),
-      'codex must auto-resume — no stale suppress from multi-cat cancelAll',
+    assert.equal(requestDrain.mock.callCount(), 1);
+    assert.deepEqual(
+      requestDrain.mock.calls[0].arguments,
+      ['t1', { bypassSuppressionForCatId: 'codex' }],
+      'the newer exact completion must drain without consuming the older aggregate fence',
     );
   });
 
@@ -391,6 +388,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
   });
 
   it('suppressAutoResume is consumed after one use (single-shot)', async () => {
+    const requestDrain = mock.method(processor, 'requestDrain', async () => {});
     // Suppress, then consume it with a canceled_by_user completion
     processor.suppressAutoResume('t1', 'opus', ['inv-first']);
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user', 'inv-first', []);
@@ -398,19 +396,13 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
     // Verify suppress flag is gone by checking the internal state:
     // A second suppressAutoResume + onInvocationComplete should suppress,
     // but WITHOUT a second suppress call, it should NOT suppress.
-    const entry = enqueueEntry(deps.queue, { content: 'after-suppress' });
+    enqueueEntry(deps.queue, { content: 'after-suppress' });
 
     // This completion should auto-resume (no suppress active)
     await processor.onInvocationComplete('t1', 'opus', 'succeeded');
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // entry should have been picked up (auto-resume is back to normal)
-    const remaining = deps.queue.list('t1', 'u1');
-    const entryStatus = remaining.find((e) => e.id === entry.id);
-    // Either entry is now processing, or routeExecution was called
-    assert.ok(
-      deps.router.routeExecution.mock.callCount() > 0 || (entryStatus && entryStatus.status === 'processing'),
-      'After suppress is consumed, subsequent completions should auto-resume normally',
-    );
+    assert.equal(requestDrain.mock.callCount(), 1, 'after consumption, subsequent completions request a drain');
   });
 });

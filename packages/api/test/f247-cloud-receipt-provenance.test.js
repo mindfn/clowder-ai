@@ -42,14 +42,16 @@ function needsBindingContent(outboundReceipt) {
 describe('F247 durable outbound receipt provenance', () => {
   it('persists a refs-only recovery carrier for an exact direct-user needs-binding source', async () => {
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'alice',
-      catId: null,
-      threadId: 'thread-owner',
-      content: '@gpt-pro exact source',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: null,
+        threadId: 'thread-owner',
+        content: '@gpt-pro exact source',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+      }),
+    );
     const outboundReceipt = receipt(source.id, {
       sourceSender: { kind: 'user', id: 'alice' },
       status: 'failed',
@@ -83,15 +85,17 @@ describe('F247 durable outbound receipt provenance', () => {
 
   it('does not persist an interactive recovery carrier for an exact cat-authored source', async () => {
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: 'thread-owner',
-      content: '@gpt-pro exact A2A source',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-      extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: 'thread-owner',
+        content: '@gpt-pro exact A2A source',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
+      }),
+    );
     const outboundReceipt = receipt(source.id, {
       status: 'failed',
       transport: 'none',
@@ -116,14 +120,16 @@ describe('F247 durable outbound receipt provenance', () => {
 
   it('does not infer recovery from a generic failed cloud receipt', async () => {
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'alice',
-      catId: null,
-      threadId: 'thread-owner',
-      content: '@gpt-pro exact source',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: null,
+        threadId: 'thread-owner',
+        content: '@gpt-pro exact source',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+      }),
+    );
     const outboundReceipt = receipt(source.id, {
       sourceSender: { kind: 'user', id: 'alice' },
       status: 'failed',
