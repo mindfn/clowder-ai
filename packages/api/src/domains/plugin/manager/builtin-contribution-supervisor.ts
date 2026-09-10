@@ -1,6 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
+import type { McpContribution, PluginManifest } from '@clowder-ai/plugin-contract';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
   getDefaultEnvironment,
@@ -18,39 +19,6 @@ import type {
 const DEFAULT_START_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 60_000;
 const CLOSE_TIMEOUT_MS = 5_000;
-
-interface ConfigurationFieldProjection {
-  readonly key: string;
-  readonly required: boolean;
-}
-
-interface EnvironmentBindingProjection {
-  readonly source: 'config' | 'secret';
-  readonly key: string;
-}
-
-interface McpContributionProjection {
-  readonly type: 'mcp';
-  readonly id: string;
-  readonly runtime: {
-    readonly transport: 'stdio' | 'ipc';
-    readonly entrypoint: string;
-    readonly args?: readonly string[];
-  };
-  readonly environment?: Readonly<Record<string, EnvironmentBindingProjection>>;
-}
-
-interface ContributionReferenceProjection {
-  readonly type: string;
-  readonly id: string;
-}
-
-interface ContributionManifestProjection {
-  readonly runtime: { readonly transport: string };
-  readonly configuration?: readonly ConfigurationFieldProjection[];
-  readonly contributions?: readonly unknown[];
-  readonly features: readonly { readonly contributions?: readonly ContributionReferenceProjection[] }[];
-}
 
 export interface MaterializedBuiltinPluginPackage {
   readonly rootDir: string;
@@ -84,9 +52,25 @@ export interface McpContributionLaunchSpec {
 }
 
 export interface McpContributionRuntimeHandle {
-  readonly tools: readonly { readonly name: string; readonly description?: string }[];
+  readonly tools: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly inputSchema: {
+      readonly type: 'object';
+      readonly properties?: Readonly<Record<string, object>>;
+      readonly required?: readonly string[];
+      readonly $schema?: string;
+    };
+  }[];
   callTool(name: string, args: Readonly<Record<string, unknown>>): Promise<unknown>;
   close(): Promise<void>;
+}
+
+export interface BuiltinPluginContributionTool {
+  readonly contributionId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly inputSchema: McpContributionRuntimeHandle['tools'][number]['inputSchema'];
 }
 
 export interface McpContributionRuntimePort {
@@ -170,6 +154,7 @@ export class StdioMcpContributionRuntime implements McpContributionRuntimePort {
       const tools = listed.tools.map((tool) => ({
         name: tool.name,
         ...(tool.description === undefined ? {} : { description: tool.description }),
+        inputSchema: structuredClone(tool.inputSchema),
       }));
       return {
         tools,
@@ -200,15 +185,17 @@ interface ActiveContribution {
 }
 
 interface ActiveExecution {
+  readonly pluginId: string;
   readonly packageDigest: string;
   readonly grantRevision: number;
   readonly materialized: MaterializedBuiltinPluginPackage;
   readonly contributions: readonly ActiveContribution[];
 }
 
-function isMcpContribution(value: unknown): value is McpContributionProjection {
-  if (!value || typeof value !== 'object') return false;
-  return (value as { type?: unknown }).type === 'mcp';
+function isMcpContribution(
+  value: NonNullable<PluginManifest['contributions']>[number] | undefined,
+): value is McpContribution {
+  return value?.type === 'mcp';
 }
 
 function pathInside(root: string, candidate: string): boolean {
@@ -223,16 +210,12 @@ function envValue(value: unknown): string | undefined {
   return undefined;
 }
 
-function requestedContributions(manifest: ContributionManifestProjection): readonly McpContributionProjection[] {
-  const byKey = new Map<string, unknown>();
+function requestedContributions(manifest: PluginManifest): readonly McpContribution[] {
+  const byKey = new Map<string, NonNullable<PluginManifest['contributions']>[number]>();
   for (const contribution of manifest.contributions ?? []) {
-    if (!contribution || typeof contribution !== 'object') continue;
-    const value = contribution as { type?: unknown; id?: unknown };
-    if (typeof value.type === 'string' && typeof value.id === 'string') {
-      byKey.set(`${value.type}\0${value.id}`, contribution);
-    }
+    byKey.set(`${contribution.type}\0${contribution.id}`, contribution);
   }
-  const selected: McpContributionProjection[] = [];
+  const selected: McpContribution[] = [];
   const seen = new Set<string>();
   for (const reference of manifest.features.flatMap((feature) => feature.contributions ?? [])) {
     const key = `${reference.type}\0${reference.id}`;
@@ -287,7 +270,7 @@ export class BuiltinPluginContributionSupervisor {
           : { packageName: authority.packageRecord.provenance.packageName }),
       });
       await materialized.verifyIntegrity();
-      const manifest = authority.packageRecord.manifest as unknown as ContributionManifestProjection;
+      const manifest = authority.packageRecord.manifest;
       if (manifest.runtime.transport !== 'builtin') {
         throw new BuiltinPluginContributionError(
           'INSTANCE_NOT_RUNNABLE',
@@ -301,6 +284,7 @@ export class BuiltinPluginContributionSupervisor {
       }
       await this.assertAuthorityFence(authority, 'starting');
       this.active.set(pluginInstanceId, {
+        pluginId: authority.instance.pluginId,
         packageDigest: authority.instance.packageDigest,
         grantRevision: authority.grants.grantRevision,
         materialized,
@@ -376,8 +360,41 @@ export class BuiltinPluginContributionSupervisor {
     return contribution.handle.callTool(toolName, args);
   }
 
+  async listPluginTools(pluginId: string): Promise<readonly BuiltinPluginContributionTool[]> {
+    const { pluginInstanceId, execution } = this.activePluginExecution(pluginId);
+    await this.assertLiveAuthority(pluginInstanceId, execution.packageDigest, execution.grantRevision);
+    return execution.contributions.flatMap((contribution) =>
+      contribution.handle.tools.map((tool) => ({
+        contributionId: contribution.id,
+        name: tool.name,
+        ...(tool.description === undefined ? {} : { description: tool.description }),
+        inputSchema: structuredClone(tool.inputSchema),
+      })),
+    );
+  }
+
+  async callPluginTool(
+    pluginId: string,
+    contributionId: string,
+    toolName: string,
+    args: Readonly<Record<string, unknown>>,
+  ): Promise<unknown> {
+    const { pluginInstanceId } = this.activePluginExecution(pluginId);
+    return this.callTool(pluginInstanceId, contributionId, toolName, args);
+  }
+
   activeContributionIds(pluginInstanceId: string): readonly string[] {
     return this.active.get(pluginInstanceId)?.contributions.map((contribution) => contribution.id) ?? [];
+  }
+
+  private activePluginExecution(pluginId: string): {
+    readonly pluginInstanceId: string;
+    readonly execution: ActiveExecution;
+  } {
+    for (const [pluginInstanceId, execution] of this.active) {
+      if (execution.pluginId === pluginId) return { pluginInstanceId, execution };
+    }
+    throw new BuiltinPluginContributionError('CONTRIBUTION_NOT_ACTIVE', `${pluginId} is not active`);
   }
 
   private async runnableAuthority(pluginInstanceId: string): Promise<RunnableAuthority> {
@@ -414,8 +431,8 @@ export class BuiltinPluginContributionSupervisor {
   private async launchSpec(
     authority: RunnableAuthority,
     rootDir: string,
-    manifest: ContributionManifestProjection,
-    contribution: McpContributionProjection,
+    manifest: PluginManifest,
+    contribution: McpContribution,
   ): Promise<McpContributionLaunchSpec> {
     const { rootReal, entrypoint } = await this.resolveContributionEntrypoint(rootDir, contribution);
     const env = await this.contributionEnvironment(authority, manifest, contribution);
@@ -432,7 +449,7 @@ export class BuiltinPluginContributionSupervisor {
 
   private async resolveContributionEntrypoint(
     rootDir: string,
-    contribution: McpContributionProjection,
+    contribution: McpContribution,
   ): Promise<{ readonly rootReal: string; readonly entrypoint: string }> {
     const rootReal = await realpath(rootDir);
     const candidate = resolve(rootReal, contribution.runtime.entrypoint);
@@ -454,8 +471,8 @@ export class BuiltinPluginContributionSupervisor {
 
   private async contributionEnvironment(
     authority: RunnableAuthority,
-    manifest: ContributionManifestProjection,
-    contribution: McpContributionProjection,
+    manifest: PluginManifest,
+    contribution: McpContribution,
   ): Promise<Readonly<Record<string, string>>> {
     const fields = new Map((manifest.configuration ?? []).map((field) => [field.key, field]));
     const effectiveGrants = new Set(authority.grants.effectiveGrants);

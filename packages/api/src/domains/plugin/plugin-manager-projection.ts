@@ -11,6 +11,7 @@ import type {
   PluginManagerLiveState,
   PluginManagerPackageSource,
 } from '@cat-cafe/shared';
+import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
 import type {
   PluginInstanceRecord,
   PluginInventorySnapshot,
@@ -51,6 +52,32 @@ export interface DerivePluginManagerActionsInput {
   readonly auth: PluginManagerAuthState;
   readonly intent: PluginManagerIntentState;
   readonly activationTransition: boolean;
+}
+
+function capabilityKind(capability: Capability): PluginManagerCapability['kind'] {
+  if (capability.startsWith('events.')) return 'events';
+  if (capability.startsWith('messaging.') || capability === 'onMessage') return 'messaging';
+  if (capability.startsWith('schedule.')) return 'schedule';
+  if (capability.startsWith('windows.') || capability.startsWith('whisper.')) return 'identity';
+  return 'service';
+}
+
+export function pluginManagerCapabilitiesFromManifest(
+  manifest: PluginManifest,
+): readonly Omit<PluginManagerCapability, 'active'>[] {
+  const capabilities = new Map<Capability, Omit<PluginManagerCapability, 'active'>>();
+  for (const feature of manifest.features) {
+    for (const capability of feature.capabilities) {
+      if (!capabilities.has(capability)) {
+        capabilities.set(capability, {
+          id: capability,
+          kind: capabilityKind(capability),
+          name: feature.name,
+        });
+      }
+    }
+  }
+  return [...capabilities.values()];
 }
 
 function blockedArtifactReason(artifact: PluginManagerArtifactState): string {
@@ -167,13 +194,15 @@ export function pluginManagerPackageIconUrl(pluginId: string): string {
   return `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/icon`;
 }
 
-function candidatePresentation(candidate: PluginManagerCatalogCandidate) {
+function candidatePresentation(candidate: PluginManagerCatalogCandidate, installedManifest?: PluginManifest) {
+  const description = installedManifest ? installedManifest.description : candidate.description;
+  const declaredIcon = installedManifest ? installedManifest.icon : candidate.icon;
   const icon =
-    candidate.icon !== undefined && typeof candidate.icon !== 'string'
-      ? { ...candidate.icon, src: pluginManagerPackageIconUrl(candidate.pluginId) }
-      : candidate.icon;
+    declaredIcon !== undefined && typeof declaredIcon !== 'string'
+      ? { ...declaredIcon, src: pluginManagerPackageIconUrl(candidate.pluginId) }
+      : declaredIcon;
   return {
-    ...(candidate.description === undefined ? {} : { description: candidate.description }),
+    ...(description === undefined ? {} : { description }),
     ...(icon === undefined ? {} : { icon }),
     ...(candidate.iconBg === undefined ? {} : { iconBg: candidate.iconBg }),
     ...(candidate.publisher === undefined ? {} : { publisher: candidate.publisher }),
@@ -198,13 +227,13 @@ function projectionState(
 }
 
 function projectCapabilities(
-  candidate: PluginManagerCatalogCandidate,
+  capabilities: readonly Omit<PluginManagerCapability, 'active'>[],
   effectiveGrants: readonly string[],
   activeCapabilityIds: readonly string[],
 ) {
   const granted = new Set(effectiveGrants);
   const active = new Set(activeCapabilityIds);
-  return candidate.capabilities.map((capability) => ({
+  return capabilities.map((capability) => ({
     ...capability,
     active: active.has(capability.id) && granted.has(capability.id),
   }));
@@ -224,6 +253,7 @@ export function projectPluginManagerCatalogCandidate(
     (item) => item.pluginId === candidate.pluginId && item.lifecycleState === 'installed',
   );
   const packageRecord = candidatePackage(candidate, snapshot, instance);
+  const installedManifest = instance ? packageRecord?.manifest : undefined;
   const grant = instance
     ? snapshot.grants.find((item) => item.pluginInstanceId === instance.pluginInstanceId)
     : undefined;
@@ -234,7 +264,7 @@ export function projectPluginManagerCatalogCandidate(
     overrides,
   );
   const capabilitySummary = projectCapabilities(
-    candidate,
+    installedManifest ? pluginManagerCapabilitiesFromManifest(installedManifest) : candidate.capabilities,
     grant?.effectiveGrants ?? [],
     overrides.activeCapabilityIds ?? [],
   );
@@ -242,8 +272,8 @@ export function projectPluginManagerCatalogCandidate(
   return {
     pluginId: candidate.pluginId,
     pluginInstanceId: instance?.pluginInstanceId ?? null,
-    displayName: candidate.displayName,
-    ...candidatePresentation(candidate),
+    displayName: installedManifest?.name ?? candidate.displayName,
+    ...candidatePresentation(candidate, installedManifest),
     source: candidateSource(candidate, packageRecord),
     availableVersion: candidate.version,
     installedVersion: packageRecord?.version ?? null,

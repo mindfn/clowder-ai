@@ -41,7 +41,15 @@ const listed = {
   catalog: { status: 'degraded', refreshedAt: 1_000, message: 'stale cache' },
 };
 
-async function harness({ overrides = {}, auditAppend, callbackRegistry, upload = false, asset, documentation } = {}) {
+async function harness({
+  overrides = {},
+  auditAppend,
+  callbackRegistry,
+  upload = false,
+  asset,
+  documentation,
+  contributions,
+} = {}) {
   const calls = [];
   const audits = [];
   const manager = {
@@ -84,6 +92,7 @@ async function harness({ overrides = {}, auditAppend, callbackRegistry, upload =
     manager,
     ...(asset ? { asset } : {}),
     ...(documentation ? { documentation } : {}),
+    ...(contributions ? { contributions } : {}),
     ...(callbackRegistry ? { callbackRegistry } : {}),
     auditLog: {
       append: async (event) => {
@@ -214,7 +223,7 @@ function verifiedCallbackRegistry({ readOnly = false } = {}) {
   };
 }
 
-test('exposes exactly the six canonical Manager operations through one service', async () => {
+test('exposes exactly the six canonical Manager state/lifecycle operations through one service', async () => {
   const { app, audits, calls } = await harness();
   try {
     assert.equal((await app.inject({ method: 'GET', url: '/api/plugin-manager/plugins' })).statusCode, 401);
@@ -391,6 +400,96 @@ test('verified Agent principal can read and mutate through the same owner/loopba
   }
 });
 
+test('verified Agent principal discovers and invokes only active Host-supervised plugin tools', async () => {
+  const contributionCalls = [];
+  const inputSchema = {
+    type: 'object',
+    properties: { videoUrl: { type: 'string' } },
+    required: ['videoUrl'],
+  };
+  const { app, audits } = await harness({
+    callbackRegistry: verifiedCallbackRegistry(),
+    contributions: {
+      listPluginTools: async (pluginId) => {
+        contributionCalls.push(['list-tools', pluginId]);
+        return [
+          {
+            contributionId: 'video-analysis-toolset',
+            name: 'video_analysis',
+            description: 'Analyze a remote video.',
+            inputSchema,
+          },
+        ];
+      },
+      callPluginTool: async (pluginId, contributionId, toolName, args) => {
+        contributionCalls.push(['call', pluginId, contributionId, toolName, args]);
+        return { content: [{ type: 'text', text: 'analyzed' }] };
+      },
+    },
+  });
+  const callbackHeaders = {
+    host: 'localhost:3004',
+    origin: 'http://localhost:3004',
+    'x-invocation-id': 'inv-plugin',
+    'x-callback-token': 'callback-secret',
+  };
+  try {
+    const listedTools = await app.inject({
+      method: 'GET',
+      url: '/api/plugin-manager/plugins/official.video/contributions/tools',
+      headers: callbackHeaders,
+      remoteAddress: '127.0.0.1',
+    });
+    assert.equal(listedTools.statusCode, 200, listedTools.payload);
+    assert.deepEqual(listedTools.json(), {
+      pluginId: 'official.video',
+      tools: [
+        {
+          contributionId: 'video-analysis-toolset',
+          name: 'video_analysis',
+          description: 'Analyze a remote video.',
+          inputSchema,
+        },
+      ],
+    });
+
+    const invoked = await app.inject({
+      method: 'POST',
+      url: '/api/plugin-manager/plugins/official.video/contributions/call',
+      headers: callbackHeaders,
+      remoteAddress: '127.0.0.1',
+      payload: {
+        contributionId: 'video-analysis-toolset',
+        toolName: 'video_analysis',
+        arguments: { videoUrl: 'https://media.example/video.mp4' },
+      },
+    });
+    assert.equal(invoked.statusCode, 200, invoked.payload);
+    assert.deepEqual(invoked.json(), { content: [{ type: 'text', text: 'analyzed' }] });
+    assert.deepEqual(contributionCalls, [
+      ['list-tools', 'official.video'],
+      [
+        'call',
+        'official.video',
+        'video-analysis-toolset',
+        'video_analysis',
+        { videoUrl: 'https://media.example/video.mp4' },
+      ],
+    ]);
+    assert.equal(audits.length, 1);
+    assert.deepEqual(audits[0].data, {
+      target: 'plugin-contribution',
+      stage: 'requested',
+      operator: 'cat:codex-sol',
+      pluginId: 'official.video',
+      contributionId: 'video-analysis-toolset',
+      toolName: 'video_analysis',
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test('invalid or read-only Agent authority cannot reach a Manager mutation', async () => {
   const readOnlyHarness = await harness({ callbackRegistry: verifiedCallbackRegistry({ readOnly: true }) });
   try {
@@ -420,6 +519,23 @@ test('invalid or read-only Agent authority cannot reach a Manager mutation', asy
       payload: { expectedRevision: 3 },
     });
     assert.equal(denied.statusCode, 403, denied.payload);
+    const contributionDenied = await readOnlyHarness.app.inject({
+      method: 'POST',
+      url: '/api/plugin-manager/plugins/official.video/contributions/call',
+      headers: {
+        host: 'localhost:3004',
+        origin: 'http://localhost:3004',
+        'x-invocation-id': 'inv-plugin',
+        'x-callback-token': 'callback-secret',
+      },
+      remoteAddress: '127.0.0.1',
+      payload: {
+        contributionId: 'video-analysis-toolset',
+        toolName: 'video_analysis',
+        arguments: {},
+      },
+    });
+    assert.equal(contributionDenied.statusCode, 403, contributionDenied.payload);
     assert.deepEqual(readOnlyHarness.audits, []);
     assert.deepEqual(readOnlyHarness.calls, [['list']]);
   } finally {

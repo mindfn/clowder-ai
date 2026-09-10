@@ -20,7 +20,7 @@ import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 function matchesSearch(plugin: PluginManagerDesignFixture, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
   if (normalized.length === 0) return true;
-  return `${plugin.displayName} ${pluginDescriptionVariants(plugin.description).join(' ')} ${plugin.packageName} ${plugin.capabilities
+  return `${plugin.id} ${plugin.displayName} ${pluginDescriptionVariants(plugin.description).join(' ')} ${plugin.packageName} ${plugin.publisher} ${plugin.capabilities
     .map((capability) => `${capability.name} ${capability.description}`)
     .join(' ')}`
     .toLocaleLowerCase()

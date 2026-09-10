@@ -62,6 +62,31 @@ test('installs a package built against the exact consumed prerelease contract', 
   assert.equal((await store.snapshot()).packages[0].contractVersion, '0.1.0-beta.13');
 });
 
+test('quarantines a catalog package rejected by the Host contract allowlist', async () => {
+  const packageManifest = manifest({ contractVersion: '0.1.0-beta.14' });
+  const archive = await packageArchive({ packageManifest });
+  const entry = catalogEntry(archive.integrity);
+  const { packagesRoot, inventory, store } = await harness(archive, entry);
+  const quarantines = new FilePluginPackageQuarantineStore(join(packagesRoot, 'quarantines.json'), {
+    now: () => 10_000,
+  });
+  const installer = new OfficialPluginPackageInstaller({
+    inventory,
+    packagesRoot,
+    catalog: [entry],
+    fetchArchive: async () => archive.bytes,
+    quarantine: quarantines,
+  });
+
+  await assert.rejects(installer.install(entry.catalogId, releaseFence(entry)), isInstallError('INVENTORY_REJECTED'));
+
+  assert.equal((await store.snapshot()).instances.length, 0);
+  const [rejected] = await quarantines.list();
+  assert.equal(rejected.pluginId, entry.pluginId);
+  assert.equal(rejected.packageDigest, archive.integrity);
+  assert.equal(rejected.failure.code, 'CONTRACT_VERSION_MISMATCH');
+});
+
 test('same exact catalog install is idempotent and does not mint a second instance', async () => {
   const archive = await packageArchive();
   const { store, installer } = await harness(archive);

@@ -5,9 +5,10 @@ import { FilesystemVerifiedPluginPackageLocator, type VerifiedPluginPackage } fr
 import type { PluginManifestValidator } from './external-runtime/package-staging.js';
 import type { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import { type PackageAdmissionCandidate, PluginInventoryError } from './host-inventory/types.js';
-import type {
-  PluginPackageQuarantineFailureCode,
-  PluginPackageQuarantineRecorder,
+import {
+  type PluginPackageQuarantineFailureCode,
+  type PluginPackageQuarantineRecorder,
+  quarantineFailureCodeFromInventoryError,
 } from './manager/plugin-package-quarantine.js';
 import {
   bundledManifestDigest,
@@ -228,7 +229,13 @@ export class OfficialPluginPackageInstaller {
       'INVALID_PACKAGE_ARCHIVE',
       'INVALID_PACKAGE_SCHEMA',
     ]);
-    if (!quarantineCodes.has(error.code as PluginPackageQuarantineFailureCode)) return;
+    const directFailureCode = error.code as PluginPackageQuarantineFailureCode;
+    const failureCode = quarantineCodes.has(directFailureCode)
+      ? directFailureCode
+      : error.code === 'INVENTORY_REJECTED'
+        ? quarantineFailureCodeFromInventoryError(error.cause)
+        : undefined;
+    if (!failureCode) return;
     try {
       await this.options.quarantine.record({
         pluginId: entry.pluginId,
@@ -236,7 +243,7 @@ export class OfficialPluginPackageInstaller {
         availableVersion: entry.version,
         packageDigest: entry.packageDigest,
         source: { kind: 'catalog', catalogId: entry.catalogId, packageName: entry.packageName },
-        failureCode: error.code as PluginPackageQuarantineFailureCode,
+        failureCode,
       });
     } catch (quarantineError) {
       throw new OfficialPluginInstallError(

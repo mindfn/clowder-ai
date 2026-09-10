@@ -1,8 +1,5 @@
-import type {
-  PluginManagerConfigField,
-  PluginManagerConfigFieldKind,
-  PluginManagerConfigureRequest,
-} from '@cat-cafe/shared';
+import type { PluginManagerConfigField, PluginManagerConfigureRequest } from '@cat-cafe/shared';
+import type { ConfigurationField } from '@clowder-ai/plugin-contract';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import { readPluginConfig, writePluginConfig } from '../plugin-config-store.js';
@@ -11,22 +8,7 @@ import { type PluginManagerConfigurationPort, PluginManagerServiceError } from '
 const SECRET_MASK = '••••••';
 const CONFIGURATION_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;
 
-interface ContractConfigurationOption {
-  readonly value: string;
-  readonly label: string;
-  readonly hint?: string;
-  readonly docsUrl?: string;
-}
-
-interface ContractConfigurationField {
-  readonly key: string;
-  readonly label: string;
-  readonly description?: string;
-  readonly kind: Exclude<PluginManagerConfigFieldKind, 'list'>;
-  readonly required: boolean;
-  readonly default?: string | number | boolean;
-  readonly options?: readonly ContractConfigurationOption[];
-}
+type ContractConfigurationField = ConfigurationField;
 
 export interface HostPluginConfigurationServiceOptions {
   readonly projectRoot: string;
@@ -38,53 +20,8 @@ function configError(message: string): PluginManagerServiceError {
   return new PluginManagerServiceError('INVALID_CONFIGURATION', message);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readOptions(value: unknown): readonly ContractConfigurationOption[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw configError('Plugin configuration options are invalid');
-  return value.map((item) => {
-    if (!isRecord(item) || typeof item.value !== 'string' || typeof item.label !== 'string') {
-      throw configError('Plugin configuration options are invalid');
-    }
-    return {
-      value: item.value,
-      label: item.label,
-      ...(typeof item.hint === 'string' ? { hint: item.hint } : {}),
-      ...(typeof item.docsUrl === 'string' ? { docsUrl: item.docsUrl } : {}),
-    };
-  });
-}
-
 function manifestConfiguration(record: PluginPackageRecord): readonly ContractConfigurationField[] {
-  const value = (record.manifest as unknown as { readonly configuration?: unknown }).configuration;
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) throw configError('Plugin configuration contribution is invalid');
-  return value.map((item) => {
-    if (
-      !isRecord(item) ||
-      typeof item.key !== 'string' ||
-      typeof item.label !== 'string' ||
-      typeof item.required !== 'boolean' ||
-      !['string', 'secret', 'select', 'boolean', 'number', 'url'].includes(String(item.kind))
-    ) {
-      throw configError('Plugin configuration contribution is invalid');
-    }
-    const kind = item.kind as ContractConfigurationField['kind'];
-    return {
-      key: item.key,
-      label: item.label,
-      kind,
-      required: item.required,
-      ...(typeof item.description === 'string' ? { description: item.description } : {}),
-      ...(typeof item.default === 'string' || typeof item.default === 'number' || typeof item.default === 'boolean'
-        ? { default: item.default }
-        : {}),
-      ...(kind === 'select' ? { options: readOptions(item.options) ?? [] } : {}),
-    };
-  });
+  return record.manifest.configuration ?? [];
 }
 
 function currentPackage(

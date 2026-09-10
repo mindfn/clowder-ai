@@ -16,6 +16,8 @@ import {
   getEventAuditLog,
 } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import {
+  BuiltinPluginContributionError,
+  type BuiltinPluginContributionSupervisor,
   LocalPluginPackageAdmissionError,
   PluginManagerPackageAssetError,
   type PluginManagerPackageAssetPort,
@@ -41,6 +43,7 @@ type PluginManagerRouteService = Pick<
 
 export interface PluginManagerRouteOptions {
   readonly manager: PluginManagerRouteService;
+  readonly contributions?: Pick<BuiltinPluginContributionSupervisor, 'listPluginTools' | 'callPluginTool'>;
   readonly asset?: PluginManagerPackageAssetPort;
   readonly documentation?: PluginManagerPackageDocumentationPort;
   readonly auditLog?: Pick<EventAuditLog, 'append'>;
@@ -114,6 +117,18 @@ const configureSchema = z
       .max(256),
   })
   .strict();
+const contributionCallSchema = z
+  .object({
+    contributionId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+    toolName: z.string().trim().min(1).max(256),
+    arguments: z.record(z.unknown()),
+  })
+  .strict();
 
 function invalidRequest(reply: FastifyReply) {
   return reply.status(400).send({ error: 'Invalid plugin manager request', code: 'INVALID_REQUEST' });
@@ -148,6 +163,28 @@ async function appendConfigurationAudit(
   });
 }
 
+async function appendContributionCallAudit(
+  auditLog: Pick<EventAuditLog, 'append'>,
+  input: {
+    readonly operator: string;
+    readonly pluginId: string;
+    readonly contributionId: string;
+    readonly toolName: string;
+  },
+): Promise<void> {
+  await auditLog.append({
+    type: AuditEventTypes.CONFIG_UPDATED,
+    data: {
+      target: 'plugin-contribution',
+      stage: 'requested',
+      operator: input.operator,
+      pluginId: input.pluginId,
+      contributionId: input.contributionId,
+      toolName: input.toolName,
+    },
+  });
+}
+
 function officialInstallStatus(code: OfficialPluginInstallError['code']): number {
   if (code === 'UNKNOWN_CATALOG_ID' || code === 'INSTANCE_NOT_FOUND') return 404;
   if (code === 'STALE_CATALOG' || code === 'STALE_REVISION') return 409;
@@ -167,6 +204,15 @@ function sendManagerError(reply: FastifyReply, error: unknown) {
     return reply.status(officialInstallStatus(error.code)).send({ error: error.message, code: error.code });
   }
   return reply.status(500).send({ error: 'Plugin manager operation failed', code: 'PLUGIN_MANAGER_FAILED' });
+}
+
+function sendContributionError(reply: FastifyReply, error: unknown) {
+  if (error instanceof BuiltinPluginContributionError) {
+    const status =
+      error.code === 'CONTRIBUTION_NOT_ACTIVE' ? 409 : error.code === 'UNSUPPORTED_CONTRIBUTION' ? 422 : 503;
+    return reply.status(status).send({ error: error.message, code: error.code });
+  }
+  return reply.status(500).send({ error: 'Plugin contribution operation failed', code: 'CONTRIBUTION_FAILED' });
 }
 
 class PluginManagerUploadError extends Error {
@@ -334,6 +380,62 @@ export function registerPluginManagerRoutes(app: FastifyInstance, options: Plugi
           return reply.status(packageAssetStatus(error.code)).send({ error: error.message, code: error.code });
         }
         return reply.status(500).send({ error: 'Plugin package documentation failed', code: 'DOCUMENTATION_FAILED' });
+      }
+    },
+  );
+
+  app.get<{ Params: { pluginId: string } }>(
+    '/api/plugin-manager/plugins/:pluginId/contributions/tools',
+    async (request, reply) => {
+      const access = requirePluginReadAccess(request, accessOptions);
+      if ('error' in access) return pluginAccessError(reply, access);
+      const parsedId = pluginIdSchema.safeParse(request.params.pluginId);
+      if (!parsedId.success) return invalidRequest(reply);
+      if (!options.contributions) {
+        return reply
+          .status(503)
+          .send({ error: 'Plugin contributions are unavailable', code: 'CONTRIBUTION_UNAVAILABLE' });
+      }
+      try {
+        return { pluginId: parsedId.data, tools: await options.contributions.listPluginTools(parsedId.data) };
+      } catch (error) {
+        return sendContributionError(reply, error);
+      }
+    },
+  );
+
+  app.post<{ Params: { pluginId: string } }>(
+    '/api/plugin-manager/plugins/:pluginId/contributions/call',
+    async (request, reply) => {
+      const access = requirePluginWriteAccess(request, accessOptions);
+      if ('error' in access) return pluginAccessError(reply, access);
+      const parsedId = pluginIdSchema.safeParse(request.params.pluginId);
+      const parsed = contributionCallSchema.safeParse(request.body);
+      if (!parsedId.success || !parsed.success) return invalidRequest(reply);
+      if (!options.contributions) {
+        return reply
+          .status(503)
+          .send({ error: 'Plugin contributions are unavailable', code: 'CONTRIBUTION_UNAVAILABLE' });
+      }
+      try {
+        await appendContributionCallAudit(auditLog, {
+          operator: access.operator,
+          pluginId: parsedId.data,
+          contributionId: parsed.data.contributionId,
+          toolName: parsed.data.toolName,
+        });
+      } catch {
+        return reply.status(503).send({ error: 'Plugin audit log is unavailable', code: 'AUDIT_UNAVAILABLE' });
+      }
+      try {
+        return await options.contributions.callPluginTool(
+          parsedId.data,
+          parsed.data.contributionId,
+          parsed.data.toolName,
+          parsed.data.arguments,
+        );
+      } catch (error) {
+        return sendContributionError(reply, error);
       }
     },
   );

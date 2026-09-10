@@ -290,6 +290,30 @@ describe('F202 live Plugin Manager Console wiring', () => {
     });
   });
 
+  it('preserves server matches whose query is visible only in plugin identity or publisher metadata', async () => {
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response());
+      if (url === '/api/plugin-manager/plugins/search?q=Clowder%20AI') return json(response());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    const search = container.querySelector('input[aria-label="搜索插件"]') as HTMLInputElement | null;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(search, 'Clowder AI');
+      search?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/search?q=Clowder%20AI');
+    expect(container.textContent).toContain('Video Analysis');
+    expect(container.textContent).not.toContain('没有符合条件的插件');
+  });
+
   it('renders a compatibility configuration contribution and saves through its typed boundary', async () => {
     const plugin = connectorPlugin();
     mockApiFetch.mockImplementation(async (url, init) => {

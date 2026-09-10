@@ -95,6 +95,13 @@ declaration and package-relative SVG/PNG asset. Core validates package paths and
 then projects one description/icon truth to catalog search, Agent tools and Console.
 Console must not infer visuals from package source or keep a private metadata map.
 
+Dynamic contribution tools remain owned by the Host supervisor rather than becoming ungoverned canonical
+registry entries or agent-owned MCP processes. The canonical Agent surface exposes two statically governed
+indirections: `plugin_list_tools(pluginId)` returns schemas only for a currently active, authorized
+contribution, and `plugin_call(pluginId, contributionId, toolName, arguments)` rechecks live package/grant
+authority before delegating to the supervisor-held MCP client. Secrets and child-process lifecycle never
+cross into the Agent provider.
+
 F247 owns the first narrow conversation Host capability seam:
 `append_message(conversationId, text, idempotencyKey)` returns a durable Host
 message ID. The seam is an admission point, not proof that a provider exposes

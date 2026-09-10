@@ -43,7 +43,7 @@ async function writeLocalPackage(root, packageManifest = manifest(), entrypoint 
   );
 }
 
-async function harness({ quarantine = false } = {}) {
+async function harness({ quarantine = false, grantPolicy } = {}) {
   const packagesRoot = await tempRoot('cat-cafe-f202-local-packages-');
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store, {
@@ -56,7 +56,9 @@ async function harness({ quarantine = false } = {}) {
   const admission = new LocalPluginPackageAdmission({
     inventory,
     packagesRoot,
-    grantPolicy: async (packageManifest) => packageManifest.features.flatMap((feature) => [...feature.capabilities]),
+    grantPolicy:
+      grantPolicy ??
+      (async (packageManifest) => packageManifest.features.flatMap((feature) => [...feature.capabilities])),
     ...(quarantineStore ? { quarantine: quarantineStore } : {}),
   });
   return { admission, inventory, packagesRoot, store, quarantines: quarantineStore };
@@ -128,6 +130,26 @@ test('copies a local directory into an immutable canonical archive before invent
   await access(join(packagesRoot, packageDirectoryName(result.packageDigest), 'package.tgz'));
   await assert.rejects(access(sideEffect), { code: 'ENOENT' });
   assert.equal((await store.snapshot()).instances.length, 1);
+});
+
+test('quarantines a local package rejected by Host grant admission', async () => {
+  const archive = await packageArchive();
+  const archivePath = join(await tempRoot('cat-cafe-f202-local-invalid-grant-'), 'plugin.tgz');
+  await writeFile(archivePath, archive.bytes);
+  const { admission, store, quarantines } = await harness({
+    quarantine: true,
+    grantPolicy: async () => ['secret.read'],
+  });
+
+  await assert.rejects(
+    admission.install({ kind: 'local-archive', path: archivePath }),
+    (error) => error?.code === 'INVENTORY_REJECTED',
+  );
+
+  assert.equal((await store.snapshot()).instances.length, 0);
+  const [rejected] = await quarantines.list();
+  assert.equal(rejected.packageDigest, archive.integrity);
+  assert.equal(rejected.failure.code, 'INVALID_GRANT');
 });
 
 test('rejects a traversal archive before publishing bytes or mutating inventory', async () => {

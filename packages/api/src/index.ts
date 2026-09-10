@@ -4628,19 +4628,23 @@ async function main(): Promise<void> {
   const { registerOfficialPluginRoutes } = await import('./routes/plugin-official-routes.js');
   const officialPluginCatalog = new RefreshingOfficialPluginCatalog({ policies: OFFICIAL_PLUGIN_POLICIES });
   const { validatePluginCatalog } = await import('@clowder-ai/plugin-contract');
-  const { MachineOfficialPluginCatalog, OFFICIAL_PLUGIN_CATALOG_URL, loadMachinePluginCatalog } = await import(
-    './domains/plugin/manager/machine-catalog-provider.js'
-  );
+  const {
+    MachineOfficialPluginCatalog,
+    OFFICIAL_PLUGIN_CATALOG_URL,
+    loadMachinePluginCatalog,
+    resolveRepositoryReplacementPluginIds,
+  } = await import('./domains/plugin/manager/machine-catalog-provider.js');
+  const pluginManagerHostPolicies = [
+    {
+      pluginId: 'dev.clowder.video-analysis',
+      replacesRepositoryPluginId: 'video-analysis',
+      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
+    },
+  ];
   const pluginManagerCatalog = new MachineOfficialPluginCatalog({
     loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
     validateCatalog: validatePluginCatalog,
-    hostPolicies: [
-      {
-        pluginId: 'dev.clowder.video-analysis',
-        replacesRepositoryPluginId: 'video-analysis',
-        effectiveGrants: ['plugin.config.read', 'secret.read'],
-      },
-    ],
+    hostPolicies: pluginManagerHostPolicies,
   });
   const { FilesystemBuiltinPluginPackageMaterializer } = await import(
     './domains/plugin/manager/builtin-package-materializer.js'
@@ -4659,10 +4663,19 @@ async function main(): Promise<void> {
   );
   const repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
     new RepositoryPluginManagerCompatibilityProvider(loadRepositoryPluginInfo, {
-      loadSuppressedPluginIds: async () =>
-        (await pluginManagerCatalog.snapshot()).entries.flatMap((entry) =>
-          entry.replacesRepositoryPluginId === undefined ? [] : [entry.replacesRepositoryPluginId],
-        ),
+      loadSuppressedPluginIds: async () => {
+        const [catalog, inventory] = await Promise.all([
+          pluginManagerCatalog.snapshot(),
+          pluginRuntime.inventoryStore.snapshot(),
+        ]);
+        return resolveRepositoryReplacementPluginIds(
+          pluginManagerHostPolicies,
+          catalog.entries,
+          inventory.instances
+            .filter((instance) => instance.lifecycleState === 'installed')
+            .map((instance) => instance.pluginId),
+        );
+      },
     }),
   ]);
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
@@ -4692,6 +4705,9 @@ async function main(): Promise<void> {
   await app.register(async (managerApp) => {
     registerPluginManagerRoutes(managerApp, {
       manager: pluginManagerRuntime.manager,
+      ...(pluginManagerRuntime.builtinSupervisor === undefined
+        ? {}
+        : { contributions: pluginManagerRuntime.builtinSupervisor }),
       asset: pluginManagerRuntime.assets,
       documentation: pluginManagerRuntime.assets,
       callbackRegistry: registry,

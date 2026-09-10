@@ -1,7 +1,11 @@
 import type { PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability } from '@clowder-ai/plugin-contract';
 import type { OfficialPluginCatalogEntry, OfficialPluginOwnerAuth } from '../official-catalog.js';
-import type { OfficialPluginCatalogProvider, OfficialPluginCatalogSnapshot } from '../official-catalog-provider.js';
+import {
+  compareOfficialPluginVersions,
+  type OfficialPluginCatalogProvider,
+  type OfficialPluginCatalogSnapshot,
+} from '../official-catalog-provider.js';
 
 export const OFFICIAL_PLUGIN_CATALOG_URL =
   'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json';
@@ -124,11 +128,33 @@ export interface MachineOfficialPluginCatalogOptions {
   readonly now?: () => number;
 }
 
+/**
+ * Resolves repository identities replaced by Host-managed catalog plugins.
+ * Machine metadata can announce a current candidate, while an installed instance
+ * keeps the replacement authoritative even when discovery is temporarily offline.
+ */
+export function resolveRepositoryReplacementPluginIds(
+  hostPolicies: readonly MachineCatalogHostPolicy[],
+  catalogEntries: readonly Pick<OfficialPluginCatalogEntry, 'pluginId'>[],
+  installedPluginIds: readonly string[],
+): readonly string[] {
+  const authoritativePluginIds = new Set([...catalogEntries.map((entry) => entry.pluginId), ...installedPluginIds]);
+  return hostPolicies.flatMap((policy) =>
+    policy.replacesRepositoryPluginId !== undefined && authoritativePluginIds.has(policy.pluginId)
+      ? [policy.replacesRepositoryPluginId]
+      : [],
+  );
+}
+
 function projectEntry(
   plugin: ValidatedMachineCatalog['plugins'][number],
   policy: MachineCatalogHostPolicy,
 ): OfficialPluginCatalogEntry | undefined {
-  const release = plugin.versions[0];
+  const release = plugin.versions.reduce<(typeof plugin.versions)[number] | undefined>((latest, candidate) => {
+    if (!latest) return candidate;
+    const comparison = compareOfficialPluginVersions(candidate.version, latest.version);
+    return comparison !== undefined && comparison > 0 ? candidate : latest;
+  }, undefined);
   if (!release) return undefined;
   return {
     catalogId: plugin.pluginId,

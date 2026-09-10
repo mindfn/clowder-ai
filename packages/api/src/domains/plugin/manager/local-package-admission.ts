@@ -11,9 +11,10 @@ import type { VerifiedPluginPackage } from '../external-runtime/types.js';
 import type { HostInventoryControlPlane } from '../host-inventory/control-plane.js';
 import { PluginInventoryError } from '../host-inventory/types.js';
 import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from '../official-package-archive.js';
-import type {
-  PluginPackageQuarantineFailureCode,
-  PluginPackageQuarantineRecorder,
+import {
+  type PluginPackageQuarantineFailureCode,
+  type PluginPackageQuarantineRecorder,
+  quarantineFailureCodeFromInventoryError,
 } from './plugin-package-quarantine.js';
 
 const execFileAsync = promisify(execFile);
@@ -259,11 +260,13 @@ export class LocalPluginPackageAdmission {
         throw error;
       }
     } catch (error) {
-      if (
-        error instanceof LocalPluginPackageAdmissionError &&
-        ['UNSUPPORTED_TRANSPORT', 'INVALID_PACKAGE_SCHEMA'].includes(error.code)
-      ) {
-        await this.recordQuarantine(source, digest, error.code as PluginPackageQuarantineFailureCode);
+      if (error instanceof LocalPluginPackageAdmissionError) {
+        const failureCode = ['UNSUPPORTED_TRANSPORT', 'INVALID_PACKAGE_SCHEMA'].includes(error.code)
+          ? (error.code as PluginPackageQuarantineFailureCode)
+          : error.code === 'INVENTORY_REJECTED'
+            ? quarantineFailureCodeFromInventoryError(error.cause)
+            : undefined;
+        if (failureCode) await this.recordQuarantine(source, digest, failureCode);
       }
       throw error;
     } finally {

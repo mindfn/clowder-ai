@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'node:path';
-import type { PluginIconSpec, PluginManagerCapabilityKind, PluginManagerDetail } from '@cat-cafe/shared';
+import type { PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
@@ -42,6 +42,7 @@ import { OfficialPluginPackageInstaller } from './official-package-installer.js'
 import type { OfficialPluginAuthPort, OfficialPluginAuthStatus } from './official-plugin-auth.js';
 import {
   type PluginManagerCatalogCandidate,
+  pluginManagerCapabilitiesFromManifest,
   projectPluginManagerCatalogCandidate,
 } from './plugin-manager-projection.js';
 import {
@@ -286,30 +287,6 @@ export function createDormantPluginRuntimeComposition(
   };
 }
 
-function capabilityKind(capability: Capability): PluginManagerCapabilityKind {
-  if (capability.startsWith('events.')) return 'events';
-  if (capability.startsWith('messaging.') || capability === 'onMessage') return 'messaging';
-  if (capability.startsWith('schedule.')) return 'schedule';
-  if (capability.startsWith('windows.') || capability.startsWith('whisper.')) return 'identity';
-  return 'service';
-}
-
-function manifestCapabilities(manifest: PluginManifest): PluginManagerCatalogCandidate['capabilities'] {
-  const capabilities = new Map<Capability, PluginManagerCatalogCandidate['capabilities'][number]>();
-  for (const feature of manifest.features) {
-    for (const capability of feature.capabilities) {
-      if (!capabilities.has(capability)) {
-        capabilities.set(capability, {
-          id: capability,
-          kind: capabilityKind(capability),
-          name: feature.name,
-        });
-      }
-    }
-  }
-  return [...capabilities.values()];
-}
-
 function catalogStatus(status: 'bootstrap' | 'fresh' | 'degraded'): PluginManagerCatalogSnapshot['status'] {
   if (status === 'fresh') return 'fresh';
   if (status === 'degraded') return 'degraded';
@@ -317,7 +294,7 @@ function catalogStatus(status: 'bootstrap' | 'fresh' | 'degraded'): PluginManage
 }
 
 function manifestIcon(manifest: PluginManifest | undefined): PluginIconSpec | undefined {
-  return (manifest as (PluginManifest & { readonly icon?: PluginIconSpec }) | undefined)?.icon;
+  return manifest?.icon;
 }
 
 function validatedManifestMap(
@@ -354,7 +331,7 @@ function managerCatalogCandidate(
     ...(icon === undefined ? {} : { icon }),
     publisher: presentation?.publisher ?? (entry.packageName.startsWith('@clowder-ai/') ? 'Clowder AI' : undefined),
     ownerAuthRequired: entry.ownerAuth !== undefined,
-    capabilities: manifest ? manifestCapabilities(manifest) : [],
+    capabilities: manifest ? pluginManagerCapabilitiesFromManifest(manifest) : [],
   };
 }
 
@@ -472,7 +449,7 @@ function inventoryCandidate(packageRecord: PluginInventorySnapshot['packages'][n
     ...(manifestIcon(packageRecord.manifest) === undefined ? {} : { icon: manifestIcon(packageRecord.manifest) }),
     ownerAuthRequired:
       provenance === undefined || provenance.kind === 'catalog' ? (provenance?.ownerAuthRequired ?? true) : false,
-    capabilities: manifestCapabilities(packageRecord.manifest),
+    capabilities: pluginManagerCapabilitiesFromManifest(packageRecord.manifest),
   };
 }
 
@@ -611,6 +588,9 @@ function lifecycleFailure(error: unknown): never {
     }
     if (code === 'INVALID_TRANSITION') {
       throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', error.message);
+    }
+    if (code === 'START_FAILED') {
+      throw new PluginManagerServiceError('RUNTIME_START_FAILED', error.message);
     }
   }
   throw new PluginManagerServiceError('LIFECYCLE_UNAVAILABLE', 'Plugin lifecycle operation failed');

@@ -91,6 +91,7 @@ export type PluginManagerServiceErrorCode =
   | 'STALE_REVISION'
   | 'INSTALL_UNAVAILABLE'
   | 'LIFECYCLE_UNAVAILABLE'
+  | 'RUNTIME_START_FAILED'
   | 'CONFIGURATION_UNAVAILABLE'
   | 'INVALID_CONFIGURATION';
 
@@ -145,6 +146,18 @@ function isCatalogInstallRequest(
   request: PluginManagerInstallRequest,
 ): request is Extract<PluginManagerInstallRequest, { source: { kind: 'catalog' } }> {
   return request.source.kind === 'catalog';
+}
+
+function quarantineAppliesTo(current: PluginManagerListItem | undefined, quarantined: PluginManagerDetail): boolean {
+  if (current?.artifact === 'installed') return false;
+  if (
+    current?.source.kind === 'catalog' &&
+    quarantined.source.kind === 'catalog' &&
+    current.packageDigest !== quarantined.packageDigest
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export class PluginManagerService {
@@ -206,11 +219,15 @@ export class PluginManagerService {
       );
     }
     const inventory = await this.options.inventory.snapshot();
-    const current = projectPluginManagerCatalogCandidate(
+    const projected = projectPluginManagerCatalogCandidate(
       candidate,
       inventory,
       (await this.options.stateProjection?.read(candidate, inventory)) ?? {},
     );
+    const quarantined = (await this.options.quarantine?.list())?.find(
+      (item) => item.pluginId === projected.pluginId && quarantineAppliesTo(projected, item),
+    );
+    const current = quarantined ?? projected;
     if (!current.actions.install) {
       throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', 'Plugin cannot be installed from its current state');
     }
@@ -318,14 +335,7 @@ export class PluginManagerService {
     }
     for (const plugin of quarantines) {
       const current = byPluginId.get(plugin.pluginId);
-      if (current?.plugin.artifact === 'installed') continue;
-      if (
-        current?.plugin.source.kind === 'catalog' &&
-        plugin.source.kind === 'catalog' &&
-        current.plugin.packageDigest !== plugin.packageDigest
-      ) {
-        continue;
-      }
+      if (!quarantineAppliesTo(current?.plugin, plugin)) continue;
       byPluginId.set(plugin.pluginId, { plugin, detail: plugin });
     }
     const normalizedQuery = query?.trim().toLocaleLowerCase() ?? '';

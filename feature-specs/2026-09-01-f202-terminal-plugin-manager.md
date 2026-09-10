@@ -4,7 +4,7 @@
 
 **目标：** 在 Clowder AI Core 中交付唯一的 Plugin Manager：用户和 Agent 从同一份 Host-owned 投影查询 catalog、已安装实例、配置/授权、启用意图、实时运行状态和能力，并通过同一服务完成安装、启用、禁用与卸载。Train B 结束时管理面即为终态；Train C 只迁出业务实现、切换默认路径并删除旧管理入口。
 
-**本 PR 验收标准：** 真实 Settings 产品壳在现有插件卡片样式上补充搜索和左右布局：左侧同一列表覆盖已安装/未安装，右侧复用现有展开卡片；安装状态不显示冗余 badge，而由左侧卡片当前可执行 action 直接表达——已安装插件只有卸载和启禁用 toggle，未安装插件只有 Install，右侧不重复这些生命周期动作；配置字段直接显示在展开卡片中，不新增“设置”按钮；离线安装复用 IM connector 的上传交互并放在页面右上角。卡片固定高度并截断溢出描述；列表与详情均从 verified `plugin.yaml` 读取同一份多语言描述与随包图标。API 与 Agent 工具复用同一个应用服务；官方 npm、本地目录/zip 和迁移期 repository-local 插件均投影到 Host inventory；公开产品面只含 list/search/get/install/set-enabled/uninstall，不公开通用 update/repair；所有写操作保留 loopback、身份、审计与 revision fence。
+**本 PR 验收标准：** 真实 Settings 产品壳在现有插件卡片样式上补充搜索和左右布局：左侧同一列表覆盖已安装/未安装，右侧复用现有展开卡片；安装状态不显示冗余 badge，而由左侧卡片当前可执行 action 直接表达——已安装插件只有卸载和启禁用 toggle，未安装插件只有 Install，右侧不重复这些生命周期动作；配置字段直接显示在展开卡片中，不新增“设置”按钮；离线安装复用 IM connector 的上传交互并放在页面右上角。卡片固定高度并截断溢出描述；列表与详情均从 verified `plugin.yaml` 读取同一份多语言描述与随包图标。API 与 Agent 工具复用同一个应用服务；官方 npm、本地目录/zip 和迁移期 repository-local 插件均投影到 Host inventory；公开管理面精确包含 list/search/get/install/set-enabled/uninstall，不公开通用 update/repair；启用后的动态插件能力通过两个静态治理入口 `plugin_list_tools`/`plugin_call` 仍由 Host supervisor 执行；所有写操作保留 loopback、身份、审计与 revision fence。
 
 **架构单元：** `plugin`
 
@@ -34,6 +34,10 @@
   - `plugin_install`
   - `plugin_set_enabled`
   - `plugin_uninstall`
+- 启用后的动态 contribution 不直接注册进 canonical tool registry；Agent 通过两个静态治理工具访问：
+  - `plugin_list_tools`
+  - `plugin_call`
+  二者复用 Host supervisor 的 live/grant authority，不能启动独立 MCP 进程或读取 Host secret。
 - `plugin.yaml` 继续是静态格式和接入协议；动态 SDK registration 不替代 manifest。
 - `plugin.yaml` 的能力/用途描述支持 `default + translations`，图标支持 legacy Host icon name 或随包 SVG/PNG；Console、Agent 与 catalog 搜索消费同一 verified metadata，不维护第二份 copy。
 
@@ -59,7 +63,9 @@
 4. 安装后，用户在详情中完成配置和专属授权。配置未完成时不能伪装成可启用。
 5. 用户启用插件，Host 创建新的 activation revision，由 supervisor 启动外部进程或执行 contract 定义的 no-op/builtin 路径；UI 原位更新，不产生重复 toast。
 6. 用户可禁用或卸载。禁用撤销运行权限但保留安装与数据；卸载先撤销 runtime/grants，再按 manifest 数据策略处置并删除安装实例。
-7. Agent 可在明确的用户意图下使用六个管理工具，读到与 UI 相同的状态和能力；Agent 不能绕过权限、配置门或 revision fence。
+7. Agent 可在明确的用户意图下使用六个管理工具，读到与 UI 相同的状态和能力；启用后再通过
+   `plugin_list_tools` 读取实时 schema，并以 `plugin_call` 调用一个精确工具。Agent 不能绕过权限、
+   配置门、live/grant authority 或 revision fence。
 
 **失败旅程：** catalog 不可用时，已安装插件仍可管理；package 校验失败进入 quarantined，不生成可启用实例；授权过期、启动崩溃或配置不完整分别显示其真实轴，不压成含糊 “error”；写操作失败保持旧 revision 可解释且不双跑。
 
@@ -240,7 +246,7 @@ acceptance of the complete Manager journey; that remains due after formal compos
 2. Green：routes 仅做 validation/HTTP mapping，调用 `PluginManagerService`。
 3. Refactor：旧 official/repo-local routes 转为 compatibility delegates；canonical response 不含 update/repair。
 
-### Task 5 — Agent 六工具
+### Task 5 — Agent 六管理工具与两贡献调用工具
 
 **Files:**
 - Create: `packages/mcp-server/src/tools/plugin-management-tools.ts`
@@ -250,9 +256,12 @@ acceptance of the complete Manager journey; that remains due after formal compos
 - Test: `packages/mcp-server/test/plugin-management-tools.test.ts`
 - Test: `packages/mcp-server/test/tool-governance.test.ts`
 
-1. Red：精确工具名、read/write annotations、closed input、permission/revision fence、无 update/repair tests。
-2. Green：工具 handler 调用同一 Host manager client/service contract；不自行读文件或拼状态。
-3. Refactor：readonly/desktop toolset projection 显式治理，不因注册 full toolset 自动泄露写能力。
+1. Red：六个管理工具加 `plugin_list_tools`/`plugin_call` 的精确名称、read/write annotations、closed
+   input、permission/revision/live/grant fence、无 update/repair tests。
+2. Green：管理工具 handler 调用同一 Host manager client/service contract；贡献工具调用同一
+   Host-owned builtin supervisor，不自行读文件、拼状态、拉起 MCP 进程或传递 secret。
+3. Refactor：readonly/desktop toolset projection 显式治理；readonly 只含读操作，不能因注册 full
+   toolset 自动泄露 `plugin_call` 或生命周期写能力。
 
 ### Task 6 — 真实壳 Design Gate prototype
 
@@ -310,17 +319,17 @@ Core feature composition 现已提供 fail-closed builtin dependency materialize
 publisher-owned lockfile-v3 `npm-shrinkwrap.json`，所有 lock entry 只能指向 canonical npm registry 且携带 canonical
 sha512 integrity，Host 只执行 script-free `npm ci`。正式 Manager REST/Console live wiring 现包含
 revision-fenced typed configuration contribution；它不是第七个 generic Agent management operation。
+动态 contribution 通过静态治理的 `plugin_list_tools`/`plugin_call` 间接面暴露，执行仍由 Host
+supervisor 持有并在每次调用前复核 live/grant authority。
 composition 同时提供 repository-local/connector compatibility projection、durable quarantine ledger
 与 authenticated same-origin package icon route。按既定 Train B/Train C 边界，Console live wiring 仍以
 non-production `pluginManagerLive=1` 显式启用，production default 留给 Train C 聚合切换，避免丢失
-Personal Chrome pairing 等专属 journey。production machine catalog 尚未切换：2026-09-01 一手 npm
-registry 复核只见 contract beta.12、SDK beta.8，`video-analysis` 尚未发布，且 deployable catalog index
-coordinate 尚未冻结；exact repository package 也未携带 `npm-shrinkwrap.json`，所以当前 tar 虽可 admission，
-却会被 terminal runtime materializer fail closed。不得用 beta.12 fallback、首次启动时的 transitive
-dependency 猜测或虚构索引冒充 exact beta.13 路径。外部发布状态
-provenance：`[primary | npm registry + exact repository HEAD | checked 2026-09-01 | Train B deployability |
-high confidence]`。携带完整 lockfile-v3 shrinkwrap 的精确 artifacts/index 到位后仍需完成最终 co-creator hands-on
-journey acceptance。
+Personal Chrome pairing 等专属 journey。production machine catalog 已切换到 bounded HTTPS provider；
+`@clowder-ai/video-analysis@0.1.0-alpha.0`、contract beta.13 与 SDK beta.9 已发布，catalog/npm digest
+逐字一致，video package 携带 lockfile-v3 `npm-shrinkwrap.json` 并可由 terminal materializer 以
+script-free `npm ci` 闭合依赖。外部发布状态 provenance：`[primary | npm registry + machine catalog +
+exact repository HEAD | checked 2026-09-10 | Train B deployability | high confidence]`。最终 co-creator
+hands-on journey acceptance 仍是独立硬门禁。
 
 ## 8. 既有正确行为保护
 
