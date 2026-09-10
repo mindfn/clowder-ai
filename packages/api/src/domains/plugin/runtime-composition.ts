@@ -411,6 +411,52 @@ function activeCapabilities(
   return active?.effectiveGrants ?? [];
 }
 
+function activeBuiltinCapabilities(
+  pluginInstanceId: string,
+  inventory: PluginInventorySnapshot,
+  supervisor: BuiltinPluginContributionSupervisor | undefined,
+): readonly Capability[] {
+  if (!supervisor) return [];
+  const activeContributionIds = new Set(supervisor.activeContributionIds(pluginInstanceId));
+  if (activeContributionIds.size === 0) return [];
+  const instance = inventory.instances.find(
+    (candidate) => candidate.pluginInstanceId === pluginInstanceId && candidate.lifecycleState === 'installed',
+  );
+  const packageRecord = instance
+    ? inventory.packages.find(
+        (candidate) => candidate.packageDigest === instance.packageDigest && candidate.packageState === 'installed',
+      )
+    : undefined;
+  if (!packageRecord || packageRecord.manifest.runtime.transport !== 'builtin') return [];
+
+  const capabilities = new Set<Capability>();
+  for (const feature of packageRecord.manifest.features) {
+    const references = feature.contributions ?? [];
+    if (
+      references.length > 0 &&
+      references.every((reference) => reference.type === 'mcp' && activeContributionIds.has(reference.id))
+    ) {
+      for (const capability of feature.capabilities) capabilities.add(capability);
+    }
+  }
+  return [...capabilities];
+}
+
+function managerActiveCapabilities(
+  pluginInstanceId: string,
+  inventory: PluginInventorySnapshot,
+  broker: Awaited<ReturnType<FileHostBrokerStore['snapshot']>>,
+  now: number,
+  builtinSupervisor: BuiltinPluginContributionSupervisor | undefined,
+): readonly string[] {
+  return [
+    ...new Set([
+      ...activeCapabilities(pluginInstanceId, broker, now),
+      ...activeBuiltinCapabilities(pluginInstanceId, inventory, builtinSupervisor),
+    ]),
+  ];
+}
+
 function inventoryCandidate(packageRecord: PluginInventorySnapshot['packages'][number]): PluginManagerCatalogCandidate {
   const provenance = packageRecord.provenance;
   return {
@@ -436,6 +482,7 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
     private readonly inventory: FilePluginInventoryStore,
     private readonly broker: FileHostBrokerStore,
     private readonly now: () => number = Date.now,
+    private readonly builtinSupervisor?: BuiltinPluginContributionSupervisor,
   ) {}
 
   async list(): Promise<readonly PluginManagerDetail[]> {
@@ -449,7 +496,13 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
         if (!packageRecord) return [];
         const candidate = inventoryCandidate(packageRecord);
         const projected = projectPluginManagerCatalogCandidate(candidate, inventory, {
-          activeCapabilityIds: activeCapabilities(instance.pluginInstanceId, broker, this.now()),
+          activeCapabilityIds: managerActiveCapabilities(
+            instance.pluginInstanceId,
+            inventory,
+            broker,
+            this.now(),
+            this.builtinSupervisor,
+          ),
           ...(candidate.ownerAuthRequired ? { authState: 'error' as const } : {}),
         });
         const provenance = packageRecord.provenance;
@@ -500,6 +553,7 @@ class RuntimePluginManagerStateProjection implements PluginManagerStateProjectio
     private readonly catalogProvider: OfficialPluginCatalogProvider,
     private readonly auth: OfficialPluginAuthPort | undefined,
     private readonly now: () => number,
+    private readonly builtinSupervisor?: BuiltinPluginContributionSupervisor,
   ) {}
 
   async read(candidate: PluginManagerCatalogCandidate, inventory: PluginInventorySnapshot) {
@@ -508,7 +562,13 @@ class RuntimePluginManagerStateProjection implements PluginManagerStateProjectio
     );
     if (!instance) return {};
     const broker = await this.broker.snapshot();
-    const activeCapabilityIds = activeCapabilities(instance.pluginInstanceId, broker, this.now());
+    const activeCapabilityIds = managerActiveCapabilities(
+      instance.pluginInstanceId,
+      inventory,
+      broker,
+      this.now(),
+      this.builtinSupervisor,
+    );
     if (!candidate.ownerAuthRequired || !this.auth) return { activeCapabilityIds };
     const entry = (await this.catalogProvider.snapshot()).entries.find((item) => item.pluginId === candidate.pluginId);
     if (!entry) return { activeCapabilityIds, authState: 'error' as const };
@@ -596,7 +656,12 @@ export function createPluginManagerRuntimeComposition(
     options.runtime.contract?.validateManifest,
   );
   const compatibility = new CompositePluginManagerCompatibilityPort([
-    new InventoryPluginManagerCompatibilityAdapter(options.runtime.inventoryStore, options.runtime.brokerStore, now),
+    new InventoryPluginManagerCompatibilityAdapter(
+      options.runtime.inventoryStore,
+      options.runtime.brokerStore,
+      now,
+      builtinSupervisor,
+    ),
     ...(options.compatibility === undefined ? [] : [options.compatibility]),
   ]);
   const stateProjection = new RuntimePluginManagerStateProjection(
@@ -604,6 +669,7 @@ export function createPluginManagerRuntimeComposition(
     options.catalogProvider,
     options.auth,
     now,
+    builtinSupervisor,
   );
   const configuration = new HostPluginConfigurationService({
     projectRoot: options.runtime.projectRoot,
