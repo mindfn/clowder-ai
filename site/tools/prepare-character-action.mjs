@@ -42,9 +42,10 @@ function isRemovable(index) {
   const b = data[p + 2];
   const hi = Math.max(r, g, b);
   const lo = Math.min(r, g, b);
-  // The fake transparency grid is near-white and nearly neutral. Requiring edge
-  // connectivity protects similarly pale fur enclosed by the character outline.
-  return lo >= 232 && hi - lo <= 18;
+  // Imagegen's fake transparency grid ranges from light grey to near-white but
+  // stays nearly neutral. Requiring edge connectivity protects similarly pale
+  // fur enclosed by the character outline.
+  return lo >= 150 && hi - lo <= 24;
 }
 
 function seed(index) {
