@@ -71,6 +71,7 @@ interface LifelineStageDetailProps {
    */
   observationsCapped?: boolean;
   guardEvents: GuardEvent[];
+  guardEventsCapped?: boolean;
   /** Per-epoch guard metrics from API (activation-timeline attributed, R15). */
   epochGuardMetrics: Record<number, GuardMetric[]>;
   overrideState: { hookId: string; enabled: boolean } | null;
@@ -100,6 +101,7 @@ export function LifelineStageDetail({
   observations,
   observationsCapped,
   guardEvents,
+  guardEventsCapped,
   epochGuardMetrics,
   overrideState,
   hookId,
@@ -146,6 +148,7 @@ export function LifelineStageDetail({
           version={epoch.version}
           governance={epoch.governance}
           guardEvents={guardEvents}
+          guardEventsCapped={guardEventsCapped}
           overrideState={overrideState}
           hookId={hookId}
           onRefresh={onRefresh}

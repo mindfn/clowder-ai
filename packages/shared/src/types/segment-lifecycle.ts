@@ -308,6 +308,8 @@ export interface SegmentLifecycleResponse {
   observationsCapped?: boolean;
   /** Guard events in the query window. */
   guardEvents: SegmentGuardEvent[];
+  /** True when the window read hit its hard cap; correlated events may be missing. */
+  guardEventsCapped?: boolean;
   /** Current runtime override state (null = manifest baseline). */
   overrideState: { hookId: string; enabled: boolean; contentVersion: number | null } | null;
   /** Guard events attributed to each epoch via activation timeline (R16). */

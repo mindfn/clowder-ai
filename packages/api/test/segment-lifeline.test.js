@@ -562,4 +562,49 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     assert.equal(res.statusCode, 401);
     await app.close();
   });
+
+  test('reads guard events completeness-preserving instead of slicing the window before correlating', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+    const now = Date.now();
+    await store.persist(
+      makeSummary('thread-X', 'turn-1', now - 1000, 'opus', [makeSegment('S-test')]),
+      makeDetail('thread-X', 'turn-1'),
+    );
+
+    // 60 correlated events: more than the window slice this route used to ask
+    // for, so a pre-correlation limit would silently drop the tail.
+    const events = Array.from({ length: 60 }, (_, index) => ({
+      eventId: `guard-${index}`,
+      kind: 'rate-limit',
+      threadId: 'thread-X',
+      catId: 'opus',
+      timestamp: now - 1000 - index,
+      guardId: 'mcp/hold-ball-rate-limit',
+    }));
+    const guardRejectionLog = {
+      // Pins the API choice: a pre-correlation slice must not be reachable.
+      queryWindow() {
+        throw new Error('queryWindow slices the window before correlation');
+      },
+      async queryWindowComplete() {
+        return { events, truncated: true };
+      },
+    };
+
+    const app = await buildLifelineApp(store, { guardRejectionLog });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guardEvents.length, 60, 'every correlated event survives the read');
+    assert.equal(body.guardEventsCapped, true, 'a capped read is reported, never rendered as absence');
+
+    await app.close();
+  });
 });

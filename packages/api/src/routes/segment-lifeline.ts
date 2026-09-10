@@ -101,6 +101,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       // when more matching rows existed than MAX_OBSERVATIONS. Aggregate
       // counts are exact regardless (full-window scan).
       observationsCapped: data.observationsCapped,
+      guardEventsCapped: data.guardEventsCapped,
       guardEvents: data.guardEvents,
       overrideState: data.overrideState
         ? { hookId: segmentId, enabled: data.overrideState.enabled, contentVersion: data.overrideState.contentVersion }
@@ -124,6 +125,7 @@ interface LifelineData {
   observations: SegmentObservation[];
   /** True when detail rows were dropped by MAX_OBSERVATIONS (counts stay exact). */
   observationsCapped: boolean;
+  guardEventsCapped: boolean;
   guardEvents: Array<{
     eventId: string;
     kind: string;
@@ -178,9 +180,10 @@ async function assembleLifelineData(
   });
 
   // 6. Guard events — still collected for detail view
-  const guardEvents = opts.guardRejectionLog
+  const guardEventResult = opts.guardRejectionLog
     ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
-    : [];
+    : { events: [], truncated: false };
+  const guardEvents = guardEventResult.events;
 
   // 7. Attribute guard events to epochs using activation timeline (R15 P1)
   const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
@@ -195,6 +198,7 @@ async function assembleLifelineData(
     activeEpoch: chain.find((e) => e.isActive) ?? chain[chain.length - 1],
     observations,
     observationsCapped: detailCapped,
+    guardEventsCapped: guardEventResult.truncated,
     guardEvents,
     overrideState,
     epochGuardMetrics,
@@ -313,8 +317,8 @@ async function collectGuardEvents(
   startMs: number,
   endMs: number,
   observations: SegmentObservation[],
-): Promise<
-  Array<{
+): Promise<{
+  events: Array<{
     eventId: string;
     kind: string;
     threadId: string;
@@ -322,11 +326,16 @@ async function collectGuardEvents(
     timestamp: number;
     guardId: string;
     attribution: 'window-correlated';
-  }>
-> {
-  if (observations.length === 0) return [];
-  const events = await log.queryWindow({ since: startMs, until: endMs, limit: 50 });
-  return events
+  }>;
+  truncated: boolean;
+}> {
+  if (observations.length === 0) return { events: [], truncated: false };
+  // `queryWindow`'s limit is applied to the whole window before this
+  // correlation narrows it to one segment, so a busy window could drop every
+  // event this segment owns and render as "no guard events" — the store
+  // already exposes a completeness-preserving read for exactly this.
+  const { events, truncated } = await log.queryWindowComplete({ since: startMs, until: endMs });
+  const correlated = events
     .filter((e) =>
       observations.some(
         (obs) =>
@@ -344,6 +353,7 @@ async function collectGuardEvents(
       guardId: e.guardId,
       attribution: 'window-correlated' as const,
     }));
+  return { events: correlated, truncated };
 }
 
 async function collectSegmentOverrideEvents(
