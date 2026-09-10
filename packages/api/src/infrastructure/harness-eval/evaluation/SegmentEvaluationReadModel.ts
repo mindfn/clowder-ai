@@ -63,10 +63,12 @@ export class SegmentEvaluationReadModel {
     const model = this.requireModel(objective.evaluationModelId);
     const projection = await this.projectObjective(input, objective, model);
     const projections = [projection];
-    const counterexamples = distinctIncidents(projections.flatMap((projection) => projection.counterexamples)).filter(
-      (annotation) =>
-        annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
-    );
+    // Same set the trigger counts. Narrowing this list to the requested segment
+    // used to render "no counterexample in this cycle" on a segment whose
+    // Objective had already collected several against a sibling segment — an
+    // absence claim contradicted by the counter directly above it. The rows
+    // carry their attribution instead, so a shared Objective stays legible.
+    const counterexamples = projections.flatMap((projection) => projection.counterexamples);
 
     return {
       segmentId: input.segmentId,
@@ -86,6 +88,9 @@ export class SegmentEvaluationReadModel {
           threadId: annotation.episodeRef.threadId,
           turnId: annotation.episodeRef.traceTurnId,
           catId: annotation.episodeRef.catId,
+          segmentIds: annotation.unitRefs
+            .filter((unitRef) => unitRef.unitType === 'segment')
+            .map((unitRef) => unitRef.unitId),
         })),
       },
       objectives: projections.map((projection) => projection.objective),
@@ -331,17 +336,6 @@ function toSummary(
     termination: record.termination ?? null,
     closedAt: record.closedAt ?? null,
   };
-}
-
-function distinctIncidents(annotations: TraceAnnotation[]): TraceAnnotation[] {
-  const seen = new Set<string>();
-  return [...annotations]
-    .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
-    .filter((annotation) => {
-      if (seen.has(annotation.incidentKey)) return false;
-      seen.add(annotation.incidentKey);
-      return true;
-    });
 }
 
 function distinctWakeSignals(annotations: TraceAnnotation[]): TraceAnnotation[] {

@@ -375,6 +375,8 @@ export interface SegmentTracingEvaluationView {
     threadId: string;
     turnId: string;
     catId: string;
+    /** Segments this counterexample is attributed to; may exclude the segment being viewed. */
+    segmentIds: string[];
   }>;
 }
 

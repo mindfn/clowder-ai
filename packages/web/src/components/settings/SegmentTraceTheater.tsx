@@ -70,6 +70,9 @@ export function SegmentTraceTheater({
         <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
           周期内反例Tracing
         </SettingsText>
+        <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
+          按 Objective 计数，与上方触发条件同源；非本段的反例会标出归属段。
+        </SettingsText>
         {!loading && (readiness?.structuredCounterexamples.length ?? 0) === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
             周期内暂无明确反例；Tracing 仍持续累计。
@@ -89,6 +92,11 @@ export function SegmentTraceTheater({
                 <SettingsBadge tone="amber" size="xxs">
                   反例信号
                 </SettingsBadge>
+                {!counterexample.segmentIds.includes(segmentId) && (
+                  <SettingsBadge tone="slate" size="xxs">
+                    归属 {counterexample.segmentIds.join('、') || '本 Objective'}
+                  </SettingsBadge>
+                )}
                 <span className="min-w-0 flex-1 truncate text-xs text-cafe-secondary">
                   {counterexample.rationale ?? counterexample.incidentKey}
                 </span>
