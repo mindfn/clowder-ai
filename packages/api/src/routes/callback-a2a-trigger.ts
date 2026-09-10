@@ -7,8 +7,6 @@
 
 import type { CatId, RoutingPreflightDecisionV1 } from '@cat-cafe/shared';
 import type { ActionSuccessorFence } from '../domains/ball-custody/ActionSuccessorAdmissionService.js';
-import type { IBallCustodyIngest } from '../domains/ball-custody/BallCustodyIngest.js';
-import { buildHandedEvent } from '../domains/ball-custody/ball-custody-events.js';
 import type { InvocationQueue, QueueEntry } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import {
   normalizeOwnerAuthProvenance,
@@ -81,8 +79,6 @@ export interface A2ATriggerDeps {
   queueProcessor?: QueueProcessorLike;
   /** #706: MessageStore for queue enrichment (messagePreview in queue_updated SSE). */
   messageStore?: IMessageStore;
-  /** F167 Phase T: persist accepted A2A dispatch custody before the child can execute. */
-  ballCustody?: IBallCustodyIngest;
   /** F293: fresh per-target decision before worklist, queue custody or fallback creation. */
   routingDispatchPreflight?: RoutingDispatchPreflightPort;
   /** F122B: InvocationQueue for agent-sourced entries.
@@ -805,25 +801,6 @@ export async function enqueueA2ATargets(
   }
 
   opts.onQueueEntriesAdmitted?.(acceptedEntries);
-  const handedToCatId = enqueued.length === 1 ? enqueued[0] : undefined;
-  if (deps.ballCustody && handedToCatId) {
-    try {
-      await deps.ballCustody.record(
-        buildHandedEvent({
-          threadId,
-          messageId: triggerMessageId,
-          fromCatId,
-          toCatId: handedToCatId,
-          at: Date.now(),
-        }),
-      );
-    } catch (err) {
-      log.warn(
-        { err, threadId, triggerMessageId, fromCatId, toCatId: handedToCatId },
-        '[F167 Phase T] accepted A2A queue handoff custody write failed (best-effort)',
-      );
-    }
-  }
   if (deps.queueProcessor.tryAutoAppendExactEntry) {
     for (const entry of acceptedEntries) {
       await deps.queueProcessor.tryAutoAppendExactEntry({ threadId, userId: opts.userId, entryId: entry.id });

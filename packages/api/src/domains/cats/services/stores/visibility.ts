@@ -3,7 +3,7 @@
  * Pure functions for determining whether a message is visible to a given viewer.
  */
 
-import { type CatId, isSelectableManagedHoldConnectorSource } from '@cat-cafe/shared';
+import { type CatId, isManagedHoldConnectorSource } from '@cat-cafe/shared';
 import { messageFrom } from './message-from.js';
 import type { IMessageStore, StoredMessage, ThreadMessageReadOptions } from './ports/MessageStore.js';
 
@@ -62,7 +62,20 @@ export function isOwnerVisibleManagedHoldConnector(
     isManagedHoldConnectorMessage(msg) &&
     msg.extra?.scheduler?.hiddenTrigger !== true &&
     msg.userId === viewerUserId &&
-    isSelectableManagedHoldConnectorSource(msg.source) &&
+    isManagedHoldConnectorSource(msg.source) &&
+    msg.source?.meta?.threadId === msg.threadId
+  );
+}
+
+/** Narrow system-message exception shared by full and incremental cat context. */
+export function isAgentReadableManagedHoldMessage(msg: StoredMessage): boolean {
+  return (
+    isDeliveredMessage(msg) &&
+    isManagedHoldConnectorMessage(msg) &&
+    msg.extra?.scheduler?.hiddenTrigger !== true &&
+    typeof msg.userId === 'string' &&
+    !SYSTEM_USER_IDS.has(msg.userId) &&
+    isManagedHoldConnectorSource(msg.source) &&
     msg.source?.meta?.threadId === msg.threadId
   );
 }

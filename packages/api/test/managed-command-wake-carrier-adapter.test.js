@@ -39,7 +39,7 @@ function response(overrides = {}) {
       status: 'failed',
       startedAt: 200,
       completedAt: 300,
-      reason: 'managed_hold_disposition_missing',
+      reason: 'provider_execution_failed',
     },
     ...overrides,
   };
@@ -55,7 +55,7 @@ describe('managed command wake History carrier adapter', () => {
       messageStore: { getById: async (id) => messages.get(id) ?? null },
       invocationRecordStore: {
         get: async (id) =>
-          id === 'invocation-failed' ? { id, status: 'failed', error: 'managed_hold_disposition_missing' } : null,
+          id === 'invocation-failed' ? { id, status: 'failed', error: 'provider_execution_failed' } : null,
       },
       invocationQueue: { getDurableEntriesForMessages: async () => new Map() },
     });
@@ -65,7 +65,7 @@ describe('managed command wake History carrier adapter', () => {
       attemptId: `${sourceId}:${catId}:invocation-failed`,
       attemptSequence: 1,
       invocationId: 'invocation-failed',
-      errorCode: 'managed_hold_disposition_missing',
+      errorCode: 'provider_execution_failed',
     });
   });
 

@@ -2316,34 +2316,7 @@ async function main(): Promise<void> {
   const { TurnCustodyProjectionService } = await import('./domains/ball-custody/TurnCustodyProjectionService.js');
   const turnCustodyProjectionService = new TurnCustodyProjectionService({
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
-    ...(ballCustodyProjectionStore ? { ballCustodyProjectionStore } : {}),
-    ...(ballCustodyEventLog ? { ballCustodyEventLog } : {}),
   });
-  let a2aDispatchDispositionService:
-    | import('./domains/ball-custody/A2ADispatchDispositionService.js').A2ADispatchDispositionService
-    | undefined;
-  if (ballCustodyIngest && ballCustodyEventLog && ballCustodyProjectionStore) {
-    const { A2ADispatchDispositionService } = await import('./domains/ball-custody/A2ADispatchDispositionService.js');
-    a2aDispatchDispositionService = new A2ADispatchDispositionService({
-      registry,
-      messageStore,
-      ballCustodyEventLog,
-      ballCustodyProjectionStore,
-      ballCustody: ballCustodyIngest,
-      log: app.log,
-      ...(ballCustodyProjector
-        ? { repairProjection: (subjectKey: string) => ballCustodyProjector!.rebuild(subjectKey) }
-        : {}),
-    });
-    const { CoordinationTerminalRetirement } = await import('./domains/ball-custody/CoordinationTerminalRetirement.js');
-    const terminalRetirement = new CoordinationTerminalRetirement({
-      messageStore,
-      service: a2aDispatchDispositionService,
-      log: app.log,
-    });
-    app.addHook('onReady', async () => terminalRetirement.start());
-    app.addHook('onClose', async () => terminalRetirement.stop());
-  }
   const proactiveCandidateRegistryResolver = personMemoryStore
     ? new ProactiveCandidateRegistryResolver({
         entityRegistry: new EntityRegistryStore(memoryServices.store.getDb()),
@@ -2448,7 +2421,6 @@ async function main(): Promise<void> {
     conciergeTriagePlanStore,
     cloudInvokeBridge,
     cloudReturnGrantStore,
-    ...(a2aDispatchDispositionService ? { a2aDispatchDispositionService } : {}),
     ...(freshnessReinvokeCheck ? { freshnessReinvokeCheck } : {}),
     turnExecutionStore,
     runtimeInteractionPort: runtimeInteractionRuntime.service,
@@ -2508,7 +2480,6 @@ async function main(): Promise<void> {
     sessionContinuationCoordinator,
     freshnessEventLog,
     freshnessClosureStore,
-    ...(a2aDispatchDispositionService ? { a2aDispatchDispositionService } : {}),
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
     deliveryCursorStore,
   });
@@ -2631,7 +2602,6 @@ async function main(): Promise<void> {
           ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
           queueProcessor,
           invocationQueue,
-          ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
           ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
           log: app.log,
         },
@@ -4319,23 +4289,6 @@ async function main(): Promise<void> {
   const waitLifecycleHolder: {
     current?: import('./domains/github-signals/GitHubWaitLifecycleService.js').GitHubWaitLifecycleService;
   } = {};
-  let managedHoldDispositionService:
-    | import('./domains/ball-custody/ManagedHoldDispositionService.js').ManagedHoldDispositionService
-    | undefined;
-  if (ballCustodyIngest && ballCustodyEventLog && ballCustodyProjectionStore) {
-    const { ManagedHoldDispositionService } = await import('./domains/ball-custody/ManagedHoldDispositionService.js');
-    managedHoldDispositionService = new ManagedHoldDispositionService({
-      registry,
-      dynamicTaskStore,
-      messageStore,
-      ballCustodyEventLog,
-      ballCustodyProjectionStore,
-      ballCustody: ballCustodyIngest,
-      ...(ballCustodyProjector
-        ? { repairProjection: (subjectKey: string) => ballCustodyProjector!.rebuild(subjectKey) }
-        : {}),
-    });
-  }
   const meetingArtifactReaderHolder: import('./routes/callback-meeting-artifact-routes.js').MeetingArtifactReaderHolder =
     {};
   const skillConsumptionReceipts = new SkillConsumptionReceiptService({
@@ -4421,8 +4374,6 @@ async function main(): Promise<void> {
       threadStore,
       taskStore,
       invocationRecordStore,
-      ...(managedHoldDispositionService ? { managedHoldDispositionService } : {}),
-      ...(a2aDispatchDispositionService ? { a2aDispatchDispositionService } : {}),
       ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
       onHoldBallCancelFeedback: (input) => {
         void import('./domains/cats/services/frustration/FrustrationDetector.js')
@@ -4980,7 +4931,6 @@ async function main(): Promise<void> {
               ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
               ...(queueProcessor ? { queueProcessor } : {}),
               ...(invocationQueue ? { invocationQueue } : {}),
-              ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
               ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
               log: app.log,
             },
@@ -7079,7 +7029,6 @@ async function main(): Promise<void> {
                 ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
                 queueProcessor,
                 invocationQueue,
-                ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
                 ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
                 log: app.log,
               },

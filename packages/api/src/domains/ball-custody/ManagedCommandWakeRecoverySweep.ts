@@ -29,7 +29,6 @@ import { publishManagedCommandWakeMessage } from './managed-command-wake-message
 import {
   isDispatchableManagedCommandWakeState,
   recordManagedCommandWakeSlaBreach,
-  recoverManagedCommandMissingDisposition,
 } from './managed-command-wake-recovery-policy.js';
 import {
   persistManagedCommandFallbackDue,
@@ -152,11 +151,15 @@ export class ManagedCommandWakeRecoverySweep {
     for (const { task, parsed, admissionFact } of undelivered) {
       const idempotencyKey = buildAdmissionFactIdempotencyKey(task.id);
       try {
-        const existing = await this.deps.messageStore.getByIdempotencyKey('system', parsed.threadId, idempotencyKey);
+        const existing = await this.deps.messageStore.getByIdempotencyKey(
+          parsed.userId,
+          parsed.threadId,
+          idempotencyKey,
+        );
         if (!existing) {
           const stored = await this.deps.messageStore.append({
-            from: { kind: 'external', connectorId: 'hold-ball' },
-            userId: 'system',
+            from: { kind: 'system', service: 'hold-ball' },
+            userId: parsed.userId,
             content: admissionFact,
             mentions: [],
             timestamp: this.now(),
@@ -166,7 +169,15 @@ export class ManagedCommandWakeRecoverySweep {
               connector: 'hold-ball',
               label: '持球通知',
               icon: '🏓',
-              meta: { wakeWhen: true, taskId: task.id, recoverySource: 'startup_sweep' },
+              meta: {
+                managedHold: true,
+                phase: 'status',
+                taskId: task.id,
+                threadId: parsed.threadId,
+                catId: parsed.catId,
+                wakeWhen: true,
+                recoverySource: 'startup_sweep',
+              },
             },
           });
           this.deps.socketManager.broadcastToRoom(`thread:${parsed.threadId}`, 'connector_message', {
@@ -299,9 +310,7 @@ export class ManagedCommandWakeRecoverySweep {
         return this.consume(parsed, undefined, eventCarrier.reason);
       }
       if (eventCarrier?.state === 'failed') {
-        return eventCarrier.errorCode === 'managed_hold_disposition_missing'
-          ? recoverManagedCommandMissingDisposition(this.deps, parsed, eventCarrier, this.now)
-          : 'pending';
+        return this.consume(parsed, eventCarrier.invocationId, 'failed');
       }
       if (eventCarrier?.state === 'pending') return 'pending';
       // An orphaned receipt proves durable responsibility while also proving
@@ -361,7 +370,7 @@ export class ManagedCommandWakeRecoverySweep {
         `[定时任务] ${wakeContent}`,
         messageId,
         undefined,
-        { sourceCategory: 'scheduled' },
+        { sourceCategory: 'scheduled', priority: 'urgent' },
       );
     } catch (err) {
       if (err instanceof ManagedCommandWakeActionLeaseAdmissionError) {

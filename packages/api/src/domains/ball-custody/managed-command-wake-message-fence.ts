@@ -148,6 +148,8 @@ export async function publishManagedCommandWakeMessage(
           label: '持球通知',
           icon: '🏓',
           meta: {
+            managedHold: true,
+            phase: 'wake',
             taskId: claimed.task.id,
             threadId: claimed.threadId,
             catId: claimed.catId,

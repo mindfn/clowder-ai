@@ -1,4 +1,4 @@
-export type QueueHandledDisposition = 'responded' | 'completed_with_turn' | 'managed_hold_disposition';
+export type QueueHandledDisposition = 'responded' | 'completed_with_turn';
 
 export type MessageWorkDisposition = 'continue_current' | 'next_work';
 

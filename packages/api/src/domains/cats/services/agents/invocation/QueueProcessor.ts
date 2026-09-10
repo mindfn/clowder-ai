@@ -28,9 +28,7 @@ import {
   commitFailedResponseAndEnqueueA2ACaller,
 } from '../../../../../routes/callback-a2a-trigger.js';
 import { emitQueueUpdated, isPublicQueueEntry } from '../../../../../utils/queue-enrichment.js';
-import type { A2ADispatchDispositionService } from '../../../../ball-custody/A2ADispatchDispositionService.js';
 import type { ActionSuccessorLeaseStore } from '../../../../ball-custody/ActionSuccessorLeaseStore.js';
-import type { TurnCustodyWakeProvenance } from '../../../../ball-custody/TurnCustodyProjectionService.js';
 import {
   resolveQueueTurnCustodyWake,
   retargetTurnCustodyWake,
@@ -112,7 +110,6 @@ import { type EnsureTerminalDeps, ensureTerminalStatus, RouteChainCompletionTrac
 import type { StaleProcessingOwnerLease } from './InvocationOwnerLeaseCandidates.js';
 import {
   actionSuccessorInvocationIdempotencyKey,
-  exactA2ASourceMessageIds,
   type InvocationQueue,
   isOrdinaryQueueTargetEligible,
   type QueueEntry,
@@ -503,11 +500,6 @@ export interface QueueProcessorDeps {
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
   actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'preflight' | 'preflightOutput' | 'commitOutcome'>;
-  /** F167: inspect replacement and retire exact consumed terminals through the canonical dispatch fence. */
-  a2aDispatchDispositionService?: Pick<
-    A2ADispatchDispositionService,
-    'inspectHandoff' | 'completeFromCoordinationTerminal'
-  >;
   /**
    * F254 Phase E (ADR-041 §5): seed the freshness seenCursor when closure adoption
    * injects required bodies — injection must count as seen, or the output gate
@@ -1908,7 +1900,7 @@ export class QueueProcessor {
    * current invocation prompt. This is the prompt-transport analogue of an
    * explicit full-body get_thread_context read.
    */
-  async markPromptMessagesSeen(input: PromptMessagesExposedInput): Promise<readonly TurnCustodyWakeProvenance[]> {
+  async markPromptMessagesSeen(input: PromptMessagesExposedInput): Promise<void> {
     await this.ackPromptMentionCursors(input);
     const attempts = this.deps.queue.findAdmittedEntriesForMessages(
       input.threadId,
@@ -1927,38 +1919,6 @@ export class QueueProcessor {
       );
       if (result?.newlySeen) recordQueuedSeenTelemetry();
     }
-    return this.resolvePromptMessageCustodyWakes(input);
-  }
-
-  /** Resolve structured obligations only after exact body exposure is durable. */
-  async resolvePromptMessageCustodyWakes(
-    input: Pick<PromptMessagesExposedInput, 'threadId' | 'catId' | 'messageIds'>,
-  ): Promise<readonly TurnCustodyWakeProvenance[]> {
-    const adoptedManagedHoldWakes: TurnCustodyWakeProvenance[] = [];
-    for (const messageId of new Set(input.messageIds)) {
-      const message = await this.deps.messageStore.getById(messageId);
-      const meta = message?.source?.meta;
-      const taskId = typeof meta?.taskId === 'string' ? meta.taskId : undefined;
-      if (
-        message?.source?.connector !== 'hold-ball' ||
-        meta?.wakeWhen !== true ||
-        !taskId ||
-        message.threadId !== input.threadId ||
-        meta.threadId !== input.threadId ||
-        meta.catId !== input.catId
-      ) {
-        continue;
-      }
-      adoptedManagedHoldWakes.push({
-        kind: 'structured',
-        protocol: 'hold',
-        subjectKey: `ball:thread:${input.threadId}`,
-        holderCatId: input.catId,
-        sourceMessageId: messageId,
-        taskId,
-      });
-    }
-    return adoptedManagedHoldWakes;
   }
 
   /**
@@ -2181,32 +2141,6 @@ export class QueueProcessor {
       'reason' in terminal ? terminal.reason : undefined,
     );
     if (!removed) throw new Error(`admitted attempt cleanup lost source entry ${attempted.id}`);
-    await this.retireConsumedCoordinationTerminals(attempted);
-  }
-
-  /**
-   * Retire the predecessor dispatch only from the same History fact that proves
-   * this target actually consumed the terminal coordination source. Queue
-   * cleanup alone is not evidence: a pre-start rejection also removes a row.
-   */
-  private async retireConsumedCoordinationTerminals(attempted: QueueEntry): Promise<void> {
-    const service = this.deps.a2aDispatchDispositionService;
-    if (attempted.sourceCategory !== 'a2a' || !service) return;
-    for (const messageId of exactA2ASourceMessageIds(attempted)) {
-      try {
-        const source = await this.deps.messageStore.getById(messageId);
-        const targetConsumed = source?.lifecycle?.dispatchRefs?.some(
-          (ref) => ref.phase === 'settled' && attempted.targets.includes(ref.targetId),
-        );
-        if (source?.extra?.coordination?.phase !== 'terminal' || !targetConsumed) continue;
-        await service.completeFromCoordinationTerminal(messageId);
-      } catch (err) {
-        this.deps.log.warn(
-          { err, threadId: attempted.threadId, entryId: attempted.id, messageId },
-          '[QueueProcessor] consumed coordination terminal retirement deferred to durable recovery',
-        );
-      }
-    }
   }
 
   /** Provider admission accepts only exact durable source custody or a source-less internal carrier. */
@@ -3085,7 +3019,6 @@ export class QueueProcessor {
     const messageId = entry.payload.messageId;
     const targetCats = [...(executionTargetCats ?? queueEntryTargetCats(entry))];
     const primaryCat = targetCats[0] ?? 'unknown';
-    const exactA2ATargetCat = targetCats.length === 1 ? targetCats[0] : undefined;
 
     const batchedEntryIds: string[] = exactBatchEntries.map((candidate) => candidate.id);
     const batchedMessageIds: string[] = exactBatchEntries.flatMap(queueEntryMessageIds);
@@ -3277,50 +3210,6 @@ export class QueueProcessor {
     };
 
     try {
-      // F167: Queue FIFO can outlive its exact A2A handoff. Reuse the same
-      // source/event fence as callback completion so a structurally replaced
-      // carrier never starts a provider invocation merely to fail at stop-gate.
-      const a2aDispositionService = this.deps.a2aDispatchDispositionService;
-      if (
-        entry.sourceCategory === 'a2a' &&
-        entry.execution.a2aTriggerMessageId &&
-        exactA2ATargetCat &&
-        a2aDispositionService
-      ) {
-        const sourceMessageIds = exactA2ASourceMessageIds(entry);
-        let inspections: Array<Awaited<ReturnType<A2ADispatchDispositionService['inspectHandoff']>>> | undefined;
-        try {
-          inspections = await Promise.all(
-            sourceMessageIds.map((sourceMessageId) =>
-              a2aDispositionService.inspectHandoff({
-                threadId,
-                catId: exactA2ATargetCat,
-                sourceMessageId,
-              }),
-            ),
-          );
-        } catch (err) {
-          log.warn(
-            { err, threadId, entryId: entry.id, sourceMessageIds },
-            '[F167] A2A replacement preflight unavailable; preserving existing callback fence',
-          );
-        }
-        if (inspections?.every((inspection) => inspection.outcome === 'replaced')) {
-          log.info(
-            {
-              threadId,
-              entryId: entry.id,
-              sourceMessageIds,
-              replacements: inspections.map((inspection) =>
-                inspection.outcome === 'replaced' ? inspection.replacement : undefined,
-              ),
-            },
-            '[F167] retired replaced A2A ledger row at queue preflight',
-          );
-          return executionResult('succeeded');
-        }
-      }
-
       // F167 Phase S: a queue row is only a carrier. The durable action lease owns
       // successor cardinality; fail closed before creating an invocation when its
       // generation was replaced or the external subject reached terminal truth.

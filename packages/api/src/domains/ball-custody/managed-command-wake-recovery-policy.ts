@@ -1,10 +1,6 @@
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import { managedCommandWakeSlaBreachTotal } from '../../infrastructure/telemetry/instruments.js';
-import type {
-  ManagedCommandWakeEventCarrier,
-  ManagedCommandWakeRecoveryDeps,
-  ManagedCommandWakeRecoveryResult,
-} from './managed-command-wake-lifecycle.js';
+import type { ManagedCommandWakeRecoveryDeps } from './managed-command-wake-lifecycle.js';
 import {
   type ManagedCommandWakeProjection,
   type ParsedManagedCommandWakeTask,
@@ -15,42 +11,6 @@ const log = createModuleLogger('ball-custody/managed-command-wake-recovery-polic
 
 export function isDispatchableManagedCommandWakeState(state: ManagedCommandWakeProjection['state']): boolean {
   return state === 'message_written' || state === 'dispatch_pending' || state === 'dispatched' || state === 'enqueued';
-}
-
-export async function recoverManagedCommandMissingDisposition(
-  deps: ManagedCommandWakeRecoveryDeps,
-  parsed: ParsedManagedCommandWakeTask,
-  carrier: Extract<ManagedCommandWakeEventCarrier, { state: 'failed' }>,
-  now: () => number,
-): Promise<ManagedCommandWakeRecoveryResult> {
-  const escalatedAt = now();
-  const updated = deps.dynamicTaskStore.updateParamsIfCurrent(parsed.task.id, parsed.task.params, {
-    ...parsed.task.params,
-    holdLifecycle: {
-      ...parsed.lifecycle,
-      status: 'escalated',
-      managedCommand: {
-        ...parsed.command,
-        state: 'escalated',
-        dispositionEscalationReason: 'managed_hold_disposition_missing',
-        dispositionEscalatedAttemptId: carrier.attemptId,
-        dispositionEscalatedAt: escalatedAt,
-      },
-    },
-  });
-  if (!updated) return 'pending';
-  deps.dynamicTaskStore.setEnabled(parsed.task.id, false);
-  deps.taskRunner.unregister(parsed.task.id);
-  log.error(
-    {
-      taskId: parsed.task.id,
-      threadId: parsed.threadId,
-      messageId: parsed.command.messageId,
-      attemptId: carrier.attemptId,
-    },
-    'managed-command wake terminal failure requires a fresh producer admission',
-  );
-  return 'recovered';
 }
 
 export function recordManagedCommandWakeSlaBreach(

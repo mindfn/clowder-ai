@@ -65,8 +65,6 @@ import {
   actionSuccessorFencesMatch,
   reconcileActionSuccessorEnqueue,
 } from '../domains/ball-custody/reconcile-action-successor-enqueue.js';
-import { turnCustodyAdoptionRegistry } from '../domains/ball-custody/TurnCustodyAdoptionRegistry.js';
-import type { TurnCustodyWakeProvenance } from '../domains/ball-custody/TurnCustodyProjectionService.js';
 import { transitionWaitState } from '../domains/ball-custody/wait-state-machine.js';
 import {
   type InvocationQueue,
@@ -1031,11 +1029,6 @@ export interface CallbackRoutesOptions {
       ) => void,
     ): void;
     unregisterEntryCompleteHook(entryId: string): void;
-    resolvePromptMessageCustodyWakes?(input: {
-      threadId: string;
-      catId: string;
-      messageIds: readonly string[];
-    }): Promise<readonly TurnCustodyWakeProvenance[]>;
     adoptExposedQueuedEntries?(input: {
       threadId: string;
       userId: string;
@@ -1825,7 +1818,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
                 ...(queueProcessor ? { queueProcessor } : {}),
                 ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-                ...(opts.ballCustody ? { ballCustody: opts.ballCustody } : {}),
                 ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
                 log: app.log,
               },
@@ -2001,7 +1993,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
               ...(queueProcessor ? { queueProcessor } : {}),
               ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-              ...(opts.ballCustody ? { ballCustody: opts.ballCustody } : {}),
               ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
               log: app.log,
             },
@@ -3269,7 +3260,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
                 ...(queueProcessor ? { queueProcessor } : {}),
                 ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-                ...(opts.ballCustody ? { ballCustody: opts.ballCustody } : {}),
                 ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
                 log: app.log,
               },
@@ -3478,7 +3468,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
             ...(queueProcessor ? { queueProcessor } : {}),
             ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-            ...(opts.ballCustody ? { ballCustody: opts.ballCustody } : {}),
             ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
             log: app.log,
           },
@@ -4497,43 +4486,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const queuedSeenInvocationId = principal.invocationId;
       const seenAt = Date.now();
       const adoptExposedQueuedEntries = queueProcessor?.adoptExposedQueuedEntries?.bind(queueProcessor);
-      const candidateCustodyMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
-        typeof entry.messageId === 'string' ? [entry.messageId] : [],
-      );
-      let candidateCustodyWakes: readonly TurnCustodyWakeProvenance[] = [];
-      if (queueProcessor?.resolvePromptMessageCustodyWakes && candidateCustodyMessageIds.length > 0) {
-        try {
-          candidateCustodyWakes = await queueProcessor.resolvePromptMessageCustodyWakes({
-            threadId: effectiveThreadId,
-            catId: principalCatId,
-            messageIds: candidateCustodyMessageIds,
-          });
-        } catch (err) {
-          app.log.error(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] queued custody obligation resolution failed before full-body return',
-          );
-          reply.status(503);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
-      }
-      const custodyReservation =
-        candidateCustodyWakes.length > 0 ? turnCustodyAdoptionRegistry.reserve(principal.invocationId) : null;
-      if (candidateCustodyWakes.length > 0 && !custodyReservation) {
-        app.log.error(
-          { invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-          '[F167] active invocation has no turn custody adoption handler',
-        );
-        reply.status(409);
-        return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-      }
       let adoptionAllowed = Boolean(adoptExposedQueuedEntries);
       if (adoptableQueuedEntries.length > 0 && opts.turnExecutionStore) {
         let exposureExecution: TurnExecutionRecord | null;
         try {
           exposureExecution = await opts.turnExecutionStore.get(principal.invocationId);
         } catch (err) {
-          await custodyReservation?.release();
           app.log.error(
             { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
             '[turn-execution] queued body adoption ledger read failed',
@@ -4589,7 +4547,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             continue;
           }
           if (adoption.reason === 'persistence_unavailable') {
-            await custodyReservation?.release();
             reply.status(503);
             return { error: 'Queued body adoption unavailable', code: 'QUEUE_ADOPTION_UNAVAILABLE' };
           }
@@ -4601,24 +4558,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...seenOnlyQueuedEntries.flatMap((entry) => (typeof entry.messageId === 'string' ? [entry.messageId] : [])),
         ...adoptedMessageIds,
       ];
-      if (custodyReservation) {
-        const deliveredIds = new Set(custodyMessageIds);
-        const adoptedWakes = candidateCustodyWakes.filter(
-          (wake) => wake.kind !== 'structured' || wake.protocol !== 'hold' || deliveredIds.has(wake.sourceMessageId),
-        );
-        try {
-          if (adoptedWakes.length > 0) await custodyReservation.commit(adoptedWakes);
-          else await custodyReservation.release();
-        } catch (err) {
-          app.log.error(
-            { err, invocationId: principal.invocationId, threadId: effectiveThreadId, catId: principalCatId },
-            '[F167] queued custody adoption failed after delivery cutover',
-          );
-          reply.status(503);
-          return { error: 'Turn custody adoption unavailable', code: 'TURN_CUSTODY_ADOPTION_UNAVAILABLE' };
-        }
-      }
-
       if (opts.redis && custodyMessageIds.length > 0) {
         try {
           await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
@@ -6208,7 +6147,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         deliveryCursorStore,
         queueProcessor,
         invocationQueue: opts.invocationQueue,
-        ...(opts.ballCustody ? { ballCustody: opts.ballCustody } : {}),
         ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
         log: app.log,
       };

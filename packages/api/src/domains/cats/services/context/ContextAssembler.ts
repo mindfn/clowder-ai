@@ -11,6 +11,7 @@ import { estimateTokens } from '../../../../utils/token-counter.js';
 import { formatPromptTime } from '../format-time.js';
 import { messageFrom } from '../stores/message-from.js';
 import { isDelivered, type StoredMessage } from '../stores/ports/MessageStore.js';
+import { isAgentReadableManagedHoldMessage } from '../stores/visibility.js';
 
 export interface ContextAssemblerOptions {
   /** Invocation-owned token ceiling for the already-selected history. */
@@ -198,7 +199,7 @@ export function assembleContext(messages: StoredMessage[], options?: ContextAsse
     const from = messageFrom(m);
     return (
       isDelivered(m) &&
-      from.kind !== 'system' &&
+      (from.kind !== 'system' || isAgentReadableManagedHoldMessage(m)) &&
       m.origin !== 'briefing' &&
       !(from.kind === 'agent' && m.content?.startsWith('[错误]'))
     );

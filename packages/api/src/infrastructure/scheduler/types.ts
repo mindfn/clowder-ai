@@ -1,4 +1,9 @@
-import type { SchedulerLifecycleEvent, SchedulerMessageExtra, SchedulerToastPayload } from '@cat-cafe/shared';
+import type {
+  ConnectorSource,
+  SchedulerLifecycleEvent,
+  SchedulerMessageExtra,
+  SchedulerToastPayload,
+} from '@cat-cafe/shared';
 import type { IBallCustodyIngest } from '../../domains/ball-custody/BallCustodyIngest.js';
 
 export type { SchedulerLifecycleEvent, SchedulerMessageExtra, SchedulerToastPayload } from '@cat-cafe/shared';
@@ -85,6 +90,10 @@ export interface DeliverOpts {
   /** Stable producer identity for retrying one exact persisted scheduler item. */
   idempotencyKey?: string;
   extra?: SchedulerMessageExtra;
+  /** Queued sources remain off the timeline until Queue admission marks them delivered. */
+  deliveryStatus?: 'queued';
+  /** Optional canonical source identity for scheduler-backed continuation producers. */
+  source?: ConnectorSource;
 }
 
 /** Phase 4: result of fetching web content */

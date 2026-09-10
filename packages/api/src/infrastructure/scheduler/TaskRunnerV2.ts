@@ -1,5 +1,4 @@
 import type { IBallCustodyIngest } from '../../domains/ball-custody/BallCustodyIngest.js';
-import { buildHoldExpiredEvent } from '../../domains/ball-custody/ball-custody-events.js';
 import { holdStaleWakeSuppressedTotal } from '../telemetry/instruments.js';
 import { computeNextCronSlot, countAdditionalDueCronSlots } from './cron-utils.js';
 import type { DynamicTaskDef, DynamicTaskStore } from './DynamicTaskStore.js';
@@ -623,12 +622,28 @@ export class TaskRunnerV2 {
       error_summary: null,
     });
 
-    if (def.deliveryThreadId && isHoldBallReminderDef(def)) {
+    if (def.deliveryThreadId && isHoldBallReminderDef(def) && this.deliver) {
       const catId = readHoldBallCatId(def);
       if (catId) {
-        this.ballCustody
-          ?.record(buildHoldExpiredEvent({ threadId: def.deliveryThreadId, catId, fireAt, at: Date.now() }))
-          .catch((err) => this.logger.error(`[scheduler] ${def.id}: failed to record missed hold expiry`, err));
+        const triggerUserId = ((def.params as Record<string, unknown>).triggerUserId as string) || 'default-user';
+        void this.deliver({
+          threadId: def.deliveryThreadId,
+          userId: triggerUserId,
+          content: `等待已结束：原定 ${fireAtIso} 的唤醒因服务未运行而错过，任务已取消。`,
+          idempotencyKey: `hold-ball-missed:${def.id}`,
+          source: {
+            connector: 'hold-ball',
+            label: '持球状态',
+            icon: '🏓',
+            meta: {
+              managedHold: true,
+              phase: 'status',
+              taskId: def.id,
+              threadId: def.deliveryThreadId,
+              catId,
+            },
+          },
+        }).catch((err) => this.logger.error(`[scheduler] ${def.id}: failed to persist missed hold status`, err));
       }
     }
 

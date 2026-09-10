@@ -120,7 +120,7 @@ export interface ManagedCommandWakeTrigger {
     message: string,
     messageId: string,
     contentBlocks?: undefined,
-    policy?: { sourceCategory?: string },
+    policy?: { sourceCategory?: string; priority?: 'urgent' | 'normal' },
   ): Promise<ManagedCommandWakeTriggerOutcome>;
 }
 

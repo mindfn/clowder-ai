@@ -57,7 +57,7 @@ function entry(overrides = {}) {
 const noMessage = { getById: async () => null };
 
 describe('F167 Phase T queue wake provenance', () => {
-  it('binds exact action successor and hold-ball carriers', async () => {
+  it('binds an exact action successor while managed-hold wakes remain lifecycle-owned', async () => {
     assert.deepEqual(
       await resolveQueueTurnCustodyWake(
         entry({ actionSuccessorFence: { leaseId: 'lease-1', generation: 3 } }),
@@ -72,7 +72,13 @@ describe('F167 Phase T queue wake provenance', () => {
           id: 'message-1',
           source: {
             connector: 'hold-ball',
-            meta: { taskId: 'task-hold-1', threadId: 'thread-1', catId: 'codex-sol', wakeWhen: true },
+            meta: {
+              managedHold: true,
+              phase: 'wake',
+              taskId: 'task-hold-1',
+              threadId: 'thread-1',
+              catId: 'codex-sol',
+            },
           },
         }),
       }),

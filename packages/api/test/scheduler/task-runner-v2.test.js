@@ -1683,17 +1683,16 @@ describe('TaskRunnerV2 — once trigger (#415)', () => {
     runner.stop();
   });
 
-  it('hydrated missed hold-ball once task records ball.hold_expired before retiring', async () => {
+  it('hydrated missed hold-ball once task persists shared lifecycle status before retiring', async () => {
     const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
-    const events = [];
+    const deliveries = [];
     const runner = new TaskRunnerV2({
       logger: silentLogger,
       ledger,
       dynamicTaskStore,
-      ballCustody: {
-        async record(event) {
-          events.push(event);
-        },
+      deliver: async (input) => {
+        deliveries.push(input);
+        return 'message-hold-missed';
       },
     });
 
@@ -1711,13 +1710,20 @@ describe('TaskRunnerV2 — once trigger (#415)', () => {
     });
 
     runner.hydrateDynamic(dynamicTaskStore, { get: () => null });
+    await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(dynamicTaskStore.getById('hold-ball-missed-1'), null, 'missed hold-ball task should be retired');
-    assert.equal(events.length, 1, 'missed hold-ball task should emit one expiry event');
-    assert.equal(events[0].kind, 'ball.hold_expired');
-    assert.equal(events[0].sourceEventId, `holdexp:thread-hold-missed:codex:${pastFireAt}`);
-    assert.equal(events[0].subjectKey, 'ball:thread:thread-hold-missed');
-    assert.deepEqual(events[0].payload, { catId: 'codex', fireAt: pastFireAt });
+    assert.equal(deliveries.length, 1, 'missed hold-ball task should persist one lifecycle status');
+    assert.equal(deliveries[0].threadId, 'thread-hold-missed');
+    assert.equal(deliveries[0].userId, 'user-42');
+    assert.equal(deliveries[0].idempotencyKey, 'hold-ball-missed:hold-ball-missed-1');
+    assert.deepEqual(deliveries[0].source.meta, {
+      managedHold: true,
+      phase: 'status',
+      taskId: 'hold-ball-missed-1',
+      threadId: 'thread-hold-missed',
+      catId: 'codex',
+    });
     runner.stop();
   });
 

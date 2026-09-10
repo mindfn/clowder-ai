@@ -57,7 +57,6 @@ describe('F247 normal owner-Chrome product chain', () => {
     // this store before dispatching; the callback route claims it on source-bound returns.
     const grantStore = new MemoryCloudReturnGrantStore();
     const bridgeCalls = [];
-    const dispositionCalls = [];
     const events = await drain(
       invokeSingleCat(
         {
@@ -78,18 +77,6 @@ describe('F247 normal owner-Chrome product chain', () => {
             },
           },
           cloudReturnGrantStore: grantStore,
-          a2aDispatchDispositionService: {
-            async complete(auth, disposition) {
-              dispositionCalls.push({ auth, disposition });
-              return {
-                outcome: 'applied',
-                disposition,
-                invocationId: auth.invocationId,
-                sourceMessageId: auth.a2aTriggerMessageId,
-                fromCatId: 'codex-sol',
-              };
-            },
-          },
         },
         {
           catId: 'gpt-pro',
@@ -119,23 +106,27 @@ describe('F247 normal owner-Chrome product chain', () => {
     assert.equal(bridgeCalls.length, 1);
     assert.equal(bridgeCalls[0].sourceMessageId, source.id);
     assert.equal('cloudReturnBinding' in bridgeCalls[0], false);
-    assert.equal(dispositionCalls.length, 1);
     const statusEvent = events.find(
       (event) =>
         event.type === 'system_info' && event.content && JSON.parse(event.content).type === 'cloud_bridge_status',
     );
+    const createdEvent = events.find(
+      (event) =>
+        event.type === 'system_info' && event.content && JSON.parse(event.content).type === 'invocation_created',
+    );
     const status = JSON.parse(statusEvent.content);
+    const created = JSON.parse(createdEvent.content);
     assert.deepEqual(
       {
         sourceMessageId: status.outboundReceipt.sourceMessageId,
-        dispatchInvocationId: status.outboundReceipt.dispatchInvocationId,
+        dispatchInvocationId: created.invocationId,
         status: status.outboundReceipt.status,
         transport: status.outboundReceipt.transport,
         hostMessageId: status.outboundReceipt.hostMessageId,
       },
       {
         sourceMessageId: source.id,
-        dispatchInvocationId: dispositionCalls[0].auth.invocationId,
+        dispatchInvocationId: status.outboundReceipt.dispatchInvocationId,
         status: 'sent',
         transport: 'host',
         hostMessageId: 'host-message-product-chain',

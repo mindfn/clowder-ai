@@ -1,16 +1,16 @@
 ---
 feature_ids: [F117]
-related_features: [F039, F086, F122, F173, F183, F254, F264]
+related_features: [F039, F086, F122, F167, F173, F183, F233, F254, F264, F280]
 related_decisions: [043]
 topics: [message, queue, delivery, lifecycle, context]
 doc_kind: spec
 created: 2026-03-14
-tips_exempt: 2026-09-03 Phase E renews automatic owner-timeline, Stop, and cat-delivery consistency hardening; the user still has one existing Stop action and no new standalone capability to teach
+tips_exempt: 2026-09-10 Phase G moves managed-hold recovery onto the existing History/Queue/response lifecycle and retires two internal completion tools; it adds no user-invokable capability to teach
 ---
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: implementing — PR #1398 已按 2026-09-09 co-creator 验收反馈收敛为单 source Queue Entry + History actual-dispatch lifecycle，并完成 carrier 能力真相与副作用出口去门卫化；待本轮 exact-HEAD review、worktree 体验与 fork soak | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: implementing — PR #1398 已按 2026-09-10 co-creator 验收反馈收敛为单 source Queue Entry + History actual-dispatch lifecycle、carrier 能力真相、去副作用门卫与 managed-hold 统一恢复；待本轮 exact-HEAD review、worktree 体验与 fork soak | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -325,6 +325,32 @@ History `dispatchRefs` 对 exact `sourceRecordId × targetCatId` 做原子 join/
 Queue pending 与 History actual dispatch 仍是两个 owner；一致性依赖固定提交顺序和单调幂等 join，不新增第三套
 “已消费 connector”receipt ledger。
 
+### Phase G: Managed hold 统一恢复（normative，2026-09-10）
+
+`hold_ball` 只负责声明一个跨 invocation 的持久等待，并把等待原因、条件和下一步写成一条 owner-bound
+History system message。该消息对 operator 与 thread 中所有成员使用同一份持久投影：人通过消息气泡理解等待，
+成员通过正常 History/context 读取同一事实；不得另造仅某只猫或仅 UI 可见的 hold 状态。
+
+条件满足后的恢复复用完整消息生命周期：
+
+1. producer 以 exact task/thread/owner/target fence 幂等创建一条 `deliveryStatus='queued'` 的
+   `managedHold:true, phase:'wake'` system source；
+2. source 进入同一成员的 canonical Queue，priority 为 `urgent`。排队阶段不出现在 History，也不进入任何成员
+   context；只有实际 Queue admission/dequeue 后才以同一 message identity 进入 History；
+3. admission 创建唯一 response bubble，processing、正文、成功、失败、取消和中断均原位更新该 bubble；provider
+   唤起失败同样归这条 response，不新增 hold-specific error row；
+4. 其他成员与 operator 在 History 中看到同一等待、唤醒和 response 终局，因此后继成员可直接续上，无需读取
+   BallCustody 或解释隐藏 disposition。
+
+普通 A2A 和 managed hold 的完成由 `source → Queue admission → response terminal` 自然闭环。它们不再写
+`ball.handed / ball.dispatch_dispositioned / ball.hold_dispositioned`，不再要求
+`cat_cafe_complete_a2a_dispatch` 或 `cat_cafe_complete_managed_hold`，也不进入 F167 turn stop gate。Ball/lease
+只保留给真正独立于消息投递的 durable action-successor responsibility；`hold_ball` 自身仍保留等待条件、取消和
+跨 invocation 恢复状态，但它不是第二套消息完成账本。
+
+历史 Ball events 与旧 task 字段只读兼容，不参与新写入或执行裁决。新路径不得根据旧 disposition 缺失重试、
+escalate 或阻止 provider 输出提交。
+
 ## Acceptance Criteria
 
 ### Phase A（后端 — deliveryStatus 真相源） ✅
@@ -403,11 +429,21 @@ Queue pending 与 History actual dispatch 仍是两个 owner；一致性依赖�
 - [x] AC-F6: connector wait continuation 在准入前验证 canonical task 的 exact outcome、fence、generation 与 delivery terminal；历史或已交付 carrier fail closed
 - [ ] AC-F7: co-creator 在 feature worktree 验证 live carrier append/interrupt、单轮排队、multi-mention lineage 与 connector replay；随后进入 fork soak
 
+### Phase G（managed hold 统一恢复，2026-09-10）— 代码与测试完成，待体验
+
+- [x] AC-G1: hold registration 只持久化一条 owner-bound waiting History message；operator 与所有 thread 成员读取同一内容
+- [x] AC-G2: timer/command condition 只创建一条 exact fenced、urgent、queued wake source；actual Queue admission 前不进入 History/context
+- [x] AC-G3: wake dequeue 后复用普通 response lifecycle，唯一 response bubble 原位承载 processing 与任意终态
+- [x] AC-G4: ordinary A2A/managed-hold 新路径不写 Ball disposition，不要求 completion MCP，也不触发 turn stop gate；action-successor gate 保留
+- [x] AC-G5: completion MCP 从 callback/API/tool registry/governance baseline 同批删除，且不存在可调用别名或双轨 fallback
+- [ ] AC-G6: co-creator 在 feature worktree 验证「等待可见 → 条件满足进入优先 Queue → 出队后单一 response 终局 → 其他成员可读」完整旅程
+
 ## Scope Boundary
 
 - **In scope**: undelivered user message 对 cat cognition (`callback / thread context / prompt / pending-mentions`) 的泄漏，以及 canceled message 对 owner timeline/history 的 resurfacing
 - **Phase C in scope**: 所有公开 History source 的统一 dispatch 头像、response lineage、terminal 与 retry 投影
 - **Phase F in scope**: canonical member carrier、live append/interrupt、MCP 发送工具去门卫化，以及 A2A / multi-mention / connector 的 exact source×target replay 防线
+- **Phase G in scope**: managed hold 的共享等待消息、queued urgent wake、统一 response 终局，以及 ordinary A2A/hold completion MCP 与 Ball disposition 双轨退役
 - **Out of scope but related**: `cat_cafe_post_message` callback 路由的 @mention 解析/路由异常（走 `callbacks.ts`，不经过 queue/delivery lifecycle）
 
 ## Dependencies
@@ -445,6 +481,7 @@ Why: actual dispatch/terminal 已从 Queue receipt 完整迁出，避免两个 c
 | KD-12 | `carrier` 是唯一接入方式配置；兼容只在配置读取边界，选项彼此平级且不 fallback | client 能力必须由实际 transport 决定，不能让 UI、provider 与全局 env 各维护一套真相 | 2026-09-09 |
 | KD-13 | 退役 MCP side-effect freshness gate；运行中正文由 live carrier 接住，单轮 carrier 继续排队 | `post_message` 顺便查 inbox、阻止发送并教学补救把 transport 缺口转嫁给工具，制造 Agent/用户视图分叉 | 2026-09-09 |
 | KD-14 | 重放防线以 History exact source×target dispatch 与 wait outcome generation 为准 | 已处理 connector source 被旧 Queue/回调重新准入时，只有持久 execution truth 能阻止重复 side effect | 2026-09-09 |
+| KD-15 | managed hold 的恢复是普通优先 Queue 消息，不是 Ball disposition 协议 | 跨 invocation 等待需要持久 task/condition；条件满足后的执行已经由 source/Queue/response 完整表达，再加 completion tool 与 stop gate只会制造第二套终局 | 2026-09-10 |
 
 ## Review Gate
 
@@ -455,3 +492,4 @@ Why: actual dispatch/terminal 已从 Queue receipt 完整迁出，避免两个 c
   co-creator worktree 体验验收仍是 fork/上游前硬门
 - Phase E: Fable 做 exact-HEAD delta 复审，硬门为 AC-E1、AC-E3 的「typed custody 行存在时仍 200」与 AC-E7 的 `reconciled` / pre-start TTL 收窄；
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
+- Phase G: 跨族 reviewer 核验等待可见性、queued-before-admission、唯一 response 终局、MCP/route/Ball writer 全链 absence；co-creator 验证 AC-G6 后才进入 fork soak

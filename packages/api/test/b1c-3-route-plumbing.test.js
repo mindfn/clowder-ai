@@ -85,14 +85,6 @@ describe('F247 AC-B1c-3 PR-C: AgentRouter.getStrategyDeps() plumbing', () => {
     assert.equal(deps.invocationDeps.cloudInvokeBridge, undefined);
   });
 
-  it('passes the exact A2A disposition producer only when provided', () => {
-    const dispositionService = { complete: async () => ({ outcome: 'applied' }) };
-    const wired = makeMinimalAgentRouter({ a2aDispatchDispositionService: dispositionService }).getStrategyDeps();
-    const absent = makeMinimalAgentRouter().getStrategyDeps();
-    assert.strictEqual(wired.invocationDeps.a2aDispatchDispositionService, dispositionService);
-    assert.equal(absent.invocationDeps.a2aDispatchDispositionService, undefined);
-  });
-
   it('keeps the public API port fallback when API_SERVER_PORT is absent', () => {
     const previous = process.env.API_SERVER_PORT;
     delete process.env.API_SERVER_PORT;

@@ -1,4 +1,4 @@
-import type { WaitContinuationCarrierV1 } from '@cat-cafe/shared';
+import { isManagedHoldConnectorSource, type WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import { type QueueEntry, queueEntryCallerCatId } from '../cats/services/agents/invocation/InvocationQueue.js';
 import { hydrateCrossThreadReplyHint, type IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import { handedEventSourceId } from './ball-custody-events.js';
@@ -84,18 +84,12 @@ async function resolveScheduledWake(
   try {
     const messageId = entry.payload.messageId;
     const sourceMessage = messageId ? await messageStore.getById(messageId) : null;
-    if (sourceMessage?.source?.connector === 'hold-ball') {
+    if (isManagedHoldConnectorSource(sourceMessage?.source) && sourceMessage?.source?.meta?.phase === 'wake') {
       const meta = sourceMessage.source.meta;
       const taskId = typeof meta?.taskId === 'string' ? meta.taskId : undefined;
       const sourceThreadId = typeof meta?.threadId === 'string' ? meta.threadId : undefined;
       const sourceCatId = typeof meta?.catId === 'string' ? meta.catId : undefined;
-      if (
-        !messageId ||
-        !taskId ||
-        meta?.wakeWhen !== true ||
-        sourceThreadId !== entry.threadId ||
-        sourceCatId !== exactTargetCatId(entry)
-      ) {
+      if (!messageId || !taskId || sourceThreadId !== entry.threadId || sourceCatId !== exactTargetCatId(entry)) {
         return { kind: 'legacy', reason: 'carrier_missing', sourceCategory: 'scheduled' };
       }
       return {

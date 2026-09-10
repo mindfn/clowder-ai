@@ -322,8 +322,8 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.equal(h.appended[0].deliveryStatus, 'queued', 'managed wake stays under F264 receipt custody');
     assert.deepEqual(
       h.triggerCalls[0][6],
-      { sourceCategory: 'scheduled' },
-      'managed event uses the same canonical Queue ingress as every connector source',
+      { sourceCategory: 'scheduled', priority: 'urgent' },
+      'managed event uses urgent canonical Queue ingress for its same-member continuation',
     );
 
     const graceAttempt = await sweep.runOnce();
@@ -439,7 +439,7 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.invocationId, 'child-exact-1');
   });
 
-  test('retires a failed missing-disposition carrier so recovery requires a fresh producer admission', async () => {
+  test('consumes a failed wake from its canonical response terminal without manual disposition', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const task = makeTask();
     task.params.holdLifecycle.managedCommand = {
@@ -462,21 +462,20 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
         attemptId: 'entry-managed:codex-sol:1',
         attemptSequence: 1,
         invocationId: 'invocation-missing-1',
-        errorCode: 'managed_hold_disposition_missing',
+        errorCode: 'provider_execution_failed',
       },
       retryEventCarrierOutcomes: ['retried'],
     });
     const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
 
     assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 1, pending: 0 });
-    const escalated = h.tasks.get(task.id);
-    const managed = escalated.params.holdLifecycle.managedCommand;
-    assert.equal(escalated.enabled, false);
-    assert.equal(escalated.params.holdLifecycle.status, 'escalated');
-    assert.equal(managed.state, 'escalated');
-    assert.equal(managed.dispositionEscalationReason, 'managed_hold_disposition_missing');
-    assert.equal(managed.dispositionEscalatedAttemptId, 'entry-managed:codex-sol:1');
-    assert.equal(managed.dispositionEscalatedAt, 10_000);
+    const consumed = h.tasks.get(task.id);
+    const managed = consumed.params.holdLifecycle.managedCommand;
+    assert.equal(consumed.enabled, false);
+    assert.equal(consumed.params.holdLifecycle.status, 'fired');
+    assert.equal(managed.state, 'consumed');
+    assert.equal(managed.invocationId, 'invocation-missing-1');
+    assert.equal(managed.carrierTerminalReason, 'failed');
     assert.deepEqual(h.unregistered, [task.id]);
     assert.equal(h.retryEventCarrierCalls.length, 0, 'a terminal ledger row is never retried in place');
   });
@@ -499,7 +498,7 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
         attemptId: 'entry-managed:codex-sol:2',
         attemptSequence: 2,
         invocationId: 'invocation-missing-2',
-        errorCode: 'managed_hold_disposition_missing',
+        errorCode: 'provider_execution_failed',
       },
       retryEventCarrierOutcomes: ['retried'],
     });
@@ -507,10 +506,10 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
 
     assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 1, pending: 0 });
     assert.equal(h.retryEventCarrierCalls.length, 0, 'a durable successor attempt consumes the bounded retry');
-    assert.equal(h.tasks.get(task.id).params.holdLifecycle.status, 'escalated');
+    assert.equal(h.tasks.get(task.id).params.holdLifecycle.status, 'fired');
   });
 
-  test('does not retry a failed managed carrier without the missing-disposition error code', async () => {
+  test('consumes every failed managed carrier regardless of provider error code', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const task = makeTask();
     task.params.holdLifecycle.managedCommand = {
@@ -534,9 +533,11 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     });
     const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
 
-    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
+    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 1, pending: 0 });
     assert.equal(h.retryEventCarrierCalls.length, 0);
-    assert.equal(h.tasks.get(task.id).enabled, true);
+    assert.equal(h.tasks.get(task.id).enabled, false);
+    assert.equal(h.tasks.get(task.id).params.holdLifecycle.status, 'fired');
+    assert.equal(h.tasks.get(task.id).params.holdLifecycle.managedCommand.carrierTerminalReason, 'failed');
   });
 
   test('terminal F264 carrier retires the managed producer and cannot revive after restart', async () => {

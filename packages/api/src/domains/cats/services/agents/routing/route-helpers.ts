@@ -48,7 +48,12 @@ import type {
   StoredToolEvent,
 } from '../../stores/ports/MessageStore.js';
 import type { Thread } from '../../stores/ports/ThreadStore.js';
-import { canViewMessage, isTimelinePublished, resolveVisibleReplyParent } from '../../stores/visibility.js';
+import {
+  canViewMessage,
+  isAgentReadableManagedHoldMessage,
+  isTimelinePublished,
+  resolveVisibleReplyParent,
+} from '../../stores/visibility.js';
 import type { AgentMessage, AgentRouteIntent, AgentService, ToolExecutionPolicy } from '../../types.js';
 import type { InvocationDeps } from '../invocation/invoke-single-cat.js';
 import type { OwnerAuthProvenance } from '../invocation/owner-auth-provenance.js';
@@ -367,9 +372,7 @@ export interface RouteOptions {
         invocationId: string;
         messageIds: readonly string[];
         seenAt: number;
-      }) => Promise<
-        readonly import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance[] | void
-      >)
+      }) => Promise<void>)
     | undefined;
   /** Create the exact child's durable processing response before provider startup. */
   onLifecycleInvocationStarted?:
@@ -1779,7 +1782,7 @@ async function assembleIncrementalContextInternal(
   const filteredReasons = new Map<string, ProjectionAuditCandidate['filteredReason']>();
   const relevant = unseen.filter((m) => {
     // System-generated messages (persisted error badges) are display-only — never enter prompt
-    if (messageFrom(m).kind === 'system') {
+    if (messageFrom(m).kind === 'system' && !isAgentReadableManagedHoldMessage(m)) {
       filteredReasons.set(m.id, 'system_display_only');
       return false;
     }

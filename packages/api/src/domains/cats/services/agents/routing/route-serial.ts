@@ -89,12 +89,10 @@ import { estimateTokens } from '../../../../../utils/token-counter.js';
 import type { IBallCustodyIngest } from '../../../../ball-custody/BallCustodyIngest.js';
 import {
   buildHandedCvoEvent,
-  buildHandedEvent,
   buildInvocationHeartbeatEvent,
   buildInvocationStartedEvent,
   buildVoidPassEvent,
 } from '../../../../ball-custody/ball-custody-events.js';
-import { turnCustodyAdoptionRegistry } from '../../../../ball-custody/TurnCustodyAdoptionRegistry.js';
 import {
   compareTurnCustodyShadow,
   type TurnCustodyProjection,
@@ -244,47 +242,12 @@ const log = createModuleLogger('route-serial');
 
 const BALL_CUSTODY_INVOCATION_HEARTBEAT_MIN_INTERVAL_MS = 30_000;
 
-export function buildTurnCustodyStopGateRemedialPrompt(wake: TurnCustodyWakeProvenance): string {
-  if (wake.kind === 'structured' && wake.protocol === 'hold') {
-    return (
-      '[F167 球权停止门] 当前 managed hold wake 尚未发生可验证状态迁移。\n' +
-      '若本次 wake 工作已经处理完成，只调用 cat_cafe_complete_managed_hold，并选择 handled 或 completed；工具会从当前 invocation 自动绑定 source message 与 task，不能手填 subject。\n' +
-      '若工作尚未结束，只使用与下一条件匹配的 hold_ball、已注册 eventWait 或结构化传球。不要用纯文本 @、礼貌 ACK、command exit、测试/merge truth 代替 disposition。'
-    );
-  }
-  if (wake.kind === 'structured' && wake.protocol === 'dispatch') {
-    return (
-      '[F167 球权停止门] 当前普通 A2A dispatch 尚未发生可验证状态迁移。\n' +
-      '若本次 A2A 工作已经处理完成，只调用 cat_cafe_complete_a2a_dispatch，并选择 handled 或 completed；工具会从当前 invocation 自动绑定 source message、前手与当前 holder，不能手填 subject。\n' +
-      '若工作尚未结束，只使用与下一条件匹配的 hold_ball、已注册 eventWait 或结构化传球。不要用纯文本 @、礼貌 ACK、command exit、测试/merge truth 代替 disposition。'
-    );
-  }
+export function buildTurnCustodyStopGateRemedialPrompt(_wake: TurnCustodyWakeProvenance): string {
   return (
     '[F167 球权停止门] 本次唤醒携带的协议球尚未发生可验证状态迁移。\n' +
     '请只完成一次与当前协议球匹配的结构化动作，不要重做或改写刚才的工作：完成候选、结构化传球、returnToPredecessor、hold_ball 或已注册的 eventWait。\n' +
     '必须调用现有结构化工具；不要用纯文本 @、口头“持球”或礼貌 ACK 代替状态迁移。'
   );
-}
-
-/**
- * F233 Phase B (B2): persist ball.handed at the receiver boundary.
- * Phase T opens a dispatch projection from this exact event, so the write must
- * settle before its baseline is sampled. Failure stays fail-closed through an
- * unknown projection rather than blocking the underlying route.
- */
-async function recordBallHanded(
-  ballCustody: IBallCustodyIngest | undefined,
-  threadId: string,
-  fromCatId: string | undefined,
-  toCatId: string,
-  messageId: string | undefined,
-): Promise<void> {
-  if (!ballCustody || !messageId) return;
-  try {
-    await ballCustody.record(buildHandedEvent({ fromCatId, toCatId, threadId, messageId, at: Date.now() }));
-  } catch (err) {
-    log.warn({ threadId, toCat: toCatId, err }, 'ball.handed ingest failed');
-  }
 }
 
 /**
@@ -515,11 +478,6 @@ function consumePendingToolResult(
   }
 
   return undefined;
-}
-
-function isSubstantivePostDispositionProgress(msg: AgentMessage): boolean {
-  if (msg.type === 'text') return Boolean(msg.content?.trim());
-  return msg.type === 'tool_use' || msg.type === 'tool_result';
 }
 
 export async function* routeSerial(
@@ -843,21 +801,11 @@ export async function* routeSerial(
 
   const completedCatInvocationIds: Array<[string, string]> = [];
   const pushRecallPresentationsByInvocation = new Map<string, PushRecallPresentation[]>();
-  const pendingTurnCustodyTransitionWrites: Promise<void>[] = [];
   const pendingTurnCustodyShadowCloses: Array<(checkpoint: 'next_turn_boundary' | 'route_settled') => Promise<void>> =
     [];
-  let unregisterTurnCustodyAdoption: (() => Promise<void>) | undefined;
-  const releaseTurnCustodyAdoption = async (): Promise<void> => {
-    const unregister = unregisterTurnCustodyAdoption;
-    unregisterTurnCustodyAdoption = undefined;
-    await unregister?.();
-  };
   let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
 
   const flushTurnCustodyShadowCloses = async (checkpoint: 'next_turn_boundary' | 'route_settled'): Promise<void> => {
-    const transitionWrites = pendingTurnCustodyTransitionWrites.splice(0);
-    if (transitionWrites.length > 0) await Promise.allSettled(transitionWrites);
-
     const closes = pendingTurnCustodyShadowCloses.splice(0);
     for (const close of closes) {
       try {
@@ -872,7 +820,6 @@ export async function* routeSerial(
     while (index < worklist.length) {
       const catId = worklist[index]!;
       let stopGateRemedialAttempted = false;
-      let structuredDispositionMissingCode: string | undefined;
       let routingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
       // whole worklist. force-reset/cancelAll aborts every cat's controller, so all entries
@@ -1058,42 +1005,23 @@ export async function* routeSerial(
                   fromCatId: directMessageFrom,
                 })
               : declaredTurnCustodyWake));
-      if (!isFreshnessSupplement && turnCustodyWake.kind !== 'non_obligation') {
-        const dispatchHandoff =
-          turnCustodyWake.kind === 'structured' && turnCustodyWake.protocol === 'dispatch'
-            ? turnCustodyWake.handoff
-            : undefined;
-        const handoffWrite = recordBallHanded(
-          deps.ballCustody,
-          threadId,
-          dispatchHandoff?.fromCatId ?? directMessageFrom,
-          catId as string,
-          dispatchHandoff?.messageId ?? streamReplyTo ?? currentUserMessageId,
-        );
-        if (deps.turnCustodyProjectionService && turnCustodyWake.kind === 'structured') {
-          await handoffWrite;
-        } else {
-          void handoffWrite;
-        }
-      }
       // Settle the preceding turn at the earliest boundary that can contain its
       // receiver-side handoff. Closing here prevents a later ping-pong turn by
       // the same cat from being misattributed to the earlier projection.
       await flushTurnCustodyShadowCloses('next_turn_boundary');
       let turnCustodyProjection: TurnCustodyProjection | undefined;
-      if (deps.turnCustodyProjectionService) {
+      // Ordinary messages and managed continuations are already closed by the
+      // source -> Queue -> response lifecycle. Do not route them through the
+      // legacy turn-custody gate, even as a covered-empty shadow projection.
+      // Exact action successors and genuinely legacy wakes retain that gate;
+      // non-obligation coordination still records its terminal witness below.
+      if (
+        deps.turnCustodyProjectionService &&
+        turnCustodyWake.kind !== 'structured' &&
+        turnCustodyWake.kind !== 'unstructured'
+      ) {
         turnCustodyProjection = await deps.turnCustodyProjectionService.open(turnCustodyWake);
       }
-      const adoptedTurnCustodyProjections: Array<{
-        wake: Extract<TurnCustodyWakeProvenance, { kind: 'structured'; protocol: 'hold' }>;
-        projection: TurnCustodyProjection;
-      }> = [];
-      const structuredDispositionPrompt =
-        turnCustodyWake.kind === 'structured' &&
-        (turnCustodyWake.protocol === 'hold' || turnCustodyWake.protocol === 'dispatch') &&
-        turnCustodyProjection?.state !== 'covered_empty'
-          ? buildTurnCustodyStopGateRemedialPrompt(turnCustodyWake)
-          : undefined;
       let turnCustodyShadowRecorded = false;
       const turnCustodyTerminalWitnesses: QueueTerminalConsumptionWitness[] = [];
       const recordTurnCustodyTerminalWitness = (witness: QueueTerminalConsumptionWitness): void => {
@@ -1113,28 +1041,6 @@ export async function* routeSerial(
           return candidateKey === witnessKey;
         });
         if (!duplicate) turnCustodyTerminalWitnesses.push(witness);
-      };
-      const adoptTurnCustodyWakes = async (wakes: readonly TurnCustodyWakeProvenance[]): Promise<void> => {
-        if (!deps.turnCustodyProjectionService) return;
-        for (const wake of wakes) {
-          // Prompt/tool adoption currently applies only to command-backed hold
-          // receipts. Dispatch custody still requires its own routed child.
-          if (wake.kind !== 'structured' || wake.protocol !== 'hold') continue;
-          const duplicatesPrimary =
-            turnCustodyWake.kind === 'structured' &&
-            turnCustodyWake.protocol === 'hold' &&
-            turnCustodyWake.sourceMessageId === wake.sourceMessageId &&
-            turnCustodyWake.taskId === wake.taskId;
-          const alreadyAdopted = adoptedTurnCustodyProjections.some(
-            (candidate) =>
-              candidate.wake.sourceMessageId === wake.sourceMessageId && candidate.wake.taskId === wake.taskId,
-          );
-          if (duplicatesPrimary || alreadyAdopted) continue;
-          adoptedTurnCustodyProjections.push({
-            wake,
-            projection: await deps.turnCustodyProjectionService.open(wake),
-          });
-        }
       };
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       const staticIdentity = hasNativeL0
@@ -1357,9 +1263,6 @@ export async function* routeSerial(
             deps.proactiveMemoryNudgeService?.finalize(preparedProactiveMemoryNudge);
             proactiveMemoryNudgeFinalized = true;
           }
-        }
-        if (structuredDispositionPrompt) {
-          projectedPrompt = `${projectedPrompt}\n\n---\n\n${structuredDispositionPrompt}`;
         }
         return projectedPrompt;
       };
@@ -1657,18 +1560,6 @@ export async function* routeSerial(
       };
       // #573/#1332: Keep callback replacement state behind one focused boundary.
       const callbackFinalReplacement = new CallbackFinalReplacementTracker(recordPersistedOutputMessageId);
-      let dispatchDispositionToolSettled = false;
-      let postDispatchDispositionProgress = false;
-      const observePostDispositionProgress = (msg: AgentMessage): void => {
-        if (dispatchDispositionToolSettled && isSubstantivePostDispositionProgress(msg)) {
-          postDispatchDispositionProgress = true;
-        }
-      };
-      const observeSettledTool = (tool: PendingToolResult | undefined): void => {
-        if (tool && normalizeMcpToolName(tool.toolName) === 'complete_a2a_dispatch') {
-          dispatchDispositionToolSettled = true;
-        }
-      };
       const verifiedConciergeToolTargets = new VerifiedConciergeToolTargetCollector();
       const pendingCallbackRoutingExits: CallbackContentRoutingExit[] = [];
       const confirmedCallbackRoutingGuardMentions = new Set<CatId>();
@@ -1677,24 +1568,6 @@ export async function* routeSerial(
       let confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = false;
       let confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
       const emittedBallHandedCvoMessageIds = new Set<string>();
-      const acceptedTurnCustodyHandoffs = new Map<string, { targetCatId: CatId; messageId: string }>();
-      const noteAcceptedTurnCustodyHandoff = (targetCatId: CatId, messageId: string): void => {
-        acceptedTurnCustodyHandoffs.set(`${messageId}:${targetCatId}`, { targetCatId, messageId });
-      };
-      const emitSingleAcceptedTurnCustodyHandoff = (): void => {
-        if (acceptedTurnCustodyHandoffs.size !== 1 || isFreshnessSupplement) return;
-        const accepted = [...acceptedTurnCustodyHandoffs.values()][0];
-        if (!accepted) return;
-        pendingTurnCustodyTransitionWrites.push(
-          recordBallHanded(
-            deps.ballCustody,
-            threadId,
-            catId as string,
-            accepted.targetCatId as string,
-            accepted.messageId,
-          ),
-        );
-      };
       const structuredTargetCats = new Set<string>();
       // F060: Collect rich blocks emitted inline via system_info (not MCP buffer)
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
@@ -1975,9 +1848,7 @@ export async function* routeSerial(
         const eventKey = `${eventThreadId}:${messageId}`;
         if (emittedBallHandedCvoMessageIds.has(eventKey)) return;
         emittedBallHandedCvoMessageIds.add(eventKey);
-        pendingTurnCustodyTransitionWrites.push(
-          emitBallHandedCvo(deps.ballCustody, eventThreadId, catId as string, messageId),
-        );
+        void emitBallHandedCvo(deps.ballCustody, eventThreadId, catId as string, messageId);
       };
       const emitConfirmedCallbackBallHandedCvo = (
         confirmed: boolean,
@@ -2063,9 +1934,7 @@ export async function* routeSerial(
         ...(options.onPromptMessagesExposed
           ? {
               onPromptMessagesExposed: async (input) => {
-                const adoptedWakes = await options.onPromptMessagesExposed!(input);
-                if (adoptedWakes) await adoptTurnCustodyWakes(adoptedWakes);
-                return adoptedWakes;
+                return options.onPromptMessagesExposed!(input);
               },
             }
           : {}),
@@ -2122,7 +1991,6 @@ export async function* routeSerial(
         }
 
         for (const effectiveMsg of effectiveMsgs) {
-          observePostDispositionProgress(effectiveMsg);
           // F22 R2 P1-1: Capture invocationId from the initial system_info.
           // Keep forwarding this boundary event so frontend can reset stale task progress.
           if (effectiveMsg.type === 'system_info' && effectiveMsg.content && !ownInvocationId) {
@@ -2146,10 +2014,6 @@ export async function* routeSerial(
                     lifecyclePriorFrontierMessageId = effectiveMsg.lifecyclePriorFrontierMessageId;
                   }
                 }
-                unregisterTurnCustodyAdoption = turnCustodyAdoptionRegistry.register(
-                  parsed.invocationId,
-                  adoptTurnCustodyWakes,
-                );
                 rememberTurnExecutionProjection(parsed.invocationId, initialExecutionKind);
                 if (!isFreshnessSupplement) {
                   emitBallInvocationStarted(deps.ballCustody, threadId, ownInvocationId, catId as string);
@@ -2267,7 +2131,6 @@ export async function* routeSerial(
               callbackResult.confirmed,
               Boolean(callbackResult.messageId && callbackResult.threadId),
             );
-            observeSettledTool(completedToolName);
             if (completedToolName && isPostMessageToolName(completedToolName.toolName) && callbackResult.confirmed) {
               callbackFinalReplacement.recordConfirmedPost(
                 completedToolName.streamDisposition ?? 'independent',
@@ -2282,15 +2145,6 @@ export async function* routeSerial(
                 callbackResult.messageId,
                 callbackResult.threadId,
               );
-              if (
-                callbackResult.confirmed &&
-                callbackResult.messageId &&
-                settledExit?.scope === 'target' &&
-                settledExit.createsCustodyHandoff &&
-                settledExit.targetCatIds.length === 1
-              ) {
-                noteAcceptedTurnCustodyHandoff(settledExit.targetCatIds[0]!, callbackResult.messageId);
-              }
             }
             // F188 Phase F AC-F10 (砚砚 六审 P1-B: also scope by catId for serial route consistency).
             // 砚砚 cloud-3 P1: also pass toolUseId for exact match when available;
@@ -2575,46 +2429,6 @@ export async function* routeSerial(
                 }
               : rawDecision;
           if (
-            turnCustodyWake.kind === 'structured' &&
-            turnCustodyWake.protocol === 'hold' &&
-            newDecision.transitionObserved &&
-            newDecision.structuredTransitionKind !== 'hold_dispositioned'
-          ) {
-            const transition = verifiedEventWait
-              ? 'event_wait'
-              : newDecision.structuredTransitionKind === 'held'
-                ? 'reheld'
-                : newDecision.structuredTransitionKind === 'handed'
-                  ? 'transferred'
-                  : undefined;
-            if (transition) {
-              recordTurnCustodyTerminalWitness({
-                kind: 'managed_hold_continued',
-                sourceMessageId: turnCustodyWake.sourceMessageId,
-                taskId: turnCustodyWake.taskId,
-                transition,
-              });
-            }
-          }
-          if (
-            turnCustodyWake.kind === 'structured' &&
-            turnCustodyWake.protocol === 'dispatch' &&
-            newDecision.transitionObserved &&
-            newDecision.structuredTransitionKind === 'dispatch_dispositioned' &&
-            newDecision.dispatchDisposition === 'handled' &&
-            dispatchDispositionToolSettled &&
-            !postDispatchDispositionProgress &&
-            newDecision.dispatchDispositionEventId &&
-            newDecision.dispatchDispositionAt !== undefined
-          ) {
-            recordTurnCustodyTerminalWitness({
-              kind: 'dispatch_handled_continuation',
-              sourceMessageId: turnCustodyWake.handoff.messageId,
-              dispositionEventId: newDecision.dispatchDispositionEventId,
-              dispositionAt: newDecision.dispatchDispositionAt,
-            });
-          }
-          if (
             newDecision.state === 'covered_empty' &&
             turnCustodyWake.kind === 'non_obligation' &&
             turnCustodyWake.source === 'coordination_terminal'
@@ -2700,70 +2514,13 @@ export async function* routeSerial(
             'F167 Phase T turn-custody stop-gate verdict',
           );
 
-          let adoptedStructuredDispositionBlocked = false;
-          for (const adopted of adoptedTurnCustodyProjections) {
-            const adoptedDecision = await deps.turnCustodyProjectionService!.close(adopted.projection);
-            const transition =
-              adoptedDecision.structuredTransitionKind === 'held'
-                ? 'reheld'
-                : adoptedDecision.structuredTransitionKind === 'handed'
-                  ? 'transferred'
-                  : undefined;
-            if (adoptedDecision.transitionObserved && transition) {
-              recordTurnCustodyTerminalWitness({
-                kind: 'managed_hold_continued',
-                sourceMessageId: adopted.wake.sourceMessageId,
-                taskId: adopted.wake.taskId,
-                transition,
-              });
-            }
-            adoptedStructuredDispositionBlocked = adoptedDecision.shouldBlock || adoptedStructuredDispositionBlocked;
-            log.info(
-              {
-                threadId,
-                catId: catId as string,
-                sourceMessageId: adopted.wake.sourceMessageId,
-                taskId: adopted.wake.taskId,
-                state: adoptedDecision.state,
-                closeCheckpoint,
-                transitionObserved: adoptedDecision.transitionObserved,
-                evidenceRefs: adoptedDecision.evidenceRefs,
-              },
-              'F167 adopted managed-hold stop-gate verdict',
-            );
-          }
-
           if (
-            (!newDecision.shouldBlock && !adoptedStructuredDispositionBlocked) ||
+            !newDecision.shouldBlock ||
             hadError ||
             !actionOutputCommitAllowed ||
             isFreshnessSupplement ||
             stopGateRemedialAttempted
           ) {
-            return;
-          }
-
-          // The exact F254 body exposure belongs to the invocation that just
-          // finished. A routing-guard child has different callback credentials,
-          // so omission must fail this attempt and restore the same Queue carrier
-          // instead of letting a second invocation impersonate its disposition.
-          if (
-            turnCustodyWake.kind === 'structured' &&
-            (turnCustodyWake.protocol === 'hold' || turnCustodyWake.protocol === 'dispatch')
-          ) {
-            stopGateRemedialAttempted = true;
-            structuredDispositionMissingCode =
-              turnCustodyWake.protocol === 'hold'
-                ? 'managed_hold_disposition_missing'
-                : 'a2a_dispatch_disposition_missing';
-            await appendStopGateFailureNotice();
-            return;
-          }
-
-          if (adoptedStructuredDispositionBlocked) {
-            stopGateRemedialAttempted = true;
-            structuredDispositionMissingCode = 'managed_hold_disposition_missing';
-            await appendStopGateFailureNotice();
             return;
           }
 
@@ -2773,11 +2530,6 @@ export async function* routeSerial(
           const originalFirstMetadata = firstMetadata;
           try {
             await runTurnCustodyStopGateRemedial('', [], []);
-            emitSingleAcceptedTurnCustodyHandoff();
-            const remedialTransitionWrites = pendingTurnCustodyTransitionWrites.splice(0);
-            if (remedialTransitionWrites.length > 0) {
-              await Promise.allSettled(remedialTransitionWrites);
-            }
             const remediatedDecision = await deps.turnCustodyProjectionService!.close(projection);
             if (remediatedDecision.shouldBlock) {
               await appendStopGateFailureNotice();
@@ -2988,7 +2740,6 @@ export async function* routeSerial(
           }
 
           for (const effectiveMsg of remedialMsgs) {
-            observePostDispositionProgress(effectiveMsg);
             if (effectiveMsg.type === 'system_info' && effectiveMsg.content && !ownInvocationId) {
               try {
                 const parsed = JSON.parse(effectiveMsg.content);
@@ -3079,7 +2830,6 @@ export async function* routeSerial(
                 callbackResult.confirmed,
                 Boolean(callbackResult.messageId && callbackResult.threadId),
               );
-              observeSettledTool(completedToolName);
               if (completedToolName && isPostMessageToolName(completedToolName.toolName) && callbackResult.confirmed) {
                 callbackFinalReplacement.recordConfirmedPost(
                   completedToolName.streamDisposition ?? 'independent',
@@ -3094,15 +2844,6 @@ export async function* routeSerial(
                   callbackResult.messageId,
                   callbackResult.threadId,
                 );
-                if (
-                  callbackResult.confirmed &&
-                  callbackResult.messageId &&
-                  settledExit?.scope === 'target' &&
-                  settledExit.createsCustodyHandoff &&
-                  settledExit.targetCatIds.length === 1
-                ) {
-                  noteAcceptedTurnCustodyHandoff(settledExit.targetCatIds[0]!, callbackResult.messageId);
-                }
               }
             }
 
@@ -4864,13 +4605,11 @@ export async function* routeSerial(
       // Yield buffered done with correct isFinal (evaluated AFTER worklist may have grown)
       // MUST always reach here regardless of append success (缅因猫 review P1-2)
       // F194 Phase Z9 砚砚 R1 P1-1: stamp ownInvocationId on done if not already set.
-      emitSingleAcceptedTurnCustodyHandoff();
       const isTerminalCoordinationWake =
         turnCustodyWake.kind === 'non_obligation' && turnCustodyWake.source === 'coordination_terminal';
       if (index === worklist.length - 1 || isTerminalCoordinationWake) {
         await flushTurnCustodyShadowCloses(index === worklist.length - 1 ? 'route_settled' : 'next_turn_boundary');
       }
-      await releaseTurnCustodyAdoption();
 
       if (doneMsg) {
         const isFinal = index === worklist.length - 1;
@@ -4883,7 +4622,6 @@ export async function* routeSerial(
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(turnCustodyTerminalWitnesses[0] ? { turnCustodyTerminalWitness: turnCustodyTerminalWitnesses[0] } : {}),
           ...(turnCustodyTerminalWitnesses.length > 0 ? { turnCustodyTerminalWitnesses } : {}),
-          ...(structuredDispositionMissingCode ? { errorCode: structuredDispositionMissingCode } : {}),
           isFinal,
         });
         if (isFinal) yieldedFinalDone = true;
@@ -4898,7 +4636,6 @@ export async function* routeSerial(
   } finally {
     // Provider/route failure after system_info must revoke callback ownership
     // before any adopted projections are closed or the route exits.
-    await releaseTurnCustodyAdoption();
     if (keepaliveTimer) clearInterval(keepaliveTimer);
 
     // Phase T stop gate is a turn-settled verdict: current output persistence,

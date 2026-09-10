@@ -438,6 +438,7 @@ export type {
 export {
   getAllConnectorDefinitions,
   getConnectorDefinition,
+  isManagedHoldConnectorSource,
   isSelectableManagedHoldConnectorSource,
   isStaticConnectorId,
   registerConnectorDefinition,

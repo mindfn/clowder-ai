@@ -28,7 +28,7 @@ export type ManagedCommandWakeState =
   | 'escalated'
   | 'consumed';
 
-export type ManagedCommandWakeCarrierTerminalReason = 'withdrawn' | 'canceled' | 'terminal' | 'force_reset';
+export type ManagedCommandWakeCarrierTerminalReason = 'withdrawn' | 'canceled' | 'failed' | 'terminal' | 'force_reset';
 
 export interface ManagedCommandTerminalResult {
   readonly exitCode: number | null;
@@ -66,13 +66,6 @@ export interface ManagedCommandWakeProjection {
   readonly carrierTerminalReason?: ManagedCommandWakeCarrierTerminalReason;
   readonly consumedAt?: number;
   readonly slaBreachObservedAt?: number;
-  /** Number of exact failed Queue attempts redelivered for a missing invocation-bound disposition. */
-  readonly dispositionRetryCount?: number;
-  /** Idempotency fence for the failed attempt that authorized the latest redelivery. */
-  readonly lastDispositionFailedAttemptId?: string;
-  readonly dispositionEscalationReason?: 'managed_hold_disposition_missing';
-  readonly dispositionEscalatedAttemptId?: string;
-  readonly dispositionEscalatedAt?: number;
 }
 
 export interface ParsedManagedCommandWakeTask {

@@ -589,11 +589,6 @@ export interface AgentRouterOptions {
   cloudInvokeBridge?: import('../../cloud-bridge/types.js').ICloudInvokeBridge;
   /** F247: shared server-custodied source-bound return authorization. */
   cloudReturnGrantStore?: import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore;
-  /** F247/F167: server-owned terminal producer for the exact cloud A2A carrier. */
-  a2aDispatchDispositionService?: Pick<
-    import('../../../../ball-custody/A2ADispatchDispositionService.js').A2ADispatchDispositionService,
-    'complete'
-  >;
   /** F254 B3: freshnessReinvokeCheck for invoke-single-cat terminal hook */
   freshnessReinvokeCheck?: import('../invocation/invoke-single-cat.js').InvocationDeps['freshnessReinvokeCheck'];
   /** Durable per-child execution lifecycle; independent from callback-auth registry TTL. */
@@ -695,10 +690,6 @@ export class AgentRouter {
   /** F247 AC-B1c-3 PR-C */
   private cloudInvokeBridge?: import('../../cloud-bridge/types.js').ICloudInvokeBridge;
   private cloudReturnGrantStore?: import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore;
-  private a2aDispatchDispositionService?: Pick<
-    import('../../../../ball-custody/A2ADispatchDispositionService.js').A2ADispatchDispositionService,
-    'complete'
-  >;
   /** F254 B3 */
   private freshnessReinvokeCheck?: import('../invocation/invoke-single-cat.js').InvocationDeps['freshnessReinvokeCheck'];
   private turnExecutionStore?: import('../../stores/ports/TurnExecutionStore.js').ITurnExecutionStore;
@@ -844,7 +835,6 @@ export class AgentRouter {
     this.conciergeTriagePlanStore = options.conciergeTriagePlanStore;
     this.cloudInvokeBridge = options.cloudInvokeBridge;
     this.cloudReturnGrantStore = options.cloudReturnGrantStore;
-    this.a2aDispatchDispositionService = options.a2aDispatchDispositionService;
     this.freshnessReinvokeCheck = options.freshnessReinvokeCheck;
     this.turnExecutionStore = options.turnExecutionStore;
     this.freshnessStateStore = options.freshnessStateStore;
@@ -1552,9 +1542,6 @@ export class AgentRouter {
         ...(this.conciergeTriagePlanStore ? { conciergeTriagePlanStore: this.conciergeTriagePlanStore } : {}),
         ...(this.cloudInvokeBridge ? { cloudInvokeBridge: this.cloudInvokeBridge } : {}),
         ...(this.cloudReturnGrantStore ? { cloudReturnGrantStore: this.cloudReturnGrantStore } : {}),
-        ...(this.a2aDispatchDispositionService
-          ? { a2aDispatchDispositionService: this.a2aDispatchDispositionService }
-          : {}),
         ...(this.freshnessReinvokeCheck ? { freshnessReinvokeCheck: this.freshnessReinvokeCheck } : {}),
         ...(this.freshnessStateStore ? { freshnessStateStore: this.freshnessStateStore } : {}),
         ...(this.providerNativeFreshnessFactory
