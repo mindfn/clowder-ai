@@ -1,9 +1,9 @@
-import type { ApprovalHubItem } from '@cat-cafe/shared';
+import type { ApprovalHubItem, HarnessGovernanceProposalChange } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { anchoredApprovalNavigation } from '@/test-support/approval-navigation';
-import { fullContentDiff } from '../F257GovernanceChanges';
+import { comparisonBlocks, fullContentDiff } from '../F257GovernanceChanges';
 import { GenericApprovalRecommendation } from '../GenericApprovalRecommendation';
 import { HarnessGovernanceDecisionActions } from '../HarnessGovernanceDecisionActions';
 import { parseUnifiedDiff } from '../workspace/DiffViewer';
@@ -135,7 +135,7 @@ describe('F257 governance card', () => {
     expect(text).toContain('提案轮次：2');
 
     const diffButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
-    expect(diffButton?.textContent).toContain('查看段内容');
+    expect(diffButton?.textContent).toContain('查看差异');
     expect(text).not.toContain('查看左右差异');
     expect(text).not.toContain('修改段内容');
     expect(container.querySelector('[data-testid="f257-governance-change"]')?.className).not.toContain('sm:flex-row');
@@ -264,8 +264,11 @@ describe('F257 governance card', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]')?.click(),
     );
     const dialog = document.body.querySelector('[data-testid="f257-governance-diff-dialog"]');
+    // operator 2026-09-10: disabling stops injection; it does not delete the body,
+    // so the body must appear unchanged on both sides rather than struck through.
     expect(dialog?.textContent).toContain('current hook content');
-    expect(dialog?.textContent).toContain('此段将不再注入');
+    expect(dialog?.textContent).toContain('已停用，不注入');
+    expect(dialog?.textContent).toContain('启用中，会注入');
   });
 
   it('offers approve/skip/reject and keeps reject disabled until a reason exists', async () => {
@@ -293,5 +296,209 @@ describe('F257 governance card', () => {
     expect(reject?.disabled).toBe(false);
     await act(async () => reject?.click());
     expect(decide).toHaveBeenCalledWith('reject', '评估漏掉了关键反例');
+  });
+
+  async function openDiffDialog(changes: Array<Record<string, unknown>>) {
+    const item = { ...ITEM, detail: { ...ITEM.detail, changes } } as ApprovalHubItem;
+    await act(async () => {
+      root.render(
+        <GenericApprovalRecommendation
+          item={item}
+          f193TargetThreadId=""
+          sourceThreadTitle="Harness Objective"
+          targetThreadTitle={null}
+          resolveCatName={(catId) => catId}
+        />,
+      );
+    });
+    const openButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
+    await act(async () => openButton?.click());
+    return document.body.querySelector('[data-testid="f257-governance-diff-dialog"]');
+  }
+
+  it('calls every action entry a diff entry regardless of action kind', async () => {
+    await openDiffDialog([FULL_ADD_CHANGE]);
+    const openButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
+    expect(openButton?.textContent).toContain('查看差异');
+    expect(openButton?.textContent).not.toContain('查看新增段内容');
+  });
+
+  it('gives an add action one comparison block per produced artifact', () => {
+    expect(comparisonBlocks(FULL_ADD_CHANGE).map((block) => block.label)).toEqual([
+      '段正文',
+      'Hook 清单',
+      '评估单元注册表',
+    ]);
+  });
+
+  it('does not present a disable action as deleting the segment body', () => {
+    const blocks = comparisonBlocks({ unitId: 'L4', action: 'disable', beforeContent: '保留的正文' });
+    expect(blocks.map((block) => block.label)).toEqual(['启用状态', '段正文']);
+    const body = blocks.find((block) => block.id === 'content');
+    expect(body?.before).toBe('保留的正文');
+    expect(body?.after).toBe('保留的正文');
+  });
+
+  it('puts the before/after headings inside the split diff instead of a detached row', async () => {
+    const dialog = await openDiffDialog([FULL_ADD_CHANGE]);
+    expect(dialog?.querySelector('[data-testid="f257-governance-before-heading"]')).toBeNull();
+    expect(dialog?.querySelector('[data-testid="diff-split-header-before"]')?.textContent).toContain('应用前');
+    expect(dialog?.querySelector('[data-testid="diff-split-header-after"]')?.textContent).toContain('应用后');
+  });
+
+  it('wraps long diff lines instead of forcing horizontal scrolling', async () => {
+    const dialog = await openDiffDialog([FULL_ADD_CHANGE]);
+    const cell = dialog?.querySelector('[data-diff-line]');
+    expect(cell?.className).toContain('whitespace-pre-wrap');
+    expect(cell?.className).not.toContain('overflow-x-auto');
+  });
+
+  // HarnessGovernanceExecutor.hydrateAdd sets hookId = unitId (not the slug).
+  const FULL_ADD_CHANGE = {
+    unitId: 'D22',
+    action: 'add',
+    hookId: 'D22',
+    assetSlug: 'd22-termination-gate',
+    reason: '补入终止门',
+    content: '新段正文',
+    manifest: {
+      id: 'D22',
+      name: '终止门',
+      stage: 'per-turn',
+      order: 2200,
+      version: 1,
+      enabled: true,
+      template: 'content.md',
+      inputs: ['threadId'],
+      // HookVariableDef is { name, description?, placeholder? } — `source` is not a field.
+      variables: [{ name: 'catId', description: '第一行\n第二行: 这不是新键' }],
+      disableable: true,
+      safetyTier: 'editable',
+      transparencyTier: 'visible-by-default',
+      governanceTier: 'human-gated',
+    },
+    // HarnessUnitDirectoryWriter.validate rejects clauseId on add.
+    objectives: [{ objectiveId: 'tool-access' }],
+  } satisfies HarnessGovernanceProposalChange;
+
+  // P2-C (sol @ ccd01dabf): the dialog must name the files the executor really
+  // writes, and must not silently drop object/array manifest fields.
+  it('projects an add onto the artifacts the executor actually writes', () => {
+    const blocks = comparisonBlocks(FULL_ADD_CHANGE);
+    expect(blocks.map((block) => block.path)).toEqual([
+      'assets/prompt-hooks/d22-termination-gate/content.md',
+      'assets/prompt-hooks/d22-termination-gate/hook.yaml',
+      'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
+    ]);
+    const manifestBlock = blocks.find((block) => block.id === 'manifest');
+    expect(manifestBlock?.after).toContain('inputs:');
+    expect(manifestBlock?.after).toContain('threadId');
+    expect(manifestBlock?.after).toContain('variables:');
+    expect(manifestBlock?.after).toContain('catId');
+    const registryBlock = blocks.find((block) => block.id === 'registry');
+    expect(registryBlock?.after).toContain('d22-termination-gate');
+    expect(registryBlock?.after).toContain('tool-access');
+  });
+
+  // P2-B (sol @ ccd01dabf): beforeEnabled is authoritative; the card must not
+  // invent a before-state, and a no-op must read as a no-op.
+  it('derives the enablement before-state from beforeEnabled, including no-ops', () => {
+    const noop = comparisonBlocks({
+      unitId: 'L4',
+      action: 'enable',
+      hookId: 'l4',
+      beforeEnabled: true,
+      beforeContent: 'body',
+    });
+    const noopState = noop.find((block) => block.id === 'state');
+    expect(noopState?.before).toBe(noopState?.after);
+
+    const real = comparisonBlocks({
+      unitId: 'L4',
+      action: 'disable',
+      hookId: 'l4',
+      beforeEnabled: true,
+      beforeContent: 'body',
+    });
+    const realState = real.find((block) => block.id === 'state');
+    expect(realState?.before).toContain('启用');
+    expect(realState?.after).toContain('停用');
+
+    const unknown = comparisonBlocks({ unitId: 'L4', action: 'disable', hookId: 'l4', beforeContent: 'body' });
+    expect(unknown.find((block) => block.id === 'state')?.before).toContain('未声明');
+  });
+
+  // sol delta @91aa4b428 (P2): change.hookId is manifest.id (e.g. "L4"), the
+  // registry says "l4-iron-laws" and the real directory is "l4-五条铁律" —
+  // three different values. An existing segment's path is not derivable, so
+  // the card must not print one.
+  it('refuses to print a path for segments whose directory is not derivable', () => {
+    for (const action of ['modify', 'disable', 'enable', 'rollback']) {
+      const blocks = comparisonBlocks({
+        unitId: 'L4',
+        hookId: 'L4',
+        action,
+        beforeEnabled: true,
+        beforeContent: 'body',
+        proposedContent: 'next',
+        targetContent: 'next',
+      });
+      for (const block of blocks) {
+        expect(block.path).toBeNull();
+        expect(JSON.stringify(block)).not.toContain('assets/prompt-hooks/L4');
+      }
+    }
+  });
+
+  it('still uses the authoritative assetSlug path for an add', () => {
+    expect(comparisonBlocks(FULL_ADD_CHANGE).map((block) => block.path)).toEqual([
+      'assets/prompt-hooks/d22-termination-gate/content.md',
+      'assets/prompt-hooks/d22-termination-gate/hook.yaml',
+      'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
+    ]);
+  });
+
+  // sol delta @91aa4b428 (P2): every scalar went through String(), so a value
+  // containing a newline or ": " silently became a new top-level key.
+  it('encodes ambiguous scalars reversibly instead of merging them into keys', () => {
+    const manifestBlock = comparisonBlocks(FULL_ADD_CHANGE).find((block) => block.id === 'manifest');
+    const after = manifestBlock?.after ?? '';
+
+    expect(after).toContain(JSON.stringify('第一行\n第二行: 这不是新键'));
+    expect(after).not.toContain('\n第二行: 这不是新键');
+    expect(after.split('\n').filter((line) => /^\s*stage:/.test(line))).toHaveLength(1);
+    // a boolean stays bare so it remains distinguishable from the string "true"
+    expect(after).toMatch(/enabled: true(\n|$)/);
+    expect(after).toContain('safetyTier: editable');
+  });
+
+  // sol delta @a525247dc (P2): enable/disable/modify/rollback write the runtime
+  // override/version store — no file is touched — so the whole file framing is
+  // false, not just the path.
+  it('drops all file metadata for comparisons that touch no file', async () => {
+    const dialog = await openDiffDialog([
+      { unitId: 'L4', hookId: 'L4', action: 'disable', beforeEnabled: true, beforeContent: 'body' },
+    ]);
+    expect(dialog?.textContent).not.toContain('file changed');
+    expect(dialog?.textContent).not.toContain('files changed');
+    expect(dialog?.textContent).not.toContain('assets/prompt-hooks');
+  });
+
+  // sol delta @a525247dc (P2): the writer creates the body + hook.yaml but
+  // APPENDS to the existing unit-evaluation-manifest.yaml. Rendering all three
+  // as empty→full hides exactly the 新增/修改 distinction lang asked for.
+  it('distinguishes newly created artifacts from an appended registry entry', () => {
+    expect(comparisonBlocks(FULL_ADD_CHANGE).map((block) => block.operation)).toEqual(['create', 'create', 'append']);
+  });
+
+  it('keeps runtime-only changes labelled as runtime rather than file writes', () => {
+    const blocks = comparisonBlocks({
+      unitId: 'L4',
+      hookId: 'L4',
+      action: 'disable',
+      beforeEnabled: true,
+      beforeContent: 'b',
+    });
+    expect(blocks.every((block) => block.operation === 'runtime')).toBe(true);
   });
 });

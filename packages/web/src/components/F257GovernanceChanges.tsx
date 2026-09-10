@@ -37,7 +37,7 @@ export function F257GovernanceChanges({ changes }: { changes: Array<Record<strin
                     className="rounded px-1 font-medium text-cafe-accent underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent"
                     data-testid="f257-governance-open-diff"
                   >
-                    {changeDetailLabel(change)}
+                    {changeDetailLabel()}
                   </button>
                 </div>
               </div>
@@ -109,21 +109,25 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4 sm:p-6">
-          <div className="grid grid-cols-2 gap-3 text-xs font-semibold text-cafe-secondary">
-            <span data-testid="f257-governance-before-heading">应用前</span>
-            <span data-testid="f257-governance-after-heading">应用后</span>
-          </div>
+        <div className="min-h-[60dvh] flex-1 space-y-4 overflow-auto p-4 sm:p-6">
           {comparisons.map((comparison) => (
             <section key={comparison.id} className="space-y-2">
-              <h3 className="text-sm font-semibold text-cafe">{comparison.label}</h3>
+              <h3 data-testid="f257-governance-comparison-label" className="text-sm font-semibold text-cafe">
+                {comparison.label}
+                <span className="ml-2 text-xs font-normal text-cafe-muted">
+                  · {OPERATION_LABEL[comparison.operation]}
+                </span>
+              </h3>
               <DiffViewer
                 diff={fullContentDiff(
-                  `${String(change.unitId ?? 'unit')}.${comparison.id}`,
+                  comparison.path ?? `${String(change.unitId ?? 'unit')} · ${comparison.label}`,
                   comparison.before,
                   comparison.after,
                 )}
+                hideFileMeta={comparison.operation === 'runtime'}
                 initialMode="split"
+                wrapLines
+                splitHeaders={{ before: '应用前', after: '应用后' }}
               />
             </section>
           ))}
@@ -137,52 +141,206 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
   );
 }
 
-function comparisonBlocks(change: Record<string, unknown>): Array<{
+/**
+ * What the executor actually does to this artifact. sol delta @a525247dc: the
+ * writer creates the body and hook.yaml but APPENDS to the existing registry,
+ * and enable/disable/modify only touch the runtime store — rendering all of
+ * them as empty→full hid exactly the 新增/修改 distinction lang asked for.
+ */
+type ArtifactOperation = 'create' | 'append' | 'runtime';
+
+interface ComparisonBlock {
   id: string;
   label: string;
+  /** Real repository path, or null when no file is involved / knowable. */
+  path: string | null;
+  operation: ArtifactOperation;
   before: string;
   after: string;
-}> {
+}
+
+const OPERATION_LABEL: Record<ArtifactOperation, string> = {
+  create: '新建文件',
+  append: '在既有文件中追加注册项',
+  runtime: '运行时状态（不写文件）',
+};
+
+export function comparisonBlocks(change: Record<string, unknown>): ComparisonBlock[] {
   const action = String(change.action ?? '');
   const beforeContent = stringField(change, 'beforeContent') ?? '';
-  const blocks: Array<{ id: string; label: string; before: string; after: string }> = [];
+  // sol delta @91aa4b428: only `add` carries an authoritative assetSlug — the
+  // writer creates the directory from it. For an existing segment the change
+  // carries hookId = manifest.id ("L4"), the registry says "l4-iron-laws", and
+  // the directory on disk is "l4-五条铁律": three different values, none of them
+  // derivable from the card. Print no path rather than a plausible wrong one.
+  const assetSlug = stringField(change, 'assetSlug');
+  const assetDir = assetSlug ? `assets/prompt-hooks/${assetSlug}` : null;
 
-  if (action === 'add') {
-    blocks.push({ id: 'content', label: '段内容', before: '', after: stringField(change, 'content') ?? '' });
-  } else if (action === 'disable') {
-    blocks.push({
-      id: 'content',
-      label: '段内容与启用状态',
-      before: `当前启用并注入\n\n${beforeContent}`,
-      after: '此段将不再注入',
-    });
-  } else if (action === 'enable') {
-    blocks.push({
-      id: 'content',
-      label: '段内容与启用状态',
-      before: `当前停用，不注入\n\n${beforeContent}`,
-      after: `恢复启用并注入\n\n${beforeContent}`,
-    });
-  } else {
-    const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
-    if (afterContent !== undefined) {
-      blocks.push({ id: 'content', label: '段内容', before: beforeContent, after: afterContent });
-    }
-  }
+  const blocks = selectBlocks(change, action, beforeContent, assetSlug, assetDir);
 
   if (change.proposedCondition !== undefined) {
     blocks.push({
       id: 'condition',
       label: '触发条件',
+      path: assetDir && `${assetDir}/hook.yaml`,
+      operation: 'runtime',
       before: formatCondition(change.beforeCondition),
       after: formatCondition(change.proposedCondition),
     });
   }
-
   if (blocks.length === 0) {
-    blocks.push({ id: 'state', label: '状态', before: '当前状态', after: '应用提议后的状态' });
+    blocks.push({
+      id: 'state',
+      label: '状态',
+      path: assetDir,
+      operation: 'runtime',
+      before: '当前状态',
+      after: '应用提议后的状态',
+    });
   }
   return blocks;
+}
+
+function selectBlocks(
+  change: Record<string, unknown>,
+  action: string,
+  beforeContent: string,
+  assetSlug: string | undefined,
+  assetDir: string | null,
+): ComparisonBlock[] {
+  if (action === 'add' && assetSlug) return addArtifactBlocks(change, assetSlug);
+  if (action === 'disable' || action === 'enable') return enablementBlocks(change, action, beforeContent, assetDir);
+  const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
+  if (afterContent === undefined) return [];
+  return [
+    {
+      id: 'content',
+      label: '段正文',
+      path: assetDir,
+      operation: 'runtime',
+      before: beforeContent,
+      after: afterContent,
+    },
+  ];
+}
+
+/** The three artifacts HarnessUnitDirectoryWriter actually writes for an add. */
+function addArtifactBlocks(change: Record<string, unknown>, assetSlug: string): ComparisonBlock[] {
+  const manifest = asRecord(change.manifest);
+  const template = stringField(manifest, 'template') ?? 'content.md';
+  return [
+    {
+      id: 'content',
+      label: '段正文',
+      path: `assets/prompt-hooks/${assetSlug}/${template}`,
+      operation: 'create',
+      before: '',
+      after: stringField(change, 'content') ?? '',
+    },
+    {
+      id: 'manifest',
+      label: 'Hook 清单',
+      path: `assets/prompt-hooks/${assetSlug}/hook.yaml`,
+      operation: 'create',
+      before: '',
+      after: formatStructured(manifest),
+    },
+    {
+      id: 'registry',
+      label: '评估单元注册表',
+      path: 'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
+      operation: 'append',
+      before: '',
+      after: formatStructured({
+        unitId: String(change.unitId ?? '未知段'),
+        hookId: assetSlug,
+        unitState: 'evaluable',
+        objectives: asRecords(change.objectives),
+      }),
+    },
+  ];
+}
+
+/**
+ * Enable/disable changes injection, never the body. sol @ ccd01dabf (P2-B):
+ * `beforeEnabled` is authoritative and the executor does not reject a no-op,
+ * so both sides are derived — a no-op then compares equal and reads as one.
+ */
+function enablementBlocks(
+  change: Record<string, unknown>,
+  action: string,
+  beforeContent: string,
+  assetDir: string | null,
+): ComparisonBlock[] {
+  return [
+    {
+      id: 'state',
+      label: '启用状态',
+      path: assetDir && `${assetDir}/hook.yaml`,
+      operation: 'runtime',
+      before: enablementLabel(change.beforeEnabled),
+      after: enablementLabel(action === 'enable'),
+    },
+    {
+      id: 'content',
+      label: '段正文',
+      path: assetDir,
+      operation: 'runtime',
+      before: beforeContent,
+      after: beforeContent,
+    },
+  ];
+}
+
+function enablementLabel(value: unknown): string {
+  if (typeof value !== 'boolean') return '（提案未声明当前启用状态）';
+  return value ? '启用中，会注入' : '已停用，不注入';
+}
+
+/**
+ * sol @ ccd01dabf (P2-C): lossless. The previous renderer dropped every
+ * object/array value, so HookManifest.inputs / .variables silently vanished
+ * from the approval diff. Structured indentation keeps it readable without
+ * falling back to raw JSON.
+ */
+const AMBIGUOUS_SCALAR = /[\n\r\t#]|:\s|^\s|\s$|^$|^[-?:,[\]{}&*!|>'"%@`]|^(?:true|false|null|~|-?\d+(?:\.\d+)?)$/i;
+
+/**
+ * sol delta @91aa4b428: String() on every scalar let a value containing a
+ * newline or ": " become a new top-level key, and made the string "true"
+ * indistinguishable from the boolean. Ambiguous scalars are JSON-quoted, which
+ * is both reversible and valid YAML double-quoted style.
+ */
+function formatScalar(value: unknown): string {
+  if (typeof value === 'string' && AMBIGUOUS_SCALAR.test(value)) return JSON.stringify(value);
+  return String(value);
+}
+
+function formatStructured(value: unknown, indent = 0): string {
+  const pad = '  '.repeat(indent);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${pad}[]`;
+    return value
+      .map((item) =>
+        item !== null && typeof item === 'object'
+          ? `${pad}-\n${formatStructured(item, indent + 1)}`
+          : `${pad}- ${formatScalar(item)}`,
+      )
+      .join('\n');
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return `${pad}（空）`;
+    return entries
+      .map(([key, item]) =>
+        item !== null && typeof item === 'object'
+          ? `${pad}${key}:\n${formatStructured(item, indent + 1)}`
+          : `${pad}${key}: ${formatScalar(item)}`,
+      )
+      .join('\n');
+  }
+  if (value === null || value === undefined) return `${pad}（未给出）`;
+  return `${pad}${formatScalar(value)}`;
 }
 
 function changeImpactSummary(change: Record<string, unknown>): string | null {
@@ -205,14 +363,8 @@ function changeImpactSummary(change: Record<string, unknown>): string | null {
   return null;
 }
 
-function changeDetailLabel(change: Record<string, unknown>): string {
-  if (change.action === 'add') return '查看新增段内容';
-  if (change.action === 'disable' || change.action === 'enable') return '查看段内容与状态';
-  if (change.action === 'rollback') return '查看版本差异';
-  const contentChanged = stringField(change, 'proposedContent') !== undefined;
-  const conditionChanged = change.proposedCondition !== undefined;
-  if (contentChanged) return '查看段内容';
-  if (conditionChanged) return '查看触发条件';
+/** operator 2026-09-10: every action entry opens the same thing — its diff. */
+function changeDetailLabel(): string {
   return '查看差异';
 }
 
@@ -233,7 +385,7 @@ function formatCondition(value: unknown): string {
   return `条件：${conditionRef}${params}`;
 }
 
-export function fullContentDiff(unitId: string, before: string, after: string): string {
+export function fullContentDiff(path: string, before: string, after: string): string {
   const beforeLines = before ? before.split('\n') : [];
   const afterLines = after ? after.split('\n') : [];
   let commonPrefix = 0;
@@ -265,9 +417,9 @@ export function fullContentDiff(unitId: string, before: string, after: string): 
   const beforeStart = beforeLines.length === 0 ? 0 : 1;
   const afterStart = afterLines.length === 0 ? 0 : 1;
   return [
-    `diff --git a/${unitId}.md b/${unitId}.md`,
-    `--- a/${unitId}.md`,
-    `+++ b/${unitId}.md`,
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
     `@@ -${beforeStart},${beforeLines.length} +${afterStart},${afterLines.length} @@`,
     ...lines,
   ].join('\n');
