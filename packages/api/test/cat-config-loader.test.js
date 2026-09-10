@@ -388,10 +388,17 @@ describe('cat-config-loader', () => {
       assert.throws(() => loadCatConfig(path), /Invalid cat config/);
     });
 
-    it('rejects wrong version', () => {
+    it('rejects incomplete version 2 config', () => {
       const bad = { ...validConfig(), version: 2 };
       const path = writeTempConfig(bad);
       assert.throws(() => loadCatConfig(path), /Invalid cat config/);
+    });
+
+    it('rejects missing and unsupported versions at the discriminator path', () => {
+      const missing = validConfig();
+      delete missing.version;
+      assert.throws(() => loadCatConfig(writeTempConfig(missing)), /version: Invalid input/);
+      assert.throws(() => loadCatConfig(writeTempConfig({ ...validConfig(), version: 3 })), /version: Invalid input/);
     });
 
     it('throws clear error when file not found', () => {
