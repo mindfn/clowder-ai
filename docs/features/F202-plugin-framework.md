@@ -40,7 +40,9 @@ What is still missing is a local plugin framework that lets a plugin declare own
 
 PR #686 is a concrete Phase 1 implementation proposal for that missing layer. It was originally labeled `F197`, but upstream `F197` is already occupied by ACP tool result event surfacing. This feature spec is the upstream anchor for the plugin framework work.
 
-## Terminal User Journey (2026-09-01)
+## User Journey
+
+### Terminal Plugin Manager Journey (2026-09-01)
 
 **Scope unit:** one catalog candidate or one Host-owned installation instance, joined into one Plugin
 Manager row without exposing repository-local, official-package and connector implementation silos.
