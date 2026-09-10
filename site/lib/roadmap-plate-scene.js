@@ -421,7 +421,6 @@
       t0: 0,
       span: 1,
     }));
-    const ANIM_FPS = 7; // frames per second for multi-frame poses
     const CAT_GAP = 132; // cats keep this much room; three of them pacing will otherwise merge
     // A pose is a different drawing. A dissolve makes two halftone silhouettes visible at once,
     // so hand off under a brief weight shift instead: compress, switch at the lowest point, then
@@ -432,6 +431,7 @@
     function pickIdle(from, still = false) {
       const next = new Set(IDLE_NEXT[from] || ['sit']);
       const choices = IDLE.filter((a) => next.has(a.pose) && (!still || !a.pace));
+      if (!choices.length) return IDLE.find((a) => a.pose === 'sit');
       const total = choices.reduce((n, a) => n + a.weight, 0);
       let r = idleRng() * total;
       for (const a of choices) {
@@ -581,14 +581,17 @@
       return { pose: i === 2 ? 'tail-up' : 'sit', dir: inward };
     }
 
-    function catX(p, i) {
+    function catPath(p, i) {
       let k = 0;
       while (k < CAT_PLAN.length - 2 && p > CAT_PLAN[k + 1].p) k += 1;
       const a = CAT_PLAN[k];
       const b = CAT_PLAN[k + 1];
       const t = smooth(Math.max(0, Math.min(1, (p - a.p) / (b.p - a.p))));
-      return P.lerp(a.x[i], b.x[i], t);
+      const x = P.lerp(a.x[i], b.x[i], t);
+      return { x, travelled: Math.abs(x - a.x[i]) };
     }
+
+    const catX = (p, i) => catPath(p, i).x;
 
     function compose(p, annotate, live) {
       const cam = camera(p);
@@ -645,30 +648,35 @@
         let pose;
         let dir;
         let x;
+        let travelled;
         if (idling) {
           const st = idleStep(i, live.time);
           const k = smooth(Math.max(0, Math.min(1, (live.time - st.t0) / st.span)));
           x = P.lerp(st.from, st.to, k);
+          travelled = Math.abs(x - st.from);
           pose = st.to !== st.from && k < 1 ? 'walk' : st.pose;
           dir = st.to !== st.from && k < 1 ? (st.to > st.from ? 1 : -1) : x < CX ? 1 : -1;
         } else {
           ({ pose, dir } = catPose(p, i));
-          x = catX(p, i);
+          ({ x, travelled } = catPath(p, i));
         }
-        for (const stage of transitionFor(i, { pose, dir, x }, live)) {
+        for (const stage of transitionFor(i, { pose, dir, x, travelled }, live)) {
           const cat = catSprite(i, stage.pose);
           if (!cat) continue;
-          // Multi-frame poses cycle on their own clock; single-frame ones just hold.
+          // A stride is a fraction of the actual sprite width. Tying the legs to distance—not
+          // wall time—keeps a slow cat from skidding and lets a fast one take proportionate steps.
+          const stride = cat.w * 0.55;
+          const gaitPhase = (stage.travelled / stride) * Math.PI * 2;
           const cel =
             live && cat.frames.length > 1
-              ? cat.frames[Math.floor(live.time * ANIM_FPS + i) % cat.frames.length]
+              ? cat.frames[Math.floor((stage.travelled / stride) * cat.frames.length) % cat.frames.length]
               : cat.frames[0];
           // Breathing: a slow rise and fall anchored at the feet, deeper when asleep. Costs no
           // frames and is most of the difference between a placed sprite and a cat.
           const rest = stage.pose === 'sleep' || stage.pose === 'curl' || stage.pose === 'loaf';
           const breath = live ? Math.sin(live.time * (rest ? 1.1 : 1.9) + i * 2.1) * (rest ? 0.016 : 0.008) : 0;
-          // Walking has real leg frames; its step rhythm keeps those frames from sliding.
-          const bob = live && stage.pose === 'walk' ? Math.abs(Math.sin(live.time * 4.4 + i * 1.7)) * -1.6 : 0;
+          // Walking has real leg frames; the body and tail follow the same distance-driven gait.
+          const bob = live && stage.pose === 'walk' ? Math.abs(Math.sin(gaitPhase)) * -1.6 : 0;
           const motion = live
             ? motionFor(stage.pose, live.time, i, stage.started)
             : motionFor(stage.pose, 0, i, stage.started);
@@ -686,8 +694,7 @@
           if (cel.tail && live) {
             // A tail is never still: a small swing about its root, faster when the cat is walking.
             const swing =
-              Math.sin(live.time * (stage.pose === 'walk' ? 4.4 : 1.6) + i * 1.7) *
-              (stage.pose === 'walk' ? 0.09 : 0.05);
+              stage.pose === 'walk' ? Math.sin(gaitPhase) * 0.09 : Math.sin(live.time * 1.6 + i * 1.7) * 0.05;
             view.save();
             view.translate(cel.tail.x, cel.tail.y);
             view.rotate(swing);

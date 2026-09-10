@@ -339,4 +339,25 @@ describe('plate study opens straight off disk', () => {
     assert.match(scene, /\(live\.time - st\.t0\) \/ st\.span/, 'a paced walk must use its complete action span');
     assert.doesNotMatch(scene, /st\.span \* 0\.7/, 'a paced walk must not arrive early then walk in place');
   });
+
+  it('drives every walk cue from distance rather than the wall clock', () => {
+    const scene = read('lib/roadmap-plate-scene.js');
+    assert.match(scene, /const stride = cat\.w \* 0\.55/, 'walk needs a stride measured from its body');
+    assert.match(
+      scene,
+      /Math\.floor\(\(stage\.travelled \/ stride\) \* cat\.frames\.length\)/,
+      'leg frame needs travelled distance',
+    );
+    assert.match(
+      scene,
+      /const gaitPhase = \(stage\.travelled \/ stride\) \* Math\.PI \* 2/,
+      'bob and tail need the same gait phase',
+    );
+    assert.doesNotMatch(scene, /Math\.floor\(live\.time \* ANIM_FPS \+ i\)/, 'walk frames must not be clock-driven');
+    assert.match(
+      scene,
+      /if \(!choices\.length\) return IDLE\.find\(\(a\) => a\.pose === 'sit'\)/,
+      'future action maps need a safe idle fallback',
+    );
+  });
 });
