@@ -37,7 +37,7 @@ export function F257GovernanceChanges({ changes }: { changes: Array<Record<strin
                     className="rounded px-1 font-medium text-cafe-accent underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent"
                     data-testid="f257-governance-open-diff"
                   >
-                    {changeDetailLabel(change)}
+                    {changeDetailLabel()}
                   </button>
                 </div>
               </div>
@@ -109,14 +109,12 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4 sm:p-6">
-          <div className="grid grid-cols-2 gap-3 text-xs font-semibold text-cafe-secondary">
-            <span data-testid="f257-governance-before-heading">应用前</span>
-            <span data-testid="f257-governance-after-heading">应用后</span>
-          </div>
+        <div className="min-h-[60dvh] flex-1 space-y-4 overflow-auto p-4 sm:p-6">
           {comparisons.map((comparison) => (
             <section key={comparison.id} className="space-y-2">
-              <h3 className="text-sm font-semibold text-cafe">{comparison.label}</h3>
+              <h3 data-testid="f257-governance-comparison-label" className="text-sm font-semibold text-cafe">
+                {comparison.label}
+              </h3>
               <DiffViewer
                 diff={fullContentDiff(
                   `${String(change.unitId ?? 'unit')}.${comparison.id}`,
@@ -124,6 +122,8 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
                   comparison.after,
                 )}
                 initialMode="split"
+                wrapLines
+                splitHeaders={{ before: '应用前', after: '应用后' }}
               />
             </section>
           ))}
@@ -137,7 +137,7 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
   );
 }
 
-function comparisonBlocks(change: Record<string, unknown>): Array<{
+export function comparisonBlocks(change: Record<string, unknown>): Array<{
   id: string;
   label: string;
   before: string;
@@ -148,21 +148,26 @@ function comparisonBlocks(change: Record<string, unknown>): Array<{
   const blocks: Array<{ id: string; label: string; before: string; after: string }> = [];
 
   if (action === 'add') {
+    // operator 2026-09-10: an add produces several artifacts; show each one,
+    // not a single prose sentence.
     blocks.push({ id: 'content', label: '段内容', before: '', after: stringField(change, 'content') ?? '' });
-  } else if (action === 'disable') {
+    blocks.push({ id: 'manifest', label: '注入清单', before: '', after: formatManifest(asRecord(change.manifest)) });
     blocks.push({
-      id: 'content',
-      label: '段内容与启用状态',
-      before: `当前启用并注入\n\n${beforeContent}`,
-      after: '此段将不再注入',
+      id: 'objectives',
+      label: 'Objective 绑定',
+      before: '',
+      after: formatObjectives(asRecords(change.objectives)),
     });
-  } else if (action === 'enable') {
+  } else if (action === 'disable' || action === 'enable') {
+    // The body is NOT removed by enable/disable — only injection changes.
+    // Diffing state and body together used to paint the whole segment red.
     blocks.push({
-      id: 'content',
-      label: '段内容与启用状态',
-      before: `当前停用，不注入\n\n${beforeContent}`,
-      after: `恢复启用并注入\n\n${beforeContent}`,
+      id: 'state',
+      label: '启用状态',
+      before: action === 'disable' ? '启用中，会注入' : '已停用，不注入',
+      after: action === 'disable' ? '停用后不再注入' : '启用后恢复注入',
     });
+    blocks.push({ id: 'content', label: '段内容', before: beforeContent, after: beforeContent });
   } else {
     const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
     if (afterContent !== undefined) {
@@ -185,6 +190,26 @@ function comparisonBlocks(change: Record<string, unknown>): Array<{
   return blocks;
 }
 
+const MANIFEST_LABELS: Record<string, string> = {
+  stage: '注入阶段',
+  order: '注入顺序',
+  sourceType: '来源类型',
+  safetyTier: '安全层级',
+  condition: '触发条件',
+};
+
+function formatManifest(manifest: Record<string, unknown>): string {
+  const rows = Object.entries(manifest)
+    .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
+    .map(([key, value]) => `${MANIFEST_LABELS[key] ?? key}：${String(value)}`);
+  return rows.length > 0 ? rows.join('\n') : '（提案未给出注入清单）';
+}
+
+function formatObjectives(objectives: Array<Record<string, unknown>>): string {
+  const rows = objectives.map((objective) => `Objective：${String(objective.objectiveId ?? '未知')}`);
+  return rows.length > 0 ? rows.join('\n') : '（提案未绑定 Objective）';
+}
+
 function changeImpactSummary(change: Record<string, unknown>): string | null {
   if (change.action === 'add') {
     const manifest = asRecord(change.manifest);
@@ -205,14 +230,8 @@ function changeImpactSummary(change: Record<string, unknown>): string | null {
   return null;
 }
 
-function changeDetailLabel(change: Record<string, unknown>): string {
-  if (change.action === 'add') return '查看新增段内容';
-  if (change.action === 'disable' || change.action === 'enable') return '查看段内容与状态';
-  if (change.action === 'rollback') return '查看版本差异';
-  const contentChanged = stringField(change, 'proposedContent') !== undefined;
-  const conditionChanged = change.proposedCondition !== undefined;
-  if (contentChanged) return '查看段内容';
-  if (conditionChanged) return '查看触发条件';
+/** operator 2026-09-10: every action entry opens the same thing — its diff. */
+function changeDetailLabel(): string {
   return '查看差异';
 }
 

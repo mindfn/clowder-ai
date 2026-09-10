@@ -3,7 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { anchoredApprovalNavigation } from '@/test-support/approval-navigation';
-import { fullContentDiff } from '../F257GovernanceChanges';
+import { comparisonBlocks, fullContentDiff } from '../F257GovernanceChanges';
 import { GenericApprovalRecommendation } from '../GenericApprovalRecommendation';
 import { HarnessGovernanceDecisionActions } from '../HarnessGovernanceDecisionActions';
 import { parseUnifiedDiff } from '../workspace/DiffViewer';
@@ -135,7 +135,7 @@ describe('F257 governance card', () => {
     expect(text).toContain('提案轮次：2');
 
     const diffButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
-    expect(diffButton?.textContent).toContain('查看段内容');
+    expect(diffButton?.textContent).toContain('查看差异');
     expect(text).not.toContain('查看左右差异');
     expect(text).not.toContain('修改段内容');
     expect(container.querySelector('[data-testid="f257-governance-change"]')?.className).not.toContain('sm:flex-row');
@@ -264,8 +264,11 @@ describe('F257 governance card', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]')?.click(),
     );
     const dialog = document.body.querySelector('[data-testid="f257-governance-diff-dialog"]');
+    // operator 2026-09-10: disabling stops injection; it does not delete the body,
+    // so the body must appear unchanged on both sides rather than struck through.
     expect(dialog?.textContent).toContain('current hook content');
-    expect(dialog?.textContent).toContain('此段将不再注入');
+    expect(dialog?.textContent).toContain('停用后不再注入');
+    expect(dialog?.textContent).toContain('启用中，会注入');
   });
 
   it('offers approve/skip/reject and keeps reject disabled until a reason exists', async () => {
@@ -293,5 +296,65 @@ describe('F257 governance card', () => {
     expect(reject?.disabled).toBe(false);
     await act(async () => reject?.click());
     expect(decide).toHaveBeenCalledWith('reject', '评估漏掉了关键反例');
+  });
+
+  async function openDiffDialog(changes: Array<Record<string, unknown>>) {
+    const item = { ...ITEM, detail: { ...ITEM.detail, changes } } as ApprovalHubItem;
+    await act(async () => {
+      root.render(
+        <GenericApprovalRecommendation
+          item={item}
+          f193TargetThreadId=""
+          sourceThreadTitle="Harness Objective"
+          targetThreadTitle={null}
+          resolveCatName={(catId) => catId}
+        />,
+      );
+    });
+    const openButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
+    await act(async () => openButton?.click());
+    return document.body.querySelector('[data-testid="f257-governance-diff-dialog"]');
+  }
+
+  const ADD_CHANGE = {
+    unitId: 'D22',
+    action: 'add',
+    reason: '补入终止门',
+    content: '新段正文',
+    manifest: { stage: 'per-turn', order: 2200 },
+    objectives: [{ objectiveId: 'tool-access' }],
+  };
+
+  it('calls every action entry a diff entry regardless of action kind', async () => {
+    await openDiffDialog([ADD_CHANGE]);
+    const openButton = container.querySelector<HTMLButtonElement>('[data-testid="f257-governance-open-diff"]');
+    expect(openButton?.textContent).toContain('查看差异');
+    expect(openButton?.textContent).not.toContain('查看新增段内容');
+  });
+
+  it('gives an add action one comparison block per produced artifact', () => {
+    expect(comparisonBlocks(ADD_CHANGE).map((block) => block.label)).toEqual(['段内容', '注入清单', 'Objective 绑定']);
+  });
+
+  it('does not present a disable action as deleting the segment body', () => {
+    const blocks = comparisonBlocks({ unitId: 'L4', action: 'disable', beforeContent: '保留的正文' });
+    expect(blocks.map((block) => block.label)).toEqual(['启用状态', '段内容']);
+    const body = blocks.find((block) => block.id === 'content');
+    expect(body?.before).toBe('保留的正文');
+    expect(body?.after).toBe('保留的正文');
+  });
+
+  it('puts the before/after headings inside the split diff instead of a detached row', async () => {
+    const dialog = await openDiffDialog([ADD_CHANGE]);
+    expect(dialog?.querySelector('[data-testid="f257-governance-before-heading"]')).toBeNull();
+    expect(dialog?.querySelector('[data-testid="diff-split-header-before"]')?.textContent).toContain('应用前');
+    expect(dialog?.querySelector('[data-testid="diff-split-header-after"]')?.textContent).toContain('应用后');
+  });
+
+  it('wraps long diff lines instead of forcing horizontal scrolling', async () => {
+    const dialog = await openDiffDialog([ADD_CHANGE]);
+    const cell = dialog?.querySelector('[data-diff-line]');
+    expect(cell?.className).toContain('whitespace-pre-wrap');
+    expect(cell?.className).not.toContain('overflow-x-auto');
   });
 });
