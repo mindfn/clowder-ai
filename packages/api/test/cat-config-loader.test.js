@@ -119,6 +119,34 @@ describe('cat-config-loader', () => {
       assert.throws(() => loadCatConfig(writeTempConfig(config)), /Invalid cat config/);
     });
 
+    it('identifies the invalid carrier path in a version 2 startup config', () => {
+      const config = validConfig();
+      config.version = 2;
+      config.roster = {
+        opus: {
+          family: 'ragdoll',
+          roles: ['assistant'],
+          lead: true,
+          available: true,
+          evaluation: 'test member',
+        },
+      };
+      config.reviewPolicy = {
+        requireDifferentFamily: true,
+        preferActiveInThread: true,
+        preferLead: true,
+        excludeUnavailable: true,
+      };
+      config.breeds[0].variants[0].clientId = 'opencode';
+      config.breeds[0].variants[0].defaultModel = 'anthropic/claude-test';
+      config.breeds[0].variants[0].carrier = 'server';
+
+      assert.throws(
+        () => loadCatConfig(writeTempConfig(config)),
+        /breeds\.0\.variants\.0\.carrier: .*received 'server'/,
+      );
+    });
+
     it('loads resolved project config when no explicit file path is provided', () => {
       const projectDir = mkdtempSync(join(tmpdir(), 'cat-default-project-'));
       const templatePath = join(projectDir, 'cat-template.json');

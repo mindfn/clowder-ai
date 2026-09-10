@@ -305,8 +305,10 @@ const catCafeConfigSchemaV2 = z
     return rest;
   });
 
-/** Union of all versions — loader handles migration */
-const catCafeConfigSchema = z.union([catCafeConfigSchemaV1, catCafeConfigSchemaV2]);
+/** Parse the discriminator before the full config so branch-specific errors retain their exact paths. */
+const catCafeConfigVersionSchema = z.object({
+  version: z.union([z.literal(1), z.literal(2)]),
+});
 
 /** clowder-ai#340: Read cat-template.json directly — cat-config.json is no longer a runtime source. */
 function readTemplate(templatePath: string): string {
@@ -533,7 +535,14 @@ function mergeTemplateWithCatalog(templatePath: string, options: CatCatalogReadO
 
 function parseCatConfig(raw: string): CatCafeConfig {
   const json: unknown = JSON.parse(raw);
-  const result = catCafeConfigSchema.safeParse(json);
+  const versionResult = catCafeConfigVersionSchema.safeParse(json);
+  if (!versionResult.success) {
+    const issues = versionResult.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
+    throw new Error(`Invalid cat config:\n${issues.join('\n')}`);
+  }
+
+  const result =
+    versionResult.data.version === 1 ? catCafeConfigSchemaV1.safeParse(json) : catCafeConfigSchemaV2.safeParse(json);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
     throw new Error(`Invalid cat config:\n${issues.join('\n')}`);
