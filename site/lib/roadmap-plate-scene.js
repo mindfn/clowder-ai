@@ -411,6 +411,7 @@
       t0: 0,
       span: 1,
     }));
+    const ANIM_FPS = 7; // frames per second for multi-frame poses
     const CAT_GAP = 132; // cats keep this much room; three of them pacing will otherwise merge
 
     function pickIdle() {
@@ -577,6 +578,11 @@
         }
         const cat = catSprite(i, pose);
         if (!cat) return;
+        // Multi-frame poses cycle on their own clock; single-frame ones just hold.
+        const cel =
+          live && cat.frames.length > 1
+            ? cat.frames[Math.floor(live.time * ANIM_FPS + i) % cat.frames.length]
+            : cat.frames[0];
         // Breathing: a slow rise and fall anchored at the feet, deeper when asleep. Costs no
         // frames and is most of the difference between a placed sprite and a cat.
         const rest = pose === 'sleep' || pose === 'curl' || pose === 'loaf';
@@ -592,18 +598,18 @@
           view.translate(cat.w, 0);
           view.scale(-1, 1);
         }
-        view.drawImage(cat.canvas, 0, 0, cat.w, cat.h);
-        if (cat.tail && live) {
+        view.drawImage(cel.canvas, 0, 0, cat.w, cat.h);
+        if (cel.tail && live) {
           // A tail is never still: a small swing about its root, faster when the cat is walking.
           const swing = Math.sin(live.time * (pose === 'walk' ? 4.4 : 1.6) + i * 1.7) * (pose === 'walk' ? 0.09 : 0.05);
           view.save();
-          view.translate(cat.tail.x, cat.tail.y);
+          view.translate(cel.tail.x, cel.tail.y);
           view.rotate(swing);
-          view.translate(-cat.tail.x, -cat.tail.y);
-          view.drawImage(cat.tail.canvas, 0, 0, cat.w, cat.h);
+          view.translate(-cel.tail.x, -cel.tail.y);
+          view.drawImage(cel.tail.canvas, 0, 0, cat.w, cat.h);
           view.restore();
-        } else if (cat.tail) {
-          view.drawImage(cat.tail.canvas, 0, 0, cat.w, cat.h);
+        } else if (cel.tail) {
+          view.drawImage(cel.tail.canvas, 0, 0, cat.w, cat.h);
         }
         view.restore();
       });

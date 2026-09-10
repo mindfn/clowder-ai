@@ -31,6 +31,7 @@ const OUT = join(HERE, '../lib/roadmap-plate-cats.js');
 const CELL = 2;
 const TONE_FLOOR = 0.02;
 const TONE_GAMMA = 0.6;
+const ANIM_CELL = 3; // animation frames are screened coarser: motion carries them, not detail
 // One world scale per cat, fixed by its sitting height, so a cat that stands up gets taller
 // instead of every pose being squashed into the same box.
 const CATS = [
@@ -78,21 +79,25 @@ function trim(src, box) {
 }
 
 /** First cell of a row strip, or the whole image for a single sprite. */
-function frameOf(src) {
+function frameOf(src, index) {
   const isRow = src.height === CELL_H && src.width % CELL_W === 0;
-  return trim(src, isRow ? [0, 0, CELL_W, CELL_H] : [0, 0, src.width, src.height]);
+  if (!isRow) return index ? null : trim(src, [0, 0, src.width, src.height]);
+  return trim(src, [CELL_W * index, 0, CELL_W, CELL_H]);
 }
 
+const frameCount = (src) => (src.height === CELL_H && src.width % CELL_W === 0 ? src.width / CELL_W : 1);
+
 /** Box-sample the sprite at the dot pitch; darker and more opaque means a fatter dot. */
-function screen(src, box, h) {
+function screen(src, box, h, pitch) {
+  const CELL_PITCH = pitch || CELL;
   const w = Math.round((box.w / box.h) * h);
   const dots = [];
-  for (let cy = 0; cy < h; cy += CELL) {
-    for (let cx = 0; cx < w; cx += CELL) {
+  for (let cy = 0; cy < h; cy += CELL_PITCH) {
+    for (let cx = 0; cx < w; cx += CELL_PITCH) {
       let ink = 0;
       let hits = 0;
-      for (let j = 0; j < CELL; j += 1) {
-        for (let i = 0; i < CELL; i += 1) {
+      for (let j = 0; j < CELL_PITCH; j += 1) {
+        for (let i = 0; i < CELL_PITCH; i += 1) {
           const sx = box.x + Math.floor(((cx + i) / w) * box.w);
           const sy = box.y + Math.floor(((cy + j) / h) * box.h);
           if (sx >= src.width || sy >= src.height) continue;
@@ -103,10 +108,10 @@ function screen(src, box, h) {
         }
       }
       if (!hits) continue;
-      const cover = (hits / (CELL * CELL)) * (TONE_FLOOR + (ink / hits) * (1 - TONE_FLOOR));
-      const r = Math.min(CELL * 0.62, CELL * 0.62 * cover ** TONE_GAMMA);
+      const cover = (hits / (CELL_PITCH * CELL_PITCH)) * (TONE_FLOOR + (ink / hits) * (1 - TONE_FLOOR));
+      const r = Math.min(CELL_PITCH * 0.62, CELL_PITCH * 0.62 * cover ** TONE_GAMMA);
       if (r < 0.18) continue;
-      dots.push(cx / CELL, cy / CELL, Math.round(r * 10) / 10);
+      dots.push(cx / CELL_PITCH, cy / CELL_PITCH, Math.round(r * 10) / 10);
     }
   }
   return { w, h, dots };
@@ -138,8 +143,8 @@ function source(id, pose) {
     const file = join(SPRITES, name);
     if (!existsSync(file)) continue;
     const src = readPixels(file);
-    const box = frameOf(src);
-    if (box) return { src, box };
+    const box = frameOf(src, 0);
+    if (box) return { src, box, frames: frameCount(src) };
   }
   return null;
 }
@@ -154,10 +159,19 @@ const screened = CATS.map((cat) => {
   for (const pose of POSES) {
     const found = source(cat.id, pose);
     if (!found) continue;
-    poses[pose] = {
-      ...screen(found.src, found.box, Math.round(found.box.h * scale)),
-      contact: contactOf(cat.id, pose, found.box),
-    };
+    // A row wider than one cell is an animation. Later frames are screened against the *first*
+    // frame's box so the cat does not jump between frames when a limb changes its extent, and at
+    // a coarser pitch, because a walk cycle at sixty pixels tall does not need the still's detail.
+    const height = Math.round(found.box.h * scale);
+    const still = screen(found.src, found.box, height);
+    const more = [];
+    for (let f = 1; f < found.frames; f += 1) {
+      const box = frameOf(found.src, f);
+      if (!box) continue;
+      const shifted = { x: CELL_W * f, y: found.box.y, w: found.box.w, h: found.box.h };
+      more.push(screen(found.src, shifted, height, ANIM_CELL).dots);
+    }
+    poses[pose] = { ...still, contact: contactOf(cat.id, pose, found.box), more };
   }
   return { id: cat.id, poses };
 });
@@ -167,7 +181,9 @@ const body = screened
       `  ${c.id}: {\n${Object.entries(c.poses)
         .map(
           ([pose, s]) =>
-            `    '${pose}': { w: ${s.w}, h: ${s.h}, contact: ${JSON.stringify(s.contact)}, dots: [${s.dots.join(',')}] },`,
+            `    '${pose}': { w: ${s.w}, h: ${s.h}, contact: ${JSON.stringify(s.contact)}, dots: [${s.dots.join(',')}]${
+              s.more.length ? `, cell2: ${ANIM_CELL}, more: [${s.more.map((f) => `[${f.join(',')}]`).join(',')}]` : ''
+            } },`,
         )
         .join('\n')}\n  },`,
   )

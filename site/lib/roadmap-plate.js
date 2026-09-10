@@ -213,31 +213,39 @@
    * couple of thousand dots. `split` is the fraction of the width that counts as rear; poses
    * where the tail is wrapped around the body pass 0 and stay whole.
    */
-  function screened(cat, dpr, split) {
-    const cell = global.ClowderPlateCatCell || 2;
-    const cut = split ? cat.w * (1 - split) : Infinity;
-    const body = surface(cat.w, cat.h, dpr);
-    const tail = split ? surface(cat.w, cat.h, dpr) : null;
+  function rasterise(dots, cell, w, h, dpr, cut) {
+    const body = surface(w, h, dpr);
+    const tail = Number.isFinite(cut) ? surface(w, h, dpr) : null;
     let pivotY = 0;
     let tailDots = 0;
-    for (let i = 0; i < cat.dots.length; i += 3) {
-      const x = cat.dots[i] * cell + cell / 2;
-      const y = cat.dots[i + 1] * cell + cell / 2;
+    for (let i = 0; i < dots.length; i += 3) {
+      const x = dots[i] * cell + cell / 2;
+      const y = dots[i + 1] * cell + cell / 2;
       const ctx = tail && x >= cut ? tail.ctx : body.ctx;
       if (ctx !== body.ctx) {
         pivotY += y;
         tailDots += 1;
       }
       ctx.beginPath();
-      ctx.arc(x, y, cat.dots[i + 2], 0, Math.PI * 2);
+      ctx.arc(x, y, dots[i + 2], 0, Math.PI * 2);
       ctx.fill();
     }
     return {
       canvas: body.canvas,
-      w: cat.w,
-      h: cat.h,
       tail: tailDots > 40 ? { canvas: tail.canvas, x: cut, y: pivotY / tailDots } : null,
     };
+  }
+
+  function screened(cat, dpr, split) {
+    const cell = global.ClowderPlateCatCell || 2;
+    const cut = split ? cat.w * (1 - split) : Number.POSITIVE_INFINITY;
+    // A row wider than one cell arrives as extra frames; they are screened coarser, so they
+    // carry their own pitch.
+    const frames = [rasterise(cat.dots, cell, cat.w, cat.h, dpr, cut)];
+    for (const dots of cat.more || []) {
+      frames.push(rasterise(dots, cat.cell2 || cell, cat.w, cat.h, dpr, cut));
+    }
+    return { ...frames[0], w: cat.w, h: cat.h, frames };
   }
 
   global.ClowderRoadmapPlate = {
