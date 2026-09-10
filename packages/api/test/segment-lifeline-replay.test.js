@@ -897,6 +897,100 @@ describe('segment-lifeline-replay route', () => {
     assert.equal(redis.hashes.has('replay-snapshot:t:1'), false);
   });
 
+  test('reports a Redis failure as unavailable provenance instead of a genuine empty result', async () => {
+    // `queryWindow` is fail-open: it catches Redis errors and returns [], so a
+    // route that used it would publish an outage as gap:null — an absence the
+    // operator cannot distinguish from "no guard fired". The failure has to
+    // reach the route, which means the strict read.
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { GuardRejectionEventLog } = await import('../dist/infrastructure/harness-eval/GuardRejectionEventLog.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+    const timestamp = 5000;
+    const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test', catId: 'opus', timestamp });
+    await seedTurn(traceStore, { threadId: 't', turnId: '1', catId: 'opus', timestamp });
+    await traceStore.persistReplaySnapshots('t', '1', [snapshot]);
+
+    // Fail the store the way Redis actually fails, so the fail-open/strict
+    // choice is what the test pins — not a stub that throws on its own.
+    const failingRedis = new FakeRedis();
+    failingRedis.zrangebyscore = async () => {
+      throw new Error('redis-down');
+    };
+    const guardLog = new GuardRejectionEventLog(failingRedis);
+
+    const app = await buildReplayApp({ traceStore, guardRejectionLog: guardLog, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    const body = JSON.parse(res.body);
+    assert.deepEqual(body.guardEvents, [], 'no events survive the outage');
+    assert.equal(body.guardEventsGap, 'unavailable', 'the outage is stated, not rendered as absence');
+
+    await app.close();
+  });
+
+  test('fences guard events by owner when two owners collide on one thread/cat/time coordinate', async () => {
+    // thread + cat + ±window is a correlation heuristic, not an authorization
+    // boundary. The snapshot ownership check upstream fences the snapshot, not
+    // this read, so a colliding coordinate would project another owner's guard
+    // kind/id/time into this response.
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { GuardRejectionEventLog } = await import('../dist/infrastructure/harness-eval/GuardRejectionEventLog.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+    const guardLog = new GuardRejectionEventLog(redis);
+    const timestamp = 5000;
+
+    const guardEvent = (eventId, ownerUserId) => ({
+      eventId,
+      ledgerId: `layer/${eventId}`,
+      kind: 'http_rate_limit',
+      threadId: 't',
+      catId: 'opus',
+      guardId: 'hold_ball_rate_limit',
+      invocationId: `inv-${eventId}`,
+      sourceTool: 'hold_ball',
+      normalizedReason: 'rate_limited',
+      layer: 'api-route',
+      ownerUserId,
+      correlationConfidence: 'window',
+      timestamp: timestamp + 1000,
+    });
+    // Identical coordinate, different owners.
+    await guardLog.append(guardEvent('mine', 'test-user'));
+    await guardLog.append(guardEvent('theirs', 'other-user'));
+
+    const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test', catId: 'opus', timestamp });
+    await seedTurn(traceStore, { threadId: 't', turnId: '1', catId: 'opus', timestamp });
+    await traceStore.persistReplaySnapshots('t', '1', [snapshot]);
+
+    const app = await buildReplayApp({
+      traceStore,
+      guardRejectionLog: guardLog,
+      threadStore: makeThreadStore(),
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    const body = JSON.parse(res.body);
+    assert.deepEqual(
+      body.guardEvents.map((event) => event.eventId),
+      ['mine'],
+      "the other owner's event never crosses into this response",
+    );
+
+    await app.close();
+  });
+
   test('deleteTurn removes all durable replay snapshots atomically', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();

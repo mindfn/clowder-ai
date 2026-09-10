@@ -397,61 +397,9 @@ describe('segment-lifeline windowMs validation', () => {
 
 // ── P2-2: guard event three-key filtering (threadId + catId + ±120s) ──
 
-describe('segment-lifeline guard event filtering', () => {
-  const PROXIMITY_MS = 120_000;
-
-  // Helper: match logic mirrors collectGuardEvents in segment-lifeline.ts
-  function filterGuardEvents(events, observations) {
-    return events.filter((e) =>
-      observations.some(
-        (obs) =>
-          obs.threadId === e.threadId && obs.catId === e.catId && Math.abs(obs.timestamp - e.timestamp) <= PROXIMITY_MS,
-      ),
-    );
-  }
-
-  test('same thread+cat within ±120s passes', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5100 }];
-    assert.equal(filterGuardEvents(events, obs).length, 1);
-  });
-
-  test('same thread, different cat excluded', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'codex', timestamp: 5000 }];
-    assert.equal(filterGuardEvents(events, obs).length, 0, 'different catId');
-  });
-
-  test('same thread+cat but outside ±120s excluded', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 + PROXIMITY_MS + 1 }];
-    assert.equal(filterGuardEvents(events, obs).length, 0, 'outside window');
-  });
-
-  test('different thread excluded even if cat+time match', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-B', catId: 'opus', timestamp: 5000 }];
-    assert.equal(filterGuardEvents(events, obs).length, 0, 'different thread');
-  });
-
-  test('no guard events when segment has no observations', () => {
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    assert.equal(filterGuardEvents(events, []).length, 0);
-  });
-
-  test('boundary: exactly ±120s passes', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [
-      { eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 + PROXIMITY_MS },
-      { eventId: 'g2', threadId: 'thread-A', catId: 'opus', timestamp: 5000 - PROXIMITY_MS },
-    ];
-    assert.equal(filterGuardEvents(events, obs).length, 2, 'boundary inclusive');
-  });
-});
-
 // ── R16 route-level regression: epochGuardMetrics in JSON response ──
 
-describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () => {
+describe('segment-lifeline route: response contract', () => {
   const SESSION_HEADERS = { 'x-test-session-user': 'test-user' };
 
   async function buildLifelineApp(traceStore, opts = {}) {
@@ -468,7 +416,7 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     return app;
   }
 
-  test('response JSON contains epochGuardMetrics keyed by version', async () => {
+  test('summary response carries no guard projection, so nothing derives evidence nobody reads', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
     const store = new InjectionTraceStore(redis);
@@ -488,13 +436,13 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
     const body = JSON.parse(res.body);
 
-    // Core contract: epochGuardMetrics must be present and keyed by version number
-    assert.ok('epochGuardMetrics' in body, 'response must include epochGuardMetrics');
-    assert.equal(typeof body.epochGuardMetrics, 'object', 'epochGuardMetrics is an object');
-
-    // v1 (manifest baseline) must have an entry (empty array since no guard events)
-    assert.ok('1' in body.epochGuardMetrics, 'epochGuardMetrics has v1 key');
-    assert.ok(Array.isArray(body.epochGuardMetrics['1']), 'v1 value is an array');
+    // The summary route used to correlate guard events across the whole window
+    // and attribute them per epoch. No console surface ever read either field:
+    // the live modal renders governance through ObjectiveGovernancePanel, and
+    // guard evidence is shown per event by the replay route. Publishing them
+    // cost an unfenced cross-owner scan per request for nobody.
+    assert.ok(!('guardEvents' in body), 'no guard projection in the summary contract');
+    assert.ok(!('epochGuardMetrics' in body), 'no per-epoch guard attribution in the summary contract');
 
     // Verify other shared-contract fields are present
     assert.equal(body.segmentId, 'S-test');

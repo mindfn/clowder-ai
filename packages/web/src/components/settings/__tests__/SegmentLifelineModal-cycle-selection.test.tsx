@@ -55,9 +55,7 @@ const lifeline: SegmentLifecycleResponse = {
   window: { startMs: 0, endMs: 400 },
   observations: [],
   observationsCapped: false,
-  guardEvents: [],
   overrideState: null,
-  epochGuardMetrics: {},
   enablementMatrix: {
     segmentId: 'D1',
     safetyTier: 'readonly',

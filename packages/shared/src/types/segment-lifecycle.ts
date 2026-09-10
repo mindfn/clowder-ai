@@ -306,12 +306,8 @@ export interface SegmentLifecycleResponse {
   observations: SegmentObservation[];
   /** True when the detail list was truncated; aggregate counts remain exact. */
   observationsCapped?: boolean;
-  /** Guard events in the query window. */
-  guardEvents: SegmentGuardEvent[];
   /** Current runtime override state (null = manifest baseline). */
   overrideState: { hookId: string; enabled: boolean; contentVersion: number | null } | null;
-  /** Guard events attributed to each epoch via activation timeline (R16). */
-  epochGuardMetrics: Record<number, GuardMetric[]>;
   /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
   enablementMatrix: SegmentEnablementMatrix;
 }

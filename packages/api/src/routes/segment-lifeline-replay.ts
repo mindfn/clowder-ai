@@ -196,14 +196,24 @@ async function fetchGuardEvents(
   threadId: string,
   catId: string,
   timestamp: number,
+  ownerUserId: string,
 ): Promise<{ events: SegmentReplayResponse['guardEvents']; gap: ReplayProvenanceGap | null }> {
   if (!log) return { events: [], gap: 'unavailable' };
   try {
-    const events = await log.queryWindow({
+    // Strict, not fail-open: `queryWindow` swallows Redis errors and returns
+    // [], so the catch below would never fire and an outage would be published
+    // as a genuine empty result with gap:null. The strict read propagates, and
+    // the catch turns it into honest `unavailable` provenance.
+    const events = await log.queryWindowStrict({
       since: timestamp - REPLAY_GUARD_WINDOW_MS,
       until: timestamp + REPLAY_GUARD_WINDOW_MS,
       threadId,
       catId,
+      // thread/cat/±window is a correlation heuristic, never an authorization
+      // boundary: two owners colliding on one coordinate would project the
+      // other owner's guard kind/id/time into this response. The snapshot
+      // ownership check upstream fences the snapshot, not this read.
+      ownerUserId,
       limit: 50,
     });
     return { events: events.map(mapGuardEvent), gap: null };
@@ -285,7 +295,13 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     const versionValidation = validateVersion(snapshot.version);
     const anchorValidation = validateMessageAnchorId(snapshot.messageAnchorId);
 
-    const guardResult = await fetchGuardEvents(opts.guardRejectionLog, threadId, snapshot.catId, snapshot.timestamp);
+    const guardResult = await fetchGuardEvents(
+      opts.guardRejectionLog,
+      threadId,
+      snapshot.catId,
+      snapshot.timestamp,
+      userId,
+    );
     const messagesResult = await resolveSurroundingMessages(snapshot, opts.messageStore, threadId, userId);
 
     const response: SegmentReplayResponse = {

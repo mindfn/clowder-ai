@@ -1,7 +1,7 @@
 /**
  * F257 Phase D — Segment lifeline endpoint.
  *
- * Read-model join: InjectionTraceStore + GuardRejectionEventLog + HookOverrideStore
+ * Read-model join: InjectionTraceStore + HookOverrideStore
  * → version lifecycle chain response. CycleRecord truth is exposed by
  * segment-evaluation; legacy ObjectiveJudgment/MetricResult data is deliberately ignored.
  *
@@ -14,17 +14,10 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import { isFiredTraceSegment } from '../domains/prompt-hooks/injection-trace-semantics.js';
-import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
-import {
-  attributeGuardEventsToEpochs,
-  buildVersionChain,
-  deriveCurrentStatus,
-  type SegmentObservationInput,
-} from './segment-lifeline-chain.js';
+import { buildVersionChain, deriveCurrentStatus, type SegmentObservationInput } from './segment-lifeline-chain.js';
 
 export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
-  guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
@@ -101,11 +94,9 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       // when more matching rows existed than MAX_OBSERVATIONS. Aggregate
       // counts are exact regardless (full-window scan).
       observationsCapped: data.observationsCapped,
-      guardEvents: data.guardEvents,
       overrideState: data.overrideState
         ? { hookId: segmentId, enabled: data.overrideState.enabled, contentVersion: data.overrideState.contentVersion }
         : null,
-      epochGuardMetrics: data.epochGuardMetrics,
       enablementMatrix: data.enablementMatrix,
     } satisfies SegmentLifecycleResponse;
 
@@ -124,17 +115,7 @@ interface LifelineData {
   observations: SegmentObservation[];
   /** True when detail rows were dropped by MAX_OBSERVATIONS (counts stay exact). */
   observationsCapped: boolean;
-  guardEvents: Array<{
-    eventId: string;
-    kind: string;
-    threadId: string;
-    catId: string;
-    timestamp: number;
-    guardId: string;
-    attribution: 'window-correlated';
-  }>;
   overrideState: { enabled: boolean; contentVersion: number | null } | null;
-  epochGuardMetrics: Record<number, import('@cat-cafe/shared').GuardMetric[]>;
   enablementMatrix: SegmentEnablementMatrix;
 }
 
@@ -177,14 +158,6 @@ async function assembleLifelineData(
     return epoch ? [{ timestamp: point.timestamp, version: epoch.version }] : [];
   });
 
-  // 6. Guard events — still collected for detail view
-  const guardEvents = opts.guardRejectionLog
-    ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
-    : [];
-
-  // 7. Attribute guard events to epochs using activation timeline (R15 P1)
-  const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
-
   const enablementMatrix = await buildLifelineEnablementMatrix(segmentId, opts, overrideState);
 
   return {
@@ -195,9 +168,7 @@ async function assembleLifelineData(
     activeEpoch: chain.find((e) => e.isActive) ?? chain[chain.length - 1],
     observations,
     observationsCapped: detailCapped,
-    guardEvents,
     overrideState,
-    epochGuardMetrics,
     enablementMatrix,
   };
 }
@@ -303,47 +274,6 @@ async function collectObservations(
     observationInputs,
     detailCapped: allRows.length > MAX_OBSERVATIONS,
   };
-}
-
-/** ±120s proximity window for guard event attribution. */
-const GUARD_PROXIMITY_MS = 120_000;
-
-async function collectGuardEvents(
-  log: GuardRejectionEventLog,
-  startMs: number,
-  endMs: number,
-  observations: SegmentObservation[],
-): Promise<
-  Array<{
-    eventId: string;
-    kind: string;
-    threadId: string;
-    catId: string;
-    timestamp: number;
-    guardId: string;
-    attribution: 'window-correlated';
-  }>
-> {
-  if (observations.length === 0) return [];
-  const events = await log.queryWindow({ since: startMs, until: endMs, limit: 50 });
-  return events
-    .filter((e) =>
-      observations.some(
-        (obs) =>
-          obs.threadId === e.threadId &&
-          obs.catId === e.catId &&
-          Math.abs(obs.timestamp - e.timestamp) <= GUARD_PROXIMITY_MS,
-      ),
-    )
-    .map((e) => ({
-      eventId: e.eventId,
-      kind: e.kind,
-      threadId: e.threadId,
-      catId: e.catId,
-      timestamp: e.timestamp,
-      guardId: e.guardId,
-      attribution: 'window-correlated' as const,
-    }));
 }
 
 async function collectSegmentOverrideEvents(
