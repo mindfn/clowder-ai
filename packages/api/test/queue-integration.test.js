@@ -2,6 +2,7 @@
 
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
+import { resolveManagedCommandWakeEventCarrier } from '../dist/domains/ball-custody/managed-command-wake-lifecycle.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
@@ -409,6 +410,127 @@ describe('Queue Integration (E2E scenarios)', () => {
 
     assert.strictEqual(routerMock.calls.length, 1, 'Should auto-dequeue after completion');
     assert.strictEqual(routerMock.calls[0].message, 'Review email content');
+  });
+
+  it('E2E: a managed-command wake waits behind the active turn and settles from its response terminal', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const messageStore = new MessageStore();
+    const wakeMessage = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: null,
+        from: { kind: 'system', service: 'managed-command-wake' },
+        content: '[定时任务] 持球唤醒（命令完成）：门禁已结束。',
+        mentions: ['opus'],
+        origin: 'connector',
+        timestamp: Date.now(),
+        threadId: 'thread-1',
+        deliveryStatus: 'queued',
+        idempotencyKey: 'hold-ball-completion:hold-ball-e2e',
+        source: {
+          connector: 'hold-ball',
+          label: '持球通知',
+          icon: '🏓',
+          meta: {
+            managedHold: true,
+            phase: 'wake',
+            taskId: 'hold-ball-e2e',
+            threadId: 'thread-1',
+            catId: 'opus',
+            wakeWhen: true,
+          },
+        },
+      }),
+    );
+    const routeCalls = [];
+    let responseMessageId;
+    const lifecycleRouter = {
+      async resolveExplicitTargets(requestedCatIds) {
+        return [...requestedCatIds];
+      },
+      async resolveConversationTargetsAtAdmission(requestedCatIds) {
+        return [...requestedCatIds];
+      },
+      async *routeExecution(userId, message, threadId, _messageId, targetCats, _intent, options) {
+        routeCalls.push({ userId, message, threadId, targetCats });
+        const invocationId = 'managed-wake-invocation';
+        const startedAt = Date.now();
+        const admission = await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId: targetCats[0],
+          invocationId,
+          parentInvocationId: options.parentInvocationId,
+          startedAt,
+        });
+        responseMessageId = admission.responseMessageId;
+        const terminal = await messageStore.commitLifecycleResponseTerminal(responseMessageId, {
+          invocationId,
+          status: 'completed',
+          completedAt: startedAt + 1,
+          content: '门禁失败，已读取结果并完成处置。',
+          mentions: [],
+          origin: 'stream',
+        });
+        assert.equal(terminal.kind, 'applied');
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: startedAt + 1 };
+      },
+      async ackCollectedCursors() {},
+    };
+    const localProcessor = new QueueProcessor({
+      queue,
+      invocationTracker: trackerMock.tracker,
+      invocationRecordStore: recordMock.store,
+      router: lifecycleRouter,
+      socketManager: socketMock.manager,
+      messageStore,
+      log: noopLog(),
+    });
+    const trigger = new ConnectorInvokeTrigger({
+      socketManager: socketMock.manager,
+      invocationQueue: queue,
+      queueProcessor: localProcessor,
+      messageStore,
+      log: noopLog(),
+    });
+
+    trackerMock.setActive('thread-1');
+    assert.equal(
+      await trigger.trigger(
+        'thread-1',
+        /** @type {any} */ ('opus'),
+        'user-1',
+        wakeMessage.content,
+        wakeMessage.id,
+        undefined,
+        { priority: 'urgent', sourceCategory: 'scheduled' },
+      ),
+      'enqueued',
+    );
+
+    assert.equal(routeCalls.length, 0, 'the wake must not join or preempt the active provider turn');
+    assert.equal(queue.findEntryWithMessageId('thread-1', wakeMessage.id)?.status, 'queued');
+    assert.equal((await messageStore.getById(wakeMessage.id)).deliveryStatus, 'queued');
+
+    trackerMock.clearActive('thread-1');
+    await localProcessor.onInvocationComplete('thread-1', 'opus', 'succeeded');
+    await settle(200);
+
+    assert.equal(routeCalls.length, 1, 'the wake must start as the next Queue-owned invocation');
+    assert.equal(queue.findEntryWithMessageId('thread-1', wakeMessage.id), undefined);
+    const settledWake = await messageStore.getById(wakeMessage.id);
+    assert.equal(settledWake.deliveryStatus, 'delivered');
+    assert.equal(settledWake.lifecycle.dispatchRefs.length, 1);
+    const response = await messageStore.getById(responseMessageId);
+    assert.deepEqual(
+      resolveManagedCommandWakeEventCarrier(settledWake, response, false, {
+        threadId: 'thread-1',
+        userId: 'user-1',
+        catId: 'opus',
+      }),
+      { state: 'handled', invocationId: 'managed-wake-invocation' },
+      'the canonical response terminal must retire the hold without a manual disposition tool',
+    );
   });
 
   it('E2E: connector admission honors an active cancel/reset suppression fence', async () => {

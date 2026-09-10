@@ -418,7 +418,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     }
     await app.close();
 
-    assert.ok(managedHold, 'the typed wake remains queryable until invocation-bound disposition');
+    assert.ok(managedHold, 'the typed wake remains queryable until its canonical response terminal');
     assert.equal(managedHold.enabled, true);
     assert.equal(managedHold.params.holdLifecycle.status, 'active');
     assert.equal(managedHold.params.holdLifecycle.managedCommand.state, 'enqueued');
@@ -434,7 +434,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.equal(
       wakeReceipts[0].deliveryStatus,
       'queued',
-      'the wake remains under Queue custody until invocation-bound disposition',
+      'the wake remains under Queue custody until its canonical response terminal',
     );
     assert.equal(wakeReceipts[0].idempotencyKey, `hold-ball-completion:${taskId}`);
     assert.equal(wakeReceipts[0].source?.meta?.taskId, taskId);
