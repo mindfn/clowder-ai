@@ -119,9 +119,12 @@ describe('cat-config-loader', () => {
       assert.throws(() => loadCatConfig(writeTempConfig(config)), /Invalid cat config/);
     });
 
-    it('loads default project config when no path/env provided', () => {
+    it('loads resolved project config when no explicit file path is provided', () => {
+      const projectDir = mkdtempSync(join(tmpdir(), 'cat-default-project-'));
+      const templatePath = join(projectDir, 'cat-template.json');
+      writeFileSync(templatePath, JSON.stringify(validConfig()));
       const saved = process.env.CAT_TEMPLATE_PATH;
-      delete process.env.CAT_TEMPLATE_PATH;
+      process.env.CAT_TEMPLATE_PATH = templatePath;
       try {
         const config = loadCatConfig();
         // F032: version can be 1 or 2 now

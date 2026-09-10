@@ -30,6 +30,7 @@ export type ManagedCommandWakeState =
   | 'consumed';
 
 export type ManagedCommandWakeCarrierTerminalReason = 'withdrawn' | 'canceled' | 'failed' | 'terminal' | 'force_reset';
+export type ManagedCommandWakeLostReason = 'runtime_restart' | 'spawn_failed' | 'runner_failed';
 
 export interface ManagedCommandTerminalResult {
   readonly exitCode: number | null;
@@ -53,7 +54,8 @@ export interface ManagedCommandWakeProjection {
   readonly admissionFactAppended?: boolean;
   readonly conditionMetAt?: number;
   readonly lostAt?: number;
-  readonly lostReason?: 'runtime_restart';
+  readonly lostReason?: ManagedCommandWakeLostReason;
+  readonly lostDetail?: string;
   readonly wakeContent?: string;
   readonly wakeSource?: 'command_completion' | 'fallback_timer';
   readonly result?: ManagedCommandTerminalResult;

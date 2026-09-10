@@ -657,9 +657,12 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       assert.strictEqual(body.wakeWhen.pid, null, 'failed admission must report pid: null');
       assert.equal(getActiveRunnerCount(), 0, 'no active runner residue after pre-admission failure');
 
-      // Durable admission-fact: a "未启动" message must be appended
-      const failMessages = deps._appendedMessages.filter((m) => m.content.includes('未启动'));
-      assert.ok(failMessages.length > 0, 'spawn failure admission fact (未启动) must be durably projected');
+      // Spawn failure owns exactly one truthful terminal fact. The periodic
+      // recovery sweep must not later invent a second "service restart" end.
+      const terminalMessages = deps._appendedMessages.filter((m) => m.source?.meta?.phase === 'status');
+      assert.equal(terminalMessages.length, 1, 'spawn failure must project exactly one terminal status');
+      assert.match(terminalMessages[0].content, /未启动/);
+      assert.doesNotMatch(terminalMessages[0].content, /服务重启/);
 
       // P1-2: DynamicTask lifecycle projection must have pid=null for spawn failure
       const task = deps.dynamicTaskStore.getById(body.taskId);
@@ -667,6 +670,99 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       const mc = task.params.holdLifecycle?.managedCommand;
       assert.ok(mc, 'managedCommand projection must exist');
       assert.strictEqual(mc.pid, null, 'spawn failure must persist pid=null in lifecycle projection');
+      assert.equal(mc.state, 'consumed', 'spawn failure must retire instead of waiting for the restart sweep');
+      assert.equal(mc.lostReason, 'spawn_failed');
+      assert.equal(mc.carrierTerminalReason, 'failed');
+      assert.equal(task.enabled, false);
+
+      await app.close();
+    } finally {
+      ManagedRunner.prototype.start = origStart;
+    }
+  });
+
+  test('T8c-3: rejected spawn admission writes one spawn terminal and retires the task', async () => {
+    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+    const origStart = ManagedRunner.prototype.start;
+    ManagedRunner.prototype.start = () => ({
+      admission: Promise.resolve({ spawned: false, pid: null, error: 'spawn ENOENT' }),
+      completion: Promise.resolve({ exitCode: null, timedOut: false, durationMs: 1 }),
+    });
+
+    try {
+      const deps = makeStubDeps();
+      const app = await createApp(deps);
+      const ownerUserId = 'user-spawn-reject';
+      const thread = await threadStore.create(ownerUserId, 'spawn-reject');
+      const { invocationId, callbackToken } = await registry.create(ownerUserId, 'codex', thread.id);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: {
+          reason: 'spawn rejection test',
+          nextStep: 'verify single terminal',
+          wakeWhen: { command: 'missing-command' },
+        },
+      });
+
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body);
+      const terminalMessages = deps._appendedMessages.filter((m) => m.source?.meta?.phase === 'status');
+      assert.equal(terminalMessages.length, 1);
+      assert.match(terminalMessages[0].content, /未启动.*spawn ENOENT/);
+      assert.doesNotMatch(terminalMessages[0].content, /服务重启/);
+      const task = deps.dynamicTaskStore.getById(body.taskId);
+      assert.equal(task.params.holdLifecycle.managedCommand.state, 'consumed');
+      assert.equal(task.params.holdLifecycle.managedCommand.lostReason, 'spawn_failed');
+      assert.equal(task.enabled, false);
+      assert.equal(getActiveRunnerCount(), 0);
+
+      await app.close();
+    } finally {
+      ManagedRunner.prototype.start = origStart;
+    }
+  });
+
+  test('T8c-4: post-spawn runner failure records a truthful runner terminal', async () => {
+    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+    const origStart = ManagedRunner.prototype.start;
+    ManagedRunner.prototype.start = () => ({
+      admission: Promise.resolve({ spawned: true, pid: 42 }),
+      completion: Promise.reject(new Error('runner pipe failed')),
+    });
+
+    try {
+      const deps = makeStubDeps();
+      const app = await createApp(deps);
+      const ownerUserId = 'user-runner-failure';
+      const thread = await threadStore.create(ownerUserId, 'runner-failure');
+      const { invocationId, callbackToken } = await registry.create(ownerUserId, 'codex', thread.id);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: {
+          reason: 'runner failure test',
+          nextStep: 'verify truthful terminal',
+          wakeWhen: { command: 'unstable-command' },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body);
+      const terminalMessages = deps._appendedMessages.filter((m) => m.source?.meta?.phase === 'status');
+      assert.equal(terminalMessages.length, 1);
+      assert.match(terminalMessages[0].content, /执行进程异常终止.*runner pipe failed/);
+      assert.doesNotMatch(terminalMessages[0].content, /服务重启/);
+      const task = deps.dynamicTaskStore.getById(body.taskId);
+      assert.equal(task.params.holdLifecycle.managedCommand.state, 'consumed');
+      assert.equal(task.params.holdLifecycle.managedCommand.lostReason, 'runner_failed');
+      assert.equal(task.enabled, false);
+      assert.equal(getActiveRunnerCount(), 0);
 
       await app.close();
     } finally {

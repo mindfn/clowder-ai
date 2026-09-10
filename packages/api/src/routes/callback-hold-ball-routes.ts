@@ -351,7 +351,7 @@ export interface HoldBallRouteDeps {
    */
   taskStore?: CrossStoreTaskStore;
   invocationRecordStore: IInvocationRecordStore;
-  managedCommandWakeRecovery?: Pick<ManagedCommandWakeRecoverySweep, 'recordCompletion'> &
+  managedCommandWakeRecovery?: Pick<ManagedCommandWakeRecoverySweep, 'recordCompletion' | 'recordLost'> &
     Partial<Pick<ManagedCommandWakeRecoverySweep, 'recordCancelledCompletion' | 'recordRetiredCompletion'>>;
   /**
    * F167 Phase P: invocation trigger for wakeWhen command completion.
@@ -422,6 +422,25 @@ function launchWakeWhenRunner(opts: {
   const { wakeWhen, reason, nextStep, threadId, catId, taskId, deps, prepared, durableJob } = opts;
   const { registryKey, entry: activeEntry } = prepared;
   const { runner } = activeEntry;
+  const invokeTrigger = deps.invokeTrigger;
+  const recovery =
+    deps.managedCommandWakeRecovery ??
+    new ManagedCommandWakeRecoverySweep({
+      dynamicTaskStore: deps.dynamicTaskStore,
+      messageStore: deps.messageStore,
+      socketManager: deps.socketManager,
+      taskRunner: deps.taskRunner,
+      invocationRecordStore: deps.invocationRecordStore,
+      getInvokeTrigger: () =>
+        invokeTrigger
+          ? {
+              trigger: async (...args) => {
+                const outcome = await invokeTrigger.trigger(...args);
+                return outcome === 'dispatched' ? 'enqueued' : outcome;
+              },
+            }
+          : undefined,
+    });
 
   let resolveExternalAdmission!: (result: import('../infrastructure/managed-runner.js').SpawnAdmission) => void;
   const admissionPromise = new Promise<import('../infrastructure/managed-runner.js').SpawnAdmission>((resolve) => {
@@ -444,6 +463,8 @@ function launchWakeWhenRunner(opts: {
       }
       const admitted = activeRunners.get(registryKey);
       if (admitted !== activeEntry || admitted.taskId !== taskId || admitted.phase !== 'pending_launch') {
+        await recovery.recordLost(taskId, 'spawn_failed', 'phase_mismatch');
+        if (activeRunners.get(registryKey) === activeEntry) activeRunners.delete(registryKey);
         resolveExternalAdmission({ spawned: false, pid: null, error: 'phase_mismatch' });
         return;
       }
@@ -465,11 +486,11 @@ function launchWakeWhenRunner(opts: {
       const spawnResult = await spawnAdmission;
 
       if (!spawnResult.spawned) {
-        // Spawn failed — clean up registry and scheduler resources.
+        const recoveryResult = await recovery.recordLost(taskId, 'spawn_failed', spawnResult.error);
         if (activeRunners.get(registryKey) === activeEntry) activeRunners.delete(registryKey);
         log.warn(
-          { threadId, catId, command: wakeWhen.command, error: spawnResult.error },
-          'F167 Phase P: wakeWhen spawn failed — cleaning up, fallback reminder will fire',
+          { threadId, catId, command: wakeWhen.command, error: spawnResult.error, recoveryResult },
+          'F167 Phase P: wakeWhen spawn failed — durable terminal recovery recorded',
         );
         resolveExternalAdmission(spawnResult);
         // Still await commandDone to drain resources
@@ -496,25 +517,6 @@ function launchWakeWhenRunner(opts: {
         },
       };
       if (durableJob) settleDurableManagedGateJobFromRunner(durableJob, completion.result);
-      const recovery =
-        deps.managedCommandWakeRecovery ??
-        new ManagedCommandWakeRecoverySweep({
-          dynamicTaskStore: deps.dynamicTaskStore,
-          messageStore: deps.messageStore,
-          socketManager: deps.socketManager,
-          taskRunner: deps.taskRunner,
-          invocationRecordStore: deps.invocationRecordStore,
-          getInvokeTrigger: () =>
-            deps.invokeTrigger
-              ? {
-                  trigger: async (...args) => {
-                    const outcome = await deps.invokeTrigger!.trigger(...args);
-                    return outcome === 'dispatched' ? 'enqueued' : outcome;
-                  },
-                }
-              : undefined,
-        });
-
       // F295: an ordinary user message can retire the wake carrier, but it is
       // not an execution-scoped cancellation request. Let the independent
       // command finish, retain its exact terminal evidence, and suppress the
@@ -573,13 +575,18 @@ function launchWakeWhenRunner(opts: {
       // never hangs on `await admissionPromise`. Calling resolve multiple
       // times is a no-op — only the first call wins.
       resolveExternalAdmission({ spawned: false, pid: null, error: 'internal_error' });
+      const recoveryResult = await recovery.recordLost(
+        taskId,
+        activeEntry.phase === 'running' ? 'runner_failed' : 'spawn_failed',
+        err instanceof Error ? err.message : String(err),
+      );
       // Clean up registry on unexpected failure too
       if (activeRunners.get(registryKey)?.runner === runner) {
         activeRunners.delete(registryKey);
       }
       log.error(
-        { threadId, catId, command: wakeWhen.command, err },
-        'F167 Phase P: wakeWhen runner failed — fallback reminder will still fire',
+        { threadId, catId, command: wakeWhen.command, err, recoveryResult },
+        'F167 Phase P: wakeWhen runner failed — durable terminal recovery recorded',
       );
     }
   })();
@@ -1083,10 +1090,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
 
       // Successful admission remains one waiting bubble. Only an exceptional
       // launch terminal adds a second, distinct lifecycle fact.
-      if (!spawnResult.spawned) {
-        const admissionFact = isCancellationOutcome
-          ? `等待已取消：命令「${wakeWhen.command}」未启动。`
-          : `等待失败：命令「${wakeWhen.command}」未启动${spawnResult.error ? `（${spawnResult.error}）` : ''}。`;
+      if (!spawnResult.spawned && isCancellationOutcome) {
+        const admissionFact = `等待已取消：命令「${wakeWhen.command}」未启动。`;
         const statusSource = { ...holdSource, meta: { ...holdSource.meta, phase: 'status' } };
         try {
           const admStored = await messageStore.append({

@@ -35,6 +35,7 @@ import {
   recordCancelledManagedCommandCompletion,
 } from './managed-command-wake-recovery-transitions.js';
 import {
+  type ManagedCommandWakeLostReason,
   parseRetiredManagedCommandWakeTask,
   readManagedCommandWakeProjection,
 } from './managed-command-wake-task-projection.js';
@@ -93,6 +94,29 @@ export class ManagedCommandWakeRecoverySweep {
     const result = await recordRetiredManagedCommandCompletion(this.deps, input, this.now);
     if (result === 'pending') managedCommandCompletionUnconsumedTotal.add(1);
     return result;
+  }
+  async recordLost(
+    taskId: string,
+    lostReason: ManagedCommandWakeLostReason,
+    lostDetail?: string,
+  ): Promise<ManagedCommandWakeRecoveryResult> {
+    const parsed = parseWakeTask(this.deps.dynamicTaskStore.getById(taskId));
+    if (!parsed) return 'missing';
+    if (parsed.command.state === 'lost') return this.recoverTask(taskId);
+    if (parsed.command.state === 'consumed') return 'recovered';
+    if (parsed.command.state !== 'command_running') return 'pending';
+    if (
+      !this.updateCommand(parsed, {
+        ...parsed.command,
+        state: 'lost',
+        lostAt: this.now(),
+        lostReason,
+        ...(lostDetail ? { lostDetail: lostDetail.slice(0, 500) } : {}),
+      })
+    ) {
+      return 'pending';
+    }
+    return this.recoverTask(taskId);
   }
   private async reconcileDurableGateJobs(tasks: DynamicTaskDef[]): Promise<ManagedCommandWakeRecoveryStats> {
     let recovered = 0;
@@ -223,19 +247,7 @@ export class ManagedCommandWakeRecoverySweep {
         : [];
     });
     for (const parsed of lostCandidates) {
-      const lostAt = this.now();
-      if (
-        !this.updateCommand(parsed, {
-          ...parsed.command,
-          state: 'lost',
-          lostAt,
-          lostReason: 'runtime_restart',
-        })
-      ) {
-        pending += 1;
-        continue;
-      }
-      const result = await this.recoverTask(parsed.task.id);
+      const result = await this.recordLost(parsed.task.id, 'runtime_restart');
       if (result === 'recovered') recovered += 1;
       else pending += 1;
     }
@@ -380,10 +392,23 @@ export class ManagedCommandWakeRecoverySweep {
     try {
       const existing = await this.deps.messageStore.getByIdempotencyKey(parsed.userId, parsed.threadId, idempotencyKey);
       if (!existing) {
+        const detail = parsed.command.lostDetail ? `（${parsed.command.lostDetail}）` : '';
+        const content =
+          parsed.command.lostReason === 'spawn_failed'
+            ? `等待失败：命令「${parsed.command.command}」未启动${detail}。`
+            : parsed.command.lostReason === 'runner_failed'
+              ? `等待已结束：命令「${parsed.command.command}」执行进程异常终止${detail}。`
+              : `等待已结束：服务重启导致命令「${parsed.command.command}」的本地执行进程丢失。`;
+        const recoverySource =
+          parsed.command.lostReason === 'spawn_failed'
+            ? 'spawn_admission'
+            : parsed.command.lostReason === 'runner_failed'
+              ? 'command_runner'
+              : 'startup_sweep';
         const stored = await this.deps.messageStore.append({
           from: { kind: 'system', service: 'hold-ball' },
           userId: parsed.userId,
-          content: `等待已结束：服务重启导致命令「${parsed.command.command}」的本地执行进程丢失。`,
+          content,
           mentions: [],
           timestamp: this.now(),
           threadId: parsed.threadId,
@@ -398,7 +423,7 @@ export class ManagedCommandWakeRecoverySweep {
               taskId: parsed.task.id,
               threadId: parsed.threadId,
               catId: parsed.catId,
-              recoverySource: 'startup_sweep',
+              recoverySource,
             },
           },
         });

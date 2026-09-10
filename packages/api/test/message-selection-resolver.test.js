@@ -250,7 +250,14 @@ describe('MessageSelectionResolver admission', () => {
         connector: 'hold-ball',
         label: '持球结果',
         icon: '🏓',
-        meta: { taskId: 'hold-ball-task-1', threadId: 'thread-source', catId: 'opus5', wakeWhen: true },
+        meta: {
+          managedHold: true,
+          phase: 'wake',
+          taskId: 'hold-ball-task-1',
+          threadId: 'thread-source',
+          catId: 'opus5',
+          wakeWhen: true,
+        },
       },
     });
     const genericScheduler = makeMessage({
@@ -295,7 +302,14 @@ describe('MessageSelectionResolver admission', () => {
       connector: 'hold-ball',
       label: '持球结果',
       icon: '🏓',
-      meta: { taskId: 'hold-ball-task-1', threadId: 'thread-source', catId: 'opus5', wakeWhen: true },
+      meta: {
+        managedHold: true,
+        phase: 'wake',
+        taskId: 'hold-ball-task-1',
+        threadId: 'thread-source',
+        catId: 'opus5',
+        wakeWhen: true,
+      },
     };
     const hidden = makeMessage({
       id: 'hidden-managed-receipt',

@@ -111,7 +111,14 @@ function appendTerminalManagedHold(messageStore, threadId, { ownerUserId, hidden
         connector: 'hold-ball',
         label: '持球结果',
         icon: '🏓',
-        meta: { taskId: `task-${suffix}`, threadId, catId: 'opus5', wakeWhen: true },
+        meta: {
+          managedHold: true,
+          phase: 'wake',
+          taskId: `task-${suffix}`,
+          threadId,
+          catId: 'opus5',
+          wakeWhen: true,
+        },
       },
     }),
   );
