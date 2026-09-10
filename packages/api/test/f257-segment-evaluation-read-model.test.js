@@ -4,7 +4,7 @@ import { describe, test } from 'node:test';
 const { ObjectiveEvaluationRuntime } = await import(
   '../dist/infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js'
 );
-const { SegmentEvaluationReadModel } = await import(
+const { SegmentEvaluationReadModel, MAX_VERSION_CHAIN_CYCLES } = await import(
   '../dist/infrastructure/harness-eval/evaluation/SegmentEvaluationReadModel.js'
 );
 const { resolveEvaluationWindow } = await import('../dist/routes/segment-evaluation.js');
@@ -678,29 +678,39 @@ describe('F257 SegmentEvaluationReadModel', () => {
   });
 
   test('reports truncation instead of silently dropping cycles beyond the projection bound', async () => {
+    const overflow = 5;
+    const seeded = MAX_VERSION_CHAIN_CYCLES + overflow;
     const redis = new FakeRedis();
     const { runtime } = runtimeFor(redis, []);
-    for (let index = 0; index < 105; index++) {
+    for (let index = 0; index < seeded; index++) {
       await seedHistory(redis, {
         ...currentCycle(),
-        cycleId: `cycle-h${String(index).padStart(3, '0')}`,
+        cycleId: `cycle-h${String(index).padStart(5, '0')}`,
         cycleStart: index,
         closedAt: index + 1,
       });
     }
-    await seedCurrent(redis, currentCycle({ cycleStart: 200 }));
+    await seedCurrent(redis, currentCycle({ cycleStart: seeded + 100 }));
 
-    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+    const view = await new SegmentEvaluationReadModel(runtime, () => seeded + 200).read({
       ownerUserId: 'owner-1',
       segmentId: 'S13',
       startMs: 0,
-      endMs: 300,
+      endMs: seeded + 200,
     });
     const objective = view.objectives[0];
 
-    assert.equal(objective.versionChain.length, 101, '100 projected history cycles plus the live cycle');
+    assert.equal(
+      objective.versionChain.length,
+      MAX_VERSION_CHAIN_CYCLES + 1,
+      'the bound projects its full depth plus the live cycle',
+    );
     assert.equal(objective.versionChainCapped, true, 'the operator is told the chain was cut');
-    assert.equal(objective.versionChain[0].ordinal, 6, 'ordinals still count from the true cycle total');
+    assert.equal(
+      objective.versionChain[0].ordinal,
+      overflow + 1,
+      'ordinals still count from the true cycle total, not from the projected slice',
+    );
   });
 
   test('resolves explicit version windows and rejects partial coordinates', () => {

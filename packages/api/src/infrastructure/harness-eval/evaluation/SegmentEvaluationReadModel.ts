@@ -31,13 +31,15 @@ const MAX_INJECTION_ROWS = 100;
 /**
  * Version-chain depth sent to the console.
  *
- * The chain drives the per-version cycle selector, so a short bound silently
- * hides every cycle of the older versions once an Objective outlives it: the
- * tree filters `cycle.segmentVersion === epoch.version`, and versions whose
- * cycles all fell outside the window simply render as empty. Keep the bound
- * generous and report truncation instead of dropping history in silence.
+ * The chain drives the per-version cycle selector, and the tree filters
+ * `cycle.segmentVersion === epoch.version`. Cycle count is therefore the wrong
+ * quantity to ration: a bound low enough to bite drops whole versions from the
+ * tree, and an empty version node reads as "the history is gone" rather than
+ * "the projection was cut". The bound exists only so an unbounded Objective
+ * cannot produce an unbounded response, so it sits far above any real cycle
+ * count and truncation is reported rather than rendered as absence.
  */
-const MAX_VERSION_CHAIN_CYCLES = 100;
+export const MAX_VERSION_CHAIN_CYCLES = 2048;
 
 /** F257 S4: Console projection whose only cycle truth is CycleRecord. */
 export class SegmentEvaluationReadModel {
