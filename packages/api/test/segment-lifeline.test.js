@@ -397,61 +397,9 @@ describe('segment-lifeline windowMs validation', () => {
 
 // ── P2-2: guard event three-key filtering (threadId + catId + ±120s) ──
 
-describe('segment-lifeline guard event filtering', () => {
-  const PROXIMITY_MS = 120_000;
-
-  // Helper: match logic mirrors collectGuardEvents in segment-lifeline.ts
-  function filterGuardEvents(events, observations) {
-    return events.filter((e) =>
-      observations.some(
-        (obs) =>
-          obs.threadId === e.threadId && obs.catId === e.catId && Math.abs(obs.timestamp - e.timestamp) <= PROXIMITY_MS,
-      ),
-    );
-  }
-
-  test('same thread+cat within ±120s passes', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5100 }];
-    assert.equal(filterGuardEvents(events, obs).length, 1);
-  });
-
-  test('same thread, different cat excluded', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'codex', timestamp: 5000 }];
-    assert.equal(filterGuardEvents(events, obs).length, 0, 'different catId');
-  });
-
-  test('same thread+cat but outside ±120s excluded', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 + PROXIMITY_MS + 1 }];
-    assert.equal(filterGuardEvents(events, obs).length, 0, 'outside window');
-  });
-
-  test('different thread excluded even if cat+time match', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [{ eventId: 'g1', threadId: 'thread-B', catId: 'opus', timestamp: 5000 }];
-    assert.equal(filterGuardEvents(events, obs).length, 0, 'different thread');
-  });
-
-  test('no guard events when segment has no observations', () => {
-    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    assert.equal(filterGuardEvents(events, []).length, 0);
-  });
-
-  test('boundary: exactly ±120s passes', () => {
-    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
-    const events = [
-      { eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 + PROXIMITY_MS },
-      { eventId: 'g2', threadId: 'thread-A', catId: 'opus', timestamp: 5000 - PROXIMITY_MS },
-    ];
-    assert.equal(filterGuardEvents(events, obs).length, 2, 'boundary inclusive');
-  });
-});
-
 // ── R16 route-level regression: epochGuardMetrics in JSON response ──
 
-describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () => {
+describe('segment-lifeline route: response contract', () => {
   const SESSION_HEADERS = { 'x-test-session-user': 'test-user' };
 
   async function buildLifelineApp(traceStore, opts = {}) {

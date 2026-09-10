@@ -219,7 +219,7 @@ describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
     expect(evalSrc).toContain('单 guard 最高');
   });
 
-  it('R15: LifelineStageDetail uses API-provided epochGuardMetrics (not local computation)', () => {
+  it('LifelineStageDetail takes epochGuardMetrics as a prop rather than computing it', () => {
     expect(detailSrc).toContain('epochGuardMetrics');
     expect(detailSrc).not.toContain('computeEpochGuardMetrics');
   });

@@ -200,7 +200,11 @@ async function fetchGuardEvents(
 ): Promise<{ events: SegmentReplayResponse['guardEvents']; gap: ReplayProvenanceGap | null }> {
   if (!log) return { events: [], gap: 'unavailable' };
   try {
-    const events = await log.queryWindow({
+    // Strict, not fail-open: `queryWindow` swallows Redis errors and returns
+    // [], so the catch below would never fire and an outage would be published
+    // as a genuine empty result with gap:null. The strict read propagates, and
+    // the catch turns it into honest `unavailable` provenance.
+    const events = await log.queryWindowStrict({
       since: timestamp - REPLAY_GUARD_WINDOW_MS,
       until: timestamp + REPLAY_GUARD_WINDOW_MS,
       threadId,
