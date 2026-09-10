@@ -1,4 +1,8 @@
-export { PLUGIN_CONTRACT_PACKAGE_VERSION, PLUGIN_CONTRACT_VERSION } from './contract-policy.js';
+export {
+  PLUGIN_CONTRACT_PACKAGE_VERSION,
+  PLUGIN_CONTRACT_VERSION,
+  PLUGIN_MANIFEST_CONTRACT_VERSIONS,
+} from './contract-policy.js';
 export type { HostInventoryControlPlaneOptions } from './control-plane.js';
 export { HostInventoryControlPlane } from './control-plane.js';
 export type {

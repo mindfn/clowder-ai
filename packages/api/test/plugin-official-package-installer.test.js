@@ -51,6 +51,17 @@ test('installs only the exact catalog artifact and admits schemas from those byt
   await access(join(packagesRoot, packageDirectoryName(archive.integrity), 'package.tgz'));
 });
 
+test('installs a package built against the exact consumed prerelease contract', async () => {
+  const packageManifest = manifest({ contractVersion: '0.1.0-beta.13' });
+  const archive = await packageArchive({ packageManifest });
+  const entry = catalogEntry(archive.integrity);
+  const { store, installer } = await harness(archive, entry);
+
+  await installer.install(entry.catalogId, releaseFence(entry));
+
+  assert.equal((await store.snapshot()).packages[0].contractVersion, '0.1.0-beta.13');
+});
+
 test('same exact catalog install is idempotent and does not mint a second instance', async () => {
   const archive = await packageArchive();
   const { store, installer } = await harness(archive);

@@ -4,7 +4,11 @@ import {
   validateEffectiveGrants,
   validateManifest,
 } from '@clowder-ai/plugin-contract';
-import { canonicalCapabilities, PLUGIN_CONTRACT_VERSION, requestedCapabilitiesForManifest } from './contract-policy.js';
+import {
+  canonicalCapabilities,
+  PLUGIN_MANIFEST_CONTRACT_VERSIONS,
+  requestedCapabilitiesForManifest,
+} from './contract-policy.js';
 import { isCanonicalPackageDigest } from './snapshot.js';
 import type { PackageAdmissionCandidate, PluginPackageRecord } from './types.js';
 import { PluginInventoryError } from './types.js';
@@ -25,14 +29,14 @@ export type PackageManifestValidationResult =
     };
 
 export interface PackageAdmissionContractRuntime {
-  /** Exact contractVersion accepted for manifests in this Host composition. */
-  readonly manifestContractVersion: string;
+  /** Exact contractVersion allowlist accepted by this Host composition. */
+  readonly manifestContractVersions: readonly string[];
   readonly validateManifest: (value: unknown) => PackageManifestValidationResult;
   readonly validateEffectiveGrants: (values: readonly string[]) => boolean;
 }
 
 const defaultContractRuntime: PackageAdmissionContractRuntime = {
-  manifestContractVersion: PLUGIN_CONTRACT_VERSION,
+  manifestContractVersions: PLUGIN_MANIFEST_CONTRACT_VERSIONS,
   validateManifest,
   validateEffectiveGrants,
 };
@@ -59,10 +63,10 @@ export function verifyPackageAdmission(
   if (validation.manifest.pluginId !== candidate.packagePluginId) {
     throw new PluginInventoryError('PACKAGE_ID_MISMATCH', 'package identity does not match manifest pluginId');
   }
-  if (validation.manifest.contractVersion !== contract.manifestContractVersion) {
+  if (!contract.manifestContractVersions.includes(validation.manifest.contractVersion)) {
     throw new PluginInventoryError(
       'CONTRACT_VERSION_MISMATCH',
-      `manifest requires ${validation.manifest.contractVersion}; Host pins ${contract.manifestContractVersion}`,
+      `manifest requires ${validation.manifest.contractVersion}; Host admits ${contract.manifestContractVersions.join(', ')}`,
     );
   }
   if (!contract.validateEffectiveGrants(candidate.effectiveGrants)) {

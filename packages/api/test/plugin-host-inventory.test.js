@@ -7,6 +7,7 @@ import {
   MemoryPluginInventoryStore,
   PLUGIN_CONTRACT_PACKAGE_VERSION,
   PLUGIN_CONTRACT_VERSION,
+  PLUGIN_MANIFEST_CONTRACT_VERSIONS,
 } from '../dist/domains/plugin/host-inventory/index.js';
 
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -63,6 +64,7 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(packageJson.dependencies['@clowder-ai/plugin-contract'], '0.1.0-beta.13');
     assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.13');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
+    assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, ['0.1.0', '0.1.0-beta.13']);
   });
 
   it('installs package, instance, and grants atomically with orthogonal initial state', async () => {
@@ -91,6 +93,16 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(snapshot.grants[0].grantRevision, 1);
   });
 
+  it('admits the exact consumed prerelease contract alongside the stable manifest line', async () => {
+    const { store, controlPlane } = harness();
+    const packageManifest = manifest({ contractVersion: PLUGIN_CONTRACT_PACKAGE_VERSION });
+
+    await controlPlane.installPackage(candidate({ manifest: packageManifest }));
+
+    const snapshot = await store.snapshot();
+    assert.equal(snapshot.packages[0].contractVersion, PLUGIN_CONTRACT_PACKAGE_VERSION);
+  });
+
   it('can bind admission to an exact newer contract runtime without bypassing Host policy', async () => {
     const exactManifest = manifest({
       contractVersion: '0.1.0-beta.13',
@@ -104,7 +116,7 @@ describe('K-2A contract-native inventory', () => {
       ],
     });
     const contract = {
-      manifestContractVersion: '0.1.0-beta.13',
+      manifestContractVersions: ['0.1.0-beta.13'],
       validateManifest: (value) => ({ valid: true, manifest: value, errors: [] }),
       validateEffectiveGrants: (values) =>
         values.every((value) => value === 'plugin.config.read' || value === 'secret.read'),

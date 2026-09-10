@@ -51,7 +51,7 @@ function exactManifest(overrides = {}) {
 
 function contract() {
   return {
-    manifestContractVersion: '0.1.0-beta.13',
+    manifestContractVersions: ['0.1.0-beta.13'],
     validateManifest: (value) => ({ valid: true, manifest: value, errors: [] }),
     validateEffectiveGrants: (values) =>
       new Set(values).size === values.length &&
