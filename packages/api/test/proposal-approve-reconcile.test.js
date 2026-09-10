@@ -294,8 +294,8 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
 
     const proposal = ctx.proposalStore.get(proposalId);
 
-    // Materialize a legacy seed: no idempotency key, no deliveryStatus, no
-    // queueCustody, but the proposal-specific source envelope and cross-post.
+    // Materialize a legacy seed: no idempotency key, no deliveryStatus, and no
+    // lifecycle dispatch refs, but with the proposal source envelope and cross-post.
     ctx.messageStore.append({
       from: { kind: 'agent', catId: 'codex' },
       userId: 'alice',
