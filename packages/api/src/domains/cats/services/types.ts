@@ -698,7 +698,7 @@ export interface AgentContextBinding {
 /** Provider-native identity for one exact, still-open Agent Client run. */
 export interface AgentClientActiveRunHandle {
   readonly provider: 'openai_codex' | 'anthropic' | 'anthropic_acp' | 'opencode' | 'other';
-  readonly carrier: 'codex_app_server' | 'claude_agent_sdk' | 'opencode_server' | 'acp' | 'other';
+  readonly carrier: 'codex_app_server' | 'claude_agent_sdk' | 'acp' | 'other';
   readonly threadId: string;
   readonly turnId: string;
 }

@@ -92,6 +92,8 @@ const mentionPatternSchema = z.string().min(2).regex(/^@/, 'mentionPattern must 
 
 const colorSchema = z.object({ primary: z.string(), secondary: z.string() });
 const catCarrierSchema = z.enum(CAT_CARRIERS);
+/** Read-only migration input for the rejected OpenCode server spike. */
+const legacyCatCarrierSchema = z.union([catCarrierSchema, z.literal('server')]);
 
 const timeZoneSchema = z
   .string()
@@ -111,9 +113,9 @@ const catVariantSchema = z
     source: z.string().optional(), // #441: legacy field, ignored — kept in schema for old catalog read compat
     accountRef: z.string().min(1).optional(), // F127: concrete account binding
     clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
-    carrier: catCarrierSchema.optional(),
+    carrier: legacyCatCarrierSchema.optional(),
     /** Legacy member access-mode field. Read only; canonical writes use carrier. */
-    transport: catCarrierSchema.optional(),
+    transport: legacyCatCarrierSchema.optional(),
     /** ACP launch details remain config data; carrier decides whether they are active. */
     acp: z.unknown().optional(),
 
@@ -177,9 +179,14 @@ type CarrierCompatInput = {
  * Every downstream projection receives only the canonical value.
  */
 export function resolveCatCarrier(input: CarrierCompatInput): CatCarrier {
+  // The unshipped OpenCode server spike wrote this value into UAT catalogs.
+  // Its `/config` endpoint is directory-scoped and persistent, so it is not a
+  // valid canonical carrier. Migrate only at this read boundary.
+  if (input.carrier === 'server') return 'cli';
   if (typeof input.carrier === 'string' && (CAT_CARRIERS as readonly string[]).includes(input.carrier)) {
     return input.carrier as CatCarrier;
   }
+  if (input.transport === 'server') return 'cli';
   if (typeof input.transport === 'string' && (CAT_CARRIERS as readonly string[]).includes(input.transport)) {
     return input.transport as CatCarrier;
   }

@@ -119,11 +119,6 @@ import {
   getOrCreateCodexAppServerPool,
 } from './domains/cats/services/agents/providers/codex-app-server-pool-registry.js';
 import { clearL0Cache, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
-import {
-  closeStaleOpenCodeServerHosts,
-  getOrCreateOpenCodeServerHost,
-  type OpenCodeServerHostRegistry,
-} from './domains/cats/services/agents/providers/OpenCodeServerHost.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { createPostCompactContextProjector } from './domains/cats/services/agents/routing/post-compact-context-projector.js';
 import { reconcileFreshnessClosuresAtStartup } from './domains/cats/services/freshness/closure/FreshnessClosureStartupReconciler.js';
@@ -148,7 +143,6 @@ import {
   KimiAgentService,
   MemoryGovernanceStore,
   OpenCodeAgentService,
-  OpenCodeServerAgentService,
 } from './domains/cats/services/index.js';
 import { FileProfileRepository } from './domains/cats/services/profile/ProfileRepository.js';
 import {
@@ -1890,10 +1884,6 @@ async function main(): Promise<void> {
   const acpPoolRegistry: AcpPoolRegistry = new Map();
   // F254: Codex app-server warm hosts are profile-scoped and survive catalog refreshes.
   const codexAppServerPoolRegistry: CodexAppServerPoolRegistry = new Map();
-  // OpenCode server hosts are also profile-scoped: a member reuses one live
-  // server across invocations while catalog refreshes retire removed profiles.
-  const openCodeServerHostRegistry: OpenCodeServerHostRegistry = new Map();
-
   // ── F32-b: AgentRegistry (catId → AgentService) — one instance per cat ──
   // Each cat gets its own AgentService instance with its catId + model.
   const agentRegistry = new AgentRegistry();
@@ -1904,7 +1894,6 @@ async function main(): Promise<void> {
     const projectRoot = resolveActiveProjectRoot();
     const activeAcpProfileIds = new Set<string>();
     const activeCodexProfileIds = new Set<string>();
-    const activeOpenCodeServerProfileIds = new Set<string>();
     for (const [id, config] of Object.entries(configs)) {
       const catId = config.id;
       // F32-b P1 fix: do NOT pass model here — let constructors resolve via
@@ -1969,15 +1958,7 @@ async function main(): Promise<void> {
             });
             break;
           case 'opencode':
-            if (config.carrier === 'server') {
-              activeOpenCodeServerProfileIds.add(id);
-              service = new OpenCodeServerAgentService({
-                catId,
-                host: getOrCreateOpenCodeServerHost(openCodeServerHostRegistry, id),
-              });
-            } else {
-              service = new OpenCodeAgentService({ catId });
-            }
+            service = new OpenCodeAgentService({ catId });
             break;
           case 'catagent': {
             const { CatAgentService } = await import(
@@ -2012,7 +1993,6 @@ async function main(): Promise<void> {
     await closeStaleCodexAppServerPools(codexAppServerPoolRegistry, activeCodexProfileIds, (err, profileId) => {
       app.log.warn({ err, profileId }, 'Codex app-server registry sync failed to close stale member pool');
     });
-    await closeStaleOpenCodeServerHosts(openCodeServerHostRegistry, activeOpenCodeServerProfileIds);
     if (router) router.refreshFromRegistry(agentRegistry);
 
     // Pre-compile L0 system prompts for all registered cats in parallel.
@@ -5965,13 +5945,6 @@ async function main(): Promise<void> {
       await pool.closeAll();
     }
     codexAppServerPoolRegistry.clear();
-  });
-
-  // Live OpenCode server carriers are profile-scoped children owned by this API
-  // process. Retire every remaining host on shutdown; catalog refreshes already
-  // close profiles that disappear while the API stays live.
-  app.addHook('onClose', async () => {
-    await closeStaleOpenCodeServerHosts(openCodeServerHostRegistry, new Set());
   });
 
   // F101: register onClose hook BEFORE listen (Fastify forbids addHook after listen).

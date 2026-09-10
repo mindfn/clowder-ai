@@ -1147,6 +1147,23 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
       assert.equal(kimiCreateRes.statusCode, 400);
       assert.match(JSON.parse(kimiCreateRes.body).error, /carrier/i);
 
+      const openCodeServerCreateRes = await app.inject({
+        method: 'POST',
+        url: '/api/cats',
+        headers,
+        body: JSON.stringify({
+          ...baseBody,
+          clientId: 'opencode',
+          accountRef: 'opencode',
+          defaultModel: 'anthropic/claude-test',
+          catId: 'runtime-opencode-server-carrier',
+          mentionPatterns: ['@runtime-opencode-server-carrier'],
+          carrier: 'server',
+          cli: { command: 'opencode', outputFormat: 'json' },
+        }),
+      });
+      assert.equal(openCodeServerCreateRes.statusCode, 400);
+
       const patchRes = await app.inject({
         method: 'PATCH',
         url: '/api/cats/runtime-codex-carrier',

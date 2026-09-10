@@ -283,7 +283,7 @@ carrier → legacy top-level transport → cli
 | Claude | `cli`, `sdk` | `sdk` 是 live session，可在执行中接收新增正文与显式中断；`cli` 是单轮进程 |
 | Codex | `cli`, `app_server` | `app_server` 是 live session；`cli` 是单轮进程 |
 | Kimi | `cli`, `acp` | 本轮不新增 Kimi live adapter；只保留既有显式选项 |
-| OpenCode | `cli`, `acp`, `server` | `server` 复用同一 session 接收后续正文与显式中断 |
+| OpenCode | `cli`, `acp` | 本轮不新增 server carrier；OpenCode 1.17.3 的 `/config` 是 directory-scoped 持久配置，不能承载 invocation-scoped MCP 凭据 |
 | Gemini | `cli`, `acp` | 由显式配置选择 |
 | generic ACP | `acp` | 不允许伪装成 CLI |
 | 其他 client | `cli` | 只有单轮能力 |
@@ -393,10 +393,10 @@ Queue pending 与 History actual dispatch 仍是两个 owner；一致性依赖�
 - [x] AC-E10: terminal History 无「撤回并编辑」；只保留一个「创建分支」入口，以原正文预填编辑框，正文不变也可确认创建
 - [ ] AC-E11: co-creator 在 feature worktree 完成上述完整旅程体验验收，随后合入 fork 并通过 soak；在这两道硬门前不得推进上游 merge
 
-### Phase F（carrier 与副作用出口，2026-09-09）— 代码与测试完成，待跨族复审 / worktree 体验
+### Phase F（carrier 与副作用出口，2026-09-09）— UAT 修订中
 
 - [x] AC-F1: 成员配置只向下游暴露 canonical `carrier`；唯一兼容读取顺序为 `carrier → transport → cli`，非法 client/carrier 组合 fail closed
-- [x] AC-F2: Claude `sdk` 与 OpenCode `server` 使用各自官方 live protocol，在 exact active session 上支持 guide/interrupt；单轮 `cli` 不谎报 append 能力，且任何 carrier 失败都不静默 fallback
+- [x] AC-F2: Claude `sdk` 与 Codex `app_server` 在 exact active session 上支持 guide/interrupt；OpenCode `server` 因 directory-scoped 持久配置无法隔离 invocation MCP 凭据而退役，OpenCode 仅保留 `cli` / `acp`；单轮 `cli` 不谎报 append 能力，且任何 carrier 失败都不静默 fallback
 - [x] AC-F3: `post_message` / `cross_post_message` / `multi_mention` 不检查 inbox、不 HELD、不接受 `acknowledgeHeld`、不附加 freshness/hold-ball 教学；F254 Phase A/B1/B2 active wiring 退役
 - [x] AC-F4: A2A 与 response terminal admission 在 exact `sourceRecordId × targetCatId` 已有 History dispatch 时幂等 no-op；已消费 Queue source replay 不产生第二次唤起
 - [x] AC-F5: multi-mention 的 Queue source 是一条真实、正文一致、可引用的 Agent History message；callback response 只作 parent lineage，不能充当 synthetic source identity

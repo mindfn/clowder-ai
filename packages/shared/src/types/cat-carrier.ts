@@ -4,7 +4,7 @@ import type { ClientId } from './cat.js';
  * Member access mode. This is deliberately separate from wire transports such
  * as MCP stdio/HTTP and ACP stdio/httpstream.
  */
-export const CAT_CARRIERS = ['cli', 'sdk', 'app_server', 'acp', 'server'] as const;
+export const CAT_CARRIERS = ['cli', 'sdk', 'app_server', 'acp'] as const;
 export type CatCarrier = (typeof CAT_CARRIERS)[number];
 
 const CARRIERS_BY_CLIENT: Readonly<Record<string, readonly CatCarrier[]>> = Object.freeze({
@@ -12,7 +12,7 @@ const CARRIERS_BY_CLIENT: Readonly<Record<string, readonly CatCarrier[]>> = Obje
   openai: ['cli', 'app_server'],
   google: ['cli', 'acp'],
   kimi: ['cli', 'acp'],
-  opencode: ['cli', 'acp', 'server'],
+  opencode: ['cli', 'acp'],
   acp: ['acp'],
   antigravity: ['cli'],
   catagent: ['cli'],

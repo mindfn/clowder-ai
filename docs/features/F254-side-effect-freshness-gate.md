@@ -30,9 +30,10 @@ Current authority is F117 Phase F and ADR-043 D6:
 
 - `post_message`, `cross_post_message`, and `multi_mention` are pure explicit sends. They do not check freshness, do not
   return HELD, do not accept `acknowledgeHeld`, and do not append inbox/hold-ball instructions to MCP results.
-- Runtime input capability belongs to the selected member `carrier`. Claude `sdk`, Codex `app_server`, and OpenCode
-  `server` can accept input in the live session; a one-shot `cli` cannot and must leave the message pending for ordinary
-  FIFO drain. No carrier silently falls back to another.
+- Runtime input capability belongs to the selected member `carrier`. Claude `sdk` and Codex `app_server` can accept
+  input in the live session; a one-shot `cli` cannot and must leave the message pending for ordinary FIFO drain.
+  OpenCode `server` is not a supported carrier because its configuration and MCP clients are directory-scoped rather
+  than invocation-scoped. No carrier silently falls back to another.
 - The only member-config compatibility boundary is `carrier → legacy top-level transport → cli`. Provider, route,
   capability, and UI code consume only canonical `carrier`; the old global `CAT_CAFE_CODEX_CARRIER` selector is retired.
 - Exact source delivery and replay safety come from F117 History `dispatchRefs` joined with Queue pending targets, not

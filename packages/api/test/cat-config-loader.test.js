@@ -97,6 +97,8 @@ describe('cat-config-loader', () => {
     it('resolves the canonical member carrier at the config boundary only', () => {
       assert.equal(resolveCatCarrier({ carrier: 'sdk', transport: 'acp' }), 'sdk');
       assert.equal(resolveCatCarrier({ transport: 'acp' }), 'acp');
+      assert.equal(resolveCatCarrier({ carrier: 'server' }), 'cli');
+      assert.equal(resolveCatCarrier({ transport: 'server' }), 'cli');
       assert.equal(resolveCatCarrier({ cli: { carrier: 'app_server' } }), 'cli');
       assert.equal(resolveCatCarrier({ acp: { command: 'opencode', startupArgs: ['acp'] } }), 'cli');
       assert.equal(resolveCatCarrier({}), 'cli');
@@ -108,6 +110,13 @@ describe('cat-config-loader', () => {
       const resolved = toAllCatConfigs(loaded).opus;
       assert.equal(resolved.carrier, 'sdk');
       assert.equal(resolved.cli.carrier, undefined, 'provider CLI config must not retain carrier selection');
+
+      const retiredServerConfig = validConfig();
+      retiredServerConfig.breeds[0].variants[0].clientId = 'opencode';
+      retiredServerConfig.breeds[0].variants[0].defaultModel = 'anthropic/claude-test';
+      retiredServerConfig.breeds[0].variants[0].carrier = 'server';
+      const migrated = toAllCatConfigs(loadCatConfig(writeTempConfig(retiredServerConfig))).opus;
+      assert.equal(migrated.carrier, 'cli', 'the retired UAT-only OpenCode server value migrates at the read boundary');
     });
 
     it('loads default project config when no path/env provided', () => {

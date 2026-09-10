@@ -118,7 +118,6 @@ const CARRIER_LABELS: Readonly<Record<CatCarrier, string>> = {
   sdk: 'SDK',
   app_server: 'App Server',
   acp: 'ACP',
-  server: 'Server',
 };
 
 export function carrierOptionsForClient(clientId: ClientId): Array<{ value: CatCarrier; label: string }> {

@@ -1240,7 +1240,7 @@ describe('HubCatEditor', () => {
   it('exposes the canonical carrier matrix per client', () => {
     expect(carrierOptionsForClient('anthropic').map((option) => option.value)).toEqual(['cli', 'sdk']);
     expect(carrierOptionsForClient('openai').map((option) => option.value)).toEqual(['cli', 'app_server']);
-    expect(carrierOptionsForClient('opencode').map((option) => option.value)).toEqual(['cli', 'acp', 'server']);
+    expect(carrierOptionsForClient('opencode').map((option) => option.value)).toEqual(['cli', 'acp']);
     expect(carrierOptionsForClient('acp').map((option) => option.value)).toEqual(['acp']);
   });
 

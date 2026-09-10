@@ -10,7 +10,6 @@ export type FreshnessCarrier =
   | 'claude_agent_sdk'
   | 'claude_print_sdk'
   | 'claude_stream_json'
-  | 'opencode_server'
   | 'kimi_stream_json'
   | 'mcp_result_piggyback'
   | 'other';

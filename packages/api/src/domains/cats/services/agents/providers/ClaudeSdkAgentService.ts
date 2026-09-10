@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   type Options as ClaudeSdkOptions,
   query as claudeQuery,
+  type EffortLevel,
   type McpServerConfig,
   type Query,
   type SDKMessage,
@@ -52,10 +53,11 @@ interface ClaudeSdkAgentServiceOptions {
 const DEFAULT_ACTIVE_RUN_CONTROL_TIMEOUT_MS = 15_000;
 const MAX_SDK_STDERR_CHARS = 4_000;
 
-function toClaudeSdkEffortLevel(effort: string): string {
-  // The SDK-bundled Claude runtime currently exposes low/medium/high. Map
-  // Clowder's maximum Anthropic preset to that carrier's highest native tier.
-  return effort === 'max' ? 'high' : effort;
+function toClaudeSdkEffortLevel(effort: string): EffortLevel {
+  if (effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max') {
+    return effort;
+  }
+  throw new Error(`claude_sdk_effort_unsupported:${effort}`);
 }
 
 async function withActiveRunControlDeadline<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -226,11 +228,6 @@ export class ClaudeSdkAgentService implements AgentService {
       for (const key of SUBSCRIPTION_MODE_DENY_KEYS) envOverrides[key] = null;
     }
     if (readOnly) envOverrides.CAT_CAFE_READONLY = 'true';
-    // The bundled Claude Code runtime reads effort from this environment key.
-    // `extraArgs: { effort }` becomes `--effort`, which the bundled CLI does
-    // not expose and therefore makes the SDK invocation exit before init.
-    envOverrides.CLAUDE_CODE_EFFORT_LEVEL = toClaudeSdkEffortLevel(effort);
-
     const abortController = new AbortController();
     const abort = () => abortController.abort(options?.signal?.reason);
     options?.signal?.addEventListener('abort', abort, { once: true });
@@ -246,6 +243,7 @@ export class ClaudeSdkAgentService implements AgentService {
       env: toSdkEnvironment(envOverrides),
       ...(imagePaths.length > 0 ? { additionalDirectories: collectImageAccessDirectories(imagePaths) } : {}),
       ...(useEnvModelOverride || !effectiveModel ? {} : { model: effectiveModel }),
+      effort: toClaudeSdkEffortLevel(effort),
       systemPrompt,
       includePartialMessages: true,
       permissionMode: readOnly ? 'plan' : 'bypassPermissions',

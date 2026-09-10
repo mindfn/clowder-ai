@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { ClaudeSdkAgentService } from '../dist/domains/cats/services/agents/providers/ClaudeSdkAgentService.js';
-import { OpenCodeServerAgentService } from '../dist/domains/cats/services/agents/providers/OpenCodeServerAgentService.js';
-import { closeStaleOpenCodeServerHosts } from '../dist/domains/cats/services/agents/providers/OpenCodeServerHost.js';
 
 class AsyncInbox {
   #values = [];
@@ -93,7 +91,12 @@ describe('live member carriers', () => {
     assert.match(sdkOptions.systemPrompt, /route identity/);
     assert.equal(sdkOptions.permissionMode, 'plan');
     assert.equal(sdkOptions.extraArgs, undefined, 'the SDK carrier must not synthesize unsupported Claude CLI flags');
-    assert.equal(sdkOptions.env.CLAUDE_CODE_EFFORT_LEVEL, 'high');
+    assert.equal(sdkOptions.effort, 'max');
+    assert.equal(
+      sdkOptions.env.CLAUDE_CODE_EFFORT_LEVEL,
+      undefined,
+      'the current Agent SDK must receive effort through its typed option, not a process-wide environment side channel',
+    );
 
     const appended = await registration.dispatcher.dispatch(
       { text: 'append body' },
@@ -130,7 +133,7 @@ describe('live member carriers', () => {
       queryFn: ({ options }) => ({
         interrupt: async () => {},
         async *[Symbol.asyncIterator]() {
-          options.stderr?.("error: unknown option '--effort'\n");
+          options.stderr?.('error: provider initialization failed\n');
           throw new Error('Claude Code process exited with code 1');
         },
       }),
@@ -140,7 +143,42 @@ describe('live member carriers', () => {
     for await (const message of service.invoke('initial body')) messages.push(message);
 
     const failure = messages.find((message) => message.type === 'error');
-    assert.equal(failure.error, "error: unknown option '--effort'");
+    assert.equal(failure.error, 'error: provider initialization failed');
+  });
+
+  it('Claude SDK injects the invocation MCP map through the native SDK option', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cat-cafe-claude-sdk-mcp-'));
+    mkdirSync(join(root, '.cat-cafe'));
+    writeFileSync(
+      join(root, '.mcp.json'),
+      JSON.stringify({ mcpServers: { 'user-tool': { command: 'user-tool', args: ['serve'] } } }),
+    );
+    let sdkOptions;
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      mcpServerPath: join(root, 'missing-dist', 'index.js'),
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ options }) => {
+        sdkOptions = options;
+        return {
+          interrupt: async () => {},
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'system', subtype: 'init', session_id: 'sdk-session-mcp' };
+          },
+        };
+      },
+    });
+
+    for await (const _message of service.invoke('initial body', {
+      workingDirectory: root,
+      callbackEnv: { CAT_CAFE_CAT_ID: 'opus', CAT_CAFE_INVOCATION_ID: 'inv-sdk-mcp' },
+    })) {
+      // Drain the injected query.
+    }
+
+    assert.equal(sdkOptions.strictMcpConfig, true);
+    assert.deepEqual(sdkOptions.mcpServers['user-tool'], { command: 'user-tool', args: ['serve'] });
   });
 
   it('Claude SDK rejects a steer whose provider interrupt never acknowledges', async () => {
@@ -176,132 +214,5 @@ describe('live member carriers', () => {
 
     events.close();
     assert.equal((await output.next()).value.type, 'done');
-  });
-
-  it('OpenCode server keeps one session live for append and aborts only for explicit steer', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'cat-cafe-opencode-server-'));
-    const configPath = join(root, 'opencode.json');
-    writeFileSync(
-      configPath,
-      JSON.stringify({
-        instructions: [],
-        mcp: { memory: { type: 'remote', url: '{env:CAT_CAFE_MCP_URL}' } },
-      }),
-    );
-    const events = new AsyncInbox();
-    const requests = [];
-    const host = {
-      async ensureStarted() {},
-      async request(path, options = {}) {
-        requests.push({ path, options });
-        if (path === '/session' && options.method === 'POST') return { id: 'oc-session-1' };
-        return undefined;
-      },
-      async openEvents() {
-        return events;
-      },
-      async close() {},
-    };
-    const registration = activeRunRegistration();
-    const service = new OpenCodeServerAgentService({ catId: 'opencode', model: 'anthropic/claude-test', host });
-    const output = service
-      .invoke('initial body', {
-        invocationId: registration.invocationId,
-        activeRunDispatch: registration,
-        workingDirectory: root,
-        callbackEnv: { OPENCODE_CONFIG: configPath, CAT_CAFE_MCP_URL: 'https://mcp.example.test' },
-      })
-      [Symbol.asyncIterator]();
-
-    assert.equal((await output.next()).value.type, 'session_init');
-    const eventPending = output.next();
-    await new Promise((resolve) => setImmediate(resolve));
-    const configPatch = requests.find((request) => request.path === '/config');
-    assert.equal(configPatch.options.body.mcp.memory.url, 'https://mcp.example.test');
-    const initial = requests.find((request) => request.path.endsWith('/prompt_async'));
-    assert.equal(initial.options.body.parts[0].text, 'initial body');
-    assert.deepEqual(initial.options.body.model, { providerID: 'anthropic', modelID: 'claude-test' });
-
-    const appended = await registration.dispatcher.dispatch(
-      { text: 'append body' },
-      { expectedInvocationId: registration.invocationId, force: false },
-    );
-    assert.equal(appended.accepted, true);
-    assert.equal(requests.filter((request) => request.path.endsWith('/abort')).length, 0);
-
-    const steered = await registration.dispatcher.dispatch(
-      { text: 'steer body' },
-      { expectedInvocationId: registration.invocationId, force: true },
-    );
-    assert.equal(steered.accepted, true);
-    assert.equal(requests.filter((request) => request.path.endsWith('/abort')).length, 1);
-    const prompts = requests.filter((request) => request.path.endsWith('/prompt_async'));
-    assert.deepEqual(
-      prompts.map((request) => request.options.body.parts[0].text),
-      ['initial body', 'append body', 'steer body'],
-    );
-    const latestMessageId = prompts.at(-1).options.body.messageID;
-    events.push({
-      type: 'message.updated',
-      properties: { info: { id: latestMessageId, sessionID: 'oc-session-1', role: 'user' } },
-    });
-    events.push({
-      type: 'message.part.delta',
-      properties: {
-        sessionID: 'oc-session-1',
-        messageID: latestMessageId,
-        partID: 'part-user',
-        field: 'text',
-        delta: 'Dispatch Mission Context must not enter the response bubble',
-      },
-    });
-    events.push({
-      type: 'message.part.updated',
-      properties: {
-        part: {
-          id: 'part-user-complete',
-          sessionID: 'oc-session-1',
-          messageID: latestMessageId,
-          type: 'text',
-          text: 'the complete user prompt must not enter the response bubble either',
-        },
-      },
-    });
-    events.push({
-      type: 'message.updated',
-      properties: { info: { id: 'assistant-1', sessionID: 'oc-session-1', role: 'assistant' } },
-    });
-    events.push({
-      type: 'message.part.updated',
-      properties: {
-        part: {
-          id: 'part-assistant',
-          sessionID: 'oc-session-1',
-          messageID: 'assistant-1',
-          type: 'text',
-          text: 'done',
-        },
-      },
-    });
-    events.push({ type: 'session.idle', properties: { sessionID: 'oc-session-1' } });
-    assert.equal((await eventPending).value.content, 'done');
-    assert.equal((await output.next()).value.type, 'done');
-    assert.equal(registration.released, true);
-  });
-
-  it('OpenCode server host registry closes only retired profiles and can drain all hosts on shutdown', async () => {
-    const closed = [];
-    const registry = new Map([
-      ['active', { close: async () => closed.push('active') }],
-      ['retired', { close: async () => closed.push('retired') }],
-    ]);
-
-    await closeStaleOpenCodeServerHosts(registry, new Set(['active']));
-    assert.deepEqual(closed, ['retired']);
-    assert.deepEqual([...registry.keys()], ['active']);
-
-    await closeStaleOpenCodeServerHosts(registry, new Set());
-    assert.deepEqual(closed, ['retired', 'active']);
-    assert.equal(registry.size, 0);
   });
 });
