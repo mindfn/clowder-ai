@@ -50,7 +50,6 @@ export async function registerSegmentLifecycleSurface(
   });
   await app.register(segmentLifelineRoutes, {
     traceStore: options.traceStore,
-    guardRejectionLog: options.guardRejectionLog,
     overrideStore: options.overrideStore,
     resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
     resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,

@@ -206,26 +206,6 @@ export function resolveActiveEpochAt(
   return epochs[idx] ?? epochs[0];
 }
 
-/** Attribute guard events to epochs using the activation timeline (R15). */
-export function attributeGuardEventsToEpochs(
-  chain: VersionEpoch[],
-  timeline: ActivationPoint[],
-  guardEvents: Array<{ timestamp: number; guardId: string }>,
-): Record<number, Array<{ guardId: string; count: number }>> {
-  const counts = new Map<number, Map<string, number>>();
-  for (const e of chain) counts.set(e.version, new Map());
-  for (const ge of guardEvents) {
-    const epoch = resolveActiveEpochAt(timeline, ge.timestamp, chain);
-    const m = counts.get(epoch.version);
-    if (m) m.set(ge.guardId, (m.get(ge.guardId) ?? 0) + 1);
-  }
-  const result: Record<number, Array<{ guardId: string; count: number }>> = {};
-  for (const [ver, m] of counts) {
-    result[ver] = [...m].map(([guardId, count]) => ({ guardId, count })).sort((a, b) => b.count - a.count);
-  }
-  return result;
-}
-
 // Observation attachment
 
 function attachObservations(

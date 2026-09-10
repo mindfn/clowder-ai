@@ -468,7 +468,7 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     return app;
   }
 
-  test('response JSON contains epochGuardMetrics keyed by version', async () => {
+  test('summary response carries no guard projection, so nothing derives evidence nobody reads', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
     const store = new InjectionTraceStore(redis);
@@ -488,13 +488,13 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
     assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
     const body = JSON.parse(res.body);
 
-    // Core contract: epochGuardMetrics must be present and keyed by version number
-    assert.ok('epochGuardMetrics' in body, 'response must include epochGuardMetrics');
-    assert.equal(typeof body.epochGuardMetrics, 'object', 'epochGuardMetrics is an object');
-
-    // v1 (manifest baseline) must have an entry (empty array since no guard events)
-    assert.ok('1' in body.epochGuardMetrics, 'epochGuardMetrics has v1 key');
-    assert.ok(Array.isArray(body.epochGuardMetrics['1']), 'v1 value is an array');
+    // The summary route used to correlate guard events across the whole window
+    // and attribute them per epoch. No console surface ever read either field:
+    // the live modal renders governance through ObjectiveGovernancePanel, and
+    // guard evidence is shown per event by the replay route. Publishing them
+    // cost an unfenced cross-owner scan per request for nobody.
+    assert.ok(!('guardEvents' in body), 'no guard projection in the summary contract');
+    assert.ok(!('epochGuardMetrics' in body), 'no per-epoch guard attribution in the summary contract');
 
     // Verify other shared-contract fields are present
     assert.equal(body.segmentId, 'S-test');
@@ -560,51 +560,6 @@ describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () 
       url: '/api/segment-lifeline/S-test',
     });
     assert.equal(res.statusCode, 401);
-    await app.close();
-  });
-
-  test('reads guard events completeness-preserving instead of slicing the window before correlating', async () => {
-    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
-    const redis = new FakeRedis();
-    const store = new InjectionTraceStore(redis);
-    const now = Date.now();
-    await store.persist(
-      makeSummary('thread-X', 'turn-1', now - 1000, 'opus', [makeSegment('S-test')]),
-      makeDetail('thread-X', 'turn-1'),
-    );
-
-    // 60 correlated events: more than the window slice this route used to ask
-    // for, so a pre-correlation limit would silently drop the tail.
-    const events = Array.from({ length: 60 }, (_, index) => ({
-      eventId: `guard-${index}`,
-      kind: 'rate-limit',
-      threadId: 'thread-X',
-      catId: 'opus',
-      timestamp: now - 1000 - index,
-      guardId: 'mcp/hold-ball-rate-limit',
-    }));
-    const guardRejectionLog = {
-      // Pins the API choice: a pre-correlation slice must not be reachable.
-      queryWindow() {
-        throw new Error('queryWindow slices the window before correlation');
-      },
-      async queryWindowComplete() {
-        return { events, truncated: true };
-      },
-    };
-
-    const app = await buildLifelineApp(store, { guardRejectionLog });
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/segment-lifeline/S-test',
-      headers: SESSION_HEADERS,
-    });
-
-    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
-    const body = JSON.parse(res.body);
-    assert.equal(body.guardEvents.length, 60, 'every correlated event survives the read');
-    assert.equal(body.guardEventsCapped, true, 'a capped read is reported, never rendered as absence');
-
     await app.close();
   });
 });

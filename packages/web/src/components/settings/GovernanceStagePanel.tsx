@@ -21,7 +21,6 @@ export interface GovernanceStagePanelProps {
   version: number;
   governance: { decision: string | null; decidedAt: number | null; actorId: string | null } | null;
   guardEvents: GuardEvent[];
-  guardEventsCapped?: boolean;
   overrideState: { hookId: string; enabled: boolean } | null;
   hookId: string;
   onRefresh: () => void;
@@ -41,7 +40,6 @@ export function GovernanceStagePanel({
   version,
   governance,
   guardEvents,
-  guardEventsCapped,
   overrideState,
   hookId,
   onRefresh,
@@ -92,7 +90,7 @@ export function GovernanceStagePanel({
         />
       </div>
 
-      <GuardEventsSection guardEvents={guardEvents} capped={guardEventsCapped} />
+      <GuardEventsSection guardEvents={guardEvents} />
     </>
   );
 }
@@ -170,20 +168,13 @@ function DecisionArea({
   );
 }
 
-function GuardEventsSection({ guardEvents, capped }: { guardEvents: GuardEvent[]; capped?: boolean }) {
-  // A capped read must still say so: rendering nothing is indistinguishable
-  // from "this segment had no guard event".
-  if (guardEvents.length === 0 && !capped) return null;
+function GuardEventsSection({ guardEvents }: { guardEvents: GuardEvent[] }) {
+  if (guardEvents.length === 0) return null;
   return (
     <div className="mt-4">
       <SettingsText as="h4" variant="xs" tone="muted" className="mb-2 font-semibold">
         守卫事件 ({guardEvents.length})
       </SettingsText>
-      {capped && (
-        <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
-          守卫事件读取已达上限，本段可能还有未列出的事件
-        </SettingsText>
-      )}
       {guardEvents[0]?.attribution === 'window-correlated' && (
         <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
           时间窗口关联，非因果归因

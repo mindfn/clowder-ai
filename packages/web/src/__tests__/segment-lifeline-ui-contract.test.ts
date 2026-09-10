@@ -152,14 +152,23 @@ describe('segment lifeline: tracing row drill-down (②)', () => {
   });
 });
 
-describe('segment lifeline: shared type contract — epochGuardMetrics (R16 P2-1)', () => {
+describe('segment lifeline: shared type contract — guard projection', () => {
   const sharedSrc = readFileSync(
     path.resolve(__dirname, '..', '..', '..', 'shared', 'src', 'types', 'segment-lifecycle.ts'),
     'utf-8',
   );
 
-  it('SegmentLifecycleResponse includes epochGuardMetrics field', () => {
-    expect(sharedSrc).toMatch(/epochGuardMetrics:\s*Record<number,\s*GuardMetric\[\]>/);
+  it('SegmentLifecycleResponse publishes no guard projection', () => {
+    // The summary response used to carry window-correlated guard events and a
+    // per-epoch attribution of them. No console surface read either one, and
+    // producing them cost an unfenced cross-owner scan on every request. Guard
+    // evidence is served per event by the owner-fenced replay route instead.
+    const summaryContract = sharedSrc.slice(
+      sharedSrc.indexOf('interface SegmentLifecycleResponse'),
+      sharedSrc.indexOf('判据④'),
+    );
+    expect(summaryContract).not.toMatch(/epochGuardMetrics/);
+    expect(summaryContract).not.toMatch(/guardEvents/);
   });
 
   it('GuardMetric interface is defined with guardId and count', () => {

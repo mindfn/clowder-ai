@@ -16,12 +16,10 @@ function makeEvent(partial) {
 
 describe('buildVersionChain', () => {
   let buildVersionChain;
-  let attributeGuardEventsToEpochs;
 
   before(async () => {
     const mod = await import('../dist/routes/segment-lifeline-chain.js');
     buildVersionChain = mod.buildVersionChain;
-    attributeGuardEventsToEpochs = mod.attributeGuardEventsToEpochs;
   });
 
   test('manifest-only segment is one active idle epoch', () => {
@@ -193,24 +191,5 @@ describe('buildVersionChain', () => {
       chain[1].events.slice(0, 2).map(({ kind }) => kind),
       ['governance-reject', 'governance-approve'],
     );
-  });
-
-  test('guard evidence is attributed to the epoch active at event time', () => {
-    const { chain, timeline } = buildVersionChain({
-      manifestVersion: 1,
-      overrideEvents: [
-        makeEvent({ action: 'content-set', timestamp: 100, epochVersion: 2 }),
-        makeEvent({ action: 'rollback', timestamp: 200 }),
-      ],
-      observations: [],
-      currentContentVersion: null,
-    });
-    const metrics = attributeGuardEventsToEpochs(chain, timeline, [
-      { timestamp: 50, guardId: 'g1' },
-      { timestamp: 150, guardId: 'g1' },
-      { timestamp: 250, guardId: 'g1' },
-    ]);
-    assert.deepEqual(metrics[1], [{ guardId: 'g1', count: 2 }]);
-    assert.deepEqual(metrics[2], [{ guardId: 'g1', count: 1 }]);
   });
 });

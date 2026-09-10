@@ -196,6 +196,7 @@ async function fetchGuardEvents(
   threadId: string,
   catId: string,
   timestamp: number,
+  ownerUserId: string,
 ): Promise<{ events: SegmentReplayResponse['guardEvents']; gap: ReplayProvenanceGap | null }> {
   if (!log) return { events: [], gap: 'unavailable' };
   try {
@@ -204,6 +205,11 @@ async function fetchGuardEvents(
       until: timestamp + REPLAY_GUARD_WINDOW_MS,
       threadId,
       catId,
+      // thread/cat/±window is a correlation heuristic, never an authorization
+      // boundary: two owners colliding on one coordinate would project the
+      // other owner's guard kind/id/time into this response. The snapshot
+      // ownership check upstream fences the snapshot, not this read.
+      ownerUserId,
       limit: 50,
     });
     return { events: events.map(mapGuardEvent), gap: null };
@@ -285,7 +291,13 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     const versionValidation = validateVersion(snapshot.version);
     const anchorValidation = validateMessageAnchorId(snapshot.messageAnchorId);
 
-    const guardResult = await fetchGuardEvents(opts.guardRejectionLog, threadId, snapshot.catId, snapshot.timestamp);
+    const guardResult = await fetchGuardEvents(
+      opts.guardRejectionLog,
+      threadId,
+      snapshot.catId,
+      snapshot.timestamp,
+      userId,
+    );
     const messagesResult = await resolveSurroundingMessages(snapshot, opts.messageStore, threadId, userId);
 
     const response: SegmentReplayResponse = {
