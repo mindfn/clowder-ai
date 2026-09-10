@@ -1,230 +1,46 @@
 'use client';
 
 /**
- * F257 governance card — action/diff fixtures.
+ * F257 governance — action/diff fixtures.
  *
  * Why this page exists (operator 2026-09-10): four review rounds on #171 found
- * seven approval-fact defects in this card, and NONE of them could be seen by
- * any cat. The existing showcase (`/showcase/f257-governance-journey`) builds an
- * ApprovalHubItem whose `detail` carries no `changes` at all, so
- * F257GovernanceChanges renders "本卡没有可执行动作" — the action-diff dialog was
- * never on screen. Real cards only appear after a real governance cycle, so the
- * defects were only reachable after merge.
+ * seven approval-fact defects in the action-diff dialog, and none of them could
+ * be seen by any cat. The existing showcase (`/showcase/f257-governance-journey`)
+ * builds an ApprovalHubItem whose `detail` carries no `changes` at all, so
+ * F257GovernanceChanges renders "本卡没有可执行动作" — the dialog was never on
+ * screen. Real cards only appear after a real governance cycle, so the defects
+ * were only reachable after merge.
  *
- * This page constructs the data instead of waiting for it: one card per
- * ArtifactOperation, so the whole dialog can be opened and looked at before
- * asking anyone to review it.
- *
- * Fixtures are typed against the production union — a drift becomes a compile
- * error here, not a demo that quietly diverges from what the executor emits.
+ * Scope (narrowed after sol's review of 09ffa8bd9): this renders
+ * F257GovernanceChanges directly rather than a whole ApprovalHubItem. The first
+ * two attempts wrapped the changes in a synthetic full proposal, which dragged
+ * in objective provenance, canonical labels/statements and an evaluation-model
+ * metric set — none of it under test here, and all of it impossible to keep
+ * faithful without duplicating the registry. Every finding so far landed on
+ * that wrapper, never on the diff. A fixture should be exactly as wide as the
+ * thing it verifies, so the only data below is HarnessGovernanceProposalChange
+ * values, typed against production and guarded by the source-backed contract
+ * test next to this file.
  */
 
-import type { ApprovalHubItem, HarnessGovernanceProposalChange } from '@cat-cafe/shared';
 import { useState } from 'react';
-import { GenericApprovalRecommendation } from '@/components/GenericApprovalRecommendation';
+import { F257GovernanceChanges } from '@/components/F257GovernanceChanges';
 import { SettingsText } from '@/components/settings/primitives';
-
-const WINDOW = { start: 1_700_000_000_000, end: 1_700_086_400_000 };
-
-/** add → writer creates two files and APPENDS one registry entry. */
-const ADD_CHANGE = {
-  action: 'add',
-  unitId: 'D22',
-  // HarnessGovernanceExecutor.hydrateAdd emits hookId = unitId, not the slug.
-  hookId: 'D22',
-  assetSlug: 'd22-termination-gate',
-  reason: '补入可验证的终止出口门',
-  manifest: {
-    id: 'D22',
-    name: '终止门',
-    stage: 'per-turn',
-    order: 2200,
-    version: 1,
-    enabled: true,
-    template: 'content.md',
-    inputs: ['threadId'],
-    variables: [{ name: 'catId', description: '当前 invocation 的猫\n第二行: 用来验证标量转义' }],
-    disableable: true,
-    safetyTier: 'editable',
-    transparencyTier: 'visible-by-default',
-    governanceTier: 'human-gated',
-  },
-  content: '# 终止门\n\n每轮结束前必须给出可验证的终止出口。',
-  objectives: [{ objectiveId: 'tool-access-correct-use' }],
-} satisfies HarnessGovernanceProposalChange;
-
-/**
- * disable → runtime override only; the body is NOT deleted.
- *
- * Target is D9, not L4: `l4-五条铁律/hook.yaml` declares `disableable: false`,
- * and HarnessGovernanceExecutor:91 throws cycle_governance_disable_forbidden
- * before ever emitting the change — an L4 disable card cannot exist.
- * `routing-target-delivery` members are D9/D13/R1/R2/S4, so disabling D9
- * leaves 4.
- */
-const DISABLE_CHANGE = {
-  action: 'disable',
-  unitId: 'D9',
-  hookId: 'D9',
-  reason: '消融验证路由反馈段是否仍有必要',
-  beforeEnabled: true,
-  beforeContent: '收到 @ 后必须三选一：接 / 退 / 升。\n状态描述不是球权声明。',
-  objectiveImpact: { objectiveId: 'routing-target-delivery', remainingMemberCount: 4 },
-} satisfies HarnessGovernanceProposalChange;
-
-/**
- * enable on an already-enabled unit — the executor does NOT reject this, which
- * is exactly why the card must read as a no-op. `iron-law-compliance` has L4 as
- * its only member, so excluding itself leaves 0.
- */
-const ENABLE_NOOP_CHANGE = {
-  action: 'enable',
-  unitId: 'L4',
-  hookId: 'L4',
-  reason: '重新启用（当前已启用 —— 这是一次空操作）',
-  beforeEnabled: true,
-  beforeContent: '1. **Runtime data safety** — 用隔离的开发/测试数据存储。',
-  objectiveImpact: { objectiveId: 'iron-law-compliance', remainingMemberCount: 0 },
-} satisfies HarnessGovernanceProposalChange;
-
-/** modify → content override in the runtime store; no file path is knowable. */
-const MODIFY_CHANGE = {
-  action: 'modify',
-  unitId: 'D8',
-  hookId: 'D8',
-  reason: '保留原规则并补入终止出口门',
-  sourceVersion: 1,
-  beforeContent: '<!-- D8 -->\n\n现有球权规则。\n',
-  proposedContent: '<!-- D8 -->\n\n现有球权规则。\n\n新增终止门：每轮必须给出可验证出口。',
-  beforeCondition: null,
-} satisfies HarnessGovernanceProposalChange;
-
-/**
- * A production cycle has exactly ONE objective, and every change on the card
- * belongs to it. Hardcoding one shared `obj` made all four cards unproducible;
- * each scenario now carries the objective its unit is actually registered
- * under in docs/harness-feedback/objectives/unit-evaluation-manifest.yaml.
- */
-const SCENARIOS = [
-  {
-    id: 'add',
-    title: '新增段 D22',
-    objectiveId: 'tool-access-correct-use',
-    objectiveLabel: '工具调用正确性',
-    hint: '两个新建文件 + 注册表追加：三块应各自标注 create / create / append',
-    change: ADD_CHANGE,
-  },
-  {
-    id: 'disable',
-    title: '禁用段 D9',
-    objectiveId: 'routing-target-delivery',
-    objectiveLabel: '路由送达',
-    hint: '只写运行时 store：正文两侧应相等，且不出现任何文件路径或 “file changed”',
-    change: DISABLE_CHANGE,
-  },
-  {
-    id: 'enable-noop',
-    title: '启用段 L4（空操作）',
-    objectiveId: 'iron-law-compliance',
-    objectiveLabel: '铁律遵守',
-    hint: '当前已启用：启用状态两侧应相等，读起来就是一次空操作',
-    change: ENABLE_NOOP_CHANGE,
-  },
-  {
-    id: 'modify',
-    title: '修改段 D8',
-    objectiveId: 'turn-custody-closure',
-    objectiveLabel: '球权闭合',
-    hint: '原文应保留为上下文、只把新增段落标绿；无权威路径故不显示文件头',
-    change: MODIFY_CHANGE,
-  },
-] as const;
-
-type Scenario = (typeof SCENARIOS)[number];
-
-/**
- * Construction-time invariant. `satisfies` proves the shape, not the semantics:
- * every earlier defect here was type-valid and production-impossible. This
- * throws at module load if a change ever references an objective other than the
- * one its card claims.
- */
-function objectiveRefOf(change: HarnessGovernanceProposalChange): string | null {
-  if (change.action === 'add') return change.objectives[0]?.objectiveId ?? null;
-  if (change.action === 'enable' || change.action === 'disable') return change.objectiveImpact.objectiveId;
-  return null; // modify/rollback carry no objective reference of their own
-}
-
-for (const scenario of SCENARIOS) {
-  const ref = objectiveRefOf(scenario.change);
-  if (ref !== null && ref !== scenario.objectiveId) {
-    throw new Error(
-      `f257_fixture_objective_mismatch:${scenario.id}: card claims ${scenario.objectiveId} but change references ${ref}`,
-    );
-  }
-}
-
-function itemFor(scenario: Scenario, ordinal: number): ApprovalHubItem {
-  const { change } = scenario;
-  return {
-    proposalId: `HGP-fixture-${change.action}`,
-    sourceFeatureId: 'F257',
-    requesterCatId: 'harness-governance-worker',
-    ownerUserId: 'demo-owner',
-    resolution: 'open',
-    materialization: { state: 'not_started' },
-    summary: `Harness 治理 fixture：${change.action}`,
-    navigation: {
-      state: 'anchored',
-      originRef: { kind: 'event', anchor: 'fixture-anchor', summary: '评估结论（fixture）' },
-      approvalCardRef: { threadId: 'thread_demo_f257', messageId: 'approval_demo_f257' },
-    },
-    inlineApprovable: true,
-    decisionMode: 'approve-skip-reject',
-    createdAt: WINDOW.end,
-    detail: {
-      header: {
-        objective: {
-          id: scenario.objectiveId,
-          label: scenario.objectiveLabel,
-          statement: `Keep ${scenario.objectiveLabel} sound.`,
-        },
-        objectiveId: scenario.objectiveId,
-        currentVersion: 'v1',
-        decision: 'evolve',
-        windows: [WINDOW],
-        triggeredBy: ['counterexamples'],
-        triggerCounts: {
-          cumulative: { count: 203, threshold: 200 },
-          counterexamples: { count: 4, threshold: 3 },
-        },
-      },
-      conclusions: [
-        { id: 'metric-a', conclusion: { kind: 'count', value: 3, howCounted: '逐条核对本周期反例后，共确认 3 次。' } },
-      ],
-      metricVisuals: [{ id: 'metric-a', currentValue: 3, previousValue: 5, delta: -2, lowerIsBetter: true }],
-      hasComparisonBaseline: true,
-      governanceReason: '反例显示内容需要收紧。',
-      history: [],
-      rejectReasons: [],
-      changes: [change],
-      evidenceRefs: ['invocation-1'],
-      cardOrdinal: ordinal,
-    },
-  };
-}
+import { SCENARIOS } from './fixtures';
 
 export default function F257GovernanceCardOperationsFixtures() {
   const [openId, setOpenId] = useState<string>(SCENARIOS[0].id);
+  const active = SCENARIOS.find((scenario) => scenario.id === openId) ?? SCENARIOS[0];
 
   return (
     <main className="mx-auto min-h-dvh max-w-5xl space-y-6 p-6">
       <header className="space-y-2">
         <SettingsText as="h1" variant="base" className="font-bold">
-          F257 治理卡 · 动作与差异 fixtures
+          F257 治理 · 动作与差异 fixtures
         </SettingsText>
         <SettingsText as="p" variant="xs" tone="muted">
-          构造数据而不是等真实周期：每个场景一张卡，点开「查看差异」即可在浏览器里核对四类 artifact operation
-          的呈现是否与执行器真实行为一致。
+          构造数据而不是等真实周期。这里只渲染动作列表与差异弹窗本身，不伪装成完整审批卡——
+          周期头部、指标与结论不在本页验证范围内，也无法在不复制 registry 的前提下保持忠实。
         </SettingsText>
       </header>
 
@@ -247,22 +63,14 @@ export default function F257GovernanceCardOperationsFixtures() {
         ))}
       </nav>
 
-      {SCENARIOS.filter((scenario) => scenario.id === openId).map((scenario, index) => (
-        <section key={scenario.id} className="space-y-3" data-testid={`f257-fixture-${scenario.id}`}>
-          <SettingsText as="p" variant="xs" tone="muted">
-            预期：{scenario.hint}
-          </SettingsText>
-          <div className="rounded-2xl border border-cafe bg-[var(--console-card-bg)] p-4">
-            <GenericApprovalRecommendation
-              item={itemFor(scenario, index + 1)}
-              f193TargetThreadId=""
-              sourceThreadTitle="F257 fixture"
-              targetThreadTitle={null}
-              resolveCatName={(catId) => catId}
-            />
-          </div>
-        </section>
-      ))}
+      <section className="space-y-3" data-testid={`f257-fixture-${active.id}`}>
+        <SettingsText as="p" variant="xs" tone="muted">
+          预期：{active.hint}
+        </SettingsText>
+        <div className="rounded-2xl border border-cafe bg-[var(--console-card-bg)] p-4 text-sm">
+          <F257GovernanceChanges changes={[active.change]} />
+        </div>
+      </section>
     </main>
   );
 }
