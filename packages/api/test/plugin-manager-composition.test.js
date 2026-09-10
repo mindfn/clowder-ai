@@ -316,6 +316,7 @@ describe('F202 Plugin Manager runtime composition', () => {
   });
 
   it('routes builtin contribution packages through the Host-owned materializer and supervisor', async () => {
+    let catalogOffline = false;
     const packageManifest = manifest({
       runtime: { transport: 'builtin' },
       contributions: [
@@ -336,7 +337,11 @@ describe('F202 Plugin Manager runtime composition', () => {
       ],
     });
     const contract = contributionContractRuntime();
-    const { archive, entry, provider, runtime } = await harness({ packageManifest, contract });
+    const { archive, entry, provider, runtime } = await harness({
+      packageManifest,
+      contract,
+      offline: () => catalogOffline,
+    });
     const materializedRoot = await root('cat-cafe-f202-builtin-materialized-');
     await mkdir(join(materializedRoot, 'dist'), { recursive: true });
     await writeFile(join(materializedRoot, 'dist/entrypoint.js'), '// builtin fixture\n', 'utf8');
@@ -380,8 +385,25 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.equal(launches.length, 1);
     assert.equal(launches[0].contributionId, 'fixture-tools');
     assert.equal(launches[0].cwd, await realpath(materializedRoot));
-    assert.equal((await composition.manager.get(entry.pluginId)).plugin.live, 'running');
+    const running = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(running.live, 'running');
+    assert.deepEqual(running.capabilitySummary, [
+      { id: 'events.publish', kind: 'events', name: 'Source', active: true },
+    ]);
+
+    catalogOffline = true;
+    const degraded = await composition.manager.list();
+    assert.equal(degraded.catalog.status, 'unavailable');
+    assert.deepEqual(degraded.plugins[0].capabilitySummary, [
+      { id: 'events.publish', kind: 'events', name: 'Source', active: true },
+    ]);
+    catalogOffline = false;
+
     await composition.manager.setEnabled(entry.pluginId, { enabled: false, expectedRevision: 4 });
-    assert.equal((await composition.manager.get(entry.pluginId)).plugin.live, 'stopped');
+    const stopped = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(stopped.live, 'stopped');
+    assert.deepEqual(stopped.capabilitySummary, [
+      { id: 'events.publish', kind: 'events', name: 'Source', active: false },
+    ]);
   });
 });
