@@ -208,13 +208,49 @@ export class ManagedCommandWakeRecoverySweep {
     }
     return { scanned: undelivered.length, recovered, pending };
   }
+  private async recoverLostNonDurableCommands(tasks: DynamicTaskDef[]): Promise<ManagedCommandWakeRecoveryStats> {
+    const isRunnerActive = this.deps.isCommandRunnerActive;
+    if (!isRunnerActive) return { scanned: 0, recovered: 0, pending: 0 };
+    let recovered = 0;
+    let pending = 0;
+    const lostCandidates = tasks.flatMap((task) => {
+      const parsed = parseWakeTask(task);
+      return parsed &&
+        parsed.command.state === 'command_running' &&
+        !parsed.command.durableJob &&
+        !isRunnerActive(task.id)
+        ? [parsed]
+        : [];
+    });
+    for (const parsed of lostCandidates) {
+      const lostAt = this.now();
+      if (
+        !this.updateCommand(parsed, {
+          ...parsed.command,
+          state: 'lost',
+          lostAt,
+          lostReason: 'runtime_restart',
+        })
+      ) {
+        pending += 1;
+        continue;
+      }
+      const result = await this.recoverTask(parsed.task.id);
+      if (result === 'recovered') recovered += 1;
+      else pending += 1;
+    }
+    return { scanned: lostCandidates.length, recovered, pending };
+  }
   async runOnce(): Promise<ManagedCommandWakeRecoveryStats> {
     const tasks = this.deps.dynamicTaskStore.getAll();
     const admission = await this.recoverAdmissionFacts(tasks);
     const durable = await this.reconcileDurableGateJobs(tasks);
+    const lost = await this.recoverLostNonDurableCommands(tasks);
     let { recovered, pending } = admission;
     recovered += durable.recovered;
     pending += durable.pending;
+    recovered += lost.recovered;
+    pending += lost.pending;
 
     // F261: API restart loses the in-memory ManagedRunner, not the authorized
     // action-plane job. Reconcile durable full-gate process/receipt truth before
@@ -244,7 +280,7 @@ export class ManagedCommandWakeRecoverySweep {
     }
 
     return {
-      scanned: candidates.length + retiredTaskIds.length + admission.scanned + durable.scanned,
+      scanned: candidates.length + retiredTaskIds.length + admission.scanned + durable.scanned + lost.scanned,
       recovered,
       pending,
     };
@@ -290,6 +326,7 @@ export class ManagedCommandWakeRecoverySweep {
     let parsed = parseWakeTask(this.deps.dynamicTaskStore.getById(taskId));
     if (!parsed) return 'missing';
     parsed = recordManagedCommandWakeSlaBreach(this.deps, parsed, this.now, this.wakeSlaMs);
+    if (parsed.command.state === 'lost') return this.persistLostCommandStatus(parsed);
     if (parsed.command.state === 'condition_met') {
       const published = await this.publishCompletion(parsed);
       if (!published) return 'pending';
@@ -334,6 +371,57 @@ export class ManagedCommandWakeRecoverySweep {
 
   private async publishCompletion(parsed: ParsedManagedCommandWakeTask): Promise<boolean> {
     return publishManagedCommandWakeMessage(this.deps, parsed, this.now);
+  }
+
+  private async persistLostCommandStatus(
+    parsed: ParsedManagedCommandWakeTask,
+  ): Promise<ManagedCommandWakeRecoveryResult> {
+    const idempotencyKey = `hold-ball-lost:${parsed.task.id}`;
+    try {
+      const existing = await this.deps.messageStore.getByIdempotencyKey(parsed.userId, parsed.threadId, idempotencyKey);
+      if (!existing) {
+        const stored = await this.deps.messageStore.append({
+          from: { kind: 'system', service: 'hold-ball' },
+          userId: parsed.userId,
+          content: `等待已结束：服务重启导致命令「${parsed.command.command}」的本地执行进程丢失。`,
+          mentions: [],
+          timestamp: this.now(),
+          threadId: parsed.threadId,
+          idempotencyKey,
+          source: {
+            connector: 'hold-ball',
+            label: '持球状态',
+            icon: '🏓',
+            meta: {
+              managedHold: true,
+              phase: 'status',
+              taskId: parsed.task.id,
+              threadId: parsed.threadId,
+              catId: parsed.catId,
+              recoverySource: 'startup_sweep',
+            },
+          },
+        });
+        this.deps.socketManager.broadcastToRoom(`thread:${parsed.threadId}`, 'connector_message', {
+          threadId: parsed.threadId,
+          message: {
+            id: stored.id,
+            type: 'connector',
+            content: stored.content,
+            source: stored.source,
+            timestamp: stored.timestamp,
+          },
+        });
+      }
+      const latest = parseWakeTask(this.deps.dynamicTaskStore.getById(parsed.task.id));
+      return latest?.command.state === 'lost' ? this.consume(latest, undefined, 'failed') : 'pending';
+    } catch (err) {
+      log.warn(
+        { err, taskId: parsed.task.id, threadId: parsed.threadId },
+        'lost managed-command terminal status persistence failed — will retry',
+      );
+      return 'pending';
+    }
   }
 
   private async dispatch(parsed: ParsedManagedCommandWakeTask): Promise<ManagedCommandWakeRecoveryResult> {

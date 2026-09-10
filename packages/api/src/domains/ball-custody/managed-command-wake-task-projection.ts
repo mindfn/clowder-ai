@@ -19,6 +19,7 @@ import type { DurableManagedGateJob } from './durable-managed-gate-job.js';
 
 export type ManagedCommandWakeState =
   | 'command_running'
+  | 'lost'
   | 'condition_met'
   | 'message_written'
   | 'dispatch_pending'
@@ -51,6 +52,8 @@ export interface ManagedCommandWakeProjection {
   /** F167 Phase P: true once the admission-fact visibility message was durably appended. */
   readonly admissionFactAppended?: boolean;
   readonly conditionMetAt?: number;
+  readonly lostAt?: number;
+  readonly lostReason?: 'runtime_restart';
   readonly wakeContent?: string;
   readonly wakeSource?: 'command_completion' | 'fallback_timer';
   readonly result?: ManagedCommandTerminalResult;
@@ -84,6 +87,7 @@ export function isPlainRecord(value: unknown): value is Record<string, unknown> 
 function isManagedCommandWakeState(value: unknown): value is ManagedCommandWakeState {
   return (
     value === 'command_running' ||
+    value === 'lost' ||
     value === 'condition_met' ||
     value === 'message_written' ||
     value === 'dispatch_pending' ||

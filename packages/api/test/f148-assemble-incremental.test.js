@@ -1089,7 +1089,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
   });
 
   test('defers a parallel sibling reply without consuming it before a later directed synthesis turn', async () => {
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const deliveryCursorStore = new DeliveryCursorStore();
     const threadId = 'thread-parallel-sibling-delivery';
     const userId = 'user-parallel-sibling-delivery';
@@ -1158,7 +1158,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
   });
 
   test('does not defer explicitly directed or causally independent cat output', async () => {
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const threadId = 'thread-parallel-sibling-counterexamples';
     const userId = 'user-parallel-sibling-counterexamples';
     const source = messageStore.append({
@@ -1207,7 +1207,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
   });
 
   test('projects the complete causal reply and public output after a newer user turn targets the receiver', async () => {
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const threadId = 'thread-directed-window-regression';
     const userId = 'user-directed-window-regression';
     const fableOutput = messageStore.append({
@@ -1274,7 +1274,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
   });
 
   test('server-authored causal reply metadata, not replyTo alone, creates a directed same-route projection', async () => {
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const threadId = 'thread-directed-causal-projection';
     const userId = 'user-directed-causal-projection';
     const current = messageStore.append({
@@ -1331,7 +1331,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
   });
 
   test('emits bounded content-free message refs and filter reasons for the final projection', async () => {
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const threadId = 'thread-projection-audit';
     const userId = 'user-projection-audit';
     for (let index = 0; index < 24; index++) {

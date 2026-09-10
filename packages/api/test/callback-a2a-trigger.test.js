@@ -175,7 +175,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
     assert.equal(invocationQueue.list('t1', 'u1').length, 10);
   });
 
-  it('persists ball handoff before offering the row to Active Append', async () => {
+  it('offers the row to Active Append without reintroducing ordinary Ball custody', async () => {
     const { deps, events, appendTrigger } = setup();
     deps.ballCustody = {
       record: mock.fn(async () => {
@@ -186,7 +186,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
 
     await enqueue(deps, trigger);
 
-    assert.deepEqual(events, ['ball', 'append', 'drain']);
+    assert.deepEqual(events, ['append', 'drain']);
   });
 
   it('rejects sources that are not persisted public Agent messages', async () => {

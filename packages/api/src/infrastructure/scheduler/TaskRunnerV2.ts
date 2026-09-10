@@ -33,6 +33,8 @@ export interface TaskRunnerV2Options {
   emissionStore?: import('./EmissionStore.js').EmissionStore;
   /** Phase 4 (AC-H1): deliver message to a thread */
   deliver?: (opts: DeliverOpts) => Promise<string>;
+  /** Cancel a scheduler-owned queued message that failed before Queue admission. */
+  cancelQueuedDelivery?: (messageId: string) => Promise<boolean>;
   /** Phase 4 (AC-H2): fetch web content with browser-automation routing */
   fetchContent?: (url: string, signal?: AbortSignal) => Promise<FetchResult>;
   /** Phase 4b: invoke a cat to handle a scheduled task (fire-and-forget) */
@@ -170,6 +172,7 @@ export class TaskRunnerV2 {
   private globalControlStore: TaskRunnerV2Options['globalControlStore'];
   private emissionStore: TaskRunnerV2Options['emissionStore'];
   private deliver: TaskRunnerV2Options['deliver'];
+  private cancelQueuedDelivery: TaskRunnerV2Options['cancelQueuedDelivery'];
   private fetchContent: TaskRunnerV2Options['fetchContent'];
   private invokeTrigger: TaskRunnerV2Options['invokeTrigger'];
   private ballCustody: TaskRunnerV2Options['ballCustody'];
@@ -196,6 +199,7 @@ export class TaskRunnerV2 {
     this.globalControlStore = opts.globalControlStore;
     this.emissionStore = opts.emissionStore;
     this.deliver = opts.deliver;
+    this.cancelQueuedDelivery = opts.cancelQueuedDelivery;
     this.fetchContent = opts.fetchContent;
     this.invokeTrigger = opts.invokeTrigger;
     this.ballCustody = opts.ballCustody;
@@ -770,6 +774,7 @@ export class TaskRunnerV2 {
       isManualTrigger,
       schedule,
       deliver: this.deliver,
+      cancelQueuedDelivery: this.cancelQueuedDelivery,
       fetchContent: this.fetchContent,
       invokeTrigger: this.invokeTrigger,
       ballCustody: this.ballCustody,

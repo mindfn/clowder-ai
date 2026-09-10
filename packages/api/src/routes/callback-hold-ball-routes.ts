@@ -16,6 +16,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IBallCustodyIngest } from '../domains/ball-custody/BallCustodyIngest.js';
 import {
+  cancelDurableManagedGateJob,
   createDurableManagedGateJob,
   DURABLE_GATE_WALL_SLA_MS,
   type DurableManagedGateJob,
@@ -212,6 +213,11 @@ async function enterManagedWakeDelivery(
 /** Test-only: get the active runners map size for assertions. */
 export function getActiveRunnerCount(): number {
   return activeRunners.size;
+}
+
+/** Runtime-only liveness proof used by startup/periodic recovery. */
+export function isManagedWakeRunnerActive(taskId: string): boolean {
+  return activeRunners.has(taskId);
 }
 
 interface PreparedManagedWakeRunner {
@@ -865,6 +871,73 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     // visibility persistence) can now race only through this canonical slot.
     const preparedWakeRunner = wakeWhen ? prepareWakeWhenRunner(threadId, catIdStr, taskId) : undefined;
 
+    // The waiting History row is the durable, shared statement that this hold
+    // exists. Commit it before replacing the prior slot: if History is down,
+    // the new scheduler row is rolled back and the previous wake remains
+    // authoritative instead of silently leaving the thread with zero visible
+    // waits (or zero wake carriers).
+    const wakeAtStr = new Date(fireAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const holdMessage = wakeWhen
+      ? `等待中：${reason}\n条件：命令「${wakeWhen.command}」完成\n之后：${nextStep}`
+      : `等待中：${reason}\n预计 ${wakeAtStr} 唤醒\n之后：${nextStep}`;
+    const holdSource = {
+      ...HOLD_BALL_SOURCE,
+      meta: {
+        managedHold: true,
+        phase: 'waiting',
+        mode: wakeWhen ? 'command' : 'timer',
+        taskId,
+        threadId,
+        catId: catIdStr,
+      },
+    };
+    let storedWaitingMessage: Awaited<ReturnType<IMessageStore['append']>>;
+    try {
+      storedWaitingMessage = await messageStore.append({
+        from: { kind: 'system', service: 'hold-ball' },
+        userId: triggerUserId,
+        content: holdMessage,
+        mentions: [],
+        timestamp: Date.now(),
+        threadId,
+        idempotencyKey: `hold-ball-waiting:${taskId}`,
+        source: holdSource,
+      });
+    } catch (err) {
+      cancelManagedWakeIfTaskMatches(taskId, threadId, catIdStr);
+      taskRunner.unregister(taskId);
+      dynamicTaskStore.remove(taskId);
+      if (durableJob) {
+        cancelDurableManagedGateJob(durableJob, {
+          cancelledBy: 'hold_registration_rollback',
+          reason: 'waiting_history_append_failed',
+        });
+      }
+      log.error(
+        { threadId, catId: catIdStr, taskId, err },
+        'F167 Phase G: waiting History append failed — rolled back new hold; prior hold retained',
+      );
+      reply.status(503);
+      return { error: 'Failed to persist hold waiting state', code: 'HOLD_WAITING_HISTORY_UNAVAILABLE' };
+    }
+    try {
+      socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+        threadId,
+        message: {
+          id: storedWaitingMessage.id,
+          type: 'connector',
+          content: storedWaitingMessage.content,
+          source: holdSource,
+          timestamp: storedWaitingMessage.timestamp,
+        },
+      });
+    } catch (err) {
+      log.warn(
+        { threadId, catId: catIdStr, taskId, err },
+        'F167 Phase G: waiting History persisted but live broadcast failed',
+      );
+    }
+
     // Cancel prior pending holds (best-effort — failure here leaves an extra
     // stale wake, not zero wakes, the milder failure mode). Telemetry: F192
     // verdict 2026-06-18 routes the cancellation by `bucketWakeDelay()` to
@@ -938,50 +1011,6 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     }
 
     const newCount = incrementHoldCount(threadId, catIdStr);
-
-    // ── Visibility message — F280 cancellation window ──
-    // Post BEFORE launch to preserve F280 pre-launch cancellation fence (lines 834–837):
-    // any cancellation admitted during this await wins because launchWakeWhenRunner's
-    // IIFE checks cancellation_reserved before spawning. The message says "待启动"
-    // because the command has not yet spawned; the HTTP response carries the real pid.
-    const wakeAtStr = new Date(fireAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-    const holdMessage = wakeWhen
-      ? `等待中：${reason}\n条件：命令「${wakeWhen.command}」完成\n之后：${nextStep}`
-      : `等待中：${reason}\n预计 ${wakeAtStr} 唤醒\n之后：${nextStep}`;
-    const holdSource = {
-      ...HOLD_BALL_SOURCE,
-      meta: {
-        managedHold: true,
-        phase: 'waiting',
-        mode: wakeWhen ? 'command' : 'timer',
-        taskId,
-        threadId,
-        catId: catIdStr,
-      },
-    };
-    try {
-      const stored = await messageStore.append({
-        from: { kind: 'system', service: 'hold-ball' },
-        userId: triggerUserId,
-        content: holdMessage,
-        mentions: [],
-        timestamp: Date.now(),
-        threadId,
-        source: holdSource,
-      });
-      socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
-        threadId,
-        message: {
-          id: stored.id,
-          type: 'connector',
-          content: stored.content,
-          source: holdSource,
-          timestamp: stored.timestamp,
-        },
-      });
-    } catch (err) {
-      log.warn({ threadId, catId: catIdStr, err }, 'F167 C1: failed to post hold_ball visibility message');
-    }
 
     // ── F167 Phase P spawn admission truth: launch AFTER visibility append ──
     // F280 invariant preserved: the visibility append above is the cancellation

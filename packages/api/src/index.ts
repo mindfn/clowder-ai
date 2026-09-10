@@ -311,6 +311,7 @@ import { CallbackAuthSystemMessageNotifier } from './routes/callback-auth-system
 import {
   cancelManagedWakeIfTaskMatches,
   commitManagedWakeCancellation,
+  isManagedWakeRunnerActive,
   releaseManagedWakeCancellation,
   reserveManagedWakeCancellation,
 } from './routes/callback-hold-ball-routes.js';
@@ -1437,6 +1438,10 @@ async function main(): Promise<void> {
     globalControlStore,
     emissionStore,
     deliver: schedulerDeliver,
+    cancelQueuedDelivery: async (messageId) => {
+      const canceled = await messageStore.markCanceled(messageId);
+      return canceled?.deliveryStatus === 'canceled';
+    },
     notifyLifecycle: schedulerLifecycleToast,
     fetchContent: schedulerFetchContent,
     ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
@@ -6214,6 +6219,7 @@ async function main(): Promise<void> {
       taskRunner: taskRunnerV2,
       invocationRecordStore,
       getInvokeTrigger: () => invokeTrigger,
+      isCommandRunnerActive: isManagedWakeRunnerActive,
       ...createManagedCommandWakeCarrierAdapter({
         messageStore,
         invocationRecordStore,

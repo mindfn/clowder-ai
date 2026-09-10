@@ -155,6 +155,8 @@ export interface ManagedCommandWakeRecoveryDeps {
   readonly now?: () => number;
   readonly dispatchedCarrierGraceMs?: number;
   readonly wakeSlaMs?: number;
+  /** Process-local liveness fence: present in production, omitted by isolated consumers. */
+  readonly isCommandRunnerActive?: (taskId: string) => boolean;
 }
 
 export interface RecordManagedCommandCompletionInput {

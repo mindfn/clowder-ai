@@ -452,6 +452,40 @@ describe('TaskRunnerV2', () => {
     );
   });
 
+  it('passes queued-delivery cancellation through the scheduler execution boundary', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const canceled = [];
+    runner = new TaskRunnerV2({
+      logger: silentLogger,
+      ledger,
+      cancelQueuedDelivery: async (messageId) => {
+        canceled.push(messageId);
+        return true;
+      },
+    });
+    runner.register({
+      id: 'cancel-queued-delivery-test',
+      profile: 'awareness',
+      trigger: { type: 'interval', ms: 999999 },
+      admission: {
+        gate: async () => ({ run: true, workItems: [{ signal: 'wake', subjectKey: 'thread-1' }] }),
+      },
+      run: {
+        overlap: 'skip',
+        timeoutMs: 5_000,
+        execute: async (_signal, _subjectKey, ctx) => {
+          assert.equal(await ctx.cancelQueuedDelivery('wake-message-1'), true);
+        },
+      },
+      state: { runLedger: 'sqlite' },
+      outcome: { whenNoSignal: 'drop' },
+      enabled: () => true,
+    });
+
+    await runner.triggerNow('cancel-queued-delivery-test');
+    assert.deepEqual(canceled, ['wake-message-1']);
+  });
+
   it('restart after timeout does not leave a zombie execution beside the new runner', async () => {
     let oldRunnerIo = 0;
     const oldTask = {

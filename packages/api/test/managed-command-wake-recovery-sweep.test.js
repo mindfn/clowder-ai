@@ -99,6 +99,13 @@ function makeHarness(options = {}) {
         appended.push(stored);
         return stored;
       },
+      async markCanceled(messageId) {
+        const message = messagesById.get(messageId);
+        if (!message) return null;
+        const canceled = { ...message, deliveryStatus: 'canceled' };
+        messagesById.set(messageId, canceled);
+        return canceled;
+      },
     },
     socketManager: { broadcastToRoom() {} },
     taskRunner: { unregister: (id) => unregistered.push(id) },
@@ -124,6 +131,7 @@ function makeHarness(options = {}) {
       : {}),
     now: () => now,
     dispatchedCarrierGraceMs: 1_000,
+    ...(options.isCommandRunnerActive ? { isCommandRunnerActive: options.isCommandRunnerActive } : {}),
   };
 
   return {
@@ -918,5 +926,52 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
 
     assert.equal(firstObservedAt, 10_000);
     assert.equal(h.tasks.get(task.id).params.holdLifecycle.managedCommand.slaBreachObservedAt, firstObservedAt);
+  });
+
+  test('startup sweep terminalizes a non-durable command whose process-local runner was lost', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const h = makeHarness({ isCommandRunnerActive: () => false });
+    const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+
+    const result = await sweep.runOnce();
+
+    assert.deepEqual(result, { scanned: 1, recovered: 1, pending: 0 });
+    const task = h.tasks.get('hold-ball-task-1');
+    assert.equal(task.enabled, false);
+    assert.equal(task.params.holdLifecycle.status, 'fired');
+    assert.equal(task.params.holdLifecycle.managedCommand.state, 'consumed');
+    assert.equal(task.params.holdLifecycle.managedCommand.carrierTerminalReason, 'failed');
+    assert.equal(h.appended.length, 1);
+    assert.equal(h.appended[0].idempotencyKey, 'hold-ball-lost:hold-ball-task-1');
+    assert.equal(h.appended[0].source.meta.phase, 'status');
+    assert.match(h.appended[0].content, /服务重启/);
+  });
+
+  test('periodic sweep leaves a live process-local command runner alone', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const h = makeHarness({ isCommandRunnerActive: () => true });
+    const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+
+    assert.deepEqual(await sweep.runOnce(), { scanned: 0, recovered: 0, pending: 0 });
+    assert.equal(h.tasks.get('hold-ball-task-1').enabled, true);
+    assert.equal(h.appended.length, 0);
+  });
+
+  test('lost-command status append retries from durable lost state without duplicating History', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const h = makeHarness({
+      appendError: new Error('message plane unavailable'),
+      isCommandRunnerActive: () => false,
+    });
+    const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+
+    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
+    assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.state, 'lost');
+    assert.equal(h.tasks.get('hold-ball-task-1').enabled, true);
+
+    h.setAppendError(null);
+    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 1, pending: 0 });
+    assert.equal(h.appended.length, 1);
+    assert.equal(h.appended[0].idempotencyKey, 'hold-ball-lost:hold-ball-task-1');
   });
 });

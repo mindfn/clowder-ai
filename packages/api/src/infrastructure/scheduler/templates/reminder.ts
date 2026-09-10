@@ -105,6 +105,7 @@ export const reminderTemplate: TaskTemplate = {
             ...(managedHoldWake
               ? {
                   deliveryStatus: 'queued' as const,
+                  idempotencyKey: `hold-ball-wake:${instanceId}`,
                   source: {
                     connector: 'hold-ball',
                     label: '持球唤醒',
@@ -122,16 +123,56 @@ export const reminderTemplate: TaskTemplate = {
           });
 
           // Wake a cat to act on the trigger message
-          if (ctx.invokeTrigger) {
+          if (managedHoldWake) {
+            try {
+              if (!ctx.invokeTrigger) throw new Error('invoke trigger is unavailable');
+              const outcome = await ctx.invokeTrigger.trigger(
+                tid,
+                catId,
+                triggerUserId,
+                content,
+                messageId,
+                undefined,
+                {
+                  sourceCategory: 'scheduled',
+                  priority: 'urgent',
+                },
+              );
+              if (outcome !== 'enqueued') throw new Error(`queue admission returned ${outcome}`);
+            } catch (err) {
+              if (!ctx.cancelQueuedDelivery)
+                throw new Error('queued delivery cancellation is unavailable', { cause: err });
+              const canceled = await ctx.cancelQueuedDelivery(messageId);
+              if (!canceled) throw new Error('failed to cancel unadmitted managed-hold wake', { cause: err });
+              const detail = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+              await ctx.deliver({
+                threadId: tid,
+                userId: triggerUserId,
+                content: `等待已结束：唤醒入队失败（${detail}）`,
+                idempotencyKey: `hold-ball-wake-failed:${instanceId}`,
+                source: {
+                  connector: 'hold-ball',
+                  label: '持球状态',
+                  icon: '🏓',
+                  meta: {
+                    managedHold: true,
+                    phase: 'status',
+                    taskId: instanceId,
+                    threadId: tid,
+                    catId,
+                  },
+                },
+              });
+            }
+          } else if (ctx.invokeTrigger) {
             try {
               void Promise.resolve(
                 ctx.invokeTrigger.trigger(tid, catId, triggerUserId, content, messageId, undefined, {
                   sourceCategory: 'scheduled',
-                  ...(managedHoldWake ? { priority: 'urgent' as const } : {}),
                 }),
               ).catch(() => {});
             } catch {
-              // Best-effort: sync trigger throw should not fail the reminder
+              // Best-effort: sync trigger throw should not fail ordinary reminders.
             }
           }
         },
