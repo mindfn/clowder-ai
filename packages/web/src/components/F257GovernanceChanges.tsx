@@ -116,11 +116,7 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
                 {comparison.label}
               </h3>
               <DiffViewer
-                diff={fullContentDiff(
-                  `${String(change.unitId ?? 'unit')}.${comparison.id}`,
-                  comparison.before,
-                  comparison.after,
-                )}
+                diff={fullContentDiff(comparison.path, comparison.before, comparison.after)}
                 initialMode="split"
                 wrapLines
                 splitHeaders={{ before: '应用前', after: '应用后' }}
@@ -140,38 +136,65 @@ function GovernanceDiffDialog({ change, onClose }: { change: Record<string, unkn
 export function comparisonBlocks(change: Record<string, unknown>): Array<{
   id: string;
   label: string;
+  path: string;
   before: string;
   after: string;
 }> {
   const action = String(change.action ?? '');
   const beforeContent = stringField(change, 'beforeContent') ?? '';
-  const blocks: Array<{ id: string; label: string; before: string; after: string }> = [];
+  const blocks: Array<{ id: string; label: string; path: string; before: string; after: string }> = [];
+  const assetSlug =
+    stringField(change, 'assetSlug') ?? stringField(change, 'hookId') ?? String(change.unitId ?? 'unit');
+  const assetDir = `assets/prompt-hooks/${assetSlug}`;
 
   if (action === 'add') {
-    // operator 2026-09-10: an add produces several artifacts; show each one,
-    // not a single prose sentence.
-    blocks.push({ id: 'content', label: '段内容', before: '', after: stringField(change, 'content') ?? '' });
-    blocks.push({ id: 'manifest', label: '注入清单', before: '', after: formatManifest(asRecord(change.manifest)) });
+    // sol @ ccd01dabf (P2-C): name the files HarnessUnitDirectoryWriter really
+    // writes, and never drop manifest fields on the way to the operator.
+    const manifest = asRecord(change.manifest);
+    const template = stringField(manifest, 'template') ?? 'content.md';
     blocks.push({
-      id: 'objectives',
-      label: 'Objective 绑定',
+      id: 'content',
+      label: '段正文',
+      path: `${assetDir}/${template}`,
       before: '',
-      after: formatObjectives(asRecords(change.objectives)),
+      after: stringField(change, 'content') ?? '',
+    });
+    blocks.push({
+      id: 'manifest',
+      label: 'Hook 清单',
+      path: `${assetDir}/hook.yaml`,
+      before: '',
+      after: formatStructured(manifest),
+    });
+    blocks.push({
+      id: 'registry',
+      label: '评估单元注册表',
+      path: 'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
+      before: '',
+      after: formatStructured({
+        unitId: String(change.unitId ?? '未知段'),
+        hookId: assetSlug,
+        unitState: 'evaluable',
+        objectives: asRecords(change.objectives),
+      }),
     });
   } else if (action === 'disable' || action === 'enable') {
     // The body is NOT removed by enable/disable — only injection changes.
-    // Diffing state and body together used to paint the whole segment red.
+    // sol @ ccd01dabf (P2-B): beforeEnabled is the authoritative prior state.
+    // The executor does not reject a no-op, so an invented before-state can
+    // contradict the card; deriving both sides makes a no-op read as a no-op.
     blocks.push({
       id: 'state',
       label: '启用状态',
-      before: action === 'disable' ? '启用中，会注入' : '已停用，不注入',
-      after: action === 'disable' ? '停用后不再注入' : '启用后恢复注入',
+      path: `${assetDir}/hook.yaml → enabled`,
+      before: enablementLabel(change.beforeEnabled),
+      after: enablementLabel(action === 'enable'),
     });
-    blocks.push({ id: 'content', label: '段内容', before: beforeContent, after: beforeContent });
+    blocks.push({ id: 'content', label: '段正文', path: `${assetDir}/`, before: beforeContent, after: beforeContent });
   } else {
     const afterContent = firstStringField(change, ['proposedContent', 'targetContent']);
     if (afterContent !== undefined) {
-      blocks.push({ id: 'content', label: '段内容', before: beforeContent, after: afterContent });
+      blocks.push({ id: 'content', label: '段正文', path: `${assetDir}/`, before: beforeContent, after: afterContent });
     }
   }
 
@@ -179,35 +202,54 @@ export function comparisonBlocks(change: Record<string, unknown>): Array<{
     blocks.push({
       id: 'condition',
       label: '触发条件',
+      path: `${assetDir}/hook.yaml → condition`,
       before: formatCondition(change.beforeCondition),
       after: formatCondition(change.proposedCondition),
     });
   }
 
   if (blocks.length === 0) {
-    blocks.push({ id: 'state', label: '状态', before: '当前状态', after: '应用提议后的状态' });
+    blocks.push({ id: 'state', label: '状态', path: assetDir, before: '当前状态', after: '应用提议后的状态' });
   }
   return blocks;
 }
 
-const MANIFEST_LABELS: Record<string, string> = {
-  stage: '注入阶段',
-  order: '注入顺序',
-  sourceType: '来源类型',
-  safetyTier: '安全层级',
-  condition: '触发条件',
-};
-
-function formatManifest(manifest: Record<string, unknown>): string {
-  const rows = Object.entries(manifest)
-    .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
-    .map(([key, value]) => `${MANIFEST_LABELS[key] ?? key}：${String(value)}`);
-  return rows.length > 0 ? rows.join('\n') : '（提案未给出注入清单）';
+function enablementLabel(value: unknown): string {
+  if (typeof value !== 'boolean') return '（提案未声明当前启用状态）';
+  return value ? '启用中，会注入' : '已停用，不注入';
 }
 
-function formatObjectives(objectives: Array<Record<string, unknown>>): string {
-  const rows = objectives.map((objective) => `Objective：${String(objective.objectiveId ?? '未知')}`);
-  return rows.length > 0 ? rows.join('\n') : '（提案未绑定 Objective）';
+/**
+ * sol @ ccd01dabf (P2-C): lossless. The previous renderer dropped every
+ * object/array value, so HookManifest.inputs / .variables silently vanished
+ * from the approval diff. Structured indentation keeps it readable without
+ * falling back to raw JSON.
+ */
+function formatStructured(value: unknown, indent = 0): string {
+  const pad = '  '.repeat(indent);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `${pad}[]`;
+    return value
+      .map((item) =>
+        item !== null && typeof item === 'object'
+          ? `${pad}-\n${formatStructured(item, indent + 1)}`
+          : `${pad}- ${String(item)}`,
+      )
+      .join('\n');
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return `${pad}（空）`;
+    return entries
+      .map(([key, item]) =>
+        item !== null && typeof item === 'object'
+          ? `${pad}${key}:\n${formatStructured(item, indent + 1)}`
+          : `${pad}${key}: ${String(item)}`,
+      )
+      .join('\n');
+  }
+  if (value === null || value === undefined) return `${pad}（未给出）`;
+  return `${pad}${String(value)}`;
 }
 
 function changeImpactSummary(change: Record<string, unknown>): string | null {
@@ -252,7 +294,7 @@ function formatCondition(value: unknown): string {
   return `条件：${conditionRef}${params}`;
 }
 
-export function fullContentDiff(unitId: string, before: string, after: string): string {
+export function fullContentDiff(path: string, before: string, after: string): string {
   const beforeLines = before ? before.split('\n') : [];
   const afterLines = after ? after.split('\n') : [];
   let commonPrefix = 0;
@@ -284,9 +326,9 @@ export function fullContentDiff(unitId: string, before: string, after: string): 
   const beforeStart = beforeLines.length === 0 ? 0 : 1;
   const afterStart = afterLines.length === 0 ? 0 : 1;
   return [
-    `diff --git a/${unitId}.md b/${unitId}.md`,
-    `--- a/${unitId}.md`,
-    `+++ b/${unitId}.md`,
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
     `@@ -${beforeStart},${beforeLines.length} +${afterStart},${afterLines.length} @@`,
     ...lines,
   ].join('\n');

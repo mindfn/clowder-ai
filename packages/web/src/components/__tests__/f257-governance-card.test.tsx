@@ -267,7 +267,7 @@ describe('F257 governance card', () => {
     // operator 2026-09-10: disabling stops injection; it does not delete the body,
     // so the body must appear unchanged on both sides rather than struck through.
     expect(dialog?.textContent).toContain('current hook content');
-    expect(dialog?.textContent).toContain('停用后不再注入');
+    expect(dialog?.textContent).toContain('已停用，不注入');
     expect(dialog?.textContent).toContain('启用中，会注入');
   });
 
@@ -333,12 +333,12 @@ describe('F257 governance card', () => {
   });
 
   it('gives an add action one comparison block per produced artifact', () => {
-    expect(comparisonBlocks(ADD_CHANGE).map((block) => block.label)).toEqual(['段内容', '注入清单', 'Objective 绑定']);
+    expect(comparisonBlocks(ADD_CHANGE).map((block) => block.label)).toEqual(['段正文', 'Hook 清单', '评估单元注册表']);
   });
 
   it('does not present a disable action as deleting the segment body', () => {
     const blocks = comparisonBlocks({ unitId: 'L4', action: 'disable', beforeContent: '保留的正文' });
-    expect(blocks.map((block) => block.label)).toEqual(['启用状态', '段内容']);
+    expect(blocks.map((block) => block.label)).toEqual(['启用状态', '段正文']);
     const body = blocks.find((block) => block.id === 'content');
     expect(body?.before).toBe('保留的正文');
     expect(body?.after).toBe('保留的正文');
@@ -356,5 +356,73 @@ describe('F257 governance card', () => {
     const cell = dialog?.querySelector('[data-diff-line]');
     expect(cell?.className).toContain('whitespace-pre-wrap');
     expect(cell?.className).not.toContain('overflow-x-auto');
+  });
+
+  const FULL_ADD_CHANGE = {
+    unitId: 'D22',
+    action: 'add',
+    hookId: 'd22-termination-gate',
+    assetSlug: 'd22-termination-gate',
+    reason: '补入终止门',
+    content: '新段正文',
+    manifest: {
+      id: 'D22',
+      name: '终止门',
+      stage: 'per-turn',
+      order: 2200,
+      version: 1,
+      enabled: true,
+      template: 'content.md',
+      inputs: ['threadId'],
+      variables: [{ name: 'catId', source: 'invocation' }],
+    },
+    objectives: [{ objectiveId: 'tool-access', clauseId: 'c1' }],
+  };
+
+  // P2-C (sol @ ccd01dabf): the dialog must name the files the executor really
+  // writes, and must not silently drop object/array manifest fields.
+  it('projects an add onto the artifacts the executor actually writes', () => {
+    const blocks = comparisonBlocks(FULL_ADD_CHANGE);
+    expect(blocks.map((block) => block.path)).toEqual([
+      'assets/prompt-hooks/d22-termination-gate/content.md',
+      'assets/prompt-hooks/d22-termination-gate/hook.yaml',
+      'docs/harness-feedback/objectives/unit-evaluation-manifest.yaml',
+    ]);
+    const manifestBlock = blocks.find((block) => block.id === 'manifest');
+    expect(manifestBlock?.after).toContain('inputs:');
+    expect(manifestBlock?.after).toContain('threadId');
+    expect(manifestBlock?.after).toContain('variables:');
+    expect(manifestBlock?.after).toContain('catId');
+    const registryBlock = blocks.find((block) => block.id === 'registry');
+    expect(registryBlock?.after).toContain('d22-termination-gate');
+    expect(registryBlock?.after).toContain('tool-access');
+  });
+
+  // P2-B (sol @ ccd01dabf): beforeEnabled is authoritative; the card must not
+  // invent a before-state, and a no-op must read as a no-op.
+  it('derives the enablement before-state from beforeEnabled, including no-ops', () => {
+    const noop = comparisonBlocks({
+      unitId: 'L4',
+      action: 'enable',
+      hookId: 'l4',
+      beforeEnabled: true,
+      beforeContent: 'body',
+    });
+    const noopState = noop.find((block) => block.id === 'state');
+    expect(noopState?.before).toBe(noopState?.after);
+
+    const real = comparisonBlocks({
+      unitId: 'L4',
+      action: 'disable',
+      hookId: 'l4',
+      beforeEnabled: true,
+      beforeContent: 'body',
+    });
+    const realState = real.find((block) => block.id === 'state');
+    expect(realState?.before).toContain('启用');
+    expect(realState?.after).toContain('停用');
+
+    const unknown = comparisonBlocks({ unitId: 'L4', action: 'disable', hookId: 'l4', beforeContent: 'body' });
+    expect(unknown.find((block) => block.id === 'state')?.before).toContain('未声明');
   });
 });

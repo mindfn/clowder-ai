@@ -181,8 +181,12 @@ function SideBySideView({
 }) {
   const pairs = useMemo(() => hunks.flatMap((h) => pairLines(h.lines)), [hunks]);
 
+  // sol @ ccd01dabf (P2-A): fixed layout is part of the wrap/header opt-in.
+  // Callers that opt into neither keep the auto-layout + outer horizontal
+  // scroll contract that code diffs rely on.
+  const layout = wrapLines || headers ? 'table-fixed ' : '';
   return (
-    <table className="w-full table-fixed text-xs font-mono border-collapse">
+    <table className={`w-full ${layout}text-xs font-mono border-collapse`}>
       {headers && (
         <thead>
           <tr className="bg-[var(--ws-editor-bg)] text-cafe-muted">
