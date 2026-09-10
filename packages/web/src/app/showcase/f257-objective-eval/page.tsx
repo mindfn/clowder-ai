@@ -162,6 +162,7 @@ const evaluation: SegmentEvaluationResponse = {
         },
       },
       versionChain: [],
+      versionChainCapped: false,
     },
   ],
 };

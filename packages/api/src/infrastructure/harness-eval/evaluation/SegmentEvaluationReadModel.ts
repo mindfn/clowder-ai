@@ -28,6 +28,16 @@ type ObjectiveProjection = {
 };
 
 const MAX_INJECTION_ROWS = 100;
+/**
+ * Version-chain depth sent to the console.
+ *
+ * The chain drives the per-version cycle selector, so a short bound silently
+ * hides every cycle of the older versions once an Objective outlives it: the
+ * tree filters `cycle.segmentVersion === epoch.version`, and versions whose
+ * cycles all fell outside the window simply render as empty. Keep the bound
+ * generous and report truncation instead of dropping history in silence.
+ */
+const MAX_VERSION_CHAIN_CYCLES = 100;
 
 /** F257 S4: Console projection whose only cycle truth is CycleRecord. */
 export class SegmentEvaluationReadModel {
@@ -89,7 +99,7 @@ export class SegmentEvaluationReadModel {
   ): Promise<ObjectiveProjection> {
     const [current, history, requestedHistoryCycle, historyCount] = await Promise.all([
       this.runtime.cycles.current(input.ownerUserId, objective.id),
-      this.runtime.cycles.history(input.ownerUserId, objective.id, 8),
+      this.runtime.cycles.history(input.ownerUserId, objective.id, MAX_VERSION_CHAIN_CYCLES),
       input.cycleId ? this.runtime.cycles.historyCycle(input.ownerUserId, objective.id, input.cycleId) : null,
       this.runtime.cycles.historyCount(input.ownerUserId, objective.id),
     ]);
@@ -216,6 +226,7 @@ export class SegmentEvaluationReadModel {
         latestEvaluation: latestEvaluationView(selectedEvaluated),
         latestGovernance: latestGovernanceView(selectedGoverned, selectedSummary?.governanceImpact ?? null),
         versionChain,
+        versionChainCapped: historyCount > history.length,
       },
     };
   }

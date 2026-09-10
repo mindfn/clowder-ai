@@ -169,6 +169,7 @@ function evaluationFor(selected: SegmentCycleSummary): SegmentEvaluationResponse
             }
           : null,
         versionChain: [prior, current],
+        versionChainCapped: false,
       },
     ],
   };

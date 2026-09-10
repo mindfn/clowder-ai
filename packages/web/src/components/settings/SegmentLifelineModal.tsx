@@ -30,6 +30,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   const [evaluation, setEvaluation] = useState<SegmentEvaluationResponse | null>(null);
   const [cycles, setCycles] = useState<SegmentCycleSummary[]>([]);
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
+  const [cyclesCapped, setCyclesCapped] = useState(false);
   const [evaluationLoading, setEvaluationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
@@ -57,6 +58,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       setLifeline(next);
       setCycles([]);
       setCurrentCycleId(null);
+      setCyclesCapped(false);
       selectionInitializedRef.current = false;
       setSelected({ version: next.activeVersion, stage: 'tracing' });
     } catch {
@@ -139,6 +141,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
         if (objective) {
           setCycles(objective.versionChain);
           setCurrentCycleId(objective.currentCycle?.cycleId ?? null);
+          setCyclesCapped(objective.versionChainCapped);
           if (!selectionInitializedRef.current) {
             const defaultCycle = objective.currentCycle ?? objective.versionChain.at(-1) ?? null;
             selectionInitializedRef.current = true;
@@ -241,6 +244,11 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                 selected={selected}
                 onSelect={handleSelect}
               />
+              {cyclesCapped && (
+                <SettingsText as="p" variant="xs" tone="muted">
+                  更早的周期超出本次投影范围，未在版本线上展示。
+                </SettingsText>
+              )}
               {selectedEpoch && selected?.stage === 'version' && (
                 <VersionContentPreview
                   segmentId={segmentId}

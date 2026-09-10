@@ -144,6 +144,7 @@ const EVALUATION: SegmentEvaluationResponse = {
         impact: CURRENT_CYCLE.governanceImpact,
       },
       versionChain: [CURRENT_CYCLE],
+      versionChainCapped: false,
     },
   ],
 };

@@ -636,6 +636,73 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(currentView.tracing.trigger.objective.lastClosedAtMs, 240);
   });
 
+  test('projects every cycle of an older version instead of truncating the chain to the newest few', async () => {
+    // Regression: the chain drives the per-version cycle selector, and the tree
+    // filters `cycle.segmentVersion === epoch.version`. A short projection made
+    // every cycle of the older versions render as an empty version node, which
+    // reads as "the data is gone" instead of "the chain was cut".
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    for (let index = 0; index < 12; index++) {
+      await seedHistory(redis, {
+        ...currentCycle(),
+        cycleId: `cycle-h${String(index).padStart(2, '0')}`,
+        version: index < 6 ? 'S13@1' : 'S13@2',
+        versionContentRef: index < 6 ? 'hook:S13@1' : 'hook:S13@2',
+        cycleStart: index,
+        closedAt: index + 1,
+      });
+    }
+    await seedCurrent(redis, currentCycle({ cycleStart: 100 }));
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+    const objective = view.objectives[0];
+
+    assert.equal(objective.versionChain.length, 13, '12 history cycles plus the live cycle');
+    assert.equal(
+      objective.versionChain.filter((cycle) => cycle.segmentVersion === 1).length,
+      6,
+      'the oldest version keeps all of its cycles',
+    );
+    assert.deepEqual(
+      objective.versionChain.map((cycle) => cycle.ordinal),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      'ordinals stay chronological across the whole chain',
+    );
+    assert.equal(objective.versionChainCapped, false, 'nothing was withheld');
+  });
+
+  test('reports truncation instead of silently dropping cycles beyond the projection bound', async () => {
+    const redis = new FakeRedis();
+    const { runtime } = runtimeFor(redis, []);
+    for (let index = 0; index < 105; index++) {
+      await seedHistory(redis, {
+        ...currentCycle(),
+        cycleId: `cycle-h${String(index).padStart(3, '0')}`,
+        cycleStart: index,
+        closedAt: index + 1,
+      });
+    }
+    await seedCurrent(redis, currentCycle({ cycleStart: 200 }));
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+    const objective = view.objectives[0];
+
+    assert.equal(objective.versionChain.length, 101, '100 projected history cycles plus the live cycle');
+    assert.equal(objective.versionChainCapped, true, 'the operator is told the chain was cut');
+    assert.equal(objective.versionChain[0].ordinal, 6, 'ordinals still count from the true cycle total');
+  });
+
   test('resolves explicit version windows and rejects partial coordinates', () => {
     assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
     assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);
