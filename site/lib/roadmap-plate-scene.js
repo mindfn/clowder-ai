@@ -413,6 +413,11 @@
     }));
     const ANIM_FPS = 7; // frames per second for multi-frame poses
     const CAT_GAP = 132; // cats keep this much room; three of them pacing will otherwise merge
+    // A pose is a different drawing, so swapping it in one paint makes a cat appear to pop from
+    // one silhouette into another. Keep that hand-off short: it reads as a natural shift of
+    // weight, rather than an opaque dissolve or a second cat standing beside the first.
+    const ACTION_CROSSFADE = 0.22;
+    const poseState = CAT_IDS.map(() => null);
 
     function pickIdle() {
       let r = idleRng() * IDLE_TOTAL;
@@ -459,6 +464,50 @@
     }
 
     const smooth = (t) => t * t * (3 - 2 * t);
+
+    // The atlas deliberately holds only the poses the story uses. Give those stills a little
+    // life in the renderer, anchored at their paws: breathing comes from scaleY above the feet;
+    // grooming, looking, yawning and stretching get a restrained weight shift. This is not a
+    // substitute for limb animation (walk has real frames), only the connective tissue between
+    // the generated action drawings.
+    function motionFor(pose, time, i) {
+      const phase = time + i * 1.7;
+      if (pose === 'groom')
+        return {
+          x: Math.sin(phase * 3.2) * 0.8,
+          y: Math.cos(phase * 6.4) * -0.7,
+          r: Math.sin(phase * 3.2) * 0.035,
+          sy: 1,
+        };
+      if (pose === 'yawn')
+        return { x: 0, y: Math.sin(phase * 2.4) * -0.9, r: -0.045 + Math.sin(phase * 2.4) * 0.018, sy: 1 };
+      if (pose === 'stretch')
+        return { x: Math.sin(phase * 1.4) * 0.7, y: 0, r: Math.sin(phase * 1.4) * 0.018, sy: 1.025 };
+      if (pose === 'look-up' || pose === 'look-down') return { x: 0, y: 0, r: Math.sin(phase * 1.5) * 0.018, sy: 1 };
+      return { x: 0, y: 0, r: 0, sy: 1 };
+    }
+
+    function transitionFor(i, next, live) {
+      if (!live) return [{ ...next, alpha: 1 }];
+      const prior = poseState[i];
+      if (!prior) {
+        poseState[i] = { to: next, from: null, started: live.time };
+        return [{ ...next, alpha: 1 }];
+      }
+      if (prior.to.pose !== next.pose) poseState[i] = { to: next, from: prior.to, started: live.time };
+      else prior.to = next;
+      const state = poseState[i];
+      const k = Math.max(0, Math.min(1, (live.time - state.started) / ACTION_CROSSFADE));
+      if (!state.from || k >= 1) {
+        state.from = null;
+        return [{ ...next, alpha: 1 }];
+      }
+      const ease = smooth(k);
+      return [
+        { ...state.from, alpha: 1 - ease },
+        { ...next, alpha: ease },
+      ];
+    }
     function camera(p) {
       let i = 0;
       while (i < KEYS.length - 2 && p > KEYS[i + 1].p) i += 1;
@@ -576,42 +625,49 @@
           ({ pose, dir } = catPose(p, i));
           x = catX(p, i);
         }
-        const cat = catSprite(i, pose);
-        if (!cat) return;
-        // Multi-frame poses cycle on their own clock; single-frame ones just hold.
-        const cel =
-          live && cat.frames.length > 1
-            ? cat.frames[Math.floor(live.time * ANIM_FPS + i) % cat.frames.length]
-            : cat.frames[0];
-        // Breathing: a slow rise and fall anchored at the feet, deeper when asleep. Costs no
-        // frames and is most of the difference between a placed sprite and a cat.
-        const rest = pose === 'sleep' || pose === 'curl' || pose === 'loaf';
-        const breath = live ? Math.sin(live.time * (rest ? 1.1 : 1.9) + i * 2.1) * (rest ? 0.016 : 0.008) : 0;
-        // Walking is still one drawing, but a step rhythm under it stops it from sliding.
-        const bob = live && pose === 'walk' ? Math.abs(Math.sin(live.time * 4.4 + i * 1.7)) * -1.6 : 0;
-        view.save();
-        view.translate(x, GROUND + bob);
-        view.scale(1, 1 + breath);
-        view.translate(0, -cat.h);
-        // Profile sprites are drawn facing left; mirror to turn one toward what it is looking at.
-        if (dir > 0 && PROFILE.has(cat.pose)) {
-          view.translate(cat.w, 0);
-          view.scale(-1, 1);
-        }
-        view.drawImage(cel.canvas, 0, 0, cat.w, cat.h);
-        if (cel.tail && live) {
-          // A tail is never still: a small swing about its root, faster when the cat is walking.
-          const swing = Math.sin(live.time * (pose === 'walk' ? 4.4 : 1.6) + i * 1.7) * (pose === 'walk' ? 0.09 : 0.05);
+        for (const stage of transitionFor(i, { pose, dir, x }, live)) {
+          const cat = catSprite(i, stage.pose);
+          if (!cat) continue;
+          // Multi-frame poses cycle on their own clock; single-frame ones just hold.
+          const cel =
+            live && cat.frames.length > 1
+              ? cat.frames[Math.floor(live.time * ANIM_FPS + i) % cat.frames.length]
+              : cat.frames[0];
+          // Breathing: a slow rise and fall anchored at the feet, deeper when asleep. Costs no
+          // frames and is most of the difference between a placed sprite and a cat.
+          const rest = stage.pose === 'sleep' || stage.pose === 'curl' || stage.pose === 'loaf';
+          const breath = live ? Math.sin(live.time * (rest ? 1.1 : 1.9) + i * 2.1) * (rest ? 0.016 : 0.008) : 0;
+          // Walking has real leg frames; its step rhythm keeps those frames from sliding.
+          const bob = live && stage.pose === 'walk' ? Math.abs(Math.sin(live.time * 4.4 + i * 1.7)) * -1.6 : 0;
+          const motion = live ? motionFor(stage.pose, live.time, i) : motionFor(stage.pose, 0, i);
           view.save();
-          view.translate(cel.tail.x, cel.tail.y);
-          view.rotate(swing);
-          view.translate(-cel.tail.x, -cel.tail.y);
-          view.drawImage(cel.tail.canvas, 0, 0, cat.w, cat.h);
+          view.globalAlpha *= stage.alpha;
+          view.translate(stage.x + motion.x, GROUND + bob + motion.y);
+          view.rotate(motion.r);
+          view.scale(1, (1 + breath) * motion.sy);
+          view.translate(0, -cat.h);
+          // Profile sprites are drawn facing left; mirror to turn one toward what it is looking at.
+          if (stage.dir > 0 && PROFILE.has(cat.pose)) {
+            view.translate(cat.w, 0);
+            view.scale(-1, 1);
+          }
+          view.drawImage(cel.canvas, 0, 0, cat.w, cat.h);
+          if (cel.tail && live) {
+            // A tail is never still: a small swing about its root, faster when the cat is walking.
+            const swing =
+              Math.sin(live.time * (stage.pose === 'walk' ? 4.4 : 1.6) + i * 1.7) *
+              (stage.pose === 'walk' ? 0.09 : 0.05);
+            view.save();
+            view.translate(cel.tail.x, cel.tail.y);
+            view.rotate(swing);
+            view.translate(-cel.tail.x, -cel.tail.y);
+            view.drawImage(cel.tail.canvas, 0, 0, cat.w, cat.h);
+            view.restore();
+          } else if (cel.tail) {
+            view.drawImage(cel.tail.canvas, 0, 0, cat.w, cat.h);
+          }
           view.restore();
-        } else if (cel.tail) {
-          view.drawImage(cel.tail.canvas, 0, 0, cat.w, cat.h);
         }
-        view.restore();
       });
       if (annotate) annotate(view, cam);
       view.setTransform(dpr, 0, 0, dpr, 0, 0);

@@ -309,4 +309,19 @@ describe('plate study opens straight off disk', () => {
       'cats must load before the scene that rasterises them',
     );
   });
+
+  it('softens action changes and gives held poses restrained renderer motion', () => {
+    const scene = read('lib/roadmap-plate-scene.js');
+    assert.match(scene, /const ACTION_CROSSFADE = 0\.22/, 'pose changes need a brief crossfade');
+    assert.match(scene, /function transitionFor\(i, next, live\)/, 'pose state needs a transition model');
+    assert.match(scene, /function motionFor\(pose, time, i\)/, 'held poses need an action-specific motion model');
+    for (const pose of ['groom', 'yawn', 'stretch', 'look-up', 'look-down']) {
+      assert.match(scene, new RegExp(`pose === '${pose}'`), `${pose} needs connective motion`);
+    }
+    assert.match(
+      scene,
+      /for \(const stage of transitionFor\(i, \{ pose, dir, x \}, live\)\)/,
+      'renderer must draw both sides of an action hand-off',
+    );
+  });
 });
