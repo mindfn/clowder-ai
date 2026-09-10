@@ -25,8 +25,10 @@ function SettingsShellInner() {
   if (standalone) {
     return (
       <div className="flex h-full flex-col bg-[var(--console-panel-bg)]">
-        <div className="m-3 flex flex-1 flex-col overflow-y-auto rounded-[18px] bg-[var(--console-shell-bg)] px-5 py-6 shadow-[var(--console-shadow-soft)] md:px-9 md:py-8">
-          <div className="space-y-5">
+        <div
+          className={`m-3 flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--console-shell-bg)] px-5 py-6 shadow-[var(--console-shadow-soft)] md:px-9 md:py-8 ${activeSection === 'plugins' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        >
+          <div className={activeSection === 'plugins' ? 'flex min-h-0 flex-1 flex-col gap-5' : 'space-y-5'}>
             <SettingsContent section={activeSection} initialEditCatId={initialEditCatId} />
           </div>
         </div>
@@ -48,8 +50,13 @@ function SettingsShellInner() {
         </div>
       </aside>
 
-      <div className="min-w-0 flex-1 overflow-y-auto" data-trajectory-origin-scroll>
-        <div className="space-y-5 px-5 py-5 md:px-8 md:py-7">
+      <div
+        className={`min-w-0 flex-1 ${activeSection === 'plugins' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        data-trajectory-origin-scroll
+      >
+        <div
+          className={`${activeSection === 'plugins' ? 'flex h-full min-h-0 flex-col gap-5' : 'space-y-5'} px-5 py-5 md:px-8 md:py-7`}
+        >
           <SettingsContent section={activeSection} initialEditCatId={initialEditCatId} />
         </div>
       </div>

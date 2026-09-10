@@ -1176,15 +1176,47 @@ export {
   personMemoryProposalPreflightBudgetSchema,
   personMemoryProposalPreflightIssueSchema,
 } from './person-memory-preflight.js';
-// Plugin Framework types (F202 声明式插件注册)
 export type {
   PluginConfigField,
+  PluginDescription,
   PluginHealthCheck,
+  PluginIconSpec,
   PluginInfo,
+  PluginLocalizedText,
+  PluginManagerActions,
+  PluginManagerArtifactState,
+  PluginManagerAuthState,
+  PluginManagerCapability,
+  PluginManagerCapabilityKind,
+  PluginManagerCatalogProjection,
+  PluginManagerConfigField,
+  PluginManagerConfigFieldKind,
+  PluginManagerConfigOption,
+  PluginManagerConfigState,
+  PluginManagerConfigureRequest,
+  PluginManagerDetail,
+  PluginManagerDetailResponse,
+  PluginManagerDiagnostic,
+  PluginManagerDocumentationResponse,
+  PluginManagerInstallRequest,
+  PluginManagerIntentState,
+  PluginManagerListItem,
+  PluginManagerListResponse,
+  PluginManagerLiveState,
+  PluginManagerPackageSource,
+  PluginManagerPublicOperation,
+  PluginManagerSetEnabledRequest,
+  PluginManagerUninstallRequest,
   PluginManifest,
   PluginResourceDef,
   PluginResourceStatus,
   PluginStatus,
+} from './plugin.js';
+// Plugin Framework + terminal Manager types (F202)
+export {
+  PLUGIN_MANAGER_PUBLIC_OPERATIONS,
+  pluginDescriptionVariants,
+  resolvePluginDescription,
 } from './plugin.js';
 export {
   DEFERRED_PERSON_MEMORY_CLERK_DISPOSITIONS,
