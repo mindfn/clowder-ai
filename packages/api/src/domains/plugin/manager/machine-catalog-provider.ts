@@ -1,7 +1,7 @@
 import type { PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability } from '@clowder-ai/plugin-contract';
-import type { OfficialPluginCatalogEntry, OfficialPluginOwnerAuth } from './official-catalog.js';
-import type { OfficialPluginCatalogProvider, OfficialPluginCatalogSnapshot } from './official-catalog-provider.js';
+import type { OfficialPluginCatalogEntry, OfficialPluginOwnerAuth } from '../official-catalog.js';
+import type { OfficialPluginCatalogProvider, OfficialPluginCatalogSnapshot } from '../official-catalog-provider.js';
 
 export const OFFICIAL_PLUGIN_CATALOG_URL =
   'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json';

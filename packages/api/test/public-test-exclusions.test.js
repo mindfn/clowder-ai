@@ -13,6 +13,7 @@ const RECONCILED_EXCLUSIONS = [
   'redis-',
   'session-strategy-phase3',
   'workflow-sop-store',
+  'codex-agent-service',
   'kimi-agent-service',
   'test/memory/',
   'thread-wiring\\.test',

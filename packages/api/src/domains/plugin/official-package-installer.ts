@@ -7,6 +7,10 @@ import { FilesystemVerifiedPluginPackageLocator, type VerifiedPluginPackage } fr
 import type { PluginManifestValidator } from './external-runtime/package-staging.js';
 import type { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import { type PackageAdmissionCandidate, PluginInventoryError } from './host-inventory/types.js';
+import type {
+  PluginPackageQuarantineFailureCode,
+  PluginPackageQuarantineRecorder,
+} from './manager/plugin-package-quarantine.js';
 import {
   bundledManifestDigest,
   COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
@@ -26,10 +30,6 @@ import {
   verifyPluginPackageDigest,
 } from './official-package-archive.js';
 import { OfficialPluginInstallError } from './official-package-errors.js';
-import type {
-  PluginPackageQuarantineFailureCode,
-  PluginPackageQuarantineRecorder,
-} from './plugin-package-quarantine.js';
 
 export interface OfficialPluginPackageInstallerOptions {
   readonly inventory: HostInventoryControlPlane;

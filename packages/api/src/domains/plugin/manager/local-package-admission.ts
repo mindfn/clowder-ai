@@ -5,12 +5,12 @@ import { type FileHandle, lstat, mkdir, mkdtemp, open, readdir, rm, writeFile } 
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { Capability, PluginManifest, SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
-import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
-import type { PluginManifestValidator } from './external-runtime/package-staging.js';
-import type { VerifiedPluginPackage } from './external-runtime/types.js';
-import type { HostInventoryControlPlane } from './host-inventory/control-plane.js';
-import { PluginInventoryError } from './host-inventory/types.js';
-import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from './official-package-archive.js';
+import { FilesystemVerifiedPluginPackageLocator } from '../external-runtime/filesystem-package-locator.js';
+import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
+import type { VerifiedPluginPackage } from '../external-runtime/types.js';
+import type { HostInventoryControlPlane } from '../host-inventory/control-plane.js';
+import { PluginInventoryError } from '../host-inventory/types.js';
+import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from '../official-package-archive.js';
 import type {
   PluginPackageQuarantineFailureCode,
   PluginPackageQuarantineRecorder,

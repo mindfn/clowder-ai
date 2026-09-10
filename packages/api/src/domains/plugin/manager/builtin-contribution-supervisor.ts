@@ -7,13 +7,13 @@ import {
   StdioClientTransport,
   type StdioServerParameters,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { PluginInventoryStore, PluginInventoryTransaction } from './host-inventory/ports.js';
+import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type {
   PluginGrantRecord,
   PluginInstanceRecord,
   PluginPackageRecord,
   RuntimeState,
-} from './host-inventory/types.js';
+} from '../host-inventory/types.js';
 
 const DEFAULT_START_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 60_000;
