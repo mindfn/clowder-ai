@@ -275,6 +275,48 @@ describe('F280 4b — bot interaction turns', () => {
     );
   });
 
+  // Outcome-level companion to the guard above, and the reason the guard alone is not enough.
+  // A round deleted by a bad tie-break leaves no trace on any user-facing surface: no timeout
+  // ever arrives, so the owner simply never learns the second request went unanswered. An
+  // assertion on `botTurns` proves the fold kept the right round in state; only this one proves
+  // the owner hears about it. Written this way the test survives the state shape changing.
+  test('A29 outcome: the owner is told about the round that survived the same-second tie', async () => {
+    const sameSecond = '2026-09-02T09:40:00Z';
+    const secondRoundOpenedAt = Date.parse(sameSecond);
+    let now = TRIGGER_MS + 1_000;
+    const harness = await createHarness({ when: AUTHOR_SUBSCRIPTION, now: () => now });
+    await harness.poll({ conversation: [triggerComment()] });
+
+    now = secondRoundOpenedAt + 1_000;
+    await harness.poll({
+      conversation: [triggerComment(), triggerComment({ id: 30, created_at: sameSecond })],
+      reviews: [
+        {
+          id: 31,
+          state: 'COMMENTED',
+          body: 'Round one verdict.',
+          submitted_at: sameSecond,
+          // The answer must carry the commit it is about, or commit affinity refuses the close
+          // outright and the tie-break is never reached — see the note on this test.
+          commit_id: HEAD,
+          user: { login: BOT, type: 'Bot' },
+        },
+      ],
+    });
+    const deliveredBeforeTimeout = harness.delivered().length;
+
+    now = secondRoundOpenedAt + BOT_TURN_TIMEOUT_MS;
+    await harness.poll();
+
+    const afterTimeout = harness.delivered().slice(deliveredBeforeTimeout);
+    assert.equal(afterTimeout.length, 1, 'the surviving round must report its timeout exactly once');
+    assert.match(
+      afterTimeout[0],
+      /never answered the request in comment #30/,
+      'the timeout must name the NEW round; naming #21 means the tie-break kept the answered one',
+    );
+  });
+
   // A28 lower-level control: an observation without review-turn authority cannot retire an open
   // round. The production CI-with-events regression below proves that authority is not inferred
   // merely from the presence of an events array.
