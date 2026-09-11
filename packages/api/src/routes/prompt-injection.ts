@@ -30,7 +30,7 @@ import {
 import { RICH_BLOCK_SHORT } from '../domains/cats/services/context/rich-block-rules.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import { resolveUserId } from '../utils/request-identity.js';
-import { getHookManifest, getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
+import { getHookManifest, getHookVariableDefs, readSegmentSource } from './prompt-injection-hooks.js';
 
 /**
  * Session-only auth for write operations — reads sessionUserId directly
@@ -120,7 +120,7 @@ export interface PromptInjectionRoutesOptions {
   overrideStore?: HookOverrideStore;
 }
 
-// ── Dynamic segment metadata (derived from TEMPLATE_FILES registry) ──
+// ── Segment metadata (TEMPLATE_FILES entries + hook-registry segments) ──
 
 interface SegmentMeta {
   allowLocalOverride: boolean;
@@ -138,29 +138,34 @@ const KNOWN_PREVIEW_VARS: Record<string, string> = {
   CC_MENTION: '@co-creator',
 };
 
-/** Derive segment meta dynamically from TEMPLATE_FILES registry (all 49 segments) */
+/**
+ * Derive segment meta for a Console segment. TEMPLATE_FILES entries keep their
+ * overlay semantics; a segment known only to the shared hook registry (a
+ * governance-added unit) derives everything from its manifest and template, so
+ * content / preview / version validation work without a restart.
+ */
 function resolveSegmentMeta(id: string): SegmentMeta | null {
   const fileInfo = getTemplateFileInfo(id);
-  if (!fileInfo) return null;
-  const ext: 'yaml' | 'md' = fileInfo.base.endsWith('.yaml') ? 'yaml' : 'md';
-  const raw = getTemplateRawContent(id, false);
+  // F257 Console 判据⑥: safety constraints come from the hook manifest so the
+  // enablement matrix is authoritative; the registry is the reload-aware one.
+  const manifest = getHookManifest(id);
+  if (!fileInfo && !manifest) return null;
+  const templateRef = fileInfo?.base ?? manifest?.template ?? '';
+  const ext: 'yaml' | 'md' = templateRef.endsWith('.yaml') ? 'yaml' : 'md';
+  const raw = readSegmentSource(id, false);
   const vars: string[] = [];
   if (raw) {
     for (const m of raw.matchAll(/\{\{(\w+)\}\}/g)) {
       if (!vars.includes(m[1])) vars.push(m[1]);
     }
   }
-  // Canonical variable definitions come from the hook manifest registry first,
-  // then fall back to the TEMPLATE_FILES registry for non-hook template-backed segments.
-  const variableDefs = getHookVariableDefs(id) ?? (fileInfo.variables || []);
-  // F257 Console 判据⑥: pull safety constraints from the hook manifest registry
-  // so the enablement matrix is authoritative. Use the on-demand registry rather
-  // than the lazy pipeline cache, which may be uninitialized at startup.
-  const manifest = getHookManifest(id);
+  // Canonical variable definitions come from the hook manifest first, then
+  // fall back to the TEMPLATE_FILES registry for non-hook template-backed segments.
+  const variableDefs = getHookVariableDefs(id) ?? (fileInfo?.variables || []);
   return {
-    allowLocalOverride: !!fileInfo.local,
+    allowLocalOverride: !!fileInfo?.local,
     ext,
-    templateRef: fileInfo.base,
+    templateRef,
     vars,
     variableDefs,
     safetyTier: manifest?.safetyTier ?? 'readonly',
@@ -237,19 +242,15 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
     }
     const { id } = request.params;
     const meta = resolveSegmentMeta(id);
-
-    // Hook segments (H1-H3): read source script file directly
     if (!meta) {
-      const hookResult = await resolveHookContent(id);
-      if (hookResult) return hookResult;
       reply.status(404);
       return { error: `Segment ${id} is not template-backed` };
     }
 
     const status = getOverrideStatus(id);
     const hasLocalOverlay = status?.hasOverride ?? false;
-    const content = getTemplateRawContent(id, true);
-    const baseContent = hasLocalOverlay ? getTemplateRawContent(id, false) : content;
+    const content = readSegmentSource(id, true);
+    const baseContent = hasLocalOverlay ? readSegmentSource(id, false) : content;
     const overlayPath = getTemplateOverlayPath(id);
     const hasBackup = overlayPath ? existsSync(`${overlayPath}.bak`) : false;
 

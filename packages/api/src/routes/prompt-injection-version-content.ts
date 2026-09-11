@@ -1,6 +1,5 @@
 import YAML from 'yaml';
-import { getTemplateRawContent } from '../domains/cats/services/context/prompt-template-loader.js';
-import { getHookManifest } from './prompt-injection-hooks.js';
+import { getHookManifest, readSegmentSource } from './prompt-injection-hooks.js';
 
 function sourcePlaceholders(content: string): Set<string> {
   return new Set([...content.matchAll(/\{\{(\w+)\}\}/g)].map((match) => match[1]));
@@ -10,7 +9,7 @@ function sourcePlaceholders(content: string): Set<string> {
 export function validateCanonicalVersionContent(hookId: string, content: string): string | null {
   if (!content.trim()) return 'content must not be empty';
   const manifest = getHookManifest(hookId);
-  const canonical = getTemplateRawContent(hookId, false);
+  const canonical = readSegmentSource(hookId, false);
   if (!manifest || canonical === null) return `Canonical template source unavailable for segment ${hookId}`;
   const present = sourcePlaceholders(content);
   const missing = [...sourcePlaceholders(canonical)].filter((name) => !present.has(name));
