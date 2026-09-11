@@ -1967,6 +1967,11 @@ export class QueueProcessor {
     return this.deps.queue.hasPendingForCat(threadId, catId, { userId });
   }
 
+  /** Process-local proof that an execute coroutine still owns this cat slot. */
+  hasProcessingSlotReservation(threadId: string, catId: string): boolean {
+    return this.processingSlots.has(QueueProcessor.slotKey(threadId, catId));
+  }
+
   /** #555: Cat-specific busy check — covers processingSlots + queue entries for this cat. */
   isCatBusy(threadId: string, catId: string): boolean {
     const reservation = this.processingSlots.get(QueueProcessor.slotKey(threadId, catId));

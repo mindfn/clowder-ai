@@ -488,7 +488,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     // A QueueProcessor execute promise must retain its reservation until its
     // finally path records the cancellation and drains the next row. Releasing
     // it here makes that completion stale and strands following Queue work.
-    if (!invocationQueue.findProcessingByCat(threadId, catId)) {
+    if (!queueProcessor.hasProcessingSlotReservation(threadId, catId)) {
       queueProcessor.releaseSlot(threadId, catId);
     }
   };
@@ -935,7 +935,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       if (Date.now() - record.updatedAt <= DEFAULT_PRESTART_RESERVATION_TTL_MS) continue;
       const repairTargets = (record.targetCats as string[]).filter(
         (catId) =>
-          invocationTracker.getSlotState?.(threadId, catId) !== 'canceled' &&
+          invocationTracker.getSlotState(threadId, catId) !== 'canceled' &&
           !invocationTracker.has(threadId, catId) &&
           !ownerExecutionTargets.has(`${record.id}\u0000${catId}`),
       );

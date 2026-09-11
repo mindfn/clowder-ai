@@ -89,6 +89,7 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.values.length = 0;
     for (const waiter of this.waiters.splice(0)) waiter({ value: undefined, done: true });
   }
 
@@ -274,6 +275,28 @@ export class ClaudeSdkAgentService implements AgentService {
     let releaseDispatch: (() => void) | undefined;
     let active = true;
     let dispatcherRegistered = false;
+    let outstandingTurnInputs = 0;
+    let activeDispatches = 0;
+    let terminalWaitingForDispatch = false;
+
+    const pushTurnInput = (message: SDKUserMessage): boolean => {
+      const accepted = input.push(message);
+      if (accepted) {
+        outstandingTurnInputs += 1;
+        terminalWaitingForDispatch = false;
+      }
+      return accepted;
+    };
+
+    const closeAfterTerminalIfIdle = (): boolean => {
+      if (!terminalWaitingForDispatch || outstandingTurnInputs !== 0 || activeDispatches !== 0) return false;
+      // Close acceptance before leaving the provider iterator. This makes an
+      // Append concurrent with Query.return() reject instead of being accepted
+      // into a turn whose output nobody will consume.
+      active = false;
+      input.close();
+      return true;
+    };
 
     const registerDispatcher = () => {
       if (dispatcherRegistered || !options?.activeRunDispatch || !options.invocationId || !activeSessionId) return;
@@ -296,15 +319,19 @@ export class ClaudeSdkAgentService implements AgentService {
           if (!active || !query) return { accepted: false, reason: 'active_run_closed' };
           const text = appendLocalImagePathHints(dispatchInput.text.trim(), dispatchInput.imagePaths ?? []);
           if (!text) return { accepted: false, reason: 'invalid_input' };
+          activeDispatches += 1;
           try {
             if (dispatchOptions.force) {
               await withActiveRunControlDeadline(query.interrupt(), this.activeRunControlTimeoutMs);
             }
-            const accepted = input.push(createSdkUserMessage(text, activeSessionId));
+            const accepted = pushTurnInput(createSdkUserMessage(text, activeSessionId));
             return accepted ? { accepted: true, handle } : { accepted: false, reason: 'active_run_closed' };
           } catch (err) {
             log.warn({ err, invocationId }, 'Claude SDK active-run dispatch rejected');
             return { accepted: false, reason: 'provider_rejected' };
+          } finally {
+            activeDispatches -= 1;
+            closeAfterTerminalIfIdle();
           }
         },
       });
@@ -313,7 +340,7 @@ export class ClaudeSdkAgentService implements AgentService {
 
     try {
       query = this.queryFn({ prompt: input, options: sdkOptions });
-      input.push(createSdkUserMessage(preparedRequest.message.body, activeSessionId, initialMessageId));
+      pushTurnInput(createSdkUserMessage(preparedRequest.message.body, activeSessionId, initialMessageId));
       for await (const event of query as AsyncIterable<SDKMessage>) {
         const raw = event as unknown as Record<string, unknown>;
         const isResultTerminal = raw.type === 'result';
@@ -323,6 +350,8 @@ export class ClaudeSdkAgentService implements AgentService {
           registerDispatcher();
         }
         if (isResultTerminal) {
+          outstandingTurnInputs = Math.max(0, outstandingTurnInputs - 1);
+          terminalWaitingForDispatch = outstandingTurnInputs === 0;
           metadata.usage = extractClaudeUsage(raw);
           if (streamState.lastTurnInputTokens != null && metadata.usage) {
             metadata.usage.lastTurnInputTokens = streamState.lastTurnInputTokens;
@@ -334,10 +363,11 @@ export class ClaudeSdkAgentService implements AgentService {
             yield { ...message, metadata };
           }
         }
-        // A streaming-input query deliberately keeps its prompt iterator open
-        // for Append/Steer. The SDK's result event, not input EOF, is the turn
-        // terminal; waiting for another provider event deadlocks completion.
-        if (isResultTerminal) break;
+        // A streaming-input query may carry multiple accepted turns. Close at
+        // the result for the final accepted input, but keep consuming when an
+        // Append/Steer already promised another result to the caller. Breaking
+        // performs AsyncIteratorClose (Query.return), terminating the SDK query.
+        if (isResultTerminal && closeAfterTerminalIfIdle()) break;
       }
     } catch (err) {
       if (!abortController.signal.aborted) {

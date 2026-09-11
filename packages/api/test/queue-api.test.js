@@ -46,6 +46,9 @@ function buildDeps(overrides = {}) {
   let deps;
   const queueProcessor = {
     canReleaseSlotForUser: mock.fn(() => true),
+    hasProcessingSlotReservation: mock.fn((threadId, catId) =>
+      Boolean(invocationQueue.findProcessingByCat(threadId, catId)),
+    ),
     processNext: mock.fn(async () => ({ started: false })),
     releaseSlot: mock.fn(() => {}),
     releaseThread: mock.fn(() => {}),

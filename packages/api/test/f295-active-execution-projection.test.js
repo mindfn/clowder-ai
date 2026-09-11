@@ -121,6 +121,9 @@ function buildDeps() {
     getExecutionId(threadId, catId) {
       return executions.get(`${threadId}:${catId}`)?.executionId;
     },
+    getSlotState(threadId, catId) {
+      return executions.has(`${threadId}:${catId}`) ? 'active' : 'absent';
+    },
     getActiveSlots(threadId) {
       return [...executions.entries()]
         .filter(([key]) => key.startsWith(`${threadId}:`))
@@ -171,6 +174,9 @@ function buildDeps() {
     },
     queueProcessor: {
       canReleaseSlotForUser: mock.fn(() => true),
+      hasProcessingSlotReservation: mock.fn((threadId, catId) =>
+        Boolean(invocationQueue.findProcessingByCat(threadId, catId)),
+      ),
       retirePrestartProcessingGroup: mock.fn(async () => 'retired'),
       processNext: mock.fn(async () => ({ started: false })),
       isPaused: mock.fn(() => false),

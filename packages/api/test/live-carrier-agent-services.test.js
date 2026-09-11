@@ -186,6 +186,149 @@ describe('live member carriers', () => {
     assert.equal(registration.released, true);
   });
 
+  it('Claude SDK consumes the response for an Append accepted before the current result terminal', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: () => ({
+        interrupt: async () => {},
+        [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+      }),
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-append-result-race' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    assert.deepEqual(
+      await registration.dispatcher.dispatch(
+        { text: 'accepted follow-up' },
+        { expectedInvocationId: registration.invocationId, force: false },
+      ),
+      {
+        accepted: true,
+        handle: {
+          provider: 'anthropic',
+          carrier: 'claude_agent_sdk',
+          threadId: 'sdk-append-result-race',
+          turnId: registration.dispatcher.handle.turnId,
+        },
+      },
+    );
+
+    const secondTurnOutput = output.next();
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-append-result-race',
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    events.push({
+      type: 'assistant',
+      session_id: 'sdk-append-result-race',
+      message: { id: 'second-turn', content: [{ type: 'text', text: 'follow-up response' }] },
+    });
+    const secondTurn = await secondTurnOutput;
+    assert.equal(secondTurn.value.type, 'text');
+    assert.equal(secondTurn.value.content, 'follow-up response');
+
+    const terminal = output.next();
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-append-result-race',
+      usage: { input_tokens: 12, output_tokens: 3 },
+    });
+    assert.equal((await terminal).value.type, 'done');
+    assert.equal(registration.released, true);
+  });
+
+  it('Claude SDK keeps the stream open while an explicit Steer is awaiting its interrupt receipt', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    let interruptStarted;
+    const started = new Promise((resolve) => {
+      interruptStarted = resolve;
+    });
+    let releaseInterrupt;
+    const interrupted = new Promise((resolve) => {
+      releaseInterrupt = resolve;
+    });
+    let resultObserved;
+    const observed = new Promise((resolve) => {
+      resultObserved = resolve;
+    });
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: () => ({
+        interrupt: async () => {
+          interruptStarted();
+          await interrupted;
+        },
+        [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+      }),
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-steer-result-race' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    const dispatch = registration.dispatcher.dispatch(
+      { text: 'interrupt and follow up' },
+      { expectedInvocationId: registration.invocationId, force: true },
+    );
+    await started;
+    const secondTurnOutput = output.next();
+    events.push({
+      get type() {
+        resultObserved();
+        return 'result';
+      },
+      subtype: 'success',
+      session_id: 'sdk-steer-result-race',
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    await observed;
+    releaseInterrupt();
+    assert.equal((await dispatch).accepted, true);
+
+    events.push({
+      type: 'assistant',
+      session_id: 'sdk-steer-result-race',
+      message: { id: 'steered-turn', content: [{ type: 'text', text: 'steered response' }] },
+    });
+    assert.equal((await secondTurnOutput).value.content, 'steered response');
+
+    const terminal = output.next();
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-steer-result-race',
+      usage: { input_tokens: 12, output_tokens: 3 },
+    });
+    assert.equal((await terminal).value.type, 'done');
+    assert.equal(registration.released, true);
+  });
+
   it('Claude SDK injects the invocation MCP map through the native SDK option', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cat-cafe-claude-sdk-mcp-'));
     mkdirSync(join(root, '.cat-cafe'));
