@@ -3484,6 +3484,9 @@ async function main(): Promise<void> {
           const { HarnessUnitDirectoryWriter } = await import(
             './infrastructure/harness-eval/governance/HarnessUnitDirectoryWriter.js'
           );
+          const { reloadEvaluationCatalog } = await import(
+            './infrastructure/harness-eval/evaluation/evaluation-catalog.js'
+          );
           const executor = new HarnessGovernanceExecutor({
             catalog: objectiveEvaluationRuntime.catalog,
             overrideStore: hookOverrideStore,
@@ -3495,6 +3498,15 @@ async function main(): Promise<void> {
             reloadPipeline: async () => {
               resetPipelineSingleton();
               await refreshOverrideSnapshot();
+              // Memory follows disk for the catalog too: a governance `add`
+              // appended to unit-evaluation-manifest.yaml, and every reader
+              // holds this one catalog object (F257, D22 2026-09-11).
+              const reloaded = await reloadEvaluationCatalog(objectiveEvaluationRuntime.catalog, repoRoot);
+              if (!reloaded.ok) {
+                app.log.warn(
+                  `[api] F257: evaluation catalog reload failed (previous snapshot kept): ${reloaded.error}`,
+                );
+              }
             },
             resolveObjectiveVersion: (objectiveId, state) =>
               objectiveEvaluationRuntime.resolveVersion(objectiveId, state),

@@ -29,6 +29,27 @@ export async function loadEvaluationCatalog(
   return { ok: true, catalog: { registry: registry.registry, manifest: manifest.manifest } };
 }
 
+/**
+ * Refresh a live catalog from disk in place. The catalog object is the
+ * process-wide holder shared by every constructor-injected reader (runtime,
+ * executor, describer, read models): its identity never changes, only its
+ * snapshot does. Called from the governance `reloadPipeline` seam so that a
+ * write to `unit-evaluation-manifest.yaml` / `registry.yaml` is observed the
+ * same way a hook directory write is observed through `resetPipelineSingleton`
+ * — memory follows disk, no reader keeps a startup snapshot. A failed load
+ * keeps the previous snapshot and reports the error (fail-closed).
+ */
+export async function reloadEvaluationCatalog(
+  catalog: EvaluationCatalog,
+  projectRoot: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const loaded = await loadEvaluationCatalog(projectRoot);
+  if (!loaded.ok) return loaded;
+  catalog.registry = loaded.catalog.registry;
+  catalog.manifest = loaded.catalog.manifest;
+  return { ok: true };
+}
+
 export function findMetricDefinition(
   catalog: EvaluationCatalog,
   objectiveId: string,
