@@ -390,12 +390,39 @@ baseline: snapshot.baseline,        // 当前最大值
 
 **"加一个事件类型要改 5 处、必然忘掉第 6 处"——这就是"改漏改"的结构原因。**
 
+#### 3.1b 第二个缺陷：同一前沿存了两份（2026-09 补记）
+
+上面那条是**匹配层**的。实现过程中暴露出**存储层**还有一条，独立存在、独立致命：
+
+同一个前沿在状态里有两份拷贝——
+
+| 前沿 | 采集器侧 | baseline 侧 |
+|---|---|---|
+| inline 评论 | `review.lastInlineCommentCursor` | `await.baseline.review.inlineCommentCursor` |
+| conversation 评论 | `review.lastConversationCommentCursor` | `await.baseline.review.conversationCommentCursor` |
+| decision | `review.lastDecisionCursor` | `await.baseline.review.decisionCursor` |
+| CI | `ci.lastFingerprint` / `lastBucket` | `await.baseline.ci.fingerprint` / `.bucket` |
+| conflict | `conflict.*` | `await.baseline.conflict.mergeState` |
+
+两份、不同写者、**每次续期靠手工三方合并对齐**（`previous ∪ facts ∪ collector`）。
+
+这解释了为什么"续期"这个动作反复丢字段：`prAuthorLogin` 被重建掉、开着的 bot 回合被丢、
+inline 前沿只读采集器游标。**它们不是五个 bug，是同一个手工合并漏了五次。**
+
+关键时序：双份拷贝本身是既有的，但**一次性等待永不重建 baseline**，所以它一直无害。
+是"自动续期"让每一轮都要踩一次手工合并，才把它变成了活跃缺陷。
+
+所以 §3.2 那句"**每个来源一条游标**"不是风格偏好，是这条缺陷的正解：
+一份拷贝、一个写者、原地推进，手工合并这个动作本身就不存在了。
+
 ### 3.2 目标设计
 
 ```
-拉取
+拉取                                          ← 可并发、可批量跨 subject
   → 归一化：所有来源产出同一形状
       Event { type, id, source, author, self, botTurn? }
+  → 入队：同一 subject 的一次观察 = 一批        ← 抓取可以并发，写入必须单点
+  ═══ 以下按 subject 串行，一批是一个原子单元 ═══
   → 订阅过滤   e.type ∈ subscription
   → 已见过滤   e.id > frontier[e.source]     ← 每个来源一条游标，天然互不吞噬
   → 受众过滤   audience(role, prAuthor, e)      ← 只在这一处
@@ -405,6 +432,23 @@ baseline: snapshot.baseline,        // 当前最大值
   → 投递到注册 thread
   → 推进 frontier[e.source] + 回合状态         ← 与投递成对，不可能只做一半
 ```
+
+**为什么有"入队"这一行。** 拉取并发不是缺陷，共享状态被多个写者并发修改才是。
+四个轮询器各有节奏、各自命中 GitHub，这没问题；它们**各自往同一份状态里写**才是
+"改漏改"在运行期的版本。入队把两者拆开：抓取该并发就并发，状态推进单点串行。
+
+这一行带三条硬约束，少一条都不成立：
+
+- **同一 subject 的批次 FIFO**：后产生的批不得先于先产生的批被消费。frontier 只退不进
+  的前提是消费顺序与观察顺序一致。
+- **一批是一个原子单元**：批内事件不得被拆散或与别批交错。回合重放（§3.2 下文的
+  `botTurns`）是**批内**性质——同秒的 close 必须先于 open，拆散批就等于把这条规则删了。
+- **注册不入队**：注册是同步契约（§4 A45 的原子拒绝、409/422/503 即期返回、响应带
+  installed task）。它与消费端是两个写者，所以注册路径的 revision 围栏必须留在原地。
+  队列只收观察与投递，不收注册。
+
+队列本身**不需要持久化**：frontier 才是真相，而"投递落库后才推进 frontier"意味着
+崩溃重启后从原 frontier 重拉即可。队列是排序设施，不是账本。
 
 **订阅是数据，不是代码。** 新增事件类型 = 归一化表加一行，不是 matcher 加一个 `case`。
 
