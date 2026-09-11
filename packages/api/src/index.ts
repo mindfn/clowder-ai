@@ -3226,9 +3226,9 @@ async function main(): Promise<void> {
           dispositionService: pawFeelDispositionService,
         })
       : undefined;
-  // F257 fork: local artifact publisher (replaces GitPublisher for durable local verdicts)
-  const { createLocalArtifactPublisher } = await import(
-    './infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js'
+  // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators
+  const { createGitWorktreePublisher } = await import(
+    './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
   );
   const verdictRepoFullName =
     process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
@@ -4005,10 +4005,54 @@ async function main(): Promise<void> {
     const trimmed = login?.trim();
     return trimmed ? trimmed : null;
   };
+  const fetchPrReviewThreads = async (
+    repo: string,
+    pr: number,
+    reviewThreadIds: readonly string[],
+  ): Promise<readonly import('@cat-cafe/shared').GitHubReviewThreadBaseline[]> => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    const query =
+      'query($id:ID!){node(id:$id){... on PullRequestReviewThread{id isResolved pullRequest{number repository{nameWithOwner}} comments(last:1){nodes{id}}}}}';
+    return Promise.all(
+      reviewThreadIds.map(async (reviewThreadId) => {
+        const { stdout } = await execFileAsync(
+          'gh',
+          ['api', 'graphql', '-f', `query=${query}`, '-F', `id=${reviewThreadId}`],
+          getGitHubExecOptions(15_000),
+        );
+        const node = (
+          JSON.parse(stdout) as {
+            data?: {
+              node?: {
+                id?: string;
+                isResolved?: boolean;
+                pullRequest?: { number?: number; repository?: { nameWithOwner?: string } };
+                comments?: { nodes?: Array<{ id?: string }> };
+              };
+            };
+          }
+        ).data?.node;
+        if (
+          !node?.id ||
+          node.pullRequest?.number !== pr ||
+          node.pullRequest.repository?.nameWithOwner?.toLowerCase() !== repo.toLowerCase()
+        ) {
+          throw new Error(`Review thread ${reviewThreadId} does not belong to ${repo}#${pr}`);
+        }
+        return {
+          reviewThreadId: node.id,
+          resolved: node.isResolved === true,
+          lastCommentId: node.comments?.nodes?.at(-1)?.id ?? null,
+        };
+      }),
+    );
+  };
   const fetchPrWaitBaseline = async (
     repoFullName: string,
     prNumber: number,
-    identity?: { readonly invocationId?: string; readonly isSelfLogin?: (login: string) => boolean | undefined },
+    when: readonly import('@cat-cafe/shared').GitHubPrWaitPredicate[],
   ) => {
     const [{ readGitHubWaitBaseline }, { fetchPaginated }] = await Promise.all([
       import('./domains/github-signals/GitHubWaitBaselineReader.js'),
@@ -4018,7 +4062,7 @@ async function main(): Promise<void> {
     const { promisify } = await import('node:util');
     const execFileAsync = promisify(execFile);
     return readGitHubWaitBaseline(
-      { repoFullName, prNumber, ...identity },
+      { repoFullName, prNumber, when },
       {
         fetchCi: (repo, pr) => fetchPrCiStatus(repo, pr, app.log, { ghToken: getGitHubToken() }),
         fetchInlineComments: (repo, pr) =>
@@ -4029,24 +4073,12 @@ async function main(): Promise<void> {
         fetchMergeState: async (repo, pr) => {
           const { stdout } = await execFileAsync(
             'gh',
-            ['pr', 'view', String(pr), '-R', repo, '--json', 'mergeable,mergeStateStatus'],
+            ['pr', 'view', String(pr), '-R', repo, '--json', 'mergeable', '--jq', '.mergeable'],
             getGitHubExecOptions(15_000),
           );
-          const data = JSON.parse(stdout) as { mergeable?: string; mergeStateStatus?: string };
-          return {
-            mergeState: data.mergeable ?? 'UNKNOWN',
-            mergeStateStatus: data.mergeStateStatus ?? 'UNKNOWN',
-          };
+          return stdout.trim() || 'UNKNOWN';
         },
-        fetchAuthorLogin: fetchPrAuthorLogin,
-        // F177: the coverage verifier is what makes a freshly-summoned round provable in the
-        // same turn. It was orphaned when the typed predicate left the public surface.
-        verifyBotTriggerCoverage: async (coverageInput) => {
-          const { verifyPrReviewEventWaitCoverage } = await import(
-            './infrastructure/github/pr-review-event-wait-coverage.js'
-          );
-          return verifyPrReviewEventWaitCoverage(coverageInput, { ghToken: getGitHubToken() });
-        },
+        fetchReviewThreads: fetchPrReviewThreads,
       },
     );
   };
@@ -6556,7 +6588,6 @@ async function main(): Promise<void> {
       deliveryDeps,
       eventLog: waitEventLog,
       log: app.log,
-      selfGitHubLogin: () => selfLoginResolver.getCurrent(),
     });
     waitLifecycleHolder.current = waitLifecycle;
     const [{ PrWaitMigrationService }, { IssueWaitMigrationService }, { WaitLifecycleRecoverySweep }] =
