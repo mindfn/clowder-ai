@@ -25,6 +25,8 @@ export interface InvocationTrackerLike {
   has(threadId: string, catId?: string): boolean;
   getUserId(threadId: string, catId: string): string | null;
   getExecutionId?(threadId: string, catId: string): string | undefined;
+  /** Canceled tombstones remain observable while provider teardown commits its durable terminal. */
+  getSlotState?(threadId: string, catId: string): 'active' | 'canceled' | 'absent';
   cancel(
     threadId: string,
     catId: string,

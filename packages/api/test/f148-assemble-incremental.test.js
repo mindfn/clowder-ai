@@ -1088,6 +1088,36 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
     assert.ok(directHandoff.contextText.includes('opus first-pass answer'));
   });
 
+  test('does not repeat the current direct user request as a co-creator baton', async () => {
+    const messageStore = adaptMessageStore(new MessageStore());
+    const threadId = 'thread-direct-current-request';
+    const userId = 'user-direct-current-request';
+    const current = messageStore.append(
+      canonicalTestMessageInput({
+        userId,
+        catId: null,
+        content: '@opus inspect this exact request',
+        mentions: ['opus'],
+        timestamp: 1,
+        threadId,
+      }),
+    );
+
+    const result = await assembleIncrementalContext(
+      buildDeps(messageStore, new DeliveryCursorStore()),
+      userId,
+      threadId,
+      'opus',
+      current.id,
+      'play',
+      { contextProjection: coldProjection('serial') },
+    );
+
+    assert.ok(result.contextText.includes(current.content));
+    assert.ok(!result.contextText.includes('传球: co-creator'));
+    assert.ok(!result.contextText.includes(`原文: "${current.content}"`));
+  });
+
   test('defers a parallel sibling reply without consuming it before a later directed synthesis turn', async () => {
     const messageStore = adaptMessageStore(new MessageStore());
     const deliveryCursorStore = new DeliveryCursorStore();

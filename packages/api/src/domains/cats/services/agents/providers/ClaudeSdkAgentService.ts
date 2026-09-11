@@ -316,22 +316,28 @@ export class ClaudeSdkAgentService implements AgentService {
       input.push(createSdkUserMessage(preparedRequest.message.body, activeSessionId, initialMessageId));
       for await (const event of query as AsyncIterable<SDKMessage>) {
         const raw = event as unknown as Record<string, unknown>;
+        const isResultTerminal = raw.type === 'result';
         if (typeof raw.session_id === 'string' && raw.session_id) {
           activeSessionId = raw.session_id;
           metadata.sessionId = raw.session_id;
           registerDispatcher();
         }
-        if (raw.type === 'result') {
+        if (isResultTerminal) {
           metadata.usage = extractClaudeUsage(raw);
           if (streamState.lastTurnInputTokens != null && metadata.usage) {
             metadata.usage.lastTurnInputTokens = streamState.lastTurnInputTokens;
           }
         }
         const transformed = transformClaudeEvent(event, this.catId, streamState);
-        if (!transformed) continue;
-        for (const message of Array.isArray(transformed) ? transformed : [transformed]) {
-          yield { ...message, metadata };
+        if (transformed) {
+          for (const message of Array.isArray(transformed) ? transformed : [transformed]) {
+            yield { ...message, metadata };
+          }
         }
+        // A streaming-input query deliberately keeps its prompt iterator open
+        // for Append/Steer. The SDK's result event, not input EOF, is the turn
+        // terminal; waiting for another provider event deadlocks completion.
+        if (isResultTerminal) break;
       }
     } catch (err) {
       if (!abortController.signal.aborted) {

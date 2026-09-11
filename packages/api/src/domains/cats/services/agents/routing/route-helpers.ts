@@ -1839,7 +1839,14 @@ async function assembleIncrementalContextInternal(
   const batonCandidates = unseen.filter(
     (m) => messageFrom(m).kind !== 'system' && m.origin !== 'briefing' && canViewMessage(m, viewer),
   );
-  const baton = extractBatonContext(batonCandidates, catId);
+  const extractedBaton = extractBatonContext(batonCandidates, catId);
+  // The current direct request is already rendered verbatim in the delta. It
+  // is not a prior handoff and repeating it as co-creator→cat navigation adds
+  // duplicate instructions. Keep genuine cat handoffs and older provenance.
+  const baton =
+    extractedBaton?.fromSpeaker === 'user' && extractedBaton.fromMessageId === currentUserMessageId
+      ? null
+      : extractedBaton;
   let activeTasks: import('./navigation-context.js').TaskSummary[] = [];
   let allThreadTasks: import('./artifact-tracking.js').ArtifactExtractionInput['prTasks'] = [];
   if (deps.taskStore) {

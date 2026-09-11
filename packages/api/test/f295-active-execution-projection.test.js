@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import Fastify from 'fastify';
-import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -430,6 +430,37 @@ describe('F295 active execution projection', () => {
     assert.equal(deps._executions.get('thread-b:kimi').executionId, 'inv-b');
   });
 
+  it('keeps a canceled Queue execution reservation until its completion drains the next row', async () => {
+    const queued = deps.invocationQueue.enqueueDurableNow(
+      canonicalTestQueueInput({
+        threadId: 'thread-a',
+        userId: USER_ID,
+        kind: 'conversation_input',
+        content: 'currently executing',
+        source: 'user',
+        sourceId: 'f295-cancel-reservation',
+        targetCats: ['kimi'],
+        intent: 'execute',
+      }),
+    );
+    assert.equal(queued.outcome, 'enqueued');
+    const processing = await deps.invocationQueue.markProcessingDurable('thread-a', USER_ID, {
+      entryId: queued.entry.id,
+      targetCats: ['kimi'],
+    });
+    assert.ok(processing);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/threads/thread-a/executions/live/inv-a/cancel',
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'kimi' },
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(deps.queueProcessor.releaseSlot.mock.calls.length, 0);
+  });
+
   it('surfaces a scheduler-owned command as occupancy instead of hiding the busy cat slot', async () => {
     // Reported downstream: the console filters executions by the viewing user, so a
     // scheduler round holding the cat slot vanished and Queue looked idle while new
@@ -824,6 +855,48 @@ describe('F295 active execution projection', () => {
       false,
       'a record terminalized by read-repair must not remain projected as running',
     );
+  });
+
+  it('does not rewrite a just-canceled tracker tombstone as execution_owner_lost', async () => {
+    await app.close();
+    deps._executions.clear();
+    const record = {
+      id: 'inv-cancel-teardown',
+      threadId: 'thread-a',
+      userId: USER_ID,
+      userMessageId: null,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      status: 'running',
+      idempotencyKey: 'cancel-teardown-record',
+      actionLeaseCarrier: { kind: 'none' },
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 60_000,
+    };
+    deps.invocationTracker.getSlotState = mock.fn(() => 'canceled');
+    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.invocationRecordStore = {
+      listRunningByThread: mock.fn(async () => [record]),
+      get: mock.fn(async (id) => (id === record.id ? record : null)),
+      update: mock.fn(async (_id, update) => {
+        Object.assign(record, update, { updatedAt: Date.now() });
+        return record;
+      }),
+    };
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: true }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const projection = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+
+    assert.equal(projection.statusCode, 200, projection.body);
+    assert.equal(record.status, 'running', 'provider teardown still owns the canonical canceled terminal');
+    assert.equal(deps.invocationRecordStore.update.mock.calls.length, 0);
   });
 
   it('never mutates a stale running record while process-owner truth is incomplete', async () => {

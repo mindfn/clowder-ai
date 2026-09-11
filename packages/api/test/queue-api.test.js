@@ -1784,6 +1784,30 @@ describe('Queue Management API', () => {
     assert.equal(doneCalls[0].arguments[0].catId, 'opus');
   });
 
+  it('POST /cancel/:catId leaves an executing Queue reservation for normal completion to drain', async () => {
+    await enqueueDurableEntry(deps.invocationQueue, { content: 'currently executing' });
+    await markHeadProcessing(deps.invocationQueue);
+    deps.invocationTracker.has = mock.fn(() => true);
+    deps.invocationTracker.cancel = mock.fn(() => ({
+      cancelled: true,
+      catIds: ['opus'],
+      executionIds: ['inv-active'],
+    }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/threads/t1/cancel/opus',
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(
+      deps.queueProcessor.releaseSlot.mock.calls.length,
+      0,
+      'the canceled execute promise still owns retirement and the following Queue drain',
+    );
+  });
+
   it('POST /cancel/:catId returns 404 when cat is not active (AC-B9)', async () => {
     deps.invocationTracker.has = mock.fn(() => false);
 

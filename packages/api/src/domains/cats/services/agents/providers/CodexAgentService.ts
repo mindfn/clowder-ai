@@ -1943,7 +1943,10 @@ export class CodexAgentService implements AgentService {
               thread: options?.sessionId
                 ? { kind: 'resume' as const, threadId: options.sessionId }
                 : { kind: 'start' as const },
-              model: cliModel,
+              // Custom models are already selected by the app-server launch
+              // config (`model=...`). Repeating them in thread/start forces a
+              // built-in metadata lookup and emits a false fallback warning.
+              ...(!customBaseUrl && cliModel ? { model: cliModel } : {}),
               ...(options?.workingDirectory ? { cwd: options.workingDirectory } : {}),
               sandbox: sandboxMode,
               approvalPolicy,

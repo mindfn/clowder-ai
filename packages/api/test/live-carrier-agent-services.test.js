@@ -146,6 +146,46 @@ describe('live member carriers', () => {
     assert.equal(failure.error, 'error: provider initialization failed');
   });
 
+  it('Claude SDK closes a streaming-input query when the provider emits its result terminal', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: () => ({
+        interrupt: async () => {},
+        [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+      }),
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const firstPending = output.next();
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-result-terminal' });
+    assert.equal((await firstPending).value.type, 'session_init');
+
+    const terminal = output.next();
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-result-terminal',
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    const settled = await Promise.race([
+      terminal,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('SDK result did not close the invocation')), 500)),
+    ]);
+
+    assert.equal(settled.value.type, 'done');
+    assert.equal(registration.released, true);
+  });
+
   it('Claude SDK injects the invocation MCP map through the native SDK option', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cat-cafe-claude-sdk-mcp-'));
     mkdirSync(join(root, '.cat-cafe'));

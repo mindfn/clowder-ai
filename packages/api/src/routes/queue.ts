@@ -484,6 +484,14 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     }
     return result;
   };
+  const releaseSlotUnlessExecutionOwnsRetirement = (threadId: string, catId: string): void => {
+    // A QueueProcessor execute promise must retain its reservation until its
+    // finally path records the cancellation and drains the next row. Releasing
+    // it here makes that completion stale and strands following Queue work.
+    if (!invocationQueue.findProcessingByCat(threadId, catId)) {
+      queueProcessor.releaseSlot(threadId, catId);
+    }
+  };
 
   const preemptSteerTarget = async (
     threadId: string,
@@ -751,7 +759,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       for (const message of buildCancelMessages({ ...cancelResult, catIds: [input.catId] })) {
         socketManager.broadcastAgentMessage(message, input.threadId);
       }
-      queueProcessor.releaseSlot(input.threadId, input.catId);
+      releaseSlotUnlessExecutionOwnsRetirement(input.threadId, input.catId);
     }
     return { cancelled: cancelResult.cancelled };
   };
@@ -926,7 +934,10 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     for (const record of runningRecords) {
       if (Date.now() - record.updatedAt <= DEFAULT_PRESTART_RESERVATION_TTL_MS) continue;
       const repairTargets = (record.targetCats as string[]).filter(
-        (catId) => !invocationTracker.has(threadId, catId) && !ownerExecutionTargets.has(`${record.id}\u0000${catId}`),
+        (catId) =>
+          invocationTracker.getSlotState?.(threadId, catId) !== 'canceled' &&
+          !invocationTracker.has(threadId, catId) &&
+          !ownerExecutionTargets.has(`${record.id}\u0000${catId}`),
       );
       if (repairTargets.length === 0) continue;
       try {
@@ -1989,7 +2000,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         for (const m of buildCancelMessages(scopedResult)) {
           socketManager.broadcastAgentMessage(m, threadId);
         }
-        queueProcessor.releaseSlot(threadId, catId);
+        releaseSlotUnlessExecutionOwnsRetirement(threadId, catId);
       }
 
       return { ok: true, cancelled: cancelResult.cancelled };
