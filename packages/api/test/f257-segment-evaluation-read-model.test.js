@@ -147,6 +147,12 @@ const catalog = {
         unitState: 'evaluable',
         objectives: [{ objectiveId: 'tool-access' }],
       },
+      {
+        unitId: 'C1',
+        hookId: 'c1-doc',
+        unitState: 'evaluable',
+        objectives: [{ objectiveId: 'tool-access' }],
+      },
     ],
   },
 };
@@ -701,6 +707,61 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(objective.versionChain.length, 101, '100 projected history cycles plus the live cycle');
     assert.equal(objective.versionChainCapped, true, 'the operator is told the chain was cut');
     assert.equal(objective.versionChain[0].ordinal, 6, 'ordinals still count from the true cycle total');
+  });
+
+  test('shows a sibling segment counterexample rather than claiming the cycle has none', async () => {
+    // Regression: C1 and S13 share one Objective, and the trigger counts
+    // counterexamples per Objective. The list used to be narrowed to the
+    // requested segment, so C1 rendered "no counterexample in this cycle"
+    // directly under a counter that already read 2/3 and had fired.
+    const redis = new FakeRedis();
+    const { annotations, runtime } = runtimeFor(redis, [episode(1, 150), episode(2, 250)]);
+    await seedCurrent(redis, currentCycle());
+    await annotations.append(annotation(1, 150, 'incident-a'));
+    await annotations.append(annotation(2, 250, 'incident-b'));
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'C1',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.equal(
+      view.tracing.trigger.objective.counterexamples.count,
+      2,
+      'the trigger counts both counterexamples of the shared Objective',
+    );
+    assert.equal(
+      view.tracing.structuredCounterexamples.length,
+      view.tracing.trigger.objective.counterexamples.count,
+      'the list never disagrees with the counter above it',
+    );
+    assert.deepEqual(
+      view.tracing.structuredCounterexamples.map((row) => row.segmentIds),
+      [['S13'], ['S13']],
+      'each row states the segment it is attributed to',
+    );
+  });
+
+  test('keeps the counter and the list on one filter when the segment owns the counterexample', async () => {
+    const redis = new FakeRedis();
+    const { annotations, runtime } = runtimeFor(redis, [episode(1, 150)]);
+    await seedCurrent(redis, currentCycle());
+    await annotations.append(annotation(1, 150, 'incident-a'));
+    // Low confidence never reaches the trigger, so it must not reach the list.
+    await annotations.append({ ...annotation(2, 200, 'incident-low'), confidence: 0.4 });
+
+    const view = await new SegmentEvaluationReadModel(runtime, () => 300).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 300,
+    });
+
+    assert.equal(view.tracing.trigger.objective.counterexamples.count, 1);
+    assert.equal(view.tracing.structuredCounterexamples.length, 1, 'the list applies the same confidence gate');
+    assert.deepEqual(view.tracing.structuredCounterexamples[0].segmentIds, ['S13']);
   });
 
   test('resolves explicit version windows and rejects partial coordinates', () => {
