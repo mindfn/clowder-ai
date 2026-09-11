@@ -23,7 +23,6 @@ import {
   getOverrideStatus,
   getTemplateFileInfo,
   getTemplateOverlayPath,
-  getTemplateRawContent,
   renderTemplate,
   stripComments,
 } from '../domains/cats/services/context/prompt-template-loader.js';
