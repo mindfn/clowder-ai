@@ -481,6 +481,11 @@ export class CodexAppServerClient {
         if (mapped) yield mapped;
         if (record?.method === 'turn/completed') {
           activeRunDispatchOpen = false;
+          // A provider-authored turn terminal is the normal lifetime boundary
+          // for any outstanding runtime interaction. Close it before transport
+          // teardown so a later EOF cannot relabel routine completion as an
+          // unexpected transport loss.
+          runtimeInteraction?.close('provider_cancelled');
           try {
             await this.deps.freshnessController?.markTurnCompleted(activeTurnId);
           } catch {
@@ -527,6 +532,9 @@ export class CodexAppServerClient {
     } finally {
       activeRunDispatchOpen = false;
       releaseActiveRunDispatch?.();
+      // Idempotent with the turn/completed and abort paths. This also settles
+      // interactions when setup exits before a provider turn can be bound.
+      runtimeInteraction?.close('provider_cancelled');
       const { closing, closed } = await closeCodexAppServerTransport(
         this.deps.wire,
         this.lifecycle,

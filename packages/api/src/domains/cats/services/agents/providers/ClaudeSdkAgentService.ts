@@ -40,6 +40,7 @@ import { compileL0ViaSubprocess } from './l0-compiler.js';
 const log = createModuleLogger('claude-sdk-agent');
 
 type ClaudeQueryFn = (params: { prompt: string | AsyncIterable<SDKUserMessage>; options?: ClaudeSdkOptions }) => Query;
+type IdentifiedSdkUserMessage = SDKUserMessage & { uuid: string };
 
 interface ClaudeSdkAgentServiceOptions {
   catId?: CatId;
@@ -114,7 +115,7 @@ function toSdkEnvironment(overrides: Record<string, string | null>): Record<stri
   return env;
 }
 
-function createSdkUserMessage(text: string, sessionId: string, uuid = randomUUID()): SDKUserMessage {
+function createSdkUserMessage(text: string, sessionId: string, uuid = randomUUID()): IdentifiedSdkUserMessage {
   return {
     type: 'user',
     uuid,
@@ -122,6 +123,42 @@ function createSdkUserMessage(text: string, sessionId: string, uuid = randomUUID
     parent_tool_use_id: null,
     message: { role: 'user', content: [{ type: 'text', text }] },
   };
+}
+
+function resultConsumedInputIds(result: Record<string, unknown>): string[] {
+  if (Array.isArray(result.user_message_uuids)) {
+    return result.user_message_uuids.filter((value): value is string => typeof value === 'string');
+  }
+  return typeof result.user_message_uuid === 'string' ? [result.user_message_uuid] : [];
+}
+
+function resultQueuedTurnCount(result: Record<string, unknown>): number | undefined {
+  const count = result.queued_turn_count;
+  return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
+function deleteOldestPendingInput(pendingInputIds: Set<string>): void {
+  const oldestPendingId = pendingInputIds.values().next().value;
+  if (oldestPendingId !== undefined) pendingInputIds.delete(oldestPendingId);
+}
+
+function settlePendingTurnInputs(pendingInputIds: Set<string>, result: Record<string, unknown>): boolean {
+  const consumedIds = resultConsumedInputIds(result);
+  for (const id of consumedIds) pendingInputIds.delete(id);
+
+  const queuedTurnCount = resultQueuedTurnCount(result);
+  if (queuedTurnCount !== undefined) {
+    // queued_turn_count is the provider's terminal snapshot of accepted user
+    // sends that still have work ahead. It also closes the narrow compatibility
+    // gap where an interrupted turn has no identity-bearing result but the
+    // post-interrupt turn does.
+    while (pendingInputIds.size > queuedTurnCount) deleteOldestPendingInput(pendingInputIds);
+  } else if (consumedIds.length === 0) {
+    // Older producers did not echo input identities. Preserve their
+    // one-result-per-turn contract by retiring the oldest accepted input.
+    deleteOldestPendingInput(pendingInputIds);
+  }
+  return pendingInputIds.size === 0;
 }
 
 /**
@@ -275,21 +312,21 @@ export class ClaudeSdkAgentService implements AgentService {
     let releaseDispatch: (() => void) | undefined;
     let active = true;
     let dispatcherRegistered = false;
-    let outstandingTurnInputs = 0;
+    const pendingTurnInputIds = new Set<string>();
     let activeDispatches = 0;
     let terminalWaitingForDispatch = false;
 
-    const pushTurnInput = (message: SDKUserMessage): boolean => {
+    const pushTurnInput = (message: IdentifiedSdkUserMessage): boolean => {
       const accepted = input.push(message);
       if (accepted) {
-        outstandingTurnInputs += 1;
+        pendingTurnInputIds.add(message.uuid);
         terminalWaitingForDispatch = false;
       }
       return accepted;
     };
 
     const closeAfterTerminalIfIdle = (): boolean => {
-      if (!terminalWaitingForDispatch || outstandingTurnInputs !== 0 || activeDispatches !== 0) return false;
+      if (!terminalWaitingForDispatch || pendingTurnInputIds.size !== 0 || activeDispatches !== 0) return false;
       // Close acceptance before leaving the provider iterator. This makes an
       // Append concurrent with Query.return() reject instead of being accepted
       // into a turn whose output nobody will consume.
@@ -350,8 +387,15 @@ export class ClaudeSdkAgentService implements AgentService {
           registerDispatcher();
         }
         if (isResultTerminal) {
-          outstandingTurnInputs = Math.max(0, outstandingTurnInputs - 1);
-          terminalWaitingForDispatch = outstandingTurnInputs === 0;
+          // The SDK may coalesce several queued sends into one provider turn.
+          // Its result echoes every consumed user-message uuid, so settle the
+          // accepted messages by identity instead of assuming one result per
+          // input. Interrupt receipts are ordered before the interrupted turn's
+          // result on the clean path; a crash may reverse those two, and the
+          // identity join remains correct in either order. queued_turn_count
+          // provides a provider-authored backstop when a result lacks an input
+          // identity (including an interrupted-turn compatibility edge).
+          terminalWaitingForDispatch = settlePendingTurnInputs(pendingTurnInputIds, raw);
           metadata.usage = extractClaudeUsage(raw);
           if (streamState.lastTurnInputTokens != null && metadata.usage) {
             metadata.usage.lastTurnInputTokens = streamState.lastTurnInputTokens;

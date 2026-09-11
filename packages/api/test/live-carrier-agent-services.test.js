@@ -189,14 +189,18 @@ describe('live member carriers', () => {
   it('Claude SDK consumes the response for an Append accepted before the current result terminal', async () => {
     const events = new AsyncInbox();
     const registration = activeRunRegistration();
+    let sdkInput;
     const service = new ClaudeSdkAgentService({
       catId: 'opus',
       model: 'claude-test',
       l0CompilerFn: async () => 'compiled L0',
-      queryFn: () => ({
-        interrupt: async () => {},
-        [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
-      }),
+      queryFn: ({ prompt }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        return {
+          interrupt: async () => {},
+          [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+        };
+      },
     });
 
     const output = service
@@ -207,6 +211,8 @@ describe('live member carriers', () => {
       })
       [Symbol.asyncIterator]();
     const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    const initialInput = (await sdkInput.next()).value;
     events.push({ type: 'system', subtype: 'init', session_id: 'sdk-append-result-race' });
     assert.equal((await initialized).value.type, 'session_init');
 
@@ -225,12 +231,14 @@ describe('live member carriers', () => {
         },
       },
     );
+    const appendedInput = (await sdkInput.next()).value;
 
     const secondTurnOutput = output.next();
     events.push({
       type: 'result',
       subtype: 'success',
       session_id: 'sdk-append-result-race',
+      user_message_uuid: initialInput.uuid,
       usage: { input_tokens: 10, output_tokens: 2 },
     });
     events.push({
@@ -247,7 +255,72 @@ describe('live member carriers', () => {
       type: 'result',
       subtype: 'success',
       session_id: 'sdk-append-result-race',
+      user_message_uuid: appendedInput.uuid,
       usage: { input_tokens: 12, output_tokens: 3 },
+    });
+    assert.equal((await terminal).value.type, 'done');
+    assert.equal(registration.released, true);
+  });
+
+  it('Claude SDK settles coalesced accepted inputs from one result identity set', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    let sdkInput;
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ prompt }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        return {
+          interrupt: async () => ({ still_queued: [] }),
+          [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+        };
+      },
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    const initialInput = (await sdkInput.next()).value;
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-coalesced-inputs' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    assert.equal(
+      (
+        await registration.dispatcher.dispatch(
+          { text: 'first accepted follow-up' },
+          { expectedInvocationId: registration.invocationId, force: false },
+        )
+      ).accepted,
+      true,
+    );
+    assert.equal(
+      (
+        await registration.dispatcher.dispatch(
+          { text: 'second accepted follow-up' },
+          { expectedInvocationId: registration.invocationId, force: false },
+        )
+      ).accepted,
+      true,
+    );
+    const firstAppend = (await sdkInput.next()).value;
+    const secondAppend = (await sdkInput.next()).value;
+
+    const terminal = output.next();
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-coalesced-inputs',
+      user_message_uuid: secondAppend.uuid,
+      user_message_uuids: [initialInput.uuid, firstAppend.uuid, secondAppend.uuid],
+      usage: { input_tokens: 14, output_tokens: 3 },
     });
     assert.equal((await terminal).value.type, 'done');
     assert.equal(registration.released, true);
@@ -256,6 +329,7 @@ describe('live member carriers', () => {
   it('Claude SDK keeps the stream open while an explicit Steer is awaiting its interrupt receipt', async () => {
     const events = new AsyncInbox();
     const registration = activeRunRegistration();
+    let sdkInput;
     let interruptStarted;
     const started = new Promise((resolve) => {
       interruptStarted = resolve;
@@ -272,13 +346,17 @@ describe('live member carriers', () => {
       catId: 'opus',
       model: 'claude-test',
       l0CompilerFn: async () => 'compiled L0',
-      queryFn: () => ({
-        interrupt: async () => {
-          interruptStarted();
-          await interrupted;
-        },
-        [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
-      }),
+      queryFn: ({ prompt }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        return {
+          interrupt: async () => {
+            interruptStarted();
+            await interrupted;
+            return { still_queued: [] };
+          },
+          [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+        };
+      },
     });
 
     const output = service
@@ -289,6 +367,8 @@ describe('live member carriers', () => {
       })
       [Symbol.asyncIterator]();
     const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    const initialInput = (await sdkInput.next()).value;
     events.push({ type: 'system', subtype: 'init', session_id: 'sdk-steer-result-race' });
     assert.equal((await initialized).value.type, 'session_init');
 
@@ -305,11 +385,13 @@ describe('live member carriers', () => {
       },
       subtype: 'success',
       session_id: 'sdk-steer-result-race',
+      user_message_uuid: initialInput.uuid,
       usage: { input_tokens: 10, output_tokens: 2 },
     });
     await observed;
     releaseInterrupt();
     assert.equal((await dispatch).accepted, true);
+    const steeredInput = (await sdkInput.next()).value;
 
     events.push({
       type: 'assistant',
@@ -323,6 +405,61 @@ describe('live member carriers', () => {
       type: 'result',
       subtype: 'success',
       session_id: 'sdk-steer-result-race',
+      user_message_uuid: steeredInput.uuid,
+      usage: { input_tokens: 12, output_tokens: 3 },
+    });
+    assert.equal((await terminal).value.type, 'done');
+    assert.equal(registration.released, true);
+  });
+
+  it('Claude SDK closes a forced Steer from the provider queue snapshot without requiring an interrupted result', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    let sdkInput;
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ prompt }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        return {
+          interrupt: async () => ({ still_queued: [] }),
+          [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+        };
+      },
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    await sdkInput.next();
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-steer-queue-snapshot' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    assert.equal(
+      (
+        await registration.dispatcher.dispatch(
+          { text: 'replacement turn' },
+          { expectedInvocationId: registration.invocationId, force: true },
+        )
+      ).accepted,
+      true,
+    );
+    const steeredInput = (await sdkInput.next()).value;
+
+    const terminal = output.next();
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-steer-queue-snapshot',
+      user_message_uuid: steeredInput.uuid,
+      queued_turn_count: 0,
       usage: { input_tokens: 12, output_tokens: 3 },
     });
     assert.equal((await terminal).value.type, 'done');
