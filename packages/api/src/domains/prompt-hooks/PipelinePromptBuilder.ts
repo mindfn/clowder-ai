@@ -44,7 +44,9 @@ function getPipeline(): HookPipeline {
   if (cachedPipeline) return cachedPipeline;
 
   const root = findMonorepoRoot();
-  const hooksDir = join(root, 'assets', 'prompt-hooks');
+  // CAT_CAFE_PROMPT_HOOKS_DIR: scan hooks from another directory (isolated
+  // acceptance stacks, regression tests that must not touch repository assets).
+  const hooksDir = process.env.CAT_CAFE_PROMPT_HOOKS_DIR || join(root, 'assets', 'prompt-hooks');
   const templatesDir = join(root, 'assets', 'prompt-templates');
 
   cachedRegistry = new HookRegistry(hooksDir, templatesDir);
@@ -62,6 +64,19 @@ export function resetPipelineSingleton(): void {
 /** Exposed for testing: access the cached registry (null if not initialized). */
 export function getCachedRegistry(): HookRegistry | null {
   return cachedRegistry;
+}
+
+/**
+ * Shared registry accessor for readers outside the prompt hot path (Console
+ * manifest, governance describers). It materialises the same singleton the
+ * pipeline uses, so `resetPipelineSingleton()` after a governance `add` is
+ * observed by every reader at once — no reader may keep a private scan cache.
+ */
+export function getOrCreateRegistry(): HookRegistry {
+  getPipeline();
+  const registry = cachedRegistry;
+  if (!registry) throw new Error('hook_registry_unavailable');
+  return registry;
 }
 
 // ---------------------------------------------------------------------------

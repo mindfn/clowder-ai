@@ -3484,6 +3484,9 @@ async function main(): Promise<void> {
           const { HarnessUnitDirectoryWriter } = await import(
             './infrastructure/harness-eval/governance/HarnessUnitDirectoryWriter.js'
           );
+          const { reloadEvaluationUnits } = await import(
+            './infrastructure/harness-eval/evaluation/evaluation-catalog.js'
+          );
           const executor = new HarnessGovernanceExecutor({
             catalog: objectiveEvaluationRuntime.catalog,
             overrideStore: hookOverrideStore,
@@ -3495,6 +3498,17 @@ async function main(): Promise<void> {
             reloadPipeline: async () => {
               resetPipelineSingleton();
               await refreshOverrideSnapshot();
+              // The unit manifest follows disk too: a governance `add` appended
+              // to unit-evaluation-manifest.yaml and every reader holds this one
+              // catalog object (F257, D22 2026-09-11). The writer already pushed
+              // the unit into the live manifest, so the in-process view stays
+              // consistent when the re-read fails; the warning means the YAML
+              // on disk is invalid. Objective definitions are not reloaded
+              // (KD-22) — see reloadEvaluationUnits.
+              const reloaded = await reloadEvaluationUnits(objectiveEvaluationRuntime.catalog, repoRoot);
+              if (!reloaded.ok) {
+                app.log.warn(`[api] F257: unit evaluation manifest reload failed: ${reloaded.error}`);
+              }
             },
             resolveObjectiveVersion: (objectiveId, state) =>
               objectiveEvaluationRuntime.resolveVersion(objectiveId, state),
