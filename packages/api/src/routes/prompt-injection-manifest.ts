@@ -5,12 +5,10 @@
  * into the ManifestSegment[] shape the Console frontend expects.
  *
  * Replaces the old monolithic assets/prompt-injection-manifest.yaml
- * with live scanning via HookRegistry.
+ * read from the prompt pipeline's shared HookRegistry (reload-aware).
  */
 
 import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { HookManifest, SafetyTier, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
@@ -19,21 +17,9 @@ import {
   getTemplateOverlayPath,
 } from '../domains/cats/services/context/prompt-template-loader.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
-import { HookRegistry } from '../domains/prompt-hooks/HookRegistry.js';
+import type { HookRegistry } from '../domains/prompt-hooks/HookRegistry.js';
+import { getOrCreateRegistry } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import { resolveUserId } from '../utils/request-identity.js';
-
-// ---------------------------------------------------------------------------
-// Project root resolution (same pattern as other routes)
-// ---------------------------------------------------------------------------
-
-function findProjectRoot(): string {
-  let dir = dirname(fileURLToPath(import.meta.url));
-  while (dir !== dirname(dir)) {
-    if (existsSync(`${dir}/pnpm-workspace.yaml`)) return dir;
-    dir = dirname(dir);
-  }
-  return process.cwd();
-}
 
 // ---------------------------------------------------------------------------
 // Prefix → category / consumer mapping
@@ -67,6 +53,12 @@ function getCategoryInfo(id: string): CategoryInfo {
 export interface PromptInjectionManifestRoutesOptions {
   /** Runtime override store. When absent, matrix uses default override state. */
   overrideStore?: HookOverrideStore;
+  /**
+   * Registry source. Defaults to the prompt pipeline singleton so the Console
+   * list follows `resetPipelineSingleton()` (governance `add` → reloadPipeline)
+   * without a restart. Tests inject a registry over a fixture directory.
+   */
+  getRegistry?: () => HookRegistry;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,30 +304,28 @@ const SUPPLEMENTAL_SEGMENTS: ManifestSegment[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Registry singleton (lazy init, scan once per process)
+// Segment derivation from the shared, reload-aware registry
 // ---------------------------------------------------------------------------
 
-let cachedResult: { root: string; hookSegments: ManifestSegment[]; allSegments: ManifestSegment[] } | null = null;
+// The registry is the only cache. A module-level scan cache here outlived
+// `resetPipelineSingleton()`: after a governance `add` the hook was injected
+// into every prompt while the Console still listed the startup set (D22,
+// 2026-09-11). Deriving per request from the shared registry costs a map over
+// ~50 in-memory manifests and keeps one truth for prompt and Console.
+function byId(a: { id: string }, b: { id: string }): number {
+  return a.id.localeCompare(b.id, undefined, { numeric: true });
+}
 
-function getManifestSegments(): { root: string; hookSegments: ManifestSegment[]; allSegments: ManifestSegment[] } {
-  if (cachedResult) return cachedResult;
-
-  const root = findProjectRoot();
-  const hooksDir = `${root}/assets/prompt-hooks`;
-  const templatesDir = `${root}/assets/prompt-templates`;
-  const registry = new HookRegistry(hooksDir, templatesDir);
-  const hooks = registry.scan();
-
-  const hookSegments = hooks
-    .map(toManifestSegment)
-    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-
-  const allSegments = [...hookSegments, ...SUPPLEMENTAL_SEGMENTS].sort((a, b) =>
-    a.id.localeCompare(b.id, undefined, { numeric: true }),
-  );
-
-  cachedResult = { root, hookSegments, allSegments };
-  return cachedResult;
+function getManifestSegments(registry: HookRegistry): {
+  hookSegments: ManifestSegment[];
+  allSegments: ManifestSegment[];
+} {
+  const hookSegments = registry
+    .getAllHooks()
+    .map((hook) => toManifestSegment(hook.manifest))
+    .sort(byId);
+  const allSegments = [...hookSegments, ...SUPPLEMENTAL_SEGMENTS].sort(byId);
+  return { hookSegments, allSegments };
 }
 
 async function attachEnablementMatrices(
@@ -373,7 +363,8 @@ export const promptInjectionManifestRoutes: FastifyPluginAsync<PromptInjectionMa
     }
 
     try {
-      const { hookSegments, allSegments } = getManifestSegments();
+      const registry = (opts.getRegistry ?? getOrCreateRegistry)();
+      const { hookSegments, allSegments } = getManifestSegments(registry);
       const segments = await attachEnablementMatrices(allSegments, opts.overrideStore);
       return {
         schemaVersion: '2.0.0',

@@ -64,6 +64,19 @@ export function getCachedRegistry(): HookRegistry | null {
   return cachedRegistry;
 }
 
+/**
+ * Shared registry accessor for readers outside the prompt hot path (Console
+ * manifest, governance describers). It materialises the same singleton the
+ * pipeline uses, so `resetPipelineSingleton()` after a governance `add` is
+ * observed by every reader at once — no reader may keep a private scan cache.
+ */
+export function getOrCreateRegistry(): HookRegistry {
+  getPipeline();
+  const registry = cachedRegistry;
+  if (!registry) throw new Error('hook_registry_unavailable');
+  return registry;
+}
+
 // ---------------------------------------------------------------------------
 // Override store wiring (PR3: HookOverrideStore → HookRegistry snapshot)
 // ---------------------------------------------------------------------------
