@@ -3,24 +3,32 @@
 // must work through the prompt pipeline's shared registry after
 // `resetPipelineSingleton()`, with no private scan cache on any route and no
 // static TEMPLATE_FILES dependency for hook-only segments (sol review of #177).
+//
+// The pipeline scans an isolated hooks directory (CAT_CAFE_PROMPT_HOOKS_DIR):
+// this test never writes to, or deletes from, the repository's assets.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { after, describe, test } from 'node:test';
+import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
+const REAL_HOOKS = join(repoRoot, 'assets', 'prompt-hooks');
+const WARM_HOOK_DIR = 's13-mcp-工具文档';
 const FIXTURE_ID = 'Z99';
-const FIXTURE_DIR = join(repoRoot, 'assets', 'prompt-hooks', 'z99-dynamic-probe');
+const FIXTURE_DIR_NAME = 'z99-dynamic-probe';
 const SESSION_HEADERS = { 'x-test-session-user': 'test-user' };
 
-function writeFixtureHook() {
-  mkdirSync(FIXTURE_DIR, { recursive: true });
+let hooksDir;
+
+function writeFixtureHook(dir) {
+  mkdirSync(dir, { recursive: true });
   writeFileSync(
-    join(FIXTURE_DIR, 'hook.yaml'),
+    join(dir, 'hook.yaml'),
     [
       `id: ${FIXTURE_ID}`,
       'name: Dynamic probe segment',
@@ -42,7 +50,7 @@ function writeFixtureHook() {
     ].join('\n'),
     'utf8',
   );
-  writeFileSync(join(FIXTURE_DIR, 'z99-dynamic-probe.md'), 'Probe segment body with {{PROBE}}.\n', 'utf8');
+  writeFileSync(join(dir, 'z99-dynamic-probe.md'), 'Probe segment body with {{PROBE}}.\n', 'utf8');
 }
 
 async function buildApp() {
@@ -64,17 +72,23 @@ async function get(app, url) {
 }
 
 describe('governance-added segment: Console journey without restart', () => {
-  after(async () => {
-    rmSync(FIXTURE_DIR, { recursive: true, force: true });
+  before(async () => {
+    hooksDir = join(mkdtempSync(join(tmpdir(), 'f257-dynamic-')), 'prompt-hooks');
+    cpSync(join(REAL_HOOKS, WARM_HOOK_DIR), join(hooksDir, WARM_HOOK_DIR), { recursive: true });
+    process.env.CAT_CAFE_PROMPT_HOOKS_DIR = hooksDir;
     const { resetPipelineSingleton } = await import('../dist/domains/prompt-hooks/PipelinePromptBuilder.js');
     resetPipelineSingleton();
+  });
+  after(async () => {
+    delete process.env.CAT_CAFE_PROMPT_HOOKS_DIR;
+    const { resetPipelineSingleton } = await import('../dist/domains/prompt-hooks/PipelinePromptBuilder.js');
+    resetPipelineSingleton();
+    rmSync(dirname(hooksDir), { recursive: true, force: true });
   });
 
   test('list, content, preview and canonical validation all follow the reloaded shared registry', async () => {
     const { resetPipelineSingleton } = await import('../dist/domains/prompt-hooks/PipelinePromptBuilder.js');
     const { validateCanonicalVersionContent } = await import('../dist/routes/prompt-injection-version-content.js');
-    rmSync(FIXTURE_DIR, { recursive: true, force: true });
-    resetPipelineSingleton();
     const app = await buildApp();
     try {
       // Production order: the operator opened some segment before the approval,
@@ -82,10 +96,12 @@ describe('governance-added segment: Console journey without restart', () => {
       const warm = await get(app, '/api/prompt-injection/segment/S13/content');
       assert.equal(warm.statusCode, 200, warm.body);
       const before = await get(app, '/api/prompt-injection/manifest');
-      assert.ok(!JSON.parse(before.body).segments.some((s) => s.id === FIXTURE_ID), 'precondition: not listed yet');
+      const beforeIds = JSON.parse(before.body).segments.map((s) => s.id);
+      assert.ok(beforeIds.includes('S13'), 'the isolated hooks directory is what the pipeline scans');
+      assert.ok(!beforeIds.includes(FIXTURE_ID), 'precondition: not listed yet');
 
       // Governance `add`: files land, then the executor reloads the pipeline.
-      writeFixtureHook();
+      writeFixtureHook(join(hooksDir, FIXTURE_DIR_NAME));
       resetPipelineSingleton();
 
       const listed = await get(app, '/api/prompt-injection/manifest');
@@ -116,6 +132,8 @@ describe('governance-added segment: Console journey without restart', () => {
 
       assert.equal(validateCanonicalVersionContent(FIXTURE_ID, 'edited body {{PROBE}}'), null);
       assert.match(validateCanonicalVersionContent(FIXTURE_ID, 'dropped the placeholder') ?? '', /\{\{PROBE\}\}/);
+
+      assert.ok(!existsSync(join(REAL_HOOKS, FIXTURE_DIR_NAME)), 'the repository assets were never touched');
     } finally {
       await app.close();
     }

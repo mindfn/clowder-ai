@@ -44,7 +44,9 @@ function getPipeline(): HookPipeline {
   if (cachedPipeline) return cachedPipeline;
 
   const root = findMonorepoRoot();
-  const hooksDir = join(root, 'assets', 'prompt-hooks');
+  // CAT_CAFE_PROMPT_HOOKS_DIR: scan hooks from another directory (isolated
+  // acceptance stacks, regression tests that must not touch repository assets).
+  const hooksDir = process.env.CAT_CAFE_PROMPT_HOOKS_DIR || join(root, 'assets', 'prompt-hooks');
   const templatesDir = join(root, 'assets', 'prompt-templates');
 
   cachedRegistry = new HookRegistry(hooksDir, templatesDir);

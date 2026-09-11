@@ -1,8 +1,10 @@
 // F257: the evaluation catalog is a process-wide holder. After a governance
-// write lands on disk, `reloadEvaluationCatalog` must make memory follow disk
-// without changing the catalog's identity — every constructor-injected reader
-// (runtime, executor, describer, read models) keeps its reference and sees the
-// new snapshot. A failed load keeps the previous snapshot (fail-closed).
+// write lands on disk, `reloadEvaluationUnits` must make the unit manifest
+// follow disk without changing the catalog's identity — every constructor-
+// injected reader (runtime, executor, describer, read models) keeps its
+// reference and sees the new units. The Objective / evaluation-model registry
+// is deliberately not hot-swapped (KD-22: a cycle keeps one evaluator model
+// version). A failed load keeps the previous manifest and reports the error.
 
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -32,16 +34,18 @@ function appendUnit(root, unit) {
   writeFileSync(path, YAML.stringify(document), 'utf8');
 }
 
-describe('evaluation catalog reload', () => {
+async function loadCatalogModule() {
+  return import('../dist/infrastructure/harness-eval/evaluation/evaluation-catalog.js');
+}
+
+describe('evaluation catalog: unit manifest reload', () => {
   const roots = [];
   after(() => {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
   });
 
   test('a unit appended on disk becomes visible to every existing reader without a restart', async () => {
-    const { loadEvaluationCatalog, reloadEvaluationCatalog } = await import(
-      '../dist/infrastructure/harness-eval/evaluation/evaluation-catalog.js'
-    );
+    const { loadEvaluationCatalog, reloadEvaluationUnits } = await loadCatalogModule();
     const root = seedRoot();
     roots.push(root);
     const loaded = await loadEvaluationCatalog(root);
@@ -59,17 +63,55 @@ describe('evaluation catalog reload', () => {
       objectives: [{ objectiveId: 'turn-custody-closure' }],
     });
 
-    const reloaded = await reloadEvaluationCatalog(catalog, root);
+    const reloaded = await reloadEvaluationUnits(catalog, root);
     assert.ok(reloaded.ok, reloaded.ok ? '' : reloaded.error);
     assert.equal(reader.catalog, catalog, 'the holder identity is stable');
     assert.ok(unitIds().includes('D99'), 'the appended unit is visible through the existing reference');
     assert.ok(unitIds().includes('D21'), 'existing units survive the reload');
   });
 
-  test('a manifest that fails validation keeps the previous snapshot and reports the error', async () => {
-    const { loadEvaluationCatalog, reloadEvaluationCatalog } = await import(
-      '../dist/infrastructure/harness-eval/evaluation/evaluation-catalog.js'
+  test('the Objective / evaluation-model registry is never hot-swapped by a unit reload (KD-22)', async () => {
+    const { loadEvaluationCatalog, reloadEvaluationUnits } = await loadCatalogModule();
+    const root = seedRoot();
+    roots.push(root);
+    const loaded = await loadEvaluationCatalog(root);
+    assert.ok(loaded.ok, loaded.ok ? '' : loaded.error);
+    const catalog = loaded.catalog;
+    const registryBefore = catalog.registry;
+    const registrySnapshot = JSON.stringify(registryBefore);
+
+    // An unrelated edit lands in registry.yaml on disk: a new metric on a live model.
+    const registryPath = join(root, OBJECTIVES_DIR, 'registry.yaml');
+    const document = YAML.parse(readFileSync(registryPath, 'utf8'));
+    document.evaluationModels[0].metrics.push({
+      id: 'metric-injected-mid-cycle',
+      kind: 'counter',
+      statement: 'must not appear in a running cycle',
+    });
+    writeFileSync(registryPath, YAML.stringify(document), 'utf8');
+    appendUnit(root, {
+      unitId: 'D97',
+      hookId: 'd97-reload-probe',
+      unitState: 'evaluable',
+      objectives: [{ objectiveId: 'turn-custody-closure' }],
+    });
+
+    const reloaded = await reloadEvaluationUnits(catalog, root);
+    assert.ok(reloaded.ok, reloaded.ok ? '' : reloaded.error);
+    assert.equal(catalog.registry, registryBefore, 'registry identity is untouched');
+    assert.equal(JSON.stringify(catalog.registry), registrySnapshot, 'registry content is untouched');
+    assert.ok(
+      !JSON.stringify(catalog.registry).includes('metric-injected-mid-cycle'),
+      'a disk edit to the registry does not reach running cycles through a unit reload',
     );
+    assert.ok(
+      catalog.manifest.units.some((unit) => unit.unitId === 'D97'),
+      'the unit manifest still follows disk',
+    );
+  });
+
+  test('a manifest that fails validation keeps the previous snapshot and reports the error', async () => {
+    const { loadEvaluationCatalog, reloadEvaluationUnits } = await loadCatalogModule();
     const root = seedRoot();
     roots.push(root);
     const loaded = await loadEvaluationCatalog(root);
@@ -84,7 +126,7 @@ describe('evaluation catalog reload', () => {
       objectives: [{ objectiveId: 'objective-that-does-not-exist' }],
     });
 
-    const reloaded = await reloadEvaluationCatalog(catalog, root);
+    const reloaded = await reloadEvaluationUnits(catalog, root);
     assert.equal(reloaded.ok, false, 'validation failure is reported, not swallowed');
     assert.match(reloaded.error, /objective-that-does-not-exist/);
     assert.equal(catalog.manifest, before, 'the previous snapshot is kept on failure');
