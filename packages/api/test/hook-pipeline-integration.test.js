@@ -114,7 +114,8 @@ describe('Pipeline Integration (real registry + resolvers + templates)', () => {
     const templatesDir = join(root, 'assets', 'prompt-templates');
     registry = new registryMod.HookRegistry(hooksDir, templatesDir);
     const manifests = registry.scan();
-    assert.equal(manifests.length, 46, `Expected 46 hooks, got ${manifests.length}`);
+    // 46 shipped hooks is the baseline; an approved governance card may author more.
+    assert.ok(manifests.length >= 46, `Expected at least 46 hooks, got ${manifests.length}`);
   });
 
   it('session-init stage fires L1-L7 + S1 + S8 + S9 + B1 + C1 (always-fire hooks)', () => {
@@ -157,8 +158,8 @@ describe('Pipeline Integration (real registry + resolvers + templates)', () => {
     const input = makeRichInput();
     const result = pipeline.executeStage('per-turn', input);
 
-    // 24 per-turn hooks should produce trace events
-    assert.equal(result.events.length, 24, `Expected 24 events, got ${result.events.length}`);
+    // 24 shipped per-turn hooks, plus any governance-authored per-turn unit.
+    assert.ok(result.events.length >= 24, `Expected at least 24 events, got ${result.events.length}`);
 
     const firedIds = result.events.filter((e) => e.status === 'fired').map((e) => e.hookId);
 

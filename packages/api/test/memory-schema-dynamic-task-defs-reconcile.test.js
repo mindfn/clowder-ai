@@ -57,9 +57,13 @@ describe('applyMigrations · dynamic_task_defs column reconciliation', () => {
     const db = new Database(':memory:');
     applyMigrations(db);
     const before = columnsOf(db);
+    const stampBefore = stampedVersion(db);
     applyMigrations(db);
     applyMigrations(db);
     assert.deepEqual(columnsOf(db), before);
-    assert.equal(stampedVersion(db), 42);
+    // Stamp-neutral by contract: reconciliation repairs columns without ever
+    // advancing the shared counter, so assert it did not move — not a literal,
+    // which would break on every ladder bump from either lineage.
+    assert.equal(stampedVersion(db), stampBefore);
   });
 });

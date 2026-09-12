@@ -16,10 +16,10 @@ describe('F267 measurement-validity publish gate', () => {
     seedCanonicalMeasurementCensusState(repoRoot);
     const harnessFeedbackRoot = resolve(repoRoot, 'docs/harness-feedback');
     let generatorCalled = false;
-    const artifactPublisher = {
-      async publishArtifact({ generate }) {
-        await generate(resolve(repoRoot, 'artifact-output'));
-        throw new Error('artifact publisher must not run through the F267 validity gate');
+    const gitPublisher = {
+      async publishOnIsolatedWorktree(opts) {
+        await opts.stage(repoRoot);
+        return { commitSha: 'unreachable', prUrl: 'unreachable' };
       },
     };
 
@@ -27,7 +27,7 @@ describe('F267 measurement-validity publish gate', () => {
       const result = await handlePublishVerdict(
         {
           harnessFeedbackRoot,
-          artifactPublisher,
+          gitPublisher,
           generator: async () => {
             generatorCalled = true;
             throw new Error('generator must not run through the F267 validity gate');

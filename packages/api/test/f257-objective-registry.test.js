@@ -135,13 +135,20 @@ describe('F257 Objective registry v2', () => {
 });
 
 describe('F257 UnitEvaluationManifest', () => {
-  test('shipped manifest covers all 46 segments and S13 belongs only to tool-access-correct-use', async () => {
+  test('shipped manifest covers the 46 baseline segments and S13 belongs only to tool-access-correct-use', async () => {
     const registry = await loadObjectiveRegistry(registryPath);
     assert.equal(registry.ok, true, registry.ok ? '' : registry.error);
     const manifest = await loadUnitEvaluationManifest(manifestPath, registry.registry);
     assert.equal(manifest.ok, true, manifest.ok ? '' : manifest.error);
-    assert.equal(manifest.manifest.units.length, 46);
-    assert.equal(new Set(manifest.manifest.units.map((unit) => unit.unitId)).size, 46);
+    // 46 is the shipped baseline, not a ceiling: an approved governance card may
+    // author new units at runtime (D22 is the first), so assert baseline coverage
+    // and uniqueness rather than an exact count that governance is meant to grow.
+    assert.ok(manifest.manifest.units.length >= 46, `expected >= 46 units, got ${manifest.manifest.units.length}`);
+    assert.equal(
+      new Set(manifest.manifest.units.map((unit) => unit.unitId)).size,
+      manifest.manifest.units.length,
+      'unit ids stay unique once governance can append',
+    );
     const s13 = manifest.manifest.units.find((unit) => unit.unitId === 'S13');
     assert.deepEqual(s13.objectives, [{ objectiveId: 'tool-access-correct-use' }]);
     assert.equal(

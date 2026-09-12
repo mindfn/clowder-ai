@@ -47,7 +47,7 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/freshness/eval-freshness-live-verdict.ts
   - packages/api/src/infrastructure/harness-eval/freshness/freshness-eval-cat-instructions.ts
   - packages/api/src/infrastructure/harness-eval/publish-verdict/freshness-generator-adapter.ts
-  - packages/api/src/infrastructure/harness-eval/publish-verdict/source-ref-validation/source-ref-handler-validation.ts
+  - packages/api/src/infrastructure/harness-eval/publish-verdict/source-ref-handler-validation.ts
   - packages/api/src/infrastructure/harness-eval/a2a/eval-a2a-adapter.ts
   - packages/api/src/infrastructure/harness-eval/hub/eval-hub-read-model.ts
   - packages/api/src/infrastructure/harness-eval/hub/eval-hub-lifecycle-projection.ts
@@ -81,8 +81,6 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/measurement/measurement-decision-proof-owner-object-spec.ts
   - packages/api/src/infrastructure/harness-eval/measurement/measurement-decision-proof-resolver.ts
   - packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts
-  - scripts/check-verdict-publish-contract.mjs
-  - packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts
   - scripts/guarded-bin/gh
   - packages/shared/src/types/friction-signal.ts
   - packages/api/src/routes/eval-hub.ts
@@ -104,12 +102,8 @@ code_anchors:
   - packages/shared/src/types/sop-definition.generated.ts
   - packages/api/src/infrastructure/harness-eval/GuardRejectionEventLog.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/EvaluationIndexer.ts
-  - packages/api/src/infrastructure/harness-eval/evaluation/EvaluationScheduler.ts
-  - packages/api/src/infrastructure/harness-eval/evaluation/EvaluationSnapshotStore.ts
-  - packages/api/src/infrastructure/harness-eval/evaluation/MetricResultStore.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/evaluation-catalog.ts
-  - packages/api/src/infrastructure/harness-eval/evaluation/evaluator-runner.ts
   - packages/api/src/infrastructure/harness-eval/trace-annotation/PendingTraceMarkerStore.ts
   - packages/api/src/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.ts
   - packages/api/src/infrastructure/harness-eval/guard-threshold-escalation.ts

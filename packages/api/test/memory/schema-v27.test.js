@@ -21,7 +21,7 @@ describe('V42 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.equal(schema.CURRENT_SCHEMA_VERSION, 42);
+      assert.ok(schema.CURRENT_SCHEMA_VERSION >= 42, 'the retry_attempts ladder block is in range');
     } finally {
       db.close();
     }
@@ -39,7 +39,7 @@ describe('V42 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.equal(schema.CURRENT_SCHEMA_VERSION, 42);
+      assert.ok(schema.CURRENT_SCHEMA_VERSION >= 42, 'the retry_attempts ladder block is in range');
     } finally {
       db.close();
     }
@@ -53,13 +53,17 @@ describe('V42 migration — dynamic_task_defs retry_attempts', () => {
     try {
       schema.applyMigrations(db);
       db.exec('ALTER TABLE dynamic_task_defs DROP COLUMN retry_attempts');
-      db.prepare('DELETE FROM schema_version WHERE version = 42').run();
+      db.prepare('DELETE FROM schema_version WHERE version = ?').run(42);
 
       schema.applyMigrations(db);
 
       const cols = db.prepare("PRAGMA table_info('dynamic_task_defs')").all();
       assert.ok(cols.some((col) => col.name === 'retry_attempts'));
-      assert.equal(db.prepare('SELECT MAX(version) as v FROM schema_version').get().v, 42);
+      assert.equal(
+        db.prepare('SELECT MAX(version) as v FROM schema_version').get().v,
+        schema.CURRENT_SCHEMA_VERSION,
+        'reconciliation restores the column without rewinding the stamp',
+      );
     } finally {
       db.close();
     }
