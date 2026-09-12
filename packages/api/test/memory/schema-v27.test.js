@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-describe('V42 migration — dynamic_task_defs retry_attempts', () => {
+describe('dynamic_task_defs retry_attempts — stamp-neutral column reconciliation', () => {
+  // Not a numbered migration: one schema_version counter is shared by the upstream
+  // and fork lineages, so a block number is not a reliable carrier for this column.
+  // applyMigrations reconciles it by column presence on every pass instead.
   it('adds retry_attempts with default 0 for durable once-task retry progress', async () => {
     const Database = (await import('better-sqlite3')).default;
     const schema = await import('../../dist/domains/memory/schema.js');
@@ -21,7 +24,7 @@ describe('V42 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.ok(schema.CURRENT_SCHEMA_VERSION >= 42, 'the retry_attempts ladder block is in range');
+      assert.ok(Number.isInteger(schema.CURRENT_SCHEMA_VERSION), 'the ladder exposes a version stamp');
     } finally {
       db.close();
     }
@@ -39,21 +42,23 @@ describe('V42 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.ok(schema.CURRENT_SCHEMA_VERSION >= 42, 'the retry_attempts ladder block is in range');
+      assert.ok(Number.isInteger(schema.CURRENT_SCHEMA_VERSION), 'the ladder exposes a version stamp');
     } finally {
       db.close();
     }
   });
 
-  it('upgrades an existing upstream V41 database with the scheduler retry column', async () => {
+  it('repairs a database stamped as migrated but missing the column', async () => {
     const Database = (await import('better-sqlite3')).default;
     const schema = await import('../../dist/domains/memory/schema.js');
 
     const db = new Database(':memory:');
     try {
       schema.applyMigrations(db);
+      // Drop the column WITHOUT touching the stamp: this is exactly the state a
+      // lineage collision produces — stamped as done, column absent.
       db.exec('ALTER TABLE dynamic_task_defs DROP COLUMN retry_attempts');
-      db.prepare('DELETE FROM schema_version WHERE version = ?').run(42);
+      const stampBefore = db.prepare('SELECT MAX(version) as v FROM schema_version').get().v;
 
       schema.applyMigrations(db);
 
@@ -61,8 +66,8 @@ describe('V42 migration — dynamic_task_defs retry_attempts', () => {
       assert.ok(cols.some((col) => col.name === 'retry_attempts'));
       assert.equal(
         db.prepare('SELECT MAX(version) as v FROM schema_version').get().v,
-        schema.CURRENT_SCHEMA_VERSION,
-        'reconciliation restores the column without rewinding the stamp',
+        stampBefore,
+        'reconciliation restores the column without moving the stamp in either direction',
       );
     } finally {
       db.close();
