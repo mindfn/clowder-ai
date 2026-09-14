@@ -154,7 +154,7 @@ async function harness() {
       return { version: `objective-${refs.join('-')}`, versionContentRef: `objective-versions:${refs.join(',')}` };
     },
   });
-  return { root, catalog, executor, writes, reloads: () => reloads };
+  return { root, catalog, executor, overrideStore, writes, reloads: () => reloads };
 }
 
 const proposal = (changes) => ({
@@ -292,6 +292,72 @@ describe('F257 Harness governance executor', () => {
 
     await context.executor.apply(proposal(changes), 'owner-1', 'Approved.', VERSION_STATE);
     assert.deepEqual(context.writes, [['condition', 'D1', condition]]);
+  });
+
+  test('an apply that fails between two durable writes can be approved again', async () => {
+    const context = await harness();
+    const condition = { conditionRef: 'routing-mode-in', params: { values: ['serial'] } };
+    const change = {
+      action: 'modify',
+      unitId: 'D1',
+      hookId: 'D1',
+      reason: 'Narrow the surface and rewrite the body.',
+      sourceVersion: 1,
+      beforeContent: 'v1 body',
+      proposedContent: 'v2 body',
+      beforeCondition: null,
+      proposedCondition: condition,
+    };
+
+    // The content write lands; the condition write fails right after it.
+    const realSetCondition = context.overrideStore.setConditionOverride;
+    let conditionAttempts = 0;
+    context.overrideStore.setConditionOverride = async (...args) => {
+      conditionAttempts += 1;
+      if (conditionAttempts === 1) throw new Error('redis_unavailable');
+      return realSetCondition.apply(context.overrideStore, args);
+    };
+
+    await assert.rejects(
+      context.executor.apply(proposal([change]), 'owner-1', 'Approved.', VERSION_STATE),
+      /redis_unavailable/,
+    );
+    assert.deepEqual(
+      context.writes,
+      [['modify', 'D1', 'v2 body']],
+      'the runtime is half-advanced: new body live, condition not',
+    );
+
+    // The proposal is still pending, so the operator approves it again. Reading
+    // our own partial progress as drift would strand it here forever.
+    await context.executor.apply(proposal([change]), 'owner-1', 'Approved.', VERSION_STATE);
+    assert.deepEqual(context.writes, [
+      ['modify', 'D1', 'v2 body'],
+      ['condition', 'D1', condition],
+    ]);
+  });
+
+  test('a unit that moved to a third value still fails closed on retry', async () => {
+    const context = await harness();
+    const change = {
+      action: 'modify',
+      unitId: 'D1',
+      hookId: 'D1',
+      reason: 'Rewrite the body.',
+      sourceVersion: 1,
+      beforeContent: 'v1 body',
+      proposedContent: 'v2 body',
+      beforeCondition: null,
+    };
+    // Someone else edited the unit to content this proposal never asked for.
+    await context.overrideStore.setContentOverride('D1', 'someone else body', 'other');
+    context.writes.length = 0;
+
+    await assert.rejects(
+      context.executor.apply(proposal([change]), 'owner-1', 'Approved.', VERSION_STATE),
+      /harness_governance_source_version_changed/,
+    );
+    assert.deepEqual(context.writes, [], 'resumability must not weaken drift detection');
   });
 
   test('preflights every action before the first mutation', async () => {

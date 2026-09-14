@@ -174,13 +174,23 @@ export class HarnessGovernanceExecutor {
     if (change.action === 'add') return this.preflightAdd(objectiveId, change, addedOrders);
     const state = await this.requireUnit(objectiveId, change.unitId);
     if (change.action === 'enable' || change.action === 'disable') {
-      if (state.enabled !== change.beforeEnabled) throw new Error('harness_governance_enablement_changed');
+      const target = change.action === 'enable';
+      if (state.enabled !== target && state.enabled !== change.beforeEnabled) {
+        throw new Error('harness_governance_enablement_changed');
+      }
       return;
     }
-    if (state.version !== change.sourceVersion || state.content !== change.beforeContent) {
+    if (
+      !contentAlreadyApplied(change, state.content) &&
+      (state.version !== change.sourceVersion || state.content !== change.beforeContent)
+    ) {
       throw new Error('harness_governance_source_version_changed');
     }
-    if (change.action === 'modify' && !sameCondition(state.condition, change.beforeCondition)) {
+    if (
+      change.action === 'modify' &&
+      !conditionAlreadyApplied(change, state.condition) &&
+      !sameCondition(state.condition, change.beforeCondition)
+    ) {
       throw new Error('harness_governance_condition_changed');
     }
   }
@@ -272,22 +282,40 @@ export class HarnessGovernanceExecutor {
   ): Promise<void> {
     const version = await this.deps.overrideStore.getActiveVersion(change.hookId);
     const content = await this.effectiveContent(change.hookId);
-    if (change.action === 'modify') {
-      if (version !== change.sourceVersion) throw new Error('harness_governance_source_version_changed');
-      if (change.proposedContent !== undefined && content !== change.proposedContent) {
-        await this.deps.overrideStore.setContentOverride(change.hookId, change.proposedContent, actorId, audit);
-      }
-      if (change.proposedCondition !== undefined) {
-        if (change.proposedCondition === null) {
-          await this.deps.overrideStore.clearConditionOverride(change.hookId, actorId, audit);
-        } else {
-          await this.deps.overrideStore.setConditionOverride(change.hookId, change.proposedCondition, actorId, audit);
-        }
-      }
+    if (!contentAlreadyApplied(change, content) && version !== change.sourceVersion) {
+      throw new Error('harness_governance_source_version_changed');
+    }
+    return change.action === 'modify'
+      ? this.applyModify(change, content, actorId, audit)
+      : this.applyRollback(change, version, content, manifestVersion, actorId, audit);
+  }
+
+  private async applyModify(
+    change: Extract<ContentChange, { action: 'modify' }>,
+    content: string,
+    actorId: string,
+    audit: OverrideAudit,
+  ): Promise<void> {
+    if (change.proposedContent !== undefined && content !== change.proposedContent) {
+      await this.deps.overrideStore.setContentOverride(change.hookId, change.proposedContent, actorId, audit);
+    }
+    if (change.proposedCondition === undefined) return;
+    if (change.proposedCondition === null) {
+      await this.deps.overrideStore.clearConditionOverride(change.hookId, actorId, audit);
       return;
     }
+    await this.deps.overrideStore.setConditionOverride(change.hookId, change.proposedCondition, actorId, audit);
+  }
+
+  private async applyRollback(
+    change: Extract<ContentChange, { action: 'rollback' }>,
+    version: number,
+    content: string,
+    manifestVersion: number,
+    actorId: string,
+    audit: OverrideAudit,
+  ): Promise<void> {
     if (version === change.targetVersion && content === change.targetContent) return;
-    if (version !== change.sourceVersion) throw new Error('harness_governance_source_version_changed');
     // hydrateRollback already chose which content this target names: the shipped
     // template when it equals the manifest version, otherwise a stored snapshot.
     // Say so explicitly, so a local epoch that collides with the shipped number
@@ -320,8 +348,19 @@ export class HarnessGovernanceExecutor {
     if (!unit.objectives.some((attachment) => attachment.objectiveId === objectiveId)) {
       throw new Error('cycle_governance_add_must_attach_objective');
     }
-    if (this.deps.catalog.manifest.units.some((candidate) => candidate.unitId === unit.unitId)) {
-      throw new Error(`cycle_governance_add_unit_exists:${unit.unitId}`);
+    const existing = this.deps.catalog.manifest.units.find((candidate) => candidate.unitId === unit.unitId);
+    if (existing) {
+      // A previous attempt of this same proposal already materialised the unit.
+      // Re-running is safe because the directory writer compares the manifest
+      // and body byte-for-byte before reusing what is on disk; only a unit that
+      // landed as something else is a genuine conflict.
+      if (
+        existing.hookId !== unit.assetSlug ||
+        JSON.stringify(existing.objectives) !== JSON.stringify(unit.objectives)
+      ) {
+        throw new Error(`cycle_governance_add_unit_exists:${unit.unitId}`);
+      }
+      return;
     }
     const registry = this.requireRegistry();
     if (
@@ -344,6 +383,33 @@ export class HarnessGovernanceExecutor {
     if (!registry) throw new Error('harness_governance_registry_unavailable');
     return registry;
   }
+}
+
+/**
+ * Apply is a sequence of individually durable writes, so a failure part-way
+ * through leaves earlier ones in place while the coordinator leaves the proposal
+ * pending. Every mutation here is already idempotent — enablement, content and
+ * rollback all no-op when the unit is where the change wants it, and the unit
+ * directory writer verifies existing files byte-for-byte before reusing them.
+ * What blocked recovery was the guards reading our own partial progress as
+ * foreign drift, which made the proposal permanently unapprovable while the
+ * runtime carried part of it (Codex P1, PR #1462). These predicates let a
+ * change count as satisfied when the live state already carries its target, so
+ * a failed apply is resumable; anything that moved to a third value still fails
+ * closed.
+ */
+function contentAlreadyApplied(change: ContentChange, content: string): boolean {
+  return change.action === 'modify'
+    ? change.proposedContent !== undefined && content === change.proposedContent
+    : content === change.targetContent;
+}
+
+function conditionAlreadyApplied(change: ContentChange, condition: unknown): boolean {
+  return (
+    change.action === 'modify' &&
+    change.proposedCondition !== undefined &&
+    sameCondition(condition, change.proposedCondition)
+  );
 }
 
 function sameCondition(a: unknown, b: unknown): boolean {
