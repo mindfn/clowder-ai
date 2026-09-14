@@ -153,6 +153,7 @@ import { buildThreadDeepLink } from '../infrastructure/connectors/connector-comm
 import { extractIssueTrackingClaims, extractPrTrackingClaims } from '../infrastructure/grounding/claim-extractors.js';
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
+import { GuardLedgerStats } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import {
   coordinationActiveDispatchCount,
@@ -186,6 +187,7 @@ import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
 import { registerCallbackExternalReviewRecoveryRoutes } from './callback-external-review-recovery-route.js';
 import { registerCallbackGameRoutes } from './callback-game-routes.js';
 import { resolveGitHubValidation } from './callback-github-validation.js';
+import { registerCallbackGuardRejectionRoutes } from './callback-guard-rejection-routes.js';
 import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { type HoldBallRouteDeps, registerCallbackHoldBallRoutes } from './callback-hold-ball-routes.js';
 import { registerCallbackLarkActionRoutes } from './callback-lark-action-routes.js';
@@ -6214,6 +6216,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   if (opts.holdBallDeps) {
     registerCallbackHoldBallRoutes(app, opts.holdBallDeps);
+    // F257: MCP-local rejections and server-side hold guards share one ledger.
+    registerCallbackGuardRejectionRoutes(app, {
+      guardRejectionLog: opts.holdBallDeps.guardRejectionLog,
+      ...(opts.redis ? { ledgerStats: new GuardLedgerStats(opts.redis) } : {}),
+      ...(opts.threadStore ? { threadStore: opts.threadStore } : {}),
+    });
   }
 
   // Thread cats discovery for MCP
