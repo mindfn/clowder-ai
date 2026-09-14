@@ -367,26 +367,25 @@ export class GitHubWaitLifecycleService {
       installState = { ...replacement, waitOutcome: deliverOutcome } as AutomationState;
       if (renewing) {
         const newGeneration = active.generation + 1;
+        // Carry the wait forward instead of rebuilding it. Everything the registration froze —
+        // subjectRef, the subscription in `continuation`, the original absolute expiresAt (AC-2:
+        // renewal reuses it, never extends), provenance, the PR author and open bot turns inside
+        // the baseline — survives because nothing is enumerated. Listing the fields is what kept
+        // dropping them: §3.1b's scars are each one field a hand-written literal forgot, and a
+        // field that is never named cannot be left out.
+        //
+        // Only what this observation actually changes is overridden: the fence moves to the new
+        // generation, and the frontier advances from the one already held.
         const awaitState = {
-          v: 1 as const,
+          ...active,
           generation: newGeneration,
-          subjectRef: active.subjectRef,
           ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
           baseline: advanceGitHubTrackingBaseline(
             this.advanceBaseline(active, input.facts, collectorState),
             effectiveEvents ?? [],
             turnClock,
           ),
-          continuation: {
-            when: active.continuation.when,
-            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
-            then: active.continuation.then,
-          },
           createdAt: this.now(),
-          autoRenew: true,
-          // #1392 AC-2: renewal reuses the ORIGINAL absolute expiresAt — it never extends.
-          ...(active.expiresAt !== undefined ? { expiresAt: active.expiresAt } : {}),
-          provenance: 'explicit_registration' as const,
         } as AwaitStateV1;
         deliverOutcome = { ...deliverOutcome, autoRenewed: true };
         installState = { ...replacement, await: awaitState, waitOutcome: deliverOutcome } as AutomationState;
