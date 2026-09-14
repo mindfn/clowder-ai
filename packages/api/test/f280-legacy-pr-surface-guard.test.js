@@ -10,18 +10,6 @@ const legacyFieldPattern = /\b(wakePolicy|trackingInstructions|eventWait|detectE
 
 const allowedRegions = [
   {
-    path: 'packages/api/src/domains/ball-custody/PrWaitMigrationService.ts',
-    label: 'one-time atomic PR legacy migration',
-    start: 'const LEGACY_KEYS',
-    end: undefined,
-  },
-  {
-    path: 'packages/api/src/domains/ball-custody/IssueWaitMigrationService.ts',
-    label: 'one-time atomic issue legacy migration',
-    start: 'const LEGACY_KEYS',
-    end: undefined,
-  },
-  {
     path: 'packages/api/src/domains/cats/services/agents/routing/route-serial.ts',
     label: 'structured custody stop-gate vocabulary',
     start: 'export function buildTurnCustodyStopGateRemedialPrompt',

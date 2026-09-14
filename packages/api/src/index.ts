@@ -6344,22 +6344,7 @@ async function main(): Promise<void> {
       selfGitHubLogin: () => selfLoginResolver.getCurrent(),
     });
     waitLifecycleHolder.current = waitLifecycle;
-    const [{ PrWaitMigrationService }, { IssueWaitMigrationService }, { WaitLifecycleRecoverySweep }] =
-      await Promise.all([
-        import('./domains/ball-custody/PrWaitMigrationService.js'),
-        import('./domains/ball-custody/IssueWaitMigrationService.js'),
-        import('./domains/ball-custody/WaitLifecycleRecoverySweep.js'),
-      ]);
-    await new PrWaitMigrationService({
-      taskStore,
-      readBaseline: fetchPrWaitBaseline,
-      log: app.log,
-    }).migrateAll();
-    await new IssueWaitMigrationService({
-      taskStore,
-      readBaseline: fetchIssueWaitBaseline,
-      log: app.log,
-    }).migrateAll();
+    const { WaitLifecycleRecoverySweep } = await import('./domains/ball-custody/WaitLifecycleRecoverySweep.js');
     await new WaitLifecycleRecoverySweep(taskStore, waitLifecycle, app.log).run();
 
     let externalReviewCoordinator:

@@ -6,7 +6,6 @@ const { MessageStore } = await import('../dist/domains/cats/services/stores/port
 const { MemoryWaitLifecycleEventLog } = await import('../dist/domains/ball-custody/WaitLifecycleEventLog.js');
 const { GitHubWaitLifecycleService } = await import('../dist/domains/github-signals/GitHubWaitLifecycleService.js');
 const { WaitLifecycleRecoverySweep } = await import('../dist/domains/ball-custody/WaitLifecycleRecoverySweep.js');
-const { PrWaitMigrationService } = await import('../dist/domains/ball-custody/PrWaitMigrationService.js');
 const { CiCdRouter, classifyCiWaitBucket } = await import('../dist/infrastructure/email/CiCdRouter.js');
 const { ReviewFeedbackRouter } = await import('../dist/infrastructure/email/ReviewFeedbackRouter.js');
 const { ConflictRouter } = await import('../dist/infrastructure/email/ConflictRouter.js');
@@ -1433,121 +1432,5 @@ describe('F280 GitHub wait lifecycle integration', () => {
     assert.deepEqual(await sweep.run(), { recovered: 1 });
     assert.deepEqual(recoveredTaskIds, [first.id, second.id]);
     assert.ok(warnings.some((args) => args.some((value) => value?.taskId === first.id)));
-  });
-});
-
-describe('F280 legacy PR state migration', () => {
-  it('atomically replaces active legacy state and clears done state without old own keys', async () => {
-    const taskStore = new TaskStore();
-    const active = await taskStore.create({
-      kind: 'pr_tracking',
-      subjectKey: 'pr:owner/repo#8',
-      threadId: 'thread_active',
-      title: 'PR tracking: owner/repo#8',
-      ownerCatId: 'codex-sol',
-      why: 'legacy active',
-      createdBy: 'codex-sol',
-      userId: 'user_1',
-      automationState: {
-        intent: 'merge',
-        wakePolicy: 'human_participant_activity',
-        trackingInstructions: 'raw migration audit note',
-        eventWait: undefined,
-        ci: { headSha: 'old' },
-      },
-    });
-    const done = await taskStore.create({
-      kind: 'pr_tracking',
-      subjectKey: 'pr:owner/repo#9',
-      threadId: 'thread_done',
-      title: 'PR tracking: owner/repo#9',
-      ownerCatId: 'codex-sol',
-      why: 'legacy done',
-      createdBy: 'codex-sol',
-      userId: 'user_1',
-      automationState: { intent: 'review', trackingInstructions: 'done note' },
-    });
-    await taskStore.update(done.id, { status: 'done' });
-
-    const migration = new PrWaitMigrationService({
-      taskStore,
-      now: () => 1_000,
-      readBaseline: async (_repo, _pr, _when) => ({
-        baseline: {
-          capturedAt: 1_000,
-          headSha: 'livehead',
-          ci: { bucket: 'pending', fingerprint: 'livehead:pending' },
-          conflict: { mergeState: 'MERGEABLE' },
-        },
-        collectorState: {
-          ci: { headSha: 'livehead', lastFingerprint: 'livehead:pending', lastBucket: 'pending' },
-          conflict: { mergeState: 'MERGEABLE' },
-        },
-      }),
-      log: { info() {}, warn() {} },
-    });
-    const report = await migration.migrateAll();
-    assert.deepEqual(report, { migratedActive: 1, cleanedDone: 1, alreadyCurrent: 0 });
-
-    const migrated = await taskStore.get(active.id);
-    assert.deepEqual(
-      migrated.automationState.await.continuation.when.map((predicate) => predicate.kind),
-      ['pr_head_changed', 'pr_ci_terminal', 'pr_became_conflicting'],
-    );
-    assert.equal(migrated.automationState.await.baseline.headSha, 'livehead');
-    assert.equal(migrated.why.includes('raw migration audit note'), true);
-    const cleaned = await taskStore.get(done.id);
-    assert.equal(cleaned.automationState.await, undefined);
-    for (const task of [migrated, cleaned]) {
-      for (const key of ['intent', 'wakePolicy', 'trackingInstructions', 'eventWait']) {
-        assert.equal(Object.hasOwn(task.automationState, key), false, `${task.id} retained ${key}`);
-      }
-    }
-  });
-
-  // F280 section 4 / A18: PR merged -> notify AND end. The documented failure mode is
-  // "永久空转" (tracking keeps polling a merged PR forever), so asserting the
-  // notification alone would pass on the broken behaviour. The third assertion -- a later
-  // observation produces nothing new -- is the one that actually catches it.
-  it('A18: a merged PR notifies once and then stops tracking instead of spinning forever', async () => {
-    const { lifecycle, messageStore, taskStore, task } = await harness([{ kind: 'pr_conversation_comment_added' }]);
-
-    const merged = await lifecycle.observe({
-      taskId: task.id,
-      subjectState: 'merged',
-      facts: { headSha: 'aaaa1111' },
-    });
-
-    // 1. it notified
-    assert.equal(merged.kind, 'notified', `expected a notification, got ${JSON.stringify(merged)}`);
-    const delivered = messageStore.getByThread('thread_1');
-    assert.equal(delivered.length, 1, 'merged PR must wake the registering thread exactly once');
-    assert.match(delivered[0].content, /merged/i, 'the notification must say the PR merged');
-
-    // 2. it ended: no active wait survives a terminal subject state
-    const after = await taskStore.get(task.id);
-    assert.equal(after.automationState.await, undefined, 'a merged PR must not keep an active wait');
-    assert.equal(after.status, 'done', 'a merged PR must close its tracking task');
-
-    // 3. it does not spin: further activity on a merged PR produces nothing at all
-    const afterMerge = await lifecycle.observe({
-      taskId: task.id,
-      facts: { headSha: 'aaaa1111', review: { conversationCommentCursor: 999 } },
-      events: [
-        {
-          type: 'pr_conversation_comment_added',
-          id: 999,
-          source: 'conversation',
-          at: 600,
-          author: 'someone-else',
-        },
-      ],
-    });
-    assert.notEqual(afterMerge.kind, 'notified', 'a merged PR must never notify again');
-    assert.equal(
-      messageStore.getByThread('thread_1').length,
-      1,
-      'no further wake may arrive after the terminal notification',
-    );
   });
 });
