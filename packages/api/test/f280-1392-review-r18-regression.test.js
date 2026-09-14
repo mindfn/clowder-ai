@@ -12,7 +12,7 @@ const { MessageStore } = await import('../dist/domains/cats/services/stores/port
 const { MemoryWaitLifecycleEventLog } = await import('../dist/domains/ball-custody/WaitLifecycleEventLog.js');
 const { GitHubWaitLifecycleService } = await import('../dist/domains/github-signals/GitHubWaitLifecycleService.js');
 
-function baseState({ autoRenew = false, expiresAt, collectorReview, baselineReview } = {}) {
+function baseState({ expiresAt, collectorReview, baselineReview } = {}) {
   return {
     ci: { headSha: 'aaaa1111', lastFingerprint: 'aaaa1111:pending', lastBucket: 'pending' },
     review: collectorReview ?? {
@@ -42,7 +42,6 @@ function baseState({ autoRenew = false, expiresAt, collectorReview, baselineRevi
         then: 'Re-lock the exact HEAD.',
       },
       ...(expiresAt !== undefined ? { expiresAt } : {}),
-      ...(autoRenew ? { autoRenew: true } : {}),
       createdAt: 100,
       provenance: 'explicit_registration',
     },
@@ -76,7 +75,7 @@ async function harness(automationState, { now = () => 500 } = {}) {
 
 describe('#1392 R18 P1#1 — auto-renew confirms delivery once and keeps tracking live', () => {
   it('confirms the gen-N outcome at the current generation, stays doing, and never re-delivers', async () => {
-    const { lifecycle, messageStore, taskStore, task } = await harness(baseState({ autoRenew: true }));
+    const { lifecycle, messageStore, taskStore, task } = await harness(baseState());
 
     const first = await lifecycle.observe({ taskId: task.id, facts: { headSha: 'bbbb2222' } });
     assert.equal(first.kind, 'notified');
@@ -127,7 +126,7 @@ describe('#1392 R18 P1#2 — a caller-supplied expiry is a LOUD terminal', () =>
 
 describe('#1392 R18 P2 — renewal baseline is a strict frontier union', () => {
   it('takes the larger same-batch comment id over a smaller explicit result cursor', async () => {
-    const { lifecycle, taskStore, task } = await harness(baseState({ autoRenew: true }));
+    const { lifecycle, taskStore, task } = await harness(baseState());
 
     await lifecycle.observe({
       taskId: task.id,
@@ -153,7 +152,6 @@ describe('#1392 R18 P2 — renewal baseline is a strict frontier union', () => {
   it('never rewinds a frontier it already holds, even when the renewal carries no review facts', async () => {
     const { lifecycle, taskStore, task } = await harness(
       baseState({
-        autoRenew: true,
         baselineReview: { inlineCommentCursor: 20, conversationCommentCursor: 30, decisionCursor: 40 },
       }),
     );

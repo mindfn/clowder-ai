@@ -232,7 +232,6 @@ async function nonAuthorTracker() {
         // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
         continuation: { when, then: 'handle it' },
         createdAt: 100,
-        autoRenew: true,
         provenance: 'explicit_registration',
       },
     },

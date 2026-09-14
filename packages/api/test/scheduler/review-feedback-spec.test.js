@@ -32,7 +32,6 @@ async function createTracked(store) {
           // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract field.
           then: 'continue',
         },
-        autoRenew: true,
         createdAt: 100,
       },
     },

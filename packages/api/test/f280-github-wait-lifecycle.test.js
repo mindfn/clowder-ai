@@ -125,7 +125,7 @@ describe('F280 — a pending re-publish never authorizes a cursor advance', () =
       createdBy: 'codex-sol',
       userId: 'user_1',
       // auto-renew is the state under test: it is what makes pending N coexist with active N+1.
-      automationState: { ...base, await: { ...base.await, autoRenew: true } },
+      automationState: { ...base },
     });
     const lifecycle = new GitHubWaitLifecycleService({
       taskStore,
@@ -226,7 +226,7 @@ describe('F280 — pending outcomes own delivery metadata and lifecycle ordering
       why: 'test',
       createdBy: 'codex-sol',
       userId: 'user_1',
-      automationState: { ...base, await: { ...base.await, autoRenew: true } },
+      automationState: { ...base },
     });
     let failNextDelivery = true;
     const messageStore = new MessageStore();
@@ -303,7 +303,7 @@ describe('F280 — pending outcomes own delivery metadata and lifecycle ordering
       why: 'test',
       createdBy: 'codex-sol',
       userId: 'user_1',
-      automationState: { ...base, await: { ...base.await, autoRenew: true } },
+      automationState: { ...base },
     });
     const lifecycle = new GitHubWaitLifecycleService({
       taskStore,
@@ -492,7 +492,7 @@ describe('F280 — the observation disposition covers every result shape', () =>
     await taskStore.replaceAutomationStateIfGeneration(task.id, {
       expectedGeneration: live.await.generation,
       expectedUpdatedAt: (await taskStore.get(task.id)).updatedAt,
-      automationState: { ...live, await: { ...live.await, autoRenew: true } },
+      automationState: { ...live },
     });
     let failNextDelivery = true;
     const messageStore = new MessageStore();
@@ -578,7 +578,7 @@ describe('F280 — the observation disposition covers every result shape', () =>
     await taskStore.replaceAutomationStateIfGeneration(task.id, {
       expectedGeneration: live.await.generation,
       expectedUpdatedAt: (await taskStore.get(task.id)).updatedAt,
-      automationState: { ...live, await: { ...live.await, autoRenew: true } },
+      automationState: { ...live },
     });
     let failNextDelivery = true;
     const messageStore = new MessageStore();
@@ -627,7 +627,7 @@ describe('F280 — the observation disposition covers every result shape', () =>
     await taskStore.replaceAutomationStateIfGeneration(task.id, {
       expectedGeneration: live.await.generation,
       expectedUpdatedAt: (await taskStore.get(task.id)).updatedAt,
-      automationState: { ...live, await: { ...live.await, autoRenew: true } },
+      automationState: { ...live },
     });
 
     let failNextDelivery = true;
@@ -722,7 +722,7 @@ describe('F280 — the delivered outcome owns the route shape', () => {
     await taskStore.replaceAutomationStateIfGeneration(task.id, {
       expectedGeneration: live.await.generation,
       expectedUpdatedAt: (await taskStore.get(task.id)).updatedAt,
-      automationState: { ...live, await: { ...live.await, autoRenew: true } },
+      automationState: { ...live },
     });
     let failNextDelivery = true;
     const messageStore = new MessageStore();
@@ -959,7 +959,7 @@ describe('F280 — the delivered outcome owns the route shape', () => {
     await taskStore.replaceAutomationStateIfGeneration(task.id, {
       expectedGeneration: live.await.generation,
       expectedUpdatedAt: (await taskStore.get(task.id)).updatedAt,
-      automationState: { ...live, await: { ...live.await, autoRenew: true } },
+      automationState: { ...live },
     });
     let failNextDelivery = true;
     const messageStore = new MessageStore();

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 const CATALOG_URL = new URL('../dist/domains/github-signals/GitHubWaitPredicateCatalog.js', import.meta.url);
 const DEFAULTSET_URL = new URL('../dist/domains/github-signals/PrTrackingDefaultSet.js', import.meta.url);
 const TRACKING_EVENT_URL = new URL('../dist/domains/github-signals/GitHubTrackingEvent.js', import.meta.url);
 const STATE_MACHINE_URL = new URL('../dist/domains/ball-custody/wait-state-machine.js', import.meta.url);
-const SHARED_URL = new URL('../../shared/dist/types/github-wait.js', import.meta.url);
 
 describe('F280 #1392 redesign — converged contract', () => {
   // ──────────────────────────────────────────────
@@ -375,15 +374,14 @@ describe('F280 #1392 redesign — converged contract', () => {
   });
 
   // ──────────────────────────────────────────────
-  // Case 5: autoRenew type on UnifiedAwaitStateV1
+  // Case 5: autoRenew retired from UnifiedAwaitStateV1
   // ──────────────────────────────────────────────
-  describe('autoRenew on await state type', () => {
-    it('autoRenew field is accepted on AwaitStateV1 (no TS error in compiled output)', async () => {
-      // The shared type allows autoRenew?: boolean on UnifiedAwaitStateV1.
-      // If the dist compiled, this assertion passes. (Type-level test.)
-      const shared = await import(SHARED_URL.href);
-      assert.ok(shared.GITHUB_WAIT_PREDICATE_KINDS, 'shared module loads');
-      assert.ok(shared.GITHUB_WAIT_PREDICATE_KINDS.includes('pr_conversation_comment_added'));
+  describe('autoRenew retired from await state type', () => {
+    it('the shared type no longer declares an autoRenew field', () => {
+      // Retirement (2026-09): the switch was removed — tracking runs until the subject ends.
+      // Guard the type surface so the field cannot be reintroduced silently.
+      const source = readFileSync(new URL('../../shared/src/types/github-wait.ts', import.meta.url), 'utf8');
+      assert.doesNotMatch(source, /\bautoRenew\?\s*:/, 'UnifiedAwaitStateV1 must not re-grow the autoRenew switch');
     });
   });
 
@@ -415,42 +413,6 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.match(content, /re-armed/i, 'a renewed wake must tell the owner tracking continues');
       const singleFire = renderGitHubWaitOutcome({ ...outcome, autoRenewed: false });
       assert.match(singleFire, /single-fire|closed/i, 'a non-renewed wake must say tracking is over');
-    });
-  });
-
-  // ──────────────────────────────────────────────
-  // Case 7: shouldAutoRenew backward compatibility
-  // ──────────────────────────────────────────────
-  describe('shouldAutoRenew backward compat', () => {
-    it('pre-existing waits without autoRenew field do NOT auto-renew', async () => {
-      const { transitionWaitState } = await import(STATE_MACHINE_URL.href);
-      // Simulate a pre-existing wait: no autoRenew field
-      const current = {
-        await: {
-          v: 1,
-          generation: 1,
-          subjectRef: 'pr:owner/repo#1',
-          ownerFence: { kind: 'containing_task', generation: 1 },
-          baseline: { capturedAt: 100, headSha: 'aaa' },
-          // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
-          continuation: { when: [{ kind: 'pr_head_changed' }], then: 'check' },
-          createdAt: 100,
-          // No autoRenew field — pre-existing one-shot
-        },
-      };
-      // shouldAutoRenew(active) === false when autoRenew is absent
-      assert.equal(current.await.autoRenew, undefined);
-      // This means the lifecycle will NOT auto-renew — test is type-level
-    });
-
-    it('explicit autoRenew:true enables renewal', () => {
-      const state = { autoRenew: true };
-      assert.equal(state.autoRenew === true, true);
-    });
-
-    it('explicit autoRenew:false disables renewal', () => {
-      const state = { autoRenew: false };
-      assert.equal(state.autoRenew === true, false);
     });
   });
 
@@ -543,7 +505,6 @@ describe('F280 #1392 redesign — converged contract', () => {
             },
             expiresAt: 99_999,
             createdAt: 100,
-            autoRenew: true,
             provenance: 'explicit_registration',
           },
         },
@@ -635,7 +596,6 @@ describe('F280 #1392 redesign — converged contract', () => {
             },
             expiresAt: 99_999,
             createdAt: 100,
-            autoRenew: true,
             provenance: 'explicit_registration',
           },
         },

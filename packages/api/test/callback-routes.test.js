@@ -5481,7 +5481,6 @@ describe('Callback Routes', () => {
     assert.ok(body.task.createdAt > 0);
     assert.equal(body.await.generation, 1);
     assert.deepEqual(body.await.continuation.when, defaultPrTrackingPredicates);
-    assert.equal(body.await.autoRenew, true);
     assert.equal(Object.hasOwn(body.await, 'expiresAt'), false);
     assert.equal(body.await.baseline.headSha, 'test-head');
 
@@ -6158,7 +6157,6 @@ describe('Callback Routes', () => {
       payload: prWaitPayload({
         prNumber: 2858,
         expiresAt: Date.now() + 60_000,
-        autoRenew: false,
       }),
     });
 
@@ -7095,7 +7093,6 @@ describe('Callback Routes', () => {
     assert.equal(body.task.automationState.await.baseline.issue.lastCommentCursor, 1234);
     assert.deepEqual(body.task.automationState.await.continuation.when, [{ kind: 'issue_comment_added' }]);
     assert.equal(body.task.automationState.await.continuation.then, 'Inspect the issue author reply.');
-    assert.equal(body.task.automationState.await.autoRenew, true);
     assert.equal(Object.hasOwn(body.task.automationState.await, 'expiresAt'), false);
     assert.equal(Object.hasOwn(body.task.automationState, 'wakePolicy'), false);
     assert.equal(Object.hasOwn(body.task.automationState, 'trackingInstructions'), false);

@@ -58,7 +58,6 @@ async function createTrackingTask(
           // biome-ignore lint/suspicious/noThenProperty: frozen internal continuation field.
           then: 'Handle the external response.',
         },
-        autoRenew: true,
         createdAt: 100,
       },
     },
@@ -469,7 +468,6 @@ describe('#1394 GitHub tracking main flow', () => {
             // biome-ignore lint/suspicious/noThenProperty: frozen internal continuation field.
             then: 'Rebase onto the current base branch.',
           },
-          autoRenew: true,
           createdAt: 100,
         },
       },
@@ -533,7 +531,6 @@ describe('#1394 issue tracking main flow', () => {
             // biome-ignore lint/suspicious/noThenProperty: frozen internal continuation field.
             then: 'Handle the external issue response.',
           },
-          autoRenew: true,
           createdAt: 100,
         },
       },

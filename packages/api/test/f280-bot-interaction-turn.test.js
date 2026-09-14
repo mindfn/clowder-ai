@@ -104,7 +104,6 @@ async function createHarness({ when, now = () => TRIGGER_MS + 1_000, externalRev
           // biome-ignore lint/suspicious/noThenProperty: frozen internal continuation field.
           then: 'Handle the external response.',
         },
-        autoRenew: true,
         createdAt: TRIGGER_MS - 1_000,
       },
     },
