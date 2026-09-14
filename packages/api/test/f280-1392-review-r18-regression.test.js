@@ -142,20 +142,31 @@ describe('#1392 R18 P2 — renewal baseline is a strict frontier union', () => {
     assert.equal(baseline.review.conversationCommentCursor, 100);
   });
 
-  it('absorbs collector review frontiers when a non-review signal triggers the renewal', async () => {
+  // This used to assert that a renewal folded the COLLECTOR's cursors in. That arm is gone: the
+  // collector cannot run ahead of the baseline (its only writers are this poll's advanceCursor and
+  // the registration reader, which emits both as a pair; CI and conflict write no review state;
+  // and the lifecycle CAS always lands before commitCursor). Reading a second copy back in is how
+  // the two cursor sets in §3.1b became two writers.
+  //
+  // What the arm was really protecting is the frontier not going backwards, so that is what is
+  // pinned now — on the baseline, which is the only source the matcher reads.
+  it('never rewinds a frontier it already holds, even when the renewal carries no review facts', async () => {
     const { lifecycle, taskStore, task } = await harness(
       baseState({
         autoRenew: true,
-        collectorReview: { lastInlineCommentCursor: 20, lastConversationCommentCursor: 200, lastDecisionCursor: 40 },
         baselineReview: { inlineCommentCursor: 20, conversationCommentCursor: 30, decisionCursor: 40 },
       }),
     );
 
-    // a head-change match carries NO review facts — the renewal must still fold the collector frontier
+    // A head-change match carries NO review facts: there is nothing to fold, so every review
+    // frontier must survive the renewal untouched. Losing one here re-notifies a comment the
+    // owner has already been shown.
     await lifecycle.observe({ taskId: task.id, facts: { headSha: 'bbbb2222' } });
 
     const { baseline } = (await taskStore.get(task.id)).automationState.await;
-    assert.equal(baseline.review.conversationCommentCursor, 200);
+    assert.ok(baseline.review.inlineCommentCursor >= 20, 'inline frontier rewound');
+    assert.ok(baseline.review.conversationCommentCursor >= 30, 'conversation frontier rewound');
+    assert.ok(baseline.review.decisionCursor >= 40, 'decision frontier rewound');
   });
 });
 

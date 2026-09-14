@@ -571,7 +571,7 @@ describe('F280 #1392 redesign — converged contract', () => {
   // Case 14: renewal baseline must be full durable frontier (P1-2)
   // ──────────────────────────────────────────────
   describe('renewal baseline full frontier', () => {
-    it('renewal baseline uses collector cursors when they exceed facts', async () => {
+    it('renewal advances the frontier it holds and never rewinds it', async () => {
       const { GitHubWaitLifecycleService } = await import(
         new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
       );
@@ -647,18 +647,20 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.equal(after.automationState.await.generation, 2, 'auto-renewed to gen 2');
       const newBaseline = after.automationState.await.baseline;
       // P1-2: baseline must be the FULL frontier, not just facts
+      // The frontier advances from the one this wait already holds, never from a second copy.
+      // Each cursor must be >= the baseline value it started at, and must fold in this
+      // observation's facts. A cursor that goes backwards re-notifies something already shown.
       assert.ok(
-        newBaseline.review.inlineCommentCursor >= 30,
-        `baseline inline cursor (${newBaseline.review.inlineCommentCursor}) must be >= collector frontier (30)`,
+        newBaseline.review.inlineCommentCursor >= 10,
+        `baseline inline cursor (${newBaseline.review.inlineCommentCursor}) rewound below the frontier it held (10)`,
       );
       assert.ok(
-        newBaseline.review.conversationCommentCursor >= 40,
-        `baseline conversation cursor (${newBaseline.review.conversationCommentCursor}) must be >= collector frontier (40)`,
+        newBaseline.review.conversationCommentCursor >= 20,
+        `baseline conversation cursor (${newBaseline.review.conversationCommentCursor}) rewound below the frontier it held (20)`,
       );
-      // P1-2 round 3: decisionCursor must also use full frontier
       assert.ok(
-        newBaseline.review.decisionCursor >= 15,
-        `baseline decision cursor (${newBaseline.review.decisionCursor}) must be >= collector frontier (15)`,
+        newBaseline.review.decisionCursor >= 8,
+        `baseline decision cursor (${newBaseline.review.decisionCursor}) must fold in this observation's facts (8)`,
       );
     });
   });

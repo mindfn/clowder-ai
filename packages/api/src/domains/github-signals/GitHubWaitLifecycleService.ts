@@ -311,7 +311,7 @@ export class GitHubWaitLifecycleService {
             await: {
               ...active,
               baseline: advanceGitHubTrackingBaseline(
-                this.buildRenewalBaseline(active, input.facts, collectorState),
+                this.advanceBaseline(active, input.facts, collectorState),
                 effectiveEvents ?? [],
                 turnClock,
               ),
@@ -373,7 +373,7 @@ export class GitHubWaitLifecycleService {
           subjectRef: active.subjectRef,
           ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
           baseline: advanceGitHubTrackingBaseline(
-            this.buildRenewalBaseline(active, input.facts, collectorState),
+            this.advanceBaseline(active, input.facts, collectorState),
             effectiveEvents ?? [],
             turnClock,
           ),
@@ -492,25 +492,35 @@ export class GitHubWaitLifecycleService {
 
   // #1392 AC-5: fresh baseline for gen N+1 — advance every cursor past the current
   // frontier (previous ∪ facts) so the next generation only matches NEW events. TaskStore-only.
-  private buildRenewalBaseline(
+  private advanceBaseline(
     previousActive: AwaitStateV1,
     facts: GitHubWaitFacts,
+    // PR side does not use this; the ISSUE branch below still does, and deliberately. Issue
+    // collection is documented as advancing "on successful event-log append, independent of
+    // delivery" (IssueCommentTaskSpec), and it runs a second delivered-cursor alongside it, so
+    // its collector genuinely can move without the baseline. The review cursors have no such
+    // path — that asymmetry is the whole reason one arm went and the other stayed.
     collectorState?: AutomationState,
   ): AwaitStateV1['baseline'] {
     const prev = previousActive.baseline;
     if ('headSha' in prev) {
       const prevReview = prev.review;
-      const collectorReview = (collectorState as Record<string, unknown> | undefined)?.review as
-        | Record<string, number | undefined>
-        | undefined;
-      // #1392 P2: the renewal review baseline is a strict union of previous ∪ facts ∪ collector for
-      // every frontier — even when a NON-review signal (CI, conflict) triggered this renewal and
-      // facts.review is absent. Copying prevReview verbatim in that case would drop collector
-      // frontiers advanced by intervening observes, so the next generation would re-match seen
-      // review events. Always fold the collector in.
+      // The frontier advances IN PLACE: it starts from the one this wait already holds and folds
+      // in what this observation saw. It is never reassembled from parts.
+      //
+      // A third arm used to read the collector's own cursors, guarding against a collector that
+      // had run ahead of the baseline between renewals. That lag is unreachable: the only writers
+      // of those cursors are this poll's `advanceCursor` and the registration baseline reader
+      // (which emits baseline and collector as a pair); CI and conflict polls write nothing to
+      // review state at all; and inside one poll the lifecycle CAS always lands before
+      // `commitCursor`. The reverse skew — lifecycle committed, cursor persist failed — leaves the
+      // collector BEHIND, and the next fetch is filtered by the baseline that already moved.
+      //
+      // Folding a second copy back in is exactly how the two cursor sets in §3.1b became two
+      // writers, and the hand-merge that followed is what kept dropping fields.
       const reviewFacts = facts.review;
       const review =
-        reviewFacts || prevReview || collectorReview
+        reviewFacts || prevReview
           ? {
               // #1394: fold the OBSERVED inline comments in, exactly as the conversation
               // frontier already does. Slice 6a made inline comments matchable but left this
@@ -519,19 +529,13 @@ export class GitHubWaitLifecycleService {
               // Every matchable surface must advance its own frontier on renewal.
               inlineCommentCursor: Math.max(
                 prevReview?.inlineCommentCursor ?? 0,
-                (collectorReview?.lastInlineCommentCursor as number) ?? 0,
                 computeCommentCursor(undefined, reviewFacts?.inlineComments, 0),
               ),
               conversationCommentCursor: Math.max(
                 prevReview?.conversationCommentCursor ?? 0,
                 computeCommentCursor(undefined, reviewFacts?.conversationComments, 0),
-                (collectorReview?.lastConversationCommentCursor as number) ?? 0,
               ),
-              decisionCursor: Math.max(
-                reviewFacts?.decisionCursor ?? 0,
-                prevReview?.decisionCursor ?? 0,
-                (collectorReview?.lastDecisionCursor as number) ?? 0,
-              ),
+              decisionCursor: Math.max(reviewFacts?.decisionCursor ?? 0, prevReview?.decisionCursor ?? 0),
               ...(reviewFacts?.decision
                 ? { decision: reviewFacts.decision }
                 : prevReview?.decision
