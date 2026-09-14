@@ -68,6 +68,11 @@ async function createTrackingTask(
 async function createReviewHarness({ inline = [], conversation = [], reviews = [], eventLog } = {}) {
   const taskStore = new TaskStore();
   const messageStore = new MessageStore();
+  // A message in MessageStore does not prove the owner was woken: delivery and Queue admission
+  // are two steps, and AC-6c exists because the second one was missing while the first looked
+  // fine. `invokeTrigger` is an OPTIONAL spec option, so a harness that omits it silently skips
+  // the wake branch entirely and every assertion here would still pass with waking fully broken.
+  const triggerCalls = [];
   const task = await createTrackingTask(taskStore);
   const lifecycle = new GitHubWaitLifecycleService({
     taskStore,
@@ -89,10 +94,11 @@ async function createReviewHarness({ inline = [], conversation = [], reviews = [
     fetchReviews: async () => normalizePrReviewDecisions(reviews),
     isEchoComment: (comment) => comment.author.toLowerCase() === 'cat-self',
     isEchoReview: (review) => review.author.toLowerCase() === 'cat-self',
+    invokeTrigger: { trigger: async (...args) => triggerCalls.push(args) },
     eventLog,
     log: logger,
   });
-  return { taskStore, messageStore, task, spec };
+  return { taskStore, messageStore, task, spec, triggerCalls };
 }
 
 async function runOnePoll(spec) {
@@ -121,13 +127,22 @@ describe('#1394 GitHub tracking main flow', () => {
   });
 
   test('a response after a HEAD push travels from the real poller through the lifecycle into MessageStore', async () => {
-    const { messageStore, spec } = await createReviewHarness({ conversation: [upstreamConversationComment] });
+    const { messageStore, spec, triggerCalls } = await createReviewHarness({
+      conversation: [upstreamConversationComment],
+    });
     await runOnePoll(spec);
 
     const delivered = messageStore.getByThread('thread-registration');
     assert.equal(delivered.length, 1);
     assert.match(delivered[0].content, /ExternalMaintainer/);
     assert.match(delivered[0].content, /retry still loses this notification/);
+
+    // The journey does not end at MessageStore. AC-6c: `observe` delivers the connector message,
+    // and the owner still needs Queue admission on top of it — the missing-notification bug was
+    // a delivered message nobody was ever woken for. Asserting only on the store would pass with
+    // that half of the path deleted.
+    assert.equal(triggerCalls.length, 1, 'a delivered message that wakes nobody is the AC-6c bug');
+    assert.equal(triggerCalls[0][0], 'thread-registration', 'the wake must go to the registered thread');
   });
 
   test('conversation, inline, and formal-review payloads share one delivery path without loss', async () => {
