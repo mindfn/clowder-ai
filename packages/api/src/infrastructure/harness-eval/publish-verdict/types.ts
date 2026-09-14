@@ -188,7 +188,8 @@ export type VerdictSourceRefs =
   | QcMetricsSelector
   | FreshnessReplaySelector
   | DesignGateEpisodeSourceSelector
-  | TrajectoryInspectorWindowSelector;
+  | TrajectoryInspectorWindowSelector
+  | PromptSegmentsSourceSelector;
 
 /**
  * Resolved evidence source paths (a2a only — for backward-compat helpers in validation.ts).
@@ -323,4 +324,13 @@ export interface HandlerError {
   status: number;
   error: string;
   detail?: string;
+}
+
+/** F257 Harness Ledger snapshot selector. */
+export interface PromptSegmentsSourceSelector {
+  kind: 'prompt-segments';
+  windowStartMs: number;
+  windowEndMs: number;
+  evalRunId: string;
+  guardId?: string;
 }
