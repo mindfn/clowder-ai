@@ -79,7 +79,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const windowStart = now - windowMs;
     const windowEnd = now;
 
-    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd);
+    const data = await assembleLifelineData(opts.traceStore, opts, userId, segmentId, windowStart, windowEnd);
     const response = {
       segmentId,
       segmentName: data.segmentName,
@@ -123,13 +123,15 @@ interface LifelineData {
 async function assembleLifelineData(
   traceStore: InjectionTraceStore,
   opts: SegmentLifelineRoutesOptions,
+  ownerUserId: string,
   segmentId: string,
   windowStart: number,
   windowEnd: number,
 ): Promise<LifelineData> {
-  // 1. Collect segment activity (full-window scan; fired detail list capped)
+  // 1. Collect segment activity (owner-scoped full-window scan; fired detail list capped)
   const { observations, observationInputs, detailCapped } = await collectObservations(
     traceStore,
+    ownerUserId,
     segmentId,
     windowStart,
     windowEnd,
@@ -227,9 +229,16 @@ interface SegmentObservation {
  * Every matching segment row contributes to exact per-epoch activity counts,
  * including skipped and disabled rows. The replay DETAIL list is deliberately
  * injection-only and capped to the most recent MAX_OBSERVATIONS rows.
+ *
+ * Codex P1 (PR #1462): the corpus is the caller's own owner-indexed episode
+ * pool, never the global trace-thread registry. Reading every traced thread
+ * folded other owners' threads, turns and cats into this owner's lifeline.
+ * This is the same corpus /api/segment-evaluation judges from, so lifeline
+ * counts and evaluation counts now answer from one source of truth.
  */
 async function collectObservations(
   store: InjectionTraceStore,
+  ownerUserId: string,
   segmentId: string,
   startMs: number,
   endMs: number,
@@ -238,33 +247,35 @@ async function collectObservations(
   observationInputs: SegmentObservationInput[];
   detailCapped: boolean;
 }> {
-  const threadIds = await store.listTracedThreadIds();
+  const episodes = await store.queryUnitWindow(
+    ownerUserId,
+    [{ unitType: 'segment', unitId: segmentId }],
+    startMs,
+    endMs,
+  );
   const allRows: SegmentObservation[] = [];
   const observationInputs: SegmentObservationInput[] = [];
 
-  for (const threadId of threadIds) {
-    const summaries = await store.queryWindow(threadId, startMs, endMs);
-    for (const summary of summaries) {
-      const seg = summary.segments.find((s) => s.segmentId === segmentId);
-      if (!seg) continue;
-      const fired = isFiredTraceSegment(seg);
-      observationInputs.push({
+  for (const { summary } of episodes) {
+    const seg = summary.segments.find((s) => s.segmentId === segmentId);
+    if (!seg) continue;
+    const fired = isFiredTraceSegment(seg);
+    observationInputs.push({
+      timestamp: summary.timestamp,
+      version: seg.version ?? null,
+      fired,
+      disabled: seg.pipelineStatus === 'disabled',
+    });
+    if (fired) {
+      allRows.push({
+        threadId: summary.threadId,
+        turnId: summary.turnId,
         timestamp: summary.timestamp,
+        catId: summary.catId,
+        pipelineStatus: 'fired',
         version: seg.version ?? null,
-        fired,
-        disabled: seg.pipelineStatus === 'disabled',
+        charCount: seg.charCount,
       });
-      if (fired) {
-        allRows.push({
-          threadId: summary.threadId,
-          turnId: summary.turnId,
-          timestamp: summary.timestamp,
-          catId: summary.catId,
-          pipelineStatus: 'fired',
-          version: seg.version ?? null,
-          charCount: seg.charCount,
-        });
-      }
     }
   }
 

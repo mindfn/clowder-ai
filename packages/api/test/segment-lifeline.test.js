@@ -137,6 +137,29 @@ function makeDetail(threadId, turnId) {
   return { threadId, turnId, raw: '' };
 }
 
+/**
+ * Seed one complete trace episode: the prompt summary plus its terminal sidecar.
+ *
+ * The lifeline reads the caller's owner-indexed episode pool, so a summary with
+ * no closed episode is invisible to it by design — ownership lives only on the
+ * terminal sidecar. Tests must close the episode to make a turn readable.
+ */
+async function seedEpisode(store, { owner, threadId, turnId, timestamp, catId, segments }) {
+  await store.persist(makeSummary(threadId, turnId, timestamp, catId, segments), makeDetail(threadId, turnId));
+  await store.closeEpisode({
+    traceTurnId: turnId,
+    invocationId: `inv-${threadId}-${turnId}`,
+    ownerUserId: owner,
+    threadId,
+    catId,
+    inputMessageId: null,
+    outputMessageId: null,
+    terminalAt: timestamp,
+    terminalKind: 'completed',
+    toolCalls: [],
+  });
+}
+
 // ── listTracedThreadIds tests ───────────────────────────────
 
 describe('InjectionTraceStore.listTracedThreadIds', () => {
@@ -423,8 +446,14 @@ describe('segment-lifeline route: response contract', () => {
 
     // Seed an observation so the chain has tracing data
     const now = Date.now();
-    const s = makeSummary('thread-X', 'turn-1', now - 1000, 'opus', [makeSegment('S-test')]);
-    await store.persist(s, makeDetail('thread-X', 'turn-1'));
+    await seedEpisode(store, {
+      owner: 'test-user',
+      threadId: 'thread-X',
+      turnId: 'turn-1',
+      timestamp: now - 1000,
+      catId: 'opus',
+      segments: [makeSegment('S-test')],
+    });
 
     const app = await buildLifelineApp(store);
     const res = await app.inject({
@@ -461,16 +490,22 @@ describe('segment-lifeline route: response contract', () => {
     const store = new InjectionTraceStore(redis);
     const now = Date.now();
 
-    await store.persist(
-      makeSummary('thread-X', 'turn-fired', now - 2000, 'opus', [makeSegment('S-test')]),
-      makeDetail('thread-X', 'turn-fired'),
-    );
-    await store.persist(
-      makeSummary('thread-X', 'turn-disabled', now - 1000, 'opus', [
-        makeSegment('S-test', { status: 'absent', pipelineStatus: 'disabled' }),
-      ]),
-      makeDetail('thread-X', 'turn-disabled'),
-    );
+    await seedEpisode(store, {
+      owner: 'test-user',
+      threadId: 'thread-X',
+      turnId: 'turn-fired',
+      timestamp: now - 2000,
+      catId: 'opus',
+      segments: [makeSegment('S-test')],
+    });
+    await seedEpisode(store, {
+      owner: 'test-user',
+      threadId: 'thread-X',
+      turnId: 'turn-disabled',
+      timestamp: now - 1000,
+      catId: 'opus',
+      segments: [makeSegment('S-test', { status: 'absent', pipelineStatus: 'disabled' })],
+    });
 
     const app = await buildLifelineApp(store);
     const res = await app.inject({
@@ -493,6 +528,53 @@ describe('segment-lifeline route: response contract', () => {
       [{ turnId: 'turn-fired', pipelineStatus: 'fired' }],
       'the replay list named 注入明细 must not mix in disabled rows',
     );
+
+    await app.close();
+  });
+
+  test("another owner's episodes never enter this owner's lifeline", async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+    const now = Date.now();
+
+    // Same segment fired for two different owners inside the same window.
+    await seedEpisode(store, {
+      owner: 'test-user',
+      threadId: 'thread-mine',
+      turnId: 'turn-mine',
+      timestamp: now - 2000,
+      catId: 'opus',
+      segments: [makeSegment('S-test')],
+    });
+    await seedEpisode(store, {
+      owner: 'other-user',
+      threadId: 'thread-theirs',
+      turnId: 'turn-theirs',
+      timestamp: now - 1000,
+      catId: 'codex',
+      segments: [makeSegment('S-test', { version: 2 })],
+    });
+
+    const app = await buildLifelineApp(store);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test',
+      headers: SESSION_HEADERS,
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const body = JSON.parse(res.body);
+
+    // Detail rows must not name the other owner's thread, turn or cat.
+    assert.deepEqual(
+      body.observations.map(({ threadId, turnId, catId }) => ({ threadId, turnId, catId })),
+      [{ threadId: 'thread-mine', turnId: 'turn-mine', catId: 'opus' }],
+      "only the requesting owner's rows are readable",
+    );
+    // Aggregate counts must not silently fold the other owner's activity in
+    // either — a count of 2 here would leak existence without leaking names.
+    assert.equal(body.chain[0].tracing.observationCount, 1, 'counts stay owner-scoped');
+    assert.equal(body.chain[0].tracing.firedCount, 1);
 
     await app.close();
   });

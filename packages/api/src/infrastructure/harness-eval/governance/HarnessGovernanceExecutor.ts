@@ -237,7 +237,7 @@ export class HarnessGovernanceExecutor {
     if (change.action === 'enable' || change.action === 'disable') {
       return this.applyEnablement(change, hook, actorId, audit);
     }
-    return this.applyContent(change, actorId, audit);
+    return this.applyContent(change, hook.manifest.version, actorId, audit);
   }
 
   private async applyAdd(change: AddChange): Promise<void> {
@@ -264,7 +264,12 @@ export class HarnessGovernanceExecutor {
     await this.deps.overrideStore[change.action](change.hookId, actorId, audit);
   }
 
-  private async applyContent(change: ContentChange, actorId: string, audit: OverrideAudit): Promise<void> {
+  private async applyContent(
+    change: ContentChange,
+    manifestVersion: number,
+    actorId: string,
+    audit: OverrideAudit,
+  ): Promise<void> {
     const version = await this.deps.overrideStore.getActiveVersion(change.hookId);
     const content = await this.effectiveContent(change.hookId);
     if (change.action === 'modify') {
@@ -283,7 +288,15 @@ export class HarnessGovernanceExecutor {
     }
     if (version === change.targetVersion && content === change.targetContent) return;
     if (version !== change.sourceVersion) throw new Error('harness_governance_source_version_changed');
-    await this.deps.overrideStore.activateVersion(change.hookId, change.targetVersion, actorId, audit);
+    // hydrateRollback already chose which content this target names: the shipped
+    // template when it equals the manifest version, otherwise a stored snapshot.
+    // Say so explicitly, so a local epoch that collides with the shipped number
+    // cannot silently redirect an approved rollback to the other content.
+    const origin = change.targetVersion === manifestVersion ? 'manifest' : 'local';
+    await this.deps.overrideStore.activateVersion(change.hookId, change.targetVersion, actorId, {
+      ...audit,
+      origin,
+    });
   }
 
   private async requireUnit(objectiveId: string, unitId: string) {

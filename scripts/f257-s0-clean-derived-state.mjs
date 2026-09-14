@@ -247,16 +247,35 @@ export function cleanupPlanDigest(plan) {
   return crypto.createHash('sha256').update(canonical).digest('hex');
 }
 
+/**
+ * Apply a confirmed cleanup plan.
+ *
+ * The confirmed digest is a compare-and-set token against live Redis, not a
+ * checksum of the object handed in. A plan is re-derived here and the caller's
+ * digest must still describe that live derivation, so state that moved after
+ * planning — a sweep job that completed, a pending run that was consumed —
+ * aborts the apply instead of unlinking a record whose sibling now outlives it.
+ * Mutations are issued from the live derivation, never from the passed plan.
+ */
 export async function applyCleanupPlan(redis, plan, confirmedDigest) {
   const actualDigest = cleanupPlanDigest(plan);
   if (confirmedDigest !== actualDigest) throw new Error(`cleanup_plan_digest_mismatch:${actualDigest}`);
+
+  const live = await buildCleanupPlan(redis, {
+    ownerUserId: plan.ownerUserId,
+    keyPrefix: plan.keyPrefix,
+    targetFingerprint: plan.targetFingerprint,
+  });
+  const liveDigest = cleanupPlanDigest(live);
+  if (liveDigest !== confirmedDigest) throw new Error(`cleanup_plan_state_changed:${liveDigest}`);
+
   const transaction = redis.multi();
-  for (const entry of plan.unlinkKeys) transaction.unlink(entry.key);
-  for (const entry of plan.zremMembers) transaction.zrem(entry.key, entry.member);
+  for (const entry of live.unlinkKeys) transaction.unlink(entry.key);
+  for (const entry of live.zremMembers) transaction.zrem(entry.key, entry.member);
   const result = await transaction.exec();
   const failure = result?.find(([error]) => error);
   if (failure) throw failure[0];
-  return { unlinked: plan.unlinkKeys.length, indexMembersRemoved: plan.zremMembers.length };
+  return { unlinked: live.unlinkKeys.length, indexMembersRemoved: live.zremMembers.length };
 }
 
 function safeRedisTarget(redisUrl) {

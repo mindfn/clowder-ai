@@ -1499,6 +1499,46 @@ describe('P1-3 R6: epochVersion-based version management', () => {
     assert.equal(await store.getActiveVersion(s1.id), 1);
   });
 
+  test('a shipped version that catches up with a local epoch is ambiguous, not a silent clear', async () => {
+    const redis = new FakeRedis();
+    const { HookOverrideStore } = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+
+    // Shipped v1; the operator writes local content, which takes epochVersion 2
+    // because local epochs continue the manifest series.
+    const v1 = makeManifest('S1-collide', { version: 1 });
+    const store1 = new HookOverrideStore(redis, buildLookup(v1));
+    await store1.setContentOverride('S1-collide', 'local-content', 'u1');
+    assert.equal(await store1.getActiveVersion('S1-collide'), 2);
+
+    // A deployment now ships manifest v2. The number 2 names two different
+    // contents: the shipped baseline and the operator's snapshot.
+    const v2 = makeManifest('S1-collide', { version: 2 });
+    const store2 = new HookOverrideStore(redis, buildLookup(v2));
+
+    await assert.rejects(
+      store2.activateVersion('S1-collide', 2, 'u1'),
+      /Ambiguous epochVersion 2/,
+      'a bare number must not quietly pick one of the two',
+    );
+    assert.equal(
+      (await store2.getOverride('S1-collide'))?.contentOverride,
+      'local-content',
+      'the rejected activation leaves the operator content untouched',
+    );
+
+    // Both meanings stay reachable once the caller says which one it wants.
+    await store2.activateVersion('S1-collide', 2, 'u1', { origin: 'local' });
+    assert.equal((await store2.getOverride('S1-collide'))?.contentOverride, 'local-content');
+
+    await store2.activateVersion('S1-collide', 2, 'u1', { origin: 'manifest' });
+    assert.equal(
+      (await store2.getOverride('S1-collide'))?.contentOverride,
+      undefined,
+      'selecting the shipped manifest clears the content override',
+    );
+    assert.equal(await store2.getActiveVersion('S1-collide'), 2);
+  });
+
   test('snapshots keyed by epochVersion (manifest.version+N), activateVersion restores by epochVersion', async () => {
     const s1 = makeManifest('S1-ver');
     const fakeRedis = new FakeRedis();

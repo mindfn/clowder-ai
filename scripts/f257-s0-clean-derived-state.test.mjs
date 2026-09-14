@@ -145,6 +145,41 @@ describe('F257 S0 derived-state cleanup plan', () => {
     );
   });
 
+  it('aborts apply when live state moved after the dry run, instead of orphaning the sibling record', async () => {
+    const prefix = 'cat-cafe:';
+    const redis = fakeRedis({
+      strings: {
+        [`${prefix}harness-semantic-sweep-job:sweep-open`]: JSON.stringify({
+          jobId: 'sweep-open',
+          ownerUserId: 'default-user',
+        }),
+      },
+    });
+    const plan = await buildCleanupPlan(redis, { ownerUserId: 'default-user', keyPrefix: prefix });
+    const digest = cleanupPlanDigest(plan);
+    assert.deepEqual(
+      plan.unlinkKeys.map((entry) => entry.key),
+      [`${prefix}harness-semantic-sweep-job:sweep-open`],
+      'the dry run planned to unlink the open sweep job',
+    );
+
+    // The sweep finishes between the dry run and --apply. Its job record is no
+    // longer open state, and unlinking it would strand the completion record.
+    redis.values.set(`${prefix}harness-semantic-sweep-completion:sweep-open`, '{"completed":true}');
+
+    await assert.rejects(applyCleanupPlan(redis, plan, digest), /cleanup_plan_state_changed/);
+    assert.equal(
+      redis.values.has(`${prefix}harness-semantic-sweep-job:sweep-open`),
+      true,
+      'the now-completed job record survives the aborted apply',
+    );
+    assert.equal(
+      redis.values.has(`${prefix}harness-semantic-sweep-completion:sweep-open`),
+      true,
+      'no orphaned completion record is left behind',
+    );
+  });
+
   it('binds apply to the exact dry-run digest and leaves completed sweep records intact', async () => {
     const prefix = 'cat-cafe:';
     const redis = fakeRedis({

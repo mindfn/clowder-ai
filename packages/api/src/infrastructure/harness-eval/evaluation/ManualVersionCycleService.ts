@@ -1,4 +1,5 @@
 import type { CycleRecord, CycleWindow } from '@cat-cafe/shared';
+import type { EpochOrigin } from '../../../domains/prompt-hooks/HookOverrideContentStore.js';
 import type { HookOverrideStore } from '../../../domains/prompt-hooks/HookOverrideStore.js';
 import { cycleTriggerPolicyFor } from './cycle-trigger-policy.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
@@ -27,6 +28,12 @@ interface ManualVersionCycleInput {
   targetVersion: number;
   actorId: string;
   reason: string;
+  /**
+   * Which content `targetVersion` names when a shipped manifest version and a
+   * local epoch snapshot carry the same number. Omitted while the number is
+   * unambiguous; required by the store once both origins claim it.
+   */
+  origin?: EpochOrigin;
 }
 
 interface ManualVersionCreateInput extends Omit<ManualVersionCycleInput, 'targetVersion'> {
@@ -86,6 +93,7 @@ export class ManualVersionCycleService {
       await this.deps.overrideStore.activateVersion(input.segmentId, input.targetVersion, input.actorId, {
         source: 'operator',
         reason: input.reason,
+        ...(input.origin ? { origin: input.origin } : {}),
       });
       return input.targetVersion;
     });

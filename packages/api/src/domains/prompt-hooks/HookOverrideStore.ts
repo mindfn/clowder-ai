@@ -14,7 +14,7 @@ import type {
   OverrideChangeEvent,
 } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { HookOverrideContentStore } from './HookOverrideContentStore.js';
+import { type EpochOrigin, HookOverrideContentStore } from './HookOverrideContentStore.js';
 import { isHookCondition } from './hook-condition-policy.js';
 import { HookOverrideEventRecorder, reconcileOverride } from './hook-override-event-recorder.js';
 
@@ -219,7 +219,7 @@ export class HookOverrideStore {
     hookId: string,
     epochVersion: number,
     actorId: string,
-    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
+    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string; origin?: EpochOrigin },
   ): Promise<void> {
     return this.content.activate(hookId, epochVersion, actorId, opts);
   }

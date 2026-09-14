@@ -97,15 +97,24 @@ function parseOverrideBody(raw: unknown): { action: OverrideAction; reason: stri
   return { action: action as OverrideAction, reason };
 }
 
-function parseActivateBody(raw: unknown): { epochVersion: number; reason: string } | { error: string } {
+function parseActivateBody(
+  raw: unknown,
+): { epochVersion: number; reason: string; origin?: 'manifest' | 'local' } | { error: string } {
   const body = isRecord(raw) ? raw : {};
   const epochVersion = typeof body.epochVersion === 'number' ? body.epochVersion : null;
   if (epochVersion === null || !Number.isSafeInteger(epochVersion) || epochVersion < 1) {
     return { error: 'epochVersion (positive integer) is required' };
   }
+  // A shipped manifest version and a local epoch can carry the same number.
+  // The caller that rendered the lifeline knows which row was chosen; without
+  // this the store fails closed rather than guessing.
+  if (body.origin !== undefined && body.origin !== 'manifest' && body.origin !== 'local') {
+    return { error: "origin must be 'manifest' or 'local' when provided" };
+  }
+  const origin = body.origin as 'manifest' | 'local' | undefined;
   const suppliedReason = typeof body.reason === 'string' ? body.reason.trim() : '';
   const reason = suppliedReason || `手动切换当前版本至 v${epochVersion}`;
-  return { epochVersion, reason };
+  return { epochVersion, reason, ...(origin ? { origin } : {}) };
 }
 
 function parseContentBody(
@@ -288,6 +297,7 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
         targetVersion: parsed.epochVersion,
         actorId: userId,
         reason: parsed.reason,
+        ...(parsed.origin ? { origin: parsed.origin } : {}),
       });
       const override = await opts.overrideStore.getOverride(hookId);
       return reply.send({ ok: true, hookId, epochVersion: parsed.epochVersion, override, transition });
