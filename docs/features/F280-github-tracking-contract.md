@@ -4,6 +4,7 @@ related_features: [F140, F168, F1392]
 topics: [github, pr-tracking, issue-tracking, notifications, wait-contract]
 doc_kind: spec
 created: 2026-09-02
+tips_exempt: "Declared 2026-09-14: this document is the acceptance contract for tracking behaviour, not a new operator surface. Registration is a cat action discovered through the typed register_pr_tracking / register_issue_tracking MCP contract, and what the operator sees is the existing thread notification — so there is no separate capability entry to tip."
 ---
 
 # GitHub Tracking — 用户契约（#1392 / #1394 唯一真相源）

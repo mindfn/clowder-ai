@@ -660,7 +660,6 @@ export {
   isValidScope,
 } from './game.js';
 export {
-  type GitHubReviewThreadBaseline,
   type AwaitStateV1,
   createWaitContinuationCarrier,
   GITHUB_WAIT_PREDICATE_KINDS,
@@ -671,6 +670,7 @@ export {
   type GitHubPrAwaitStateV1,
   type GitHubPrWaitBaseline,
   type GitHubPrWaitPredicate,
+  type GitHubReviewThreadBaseline,
   type GitHubWaitBaseline,
   type GitHubWaitMatchedDelta,
   type GitHubWaitPredicate,

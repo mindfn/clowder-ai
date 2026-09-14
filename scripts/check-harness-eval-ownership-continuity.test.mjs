@@ -22,8 +22,7 @@ const RETIRED_ANCHORS = [
 const LIVE_GIT_PUBLISHER = 'packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts';
 // Upstream flattened the source-ref validator out of its subdirectory; the refreshed
 // overlay follows that layout, so base and overlay agree and nothing is relocated here.
-const RELOCATED_CODE_ANCHORS = new Map([
-]);
+const RELOCATED_CODE_ANCHORS = new Map([]);
 
 function parseFrontmatter(markdown) {
   const match = markdown.match(/^---\n([\s\S]*?)\n---/);

@@ -2,7 +2,7 @@
 feature_ids: [F267]
 related_features: [F192, F245, F263, F266, F268, F275, F311]
 topics: [eval, measurement-validity, calibration, uncertainty, repeatability, friction, work-eligibility]
-tips_exempt: "Renewed 2026-09-02: capability-evolution issuance is a cat-only eval workflow; the operator entry remains F311's Evolution Program tip, while this owner action is discovered through its typed MCP contract."
+tips_exempt: "Renewed 2026-09-14: KD-11 records that metric versioning is contracted but never exercised — a knowledge row eval authors read, not a new operator surface. Capability-evolution issuance stays a cat-only eval workflow; the operator entry remains F311's Evolution Program tip, while this owner action is discovered through its typed MCP contract."
 doc_kind: spec
 created: 2026-07-18
 updated: 2026-09-02
