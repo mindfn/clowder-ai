@@ -187,14 +187,6 @@ export interface UnifiedAwaitStateV1<SubjectRef extends string, Baseline, Predic
   };
   readonly expiresAt?: number;
   readonly createdAt: number;
-  /**
-   * #1392 AC-1: when true, a predicate match
-   * auto-renews the tracking task with a fresh baseline + incremented
-   * generation inside TaskStore; terminal subject states suppress renewal.
-   * Public GitHub tracking always sets true. Absent/false remains available to
-   * internal one-shot lifecycle users only.
-   */
-  readonly autoRenew?: boolean;
 }
 
 type GitHubWaitProvenance = {

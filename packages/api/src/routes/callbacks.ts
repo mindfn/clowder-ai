@@ -5534,7 +5534,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
           then: nextStep,
         },
-        autoRenew: true,
         createdAt: Date.now(),
         provenance: 'explicit_registration',
       };
@@ -5761,7 +5760,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
           then: nextStep,
         },
-        autoRenew: true,
         createdAt: Date.now(),
         provenance: 'explicit_registration',
       };

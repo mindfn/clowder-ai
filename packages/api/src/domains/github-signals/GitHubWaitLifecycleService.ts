@@ -343,16 +343,14 @@ export class GitHubWaitLifecycleService {
       const outcome = replacement.waitOutcome;
       if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome', observationEvaluated: false };
 
-      // #1392 AC-1: on a predicate MATCH with autoRenew, atomically install gen N+1
-      // (fresh baseline, same when/then/expiresAt) in the SAME CAS as the delivered
-      // outcome — a TaskStore-only generation transition. Never renew on expiry,
-      // terminal, cancel, or subject-terminal. The installed outcome is also the recovery
-      // outbox: its lifecycle event must be durable before connector delivery can begin.
-      const renewing =
-        outcome.delivery === 'pending' &&
-        outcome.reason === 'matched' &&
-        active.autoRenew === true &&
-        !outcome.terminalSubjectState;
+      // #1392 AC-1: a predicate match installs the next generation in the SAME CAS as the
+      // delivered outcome — a TaskStore-only transition. The installed outcome is also the
+      // recovery outbox, so its lifecycle event must be durable before delivery can begin.
+      // Tracking continues until the subject itself ends. #1392's whole point is that a cat never
+      // re-registers by hand, so "keep going" is not a flag a wait can be missing — a matched,
+      // non-terminal outcome renews, full stop. The `autoRenew` switch only ever existed to let
+      // pre-#1392 one-shot waits opt out, and those are gone with the migration services.
+      const renewing = outcome.delivery === 'pending' && outcome.reason === 'matched' && !outcome.terminalSubjectState;
 
       let installState: AutomationState = replacement;
       let installStatus: 'done' | 'doing' = 'done';

@@ -169,15 +169,3 @@ describe('#1392 R18 P2 — renewal baseline is a strict frontier union', () => {
     assert.ok(baseline.review.decisionCursor >= 40, 'decision frontier rewound');
   });
 });
-
-describe('#1392 AC-1 — renderer states the truthful rearm outcome', () => {
-  it('a single-fire (autoRenew off) match tells the owner tracking closed, not re-armed', async () => {
-    const { lifecycle, task } = await harness(baseState({ autoRenew: false }));
-
-    const result = await lifecycle.observe({ taskId: task.id, facts: { headSha: 'bbbb2222' } });
-
-    assert.equal(result.kind, 'notified');
-    assert.match(result.content, /single-fire/i);
-    assert.doesNotMatch(result.content, /re-armed/i);
-  });
-});
