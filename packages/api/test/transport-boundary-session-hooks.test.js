@@ -72,9 +72,9 @@ describe('Transport boundary + session hook source', () => {
       }
     });
 
-    it('exactly 46 hooks in the pipeline (no transport leakage)', () => {
+    it('exactly 47 hooks in the pipeline (no transport leakage)', () => {
       const allHooks = registry.getAllHooks();
-      assert.equal(allHooks.length, 46, `Expected 46 hooks, got ${allHooks.length}`);
+      assert.equal(allHooks.length, 47, `Expected 47 hooks, got ${allHooks.length}`);
     });
   });
 

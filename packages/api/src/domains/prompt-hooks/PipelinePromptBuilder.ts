@@ -242,7 +242,7 @@ export function buildInvocationContextViaHookPipelineWithTrace(context: Invocati
  * Equivalent to legacy `buildSystemPrompt()`.
  *
  * Unlike the scoped builders above, this produces the FULL unfiltered pipeline
- * output — all 46 hooks. Use when the pipeline IS the single source (future).
+ * output — all 47 hooks. Use when the pipeline IS the single source (future).
  *
  * @returns Combined prompt string with trace results for observability.
  */

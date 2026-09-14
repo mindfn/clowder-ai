@@ -294,6 +294,15 @@ function buildSerialMultiTargetNoticePayload(
   });
 }
 
+/**
+ * D22 lists every custody exit as a generic turn checklist. When the route has
+ * already emitted an exact F167 protocol contract for this turn, that contract
+ * is the only valid one — and D22 would put the excluded exits (notably
+ * returnToPredecessor, which a managed-hold wake cannot use) back in front of
+ * the cat. The exact contract shadows the generic checklist for that turn only.
+ */
+const TURN_CUSTODY_GENERIC_CHECKPOINT_HOOK_ID = 'D22';
+
 export function buildTurnCustodyStopGateRemedialPrompt(wake: TurnCustodyWakeProvenance): string {
   if (wake.kind === 'structured' && wake.protocol === 'hold') {
     return (
@@ -1484,6 +1493,12 @@ export async function* routeSerial(
         : '';
       const invocationContext = [
         buildInvocationContext({
+          ...(structuredDispositionPrompt !== undefined
+            ? {
+                suppressedHookIds: [TURN_CUSTODY_GENERIC_CHECKPOINT_HOOK_ID],
+                hookSuppressionReason: 'shadowed_by_exact_turn_custody_protocol',
+              }
+            : {}),
           catId,
           mode: invocationMode,
           chainIndex: index + 1,
@@ -1514,7 +1529,7 @@ export async function* routeSerial(
         .filter(Boolean)
         .join('\n\n');
       // F237: drain turn trace synchronously — no yield between build and drain.
-      // F257: save turn pipeline trace for full 46-segment persistence (D+R+N).
+      // F257: save turn pipeline trace for full 47-segment persistence (D+R+N).
       const { turn: pipelineTurnTrace } = drainCapturedTraces();
       const continuityCapsule = buildCapsuleFromRouteState({
         threadId,

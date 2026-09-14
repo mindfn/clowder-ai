@@ -53,6 +53,14 @@ const MERGE_GATE_SOURCE_PROVENANCE_TRIGGER = '- MG provenance override：外部f
  * Context for a single cat invocation
  */
 export interface InvocationContext {
+  /**
+   * Hooks this route has shadowed for the exact turn because it already owns a
+   * narrower terminal contract (F167 structured hold / dispatch). See
+   * AssemblerInput.suppressedHookIds.
+   */
+  suppressedHookIds?: readonly string[];
+  /** Why those hooks were shadowed; carried into the skip trace. */
+  hookSuppressionReason?: string;
   /** Which cat is being invoked */
   catId: CatId;
   /** independent = sole responder, serial = part of a chain, parallel = concurrent ideation */

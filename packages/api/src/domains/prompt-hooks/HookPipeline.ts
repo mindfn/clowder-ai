@@ -136,11 +136,48 @@ export class HookPipeline {
   }
 
   /**
-   * Execute all hooks for a stage in manifest order.
-   * Each hook: enabled check → resolve → render → patch + trace.
+   * Decide the gates that precede any resolver work, in priority order.
    *
-   * Checks registry.isEnabled() which resolves override snapshot → manifest baseline.
-   * Content overrides from HookOverrideStore take precedence over template rendering.
+   * A hook that is turned off stays `disabled` even when the route also shadows
+   * it — "was never going to run" is the more precise fact. A route-owned exact
+   * contract then shadows a conflicting generic hook for this turn only, and is
+   * recorded as `skipped` rather than filtered out of the rendered text: the
+   * evaluation ledger must not claim a segment fired when it never reached the
+   * model.
+   *
+   * Returns the terminal trace event, or null when the hook may proceed.
+   */
+  private rejectBeforeResolve(hookId: string, stage: HookStage, ts: number, input: AssemblerInput): TraceEvent | null {
+    if (!this.registry.isEnabled(hookId)) {
+      return {
+        hookId,
+        stage,
+        timestamp: ts,
+        status: 'disabled',
+        disabledBy: this.registry.getDisabledBySource(hookId),
+      } as TraceEventDisabled;
+    }
+    if (input.suppressedHookIds?.includes(hookId)) {
+      return {
+        hookId,
+        stage,
+        timestamp: ts,
+        status: 'skipped',
+        reasonCode: 'route_suppressed',
+        reason: input.hookSuppressionReason ?? 'shadowed by a route-owned exact contract',
+      } as TraceEventSkipped;
+    }
+    return null;
+  }
+
+  /**
+   * Execute all hooks for a stage in manifest order.
+   * Each hook: pre-resolve gates → resolve → governed condition → render → patch + trace.
+   *
+   * The pre-resolve gates (see rejectBeforeResolve) cover registry.isEnabled(),
+   * which resolves override snapshot → manifest baseline, and route-owned
+   * shadowing. Content overrides from HookOverrideStore take precedence over
+   * template rendering.
    */
   executeStage(stage: HookStage, input: AssemblerInput): PipelineResult {
     const hooks = this.registry.getStageHooks(stage);
@@ -151,15 +188,10 @@ export class HookPipeline {
       const hookId = hook.manifest.id;
       const ts = Date.now();
 
-      // 1. Enabled check — override snapshot → manifest baseline (PR3)
-      if (!this.registry.isEnabled(hookId)) {
-        events.push({
-          hookId,
-          stage,
-          timestamp: ts,
-          status: 'disabled',
-          disabledBy: this.registry.getDisabledBySource(hookId),
-        } as TraceEventDisabled);
+      // 1. Gates that need no resolver work: turned off, or shadowed by the route.
+      const preResolveRejection = this.rejectBeforeResolve(hookId, stage, ts, input);
+      if (preResolveRejection) {
+        events.push(preResolveRejection);
         continue;
       }
 

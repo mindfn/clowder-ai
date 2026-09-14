@@ -19,6 +19,9 @@ function fakeTraceStore() {
   return {
     listTracedThreadIds: async () => [],
     queryWindow: async () => [],
+    // The lifeline reads the caller's owner-indexed episode pool, not the
+    // global thread registry, so the production surface needs this method.
+    queryUnitWindow: async () => [],
     getReplaySnapshot: async () => null,
   };
 }

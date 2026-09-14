@@ -6687,24 +6687,17 @@ async function main(): Promise<void> {
       const execFileAsync = promisify(execFile);
       const { stdout } = await execFileAsync(
         'gh',
-        ['pr', 'view', String(pr), '-R', repo, '--json', 'mergeable,mergeStateStatus,headRefOid'],
+        ['pr', 'view', String(pr), '-R', repo, '--json', 'mergeable,headRefOid'],
         getGitHubExecOptions(15_000),
       );
       const data = JSON.parse(stdout);
-      return {
-        mergeState: data.mergeable ?? 'UNKNOWN',
-        mergeStateStatus: data.mergeStateStatus ?? 'UNKNOWN',
-        headSha: data.headRefOid ?? '',
-      };
+      return { mergeState: data.mergeable ?? 'UNKNOWN', headSha: data.headRefOid ?? '' };
     };
 
     const { ConflictAutoExecutor } = await import('./infrastructure/email/ConflictAutoExecutor.js');
     const autoExecutor = new ConflictAutoExecutor({ log: app.log });
 
     const { fetchPaginated: fetchPaginatedFn } = await import('./infrastructure/github/fetch-paginated.js');
-    const { normalizeIssueComments, normalizePrFeedbackComments, normalizePrReviewDecisions } = await import(
-      './infrastructure/github/github-feedback-payload.js'
-    );
     const fetchPaginated = (endpoint: string, sinceId?: number) =>
       fetchPaginatedFn(endpoint, { sinceId, ghToken: getGitHubToken() });
 
@@ -6749,20 +6742,79 @@ async function main(): Promise<void> {
         fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, cursors.inline),
         fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, cursors.conversation),
       ]);
-      return normalizePrFeedbackComments(reviewComments, issueComments);
+      return [...reviewComments, ...issueComments].map(
+        (c: {
+          id: number;
+          body: string;
+          created_at: string;
+          user?: { login: string; type?: string };
+          commit_id?: string;
+          path?: string;
+          line?: number;
+          pull_request_review_id?: number;
+          author_association?: string; // F168 Phase B: needed for delivery policy
+        }) => ({
+          id: c.id,
+          ...(c.pull_request_review_id ? { reviewId: c.pull_request_review_id } : {}),
+          author: c.user?.login ?? 'unknown',
+          actorType: c.user?.type,
+          body: c.body,
+          createdAt: c.created_at,
+          ...(c.commit_id ? { commitId: c.commit_id } : {}),
+          commentType: c.pull_request_review_id ? ('inline' as const) : ('conversation' as const),
+          ...(c.path ? { filePath: c.path } : {}),
+          ...(c.line ? { line: c.line } : {}),
+          ...(c.author_association !== undefined ? { authorAssociation: c.author_association } : {}),
+        }),
+      );
     };
 
     const fetchReviews = async (repo: string, pr: number, sinceId?: number) => {
       await refreshGitHubSelfLogin();
       const reviews = await fetchPaginated(`/repos/${repo}/pulls/${pr}/reviews`, sinceId);
-      return normalizePrReviewDecisions(reviews);
+      return reviews.map(
+        (r: {
+          id: number;
+          user?: { login: string; type?: string };
+          state: string;
+          body: string;
+          submitted_at: string;
+          commit_id?: string;
+          author_association?: string; // F168 Phase B: needed for delivery policy
+        }) => ({
+          id: r.id,
+          author: r.user?.login ?? 'unknown',
+          actorType: r.user?.type,
+          state: r.state as 'APPROVED' | 'CHANGES_REQUESTED' | 'DISMISSED' | 'COMMENTED',
+          body: r.body,
+          submittedAt: r.submitted_at,
+          ...(r.commit_id ? { commitId: r.commit_id } : {}),
+          ...(r.author_association !== undefined ? { authorAssociation: r.author_association } : {}),
+        }),
+      );
     };
 
     // F202 Phase 2D: Issue comment fetchers (parallel to PR comment fetchers)
     const fetchIssueComments = async (repoFullName: string, issueNumber: number, sinceId?: number) => {
       await refreshGitHubSelfLogin();
       const comments = await fetchPaginated(`/repos/${repoFullName}/issues/${issueNumber}/comments`, sinceId);
-      return normalizeIssueComments(comments);
+      return comments.map(
+        (c: {
+          id: number;
+          body: string;
+          created_at: string;
+          user?: { login: string; type?: string };
+          author_association?: string; // F168 Phase B: needed for delivery policy
+        }) => ({
+          id: c.id,
+          author: c.user?.login ?? 'unknown',
+          actorType: c.user?.type,
+          body: c.body,
+          createdAt: c.created_at,
+          // Map snake_case GitHub API field to camelCase IssueComment.authorAssociation
+          ...(c.author_association !== undefined ? { authorAssociation: c.author_association } : {}),
+        }),
+      );
     };
 
     const fetchIssueMetadata = async (repoFullName: string, issueNumber: number) => {

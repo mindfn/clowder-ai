@@ -60,6 +60,8 @@ describe('evaluation catalog: unit manifest reload', () => {
       unitId: 'D99',
       hookId: 'd99-reload-probe',
       unitState: 'evaluable',
+      // Non-baseline units must declare origin: local (unit manifest contract).
+      origin: 'local',
       objectives: [{ objectiveId: 'turn-custody-closure' }],
     });
 
@@ -93,6 +95,8 @@ describe('evaluation catalog: unit manifest reload', () => {
       unitId: 'D97',
       hookId: 'd97-reload-probe',
       unitState: 'evaluable',
+      // Non-baseline units must declare origin: local (unit manifest contract).
+      origin: 'local',
       objectives: [{ objectiveId: 'turn-custody-closure' }],
     });
 

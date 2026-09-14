@@ -354,6 +354,20 @@ export interface AssemblerInput {
 
   // --- Co-creator mention (for D21 template {{CC_MENTION}}) ---
   coCreatorFirstMention: string;
+
+  /**
+   * Hooks the ROUTE has shadowed for this exact turn.
+   *
+   * A route that already owns an exact terminal contract for the turn (F167
+   * structured hold / dispatch) states the only valid exits itself. A generic
+   * hook that enumerates every exit would re-widen that contract, so the route
+   * names it here instead of the pipeline guessing. Suppression is recorded as
+   * a skipped trace event, never silently dropped from the rendered text — the
+   * evaluation ledger must not claim the hook fired.
+   */
+  suppressedHookIds?: readonly string[];
+  /** Why the route shadowed those hooks; surfaces verbatim in the skip trace. */
+  hookSuppressionReason?: string;
 }
 
 /** Flattened world context for D18 resolver. */
