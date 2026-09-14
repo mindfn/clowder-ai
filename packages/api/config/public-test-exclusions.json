@@ -94,6 +94,14 @@
       "introducedBy": "78f3bc57c",
       "expiresOn": "2026-10-01",
       "audit": {
+        "reviewedOn": "2026-09-09",
+        "sourceHead": "6bffad45ecb50e6cbe1f11ae897358a54ef5ff39",
+        "publicHead": "6b6fbbaa863ced704081f0ddc718d797b619f8c2",
+        "status": "source_dependency_failure",
+        "matchedFileCount": 257,
+        "matchedFilesHash": "44c17c6a5c91da002e0ca89cfdf8b3a68455552fd50768c9b78816d0a9830357"
+      },
+      "publicAudit": {
         "reviewedOn": "2026-09-14",
         "sourceHead": "6bffad45ecb50e6cbe1f11ae897358a54ef5ff39",
         "publicHead": "c0cf29f0a2a828654202cb662f18c55058f2a1fb",
@@ -493,6 +501,14 @@
       "introducedBy": "bfa9e2c8f",
       "expiresOn": "2026-10-01",
       "audit": {
+        "reviewedOn": "2026-09-01",
+        "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
+        "publicHead": "182d8ec9abc87ff7905441dca0575aab9787ee8f",
+        "status": "private_fixture_failure",
+        "matchedFileCount": 9,
+        "matchedFilesHash": "0c0d80f3d4f94431a26b151478f8beed27527783d335186604a61627b7a9f4de"
+      },
+      "publicAudit": {
         "reviewedOn": "2026-09-14",
         "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
         "publicHead": "c0cf29f0a2a828654202cb662f18c55058f2a1fb",
