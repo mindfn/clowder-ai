@@ -44,35 +44,18 @@
       }
     },
     {
-      "id": "workflow-sop-store",
-      "match": "workflow-sop-store",
-      "category": "source_only",
-      "reason": "The bounded public audit discovered no matching test file; retain only until the explicit inventory recheck completes.",
-      "owner": "@zts212653",
-      "introducedBy": "78f3bc57c",
-      "expiresOn": "2026-09-08",
-      "audit": {
-        "reviewedOn": "2026-09-01",
-        "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
-        "publicHead": "182d8ec9abc87ff7905441dca0575aab9787ee8f",
-        "status": "pending_bounded_recheck",
-        "matchedFileCount": 1,
-        "matchedFilesHash": "f2bb4b4bfdab922a8169ff8df9d041e0d694b636be18fa81ce58850ba264e0c8"
-      }
-    },
-    {
       "id": "codex-agent-service",
       "match": "codex-agent-service",
       "category": "source_only",
-      "reason": "The bounded public audit reached its 120-second cap; retain only until a completed public recheck replaces this evidence.",
+      "reason": "A fresh public-like run without private cat model configuration fails before exercising provider behavior, so this remains source-only coverage.",
       "owner": "@zts212653",
       "introducedBy": "78f3bc57c",
-      "expiresOn": "2026-09-08",
+      "expiresOn": "2026-10-01",
       "audit": {
-        "reviewedOn": "2026-09-01",
-        "sourceHead": "b741f42fdbbb4484a54cde7eadca08b3b11652e3",
-        "publicHead": "182d8ec9abc87ff7905441dca0575aab9787ee8f",
-        "status": "pending_bounded_recheck",
+        "reviewedOn": "2026-09-10",
+        "sourceHead": "06c052010c01745da02aace324aa067e69c3ce75",
+        "publicHead": "6b6fbbaa863ced704081f0ddc718d797b619f8c2",
+        "status": "source_dependency_failure",
         "matchedFileCount": 2,
         "matchedFilesHash": "bb6f15490d1f0a407ece89b4a005c9fbea371b0d2b57e3d3ce080c9b27f08113"
       }

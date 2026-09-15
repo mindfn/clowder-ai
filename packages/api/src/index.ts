@@ -3979,6 +3979,8 @@ async function main(): Promise<void> {
     return verify(input, { ghToken: getGitHubToken() });
   };
 
+  let loadRepositoryPluginInfo: (() => Promise<readonly import('@cat-cafe/shared').PluginInfo[]>) | undefined;
+
   // F202: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
@@ -4004,7 +4006,9 @@ async function main(): Promise<void> {
     const { resolveStartupCliConfigContext } = await import('./config/capabilities/startup-cli-config.js');
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'packages', 'api', 'src', 'plugins');
-    const { loadAllPluginConfigs, resolvePluginEnv } = await import('./domains/plugin/plugin-config-store.js');
+    const { loadAllPluginConfigs, readPluginEnvSnapshot, resolvePluginEnv } = await import(
+      './domains/plugin/plugin-config-store.js'
+    );
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
     const scannedManifests = pluginRegistry.getAllManifests();
@@ -4012,11 +4016,17 @@ async function main(): Promise<void> {
     app.log.info(
       `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
     );
+    loadRepositoryPluginInfo = async () => {
+      const manifests = pluginRegistry.scan();
+      const projectRoot = resolveActiveProjectRoot();
+      const capabilities = await readCapabilitiesConfig(projectRoot);
+      const envSnapshot = readPluginEnvSnapshot(projectRoot, manifests);
+      return manifests.map((manifest) => pluginRegistry.getPluginInfo(manifest, capabilities, envSnapshot));
+    };
     getGitHubPluginEnv = () => {
       const githubManifest = pluginRegistry.getManifest('github');
       return githubManifest ? resolvePluginEnv([githubManifest]) : {};
     };
-
     const limbAdapterRegistry = new Map<
       string,
       (yamlPath: string, pluginConfig: Record<string, string>) => Promise<ILimbNode>
@@ -4563,7 +4573,9 @@ async function main(): Promise<void> {
     `[api] official plugin Host routes ready ` +
       `(created=${officialSignalRouteBootstrap.created}, preserved=${officialSignalRouteBootstrap.preserved})`,
   );
-  const { createDormantPluginRuntimeComposition } = await import('./domains/plugin/runtime-composition.js');
+  const { createDormantPluginRuntimeComposition, createPluginManagerRuntimeComposition } = await import(
+    './domains/plugin/runtime-composition.js'
+  );
   const { createCollectiveAgentVerifier } = await import(
     './domains/plugin/builtin-runtime/collective-agent-verifier.js'
   );
@@ -4574,8 +4586,9 @@ async function main(): Promise<void> {
     const config = catRegistry.tryGet(catId as CatId)?.config;
     return config ? { agentId: catId, catId, displayName: config.displayName } : undefined;
   };
+  const pluginProjectRoot = resolveActiveProjectRoot();
   const pluginRuntime = createDormantPluginRuntimeComposition({
-    projectRoot: resolveActiveProjectRoot(),
+    projectRoot: pluginProjectRoot,
     routes: signalRouteStore,
     intakes: meetingIntakeStore,
     messageStore,
@@ -4600,13 +4613,6 @@ async function main(): Promise<void> {
         }),
     },
   });
-  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
-  app.log.info(
-    `[api] K-2 external plugin runtime recovered ` +
-      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
-      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
-      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
-  );
   const { OfficialPluginAuthService } = await import('./domains/plugin/official-plugin-auth.js');
   const officialPluginAuth = new OfficialPluginAuthService({ packages: pluginRuntime.packages });
   app.addHook('onClose', async () => {
@@ -4615,13 +4621,99 @@ async function main(): Promise<void> {
   });
   const { OFFICIAL_PLUGIN_POLICIES } = await import('./domains/plugin/official-catalog.js');
   const { RefreshingOfficialPluginCatalog } = await import('./domains/plugin/official-catalog-provider.js');
-  const { OfficialPluginPackageInstaller } = await import('./domains/plugin/official-package-installer.js');
   const { OfficialPluginHistoryImportService } = await import('./domains/plugin/official-plugin-history-import.js');
   const { OfficialPluginMeetingIntakeService } = await import('./domains/plugin/official-plugin-meeting-intake.js');
   const { createLarkCliFeishuArtifactInspector, normalizeGeneratedArtifact, parseFeishuMinutesReference } =
     await import('@clowder-ai/feishu-meeting-intake');
   const { registerOfficialPluginRoutes } = await import('./routes/plugin-official-routes.js');
   const officialPluginCatalog = new RefreshingOfficialPluginCatalog({ policies: OFFICIAL_PLUGIN_POLICIES });
+  const { validatePluginCatalog } = await import('@clowder-ai/plugin-contract');
+  const {
+    MachineOfficialPluginCatalog,
+    OFFICIAL_PLUGIN_CATALOG_URL,
+    loadMachinePluginCatalog,
+    resolveRepositoryReplacementPluginIds,
+  } = await import('./domains/plugin/manager/machine-catalog-provider.js');
+  const pluginManagerHostPolicies = [
+    {
+      pluginId: 'dev.clowder.video-analysis',
+      replacesRepositoryPluginId: 'video-analysis',
+      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
+    },
+  ];
+  const pluginManagerCatalog = new MachineOfficialPluginCatalog({
+    loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
+    validateCatalog: validatePluginCatalog,
+    hostPolicies: pluginManagerHostPolicies,
+  });
+  const { FilesystemBuiltinPluginPackageMaterializer } = await import(
+    './domains/plugin/manager/builtin-package-materializer.js'
+  );
+  const { readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
+  const readBuiltinPluginValue = async (pluginInstanceId: string, key: string) => {
+    const snapshot = await pluginRuntime.inventoryStore.snapshot();
+    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
+    return instance ? readPluginConfig(pluginProjectRoot, instance.pluginId)[key] : undefined;
+  };
+  if (loadRepositoryPluginInfo === undefined) {
+    throw new Error('Repository plugin discovery must be ready before Plugin Manager composition');
+  }
+  const { PluginManagerCompatibilityAdapter, RepositoryPluginManagerCompatibilityProvider } = await import(
+    './domains/plugin/manager/plugin-manager-compatibility.js'
+  );
+  const repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
+    new RepositoryPluginManagerCompatibilityProvider(loadRepositoryPluginInfo, {
+      loadSuppressedPluginIds: async () => {
+        const [catalog, inventory] = await Promise.all([
+          pluginManagerCatalog.snapshot(),
+          pluginRuntime.inventoryStore.snapshot(),
+        ]);
+        return resolveRepositoryReplacementPluginIds(
+          pluginManagerHostPolicies,
+          catalog.entries,
+          inventory.instances
+            .filter((instance) => instance.lifecycleState === 'installed')
+            .map((instance) => instance.pluginId),
+        );
+      },
+    }),
+  ]);
+  const pluginManagerRuntime = createPluginManagerRuntimeComposition({
+    runtime: pluginRuntime,
+    catalogProvider: pluginManagerCatalog,
+    catalogManifests: [],
+    compatibility: repositoryPluginManagerCompatibility,
+    auth: officialPluginAuth,
+    builtinContributions: {
+      materializer: new FilesystemBuiltinPluginPackageMaterializer({
+        packagesRoot: pluginRuntime.paths.packagesRoot,
+      }),
+      configuration: {
+        readConfig: readBuiltinPluginValue,
+        readSecret: readBuiltinPluginValue,
+      },
+    },
+  });
+  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
+  app.log.info(
+    `[api] K-2 plugin runtime recovered ` +
+      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
+      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
+      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
+  );
+  const { pluginManagerUploadRoutes, registerPluginManagerRoutes } = await import('./routes/plugin-manager-routes.js');
+  await app.register(async (managerApp) => {
+    registerPluginManagerRoutes(managerApp, {
+      manager: pluginManagerRuntime.manager,
+      ...(pluginManagerRuntime.builtinSupervisor === undefined
+        ? {}
+        : { contributions: pluginManagerRuntime.builtinSupervisor }),
+      asset: pluginManagerRuntime.assets,
+      documentation: pluginManagerRuntime.assets,
+      callbackRegistry: registry,
+    });
+  });
+  await app.register(pluginManagerUploadRoutes, { manager: pluginManagerRuntime.manager });
   const officialPluginHistoryImport = new OfficialPluginHistoryImportService({
     inventory: pluginRuntime.inventoryStore,
     broker: pluginRuntime.broker,
@@ -4644,11 +4736,7 @@ async function main(): Promise<void> {
     lifecycle: pluginRuntime.lifecycle,
     auth: officialPluginAuth,
     catalogProvider: officialPluginCatalog,
-    installer: new OfficialPluginPackageInstaller({
-      inventory: pluginRuntime.inventory,
-      packagesRoot: pluginRuntime.paths.packagesRoot,
-      catalogProvider: officialPluginCatalog,
-    }),
+    installer: pluginManagerRuntime.officialInstaller,
     historyImport: officialPluginHistoryImport,
     meetingIntake: new OfficialPluginMeetingIntakeService({ homeDirectory: homedir() }),
   });

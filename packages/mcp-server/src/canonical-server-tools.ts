@@ -26,6 +26,7 @@ import {
   meetingArtifactTools,
   pawFeelDispositionTools,
   perspectiveTools,
+  pluginManagementTools,
   publishVerdictTools,
   recentTools,
   richBlockRulesTools,
@@ -58,6 +59,7 @@ export const CANONICAL_TOOL_SOURCES = {
     ...gameActionTools,
     ...scheduleTools,
     ...shellTools,
+    ...pluginManagementTools,
   ],
   memory: [
     ...callbackMemoryTools,

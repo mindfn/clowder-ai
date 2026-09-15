@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 
@@ -308,10 +308,11 @@ test('rechecks the staged tree after runtime-state projection and performs zero 
 test('rejects traversal and symlink entrypoints before spawn', async (t) => {
   await t.test('traversal', async () => {
     const manifest = externalManifest({ transport: 'stdio', entrypoint: '../outside.js' });
-    const harness = await startHarness({ manifest });
-    await writeFile(join(dirname(harness.rootDir), 'outside.js'), '// outside\n', 'utf8');
-    await assert.rejects(harness.supervisor.start(EXTERNAL_INSTANCE_ID), isRuntimeError('INVALID_ENTRYPOINT'));
-    assert.equal(harness.processes.specs.length, 0);
+    await assert.rejects(
+      startHarness({ manifest }),
+      (error) => error?.code === 'INVALID_MANIFEST',
+      'beta.13 rejects traversal at inventory admission before a runtime supervisor exists',
+    );
   });
 
   await t.test('symlink', async () => {
