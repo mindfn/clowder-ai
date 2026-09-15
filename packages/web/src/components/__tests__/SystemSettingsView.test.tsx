@@ -233,6 +233,49 @@ describe('SystemSettingsView', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
 
+  it('serializes exactTrue toggles as true/false (D3: readers demand === "true")', async () => {
+    const onSaved = vi.fn();
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+    const corsToggle: EnvVar = {
+      name: 'CORS_ALLOW_PRIVATE_NETWORK',
+      defaultValue: 'false',
+      description: '允许局域网访问',
+      category: 'server',
+      sensitive: false,
+      runtimeEditable: true,
+      label: '允许局域网访问',
+      settingsGroup: 'network',
+      restartRequired: true,
+      booleanSemantics: { defaultOn: false, trueWhen: 'exactTrue' },
+      currentValue: null,
+    };
+    await renderView([corsToggle], onSaved);
+
+    const toggle = container.querySelector('button[role="switch"][aria-label="允许局域网访问"]') as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    await act(async () => {
+      findButton(container, '保存到 .env')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const patchCall = mockApiFetch.mock.calls.find(
+      ([path, init]) => path === '/api/config/env' && init?.method === 'PATCH',
+    );
+    expect(patchCall).toBeTruthy();
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    // A blanket '1' here is the D3 bug: frontend-origin.ts:121 requires === 'true'.
+    expect(body.updates).toEqual([{ name: 'CORS_ALLOW_PRIVATE_NETWORK', value: 'true' }]);
+  });
+
   it('offers the .env escape hatch link at the top of the page', async () => {
     await renderView([EDITABLE_DIR_VAR]);
 

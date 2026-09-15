@@ -37,7 +37,22 @@ function resolveControlType(variable: EnvVar): 'text' | 'number' | 'toggle' | 'd
   );
 }
 
-/** 可编辑分支：draft 驱动；toggle 写回 '1'/'0'。 */
+/**
+ * D3 (#770 P0): serialize a toggle write-back per the variable's own boolean
+ * semantics — readers judge by their own convention (frontend-origin.ts:121
+ * wants === 'true', storage-guard.ts:23 wants === '1'), so a blanket '1'/'0'
+ * silently writes values the reader treats as OFF.
+ */
+function serializeToggleValue(variable: EnvVar, on: boolean): string {
+  switch (variable.booleanSemantics?.trueWhen ?? 'parseBoolEnv') {
+    case 'exactTrue':
+      return on ? 'true' : 'false';
+    default:
+      return on ? '1' : '0';
+  }
+}
+
+/** 可编辑分支：draft 驱动；toggle 写回按 booleanSemantics 序列化。 */
 function EditableSettingControl({
   variable,
   draft,
@@ -59,7 +74,7 @@ function EditableSettingControl({
           role="switch"
           aria-checked={on}
           aria-label={label}
-          onClick={() => onDraftChange(variable.name, on ? '0' : '1')}
+          onClick={() => onDraftChange(variable.name, serializeToggleValue(variable, !on))}
           className={`relative inline-flex h-5 w-9 items-center rounded-full ${
             on ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'
           }`}
