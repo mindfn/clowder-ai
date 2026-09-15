@@ -172,7 +172,8 @@ describe('F293 actual-send routing preflight', () => {
       receipts.some((receipt) => receipt.target.targetCatId === 'opus' && receipt.target.disposition === 'rejected'),
     );
     assert.ok(
-      receipts.some((receipt) => receipt.target.targetCatId === 'codex' && receipt.target.disposition === 'warned'),
+      !receipts.some((receipt) => receipt.target.targetCatId === 'codex'),
+      'fail-open infrastructure degradation stays in routing telemetry instead of becoming chat content',
     );
   });
 
@@ -189,51 +190,88 @@ describe('F293 actual-send routing preflight', () => {
     }
 
     assert.ok(calls.includes('opus'));
-    const receipt = events
-      .filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight'))
-      .map((event) => JSON.parse(event.content))[0];
-    assert.equal(receipt.resolverState, 'degraded');
-    assert.equal(receipt.target.targetCatId, 'opus');
-    assert.equal(receipt.target.disposition, 'warned');
-    assert.deepEqual(receipt.target.alternatives, []);
+    assert.equal(
+      events.filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight')).length,
+      0,
+      'an unavailable advisory resolver must not manufacture a visible warning for an unchanged send',
+    );
   });
 
-  test('serial deferred A2A checks fresh state before creating a queue entry', async () => {
-    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
-    const calls = [];
-    const deferred = [];
-    const deps = routeDeps(
+  test('completed response preflights before atomic ledger admission and leaves no rejected row', async () => {
+    const { commitCompletedResponseAndEnqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
+    const broadcasts = [];
+    const processing = messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      threadId: 'thread-deferred',
+      userId: 'owner-1',
+      content: '',
+      mentions: [],
+      origin: 'stream',
+      timestamp: 100,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '0000000000100:response-opus',
+        from: { kind: 'agent', catId: 'opus' },
+        invocationId: 'inv-opus',
+        targetId: 'opus',
+        inputEntryIds: ['entry-source'],
+        inputMessageIds: ['message-source'],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    const stored = await commitCompletedResponseAndEnqueueA2ATargets(
       {
-        opus: {
-          async *invoke() {
-            calls.push('opus');
-            yield { type: 'text', catId: 'opus', content: '@codex\ncontinue from here', timestamp: Date.now() };
-            yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        invocationQueue: queue,
+        messageStore,
+        queueProcessor: { async requestDrain() {} },
+        socketManager: {
+          broadcastAgentMessage(message, threadId) {
+            broadcasts.push({ message, threadId });
           },
+          emitToUser() {},
         },
-        codex: service('codex', calls),
+        routingDispatchPreflight: {
+          preflight: async (input) => decision(input, { codex: 'rejected', terra: 'warned' }),
+        },
+        log: { error() {}, warn() {}, info() {} },
       },
-      { preflight: async (input) => decision(input, { opus: 'allowed', codex: 'rejected' }) },
+      {
+        responseMessageId: processing.id,
+        invocationId: 'inv-opus',
+        terminal: { status: 'completed', completedAt: 200 },
+        message: {
+          from: { kind: 'agent', catId: 'opus' },
+          threadId: 'thread-deferred',
+          userId: 'owner-1',
+          content: '@codex\n@terra\ncontinue from here',
+          mentions: ['codex', 'terra'],
+          origin: 'stream',
+          timestamp: 200,
+        },
+        targetCats: ['codex', 'terra'],
+        userId: 'owner-1',
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-deferred',
+        callerCatId: 'opus',
+      },
     );
-    const events = [];
-    for await (const event of routeSerial(deps, ['opus'], 'start', 'owner-1', 'thread-deferred', {
-      queueHasQueuedMessages: () => true,
-      deferA2AEnqueue: (entry) => {
-        deferred.push(entry);
-        return { outcome: 'enqueued' };
-      },
-    })) {
-      events.push(event);
-    }
 
-    assert.deepEqual(calls, ['opus']);
-    assert.deepEqual(deferred, [], 'rejected dynamic target must never enter InvocationQueue');
+    assert.equal(stored.lifecycle.status, 'completed');
+    assert.deepEqual(
+      queue.list('thread-deferred', 'owner-1').flatMap((entry) => entry.targets),
+      ['terra'],
+    );
     assert.ok(
-      events.some(
-        (event) =>
-          event.type === 'system_info' &&
-          event.content?.includes('routing_preflight') &&
-          JSON.parse(event.content).target.targetCatId === 'codex',
+      broadcasts.some(
+        ({ message }) =>
+          message.type === 'system_info' &&
+          message.content?.includes('routing_preflight') &&
+          JSON.parse(message.content).target.targetCatId === 'codex',
       ),
     );
   });
@@ -243,7 +281,7 @@ describe('F293 actual-send routing preflight', () => {
     const calls = [];
     const deps = routeDeps(
       { opus: service('opus', calls), codex: service('codex', calls) },
-      { preflight: async (input) => decision(input, { opus: 'rejected', codex: 'allowed' }) },
+      { preflight: async (input) => decision(input, { opus: 'rejected', codex: 'warned' }) },
     );
     const events = [];
     for await (const event of routeParallel(deps, ['opus', 'codex'], 'ideate', 'owner-1', 'thread-parallel')) {
@@ -252,13 +290,13 @@ describe('F293 actual-send routing preflight', () => {
 
     assert.ok(!calls.includes('opus'));
     assert.ok(calls.includes('codex'));
-    assert.ok(
-      events.some(
-        (event) =>
-          event.type === 'system_info' &&
-          event.content?.includes('routing_preflight') &&
-          JSON.parse(event.content).target.disposition === 'rejected',
-      ),
+    const receipts = events
+      .filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight'))
+      .map((event) => JSON.parse(event.content));
+    assert.deepEqual(
+      receipts.map((receipt) => [receipt.target.targetCatId, receipt.target.disposition]),
+      [['opus', 'rejected']],
+      'parallel fail-open degradation stays in routing telemetry instead of becoming chat content',
     );
   });
 
@@ -326,14 +364,24 @@ describe('F293 actual-send routing preflight', () => {
   test('callback queue partitions mixed targets before creating queue entries and returns the complete receipt', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
     const broadcasts = [];
+    const triggerMessage = messageStore.append({
+      from: { kind: 'agent', catId: 'terra' },
+      threadId: 'thread-callback',
+      userId: 'owner-1',
+      content: 'review this',
+      mentions: ['opus', 'codex'],
+      origin: 'callback',
+      timestamp: Date.now(),
+    });
     const result = await enqueueA2ATargets(
       {
-        router: {},
-        invocationRecordStore: {},
         invocationQueue: queue,
-        queueProcessor: { async tryAutoExecute() {} },
+        messageStore,
+        queueProcessor: { async requestDrain() {} },
         socketManager: {
           broadcastAgentMessage(message, threadId) {
             broadcasts.push({ message, threadId });
@@ -352,15 +400,7 @@ describe('F293 actual-send routing preflight', () => {
         userId: 'owner-1',
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-callback',
-        triggerMessage: {
-          id: 'message-callback',
-          threadId: 'thread-callback',
-          userId: 'owner-1',
-          catId: 'terra',
-          content: 'review this',
-          mentions: ['opus', 'codex'],
-          timestamp: Date.now(),
-        },
+        triggerMessage,
         callerCatId: 'terra',
       },
     );
@@ -374,7 +414,7 @@ describe('F293 actual-send routing preflight', () => {
       ],
     );
     assert.deepEqual(
-      queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targetCats),
+      queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targets),
       ['codex'],
     );
     assert.deepEqual(
@@ -385,10 +425,7 @@ describe('F293 actual-send routing preflight', () => {
           target: JSON.parse(message.content).target.targetCatId,
           disposition: JSON.parse(message.content).target.disposition,
         })),
-      [
-        { threadId: 'thread-callback', target: 'opus', disposition: 'rejected' },
-        { threadId: 'thread-callback', target: 'codex', disposition: 'warned' },
-      ],
+      [{ threadId: 'thread-callback', target: 'opus', disposition: 'rejected' }],
     );
   });
 });
