@@ -16,6 +16,26 @@ export interface CycleVersionRef {
   versionContentRef: string;
 }
 
+export interface CycleStatusSnapshot {
+  schemaVersion: 1;
+  objectiveId: string;
+  cycleId: string;
+  evalStatus: CycleRecord['evalStatus'];
+  cycleStartMs: number;
+  cycleEndMs: number | null;
+  triggeredBy: CycleTriggerRoute[];
+  assignmentMessageId: string | null;
+  assignedAtMs: number | null;
+  progress: {
+    minimumInterval: { elapsedMs: number; thresholdMs: number; remainingMs: number; eligible: boolean };
+    cumulative: { coordinate: 'N'; count: number; threshold: number; met: boolean };
+    recurringEvents: { coordinate: 'M'; count: number; threshold: number; met: boolean };
+    cadence: { coordinate: 'D'; elapsedMs: number; thresholdMs: number; eligible: boolean; met: boolean };
+  };
+  assignmentDelivery: 'not_requested' | 'pending' | 'delivered' | 'closed';
+  waitPolicy: { mode: 'event_driven'; holdBall: false };
+}
+
 export class CycleTriggerChecker {
   private requestedHandler?: (record: CycleRecord) => void;
   private readonly mutationTails = new Map<string, Promise<void>>();
@@ -73,6 +93,85 @@ export class CycleTriggerChecker {
     );
   }
 
+  async readStatus(ownerUserId: string, objectiveId: string, now: number): Promise<CycleStatusSnapshot> {
+    const current = await this.deps.cycles.current(ownerUserId, objectiveId);
+    if (!current) throw new Error(`cycle_evaluation_not_found:${objectiveId}`);
+    const objective = this.deps.catalog.registry.objectives.find((item) => item.id === objectiveId);
+    const model = this.deps.catalog.registry.evaluationModels.find((item) => item.id === objective?.evaluationModelId);
+    if (!model) throw new Error(`cycle_evaluation_model_not_found:${objectiveId}`);
+
+    const end = current.cycleEnd ?? now;
+    if (end < current.cycleStart) throw new Error(`cycle_start_after_now:${objectiveId}`);
+    const policy = cycleTriggerPolicyFor(this.deps.catalog, current);
+    const progress = await this.measureProgress(
+      ownerUserId,
+      objectiveId,
+      model.metrics.map((metric) => metric.id),
+      current.cycleStart,
+      end,
+      policy,
+    );
+
+    return {
+      schemaVersion: 1,
+      objectiveId,
+      cycleId: current.cycleId,
+      evalStatus: current.evalStatus,
+      cycleStartMs: current.cycleStart,
+      cycleEndMs: current.cycleEnd ?? null,
+      triggeredBy: [...(current.triggeredBy ?? [])],
+      assignmentMessageId: current.assignmentMessageId ?? null,
+      assignedAtMs: current.assignedAt ?? null,
+      progress,
+      assignmentDelivery: assignmentDelivery(current),
+      waitPolicy: { mode: 'event_driven', holdBall: false },
+    };
+  }
+
+  private async measureProgress(
+    ownerUserId: string,
+    objectiveId: string,
+    metricIds: string[],
+    start: number,
+    end: number,
+    policy: ReturnType<typeof cycleTriggerPolicyFor>,
+  ): Promise<CycleStatusSnapshot['progress']> {
+    const elapsedMs = end - start;
+    const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, start, end);
+    const recurringEventCount = (await this.distinctCounterexamples(ownerUserId, objectiveId, metricIds, start, end))
+      .size;
+    const cadenceThresholdMs = policy.cadenceDays * 24 * 60 * 60 * 1000;
+    const cadenceEligible = observedInvocationCount > 0;
+
+    return {
+      minimumInterval: {
+        elapsedMs,
+        thresholdMs: policy.minimumIntervalMs,
+        remainingMs: Math.max(0, policy.minimumIntervalMs - elapsedMs),
+        eligible: elapsedMs >= policy.minimumIntervalMs,
+      },
+      cumulative: {
+        coordinate: 'N',
+        count: observedInvocationCount,
+        threshold: policy.cumulativeThreshold,
+        met: observedInvocationCount >= policy.cumulativeThreshold,
+      },
+      recurringEvents: {
+        coordinate: 'M',
+        count: recurringEventCount,
+        threshold: policy.counterexampleThreshold,
+        met: recurringEventCount >= policy.counterexampleThreshold,
+      },
+      cadence: {
+        coordinate: 'D',
+        elapsedMs,
+        thresholdMs: cadenceThresholdMs,
+        eligible: cadenceEligible,
+        met: cadenceEligible && elapsedMs >= cadenceThresholdMs,
+      },
+    };
+  }
+
   /** Serialize eval-trigger and operator version-switch mutations in this API process. */
   async withObjectiveLock<T>(ownerUserId: string, objectiveId: string, operation: () => Promise<T>): Promise<T> {
     const key = `${ownerUserId}:${objectiveId}`;
@@ -112,21 +211,18 @@ export class CycleTriggerChecker {
     }
 
     const history = await this.deps.cycles.history(ownerUserId, objectiveId);
-
-    const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, current.cycleStart, now);
-    const counterexamples = await this.distinctCounterexamples(
+    const progress = await this.measureProgress(
       ownerUserId,
       objectiveId,
       model.metrics.map((metric) => metric.id),
       current.cycleStart,
       now,
+      policy,
     );
     const triggeredBy: CycleTriggerRoute[] = [];
-    if (observedInvocationCount >= policy.cumulativeThreshold) triggeredBy.push('cumulative');
-    if (counterexamples.size >= policy.counterexampleThreshold) triggeredBy.push('counterexamples');
-    if (observedInvocationCount > 0 && now - current.cycleStart >= policy.cadenceDays * 24 * 60 * 60 * 1000) {
-      triggeredBy.push('cadence');
-    }
+    if (progress.cumulative.met) triggeredBy.push('cumulative');
+    if (progress.recurringEvents.met) triggeredBy.push('counterexamples');
+    if (progress.cadence.met) triggeredBy.push('cadence');
     if (triggeredBy.length === 0) return { status: 'idle', record: current };
 
     const window = { start: current.cycleStart, end: now };
@@ -198,4 +294,10 @@ function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {
     windows.push({ start: record.cycleStart, end: record.cycleEnd });
   }
   return windows.reverse();
+}
+
+function assignmentDelivery(record: CycleRecord): CycleStatusSnapshot['assignmentDelivery'] {
+  if (record.evalStatus === 'idle') return 'not_requested';
+  if (record.evalStatus === 'written' || record.evalStatus === 'stalled') return 'closed';
+  return record.assignedAt === undefined ? 'pending' : 'delivered';
 }

@@ -196,6 +196,89 @@ function seedHistory(redis, record) {
 }
 
 describe('F257 CycleRecord trigger checker', () => {
+  test('reads typed N/M/D progress without mutating an idle cycle', async () => {
+    const context = createHarness({
+      episodes: [episode('a', 1_000), episode('b', 1_100)],
+      annotations: [
+        {
+          createdAt: 1_050,
+          polarity: 'counterexample',
+          confidence: 1,
+          incidentKey: 'same-root',
+          source: 'structured-rule',
+        },
+      ],
+      cycleModel: model({ minimumIntervalMs: 2_000, cadenceDays: 1 }),
+    });
+    const current = await context.store.initialize(
+      'owner-1',
+      'obj',
+      500,
+      { version: 'v4', versionContentRef: 'hooks:d1-test@v4' },
+      {
+        triggerPolicy: {
+          cumulativeThreshold: 3,
+          counterexampleThreshold: 2,
+          cadenceDays: 1,
+          minimumIntervalMs: 2_000,
+          consecutiveKeepCycles: 0,
+          consecutiveCadenceKeepCycles: 0,
+        },
+        objectiveLifecycle: 'active',
+      },
+    );
+
+    const status = await context.checker.readStatus('owner-1', 'obj', 2_000);
+
+    assert.deepEqual(status, {
+      schemaVersion: 1,
+      objectiveId: 'obj',
+      cycleId: current.cycleId,
+      evalStatus: 'idle',
+      cycleStartMs: 500,
+      cycleEndMs: null,
+      triggeredBy: [],
+      assignmentMessageId: null,
+      assignedAtMs: null,
+      progress: {
+        minimumInterval: { elapsedMs: 1_500, thresholdMs: 2_000, remainingMs: 500, eligible: false },
+        cumulative: { coordinate: 'N', count: 2, threshold: 3, met: false },
+        recurringEvents: { coordinate: 'M', count: 1, threshold: 2, met: false },
+        cadence: { coordinate: 'D', elapsedMs: 1_500, thresholdMs: DAY, eligible: true, met: false },
+      },
+      assignmentDelivery: 'not_requested',
+      waitPolicy: { mode: 'event_driven', holdBall: false },
+    });
+    assert.deepEqual(await context.store.current('owner-1', 'obj'), current);
+  });
+
+  test('freezes status progress at cycleEnd and exposes delivery pending after a trigger', async () => {
+    const context = createHarness({
+      episodes: [episode('a', 1_000), episode('b', 1_100), episode('c', 1_200)],
+    });
+    await context.checker.checkObjective('owner-1', 'obj', 2_000);
+
+    const status = await context.checker.readStatus('owner-1', 'obj', 9_000);
+
+    assert.equal(status.evalStatus, 'requested');
+    assert.equal(status.cycleEndMs, 2_000);
+    assert.deepEqual(status.triggeredBy, ['cumulative']);
+    assert.deepEqual(status.progress.cumulative, { coordinate: 'N', count: 3, threshold: 3, met: true });
+    assert.equal(status.assignmentDelivery, 'pending');
+    assert.deepEqual(status.waitPolicy, { mode: 'event_driven', holdBall: false });
+
+    const requested = await context.store.current('owner-1', 'obj');
+    assert.equal(
+      await context.store.transition(requested, {
+        ...requested,
+        assignmentMessageId: 'assignment-1',
+        assignedAt: 2_100,
+      }),
+      true,
+    );
+    assert.equal((await context.checker.readStatus('owner-1', 'obj', 10_000)).assignmentDelivery, 'delivered');
+  });
+
   test('manual version switch archives tracing and carries old evidence without using it to wake the new cycle', async () => {
     const episodes = [episode('old-a', 100), episode('old-b', 200), episode('new-a', 600), episode('new-b', 700)];
     const context = createHarness({ episodes });
