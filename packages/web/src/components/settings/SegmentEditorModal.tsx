@@ -109,14 +109,20 @@ export function SegmentEditorModal({ segmentId, segmentName, onClose }: SegmentE
                 <textarea
                   value={editor.draft}
                   onChange={(event) => editor.setDraft(event.target.value)}
-                  disabled={!editor.tracing || editor.saving}
+                  disabled={!editor.editable || editor.saving}
                   rows={12}
                   className="min-h-[160px] w-full resize-y border-0 bg-transparent p-0 font-mono text-xs leading-relaxed text-cafe-secondary focus:outline-none focus:ring-0"
                 />
               </div>
 
-              {!editor.tracing && <SettingsText tone="muted">当前正在评估，完成后可编辑并产生新版本。</SettingsText>}
-              {editor.tracing && editor.createPermission && !editor.createPermission.allowed && (
+              {!editor.editable && <SettingsText tone="muted">当前正在评估，完成后可编辑并产生新版本。</SettingsText>}
+              {editor.stalled && (
+                <SettingsText tone="muted">
+                  评估已停滞（两次自动催促均无回写）。产生并应用新版本会终止当前周期，并以新版本开启下一周期；若要沿用当前版本，请在该
+                  Objective 的评估 thread 中继续评估并回写。
+                </SettingsText>
+              )}
+              {editor.editable && editor.createPermission && !editor.createPermission.allowed && (
                 <SettingsText tone="muted">{editor.createPermission.reason}</SettingsText>
               )}
 

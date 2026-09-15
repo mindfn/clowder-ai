@@ -1,4 +1,5 @@
 import type { CatId, CycleEvaluationSubmission, CycleRecord, CycleTracePage } from '@cat-cafe/shared';
+import { cycleAcceptsEvaluationWriteback } from '@cat-cafe/shared';
 import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 import type { DeliverOpts, ScheduleInvokeTrigger } from '../../scheduler/types.js';
@@ -132,7 +133,10 @@ export class CycleEvaluationCoordinator {
       }
       throw new Error(`cycle_evaluation_conflict:${record.cycleId}`);
     }
-    if (record.evalStatus !== 'requested' && record.evalStatus !== 'retriggered') {
+    // A closed record without an evaluation was terminated by an operator
+    // version transition; its cycleId still resolves from history, but the
+    // evaluation it never received cannot land on the successor cycle.
+    if (record.closedAt !== undefined || !cycleAcceptsEvaluationWriteback(record.evalStatus)) {
       throw new Error(`cycle_evaluation_not_active:${record.cycleId}`);
     }
     await this.evidence.validateSubmission(record, input);
@@ -203,6 +207,8 @@ export class CycleEvaluationCoordinator {
         `Cycle: \`${record.cycleId}\``,
         `Evaluation thread: \`${CycleEvaluationCoordinator.threadIdFor(record.objectiveId)}\``,
         'The one bounded retrigger also received no structured writeback. Automatic retries have stopped.',
+        'A late writeback is still accepted: continue in the evaluation thread (read the pool, submit the evaluation).',
+        'Or an operator can end this cycle by switching or creating a segment version; the next cycle starts there.',
       ].join('\n'),
     });
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
@@ -292,9 +298,7 @@ export class CycleEvaluationCoordinator {
     if (principal.threadId !== threadId) throw new Error(`cycle_evaluation_principal_mismatch:${cycleId}`);
     const record = await this.deps.runtime.cycles.current(principal.userId, objectiveId);
     if (!record || record.cycleId !== cycleId) throw new Error(`cycle_evaluation_not_found:${cycleId}`);
-    if (record.evalStatus !== 'requested' && record.evalStatus !== 'retriggered') {
-      throw new Error(`cycle_evaluation_not_active:${cycleId}`);
-    }
+    if (!cycleAcceptsEvaluationWriteback(record.evalStatus)) throw new Error(`cycle_evaluation_not_active:${cycleId}`);
     return record;
   }
 

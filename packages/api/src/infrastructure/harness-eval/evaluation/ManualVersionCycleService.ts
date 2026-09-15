@@ -1,4 +1,5 @@
 import type { CycleRecord, CycleWindow } from '@cat-cafe/shared';
+import { cycleAcceptsOperatorVersionTransition } from '@cat-cafe/shared';
 import type { EpochOrigin } from '../../../domains/prompt-hooks/HookOverrideContentStore.js';
 import type { HookOverrideStore } from '../../../domains/prompt-hooks/HookOverrideStore.js';
 import { cycleTriggerPolicyFor } from './cycle-trigger-policy.js';
@@ -123,7 +124,12 @@ export class ManualVersionCycleService {
   ): Promise<{ current: CycleRecord; sourceVersion: number; switchedAt: number }> {
     const current = await this.deps.runtime.cycles.current(input.ownerUserId, objectiveId);
     if (!current) throw new ManualVersionCycleError('cycle_not_initialized');
-    if (current.evalStatus !== 'idle') throw new ManualVersionCycleError('evaluation_in_progress');
+    // idle: nothing in flight. stalled: both bounded nudges were spent with no
+    // writeback, so the transition is the operator's cat-free exit; the frozen
+    // evaluation window stays on the archived record as carry-over evidence.
+    if (!cycleAcceptsOperatorVersionTransition(current.evalStatus)) {
+      throw new ManualVersionCycleError('evaluation_in_progress');
+    }
     const [sourceVersion, cycleSegmentVersion] = await Promise.all([
       this.deps.overrideStore.getActiveVersion(input.segmentId),
       this.deps.runtime.resolveSegmentVersion(current.versionContentRef, input.segmentId),

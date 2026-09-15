@@ -36,7 +36,7 @@ function jsonResponse(body: unknown, ok = true) {
   return { ok, json: async () => body };
 }
 
-function mockLoad(evalStatus: 'idle' | 'requested' = 'idle') {
+function mockLoad(evalStatus: 'idle' | 'requested' | 'stalled' = 'idle') {
   apiFetch.mockResolvedValueOnce(jsonResponse(content));
   apiFetch.mockResolvedValueOnce(jsonResponse(lifeline));
   apiFetch.mockResolvedValueOnce(jsonResponse({ objectives: [{ currentCycle: { evalStatus } }] }));
@@ -76,7 +76,7 @@ describe('SegmentEditorModal version lifecycle editor', () => {
     });
   }
 
-  async function renderEditor(evalStatus: 'idle' | 'requested' = 'idle', onClose: () => void = () => {}) {
+  async function renderEditor(evalStatus: 'idle' | 'requested' | 'stalled' = 'idle', onClose: () => void = () => {}) {
     mockLoad(evalStatus);
     function EditorHost() {
       const [open, setOpen] = React.useState(true);
@@ -205,5 +205,12 @@ describe('SegmentEditorModal version lifecycle editor', () => {
     await renderEditor('requested');
     expect((document.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(true);
     expect(document.body.textContent).toContain('当前正在评估，完成后可编辑并产生新版本');
+  });
+
+  it('keeps editing open when the evaluation has stalled and names the exit', async () => {
+    await renderEditor('stalled');
+    expect((document.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
+    expect(document.body.textContent).toContain('评估已停滞');
+    expect(document.body.textContent).not.toContain('当前正在评估');
   });
 });
