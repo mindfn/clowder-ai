@@ -12,6 +12,12 @@ import type {
   PluginManagerLiveState,
 } from '@cat-cafe/shared';
 
+export type PluginManagerReadmeState =
+  | { readonly state: 'loading' }
+  | { readonly state: 'absent' }
+  | { readonly state: 'unavailable' }
+  | { readonly state: 'available'; readonly markdown: string };
+
 export interface PluginManagerDesignFixture {
   id: string;
   displayName: string;
@@ -33,8 +39,7 @@ export interface PluginManagerDesignFixture {
   capabilities: Array<{ name: string; description: string }>;
   contributions?: PluginManagerContribution[];
   tools?: Array<Pick<PluginManagerContributionTool, 'contributionId' | 'name' | 'description'>>;
-  readmeMarkdown?: string;
-  readmeUnavailable?: boolean;
+  readme: PluginManagerReadmeState;
   setupSteps?: string[];
   docsUrl?: string;
   configFields?: PluginManagerDetail['configFields'];
@@ -63,6 +68,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     auth: 'connected',
     intent: 'enabled',
     live: 'running',
+    readme: { state: 'absent' },
     setupSteps: [
       '在运行 Clowder AI 的机器上使用 GitHub CLI 登录',
       '可选：仅为显式消费凭据的插件子进程配置 token',
@@ -123,6 +129,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     auth: 'connected',
     intent: 'enabled',
     live: 'running',
+    readme: { state: 'absent' },
     capabilities: [
       { name: '事件输入', description: '发布已声明的飞书会议纪要信号' },
       { name: '消息', description: '把纪要投递给已授权的会话' },
@@ -163,6 +170,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     auth: 'not-required',
     intent: 'disabled',
     live: 'stopped',
+    readme: { state: 'absent' },
     capabilities: [
       { name: 'MCP tool', description: '按需分析视频并返回结构化结果' },
       { name: '媒体读取', description: '只读取用户显式选择的视频' },
@@ -188,6 +196,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     auth: 'expired',
     intent: 'disabled',
     live: 'stopped',
+    readme: { state: 'absent' },
     capabilities: [{ name: '屏幕观察', description: '在有界授权窗口内采集当前可见内容' }],
     diagnostic: '短时授权已过期；重新授权前不会采集屏幕。',
   },
@@ -211,6 +220,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     auth: 'not-required',
     intent: 'enabled',
     live: 'crashed',
+    readme: { state: 'absent' },
     capabilities: [
       { name: 'MCP tool', description: '提交视频生成任务' },
       { name: '服务', description: '管理本地生成进程与结果文件' },
@@ -237,6 +247,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     auth: 'disconnected',
     intent: 'disabled',
     live: 'stopped',
+    readme: { state: 'absent' },
     capabilities: [{ name: '会话投递', description: '向已绑定的浏览器会话追加消息' }],
   },
 ];

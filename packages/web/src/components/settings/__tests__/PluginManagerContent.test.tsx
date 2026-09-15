@@ -513,6 +513,62 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.textContent).not.toContain('此版本未随插件包提供 README。');
   });
 
+  it('keeps package documentation in a loading state until detail projection completes', async () => {
+    let resolveDocumentation: ((response: Response) => void) | undefined;
+    const documentation = new Promise<Response>((resolve) => {
+      resolveDocumentation = resolve;
+    });
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return documentation;
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('README 加载中…');
+    expect(container.textContent).not.toContain('此版本未随插件包提供 README。');
+
+    resolveDocumentation?.(json({}));
+    await flushEffects();
+    expect(container.textContent).toContain('此版本未随插件包提供 README。');
+  });
+
+  it('reports package documentation as unavailable when plugin detail loading fails', async () => {
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json({}, 503);
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return json({});
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('README 暂不可用。');
+    expect(container.textContent).not.toContain('此版本未随插件包提供 README。');
+  });
+
+  it.each([
+    { label: 'an explicit empty response', status: 200 },
+    { label: 'a compatibility-layer miss', status: 404 },
+  ])('keeps README absent for $label', async ({ status }) => {
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return json({}, status);
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('此版本未随插件包提供 README。');
+    expect(container.textContent).not.toContain('README 暂不可用。');
+  });
+
   it('polls by replacing the same projection without emitting duplicate UI errors', async () => {
     vi.useFakeTimers();
     let listReads = 0;

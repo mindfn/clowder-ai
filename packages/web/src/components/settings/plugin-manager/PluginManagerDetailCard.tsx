@@ -121,16 +121,20 @@ function CapabilityDocumentation({
   return (
     <section className="space-y-3" data-plugin-detail-section="capability-docs">
       <SectionHeading>能力说明</SectionHeading>
-      {plugin.readmeUnavailable === true ? (
+      {plugin.readme.state === 'loading' ? (
+        <SettingsText as="p" variant="sm" tone="muted">
+          README 加载中…
+        </SettingsText>
+      ) : plugin.readme.state === 'unavailable' ? (
         <SettingsText as="p" variant="sm" tone="muted">
           README 暂不可用。
         </SettingsText>
-      ) : plugin.readmeMarkdown === undefined ? (
+      ) : plugin.readme.state === 'absent' ? (
         <SettingsText as="p" variant="sm" tone="muted">
           此版本未随插件包提供 README。
         </SettingsText>
       ) : (
-        <MarkdownContent content={plugin.readmeMarkdown} disableCommandPrefix />
+        <MarkdownContent content={plugin.readme.markdown} disableCommandPrefix />
       )}
       {plugin.docsUrl && (
         <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
