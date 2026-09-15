@@ -83,6 +83,7 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts
   - packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts
   - packages/api/src/infrastructure/harness-eval/artifact-store/artifact-store-layout.ts
+  - packages/api/src/infrastructure/harness-eval/artifact-store/verdict-id-reservations.ts
   - packages/api/src/infrastructure/harness-eval/lifecycle-space.ts
   - scripts/guarded-bin/gh
   - packages/shared/src/types/friction-signal.ts
