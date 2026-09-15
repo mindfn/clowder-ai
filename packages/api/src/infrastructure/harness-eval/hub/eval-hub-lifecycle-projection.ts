@@ -1,11 +1,4 @@
-import {
-  type EvalLifecycleSpace,
-  loadLifecycleSpaceMigrations,
-  loadLifecycleSpaceRoots,
-  type OwnerArtifactStoreRef,
-  ownerLifecycleSpace,
-  repositoryLifecycleSpace,
-} from '../lifecycle-space.js';
+import { type EvalLifecycleSpace, loadLifecycleSpaceMigrations, loadLifecycleSpaceRoots } from '../lifecycle-space.js';
 import { deriveEvalCaseId } from '../publish-verdict/lifecycle-root-artifact.js';
 import { projectReevalCase } from '../reeval-case.js';
 import { loadReevalCaseRoot } from '../reeval-case-root.js';
@@ -23,14 +16,13 @@ export type { ResolvedEvalVerdictLifecycleRoot } from './eval-hub-lifecycle-view
 type LifecycleEventReader = Pick<IReevalClosureEventLog, 'read'>;
 
 export interface EnrichEvalHubLifecycleOptions {
-  harnessFeedbackRoot: string;
-  /** The repository space's log: repository verdicts are projected from it. */
-  eventLog?: LifecycleEventReader;
   /**
-   * The reading owner's space. Runtime artifact verdicts are projected only here —
-   * from that owner's roots and log — and never from the repository space.
+   * The reader's lifecycle space. The summary's runtime verdicts must be the reader's
+   * own, so they belong to this space whenever it holds an artifact store.
    */
-  owner?: OwnerArtifactStoreRef & { eventLog: LifecycleEventReader };
+  space: EvalLifecycleSpace;
+  /** The space's log; without one, items stay as the read model built them. */
+  eventLog?: LifecycleEventReader;
   assignedEvalCatIds?: ReadonlyMap<string, string>;
 }
 
@@ -78,7 +70,7 @@ function requiresAction(item: EvalHubItem): boolean {
 }
 
 interface IndexedItem {
-  /** Position in the summary, so items projected in different spaces keep their order. */
+  /** Position in the summary, so projected items and items outside the space keep their order. */
   index: number;
   item: EvalHubItem;
 }
@@ -215,39 +207,38 @@ async function enrichSpaceItems(
   return enriched;
 }
 
+/** Committed verdicts are the install's; runtime verdicts are the reader's own. */
+function belongsToSpace(item: EvalHubItem, space: EvalLifecycleSpace): boolean {
+  return item.source.kind === 'artifact' ? space.artifactStore !== undefined : space.kind === 'install';
+}
+
+function outsideSpace({ index, item }: IndexedItem): IndexedItem {
+  if (item.verdict === 'keep_observe') return { index, item };
+  const lifecycle = { ...item.lifecycle, unavailableReason: 'verdict lifecycle belongs to another lifecycle space' };
+  return { index, item: { ...item, lifecycle } };
+}
+
 /**
- * Projects each verdict's lifecycle inside the space it belongs to: repository
- * verdicts from the repository roots and log, the reader's runtime artifact verdicts
- * from that owner's roots and log. A space without a log leaves its items as the
- * read model built them.
+ * Projects the lifecycles of the reader's space — every verdict in it, whichever store
+ * holds it, from the space's roots and log — so a stable case is one item however its
+ * cycles are stored. A verdict outside the reader's space is not the reader's
+ * lifecycle and is not projected. Without a log, items stay as the read model built them.
  */
 export async function enrichEvalHubLifecycle(
   summary: EvalHubSummary,
   options: EnrichEvalHubLifecycleOptions,
 ): Promise<EvalHubSummary> {
-  if (!options.eventLog && !options.owner) return summary;
+  const { space, eventLog } = options;
+  if (!eventLog) return summary;
   const indexed = summary.items.map((item, index) => ({ index, item }));
-  const repositoryItems = indexed.filter(({ item }) => item.source.kind !== 'artifact');
-  const artifactItems = indexed.filter(({ item }) => item.source.kind === 'artifact');
-  const project = (spaceItems: IndexedItem[], lifecycle: SpaceLifecycle | undefined) =>
-    lifecycle ? enrichSpaceItems(spaceItems, lifecycle, summary.generatedAt, options.assignedEvalCatIds) : spaceItems;
-
-  const items = [
-    ...(await project(
-      repositoryItems,
-      options.eventLog
-        ? { space: repositoryLifecycleSpace(options.harnessFeedbackRoot), eventLog: options.eventLog }
-        : undefined,
-    )),
-    ...(await project(
-      artifactItems,
-      options.owner
-        ? { space: ownerLifecycleSpace(options.harnessFeedbackRoot, options.owner), eventLog: options.owner.eventLog }
-        : undefined,
-    )),
-  ]
-    .sort((left, right) => left.index - right.index)
-    .map(({ item }) => item);
+  const projected = await enrichSpaceItems(
+    indexed.filter(({ item }) => belongsToSpace(item, space)),
+    { space, eventLog },
+    summary.generatedAt,
+    options.assignedEvalCatIds,
+  );
+  const outside = indexed.filter(({ item }) => !belongsToSpace(item, space)).map(outsideSpace);
+  const items = [...projected, ...outside].sort((left, right) => left.index - right.index).map(({ item }) => item);
 
   const domains = summary.domains?.map((domain) => {
     const representative = items.find((item) => item.domainId === domain.domainId);

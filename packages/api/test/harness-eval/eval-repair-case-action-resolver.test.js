@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { EvalRepairCaseActionResolver } from '../../dist/infrastructure/harness-eval/eval-repair-case-action-resolver.js';
-import { repositoryLifecycleSpace } from '../../dist/infrastructure/harness-eval/lifecycle-space.js';
+import { installLifecycleSpace } from '../../dist/infrastructure/harness-eval/lifecycle-space.js';
 import {
   actionRef,
   caseId,
@@ -41,7 +41,7 @@ describe('F313 linked fresh case/action resolution', () => {
     });
     assert.equal(superseded.status, 'superseded');
 
-    const resolver = new EvalRepairCaseActionResolver(repositoryLifecycleSpace(root), ctx.eventLog);
+    const resolver = new EvalRepairCaseActionResolver(installLifecycleSpace(root), ctx.eventLog);
     const recovered = await resolver.resolve(superseded.freshCaseActionRef);
 
     assert.equal(recovered.supersedesProposalId, original.proposalId);

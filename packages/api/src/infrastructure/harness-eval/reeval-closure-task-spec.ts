@@ -7,13 +7,7 @@ import {
 } from './capability-wakeup-closure-import.js';
 import { loadDomains } from './hub/eval-hub-read-model.js';
 import type { LegacyReevalCaseMigration } from './legacy-reeval-case-migration.js';
-import {
-  loadLifecycleSpaceMigrations,
-  loadLifecycleSpaceRoots,
-  type OwnerArtifactStoreRef,
-  ownerLifecycleSpace,
-  repositoryLifecycleSpace,
-} from './lifecycle-space.js';
+import { type EvalLifecycleSpace, loadLifecycleSpaceMigrations, loadLifecycleSpaceRoots } from './lifecycle-space.js';
 import { deriveEvalCaseId, type LifecycleRootArtifact } from './publish-verdict/lifecycle-root-artifact.js';
 import { projectReevalCase } from './reeval-case.js';
 import { compareReevalCycles } from './reeval-case-cycle-order.js';
@@ -30,13 +24,8 @@ import {
 import type { EvalLifecycleEvent } from './reeval-closure-schema.js';
 
 export interface ReevalClosureSubjectsLoaderOptions {
-  /** The repository's harness-feedback root: the domain registry, and the repository space's roots. */
-  harnessFeedbackRoot: string;
-  /**
-   * Loads this owner's space instead — the lifecycle roots of the runtime verdicts the
-   * owner published. `eventLog` must then be that owner's log.
-   */
-  owner?: OwnerArtifactStoreRef;
+  /** The lifecycle space to reconcile; `eventLog` must be that space's log. */
+  space: EvalLifecycleSpace;
   eventLog: IReevalClosureEventLog;
   resolveAssignedEvalCatId?: (domainId: string, registryCatId: string) => Promise<string | undefined>;
   frictionV3Cutover?: { lifecycleVersion: 1 };
@@ -48,7 +37,7 @@ interface SubjectLoadContext {
   options: ReevalClosureSubjectsLoaderOptions;
   domains: ReturnType<typeof loadDomains>;
   historical: ReturnType<typeof buildCapabilityWakeupClosureImport>;
-  /** Only the repository space carries the imported capability-wakeup lifecycle. */
+  /** Only the install space carries the imported capability-wakeup lifecycle. */
   isHistorical: (verdictId: string) => boolean;
   migrations: readonly LegacyReevalCaseMigration[];
 }
@@ -135,18 +124,16 @@ async function buildCaseSubject(
 export async function loadReevalClosureSubjects(
   options: ReevalClosureSubjectsLoaderOptions,
 ): Promise<ReevalLifecycleReconcileSubject[]> {
-  const space = options.owner
-    ? ownerLifecycleSpace(options.harnessFeedbackRoot, options.owner)
-    : repositoryLifecycleSpace(options.harnessFeedbackRoot);
+  const { space } = options;
   // The imported capability-wakeup lifecycle and legacy case migrations are committed
-  // history: they belong to the repository space and never to an owner's.
-  const inRepository = space.kind === 'repository';
+  // history: they belong to the install space and never to another owner's.
+  const inInstall = space.kind === 'install';
   const historical = buildCapabilityWakeupClosureImport();
   const context: SubjectLoadContext = {
     options,
-    domains: loadDomains(options.harnessFeedbackRoot),
+    domains: loadDomains(space.harnessFeedbackRoot),
     historical,
-    isHistorical: (verdictId) => inRepository && verdictId === historical.root.verdictId,
+    isHistorical: (verdictId) => inInstall && verdictId === historical.root.verdictId,
     migrations: loadLifecycleSpaceMigrations(space),
   };
   const { domains, isHistorical } = context;
@@ -179,8 +166,8 @@ export async function loadReevalClosureSubjects(
 
   const historicalRoot = roots.find((root) => isHistorical(root.verdictId));
   const historicalVerdictExists =
-    inRepository &&
-    existsSync(join(options.harnessFeedbackRoot, 'verdicts', `${CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID}.md`));
+    inInstall &&
+    existsSync(join(space.harnessFeedbackRoot, 'verdicts', `${CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID}.md`));
   if (historicalVerdictExists && historicalRoot?.schemaVersion !== 2 && historicalRoot?.schemaVersion !== 3) {
     const domain = domains.get(historical.root.domainId);
     if (!domain) {
@@ -224,9 +211,6 @@ function caseNeedsResponsibility(
 }
 
 export interface ReevalClosureTaskSpecOptions {
-  /** One reconciler runs per lifecycle space; the default id and label are the repository space's. */
-  taskId?: string;
-  label?: string;
   eventLog: IReevalClosureEventLog;
   loadSubjects: () => Promise<ReevalLifecycleReconcileSubject[]>;
   responsibilityService?: Pick<ReevalCaseResponsibilityService, 'reconcile'>;
@@ -241,7 +225,7 @@ export function createReevalClosureTaskSpec(
 ): TaskSpec_P1<ReevalClosureBatchSignal> {
   const now = options.now ?? (() => new Date().toISOString());
   return {
-    id: options.taskId ?? 'eval-verdict-closure-reconciler',
+    id: 'eval-verdict-closure-reconciler',
     profile: 'poller',
     trigger: { type: 'interval', ms: options.pollIntervalMs ?? 600_000 },
     admission: {
@@ -325,7 +309,7 @@ export function createReevalClosureTaskSpec(
     outcome: { whenNoSignal: 'drop' },
     enabled: () => true,
     display: {
-      label: options.label ?? 'Eval Verdict Closure Reconciler',
+      label: 'Eval Verdict Closure Reconciler',
       category: 'system',
       description: 'Opens actionable verdict lifecycles and resurfaces overdue acknowledgement or re-evaluation',
       subjectKind: 'none',

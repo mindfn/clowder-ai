@@ -150,12 +150,16 @@ export function resolveLifecycleRootsWithLegacyCases(
   });
 }
 
-export function loadLifecycleRootsWithLegacyCases(harnessFeedbackRoot: string): LifecycleRootArtifact[] {
+/**
+ * The lifecycle roots committed to the product repository, including the imported
+ * capability-wakeup root when its verdict was committed without one.
+ */
+export function loadCommittedLifecycleRoots(harnessFeedbackRoot: string): LifecycleRootArtifact[] {
   const roots = scanLifecycleRootArtifacts(harnessFeedbackRoot);
   const historical = buildCapabilityWakeupClosureImport();
   const historicalVerdictPath = join(harnessFeedbackRoot, 'verdicts', `${historical.root.verdictId}.md`);
   if (existsSync(historicalVerdictPath) && !roots.some((root) => root.verdictId === historical.root.verdictId)) {
     roots.push(historical.root);
   }
-  return resolveLifecycleRootsWithLegacyCases(harnessFeedbackRoot, roots);
+  return roots;
 }

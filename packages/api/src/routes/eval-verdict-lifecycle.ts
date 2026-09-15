@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Redis } from 'ioredis';
 import { requireConnectorWriteNetworkGuard } from '../config/connector-secret-write-guards.js';
-import { listOwnerArtifactVerdicts } from '../infrastructure/harness-eval/artifact-store/artifact-store-reader.js';
 import {
   buildCapabilityWakeupClosureImport,
   CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID,
@@ -10,11 +9,7 @@ import { getEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-d
 import type { EvalReleaseTruthResolver } from '../infrastructure/harness-eval/eval-release-truth-resolver.js';
 import { EvalReleaseTruthError } from '../infrastructure/harness-eval/eval-release-truth-resolver.js';
 import { loadEvalVerdictLifecycleRoot } from '../infrastructure/harness-eval/hub/eval-hub-lifecycle-projection.js';
-import {
-  type EvalLifecycleSpace,
-  ownerLifecycleSpace,
-  repositoryLifecycleSpace,
-} from '../infrastructure/harness-eval/lifecycle-space.js';
+import { type EvalLifecycleSpace, lifecycleSpaceOf } from '../infrastructure/harness-eval/lifecycle-space.js';
 import {
   frictionLifecycleV3QuarantineDiagnostic,
   loadReevalCaseRoot,
@@ -33,11 +28,13 @@ import { registerCallbackAuthHook } from './callback-auth-prehandler.js';
 
 export interface EvalVerdictLifecycleRoutesOptions {
   harnessFeedbackRoot: string;
-  /** The repository space's canonical log. */
+  /** F257 × F266: the owner whose lifecycle space is the install's (repository history + runtime verdicts). */
+  configuredOwnerUserId: string;
+  /** The install space's canonical log. */
   eventLog?: IReevalClosureEventLog;
   /** F257: the artifact store whose owner partitions hold runtime verdicts and their lifecycle roots. */
   artifactStoreRoot?: string;
-  /** F257: opens one owner's canonical log, for the lifecycles of the runtime verdicts that owner published. */
+  /** F257: opens another owner's canonical log, for the lifecycles of the runtime verdicts that owner published. */
   ownerEventLog?: (ownerUserId: string) => IReevalClosureEventLog;
   redis?: Redis;
   callbackRegistry?: CallbackAuthRegistry;
@@ -183,30 +180,20 @@ interface LifecycleSpaceLog {
 }
 
 /**
- * The space a command acts in. A verdict the caller published as a runtime artifact
- * lives in the caller's owner space — the same precedence the Eval Hub uses when an
- * artifact and a repository verdict share an id — and every other verdict in the
- * repository space. Another owner's runtime verdict is never reachable.
+ * The space a command acts in: the caller's owner's, and nothing outside it. The
+ * configured owner's space is the install's, so its commands reach the repository's
+ * history and that owner's runtime verdicts alike; any other owner reaches only the
+ * runtime verdicts it published.
  */
 function resolveLifecycleSpace(
   opts: EvalVerdictLifecycleRoutesOptions,
-  verdictId: string,
   ownerUserId: string,
-): LifecycleSpaceLog | { unavailable: string } {
-  const { artifactStoreRoot } = opts;
-  if (
-    artifactStoreRoot &&
-    ownerUserId.trim() !== '' &&
-    listOwnerArtifactVerdicts(artifactStoreRoot, ownerUserId).some((entry) => entry.coordinates.verdictId === verdictId)
-  ) {
-    if (!opts.ownerEventLog) return { unavailable: 'owner lifecycle persistence unavailable' };
-    return {
-      space: ownerLifecycleSpace(opts.harnessFeedbackRoot, { artifactStoreRoot, ownerUserId }),
-      eventLog: opts.ownerEventLog(ownerUserId),
-    };
-  }
-  if (!opts.eventLog) return { unavailable: 'canonical lifecycle persistence unavailable' };
-  return { space: repositoryLifecycleSpace(opts.harnessFeedbackRoot), eventLog: opts.eventLog };
+): LifecycleSpaceLog | { status: 404 | 503; error: string } {
+  const space = lifecycleSpaceOf(ownerUserId, opts);
+  if (!space) return { status: 404, error: 'root_not_found' };
+  const eventLog = space.kind === 'install' ? opts.eventLog : opts.ownerEventLog?.(ownerUserId);
+  if (!eventLog) return { status: 503, error: 'canonical lifecycle persistence unavailable' };
+  return { space, eventLog };
 }
 
 function createClosureService(opts: EvalVerdictLifecycleRoutesOptions, { space, eventLog }: LifecycleSpaceLog) {
@@ -220,7 +207,7 @@ function createClosureService(opts: EvalVerdictLifecycleRoutesOptions, { space, 
       return override ? { ...resolved.projectorRoot, assignedEvalCatId: override.catId } : resolved.projectorRoot;
     },
     loadBootstrap: async (verdictId) => {
-      if (space.kind === 'repository' && verdictId === CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID) {
+      if (space.kind === 'install' && verdictId === CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID) {
         return buildCapabilityWakeupClosureImport().bootstrapEvents;
       }
       const resolved = loadEvalVerdictLifecycleRoot(space, verdictId);
@@ -282,8 +269,8 @@ export const evalVerdictLifecycleRoutes: FastifyPluginAsync<EvalVerdictLifecycle
     const caller = requireLifecycleCaller(request, reply, commandBody);
     if (!caller) return;
     const { verdictId } = request.params as { verdictId: string };
-    const lifecycle = resolveLifecycleSpace(opts, verdictId, caller.ownerUserId);
-    if ('unavailable' in lifecycle) return reply.status(503).send({ error: lifecycle.unavailable });
+    const lifecycle = resolveLifecycleSpace(opts, caller.ownerUserId);
+    if ('error' in lifecycle) return reply.status(lifecycle.status).send({ error: lifecycle.error });
     return executeInLifecycleSpace(opts, lifecycle, caller.actor, commandBody, verdictId, reply);
   });
 };

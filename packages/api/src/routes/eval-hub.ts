@@ -88,9 +88,11 @@ export interface EvalHubRoutesOptions {
    * publish-verdict — same gap as F178/F223 (post_message, workspace_navigate).
    */
   agentKeyRegistry?: AgentKeyAuthRegistry;
-  /** F266 canonical event reader; absent means artifact-only honest degradation. */
+  /** F257 × F266: the owner whose lifecycle space is the install's (repository history + runtime verdicts). */
+  configuredOwnerUserId: string;
+  /** F266 canonical event reader of the install space; absent means artifact-only honest degradation. */
   lifecycleEventLog?: Pick<IReevalClosureEventLog, 'read'>;
-  /** F257: opens one owner's lifecycle log, for the runtime verdicts that owner published. */
+  /** F257: opens another owner's lifecycle log, for the runtime verdicts that owner published. */
   ownerLifecycleEventLog?: (ownerUserId: string) => Pick<IReevalClosureEventLog, 'read'>;
   /** F257 guard-rejection ledger sink for publish-policy rejects. */
   guardRejectionLog?: GuardRejectionEventLog;
@@ -139,6 +141,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
         artifactStoreRoot: opts.artifactStoreRoot,
         userId,
+        configuredOwnerUserId: opts.configuredOwnerUserId,
         log: request.log,
         ...(opts.redis ? { redis: opts.redis } : {}),
         ...(opts.threadStore ? { threadStore: opts.threadStore } : {}),

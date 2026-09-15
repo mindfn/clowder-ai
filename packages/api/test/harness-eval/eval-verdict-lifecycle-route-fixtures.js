@@ -135,6 +135,7 @@ export async function buildApp(t) {
   });
   await app.register(evalVerdictLifecycleRoutes, {
     harnessFeedbackRoot,
+    configuredOwnerUserId: 'owner-user',
     eventLog,
     redis: {
       async get(key) {
@@ -158,7 +159,7 @@ export async function buildApp(t) {
 export async function buildUnavailableApp(t) {
   const app = Fastify({ logger: false });
   const harnessFeedbackRoot = setupHarnessRoot(t);
-  await app.register(evalVerdictLifecycleRoutes, { harnessFeedbackRoot });
+  await app.register(evalVerdictLifecycleRoutes, { harnessFeedbackRoot, configuredOwnerUserId: 'owner-user' });
   return app;
 }
 

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { loadEnrichedEvalHubSummary } from '../../dist/infrastructure/harness-eval/hub/eval-hub-summary-service.js';
+import { ownerLifecycleSpace } from '../../dist/infrastructure/harness-eval/lifecycle-space.js';
 import { deriveEvalCaseId } from '../../dist/infrastructure/harness-eval/publish-verdict/lifecycle-root-artifact.js';
 import { createLocalArtifactPublisher } from '../../dist/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js';
 import * as reevalClosureEventLog from '../../dist/infrastructure/harness-eval/reeval-closure-event-log.js';
@@ -18,6 +19,7 @@ import {
   makePacket,
   publishOpts,
 } from './local-artifact-publisher-fixtures.js';
+import { MemoryLifecycleEventLog } from './memory-lifecycle-event-log.js';
 
 /**
  * F257 × F266 — a runtime artifact's lifecycle belongs to the owner who published it.
@@ -27,42 +29,19 @@ import {
  * opened, acknowledged, or re-evaluated. And because owner partitions let two owners
  * publish the same verdict or case id, one global event-log key per id would have let
  * their lifecycles overwrite each other the moment the roots were connected.
+ *
+ * The owners here are not the configured owner, whose space is the install's
+ * (`lifecycle-install-space.test.js`): each has a space of its own runtime verdicts.
  */
 
-class MemoryEventLog {
-  logs = new Map();
-  seen = new Set();
-
-  async append(event, expectedSequence) {
-    const subjectId = event.caseId ?? event.verdictId;
-    if (this.seen.has(event.eventId)) return { outcome: 'duplicate' };
-    const log = this.logs.get(subjectId) ?? [];
-    if (log.length !== expectedSequence) return { outcome: 'conflict', actualSequence: log.length };
-    this.seen.add(event.eventId);
-    this.logs.set(subjectId, [...log, structuredClone(event)]);
-    return { outcome: 'appended', sequence: log.length };
-  }
-
-  async read(subjectId, fromSequence = 0) {
-    return structuredClone((this.logs.get(subjectId) ?? []).slice(fromSequence));
-  }
-
-  async listVerdictIds() {
-    return [...this.logs.keys()].sort();
-  }
-
-  async listSubjectIds() {
-    return this.listVerdictIds();
-  }
-}
-
+const CONFIGURED_OWNER = 'install-owner';
 const CASE_ID = deriveEvalCaseId('eval:harness-ledger', 'ledger-drift');
 
 describe('owner lifecycle spaces', () => {
   let tmp;
   let harnessFeedbackRoot;
   let artifactStoreRoot;
-  let repositoryLog;
+  let installLog;
   let ownerLogs;
 
   beforeEach(() => {
@@ -70,10 +49,10 @@ describe('owner lifecycle spaces', () => {
     harnessFeedbackRoot = join(tmp, 'repo', 'docs', 'harness-feedback');
     artifactStoreRoot = join(tmp, 'data', 'harness-feedback', 'artifacts');
     makeHarnessLedgerDomainRegistry(harnessFeedbackRoot);
-    repositoryLog = new MemoryEventLog();
+    installLog = new MemoryLifecycleEventLog();
     ownerLogs = new Map([
-      ['owner-a', new MemoryEventLog()],
-      ['owner-b', new MemoryEventLog()],
+      ['owner-a', new MemoryLifecycleEventLog()],
+      ['owner-b', new MemoryLifecycleEventLog()],
     ]);
   });
 
@@ -108,7 +87,8 @@ describe('owner lifecycle spaces', () => {
       harnessFeedbackRoot,
       artifactStoreRoot,
       userId,
-      lifecycleEventLog: repositoryLog,
+      configuredOwnerUserId: CONFIGURED_OWNER,
+      lifecycleEventLog: installLog,
       ownerLifecycleEventLog: ownerEventLog,
       log: { warn() {} },
     });
@@ -117,8 +97,7 @@ describe('owner lifecycle spaces', () => {
   async function openOwnerSubjects(ownerUserId, now = '2099-01-01T01:00:00.000Z') {
     const eventLog = ownerEventLog(ownerUserId);
     const subjects = await loadReevalClosureSubjects({
-      harnessFeedbackRoot,
-      owner: { artifactStoreRoot, ownerUserId },
+      space: ownerLifecycleSpace(harnessFeedbackRoot, { artifactStoreRoot, ownerUserId }),
       eventLog,
     });
     for (const subject of subjects) {
@@ -130,22 +109,22 @@ describe('owner lifecycle spaces', () => {
     return subjects;
   }
 
-  it('keys each owner’s lifecycle log apart and leaves the repository keys where they were', () => {
+  it('keys each owner’s lifecycle log apart and leaves the install keys where they were', () => {
     const { reevalClosureKeys } = reevalClosureEventLog;
-    const repository = reevalClosureKeys({ kind: 'repository' });
-    assert.equal(repository.eventLog(CASE_ID), `eval:verdict-lifecycle:log:${CASE_ID}`);
-    assert.equal(repository.eventsSeen, 'eval:verdict-lifecycle:events:seen');
-    assert.equal(repository.verdicts, 'eval:verdict-lifecycle:verdicts');
+    const install = reevalClosureKeys({ kind: 'install' });
+    assert.equal(install.eventLog(CASE_ID), `eval:verdict-lifecycle:log:${CASE_ID}`);
+    assert.equal(install.eventsSeen, 'eval:verdict-lifecycle:events:seen');
+    assert.equal(install.verdicts, 'eval:verdict-lifecycle:verdicts');
 
     const ownerA = reevalClosureKeys({ kind: 'owner', ownerUserId: 'owner-a' });
     const ownerB = reevalClosureKeys({ kind: 'owner', ownerUserId: 'owner-b' });
-    for (const [a, b, repo] of [
-      [ownerA.eventLog(CASE_ID), ownerB.eventLog(CASE_ID), repository.eventLog(CASE_ID)],
-      [ownerA.eventsSeen, ownerB.eventsSeen, repository.eventsSeen],
-      [ownerA.verdicts, ownerB.verdicts, repository.verdicts],
+    for (const [a, b, installKey] of [
+      [ownerA.eventLog(CASE_ID), ownerB.eventLog(CASE_ID), install.eventLog(CASE_ID)],
+      [ownerA.eventsSeen, ownerB.eventsSeen, install.eventsSeen],
+      [ownerA.verdicts, ownerB.verdicts, install.verdicts],
     ]) {
       assert.notEqual(a, b);
-      assert.notEqual(a, repo);
+      assert.notEqual(a, installKey);
       assert.equal(a.includes('owner-a'), false, 'the raw user id is not written into a key');
     }
   });
@@ -164,7 +143,7 @@ describe('owner lifecycle spaces', () => {
     );
     const after = (await summaryFor('owner-a')).items.find((item) => item.id === 'hlr-actionable');
     assert.equal(after.lifecycle.availability, 'available', JSON.stringify(after.lifecycle));
-    assert.deepEqual(await repositoryLog.listSubjectIds(), [], 'a runtime lifecycle never lands in the repository log');
+    assert.deepEqual(await installLog.listSubjectIds(), [], 'another owner’s lifecycle never lands in the install log');
   });
 
   it('keeps two owners’ lifecycles of the same stable case apart', async () => {
@@ -215,7 +194,8 @@ describe('owner lifecycle spaces', () => {
       };
       await app.register(evalVerdictLifecycleRoutes, {
         harnessFeedbackRoot,
-        eventLog: repositoryLog,
+        configuredOwnerUserId: CONFIGURED_OWNER,
+        eventLog: installLog,
         artifactStoreRoot,
         ownerEventLog,
         callbackRegistry,
@@ -290,7 +270,7 @@ describe('owner lifecycle spaces', () => {
       const typesA = (await ownerEventLog('owner-a').read('hlr-shared')).map((event) => event.type);
       assert.deepEqual(typesA, ['verdict_opened', 'owner_acknowledged']);
       assert.deepEqual(await ownerEventLog('owner-b').read('hlr-shared'), []);
-      assert.deepEqual(await repositoryLog.read('hlr-shared'), []);
+      assert.deepEqual(await installLog.read('hlr-shared'), []);
 
       const byB = await acknowledge(app, 'hlr-shared', 'invocation-b');
       assert.equal(byB.statusCode, 200, byB.body);
@@ -313,7 +293,7 @@ describe('owner lifecycle spaces', () => {
       const byB = await send(app, 'hlr-case-cycle', 'invocation-b', 'plan_action', 2);
       assert.equal(byB.statusCode, 200, byB.body);
       assert.equal((await ownerEventLog('owner-a').read(CASE_ID)).length, 3);
-      assert.deepEqual(await repositoryLog.listSubjectIds(), []);
+      assert.deepEqual(await installLog.listSubjectIds(), []);
     });
 
     it('does not let one owner command another owner’s verdict', async (t) => {

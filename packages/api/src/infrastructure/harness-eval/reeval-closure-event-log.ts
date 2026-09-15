@@ -5,22 +5,23 @@ import { type EvalLifecycleEvent, EvalLifecycleEventSchema } from './reeval-clos
 const KEYSPACE = 'eval:verdict-lifecycle';
 
 /**
- * Which lifecycle an event log records. Lifecycle ids (verdict ids, and case ids
- * derived from domain + finding) are not unique across owners, so the owner is part
- * of the log's address rather than a field on its events:
+ * Which lifecycle space an event log records (see `lifecycle-space.ts`). Lifecycle
+ * ids (verdict ids, and case ids derived from domain + finding) are not unique across
+ * owners, so the space is part of the log's address rather than a field on its events:
  *
- * - `repository` — lifecycles of roots committed to the product repository. Keeps the
- *   original global keys, so state recorded before owner partitions stays readable.
- * - `owner` — lifecycles of the runtime artifacts one owner published, under the same
- *   owner key as that owner's artifact partition. Log, duplicate set and subject index
- *   are all per owner: two owners never share a sequence, an event id, or a listing.
+ * - `install` — the configured owner's space, which also holds the repository's
+ *   committed history. Keeps the original global keys, so every chain recorded before
+ *   runtime verdicts existed continues where it was written.
+ * - `owner` — any other owner's space, under the same owner key as that owner's
+ *   artifact partition. Log, duplicate set and subject index are all per owner: two
+ *   owners never share a sequence, an event id, or a listing.
  */
-export type EvalLifecycleScope = { kind: 'repository' } | { kind: 'owner'; ownerUserId: string };
+export type EvalLifecycleScope = { kind: 'install' } | { kind: 'owner'; ownerUserId: string };
 
-export const REPOSITORY_LIFECYCLE_SCOPE: EvalLifecycleScope = { kind: 'repository' };
+export const INSTALL_LIFECYCLE_SCOPE: EvalLifecycleScope = { kind: 'install' };
 
 export function reevalClosureKeys(scope: EvalLifecycleScope) {
-  const prefix = scope.kind === 'repository' ? KEYSPACE : `${KEYSPACE}:owners:${artifactOwnerKey(scope.ownerUserId)}`;
+  const prefix = scope.kind === 'install' ? KEYSPACE : `${KEYSPACE}:owners:${artifactOwnerKey(scope.ownerUserId)}`;
   return {
     eventLog: (subjectId: string): string => `${prefix}:log:${subjectId}`,
     eventsSeen: `${prefix}:events:seen`,
@@ -28,7 +29,7 @@ export function reevalClosureKeys(scope: EvalLifecycleScope) {
   } as const;
 }
 
-export const ReevalClosureKeys = reevalClosureKeys(REPOSITORY_LIFECYCLE_SCOPE);
+export const ReevalClosureKeys = reevalClosureKeys(INSTALL_LIFECYCLE_SCOPE);
 
 export type ReevalClosureAppendResult =
   | { outcome: 'appended'; sequence: number }
@@ -81,7 +82,7 @@ export class RedisReevalClosureEventLog implements IReevalClosureEventLog {
 
   constructor(
     private readonly redis: RedisClient,
-    scope: EvalLifecycleScope = REPOSITORY_LIFECYCLE_SCOPE,
+    scope: EvalLifecycleScope = INSTALL_LIFECYCLE_SCOPE,
   ) {
     this.keys = reevalClosureKeys(scope);
   }
