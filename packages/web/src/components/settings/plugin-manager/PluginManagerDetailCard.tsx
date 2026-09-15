@@ -45,12 +45,35 @@ function capabilityDescription(
   plugin: PluginManagerDesignFixture,
   kind: string,
   description: string | undefined,
-): string {
-  if (kind === 'mcp' && plugin.live === 'running' && plugin.tools === undefined) return '工具信息暂不可用。';
+): string | undefined {
   if (description !== undefined) return description;
   if (kind !== 'mcp') return '插件未提供用途说明。';
   if (plugin.live !== 'running') return '启用插件后显示工具及用途。';
-  return '插件未提供用途说明。';
+  return plugin.tools === undefined ? undefined : '插件未提供用途说明。';
+}
+
+function CapabilityDocRow({
+  plugin,
+  kind,
+  item,
+}: {
+  plugin: PluginManagerDesignFixture;
+  kind: string;
+  item: CapabilityDocItem;
+}) {
+  const description = capabilityDescription(plugin, kind, item.description);
+  return (
+    <li className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
+      <SettingsText as="p" variant="sm" tone="default" className="font-medium">
+        {item.name}
+      </SettingsText>
+      {description !== undefined && (
+        <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
+          {description}
+        </SettingsText>
+      )}
+    </li>
+  );
 }
 
 function capabilityDocItems(plugin: PluginManagerDesignFixture): CapabilityDocItem[] {
@@ -98,7 +121,11 @@ function CapabilityDocumentation({
   return (
     <section className="space-y-3" data-plugin-detail-section="capability-docs">
       <SectionHeading>能力说明</SectionHeading>
-      {plugin.readmeMarkdown === undefined ? (
+      {plugin.readmeUnavailable === true ? (
+        <SettingsText as="p" variant="sm" tone="muted">
+          README 暂不可用。
+        </SettingsText>
+      ) : plugin.readmeMarkdown === undefined ? (
         <SettingsText as="p" variant="sm" tone="muted">
           此版本未随插件包提供 README。
         </SettingsText>
@@ -122,16 +149,14 @@ function CapabilityDocumentation({
               <SettingsText as="h5" variant="xs" tone="muted" className="font-semibold">
                 {contributionKindLabel[kind] ?? kind}
               </SettingsText>
+              {kind === 'mcp' && plugin.live === 'running' && plugin.tools === undefined && (
+                <SettingsText as="p" variant="xs" tone="muted">
+                  工具信息暂不可用。
+                </SettingsText>
+              )}
               <ul className="space-y-1.5">
                 {items.map((item) => (
-                  <li key={item.key} className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
-                    <SettingsText as="p" variant="sm" tone="default" className="font-medium">
-                      {item.name}
-                    </SettingsText>
-                    <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
-                      {capabilityDescription(plugin, kind, item.description)}
-                    </SettingsText>
-                  </li>
+                  <CapabilityDocRow key={item.key} plugin={plugin} kind={kind} item={item} />
                 ))}
               </ul>
             </section>

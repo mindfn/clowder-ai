@@ -34,6 +34,7 @@ export interface PluginManagerDesignFixture {
   contributions?: PluginManagerContribution[];
   tools?: Array<Pick<PluginManagerContributionTool, 'contributionId' | 'name' | 'description'>>;
   readmeMarkdown?: string;
+  readmeUnavailable?: boolean;
   setupSteps?: string[];
   docsUrl?: string;
   configFields?: PluginManagerDetail['configFields'];

@@ -471,7 +471,14 @@ describe('F202 live Plugin Manager Console wiring', () => {
           ...detail(plugin),
           plugin: {
             ...detail(plugin).plugin,
-            contributions: [{ id: 'video-analysis-toolset', kind: 'mcp', name: 'video-analysis-toolset' }],
+            contributions: [
+              {
+                id: 'video-analysis-toolset',
+                kind: 'mcp',
+                name: 'video-analysis-toolset',
+                description: 'Analyze videos.',
+              },
+            ],
           },
         });
       }
@@ -484,8 +491,26 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => root.render(<PluginsContent />));
     await flushEffects();
 
+    expect(container.textContent).toContain('Analyze videos.');
     expect(container.textContent).toContain('工具信息暂不可用。');
     expect(container.textContent).not.toContain('插件未提供用途说明。');
+  });
+
+  it('reports package documentation as unavailable when its Host request fails', async () => {
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') {
+        return json({ error: 'archive fetch failed', code: 'INVALID_ASSET' }, 503);
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('README 暂不可用。');
+    expect(container.textContent).not.toContain('此版本未随插件包提供 README。');
   });
 
   it('polls by replacing the same projection without emitting duplicate UI errors', async () => {
