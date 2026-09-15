@@ -74,6 +74,69 @@ function groupCapabilityDocs(items: readonly CapabilityDocItem[]) {
   return [...groups].map(([kind, groupedItems]) => ({ kind, items: groupedItems }));
 }
 
+function CapabilityDocumentation({
+  plugin,
+  installed,
+  groups,
+}: {
+  plugin: PluginManagerDesignFixture;
+  installed: boolean;
+  groups: readonly { kind: string; items: CapabilityDocItem[] }[];
+}) {
+  return (
+    <section className="space-y-3" data-plugin-detail-section="capability-docs">
+      <SectionHeading>能力说明</SectionHeading>
+      {plugin.readmeMarkdown === undefined ? (
+        <SettingsText as="p" variant="sm" tone="muted">
+          此版本未随插件包提供 README。
+        </SettingsText>
+      ) : (
+        <MarkdownContent content={plugin.readmeMarkdown} disableCommandPrefix />
+      )}
+      {plugin.docsUrl && (
+        <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
+          <ExternalLinkIcon />
+          <span>查看插件文档</span>
+        </a>
+      )}
+      {plugin.contributions === undefined ? (
+        <SettingsText as="p" variant="sm" tone="muted">
+          {installed ? '能力信息暂不可用。' : '安装后可查看具体工具与用途。'}
+        </SettingsText>
+      ) : groups.length > 0 ? (
+        <div className="space-y-3">
+          {groups.map(({ kind, items }) => (
+            <section key={kind} className="space-y-1.5" data-contribution-kind={kind}>
+              <SettingsText as="h5" variant="xs" tone="muted" className="font-semibold">
+                {contributionKindLabel[kind] ?? kind}
+              </SettingsText>
+              <ul className="space-y-1.5">
+                {items.map((item) => (
+                  <li key={item.key} className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
+                    <SettingsText as="p" variant="sm" tone="default" className="font-medium">
+                      {item.name}
+                    </SettingsText>
+                    <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
+                      {item.description ??
+                        (kind === 'mcp' && plugin.live !== 'running'
+                          ? '启用插件后显示工具及用途。'
+                          : '插件未提供用途说明。')}
+                    </SettingsText>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <SettingsText as="p" variant="sm" tone="muted">
+          此插件未声明可展示的工具或资源。
+        </SettingsText>
+      )}
+    </section>
+  );
+}
+
 export function PluginManagerDetailCard({
   plugin,
   locale,
@@ -208,52 +271,7 @@ export function PluginManagerDetailCard({
           )}
         </section>
 
-        <section className="space-y-3" data-plugin-detail-section="capability-docs">
-          <SectionHeading>能力说明</SectionHeading>
-          {plugin.readmeMarkdown === undefined ? (
-            <SettingsText as="p" variant="sm" tone="muted">
-              此版本未随插件包提供 README。
-            </SettingsText>
-          ) : (
-            <MarkdownContent content={plugin.readmeMarkdown} disableCommandPrefix />
-          )}
-          {plugin.docsUrl && (
-            <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
-              <ExternalLinkIcon />
-              <span>查看插件文档</span>
-            </a>
-          )}
-          {capabilityGroups.length > 0 ? (
-            <div className="space-y-3">
-              {capabilityGroups.map(({ kind, items }) => (
-                <section key={kind} className="space-y-1.5" data-contribution-kind={kind}>
-                  <SettingsText as="h5" variant="xs" tone="muted" className="font-semibold">
-                    {contributionKindLabel[kind] ?? kind}
-                  </SettingsText>
-                  <ul className="space-y-1.5">
-                    {items.map((item) => (
-                      <li key={item.key} className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
-                        <SettingsText as="p" variant="sm" tone="default" className="font-medium">
-                          {item.name}
-                        </SettingsText>
-                        <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
-                          {item.description ??
-                            (kind === 'mcp' && plugin.live !== 'running'
-                              ? '启用插件后显示工具及用途。'
-                              : '插件未提供用途说明。')}
-                        </SettingsText>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ))}
-            </div>
-          ) : (
-            <SettingsText as="p" variant="sm" tone="muted">
-              {installed ? '此插件未声明可展示的工具或资源。' : '安装后可查看具体工具与用途。'}
-            </SettingsText>
-          )}
-        </section>
+        <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} />
       </div>
     </article>
   );
