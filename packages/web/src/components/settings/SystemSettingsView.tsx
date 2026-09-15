@@ -285,7 +285,18 @@ export function SystemSettingsView({ variables, groupLabels, onSaved }: SystemSe
         setSaveState({ saving: false, error: body.error ?? '保存失败', success: null });
         return;
       }
-      setSaveState({ saving: false, error: null, success: '已写回 .env，重启后生效' });
+      // #770 P0 D9: immediate-apply vars (restartRequired:false, e.g. LOG_LEVEL,
+      // CLI_TIMEOUT_MS, PROJECT_*) take effect the moment PATCH lands — telling
+      // the user "重启后生效" for those is factually wrong.
+      const restartCount = changedUpdates.filter((u) => u.restartRequired).length;
+      const immediateCount = changedUpdates.length - restartCount;
+      const success =
+        restartCount > 0 && immediateCount > 0
+          ? `已写回 .env：${immediateCount} 项已生效，${restartCount} 项需重启后生效`
+          : restartCount > 0
+            ? '已写回 .env，重启后生效'
+            : '已写回 .env，已生效';
+      setSaveState({ saving: false, error: null, success });
       onSaved?.();
     } catch {
       setSaveState({ saving: false, error: '保存失败', success: null });
