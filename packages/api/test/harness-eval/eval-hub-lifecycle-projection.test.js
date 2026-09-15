@@ -16,7 +16,7 @@ function lifecycleEvent(event) {
   return { verdictId, domainId: 'eval:capability-tips', ...event };
 }
 
-function setupRoot(t) {
+function setupSpace(t) {
   const harnessFeedbackRoot = mkdtempSync(join(tmpdir(), 'f266-hub-lifecycle-'));
   t.after(() => rmSync(harnessFeedbackRoot, { recursive: true, force: true }));
   const bundleDir = join(harnessFeedbackRoot, 'bundles', verdictId);
@@ -69,7 +69,7 @@ sla:
 fixtures: []
 `,
   );
-  return harnessFeedbackRoot;
+  return installLifecycleSpace(harnessFeedbackRoot);
 }
 
 function item(overrides = {}) {
@@ -220,7 +220,7 @@ function secondReevalCycleEvents() {
 
 describe('Eval Hub lifecycle projection', () => {
   it('keeps artifact-only summaries honest when the canonical event reader is unavailable', async (t) => {
-    const harnessFeedbackRoot = setupRoot(t);
+    const space = setupSpace(t);
     const observing = item({
       id: 'observing-verdict',
       verdict: 'keep_observe',
@@ -232,9 +232,7 @@ describe('Eval Hub lifecycle projection', () => {
       },
     });
 
-    const enriched = await enrichEvalHubLifecycle(summary([item(), observing]), {
-      space: installLifecycleSpace(harnessFeedbackRoot),
-    });
+    const enriched = await enrichEvalHubLifecycle(summary([item(), observing]), { space });
 
     assert.equal(enriched.items[0].lifecycle.availability, 'unavailable');
     assert.equal(enriched.items[0].lifecycle.ownerResponseStatus, 'unavailable');
@@ -242,11 +240,11 @@ describe('Eval Hub lifecycle projection', () => {
   });
 
   it('projects trusted owner, backlinks, unavailable evidence, re-eval, and diagnosis target from replay', async (t) => {
-    const harnessFeedbackRoot = setupRoot(t);
+    const space = setupSpace(t);
     const eventLog = new MemoryEventLog(resolvedEvents());
 
     const enriched = await enrichEvalHubLifecycle(summary([staleItem()]), {
-      space: installLifecycleSpace(harnessFeedbackRoot),
+      space,
       eventLog,
       assignedEvalCatIds: new Map([['eval:capability-tips', 'gpt52']]),
     });
@@ -273,7 +271,7 @@ describe('Eval Hub lifecycle projection', () => {
   });
 
   it('clears legacy staleness after reasoned operator suppression', async (t) => {
-    const harnessFeedbackRoot = setupRoot(t);
+    const space = setupSpace(t);
     const [opened] = resolvedEvents();
     const suppressed = {
       verdictId,
@@ -287,7 +285,7 @@ describe('Eval Hub lifecycle projection', () => {
     };
 
     const enriched = await enrichEvalHubLifecycle(summary([staleItem()]), {
-      space: installLifecycleSpace(harnessFeedbackRoot),
+      space,
       eventLog: new MemoryEventLog([opened, suppressed]),
     });
     const lifecycle = enriched.items[0].lifecycle;
@@ -299,10 +297,10 @@ describe('Eval Hub lifecycle projection', () => {
   });
 
   it('derives the active cycle attention state from canonical due time after an earlier failure', async (t) => {
-    const harnessFeedbackRoot = setupRoot(t);
+    const space = setupSpace(t);
 
     const enriched = await enrichEvalHubLifecycle(summary([staleItem()]), {
-      space: installLifecycleSpace(harnessFeedbackRoot),
+      space,
       eventLog: new MemoryEventLog(secondReevalCycleEvents()),
     });
     const lifecycle = enriched.items[0].lifecycle;
@@ -314,7 +312,7 @@ describe('Eval Hub lifecycle projection', () => {
     assert.equal(enriched.counts.stale, 0);
     assert.equal(enriched.counts.actionable, 1);
     const overdue = await enrichEvalHubLifecycle(summary([item()], '2026-07-27T00:00:00.000Z'), {
-      space: installLifecycleSpace(harnessFeedbackRoot),
+      space,
       eventLog: new MemoryEventLog(secondReevalCycleEvents()),
     });
     assert.equal(overdue.items[0].lifecycle.stale, true);
@@ -322,7 +320,7 @@ describe('Eval Hub lifecycle projection', () => {
   });
 
   it('surfaces recoverable SLA escalation without fabricating a repair', async (t) => {
-    const harnessFeedbackRoot = setupRoot(t);
+    const space = setupSpace(t);
     const events = resolvedEvents().slice(0, 1);
     events.push({
       verdictId,
@@ -338,7 +336,7 @@ describe('Eval Hub lifecycle projection', () => {
     });
 
     const enriched = await enrichEvalHubLifecycle(summary([item()]), {
-      space: installLifecycleSpace(harnessFeedbackRoot),
+      space,
       eventLog: new MemoryEventLog(events),
     });
     const lifecycle = enriched.items[0].lifecycle;
