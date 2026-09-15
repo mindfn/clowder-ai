@@ -3226,16 +3226,22 @@ async function main(): Promise<void> {
           dispositionService: pawFeelDispositionService,
         })
       : undefined;
-  // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators
+  // F257 / F192 sunset: a verdict is runtime evolution output, so it is published
+  // as an immutable local artifact outside the product repository — not committed
+  // and PR'd into the baseline that ships in the install package.
+  const { createLocalArtifactPublisher } = await import(
+    './infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js'
+  );
+  const catCafeDataDir = process.env.CAT_CAFE_DATA_DIR ?? memoryServices.dataDir ?? join(homedir(), '.cat-cafe');
+  const artifactStoreRoot = resolve(catCafeDataDir, 'harness-feedback', 'artifacts');
+  const artifactPublisher = createLocalArtifactPublisher({ artifactRoot: artifactStoreRoot });
+  // F311 capability-evolution measurement issuance still publishes through the
+  // isolated-worktree Git publisher; its baseline classification is F311's call.
   const { createGitWorktreePublisher } = await import(
     './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
   );
   const verdictRepoFullName =
     process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
-  const harnessGitPublisher = createGitWorktreePublisher({
-    repoRoot,
-    expectedRepoFullName: verdictRepoFullName,
-  });
   const capabilityEvolutionMeasurementGitPublisher = createGitWorktreePublisher({
     repoRoot,
     expectedRepoFullName: verdictRepoFullName,
@@ -3585,7 +3591,8 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
     messageStore,
-    gitPublisher: harnessGitPublisher,
+    artifactPublisher,
+    artifactStoreRoot,
     verdictGenerators,
     // 砚砚 R4 P1 + cloud R4 P1: register CallbackAuthRegistry for MCP route auth.
     callbackRegistry: registry,

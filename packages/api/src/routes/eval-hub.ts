@@ -23,7 +23,7 @@ import {
   type InvokeTriggerProvider,
 } from '../infrastructure/harness-eval/manual-trigger/index.js';
 import {
-  type GitPublisher,
+  type ArtifactPublisher,
   handlePublishVerdict,
   type VerdictGenerator,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
@@ -61,10 +61,11 @@ export interface EvalHubRoutesOptions {
    * F257 / F192 sunset: durable artifact publisher for verdict bundles.
    * Replaces the deprecated Git worktree publisher.
    */
-  gitPublisher?: GitPublisher;
+  artifactPublisher?: ArtifactPublisher;
   /**
    * Durable artifact store root surfaced alongside legacy in-repo verdicts.
    */
+  artifactStoreRoot?: string;
   /**
    * F192 Phase H: domain → verdict generator map. Real impl (e.g.
    * `generateA2aLiveVerdict` for eval:a2a) wired here; tests inject mock.
@@ -131,6 +132,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     try {
       return await loadEnrichedEvalHubSummary({
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
+        artifactStoreRoot: opts.artifactStoreRoot,
         userId,
         log: request.log,
         ...(opts.redis ? { redis: opts.redis } : {}),
@@ -333,7 +335,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     const result = await handlePublishVerdict(
       {
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
-        gitPublisher: opts.gitPublisher,
+        artifactPublisher: opts.artifactPublisher,
         generator,
         // 砚砚 R6 P1: pass redis so handler reads OQ-20 override (same instance
         // as handleTriggerNow uses — symmetric wake/publish for override cats).

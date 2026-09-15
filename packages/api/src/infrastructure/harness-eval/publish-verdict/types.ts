@@ -15,6 +15,32 @@ import type { FrictionVerdictHandoffPacketV3, VerdictHandoffPacket } from '../ve
  * Extracted from publish-verdict.ts per AGENTS.md 350-line hard limit.
  */
 
+// F257 / F192 sunset: a verdict is runtime evolution output, so it lands as an
+// immutable local artifact outside the product repository — not as a commit and
+// PR against the baseline that ships in the install package.
+
+export interface ArtifactRef {
+  artifactId: string;
+  domainSlug: string;
+  verdictPath: string;
+  bundleDir: string;
+  artifactUrl: string;
+}
+
+export interface PublishArtifactOpts {
+  packet: VerdictHandoffPacket;
+  sourceRefs: VerdictSourceRefs;
+  generate: (outputRoot: string) => Promise<GeneratedVerdictArtifact>;
+}
+
+export interface ArtifactPublisher {
+  publishArtifact(opts: PublishArtifactOpts): Promise<ArtifactRef>;
+}
+
+// The isolated-worktree Git publisher below is retained for F311's capability-
+// evolution measurement issuer, which still publishes through it. F257 verdict
+// publication no longer does.
+
 export interface StageResult {
   /** Absolute paths under the isolated worktree to `git add`. */
   paths: string[];
@@ -273,8 +299,8 @@ export interface GeneratorDeps {
 
 export interface PublishVerdictDeps {
   harnessFeedbackRoot: string;
-  /** AC-H2 + 砚砚 R1 P1 #1: isolated publish worktree (default throws). */
-  gitPublisher?: GitPublisher;
+  /** F257 / F192 sunset: durable publisher outside the product Git repository. */
+  artifactPublisher?: ArtifactPublisher;
   /** AC-H2: domain-specific generator (default throws — route-layer must inject per-domain). */
   generator?: VerdictGenerator;
   /** 砚砚 R6 P1: Redis client for OQ-20 eval-cat overrides (symmetric with trigger-now). */
@@ -320,8 +346,10 @@ export interface PublishVerdictSuccess {
   ok: true;
   verdictPath: string;
   bundleDir: string;
-  commitSha: string;
-  prUrl: string;
+  // F257 durable-artifact contract: publish returns an immutable artifact reference,
+  // not a git commit/PR.
+  artifactId: string;
+  artifactUrl: string;
   findingArtifacts: GeneratedFindingArtifact[];
   childArtifacts: PublishedVerdictChildArtifact[];
 }
