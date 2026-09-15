@@ -119,6 +119,10 @@ export const readCycleTracesInputSchema = {
   limit: z.number().int().min(1).max(25).default(10).describe('Bounded trace page size (1-25).'),
 };
 
+export const readCycleStatusInputSchema = {
+  objectiveId: identifier.describe('Objective id owned by the current evaluator thread.'),
+};
+
 export const submitCycleEvaluationInputSchema = {
   objectiveId: identifier.describe('Objective id from the cycle assignment.'),
   cycleId: identifier.describe('Exact CycleRecord id from the assignment.'),
@@ -206,6 +210,10 @@ interface ReadCycleTracesInput extends Record<string, unknown> {
   limit: number;
 }
 
+interface ReadCycleStatusInput extends Record<string, unknown> {
+  objectiveId: string;
+}
+
 interface SubmitCycleEvaluationInput extends Record<string, unknown> {
   objectiveId: string;
   cycleId: string;
@@ -232,6 +240,10 @@ export async function handleReadCycleTracesTool(input: ReadCycleTracesInput): Pr
   return callbackPost('/api/callbacks/harness-signals/read-cycle-traces', input, { retryDelaysMs: [] });
 }
 
+export async function handleReadCycleStatusTool(input: ReadCycleStatusInput): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/harness-signals/read-cycle-status', input, { retryDelaysMs: [] });
+}
+
 export async function handleSubmitCycleEvaluationTool(input: SubmitCycleEvaluationInput): Promise<ToolResult> {
   return callbackPost('/api/callbacks/harness-signals/submit-cycle-evaluation', input, { retryDelaysMs: [] });
 }
@@ -245,6 +257,19 @@ export async function handleSubmitCycleGovernanceTool(input: SubmitCycleGovernan
 }
 
 export const unitEvaluationTools = [
+  defineTool({
+    name: 'cat_cafe_read_cycle_status',
+    description:
+      'Read the current F257 Objective cycle lifecycle and exact N/M/D trigger progress. Use when: an evaluator finishes a cycle, wakes without an immutable assignment, or must distinguish idle collection from requested delivery. NOT for: reading frozen trace bodies or submitting conclusions. Output: a read-only snapshot with evalStatus, the frozen boundary when present, assignment delivery state, and cumulative N / recurring high-confidence wake-event M / cadence D progress. GOTCHA: idle means no assignment exists yet and scheduler delivery is event-driven—do not call hold_ball or poll; requested with assignmentDelivery=pending is the delivery-pending case.',
+    inputSchema: readCycleStatusInputSchema,
+    handler: handleReadCycleStatusTool,
+    governance: {
+      implementationExport: 'handleReadCycleStatusTool',
+      action: 'read-cycle-status',
+      risk: { level: 'read', openWorld: false },
+      runtimeProfiles: ['full'],
+    },
+  }),
   defineTool({
     name: 'cat_cafe_read_cycle_traces',
     description:

@@ -65,6 +65,8 @@ export const readCycleTracesBodySchema = z
   })
   .strict();
 
+export const readCycleStatusBodySchema = z.object({ objectiveId: identifier }).strict();
+
 export const submitCycleEvaluationBodySchema = z
   .object({
     objectiveId: identifier,
@@ -207,6 +209,20 @@ export const submitCycleGovernanceBodySchema = z
 
 type HandlerResult = { status: number; body: unknown };
 
+export async function handleReadCycleStatus(
+  coordinator: CycleEvaluationCoordinator,
+  principal: CycleEvaluationPrincipal,
+  rawBody: unknown,
+): Promise<HandlerResult> {
+  const parsed = readCycleStatusBodySchema.safeParse(rawBody);
+  if (!parsed.success) return invalidBody(parsed.error.issues);
+  try {
+    return { status: 200, body: await coordinator.readStatus(principal, parsed.data) };
+  } catch (error) {
+    return cycleError(error);
+  }
+}
+
 export async function handleReadCycleTraces(
   coordinator: CycleEvaluationCoordinator,
   principal: CycleEvaluationPrincipal,
@@ -274,6 +290,13 @@ export function registerCycleEvaluationCallbackRoutes(
   describer: HarnessUnitDescriber,
   governance?: CycleGovernanceCoordinator,
 ): void {
+  app.post('/api/callbacks/harness-signals/read-cycle-status', async (request, reply) => {
+    const principal = invocationPrincipal(request, reply);
+    if (!principal) return;
+    const result = await handleReadCycleStatus(coordinator, principal, request.body);
+    reply.status(result.status);
+    return result.body;
+  });
   app.post('/api/callbacks/harness-signals/read-cycle-traces', async (request, reply) => {
     const principal = invocationPrincipal(request, reply);
     if (!principal) return;
