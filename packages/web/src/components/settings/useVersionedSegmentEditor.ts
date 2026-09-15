@@ -6,6 +6,7 @@ import type {
   SegmentEvaluationResponse,
   SegmentLifecycleResponse,
 } from '@cat-cafe/shared';
+import { cycleAcceptsOperatorVersionTransition } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 
@@ -143,11 +144,13 @@ export function useVersionedSegmentEditor(segmentId: string) {
     () => (snapshot ? Math.max(...snapshot.lifeline.chain.map((epoch) => epoch.version)) + 1 : null),
     [snapshot],
   );
-  const tracing = snapshot?.evalStatus === 'idle';
+  // idle or stalled: producing a version is allowed and closes the current cycle.
+  const editable = snapshot?.evalStatus != null && cycleAcceptsOperatorVersionTransition(snapshot.evalStatus);
+  const stalled = snapshot?.evalStatus === 'stalled';
   const createPermission = snapshot?.content.enablementMatrix.runtimeOverride.actions.createVersion;
   const canCreate = Boolean(
     snapshot &&
-      tracing &&
+      editable &&
       createPermission?.allowed &&
       selectedVersion !== null &&
       draft !== reference &&
@@ -167,7 +170,8 @@ export function useVersionedSegmentEditor(segmentId: string) {
     error,
     missing,
     previewVersion,
-    tracing,
+    editable,
+    stalled,
     createPermission,
     canCreate,
     applyNewVersion,

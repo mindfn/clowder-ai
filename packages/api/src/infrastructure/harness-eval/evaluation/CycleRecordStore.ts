@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { CycleRecord, CycleTriggerPolicy } from '@cat-cafe/shared';
+import { cycleAcceptsOperatorVersionTransition } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { isCycleTermination, isCycleWindow } from './cycle-record-validation.js';
 
@@ -231,9 +232,11 @@ export class CycleRecordStore {
   }
 
   /**
-   * Close an idle tracing cycle and open its replacement at the exact same
-   * timestamp. Redis performs the archive/current swap as one CAS so an eval
-   * request can never be overwritten by a late operator click.
+   * Close an idle tracing cycle — or a stalled evaluation cycle, which has
+   * nothing in flight — and open its replacement at the exact same timestamp.
+   * Redis performs the archive/current swap as one CAS so an eval request can
+   * never be overwritten by a late operator click, and a late writeback can
+   * never land on the successor.
    */
   async switchVersion(
     expected: CycleRecord,
@@ -242,8 +245,8 @@ export class CycleRecordStore {
     carryoverWindows: CycleRecord['carryoverWindows'],
   ): Promise<CycleRecord | null> {
     if (
-      expected.evalStatus !== 'idle' ||
-      completed.evalStatus !== 'idle' ||
+      !cycleAcceptsOperatorVersionTransition(expected.evalStatus) ||
+      completed.evalStatus !== expected.evalStatus ||
       expected.ownerUserId !== completed.ownerUserId ||
       expected.objectiveId !== completed.objectiveId ||
       expected.cycleId !== completed.cycleId ||
