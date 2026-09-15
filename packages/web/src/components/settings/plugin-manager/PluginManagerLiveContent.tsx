@@ -12,20 +12,22 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfirm } from '@/components/useConfirm';
 import { apiFetch } from '@/utils/api-client';
 import { PluginManagerContent } from './PluginManagerContent';
-import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
+import type { PluginManagerDesignFixture, PluginManagerReadmeState } from './plugin-manager-fixtures';
 
 const POLL_INTERVAL_MS = 5_000;
 
 type ConsolePluginManagerDetail = PluginManagerDetail & {
-  readonly readmeMarkdown?: string;
-  readonly readmeUnavailable?: boolean;
+  readonly readme: Exclude<PluginManagerReadmeState, { readonly state: 'loading' }>;
   readonly tools?: PluginManagerContributionToolsResponse['tools'];
 };
 
-type DocumentationFetchResult =
-  | { readonly state: 'available'; readonly readmeMarkdown: string }
-  | { readonly state: 'absent' }
-  | { readonly state: 'unavailable' };
+type DocumentationFetchResult = ConsolePluginManagerDetail['readme'];
+
+type DetailLoadState =
+  | { readonly state: 'idle' }
+  | { readonly state: 'loading'; readonly pluginId: string }
+  | { readonly state: 'ready'; readonly pluginId: string; readonly detail: ConsolePluginManagerDetail }
+  | { readonly state: 'unavailable'; readonly pluginId: string };
 
 function packageName(plugin: PluginManagerListItem): string {
   return plugin.source.packageName ?? plugin.pluginId;
@@ -46,8 +48,7 @@ function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<
             ...(description === undefined ? {} : { description }),
           })),
         }),
-    ...(detail.readmeMarkdown === undefined ? {} : { readmeMarkdown: detail.readmeMarkdown }),
-    ...(detail.readmeUnavailable === true ? { readmeUnavailable: true } : {}),
+    readme: detail.readme,
     ...(detail.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
     ...(detail.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
     ...(detail.configFields === undefined ? {} : { configFields: detail.configFields }),
@@ -57,6 +58,7 @@ function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<
 function designFixture(
   plugin: PluginManagerListItem,
   detail: ConsolePluginManagerDetail | undefined,
+  readme: PluginManagerReadmeState,
 ): PluginManagerDesignFixture {
   const capabilities = detail?.capabilities ?? plugin.capabilitySummary;
   return {
@@ -77,6 +79,7 @@ function designFixture(
     auth: plugin.auth,
     intent: plugin.intent,
     live: plugin.live,
+    readme,
     capabilities: capabilities.map((capability) => ({
       name: capability.name,
       description:
@@ -141,7 +144,7 @@ async function fetchDocumentation(path: string): Promise<DocumentationFetchResul
   if (!isDocumentationResponse(value)) return { state: 'unavailable' };
   return value.readmeMarkdown === undefined
     ? { state: 'absent' }
-    : { state: 'available', readmeMarkdown: value.readmeMarkdown };
+    : { state: 'available', markdown: value.readmeMarkdown };
 }
 
 async function fetchContributionTools(
@@ -166,8 +169,7 @@ async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Pro
     value.plugin.artifact === 'installed' && value.plugin.live === 'running' ? await fetchContributionTools(path) : [];
   return {
     ...value.plugin,
-    ...(documentation.state === 'available' ? { readmeMarkdown: documentation.readmeMarkdown } : {}),
-    ...(documentation.state === 'unavailable' ? { readmeUnavailable: true } : {}),
+    readme: documentation,
     ...(tools === undefined ? {} : { tools }),
   };
 }
@@ -227,10 +229,23 @@ function configurationRequest(
   };
 }
 
+function detailProjection(
+  pluginId: string,
+  detailState: DetailLoadState,
+): { readonly detail?: ConsolePluginManagerDetail; readonly readme: PluginManagerReadmeState } {
+  if (detailState.state === 'ready' && detailState.pluginId === pluginId) {
+    return { detail: detailState.detail, readme: detailState.detail.readme };
+  }
+  if (detailState.state === 'unavailable' && detailState.pluginId === pluginId) {
+    return { readme: { state: 'unavailable' } };
+  }
+  return { readme: { state: 'loading' } };
+}
+
 export function PluginManagerLiveContent() {
   const confirm = useConfirm();
   const [snapshot, setSnapshot] = useState<PluginManagerListResponse | null>(null);
-  const [detail, setDetail] = useState<ConsolePluginManagerDetail | undefined>();
+  const [detailState, setDetailState] = useState<DetailLoadState>({ state: 'idle' });
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selectedId = useRef<string | null>(null);
@@ -241,13 +256,16 @@ export function PluginManagerLiveContent() {
 
   const loadDetail = useCallback(async (pluginId: string, afterMutation = false) => {
     const generation = ++detailGeneration.current;
+    setDetailState((current) =>
+      current.state === 'ready' && current.pluginId === pluginId ? current : { state: 'loading', pluginId },
+    );
     try {
       const value = await fetchManagerDetail(pluginId, afterMutation);
       if (!mounted.current || generation !== detailGeneration.current) return;
-      setDetail(value);
+      setDetailState({ state: 'ready', pluginId, detail: value });
     } catch {
       if (!mounted.current || generation !== detailGeneration.current) return;
-      setDetail(undefined);
+      setDetailState({ state: 'unavailable', pluginId });
     }
   }, []);
 
@@ -261,7 +279,7 @@ export function PluginManagerLiveContent() {
         const next = selectedPluginId(value.plugins, selectedId.current);
         selectedId.current = next;
         if (next) await loadDetail(next, afterMutation);
-        else setDetail(undefined);
+        else setDetailState({ state: 'idle' });
       } catch {
         if (!mounted.current || generation !== listGeneration.current) return;
         setError('插件列表加载失败；现有状态没有被改写。');
@@ -340,9 +358,10 @@ export function PluginManagerLiveContent() {
   );
 
   const plugins = snapshot?.plugins ?? [];
-  const fixtures = plugins.map((plugin) =>
-    designFixture(plugin, detail?.pluginId === plugin.pluginId ? detail : undefined),
-  );
+  const fixtures = plugins.map((plugin) => {
+    const projection = detailProjection(plugin.pluginId, detailState);
+    return designFixture(plugin, projection.detail, projection.readme);
+  });
 
   return (
     <PluginManagerContent

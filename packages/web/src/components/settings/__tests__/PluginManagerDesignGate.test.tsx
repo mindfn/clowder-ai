@@ -291,7 +291,7 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
   it('separates package identity, short Agent introduction, configuration, and human capability docs', async () => {
     const github = {
       ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
-      readmeMarkdown: '# GitHub\n\n这是只在显式详情中读取的用户文档。',
+      readme: { state: 'available' as const, markdown: '# GitHub\n\n这是只在显式详情中读取的用户文档。' },
     };
     await act(async () => root.render(<PluginManagerContent fixtures={[github]} />));
 
