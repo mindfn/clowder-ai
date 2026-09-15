@@ -17,6 +17,7 @@ import { PluginPackageQuarantineStoreError } from './manager/plugin-package-quar
 import {
   type PluginManagerCatalogCandidate,
   type PluginManagerProjectionOverrides,
+  pluginManagerContributionsFromManifest,
   projectPluginManagerCatalogCandidate,
 } from './plugin-manager-projection.js';
 
@@ -139,6 +140,24 @@ function detailFromListItem(plugin: PluginManagerListItem): PluginManagerDetail 
     ...plugin,
     capabilities: plugin.capabilitySummary.map((capability) => ({ ...capability })),
     configFields: [],
+  };
+}
+
+function catalogDetail(
+  plugin: PluginManagerListItem,
+  candidate: PluginManagerCatalogCandidate,
+  inventory: PluginInventorySnapshot,
+): PluginManagerDetail {
+  const installedManifest =
+    plugin.pluginInstanceId === null
+      ? undefined
+      : inventory.packages.find((item) => item.packageDigest === plugin.packageDigest)?.manifest;
+  const contributions = installedManifest
+    ? pluginManagerContributionsFromManifest(installedManifest)
+    : (candidate.contributions ?? []);
+  return {
+    ...detailFromListItem(plugin),
+    contributions: contributions.map((contribution) => ({ ...contribution })),
   };
 }
 
@@ -318,18 +337,19 @@ export class PluginManagerService {
       this.options.quarantine?.list() ?? Promise.resolve([]),
     ]);
     const projectedPublished = await Promise.all(
-      catalog.candidates.map(async (candidate) =>
-        projectPluginManagerCatalogCandidate(
+      catalog.candidates.map(async (candidate) => {
+        const plugin = projectPluginManagerCatalogCandidate(
           candidate,
           inventory,
           (await this.options.stateProjection?.read(candidate, inventory)) ?? {},
-        ),
-      ),
+        );
+        return { plugin, detail: catalogDetail(plugin, candidate, inventory) };
+      }),
     );
     const byPluginId = new Map<
       string,
       { readonly plugin: PluginManagerListItem; readonly detail?: PluginManagerDetail }
-    >(projectedPublished.map((plugin) => [plugin.pluginId, { plugin }] as const));
+    >(projectedPublished.map(({ plugin, detail }) => [plugin.pluginId, { plugin, detail }] as const));
     for (const plugin of compatibility) {
       if (!byPluginId.has(plugin.pluginId)) byPluginId.set(plugin.pluginId, { plugin, detail: plugin });
     }

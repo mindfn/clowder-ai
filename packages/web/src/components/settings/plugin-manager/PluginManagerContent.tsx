@@ -1,7 +1,7 @@
 'use client';
 
 import { pluginDescriptionVariants, resolvePluginDescription } from '@cat-cafe/shared';
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
 import {
@@ -16,6 +16,49 @@ import { SettingsText } from '../primitives/SettingsText';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
 import { PluginVisual } from './PluginVisual';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
+
+const DEFAULT_RECOMMENDATION_LIMIT = 3;
+
+function PluginListSection({
+  kind,
+  title,
+  ariaLabel,
+  rows,
+}: {
+  kind: 'installed' | 'attention' | 'recommended' | 'other';
+  title: string;
+  ariaLabel: string;
+  rows: readonly ReactNode[];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <section data-plugin-section={kind} className="space-y-2">
+      <SettingsText as="h3" variant="xs" tone="muted" className="px-1 font-semibold">
+        {title}
+      </SettingsText>
+      <ul aria-label={ariaLabel} className="space-y-2">
+        {rows}
+      </ul>
+    </section>
+  );
+}
+
+function PluginManagerError({ message }: { message: string | null | undefined }) {
+  if (!message) return null;
+  return (
+    <div role="alert" className="rounded-xl bg-conn-red-bg px-3 py-2.5 text-sm text-conn-red-text">
+      {message}
+    </div>
+  );
+}
+
+function toggleBlockedTitle(plugin: PluginManagerDesignFixture): string | undefined {
+  const reasons = plugin.actions?.blockingReasons ?? [];
+  if (reasons.includes('config-incomplete') || reasons.includes('config-invalid')) return '请先完成插件配置';
+  if (reasons.some((reason) => reason.startsWith('auth-'))) return '请先完成插件授权';
+  if (reasons.includes('activation-transition')) return '插件正在切换运行状态';
+  return reasons.length > 0 ? '当前状态暂不可切换' : undefined;
+}
 
 function matchesSearch(plugin: PluginManagerDesignFixture, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
@@ -32,6 +75,7 @@ function PluginListActions({
   installed,
   canInstall,
   canSetEnabled,
+  showLifecycleToggle,
   canUninstall,
   busy,
   onInstall,
@@ -42,6 +86,7 @@ function PluginListActions({
   installed: boolean;
   canInstall: boolean;
   canSetEnabled: boolean;
+  showLifecycleToggle: boolean;
   canUninstall: boolean;
   busy: boolean;
   onInstall: (() => void) | undefined;
@@ -65,7 +110,7 @@ function PluginListActions({
           aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${plugin.displayName}`}
         />
       )}
-      {installed && canSetEnabled && (
+      {installed && showLifecycleToggle && (
         <SettingsResourceToggleSwitch
           enabled={plugin.intent === 'enabled'}
           busy={busy}
@@ -76,6 +121,7 @@ function PluginListActions({
           }}
           ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
           ariaPressed={plugin.intent === 'enabled'}
+          title={canSetEnabled ? undefined : toggleBlockedTitle(plugin)}
         />
       )}
     </>
@@ -105,12 +151,12 @@ function PluginListRow({
   const canInstall = plugin.actions?.install ?? !installed;
   const canSetEnabled = plugin.actions?.setEnabled ?? installed;
   const canUninstall = plugin.actions?.uninstall ?? installed;
+  const showLifecycleToggle = installed && plugin.sourceAdapter === undefined;
   const description = resolvePluginDescription(plugin.description, locale);
   return (
-    <article
+    <li
       data-plugin-id={plugin.id}
       data-plugin-list-row="true"
-      role="listitem"
       aria-current={selected ? 'true' : undefined}
       className={`${settingsResourceCardClass} h-[88px] overflow-hidden transition-colors ${
         selected ? '' : 'hover:bg-[var(--console-hover-bg)]'
@@ -137,6 +183,7 @@ function PluginListRow({
             installed={installed}
             canInstall={canInstall}
             canSetEnabled={canSetEnabled}
+            showLifecycleToggle={showLifecycleToggle}
             canUninstall={canUninstall}
             busy={busy}
             onInstall={onInstall}
@@ -145,7 +192,7 @@ function PluginListRow({
           />
         </div>
       </div>
-    </article>
+    </li>
   );
 }
 
@@ -182,8 +229,34 @@ export function PluginManagerContent({
   const [selectedId, setSelectedId] = useState(fixtures[0]?.id ?? '');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
-  const visible = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
+  const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
+  const installedPlugins = filtered.filter((plugin) => plugin.artifact === 'installed');
+  const recommendationPool = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source === 'catalog');
+  const recommendedPlugins =
+    query.trim().length > 0 ? recommendationPool : recommendationPool.slice(0, DEFAULT_RECOMMENDATION_LIMIT);
+  const attentionPlugins = filtered.filter((plugin) => plugin.artifact !== 'installed' && plugin.artifact !== 'absent');
+  const otherPlugins = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source !== 'catalog');
+  const visible = [...installedPlugins, ...attentionPlugins, ...recommendedPlugins, ...otherPlugins];
   const selected = visible.find((plugin) => plugin.id === selectedId) ?? visible[0] ?? null;
+
+  const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>
+    plugins.map((plugin) => (
+      <PluginListRow
+        key={plugin.id}
+        plugin={plugin}
+        selected={plugin.id === selected?.id}
+        locale={locale}
+        onSelect={() => {
+          setSelectedId(plugin.id);
+          setMobileDetailOpen(true);
+          onPluginSelect?.(plugin.id);
+        }}
+        onInstall={() => onInstall?.(plugin.id)}
+        onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}
+        onUninstall={() => onUninstall?.(plugin.id)}
+        busy={busyPluginId === plugin.id}
+      />
+    ));
 
   return (
     <section data-testid="plugin-manager" className="flex h-full min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
@@ -204,11 +277,7 @@ export function PluginManagerContent({
         </div>
       )}
 
-      {error && (
-        <div role="alert" className="rounded-xl bg-conn-red-bg px-3 py-2.5 text-sm text-conn-red-text">
-          {error}
-        </div>
-      )}
+      <PluginManagerError message={error} />
 
       <div className="grid min-h-0 flex-1 gap-3.5 overflow-hidden lg:grid-cols-[minmax(17rem,0.82fr)_minmax(0,1.5fr)]">
         <div
@@ -233,12 +302,7 @@ export function PluginManagerContent({
           <SettingsText as="p" variant="sm" tone="default" className="px-1 font-semibold">
             插件列表
           </SettingsText>
-          <div
-            data-plugin-scroll-region="list"
-            role="list"
-            aria-label="插件列表"
-            className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
-          >
+          <div data-plugin-scroll-region="list" className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             {loading && (
               <div data-testid="plugin-manager-loading" className="space-y-2">
                 {[0, 1, 2].map((item) => (
@@ -246,30 +310,36 @@ export function PluginManagerContent({
                 ))}
               </div>
             )}
-            {!loading && visible.length === 0 && (
+            {!loading && filtered.length === 0 && (
               <div className={`${settingsResourceCardClass} px-4 py-10 text-center`}>
                 <SettingsText as="p" variant="sm" tone="muted">
                   没有符合条件的插件
                 </SettingsText>
               </div>
             )}
-            {visible.map((plugin) => (
-              <PluginListRow
-                key={plugin.id}
-                plugin={plugin}
-                selected={plugin.id === selected?.id}
-                locale={locale}
-                onSelect={() => {
-                  setSelectedId(plugin.id);
-                  setMobileDetailOpen(true);
-                  onPluginSelect?.(plugin.id);
-                }}
-                onInstall={() => onInstall?.(plugin.id)}
-                onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}
-                onUninstall={() => onUninstall?.(plugin.id)}
-                busy={busyPluginId === plugin.id}
-              />
-            ))}
+            {!loading && (
+              <>
+                <PluginListSection
+                  kind="installed"
+                  title="已安装"
+                  ariaLabel="已安装插件"
+                  rows={renderRows(installedPlugins)}
+                />
+                <PluginListSection
+                  kind="attention"
+                  title="需要处理"
+                  ariaLabel="需要处理的插件"
+                  rows={renderRows(attentionPlugins)}
+                />
+                <PluginListSection
+                  kind="recommended"
+                  title="推荐"
+                  ariaLabel="推荐插件"
+                  rows={renderRows(recommendedPlugins)}
+                />
+                <PluginListSection kind="other" title="其他" ariaLabel="其他插件" rows={renderRows(otherPlugins)} />
+              </>
+            )}
           </div>
         </div>
 

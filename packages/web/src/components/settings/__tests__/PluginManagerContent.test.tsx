@@ -53,7 +53,10 @@ function response(plugin: unknown = managerPlugin()) {
   };
 }
 
-function detail(plugin = managerPlugin()) {
+type ManagerPluginFixture = ReturnType<typeof managerPlugin>;
+type ManagerPluginDetailFixture = Omit<ManagerPluginFixture, 'live'> & { readonly live: 'stopped' | 'running' };
+
+function detail(plugin: ManagerPluginDetailFixture = managerPlugin()) {
   return {
     plugin: {
       ...plugin,
@@ -384,6 +387,72 @@ describe('F202 live Plugin Manager Console wiring', () => {
         body: JSON.stringify({ expectedRevision: 7, updates: [{ key: 'apiKey', value: 'private-key' }] }),
       },
     );
+  });
+
+  it('uses the shared Console confirmation flow before uninstalling', async () => {
+    const plugin = managerPlugin({ installed: true });
+    const nativeConfirm = vi.spyOn(window, 'confirm');
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(plugin));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail(plugin));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/uninstall' && init?.method === 'POST') {
+        return json({ pluginId: plugin.pluginId, pluginInstanceId: plugin.pluginInstanceId });
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const uninstall = container.querySelector('button[aria-label="卸载Video Analysis"]') as HTMLButtonElement | null;
+    await act(async () => uninstall?.click());
+    await flushEffects();
+
+    expect(nativeConfirm).not.toHaveBeenCalled();
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/dev.clowder.video-analysis/uninstall', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 7 }),
+    });
+    nativeConfirm.mockRestore();
+  });
+
+  it('loads active contribution tools for capability documentation', async () => {
+    const plugin = { ...managerPlugin({ installed: true }), live: 'running' as const };
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(plugin));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
+        return json({
+          ...detail(plugin),
+          plugin: {
+            ...detail(plugin).plugin,
+            contributions: [{ id: 'video-analysis-toolset', kind: 'mcp', name: 'video-analysis-toolset' }],
+          },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/contributions/tools') {
+        return json({
+          pluginId: plugin.pluginId,
+          tools: [
+            {
+              contributionId: 'video-analysis-toolset',
+              name: 'video_analysis',
+              description: 'Analyze an explicitly selected video.',
+              inputSchema: { type: 'object' },
+            },
+          ],
+        });
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/dev.clowder.video-analysis/contributions/tools',
+    );
+    expect(container.textContent).toContain('video_analysis');
+    expect(container.textContent).toContain('Analyze an explicitly selected video.');
   });
 
   it('polls by replacing the same projection without emitting duplicate UI errors', async () => {

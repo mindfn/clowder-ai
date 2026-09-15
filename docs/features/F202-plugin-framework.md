@@ -48,10 +48,14 @@ PR #686 is a concrete Phase 1 implementation proposal for that missing layer. It
 Manager row without exposing repository-local, official-package and connector implementation silos.
 
 1. A user opens Settings → Plugins and searches the machine-readable published catalog together with
-   plugins already installed on this Host.
+   plugins already installed on this Host. Installed plugins remain in the first section; up to three
+   uninstalled catalog candidates appear below as recommendations, while an active search returns every
+   matching candidate instead of applying that recommendation cap.
 2. Selecting a plugin opens the existing expanded-card presentation in the right pane. The left card
    only adds installed/uninstalled truth; an installed detail keeps its existing configuration and resource
-   content with uninstall plus enable/disable toggle, while an uninstalled detail exposes only Install.
+   content with uninstall plus one enable/disable toggle, while an uninstalled detail exposes only Install.
+   A temporarily blocked toggle remains visible and disabled with its reason, and destructive confirmation
+   uses the shared Console dialog rather than a browser-native prompt.
    Full orthogonal state remains available to Agent/API and deep diagnostics rather than becoming a new
    default UI dashboard. Installation state is expressed by the available action set (Install versus enable/disable +
    uninstall), not by a redundant installed/uninstalled badge.
@@ -70,6 +74,12 @@ Manager row without exposing repository-local, official-package and connector im
    runtime-discovered schemas and `plugin_call` invokes one selected tool through the existing Host
    supervisor. They do not receive a separate registry, process launcher, secret path, or stronger authority
    than the Console.
+
+The detail capability explanation is derived from package-owned contributions, grouped by contribution
+kind (for example MCP, Scheduler, and Skill). Once an MCP contribution is live, the Manager replaces its
+placeholder with the runtime-discovered tool names and descriptions. Host permission grants are never
+relabeled as user-facing tools; before package admission the Manager says that exact tools become available
+after installation. A package-root README remains the separate, package-owned long-form explanation.
 
 **Failure journey:** catalog failure never hides an installed plugin; a rejected package is quarantined
 and never becomes enableable; config, auth, desired activation and live runtime failures remain separate

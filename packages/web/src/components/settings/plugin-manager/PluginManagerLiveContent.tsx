@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  PluginManagerContributionToolsResponse,
   PluginManagerDetail,
   PluginManagerDetailResponse,
   PluginManagerDocumentationResponse,
@@ -8,16 +9,42 @@ import type {
   PluginManagerListResponse,
 } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useConfirm } from '@/components/useConfirm';
 import { apiFetch } from '@/utils/api-client';
 import { PluginManagerContent } from './PluginManagerContent';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const POLL_INTERVAL_MS = 5_000;
 
-type ConsolePluginManagerDetail = PluginManagerDetail & { readonly readmeMarkdown?: string };
+type ConsolePluginManagerDetail = PluginManagerDetail & {
+  readonly readmeMarkdown?: string;
+  readonly tools?: PluginManagerContributionToolsResponse['tools'];
+};
 
 function packageName(plugin: PluginManagerListItem): string {
   return plugin.source.packageName ?? plugin.pluginId;
+}
+
+function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<PluginManagerDesignFixture> {
+  if (!detail) return {};
+  return {
+    ...(detail.contributions === undefined
+      ? {}
+      : { contributions: detail.contributions.map((contribution) => ({ ...contribution })) }),
+    ...(detail.tools === undefined
+      ? {}
+      : {
+          tools: detail.tools.map(({ contributionId, name, description }) => ({
+            contributionId,
+            name,
+            ...(description === undefined ? {} : { description }),
+          })),
+        }),
+    ...(detail.readmeMarkdown === undefined ? {} : { readmeMarkdown: detail.readmeMarkdown }),
+    ...(detail.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
+    ...(detail.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
+    ...(detail.configFields === undefined ? {} : { configFields: detail.configFields }),
+  };
 }
 
 function designFixture(
@@ -50,10 +77,7 @@ function designFixture(
           ? capability.description
           : capability.name,
     })),
-    ...(detail?.readmeMarkdown === undefined ? {} : { readmeMarkdown: detail.readmeMarkdown }),
-    ...(detail?.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
-    ...(detail?.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
-    ...(detail?.configFields === undefined ? {} : { configFields: detail.configFields }),
+    ...fixtureDetail(detail),
     ...(plugin.diagnostic === undefined ? {} : { diagnostic: plugin.diagnostic.message }),
     actions: plugin.actions,
   };
@@ -85,11 +109,34 @@ function isDocumentationResponse(value: unknown): value is PluginManagerDocument
   return readmeMarkdown === undefined || typeof readmeMarkdown === 'string';
 }
 
+function isContributionToolsResponse(value: unknown): value is PluginManagerContributionToolsResponse {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as { pluginId?: unknown; tools?: unknown };
+  return (
+    typeof candidate.pluginId === 'string' &&
+    Array.isArray(candidate.tools) &&
+    candidate.tools.every(
+      (tool) =>
+        tool !== null &&
+        typeof tool === 'object' &&
+        typeof (tool as { contributionId?: unknown }).contributionId === 'string' &&
+        typeof (tool as { name?: unknown }).name === 'string',
+    )
+  );
+}
+
 async function fetchDocumentation(path: string): Promise<string | undefined> {
   const response = await apiFetch(`${path}/documentation`).catch(() => undefined);
   if (!response?.ok) return undefined;
   const value: unknown = await response.json().catch(() => undefined);
   return isDocumentationResponse(value) ? value.readmeMarkdown : undefined;
+}
+
+async function fetchContributionTools(path: string): Promise<PluginManagerContributionToolsResponse['tools']> {
+  const response = await apiFetch(`${path}/contributions/tools`).catch(() => undefined);
+  if (!response?.ok) return [];
+  const value: unknown = await response.json().catch(() => undefined);
+  return isContributionToolsResponse(value) ? value.tools : [];
 }
 
 async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Promise<ConsolePluginManagerDetail> {
@@ -101,7 +148,13 @@ async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Pro
   if (!response.ok) throw new Error(`detail request failed (${response.status})`);
   const value: unknown = await response.json();
   if (!isDetailResponse(value)) throw new Error('detail response is invalid');
-  return readmeMarkdown === undefined ? value.plugin : { ...value.plugin, readmeMarkdown };
+  const tools =
+    value.plugin.artifact === 'installed' && value.plugin.live === 'running' ? await fetchContributionTools(path) : [];
+  return {
+    ...value.plugin,
+    ...(readmeMarkdown === undefined ? {} : { readmeMarkdown }),
+    tools,
+  };
 }
 
 async function fetchManagerList(search: string, afterMutation: boolean): Promise<PluginManagerListResponse> {
@@ -160,6 +213,7 @@ function configurationRequest(
 }
 
 export function PluginManagerLiveContent() {
+  const confirm = useConfirm();
   const [snapshot, setSnapshot] = useState<PluginManagerListResponse | null>(null);
   const [detail, setDetail] = useState<ConsolePluginManagerDetail | undefined>();
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
@@ -326,10 +380,19 @@ export function PluginManagerLiveContent() {
           return;
         }
         const operation = plugin.artifact === 'quarantined' ? '移除隔离记录' : '卸载';
-        if (!window.confirm(`确认${operation} ${plugin.displayName}？`)) return;
-        void mutate(pluginId, `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/uninstall`, {
-          expectedRevision: plugin.lifecycleRevision,
-        });
+        void (async () => {
+          const accepted = await confirm({
+            title: `${operation}插件`,
+            message: `确认${operation} ${plugin.displayName}？`,
+            confirmLabel: operation,
+            cancelLabel: '取消',
+            variant: 'danger',
+          });
+          if (!accepted) return;
+          await mutate(pluginId, `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/uninstall`, {
+            expectedRevision: plugin.lifecycleRevision,
+          });
+        })();
       }}
       onConfigure={(pluginId, updates) => void configure(pluginId, updates)}
     />

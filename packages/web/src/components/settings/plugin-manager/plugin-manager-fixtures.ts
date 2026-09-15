@@ -5,6 +5,8 @@ import type {
   PluginManagerArtifactState,
   PluginManagerAuthState,
   PluginManagerConfigState,
+  PluginManagerContribution,
+  PluginManagerContributionTool,
   PluginManagerDetail,
   PluginManagerIntentState,
   PluginManagerLiveState,
@@ -29,6 +31,8 @@ export interface PluginManagerDesignFixture {
   intent: PluginManagerIntentState;
   live: PluginManagerLiveState;
   capabilities: Array<{ name: string; description: string }>;
+  contributions?: PluginManagerContribution[];
+  tools?: Array<Pick<PluginManagerContributionTool, 'contributionId' | 'name' | 'description'>>;
   readmeMarkdown?: string;
   setupSteps?: string[];
   docsUrl?: string;
@@ -121,6 +125,20 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     capabilities: [
       { name: '事件输入', description: '发布已声明的飞书会议纪要信号' },
       { name: '消息', description: '把纪要投递给已授权的会话' },
+    ],
+    contributions: [
+      {
+        id: 'meeting-events',
+        kind: 'events',
+        name: '事件输入',
+        description: '发布已声明的飞书会议纪要信号',
+      },
+      {
+        id: 'meeting-messages',
+        kind: 'messaging',
+        name: '消息',
+        description: '把纪要投递给已授权的会话',
+      },
     ],
   },
   {

@@ -205,6 +205,27 @@ export interface PluginManagerCapability {
   active: boolean;
 }
 
+/** Package-owned capability surface shown to people; distinct from Host permission grants. */
+export interface PluginManagerContribution {
+  id: string;
+  kind: PluginManagerCapabilityKind;
+  name: string;
+  description?: string;
+}
+
+/** Runtime-discovered tool exposed by one active MCP contribution. */
+export interface PluginManagerContributionTool {
+  contributionId: string;
+  name: string;
+  description?: string;
+  inputSchema: Readonly<Record<string, unknown>>;
+}
+
+export interface PluginManagerContributionToolsResponse {
+  pluginId: string;
+  tools: PluginManagerContributionTool[];
+}
+
 export interface PluginManagerDiagnostic {
   code: string;
   message: string;
@@ -268,6 +289,8 @@ export interface PluginManagerListItem {
 
 export interface PluginManagerDetail extends PluginManagerListItem {
   capabilities: PluginManagerCapability[];
+  /** Absent only when legacy/catalog metadata cannot yet expose a verified manifest. */
+  contributions?: PluginManagerContribution[];
   docsUrl?: string;
   setupSteps?: string[];
   configFields: PluginManagerConfigField[];

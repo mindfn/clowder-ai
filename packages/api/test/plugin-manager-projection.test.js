@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 
 import {
   derivePluginManagerActions,
+  pluginManagerContributionsFromManifest,
   projectPluginManagerCatalogCandidate,
 } from '../dist/domains/plugin/plugin-manager-projection.js';
 
@@ -89,6 +90,47 @@ function installedSnapshot(overrides = {}) {
 const emptySnapshot = { schemaVersion: 1, packages: [], instances: [], grants: [] };
 
 describe('F202 terminal Plugin Manager projection', () => {
+  it('projects declared contributions without relabeling permission grants as tools', () => {
+    const manifest = {
+      ...installedSnapshot().packages[0].manifest,
+      contributions: [
+        {
+          type: 'mcp',
+          id: 'video-analysis-toolset',
+          runtime: { transport: 'stdio', entrypoint: 'dist/mcp-entrypoint.js' },
+        },
+        {
+          type: 'tool',
+          id: 'summarize-video',
+          name: 'summarize_video',
+          description: 'Summarize an explicitly selected video.',
+          inputSchema: { type: 'object' },
+          action: { method: 'video.summarize' },
+        },
+        {
+          type: 'schedule',
+          id: 'daily-video-summary',
+          schedule: { kind: 'interval', everyMs: 86_400_000 },
+          action: { method: 'video.summarize' },
+          policy: { overlap: 'skip', timeoutMs: 60_000 },
+        },
+        { type: 'skill', id: 'video-analysis-guide', path: 'skills/video-analysis/SKILL.md' },
+      ],
+    };
+
+    assert.deepEqual(pluginManagerContributionsFromManifest(manifest), [
+      { id: 'video-analysis-toolset', kind: 'mcp', name: 'video-analysis-toolset' },
+      {
+        id: 'summarize-video',
+        kind: 'direct-tool',
+        name: 'summarize_video',
+        description: 'Summarize an explicitly selected video.',
+      },
+      { id: 'daily-video-summary', kind: 'schedule', name: 'daily-video-summary' },
+      { id: 'video-analysis-guide', kind: 'skill', name: 'video-analysis-guide' },
+    ]);
+  });
+
   it('expresses an uninstalled catalog candidate only through the install action', () => {
     const projected = projectPluginManagerCatalogCandidate(candidate, emptySnapshot);
 

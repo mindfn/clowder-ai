@@ -19,6 +19,61 @@ function SectionHeading({ children }: { children: string }) {
   );
 }
 
+const contributionKindLabel: Record<string, string> = {
+  mcp: 'MCP',
+  schedule: 'Scheduler',
+  skill: 'Skill',
+  'direct-tool': 'Tool',
+  limb: 'Limb',
+  webhook: 'Webhook',
+  messaging: 'Messaging',
+  events: 'Events',
+  identity: 'Identity',
+  connector: 'Connector',
+  service: 'Service',
+  ui: 'UI',
+};
+
+interface CapabilityDocItem {
+  key: string;
+  kind: string;
+  name: string;
+  description?: string;
+}
+
+function capabilityDocItems(plugin: PluginManagerDesignFixture): CapabilityDocItem[] {
+  return (plugin.contributions ?? []).flatMap((contribution) => {
+    const tools =
+      contribution.kind === 'mcp' ? (plugin.tools ?? []).filter((tool) => tool.contributionId === contribution.id) : [];
+    if (tools.length > 0) {
+      return tools.map((tool) => ({
+        key: `${contribution.id}:${tool.name}`,
+        kind: 'mcp',
+        name: tool.name,
+        ...(tool.description === undefined ? {} : { description: tool.description }),
+      }));
+    }
+    return [
+      {
+        key: contribution.id,
+        kind: contribution.kind,
+        name: contribution.name,
+        ...(contribution.description === undefined ? {} : { description: contribution.description }),
+      },
+    ];
+  });
+}
+
+function groupCapabilityDocs(items: readonly CapabilityDocItem[]) {
+  const groups = new Map<string, CapabilityDocItem[]>();
+  for (const item of items) {
+    const group = groups.get(item.kind) ?? [];
+    group.push(item);
+    groups.set(item.kind, group);
+  }
+  return [...groups].map(([kind, groupedItems]) => ({ kind, items: groupedItems }));
+}
+
 export function PluginManagerDetailCard({
   plugin,
   locale,
@@ -33,6 +88,8 @@ export function PluginManagerDetailCard({
   const installed = plugin.artifact === 'installed';
   const description = resolvePluginDescription(plugin.description, locale);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const capabilityItems = capabilityDocItems(plugin);
+  const capabilityGroups = groupCapabilityDocs(capabilityItems);
   const updates = (plugin.configFields ?? []).flatMap((field) => {
     const value = fieldValues[field.key];
     return value === undefined ? [] : [{ key: field.key, value: value.length === 0 ? null : value }];
@@ -166,23 +223,36 @@ export function PluginManagerDetailCard({
               <span>查看插件文档</span>
             </a>
           )}
-          {plugin.capabilities.length > 0 ? (
-            <div className="space-y-2" role="group" aria-label="已声明能力">
-              <SettingsText as="p" variant="xs" tone="muted" className="font-semibold">
-                已声明能力
-              </SettingsText>
-              {plugin.capabilities.map((capability) => (
-                <div key={capability.name} className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
-                  <SettingsText as="p" variant="sm" tone="default" className="font-medium">
-                    {capability.name}
+          {capabilityGroups.length > 0 ? (
+            <div className="space-y-3">
+              {capabilityGroups.map(({ kind, items }) => (
+                <section key={kind} className="space-y-1.5" data-contribution-kind={kind}>
+                  <SettingsText as="h5" variant="xs" tone="muted" className="font-semibold">
+                    {contributionKindLabel[kind] ?? kind}
                   </SettingsText>
-                  <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
-                    {capability.description}
-                  </SettingsText>
-                </div>
+                  <ul className="space-y-1.5">
+                    {items.map((item) => (
+                      <li key={item.key} className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
+                        <SettingsText as="p" variant="sm" tone="default" className="font-medium">
+                          {item.name}
+                        </SettingsText>
+                        <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
+                          {item.description ??
+                            (kind === 'mcp' && plugin.live !== 'running'
+                              ? '启用插件后显示工具及用途。'
+                              : '插件未提供用途说明。')}
+                        </SettingsText>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ))}
             </div>
-          ) : null}
+          ) : (
+            <SettingsText as="p" variant="sm" tone="muted">
+              {installed ? '此插件未声明可展示的工具或资源。' : '安装后可查看具体工具与用途。'}
+            </SettingsText>
+          )}
         </section>
       </div>
     </article>
