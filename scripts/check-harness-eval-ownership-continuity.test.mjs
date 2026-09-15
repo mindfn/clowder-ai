@@ -7,11 +7,12 @@ import YAML from 'yaml';
 import { findOwnershipContinuityViolations } from './lib/ownership-continuity.mjs';
 
 const OWNERSHIP_PATH = 'docs/architecture/ownership/cells/harness-eval.md';
-// co-creator chose the upstream owner for verdict publication (A): the fork's local
-// artifact publisher is sunset and the git worktree publisher is the live one.
-// This list is the inverse of the pre-refresh fork overlay on purpose.
+// Verdict publication follows the co-creator's baseline principle (thread message 000722,
+// re-applied 2026-09-15 in 001098/001107, superseding the refresh-time choice A in 000444):
+// a verdict is runtime evolution output, so it is published by the local artifact publisher
+// outside the product repository. The isolated-worktree Git publisher stays owned because
+// F311's capability-evolution measurement issuer still publishes through it.
 const RETIRED_ANCHORS = [
-  'packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts',
   'scripts/check-verdict-publish-contract.mjs',
   // Retired by F257's own objective-driven redesign; absent on both lineages.
   'packages/api/src/infrastructure/harness-eval/evaluation/EvaluationScheduler.ts',
@@ -19,7 +20,10 @@ const RETIRED_ANCHORS = [
   'packages/api/src/infrastructure/harness-eval/evaluation/MetricResultStore.ts',
   'packages/api/src/infrastructure/harness-eval/evaluation/evaluator-runner.ts',
 ];
-const LIVE_GIT_PUBLISHER = 'packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts';
+const OWNED_PUBLISHERS = [
+  'packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts',
+  'packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts',
+];
 // Upstream flattened the source-ref validator out of its subdirectory; the refreshed
 // overlay follows that layout, so base and overlay agree and nothing is relocated here.
 const RELOCATED_CODE_ANCHORS = new Map([]);
@@ -55,7 +59,7 @@ test('detects dropped base ownership and dangling overlay anchors', () => {
   );
 });
 
-test('F257 ownership overlay preserves origin/main except the explicit local-publisher sunset', () => {
+test('F257 ownership overlay preserves origin/main and owns both verdict and issuer publishers', () => {
   const base = parseFrontmatter(execFileSync('git', ['show', `origin/main:${OWNERSHIP_PATH}`], { encoding: 'utf8' }));
   const overlay = parseFrontmatter(readFileSync(OWNERSHIP_PATH, 'utf8'));
   const continuityBase = {
@@ -67,8 +71,10 @@ test('F257 ownership overlay preserves origin/main except the explicit local-pub
 
   assert.deepEqual(findOwnershipContinuityViolations(continuityBase, overlay, { pathExists: existsSync }), []);
   assert.ok(overlay.canonical_features.includes('F257'));
-  assert.ok(existsSync(LIVE_GIT_PUBLISHER), 'the chosen upstream publisher must exist');
-  assert.ok(overlay.code_anchors.includes(LIVE_GIT_PUBLISHER), 'the chosen upstream publisher must stay owned');
+  for (const publisher of OWNED_PUBLISHERS) {
+    assert.ok(existsSync(publisher), `publisher must exist: ${publisher}`);
+    assert.ok(overlay.code_anchors.includes(publisher), `publisher must stay owned: ${publisher}`);
+  }
   for (const retired of RETIRED_ANCHORS) {
     assert.ok(!existsSync(retired), `retired anchor must stay absent: ${retired}`);
     assert.ok(!overlay.code_anchors.includes(retired), `retired anchor must stay unowned: ${retired}`);

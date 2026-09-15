@@ -119,7 +119,7 @@ Fields:
 - \`evidenceCatId\` — OPTIONAL cat filter for event-memory evidence linking
 - \`episodeVerdicts\` — OPTIONAL explicit 7-class writeback list for terminal episodes in the selected window. Use only after reviewing the episode evidence. Valid verdicts: \`success\`, \`corrected_success\`, \`needs_investigation\`, \`harness_fix_needed\`, \`routing_failure\`, \`taste_mismatch\`, \`abandoned\`. Replacement publishes may repeat the exact stored verdict idempotently; any different value is rejected so audit history cannot be rewritten.
 
-Tool resolves the selector by loading task-outcome episodes/signals for the time window, bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`, writing the live verdict artifacts in the isolated worktree, and applying any explicit \`episodeVerdicts\` to the task-outcome DB. Tool will NOT fabricate evidence — if the DB path is missing, the selector is invalid, or an \`episodeVerdicts[].episodeId\` is outside the selected terminal window, publish fails.
+Tool resolves the selector by loading task-outcome episodes/signals for the time window, bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`, writing the live verdict artifact into the runtime artifact store, and applying any explicit \`episodeVerdicts\` to the task-outcome DB. Tool will NOT fabricate evidence — if the DB path is missing, the selector is invalid, or an \`episodeVerdicts[].episodeId\` is outside the selected terminal window, publish fails.
 
 The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
 

@@ -81,6 +81,8 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/measurement/measurement-decision-proof-owner-object-spec.ts
   - packages/api/src/infrastructure/harness-eval/measurement/measurement-decision-proof-resolver.ts
   - packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts
+  - packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts
+  - packages/api/src/infrastructure/harness-eval/artifact-store/artifact-store-layout.ts
   - scripts/guarded-bin/gh
   - packages/shared/src/types/friction-signal.ts
   - packages/api/src/routes/eval-hub.ts
