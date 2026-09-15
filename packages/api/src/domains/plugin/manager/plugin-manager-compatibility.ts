@@ -178,6 +178,12 @@ function projectCompatibilityRecord(record: PluginManagerCompatibilityRecord): P
       blockingReasons: ['compatibility-read-only'],
     },
     capabilities,
+    contributions: capabilities.map(({ id, kind, name, description }) => ({
+      id,
+      kind,
+      name,
+      ...(description === undefined ? {} : { description }),
+    })),
     ...(record.docsUrl === undefined ? {} : { docsUrl: record.docsUrl }),
     ...(record.setupSteps === undefined ? {} : { setupSteps: [...record.setupSteps] }),
     configFields: record.configFields.map(projectCompatibilityConfigField),

@@ -31,15 +31,38 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('renders one searchable inventory joined with published candidates', async () => {
+  it('separates installed plugins from a bounded recommendation shelf', async () => {
     await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
 
     expect(container.querySelector('[data-testid="plugin-manager"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-plugin-id="video-analysis"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-plugin-id="feishu-meeting-intake"]')).toHaveLength(1);
-    expect(container.textContent).not.toContain('已安装');
-    expect(container.textContent).not.toContain('未安装');
+    expect(container.querySelector('[data-plugin-section="installed"]')?.textContent).toContain('已安装');
+    expect(container.querySelector('[data-plugin-section="recommended"]')?.textContent).toContain('推荐');
+    expect(container.querySelector('[data-plugin-section="recommended"]')?.textContent).toContain('视频分析');
     expect(container.textContent).not.toContain('需处理');
+  });
+
+  it('limits the default recommendation shelf to three catalog candidates but searches all matches', async () => {
+    const candidates = Array.from({ length: 5 }, (_, index) => ({
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[2],
+      id: `recommended-${index + 1}`,
+      displayName: `推荐插件 ${index + 1}`,
+    }));
+    await act(async () =>
+      root.render(<PluginManagerContent fixtures={[PLUGIN_MANAGER_DESIGN_FIXTURES[0], ...candidates]} />),
+    );
+
+    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(3);
+
+    const search = container.querySelector('input[aria-label="搜索插件"]') as HTMLInputElement | null;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(search, '推荐插件');
+      search?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(5);
   });
 
   it('uses a filled accessible selection state without the persistent accent outline', async () => {
@@ -114,6 +137,27 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     const row = container.querySelector('[data-plugin-id="github"]');
     expect(row?.querySelector('button[aria-pressed]')).toBeNull();
     expect(row?.querySelector('button[aria-label^="卸载"]')).toBeNull();
+  });
+
+  it('keeps the lifecycle toggle visible but disabled when configuration blocks enable', async () => {
+    const blocked = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[1],
+      config: 'incomplete' as const,
+      intent: 'disabled' as const,
+      actions: {
+        install: false,
+        setEnabled: false,
+        uninstall: true,
+        blockingReasons: ['config-incomplete'],
+      },
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[blocked]} />));
+
+    const toggle = container.querySelector('button[aria-label="启用飞书会议纪要同步"]') as HTMLButtonElement | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle?.disabled).toBe(true);
+    expect(toggle?.title).toBe('请先完成插件配置');
   });
 
   it('expresses uninstalled state only through the install action', async () => {
@@ -256,5 +300,46 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(detail?.textContent).toContain('@clowder-ai/github');
     expect(detail?.textContent).toContain('跟踪 PR、CI/CD、冲突检测与仓库扫描');
     expect(detail?.textContent).toContain('这是只在显式详情中读取的用户文档。');
+  });
+
+  it('groups declared contributions and runtime tools by their real type and description', async () => {
+    const video = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[2],
+      artifact: 'installed' as const,
+      installedVersion: PLUGIN_MANAGER_DESIGN_FIXTURES[2].availableVersion,
+      contributions: [{ id: 'video-analysis-toolset', kind: 'mcp' as const, name: 'video-analysis-toolset' }],
+      tools: [
+        {
+          contributionId: 'video-analysis-toolset',
+          name: 'video_analysis',
+          description: '分析远程视频并返回结构化结果。',
+        },
+      ],
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[video]} />));
+
+    const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
+    expect(detail?.textContent).toContain('MCP');
+    expect(detail?.textContent).toContain('video_analysis');
+    expect(detail?.textContent).toContain('分析远程视频并返回结构化结果。');
+    expect(detail?.textContent?.match(/Analyze video/g) ?? []).toHaveLength(0);
+  });
+
+  it('does not relabel permission grants as exposed tools before package admission', async () => {
+    const video = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[2],
+      capabilities: [
+        { name: 'Analyze video', description: 'Permission-backed video analysis.' },
+        { name: 'Analyze video', description: 'Permission-backed video analysis.' },
+      ],
+      contributions: undefined,
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[video]} />));
+
+    const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
+    expect(detail?.textContent).toContain('安装后可查看具体工具与用途。');
+    expect(detail?.textContent).not.toContain('Analyze video');
   });
 });

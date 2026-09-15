@@ -6,6 +6,7 @@ import type {
   PluginManagerAuthState,
   PluginManagerCapability,
   PluginManagerConfigState,
+  PluginManagerContribution,
   PluginManagerIntentState,
   PluginManagerListItem,
   PluginManagerLiveState,
@@ -33,6 +34,7 @@ export interface PluginManagerCatalogCandidate {
   readonly publisher?: string;
   readonly ownerAuthRequired: boolean;
   readonly capabilities: readonly Omit<PluginManagerCapability, 'active'>[];
+  readonly contributions?: readonly PluginManagerContribution[];
 }
 
 export interface PluginManagerProjectionOverrides {
@@ -78,6 +80,44 @@ export function pluginManagerCapabilitiesFromManifest(
     }
   }
   return [...capabilities.values()];
+}
+
+type ManifestContribution = NonNullable<PluginManifest['contributions']>[number];
+
+function contributionKind(contribution: ManifestContribution): PluginManagerContribution['kind'] {
+  switch (contribution.type) {
+    case 'tool':
+      return 'direct-tool';
+    case 'message-subscription':
+      return 'messaging';
+    default:
+      return contribution.type;
+  }
+}
+
+function contributionName(contribution: ManifestContribution): string {
+  switch (contribution.type) {
+    case 'identity':
+      return contribution.displayName;
+    case 'tool':
+      return contribution.name;
+    case 'ui':
+      return contribution.label;
+    default:
+      return contribution.id;
+  }
+}
+
+/** Projects verified package contributions without relabeling Host permission grants as user-facing tools. */
+export function pluginManagerContributionsFromManifest(manifest: PluginManifest): readonly PluginManagerContribution[] {
+  return (manifest.contributions ?? []).map((contribution) => ({
+    id: contribution.id,
+    kind: contributionKind(contribution),
+    name: contributionName(contribution),
+    ...(contribution.type === 'tool' && contribution.description !== undefined
+      ? { description: contribution.description }
+      : {}),
+  }));
 }
 
 function blockedArtifactReason(artifact: PluginManagerArtifactState): string {

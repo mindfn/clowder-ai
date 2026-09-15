@@ -128,6 +128,13 @@ function installedInventory(overrides = {}) {
           version: published.version,
           contractVersion: '0.1.0',
           name: published.displayName,
+          contributions: [
+            {
+              type: 'mcp',
+              id: 'video-analysis-toolset',
+              runtime: { transport: 'stdio', entrypoint: 'dist/mcp-entrypoint.js' },
+            },
+          ],
           features: [{ id: 'events', name: 'Events', resources: [], capabilities: ['events.publish'] }],
           runtime: { transport: 'stdio', entrypoint: 'dist/entrypoint.js' },
         },
@@ -165,6 +172,20 @@ function installedInventory(overrides = {}) {
 }
 
 describe('F202 terminal Plugin Manager service', () => {
+  it('returns installed package contributions in detail without treating grants as tools', async () => {
+    const manager = service({ inventory: installedInventory() });
+
+    const result = await manager.get(published.pluginId);
+
+    assert.deepEqual(result.plugin.contributions, [
+      { id: 'video-analysis-toolset', kind: 'mcp', name: 'video-analysis-toolset' },
+    ]);
+    assert.deepEqual(
+      result.plugin.capabilities.map(({ id }) => id),
+      ['events.publish'],
+    );
+  });
+
   it('returns one searchable list across published and compatibility plugins', async () => {
     const manager = service({ compatibility: [bundledGithub] });
 

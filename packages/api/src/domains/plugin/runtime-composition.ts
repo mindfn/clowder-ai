@@ -46,6 +46,7 @@ import type { OfficialPluginAuthPort, OfficialPluginAuthStatus } from './officia
 import {
   type PluginManagerCatalogCandidate,
   pluginManagerCapabilitiesFromManifest,
+  pluginManagerContributionsFromManifest,
   projectPluginManagerCatalogCandidate,
 } from './plugin-manager-projection.js';
 import {
@@ -358,6 +359,7 @@ function managerCatalogCandidate(
     publisher: presentation?.publisher ?? (entry.packageName.startsWith('@clowder-ai/') ? 'Clowder AI' : undefined),
     ownerAuthRequired: entry.ownerAuth !== undefined,
     capabilities: manifest ? pluginManagerCapabilitiesFromManifest(manifest) : [],
+    contributions: manifest ? pluginManagerContributionsFromManifest(manifest) : [],
   };
 }
 
@@ -476,6 +478,7 @@ function inventoryCandidate(packageRecord: PluginInventorySnapshot['packages'][n
     ownerAuthRequired:
       provenance === undefined || provenance.kind === 'catalog' ? (provenance?.ownerAuthRequired ?? true) : false,
     capabilities: pluginManagerCapabilitiesFromManifest(packageRecord.manifest),
+    contributions: pluginManagerContributionsFromManifest(packageRecord.manifest),
   };
 }
 
@@ -532,6 +535,9 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
                       trust: 'local-trusted' as const,
                     },
             capabilities: projected.capabilitySummary.map((capability) => ({ ...capability })),
+            contributions: pluginManagerContributionsFromManifest(packageRecord.manifest).map((contribution) => ({
+              ...contribution,
+            })),
             configFields: [],
           },
         ];
