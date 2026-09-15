@@ -51,10 +51,18 @@ export function assertGeneratedArtifactCoordinates(
   verdictId: string,
   generated: GeneratedVerdictArtifact,
 ): void {
+  const claimed = new Set<string>();
   for (const claim of coordinateClaims(verdictId, generated)) {
     if (!SAFE_ARTIFACT_ID_PATTERN.test(claim.verdictId)) {
       throw new Error(`artifact_coordinate_mismatch: ${claim.label} id is not a single safe path segment`);
     }
+    // Two claims on one id would be two verdicts written to one file.
+    if (claimed.has(claim.verdictId)) {
+      throw new Error(
+        `artifact_coordinate_mismatch: generator returned verdict id '${claim.verdictId}' more than once`,
+      );
+    }
+    claimed.add(claim.verdictId);
     assertExactCoordinate(`${claim.label} markdown`, claim.verdictPath, verdictPathIn(outputRoot, claim.verdictId));
     assertExactCoordinate(`${claim.label} bundle`, claim.bundleDir, bundleDirIn(outputRoot, claim.verdictId));
   }

@@ -16,6 +16,7 @@ import {
   assertVerdictsMaterialized,
   generatedVerdictIds,
 } from '../artifact-store/generated-artifact-coordinates.js';
+import { reserveVerdictIds } from '../artifact-store/verdict-id-reservations.js';
 import { mapPublishVerdictError } from './error-mapping.js';
 import type { ArtifactPublisher, ArtifactRef, PublishArtifactOpts } from './types.js';
 
@@ -60,6 +61,8 @@ async function stageArtifact(
     const verdictIds = generatedVerdictIds(coordinates.artifactId, generated);
     assertVerdictsMaterialized(outputRoot, verdictIds);
     assertStagedPathsInside(stagingDir, generated.extraStagedPaths);
+    // Every verdict id the container holds is reserved before the container is visible.
+    reserveVerdictIds(ownerRoot, coordinates, verdictIds);
 
     // Atomic publication: readers either see no artifact or the complete
     // directory. The parent must exist before rename(2).
@@ -124,6 +127,9 @@ async function completeAfterPublish(
  *   before the rename and again after it.
  * - Duplicate artifact IDs within one owner are rejected (publishing the same id
  *   twice is a client error, not an overwrite).
+ * - A verdict id names one verdict in the owner's store: every id a publication
+ *   holds, children included, is reserved before its container becomes visible, and
+ *   an id another artifact holds is rejected (`verdict-id-reservations.ts`).
  * - `afterPublish` runs exactly once after the artifact is durably published.
  * - On failure, the staging directory is removed.
  *

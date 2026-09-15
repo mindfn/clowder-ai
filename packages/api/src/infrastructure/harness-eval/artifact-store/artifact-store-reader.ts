@@ -84,10 +84,10 @@ function ownerArtifactContainers(ownerRoot: string): ArtifactContainer[] {
  * partitions are never opened, and names that are not valid coordinates —
  * including in-flight `.staging-*` directories — are skipped.
  *
- * A verdict id is listed once per owner, from the first container in address
- * order. Child ids are derived from their published verdict's id, so two
- * containers holding one id means the store was edited by hand; the listing stays
- * deterministic instead of depending on directory order.
+ * A verdict id names one verdict in an owner's store, and every consumer addresses a
+ * runtime verdict by that id alone. The publisher reserves each id for one artifact,
+ * so two artifacts holding one id means the store was changed outside it — and the
+ * listing refuses to choose between them rather than keep whichever sorts first.
  */
 export function listOwnerArtifactVerdicts(artifactRoot: string, ownerUserId: string): OwnerArtifactVerdict[] {
   const ownerRoot = artifactOwnerRoot(artifactRoot, ownerUserId);
@@ -97,7 +97,12 @@ export function listOwnerArtifactVerdicts(artifactRoot: string, ownerUserId: str
   for (const { domainSlug, artifactId, containerDir } of ownerArtifactContainers(ownerRoot)) {
     const outputRoot = artifactOutputRoot(containerDir);
     for (const verdictId of containerVerdictIds(containerDir, artifactId)) {
-      if (verdicts.has(verdictId)) continue;
+      const held = verdicts.get(verdictId)?.coordinates;
+      if (held) {
+        throw new Error(
+          `verdict_id_conflict: verdict '${verdictId}' is held by ${held.domainSlug}/${held.artifactId} and ${domainSlug}/${artifactId}`,
+        );
+      }
       verdicts.set(verdictId, {
         coordinates: { domainSlug, artifactId, verdictId },
         verdictPath: verdictPathIn(outputRoot, verdictId),

@@ -1,6 +1,9 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { assertGeneratedArtifactCoordinates } from '../artifact-store/generated-artifact-coordinates.js';
+import {
+  assertGeneratedArtifactCoordinates,
+  generatedVerdictIds,
+} from '../artifact-store/generated-artifact-coordinates.js';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { assertMeasurementCensusAllowsVerdict } from '../measurement/measurement-bundle-census-file.js';
@@ -61,6 +64,14 @@ const defaultArtifactPublisher: ArtifactPublisher = {
     throw new Error('ArtifactPublisher not injected (must wire real durable publisher at route layer)');
   },
 };
+
+/** A verdict committed to the product repository — its file or its bundle — holds its id. */
+function isCommittedVerdictId(harnessFeedbackRoot: string, verdictId: string): boolean {
+  return (
+    existsSync(resolve(harnessFeedbackRoot, 'verdicts', `${verdictId}.md`)) ||
+    existsSync(resolve(harnessFeedbackRoot, 'bundles', verdictId))
+  );
+}
 
 /**
  * AC-H1: Validate VerdictHandoffPacket schema (server NEVER 造 evidence).
@@ -206,11 +217,9 @@ export async function handlePublishVerdict(
     };
   }
   // An id already used by a verdict committed to the product repository is taken:
-  // the Eval Hub merges both sources by id. The authoritative duplicate check for
-  // runtime artifacts is the publisher's atomic rename within the owner partition.
-  const liveVerdictPath = resolve(deps.harnessFeedbackRoot, 'verdicts', `${packet.id}.md`);
-  const liveBundleDir = resolve(deps.harnessFeedbackRoot, 'bundles', packet.id);
-  if (existsSync(liveVerdictPath) || existsSync(liveBundleDir)) {
+  // the Eval Hub merges both sources by id. Ids held by other runtime artifacts are
+  // the publisher's to refuse, atomically within the owner partition.
+  if (isCommittedVerdictId(deps.harnessFeedbackRoot, packet.id)) {
     return {
       status: 409,
       error: 'verdict_already_exists',
@@ -289,6 +298,15 @@ export async function handlePublishVerdict(
         // Lifecycle roots are written into the directories the generator names,
         // so those names must be the output root's own coordinates first.
         assertGeneratedArtifactCoordinates(outputRoot, packet.id, candidate);
+        // A committed id is taken for every verdict the publication holds, children included.
+        const committed = generatedVerdictIds(packet.id, candidate).find((verdictId) =>
+          isCommittedVerdictId(deps.harnessFeedbackRoot, verdictId),
+        );
+        if (committed) {
+          throw new Error(
+            `verdict_id_taken: verdict id '${committed}' is already held by a verdict committed to the product repository`,
+          );
+        }
         generated = candidate;
         childArtifacts = writeGeneratedLifecycleArtifacts(candidate, packet, outputRoot);
         findingArtifacts = candidate.findingArtifacts ?? [];

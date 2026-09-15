@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { listOwnerArtifactVerdicts } from '../../dist/infrastructure/harness-eval/artifact-store/artifact-store-reader.js';
+import { deriveFrictionChildVerdictId } from '../../dist/infrastructure/harness-eval/friction/friction-finding-artifact.js';
 import { buildFrictionRollupReport } from '../../dist/infrastructure/harness-eval/friction/friction-rollup-report.js';
 import { loadEvalHubSummary } from '../../dist/infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { createFrictionGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/friction-generator-adapter.js';
@@ -217,7 +218,22 @@ describe('friction breakout through the real artifact store', () => {
     rmSync(artifactStoreRoot, { recursive: true, force: true });
   });
 
-  it('publishes child verdicts the Eval Hub lists and whose evidence it can open', async (t) => {
+  const aggregate = buildPacket({
+    id: 'friction-breakout-aggregate',
+    domainId: 'eval:friction',
+    createdAt: FRICTION_CAPTURE.capturedAt,
+    verdict: 'keep_observe',
+    harnessUnderEval: { featureId: 'F245', componentId: 'friction-rollup', name: 'friction rollup' },
+    ownerAsk: { targetFeatureId: 'F245', targetOwnerCatId: 'opus-47', requestedAction: 'Observe aggregate window.' },
+    evidencePacket: {
+      snapshotRefs: ['placeholder:snapshot'],
+      attributionRefs: ['placeholder:attribution'],
+      metricRefs: ['friction.cluster_count'],
+      sampleTraceRefs: ['source-message:f313'],
+    },
+  });
+
+  function publishBreakout() {
     const capture = {
       capturedAt: FRICTION_CAPTURE.capturedAt,
       expectedCancelIds: [],
@@ -230,22 +246,7 @@ describe('friction breakout through the real artifact store', () => {
       rollupInput: FRICTION_CAPTURE.rollupInput,
       rollupReport: buildFrictionRollupReport(FRICTION_CAPTURE.rollupInput, FRICTION_CAPTURE.capturedAt),
     };
-    const aggregate = buildPacket({
-      id: 'friction-breakout-aggregate',
-      domainId: 'eval:friction',
-      createdAt: FRICTION_CAPTURE.capturedAt,
-      verdict: 'keep_observe',
-      harnessUnderEval: { featureId: 'F245', componentId: 'friction-rollup', name: 'friction rollup' },
-      ownerAsk: { targetFeatureId: 'F245', targetOwnerCatId: 'opus-47', requestedAction: 'Observe aggregate window.' },
-      evidencePacket: {
-        snapshotRefs: ['placeholder:snapshot'],
-        attributionRefs: ['placeholder:attribution'],
-        metricRefs: ['friction.cluster_count'],
-        sampleTraceRefs: ['source-message:f313'],
-      },
-    });
-
-    const result = await handlePublishVerdict(
+    return handlePublishVerdict(
       {
         harnessFeedbackRoot,
         artifactPublisher: createLocalArtifactPublisher({ artifactRoot: artifactStoreRoot }),
@@ -265,6 +266,22 @@ describe('friction breakout through the real artifact store', () => {
         ],
       },
     );
+  }
+
+  it('refuses a child verdict whose id a verdict committed to the repository already uses', async () => {
+    // The Eval Hub merges repository and runtime verdicts by id, so a committed id is taken for children too.
+    const childId = deriveFrictionChildVerdictId(aggregate.id, 'default-mode-tool-availability');
+    writeFileSync(join(harnessFeedbackRoot, 'verdicts', `${childId}.md`), '# committed verdict\n');
+
+    const result = await publishBreakout();
+    assert.equal(result.status, 409, JSON.stringify(result));
+    assert.equal(result.error, 'verdict_already_exists');
+    assert.match(result.detail, new RegExp(`^verdict_id_taken: .*'${childId}'`));
+    assert.deepEqual(listOwnerArtifactVerdicts(artifactStoreRoot, 'user-1'), [], 'nothing was published');
+  });
+
+  it('publishes child verdicts the Eval Hub lists and whose evidence it can open', async (t) => {
+    const result = await publishBreakout();
     assert.ok(!('error' in result), JSON.stringify(result));
     const childIds = result.childArtifacts.map((child) => child.verdictId).sort();
     assert.equal(childIds.length, 3);
