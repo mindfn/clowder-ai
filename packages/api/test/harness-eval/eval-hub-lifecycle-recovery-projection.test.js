@@ -88,6 +88,11 @@ async function project(t, events) {
     id: verdictId,
     domainId,
     verdict: 'fix',
+    source: {
+      kind: 'workspace',
+      verdictPath: `docs/harness-feedback/verdicts/${verdictId}.md`,
+      bundleDir: `docs/harness-feedback/bundles/${verdictId}`,
+    },
     evidence: { attributionRefs: [], metricRefs: [] },
     lifecycle: {
       availability: 'unavailable',

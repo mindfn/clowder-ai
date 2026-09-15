@@ -280,6 +280,7 @@ import {
 } from './infrastructure/harness-eval/eval-repair-owner-runtime.js';
 import { HarnessGovernanceProposalStore } from './infrastructure/harness-eval/governance/HarnessGovernanceProposalStore.js';
 import { ensureEvalDomainThreads } from './infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
+import { ownerLifecycleSpace } from './infrastructure/harness-eval/lifecycle-space.js';
 import { loadOrCreatePawFeelBundleSnapshotSigner } from './infrastructure/harness-eval/paw-feel-disposition/bundle-snapshot.js';
 import { RedisPawFeelReconciliationCoverageStore } from './infrastructure/harness-eval/paw-feel-disposition/coverage-store.js';
 import { RedisPawFeelDutyConfigStore } from './infrastructure/harness-eval/paw-feel-disposition/duty-config-store.js';
@@ -3148,9 +3149,19 @@ async function main(): Promise<void> {
   const { evalVerdictLifecycleRoutes } = await import('./routes/eval-verdict-lifecycle.js');
 
   const evalHarnessFeedbackRoot = resolve(repoRoot, 'docs', 'harness-feedback');
-  const reevalClosureEventLog = redis
-    ? new (await import('./infrastructure/harness-eval/reeval-closure-event-log.js')).RedisReevalClosureEventLog(redis)
+  const { RedisReevalClosureEventLog } = await import('./infrastructure/harness-eval/reeval-closure-event-log.js');
+  // F266: lifecycles of repository roots keep the original global keys.
+  const reevalClosureEventLog = redis ? new RedisReevalClosureEventLog(redis) : undefined;
+  // F257: a runtime verdict's lifecycle lives in the space of the owner who published it.
+  const ownerReevalClosureEventLog = redis
+    ? (ownerUserId: string) => new RedisReevalClosureEventLog(redis, { kind: 'owner', ownerUserId })
     : undefined;
+  // F266/F313 eval repair approvals are the configured owner's decisions about the
+  // findings that owner's runtime verdicts carry, so that runtime reads and writes the
+  // configured owner's lifecycle space. Repository roots gain no friction findings
+  // since verdicts stopped being committed, and no repair approval was ever recorded
+  // against one.
+  const evalRepairEventLog = ownerReevalClosureEventLog?.(privateUserId);
   // F278: one durable disposition ledger shared by every projection and writer.
   // Without Redis, the routes remain visible but fail closed with 503 instead
   // of acknowledging non-durable review state.
@@ -3599,6 +3610,7 @@ async function main(): Promise<void> {
     // 砚砚 R9 P1: shared-MCP (Antigravity) agent-key publish path needs this.
     agentKeyRegistry,
     lifecycleEventLog: reevalClosureEventLog,
+    ownerLifecycleEventLog: ownerReevalClosureEventLog,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
     // F257: harness-ledger snapshot and Objective-cycle wiring.
@@ -3632,6 +3644,8 @@ async function main(): Promise<void> {
   await app.register(evalVerdictLifecycleRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
     eventLog: reevalClosureEventLog,
+    artifactStoreRoot,
+    ownerEventLog: ownerReevalClosureEventLog,
     redis: redisClient ?? undefined,
     callbackRegistry: registry,
     agentKeyRegistry,
@@ -3654,8 +3668,8 @@ async function main(): Promise<void> {
   const evolutionProgramAdapterRegistry = new ProgramAdapterRegistry();
   evolutionProgramAdapterRegistry.register(
     createMicroduckRuntimeAdapter({
-      proposalResolver: createMicroduckProposalResolver(reevalClosureEventLog),
-      approvalResolver: createMicroduckApprovalResolver(reevalClosureEventLog),
+      proposalResolver: createMicroduckProposalResolver(evalRepairEventLog),
+      approvalResolver: createMicroduckApprovalResolver(evalRepairEventLog),
     }),
   );
   const evolutionProgramService = redis
@@ -4848,17 +4862,20 @@ async function main(): Promise<void> {
   // F246/F313: one registry and one renderer projection. The F266 writer stays
   // fenced until an owner-backed resolver/dispatcher and a v1_active epoch are
   // supplied by an explicit production migration.
-  const f266ApprovalAdapter = new F266ApprovalAdapter(reevalClosureEventLog);
+  const f266ApprovalAdapter = new F266ApprovalAdapter(evalRepairEventLog);
   const f266EpochAuthority = redis ? new RedisApprovalLifecycleEpochAuthority(redis) : undefined;
-  const f266CaseActionResolver = reevalClosureEventLog
-    ? new EvalRepairCaseActionResolver(evalHarnessFeedbackRoot, reevalClosureEventLog)
+  const f266CaseActionResolver = evalRepairEventLog
+    ? new EvalRepairCaseActionResolver(
+        ownerLifecycleSpace(evalHarnessFeedbackRoot, { artifactStoreRoot, ownerUserId: privateUserId }),
+        evalRepairEventLog,
+      )
     : undefined;
   const f266OwnerRuntime = await createEvalRepairOwnerRuntime({
     lifecycleVersion: 1,
     loaderVersion: 1,
     routeVersion: 1,
     materializerVersion: 1,
-    ...(reevalClosureEventLog ? { eventLog: reevalClosureEventLog } : {}),
+    ...(evalRepairEventLog ? { eventLog: evalRepairEventLog } : {}),
     approvalIngress,
     approvalAdapter: f266ApprovalAdapter,
     ...(f266EpochAuthority ? { epochAuthority: f266EpochAuthority } : {}),
@@ -7309,45 +7326,65 @@ async function main(): Promise<void> {
           }),
         })
       : undefined;
-    const responsibilityService =
-      f266AdmissionService && taskDispatcher
-        ? new ReevalCaseResponsibilityService({
-            taskStore,
-            eventLog: reevalClosureEventLog,
-            admissionService: f266AdmissionService,
-            taskDispatcher,
-            resolveFeatureThreadId: (featureId, ownerUserId) =>
-              resolveUniqueFeatureThreadId(threadStore, backlogStore, ownerUserId, featureId, app.log),
-            ownerUserId: privateUserId,
-          })
-        : undefined;
-    const reevaluationService =
-      f266AdmissionService && taskDispatcher
-        ? new ReevalCaseReevaluationService({
-            taskStore,
-            eventLog: reevalClosureEventLog,
-            admissionService: f266AdmissionService,
-            taskDispatcher,
-            ownerUserId: privateUserId,
-          })
-        : undefined;
-    taskRunnerV2.register(
-      createReevalClosureTaskSpec({
-        eventLog: reevalClosureEventLog,
-        loadSubjects: () =>
-          loadReevalClosureSubjects({
-            harnessFeedbackRoot: evalHarnessFeedbackRoot,
-            eventLog: reevalClosureEventLog,
-            ...(f266Cutover.status === 'active' ? { frictionV3Cutover: f266Cutover.rootActivation } : {}),
-            resolveAssignedEvalCatId: async (domainId, registryCatId) =>
-              (await getEvalCatOverride(redis, domainId))?.catId ?? registryCatId,
-          }),
-        ...(responsibilityService ? { responsibilityService } : {}),
-        ...(reevaluationService ? { reevaluationService } : {}),
-        log: { info: app.log.info.bind(app.log), warn: app.log.warn.bind(app.log) },
-      }),
-    );
-    app.log.info('[api] F266: eval verdict closure reconciler registered');
+    // One reconciler per lifecycle space: repository roots on the original keys, and
+    // the configured owner's runtime verdicts in that owner's space. The services act
+    // for the configured owner, so no other owner's space is reconciled here.
+    const reconcilers = [
+      { eventLog: reevalClosureEventLog },
+      ...(evalRepairEventLog
+        ? [
+            {
+              taskId: 'eval-verdict-closure-reconciler-owner-artifacts',
+              label: 'Eval Verdict Closure Reconciler (runtime artifacts)',
+              eventLog: evalRepairEventLog,
+              owner: { artifactStoreRoot, ownerUserId: privateUserId },
+            },
+          ]
+        : []),
+    ];
+    for (const reconciler of reconcilers) {
+      const responsibilityService =
+        f266AdmissionService && taskDispatcher
+          ? new ReevalCaseResponsibilityService({
+              taskStore,
+              eventLog: reconciler.eventLog,
+              admissionService: f266AdmissionService,
+              taskDispatcher,
+              resolveFeatureThreadId: (featureId, ownerUserId) =>
+                resolveUniqueFeatureThreadId(threadStore, backlogStore, ownerUserId, featureId, app.log),
+              ownerUserId: privateUserId,
+            })
+          : undefined;
+      const reevaluationService =
+        f266AdmissionService && taskDispatcher
+          ? new ReevalCaseReevaluationService({
+              taskStore,
+              eventLog: reconciler.eventLog,
+              admissionService: f266AdmissionService,
+              taskDispatcher,
+              ownerUserId: privateUserId,
+            })
+          : undefined;
+      taskRunnerV2.register(
+        createReevalClosureTaskSpec({
+          ...(reconciler.taskId ? { taskId: reconciler.taskId, label: reconciler.label } : {}),
+          eventLog: reconciler.eventLog,
+          loadSubjects: () =>
+            loadReevalClosureSubjects({
+              harnessFeedbackRoot: evalHarnessFeedbackRoot,
+              ...(reconciler.owner ? { owner: reconciler.owner } : {}),
+              eventLog: reconciler.eventLog,
+              ...(f266Cutover.status === 'active' ? { frictionV3Cutover: f266Cutover.rootActivation } : {}),
+              resolveAssignedEvalCatId: async (domainId, registryCatId) =>
+                (await getEvalCatOverride(redis, domainId))?.catId ?? registryCatId,
+            }),
+          ...(responsibilityService ? { responsibilityService } : {}),
+          ...(reevaluationService ? { reevaluationService } : {}),
+          log: { info: app.log.info.bind(app.log), warn: app.log.warn.bind(app.log) },
+        }),
+      );
+    }
+    app.log.info(`[api] F266: eval verdict closure reconcilers registered (${reconcilers.length} lifecycle spaces)`);
   }
 
   if (deferredPersonMemoryReceiptStore) {

@@ -1,31 +1,45 @@
-import { loadLegacyReevalCaseMigrations, loadLifecycleRootsWithLegacyCases } from '../legacy-reeval-case-migration.js';
-import { deriveEvalCaseId, type LifecycleRootArtifact } from '../publish-verdict/lifecycle-root-artifact.js';
+import {
+  type EvalLifecycleSpace,
+  loadLifecycleSpaceMigrations,
+  loadLifecycleSpaceRoots,
+  type OwnerArtifactStoreRef,
+  ownerLifecycleSpace,
+  repositoryLifecycleSpace,
+} from '../lifecycle-space.js';
+import { deriveEvalCaseId } from '../publish-verdict/lifecycle-root-artifact.js';
 import { projectReevalCase } from '../reeval-case.js';
 import { loadReevalCaseRoot } from '../reeval-case-root.js';
-import { projectReevalClosure, type ReevalClosureRoot } from '../reeval-closure.js';
 import type { IReevalClosureEventLog } from '../reeval-closure-event-log.js';
-import type { EvalLifecycleEvent } from '../reeval-closure-schema.js';
-import { projectLifecyclePresentation } from './eval-hub-lifecycle-debt.js';
+import {
+  availableCaseLifecycle,
+  availableLifecycle,
+  type ResolvedEvalVerdictLifecycleRoot,
+} from './eval-hub-lifecycle-views.js';
 import { loadDomains } from './eval-hub-read-model.js';
-import type { EvalHubItem, EvalHubLifecycleView, EvalHubSummary } from './eval-hub-read-model-types.js';
+import type { EvalHubItem, EvalHubSummary } from './eval-hub-read-model-types.js';
 
-export interface ResolvedEvalVerdictLifecycleRoot {
-  artifact: LifecycleRootArtifact;
-  projectorRoot: ReevalClosureRoot;
-}
+export type { ResolvedEvalVerdictLifecycleRoot } from './eval-hub-lifecycle-views.js';
+
+type LifecycleEventReader = Pick<IReevalClosureEventLog, 'read'>;
 
 export interface EnrichEvalHubLifecycleOptions {
   harnessFeedbackRoot: string;
-  eventLog?: Pick<IReevalClosureEventLog, 'read'>;
+  /** The repository space's log: repository verdicts are projected from it. */
+  eventLog?: LifecycleEventReader;
+  /**
+   * The reading owner's space. Runtime artifact verdicts are projected only here —
+   * from that owner's roots and log — and never from the repository space.
+   */
+  owner?: OwnerArtifactStoreRef & { eventLog: LifecycleEventReader };
   assignedEvalCatIds?: ReadonlyMap<string, string>;
 }
 
 export function loadEvalVerdictLifecycleRoots(
-  harnessFeedbackRoot: string,
+  space: EvalLifecycleSpace,
   assignedEvalCatIds?: ReadonlyMap<string, string>,
 ): Map<string, ResolvedEvalVerdictLifecycleRoot> {
-  const domains = loadDomains(harnessFeedbackRoot);
-  const artifacts = loadLifecycleRootsWithLegacyCases(harnessFeedbackRoot);
+  const domains = loadDomains(space.harnessFeedbackRoot);
+  const artifacts = loadLifecycleSpaceRoots(space);
 
   const roots = new Map<string, ResolvedEvalVerdictLifecycleRoot>();
   for (const artifact of artifacts) {
@@ -48,72 +62,11 @@ export function loadEvalVerdictLifecycleRoots(
 }
 
 export function loadEvalVerdictLifecycleRoot(
-  harnessFeedbackRoot: string,
+  space: EvalLifecycleSpace,
   verdictId: string,
   assignedEvalCatIds?: ReadonlyMap<string, string>,
 ): ResolvedEvalVerdictLifecycleRoot | undefined {
-  return loadEvalVerdictLifecycleRoots(harnessFeedbackRoot, assignedEvalCatIds).get(verdictId);
-}
-
-function availableCaseLifecycle(
-  item: EvalHubItem,
-  harnessFeedbackRoot: string,
-  root: ResolvedEvalVerdictLifecycleRoot,
-  events: readonly EvalLifecycleEvent[],
-  generatedAt: string,
-  assignedEvalCatIds?: ReadonlyMap<string, string>,
-): EvalHubLifecycleView {
-  if (root.artifact.schemaVersion !== 2) throw new Error(`verdict ${item.id} does not belong to a stable case`);
-  const resolved = loadReevalCaseRoot(harnessFeedbackRoot, item.id, assignedEvalCatIds?.get(root.artifact.domainId));
-  if (!resolved) throw new Error(`stable case root unavailable for verdict ${item.id}`);
-  const projection = projectReevalCase(resolved.projectorRoot, events);
-  const activeRoot = resolved.roots.find((candidate) => candidate.verdictId === projection.activeVerdictId);
-  const presentation = projectLifecyclePresentation(projection, generatedAt, activeRoot);
-  return {
-    availability: 'available',
-    closureStatus: projection.status,
-    ...presentation,
-    sequence: projection.sequence,
-    caseId: projection.caseId,
-    activeVerdictId: projection.activeVerdictId,
-    observedVerdictIds: [...projection.observedVerdictIds],
-    targetOwnerCatId: projection.targetOwnerCatId,
-    ...(projection.lifecycleOwnerCatId ? { lifecycleOwnerCatId: projection.lifecycleOwnerCatId } : {}),
-    ...(projection.taskId ? { taskId: projection.taskId } : {}),
-    ...(projection.leaseId ? { leaseId: projection.leaseId } : {}),
-    ...(projection.leaseGeneration ? { leaseGeneration: projection.leaseGeneration } : {}),
-    ...(projection.responsibilityBlocker
-      ? {
-          responsibilityBlocker: {
-            ...projection.responsibilityBlocker,
-            candidateThreadIds: [...projection.responsibilityBlocker.candidateThreadIds],
-          },
-        }
-      : {}),
-    ...(projection.custodyDispatchBlocker ? { custodyDispatchBlocker: { ...projection.custodyDispatchBlocker } } : {}),
-    ...(projection.mainCommitSha ? { mainCommitSha: projection.mainCommitSha } : {}),
-    ...(projection.liveCommitSha ? { liveCommitSha: projection.liveCommitSha } : {}),
-    ...(projection.reevalTaskId ? { reevalTaskId: projection.reevalTaskId } : {}),
-    ...(projection.reevalLeaseId ? { reevalLeaseId: projection.reevalLeaseId } : {}),
-    ...(projection.reevalLeaseGeneration ? { reevalLeaseGeneration: projection.reevalLeaseGeneration } : {}),
-    ownerResponseRefs: [...projection.ownerResponseRefs],
-    planRefs: [...projection.planRefs],
-    actionRefs: [...projection.actionRefs],
-    reevalRefs: [...projection.reevalRefs],
-    unavailableRefs: projection.refs.filter((ref) => ref.availability === 'unavailable'),
-    ...(projection.closureReason ? { closureReason: projection.closureReason } : {}),
-    diagnosisTarget: diagnosisTarget(item, root.artifact),
-  };
-}
-
-function diagnosisTarget(item: EvalHubItem, artifact: LifecycleRootArtifact) {
-  return {
-    featureId: artifact.harnessUnderEval.featureId,
-    componentId: artifact.harnessUnderEval.componentId,
-    name: artifact.harnessUnderEval.name,
-    attributionRefs: [...item.evidence.attributionRefs],
-    metricRefs: [...item.evidence.metricRefs],
-  };
+  return loadEvalVerdictLifecycleRoots(space, assignedEvalCatIds).get(verdictId);
 }
 
 function requiresAction(item: EvalHubItem): boolean {
@@ -124,49 +77,37 @@ function requiresAction(item: EvalHubItem): boolean {
   );
 }
 
-function availableLifecycle(
-  item: EvalHubItem,
-  root: ResolvedEvalVerdictLifecycleRoot,
-  events: readonly EvalLifecycleEvent[],
-  generatedAt: string,
-): EvalHubLifecycleView {
-  const projection = projectReevalClosure(root.projectorRoot, events);
-  const presentation = projectLifecyclePresentation(projection, generatedAt);
-  return {
-    availability: 'available',
-    closureStatus: projection.status,
-    ...presentation,
-    sequence: projection.sequence,
-    targetOwnerCatId: projection.targetOwnerCatId,
-    ...(projection.lifecycleOwnerCatId ? { lifecycleOwnerCatId: projection.lifecycleOwnerCatId } : {}),
-    ownerResponseRefs: [...projection.ownerResponseRefs],
-    planRefs: [...projection.planRefs],
-    actionRefs: [...projection.actionRefs],
-    reevalRefs: [...projection.reevalRefs],
-    unavailableRefs: projection.refs.filter((ref) => ref.availability === 'unavailable'),
-    ...(projection.closureReason ? { closureReason: projection.closureReason } : {}),
-    diagnosisTarget: diagnosisTarget(item, root.artifact),
-  };
+interface IndexedItem {
+  /** Position in the summary, so items projected in different spaces keep their order. */
+  index: number;
+  item: EvalHubItem;
 }
 
-export async function enrichEvalHubLifecycle(
-  summary: EvalHubSummary,
-  options: EnrichEvalHubLifecycleOptions,
-): Promise<EvalHubSummary> {
-  if (!options.eventLog) return summary;
-  const roots = loadEvalVerdictLifecycleRoots(options.harnessFeedbackRoot, options.assignedEvalCatIds);
-  const legacyMigrations = loadLegacyReevalCaseMigrations(options.harnessFeedbackRoot);
+interface SpaceLifecycle {
+  space: EvalLifecycleSpace;
+  eventLog: LifecycleEventReader;
+}
+
+async function enrichSpaceItems(
+  spaceItems: readonly IndexedItem[],
+  { space, eventLog }: SpaceLifecycle,
+  generatedAt: string,
+  assignedEvalCatIds: ReadonlyMap<string, string> | undefined,
+): Promise<IndexedItem[]> {
+  const roots = loadEvalVerdictLifecycleRoots(space, assignedEvalCatIds);
+  const legacyMigrations = loadLifecycleSpaceMigrations(space);
   const stableCaseIds = new Set(
     [...roots.values()]
       .filter((root) => root.artifact.schemaVersion === 2)
       .map((root) => (root.artifact.schemaVersion === 2 ? root.artifact.caseId : '')),
   );
   const processedCaseIds = new Set<string>();
-  const items: EvalHubItem[] = [];
-  for (const item of summary.items) {
+  const enriched: IndexedItem[] = [];
+  for (const { index, item } of spaceItems) {
+    const emit = (projected: EvalHubItem) => enriched.push({ index, item: projected });
     const root = roots.get(item.id);
     if (root?.artifact.schemaVersion === 3) {
-      items.push({
+      emit({
         ...item,
         lifecycle: {
           ...item.lifecycle,
@@ -196,22 +137,19 @@ export async function enrichEvalHubLifecycle(
       continue;
     }
     if (!root) {
-      if (item.verdict === 'keep_observe') {
-        items.push(item);
-        continue;
-      }
-      items.push({
-        ...item,
-        lifecycle: { ...item.lifecycle, unavailableReason: 'immutable lifecycle root unavailable' },
-      });
+      emit(
+        item.verdict === 'keep_observe'
+          ? item
+          : { ...item, lifecycle: { ...item.lifecycle, unavailableReason: 'immutable lifecycle root unavailable' } },
+      );
       continue;
     }
     if (root.artifact.schemaVersion === 2) {
       const caseId = root.artifact.caseId;
       if (processedCaseIds.has(caseId)) continue;
       processedCaseIds.add(caseId);
-      const candidates = summary.items
-        .map((candidate) => ({ item: candidate, root: roots.get(candidate.id) }))
+      const candidates = spaceItems
+        .map(({ item: candidate }) => ({ item: candidate, root: roots.get(candidate.id) }))
         .filter(
           (candidate): candidate is { item: EvalHubItem; root: ResolvedEvalVerdictLifecycleRoot } =>
             candidate.root?.artifact.schemaVersion === 2 && candidate.root.artifact.caseId === caseId,
@@ -225,12 +163,12 @@ export async function enrichEvalHubLifecycle(
         });
       let representative = candidates[0];
       if (!representative) continue;
-      const events = await options.eventLog.read(caseId);
+      const events = await eventLog.read(caseId);
       if (events.length > 0) {
         const resolved = loadReevalCaseRoot(
-          options.harnessFeedbackRoot,
+          space,
           representative.item.id,
-          options.assignedEvalCatIds?.get(root.artifact.domainId),
+          assignedEvalCatIds?.get(root.artifact.domainId),
         );
         if (!resolved) throw new Error(`stable case root unavailable for verdict ${representative.item.id}`);
         const projection = projectReevalCase(resolved.projectorRoot, events);
@@ -243,7 +181,7 @@ export async function enrichEvalHubLifecycle(
             candidates.find((candidate) => candidate.item.id === projection.activeVerdictId) ?? representative;
         }
       }
-      items.push({
+      emit({
         ...representative.item,
         lifecycle:
           events.length === 0
@@ -254,29 +192,63 @@ export async function enrichEvalHubLifecycle(
               }
             : availableCaseLifecycle(
                 representative.item,
-                options.harnessFeedbackRoot,
+                space,
                 representative.root,
                 events,
-                summary.generatedAt,
-                options.assignedEvalCatIds,
+                generatedAt,
+                assignedEvalCatIds,
               ),
       });
       continue;
     }
     if (item.verdict === 'keep_observe') {
-      items.push(item);
+      emit(item);
       continue;
     }
-    const events = await options.eventLog.read(item.id);
-    if (!events || events.length === 0) {
-      items.push({
-        ...item,
-        lifecycle: { ...item.lifecycle, unavailableReason: 'canonical lifecycle record not initialized' },
-      });
-      continue;
-    }
-    items.push({ ...item, lifecycle: availableLifecycle(item, root, events, summary.generatedAt) });
+    const events = await eventLog.read(item.id);
+    emit(
+      !events || events.length === 0
+        ? { ...item, lifecycle: { ...item.lifecycle, unavailableReason: 'canonical lifecycle record not initialized' } }
+        : { ...item, lifecycle: availableLifecycle(item, root, events, generatedAt) },
+    );
   }
+  return enriched;
+}
+
+/**
+ * Projects each verdict's lifecycle inside the space it belongs to: repository
+ * verdicts from the repository roots and log, the reader's runtime artifact verdicts
+ * from that owner's roots and log. A space without a log leaves its items as the
+ * read model built them.
+ */
+export async function enrichEvalHubLifecycle(
+  summary: EvalHubSummary,
+  options: EnrichEvalHubLifecycleOptions,
+): Promise<EvalHubSummary> {
+  if (!options.eventLog && !options.owner) return summary;
+  const indexed = summary.items.map((item, index) => ({ index, item }));
+  const repositoryItems = indexed.filter(({ item }) => item.source.kind !== 'artifact');
+  const artifactItems = indexed.filter(({ item }) => item.source.kind === 'artifact');
+  const project = (spaceItems: IndexedItem[], lifecycle: SpaceLifecycle | undefined) =>
+    lifecycle ? enrichSpaceItems(spaceItems, lifecycle, summary.generatedAt, options.assignedEvalCatIds) : spaceItems;
+
+  const items = [
+    ...(await project(
+      repositoryItems,
+      options.eventLog
+        ? { space: repositoryLifecycleSpace(options.harnessFeedbackRoot), eventLog: options.eventLog }
+        : undefined,
+    )),
+    ...(await project(
+      artifactItems,
+      options.owner
+        ? { space: ownerLifecycleSpace(options.harnessFeedbackRoot, options.owner), eventLog: options.owner.eventLog }
+        : undefined,
+    )),
+  ]
+    .sort((left, right) => left.index - right.index)
+    .map(({ item }) => item);
+
   const domains = summary.domains?.map((domain) => {
     const representative = items.find((item) => item.domainId === domain.domainId);
     if (!representative || domain.latestVerdictId === representative.id) return domain;

@@ -6,7 +6,15 @@ import {
   CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID,
 } from './capability-wakeup-closure-import.js';
 import { loadDomains } from './hub/eval-hub-read-model.js';
-import { loadLifecycleRootsWithLegacyCases, migrationForCase } from './legacy-reeval-case-migration.js';
+import type { LegacyReevalCaseMigration } from './legacy-reeval-case-migration.js';
+import {
+  loadLifecycleSpaceMigrations,
+  loadLifecycleSpaceRoots,
+  type OwnerArtifactStoreRef,
+  ownerLifecycleSpace,
+  repositoryLifecycleSpace,
+} from './lifecycle-space.js';
+import { deriveEvalCaseId, type LifecycleRootArtifact } from './publish-verdict/lifecycle-root-artifact.js';
 import { projectReevalCase } from './reeval-case.js';
 import { compareReevalCycles } from './reeval-case-cycle-order.js';
 import type { ReevalCaseReevaluationService } from './reeval-case-reevaluation.js';
@@ -19,43 +27,145 @@ import {
   type ReevalCaseReconcileSubject,
   type ReevalLifecycleReconcileSubject,
 } from './reeval-closure-reconciler.js';
+import type { EvalLifecycleEvent } from './reeval-closure-schema.js';
 
 export interface ReevalClosureSubjectsLoaderOptions {
+  /** The repository's harness-feedback root: the domain registry, and the repository space's roots. */
   harnessFeedbackRoot: string;
+  /**
+   * Loads this owner's space instead — the lifecycle roots of the runtime verdicts the
+   * owner published. `eventLog` must then be that owner's log.
+   */
+  owner?: OwnerArtifactStoreRef;
   eventLog: IReevalClosureEventLog;
   resolveAssignedEvalCatId?: (domainId: string, registryCatId: string) => Promise<string | undefined>;
   frictionV3Cutover?: { lifecycleVersion: 1 };
 }
 
+type CaseLifecycleRoot = Extract<LifecycleRootArtifact, { schemaVersion: 2 | 3 }>;
+
+interface SubjectLoadContext {
+  options: ReevalClosureSubjectsLoaderOptions;
+  domains: ReturnType<typeof loadDomains>;
+  historical: ReturnType<typeof buildCapabilityWakeupClosureImport>;
+  /** Only the repository space carries the imported capability-wakeup lifecycle. */
+  isHistorical: (verdictId: string) => boolean;
+  migrations: readonly LegacyReevalCaseMigration[];
+}
+
+async function assignedEvalCatIdFor(
+  options: ReevalClosureSubjectsLoaderOptions,
+  domainId: string,
+  registryCatId: string,
+) {
+  return (await options.resolveAssignedEvalCatId?.(domainId, registryCatId)) ?? registryCatId;
+}
+
+function historicalContinuity(bootstrapEvents: readonly EvalLifecycleEvent[]) {
+  const refsOf = (type: EvalLifecycleEvent['type']) =>
+    bootstrapEvents.filter((event) => event.type === type).flatMap((event) => event.refs);
+  return {
+    ownerResponseRefs: refsOf('owner_acknowledged'),
+    planRefs: refsOf('action_planned'),
+    actionRefs: refsOf('fix_recorded'),
+    reevalRefs: refsOf('reeval_requested'),
+  };
+}
+
+async function buildCaseSubject(
+  caseId: string,
+  groupedRoots: CaseLifecycleRoot[],
+  { options, domains, historical, isHistorical, migrations }: SubjectLoadContext,
+): Promise<ReevalCaseReconcileSubject | undefined> {
+  groupedRoots.sort(compareReevalCycles);
+  const first = groupedRoots[0];
+  if (!first) return undefined;
+  for (const candidate of groupedRoots.slice(1)) {
+    if (
+      candidate.domainId !== first.domainId ||
+      candidate.findingKey !== first.findingKey ||
+      candidate.harnessUnderEval.featureId !== first.harnessUnderEval.featureId
+    ) {
+      throw new Error(`case ${caseId} contains incompatible immutable lifecycle roots`);
+    }
+  }
+  const domain = domains.get(first.domainId);
+  if (!domain) throw new Error(`lifecycle case ${caseId} references unregistered domain ${first.domainId}`);
+  const assignedEvalCatId = await assignedEvalCatIdFor(options, first.domainId, domain.evalCat.catId);
+  const migration = migrations.find(
+    (candidate) => deriveEvalCaseId(candidate.domainId, candidate.findingKey) === caseId,
+  );
+  const repairTarget = first.schemaVersion === 3 ? first.repairTarget : undefined;
+  return {
+    caseRoot: {
+      caseId,
+      domainId: first.domainId,
+      targetOwnerCatId: repairTarget ? repairTarget.ownerCatId : domain.handoffTargetResolver.ownerCatId,
+      assignedEvalCatId,
+      reevalWithinHours: domain.sla.reevalWithinHours,
+      cycles: groupedRoots.map((root) => ({
+        verdictId: root.verdictId,
+        createdAt: root.createdAt,
+        verdict: root.verdict,
+      })),
+    },
+    roots: groupedRoots,
+    assignedEvalCatId,
+    acknowledgeHours: domain.sla.acknowledgeHours,
+    events: await options.eventLog.read(caseId),
+    openRefsByVerdictId: new Map(
+      groupedRoots.map((root) => [
+        root.verdictId,
+        isHistorical(root.verdictId) ? historical.openRefs : lifecycleRootRefs(root),
+      ]),
+    ),
+    responsibilityContext: {
+      systemThreadId: domain.systemThreadId,
+      featureId: repairTarget ? repairTarget.featureId : domain.handoffTargetResolver.featureId,
+      ownerCatId: repairTarget ? repairTarget.ownerCatId : domain.handoffTargetResolver.ownerCatId,
+      evalCatId: assignedEvalCatId,
+    },
+    ...(migration ? { legacyMigration: migration.freshnessReview } : {}),
+    ...(groupedRoots.some((root) => isHistorical(root.verdictId))
+      ? { legacyContinuity: historicalContinuity(historical.bootstrapEvents ?? []) }
+      : {}),
+  };
+}
+
 export async function loadReevalClosureSubjects(
   options: ReevalClosureSubjectsLoaderOptions,
 ): Promise<ReevalLifecycleReconcileSubject[]> {
-  const domains = loadDomains(options.harnessFeedbackRoot);
+  const space = options.owner
+    ? ownerLifecycleSpace(options.harnessFeedbackRoot, options.owner)
+    : repositoryLifecycleSpace(options.harnessFeedbackRoot);
+  // The imported capability-wakeup lifecycle and legacy case migrations are committed
+  // history: they belong to the repository space and never to an owner's.
+  const inRepository = space.kind === 'repository';
   const historical = buildCapabilityWakeupClosureImport();
-  const historicalBootstrapEvents = historical.bootstrapEvents ?? [];
-  const historicalVerdictExists = existsSync(
-    join(options.harnessFeedbackRoot, 'verdicts', `${CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID}.md`),
-  );
-  const roots = loadLifecycleRootsWithLegacyCases(options.harnessFeedbackRoot);
+  const context: SubjectLoadContext = {
+    options,
+    domains: loadDomains(options.harnessFeedbackRoot),
+    historical,
+    isHistorical: (verdictId) => inRepository && verdictId === historical.root.verdictId,
+    migrations: loadLifecycleSpaceMigrations(space),
+  };
+  const { domains, isHistorical } = context;
+  const roots = loadLifecycleSpaceRoots(space);
   const subjects: ReevalLifecycleReconcileSubject[] = [];
-  const caseRoots = new Map<string, Extract<(typeof roots)[number], { schemaVersion: 2 | 3 }>[]>();
+  const caseRoots = new Map<string, CaseLifecycleRoot[]>();
 
   for (const root of roots) {
-    if (root.verdictId === historical.root.verdictId && root.schemaVersion === 1) continue;
+    if (isHistorical(root.verdictId) && root.schemaVersion === 1) continue;
     if (root.schemaVersion === 3 && options.frictionV3Cutover?.lifecycleVersion !== 1) continue;
     if (root.schemaVersion === 2 || root.schemaVersion === 3) {
-      const grouped = caseRoots.get(root.caseId) ?? [];
-      grouped.push(root);
-      caseRoots.set(root.caseId, grouped);
+      caseRoots.set(root.caseId, [...(caseRoots.get(root.caseId) ?? []), root]);
       continue;
     }
     const domain = domains.get(root.domainId);
     if (!domain) throw new Error(`lifecycle root ${root.verdictId} references unregistered domain ${root.domainId}`);
-    const assignedEvalCatId =
-      (await options.resolveAssignedEvalCatId?.(root.domainId, domain.evalCat.catId)) ?? domain.evalCat.catId;
     subjects.push({
       root,
-      assignedEvalCatId,
+      assignedEvalCatId: await assignedEvalCatIdFor(options, root.domainId, domain.evalCat.catId),
       acknowledgeHours: domain.sla.acknowledgeHours,
       events: await options.eventLog.read(root.verdictId),
       openRefs: lifecycleRootRefs(root),
@@ -63,88 +173,22 @@ export async function loadReevalClosureSubjects(
   }
 
   for (const [caseId, groupedRoots] of caseRoots) {
-    groupedRoots.sort(compareReevalCycles);
-    const first = groupedRoots[0];
-    if (!first) continue;
-    for (const candidate of groupedRoots.slice(1)) {
-      if (
-        candidate.domainId !== first.domainId ||
-        candidate.findingKey !== first.findingKey ||
-        candidate.harnessUnderEval.featureId !== first.harnessUnderEval.featureId
-      ) {
-        throw new Error(`case ${caseId} contains incompatible immutable lifecycle roots`);
-      }
-    }
-    const domain = domains.get(first.domainId);
-    if (!domain) throw new Error(`lifecycle case ${caseId} references unregistered domain ${first.domainId}`);
-    const assignedEvalCatId =
-      (await options.resolveAssignedEvalCatId?.(first.domainId, domain.evalCat.catId)) ?? domain.evalCat.catId;
-    const migration = migrationForCase(options.harnessFeedbackRoot, caseId);
-    const caseSubject: ReevalCaseReconcileSubject = {
-      caseRoot: {
-        caseId,
-        domainId: first.domainId,
-        targetOwnerCatId:
-          first.schemaVersion === 3 ? first.repairTarget.ownerCatId : domain.handoffTargetResolver.ownerCatId,
-        assignedEvalCatId,
-        reevalWithinHours: domain.sla.reevalWithinHours,
-        cycles: groupedRoots.map((root) => ({
-          verdictId: root.verdictId,
-          createdAt: root.createdAt,
-          verdict: root.verdict,
-        })),
-      },
-      roots: groupedRoots,
-      assignedEvalCatId,
-      acknowledgeHours: domain.sla.acknowledgeHours,
-      events: await options.eventLog.read(caseId),
-      openRefsByVerdictId: new Map(
-        groupedRoots.map((root) => [
-          root.verdictId,
-          root.verdictId === historical.root.verdictId ? historical.openRefs : lifecycleRootRefs(root),
-        ]),
-      ),
-      responsibilityContext: {
-        systemThreadId: domain.systemThreadId,
-        featureId: first.schemaVersion === 3 ? first.repairTarget.featureId : domain.handoffTargetResolver.featureId,
-        ownerCatId: first.schemaVersion === 3 ? first.repairTarget.ownerCatId : domain.handoffTargetResolver.ownerCatId,
-        evalCatId: assignedEvalCatId,
-      },
-      ...(migration ? { legacyMigration: migration.freshnessReview } : {}),
-      ...(groupedRoots.some((root) => root.verdictId === historical.root.verdictId)
-        ? {
-            legacyContinuity: {
-              ownerResponseRefs: historicalBootstrapEvents
-                .filter((event) => event.type === 'owner_acknowledged')
-                .flatMap((event) => event.refs),
-              planRefs: historicalBootstrapEvents
-                .filter((event) => event.type === 'action_planned')
-                .flatMap((event) => event.refs),
-              actionRefs: historicalBootstrapEvents
-                .filter((event) => event.type === 'fix_recorded')
-                .flatMap((event) => event.refs),
-              reevalRefs: historicalBootstrapEvents
-                .filter((event) => event.type === 'reeval_requested')
-                .flatMap((event) => event.refs),
-            },
-          }
-        : {}),
-    };
-    subjects.push(caseSubject);
+    const caseSubject = await buildCaseSubject(caseId, groupedRoots, context);
+    if (caseSubject) subjects.push(caseSubject);
   }
 
-  const historicalRoot = roots.find((root) => root.verdictId === historical.root.verdictId);
+  const historicalRoot = roots.find((root) => isHistorical(root.verdictId));
+  const historicalVerdictExists =
+    inRepository &&
+    existsSync(join(options.harnessFeedbackRoot, 'verdicts', `${CAPABILITY_WAKEUP_HISTORICAL_VERDICT_ID}.md`));
   if (historicalVerdictExists && historicalRoot?.schemaVersion !== 2 && historicalRoot?.schemaVersion !== 3) {
     const domain = domains.get(historical.root.domainId);
     if (!domain) {
       throw new Error(`historical lifecycle ${historical.root.verdictId} references an unregistered domain`);
     }
-    const assignedEvalCatId =
-      (await options.resolveAssignedEvalCatId?.(historical.root.domainId, domain.evalCat.catId)) ??
-      domain.evalCat.catId;
     subjects.push({
       ...historical,
-      assignedEvalCatId,
+      assignedEvalCatId: await assignedEvalCatIdFor(options, historical.root.domainId, domain.evalCat.catId),
       ...(historicalRoot?.schemaVersion === 1
         ? { root: historicalRoot, openRefs: lifecycleRootRefs(historicalRoot) }
         : {}),
@@ -180,6 +224,9 @@ function caseNeedsResponsibility(
 }
 
 export interface ReevalClosureTaskSpecOptions {
+  /** One reconciler runs per lifecycle space; the default id and label are the repository space's. */
+  taskId?: string;
+  label?: string;
   eventLog: IReevalClosureEventLog;
   loadSubjects: () => Promise<ReevalLifecycleReconcileSubject[]>;
   responsibilityService?: Pick<ReevalCaseResponsibilityService, 'reconcile'>;
@@ -194,7 +241,7 @@ export function createReevalClosureTaskSpec(
 ): TaskSpec_P1<ReevalClosureBatchSignal> {
   const now = options.now ?? (() => new Date().toISOString());
   return {
-    id: 'eval-verdict-closure-reconciler',
+    id: options.taskId ?? 'eval-verdict-closure-reconciler',
     profile: 'poller',
     trigger: { type: 'interval', ms: options.pollIntervalMs ?? 600_000 },
     admission: {
@@ -278,7 +325,7 @@ export function createReevalClosureTaskSpec(
     outcome: { whenNoSignal: 'drop' },
     enabled: () => true,
     display: {
-      label: 'Eval Verdict Closure Reconciler',
+      label: options.label ?? 'Eval Verdict Closure Reconciler',
       category: 'system',
       description: 'Opens actionable verdict lifecycles and resurfaces overdue acknowledgement or re-evaluation',
       subjectKind: 'none',

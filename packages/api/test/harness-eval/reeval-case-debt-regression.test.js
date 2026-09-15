@@ -146,6 +146,11 @@ describe('F266 lifecycle debt invariants', () => {
           domainId,
           verdict: 'keep_observe',
           harnessUnderEval: activeRoot.harnessUnderEval,
+          source: {
+            kind: 'workspace',
+            verdictPath: `docs/harness-feedback/verdicts/${monitorVerdictId}.md`,
+            bundleDir: `docs/harness-feedback/bundles/${monitorVerdictId}`,
+          },
           evidence: { attributionRefs: ['attribution:monitor'], metricRefs: ['metric:monitor'] },
           lifecycle: {
             availability: 'unavailable',

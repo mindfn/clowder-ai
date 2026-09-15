@@ -77,6 +77,7 @@ function item(overrides = {}) {
     domainId: 'eval:capability-tips',
     verdict: 'fix',
     harnessUnderEval: { featureId: 'F268', componentId: 'tips', name: 'Capability Tips' },
+    source: { kind: 'workspace', verdictPath: `verdicts/${verdictId}.md`, bundleDir: `bundles/${verdictId}` },
     evidence: {
       attributionRefs: [`attribution:bundle/${verdictId}/finding-1`],
       metricRefs: ['metric:tips.missed'],

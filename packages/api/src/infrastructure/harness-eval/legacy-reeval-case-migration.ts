@@ -159,9 +159,3 @@ export function loadLifecycleRootsWithLegacyCases(harnessFeedbackRoot: string): 
   }
   return resolveLifecycleRootsWithLegacyCases(harnessFeedbackRoot, roots);
 }
-
-export function migrationForCase(harnessFeedbackRoot: string, caseId: string): LegacyReevalCaseMigration | undefined {
-  return loadLegacyReevalCaseMigrations(harnessFeedbackRoot).find(
-    (migration) => deriveEvalCaseId(migration.domainId, migration.findingKey) === caseId,
-  );
-}

@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import Fastify from 'fastify';
 
 import { enrichEvalHubLifecycle } from '../../dist/infrastructure/harness-eval/hub/eval-hub-lifecycle-projection.js';
+import { repositoryLifecycleSpace } from '../../dist/infrastructure/harness-eval/lifecycle-space.js';
 import { classifyReevalCaseRoot } from '../../dist/infrastructure/harness-eval/reeval-case-root.js';
 import { planReevalClosureEvents } from '../../dist/infrastructure/harness-eval/reeval-closure-reconciler.js';
 import {
@@ -108,6 +109,11 @@ function summary() {
         domainId: 'eval:friction',
         verdict: 'fix',
         harnessUnderEval: { featureId: 'F245', componentId: 'friction-rollup', name: 'Friction rollup' },
+        source: {
+          kind: 'workspace',
+          verdictPath: `docs/harness-feedback/verdicts/${verdictId}.md`,
+          bundleDir: `docs/harness-feedback/bundles/${verdictId}`,
+        },
         evidence: { attributionRefs: ['bundle:attribution'], metricRefs: ['friction.cluster_count'] },
         lifecycle: {
           availability: 'unavailable',
@@ -126,7 +132,7 @@ describe('F313 schema-v3 re-evaluation root quarantine', () => {
     const root = setupV3Root(t);
     const eventLog = new CountingEventLog();
     const cutover = { lifecycleVersion: 1 };
-    const classified = classifyReevalCaseRoot(root, verdictId, undefined, cutover);
+    const classified = classifyReevalCaseRoot(repositoryLifecycleSpace(root), verdictId, undefined, cutover);
     assert.equal(classified.status, 'available');
 
     const subjects = await loadReevalClosureSubjects({
@@ -149,7 +155,7 @@ describe('F313 schema-v3 re-evaluation root quarantine', () => {
     const eventLog = new CountingEventLog();
     let responsibilityCalls = 0;
     let reevaluationCalls = 0;
-    const classified = classifyReevalCaseRoot(root, verdictId);
+    const classified = classifyReevalCaseRoot(repositoryLifecycleSpace(root), verdictId);
     assert.equal(classified.status, 'known-but-quarantined');
     assert.deepEqual(classified.diagnostic.effects, {
       openCase: false,

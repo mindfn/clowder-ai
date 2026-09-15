@@ -90,6 +90,8 @@ export interface EvalHubRoutesOptions {
   agentKeyRegistry?: AgentKeyAuthRegistry;
   /** F266 canonical event reader; absent means artifact-only honest degradation. */
   lifecycleEventLog?: Pick<IReevalClosureEventLog, 'read'>;
+  /** F257: opens one owner's lifecycle log, for the runtime verdicts that owner published. */
+  ownerLifecycleEventLog?: (ownerUserId: string) => Pick<IReevalClosureEventLog, 'read'>;
   /** F257 guard-rejection ledger sink for publish-policy rejects. */
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257 Objective-cycle assignment, trace read, and structured writeback. */
@@ -141,6 +143,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         ...(opts.redis ? { redis: opts.redis } : {}),
         ...(opts.threadStore ? { threadStore: opts.threadStore } : {}),
         ...(opts.lifecycleEventLog ? { lifecycleEventLog: opts.lifecycleEventLog } : {}),
+        ...(opts.ownerLifecycleEventLog ? { ownerLifecycleEventLog: opts.ownerLifecycleEventLog } : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

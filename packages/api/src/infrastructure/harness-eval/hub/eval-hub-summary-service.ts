@@ -13,7 +13,10 @@ export interface LoadEnrichedEvalHubSummaryOptions {
   userId: string;
   redis?: Redis;
   threadStore?: IThreadStore;
+  /** The repository space's lifecycle log. */
   lifecycleEventLog?: Pick<IReevalClosureEventLog, 'read'>;
+  /** Opens one owner's lifecycle log; the summary only ever opens the requesting user's. */
+  ownerLifecycleEventLog?: (ownerUserId: string) => Pick<IReevalClosureEventLog, 'read'>;
   log: { warn(...args: unknown[]): void };
 }
 
@@ -46,7 +49,7 @@ async function ensureEvalThreadsBestEffort(summary: EvalHubSummary, options: Loa
 }
 
 export async function loadEnrichedEvalHubSummary(options: LoadEnrichedEvalHubSummaryOptions): Promise<EvalHubSummary> {
-  // Runtime artifacts are read only from the requesting user's own partition.
+  // Runtime artifacts, and their lifecycles, are read only from the requesting user's own partition.
   const summary = loadEvalHubSummary({
     harnessFeedbackRoot: options.harnessFeedbackRoot,
     ...(options.artifactStoreRoot
@@ -58,6 +61,15 @@ export async function loadEnrichedEvalHubSummary(options: LoadEnrichedEvalHubSum
   return enrichEvalHubLifecycle(summary, {
     harnessFeedbackRoot: options.harnessFeedbackRoot,
     ...(options.lifecycleEventLog ? { eventLog: options.lifecycleEventLog } : {}),
+    ...(options.artifactStoreRoot && options.ownerLifecycleEventLog
+      ? {
+          owner: {
+            artifactStoreRoot: options.artifactStoreRoot,
+            ownerUserId: options.userId,
+            eventLog: options.ownerLifecycleEventLog(options.userId),
+          },
+        }
+      : {}),
     assignedEvalCatIds: new Map(summary.domains.map((domain) => [domain.domainId, domain.evalCatId])),
   });
 }
