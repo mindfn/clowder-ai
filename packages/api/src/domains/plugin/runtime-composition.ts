@@ -359,7 +359,7 @@ function managerCatalogCandidate(
     publisher: presentation?.publisher ?? (entry.packageName.startsWith('@clowder-ai/') ? 'Clowder AI' : undefined),
     ownerAuthRequired: entry.ownerAuth !== undefined,
     capabilities: manifest ? pluginManagerCapabilitiesFromManifest(manifest) : [],
-    contributions: manifest ? pluginManagerContributionsFromManifest(manifest) : [],
+    ...(manifest === undefined ? {} : { contributions: pluginManagerContributionsFromManifest(manifest) }),
   };
 }
 
