@@ -156,14 +156,21 @@ describe('env-registry', () => {
     assert.equal(apiPort.control, 'number');
   });
 
-  it('marks CAT_TEMPLATE_PATH as bootstrap-only while REDIS_URL is restart-fenced editable (#770)', () => {
+  it('marks CAT_TEMPLATE_PATH as bootstrap-only while REDIS_URL exits the Hub-editable surface (#770 P0 D4)', () => {
     const templatePath = ENV_VARS.find((v) => v.name === 'CAT_TEMPLATE_PATH');
     const redisUrl = ENV_VARS.find((v) => v.name === 'REDIS_URL');
+    const memoryStore = ENV_VARS.find((v) => v.name === 'MEMORY_STORE');
     assert.ok(templatePath, 'CAT_TEMPLATE_PATH should be in registry');
     assert.ok(redisUrl, 'REDIS_URL should be in registry');
+    assert.ok(memoryStore, 'MEMORY_STORE should be in registry');
     assert.equal(templatePath.runtimeEditable, false);
-    assert.equal(redisUrl.runtimeEditable, true);
+    // D4: start-dev.sh rebuilds+exports REDIS_URL unconditionally in both startup
+    // branches; D5: no launch path reads MEMORY_STORE from .env (--memory flag /
+    // desktop memoryMode set it instead). Both must fail closed from Hub writes.
+    assert.equal(redisUrl.runtimeEditable, false, 'REDIS_URL edits can never take effect — dead control');
     assert.equal(redisUrl.restartRequired, true);
+    assert.equal(memoryStore.runtimeEditable, false, 'MEMORY_STORE from .env is unreachable in every launch path');
+    assert.equal(memoryStore.restartRequired, true);
   });
 
   it('registers the F255 awakened lease as bootstrap-only runtime configuration', () => {
@@ -971,7 +978,7 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('accepts REDIS_URL hub writes and persists them without hot-updating runtime clients (#770)', async () => {
+  it('rejects REDIS_URL hub writes — startup script rebuilds it unconditionally (#770 P0 D4)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -996,14 +1003,52 @@ describe('PATCH /api/config/env (route)', () => {
         },
       });
 
-      assert.equal(res.statusCode, 200);
-      assert.match(readFileSync(envFilePath, 'utf8'), /REDIS_URL=redis:\/\/localhost:6398\/15/);
-      // restartRequired: bootstrapped redis clients keep the old connection string.
+      // D4: start-dev.sh unconditionally re-exports redis://localhost:$REDIS_PORT,
+      // so a Hub write would persist a value that startup silently discards.
+      assert.equal(res.statusCode, 400, 'REDIS_URL writes must fail closed');
+      assert.match(res.payload, /not editable/);
+      assert.match(readFileSync(envFilePath, 'utf8'), /REDIS_URL=redis:\/\/localhost:6399\/15/);
+      assert.doesNotMatch(readFileSync(envFilePath, 'utf8'), /6398/);
       assert.equal(process.env.REDIS_URL, 'redis://localhost:6399/15');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
       delete process.env.REDIS_URL;
+    }
+  });
+
+  it('rejects MEMORY_STORE hub writes — no launch path reads it from .env (#770 P0 D5)', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, '', 'utf8');
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'codex' },
+        payload: {
+          updates: [{ name: 'MEMORY_STORE', value: '1' }],
+        },
+      });
+
+      // D5: only --memory (start-dev.sh:1449) or desktop memoryMode set this
+      // var; a .env write is unreachable dead configuration.
+      assert.equal(res.statusCode, 400, 'MEMORY_STORE writes must fail closed');
+      assert.match(res.payload, /not editable/);
+      assert.doesNotMatch(readFileSync(envFilePath, 'utf8'), /MEMORY_STORE/);
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 

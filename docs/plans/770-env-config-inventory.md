@@ -97,11 +97,11 @@ created: 2026-08-12
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| storage | REDIS_URL | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | REDIS_URL | system | yes | no | read-only (Hub) | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System（纯文本展示） | #770 P0 D4：start-dev.sh 两分支无条件重建导出，Hub/.env 修改永不生效；PATCH 400 |
 | storage | REDIS_KEY_PREFIX | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | REDIS_DATA_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | Redis 数据目录，由 shell 启动脚本在 API 前设置；DATA_DIR 设置后覆盖 |
 | storage | REDIS_BACKUP_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | Redis 备份目录，由 shell 启动脚本在 API 前设置；DATA_DIR 设置后覆盖 |
-| storage | MEMORY_STORE | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | MEMORY_STORE | system | yes | no | read-only (Hub) | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System（纯文本展示） | #770 P0 D5：仅 --memory 标志/桌面 memoryMode 设置，无启动路径读 .env；PATCH 400 |
 | storage | MESSAGE_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | THREAD_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | TASK_TTL_SECONDS | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |

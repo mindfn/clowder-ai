@@ -719,11 +719,13 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'REDIS_URL',
     defaultValue: '',
     placeholder: '未设置（需同时开启内存模式才能启动）',
-    description: '数据库连接地址。未设置时需要同时开启“内存模式”才能启动',
+    description:
+      '数据库连接地址。#770 P0 D4：start-dev.sh 的两个启动分支都会无条件用本机 Redis 端口重建并导出此变量' +
+      '（setup_storage 已运行 / 新启动两分支），页面或 .env 修改永远不会生效；如需外接数据库请手工编辑 .env 并改用非 start-dev 启动方式',
     category: 'storage',
     sensitive: false,
     maskMode: 'url',
-    runtimeEditable: true,
+    runtimeEditable: false,
     exampleRecommended: true,
     label: '数据库连接',
     settingsGroup: 'storage',
@@ -761,10 +763,13 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'MEMORY_STORE',
     defaultValue: '(未设置)',
-    description: '当 Redis 不可用时允许以内存模式启动。已配置 Redis 时此选项不改变存储后端',
+    description:
+      '当 Redis 不可用时允许以内存模式启动。已配置 Redis 时此选项不改变存储后端。#770 P0 D5：任何启动路径都不会读取' +
+      ' .env 里的此变量——start-dev.sh 仅由 --memory 标志设置（:1449，且 Redis 分支总是导出 REDIS_URL 或退出），' +
+      '桌面版由 memoryMode 固定（service-manager.js:700）。如需内存模式请用 --memory 启动',
     category: 'storage',
     sensitive: false,
-    runtimeEditable: true,
+    runtimeEditable: false,
     label: '内存模式（后备）',
     settingsGroup: 'storage',
     restartRequired: true,
