@@ -212,7 +212,7 @@ describe('Eval Hub read model — F245 friction projections', () => {
     const item = summary.items.find((entry) => entry.id === verdictId);
 
     assert.ok(item, 'artifact-store friction verdict must be present in Hub summary');
-    assert.deepEqual(item.source, { kind: 'artifact', domainSlug: 'eval-friction', artifactId: verdictId });
+    assert.deepEqual(item.source, { kind: 'artifact', domainSlug: 'eval-friction', artifactId: verdictId, verdictId });
     assert.equal(item.friction.projectionStatus, 'available');
     assert.deepEqual(item.friction.source, { kind: 'artifact' });
   });

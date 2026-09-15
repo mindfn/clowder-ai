@@ -6,8 +6,14 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
  * writes verdict artifacts and by every reader that serves them back.
  *
  *   <artifactRoot>/owners/<ownerKey>/<domainSlug>/<artifactId>/docs/harness-feedback/
- *     verdicts/<artifactId>.md
- *     bundles/<artifactId>/…
+ *     verdicts/<verdictId>.md
+ *     bundles/<verdictId>/…
+ *
+ * An artifact is a container named after the verdict it was published for. One
+ * publication can generate more verdicts than that one — a friction breakout writes
+ * a child verdict per finding next to its aggregate — and all of them live in the
+ * same container. A verdict is therefore addressed by (artifactId, verdictId); the
+ * published verdict is simply the one whose id equals its container's.
  *
  * A verdict is generated from owner-scoped evidence, so the owner is part of the
  * artifact's address, not a filter applied after listing. Two owners publishing
@@ -25,6 +31,11 @@ export const SAFE_ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export interface ArtifactCoordinates {
   domainSlug: string;
   artifactId: string;
+}
+
+/** One verdict inside an artifact container. */
+export interface ArtifactVerdictCoordinates extends ArtifactCoordinates {
+  verdictId: string;
 }
 
 export function toArtifactDomainSlug(domainId: string): string {
@@ -94,13 +105,13 @@ export function isArtifactFileKey(value: unknown): value is ArtifactFileKey {
 
 export function artifactFileLocation(
   outputRoot: string,
-  artifactId: string,
+  verdictId: string,
   fileKey: ArtifactFileKey,
 ): { path: string; contentType: ArtifactFileContentType } {
-  const bundleDir = bundleDirIn(outputRoot, artifactId);
+  const bundleDir = bundleDirIn(outputRoot, verdictId);
   switch (fileKey) {
     case 'verdict':
-      return { path: verdictPathIn(outputRoot, artifactId), contentType: 'text/markdown' };
+      return { path: verdictPathIn(outputRoot, verdictId), contentType: 'text/markdown' };
     case 'snapshot':
       return { path: resolve(bundleDir, 'snapshot.json'), contentType: 'application/json' };
     case 'attribution':

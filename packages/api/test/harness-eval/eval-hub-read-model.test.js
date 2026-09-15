@@ -489,7 +489,7 @@ Evidence:
     assert.match(item.phenomenon, /artifact/, 'artifact-store verdict must take precedence over legacy');
     assert.deepEqual(
       item.source,
-      { kind: 'artifact', domainSlug: 'eval-a2a', artifactId: sharedId },
+      { kind: 'artifact', domainSlug: 'eval-a2a', artifactId: sharedId, verdictId: sharedId },
       'source must address the artifact, not legacy in-repo docs',
     );
   });

@@ -31,7 +31,12 @@ const artifactEvent: EvalWorkspaceEvent = {
     stale: false,
   },
   stale: false,
-  source: { kind: 'artifact', domainSlug: 'eval-harness-ledger', artifactId: 'hlr-artifact-1' },
+  source: {
+    kind: 'artifact',
+    domainSlug: 'eval-harness-ledger',
+    artifactId: 'hlr-artifact-1',
+    verdictId: 'hlr-artifact-1',
+  },
   systemThreadId: 'thread-ledger',
 };
 
@@ -78,7 +83,7 @@ describe('EvalWorkspaceEventCard evidence for runtime artifacts', () => {
     });
 
     expect(mocks.apiFetch).toHaveBeenCalledWith(
-      '/api/eval-hub/artifacts/eval-harness-ledger/hlr-artifact-1/files/verdict',
+      '/api/eval-hub/artifacts/eval-harness-ledger/hlr-artifact-1/verdicts/hlr-artifact-1/files/verdict',
     );
     expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('结论文件 · hlr-artifact-1');
     expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();

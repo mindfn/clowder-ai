@@ -78,6 +78,7 @@ describe('artifact store owner scope', () => {
       kind: 'artifact',
       domainSlug: 'eval-harness-ledger',
       artifactId: 'hlr-a-only',
+      verdictId: 'hlr-a-only',
     });
     assert.equal(
       JSON.stringify(summaryA.items).includes(artifactStoreRoot),
@@ -96,7 +97,7 @@ describe('artifact store owner scope', () => {
     );
   });
 
-  describe('GET /api/eval-hub/artifacts/:domainSlug/:artifactId/files/:fileKey', () => {
+  describe('GET /api/eval-hub/artifacts/:domainSlug/:artifactId/verdicts/:verdictId/files/:fileKey', () => {
     async function buildApp(sessionUserId, options = {}) {
       const app = Fastify({ logger: false });
       app.addHook('preHandler', async (request) => {
@@ -110,7 +111,7 @@ describe('artifact store owner scope', () => {
     }
 
     const url = (artifactId, fileKey, domainSlug = 'eval-harness-ledger') =>
-      `/api/eval-hub/artifacts/${domainSlug}/${artifactId}/files/${fileKey}`;
+      `/api/eval-hub/artifacts/${domainSlug}/${artifactId}/verdicts/${artifactId}/files/${fileKey}`;
 
     it('serves the owner’s own verdict and bundle files by key', async (t) => {
       await publish('owner-a', makePacket({ id: 'hlr-readable' }), 'readable');

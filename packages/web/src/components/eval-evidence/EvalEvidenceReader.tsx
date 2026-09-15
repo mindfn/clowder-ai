@@ -36,7 +36,7 @@ async function fetchArtifactEvidence(target: ArtifactTarget, label: string) {
   }
   const file = (await response.json()) as ArtifactFileResponse;
   return {
-    title: `${label} · ${target.artifactId}${file.truncated ? '（内容过长，已截断）' : ''}`,
+    title: `${label} · ${target.verdictId}${file.truncated ? '（内容过长，已截断）' : ''}`,
     ...readableContent(file),
   };
 }

@@ -40,7 +40,8 @@ export interface EvalHubFrictionProjection {
  */
 export type EvalHubItemSource =
   | { kind: 'workspace'; verdictPath: string; bundleDir: string }
-  | { kind: 'artifact'; domainSlug: string; artifactId: string };
+  /** A runtime verdict: the artifact that holds it, and its own id inside that artifact. */
+  | { kind: 'artifact'; domainSlug: string; artifactId: string; verdictId: string };
 
 export type EvalEvidenceFileKey = 'verdict' | 'snapshot' | 'attribution' | 'friction-report';
 

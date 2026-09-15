@@ -66,7 +66,12 @@ const artifactItem: EvalHubItem = {
     threadId: 'thread-ledger',
     stateSot: 'registry',
   },
-  source: { kind: 'artifact', domainSlug: 'eval-harness-ledger', artifactId: 'hlr-artifact-1' },
+  source: {
+    kind: 'artifact',
+    domainSlug: 'eval-harness-ledger',
+    artifactId: 'hlr-artifact-1',
+    verdictId: 'hlr-artifact-1',
+  },
 };
 
 describe('HubEvalVerdictCard evidence for runtime artifacts', () => {
@@ -118,7 +123,9 @@ describe('HubEvalVerdictCard evidence for runtime artifacts', () => {
 
     await click('快照包');
 
-    expect(apiFetch).toHaveBeenCalledWith('/api/eval-hub/artifacts/eval-harness-ledger/hlr-artifact-1/files/snapshot');
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/eval-hub/artifacts/eval-harness-ledger/hlr-artifact-1/verdicts/hlr-artifact-1/files/snapshot',
+    );
     expect(storeMocks.setWorkspaceOpenFile).not.toHaveBeenCalled();
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain('快照包 · hlr-artifact-1');
@@ -131,20 +138,23 @@ describe('HubEvalVerdictCard evidence for runtime artifacts', () => {
 
     await click('结论文件');
 
-    expect(apiFetch).toHaveBeenCalledWith('/api/eval-hub/artifacts/eval-harness-ledger/hlr-artifact-1/files/verdict');
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/eval-hub/artifacts/eval-harness-ledger/hlr-artifact-1/verdicts/hlr-artifact-1/files/verdict',
+    );
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('结论文件读取失败');
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(storeMocks.setWorkspaceOpenFile).not.toHaveBeenCalled();
   });
 
-  it('opens the friction raw report of an artifact through the same route', async () => {
+  it('opens a child verdict’s friction raw report inside the artifact that holds it', async () => {
     vi.mocked(apiFetch).mockResolvedValueOnce(
       jsonResponse({ fileKey: 'friction-report', contentType: 'application/json', content: '{}', truncated: false }),
     );
     const frictionItem: EvalHubItem = {
       ...artifactItem,
+      id: 'fr-1-finding-a',
       domainId: 'eval:friction',
-      source: { kind: 'artifact', domainSlug: 'eval-friction', artifactId: 'fr-1' },
+      source: { kind: 'artifact', domainSlug: 'eval-friction', artifactId: 'fr-1', verdictId: 'fr-1-finding-a' },
       friction: {
         projectionStatus: 'available',
         actionableCandidates: [],
@@ -156,7 +166,9 @@ describe('HubEvalVerdictCard evidence for runtime artifacts', () => {
 
     await click('原始报告');
 
-    expect(apiFetch).toHaveBeenCalledWith('/api/eval-hub/artifacts/eval-friction/fr-1/files/friction-report');
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/eval-hub/artifacts/eval-friction/fr-1/verdicts/fr-1-finding-a/files/friction-report',
+    );
     expect(storeMocks.setWorkspaceOpenFile).not.toHaveBeenCalled();
   });
 

@@ -96,28 +96,43 @@ function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-/** A generator whose output the Eval Hub read model can render (verdict + snapshot/attribution/provenance). */
-export function hubReadableGenerator(packet, { phenomenon = 'test' } = {}) {
-  return async (outputRoot) => {
-    const verdictId = packet.id;
-    const evalSnapshotId = 'eval-F257-2026-07-29';
-    const generatedAt = '2099-01-01T00:00:00.000Z';
-    const verdictPath = join(outputRoot, 'verdicts', `${verdictId}.md`);
-    const bundleDir = join(outputRoot, 'bundles', verdictId);
-    mkdirSync(bundleDir, { recursive: true });
-    mkdirSync(dirname(verdictPath), { recursive: true });
-    writeFileSync(
-      verdictPath,
-      `---
+/** An immutable lifecycle root for a harness-ledger verdict, as the publish handler writes it into the bundle. */
+export function lifecycleRoot(verdictId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    verdictId,
+    domainId: 'eval:harness-ledger',
+    createdAt: '2099-01-01T00:00:00.000Z',
+    verdict: 'fix',
+    harnessUnderEval: { featureId: 'F257', componentId: 'ledger', name: 'Harness Ledger' },
+    ownerAsk: { targetFeatureId: 'F257', targetOwnerCatId: 'codex', requestedAction: 'repair the ledger' },
+    acceptanceReevalPlan: {
+      nextEvalAt: '2099-01-08T00:00:00.000Z',
+      closureCondition: 'the next eval verifies the repair',
+    },
+    ...overrides,
+  };
+}
+
+function writeHubReadableVerdict(outputRoot, { verdictId, domainId, phenomenon, verdict, root }) {
+  const evalSnapshotId = 'eval-F257-2026-07-29';
+  const generatedAt = '2099-01-01T00:00:00.000Z';
+  const verdictPath = join(outputRoot, 'verdicts', `${verdictId}.md`);
+  const bundleDir = join(outputRoot, 'bundles', verdictId);
+  mkdirSync(bundleDir, { recursive: true });
+  mkdirSync(dirname(verdictPath), { recursive: true });
+  writeFileSync(
+    verdictPath,
+    `---
 doc_kind: harness-feedback
 feedback_type: live-verdict
-domain_id: ${packet.domainId}
+domain_id: ${domainId}
 packet_id: ${verdictId}
 ---
 
 # Verdict
 
-- Verdict: \`keep_observe\`
+- Verdict: \`${verdict}\`
 - Phenomenon: ${phenomenon}
 - Owner ask: observe
 - Harness: F257/ledger (Harness Ledger)
@@ -126,38 +141,69 @@ packet_id: ${verdictId}
 Evidence:
 - metric:test
 `,
-    );
-    writeJson(join(bundleDir, 'snapshot.json'), {
-      verdictId,
-      evalSnapshotId,
-      featureId: 'F257',
-      generatedAt,
-      window: { startMs: 1, endMs: 2, durationHours: 0 },
-      components: [
-        {
-          componentId: 'C1',
-          componentName: 'test component',
-          confidence: 'medium',
-          activationCounts: { 'test.metric': 1 },
-          frictionCounts: {},
-        },
-      ],
+  );
+  writeJson(join(bundleDir, 'snapshot.json'), {
+    verdictId,
+    evalSnapshotId,
+    featureId: 'F257',
+    generatedAt,
+    window: { startMs: 1, endMs: 2, durationHours: 0 },
+    components: [
+      {
+        componentId: 'C1',
+        componentName: 'test component',
+        confidence: 'medium',
+        activationCounts: { 'test.metric': 1 },
+        frictionCounts: {},
+      },
+    ],
+  });
+  writeJson(join(bundleDir, 'attribution.json'), {
+    verdictId,
+    featureId: 'F257',
+    evalSnapshotId,
+    generatedAt,
+    findings: [],
+    noFindingRecord: { reason: 'fixture', evidence: 'fixture' },
+  });
+  writeJson(join(bundleDir, 'provenance.json'), {
+    verdictId,
+    generatedAt,
+    rawInputs: [{ path: 'test-input', sha256: '0'.repeat(64) }],
+    generator: { name: 'test', version: '1.0.0' },
+    sanitizeRulesVersion: '1.0.0',
+  });
+  if (root) writeJson(join(bundleDir, 'lifecycle-root.json'), root);
+  return { verdictPath, bundleDir };
+}
+
+/**
+ * A generator whose output the Eval Hub read model can render (verdict + snapshot/attribution/provenance).
+ * `lifecycleRoot` adds the immutable lifecycle root; `children` are further verdicts generated into the
+ * same artifact, the way a friction breakout publishes its findings next to the aggregate verdict.
+ */
+export function hubReadableGenerator(
+  packet,
+  { phenomenon = 'test', verdict = 'keep_observe', lifecycleRoot: root, children = [] } = {},
+) {
+  return async (outputRoot) => {
+    const published = writeHubReadableVerdict(outputRoot, {
+      verdictId: packet.id,
+      domainId: packet.domainId,
+      phenomenon,
+      verdict,
+      root,
     });
-    writeJson(join(bundleDir, 'attribution.json'), {
-      verdictId,
-      featureId: 'F257',
-      evalSnapshotId,
-      generatedAt,
-      findings: [],
-      noFindingRecord: { reason: 'fixture', evidence: 'fixture' },
-    });
-    writeJson(join(bundleDir, 'provenance.json'), {
-      verdictId,
-      generatedAt,
-      rawInputs: [{ path: 'test-input', sha256: '0'.repeat(64) }],
-      generator: { name: 'test', version: '1.0.0' },
-      sanitizeRulesVersion: '1.0.0',
-    });
-    return { verdictPath, bundleDir };
+    const childArtifacts = children.map((child) => ({
+      verdictId: child.id,
+      ...writeHubReadableVerdict(outputRoot, {
+        verdictId: child.id,
+        domainId: packet.domainId,
+        phenomenon: child.phenomenon ?? 'child',
+        verdict: child.verdict ?? 'keep_observe',
+        root: child.lifecycleRoot,
+      }),
+    }));
+    return { ...published, ...(childArtifacts.length > 0 ? { childArtifacts } : {}) };
   };
 }

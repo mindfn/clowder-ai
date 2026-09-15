@@ -65,7 +65,7 @@ function loadOwnerArtifactVerdicts(artifactStore: LoadEvalHubSummaryInput['artif
   return listOwnerArtifactVerdicts(artifactStore.root, artifactStore.ownerUserId).map(
     ({ coordinates, verdictPath, bundleDir }) => {
       const verdict = parseVerdictMarkdown(verdictPath);
-      verdict.id = coordinates.artifactId;
+      verdict.id = coordinates.verdictId;
       return { verdict, bundleDir, source: { kind: 'artifact', ...coordinates } };
     },
   );
