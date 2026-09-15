@@ -186,6 +186,14 @@ describe('F202 terminal Plugin Manager service', () => {
     );
   });
 
+  it('preserves unavailable catalog contribution metadata in detail', async () => {
+    const manager = service();
+
+    const result = await manager.get(published.pluginId);
+
+    assert.equal('contributions' in result.plugin, false);
+  });
+
   it('returns one searchable list across published and compatibility plugins', async () => {
     const manager = service({ compatibility: [bundledGithub] });
 

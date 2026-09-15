@@ -154,10 +154,12 @@ function catalogDetail(
       : inventory.packages.find((item) => item.packageDigest === plugin.packageDigest)?.manifest;
   const contributions = installedManifest
     ? pluginManagerContributionsFromManifest(installedManifest)
-    : (candidate.contributions ?? []);
+    : candidate.contributions;
   return {
     ...detailFromListItem(plugin),
-    contributions: contributions.map((contribution) => ({ ...contribution })),
+    ...(contributions === undefined
+      ? {}
+      : { contributions: contributions.map((contribution) => ({ ...contribution })) }),
   };
 }
 

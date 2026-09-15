@@ -41,6 +41,18 @@ interface CapabilityDocItem {
   description?: string;
 }
 
+function capabilityDescription(
+  plugin: PluginManagerDesignFixture,
+  kind: string,
+  description: string | undefined,
+): string {
+  if (kind === 'mcp' && plugin.live === 'running' && plugin.tools === undefined) return '工具信息暂不可用。';
+  if (description !== undefined) return description;
+  if (kind !== 'mcp') return '插件未提供用途说明。';
+  if (plugin.live !== 'running') return '启用插件后显示工具及用途。';
+  return '插件未提供用途说明。';
+}
+
 function capabilityDocItems(plugin: PluginManagerDesignFixture): CapabilityDocItem[] {
   return (plugin.contributions ?? []).flatMap((contribution) => {
     const tools =
@@ -117,10 +129,7 @@ function CapabilityDocumentation({
                       {item.name}
                     </SettingsText>
                     <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
-                      {item.description ??
-                        (kind === 'mcp' && plugin.live !== 'running'
-                          ? '启用插件后显示工具及用途。'
-                          : '插件未提供用途说明。')}
+                      {capabilityDescription(plugin, kind, item.description)}
                     </SettingsText>
                   </li>
                 ))}

@@ -160,6 +160,7 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(toggle?.disabled).toBe(true);
     expect(reason?.textContent).toBe('请先完成插件配置');
     expect(toggle?.getAttribute('aria-describedby')).toBe(reason?.id);
+    expect(toggle?.title).toBe('请先完成插件配置');
   });
 
   it('expresses uninstalled state only through the install action', async () => {
