@@ -132,11 +132,13 @@ async function fetchDocumentation(path: string): Promise<string | undefined> {
   return isDocumentationResponse(value) ? value.readmeMarkdown : undefined;
 }
 
-async function fetchContributionTools(path: string): Promise<PluginManagerContributionToolsResponse['tools']> {
+async function fetchContributionTools(
+  path: string,
+): Promise<PluginManagerContributionToolsResponse['tools'] | undefined> {
   const response = await apiFetch(`${path}/contributions/tools`).catch(() => undefined);
-  if (!response?.ok) return [];
+  if (!response?.ok) return undefined;
   const value: unknown = await response.json().catch(() => undefined);
-  return isContributionToolsResponse(value) ? value.tools : [];
+  return isContributionToolsResponse(value) ? value.tools : undefined;
 }
 
 async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Promise<ConsolePluginManagerDetail> {
@@ -153,7 +155,7 @@ async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Pro
   return {
     ...value.plugin,
     ...(readmeMarkdown === undefined ? {} : { readmeMarkdown }),
-    tools,
+    ...(tools === undefined ? {} : { tools }),
   };
 }
 

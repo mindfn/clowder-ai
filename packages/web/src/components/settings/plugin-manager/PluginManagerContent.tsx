@@ -134,6 +134,7 @@ function PluginListActions({
             ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
             ariaPressed={plugin.intent === 'enabled'}
             ariaDescribedBy={blockedReasonId}
+            title={blockedReason}
           />
         </div>
       )}

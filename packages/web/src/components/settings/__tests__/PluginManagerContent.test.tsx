@@ -425,7 +425,14 @@ describe('F202 live Plugin Manager Console wiring', () => {
           ...detail(plugin),
           plugin: {
             ...detail(plugin).plugin,
-            contributions: [{ id: 'video-analysis-toolset', kind: 'mcp', name: 'video-analysis-toolset' }],
+            contributions: [
+              {
+                id: 'video-analysis-toolset',
+                kind: 'mcp',
+                name: 'video-analysis-toolset',
+                description: 'Analyze videos.',
+              },
+            ],
           },
         });
       }
@@ -453,6 +460,32 @@ describe('F202 live Plugin Manager Console wiring', () => {
     );
     expect(container.textContent).toContain('video_analysis');
     expect(container.textContent).toContain('Analyze an explicitly selected video.');
+  });
+
+  it('reports active contribution tools as unavailable when their detail request fails', async () => {
+    const plugin = { ...managerPlugin({ installed: true }), live: 'running' as const };
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(plugin));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
+        return json({
+          ...detail(plugin),
+          plugin: {
+            ...detail(plugin).plugin,
+            contributions: [{ id: 'video-analysis-toolset', kind: 'mcp', name: 'video-analysis-toolset' }],
+          },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/contributions/tools') {
+        return json({}, 503);
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('工具信息暂不可用。');
+    expect(container.textContent).not.toContain('插件未提供用途说明。');
   });
 
   it('polls by replacing the same projection without emitting duplicate UI errors', async () => {
