@@ -179,6 +179,7 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
         packet: buildFrictionPacket(),
         domain: 'eval:friction',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: SELECTOR,
       },
     );
@@ -227,6 +228,7 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
         packet: buildFrictionPacket({ id: 'vhp-friction-kindmismatch' }),
         domain: 'eval:friction',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
       },
     );
@@ -248,6 +250,7 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
         packet: buildPacket({ id: 'vhp-friction-wrong-domain', domainId: 'eval:a2a' }),
         domain: 'eval:a2a',
         catId: 'codex',
+        ownerUserId: 'owner-test',
         sourceRefs: SELECTOR,
       },
     );
@@ -267,6 +270,7 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
         packet: buildFrictionPacket({ id: 'vhp-friction-badwindow' }),
         domain: 'eval:friction',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'friction-rollup-snapshot', windowStartMs: 100, windowEndMs: 100 },
       },
     );
@@ -284,6 +288,7 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
         packet: buildFrictionPacket({ id: 'vhp-friction-no-gen' }),
         domain: 'eval:friction',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: SELECTOR,
       },
     );
@@ -303,7 +308,8 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
       {
         packet: buildFrictionPacket({ id: 'vhp-friction-wrongcat' }),
         domain: 'eval:friction',
-        catId: 'opus-47', // friction eval cat is gpt52
+        catId: 'opus-47',
+        ownerUserId: 'owner-test', // friction eval cat is gpt52
         sourceRefs: SELECTOR,
       },
     );

@@ -7,11 +7,23 @@ type CountRecord = Record<string, number | null>;
 
 export interface LoadEvalHubSummaryInput {
   harnessFeedbackRoot: string;
-  /** Durable runtime verdict store outside the product Git repository. */
-  artifactStoreRoot?: string;
+  /**
+   * Durable runtime verdict store outside the product Git repository. The store is
+   * partitioned by owner, so it can only be read on behalf of one.
+   */
+  artifactStore?: { root: string; ownerUserId: string };
   /** Injectable wall clock for deterministic staleness checks. */
   now?: Date;
 }
+
+/**
+ * Where a verdict's evidence can be opened. A verdict committed to the product
+ * repository is a workspace file; a runtime artifact lives outside every workspace
+ * and is addressed by its coordinates, read through the owner-scoped artifact route.
+ */
+export type EvalHubItemSource =
+  | { kind: 'workspace'; verdictPath: string; bundleDir: string }
+  | { kind: 'artifact'; domainSlug: string; artifactId: string };
 
 export interface EvalDomainSummary {
   domainId: string;
@@ -146,6 +158,6 @@ export interface EvalHubItem {
     threadId: string;
     stateSot: 'registry';
   };
-  source: { verdictPath: string; bundleDir: string };
+  source: EvalHubItemSource;
   friction?: EvalHubFrictionProjection;
 }

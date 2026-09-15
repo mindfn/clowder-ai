@@ -29,6 +29,12 @@ export interface ArtifactRef {
 
 export interface PublishArtifactOpts {
   packet: VerdictHandoffPacket;
+  /**
+   * Server-trusted principal the artifact belongs to. Verdicts are generated from
+   * owner-scoped evidence, so the store partitions by owner and a publication
+   * without one has no address.
+   */
+  ownerUserId: string;
   sourceRefs: VerdictSourceRefs;
   generate: (outputRoot: string) => Promise<GeneratedVerdictArtifact>;
 }
@@ -324,8 +330,8 @@ export interface PublishVerdictInput {
   domain: string; // must match packet.domainId
   /** AC-H3: catId derived from callback auth at MCP server layer. */
   catId: string;
-  /** Server-trusted callback principal userId (not user-supplied). */
-  ownerUserId?: string;
+  /** Server-trusted callback principal userId (not user-supplied); the published artifact's owner. */
+  ownerUserId: string;
   /** 砚砚 R1 P1 #2: explicit evidence refs (sanitized YAML basenames OR replayable selector). Tool NEVER fabricates. */
   sourceRefs: VerdictSourceRefs;
   /** eval:friction only: caller judgments plus feature/component hints; routing truth is server-resolved. */

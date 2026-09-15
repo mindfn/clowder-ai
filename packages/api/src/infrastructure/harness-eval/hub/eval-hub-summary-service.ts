@@ -46,9 +46,12 @@ async function ensureEvalThreadsBestEffort(summary: EvalHubSummary, options: Loa
 }
 
 export async function loadEnrichedEvalHubSummary(options: LoadEnrichedEvalHubSummaryOptions): Promise<EvalHubSummary> {
+  // Runtime artifacts are read only from the requesting user's own partition.
   const summary = loadEvalHubSummary({
     harnessFeedbackRoot: options.harnessFeedbackRoot,
-    artifactStoreRoot: options.artifactStoreRoot,
+    ...(options.artifactStoreRoot
+      ? { artifactStore: { root: options.artifactStoreRoot, ownerUserId: options.userId } }
+      : {}),
   });
   await applyEvalCatOverrides(summary, options.redis);
   await ensureEvalThreadsBestEffort(summary, options);

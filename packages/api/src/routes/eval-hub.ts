@@ -30,6 +30,7 @@ import {
 import type { IReevalClosureEventLog } from '../infrastructure/harness-eval/reeval-closure-event-log.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-auth-prehandler.js';
+import { registerEvalHubArtifactFileRoute } from './eval-hub-artifact-files.js';
 
 export type {
   GenerateNowInput,
@@ -125,6 +126,8 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
       opts.cycleGovernanceCoordinator,
     );
   }
+  registerEvalHubArtifactFileRoute(app, opts.artifactStoreRoot);
+
   app.get('/api/eval-hub/summary', async (request, reply) => {
     const userId = requireSession(request, reply);
     if (!userId) return;

@@ -131,7 +131,7 @@ describe('publish_verdict eval:freshness', () => {
 
     const result = await handlePublishVerdict(
       { harnessFeedbackRoot, generator, artifactPublisher },
-      { packet: freshnessPacket(), domain: 'eval:freshness', catId: 'gpt52', sourceRefs },
+      { packet: freshnessPacket(), domain: 'eval:freshness', catId: 'gpt52', ownerUserId: 'owner-test', sourceRefs },
     );
 
     assert.ok(!('error' in result), JSON.stringify(result));
@@ -180,6 +180,7 @@ describe('publish_verdict eval:freshness', () => {
         packet: freshnessPacket({ id: 'vhp-freshness-bad-selector' }),
         domain: 'eval:freshness',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: { ...sourceRefs, windowEndMs: sourceRefs.windowStartMs },
       },
     );
@@ -196,6 +197,7 @@ describe('publish_verdict eval:freshness', () => {
         packet: freshnessPacket({ id: 'vhp-freshness-fixture-subset' }),
         domain: 'eval:freshness',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: { ...sourceRefs, fixtureIds: ['original-double-message-dogfood'] },
       },
     );
@@ -231,6 +233,7 @@ describe('publish_verdict eval:freshness', () => {
         packet: freshnessPacket({ id: 'vhp-freshness-no-data' }),
         domain: 'eval:freshness',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'freshness-closure-replay', windowStartMs: 3_000, windowEndMs: 4_000 },
       },
     );
@@ -259,6 +262,7 @@ describe('publish_verdict eval:freshness', () => {
         }),
         domain: 'eval:freshness',
         catId: 'gpt52',
+        ownerUserId: 'owner-test',
         sourceRefs,
       },
     );

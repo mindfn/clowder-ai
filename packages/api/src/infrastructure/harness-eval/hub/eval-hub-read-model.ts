@@ -2,13 +2,14 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { resolveA2aEvidenceBundle } from '../a2a/eval-a2a-artifact-resolver.js';
+import { listOwnerArtifactVerdicts } from '../artifact-store/artifact-store-reader.js';
 import {
   type EvalDomainRegistryEntry,
   isEvalDomainRegistryYamlFile,
   parseEvalDomainRegistryFile,
   parseEvalMetricGlossary,
 } from '../domain/eval-domain-registry.js';
-import { loadEvalHubFrictionProjection } from './eval-hub-friction-projection.js';
+import { type EvalHubFrictionReportSource, loadEvalHubFrictionProjection } from './eval-hub-friction-projection.js';
 import { synthesizeEvalHubNextCheck, synthesizeEvalHubOperatorNarrative } from './eval-hub-operator-narrative.js';
 import {
   computeNextCronFire,
@@ -27,6 +28,7 @@ import {
 import type {
   EvalDomainSummary,
   EvalHubItem,
+  EvalHubItemSource,
   EvalHubSummary,
   LoadEvalHubSummaryInput,
 } from './eval-hub-read-model-types.js';
@@ -35,29 +37,52 @@ import { resolveEvalHubRepoWorktreeId } from './eval-hub-repo-worktree-id.js';
 type VerdictEntry = {
   verdict: ParsedVerdictMarkdown;
   bundleDir: string;
+  source: EvalHubItemSource;
 };
 
+function loadRepositoryVerdicts(harnessFeedbackRoot: string, repoRoot: string): VerdictEntry[] {
+  const verdictsDir = join(harnessFeedbackRoot, 'verdicts');
+  if (!existsSync(verdictsDir)) return [];
+  return readdirSync(verdictsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => {
+      const verdict = parseVerdictMarkdown(join(verdictsDir, entry.name));
+      const bundleDir = join(harnessFeedbackRoot, 'bundles', verdict.id);
+      return {
+        verdict,
+        bundleDir,
+        source: {
+          kind: 'workspace',
+          verdictPath: repoRelative(repoRoot, verdict.path),
+          bundleDir: repoRelative(repoRoot, bundleDir),
+        },
+      };
+    });
+}
+
+function loadOwnerArtifactVerdicts(artifactStore: LoadEvalHubSummaryInput['artifactStore']): VerdictEntry[] {
+  if (!artifactStore) return [];
+  return listOwnerArtifactVerdicts(artifactStore.root, artifactStore.ownerUserId).map(
+    ({ coordinates, verdictPath, bundleDir }) => {
+      const verdict = parseVerdictMarkdown(verdictPath);
+      verdict.id = coordinates.artifactId;
+      return { verdict, bundleDir, source: { kind: 'artifact', ...coordinates } };
+    },
+  );
+}
+
 export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSummary {
-  const verdictsDir = join(input.harnessFeedbackRoot, 'verdicts');
   const repoRoot = dirname(dirname(input.harnessFeedbackRoot));
   const domains = loadDomains(input.harnessFeedbackRoot);
   const now = input.now ?? new Date();
-  const legacyEntries: VerdictEntry[] = existsSync(verdictsDir)
-    ? readdirSync(verdictsDir, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-        .map((entry) => {
-          const verdict = parseVerdictMarkdown(join(verdictsDir, entry.name));
-          return { verdict, bundleDir: join(input.harnessFeedbackRoot, 'bundles', verdict.id) };
-        })
-    : [];
-  const artifactEntries =
-    input.artifactStoreRoot && existsSync(input.artifactStoreRoot)
-      ? loadArtifactStoreVerdicts(input.artifactStoreRoot)
-      : [];
+  const artifactEntries = loadOwnerArtifactVerdicts(input.artifactStore);
   const artifactIds = new Set(artifactEntries.map((entry) => entry.verdict.id));
-  const items = [...artifactEntries, ...legacyEntries.filter((entry) => !artifactIds.has(entry.verdict.id))]
+  const repositoryEntries = loadRepositoryVerdicts(input.harnessFeedbackRoot, repoRoot).filter(
+    (entry) => !artifactIds.has(entry.verdict.id),
+  );
+  const items = [...artifactEntries, ...repositoryEntries]
     .filter((entry) => entry.verdict.frontmatter.feedback_type === 'live-verdict')
-    .map((entry) => buildEvalHubItem(entry.verdict, entry.bundleDir, domains, now, repoRoot))
+    .map((entry) => buildEvalHubItem(entry, domains, now, repoRoot))
     .sort((a, b) => b.trend.generatedAt.localeCompare(a.trend.generatedAt));
 
   // F192 P2 — supersede gating (PR 791 review).
@@ -132,35 +157,15 @@ export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSumma
   };
 }
 
-function loadArtifactStoreVerdicts(artifactStoreRoot: string): VerdictEntry[] {
-  const entries: VerdictEntry[] = [];
-  for (const domainEntry of readdirSync(artifactStoreRoot, { withFileTypes: true })) {
-    if (!domainEntry.isDirectory()) continue;
-    const domainDir = join(artifactStoreRoot, domainEntry.name);
-    for (const artifactEntry of readdirSync(domainDir, { withFileTypes: true })) {
-      if (!artifactEntry.isDirectory()) continue;
-      const artifactDir = join(domainDir, artifactEntry.name);
-      const artifactId = artifactEntry.name;
-      let verdictPath = join(artifactDir, 'verdict.md');
-      let bundleDir = join(artifactDir, 'bundle');
-      const nativeVerdictPath = join(artifactDir, 'docs', 'harness-feedback', 'verdicts', `${artifactId}.md`);
-      const nativeBundleDir = join(artifactDir, 'docs', 'harness-feedback', 'bundles', artifactId);
-      if (!existsSync(verdictPath) && existsSync(nativeVerdictPath)) {
-        verdictPath = nativeVerdictPath;
-        bundleDir = nativeBundleDir;
-      }
-      if (!existsSync(verdictPath)) continue;
-      const verdict = parseVerdictMarkdown(verdictPath);
-      verdict.id = artifactId;
-      entries.push({ verdict, bundleDir });
-    }
-  }
-  return entries;
+function frictionReportSource(source: EvalHubItemSource, repoRoot: string) {
+  return (rawReportPath: string): EvalHubFrictionReportSource =>
+    source.kind === 'artifact'
+      ? { kind: 'artifact' }
+      : { kind: 'workspace', rawReportPath: repoRelative(repoRoot, rawReportPath) };
 }
 
 function buildEvalHubItem(
-  verdict: ParsedVerdictMarkdown,
-  bundleDir: string,
+  { verdict, bundleDir, source }: VerdictEntry,
   domains: Map<EvalDomainRegistryEntry['domainId'], EvalDomainRegistryEntry>,
   now: Date,
   repoRoot: string,
@@ -189,7 +194,7 @@ function buildEvalHubItem(
   const harness = parseHarness(extractBullet(verdict.markdown, 'Harness'));
   const reevalSummary = requiredText(extractBullet(verdict.markdown, 'Re-eval'), 're-eval');
   const nextEvalAt = reevalSummary.match(/\d{4}-\d{2}-\d{2}T[0-9:.]+Z/)?.[0];
-  const friction = loadEvalHubFrictionProjection(domainId, bundleDir, repoRoot);
+  const friction = loadEvalHubFrictionProjection(domainId, bundleDir, frictionReportSource(source, repoRoot));
   const stale = computeStale(nextEvalAt, now);
 
   return {
@@ -251,10 +256,7 @@ function buildEvalHubItem(
       threadId: domain.systemThreadId,
       stateSot: domain.threadPolicy.stateSot,
     },
-    source: {
-      verdictPath: repoRelative(repoRoot, verdict.path),
-      bundleDir: repoRelative(repoRoot, bundleDir),
-    },
+    source,
     ...(friction ? { friction } : {}),
   };
 }

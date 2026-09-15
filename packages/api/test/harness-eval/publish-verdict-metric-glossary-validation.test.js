@@ -66,6 +66,7 @@ describe('publish_verdict metric glossary preflight', () => {
           packet,
           domain: 'eval:a2a',
           catId: 'codex',
+          ownerUserId: 'owner-test',
           sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
         },
       );

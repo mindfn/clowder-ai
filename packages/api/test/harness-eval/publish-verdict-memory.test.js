@@ -207,6 +207,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         packet: buildMemoryPacket(),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: {
           kind: 'memory-recall-snapshot',
           windowDays: 30,
@@ -293,6 +294,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'memory-recall-snapshot', windowDays: 30 },
       },
     );
@@ -359,6 +361,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'memory-recall-snapshot', windowDays: 30 },
       },
     );
@@ -408,6 +411,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'memory-recall-snapshot', windowDays: 30 },
       },
     );
@@ -432,6 +436,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         packet: buildMemoryPacket({ id: 'vhp-mem-kindmismatch' }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         // Wrong shape — a2a refs sent for memory domain
         sourceRefs: { snapshotName: 'snap.yaml', attributionName: 'attr.yaml' },
       },
@@ -459,6 +464,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         packet: buildMemoryPacket({ id: 'vhp-mem-kindmismatch-cw' }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: {
           kind: 'capability-wakeup-trial-window',
           capability: 'rich-messaging',
@@ -490,6 +496,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         packet: buildPacket({ id: 'vhp-mem-wrong-domain', domainId: 'eval:a2a' }),
         domain: 'eval:a2a',
         catId: 'codex',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'memory-recall-snapshot', windowDays: 30 },
       },
     );
@@ -520,6 +527,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         packet: buildMemoryPacket({ id: 'vhp-mem-empty' }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'memory-recall-snapshot', windowDays: 30 },
       },
     );
@@ -539,6 +547,7 @@ describe('handlePublishVerdict end-to-end with eval:memory generator', () => {
         packet: buildMemoryPacket({ id: 'vhp-mem-no-gen' }),
         domain: 'eval:memory',
         catId: 'opus-47',
+        ownerUserId: 'owner-test',
         sourceRefs: { kind: 'memory-recall-snapshot', windowDays: 30 },
       },
     );

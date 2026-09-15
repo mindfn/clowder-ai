@@ -77,7 +77,7 @@ function item(id, verdict = 'fix') {
       closureStatus: 'unavailable',
       stale: true,
     },
-    source: { verdictPath: `verdicts/${id}.md`, bundleDir: `bundles/${id}` },
+    source: { kind: 'workspace', verdictPath: `verdicts/${id}.md`, bundleDir: `bundles/${id}` },
   };
 }
 

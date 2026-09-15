@@ -1,16 +1,15 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import { assertGeneratedArtifactCoordinates } from '../artifact-store/generated-artifact-coordinates.js';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
-import { assertMeasurementVerdictActionAllowed } from '../measurement/measurement-bundle-census.js';
-import { readMeasurementBundleCensusFile } from '../measurement/measurement-bundle-census-file.js';
+import { assertMeasurementCensusAllowsVerdict } from '../measurement/measurement-bundle-census-file.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,
   type VerdictHandoffPacket,
 } from '../verdict-handoff.js';
-import { mapPublishVerdictError } from './error-mapping.js';
+import { classifyPublishFailure } from './error-mapping.js';
 import {
   rejectServerOwnedFrictionPacketFields,
   validateFrictionAggregateWrite,
@@ -18,7 +17,6 @@ import {
 } from './friction-findings/friction-analysis-input.js';
 import { writeGeneratedLifecycleArtifacts } from './friction-findings/generated-lifecycle-artifacts.js';
 import { validateMetricRefsAgainstGlossary } from './metric-glossary-validation.js';
-import { computePublishPolicy } from './publish-policy.js';
 import { validateSourceRefsForPublish } from './source-ref-handler-validation.js';
 import type {
   ArtifactPublisher,
@@ -107,9 +105,9 @@ export async function handlePublishVerdict(
   if (aggregateError) return aggregateError;
 
   // One server-owned clock governs both future-time rejection and generator
-  // provenance. This must run before GitPublisher can create a branch, commit,
-  // remote ref, or PR; packet.createdAt remains the event time and may be old,
-  // but it cannot claim an event later than the publication request itself.
+  // provenance. This must run before the publisher stages anything;
+  // packet.createdAt remains the event time and may be old, but it cannot claim
+  // an event later than the publication request itself.
   const publicationTime = (deps.now?.() ?? new Date()).toISOString();
   if (Date.parse(packet.createdAt) > Date.parse(publicationTime)) {
     return {
@@ -140,6 +138,15 @@ export async function handlePublishVerdict(
       status: 401,
       error: 'unauthenticated',
       detail: 'catId not provided — MCP layer must derive from callback',
+    };
+  }
+  // The artifact store is partitioned by owner; a publication without a
+  // server-trusted owner has no address to publish to.
+  if (typeof input.ownerUserId !== 'string' || input.ownerUserId.trim() === '') {
+    return {
+      status: 401,
+      error: 'unauthenticated',
+      detail: 'owner_user_required: ownerUserId not provided — MCP layer must derive it from the callback principal',
     };
   }
   const domains = loadDomains(deps.harnessFeedbackRoot);
@@ -198,9 +205,9 @@ export async function handlePublishVerdict(
       detail: `packet.phenomenon must be <= ${MAX_PHENOMENON_LEN} chars (got ${packet.phenomenon.length})`,
     };
   }
-  // Idempotency fast-fail: live-tree existsSync catches common dup quickly.
-  // 砚砚 R3 P1 #2 cloud: NOT authoritative — if API checkout is stale vs origin/main,
-  // dup-on-main slips through. Authoritative re-check inside isolated worktree below.
+  // An id already used by a verdict committed to the product repository is taken:
+  // the Eval Hub merges both sources by id. The authoritative duplicate check for
+  // runtime artifacts is the publisher's atomic rename within the owner partition.
   const liveVerdictPath = resolve(deps.harnessFeedbackRoot, 'verdicts', `${packet.id}.md`);
   const liveBundleDir = resolve(deps.harnessFeedbackRoot, 'bundles', packet.id);
   if (existsSync(liveVerdictPath) || existsSync(liveBundleDir)) {
@@ -259,24 +266,18 @@ export async function handlePublishVerdict(
   let findingArtifacts: GeneratedFindingArtifact[] = [];
   let childArtifacts: PublishedVerdictChildArtifact[] = [];
   try {
-    // Preserve main's measurement-policy gate. The census remains a product-repo
-    // input; local artifact publication must not rewrite that repository file.
-    const repoRoot = resolve(deps.harnessFeedbackRoot, '..', '..');
-    const censusPath = resolve(repoRoot, 'docs', 'harness-feedback', 'registry', 'measurement-bundles.yaml');
-    if (existsSync(censusPath)) {
-      const cleanCensusSource = readMeasurementBundleCensusFile(repoRoot);
-      assertMeasurementVerdictActionAllowed(parseYaml(cleanCensusSource), packet.domainId, packet.verdict);
-    } else if (packet.verdict !== 'keep_observe') {
-      throw new Error(
-        `measurement_validity_gate: measurement bundle census missing; actionable verdict '${packet.verdict}' requires ${censusPath}`,
-      );
-    }
+    assertMeasurementCensusAllowsVerdict(
+      resolve(deps.harnessFeedbackRoot, '..', '..'),
+      packet.domainId,
+      packet.verdict,
+    );
 
     const ref = await artifactPublisher.publishArtifact({
       packet,
+      ownerUserId: input.ownerUserId,
       sourceRefs: input.sourceRefs,
       async generate(outputRoot) {
-        generated = await generator(packet, input.sourceRefs, {
+        const candidate = await generator(packet, input.sourceRefs, {
           harnessFeedbackRoot: outputRoot,
           liveHarnessFeedbackRoot: deps.harnessFeedbackRoot,
           publicationTime,
@@ -285,24 +286,19 @@ export async function handlePublishVerdict(
           eventMemoryDbPath: deps.eventMemoryDbPath,
           ...(analysisFindings ? { analysisFindings } : {}),
         });
-        childArtifacts = writeGeneratedLifecycleArtifacts(generated, packet, outputRoot);
-        findingArtifacts = generated.findingArtifacts ?? [];
-        return generated;
+        // Lifecycle roots are written into the directories the generator names,
+        // so those names must be the output root's own coordinates first.
+        assertGeneratedArtifactCoordinates(outputRoot, packet.id, candidate);
+        generated = candidate;
+        childArtifacts = writeGeneratedLifecycleArtifacts(candidate, packet, outputRoot);
+        findingArtifacts = candidate.findingArtifacts ?? [];
+        return candidate;
       },
     });
 
     if (!generated) {
       return { status: 500, error: 'internal', detail: 'generate callback did not produce artifact' };
     }
-
-    let attribution: unknown;
-    try {
-      const attrPath = resolve(ref.bundleDir, 'attribution.json');
-      if (existsSync(attrPath)) attribution = JSON.parse(readFileSync(attrPath, 'utf8'));
-    } catch {
-      // Fail-open: undefined preserves the existing policy default.
-    }
-    computePublishPolicy(packet, attribution);
 
     return {
       ok: true,
@@ -314,10 +310,6 @@ export async function handlePublishVerdict(
       childArtifacts,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const mapped = mapPublishVerdictError(message);
-    if (mapped) return mapped;
-    if (!generated) return { status: 500, error: 'generator_failed', detail: message };
-    return { status: 500, error: 'publisher_failed', detail: message };
+    return classifyPublishFailure(err instanceof Error ? err.message : String(err), generated !== null);
   }
 }

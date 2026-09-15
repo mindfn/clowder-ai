@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,8 +75,11 @@ describe('Eval Hub read model', () => {
     assert.equal(item.systemWorkspace.kind, 'eval_domain');
     assert.equal(item.systemWorkspace.id, 'eval:a2a');
     assert.equal(item.systemWorkspace.threadId, 'thread_eval_a2a');
-    assert.equal(item.source.verdictPath, 'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md');
-    assert.equal(item.source.bundleDir, 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict');
+    assert.deepEqual(item.source, {
+      kind: 'workspace',
+      verdictPath: 'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md',
+      bundleDir: 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict',
+    });
   });
 
   it('returns repo-relative source paths even when the API process runs from a package directory', () => {
@@ -91,8 +95,11 @@ describe('Eval Hub read model', () => {
       // (test purpose: verify repo-relative paths, not verdict count).
       const item = summary.items.find((v) => v.id === '2026-05-23-eval-a2a-live-verdict');
       assert.ok(item, 'fixture verdict must remain in summary');
-      assert.equal(item.source.verdictPath, 'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md');
-      assert.equal(item.source.bundleDir, 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict');
+      assert.deepEqual(item.source, {
+        kind: 'workspace',
+        verdictPath: 'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md',
+        bundleDir: 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict',
+      });
     } finally {
       chdir(originalCwd);
     }
@@ -410,7 +417,8 @@ Evidence:
     });
 
     // Artifact-store verdict with the same id but "artifact" ownerAsk.
-    const artifactDomainDir = join(artifactStoreRoot, 'eval-a2a', sharedId);
+    const ownerKey = createHash('sha256').update('owner-a', 'utf8').digest('hex');
+    const artifactDomainDir = join(artifactStoreRoot, 'owners', ownerKey, 'eval-a2a', sharedId);
     const artifactVerdictDir = join(artifactDomainDir, 'docs', 'harness-feedback', 'verdicts');
     const artifactBundleDir = join(artifactDomainDir, 'docs', 'harness-feedback', 'bundles', sharedId);
     mkdirSync(artifactVerdictDir, { recursive: true });
@@ -472,17 +480,17 @@ Evidence:
 
     const summary = loadEvalHubSummary({
       harnessFeedbackRoot,
-      artifactStoreRoot,
+      artifactStore: { root: artifactStoreRoot, ownerUserId: 'owner-a' },
       now: new Date('2099-01-01T00:00:00.000Z'),
     });
 
     const item = summary.items.find((v) => v.id === sharedId);
     assert.ok(item, 'shared-id verdict must appear exactly once');
     assert.match(item.phenomenon, /artifact/, 'artifact-store verdict must take precedence over legacy');
-    assert.match(
-      item.source.verdictPath,
-      /data\/harness-feedback\/artifacts\/eval-a2a/,
-      'source path must point to artifact store, not legacy in-repo docs',
+    assert.deepEqual(
+      item.source,
+      { kind: 'artifact', domainSlug: 'eval-a2a', artifactId: sharedId },
+      'source must address the artifact, not legacy in-repo docs',
     );
   });
 
