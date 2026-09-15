@@ -25,6 +25,13 @@ const LOG_DIR = resolveLogDir();
 const RETENTION_FILES = 14;
 
 /**
+ * #770 P0 D2: children created through createModuleLogger + the console
+ * redirect child. Pino children snapshot the parent level, so runtime
+ * LOG_LEVEL changes must be pushed into each of them (see setRuntimeLogLevel).
+ */
+const childLoggers = new Set<pino.Logger>();
+
+/**
  * Pino redaction paths — masks values at these JSON paths.
  * Uses fast-redact: compiled once at creation, zero per-log overhead.
  */
@@ -91,7 +98,23 @@ export const logger = pino(
 );
 
 export function createModuleLogger(module: string): pino.Logger {
-  return logger.child({ module });
+  const child = logger.child({ module });
+  childLoggers.add(child);
+  return child;
+}
+
+/**
+ * #770 P0 D2: apply a LOG_LEVEL change at runtime. Pino children snapshot the
+ * parent level at creation and do NOT follow later parent changes, so every
+ * child created through createModuleLogger (plus the console redirect child)
+ * is tracked and updated alongside the root. Returns false for unknown levels.
+ */
+export function setRuntimeLogLevel(level: string): boolean {
+  if (!(level in pino.levels.values)) return false;
+  const target = level as pino.Level;
+  logger.level = target;
+  for (const child of childLoggers) child.level = target;
+  return true;
 }
 
 export const LOG_DIR_PATH = LOG_DIR;
@@ -101,6 +124,7 @@ export const LOG_DIR_PATH = LOG_DIR;
  * Sanitize args before utilFormat so secrets cannot leak through msg strings.
  */
 const consoleLogger = logger.child({ module: 'console' });
+childLoggers.add(consoleLogger);
 
 const SENSITIVE_KEYS = new Set(
   REDACT_PATHS.map((path) => {

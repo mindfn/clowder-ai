@@ -41,7 +41,7 @@ import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadS
 // so env-summary returns the path the active pino destination is actually writing to.
 // Reading process.env.LOG_DIR here would diverge from logger after a runtime
 // `PATCH /api/config/env` LOG_DIR edit — env-summary would lie about effective path.
-import { LOG_DIR_PATH } from '../infrastructure/logger.js';
+import { LOG_DIR_PATH, logger, setRuntimeLogLevel } from '../infrastructure/logger.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { isDirectLoopbackRequest, isTrustedLocalApiRequest } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
@@ -278,7 +278,15 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   app.get('/api/config/env-summary', async (request) => {
     const { surface } = request.query as { surface?: string };
     if (surface === 'system') {
-      return { groups: SETTINGS_GROUPS, variables: buildSystemEnvSummary() };
+      const variables = buildSystemEnvSummary();
+      // #770 P0 D2: when LOG_LEVEL is unset the dropdown must show the level
+      // actually in effect (pino default 'info'), not an empty draft that the
+      // browser renders as the first option ('fatal').
+      const logLevel = variables.find((entry) => entry.name === 'LOG_LEVEL');
+      if (logLevel && (logLevel.currentValue == null || logLevel.currentValue === '')) {
+        logLevel.currentValue = logger.level;
+      }
+      return { groups: SETTINGS_GROUPS, variables };
     }
 
     const apiCwd = process.cwd();
@@ -410,6 +418,14 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       if (isRestartRequiredEnvVar(name)) continue;
       if (value == null || value === '') delete process.env[name];
       else process.env[name] = value;
+      // #770 P0 D2: LOG_LEVEL is consumed from the frozen module-load constant in
+      // logger.ts, so hot-updating process.env alone changes nothing. Push the new
+      // level into the root pino logger and every tracked child immediately.
+      if (name === 'LOG_LEVEL' && typeof value === 'string' && value.trim()) {
+        if (!setRuntimeLogLevel(value.trim())) {
+          request.log.warn({ level: value }, '[config] Ignoring unknown LOG_LEVEL from env PATCH');
+        }
+      }
     }
 
     // Only emit if at least one key actually changed

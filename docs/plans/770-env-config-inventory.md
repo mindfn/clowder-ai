@@ -69,7 +69,7 @@ created: 2026-08-12
 | server | RUNTIME_REPO_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | WORKSPACE_LINKED_ROOTS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | ANTHROPIC_API_KEY | accounts | no | no | module-managed | text | no | equivalent | HubAccountsTab.tsx → `/api/accounts` → accounts/credentials store → account resolver/resolveEnvMap → provider env injection | 清出 System | 由统一账户/凭证系统管理；env 仅作 bootstrap/fallback |
-| server | LOG_LEVEL | system | yes | no | editable | dropdown | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | LOG_LEVEL | system | yes | no | editable | dropdown | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 即时生效（#770 P0 D2：PATCH 时 setRuntimeLogLevel 推根+子 pino logger），未设置时 summary 回显实际生效级别 |
 | server | LOG_DIR | ops | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 日志目录；不进通用 projection |
 | server | DEBUG | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
 | server | PREVIEW_GATEWAY_ENABLED | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |

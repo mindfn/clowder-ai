@@ -570,14 +570,15 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'LOG_LEVEL',
     defaultValue: 'info',
-    description: '日志级别（Pino 消费：fatal / error / warn / info / debug / trace / silent）',
+    description:
+      '日志级别（Pino 消费：fatal / error / warn / info / debug / trace / silent）。保存后立即生效，无需重启',
     category: 'server',
     sensitive: false,
     runtimeEditable: true,
     exampleRecommended: true,
     label: '日志级别',
     settingsGroup: 'runtime',
-    restartRequired: true,
+    restartRequired: false,
     allowedValues: ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'],
   },
   {
