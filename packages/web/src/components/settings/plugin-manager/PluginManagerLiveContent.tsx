@@ -18,8 +18,14 @@ const POLL_INTERVAL_MS = 5_000;
 
 type ConsolePluginManagerDetail = PluginManagerDetail & {
   readonly readmeMarkdown?: string;
+  readonly readmeUnavailable?: boolean;
   readonly tools?: PluginManagerContributionToolsResponse['tools'];
 };
+
+type DocumentationFetchResult =
+  | { readonly state: 'available'; readonly readmeMarkdown: string }
+  | { readonly state: 'absent' }
+  | { readonly state: 'unavailable' };
 
 function packageName(plugin: PluginManagerListItem): string {
   return plugin.source.packageName ?? plugin.pluginId;
@@ -41,6 +47,7 @@ function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<
           })),
         }),
     ...(detail.readmeMarkdown === undefined ? {} : { readmeMarkdown: detail.readmeMarkdown }),
+    ...(detail.readmeUnavailable === true ? { readmeUnavailable: true } : {}),
     ...(detail.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
     ...(detail.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
     ...(detail.configFields === undefined ? {} : { configFields: detail.configFields }),
@@ -125,11 +132,16 @@ function isContributionToolsResponse(value: unknown): value is PluginManagerCont
   );
 }
 
-async function fetchDocumentation(path: string): Promise<string | undefined> {
+async function fetchDocumentation(path: string): Promise<DocumentationFetchResult> {
   const response = await apiFetch(`${path}/documentation`).catch(() => undefined);
-  if (!response?.ok) return undefined;
+  if (response === undefined) return { state: 'unavailable' };
+  if (response.status === 404) return { state: 'absent' };
+  if (!response.ok) return { state: 'unavailable' };
   const value: unknown = await response.json().catch(() => undefined);
-  return isDocumentationResponse(value) ? value.readmeMarkdown : undefined;
+  if (!isDocumentationResponse(value)) return { state: 'unavailable' };
+  return value.readmeMarkdown === undefined
+    ? { state: 'absent' }
+    : { state: 'available', readmeMarkdown: value.readmeMarkdown };
 }
 
 async function fetchContributionTools(
@@ -143,7 +155,7 @@ async function fetchContributionTools(
 
 async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Promise<ConsolePluginManagerDetail> {
   const path = `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}`;
-  const [response, readmeMarkdown] = await Promise.all([
+  const [response, documentation] = await Promise.all([
     afterMutation ? apiFetch(path, undefined, { afterCurrentGet: true }) : apiFetch(path),
     fetchDocumentation(path),
   ]);
@@ -154,7 +166,8 @@ async function fetchManagerDetail(pluginId: string, afterMutation: boolean): Pro
     value.plugin.artifact === 'installed' && value.plugin.live === 'running' ? await fetchContributionTools(path) : [];
   return {
     ...value.plugin,
-    ...(readmeMarkdown === undefined ? {} : { readmeMarkdown }),
+    ...(documentation.state === 'available' ? { readmeMarkdown: documentation.readmeMarkdown } : {}),
+    ...(documentation.state === 'unavailable' ? { readmeUnavailable: true } : {}),
     ...(tools === undefined ? {} : { tools }),
   };
 }
