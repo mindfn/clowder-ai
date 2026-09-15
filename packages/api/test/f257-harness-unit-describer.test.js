@@ -222,6 +222,17 @@ describe('F257 harness unit and callback contracts', () => {
       (await handleReadCycleStatus(coordinator, principal, { objectiveId: 'obj', cycleId: 'invented' })).status,
       400,
     );
+
+    const missing = await handleReadCycleStatus(
+      {
+        async readStatus() {
+          throw new Error('cycle_evaluation_not_found:obj');
+        },
+      },
+      principal,
+      { objectiveId: 'obj' },
+    );
+    assert.deepEqual(missing, { status: 404, body: { error: 'cycle_evaluation_not_found' } });
   });
 
   test('registers the cycle-status callback on the runtime route surface', () => {

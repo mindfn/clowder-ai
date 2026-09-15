@@ -254,7 +254,23 @@ describe('F257 CycleRecord trigger checker', () => {
 
   test('freezes status progress at cycleEnd and exposes delivery pending after a trigger', async () => {
     const context = createHarness({
-      episodes: [episode('a', 1_000), episode('b', 1_100), episode('c', 1_200)],
+      episodes: [episode('a', 1_000), episode('b', 1_100), episode('c', 1_200), episode('after-end', 2_500)],
+      annotations: [
+        {
+          createdAt: 1_300,
+          polarity: 'counterexample',
+          confidence: 1,
+          incidentKey: 'before-end',
+          source: 'structured-rule',
+        },
+        {
+          createdAt: 2_500,
+          polarity: 'counterexample',
+          confidence: 1,
+          incidentKey: 'after-end',
+          source: 'structured-rule',
+        },
+      ],
     });
     await context.checker.checkObjective('owner-1', 'obj', 2_000);
 
@@ -263,7 +279,9 @@ describe('F257 CycleRecord trigger checker', () => {
     assert.equal(status.evalStatus, 'requested');
     assert.equal(status.cycleEndMs, 2_000);
     assert.deepEqual(status.triggeredBy, ['cumulative']);
+    assert.equal(status.progress.minimumInterval.elapsedMs, 1_000);
     assert.deepEqual(status.progress.cumulative, { coordinate: 'N', count: 3, threshold: 3, met: true });
+    assert.deepEqual(status.progress.recurringEvents, { coordinate: 'M', count: 1, threshold: 2, met: false });
     assert.equal(status.assignmentDelivery, 'pending');
     assert.deepEqual(status.waitPolicy, { mode: 'event_driven', holdBall: false });
 
@@ -277,6 +295,28 @@ describe('F257 CycleRecord trigger checker', () => {
       true,
     );
     assert.equal((await context.checker.readStatus('owner-1', 'obj', 10_000)).assignmentDelivery, 'delivered');
+  });
+
+  test('does not initialize a missing cycle while reading status', async () => {
+    const context = createHarness();
+
+    await assert.rejects(context.checker.readStatus('owner-1', 'obj', 2_000), /cycle_evaluation_not_found:obj/);
+    assert.equal(await context.store.current('owner-1', 'obj'), null);
+  });
+
+  test('projects written and stalled cycles as closed assignment delivery', async () => {
+    for (const evalStatus of ['written', 'stalled']) {
+      const context = createHarness();
+      const idle = await context.store.initialize('owner-1', 'obj', 500, {
+        version: 'v4',
+        versionContentRef: 'hooks:d1-test@v4',
+      });
+      assert.equal(await context.store.transition(idle, { ...idle, cycleEnd: 1_000, evalStatus }), true);
+
+      const status = await context.checker.readStatus('owner-1', 'obj', 2_000);
+      assert.equal(status.evalStatus, evalStatus);
+      assert.equal(status.assignmentDelivery, 'closed');
+    }
   });
 
   test('manual version switch archives tracing and carries old evidence without using it to wake the new cycle', async () => {
