@@ -93,6 +93,8 @@ function PluginListActions({
   onSetEnabled: ((enabled: boolean) => void) | undefined;
   onUninstall: (() => void) | undefined;
 }) {
+  const blockedReason = canSetEnabled ? undefined : toggleBlockedTitle(plugin);
+  const blockedReasonId = blockedReason ? `plugin-toggle-blocked-reason-${plugin.id}` : undefined;
   if (canInstall) {
     return (
       <SettingsPrimaryButton onClick={() => onInstall?.()} disabled={busy}>
@@ -111,18 +113,29 @@ function PluginListActions({
         />
       )}
       {installed && showLifecycleToggle && (
-        <SettingsResourceToggleSwitch
-          enabled={plugin.intent === 'enabled'}
-          busy={busy}
-          disabled={!canSetEnabled}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSetEnabled?.(plugin.intent !== 'enabled');
-          }}
-          ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
-          ariaPressed={plugin.intent === 'enabled'}
-          title={canSetEnabled ? undefined : toggleBlockedTitle(plugin)}
-        />
+        <div className="flex items-center gap-2">
+          {blockedReason && (
+            <span
+              id={blockedReasonId}
+              data-plugin-toggle-blocked-reason="true"
+              className="max-w-24 text-right text-xs leading-tight text-cafe-muted"
+            >
+              {blockedReason}
+            </span>
+          )}
+          <SettingsResourceToggleSwitch
+            enabled={plugin.intent === 'enabled'}
+            busy={busy}
+            disabled={!canSetEnabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSetEnabled?.(plugin.intent !== 'enabled');
+            }}
+            ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
+            ariaPressed={plugin.intent === 'enabled'}
+            ariaDescribedBy={blockedReasonId}
+          />
+        </div>
       )}
     </>
   );

@@ -155,9 +155,11 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     await act(async () => root.render(<PluginManagerContent fixtures={[blocked]} />));
 
     const toggle = container.querySelector('button[aria-label="启用飞书会议纪要同步"]') as HTMLButtonElement | null;
+    const reason = container.querySelector('[data-plugin-toggle-blocked-reason]');
     expect(toggle).not.toBeNull();
     expect(toggle?.disabled).toBe(true);
-    expect(toggle?.title).toBe('请先完成插件配置');
+    expect(reason?.textContent).toBe('请先完成插件配置');
+    expect(toggle?.getAttribute('aria-describedby')).toBe(reason?.id);
   });
 
   it('expresses uninstalled state only through the install action', async () => {
@@ -341,5 +343,34 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
     expect(detail?.textContent).toContain('安装后可查看具体工具与用途。');
     expect(detail?.textContent).not.toContain('Analyze video');
+  });
+
+  it('distinguishes unavailable contribution metadata from a verified empty contribution surface', async () => {
+    const unavailable = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[1],
+      contributions: undefined,
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[unavailable]} />));
+
+    const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
+    expect(detail?.textContent).toContain('能力信息暂不可用。');
+    expect(detail?.textContent).not.toContain('此插件未声明可展示的工具或资源。');
+
+    await act(async () =>
+      root.render(
+        <PluginManagerContent
+          fixtures={[
+            {
+              ...unavailable,
+              contributions: [],
+            },
+          ]}
+        />,
+      ),
+    );
+
+    expect(detail?.textContent).toContain('此插件未声明可展示的工具或资源。');
+    expect(detail?.textContent).not.toContain('能力信息暂不可用。');
   });
 });
