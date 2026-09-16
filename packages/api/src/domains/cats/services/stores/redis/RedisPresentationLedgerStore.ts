@@ -32,8 +32,8 @@ import type {
   ReserveInput,
   ReserveResult,
 } from '../ports/PresentationLedgerStore.js';
-import { ContextEpochKeys } from '../redis-keys/context-epoch-keys.js';
-import { PresentationLedgerKeys } from '../redis-keys/presentation-ledger-keys.js';
+import { ContextEpochKeys } from '../redis-keys/session/context-epoch-keys.js';
+import { PresentationLedgerKeys } from '../redis-keys/session/presentation-ledger-keys.js';
 
 /**
  * Take the entry unless it is delivered, or reserved by a still-live prompt.

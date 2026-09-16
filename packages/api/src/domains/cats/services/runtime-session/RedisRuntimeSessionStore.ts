@@ -10,7 +10,7 @@
 
 import type { CatId } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { RuntimeSessionKeys } from '../stores/redis-keys/runtime-session-keys.js';
+import { RuntimeSessionKeys } from '../stores/redis-keys/session/runtime-session-keys.js';
 import {
   normalizeRuntimeSessionMetadata,
   type RuntimeSessionLifecycleState,

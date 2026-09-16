@@ -14,8 +14,8 @@
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { ContextEpochRecord, IContextEpochStore } from '../ports/ContextEpochStore.js';
-import { ContextEpochKeys } from '../redis-keys/context-epoch-keys.js';
-import { PresentationLedgerKeys } from '../redis-keys/presentation-ledger-keys.js';
+import { ContextEpochKeys } from '../redis-keys/session/context-epoch-keys.js';
+import { PresentationLedgerKeys } from '../redis-keys/session/presentation-ledger-keys.js';
 
 const DEFAULT_TTL = 0; // persistent
 

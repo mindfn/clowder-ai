@@ -36,7 +36,7 @@ import type {
 } from '../ports/SessionChainStore.js';
 import type { StoreReadOptions } from '../ports/StoreReadOptions.js';
 import { awaitStoreRead, throwIfStoreReadAborted } from '../ports/StoreReadOptions.js';
-import { SessionChainKeys } from '../redis-keys/session-chain-keys.js';
+import { SessionChainKeys } from '../redis-keys/session/session-chain-keys.js';
 
 const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
 

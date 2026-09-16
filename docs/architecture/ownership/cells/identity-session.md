@@ -39,7 +39,7 @@ code_anchors:
   - packages/api/src/domains/cats/services/runtime-session/RedisRuntimeSessionStore.ts
   - packages/api/src/domains/cats/services/runtime-session/RuntimeSessionStoreFactory.ts
   - packages/api/src/domains/cats/services/runtime-session/ExternalRuntimeSessionRegistration.ts
-  - packages/api/src/domains/cats/services/stores/redis-keys/runtime-session-keys.ts
+  - packages/api/src/domains/cats/services/stores/redis-keys/session/runtime-session-keys.ts
   - packages/api/src/routes/callback-runtime-session-routes.ts
   - packages/api/src/routes/external-runtime-sessions.ts
   - packages/mcp-server/src/tools/external-runtime-session-tools.ts

@@ -13,7 +13,7 @@ import type { CreateSummaryInput, ThreadSummary } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { generateSortableId } from '../ports/MessageStore.js';
 import type { ISummaryStore } from '../ports/SummaryStore.js';
-import { SummaryKeys } from '../redis-keys/summary-keys.js';
+import { SummaryKeys } from '../redis-keys/session/summary-keys.js';
 
 const DEFAULT_TTL = 0; // persistent — set >0 via env to enable expiry
 

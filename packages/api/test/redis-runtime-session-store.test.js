@@ -54,7 +54,7 @@ describe('RedisRuntimeSessionStore', { skip: redisIsolationSkipReason(REDIS_URL)
 
     const storeModule = await import('../dist/domains/cats/services/runtime-session/RedisRuntimeSessionStore.js');
     RedisRuntimeSessionStore = storeModule.RedisRuntimeSessionStore;
-    const keysModule = await import('../dist/domains/cats/services/stores/redis-keys/runtime-session-keys.js');
+    const keysModule = await import('../dist/domains/cats/services/stores/redis-keys/session/runtime-session-keys.js');
     RuntimeSessionKeys = keysModule.RuntimeSessionKeys;
     const redisModule = await import('@cat-cafe/shared/utils');
     createRedisClient = redisModule.createRedisClient;

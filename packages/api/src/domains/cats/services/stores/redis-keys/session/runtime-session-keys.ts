@@ -11,7 +11,7 @@ import type {
   RuntimeSessionMetadata,
   RuntimeSessionRuntime,
   RuntimeSessionSurface,
-} from '../../runtime-session/RuntimeSessionMetadata.js';
+} from '../../../runtime-session/RuntimeSessionMetadata.js';
 
 export const RuntimeSessionKeys = {
   /** String JSON: RuntimeSessionMetadata sidecar by SessionRecord.id */
