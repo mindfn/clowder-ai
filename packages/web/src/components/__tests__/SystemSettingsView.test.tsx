@@ -88,6 +88,11 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement | u
     | undefined;
 }
 
+function setNativeValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  setter?.call(input, value);
+}
+
 describe('SystemSettingsView', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -334,5 +339,58 @@ describe('SystemSettingsView', () => {
     await flushEffects();
 
     expect(container.textContent).toContain('保存失败（测试）');
+  });
+
+  it('D7: a post-save refetch with unchanged data does not bounce the saved draft back', async () => {
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+
+    await renderView([NUMBER_VAR]);
+    const input = container.querySelector('input[aria-label="消息过期时间"]') as HTMLInputElement;
+    expect(input.value).toBe('');
+
+    await act(async () => {
+      setNativeValue(input, '3600');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(findButton(container, '保存到 .env')?.disabled).toBe(false);
+
+    await act(async () => {
+      findButton(container, '保存到 .env')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(container.textContent).toContain('已写回 .env，重启后生效');
+    expect((container.querySelector('input[aria-label="消息过期时间"]') as HTMLInputElement).value).toBe('3600');
+
+    // Simulated post-save refetch: fresh array identity, same stale pre-restart
+    // currentValue. The old draft-reset effect fired here and reverted the UI.
+    await act(async () => {
+      root.render(
+        React.createElement(SystemSettingsView, { variables: [{ ...NUMBER_VAR }], groupLabels: GROUP_LABELS }),
+      );
+    });
+    await flushEffects();
+
+    const inputAfter = container.querySelector('input[aria-label="消息过期时间"]') as HTMLInputElement;
+    expect(inputAfter.value).toBe('3600');
+    expect(findButton(container, '保存到 .env')?.disabled).toBe(true);
+  });
+
+  it('D1: warns when a var is shadowed by .env.local instead of showing divergence', async () => {
+    await renderView([{ ...NUMBER_VAR, shadowedByLocal: true, savedValue: '3600', currentValue: '604800' }]);
+
+    expect(container.textContent).toContain('此项被 .env.local 覆盖，页面修改不会生效');
+    expect(container.textContent).not.toContain('已保存 3600，当前生效');
+  });
+
+  it('D1: shows saved-vs-effective divergence for restart-required vars', async () => {
+    await renderView([{ ...NUMBER_VAR, savedValue: '3600', currentValue: '604800' }]);
+
+    expect(container.textContent).toContain('已保存 3600，当前生效 604800，需完整重启后生效');
   });
 });

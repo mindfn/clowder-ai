@@ -36,6 +36,10 @@ export interface EnvVar {
   /** Input placeholder shown when no current value is set (human-readable default hint). */
   placeholder?: string;
   currentValue: string | null;
+  /** #770 P0 D1: value actually persisted in .env (may differ from currentValue until restart). */
+  savedValue?: string | null;
+  /** #770 P0 D1: true when .env.local defines this key and overrides any Hub write. */
+  shadowedByLocal?: boolean;
   label?: string;
   settingsGroup?: string;
   restartRequired?: boolean;

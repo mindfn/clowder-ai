@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { DirPickerField } from './DirPickerField';
 import type { EnvVar } from './EnvSubComponents';
@@ -148,12 +148,27 @@ function SettingItem({
   const label = variable.label ?? variable.name;
   const control = resolveControlType(variable);
   const editable = isEditableVariable(variable);
+  const showSavedDivergence =
+    !variable.shadowedByLocal &&
+    variable.restartRequired === true &&
+    variable.savedValue != null &&
+    variable.savedValue !== '' &&
+    variable.currentValue != null &&
+    variable.savedValue !== variable.currentValue;
 
   return (
     <div className="flex items-start justify-between gap-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-cafe">{label}</div>
         {variable.description && <div className="mt-0.5 text-xs text-cafe-muted leading-5">{variable.description}</div>}
+        {variable.shadowedByLocal && (
+          <div className="mt-0.5 text-xs text-cafe-muted">此项被 .env.local 覆盖，页面修改不会生效</div>
+        )}
+        {showSavedDivergence && (
+          <div className="mt-0.5 text-xs text-cafe-muted">
+            已保存 {variable.savedValue}，当前生效 {variable.currentValue}，需完整重启后生效
+          </div>
+        )}
       </div>
       <div className={control === 'toggle' ? 'shrink-0' : 'min-w-0 max-w-[50%] flex-1'}>
         {editable ? (
@@ -220,21 +235,23 @@ function CollapsibleAdvancedSection({
 }
 
 export function SystemSettingsView({ variables, groupLabels, onSaved }: SystemSettingsViewProps) {
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // #770 P0 D7: initialize drafts ONCE at mount. The previous effect reset
+  // drafts on every `variables` identity change, and the post-save refetch
+  // (same old currentValue for restart-required vars) reverted the just-saved
+  // draft in the UI — the page "bounced back". After a successful save the
+  // new values become the local baseline (savedBaseline) so the page stays
+  // clean without needing a refetch.
+  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      variables.filter(isEditableVariable).map((variable) => [variable.name, initialDraftValue(variable)]),
+    ),
+  );
+  const [savedBaseline, setSavedBaseline] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<{ saving: boolean; error: string | null; success: string | null }>({
     saving: false,
     error: null,
     success: null,
   });
-
-  // (Re)initialize drafts whenever the fetched variables change (mount + post-save refetch).
-  useEffect(() => {
-    setDrafts(
-      Object.fromEntries(
-        variables.filter(isEditableVariable).map((variable) => [variable.name, initialDraftValue(variable)]),
-      ),
-    );
-  }, [variables]);
 
   const { runtimeVars, restartVars } = useMemo(() => {
     const runtime: EnvVar[] = [];
@@ -257,7 +274,7 @@ export function SystemSettingsView({ variables, groupLabels, onSaved }: SystemSe
     .map((variable) => ({
       name: variable.name,
       value: drafts[variable.name] ?? '',
-      baselineValue: initialDraftValue(variable),
+      baselineValue: savedBaseline[variable.name] ?? initialDraftValue(variable),
       maskedUrl: isMaskedUrlVariable(variable),
       restartRequired: variable.restartRequired === true,
     }))
@@ -297,6 +314,13 @@ export function SystemSettingsView({ variables, groupLabels, onSaved }: SystemSe
             ? '已写回 .env，重启后生效'
             : '已写回 .env，已生效';
       setSaveState({ saving: false, error: null, success });
+      // The saved values are now the local baseline — no refetch needed, and a
+      // refetch would hand back the stale pre-restart currentValue and bounce
+      // the drafts (D7).
+      setSavedBaseline((prev) => ({
+        ...prev,
+        ...Object.fromEntries(changedUpdates.map((update) => [update.name, update.value])),
+      }));
       onSaved?.();
     } catch {
       setSaveState({ saving: false, error: '保存失败', success: null });

@@ -31,6 +31,7 @@ import {
   hasSensitiveEditableVars,
   isEditableEnvVarName,
   isRestartRequiredEnvVar,
+  maskEnvValue,
   SETTINGS_GROUPS,
 } from '../config/env-registry.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
@@ -154,6 +155,28 @@ export function applyEnvUpdatesToFile(contents: string, updates: Map<string, str
     .replace(/\n{3,}/g, '\n\n')
     .trimEnd();
   return normalized.length > 0 ? `${normalized}\n` : '';
+}
+
+/**
+ * #770 P0 D1: parse KEY=VALUE lines out of an env file (the inverse of
+ * applyEnvUpdatesToFile's write format). Quoted values are unescaped; comments
+ * and blank lines are skipped. Returns the LAST assignment per key, matching
+ * shell `source` semantics where a later line wins.
+ */
+function parseEnvFileValues(contents: string): Map<string, string> {
+  const values = new Map<string, string>();
+  for (const line of contents.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    let value = (match[2] ?? '').trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1).replace(/\\(.)/g, '$1');
+    } else if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1);
+    }
+    values.set(match[1]!, value);
+  }
+  return values;
 }
 
 export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptions = {}): Promise<void> {
@@ -286,7 +309,25 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       if (logLevel && (logLevel.currentValue == null || logLevel.currentValue === '')) {
         logLevel.currentValue = logger.level;
       }
-      return { groups: SETTINGS_GROUPS, variables };
+      // #770 P0 D1/D7: expose what PATCH actually persisted (savedValue) and
+      // whether .env.local shadows the key (start-dev.sh sources .env.local
+      // AFTER .env, so a key present there overrides any Hub write until the
+      // file is edited). Without this the UI could only compare against the
+      // pre-restart process.env value and had to reset drafts after saving.
+      const savedByName = parseEnvFileValues(existsSync(envFilePath) ? readFileSync(envFilePath, 'utf8') : '');
+      const envLocalPath = resolve(dirname(envFilePath), '.env.local');
+      const localKeys = new Set(
+        parseEnvFileValues(existsSync(envLocalPath) ? readFileSync(envLocalPath, 'utf8') : '').keys(),
+      );
+      const annotated = variables.map((entry) => {
+        const rawSaved = savedByName.get(entry.name);
+        return {
+          ...entry,
+          savedValue: rawSaved != null && rawSaved !== '' ? maskEnvValue(entry, rawSaved) : null,
+          shadowedByLocal: localKeys.has(entry.name),
+        };
+      });
+      return { groups: SETTINGS_GROUPS, variables: annotated };
     }
 
     const apiCwd = process.cwd();

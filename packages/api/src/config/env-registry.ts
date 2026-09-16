@@ -2388,6 +2388,15 @@ function maskValue(def: EnvDefinition, raw: string): string {
   return raw;
 }
 
+/**
+ * Route-layer reuse (#770 P0 D1): mask a raw value read back from .env exactly
+ * the way buildEnvSummary masks currentValue, so savedValue never leaks what
+ * currentValue would already hide.
+ */
+export function maskEnvValue(def: EnvDefinition, raw: string): string {
+  return maskValue(def, raw);
+}
+
 function isHubVisibleEnvVar(def: EnvDefinition): boolean {
   return def.hubVisible !== false;
 }

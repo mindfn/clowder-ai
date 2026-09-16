@@ -34,5 +34,8 @@ export function HubSystemSettingsTab() {
   if (error) return <SettingsStatusStrip tone="error">{error}</SettingsStatusStrip>;
   if (!data) return <SettingsStatusStrip tone="info">加载系统设置…</SettingsStatusStrip>;
 
-  return <SystemSettingsView variables={data.variables} groupLabels={data.groups} onSaved={load} />;
+  // #770 P0 D7: no post-save refetch. A refetch returns the same stale
+  // pre-restart currentValue for restart-required vars, and the draft-reset
+  // effect used to revert the just-saved values in the UI (save bounce).
+  return <SystemSettingsView variables={data.variables} groupLabels={data.groups} />;
 }
