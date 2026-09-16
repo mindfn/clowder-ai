@@ -1,20 +1,20 @@
 /**
  * The install's one owner.
  *
- * Two settings name it, and they answer different questions:
- * `DEFAULT_OWNER_USER_ID` is the owner trust anchor privileged gates check, and
- * `CAT_CAFE_USER_ID` is the user whose runtime data this install owns — the id the
- * install also mints its loopback browser session under. One install has one owner,
- * so when the anchor is configured it must name that same user.
+ * Two settings can name it. `DEFAULT_OWNER_USER_ID` is the owner trust anchor that
+ * privileged gates check, and it is the one `.env.example` asks a multi-user
+ * deployment to set. `CAT_CAFE_USER_ID` is the user whose runtime data this install
+ * owns, defaulting to `default-user`. The anchor wins when configured, the same
+ * precedence the agent-key sidecars already use, so configuring only the anchor stays
+ * supported: the session the install mints, its lifecycle spaces, its schedulers and
+ * its memory index all become that user.
  *
- * When the two disagree, a legal-looking deployment locks its owner out
- * deterministically, and the two failures do not even look alike:
- * a loopback session is minted as `CAT_CAFE_USER_ID`, so it fails every privileged
- * gate; and with the anchor left at `default-user` while `CAT_CAFE_USER_ID` is
- * someone else, a remote session is minted as `default-user`, passes the gate, and
- * then finds the install's own F257 lifecycles in another owner's space — authorized,
- * then 404. Refusing to boot is the honest outcome: the alternative is an install
- * whose owner cannot govern it, with no error anywhere.
+ * Only two explicit, different owners contradict each other. Then the operator has
+ * declared one user privileged and another the data owner, and whichever half a
+ * consumer reads, the other is wrong: a session passes the gate and then finds the
+ * install's own F257 lifecycles in another owner's space. That configuration refuses
+ * to boot, because the alternative is an install whose owner cannot govern it with no
+ * error anywhere.
  */
 export function installOwnerUserId(env: NodeJS.ProcessEnv = process.env): string {
   const runtimeUserId = (env.CAT_CAFE_USER_ID ?? 'default-user').trim();
@@ -23,21 +23,21 @@ export function installOwnerUserId(env: NodeJS.ProcessEnv = process.env): string
 }
 
 /**
- * The same identity, asserted coherent. Boot calls this once so an install whose
- * owner cannot govern it never starts; every other owner consumer reads the total
- * derivation above, because a library accessor must not throw on legacy config.
+ * The same identity, asserted coherent. Boot calls this once, so an install with two
+ * declared owners never starts; every other consumer reads the total derivation
+ * above, because a library accessor must not throw on a legacy configuration.
  */
 export function resolveInstallOwnerUserId(env: NodeJS.ProcessEnv = process.env): string {
-  const runtimeUserId = (env.CAT_CAFE_USER_ID ?? 'default-user').trim();
-  if (!runtimeUserId) throw new Error('[api] CAT_CAFE_USER_ID must not be blank');
+  const owner = installOwnerUserId(env);
   const trustAnchor = env.DEFAULT_OWNER_USER_ID?.trim();
-  if (trustAnchor && trustAnchor !== runtimeUserId) {
+  const configuredRuntimeUserId = env.CAT_CAFE_USER_ID?.trim();
+  if (trustAnchor && configuredRuntimeUserId && trustAnchor !== configuredRuntimeUserId) {
     throw new Error(
-      `[api] DEFAULT_OWNER_USER_ID ("${trustAnchor}") and CAT_CAFE_USER_ID ("${runtimeUserId}") name different users, ` +
-        'so this install has no single owner: privileged gates would trust one id while runtime data, browser sessions ' +
-        'and F257 lifecycle spaces belong to the other. Set both to the owner, or leave DEFAULT_OWNER_USER_ID unset for ' +
-        'single-user local mode.',
+      `[api] DEFAULT_OWNER_USER_ID ("${trustAnchor}") and CAT_CAFE_USER_ID ("${configuredRuntimeUserId}") name ` +
+        'different users, so this install has no single owner: privileged gates would trust one id while runtime ' +
+        'data, browser sessions and F257 lifecycle spaces belong to the other. Set both to the owner, or set only ' +
+        'DEFAULT_OWNER_USER_ID and leave CAT_CAFE_USER_ID unset.',
     );
   }
-  return installOwnerUserId(env);
+  return owner;
 }
