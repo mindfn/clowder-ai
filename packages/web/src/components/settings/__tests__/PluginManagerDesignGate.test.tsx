@@ -173,7 +173,10 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     await act(async () => toggle?.click());
 
     expect(onSetEnabled).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(container.querySelector('[data-plugin-detail-section="configuration"]'));
+    const configuration = container.querySelector('[data-plugin-detail-section="configuration"]');
+    expect(document.activeElement).toBe(configuration);
+    expect(configuration?.className).toContain('focus:ring-2');
+    expect(configuration?.className).toContain('focus:ring-conn-sky-ring');
   });
 
   it('expresses uninstalled state only through the install action', async () => {

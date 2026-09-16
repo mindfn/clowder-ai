@@ -221,7 +221,11 @@ export function PluginManagerDetailCard({
           </div>
         )}
 
-        <section className="space-y-3 outline-none" data-plugin-detail-section="configuration" tabIndex={-1}>
+        <section
+          className="space-y-3 rounded-xl outline-none focus:ring-2 focus:ring-conn-sky-ring"
+          data-plugin-detail-section="configuration"
+          tabIndex={-1}
+        >
           <SectionHeading>插件配置</SectionHeading>
           {installed ? (
             <>
