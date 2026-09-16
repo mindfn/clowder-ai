@@ -41,7 +41,7 @@ describe('the install has one owner identity', () => {
       { CAT_CAFE_USER_ID: 'bob', DEFAULT_OWNER_USER_ID: 'default-user' },
       { CAT_CAFE_USER_ID: 'default-user', DEFAULT_OWNER_USER_ID: 'alice' },
     ]) {
-      assert.throws(() => resolveInstallOwnerUserId(env), /name \ndifferent users|name different users/);
+      assert.throws(() => resolveInstallOwnerUserId(env), /explicitly declare different owners/);
     }
     assert.throws(
       () => resolveInstallOwnerUserId({ CAT_CAFE_USER_ID: 'bob', DEFAULT_OWNER_USER_ID: 'alice' }),
@@ -91,7 +91,7 @@ describe('the install has one owner identity', () => {
     assert.equal(parseCliArgs(['--user-id', 'explicit'], { DEFAULT_OWNER_USER_ID: 'alice' }).userId, 'explicit');
     assert.throws(
       () => parseCliArgs([], { CAT_CAFE_USER_ID: 'bob', DEFAULT_OWNER_USER_ID: 'alice' }),
-      /name different users/,
+      /explicitly declare different owners/,
     );
     assert.equal(loaderSource.includes("env.DEFAULT_OWNER_USER_ID?.trim() || 'default-user'"), false);
     assert.match(loaderSource, /return installOwnerUserId\(env\);/);
@@ -127,6 +127,29 @@ describe('the install has one owner identity', () => {
     const example = read('../../../.env.example');
     assert.ok(example.includes('CAT_CAFE_USER_ID'), '.env.example must name both owner variables');
     assert.ok(/refuses to start|拒绝启动/.test(example), '.env.example must state the refusal');
+  });
+
+  // session-auth mints the owner only for a direct loopback bootstrap; a remote or
+  // proxied one gets default-user, or unpaired-user when the owner is the default
+  // identity. Saying "the whole install, browser session included, becomes that user"
+  // misstates the trust boundary, so every surface must keep the narrower claim.
+  it('does not let the owner identity read as a session grant', () => {
+    for (const surface of [
+      '../../../docs/configuration/environment.md',
+      '../../../docs/configuration/environment.zh-CN.md',
+      '../../../.env.example',
+      '../src/config/install-owner.ts',
+    ]) {
+      const text = read(surface);
+      assert.match(text, /loopback/, `${surface} must name the loopback boundary`);
+      assert.ok(
+        /never (the owner identity|becomes the owner|is)|不会\*{0,2}成为所有者|never is/.test(text),
+        `${surface} must state that a remote session never becomes the owner`,
+      );
+    }
+    const owner = read('../src/config/install-owner.ts');
+    assert.equal(owner.includes('browser sessions belong'), false);
+    assert.match(owner, /explicitly declare different owners/);
   });
 
   it('is derived once in the composition, and every owner consumer reads it', () => {

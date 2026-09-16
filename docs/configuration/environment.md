@@ -35,9 +35,14 @@ One install has one owner, resolved in this order:
 2. otherwise `CAT_CAFE_USER_ID`
 3. otherwise `default-user`
 
-Setting only `DEFAULT_OWNER_USER_ID` is supported and is the usual multi-user setup: the whole
-install -- browser session, schedulers, publishers, memory index and F257 lifecycle spaces --
-becomes that user. Setting **both to different users** is a configuration with no single owner:
+Setting only `DEFAULT_OWNER_USER_ID` is supported and is the usual multi-user setup: the
+install's schedulers, publishers, memory index and F257 lifecycle spaces all belong to that
+user. Browser sessions are deliberately narrower: only a bootstrap over **direct loopback** is
+minted as the owner. A remote or proxied bootstrap receives `default-user`, or `unpaired-user`
+when the owner is the default identity, and never the owner identity -- see
+`packages/api/src/infrastructure/session-auth.ts` and its regressions.
+
+Setting **both to different users** is a configuration with no single owner:
 privileged gates would trust one id while the data belongs to the other, so **the server refuses
 to start** with an error naming both values. Set both to the owner, or set only
 `DEFAULT_OWNER_USER_ID`.

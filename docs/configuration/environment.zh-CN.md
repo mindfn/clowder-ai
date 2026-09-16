@@ -35,8 +35,13 @@
 2. 否则用 `CAT_CAFE_USER_ID`
 3. 否则用 `default-user`
 
-只设置 `DEFAULT_OWNER_USER_ID` 是受支持的，也是多用户部署的常见配置：整套安装——浏览器会话、
-调度器、发布、记忆索引、F257 生命周期空间——都变成该用户。**两者都设置且不同**则是"没有单一
+只设置 `DEFAULT_OWNER_USER_ID` 是受支持的，也是多用户部署的常见配置：安装的调度器、发布、
+记忆索引与 F257 生命周期空间都归该用户。浏览器会话的范围是刻意收窄的：只有**本机直连
+（loopback）**的 bootstrap 才铸造成所有者身份；远程或经代理的 bootstrap 得到的是
+`default-user`（所有者为默认身份时是 `unpaired-user`），**不会**成为所有者——见
+`packages/api/src/infrastructure/session-auth.ts` 及其回归测试。
+
+**两者都设置且不同**则是"没有单一
 所有者"的配置：特权门信任其中一个 ID，而数据属于另一个，因此**服务会拒绝启动**并在报错里列出
 两个值。请把两者都设为所有者，或只设置 `DEFAULT_OWNER_USER_ID`。
 
