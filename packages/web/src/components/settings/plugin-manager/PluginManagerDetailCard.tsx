@@ -41,37 +41,13 @@ interface CapabilityDocItem {
   description?: string;
 }
 
-function capabilityDescription(
-  plugin: PluginManagerDesignFixture,
-  kind: string,
-  description: string | undefined,
-): string | undefined {
-  if (description !== undefined) return description;
-  if (kind !== 'mcp') return '插件未提供用途说明。';
-  if (plugin.live !== 'running') return '启用插件后显示工具及用途。';
-  return plugin.tools === undefined ? undefined : '插件未提供用途说明。';
-}
-
-function CapabilityDocRow({
-  plugin,
-  kind,
-  item,
-}: {
-  plugin: PluginManagerDesignFixture;
-  kind: string;
-  item: CapabilityDocItem;
-}) {
-  const description = capabilityDescription(plugin, kind, item.description);
+function CapabilityDocRow({ item }: { item: CapabilityDocItem }) {
   return (
-    <li className="rounded-xl bg-cafe-surface-sunken px-3 py-2.5">
-      <SettingsText as="p" variant="sm" tone="default" className="font-medium">
-        {item.name}
+    <li className="list-disc">
+      <SettingsText as="p" variant="sm" tone="secondary">
+        <span className="font-medium text-cafe">{item.name}</span>
+        {item.description === undefined ? null : <span> — {item.description}</span>}
       </SettingsText>
-      {description !== undefined && (
-        <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">
-          {description}
-        </SettingsText>
-      )}
     </li>
   );
 }
@@ -129,11 +105,7 @@ function CapabilityDocumentation({
         <SettingsText as="p" variant="sm" tone="muted">
           README 暂不可用。
         </SettingsText>
-      ) : plugin.readme.state === 'absent' ? (
-        <SettingsText as="p" variant="sm" tone="muted">
-          此版本未随插件包提供 README。
-        </SettingsText>
-      ) : (
+      ) : plugin.readme.state === 'absent' ? null : (
         <MarkdownContent content={plugin.readme.markdown} disableCommandPrefix />
       )}
       {plugin.docsUrl && (
@@ -158,9 +130,9 @@ function CapabilityDocumentation({
                   工具信息暂不可用。
                 </SettingsText>
               )}
-              <ul className="space-y-1.5">
+              <ul className="space-y-1.5 pl-4">
                 {items.map((item) => (
-                  <CapabilityDocRow key={item.key} plugin={plugin} kind={kind} item={item} />
+                  <CapabilityDocRow key={item.key} item={item} />
                 ))}
               </ul>
             </section>
@@ -249,7 +221,7 @@ export function PluginManagerDetailCard({
           </div>
         )}
 
-        <section className="space-y-3" data-plugin-detail-section="configuration">
+        <section className="space-y-3 outline-none" data-plugin-detail-section="configuration" tabIndex={-1}>
           <SectionHeading>插件配置</SectionHeading>
           {installed ? (
             <>

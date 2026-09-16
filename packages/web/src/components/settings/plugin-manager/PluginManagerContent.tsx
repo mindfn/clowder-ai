@@ -1,47 +1,16 @@
 'use client';
 
-import { pluginDescriptionVariants, resolvePluginDescription } from '@cat-cafe/shared';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { pluginDescriptionVariants } from '@cat-cafe/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
-import {
-  SettingsResourceToggleSwitch,
-  settingsResourceActionGroupClass,
-  settingsResourceCardClass,
-  settingsResourceRowClass,
-} from '../../SettingsResourceCard';
-import { SettingsDeleteButton } from '../primitives/SettingsDeleteButton';
-import { SettingsPrimaryButton } from '../primitives/SettingsPrimaryButton';
+import { settingsResourceCardClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
-import { PluginVisual } from './PluginVisual';
+import { PluginListRow, PluginListSection } from './PluginManagerList';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const DEFAULT_RECOMMENDATION_LIMIT = 3;
-
-function PluginListSection({
-  kind,
-  title,
-  ariaLabel,
-  rows,
-}: {
-  kind: 'installed' | 'attention' | 'recommended' | 'other';
-  title: string;
-  ariaLabel: string;
-  rows: readonly ReactNode[];
-}) {
-  if (rows.length === 0) return null;
-  return (
-    <section data-plugin-section={kind} className="space-y-2">
-      <SettingsText as="h3" variant="xs" tone="muted" className="px-1 font-semibold">
-        {title}
-      </SettingsText>
-      <ul aria-label={ariaLabel} className="space-y-2">
-        {rows}
-      </ul>
-    </section>
-  );
-}
 
 function PluginManagerError({ message }: { message: string | null | undefined }) {
   if (!message) return null;
@@ -52,14 +21,6 @@ function PluginManagerError({ message }: { message: string | null | undefined })
   );
 }
 
-function toggleBlockedTitle(plugin: PluginManagerDesignFixture): string | undefined {
-  const reasons = plugin.actions?.blockingReasons ?? [];
-  if (reasons.includes('config-incomplete') || reasons.includes('config-invalid')) return '请先完成插件配置';
-  if (reasons.some((reason) => reason.startsWith('auth-'))) return '请先完成插件授权';
-  if (reasons.includes('activation-transition')) return '插件正在切换运行状态';
-  return reasons.length > 0 ? '当前状态暂不可切换' : undefined;
-}
-
 function matchesSearch(plugin: PluginManagerDesignFixture, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
   if (normalized.length === 0) return true;
@@ -68,146 +29,6 @@ function matchesSearch(plugin: PluginManagerDesignFixture, query: string): boole
     .join(' ')}`
     .toLocaleLowerCase()
     .includes(normalized);
-}
-
-function PluginListActions({
-  plugin,
-  installed,
-  canInstall,
-  canSetEnabled,
-  showLifecycleToggle,
-  canUninstall,
-  busy,
-  onInstall,
-  onSetEnabled,
-  onUninstall,
-}: {
-  plugin: PluginManagerDesignFixture;
-  installed: boolean;
-  canInstall: boolean;
-  canSetEnabled: boolean;
-  showLifecycleToggle: boolean;
-  canUninstall: boolean;
-  busy: boolean;
-  onInstall: (() => void) | undefined;
-  onSetEnabled: ((enabled: boolean) => void) | undefined;
-  onUninstall: (() => void) | undefined;
-}) {
-  const blockedReason = canSetEnabled ? undefined : toggleBlockedTitle(plugin);
-  const blockedReasonId = blockedReason ? `plugin-toggle-blocked-reason-${plugin.id}` : undefined;
-  if (canInstall) {
-    return (
-      <SettingsPrimaryButton onClick={() => onInstall?.()} disabled={busy}>
-        安装
-      </SettingsPrimaryButton>
-    );
-  }
-  if (!installed && !canUninstall) return null;
-  return (
-    <>
-      {canUninstall && (
-        <SettingsDeleteButton
-          onClick={() => onUninstall?.()}
-          disabled={busy}
-          aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${plugin.displayName}`}
-        />
-      )}
-      {installed && showLifecycleToggle && (
-        <div className="flex items-center gap-2">
-          {blockedReason && (
-            <span
-              id={blockedReasonId}
-              data-plugin-toggle-blocked-reason="true"
-              className="max-w-24 text-right text-xs leading-tight text-cafe-muted"
-            >
-              {blockedReason}
-            </span>
-          )}
-          <SettingsResourceToggleSwitch
-            enabled={plugin.intent === 'enabled'}
-            busy={busy}
-            disabled={!canSetEnabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSetEnabled?.(plugin.intent !== 'enabled');
-            }}
-            ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
-            ariaPressed={plugin.intent === 'enabled'}
-            ariaDescribedBy={blockedReasonId}
-            title={blockedReason}
-          />
-        </div>
-      )}
-    </>
-  );
-}
-
-function PluginListRow({
-  plugin,
-  selected,
-  onSelect,
-  onInstall,
-  onSetEnabled,
-  onUninstall,
-  busy,
-  locale,
-}: {
-  plugin: PluginManagerDesignFixture;
-  selected: boolean;
-  onSelect: () => void;
-  onInstall?: () => void;
-  onSetEnabled?: (enabled: boolean) => void;
-  onUninstall?: () => void;
-  busy: boolean;
-  locale: string;
-}) {
-  const installed = plugin.artifact === 'installed';
-  const canInstall = plugin.actions?.install ?? !installed;
-  const canSetEnabled = plugin.actions?.setEnabled ?? installed;
-  const canUninstall = plugin.actions?.uninstall ?? installed;
-  const showLifecycleToggle = installed && plugin.sourceAdapter === undefined;
-  const description = resolvePluginDescription(plugin.description, locale);
-  return (
-    <li
-      data-plugin-id={plugin.id}
-      data-plugin-list-row="true"
-      aria-current={selected ? 'true' : undefined}
-      className={`${settingsResourceCardClass} h-[88px] overflow-hidden transition-colors ${
-        selected ? '' : 'hover:bg-[var(--console-hover-bg)]'
-      }`}
-      style={selected ? { backgroundColor: 'var(--console-active-bg)' } : undefined}
-    >
-      <div className={`${settingsResourceRowClass} h-full w-full`}>
-        <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={onSelect}>
-          <PluginVisual icon={plugin.icon} iconBg={plugin.iconBg} name={plugin.displayName} />
-          <span className="min-w-0 flex-1">
-            <SettingsText as="span" variant="sm" tone="default" className="block truncate font-semibold">
-              {plugin.displayName}
-            </SettingsText>
-            <span data-plugin-description="true" className="mt-0.5 line-clamp-2 block overflow-hidden">
-              <SettingsText as="span" variant="xs" tone="secondary">
-                {description}
-              </SettingsText>
-            </span>
-          </span>
-        </button>
-        <div className={settingsResourceActionGroupClass}>
-          <PluginListActions
-            plugin={plugin}
-            installed={installed}
-            canInstall={canInstall}
-            canSetEnabled={canSetEnabled}
-            showLifecycleToggle={showLifecycleToggle}
-            canUninstall={canUninstall}
-            busy={busy}
-            onInstall={onInstall}
-            onSetEnabled={onSetEnabled}
-            onUninstall={onUninstall}
-          />
-        </div>
-      </div>
-    </li>
-  );
 }
 
 function usePluginSelection(
@@ -270,6 +91,8 @@ export function PluginManagerContent({
 }) {
   const [query, setQuery] = useState('');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [focusConfigurationPluginId, setFocusConfigurationPluginId] = useState<string | null>(null);
+  const detailPanelRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
   const installedPlugins = filtered.filter((plugin) => plugin.artifact === 'installed');
@@ -281,6 +104,12 @@ export function PluginManagerContent({
   const visible = [...installedPlugins, ...attentionPlugins, ...recommendedPlugins, ...otherPlugins];
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
+
+  useEffect(() => {
+    if (focusConfigurationPluginId === null || selected?.id !== focusConfigurationPluginId) return;
+    detailPanelRef.current?.querySelector<HTMLElement>('[data-plugin-detail-section="configuration"]')?.focus();
+    setFocusConfigurationPluginId(null);
+  }, [focusConfigurationPluginId, selected?.id]);
 
   const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>
     plugins.map((plugin) => (
@@ -295,6 +124,11 @@ export function PluginManagerContent({
         }}
         onInstall={() => onInstall?.(plugin.id)}
         onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}
+        onBlockedToggle={() => {
+          selection.select(plugin.id);
+          setMobileDetailOpen(true);
+          setFocusConfigurationPluginId(plugin.id);
+        }}
         onUninstall={() => onUninstall?.(plugin.id)}
         busy={busyPluginId === plugin.id}
       />
@@ -386,6 +220,7 @@ export function PluginManagerContent({
         </div>
 
         <div
+          ref={detailPanelRef}
           data-mobile-panel="detail"
           className={`${mobileDetailOpen ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col gap-2 lg:flex`}
         >

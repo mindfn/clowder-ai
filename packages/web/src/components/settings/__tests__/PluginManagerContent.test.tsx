@@ -638,7 +638,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
 
     resolveDocumentation?.(json({}));
     await flushEffects();
-    expect(container.textContent).toContain('此版本未随插件包提供 README。');
+    expect(container.textContent).not.toContain('此版本未随插件包提供 README。');
   });
 
   it('reports package documentation as unavailable when plugin detail loading fails', async () => {
@@ -670,7 +670,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => root.render(<PluginsContent />));
     await flushEffects();
 
-    expect(container.textContent).toContain('此版本未随插件包提供 README。');
+    expect(container.textContent).not.toContain('此版本未随插件包提供 README。');
     expect(container.textContent).not.toContain('README 暂不可用。');
   });
 

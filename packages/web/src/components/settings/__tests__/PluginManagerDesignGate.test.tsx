@@ -1,6 +1,6 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginManagerContent } from '../plugin-manager/PluginManagerContent';
 import { PLUGIN_MANAGER_DESIGN_FIXTURES } from '../plugin-manager/plugin-manager-fixtures';
 
@@ -139,11 +139,22 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(row?.querySelector('button[aria-label^="卸载"]')).toBeNull();
   });
 
-  it('keeps the lifecycle toggle visible but disabled when configuration blocks enable', async () => {
+  it('keeps a blocked lifecycle toggle actionable and routes it to configuration', async () => {
+    const onSetEnabled = vi.fn();
     const blocked = {
       ...PLUGIN_MANAGER_DESIGN_FIXTURES[1],
       config: 'incomplete' as const,
       intent: 'disabled' as const,
+      configFields: [
+        {
+          kind: 'secret' as const,
+          key: 'PLUGIN_TOKEN',
+          label: 'Plugin token',
+          required: true,
+          currentValue: null,
+          sensitive: true,
+        },
+      ],
       actions: {
         install: false,
         setEnabled: false,
@@ -152,15 +163,17 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
       },
     };
 
-    await act(async () => root.render(<PluginManagerContent fixtures={[blocked]} />));
+    await act(async () => root.render(<PluginManagerContent fixtures={[blocked]} onSetEnabled={onSetEnabled} />));
 
     const toggle = container.querySelector('button[aria-label="启用飞书会议纪要同步"]') as HTMLButtonElement | null;
-    const reason = container.querySelector('[data-plugin-toggle-blocked-reason]');
     expect(toggle).not.toBeNull();
-    expect(toggle?.disabled).toBe(true);
-    expect(reason?.textContent).toBe('请先完成插件配置');
-    expect(toggle?.getAttribute('aria-describedby')).toBe(reason?.id);
-    expect(toggle?.title).toBe('请先完成插件配置');
+    expect(toggle?.disabled).toBe(false);
+    expect(container.querySelector('[data-plugin-toggle-blocked-reason]')).toBeNull();
+
+    await act(async () => toggle?.click());
+
+    expect(onSetEnabled).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(container.querySelector('[data-plugin-detail-section="configuration"]'));
   });
 
   it('expresses uninstalled state only through the install action', async () => {
@@ -213,12 +226,13 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(toolbar?.className).toContain('justify-end');
   });
 
-  it('uses manifest visuals, fixed-height list cards, and localized detail descriptions', async () => {
+  it('uses manifest visuals, unclipped list cards, and localized detail descriptions', async () => {
     await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
 
     const githubRow = container.querySelector('[data-plugin-id="github"]');
     expect(githubRow?.getAttribute('data-plugin-list-row')).toBe('true');
-    expect(githubRow?.className).toContain('h-[88px]');
+    expect(githubRow?.className).toContain('min-h-[88px]');
+    expect(githubRow?.className).not.toContain('overflow-hidden');
     expect(githubRow?.querySelector('[data-plugin-description]')?.className).toContain('line-clamp-2');
     expect(githubRow?.querySelector('[data-plugin-icon="github"]')).not.toBeNull();
 
@@ -323,10 +337,12 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     await act(async () => root.render(<PluginManagerContent fixtures={[video]} />));
 
     const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
+    const capabilityRow = detail?.querySelector('[data-contribution-kind="mcp"] li');
     expect(detail?.textContent).toContain('MCP');
-    expect(detail?.textContent).toContain('video_analysis');
-    expect(detail?.textContent).toContain('分析远程视频并返回结构化结果。');
+    expect(capabilityRow?.textContent).toBe('video_analysis — 分析远程视频并返回结构化结果。');
+    expect(capabilityRow?.querySelectorAll('p')).toHaveLength(1);
     expect(detail?.textContent?.match(/Analyze video/g) ?? []).toHaveLength(0);
+    expect(detail?.textContent).not.toContain('插件未提供用途说明。');
   });
 
   it('does not relabel permission grants as exposed tools before package admission', async () => {
