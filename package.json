@@ -125,6 +125,7 @@
     "logs:health": "bash ./scripts/logs-health.sh",
     "clean": "pnpm -r run clean && rm -rf node_modules",
     "check:start-profile-isolation": "node --test scripts/start-dev-profile-isolation.test.mjs",
+    "check:start-redis-data-dir-guard": "node --test scripts/start-dev-redis-data-dir-guard.test.mjs",
     "check:node-runtime-guard": "node --test scripts/node-runtime-guard.test.mjs",
     "check:brand-dictionary": "node --test scripts/brand-dictionary-helper.test.mjs",
     "check:brand-guard": "node --test scripts/intake-from-opensource.test.mjs scripts/lib/intake-gh-retry.test.mjs",

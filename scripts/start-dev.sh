@@ -656,6 +656,61 @@ redis_ping() {
     fi
 }
 
+# 归一化数据目录路径，用于跨实例对比（容忍尾斜杠与符号链接差异）。
+normalize_data_dir() {
+    local dir="${1%/}"
+    local resolved
+    if resolved=$(realpath "$dir" 2>/dev/null); then
+        printf '%s' "$resolved"
+    else
+        printf '%s' "$dir"
+    fi
+}
+
+# 查找数据目录已被另一个存活 redis-server 占用的情况，输出 "端口 PID"。
+# 返回 0 = 发现冲突，1 = 无冲突。
+# 判据落在数据目录事实上，而不是端口：注入的 REDIS_DATA_DIR 环境变量会
+# 架空 worktree .env.local 的隔离，两个实例并发写同一份 AOF/RDB 会交错
+# 损坏数据。探测不到 dir 的实例（如需鉴权）不构成已确认冲突，不拦截。
+find_redis_using_data_dir() {
+    local target_dir="$1"
+    local normalized_target
+    normalized_target=$(normalize_data_dir "$target_dir")
+
+    local line pid args token prev port dir normalized_dir
+    while IFS= read -r line; do
+        read -r pid args <<< "$line"
+        port=""
+        prev=""
+        for token in $args; do
+            if [ "$prev" = "--port" ]; then
+                port="$token"
+                break
+            fi
+            case "$token" in
+                *:*[0-9]) port="${token##*:}"; break ;;
+            esac
+            prev="$token"
+        done
+        [[ "$port" =~ ^[0-9]+$ ]] || continue
+
+        if command -v timeout >/dev/null 2>&1; then
+            dir=$(timeout 2 redis-cli -h 127.0.0.1 -p "$port" config get dir 2>/dev/null | sed -n '2p' | tr -d '\r')
+        else
+            dir=$(redis-cli -h 127.0.0.1 -p "$port" config get dir 2>/dev/null | sed -n '2p' | tr -d '\r')
+        fi
+        [ -n "$dir" ] || continue
+
+        normalized_dir=$(normalize_data_dir "$dir")
+        if [ "$normalized_dir" = "$normalized_target" ]; then
+            printf '%s %s\n' "$port" "$pid"
+            return 0
+        fi
+    done < <(ps -eo pid=,args= | grep '[r]edis-server' || true)
+
+    return 1
+}
+
 register_redis_dev_lease() {
     [ "$USE_REDIS" = true ] || return 0
     case "$DAEMON_DEPLOYMENT_ID" in
@@ -1357,6 +1412,11 @@ setup_storage() {
 
     # 默认: 尝试 Redis 持久化 (专属端口，避免与系统 Redis 冲突)
     if redis_ping; then
+        local running_redis_dir
+        running_redis_dir=$(redis-cli -p "$REDIS_PORT" config get dir 2>/dev/null | sed -n '2p' | tr -d '\r')
+        if [ -n "$running_redis_dir" ] && [ "$(normalize_data_dir "$running_redis_dir")" != "$(normalize_data_dir "$REDIS_DATA_DIR")" ]; then
+            echo -e "${YELLOW}  ⚠ 端口 $REDIS_PORT 的 Redis 数据目录为 $running_redis_dir，与本配置 ($REDIS_DATA_DIR) 不同；将直接采用既有实例${NC}"
+        fi
         echo -e "${GREEN}  ✓ Redis 已运行 (端口 $REDIS_PORT)${NC}"
         export REDIS_URL="redis://localhost:$REDIS_PORT"
         print_redis_runtime_info
@@ -1365,6 +1425,16 @@ setup_storage() {
 
     echo -e "${YELLOW}  ⚠ Redis 未运行，尝试在端口 $REDIS_PORT 启动...${NC}"
     if command -v redis-server &> /dev/null; then
+        if [ "${CAT_CAFE_ALLOW_SHARED_REDIS_DATA_DIR:-0}" != "1" ]; then
+            local redis_dir_conflict=""
+            # set -e: 命令替换非零退出会立即 shell exit，必须用 if 包裹（line 292 约定）
+            if redis_dir_conflict="$(find_redis_using_data_dir "$REDIS_DATA_DIR")"; then
+                echo -e "${RED}  ✗ Redis 数据目录已被另一个存活实例占用: $REDIS_DATA_DIR${NC}" >&2
+                echo -e "${RED}    冲突方: 端口 $(awk '{print $1}' <<< "$redis_dir_conflict") (pid $(awk '{print $2}' <<< "$redis_dir_conflict"))${NC}" >&2
+                echo "    两个实例并发写同一份 AOF/RDB 会交错损坏数据；如确需共享，请设置 CAT_CAFE_ALLOW_SHARED_REDIS_DATA_DIR=1" >&2
+                exit 1
+            fi
+        fi
         maybe_quarantine_stale_aof_dir
         cat_cafe_redis_start_daemon \
             --port "$REDIS_PORT" \
