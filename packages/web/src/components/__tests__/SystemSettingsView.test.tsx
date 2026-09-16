@@ -393,4 +393,41 @@ describe('SystemSettingsView', () => {
 
     expect(container.textContent).toContain('已保存 3600，当前生效 604800，需完整重启后生效');
   });
+
+  const LOG_LEVEL_VAR: EnvVar = {
+    name: 'LOG_LEVEL',
+    defaultValue: '(未设置)',
+    description: 'API 日志级别',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: true,
+    label: '日志级别',
+    settingsGroup: 'runtime',
+    restartRequired: false,
+    control: 'dropdown',
+    allowedValues: ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'],
+    currentValue: null,
+  };
+
+  it('P2: unset dropdown renders an honest （未设置） option instead of falling back to the first option (fatal)', async () => {
+    await renderView([{ ...LOG_LEVEL_VAR }]);
+
+    const select = container.querySelector('select[aria-label="日志级别"]');
+    expect(select).not.toBeNull();
+    // The browser falls back to the first <option> when value matches nothing;
+    // without the placeholder that first option is 'fatal' — a lie, since the
+    // effective level when unset is the pino default ('info').
+    expect((select as HTMLSelectElement).value).toBe('');
+    const selected = (select as HTMLSelectElement).selectedOptions[0];
+    expect(selected?.textContent).toBe('（未设置）');
+    expect(selected?.textContent).not.toBe('fatal');
+  });
+
+  it('P2: set dropdown keeps showing the actual value, no placeholder', async () => {
+    await renderView([{ ...LOG_LEVEL_VAR, currentValue: 'debug' }]);
+
+    const select = container.querySelector('select[aria-label="日志级别"]') as HTMLSelectElement;
+    expect(select.value).toBe('debug');
+    expect(select.textContent).not.toContain('（未设置）');
+  });
 });

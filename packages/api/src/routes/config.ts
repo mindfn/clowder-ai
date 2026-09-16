@@ -28,6 +28,7 @@ import {
   buildSystemEnvSummary,
   ENV_CATEGORIES,
   filterSensitiveEditableKeys,
+  getEnvDefinition,
   hasSensitiveEditableVars,
   isEditableEnvVarName,
   isRestartRequiredEnvVar,
@@ -411,6 +412,22 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
         return { error: `Env var '${update.name}' is not editable from Hub` };
       }
       updates.set(update.name, update.value);
+    }
+
+    // #770 P0 P1 fix: reject values outside a var's declared allowedValues
+    // BEFORE anything is written. An unknown value (e.g. a bogus LOG_LEVEL)
+    // would otherwise be persisted to .env and crash the API at next full
+    // restart when logger.ts feeds the raw string to pino as a level. Generic
+    // check — every allowedValues-declared var is protected, not just LOG_LEVEL.
+    for (const [name, value] of updates) {
+      if (value == null || value === '') continue;
+      const def = getEnvDefinition(name);
+      if (def?.allowedValues && !def.allowedValues.includes(value)) {
+        reply.status(400);
+        return {
+          error: `Invalid value for '${name}'. Allowed values: ${def.allowedValues.join(', ')}`,
+        };
+      }
     }
 
     // Sensitive env writes require session-auth (not forgeable header identity)

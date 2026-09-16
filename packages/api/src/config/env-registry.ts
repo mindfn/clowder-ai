@@ -2457,6 +2457,17 @@ export function isEditableEnvVarName(name: string): boolean {
 }
 
 /**
+ * Look up a single env var definition by name (#770 P0 P1 fix): the PATCH
+ * handler needs the declared allowedValues to reject out-of-list values before
+ * they reach process.env / .env — an unknown value (e.g. a bogus LOG_LEVEL)
+ * would otherwise crash the API at next full restart when the raw string is
+ * fed to pino as a level.
+ */
+export function getEnvDefinition(name: string): EnvDefinition | undefined {
+  return ENV_VARS.find((d) => d.name === name);
+}
+
+/**
  * True if the env var requires a process restart to take effect.
  * Used by the PATCH handler to skip hot-updating process.env for these vars —
  * their new value is written to .env and picked up on next start.

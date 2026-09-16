@@ -101,6 +101,12 @@ function EditableSettingControl({
               {option}
             </option>
           ))}
+          {/* #770 P0 P2 fix: an empty draft (var unset) would otherwise make the
+              browser fall back to showing the FIRST option (LOG_LEVEL → 'fatal')
+              while the effective level is something else — the page lied about the
+              value. Render an honest placeholder instead; it is selectable so the
+              user can explicitly clear the var, and the API treats '' as delete. */}
+          {draft === '' && !options.includes('') && <option value="">（未设置）</option>}
           {draft && !options.includes(draft) && <option value={draft}>{draft}（当前值）</option>}
         </select>
       );
