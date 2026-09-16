@@ -14,9 +14,13 @@ const CLI_USAGE = `Usage:
 
 Default mode is a zero-write JSON dry-run.
 
+Without --user-id the profile owner is the install owner: DEFAULT_OWNER_USER_ID when set,
+otherwise CAT_CAFE_USER_ID, otherwise default-user. Setting both to different users is a
+configuration with no single owner, and this command exits 1 rather than writing a partition.
+
 Options:
   --data-dir <dir>                 Canonical data root (default: CAT_CAFE_DATA_DIR or ~/.cat-cafe)
-  --user-id <id>                   Profile owner (default: CAT_CAFE_USER_ID or default-user)
+  --user-id <id>                   Profile owner (default: the install owner, described above)
   --relationship-key <cat=persona> Explicit mapping for legacy catIds absent from the current catalog
   --resolution-file <json>         Hash-guarded merged content for every divergent target
   --apply                          Backup, write canonical files, then write legacy markers

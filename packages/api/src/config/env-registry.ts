@@ -260,6 +260,8 @@ export const ENV_VARS: EnvDefinition[] = [
     defaultValue: '(未设置 = 单用户本地模式)',
     description:
       '所有者信任锚点：未设置时为单用户本地模式（依赖 loopback 保护）；设置后特权操作按此 ID 做 owner 校验。' +
+      '同时也是安装所有者的首选来源，优先于 CAT_CAFE_USER_ID：一个安装只有一个所有者，' +
+      '两者都显式设置且不同时服务启动失败。' +
       '仅可通过编辑 .env 并重启修改——Hub 内可写会造成权限自举（会话可将自己设为 owner），故永久只读',
     category: 'server',
     sensitive: false,
@@ -271,7 +273,9 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'CAT_CAFE_USER_ID',
     defaultValue: 'default-user',
-    description: '当前用户 ID',
+    description:
+      '当前用户 ID，也是安装所有者的回落来源：DEFAULT_OWNER_USER_ID 未设置时由它决定所有者（会话、调度、' +
+      '发布与 F257 生命周期分区都归这个用户）；两者都显式设置且不同时服务启动失败',
     category: 'server',
     sensitive: false,
   },

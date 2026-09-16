@@ -101,6 +101,34 @@ describe('the install has one owner identity', () => {
     assert.equal(read(MIGRATION_CLI).includes("process.env.CAT_CAFE_USER_ID ?? 'default-user'"), false);
   });
 
+  // The precedence and the refusal are user-visible configuration, so they must not
+  // live only in source comments and a startup error.
+  it('states the same owner contract everywhere a user can read it', () => {
+    const cli = read(MIGRATION_CLI);
+    assert.match(cli, /DEFAULT_OWNER_USER_ID when set/);
+    assert.match(cli, /otherwise CAT_CAFE_USER_ID, otherwise default-user/);
+    assert.match(cli, /exits 1/);
+    assert.equal(cli.includes('default: CAT_CAFE_USER_ID or default-user'), false);
+
+    const registry = read('../src/config/env-registry.ts');
+    assert.match(registry, /优先于 CAT_CAFE_USER_ID/);
+    assert.match(registry, /DEFAULT_OWNER_USER_ID 未设置时由它决定所有者/);
+
+    for (const doc of [
+      '../../../docs/configuration/environment.md',
+      '../../../docs/configuration/environment.zh-CN.md',
+    ]) {
+      const text = read(doc);
+      assert.ok(text.includes('DEFAULT_OWNER_USER_ID'), `${doc} must name the trust anchor`);
+      assert.ok(text.includes('CAT_CAFE_USER_ID'), `${doc} must name the runtime owner variable`);
+      assert.ok(/refuses\s+to start|拒绝启动/.test(text), `${doc} must state the refusal`);
+    }
+
+    const example = read('../../../.env.example');
+    assert.ok(example.includes('CAT_CAFE_USER_ID'), '.env.example must name both owner variables');
+    assert.ok(/refuses to start|拒绝启动/.test(example), '.env.example must state the refusal');
+  });
+
   it('is derived once in the composition, and every owner consumer reads it', () => {
     assert.equal(indexSource.match(/resolveInstallOwnerUserId\(/g).length, 1);
     assert.match(indexSource, /const privateUserId = resolveInstallOwnerUserId\(\);/);
