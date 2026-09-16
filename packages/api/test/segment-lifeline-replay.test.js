@@ -360,6 +360,54 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
+  // S14 mounts the owner's private profile, so its snapshot content must be readable by
+  // that owner and by nobody else. Asserted both ways: a one-sided 403 check would also
+  // pass if the segment were never persisted at all.
+  test('keeps an S14 owner-profile snapshot readable only by its owner', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const capsule = '## 主人画像\n\nlang：co-creator。';
+
+    for (const [label, ownerUserId, expected] of [
+      ['the owner', SESSION_HEADERS['x-test-session-user'], 200],
+      ['another owner', 'other-user', 403],
+    ]) {
+      const redis = new FakeRedis();
+      const traceStore = new InjectionTraceStore(redis);
+      const snapshot = makeSnapshot({
+        threadId: 't',
+        turnId: '1',
+        segmentId: 'S14',
+        overrides: { ownerUserId, content: capsule },
+      });
+      await seedTurn(traceStore, {
+        threadId: snapshot.threadId,
+        turnId: snapshot.turnId,
+        catId: snapshot.catId,
+        timestamp: snapshot.timestamp,
+      });
+      await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+      const app = await buildReplayApp({
+        traceStore,
+        messageStore: new MessageStore(),
+        threadStore: makeThreadStore('system'),
+      });
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/segment-lifeline/S14/replay?threadId=t&turnId=1',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(res.statusCode, expected, `${label} should get ${expected}`);
+      if (expected === 200) {
+        assert.ok(res.body.includes('主人画像'), 'the owner can read their own profile segment');
+      } else {
+        assert.equal(res.body.includes('主人画像'), false, 'another owner must not receive the profile bytes');
+      }
+      await app.close();
+    }
+  });
+
   test('allows the snapshot owner to replay a system-created evaluation thread', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();

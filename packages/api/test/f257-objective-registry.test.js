@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const { loadObjectiveRegistry, parseObjectiveRegistry } = await import(
   '../dist/infrastructure/harness-eval/objective-registry.js'
 );
-const { loadUnitEvaluationManifest, parseUnitEvaluationManifest } = await import(
+const { CANONICAL_UNIT_IDS, loadUnitEvaluationManifest, parseUnitEvaluationManifest } = await import(
   '../dist/infrastructure/harness-eval/unit-evaluation-manifest.js'
 );
 const { validateSignalCoordinates } = await import(
@@ -135,15 +135,25 @@ describe('F257 Objective registry v2', () => {
 });
 
 describe('F257 UnitEvaluationManifest', () => {
-  test('shipped manifest covers the 46 baseline segments and S13 belongs only to tool-access-correct-use', async () => {
+  test('shipped manifest covers exactly the baseline id set, and S13 belongs only to tool-access-correct-use', async () => {
     const registry = await loadObjectiveRegistry(registryPath);
     assert.equal(registry.ok, true, registry.ok ? '' : registry.error);
     const manifest = await loadUnitEvaluationManifest(manifestPath, registry.registry);
     assert.equal(manifest.ok, true, manifest.ok ? '' : manifest.error);
-    // 46 is the shipped baseline, not a ceiling: an approved governance card may
-    // author new units at runtime (D22 is the first), so assert baseline coverage
-    // and uniqueness rather than an exact count that governance is meant to grow.
-    assert.ok(manifest.manifest.units.length >= 46, `expected >= 46 units, got ${manifest.manifest.units.length}`);
+    // Compare the explicit id SETS, not counts: `>= N` would pass while a baseline unit
+    // silently disappeared and a governance-authored one took its place. Totals below are
+    // diagnostics only. Governance may still append `origin: local` units (D22 is first).
+    const baselineIds = manifest.manifest.units
+      .filter((unit) => (unit.origin ?? 'baseline') === 'baseline')
+      .map((unit) => unit.unitId)
+      .sort();
+    assert.deepEqual(
+      baselineIds,
+      [...CANONICAL_UNIT_IDS].sort(),
+      `baseline id set drifted (baseline=${baselineIds.length}, canonical=${CANONICAL_UNIT_IDS.length})`,
+    );
+    const localIds = manifest.manifest.units.filter((unit) => unit.origin === 'local').map((unit) => unit.unitId);
+    assert.deepEqual(localIds, ['D22'], 'D22 stays the governance-authored local unit');
     assert.equal(
       new Set(manifest.manifest.units.map((unit) => unit.unitId)).size,
       manifest.manifest.units.length,
@@ -205,29 +215,14 @@ describe('F257 UnitEvaluationManifest', () => {
       registry.registry,
     );
     assert.equal(missing.ok, false);
-    assert.match(missing.error, /canonical 46 units/);
+    assert.match(missing.error, new RegExp(`canonical ${CANONICAL_UNIT_IDS.length} units`));
   });
 
   test('rejects clause-level and multi-Objective segment membership', () => {
     const registry = parseObjectiveRegistry(minimalV2);
     assert.equal(registry.ok, true);
-    const prefix = Array.from({ length: 46 }, (_, index) => ({
-      unitId:
-        index === 0
-          ? 'B1'
-          : index === 1
-            ? 'C1'
-            : index < 23
-              ? `D${index - 1}`
-              : index < 30
-                ? `L${index - 22}`
-                : index === 30
-                  ? 'N1'
-                  : index === 31
-                    ? 'R1'
-                    : index === 32
-                      ? 'R2'
-                      : `S${index - 32}`,
+    const prefix = CANONICAL_UNIT_IDS.map((unitId, index) => ({
+      unitId,
       hookId: `hook-${index}`,
       unitState: 'evaluable',
       objectives: [{ objectiveId: 'x-goal' }],

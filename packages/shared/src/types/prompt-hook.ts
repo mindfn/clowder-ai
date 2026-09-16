@@ -309,6 +309,13 @@ export interface AssemblerInput {
   coCreatorName: string;
   coCreatorHandles: string;
   governanceDigest: string;
+  /**
+   * S14: the owner's F231 profile, already resolved and rendered by the route
+   * (capsule section plus any available pointer lines). The pipeline never reads
+   * profile files itself, so the bytes a session delivers are the exact bytes the
+   * route bound as evidence. Absent when the owner has no profile layer.
+   */
+  ownerProfileSection?: string | null;
   mcpToolsSection: string;
 
   // --- Pack blocks ---

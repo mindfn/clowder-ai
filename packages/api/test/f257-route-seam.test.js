@@ -1,6 +1,8 @@
 /** F257 S5: serial and parallel routes share one session HookPipeline result. */
 
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
 class FakeRedis {
@@ -66,7 +68,7 @@ class FakeRedis {
 function mockService(catId, { native, captures }) {
   return {
     async *invoke(_messages, options) {
-      captures.push(options);
+      captures.push(Object.assign({ __messages: _messages }, options));
       yield { type: 'text', catId, content: 'reply', timestamp: Date.now() };
       yield { type: 'done', catId, timestamp: Date.now() };
     },
@@ -155,6 +157,7 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
         restrictions: [],
         clientId: 'anthropic',
         breedId: 'ragdoll',
+        relationshipKey: 'ragdoll',
       });
     }
     routeParallel = (await import('../dist/domains/cats/services/agents/routing/route-parallel.js')).routeParallel;
@@ -190,9 +193,62 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
     ['parallel', () => routeParallel],
     ['serial', () => routeSerial],
   ]) {
+    // S14: the owner profile must reach BOTH carriers. Asserted here rather than by
+    // calling buildStaticIdentity twice, because only this seam proves the route
+    // actually resolved and passed profile truth.
+    test(`${mode}: both carriers receive the owner profile the route resolved`, async () => {
+      // Fixture paths come from the repository contract, not from hand-built paths, so a
+      // layout change cannot make this test silently stop covering delivery.
+      const { FileProfileRepository } = await import('../dist/domains/cats/services/profile/ProfileRepository.js');
+      const { installOwnerUserId } = await import('../dist/config/install-owner.js');
+      const repo = new FileProfileRepository();
+      const ownerId = installOwnerUserId();
+      const nativeDir = repo.profileDir(ownerId);
+      mkdirSync(nativeDir, { recursive: true });
+      writeFileSync(join(nativeDir, 'operator-capsule.md'), 'lang：co-creator，证据优先。\n');
+      const primer = repo.primerPath(repo.scope(ownerId, 'nativecat'));
+      mkdirSync(dirname(primer), { recursive: true });
+      writeFileSync(primer, '关系轨迹正文（不应进入 prompt）\n');
+      const plainPrimer = repo.primerPath(repo.scope(ownerId, 'plaincat'));
+      mkdirSync(dirname(plainPrimer), { recursive: true });
+      writeFileSync(plainPrimer, '关系轨迹正文（不应进入 prompt）\n');
+
+      const captures = [];
+      await drain(getRoute(), 'nativecat', `seam-${mode}-profile-native`, captures);
+      const nativeDelivered = captures[0]?.nativeSessionPrompt ?? '';
+      assert.match(nativeDelivered, /## 主人画像/, 'native carrier must receive the owner capsule');
+      assert.match(
+        nativeDelivered,
+        /cat-cafe-profile:\/\/relationship\/current/,
+        'native carrier must receive the relationship pointer',
+      );
+
+      const plainCaptures = [];
+      await drain(getRoute(), 'plaincat', `seam-${mode}-profile-plain`, plainCaptures);
+      const prepended = JSON.stringify(plainCaptures[0]?.__messages ?? []);
+      assert.match(prepended, /## 主人画像/, 'non-native carrier must receive the owner capsule');
+      assert.match(
+        prepended,
+        /cat-cafe-profile:\/\/relationship\/current/,
+        'non-native carrier must receive the relationship pointer',
+      );
+      // INV-6: a pointer says the trajectory exists and how to read it, never its content.
+      assert.equal(nativeDelivered.includes('不应进入 prompt'), false, 'pointer must not leak primer content');
+      assert.equal(prepended.includes('不应进入 prompt'), false, 'pointer must not leak primer content');
+    });
+
     test(`${mode}: native carrier receives the exact route-owned session prompt and traces L1-L7`, async () => {
       const threadId = `seam-${mode}-native`;
-      const expectedPrompt = buildStaticIdentity('nativecat', { mcpAvailable: false });
+      // The carrier must receive exactly the builder's bytes for the same inputs, and
+      // S14's profile is now one of those inputs. Resolve it the way the route does, so
+      // this holds whether or not another test has already written profile fixtures.
+      const { resolveOwnerProfileSnapshot } = await import(
+        '../dist/domains/cats/services/profile/owner-profile-snapshot.js'
+      );
+      const expectedPrompt = buildStaticIdentity('nativecat', {
+        mcpAvailable: false,
+        profile: resolveOwnerProfileSnapshot({ catId: 'nativecat' }),
+      });
       const captures = [];
       await drain(getRoute(), 'nativecat', threadId, captures);
       assert.equal(captures.length, 1);

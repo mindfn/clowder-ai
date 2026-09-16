@@ -179,8 +179,10 @@ describe('Pipeline Integration (real registry + resolvers + templates)', () => {
     const input = makeRichInput();
     const result = pipeline.executeStage('session-init', input);
 
-    // All 22 session-init hooks should produce trace events
-    assert.equal(result.events.length, 22, `Expected 22 events, got ${result.events.length}`);
+    // Every session-init hook produces a trace event (fired or skipped); derived from the
+    // registry so a new governed segment does not break this as a bare count.
+    const expected = registry.getStageHooks('session-init').length;
+    assert.equal(result.events.length, expected, `Expected ${expected} events, got ${result.events.length}`);
 
     // Always-fire hooks should all be fired
     const firedIds = result.events.filter((e) => e.status === 'fired').map((e) => e.hookId);
@@ -296,7 +298,11 @@ describe('Pipeline Integration (real registry + resolvers + templates)', () => {
     const pipeline = new pipelineMod.HookPipeline(registry, resolversMod.RESOLVER_MAP, templateMod.renderSegment);
     // Call without overrides — should work exactly as before
     const result = pipeline.executeStage('session-init', makeRichInput());
-    assert.equal(result.events.length, 22, 'Same 22 session-init events');
+    assert.equal(
+      result.events.length,
+      registry.getStageHooks('session-init').length,
+      'one event per registered session-init hook',
+    );
     const firedIds = result.events.filter((e) => e.status === 'fired').map((e) => e.hookId);
     assert.ok(firedIds.includes('S1'), 'S1 fires from baseline');
   });

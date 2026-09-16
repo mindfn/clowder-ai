@@ -84,9 +84,12 @@ describe('Pipeline equivalence regression (AC-P2-14)', () => {
     assert.ok(!output.includes('── [B1]'), 'B1 marker excluded from S-scoped output');
   });
 
-  it('session trace produces exactly 22 session-init events', () => {
+  it('session trace produces one event per registered session-init hook', () => {
     const { trace } = ppb.buildStaticIdentityViaHookPipelineWithTrace('opus', { mcpAvailable: true });
-    assert.equal(trace.events.length, 22, `Expected 22 session-init events, got ${trace.events.length}`);
+    // Derived, not hardcoded: every session-init hook must be traced (fired or skipped),
+    // so adding a governed segment updates this instead of silently drifting.
+    const expected = ppb.getOrCreateRegistry().getStageHooks('session-init').length;
+    assert.equal(trace.events.length, expected, `Expected ${expected} session-init events, got ${trace.events.length}`);
   });
 
   // -- Per-turn scope filtering ----------------------------------------------

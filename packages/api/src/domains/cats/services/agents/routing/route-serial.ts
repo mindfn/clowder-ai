@@ -165,6 +165,7 @@ import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOut
 import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
+import { resolveOwnerProfileSnapshot } from '../../profile/owner-profile-snapshot.js';
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import {
@@ -1393,10 +1394,17 @@ export async function* routeSerial(
         }
       };
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
-      const nativeSessionPrompt = hasNativeL0 ? buildStaticIdentity(catId, { mcpAvailable }) : undefined;
+      // S14: resolve the owner profile once, then give the same snapshot to whichever
+      // carrier transports this session, so both deliver identical bytes. The pack-only
+      // path deliberately omits it -- the native carrier already delivered S14 inside
+      // nativeSessionPrompt, and repeating it there would inject the profile twice.
+      const ownerProfile = resolveOwnerProfileSnapshot({ catId });
+      const nativeSessionPrompt = hasNativeL0
+        ? buildStaticIdentity(catId, { mcpAvailable, profile: ownerProfile })
+        : undefined;
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
-        : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
+        : buildStaticIdentity(catId, { mcpAvailable, packBlocks, profile: ownerProfile });
       // F237: drain session trace synchronously — before any await between
       // buildStaticIdentity and buildInvocationContext (race-safety for parallel reuse).
       // F257: save session pipeline trace for full 46-segment persistence (S+L+B+C).

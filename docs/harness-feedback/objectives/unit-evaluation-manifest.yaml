@@ -87,5 +87,6 @@ units:
   - { unitId: S11, hookId: s11-default-behavior, unitState: evaluable, objectives: [{ objectiveId: operator-preference-alignment }] }
   - { unitId: S12, hookId: s12-world-driver, unitState: evaluable, objectives: [{ objectiveId: world-state-fidelity }] }
   - { unitId: S13, hookId: s13-mcp-tool-documentation, unitState: evaluable, objectives: [{ objectiveId: tool-access-correct-use }] }
+  - { unitId: S14, hookId: s14-owner-profile, unitState: evaluable, objectives: [{ objectiveId: operator-preference-alignment }] }
   # Governance-authored unit: written by an approved F257 governance card, not by hand.
   - { unitId: D22, hookId: d22-custody-closure-checkpoint, unitState: evaluable, origin: local, objectives: [{ objectiveId: turn-custody-closure }] }

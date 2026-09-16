@@ -458,6 +458,20 @@ export function buildTeammateRoster(currentCatId: CatId): string | null {
  * MCP section is included here (not in invocationContext) because it's
  * session-level — injected once on new session, skipped on --resume.
  */
+/**
+ * S14: the owner profile a route resolved for this session. The route renders it once
+ * (capsule section plus available pointer lines) so every carrier delivers the same
+ * bytes and durable evidence can bind exactly what was delivered.
+ */
+export interface OwnerProfileSnapshot {
+  /** Owner the profile belongs to; never rendered into the prompt. */
+  userId: string;
+  /** `renderUserCapsuleSection` output, when the owner has a capsule. */
+  capsuleSection?: string;
+  /** Logical pointer lines (relationship primer, corpus), already formatted. */
+  pointerLines?: readonly string[];
+}
+
 export interface StaticIdentityOptions {
   /**
    * Whether native MCP tools are available (Claude with --mcp-config).
@@ -475,6 +489,8 @@ export interface StaticIdentityOptions {
    *   Identity (core) > Pack Masks > Governance L0 > Pack Guardrails > Pack Defaults > Workflows
    */
   packBlocks?: CompiledPackBlocks | null;
+  /** F231 owner profile resolved by the route; see OwnerProfileSnapshot. */
+  profile?: OwnerProfileSnapshot | null;
   /**
    * F237: When true, insert `── [SN] Name ──` markers before each segment.
    * Used by compiled-preview to show which segment generated which content.

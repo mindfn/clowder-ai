@@ -3,7 +3,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { ObjectiveRegistry } from './objective-registry.js';
 
-const CANONICAL_UNIT_IDS = [
+export const CANONICAL_UNIT_IDS = [
   'B1',
   'C1',
   ...Array.from({ length: 21 }, (_, index) => `D${index + 1}`),
@@ -11,7 +11,7 @@ const CANONICAL_UNIT_IDS = [
   'N1',
   'R1',
   'R2',
-  ...Array.from({ length: 13 }, (_, index) => `S${index + 1}`),
+  ...Array.from({ length: 14 }, (_, index) => `S${index + 1}`),
 ].sort();
 const unitId = z.string().regex(/^[A-Z]+\d+$/);
 
@@ -90,7 +90,8 @@ function validateManifest(manifest: UnitEvaluationManifest, registry: ObjectiveR
   }
 
   const missing = CANONICAL_UNIT_IDS.filter((unitId) => !seenUnits.has(unitId));
-  if (missing.length > 0) return `manifest must cover canonical 46 units; missing=[${missing.join(',')}]`;
+  if (missing.length > 0)
+    return `manifest must cover canonical ${CANONICAL_UNIT_IDS.length} units; missing=[${missing.join(',')}]`;
   return validateScopes(manifest);
 }
 

@@ -91,19 +91,46 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     await app.close();
   });
 
-  it('keeps every formal template segment version-editable', async () => {
+  // Judged per safety tier rather than "every formal template is editable": a formal
+  // template may mount owner data (S14), and HookPipeline returns a contentOverride
+  // verbatim without rendering variables, so an activated edit would replace the real
+  // profile with the literal placeholder. Both tiers are asserted generically, and both
+  // branches are proven non-empty so neither loop can pass vacuously.
+  it('honors each formal template segment safety tier', async () => {
     const app = await buildManifestApp();
     const res = await app.inject({ method: 'GET', url: '/api/prompt-injection/manifest' });
     const formalSegments = res.json().segments.filter((segment) => segment.sourceType === 'template');
     assert.ok(formalSegments.length > 0);
-    for (const segment of formalSegments) {
-      assert.equal(segment.safetyTier, 'editable', `formal segment ${segment.id} must remain version-editable`);
+    const editable = formalSegments.filter((segment) => segment.safetyTier === 'editable');
+    const readOnly = formalSegments.filter((segment) => segment.safetyTier === 'readonly');
+    assert.ok(editable.length > 0, 'formal templates include editable governance copy');
+    assert.ok(readOnly.length > 0, 'formal templates include a readonly owner-data mount');
+
+    for (const segment of editable) {
       assert.equal(
         segment.enablementMatrix.runtimeOverride.actions.createVersion.allowed,
         true,
-        `formal segment ${segment.id} must permit a governed version creation`,
+        `editable segment ${segment.id} must permit a governed version creation`,
       );
     }
+
+    for (const segment of readOnly) {
+      const runtime = segment.enablementMatrix.runtimeOverride.actions;
+      for (const action of ['createVersion', 'activateVersion', 'disable']) {
+        assert.equal(runtime[action].allowed, false, `readonly segment ${segment.id} must reject ${action}`);
+      }
+      assert.equal(
+        segment.enablementMatrix.localOverlay.actions.edit.allowed,
+        false,
+        `readonly segment ${segment.id} must reject a content edit`,
+      );
+    }
+
+    // The readonly branch must actually cover the owner-profile mount.
+    assert.ok(
+      readOnly.some((segment) => segment.id === 'S14'),
+      'S14 mounts the owner profile and must be readonly',
+    );
     await app.close();
   });
 

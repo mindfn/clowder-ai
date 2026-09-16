@@ -67,6 +67,7 @@ import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
+import { resolveOwnerProfileSnapshot } from '../../profile/owner-profile-snapshot.js';
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import type { AppendMessageInput, StoredToolEvent } from '../../stores/ports/MessageStore.js';
@@ -621,10 +622,17 @@ export async function* routeParallel(
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // Staging is injected in invoke-single-cat independently of staticIdentity
       // (Cloud R2 P1 #2237 L1099). See route-serial.ts for the architecture rationale.
-      const nativeSessionPrompt = hasNativeL0 ? buildStaticIdentity(catId, { mcpAvailable }) : undefined;
+      // S14: resolve the owner profile once, then give the same snapshot to whichever
+      // carrier transports this session, so both deliver identical bytes. The pack-only
+      // path deliberately omits it -- the native carrier already delivered S14 inside
+      // nativeSessionPrompt, and repeating it there would inject the profile twice.
+      const ownerProfile = resolveOwnerProfileSnapshot({ catId });
+      const nativeSessionPrompt = hasNativeL0
+        ? buildStaticIdentity(catId, { mcpAvailable, profile: ownerProfile })
+        : undefined;
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
-        : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
+        : buildStaticIdentity(catId, { mcpAvailable, packBlocks, profile: ownerProfile });
       // F237: drain session trace IMMEDIATELY — before any await that could let
       // another parallel cat overwrite the module-global capture buffer.
       // F257: save session pipeline trace for full 46-segment persistence (S+L+B+C).
