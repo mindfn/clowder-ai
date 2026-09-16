@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, type CatCatalogReadOptions, readCatCatalogRaw } from './cat-catalog-store.js';
 import { assertNoCrossCatPatternConflicts, warnOnNicknameConflicts } from './cat-uniqueness.js';
+import { installOwnerUserId } from './install-owner.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import {
   hasOccupiedMentionAlias,
@@ -929,9 +930,15 @@ export function hasRuntimeDefaultCatOverride(): boolean {
   return _runtimeDefaultCatId !== null && isKnownAvailableDefaultCat(_runtimeDefaultCatId);
 }
 
-/** Unified owner userId: configured env or single-user fallback. */
+/**
+ * Unified owner userId. One install has one owner, so this is the same derivation
+ * the composition root boots from (config/install-owner.ts): the trust anchor when
+ * configured, otherwise the runtime user. Reading only the anchor here used to pin
+ * every scheduler, publisher and agent-key consumer to `default-user` while the
+ * install owned its data under CAT_CAFE_USER_ID.
+ */
 export function getOwnerUserId(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DEFAULT_OWNER_USER_ID?.trim() || 'default-user';
+  return installOwnerUserId(env);
 }
 
 // ── Variant CLI effort accessor ──────────────────────────────────────

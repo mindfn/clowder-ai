@@ -16,6 +16,17 @@
  * then 404. Refusing to boot is the honest outcome: the alternative is an install
  * whose owner cannot govern it, with no error anywhere.
  */
+export function installOwnerUserId(env: NodeJS.ProcessEnv = process.env): string {
+  const runtimeUserId = (env.CAT_CAFE_USER_ID ?? 'default-user').trim();
+  if (!runtimeUserId) throw new Error('[api] CAT_CAFE_USER_ID must not be blank');
+  return env.DEFAULT_OWNER_USER_ID?.trim() || runtimeUserId;
+}
+
+/**
+ * The same identity, asserted coherent. Boot calls this once so an install whose
+ * owner cannot govern it never starts; every other owner consumer reads the total
+ * derivation above, because a library accessor must not throw on legacy config.
+ */
 export function resolveInstallOwnerUserId(env: NodeJS.ProcessEnv = process.env): string {
   const runtimeUserId = (env.CAT_CAFE_USER_ID ?? 'default-user').trim();
   if (!runtimeUserId) throw new Error('[api] CAT_CAFE_USER_ID must not be blank');
@@ -28,5 +39,5 @@ export function resolveInstallOwnerUserId(env: NodeJS.ProcessEnv = process.env):
         'single-user local mode.',
     );
   }
-  return runtimeUserId;
+  return installOwnerUserId(env);
 }

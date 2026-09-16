@@ -1082,13 +1082,12 @@ async function main(): Promise<void> {
     messageStore instanceof RedisMessageStore &&
     invocationRecordStore instanceof RedisInvocationRecordStore
   ) {
-    const { getOwnerUserId } = await import('./config/cat-config-loader.js');
     const backfillResult = await runSchedulerReplyUserIdBackfill({
       redis,
       messageStore,
       invocationRecordStore,
       threadStore,
-      defaultUserId: getOwnerUserId(),
+      defaultUserId: privateUserId,
     });
     if (!backfillResult.skipped && (backfillResult.repairedMessages > 0 || backfillResult.repairedInvocations > 0)) {
       app.log.info(
@@ -1236,7 +1235,7 @@ async function main(): Promise<void> {
     },
     // Phase E-1: thread summary indexing — provide a callback that lists all threads
     threadListFn: async () => {
-      const threads = await threadStore.list('default-user');
+      const threads = await threadStore.list(privateUserId);
       return threads
         .filter((t) => !t.projectPath.startsWith('games/'))
         .map((t) => ({
@@ -1249,7 +1248,7 @@ async function main(): Promise<void> {
         }));
     },
     excludeThreadIdsFn: async () => {
-      const allThreads = await threadStore.list('default-user');
+      const allThreads = await threadStore.list(privateUserId);
       const excluded = new Set<string>();
       for (const t of allThreads) {
         if (t.projectPath.startsWith('games/')) excluded.add(t.id);
@@ -1728,7 +1727,6 @@ async function main(): Promise<void> {
   const { RedisBriefingConfigStore, MemoryBriefingConfigStore } = await import(
     './domains/cats/services/duty-briefing/BriefingConfigStore.js'
   );
-  const { getOwnerUserId: getDutyBriefingOwnerUserId } = await import('./config/cat-config-loader.js');
   const briefingConfigStore = redis ? new RedisBriefingConfigStore(redis) : new MemoryBriefingConfigStore();
   // f167SnapshotProvider Phase A 未接 → voidPasses 暂空（F167 锚点降级，Phase B 接）
   const dutyBriefingCollectDeps = {
@@ -1738,7 +1736,7 @@ async function main(): Promise<void> {
     dynamicTaskStore,
     threadStore,
     messageStore,
-    userId: getDutyBriefingOwnerUserId(),
+    userId: privateUserId,
     ...(ballCustodyProjectionStore ? { ballCustodyProjectionStore } : {}),
   };
   const { dutyBriefingRoutes } = await import('./routes/duty-briefing.js');
@@ -1798,19 +1796,14 @@ async function main(): Promise<void> {
         db,
         enabled: () => process.env.F102_ABSTRACTIVE === 'on',
         getThreadLastActivity: async (threadId) => {
-          const msgs = await messageStore.getByThread(threadId, 1, 'default-user');
+          const msgs = await messageStore.getByThread(threadId, 1, privateUserId);
           if (msgs.length === 0) return null;
           return { threadId, lastMessageAt: msgs[0]!.timestamp };
         },
         getMessagesAfterWatermark: async (threadId, afterMessageId, limit) => {
           // P1 fix (砚砚 review): use getByThreadAfter for true "after watermark" semantics,
           // not "latest N + slice" which would skip messages if delta > limit
-          const msgs = await messageStore.getByThreadAfter(
-            threadId,
-            afterMessageId ?? undefined,
-            limit,
-            'default-user',
-          );
+          const msgs = await messageStore.getByThreadAfter(threadId, afterMessageId ?? undefined, limit, privateUserId);
           return msgs.map((m) => ({
             id: m.id,
             content: m.content,
@@ -6923,8 +6916,7 @@ async function main(): Promise<void> {
           .map((line: string) => JSON.parse(line));
       };
 
-      const { getOwnerUserId } = await import('./config/cat-config-loader.js');
-      const effectiveUserId = getOwnerUserId();
+      const effectiveUserId = privateUserId;
 
       // F168 C0.3: repo-level comment poller deps (collection-only, redis-gated).
       // Lists ALL issue comments across allowlisted repos — including un-routed/untracked
@@ -7109,7 +7101,6 @@ async function main(): Promise<void> {
   const { createTelemetryEvidencePrereqProbe } = await import(
     './infrastructure/harness-eval/domain/eval-domain-evidence-gate.js'
   );
-  const { getOwnerUserId } = await import('./config/cat-config-loader.js');
   // cloud R6 P2 (PR-2) + memory wire-up: mirror the same wired set the
   // eval-hub.ts route computes (Object.keys(verdictGenerators)). Bootstrap-time
   // invariant:
@@ -7191,7 +7182,7 @@ async function main(): Promise<void> {
   const evalScheduleOpts = {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
     threadStore,
-    defaultUserId: getOwnerUserId(),
+    defaultUserId: privateUserId,
     listDynamicTasks: () => dynamicTaskStore.getAll(),
     redis: redisClient ?? undefined,
     wiredPublishDomains,
@@ -7471,7 +7462,7 @@ async function main(): Promise<void> {
         deliver: schedulerDeliver,
         readPersistedContent: async (messageId) => (await messageStore.getById(messageId))?.content ?? null,
         invokeTrigger,
-        defaultUserId: getOwnerUserId(),
+        defaultUserId: privateUserId,
         logger: { warn: app.log.warn.bind(app.log) },
       }),
       logger: { warn: app.log.warn.bind(app.log), info: app.log.info.bind(app.log) },
@@ -7536,7 +7527,7 @@ async function main(): Promise<void> {
     threadStore,
     invokeTrigger,
     socketManager,
-    defaultUserId: 'default-user' as const,
+    defaultUserId: privateUserId,
     // clowder-ai#910 + cloud P1: pass a getter (not a value) so runtime
     // `PUT /api/config/default-cat` (which calls `setRuntimeDefaultCatId` →
     // updates `_runtimeDefaultCatId`) propagates to ConnectorRouter's
