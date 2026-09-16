@@ -187,10 +187,6 @@ async function fetchManagerList(search: string, afterMutation: boolean): Promise
   return value;
 }
 
-function selectedPluginId(plugins: readonly PluginManagerListItem[], current: string | null): string | null {
-  return plugins.some((plugin) => plugin.pluginId === current) ? current : (plugins[0]?.pluginId ?? null);
-}
-
 type ConfigurationUpdate = { readonly key: string; readonly value: string | null };
 
 function legacyConfigurationUpdates(updates: readonly ConfigurationUpdate[]) {
@@ -248,7 +244,8 @@ export function PluginManagerLiveContent() {
   const [detailState, setDetailState] = useState<DetailLoadState>({ state: 'idle' });
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const selectedId = useRef<string | null>(null);
+  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  const selectedPluginIdRef = useRef<string | null>(null);
   const query = useRef('');
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
@@ -257,7 +254,9 @@ export function PluginManagerLiveContent() {
   const loadDetail = useCallback(async (pluginId: string, afterMutation = false) => {
     const generation = ++detailGeneration.current;
     setDetailState((current) =>
-      current.state === 'ready' && current.pluginId === pluginId ? current : { state: 'loading', pluginId },
+      (current.state === 'ready' || current.state === 'unavailable') && current.pluginId === pluginId
+        ? current
+        : { state: 'loading', pluginId },
     );
     try {
       const value = await fetchManagerDetail(pluginId, afterMutation);
@@ -269,6 +268,20 @@ export function PluginManagerLiveContent() {
     }
   }, []);
 
+  const selectPlugin = useCallback(
+    (pluginId: string | null) => {
+      selectedPluginIdRef.current = pluginId;
+      setSelectedPluginId(pluginId);
+      if (pluginId) {
+        void loadDetail(pluginId);
+        return;
+      }
+      detailGeneration.current += 1;
+      setDetailState({ state: 'idle' });
+    },
+    [loadDetail],
+  );
+
   const loadList = useCallback(
     async (search: string, afterMutation = false) => {
       const generation = ++listGeneration.current;
@@ -276,10 +289,10 @@ export function PluginManagerLiveContent() {
         const value = await fetchManagerList(search, afterMutation);
         if (!mounted.current || generation !== listGeneration.current) return;
         setSnapshot(value);
-        const next = selectedPluginId(value.plugins, selectedId.current);
-        selectedId.current = next;
-        if (next) await loadDetail(next, afterMutation);
-        else setDetailState({ state: 'idle' });
+        const current = selectedPluginIdRef.current;
+        if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
+          await loadDetail(current, afterMutation);
+        }
       } catch {
         if (!mounted.current || generation !== listGeneration.current) return;
         setError('插件列表加载失败；现有状态没有被改写。');
@@ -371,10 +384,8 @@ export function PluginManagerLiveContent() {
       loading={snapshot === null && error === null}
       error={error}
       busyPluginId={busyPluginId}
-      onPluginSelect={(pluginId) => {
-        selectedId.current = pluginId;
-        void loadDetail(pluginId);
-      }}
+      selectedPluginId={selectedPluginId}
+      onPluginSelect={selectPlugin}
       onSearchChange={(value) => {
         query.current = value;
         void loadList(value);

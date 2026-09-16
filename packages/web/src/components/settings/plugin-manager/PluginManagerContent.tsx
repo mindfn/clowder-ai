@@ -1,7 +1,7 @@
 'use client';
 
 import { pluginDescriptionVariants, resolvePluginDescription } from '@cat-cafe/shared';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
 import {
@@ -210,6 +210,33 @@ function PluginListRow({
   );
 }
 
+function usePluginSelection(
+  visible: readonly PluginManagerDesignFixture[],
+  controlledSelectedId: string | null | undefined,
+  onPluginSelect: ((pluginId: string | null) => void) | undefined,
+) {
+  const [internalSelectedId, setInternalSelectedId] = useState(visible[0]?.id ?? '');
+  const requestedSelectedId = controlledSelectedId === undefined ? internalSelectedId : controlledSelectedId;
+  const selected = visible.find((plugin) => plugin.id === requestedSelectedId) ?? visible[0] ?? null;
+  const effectiveSelectedId = selected?.id ?? null;
+
+  useEffect(() => {
+    if (controlledSelectedId === undefined) {
+      if (effectiveSelectedId !== internalSelectedId) setInternalSelectedId(effectiveSelectedId ?? '');
+      return;
+    }
+    if (effectiveSelectedId !== controlledSelectedId) onPluginSelect?.(effectiveSelectedId);
+  }, [controlledSelectedId, effectiveSelectedId, internalSelectedId, onPluginSelect]);
+
+  return {
+    selected,
+    select: (pluginId: string) => {
+      if (controlledSelectedId === undefined) setInternalSelectedId(pluginId);
+      onPluginSelect?.(pluginId);
+    },
+  };
+}
+
 export function PluginManagerContent({
   fixtures,
   catalogStatus = 'fresh',
@@ -217,6 +244,7 @@ export function PluginManagerContent({
   loading = false,
   error,
   busyPluginId = null,
+  selectedPluginId,
   onPluginSelect,
   onSearchChange,
   onInstall,
@@ -231,7 +259,8 @@ export function PluginManagerContent({
   loading?: boolean;
   error?: string | null;
   busyPluginId?: string | null;
-  onPluginSelect?: (pluginId: string) => void;
+  selectedPluginId?: string | null;
+  onPluginSelect?: (pluginId: string | null) => void;
   onSearchChange?: (query: string) => void;
   onInstall?: (pluginId: string) => void;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
@@ -240,7 +269,6 @@ export function PluginManagerContent({
   locale?: string;
 }) {
   const [query, setQuery] = useState('');
-  const [selectedId, setSelectedId] = useState(fixtures[0]?.id ?? '');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
   const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
@@ -251,7 +279,8 @@ export function PluginManagerContent({
   const attentionPlugins = filtered.filter((plugin) => plugin.artifact !== 'installed' && plugin.artifact !== 'absent');
   const otherPlugins = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source !== 'catalog');
   const visible = [...installedPlugins, ...attentionPlugins, ...recommendedPlugins, ...otherPlugins];
-  const selected = visible.find((plugin) => plugin.id === selectedId) ?? visible[0] ?? null;
+  const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
+  const selected = selection.selected;
 
   const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>
     plugins.map((plugin) => (
@@ -261,9 +290,8 @@ export function PluginManagerContent({
         selected={plugin.id === selected?.id}
         locale={locale}
         onSelect={() => {
-          setSelectedId(plugin.id);
+          selection.select(plugin.id);
           setMobileDetailOpen(true);
-          onPluginSelect?.(plugin.id);
         }}
         onInstall={() => onInstall?.(plugin.id)}
         onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}

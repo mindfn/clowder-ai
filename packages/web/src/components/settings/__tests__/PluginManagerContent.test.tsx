@@ -10,11 +10,16 @@ import { PluginsContent, resolvePluginManagerDesignGate } from '../PluginsConten
 const mockApiFetch = vi.mocked(apiFetch);
 const digest = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
 
-function managerPlugin({ installed = false, revision = 7 } = {}) {
+function managerPlugin({
+  installed = false,
+  revision = 7,
+  pluginId = 'dev.clowder.video-analysis',
+  displayName = 'Video Analysis',
+} = {}) {
   return {
-    pluginId: 'dev.clowder.video-analysis',
+    pluginId,
     pluginInstanceId: installed ? 'pi_video' : null,
-    displayName: 'Video Analysis',
+    displayName,
     description: {
       default: 'Analyze remote videos.',
       translations: { 'zh-CN': '分析远程视频。' },
@@ -216,6 +221,45 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins/personal-chrome')).toBe(false);
   });
 
+  it('loads detail for the installed plugin selected by visible section ordering', async () => {
+    const audio = managerPlugin({
+      pluginId: 'dev.clowder.audio-notes',
+      displayName: 'Audio Notes',
+    });
+    const video = managerPlugin({ installed: true });
+    const detailReads: string[] = [];
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') {
+        return json({ plugins: [audio, video], catalog: { status: 'fresh', refreshedAt: 1_000 } });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.audio-notes') {
+        detailReads.push(audio.pluginId);
+        return json(detail(audio));
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
+        detailReads.push(video.pluginId);
+        return json(detail(video));
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.audio-notes/documentation') {
+        return json({ readmeMarkdown: '# Audio Notes' });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') {
+        return json({ readmeMarkdown: '# Video Analysis README' });
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.querySelector('[data-plugin-id="dev.clowder.video-analysis"]')?.getAttribute('aria-current')).toBe(
+      'true',
+    );
+    expect(container.textContent).toContain('Video Analysis README');
+    expect(container.textContent).not.toContain('README 加载中…');
+    expect(detailReads).toEqual([video.pluginId]);
+  });
+
   it('shows an honest loading surface before the first Manager snapshot arrives', async () => {
     mockApiFetch.mockReturnValue(new Promise<Response>(() => {}));
 
@@ -315,6 +359,61 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/search?q=Clowder%20AI');
     expect(container.textContent).toContain('Video Analysis');
     expect(container.textContent).not.toContain('没有符合条件的插件');
+  });
+
+  it('loads detail for the visible fallback when search removes the prior selection', async () => {
+    const video = managerPlugin({ installed: true });
+    const audio = managerPlugin({
+      pluginId: 'dev.clowder.audio-notes',
+      displayName: 'Audio Notes',
+    });
+    const calendar = managerPlugin({
+      installed: true,
+      pluginId: 'dev.clowder.calendar-assistant',
+      displayName: 'Calendar Assistant',
+    });
+    const detailReads: string[] = [];
+    const detailsByUrl = new Map<string, ManagerPluginFixture>(
+      [video, audio, calendar].map((plugin) => [`/api/plugin-manager/plugins/${plugin.pluginId}`, plugin] as const),
+    );
+    const documentationByUrl = new Map<string, string>(
+      [video, audio, calendar].map((plugin) => [
+        `/api/plugin-manager/plugins/${plugin.pluginId}/documentation`,
+        plugin.displayName,
+      ]),
+    );
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(video));
+      if (url === '/api/plugin-manager/plugins/search?q=Clowder%20AI') {
+        return json({ plugins: [audio, calendar], catalog: { status: 'fresh', refreshedAt: 1_000 } });
+      }
+      const detailPlugin = detailsByUrl.get(String(url));
+      if (detailPlugin) {
+        detailReads.push(detailPlugin.pluginId);
+        return json(detail(detailPlugin));
+      }
+      const documentationName = documentationByUrl.get(String(url));
+      if (documentationName) return json({ readmeMarkdown: `# ${documentationName} README` });
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    const search = container.querySelector('input[aria-label="搜索插件"]') as HTMLInputElement | null;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(search, 'Clowder AI');
+      search?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-plugin-id="dev.clowder.calendar-assistant"]')?.getAttribute('aria-current'),
+    ).toBe('true');
+    expect(container.textContent).toContain('Calendar Assistant README');
+    expect(container.textContent).not.toContain('README 加载中…');
+    expect(detailReads.at(-1)).toBe(calendar.pluginId);
   });
 
   it('renders a compatibility configuration contribution and saves through its typed boundary', async () => {
@@ -478,6 +577,11 @@ describe('F202 live Plugin Manager Console wiring', () => {
                 name: 'video-analysis-toolset',
                 description: 'Analyze videos.',
               },
+              {
+                id: 'undocumented-toolset',
+                kind: 'mcp',
+                name: 'undocumented-toolset',
+              },
             ],
           },
         });
@@ -492,6 +596,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await flushEffects();
 
     expect(container.textContent).toContain('Analyze videos.');
+    expect(container.textContent).toContain('undocumented-toolset');
     expect(container.textContent).toContain('工具信息暂不可用。');
     expect(container.textContent).not.toContain('插件未提供用途说明。');
   });
@@ -596,5 +701,40 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(listReads).toBe(2);
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-plugin-id="dev.clowder.video-analysis"]')).toHaveLength(1);
+  });
+
+  it('keeps an unavailable detail state stable while polling retries it', async () => {
+    vi.useFakeTimers();
+    let detailReads = 0;
+    let resolveRetry: ((response: Response) => void) | undefined;
+    const retry = new Promise<Response>((resolve) => {
+      resolveRetry = resolve;
+    });
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(managerPlugin({ installed: true })));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
+        detailReads += 1;
+        return detailReads === 1 ? json({}, 503) : retry;
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return json({});
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    expect(container.textContent).toContain('README 暂不可用。');
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(detailReads).toBe(2);
+    expect(container.textContent).toContain('README 暂不可用。');
+    expect(container.textContent).not.toContain('README 加载中…');
+
+    resolveRetry?.(json({}, 503));
+    await flushEffects();
   });
 });
