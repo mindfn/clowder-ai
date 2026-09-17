@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, symlinkSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 const { buildMigrationPlan, measurePath, runDataDirsMigration, shouldAbortStartupOnMigration } = await import(
@@ -598,6 +598,130 @@ describe('data-dirs-migration', () => {
       assert.equal(existsSync(legacyB), false);
       // The pre-existing target evidence stays intact
       assert.equal(await readFile(join(dataRoot, 'evidence.sqlite'), 'utf-8'), 'existing');
+    });
+  });
+
+  describe('connector-media relocation (F770 Gate 1 evidence review)', () => {
+    test('relocates {DATA_DIR}/cache/connector-media to {DATA_DIR}/connector-media', async () => {
+      const cleanCwd = await mkdtemp(join(tmpdir(), 'cat-cafe-770-cm-cwd-'));
+      const originalCwd = process.cwd();
+      process.chdir(cleanCwd);
+      try {
+        const dataRoot = join(workRoot, 'data');
+        // Gate-1 intermediate layout: derived cache root held the media
+        const intermediate = join(dataRoot, 'cache', 'connector-media');
+        await mkdir(intermediate, { recursive: true });
+        await writeFile(join(intermediate, 'photo.jpg'), 'jpg-bytes', 'utf-8');
+        process.env.DATA_DIR = dataRoot;
+
+        const result = await runDataDirsMigration({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+          trigger: 'startup',
+          io: plentyOfSpaceIO(),
+        });
+
+        const cm = result.items.find((i) => i.key === 'connectorMedia');
+        assert.equal(cm.status, 'moved');
+        assert.equal(cm.fromPath, intermediate);
+        assert.equal(cm.toPath, join(dataRoot, 'connector-media'));
+        assert.equal(existsSync(join(dataRoot, 'connector-media', 'photo.jpg')), true);
+        assert.equal(existsSync(intermediate), false);
+      } finally {
+        process.chdir(originalCwd);
+        await rm(cleanCwd, { recursive: true, force: true });
+      }
+    });
+
+    test('relocates explicit {CACHE_DIR}/connector-media to the legacy cwd path when no DATA_DIR is set', async () => {
+      const cleanCwd = await mkdtemp(join(tmpdir(), 'cat-cafe-770-cm-cwd-'));
+      const originalCwd = process.cwd();
+      process.chdir(cleanCwd);
+      try {
+        const cacheRoot = join(workRoot, 'cache-root');
+        const intermediate = join(cacheRoot, 'connector-media');
+        await mkdir(intermediate, { recursive: true });
+        await writeFile(join(intermediate, 'voice.ogg'), 'ogg-bytes', 'utf-8');
+        process.env.CACHE_DIR = cacheRoot;
+
+        const result = await runDataDirsMigration({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+          trigger: 'startup',
+          io: plentyOfSpaceIO(),
+        });
+
+        const cm = result.items.find((i) => i.key === 'connectorMedia');
+        assert.equal(cm.status, 'moved');
+        assert.equal(cm.fromPath, intermediate);
+        // process.cwd() returns the realpath after chdir (macOS /tmp symlink)
+        const legacyTarget = resolve(process.cwd(), 'data', 'connector-media');
+        assert.equal(cm.toPath, legacyTarget);
+        assert.equal(existsSync(join(legacyTarget, 'voice.ogg')), true);
+        assert.equal(existsSync(intermediate), false);
+      } finally {
+        process.chdir(originalCwd);
+        await rm(cleanCwd, { recursive: true, force: true });
+      }
+    });
+
+    test('does not relocate when the DATA_DIR target is already populated (target-not-empty abort path)', async () => {
+      const cleanCwd = await mkdtemp(join(tmpdir(), 'cat-cafe-770-cm-cwd-'));
+      const originalCwd = process.cwd();
+      process.chdir(cleanCwd);
+      try {
+        const dataRoot = join(workRoot, 'data');
+        const intermediate = join(dataRoot, 'cache', 'connector-media');
+        await mkdir(intermediate, { recursive: true });
+        await writeFile(join(intermediate, 'old.jpg'), 'old-bytes', 'utf-8');
+        await mkdir(join(dataRoot, 'connector-media'), { recursive: true });
+        await writeFile(join(dataRoot, 'connector-media', 'new.jpg'), 'new-bytes', 'utf-8');
+        process.env.DATA_DIR = dataRoot;
+
+        const result = await runDataDirsMigration({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+          trigger: 'startup',
+          io: plentyOfSpaceIO(),
+        });
+
+        const cm = result.items.find((i) => i.key === 'connectorMedia');
+        assert.equal(cm.status, 'skipped');
+        assert.equal(cm.reason, 'target-not-empty');
+        // Both sides untouched — operator reconciles
+        assert.equal(existsSync(join(intermediate, 'old.jpg')), true);
+        assert.equal(await readFile(join(dataRoot, 'connector-media', 'new.jpg'), 'utf-8'), 'new-bytes');
+        const decision = shouldAbortStartupOnMigration(result);
+        assert.equal(decision.shouldAbort, true);
+      } finally {
+        process.chdir(originalCwd);
+        await rm(cleanCwd, { recursive: true, force: true });
+      }
+    });
+
+    test('no work when neither legacy nor intermediate locations have files', async () => {
+      const cleanCwd = await mkdtemp(join(tmpdir(), 'cat-cafe-770-cm-cwd-'));
+      const originalCwd = process.cwd();
+      process.chdir(cleanCwd);
+      try {
+        const dataRoot = join(workRoot, 'data');
+        process.env.DATA_DIR = dataRoot;
+
+        const plan = await buildMigrationPlan({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+        });
+        const cm = plan.items.find((i) => i.spec.key === 'connectorMedia');
+        assert.equal(cm.eligible, false);
+        assert.equal(cm.skipReason, 'no-source-data');
+      } finally {
+        process.chdir(originalCwd);
+        await rm(cleanCwd, { recursive: true, force: true });
+      }
     });
   });
 });

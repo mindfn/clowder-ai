@@ -178,9 +178,11 @@ describe('data-dirs resolver (issue #671)', () => {
       delete process.env.REDIS_DATA_DIR;
     });
 
-    test('DATA_DIR derives the cache root (F770 Phase 2) but not log paths', () => {
+    test('DATA_DIR derives the cache root (F770 Phase 2) for tts; connector-media is DATA_DIR data', () => {
       assert.equal(resolveTtsCacheDir(), '/tmp/issue-671-data/cache/tts');
-      assert.equal(resolveConnectorMediaDir(), '/tmp/issue-671-data/cache/connector-media');
+      // F770 Gate 1 evidence review: connector media is unique-copy user data
+      // (platform CDN refs expire), so it belongs to DATA_DIR, not the cache.
+      assert.equal(resolveConnectorMediaDir(), '/tmp/issue-671-data/connector-media');
       assert.equal(resolveAnnotationDataDir(MONOREPO_ROOT), '/tmp/issue-671-data/stories');
       assert.equal(resolveLogDir(), resolve(process.cwd(), 'data/logs/api'));
     });
@@ -195,11 +197,12 @@ describe('data-dirs resolver (issue #671)', () => {
       assert.equal(resolveTtsCacheDir(), '/tmp/issue-671-cache/tts');
     });
 
-    test('connector-media goes under CACHE_DIR', () => {
-      assert.equal(resolveConnectorMediaDir(), '/tmp/issue-671-cache/connector-media');
+    test('connector-media ignores CACHE_DIR (not rebuildable cache)', () => {
+      assert.equal(resolveConnectorMediaDir(), resolve(process.cwd(), 'data/connector-media'));
     });
 
     test('CACHE_DIR does not affect data or log paths', () => {
+      assert.equal(resolveConnectorMediaDir(), resolve(process.cwd(), 'data/connector-media'));
       assert.equal(resolveEvidenceDbPath(REPO_ROOT), resolve(REPO_ROOT, 'evidence.sqlite'));
       assert.equal(resolveLogDir(), resolve(process.cwd(), 'data/logs/api'));
     });

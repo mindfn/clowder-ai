@@ -25,7 +25,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { type DataPathKey, type DataPathSpec, describeDataPaths } from './data-dirs.js';
 
 /** SQLite sidecar suffixes that must move alongside the main DB file. */
@@ -33,6 +33,12 @@ const SQLITE_SIDECARS = ['-wal', '-shm', '-journal'];
 
 export interface MigrationPlanItem {
   readonly spec: DataPathSpec;
+  /**
+   * F770 connector-media relocation: when the files sit at a Gate-1
+   * cache-based intermediate location instead of the legacy cwd path, this
+   * is the populated intermediate source to move (the legacy path is empty).
+   */
+  readonly sourceOverride?: string;
   /** Bytes that need to move (legacy path size, including SQLite sidecars). */
   readonly sourceBytes: number;
   /** True if the source path exists and is not a placeholder-only upload dir. */
@@ -171,6 +177,26 @@ export interface RunOptions extends PlanOptions {
 const DEFAULT_SAFETY_MULTIPLIER = 1.5;
 const UPLOADS_PLACEHOLDER_FILES = new Set(['.gitkeep']);
 
+/**
+ * F770 connector-media relocation (Gate 1 evidence review): connector media
+ * moved from the cache root to DATA_DIR because platform CDN references
+ * expire — local files are the only copy backing user-visible attachments.
+ * Installs that ran the intermediate Gate-1 layout hold files at cache-based
+ * locations that are neither the legacy cwd path nor the new DATA_DIR path:
+ *   - {DATA_DIR}/cache/connector-media  (derived cache root era)
+ *   - {CACHE_DIR}/connector-media       (explicit deprecated CACHE_DIR override era)
+ * These are one-time relocation sources; the first populated one wins.
+ * Callers filter out entries equal to the legacy/target paths.
+ */
+function intermediateConnectorMediaPaths(): string[] {
+  const paths: string[] = [];
+  const dataRoot = process.env.DATA_DIR?.trim();
+  if (dataRoot) paths.push(resolve(dataRoot, 'cache', 'connector-media'));
+  const cacheOverride = process.env.CACHE_DIR?.trim();
+  if (cacheOverride) paths.push(resolve(cacheOverride, 'connector-media'));
+  return paths;
+}
+
 /** Recursively measure on-disk size of a file or directory. */
 export async function measurePath(path: string): Promise<number> {
   if (!existsSync(path)) return 0;
@@ -223,6 +249,18 @@ export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPl
   let totalBytes = 0;
 
   for (const spec of specs) {
+    // F770 connector-media relocation: after the evidence review the resolver
+    // points at DATA_DIR (or the legacy cwd path when no DATA_DIR is set),
+    // never at the cache root. Files left at the Gate-1 cache-based
+    // intermediate locations must still be relocated once — see
+    // intermediateConnectorMediaPaths(). This branch owns the whole item.
+    if (spec.key === 'connectorMedia') {
+      const item = await planConnectorMediaRelocation(spec);
+      items.push(item);
+      if (item.eligible) totalBytes += item.sourceBytes;
+      continue;
+    }
+
     // Only consider entries where a root is configured and legacy != root path.
     if (spec.rootBasedPath === null) {
       items.push({
@@ -288,6 +326,80 @@ export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPl
 
   const hasWork = items.some((i) => i.eligible);
   return { items, totalBytes, hasWork };
+}
+
+/**
+ * Plan the connector-media relocation. Target is rootBasedPath when DATA_DIR
+ * is set, else the legacy cwd path (CACHE_DIR no longer governs this item).
+ * Sources, in priority order: the legacy cwd path, then the populated Gate-1
+ * cache-based intermediate locations. When the legacy path is populated the
+ * generic legacy→target move happens (intermediates, if also populated, are
+ * left on disk untouched — the resolver reads the migrated target, so no
+ * data is lost, but only the first populated source moves per run).
+ */
+async function planConnectorMediaRelocation(spec: DataPathSpec): Promise<MigrationPlanItem> {
+  const target = spec.rootBasedPath ?? spec.legacyPath;
+  const intermediates = intermediateConnectorMediaPaths().filter((p) => p !== spec.legacyPath && p !== target);
+
+  const legacyPopulated = await isPopulated(spec.legacyPath);
+  const targetPopulated = target !== spec.legacyPath && (await isPopulated(target));
+
+  if (legacyPopulated) {
+    if (targetPopulated) {
+      return {
+        spec,
+        sourceBytes: 0,
+        sourceExists: true,
+        targetPopulated: true,
+        eligible: false,
+        skipReason: 'target-not-empty',
+      };
+    }
+    if (target === spec.legacyPath) {
+      // No DATA_DIR: the legacy cwd path IS the active path — nothing to do.
+      return {
+        spec,
+        sourceBytes: 0,
+        sourceExists: true,
+        targetPopulated: false,
+        eligible: false,
+        skipReason: 'no-source-data',
+      };
+    }
+    const sourceBytes = await measurePath(spec.legacyPath);
+    return { spec, sourceBytes, sourceExists: true, targetPopulated: false, eligible: true };
+  }
+
+  const populatedIntermediate = [];
+  for (const p of intermediates) {
+    if (await isPopulated(p)) populatedIntermediate.push(p);
+  }
+  if (populatedIntermediate.length === 0) {
+    return {
+      spec,
+      sourceBytes: 0,
+      sourceExists: false,
+      targetPopulated,
+      eligible: false,
+      skipReason: 'no-source-data',
+    };
+  }
+  if (targetPopulated) {
+    // Resolver already reads the populated target; the stranded intermediate
+    // is surfaced via the same target-not-empty abort path as other items so
+    // an operator reconciles instead of silently losing the old files.
+    return {
+      spec,
+      sourceBytes: 0,
+      sourceExists: true,
+      targetPopulated: true,
+      eligible: false,
+      skipReason: 'target-not-empty',
+    };
+  }
+  const sourceOverride = populatedIntermediate[0];
+  const sourceBytes = await measurePath(sourceOverride);
+  return { spec, sourceOverride, sourceBytes, sourceExists: true, targetPopulated: false, eligible: true };
 }
 
 async function sourceExistsForMigration(spec: DataPathSpec): Promise<boolean> {
@@ -385,7 +497,7 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
     const safetyMul = opts.spaceSafetyMultiplier ?? DEFAULT_SAFETY_MULTIPLIER;
     const byTarget = new Map<string, number>();
     for (const item of eligible) {
-      const targetRoot = item.spec.rootBasedPath!;
+      const targetRoot = item.spec.rootBasedPath ?? item.spec.legacyPath;
       const bucket = targetMountKey(targetRoot);
       byTarget.set(bucket, (byTarget.get(bucket) ?? 0) + item.sourceBytes);
     }
@@ -420,21 +532,23 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
       results.push(planItemToSkippedResult(item));
       continue;
     }
+    const fromPath = item.sourceOverride ?? item.spec.legacyPath;
+    const toPath = item.spec.rootBasedPath ?? item.spec.legacyPath;
     try {
-      await migrateOne(item.spec, item.spec.isFile, opts.forceCrossDeviceForTesting === true);
+      await migrateOne(fromPath, toPath, item.spec.isFile, opts.forceCrossDeviceForTesting === true);
       log?.info(
         {
           key: item.spec.key,
-          from: item.spec.legacyPath,
-          to: item.spec.rootBasedPath,
+          from: fromPath,
+          to: toPath,
           bytes: item.sourceBytes,
         },
         '[#671] Migrated data-dirs entry',
       );
       results.push({
         key: item.spec.key,
-        fromPath: item.spec.legacyPath,
-        toPath: item.spec.rootBasedPath!,
+        fromPath,
+        toPath,
         bytes: item.sourceBytes,
         status: 'moved',
       });
@@ -443,8 +557,8 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
       log?.warn(
         {
           key: item.spec.key,
-          from: item.spec.legacyPath,
-          to: item.spec.rootBasedPath,
+          from: fromPath,
+          to: toPath,
           error: message,
           trigger: opts.trigger,
         },
@@ -452,8 +566,8 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
       );
       results.push({
         key: item.spec.key,
-        fromPath: item.spec.legacyPath,
-        toPath: item.spec.rootBasedPath!,
+        fromPath,
+        toPath,
         bytes: item.sourceBytes,
         status: 'failed',
         error: message,
@@ -513,19 +627,19 @@ function planItemToRuntimeFileBlockedResult(item: MigrationPlanItem): MigrationI
  * (-wal, -shm, -journal) move together.  If any sidecar move fails the
  * main file is rolled back so the legacy DB stays intact (P1 review).
  */
-async function migrateOne(spec: DataPathSpec, isFile: boolean, forceCrossDevice = false): Promise<void> {
-  const target = spec.rootBasedPath!;
+async function migrateOne(fromPath: string, toPath: string, isFile: boolean, forceCrossDevice = false): Promise<void> {
+  const target = toPath;
   await mkdir(dirname(target), { recursive: true });
 
   if (!isFile) {
-    await moveTree(spec.legacyPath, target, forceCrossDevice);
+    await moveTree(fromPath, target, forceCrossDevice);
     return;
   }
 
   // Collect main file + any existing sidecars as one migration bundle.
-  const bundle: Array<{ from: string; to: string }> = [{ from: spec.legacyPath, to: target }];
+  const bundle: Array<{ from: string; to: string }> = [{ from: fromPath, to: target }];
   for (const suffix of SQLITE_SIDECARS) {
-    const sidecarSrc = `${spec.legacyPath}${suffix}`;
+    const sidecarSrc = `${fromPath}${suffix}`;
     if (existsSync(sidecarSrc)) {
       bundle.push({ from: sidecarSrc, to: `${target}${suffix}` });
     }

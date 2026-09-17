@@ -2,8 +2,9 @@
  * Unified data directory resolver — issue #671.
  *
  * Three root env vars control where runtime data is written:
- * - DATA_DIR  : persistent data (DBs, transcripts, audit logs, uploads, cli archive)
- * - CACHE_DIR : rebuildable cache (tts audio, connector media)
+ * - DATA_DIR  : persistent data (DBs, transcripts, audit logs, uploads, cli
+ *               archive, connector media)
+ * - CACHE_DIR : rebuildable cache (tts audio)
  * - LOG_DIR   : log files (used directly, no subdirectory)
  *
  * Behavior: if a root is set, the path is `{root}/{subPath}`; otherwise the
@@ -138,7 +139,15 @@ export function resolveTtsCacheDir(): string {
 }
 
 export function resolveConnectorMediaDir(): string {
-  const root = resolveCacheRoot();
+  // F770 Gate 1 evidence review: connector media is NOT rebuildable cache.
+  // Platform CDN references expire (e.g. weixin media keys are short-lived),
+  // so once downloaded these files are the only copy backing user-visible
+  // message attachments — clearing them is data loss. They therefore live
+  // under DATA_DIR, and the deprecated CACHE_DIR override deliberately does
+  // NOT apply. One-time relocation of the Gate-1 cache-based layout
+  // ({DATA_DIR}/cache/connector-media, {CACHE_DIR}/connector-media) is
+  // handled by data-dirs-migration.ts at startup.
+  const root = readRoot('DATA_DIR');
   return root ? joinUnder(root, 'connector-media') : resolve(process.cwd(), 'data/connector-media');
 }
 
@@ -318,10 +327,10 @@ export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[
     },
     {
       key: 'connectorMedia',
-      root: 'CACHE_DIR',
+      root: 'DATA_DIR',
       subPath: 'connector-media',
       legacyPath: resolve(process.cwd(), 'data/connector-media'),
-      rootBasedPath: cacheRoot ? joinUnder(cacheRoot, 'connector-media') : null,
+      rootBasedPath: dataRoot ? joinUnder(dataRoot, 'connector-media') : null,
       currentPath: resolveConnectorMediaDir(),
       isFile: false,
     },

@@ -13,12 +13,16 @@
  *     pre-change (baseline) resolver output, the five dead knobs must be
  *     ignored even when set, and the migration plan must be a no-op.
  *  2. With DATA_DIR=X set, every item whose location is frozen must land
- *     exactly where the pre-change resolver put it. Three items have a
- *     documented Phase-2 derivation instead: ttsCache → X/cache/tts,
- *     connectorMedia → X/cache/connector-media, annotationData → X/stories.
+ *     exactly where the pre-change resolver put it. Two items have a
+ *     documented Phase-2 derivation instead: ttsCache → X/cache/tts and
+ *     annotationData → X/stories. connectorMedia moved a second time after
+ *     the Gate-1 evidence review (platform CDN refs expire → local files are
+ *     the only copy backing user-visible attachments, so it is DATA_DIR data,
+ *     not cache): X/cache/connector-media → X/connector-media.
  *  3. An explicit CACHE_DIR / ANNOTATION_DATA_DIR (deprecated compat
  *     overrides) must win over the DATA_DIR derivation, exactly as the
- *     pre-change resolver honored them.
+ *     pre-change resolver honored them. CACHE_DIR governs ttsCache only —
+ *     connectorMedia deliberately ignores it.
  *
  * The baseline below is a frozen copy of packages/api/src/config/data-dirs.ts
  * as it was BEFORE the Gate 1 collapse (verified against the old dist build
@@ -122,7 +126,7 @@ const ITEMS = {
   redisData: ['DATA_DIR', 'redis'],
   redisBackups: ['DATA_DIR', 'redis-backups'],
   ttsCache: ['CACHE_DIR', 'tts'],
-  connectorMedia: ['CACHE_DIR', 'connector-media'],
+  connectorMedia: ['DATA_DIR', 'connector-media'],
   annotationData: ['DATA_DIR', 'stories'],
   logs: ['LOG_DIR', ''],
 };
@@ -263,12 +267,14 @@ describe('F770 Gate 1 data-dirs invariants', () => {
     }
   });
 
-  it('DATA_DIR=X: frozen items match the pre-collapse resolver; cache + stories use the Phase-2 derivation', async () => {
+  it('DATA_DIR=X: frozen items match the pre-collapse resolver; tts/stories use the Phase-2 derivation; connector-media is DATA_DIR data', async () => {
     process.env.DATA_DIR = DATA_ROOT;
 
     const PHASE2_DELTAS = {
       ttsCache: resolve(DATA_ROOT, 'cache/tts'),
-      connectorMedia: resolve(DATA_ROOT, 'cache/connector-media'),
+      // Gate-1 evidence review relocation: unique-copy platform media is
+      // DATA_DIR data, not rebuildable cache.
+      connectorMedia: resolve(DATA_ROOT, 'connector-media'),
       annotationData: resolve(DATA_ROOT, 'stories'),
     };
     const { specs } = assertMatchesBaseline('DATA_DIR set', PHASE2_DELTAS);
@@ -293,28 +299,33 @@ describe('F770 Gate 1 data-dirs invariants', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('DATA_DIR=X + CACHE_DIR=Y: cache items honor the override exactly; stories still derive from DATA_DIR', () => {
+  it('DATA_DIR=X + CACHE_DIR=Y: tts honors the cache override; connector-media ignores it; stories still derive from DATA_DIR', () => {
     process.env.DATA_DIR = DATA_ROOT;
     process.env.CACHE_DIR = CACHE_ROOT;
 
-    const { expected } = assertMatchesBaseline('DATA_DIR + CACHE_DIR', {
+    const { specs } = assertMatchesBaseline('DATA_DIR + CACHE_DIR', {
+      // connector-media ignores the deprecated CACHE_DIR override — it is
+      // DATA_DIR data (Gate-1 evidence review), only tts stays cache-bound.
+      connectorMedia: resolve(DATA_ROOT, 'connector-media'),
       annotationData: resolve(DATA_ROOT, 'stories'),
     });
-    assert.equal(expected.ttsCache, resolve(CACHE_ROOT, 'tts'));
-    assert.equal(expected.connectorMedia, resolve(CACHE_ROOT, 'connector-media'));
+    assert.equal(specs.ttsCache.currentPath, resolve(CACHE_ROOT, 'tts'));
+    assert.equal(specs.connectorMedia.currentPath, resolve(DATA_ROOT, 'connector-media'));
 
     delete process.env.DATA_DIR;
     delete process.env.CACHE_DIR;
   });
 
-  it('explicit ANNOTATION_DATA_DIR / CACHE_DIR win over DATA_DIR (deprecated compat)', () => {
+  it('explicit ANNOTATION_DATA_DIR / CACHE_DIR win over DATA_DIR (deprecated compat), except connector-media', () => {
     process.env.DATA_DIR = DATA_ROOT;
     process.env.CACHE_DIR = CACHE_ROOT;
     process.env.ANNOTATION_DATA_DIR = ANNO_ROOT;
 
     const specs = specsByKey();
     assert.equal(specs.ttsCache.currentPath, resolve(CACHE_ROOT, 'tts'));
-    assert.equal(specs.connectorMedia.currentPath, resolve(CACHE_ROOT, 'connector-media'));
+    // connector-media is unique-copy DATA_DIR data — the CACHE_DIR override
+    // deliberately does not apply to it.
+    assert.equal(specs.connectorMedia.currentPath, resolve(DATA_ROOT, 'connector-media'));
     assert.equal(specs.annotationData.currentPath, ANNO_ROOT);
 
     delete process.env.DATA_DIR;
