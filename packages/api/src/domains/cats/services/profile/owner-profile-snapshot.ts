@@ -1,6 +1,10 @@
-import { catRegistry } from '@cat-cafe/shared';
-import { CURRENT_RELATIONSHIP_PROFILE_URI, renderUserCapsuleSection } from '@cat-cafe/shared/profile-contract';
+import {
+  CURRENT_CORPUS_PROFILE_URI,
+  CURRENT_RELATIONSHIP_PROFILE_URI,
+  renderUserCapsuleSection,
+} from '@cat-cafe/shared/profile-contract';
 import { installOwnerUserId } from '../../../../config/install-owner.js';
+import { profilePointerEmitted } from '../../../../infrastructure/telemetry/instruments.js';
 import type { OwnerProfileSnapshot } from '../context/SystemPromptBuilder.js';
 import { FileProfileRepository } from './ProfileRepository.js';
 
@@ -31,17 +35,23 @@ export function resolveOwnerProfileSnapshot(options: {
   const capsuleSection = capsule ? renderUserCapsuleSection(capsule.content) : '';
 
   const pointerLines: string[] = [];
-  // The capsule and the relationship primer are independently optional layers. A cat
-  // without a persona key simply has no primer to point at; resolving the scope anyway
-  // would throw and fail the whole invocation over a missing pointer, which is a worse
-  // regression than the missing line. (The retired L0 compiler threw here, but it ran in
-  // a subprocess that only compiled that cat's prompt.)
-  const relationshipKey = catRegistry.tryGet(options.catId)?.config.relationshipKey;
-  if (relationshipKey) {
-    const primer = repository.readPrimer(repository.scope(userId, options.catId));
-    if (primer) {
-      pointerLines.push(`关系轨迹: ${CURRENT_RELATIONSHIP_PROFILE_URI}（cat_cafe_read_profile 按需读）`);
-    }
+  // Identity resolution is fail-closed, exactly as the retired L0 compiler and
+  // `FileProfileRepository.scope()` are. Production always has a relationship key
+  // (`cat-config-loader.ts` fills it from the breed id), so a missing one means the
+  // catalog invariant is broken — not that this cat merely has no primer. Degrading
+  // to "no pointer" would hide that. Going through the repository also keeps its
+  // injected `relationshipKeyForCat` seam authoritative instead of re-reading the
+  // global registry behind its back.
+  const primer = repository.readPrimer(repository.scope(userId, options.catId));
+  if (primer) {
+    pointerLines.push(`关系轨迹: ${CURRENT_RELATIONSHIP_PROFILE_URI}（cat_cafe_read_profile 按需读）`);
+    profilePointerEmitted.add(1, { 'profile.layer': 'primer' });
+  }
+  // Phase E: the corpus is owner-wide, so it is not scoped to this cat. Same
+  // existence gate and same per-layer counter the retired L0 compiler emitted.
+  if (repository.readCorpus(userId)) {
+    pointerLines.push(`共享事实: ${CURRENT_CORPUS_PROFILE_URI}（cat_cafe_read_profile layer=corpus 按需读）`);
+    profilePointerEmitted.add(1, { 'profile.layer': 'corpus' });
   }
 
   if (!capsuleSection && pointerLines.length === 0) return null;

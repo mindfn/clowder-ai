@@ -13,6 +13,12 @@ export function mapPublishVerdictError(message: string): HandlerError | null {
   if (message.startsWith('artifact_already_exists') || message.startsWith('verdict_id_taken')) {
     return { status: 409, error: 'verdict_already_exists', detail: message };
   }
+  if (message.startsWith('verdict_window_already_published')) {
+    return { status: 409, error: 'verdict_window_already_published', detail: message };
+  }
+  if (message.startsWith('verdict_window_duplicated_in_candidate')) {
+    return { status: 409, error: 'verdict_window_duplicated_in_candidate', detail: message };
+  }
   if (message.startsWith('invalid_source_ref')) {
     return { status: 400, error: 'invalid_source_ref', detail: message };
   }

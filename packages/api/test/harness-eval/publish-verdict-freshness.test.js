@@ -3,13 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-
 import { InMemoryFreshnessClosureStore } from '../../dist/domains/cats/services/freshness/closure/FreshnessClosureStore.js';
 import { FreshnessReplayProviderImpl } from '../../dist/infrastructure/harness-eval/freshness/freshness-replay-provider.js';
 import { loadEvalHubSummary } from '../../dist/infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { createFreshnessGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/freshness-generator-adapter.js';
 import { handlePublishVerdict } from '../../dist/infrastructure/harness-eval/publish-verdict/publish-verdict.js';
-import { buildPacket } from './publish-verdict-fixtures.js';
+import { buildPacket, seedCanonicalMeasurementCensusState } from './publish-verdict-fixtures.js';
 
 const root = mkdtempSync(join(tmpdir(), 'publish-verdict-freshness-'));
 const harnessFeedbackRoot = join(root, 'docs', 'harness-feedback');
@@ -67,6 +66,26 @@ const sourceRefs = {
   windowEndMs: 2_000,
 };
 
+function matureProvider(store = new InMemoryFreshnessClosureStore()) {
+  return new FreshnessReplayProviderImpl({
+    store,
+    fixtureRoot,
+    queueLifecycleSource: {
+      async listOwnerQueueCustodyLifecycles() {
+        return [];
+      },
+    },
+    attentionEventLog: {
+      async queryWindowBetween(startMs, endMs) {
+        return {
+          events: [],
+          coverage: { status: 'complete', completeFromMs: startMs, observedThroughMs: endMs },
+        };
+      },
+    },
+  });
+}
+
 before(() => {
   mkdirSync(join(harnessFeedbackRoot, 'eval-domains'), { recursive: true });
   mkdirSync(join(harnessFeedbackRoot, 'verdicts'), { recursive: true });
@@ -105,10 +124,7 @@ describe('publish_verdict eval:freshness', () => {
       evidenceRefs: ['append:message-final'],
       now: 1_300,
     });
-    const provider = new FreshnessReplayProviderImpl({
-      store,
-      fixtureRoot,
-    });
+    const provider = matureProvider(store);
     const generator = createFreshnessGeneratorAdapter(provider);
     let isolatedRoot;
     const artifactPublisher = {
@@ -116,7 +132,18 @@ describe('publish_verdict eval:freshness', () => {
         isolatedRoot = join(root, 'isolated');
         rmSync(isolatedRoot, { recursive: true, force: true });
         const outputRoot = join(isolatedRoot, 'docs', 'harness-feedback');
-        mkdirSync(outputRoot, { recursive: true });
+        mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
+        // The Eval Hub read model resolves every verdict against the domain registry.
+        // Upstream's git publisher got that for free (an isolated worktree is a repo
+        // checkout); a durable artifact root is a bare directory, so the registry is
+        // supplied here as what it is — an input to the read model, not generator output.
+        writeFileSync(join(outputRoot, 'eval-domains', 'eval-freshness.yaml'), domainYaml);
+        seedCanonicalMeasurementCensusState(isolatedRoot);
+        // Census seeding also plants sample verdicts whose bundles are not in this root;
+        // the read model resolves every verdict it finds, so clear them (as upstream's
+        // publisher fixture does) and let this test's own verdict be the only subject.
+        rmSync(join(outputRoot, 'verdicts'), { recursive: true, force: true });
+        mkdirSync(join(outputRoot, 'verdicts'), { recursive: true });
         const generated = await generate(outputRoot);
         await generated.afterPublish?.();
         return {
@@ -131,7 +158,9 @@ describe('publish_verdict eval:freshness', () => {
 
     const result = await handlePublishVerdict(
       { harnessFeedbackRoot, generator, artifactPublisher },
-      { packet: freshnessPacket(), domain: 'eval:freshness', catId: 'gpt52', ownerUserId: 'owner-test', sourceRefs },
+      // The live closure fixture below is owned by user-1 and upstream's replay is
+      // owner-scoped, so the publishing owner must be that same owner to see it.
+      { packet: freshnessPacket(), domain: 'eval:freshness', catId: 'gpt52', ownerUserId: 'user-1', sourceRefs },
     );
 
     assert.ok(!('error' in result), JSON.stringify(result));
@@ -207,9 +236,7 @@ describe('publish_verdict eval:freshness', () => {
   });
 
   it('publishes an empty replay window as no-data with healthy=false', async () => {
-    const generator = createFreshnessGeneratorAdapter(
-      new FreshnessReplayProviderImpl({ store: new InMemoryFreshnessClosureStore(), fixtureRoot }),
-    );
+    const generator = createFreshnessGeneratorAdapter(matureProvider());
     const isolatedRoot = join(root, 'isolated-no-data');
     const artifactPublisher = {
       async publishArtifact({ packet, generate }) {

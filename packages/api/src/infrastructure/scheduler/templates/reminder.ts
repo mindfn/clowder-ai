@@ -45,6 +45,7 @@ export const reminderTemplate: TaskTemplate = {
     const message = (p.params.message as string) || '定时提醒';
     const targetCatId = (p.params.targetCatId as string) || null;
     const triggerUserId = (p.params.triggerUserId as string) || 'default-user';
+    const ownerAuthProvenance = instanceId.startsWith('hold-ball-') ? p.ownerAuthProvenance : undefined;
     const threadId = p.deliveryThreadId;
     const isHoldBallWake = instanceId.startsWith('hold-ball-');
     const managedCommandWake = instanceId.startsWith('hold-ball-') && isManagedCommandWake(p.params);
@@ -107,6 +108,7 @@ export const reminderTemplate: TaskTemplate = {
                 ctx.invokeTrigger.trigger(tid, catId, triggerUserId, content, messageId, undefined, {
                   sourceCategory: 'scheduled',
                   ...(isHoldBallWake ? { completionRequirement: 'action-or-routing-exit' as const } : {}),
+                  ...(ownerAuthProvenance ? { ownerAuthProvenance } : {}),
                 }),
               ).catch(() => {});
             } catch {

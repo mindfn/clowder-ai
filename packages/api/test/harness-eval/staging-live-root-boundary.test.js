@@ -154,7 +154,10 @@ function makeBoundaryDeps(domain, seedIn) {
   mkdirSync(liveRoot, { recursive: true });
   mkdirSync(stagingRoot, { recursive: true });
   seedDomain(seedIn === 'live' ? liveRoot : stagingRoot, domain);
-  return { harnessFeedbackRoot: stagingRoot, liveHarnessFeedbackRoot: liveRoot };
+  // Owner-gated adapters refuse before resolving any evidence, so the boundary under
+  // test is only reachable with an owner present. This is a precondition of the test,
+  // not part of its contract.
+  return { harnessFeedbackRoot: stagingRoot, liveHarnessFeedbackRoot: liveRoot, ownerUserId: 'boundary-owner' };
 }
 
 const WINDOW = { startMs: 1_786_698_665_681, endMs: 1_787_303_465_681 };
@@ -240,6 +243,9 @@ const ADAPTERS = [
         closures: [],
         replayWindow: { startMs: WINDOW.startMs, endMs: WINDOW.endMs },
         summary: { total: 0, stale: 0, fresh: 0 },
+        // Same reason as ownerUserId above: a blocked maturity gate would short-circuit
+        // before the registry lookup this suite exists to pin.
+        measurementMaturity: { status: 'ready', reasons: [] },
       }),
     },
     domain: { domainId: 'eval:freshness', displayName: 'Freshness Eval', sourceRefsKind: 'freshness-closure-replay' },
@@ -321,6 +327,13 @@ for (const entry of ADAPTERS) {
           err.message,
           /unknown_domain/,
           'adapter must resolve the eval-domain registry from liveHarnessFeedbackRoot',
+        );
+        // A precondition that fires BEFORE the lookup would satisfy the assertion above
+        // without ever exercising it. Fail loudly instead of passing vacuously.
+        assert.doesNotMatch(
+          err.message,
+          /owner_user_required|measurement_validity_gate/,
+          'a precondition short-circuited the adapter, so the root boundary was never reached',
         );
       }
     });

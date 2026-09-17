@@ -235,3 +235,6 @@ packages/api/test/__b1_parent_a__/
 docs/harness-feedback/run-snapshots/
 .codex-tmp-*
 .tmp/
+
+# Isolated artwork preview sessions; user-entered drafts and SQLite stay local.
+var/f309-artwork-preview/

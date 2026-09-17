@@ -57,6 +57,7 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import type { TaskProgressStore } from '../invocation/TaskProgressStore.js';
 import type { AgentRegistry } from '../registry/AgentRegistry.js';
+import type { AgentRegistrationFailure } from '../registry/AgentServiceUnavailableError.js';
 import type {
   A2ASlotTrackingOptions,
   PersistenceContext,
@@ -564,6 +565,7 @@ function buildMentionData(configs: Record<string, import('@cat-cafe/shared').Cat
  * Options for AgentRouter constructor
  */
 export interface AgentRouterOptions {
+  collectiveContext?: import('../invocation/invoke-single-cat.js').InvocationDeps['collectiveContext'];
   agentRegistry: AgentRegistry;
   registry: InvocationRegistry;
   messageStore: IMessageStore;
@@ -700,8 +702,10 @@ export interface AgentRouterOptions {
  */
 export class AgentRouter {
   private services: Record<string, AgentService>;
+  private unavailableServices: ReadonlyMap<string, AgentRegistrationFailure> = new Map();
   private registry: InvocationRegistry;
   private messageStore: IMessageStore;
+  private collectiveContext: import('../invocation/invoke-single-cat.js').InvocationDeps['collectiveContext'];
   private sessionManager: SessionManager;
   private deliveryCursorStore: DeliveryCursorStore;
   private threadStore: IThreadStore | null;
@@ -855,6 +859,7 @@ export class AgentRouter {
   }
 
   private rebuildRuntimeCaches(agentRegistry: AgentRegistry): void {
+    this.unavailableServices = agentRegistry.getAllUnavailableEntries();
     this.services = {};
     for (const [catId, service] of agentRegistry.getAllEntries()) {
       this.services[catId] = service;
@@ -871,6 +876,7 @@ export class AgentRouter {
 
     this.registry = options.registry;
     this.messageStore = options.messageStore;
+    this.collectiveContext = options.collectiveContext;
     this.sessionManager = new SessionManager(options.sessionStore);
     // #1200 P2-3: wire cursor canonicalizer for v1→v2 async resolution
     const canonicalizer = options.messageStore.canonicalizeCursor
@@ -973,6 +979,13 @@ export class AgentRouter {
   contextCapacitySnapshot(catId: CatId): InvocationCapacitySnapshot | undefined {
     const service = this.services[catId];
     return service ? resolveInvocationCapacitySnapshot({ catId, service }) : undefined;
+  }
+
+  supportsCollectiveParticipation(catId: string): boolean {
+    return (
+      this.isRoutableCat(catId) &&
+      this.services[catId]?.supportsToolExecutionPolicy?.({ mode: 'collective_participation' }) === true
+    );
   }
 
   private isRoutableCat(catId: string | null | undefined): catId is CatId {
@@ -1622,8 +1635,11 @@ export class AgentRouter {
     const apiPort = process.env.API_SERVER_PORT ?? '3004';
     return {
       services: this.services,
+      unavailableServices: this.unavailableServices,
       ...(this.routingDispatchPreflight ? { routingDispatchPreflight: this.routingDispatchPreflight } : {}),
       invocationDeps: {
+        messageStore: this.messageStore,
+        ...(this.collectiveContext ? { collectiveContext: this.collectiveContext } : {}),
         registry: this.registry,
         sessionManager: this.sessionManager,
         threadStore: this.threadStore,
@@ -1929,6 +1945,7 @@ export class AgentRouter {
       persistedPromptMessages?: RouteOptions['persistedPromptMessages'];
       /** F281: required on typed first-party ingress; only direct_owner is injectable. */
       humanDispositionInvocationOrigin: HumanDispositionInvocationOrigin;
+      routingQueueSource?: RouteOptions['routingQueueSource'];
       /** F153: caller trace context for cross-route A2A propagation */
       callerTraceContext?: CallerTraceContext;
       /** Explicit A2A trigger message ID for queue-dispatched stream reply threading */
@@ -1951,6 +1968,7 @@ export class AgentRouter {
       freshnessSupplementId?: RouteOptions['freshnessSupplementId'];
       freshnessSupplementRequiredMessageIds?: RouteOptions['freshnessSupplementRequiredMessageIds'];
       toolExecutionPolicy?: RouteOptions['toolExecutionPolicy'];
+      executionScope?: RouteOptions['executionScope'];
       memoryCueOpportunitySeeds?: RouteOptions['memoryCueOpportunitySeeds'];
       asrPersonMemoryScenes?: RouteOptions['asrPersonMemoryScenes'];
     },
@@ -2064,6 +2082,7 @@ export class AgentRouter {
       freshnessSupplementId: options?.freshnessSupplementId,
       freshnessSupplementRequiredMessageIds: options?.freshnessSupplementRequiredMessageIds,
       toolExecutionPolicy: options?.toolExecutionPolicy,
+      executionScope: options?.executionScope,
       memoryCueOpportunitySeeds: options?.memoryCueOpportunitySeeds,
       asrPersonMemoryScenes: options?.asrPersonMemoryScenes,
       invocationController: options?.invocationController,
@@ -2081,6 +2100,7 @@ export class AgentRouter {
       cloudDispatchProvenance: options?.cloudDispatchProvenance,
       requiresExactCloudDispatchProvenance: options?.requiresExactCloudDispatchProvenance,
       humanDispositionInvocationOrigin: options.humanDispositionInvocationOrigin,
+      ...(options.routingQueueSource ? { routingQueueSource: options.routingQueueSource } : {}),
       thinkingMode,
       ...(options?.cursorBoundaries ? { cursorBoundaries: options.cursorBoundaries } : {}),
       ...(options?.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),

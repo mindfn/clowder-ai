@@ -1,5 +1,8 @@
 import { type EvalDomainRegistryEntry, parseEvalDomainRegistryEntry } from './domain/eval-domain-registry.js';
-import { PUBLISH_VERDICT_PACKET_INSTRUCTIONS } from './eval-cat-publish-instructions.js';
+import {
+  PUBLISH_VERDICT_ARTIFACT_FOOTER,
+  PUBLISH_VERDICT_PACKET_INSTRUCTIONS,
+} from './eval-cat-publish-instructions.js';
 import { FRESHNESS_PUBLISH_SELECTOR_INSTRUCTIONS } from './freshness/freshness-eval-cat-instructions.js';
 import {
   TRAJECTORY_INSPECTOR_DOMAIN_INSTRUCTIONS,
@@ -38,7 +41,7 @@ export interface EvalCatInvocationPacket {
 
 const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
   'eval:a2a':
-    'Enter the eval:a2a domain thread, load the longitudinal context, compare day-over-day trends, and produce a verdict handoff packet when evidence supports fix/build/keep/delete_sunset. Include legacy scheduled task status in the analysis to prevent duplicate triggers. COUNTER RATE DENOMINATOR (F167 sibling-PR): OTel SDK counters reset to 0 on every API process restart, while the trace store is hydrated from Redis with up to 24h of history. The counter-window block is written as `counter_window` (snake_case) in raw snapshot YAML (`snapshots/*.yaml`) and as `counterWindow` (camelCase) in bundle JSON (`bundles/*/snapshot.json`) — both refer to the same field; check whichever artifact you are reading. If the counter-window block is present, use `counter_window.duration_hours` / `counterWindow.durationHours` — NOT `window.duration_hours` / `window.durationHours` — as the denominator for any counter-based rate (e.g. `activationCounts.X / counterWindow.durationHours`). When the counter-window duration is < 2 hours, downgrade counter-derived rate confidence by one level (recent restart = short accumulation window, rate is noisy). If the counter-window block is absent (older server build), flag as telemetry gap and accept that counter rates may underreport. GROUNDING SUBDOMAIN (F167 Phase O): examine the grounding-phase-o component — check grounding.check_total (shadow checks run on stateful tools), grounding.verdict_total (verdicts produced), grounding.mismatch_sample_count (claim-source mismatches). If mismatch_sample_count > 0, review groundingSampleEvidence for recurring patterns. Grounding runs in shadow mode (never blocks) — report whether shadow data suggests high-confidence mismatch patterns that warrant escalation to fail-closed, or whether the distribution is healthy (mostly verified/insufficient with few mismatches). PHASE Q HOLD LIFECYCLE: examine the hold-lifecycle-phase-q component — hold_lifecycle.event_retired_total and hold_lifecycle.stale_wake_suppressed_total are healthy activation counters, while hold_lifecycle.expired_after_satisfied_total is zero-tolerance: any nonzero value is a high-severity regression and should be reviewed with per-fire sample evidence when present. F167 EVENT-BACKED ROUTING EXIT: examine the event-backed-routing-exit component — compare event_wait.bypass_total, event_wait.rejected_stale_total, event_wait.rejected_unrelated_total, event_wait.rejected_uncovered_total, event_wait.rejected_query_failed_total, event_wait.rejected_other_total, and event_wait.redundant_hold_prevented_total; event_wait.rejected_other_total closes accounting for missing_invocation, no_candidate, and proof_invalid. event_wait.false_bypass_total is zero-tolerance and any nonzero value is a high-severity fail-closed regression. ACTION SUCCESSOR CARRIER MIGRATION: inspect successor.single_target_multi_mention_rate, successor.unfenced_single_target_multi_mention, successor.action_fence_unavailable, and successor.agent_key_action_rejected. A nonzero action_fence_unavailable now isolates durable admission/wiring failure and warrants a fix verdict. agent_key_action_rejected is expected fail-closed behavior because persistent-agent credentials lack invocation provenance; trend it as caller misuse, not a wiring regression. Trend single-target multi_mention toward zero while excluding legitimate explicit parallel observations. PHASE T TURN-CUSTODY STOP GATE: examine the turn-custody-stop-gate component. Record turn_custody.old_only_block_total and turn_custody.projected_block_increase_total only as behavior-delta observations, never as equivalence or correctness redlines; trend turn_custody.unknown_legacy_rate as migration context. The full authoritative turn_custody.new_only_block_total denominator must equal justified + unjustified + unexplained; any classification gap, unjustified row, or unexplained row is zero-tolerance. Also require zero protocol_action_without_custody, user_nudge_required, same_subject_post_terminal_enqueue, and lease_succeeded_subject_nonterminal. Bounded trace samples explain rows but never substitute for the metric denominator. no-data confidence on grounding-phase-o, event-backed-routing-exit, or turn-custody-stop-gate means the hook is not wired or required counters were not exposed — flag as telemetry gap.',
+    'Enter the eval:a2a domain thread, load the longitudinal context, compare day-over-day trends, and produce a verdict handoff packet when evidence supports fix/build/keep/delete_sunset. Include legacy scheduled task status in the analysis to prevent duplicate triggers. COUNTER RATE DENOMINATOR (F167 sibling-PR): OTel SDK counters reset to 0 on every API process restart, while the trace store is hydrated from Redis with up to 24h of history. The counter-window block is written as `counter_window` (snake_case) in raw snapshot YAML (`snapshots/*.yaml`) and as `counterWindow` (camelCase) in bundle JSON (`bundles/*/snapshot.json`) — both refer to the same field; check whichever artifact you are reading. If the counter-window block is present, use `counter_window.duration_hours` / `counterWindow.durationHours` — NOT `window.duration_hours` / `window.durationHours` — as the denominator for any counter-based rate (e.g. `activationCounts.X / counterWindow.durationHours`). When the counter-window duration is < 2 hours, downgrade counter-derived rate confidence by one level (recent restart = short accumulation window, rate is noisy). If the counter-window block is absent (older server build), flag as telemetry gap and accept that counter rates may underreport. GROUNDING SUBDOMAIN (F167 Phase O): examine the grounding-phase-o component — check grounding.check_total (shadow checks run on stateful tools), grounding.verdict_total (verdicts produced), grounding.mismatch_sample_count (claim-source mismatches). If mismatch_sample_count > 0, review groundingSampleEvidence for recurring patterns. Grounding runs in shadow mode (never blocks) — report whether shadow data suggests high-confidence mismatch patterns that warrant escalation to fail-closed, or whether the distribution is healthy (mostly verified/insufficient with few mismatches). PHASE Q HOLD LIFECYCLE: examine the hold-lifecycle-phase-q component — hold_lifecycle.event_retired_total and hold_lifecycle.stale_wake_suppressed_total are healthy activation counters, while hold_lifecycle.expired_after_satisfied_total is zero-tolerance: any nonzero value is a high-severity regression and should be reviewed with per-fire sample evidence when present. F167 EVENT-BACKED ROUTING EXIT: examine the event-backed-routing-exit component — compare event_wait.bypass_total, event_wait.rejected_stale_total, event_wait.rejected_unrelated_total, event_wait.rejected_uncovered_total, event_wait.rejected_query_failed_total, event_wait.rejected_other_total, and event_wait.redundant_hold_prevented_total; event_wait.rejected_other_total closes accounting for missing_invocation (legacy), missing_identity, no_candidate, and proof_invalid; rejected_stale_total includes authority_stale and authority_changed at Queue commit, and rejected_query_failed_total includes failed canonical authority reads. Consumer rejections increase false_bypass_total once per rejected commit attempt; successful commits, idempotent replays, and retried Queue revision conflicts do not. event_wait.false_bypass_total is zero-tolerance and any nonzero value is a high-severity fail-closed regression. ACTION SUCCESSOR CARRIER MIGRATION: inspect successor.single_target_multi_mention_rate, successor.unfenced_single_target_multi_mention, successor.action_fence_unavailable, and successor.agent_key_action_rejected. A nonzero action_fence_unavailable now isolates durable admission/wiring failure and warrants a fix verdict. agent_key_action_rejected is expected fail-closed behavior because persistent-agent credentials lack invocation provenance; trend it as caller misuse, not a wiring regression. Trend single-target multi_mention toward zero while excluding legitimate explicit parallel observations. PHASE T TURN-CUSTODY STOP GATE: examine the turn-custody-stop-gate component. Record turn_custody.old_only_block_total and turn_custody.projected_block_increase_total only as behavior-delta observations, never as equivalence or correctness redlines; trend turn_custody.unknown_legacy_rate as migration context. The full authoritative turn_custody.new_only_block_total denominator must equal justified + unjustified + unexplained; any classification gap, unjustified row, or unexplained row is zero-tolerance. Also require zero protocol_action_without_custody, user_nudge_required, same_subject_post_terminal_enqueue, and lease_succeeded_subject_nonterminal. Bounded trace samples explain rows but never substitute for the metric denominator. no-data confidence on grounding-phase-o, event-backed-routing-exit, or turn-custody-stop-gate means the hook is not wired or required counters were not exposed — flag as telemetry gap.',
   'eval:memory':
     'Enter the eval:memory domain thread, load recall quality and library health trends, compare day-over-day recall metrics (MRR, precision@K, abandonment) and library health indicators (orphan edges, stale anchors, verification debt), and produce a verdict handoff packet when evidence supports fix/build/keep/delete_sunset.',
   'eval:sop':
@@ -50,7 +53,7 @@ const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
   'eval:friction':
     'Enter the eval:friction domain thread. Review the periodic cross-channel friction rollup report (clusters aggregated from paw-feel markers, tool-call cancels, user feedback, and eval-domain metrics). For each Top-N cluster, weigh its sensor forms (provided in the report), channel diversity (cross-channel recurrence = stronger signal), count, severity, and member evidence refs. The report does NOT pre-assign root cause — YOU assign the 7-class root cause as your own verdict-layer attribution judgment (harness_misfit / tool_gap / environment_drift / vision_gap / translation_gap / execution_gap / taste_gap); do not fabricate attribution — if the evidence is thin, lower your confidence or say so. Phase D contract: `actionableCandidates` are the only clusters eligible for a repair-thread exit, and each may carry a prefilled `followupDraft` you can reuse when you decide a propose_thread is warranted. `referenceOnly` clusters are link-only context (currently eval-domain friction): list / cite them, but do NOT open a second repair thread for them. Produce a verdict handoff packet (fix/build/keep_observe/delete_sunset). Cluster counts + sensor forms are evidence, not the packet verdict. Do not over-fold the long tail — a low-count cluster on a high-severity channel can still warrant a fix verdict.',
   'eval:freshness':
-    'Enter the eval:freshness domain thread. Review F254 freshness telemetry across the gate/notice/reinvoke/queued-read lifecycle. Track cat_cafe.freshness.queued_seen as full contiguous get_thread_context reads of same-target queued bodies, and cat_cafe.freshness.queued_handled as queued_seen entries closed by same-invocation cat-level success evidence. The v1 inference is succeeded=handled only when seen and succeeded are anchored to the same outer InvocationRecord id for the same cat; treat any widening of the read-to-handled gap as a possible false inference, crash/cancel preservation issue, or user-visible duplicate wake. Compare queued_seen, queued_handled, gate_held, notice_attached, notice_acked, reinvoke_triggered, and reinvoke_skipped trends. For D2, inspect providerNativeCoverage by provider, carrier, delivery semantics, and tool surface; opportunity, delivered, seen, handled, and missed are distinct. MCP-only cells are partial evidence and must never be reported as all-tool coverage. Replay all eight AC-E9 classes when validating structure. No-data is a telemetry gap with healthy=false, never proof the system is healthy. Publish support is available only when this runtime advertises the wired freshness-closure-replay selector.',
+    'Enter the eval:freshness domain thread. Review F254 freshness telemetry across the Queue custody, FreshnessSupplement, gate/notice/reinvoke, stream, and provider-native lifecycles. Use only the owner-scoped half-open-window replay counts emitted by the selector; process-cumulative OTel counters are diagnostic and never a weekly denominator. Treat freshness.queued_seen as exact-body exposure and freshness.queued_handled as current-revision target-local terminal evidence; succeeded=handled is an explicit current-revision inference, not a historical body-exposure claim. A widening seen-to-handled gap or pending-at-window-end count is a telemetry gap to investigate for crash/cancel preservation issues or duplicate wakes. For D2, inspect providerNativeCoverage by provider, carrier, delivery semantics, and tool surface; opportunity, delivered, seen, handled, and missed are distinct. MCP-only cells are partial evidence and must never be reported as all-tool coverage. Replay all eight AC-E9 classes for structural invariants and preserve legacy closure evidence. A closure structural no_data result can coexist with real Queue/Supplement/attention activity: report those signals and keep healthy=false. If measurementMaturity is blocked or any required source lacks complete selected-window coverage, publication must fail rather than extrapolate. Publish support is available only when this runtime advertises the wired freshness-closure-replay selector.',
   'eval:qc':
     'Enter the eval:qc domain thread. Analyze the weekly QC pipeline metrics rollup: finding yield (average actionable findings per review), false positive rate (findings rejected by author / total), reviewer delta (formal reviewer new findings vs fresh-context pre-review coverage), and post-merge bug rate (hotfixes within 14-day window per merged PR). Phase C bootstrap provides zero-baseline data — produce a keep_observe verdict noting the zero-data state. As live telemetry sources are wired (future phases), compare week-over-week trends and produce fix/build/keep_observe/delete_sunset verdicts based on whether the QC loop is improving review quality.',
   'eval:harness-ledger':
@@ -68,9 +71,7 @@ const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
 const PUBLISH_VERDICT_INSTRUCTIONS_A2A = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
 You must also supply \`sourceRefs\` (NOT part of packet, separate input field): \`{ snapshotName, attributionName }\` — BASENAMES of your sanitized evidence YAMLs inside \`<harnessFeedbackRoot>/snapshots/\` and \`<harnessFeedbackRoot>/attributions/\` respectively. Path separators / \`..\` will be rejected (allowlist). The tool will NOT fabricate evidence — if you don't provide refs, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 /** F192 PR-2: capability-wakeup replay selector sourceRefs. */
@@ -94,9 +95,7 @@ Fields:
 
 Tool resolves the selector by replaying session events via \`buildCapabilityTrace → evaluateCapabilityWakeupTrace → classifyCapabilityWakeupTrials\` — no need for you to pre-sanitize evidence YAMLs. Tool will NOT fabricate evidence — if selector yields zero classified trials, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_TASK_OUTCOME = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -121,9 +120,7 @@ Fields:
 
 Tool resolves the selector by loading task-outcome episodes/signals for the time window, bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`, writing the live verdict artifact into the runtime artifact store, and applying any explicit \`episodeVerdicts\` to the task-outcome DB. Tool will NOT fabricate evidence — if the DB path is missing, the selector is invalid, or an \`episodeVerdicts[].episodeId\` is outside the selected terminal window, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 /** F192 publish_verdict eval:memory replay selector sourceRefs. */
@@ -146,9 +143,9 @@ Fields:
 
 Tool resolves the selector by calling \`RecallMetricsComputer.computeMetrics({days, catId, toolName})\` + \`computeLibraryHealth(...)\` — no need for you to pre-sanitize evidence YAMLs. Tool will NOT fabricate evidence — if the window yields zero recall events (\`totalEvents=0\`), publish fails with \`404 no_metrics_in_window\` so you widen the window or relax the filters before retrying.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL. Bundle contains snapshot.json + attribution.json + provenance.json (sha256 of \`generated/memory/{verdictId}/{recall-metrics,library-health}.json\` for replay).
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+Bundle contains snapshot.json + attribution.json + provenance.json (sha256 of \`generated/memory/{verdictId}/{recall-metrics,library-health}.json\` for replay).
 `;
 
 /** Only domains with wired generators get publish instructions and sourceRefs shape. */
@@ -189,9 +186,7 @@ Fields: \`kind\` REQUIRED literal \`"sop-trace-eval"\`; \`sopDefinitionId\` REQU
 For F303 route/consumer admission, include optional \`diffContext\` with full 40-character \`baseSha\`/\`headSha\` and every changed file's \`path\` + \`addedLines\`. When added route/consumer lines touch auth/policy/resolver/cursor/lifecycle helpers, include \`designGateReviewPacket\`: \`exactHeadSha\`, typed \`riskClaims\` (including \`consumer_delta\`, canonical source, consumer evidence, and claim guard), plus one successful \`targetedSelfCheckReceipts\` entry per claim whose claimId, headSha, and command match. Partial diff coverage, duplicate claim IDs, mismatched HEAD, missing evidence, or failed/mismatched receipts fail closed.
 Tool resolves the selector by building a SopTrace from the embedded trace data, loading the SOP definition from the shared catalog, running \`evaluateSopDefinition(definition, trace)\`, and writing the results as bundle artifacts (snapshot.json, attribution.json, provenance.json) + raw inputs (trace.json, eval-results.json). Tool will NOT fabricate evidence — if the trace fails schema validation or the definition ID is unknown, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_FRICTION = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -214,9 +209,7 @@ Fields:
 
 Tool resolves the selector by composing the 4 read-only friction channels (paw-feel markers / tool-call cancels / user feedback / eval-domain metrics) over the window, aggregating + clustering into a FrictionRollupReport, and bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`. Read-only (KD-4): no writeback to any source store. Tool will NOT fabricate evidence — an empty window yields a no-finding record, not invented clusters.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_ANCHOR_FIRST = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -235,9 +228,7 @@ Fields:
 
 Tool resolves the selector by computing the anchor telemetry rollup over the specified window (per-tool preview↔drill join, open-rate, double-sided netBenefit, orphanDrills) and bundling the rollup snapshot + Track-1 aggregate cross-reference. Tool will NOT fabricate evidence — if the window yields zero preview events, the rollup is empty (no perTool entries).
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_QC = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -258,9 +249,7 @@ Use the canonical QC \`metricRefs\`: \`metric:finding_yield\`, \`metric:false_po
 
 Tool resolves the selector by computing the QC metrics rollup over the specified window and bundling the snapshot. Phase C bootstrap: metrics are zero-baseline (no live data source wired yet). Tool will NOT fabricate evidence.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -275,9 +264,7 @@ Fields:
 
 **Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the complete sourceRefs. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and published bundle share one data source.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_FOOTER.trim()}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_FRESHNESS = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}${FRESHNESS_PUBLISH_SELECTOR_INSTRUCTIONS}`;
@@ -285,9 +272,7 @@ const PUBLISH_VERDICT_INSTRUCTIONS_FRESHNESS = `${PUBLISH_VERDICT_PACKET_INSTRUC
 const PUBLISH_VERDICT_INSTRUCTIONS_DESIGN_GATE = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
 You must also supply \`sourceRefs\` as the server-owned \`design-gate-episode-source-map\` selector. Discover candidate maps under \`docs/harness-feedback/design-gate/source-maps/\`; choose the unique cumulative map with the greatest \`window.endMs\`, and pass its filename stem as \`sourceMapId\`. The API rejects stale, ambiguous, or non-cumulative selections instead of silently replaying a frozen bootstrap window.
 The source map contains canonical refs only. The API re-resolves admission, GitHub exact HEAD and self-check, persisted non-author review, landed Alpha, and consequence sources. Do not copy source prose or submit caller-authored episode facts. Use the six canonical metric refs for the vector. Missing/invalid sources, immature observation, or insufficient validity allow only \`keep_observe\`.
-
-The MCP tool creates the existing isolated evidence branch and PR. Do not write or push verdict artifacts directly.
-`;
+${PUBLISH_VERDICT_ARTIFACT_FOOTER}`;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_TRAJECTORY_INSPECTOR = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}${TRAJECTORY_INSPECTOR_PUBLISH_SELECTOR_INSTRUCTIONS}`;
 
@@ -305,6 +290,16 @@ const PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN: Partial<Record<string, string>> = 
   'eval:design-gate': PUBLISH_VERDICT_INSTRUCTIONS_DESIGN_GATE,
   'eval:trajectory-inspector': PUBLISH_VERDICT_INSTRUCTIONS_TRAJECTORY_INSPECTOR,
 };
+
+/**
+ * Registry census hook: every wired domain's publish instructions, so a contract
+ * guard can assert the whole table at once instead of sampling a few domains.
+ */
+export function evalDomainPublishInstructions(): ReadonlyArray<{ domainId: string; instructions: string }> {
+  return Object.entries(PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    .map(([domainId, instructions]) => ({ domainId, instructions }));
+}
 
 /** Registry census hook: report instruction wiring without duplicating either map. */
 export function hasEvalDomainInstructions(domainId: string): boolean {

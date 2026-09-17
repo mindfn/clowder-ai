@@ -709,7 +709,9 @@ describe('incremental current-message fallback integration', () => {
           parentInvocationId: 'inv-parent',
           persistedPromptMessageIds: [sanitizedMessageId],
           persistedPromptMessages: [{ messageId: sanitizedMessageId, content: sanitizedBody }],
-          onPromptMessagesExposed: async (input) => exposed.push(input),
+          onPromptMessagesExposed: async (input) => {
+            exposed.push(input);
+          },
         })) {
         }
 
@@ -762,7 +764,9 @@ describe('incremental current-message fallback integration', () => {
         parentInvocationId: 'inv-parent',
         persistedPromptMessageIds: [normalizedMessageId],
         persistedPromptMessages: [{ messageId: normalizedMessageId, content: persistedBody }],
-        onPromptMessagesExposed: async (input) => exposed.push(input),
+        onPromptMessagesExposed: async (input) => {
+          exposed.push(input);
+        },
       })) {
       }
 
@@ -820,7 +824,9 @@ describe('incremental current-message fallback integration', () => {
       for await (const _ of route(deps, ['opus'], 'history-16', 'user1', 'thread1', {
         currentUserMessageId,
         parentInvocationId: 'inv-parent',
-        onPromptMessagesExposed: async (input) => exposed.push(input),
+        onPromptMessagesExposed: async (input) => {
+          exposed.push(input);
+        },
       })) {
       }
 
@@ -893,7 +899,9 @@ describe('incremental current-message fallback integration', () => {
         for await (const _ of route(deps, ['opus'], 'this message starts the new turn', 'user1', 'thread1', {
           currentUserMessageId,
           parentInvocationId: 'inv-parent',
-          onPromptMessagesExposed: async (input) => exposed.push(input),
+          onPromptMessagesExposed: async (input) => {
+            exposed.push(input);
+          },
         })) {
         }
 
@@ -939,7 +947,9 @@ describe('incremental current-message fallback integration', () => {
         persistedPromptMessageIds: callerFolded,
         freshnessSupplementRequiredMessageIds: [freshnessRequired[0]],
         freshnessClosureRequiredMessageIds: [freshnessRequired[1]],
-        onPromptMessagesExposed: async (input) => exposed.push(input),
+        onPromptMessagesExposed: async (input) => {
+          exposed.push(input);
+        },
       })) {
       }
 
@@ -1076,7 +1086,9 @@ describe('incremental current-message fallback integration', () => {
             contentBlocks: [{ type: 'context_attachment', attachment: hydratedAttachment }],
           },
         ],
-        onPromptMessagesExposed: async (input) => exposed.push(input),
+        onPromptMessagesExposed: async (input) => {
+          exposed.push(input);
+        },
       })) {
       }
 

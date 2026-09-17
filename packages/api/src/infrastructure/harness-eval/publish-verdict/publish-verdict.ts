@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
   assertGeneratedArtifactCoordinates,
   generatedVerdictIds,
@@ -310,6 +310,22 @@ export async function handlePublishVerdict(
         generated = candidate;
         childArtifacts = writeGeneratedLifecycleArtifacts(candidate, packet, outputRoot);
         findingArtifacts = candidate.findingArtifacts ?? [];
+        // Stamp invocation-authenticated sourceThreadId into provenance.json.
+        // Centralized here (not in 10+ generators) so: (a) new generators get it
+        // for free, (b) client can never forge it — it comes from CallbackPrincipal.
+        // agent_key principals have no threadId, so the field is omitted gracefully.
+        if (input.sourceThreadId) {
+          const provenancePath = join(candidate.bundleDir, 'provenance.json');
+          if (existsSync(provenancePath)) {
+            const prov = JSON.parse(readFileSync(provenancePath, 'utf8'));
+            prov.sourceThreadId = input.sourceThreadId;
+            writeFileSync(provenancePath, `${JSON.stringify(prov, null, 2)}\n`);
+          } else {
+            console.warn(
+              `[publish-verdict] provenance.json not found at ${provenancePath}, sourceThreadId not stamped — generator may have failed to produce it`,
+            );
+          }
+        }
         return candidate;
       },
     });

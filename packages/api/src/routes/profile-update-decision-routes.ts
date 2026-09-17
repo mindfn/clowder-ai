@@ -31,6 +31,7 @@ export interface ProfileUpdateDecisionDeps {
   lock: SessionMutex;
   repository: FileProfileRepository;
   socketManager: Pick<SocketManager, 'emitToUser'>;
+  refreshProfileCollectionIndex?: (userId: string) => Promise<{ status: string; error?: string }>;
   approveProfileUpdate?: typeof defaultApproveProfileUpdate;
 }
 
@@ -70,7 +71,14 @@ async function resolveOwnedProfileUpdate(
 }
 
 export function registerProfileUpdateDecisionRoutes(app: FastifyInstance, deps: ProfileUpdateDecisionDeps): void {
-  const { store, lock, repository, socketManager, approveProfileUpdate = defaultApproveProfileUpdate } = deps;
+  const {
+    store,
+    lock,
+    repository,
+    socketManager,
+    refreshProfileCollectionIndex,
+    approveProfileUpdate = defaultApproveProfileUpdate,
+  } = deps;
 
   app.get('/api/profile-updates/:proposalId', async (request, reply) => {
     const proposalId = resolveProfileUpdateId(request, reply);
@@ -92,13 +100,22 @@ export function registerProfileUpdateDecisionRoutes(app: FastifyInstance, deps: 
     const result = await approveProfileUpdate(proposal.proposalId, userId, { store, lock, repository });
     if (result.ok) {
       // F231 AC-C3 eval counter (KD-10)
-      profileUpdateApproved.add(1, { 'agent.id': result.proposal.sourceCatId });
+      profileUpdateApproved.add(1, { 'agent.id': result.proposal.sourceCatId, 'target.layer': result.targetLayer });
+      // Phase E (INV-9): refresh private collection index so owner-auth search_evidence finds
+      // newly written content immediately. Awaited — not fire-and-forget (R3 ≥3-轮 fix).
+      const indexRefresh = await refreshProfileCollectionIndex?.(userId)?.catch((err: Error) => ({
+        status: 'error' as const,
+        error: err.message,
+      }));
       socketManager.emitToUser(userId, 'proposal_updated', result.proposal);
       return {
         proposalId: result.proposal.proposalId,
         status: result.proposal.status,
         writtenPath: result.proposal.writtenPath,
         recovered: result.recovered,
+        revision: result.revision,
+        targetLayer: result.targetLayer,
+        ...(indexRefresh ? { indexRefreshStatus: indexRefresh.status } : {}),
       };
     }
     switch (result.reason) {
@@ -148,7 +165,7 @@ export function registerProfileUpdateDecisionRoutes(app: FastifyInstance, deps: 
       return { error: 'Proposal status changed concurrently — retry reject', status: proposal.status };
     }
     // F231 AC-C3 eval counter (KD-10)
-    profileUpdateRejected.add(1, { 'agent.id': marked.sourceCatId });
+    profileUpdateRejected.add(1, { 'agent.id': marked.sourceCatId, 'target.layer': marked.targetLayer });
     socketManager.emitToUser(userId, 'proposal_updated', marked);
     return { proposalId: marked.proposalId, status: marked.status };
   });

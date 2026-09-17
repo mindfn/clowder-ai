@@ -85,8 +85,11 @@ export function formatRoutingPolicy(
  */
 function renderOwnerProfileSection(profile: StaticIdentityOptions['profile']): string | null {
   if (!profile) return null;
-  const parts = [profile.capsuleSection?.trim(), ...(profile.pointerLines ?? []).map((line) => line.trim())].filter(
-    (part): part is string => Boolean(part),
+  // Deliver the snapshot's bytes unchanged: durable evidence binds exactly what the
+  // session received, so trimming here would make "delivered == stored" untrue. Blank
+  // parts are dropped whole rather than rewritten.
+  const parts = [profile.capsuleSection, ...(profile.pointerLines ?? [])].filter(
+    (part): part is string => typeof part === 'string' && part.trim().length > 0,
   );
   return parts.length > 0 ? parts.join('\n\n') : null;
 }
