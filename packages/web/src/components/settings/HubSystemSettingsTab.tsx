@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import type { EnvVar } from './EnvSubComponents';
 import { SettingsStatusStrip } from './primitives';
-import { SystemSettingsView } from './SystemSettingsView';
+import { SystemSettingsGate2 } from './SystemSettingsGate2';
 
 interface SystemSummaryResponse {
   groups: Record<string, string>;
@@ -34,8 +34,8 @@ export function HubSystemSettingsTab() {
   if (error) return <SettingsStatusStrip tone="error">{error}</SettingsStatusStrip>;
   if (!data) return <SettingsStatusStrip tone="info">加载系统设置…</SettingsStatusStrip>;
 
-  // #770 P0 D7: no post-save refetch. A refetch returns the same stale
-  // pre-restart currentValue for restart-required vars, and the draft-reset
-  // effect used to revert the just-saved values in the UI (save bounce).
-  return <SystemSettingsView variables={data.variables} groupLabels={data.groups} />;
+  // #770 Gate 2: the curated status + five-decisions view replaces the env-var
+  // dump (former SystemSettingsView). No post-save refetch by design (P0 D7) —
+  // just-written values live in the view's local overrides.
+  return <SystemSettingsGate2 variables={data.variables} />;
 }
