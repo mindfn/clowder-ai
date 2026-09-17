@@ -7,24 +7,24 @@ import { after, before, test } from 'node:test';
 
 const { invokeSingleCat } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
 
-let auditDir;
-let originalAuditDir;
+let dataDir;
+let originalDataDir;
 let originalPreflightDisable;
 
 before(async () => {
-  auditDir = await mkdtemp(join(tmpdir(), 'f298-registration-failure-'));
-  originalAuditDir = process.env.AUDIT_LOG_DIR;
+  dataDir = await mkdtemp(join(tmpdir(), 'f298-registration-failure-'));
+  originalDataDir = process.env.DATA_DIR;
   originalPreflightDisable = process.env.CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT;
-  process.env.AUDIT_LOG_DIR = auditDir;
+  process.env.DATA_DIR = dataDir;
   process.env.CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT = '1';
 });
 
 after(async () => {
-  if (originalAuditDir === undefined) delete process.env.AUDIT_LOG_DIR;
-  else process.env.AUDIT_LOG_DIR = originalAuditDir;
+  if (originalDataDir === undefined) delete process.env.DATA_DIR;
+  else process.env.DATA_DIR = originalDataDir;
   if (originalPreflightDisable === undefined) delete process.env.CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT;
   else process.env.CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT = originalPreflightDisable;
-  await rm(auditDir, { recursive: true, force: true });
+  await rm(dataDir, { recursive: true, force: true });
 });
 
 test('F298 auth admission failure is typed before provider startup', async () => {

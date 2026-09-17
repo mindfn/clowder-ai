@@ -300,7 +300,9 @@ NEXT_PUBLIC_WHISPER_URL=http://localhost:9876
 
 # 文字转语音（TTS）
 TTS_URL=http://localhost:9879
-# 可选覆盖；默认使用 ~/.cat-cafe/assets/tts
+# 已弃用的覆盖项，老安装仍生效：设置后生成的音频缓存在此路径。
+# 新安装请改用 CACHE_DIR —— 音频缓存位于 CACHE_DIR/tts
+#（默认：API 工作目录下的 data/tts-cache）。
 # TTS_CACHE_DIR=/绝对路径/tts-cache
 
 # 语音纠正（LLM 后处理）

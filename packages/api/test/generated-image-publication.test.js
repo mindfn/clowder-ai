@@ -7,19 +7,19 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 describe('publishGeneratedImage', () => {
   let sourceDir;
   let uploadDir;
-  let previousUploadDir;
+  let previousDataDir;
 
   beforeEach(async () => {
     sourceDir = await mkdtemp(join(tmpdir(), 'cat-cafe-generated-image-source-'));
     uploadDir = await mkdtemp(join(tmpdir(), 'cat-cafe-generated-image-upload-'));
-    previousUploadDir = process.env.UPLOAD_DIR;
+    previousDataDir = process.env.DATA_DIR;
   });
 
   afterEach(async () => {
     if (sourceDir) await rm(sourceDir, { recursive: true, force: true });
     if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
-    if (previousUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = previousUploadDir;
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
   });
 
   it('publishes a generated image as a canonical /uploads artifact with media_gallery block', async () => {
@@ -169,12 +169,12 @@ describe('publishGeneratedImage', () => {
     assert.equal((await readdir(uploadDir)).length, 2);
   });
 
-  it('uses UPLOAD_DIR when uploadDir override is omitted', async () => {
+  it('uses DATA_DIR/uploads when uploadDir override is omitted', async () => {
     const { publishGeneratedImage } = await import(
       '../dist/domains/cats/services/agents/providers/generated-image-publication.js'
     );
 
-    process.env.UPLOAD_DIR = uploadDir;
+    process.env.DATA_DIR = uploadDir;
 
     const sourcePath = join(sourceDir, 'cat.png');
     await writeFile(sourcePath, Buffer.from('fake-png'));
@@ -188,7 +188,7 @@ describe('publishGeneratedImage', () => {
     });
 
     assert.match(published.urlPath, /^\/uploads\/env-upload-dir-[a-f0-9]{8}\.png$/);
-    assert.equal(published.absPath, join(uploadDir, published.urlPath.replace('/uploads/', '')));
+    assert.equal(published.absPath, join(uploadDir, 'uploads', published.urlPath.replace('/uploads/', '')));
   });
 
   it('bounds publication filenames for very long publicationKeys', async () => {

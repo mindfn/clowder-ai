@@ -28,15 +28,15 @@ async function withKeepAlive(promise, ms = 1_000) {
 }
 
 let invokeSingleCat;
-let savedAuditLogDir;
+let savedDataDir;
 let savedCliTimeoutMs;
 
 describe('invocation-level hard timeout (F089)', () => {
   before(async () => {
-    savedAuditLogDir = process.env.AUDIT_LOG_DIR;
+    savedDataDir = process.env.DATA_DIR;
     savedCliTimeoutMs = process.env.CLI_TIMEOUT_MS;
     const tempDir = await mkdtemp(join(tmpdir(), 'cat-inv-timeout-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     // Override CLI_TIMEOUT_MS to make invocation timeout short for testing.
     // Invocation timeout = CLI_TIMEOUT_MS * 2 = 400ms
     process.env.CLI_TIMEOUT_MS = '200';
@@ -45,8 +45,8 @@ describe('invocation-level hard timeout (F089)', () => {
   });
 
   after(() => {
-    if (savedAuditLogDir === undefined) delete process.env.AUDIT_LOG_DIR;
-    else process.env.AUDIT_LOG_DIR = savedAuditLogDir;
+    if (savedDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = savedDataDir;
     if (savedCliTimeoutMs === undefined) delete process.env.CLI_TIMEOUT_MS;
     else process.env.CLI_TIMEOUT_MS = savedCliTimeoutMs;
   });

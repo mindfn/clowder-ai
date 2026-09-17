@@ -29,7 +29,7 @@ describe('preflight timeout rescues hung invocation', () => {
     process.env.CAT_CAFE_PREFLIGHT_TIMEOUT_MS = '200';
 
     tempDir = mkdtempSync(join(tmpdir(), 'cat-audit-preflight-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     process.env.CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT = '1';
 
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');

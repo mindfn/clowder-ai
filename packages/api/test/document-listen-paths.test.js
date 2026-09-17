@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
+import { homedir } from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
-import {
-  resolveDocumentListenStatePath,
-  resolveTtsCacheDir,
-} from '../dist/domains/cats/services/tts/document-listen-paths.js';
+import { afterEach, describe, it } from 'node:test';
+import { resolveTtsCacheDir } from '../dist/config/data-dirs.js';
+import { resolveDocumentListenStatePath } from '../dist/domains/cats/services/tts/document-listen-paths.js';
 
 describe('resolveDocumentListenStatePath', () => {
   const homeDir = path.join(path.sep, 'tmp', 'cat-cafe-home');
@@ -47,32 +46,46 @@ describe('resolveDocumentListenStatePath', () => {
   });
 });
 
-describe('resolveTtsCacheDir', () => {
-  const homeDir = path.join(path.sep, 'tmp', 'cat-cafe-home');
-
-  it('stores reusable audio below the stable user data root by default', () => {
-    assert.equal(resolveTtsCacheDir({}, homeDir), path.join(homeDir, '.cat-cafe', 'assets', 'tts'));
+describe('resolveTtsCacheDir (canonical resolver in config/data-dirs.js)', () => {
+  // The canonical resolver reads process.env directly — save/restore the
+  // knobs each test touches so the rest of the suite sees a clean env.
+  const touched = ['TTS_CACHE_DIR', 'CACHE_DIR', 'DATA_DIR'];
+  const saved = {};
+  afterEach(() => {
+    for (const key of touched) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
   });
 
-  it('keeps the default cache stable when CAT_CAFE_DATA_DIR uses a home-relative path', () => {
-    assert.equal(
-      resolveTtsCacheDir({ CAT_CAFE_DATA_DIR: '~/.cat-cafe-custom' }, homeDir),
-      path.join(homeDir, '.cat-cafe-custom', 'assets', 'tts'),
-    );
+  function setEnv(key, value) {
+    if (!(key in saved)) saved[key] = process.env[key];
+    process.env[key] = value;
+  }
+
+  it('defaults to the cwd-based legacy cache dir when no root or override is set', () => {
+    for (const key of ['TTS_CACHE_DIR', 'CACHE_DIR']) {
+      if (!(key in saved)) saved[key] = process.env[key];
+      delete process.env[key];
+    }
+    assert.equal(resolveTtsCacheDir(), path.resolve(process.cwd(), 'data/tts-cache'));
   });
 
-  it('lets TTS_CACHE_DIR explicitly override the canonical cache root', () => {
+  it('derives the cache dir from CACHE_DIR/tts', () => {
+    const cacheRoot = path.join(path.sep, 'var', 'cache', 'cat-cafe');
+    setEnv('CACHE_DIR', cacheRoot);
+    assert.equal(resolveTtsCacheDir(), path.join(cacheRoot, 'tts'));
+  });
+
+  it('keeps an explicit TTS_CACHE_DIR override working (deprecated compat)', () => {
     const override = path.join(path.sep, 'var', 'cache', 'cat-cafe-tts');
-    assert.equal(
-      resolveTtsCacheDir({ CAT_CAFE_DATA_DIR: path.join(path.sep, 'ignored'), TTS_CACHE_DIR: override }, homeDir),
-      override,
-    );
+    setEnv('CACHE_DIR', path.join(path.sep, 'ignored'));
+    setEnv('TTS_CACHE_DIR', override);
+    assert.equal(resolveTtsCacheDir(), override);
   });
 
   it('expands a home-relative TTS_CACHE_DIR override', () => {
-    assert.equal(
-      resolveTtsCacheDir({ TTS_CACHE_DIR: '~/custom-tts-cache' }, homeDir),
-      path.join(homeDir, 'custom-tts-cache'),
-    );
+    setEnv('TTS_CACHE_DIR', '~/custom-tts-cache');
+    assert.equal(resolveTtsCacheDir(), path.join(homedir(), 'custom-tts-cache'));
   });
 });

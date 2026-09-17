@@ -39,14 +39,14 @@ describe('POST /api/uploads/avatar', () => {
   /** @type {import('fastify').FastifyInstance} */
   let app;
   /** @type {string} */
-  let uploadDir;
+  let dataDir;
   /** @type {string | undefined} */
-  let prevUploadDir;
+  let prevDataDir;
 
   before(async () => {
-    uploadDir = await mkdtemp(join(tmpdir(), 'avatars-route-'));
-    prevUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = uploadDir;
+    dataDir = await mkdtemp(join(tmpdir(), 'avatars-route-'));
+    prevDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = dataDir;
     app = Fastify();
     await app.register(avatarsRoutes);
     await app.ready();
@@ -54,12 +54,12 @@ describe('POST /api/uploads/avatar', () => {
 
   after(async () => {
     await app.close();
-    if (prevUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = prevUploadDir;
-    await rm(uploadDir, { recursive: true, force: true });
+    if (prevDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = prevDataDir;
+    await rm(dataDir, { recursive: true, force: true });
   });
 
-  it('accepts a 7 MiB PNG and persists it to UPLOAD_DIR', async () => {
+  it('accepts a 7 MiB PNG and persists it under DATA_DIR/uploads', async () => {
     const rawBytes = 7 * 1024 * 1024;
     const buffer = makePngBuffer(rawBytes);
     const { payload, contentType } = buildMultipartPayload({
@@ -79,7 +79,7 @@ describe('POST /api/uploads/avatar', () => {
     assert.ok(body.url.startsWith('/uploads/'), 'URL should start with /uploads/');
     assert.ok(body.url.endsWith('.png'), 'URL should end with .png');
     const filename = body.url.replace('/uploads/', '');
-    const saved = await stat(join(uploadDir, filename));
+    const saved = await stat(join(dataDir, 'uploads', filename));
     assert.equal(saved.isFile(), true);
     assert.equal(saved.size, rawBytes, 'saved file size should match the input buffer length');
   });

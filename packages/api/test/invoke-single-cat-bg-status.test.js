@@ -30,7 +30,7 @@ let SessionChainStore;
 describe('F198-C P2-1: status messages treated as non-substantive', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-bg-status-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
     ({ SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js'));

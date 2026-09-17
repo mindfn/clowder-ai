@@ -41,7 +41,7 @@ let SessionChainStore;
 describe('F198 Bug #3: bg carrier chainKey consumer', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-bg-chainkey-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     invokeSingleCat = (await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js'))
       .invokeSingleCat;
     SessionChainStore = (await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js'))

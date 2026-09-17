@@ -24,7 +24,7 @@ let invokeSingleCat;
 describe('F115 AC-C3: proxy fallback to direct upstream', () => {
   before(async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'proxy-fallback-audit-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });

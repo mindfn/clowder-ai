@@ -9,9 +9,12 @@
  * Behavior: if a root is set, the path is `{root}/{subPath}`; otherwise the
  * legacy default (preserved for backward compatibility) is used.
  *
- * Legacy per-path env vars (EVIDENCE_DB, WORLD_DB, TRANSCRIPT_DATA_DIR,
- * AUDIT_LOG_DIR, CLI_RAW_ARCHIVE_DIR, UPLOAD_DIR, TTS_CACHE_DIR,
- * CONNECTOR_MEDIA_DIR) are removed — configure via the three roots instead.
+ * Legacy per-path env vars are collapsed (F770 Gate 1): TRANSCRIPT_DATA_DIR,
+ * AUDIT_LOG_DIR, CLI_RAW_ARCHIVE_DIR, UPLOAD_DIR and CONNECTOR_MEDIA_DIR are
+ * never read — their locations are fixed derivations under DATA_DIR/CACHE_DIR
+ * (see each resolver below). EVIDENCE_DB/WORLD_DB were already removed.
+ * TTS_CACHE_DIR survives as a deprecated compatibility override only: when
+ * explicitly set it still wins, but new installs should use CACHE_DIR.
  */
 
 import { homedir } from 'node:os';
@@ -31,6 +34,14 @@ function readRoot(name: DataRoot): string | undefined {
 
 function joinUnder(root: string, subPath: string): string {
   return resolve(root, subPath);
+}
+
+/** Expand a leading `~` against the user home dir (legacy env-var compat). */
+function expandHomePath(value: string): string {
+  const home = homedir();
+  if (value === '~') return home;
+  if (value.startsWith('~/')) return resolve(home, value.slice(2));
+  return value;
 }
 
 // --- DATA_DIR consumers --------------------------------------------------
@@ -100,6 +111,11 @@ export function resolveRedisBackupDir(): string {
 // --- CACHE_DIR consumers -------------------------------------------------
 
 export function resolveTtsCacheDir(): string {
+  // Deprecated compat (F770 Gate 1): an explicit TTS_CACHE_DIR still wins so
+  // existing installs keep their cache location; `~` is expanded as before.
+  // Unset → CACHE_DIR/tts, else the cwd-based legacy default.
+  const legacyOverride = process.env.TTS_CACHE_DIR;
+  if (legacyOverride && legacyOverride.trim() !== '') return resolve(expandHomePath(legacyOverride.trim()));
   const root = readRoot('CACHE_DIR');
   return root ? joinUnder(root, 'tts') : resolve(process.cwd(), 'data/tts-cache');
 }
@@ -257,6 +273,10 @@ export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[
       root: 'CACHE_DIR',
       subPath: 'tts',
       legacyPath: resolve(process.cwd(), 'data/tts-cache'),
+      // Deprecated TTS_CACHE_DIR override: when set, actual writes go to the
+      // override, so the CACHE_DIR target is not where new cache lands. The
+      // plan's source-exists check normally no-ops here (legacy dir is empty
+      // on installs that used the override); do not add migration work for it.
       rootBasedPath: cacheRoot ? joinUnder(cacheRoot, 'tts') : null,
       currentPath: resolveTtsCacheDir(),
       isFile: false,

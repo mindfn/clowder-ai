@@ -664,14 +664,14 @@ describe('GET /api/preview/target-health', () => {
 describe('POST /api/preview/screenshot', () => {
   let app3;
   /** @type {string | undefined} */
-  let previousUploadDir;
+  let previousDataDir;
   /** @type {string} */
   let customUploadDir;
 
   before(async () => {
     customUploadDir = await mkdtemp(join(tmpdir(), 'preview-screenshot-upload-'));
-    previousUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = customUploadDir;
+    previousDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = customUploadDir;
     app3 = Fastify();
     await app3.register(previewRoutes, {
       portDiscovery: new PortDiscoveryService(),
@@ -682,8 +682,8 @@ describe('POST /api/preview/screenshot', () => {
 
   after(async () => {
     await app3.close();
-    if (previousUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = previousUploadDir;
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
     await rm(customUploadDir, { recursive: true, force: true });
   });
 
@@ -712,7 +712,7 @@ describe('POST /api/preview/screenshot', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it('writes screenshot files to UPLOAD_DIR when customized', async () => {
+  it('writes screenshot files under DATA_DIR/uploads', async () => {
     const dataUrl =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
     const res = await app3.inject({
@@ -723,7 +723,7 @@ describe('POST /api/preview/screenshot', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const filename = body.url.replace('/uploads/', '');
-    const saved = await stat(join(customUploadDir, filename));
+    const saved = await stat(join(customUploadDir, 'uploads', filename));
     assert.equal(saved.isFile(), true);
   });
 });

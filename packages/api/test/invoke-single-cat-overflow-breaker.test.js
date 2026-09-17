@@ -24,7 +24,7 @@ let invokeSingleCat;
 describe('F118 overflow circuit breaker (AC-C6)', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-breaker-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });

@@ -26,7 +26,7 @@ let SessionChainStore;
 describe('#774 CLI timeout retry on session resume', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-timeout-retry-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
     ({ SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js'));

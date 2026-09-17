@@ -19,7 +19,7 @@ let invokeSingleCat;
 describe('F118 finally block audit fallback (AC-C5)', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-finally-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });
@@ -87,10 +87,10 @@ describe('F118 finally block audit fallback (AC-C5)', () => {
     await new Promise((r) => setTimeout(r, 200));
 
     // Read audit log and check for fallback CAT_ERROR
-    const files = await readdir(tempDir);
+    const files = await readdir(join(tempDir, 'audit-logs'));
     assert.ok(files.length > 0, 'audit log file should exist');
 
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const auditContent = await readFile(join(tempDir, 'audit-logs', files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')
@@ -133,8 +133,8 @@ describe('F118 finally block audit fallback (AC-C5)', () => {
     // Wait for fire-and-forget audit writes
     await new Promise((r) => setTimeout(r, 200));
 
-    const files = await readdir(tempDir);
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const files = await readdir(join(tempDir, 'audit-logs'));
+    const auditContent = await readFile(join(tempDir, 'audit-logs', files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')

@@ -214,7 +214,7 @@ afterEach(async () => {
 describe('invokeSingleCat audit events (P1 fix)', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-audit-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     // Dynamic import AFTER env is set — singleton will use this dir
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     const { resolveInvocationCapacitySnapshot } = await import(
@@ -452,8 +452,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     // Wait for fire-and-forget audit writes
     await new Promise((r) => setTimeout(r, 150));
 
-    const files = await readdir(tempDir);
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const files = await readdir(join(tempDir, 'audit-logs'));
+    const auditContent = await readFile(join(tempDir, 'audit-logs', files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')
@@ -1114,8 +1114,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
 
     await new Promise((r) => setTimeout(r, 150));
 
-    const files = await readdir(tempDir);
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const files = await readdir(join(tempDir, 'audit-logs'));
+    const auditContent = await readFile(join(tempDir, 'audit-logs', files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')

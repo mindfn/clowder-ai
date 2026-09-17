@@ -3780,8 +3780,8 @@ describe('Callback Routes', () => {
   test('#454: generate-document broadcast includes invocationId', async () => {
     const { tmpdir } = await import('node:os');
     const { rm } = await import('node:fs/promises');
-    const uploadDir = `${tmpdir()}/cat-cafe-test-uploads-454`;
-    process.env.UPLOAD_DIR = uploadDir;
+    const dataDir = `${tmpdir()}/cat-cafe-test-data-454`;
+    process.env.DATA_DIR = dataDir;
     try {
       const app = await createApp();
       const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-454-doc');
@@ -3806,16 +3806,16 @@ describe('Callback Routes', () => {
       assert.ok(docMsg, 'generate-document should broadcast system_info with rich_block');
       assert.equal(docMsg.invocationId, invocationId, 'generate-document broadcast must include invocationId');
     } finally {
-      delete process.env.UPLOAD_DIR;
-      await rm(uploadDir, { recursive: true, force: true }).catch(() => {});
+      delete process.env.DATA_DIR;
+      await rm(dataDir, { recursive: true, force: true }).catch(() => {});
     }
   });
 
   test('POST generate-document rejects invocation-bound soft-deleted thread without buffering or broadcasting', async () => {
     const { tmpdir } = await import('node:os');
     const { rm } = await import('node:fs/promises');
-    const uploadDir = `${tmpdir()}/cat-cafe-test-uploads-deleted`;
-    process.env.UPLOAD_DIR = uploadDir;
+    const dataDir = `${tmpdir()}/cat-cafe-test-data-deleted`;
+    process.env.DATA_DIR = dataDir;
     try {
       const thread = threadStore.create('user-1', 'Deleted Document Target');
       assert.equal(threadStore.softDelete(thread.id), true);
@@ -3849,8 +3849,8 @@ describe('Callback Routes', () => {
         'deleted thread must not receive generated file rich blocks',
       );
     } finally {
-      delete process.env.UPLOAD_DIR;
-      await rm(uploadDir, { recursive: true, force: true }).catch(() => {});
+      delete process.env.DATA_DIR;
+      await rm(dataDir, { recursive: true, force: true }).catch(() => {});
     }
   });
 

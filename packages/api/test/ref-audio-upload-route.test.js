@@ -1,6 +1,6 @@
 // @ts-check
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -57,15 +57,18 @@ describe('POST /api/uploads/ref-audio', () => {
   let app;
   /** @type {string} */
   let uploadDir;
+  let uploadsDir;
   /** @type {string | undefined} */
-  let prevUploadDir;
+  let prevDataDir;
   let trackedFileReads = 0;
   let trackedBufferDrains = 0;
 
   before(async () => {
     uploadDir = await mkdtemp(join(tmpdir(), 'ref-audio-route-'));
-    prevUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = uploadDir;
+    uploadsDir = join(uploadDir, 'uploads');
+    await mkdir(uploadsDir, { recursive: true });
+    prevDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = uploadDir;
     app = Fastify();
     app.addHook('preHandler', async (request) => {
       const sessionUser = request.headers['x-test-session-user'];
@@ -93,8 +96,8 @@ describe('POST /api/uploads/ref-audio', () => {
 
   after(async () => {
     await app.close();
-    if (prevUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = prevUploadDir;
+    if (prevDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = prevDataDir;
     await rm(uploadDir, { recursive: true, force: true });
   });
 
@@ -122,7 +125,7 @@ describe('POST /api/uploads/ref-audio', () => {
   it('drains unauthorized multipart uploads before returning auth error', async () => {
     trackedFileReads = 0;
     trackedBufferDrains = 0;
-    const filesBefore = await readdir(uploadDir);
+    const filesBefore = await readdir(uploadsDir);
     const { payload, contentType } = buildMultipartPayload({
       buffer: makeWavBuffer(),
       filename: 'voice.wav',
@@ -143,10 +146,10 @@ describe('POST /api/uploads/ref-audio', () => {
     assert.equal(JSON.parse(res.body).code, 'AUTH_REQUIRED');
     assert.equal(trackedFileReads, 1);
     assert.equal(trackedBufferDrains, 1);
-    assert.deepEqual(await readdir(uploadDir), filesBefore);
+    assert.deepEqual(await readdir(uploadsDir), filesBefore);
   });
 
-  it('accepts a sniffed WAV reference audio file and persists it under UPLOAD_DIR', async () => {
+  it('accepts a sniffed WAV reference audio file and persists it under DATA_DIR/uploads', async () => {
     const { payload, contentType } = buildMultipartPayload({
       buffer: makeWavBuffer(),
       filename: '../voice.wav',
@@ -167,7 +170,7 @@ describe('POST /api/uploads/ref-audio', () => {
     const body = JSON.parse(res.body);
     assert.match(body.url, /^\/uploads\/ref-audio-\d+-[a-f0-9]{8}\.wav$/);
     assert.doesNotMatch(body.url, /\.\.|voice\.wav/);
-    const saved = await stat(join(uploadDir, body.url.slice('/uploads/'.length)));
+    const saved = await stat(join(uploadsDir, body.url.slice('/uploads/'.length)));
     assert.equal(saved.isFile(), true);
     assert.equal(saved.size, 32);
   });
@@ -199,14 +202,14 @@ describe('POST /api/uploads/ref-audio', () => {
       assert.equal(res.statusCode, 200, `${entry.ext} upload should succeed`);
       const body = JSON.parse(res.body);
       assert.match(body.url, new RegExp(`^/uploads/ref-audio-\\d+-[a-f0-9]{8}\\.${entry.ext}$`));
-      const saved = await stat(join(uploadDir, body.url.slice('/uploads/'.length)));
+      const saved = await stat(join(uploadsDir, body.url.slice('/uploads/'.length)));
       assert.equal(saved.isFile(), true);
       assert.equal(saved.size, entry.buffer.length);
     }
   });
 
   it('rejects multipart requests without a file part', async () => {
-    const filesBefore = await readdir(uploadDir);
+    const filesBefore = await readdir(uploadsDir);
     const { payload, contentType } = buildNoFileMultipartPayload();
 
     const res = await app.inject({
@@ -221,11 +224,11 @@ describe('POST /api/uploads/ref-audio', () => {
 
     assert.equal(res.statusCode, 400);
     assert.equal(JSON.parse(res.body).code, 'NO_FILE');
-    assert.deepEqual(await readdir(uploadDir), filesBefore);
+    assert.deepEqual(await readdir(uploadsDir), filesBefore);
   });
 
   it('rejects non-audio bytes even when declared as audio', async () => {
-    const filesBefore = await readdir(uploadDir);
+    const filesBefore = await readdir(uploadsDir);
     const { payload, contentType } = buildMultipartPayload({
       buffer: Buffer.from('not really audio'),
       filename: 'voice.wav',
@@ -244,11 +247,11 @@ describe('POST /api/uploads/ref-audio', () => {
 
     assert.equal(res.statusCode, 415);
     assert.equal(JSON.parse(res.body).code, 'AUDIO_FORMAT_UNRECOGNIZED');
-    assert.deepEqual(await readdir(uploadDir), filesBefore);
+    assert.deepEqual(await readdir(uploadsDir), filesBefore);
   });
 
   it('rejects files above the refAudio size limit', async () => {
-    const filesBefore = await readdir(uploadDir);
+    const filesBefore = await readdir(uploadsDir);
     const tooLarge = 10 * 1024 * 1024 + 1;
     const { payload, contentType } = buildMultipartPayload({
       buffer: makeMp3Buffer(tooLarge),
@@ -270,6 +273,6 @@ describe('POST /api/uploads/ref-audio', () => {
     const body = JSON.parse(res.body);
     assert.equal(body.code, 'PAYLOAD_TOO_LARGE');
     assert.equal(body.maxBytes, 10 * 1024 * 1024);
-    assert.deepEqual(await readdir(uploadDir), filesBefore);
+    assert.deepEqual(await readdir(uploadsDir), filesBefore);
   });
 });
