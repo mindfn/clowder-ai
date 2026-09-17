@@ -1,7 +1,7 @@
 'use client';
 
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
@@ -72,6 +72,7 @@ export function PluginManagerContent({
   onSetEnabled,
   onUninstall,
   onConfigure,
+  configurationSavedPluginId = null,
   locale = 'zh-CN',
 }: {
   fixtures: readonly PluginManagerDesignFixture[];
@@ -87,12 +88,12 @@ export function PluginManagerContent({
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
+  configurationSavedPluginId?: string | null;
   locale?: string;
 }) {
   const [query, setQuery] = useState('');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
-  const [focusConfigurationPluginId, setFocusConfigurationPluginId] = useState<string | null>(null);
-  const detailPanelRef = useRef<HTMLDivElement>(null);
+  const [configurationValidation, setConfigurationValidation] = useState({ pluginId: '', request: 0 });
 
   const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
   const installedPlugins = filtered.filter((plugin) => plugin.artifact === 'installed');
@@ -104,12 +105,6 @@ export function PluginManagerContent({
   const visible = [...installedPlugins, ...attentionPlugins, ...recommendedPlugins, ...otherPlugins];
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
-
-  useEffect(() => {
-    if (focusConfigurationPluginId === null || selected?.id !== focusConfigurationPluginId) return;
-    detailPanelRef.current?.querySelector<HTMLElement>('[data-plugin-detail-section="configuration"]')?.focus();
-    setFocusConfigurationPluginId(null);
-  }, [focusConfigurationPluginId, selected?.id]);
 
   const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>
     plugins.map((plugin) => (
@@ -127,7 +122,7 @@ export function PluginManagerContent({
         onBlockedToggle={() => {
           selection.select(plugin.id);
           setMobileDetailOpen(true);
-          setFocusConfigurationPluginId(plugin.id);
+          setConfigurationValidation((current) => ({ pluginId: plugin.id, request: current.request + 1 }));
         }}
         onUninstall={() => onUninstall?.(plugin.id)}
         busy={busyPluginId === plugin.id}
@@ -220,7 +215,6 @@ export function PluginManagerContent({
         </div>
 
         <div
-          ref={detailPanelRef}
           data-mobile-panel="detail"
           className={`${mobileDetailOpen ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col gap-2 lg:flex`}
         >
@@ -239,6 +233,10 @@ export function PluginManagerContent({
                 plugin={selected}
                 locale={locale}
                 busy={busyPluginId === selected.id}
+                configurationValidationRequest={
+                  configurationValidation.pluginId === selected.id ? configurationValidation.request : 0
+                }
+                configurationSaved={configurationSavedPluginId === selected.id}
                 onSaveConfig={
                   selected.configFields?.length ? (updates) => onConfigure?.(selected.id, updates) : undefined
                 }

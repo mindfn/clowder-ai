@@ -174,9 +174,65 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
 
     expect(onSetEnabled).not.toHaveBeenCalled();
     const configuration = container.querySelector('[data-plugin-detail-section="configuration"]');
-    expect(document.activeElement).toBe(configuration);
-    expect(configuration?.className).toContain('focus:ring-2');
-    expect(configuration?.className).toContain('focus:ring-conn-sky-ring');
+    const requiredField = container.querySelector('[data-testid="field-PLUGIN_TOKEN"]') as HTMLInputElement | null;
+    expect(document.activeElement).toBe(requiredField);
+    expect(requiredField?.getAttribute('aria-invalid')).toBe('true');
+    expect(requiredField?.className).toContain('border-conn-red-ring');
+    expect(configuration?.className).not.toContain('focus:ring-2');
+    expect(container.textContent).toContain('请填写 Plugin token');
+  });
+
+  it('uses the same required-field validation when saving an incomplete configuration', async () => {
+    const onConfigure = vi.fn();
+    const blocked = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[1],
+      config: 'incomplete' as const,
+      configFields: [
+        {
+          kind: 'secret' as const,
+          key: 'PLUGIN_TOKEN',
+          label: 'Plugin token',
+          required: true,
+          currentValue: null,
+          sensitive: true,
+        },
+      ],
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[blocked]} onConfigure={onConfigure} />));
+
+    const save = button(container, '保存配置') as HTMLButtonElement | undefined;
+    expect(save?.disabled).toBe(false);
+    await act(async () => save?.click());
+
+    const requiredField = container.querySelector('[data-testid="field-PLUGIN_TOKEN"]') as HTMLInputElement | null;
+    expect(onConfigure).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(requiredField);
+    expect(requiredField?.getAttribute('aria-invalid')).toBe('true');
+    expect(container.textContent).toContain('请填写 Plugin token');
+  });
+
+  it('serializes an untouched required boolean from the manifest without plugin-specific logic', async () => {
+    const onConfigure = vi.fn();
+    const blocked = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[1],
+      config: 'incomplete' as const,
+      configFields: [
+        {
+          kind: 'boolean' as const,
+          key: 'ALLOW_REMOTE',
+          label: 'Allow remote access',
+          required: true,
+          currentValue: null,
+          sensitive: false,
+        },
+      ],
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[blocked]} onConfigure={onConfigure} />));
+    await act(async () => button(container, '保存配置')?.click());
+
+    expect(onConfigure).toHaveBeenCalledWith('feishu-meeting-intake', [{ key: 'ALLOW_REMOTE', value: 'false' }]);
   });
 
   it('expresses uninstalled state only through the install action', async () => {

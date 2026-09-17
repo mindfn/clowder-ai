@@ -25,6 +25,7 @@ export function PluginManagerLiveContent() {
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  const [configurationSavedPluginId, setConfigurationSavedPluginId] = useState<string | null>(null);
   const selectedPluginIdRef = useRef<string | null>(null);
   const query = useRef('');
   const listGeneration = useRef(0);
@@ -52,6 +53,7 @@ export function PluginManagerLiveContent() {
     (pluginId: string | null) => {
       selectedPluginIdRef.current = pluginId;
       setSelectedPluginId(pluginId);
+      setConfigurationSavedPluginId((current) => (current === pluginId ? current : null));
       if (pluginId) {
         void loadDetail(pluginId);
         return;
@@ -103,6 +105,7 @@ export function PluginManagerLiveContent() {
       }
       setBusyPluginId(pluginId);
       setError(null);
+      setConfigurationSavedPluginId(null);
       try {
         const response = await apiFetch(request.path, request.init);
         if (!response.ok) {
@@ -110,6 +113,7 @@ export function PluginManagerLiveContent() {
           setError(failure.message);
           return;
         }
+        setConfigurationSavedPluginId(pluginId);
         await refresh();
       } catch {
         setError('配置保存失败；现有配置没有被改写。');
@@ -198,6 +202,7 @@ export function PluginManagerLiveContent() {
           expectedRevision: plugin.lifecycleRevision,
         });
       }}
+      configurationSavedPluginId={configurationSavedPluginId}
       onUninstall={(pluginId) => {
         const plugin = plugins.find((candidate) => candidate.pluginId === pluginId);
         if (!plugin || plugin.lifecycleRevision === null) {

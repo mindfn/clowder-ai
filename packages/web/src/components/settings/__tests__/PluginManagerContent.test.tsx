@@ -60,6 +60,16 @@ function response(plugin: unknown = managerPlugin()) {
 
 type ManagerPluginFixture = ReturnType<typeof managerPlugin>;
 type ManagerPluginDetailFixture = Omit<ManagerPluginFixture, 'live'> & { readonly live: 'stopped' | 'running' };
+type ManagerPluginConfigurationFixture = Omit<ManagerPluginFixture, 'config' | 'lifecycleRevision' | 'actions'> & {
+  readonly config: 'ready' | 'incomplete';
+  readonly lifecycleRevision: number | null;
+  readonly actions: {
+    readonly install: boolean;
+    readonly setEnabled: boolean;
+    readonly uninstall: boolean;
+    readonly blockingReasons: readonly string[];
+  };
+};
 
 function detail(plugin: ManagerPluginDetailFixture = managerPlugin()) {
   return {
@@ -75,21 +85,34 @@ function detail(plugin: ManagerPluginDetailFixture = managerPlugin()) {
   };
 }
 
-function configuredDetail(plugin = managerPlugin({ installed: true })) {
+function configuredDetail(
+  plugin: ManagerPluginConfigurationFixture = managerPlugin({ installed: true }),
+  saved = false,
+) {
   return {
     plugin: {
       ...plugin,
-      config: 'incomplete',
-      actions: { ...plugin.actions, setEnabled: false, blockingReasons: ['config-incomplete'] },
       capabilities: plugin.capabilitySummary,
       configFields: [
+        {
+          key: 'provider',
+          label: 'Video provider',
+          kind: 'select',
+          required: true,
+          sensitive: false,
+          currentValue: saved ? 'gemini' : null,
+          options: [
+            { value: 'gemini', label: 'Gemini' },
+            { value: 'zhipu', label: 'Zhipu' },
+          ],
+        },
         {
           key: 'apiKey',
           label: 'API key',
           kind: 'secret',
           required: true,
           sensitive: true,
-          currentValue: null,
+          currentValue: saved ? '••••••' : null,
         },
       ],
     },
@@ -450,18 +473,34 @@ describe('F202 live Plugin Manager Console wiring', () => {
     });
   });
 
-  it('saves Host-managed typed configuration through the contribution route with a revision fence', async () => {
-    const plugin = managerPlugin({ installed: true });
+  it('saves the visible select value, confirms success, and enables with the refreshed revision', async () => {
+    const installed = managerPlugin({ installed: true });
+    const blocked = {
+      ...installed,
+      config: 'incomplete' as const,
+      actions: { ...installed.actions, setEnabled: false, blockingReasons: ['config-incomplete'] },
+    };
+    const ready = {
+      ...installed,
+      config: 'ready' as const,
+      lifecycleRevision: 8,
+      actions: { ...installed.actions, setEnabled: true, blockingReasons: [] },
+    };
+    let saved = false;
     mockApiFetch.mockImplementation(async (url, init) => {
-      if (url === '/api/plugin-manager/plugins') return json(response(plugin));
-      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(configuredDetail(plugin));
-      if (
-        url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/contributions/configuration' &&
-        init?.method === 'POST'
-      ) {
-        return json({ pluginId: plugin.pluginId, pluginInstanceId: 'pi_video' });
+      switch (`${init?.method ?? 'GET'} ${url}`) {
+        case 'GET /api/plugin-manager/plugins':
+          return json(response(saved ? ready : blocked));
+        case 'GET /api/plugin-manager/plugins/dev.clowder.video-analysis':
+          return json(configuredDetail(saved ? ready : blocked, saved));
+        case 'POST /api/plugin-manager/plugins/dev.clowder.video-analysis/contributions/configuration':
+          saved = true;
+          return json({ pluginId: installed.pluginId, pluginInstanceId: 'pi_video' });
+        case 'POST /api/plugin-manager/plugins/dev.clowder.video-analysis/set-enabled':
+          return json({ pluginId: installed.pluginId, pluginInstanceId: 'pi_video' });
+        default:
+          return json({}, 404);
       }
-      return json({}, 404);
     });
 
     await act(async () => root.render(<PluginsContent />));
@@ -483,9 +522,26 @@ describe('F202 live Plugin Manager Console wiring', () => {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ expectedRevision: 7, updates: [{ key: 'apiKey', value: 'private-key' }] }),
+        body: JSON.stringify({
+          expectedRevision: 7,
+          updates: [
+            { key: 'provider', value: 'gemini' },
+            { key: 'apiKey', value: 'private-key' },
+          ],
+        }),
       },
     );
+    expect(container.textContent).toContain('配置已保存');
+
+    const toggle = container.querySelector('button[aria-label="启用Video Analysis"]') as HTMLButtonElement | null;
+    await act(async () => toggle?.click());
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/dev.clowder.video-analysis/set-enabled', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true, expectedRevision: 8 }),
+    });
   });
 
   it('uses the shared Console confirmation flow before uninstalling', async () => {
