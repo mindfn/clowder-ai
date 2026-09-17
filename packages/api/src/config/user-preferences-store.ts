@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { delimiter, resolve } from 'node:path';
 import type {
   MessageDispositionPreferenceSnapshot,
   MessageDispositionPreferences,
@@ -229,4 +229,55 @@ export function saveLogLevel(projectRoot: string, value: string): LogLevelResolu
   // to the legacy env value (or re-migrate it) right after an intentional clear.
   if (sanitized) return { logLevel: sanitized, source: 'preferences', migratedFromEnv: false };
   return { logLevel: null, source: 'none', migratedFromEnv: false };
+}
+
+function sanitizeDeniedRoots(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+        .map((entry) => entry.trim()),
+    ),
+  ];
+}
+
+export interface DeniedRootsResolution {
+  /** Custom denied roots only — platform defaults are always merged by the consumer. */
+  deniedRoots: string[];
+  /** Where the returned value came from. */
+  source: 'preferences' | 'env-fallback' | 'none';
+  /** True when a legacy process.env PROJECT_DENIED_ROOTS value was migrated into the JSON store on this read. */
+  migratedFromEnv: boolean;
+}
+
+/**
+ * F770: custom denied roots live in user-preferences.json and are read per
+ * validation call (hot, same as the legacy env read). The key distinction from
+ * theme/log-level: an EMPTY ARRAY is a deliberate stored state — it clears all
+ * custom denials and must override the env fallback, otherwise clearing the
+ * blacklist would silently revive the env value (security control resurrection).
+ * The legacy PROJECT_DENIED_ROOTS env value is migrated into the store on first
+ * read when the key is absent entirely.
+ */
+export function resolveDeniedRoots(projectRoot: string): DeniedRootsResolution {
+  const prefs = readUserPreferences(projectRoot);
+  if (Array.isArray(prefs.deniedRoots)) {
+    return { deniedRoots: sanitizeDeniedRoots(prefs.deniedRoots), source: 'preferences', migratedFromEnv: false };
+  }
+  const envValue = process.env.PROJECT_DENIED_ROOTS;
+  if (envValue?.trim()) {
+    const custom = envValue.split(delimiter).filter(Boolean);
+    updateUserPreferences(projectRoot, (current) => ({ ...current, deniedRoots: custom }));
+    return { deniedRoots: custom, source: 'env-fallback', migratedFromEnv: true };
+  }
+  return { deniedRoots: [], source: 'none', migratedFromEnv: false };
+}
+
+export function saveDeniedRoots(projectRoot: string, roots: string[]): DeniedRootsResolution {
+  const sanitized = sanitizeDeniedRoots(roots);
+  updateUserPreferences(projectRoot, (current) => ({ ...current, deniedRoots: sanitized }));
+  // Return the just-written value directly: re-resolving here would fall back
+  // to the legacy env value right after an intentional clear of all denials.
+  return { deniedRoots: sanitized, source: 'preferences', migratedFromEnv: false };
 }

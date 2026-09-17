@@ -230,12 +230,10 @@ export const ENV_VARS: EnvDefinition[] = [
       'Denylist 模式下额外拦截的目录（按系统路径分隔符分隔，会合并到平台默认拦截列表）。仅在未设置 PROJECT_ALLOWED_ROOTS 时生效。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: true,
-    label: '目录黑名单',
-    settingsGroup: 'security',
-    // NOT dirpicker: project-path.ts splits this on node:path delimiter into a
-    // multi-root LIST (merged with platform defaults). A single-directory picker
-    // would drop the list semantics (codex/sol #1344 P2). Renders as multi-path text.
+    runtimeEditable: false,
+    hubVisible: false,
+    deprecated:
+      '已迁移到 .cat-cafe/user-preferences.json 的 deniedRoots 字段（F770），经 /api/config/denied-roots 运行时读写、保存后立即生效无需重启；此 env 值仅作首次读取的只读回退（迁入 JSON）',
   },
   {
     name: 'FRONTEND_URL',
@@ -2516,7 +2514,6 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'PREVIEW_GATEWAY_PORT',
   'PROJECT_ALLOWED_ROOTS',
   'PROJECT_ALLOWED_ROOTS_APPEND',
-  'PROJECT_DENIED_ROOTS',
   'REDIS_KEY_PREFIX',
   'REDIS_URL',
   'SUMMARY_TTL_SECONDS',

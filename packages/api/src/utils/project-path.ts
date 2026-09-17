@@ -29,9 +29,30 @@ export function getDefaultDeniedRoots(platformName = platform()): string[] {
   return ['/proc', '/sys', '/dev', '/boot', '/sbin', '/run'];
 }
 
+/**
+ * F770: preferred source of custom denied roots. Wired once at startup in
+ * config.ts to resolveDeniedRoots(projectRoot).deniedRoots (JSON preferences,
+ * migrating the legacy env value on first read).
+ *
+ * FAIL-CLOSED BY CONSTRUCTION: when the provider is unset / not yet wired /
+ * returns null, DENIED_ROOTS() falls back to platform defaults + the legacy
+ * env value — exactly the pre-#770 behavior. A security control must degrade
+ * toward MORE restriction, never toward "no restriction", so the unwired case
+ * can never yield an empty denylist.
+ */
+let deniedRootsProvider: (() => string[] | null) | null = null;
+
+export function setDeniedRootsProvider(provider: (() => string[] | null) | null): void {
+  deniedRootsProvider = provider;
+}
+
 function DENIED_ROOTS(): string[] {
-  const envDenied = process.env.PROJECT_DENIED_ROOTS;
   const defaults = getDefaultDeniedRoots();
+  const provided = deniedRootsProvider?.();
+  if (provided != null) {
+    return [...new Set([...defaults, ...provided])];
+  }
+  const envDenied = process.env.PROJECT_DENIED_ROOTS;
   if (envDenied?.trim()) {
     const custom = envDenied.split(delimiter).filter(Boolean);
     return [...new Set([...defaults, ...custom])];

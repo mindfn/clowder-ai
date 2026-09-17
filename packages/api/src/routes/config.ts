@@ -37,7 +37,7 @@ import {
 } from '../config/env-registry.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
-import { readStoredLogLevel } from '../config/user-preferences-store.js';
+import { readStoredLogLevel, resolveDeniedRoots } from '../config/user-preferences-store.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 // F212 Phase F (cloud codex R4 P2-#2 on fc69597675): import logger's captured LOG_DIR
@@ -48,9 +48,11 @@ import { LOG_DIR_PATH, logger, setRuntimeLogLevel } from '../infrastructure/logg
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { isDirectLoopbackRequest, isTrustedLocalApiRequest } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
+import { setDeniedRootsProvider } from '../utils/project-path.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { configCatOrderRoutes } from './config-cat-order.js';
+import { configDeniedRootsRoutes } from './config-denied-roots.js';
 import { configLogLevelRoutes } from './config-log-level.js';
 import { configMessageDispositionRoutes } from './config-message-disposition.js';
 import { configThemeRoutes } from './config-theme.js';
@@ -196,7 +198,14 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   const storedLogLevel = readStoredLogLevel(projectRoot);
   if (storedLogLevel) setRuntimeLogLevel(storedLogLevel);
 
+  // F770: wire the JSON-preferences denylist into project-path validation.
+  // Fail-closed: before this line (or if the provider is never wired, e.g.
+  // boot-time callers) DENIED_ROOTS() falls back to platform defaults + the
+  // legacy env value — exactly the pre-#770 behavior, zero regression.
+  setDeniedRootsProvider(() => resolveDeniedRoots(projectRoot).deniedRoots);
+
   await app.register(configCatOrderRoutes, { projectRoot });
+  await app.register(configDeniedRootsRoutes, { projectRoot });
   await app.register(configLogLevelRoutes, { projectRoot });
   await app.register(configMessageDispositionRoutes, { projectRoot });
   await app.register(configThemeRoutes, { projectRoot });

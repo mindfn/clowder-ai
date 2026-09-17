@@ -40,7 +40,7 @@ created: 2026-08-12
 | server | CORS_ALLOW_PRIVATE_NETWORK | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PROJECT_ALLOWED_ROOTS | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PROJECT_ALLOWED_ROOTS_APPEND | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | PROJECT_DENIED_ROOTS | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
+| server | PROJECT_DENIED_ROOTS | system | no | no | read-only | text | no | N/A | （已迁出）/api/config/denied-roots | 清出 System | F770 存储分层：已迁移到 user-preferences.json 的 deniedRoots，运行时读写免重启；env 仅首次读取只读回退（deprecated + hubVisible:false + runtimeEditable:false） |
 | server | FRONTEND_URL | system | yes | no | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | FRONTEND_PORT | system | yes | no | editable | number | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | DEFAULT_OWNER_USER_ID | system | yes | no | read-only (Hub) | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System（纯文本展示） | owner/trust-anchor，security group，Hub 只读 + restartRequired（#770 round 4 / opus P1-A：非 sensitive 导致 PATCH 鉴权块跳过，可写会权限自举）；仅手工 .env + 重启，未设置 ⇒ 单用户本地模式 |
@@ -69,7 +69,7 @@ created: 2026-08-12
 | server | RUNTIME_REPO_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | WORKSPACE_LINKED_ROOTS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | ANTHROPIC_API_KEY | accounts | no | no | module-managed | text | no | equivalent | HubAccountsTab.tsx → `/api/accounts` → accounts/credentials store → account resolver/resolveEnvMap → provider env injection | 清出 System | 由统一账户/凭证系统管理；env 仅作 bootstrap/fallback |
-| server | LOG_LEVEL | system | yes | no | editable | dropdown | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 即时生效（#770 P0 D2：PATCH 时 setRuntimeLogLevel 推根+子 pino logger），未设置时 summary 回显实际生效级别 |
+| server | LOG_LEVEL | system | no | no | read-only | dropdown | no | N/A | （已迁出）/api/config/log-level | 清出 System | F770 存储分层：已迁移到 user-preferences.json 的 logLevel，运行时读写免重启（PUT 即改 root+子 logger）；env 仅启动期只读回退（deprecated + hubVisible:false + runtimeEditable:false） |
 | server | LOG_DIR | ops | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 日志目录；不进通用 projection |
 | server | DEBUG | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
 | server | PREVIEW_GATEWAY_ENABLED | system | yes | no | editable | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
@@ -393,7 +393,7 @@ created: 2026-08-12
   - **组件补齐**（需专用组件/连接器扩展，不进通用 env 卡）：`AUDIT_LOG_INCLUDE_PROMPT_SNIPPETS`；GitHub Repo Inbox 配置（`GITHUB_WEBHOOK_SECRET`、`GITHUB_REPO_ALLOWLIST`、`GITHUB_REPO_INBOX_CAT_ID`），但需先把 connector gateway 从直接读 `process.env` 迁到 plugin config resolver。
   - **产品待决策**（仅当产品继续支持远程/自托管 sidecar 时，在 `ServiceStatusPanel` 增加“自定义端点”）：`AUDIO_SERVICE_URL`、`TTS_URL`、`WHISPER_URL`、`NEXT_PUBLIC_LLM_POSTPROCESS_URL`。
 - Dependencies: PR-B (so System view no longer duplicates them).
-- Runtime-persistence caveat: Console `PATCH /api/config/env` writes per-user `.env` and mutates the running process, but packaged desktop restart (`ServiceManager._startApi()`) does not reload `.env` (tracked by #1062). PR-C full acceptance for the packaged desktop lane is blocked on #1062; dev-mode acceptance can proceed. `LOG_LEVEL` is the canonical regression sample.
+- Runtime-persistence caveat: Console `PATCH /api/config/env` writes per-user `.env` and mutates the running process, but packaged desktop restart (`ServiceManager._startApi()`) does not reload `.env` (tracked by #1062). PR-C full acceptance for the packaged desktop lane is blocked on #1062; dev-mode acceptance can proceed. `PROJECT_ALLOWED_ROOTS` is the canonical regression sample. (`LOG_LEVEL` was the sample when this caveat was written; it has since migrated to user-preferences.json — F770 storage tier — and left the env write surface.)
 - Write-policy gate: all projected vars are readable; write is only enabled when the var's **target write policy** is `editable` **and** the runtime persistence contract is satisfied.
 - Verification: each module page can read its projected env vars via the unified renderer; only vars marked `editable` in target write policy are writable; `runtimeEditable=false` / `read-only` / `read-only, opt-in editable` vars render as read-only; build-time vars (`NEXT_PUBLIC_*`) are surfaced read-only with a rebuild-required hint. e2e tests verify no regressions in existing module UIs.
 

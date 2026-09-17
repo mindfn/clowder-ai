@@ -284,10 +284,11 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
-  it('defines exactly 27 registered, labelled, grouped, explicitly classified System variables', () => {
-    // F770: LOG_LEVEL left the curated surface when it moved to
-    // user-preferences.json (deprecated vars must not be SYSTEM_VARS members).
-    assert.equal(SYSTEM_VARS.size, 27);
+  it('defines exactly 26 registered, labelled, grouped, explicitly classified System variables', () => {
+    // F770: LOG_LEVEL and PROJECT_DENIED_ROOTS left the curated surface when
+    // they moved to user-preferences.json (deprecated vars must not be
+    // SYSTEM_VARS members).
+    assert.equal(SYSTEM_VARS.size, 26);
     for (const name of SYSTEM_VARS) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain in the full registry`);
@@ -298,12 +299,22 @@ describe('#770: curated System Settings projection', () => {
   });
 
   it('opens filesystem-policy variables for Hub writes (#770 round 3: no disabled dead controls)', () => {
-    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
+    // F770 storage tier: PROJECT_DENIED_ROOTS migrated to
+    // user-preferences.json (deniedRoots) and is no longer Hub-writable; the
+    // allowlist pair stays env-backed and editable.
+    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND']) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain registered`);
       assert.equal(definition.runtimeEditable, true, `${name} must be editable from the System page`);
       assert.equal(definition.settingsGroup, 'security');
     }
+    const denied = ENV_VARS.find((candidate) => candidate.name === 'PROJECT_DENIED_ROOTS');
+    assert.ok(denied, 'PROJECT_DENIED_ROOTS must remain registered (deprecated, read-only fallback)');
+    assert.equal(denied.runtimeEditable, false, 'migrated var must not be editable from the System page');
+    assert.equal(denied.hubVisible, false, 'migrated var must leave the Hub surface');
+    assert.ok(denied.deprecated?.includes('user-preferences.json'), 'deprecation note must name the JSON store');
+    assert.equal(isEditableEnvVar(denied), false, 'PATCH must reject the migrated var (fail closed)');
+    assert.equal(SYSTEM_VARS.has('PROJECT_DENIED_ROOTS'), false, 'deprecated var must not be a SYSTEM_VAR');
   });
 
   it('keeps DEFAULT_OWNER_USER_ID visible but Hub-read-only (#770 round 4: unauthenticated PATCH bootstrap)', () => {
@@ -1068,7 +1079,7 @@ describe('PATCH /api/config/env (route)', () => {
       });
       await app.ready();
 
-      for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
+      for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND']) {
         const response = await app.inject({
           method: 'PATCH',
           url: '/api/config/env',
@@ -1077,6 +1088,18 @@ describe('PATCH /api/config/env (route)', () => {
         });
         assert.equal(response.statusCode, 200, `${name} must be accepted`);
       }
+
+      // F770 storage tier: PROJECT_DENIED_ROOTS migrated to
+      // user-preferences.json and left the env write surface — the registry
+      // editability gate must reject it fail-closed like the trust anchor.
+      const deniedResponse = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'codex' },
+        payload: { updates: [{ name: 'PROJECT_DENIED_ROOTS', value: '/tmp/untrusted' }] },
+      });
+      assert.equal(deniedResponse.statusCode, 400, 'migrated var writes must be rejected from Hub');
+      assert.match(deniedResponse.payload, /not editable/);
 
       // The trust anchor is NOT sensitive, so the PATCH auth block (session 401 /
       // loopback+owner 403 / resolveOwnerGate) never runs for it — the only fence
@@ -1230,9 +1253,10 @@ describe('#770: isEditableEnvVar fail-closed default', () => {
 describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
   afterEach(() => restoreEnv());
 
-  it('SYSTEM_VARS contains exactly 27 curated variables', () => {
-    // F770: LOG_LEVEL departed when it migrated to user-preferences.json.
-    assert.equal(SYSTEM_VARS.size, 27);
+  it('SYSTEM_VARS contains exactly 26 curated variables', () => {
+    // F770: LOG_LEVEL and PROJECT_DENIED_ROOTS departed when they migrated to
+    // user-preferences.json.
+    assert.equal(SYSTEM_VARS.size, 26);
   });
 
   it('every SYSTEM_VAR exists in the registry', () => {
@@ -1267,13 +1291,19 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
     }
   });
 
-  it('security SYSTEM_VARS are explicitly runtimeEditable: true, except the trust anchor (#770 round 4)', () => {
-    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
+  it('security SYSTEM_VARS are explicitly runtimeEditable: true, except the trust anchor and migrated vars (#770 round 4)', () => {
+    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND']) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
       assert.equal(def.runtimeEditable, true, `${name} must be editable from the System page`);
       assert.equal(def.settingsGroup, 'security');
     }
+    // F770 storage tier: migrated to user-preferences.json, rejected by PATCH.
+    const denied = ENV_VARS.find((v) => v.name === 'PROJECT_DENIED_ROOTS');
+    assert.ok(denied, 'migrated var should remain in registry');
+    assert.equal(denied.runtimeEditable, false, 'migrated var must not be editable from the System page');
+    assert.equal(denied.settingsGroup, undefined, 'migrated var must leave the security settings group');
+    assert.equal(SYSTEM_VARS.has('PROJECT_DENIED_ROOTS'), false, 'migrated var must not be a SYSTEM_VAR');
     const owner = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(owner, 'trust anchor should be in registry');
     assert.equal(owner.runtimeEditable, false, 'trust anchor must not be editable from the System page');

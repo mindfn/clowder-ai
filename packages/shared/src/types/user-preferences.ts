@@ -56,4 +56,11 @@ export interface UserPreferences {
    * env var so log level changes apply without a restart.
    */
   logLevel?: string;
+  /**
+   * F770: extra denied project roots for path validation (denylist mode),
+   * absolute paths. Migrated from the PROJECT_DENIED_ROOTS env var. An empty
+   * array is meaningful: it clears all custom denials and overrides the env
+   * fallback (security control must not silently revive).
+   */
+  deniedRoots?: string[];
 }
