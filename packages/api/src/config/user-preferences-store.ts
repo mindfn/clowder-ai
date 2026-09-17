@@ -5,8 +5,8 @@
  * setting cannot clobber another. Writes are crash-safe temp+rename and no-TTL.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, resolve } from 'node:path';
 import type {
   MessageDispositionPreferenceSnapshot,
   MessageDispositionPreferences,
@@ -267,15 +267,42 @@ export function resolveDeniedRoots(projectRoot: string): DeniedRootsResolution {
   }
   const envValue = process.env.PROJECT_DENIED_ROOTS;
   if (envValue?.trim()) {
-    const custom = envValue.split(delimiter).filter(Boolean);
+    const custom = [...new Set(envValue.split(delimiter).filter(Boolean).map(canonicalizeDeniedRoot))];
     updateUserPreferences(projectRoot, (current) => ({ ...current, deniedRoots: custom }));
     return { deniedRoots: custom, source: 'env-fallback', migratedFromEnv: true };
   }
   return { deniedRoots: [], source: 'none', migratedFromEnv: false };
 }
 
+/**
+ * Canonicalize one denied root for comparison against realpath'd candidate
+ * paths. validateProjectPathDetailed realpaths the candidate before checking,
+ * and macOS aliases /tmp, /var, /etc behind /private/... symlinks — a stored
+ * literal '/tmp/x' would never match the candidate's '/private/tmp/x', a
+ * silent security-control failure. Resolve the longest EXISTING ancestor so
+ * not-yet-created directories still canonicalize (and saving them never fails
+ * just because the target does not exist yet).
+ */
+function canonicalizeDeniedRoot(entry: string): string {
+  const abs = resolve(entry);
+  let probe = abs;
+  const tail: string[] = [];
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe) break;
+    tail.unshift(basename(probe));
+    probe = parent;
+  }
+  try {
+    const canonical = realpathSync(probe);
+    return tail.length === 0 ? canonical : resolve(canonical, ...tail);
+  } catch {
+    return abs;
+  }
+}
+
 export function saveDeniedRoots(projectRoot: string, roots: string[]): DeniedRootsResolution {
-  const sanitized = sanitizeDeniedRoots(roots);
+  const sanitized = [...new Set(sanitizeDeniedRoots(roots).map(canonicalizeDeniedRoot))];
   updateUserPreferences(projectRoot, (current) => ({ ...current, deniedRoots: sanitized }));
   // Return the just-written value directly: re-resolving here would fall back
   // to the legacy env value right after an intentional clear of all denials.

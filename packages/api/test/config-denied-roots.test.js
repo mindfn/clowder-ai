@@ -11,17 +11,24 @@
  *   - FAIL-CLOSED: when the JSON provider is unwired / absent / broken,
  *     validation degrades toward platform defaults (+ legacy env), never
  *     toward "no restriction".
+ *   - STORED ROOTS ARE CANONICAL: validateProjectPathDetailed realpaths the
+ *     candidate before comparison, and macOS aliases /tmp, /var, /etc behind
+ *     /private/... symlinks — a literal '/tmp/x' would never match the
+ *     candidate's '/private/tmp/x' (silent security-control failure). Roots
+ *     are canonicalized at save time (longest-existing-ancestor realpath, so
+ *     not-yet-created directories still canonicalize), and GET returns the
+ *     canonical values so the UI states exactly what is being blocked.
  * The .env tier remains a read-only fallback, migrated into the JSON store on
  * first read; PATCH /api/config/env must reject PROJECT_DENIED_ROOTS.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, resolve } from 'node:path';
+import { basename, delimiter, dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
 
-import { isUnderAllowedRoot, setDeniedRootsProvider } from '../dist/utils/project-path.js';
+import { isUnderAllowedRoot, setDeniedRootsProvider, validateProjectPathDetailed } from '../dist/utils/project-path.js';
 
 async function buildApp(envFilePath, tempRoot) {
   const { configRoutes } = await import('../dist/routes/config.js');
@@ -42,17 +49,38 @@ function tempSetup() {
   return { tempRoot, envFilePath };
 }
 
+/** Mirror of the store's canonicalizeDeniedRoot: expectations must not drift from implementation. */
+function canon(entry) {
+  let probe = resolve(entry);
+  const tail = [];
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe) break;
+    tail.unshift(basename(probe));
+    probe = parent;
+  }
+  try {
+    const canonical = realpathSync(probe);
+    return tail.length === 0 ? canonical : resolve(canonical, ...tail);
+  } catch {
+    return resolve(entry);
+  }
+}
+
 describe('#770 F770: denied roots apply at runtime without restart', () => {
   it('PUT custom roots hot-applies to path validation in the same process; clearing hot-applies too', async () => {
     const savedEnv = process.env.PROJECT_DENIED_ROOTS;
     const { tempRoot, envFilePath } = tempSetup();
     delete process.env.PROJECT_DENIED_ROOTS;
+    const denied = resolve(tmpdir(), 'f770-denied-roots-blocked');
+    const allowed = resolve(tmpdir(), 'f770-denied-roots-fine');
+    mkdirSync(denied, { recursive: true });
+    mkdirSync(allowed, { recursive: true });
     try {
       const app = await buildApp(envFilePath, tempRoot);
       try {
-        const denied = '/tmp/f770-denied-roots-blocked';
-        const allowed = '/tmp/f770-denied-roots-fine';
-        assert.equal(isUnderAllowedRoot(`${denied}/sub`), true, 'control: path is allowed before PUT');
+        const probe = await validateProjectPathDetailed(denied);
+        assert.equal(probe.ok, true, `control: path is allowed before PUT: ${JSON.stringify(probe)}`);
 
         const res = await app.inject({
           method: 'PUT',
@@ -63,15 +91,14 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         assert.equal(res.statusCode, 200, `PUT rejected: ${res.payload}`);
         assert.equal(res.json().source, 'preferences');
 
-        assert.equal(
-          isUnderAllowedRoot(`${denied}/sub`),
-          false,
-          'custom denied root must block validation without restart',
-        );
-        assert.equal(isUnderAllowedRoot(`${allowed}/sub`), true, 'unrelated paths stay allowed');
+        const blocked = await validateProjectPathDetailed(denied);
+        assert.equal(blocked.ok, false, 'custom denied root must block validation without restart');
+        assert.equal(blocked.reason, 'denied_root');
+        const fine = await validateProjectPathDetailed(allowed);
+        assert.equal(fine.ok, true, 'unrelated paths stay allowed');
 
         const got = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
-        assert.deepEqual(got.json().deniedRoots, [denied]);
+        assert.deepEqual(got.json().deniedRoots, [canon(denied)]);
         assert.equal(got.json().source, 'preferences');
 
         const cleared = await app.inject({
@@ -81,19 +108,22 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
           payload: { deniedRoots: [] },
         });
         assert.equal(cleared.statusCode, 200);
-        assert.equal(isUnderAllowedRoot(`${denied}/sub`), true, 'clearing the custom list hot-applies too');
+        const unblocked = await validateProjectPathDetailed(denied);
+        assert.equal(unblocked.ok, true, 'clearing the custom list hot-applies too');
       } finally {
         await app.close();
       }
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(denied, { recursive: true, force: true });
+      rmSync(allowed, { recursive: true, force: true });
       if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
       else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       setDeniedRootsProvider(null);
     }
   });
 
-  it('migrates a legacy env value into the JSON store on first read and keeps it', async () => {
+  it('migrates a legacy env value into the JSON store on first read (canonicalized) and keeps it', async () => {
     const savedEnv = process.env.PROJECT_DENIED_ROOTS;
     const { tempRoot, envFilePath } = tempSetup();
     delete process.env.PROJECT_DENIED_ROOTS;
@@ -106,18 +136,18 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         const first = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
         assert.equal(first.statusCode, 200);
         const firstBody = first.json();
-        assert.deepEqual(firstBody.deniedRoots, [legacyPath]);
+        assert.deepEqual(firstBody.deniedRoots, [canon(legacyPath)]);
         assert.equal(firstBody.source, 'env-fallback');
         assert.equal(firstBody.migratedFromEnv, true);
 
         // The value landed in the JSON store — durable, not just served from env.
         const { readUserPreferences } = await import('../dist/config/user-preferences-store.js');
-        assert.deepEqual(readUserPreferences(tempRoot).deniedRoots, [legacyPath]);
+        assert.deepEqual(readUserPreferences(tempRoot).deniedRoots, [canon(legacyPath)]);
 
         // Second read: JSON wins over the still-present env value.
         const second = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
         assert.equal(second.json().source, 'preferences');
-        assert.deepEqual(second.json().deniedRoots, [legacyPath]);
+        assert.deepEqual(second.json().deniedRoots, [canon(legacyPath)]);
       } finally {
         await app.close();
       }
@@ -155,7 +185,7 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         assert.deepEqual(readUserPreferences(tempRoot).deniedRoots, []);
 
         assert.equal(
-          isUnderAllowedRoot(`${legacyPath}/sub`),
+          isUnderAllowedRoot(`${canon(legacyPath)}/sub`),
           true,
           'a path only denied by the cleared env value must be allowed again',
         );
@@ -181,10 +211,12 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
           method: 'PUT',
           url: '/api/config/denied-roots',
           headers: { 'x-cat-cafe-user': 'codex' },
-          payload: { deniedRoots: ['  /tmp/f770-dedupe  ', '/tmp/f770-dedupe', '', '   ', '/tmp/f770-other'] },
+          payload: {
+            deniedRoots: ['  /tmp/f770-dedupe  ', '/tmp/f770-dedupe', '', '   ', '/tmp/f770-other'],
+          },
         });
         assert.equal(cleaned.statusCode, 200, `PUT rejected: ${cleaned.payload}`);
-        assert.deepEqual(cleaned.json().deniedRoots, ['/tmp/f770-dedupe', '/tmp/f770-other']);
+        assert.deepEqual(cleaned.json().deniedRoots, [canon('/tmp/f770-dedupe'), canon('/tmp/f770-other')]);
 
         const relative = await app.inject({
           method: 'PUT',
@@ -197,7 +229,7 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
 
         // The rejected PUT must not touch the stored value.
         const got = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
-        assert.deepEqual(got.json().deniedRoots, ['/tmp/f770-dedupe', '/tmp/f770-other']);
+        assert.deepEqual(got.json().deniedRoots, [canon('/tmp/f770-dedupe'), canon('/tmp/f770-other')]);
       } finally {
         await app.close();
       }
@@ -241,6 +273,88 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
       else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       if (savedOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
       else process.env.DEFAULT_OWNER_USER_ID = savedOwner;
+      setDeniedRootsProvider(null);
+    }
+  });
+});
+
+describe('#770 F770: stored roots are canonical (symlink-safe)', () => {
+  it("canonicalizes macOS /private symlinks at save time so literal '/tmp/x' input actually blocks its real path", async () => {
+    const savedEnv = process.env.PROJECT_DENIED_ROOTS;
+    const { tempRoot, envFilePath } = tempSetup();
+    delete process.env.PROJECT_DENIED_ROOTS;
+    const literal = '/tmp/f770-symlink-canonical';
+    const canonical = canon(literal);
+    mkdirSync(literal, { recursive: true });
+    try {
+      const app = await buildApp(envFilePath, tempRoot);
+      try {
+        const res = await app.inject({
+          method: 'PUT',
+          url: '/api/config/denied-roots',
+          headers: { 'x-cat-cafe-user': 'codex' },
+          payload: { deniedRoots: [literal] },
+        });
+        assert.equal(res.statusCode, 200, `PUT rejected: ${res.payload}`);
+        assert.notEqual(
+          canonical,
+          resolve(literal),
+          'test premise: on this platform the canonical path must differ from the literal input',
+        );
+        assert.deepEqual(res.json().deniedRoots, [canonical], 'GET must return the canonical stored root');
+
+        // The exact scenario opus found: user types '/tmp/...', validation
+        // realpaths to '/private/tmp/...' — the stored root must match.
+        const blocked = await validateProjectPathDetailed(literal);
+        assert.equal(
+          blocked.ok,
+          false,
+          `literal input must block its realpath'd candidate: ${JSON.stringify(blocked)}`,
+        );
+        assert.equal(blocked.reason, 'denied_root');
+      } finally {
+        await app.close();
+      }
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(literal, { recursive: true, force: true });
+      if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
+      else process.env.PROJECT_DENIED_ROOTS = savedEnv;
+      setDeniedRootsProvider(null);
+    }
+  });
+
+  it('tolerates not-yet-existing directories: save succeeds now and blocks once the directory appears', async () => {
+    const savedEnv = process.env.PROJECT_DENIED_ROOTS;
+    const { tempRoot, envFilePath } = tempSetup();
+    delete process.env.PROJECT_DENIED_ROOTS;
+    const literal = '/tmp/f770-not-yet-existing';
+    const canonical = canon(literal);
+    try {
+      const app = await buildApp(envFilePath, tempRoot);
+      try {
+        const res = await app.inject({
+          method: 'PUT',
+          url: '/api/config/denied-roots',
+          headers: { 'x-cat-cafe-user': 'codex' },
+          payload: { deniedRoots: [literal] },
+        });
+        assert.equal(res.statusCode, 200, `realpath failure on a missing dir must not 400 the save: ${res.payload}`);
+        assert.deepEqual(res.json().deniedRoots, [canonical]);
+
+        // Once the directory comes into existence, the pre-canonicalized root matches.
+        mkdirSync(literal, { recursive: true });
+        const blocked = await validateProjectPathDetailed(literal);
+        assert.equal(blocked.ok, false, 'a denied root created after the save must be blocked');
+        assert.equal(blocked.reason, 'denied_root');
+      } finally {
+        await app.close();
+      }
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(literal, { recursive: true, force: true });
+      if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
+      else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       setDeniedRootsProvider(null);
     }
   });
