@@ -12,16 +12,22 @@
  *  1. With no root env vars set, every resolved path must equal the
  *     pre-change (baseline) resolver output, the five dead knobs must be
  *     ignored even when set, and the migration plan must be a no-op.
- *  2. With DATA_DIR=X set, all 12 data items must land exactly where the
- *     pre-change resolver put them for the same input — not merely
- *     "somewhere under X".
+ *  2. With DATA_DIR=X set, every item whose location is frozen must land
+ *     exactly where the pre-change resolver put it. Three items have a
+ *     documented Phase-2 derivation instead: ttsCache → X/cache/tts,
+ *     connectorMedia → X/cache/connector-media, annotationData → X/stories.
+ *  3. An explicit CACHE_DIR / ANNOTATION_DATA_DIR (deprecated compat
+ *     overrides) must win over the DATA_DIR derivation, exactly as the
+ *     pre-change resolver honored them.
  *
  * The baseline below is a frozen copy of packages/api/src/config/data-dirs.ts
  * as it was BEFORE the Gate 1 collapse (verified against the old dist build
  * during the refactor; the pre-change resolver never read the five knobs,
  * so the only intentional behavioral addition — the TTS_CACHE_DIR override —
  * is exercised in document-listen-paths.test.js and excluded here by always
- * running with TTS_CACHE_DIR unset).
+ * running with TTS_CACHE_DIR unset). Phase 2 (CACHE_DIR/ANNOTATION_DATA_DIR
+ * as deprecated overrides with DATA_DIR derivations) is pinned by the
+ * deltas map in the DATA_DIR scenarios and by the override-precedence test.
  */
 
 import assert from 'node:assert/strict';
@@ -92,12 +98,19 @@ function oldConnectorMedia() {
   const root = oldReadRoot('CACHE_DIR');
   return root ? oldJoin(root, 'connector-media') : resolve(process.cwd(), 'data/connector-media');
 }
+function oldAnnotation(monorepoRoot) {
+  // Pre-Phase-2 the stories dir was read inline in index.ts: explicit
+  // ANNOTATION_DATA_DIR wins, else {monorepoRoot}/data/stories.
+  return process.env.ANNOTATION_DATA_DIR
+    ? resolve(process.env.ANNOTATION_DATA_DIR)
+    : resolve(monorepoRoot, 'data/stories');
+}
 function oldLogs() {
   const root = oldReadRoot('LOG_DIR');
   return root ?? resolve(process.cwd(), 'data/logs/api');
 }
 
-/** key → [rootEnv, subPath] for the 12 data items. */
+/** key → [rootEnv, subPath] for the 13 data items. */
 const ITEMS = {
   evidenceDb: ['DATA_DIR', 'evidence.sqlite'],
   worldDb: ['DATA_DIR', 'world.sqlite'],
@@ -110,6 +123,7 @@ const ITEMS = {
   redisBackups: ['DATA_DIR', 'redis-backups'],
   ttsCache: ['CACHE_DIR', 'tts'],
   connectorMedia: ['CACHE_DIR', 'connector-media'],
+  annotationData: ['DATA_DIR', 'stories'],
   logs: ['LOG_DIR', ''],
 };
 
@@ -126,6 +140,7 @@ function expectedCurrentPaths(repoRoot, monorepoRoot) {
     redisBackups: oldRedisBackups(),
     ttsCache: oldTtsCache(),
     connectorMedia: oldConnectorMedia(),
+    annotationData: oldAnnotation(monorepoRoot),
     logs: oldLogs(),
   };
 }
@@ -134,12 +149,14 @@ const REPO_ROOT = resolve('/tmp', 'f770-invariant-fake-repo');
 const MONOREPO_ROOT = resolve('/tmp', 'f770-invariant-fake-mono');
 const DATA_ROOT = resolve('/tmp', 'f770-invariant-fake-data');
 const CACHE_ROOT = resolve('/tmp', 'f770-invariant-fake-cache');
+const ANNO_ROOT = resolve('/tmp', 'f770-invariant-fake-anno');
 
 const ENV_KEYS = [
   'DATA_DIR',
   'CACHE_DIR',
   'LOG_DIR',
   'TTS_CACHE_DIR',
+  'ANNOTATION_DATA_DIR',
   'AUDIT_LOG_DIR',
   'CLI_RAW_ARCHIVE_DIR',
   'CONNECTOR_MEDIA_DIR',
@@ -170,10 +187,29 @@ function specsByKey() {
   return Object.fromEntries(specs.map((s) => [s.key, s]));
 }
 
-function assertMatchesBaseline(label) {
+/**
+ * Assert the resolver output matches the frozen pre-collapse baseline.
+ * `deltas` (key → expected path) documents items whose location Phase 2
+ * deliberately moved: they must land at the new derivation AND differ from
+ * the baseline (so a silent no-op can't pass as the move).
+ */
+function assertMatchesBaseline(label, deltas = {}) {
   const specs = specsByKey();
   const expected = expectedCurrentPaths(REPO_ROOT, MONOREPO_ROOT);
   for (const [key, currentPath] of Object.entries(expected)) {
+    if (key in deltas) {
+      assert.equal(
+        specs[key].currentPath,
+        deltas[key],
+        `${label}: ${key}.currentPath must land at the deliberate Phase-2 derivation`,
+      );
+      assert.notEqual(
+        specs[key].currentPath,
+        currentPath,
+        `${label}: ${key} must actually move away from the pre-Phase-2 baseline`,
+      );
+      continue;
+    }
     assert.equal(
       specs[key].currentPath,
       currentPath,
@@ -227,15 +263,28 @@ describe('F770 Gate 1 data-dirs invariants', () => {
     }
   });
 
-  it('DATA_DIR=X: all 12 data items land exactly where the pre-collapse resolver put them', async () => {
+  it('DATA_DIR=X: frozen items match the pre-collapse resolver; cache + stories use the Phase-2 derivation', async () => {
     process.env.DATA_DIR = DATA_ROOT;
 
-    const { specs } = assertMatchesBaseline('DATA_DIR set');
+    const PHASE2_DELTAS = {
+      ttsCache: resolve(DATA_ROOT, 'cache/tts'),
+      connectorMedia: resolve(DATA_ROOT, 'cache/connector-media'),
+      annotationData: resolve(DATA_ROOT, 'stories'),
+    };
+    const { specs } = assertMatchesBaseline('DATA_DIR set', PHASE2_DELTAS);
 
     for (const [key, spec] of Object.entries(specs)) {
       const [rootEnv, subPath] = ITEMS[key];
       if (rootEnv === 'DATA_DIR') {
         assert.equal(spec.rootBasedPath, resolve(DATA_ROOT, subPath), `${key}.rootBasedPath should be under DATA_DIR`);
+      } else if (rootEnv === 'CACHE_DIR') {
+        // Cache root derives from DATA_DIR when the deprecated CACHE_DIR
+        // override is unset (F770 Phase 2).
+        assert.equal(
+          spec.rootBasedPath,
+          resolve(DATA_ROOT, 'cache', subPath),
+          `${key}.rootBasedPath should be under the derived DATA_DIR/cache`,
+        );
       } else {
         assert.equal(spec.rootBasedPath, null, `${key} is governed by ${rootEnv}, not DATA_DIR`);
       }
@@ -244,15 +293,32 @@ describe('F770 Gate 1 data-dirs invariants', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('CACHE_DIR=Y: cache items match the pre-collapse resolver exactly', () => {
+  it('DATA_DIR=X + CACHE_DIR=Y: cache items honor the override exactly; stories still derive from DATA_DIR', () => {
     process.env.DATA_DIR = DATA_ROOT;
     process.env.CACHE_DIR = CACHE_ROOT;
 
-    const { expected } = assertMatchesBaseline('DATA_DIR + CACHE_DIR');
+    const { expected } = assertMatchesBaseline('DATA_DIR + CACHE_DIR', {
+      annotationData: resolve(DATA_ROOT, 'stories'),
+    });
     assert.equal(expected.ttsCache, resolve(CACHE_ROOT, 'tts'));
     assert.equal(expected.connectorMedia, resolve(CACHE_ROOT, 'connector-media'));
 
     delete process.env.DATA_DIR;
     delete process.env.CACHE_DIR;
+  });
+
+  it('explicit ANNOTATION_DATA_DIR / CACHE_DIR win over DATA_DIR (deprecated compat)', () => {
+    process.env.DATA_DIR = DATA_ROOT;
+    process.env.CACHE_DIR = CACHE_ROOT;
+    process.env.ANNOTATION_DATA_DIR = ANNO_ROOT;
+
+    const specs = specsByKey();
+    assert.equal(specs.ttsCache.currentPath, resolve(CACHE_ROOT, 'tts'));
+    assert.equal(specs.connectorMedia.currentPath, resolve(CACHE_ROOT, 'connector-media'));
+    assert.equal(specs.annotationData.currentPath, ANNO_ROOT);
+
+    delete process.env.DATA_DIR;
+    delete process.env.CACHE_DIR;
+    delete process.env.ANNOTATION_DATA_DIR;
   });
 });

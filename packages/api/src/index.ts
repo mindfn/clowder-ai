@@ -39,6 +39,7 @@ import { getCatModel } from './config/cat-models.js';
 import { resolveCodexCarrierTruth } from './config/codex-cli.js';
 import { configEventBus } from './config/config-event-bus.js';
 import {
+  resolveAnnotationDataDir,
   resolveConnectorMediaDir,
   resolveEvidenceDbPath,
   resolveTranscriptsDir,
@@ -5294,7 +5295,7 @@ async function main(): Promise<void> {
   // F252 Phase D: Story annotations CRUD (annotations at arbitrary timeline points)
   const { AnnotationFileStore } = await import('./domains/story/annotation-store.js');
   const { storyAnnotationRoutes } = await import('./routes/story-annotations.js');
-  const annotationDataDir = process.env.ANNOTATION_DATA_DIR ?? `${findMonorepoRoot(process.cwd())}/data/stories`;
+  const annotationDataDir = resolveAnnotationDataDir(findMonorepoRoot(process.cwd()));
   const annotationStore = new AnnotationFileStore(annotationDataDir);
   await app.register(storyAnnotationRoutes, {
     annotationStore,

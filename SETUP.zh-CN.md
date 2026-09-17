@@ -301,9 +301,16 @@ NEXT_PUBLIC_WHISPER_URL=http://localhost:9876
 # 文字转语音（TTS）
 TTS_URL=http://localhost:9879
 # 已弃用的覆盖项，老安装仍生效：设置后生成的音频缓存在此路径。
-# 新安装请改用 CACHE_DIR —— 音频缓存位于 CACHE_DIR/tts
-#（默认：API 工作目录下的 data/tts-cache）。
+# 未设置时，音频缓存位于派生缓存根下 —— 设置了 DATA_DIR 时为
+# DATA_DIR/cache/tts，否则为 API 工作目录下的 data/tts-cache。
 # TTS_CACHE_DIR=/绝对路径/tts-cache
+
+# 数据根目录（issue #671 / F770）：DATA_DIR 是唯一面向用户的根 ——
+# 持久数据、缓存（DATA_DIR/cache）和 story 标注（DATA_DIR/stories）都
+# 从它派生。下面的覆盖项是已弃用的兼容开关：显式设置时仍然生效，
+# 但新安装只应设置 DATA_DIR。
+# CACHE_DIR=/绝对路径/cache              # DATA_DIR/cache 的已弃用覆盖项
+# ANNOTATION_DATA_DIR=/绝对路径/stories # DATA_DIR/stories 的已弃用覆盖项
 
 # 语音纠正（LLM 后处理）
 NEXT_PUBLIC_LLM_POSTPROCESS_URL=http://localhost:9878

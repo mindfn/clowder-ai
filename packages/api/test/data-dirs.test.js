@@ -14,6 +14,7 @@ const {
   resolveRedisBackupDir,
   resolveTtsCacheDir,
   resolveConnectorMediaDir,
+  resolveAnnotationDataDir,
   resolveLogDir,
   describeDataPaths,
 } = await import('../dist/config/data-dirs.js');
@@ -30,6 +31,7 @@ function snapshotEnv() {
     DATA_DIR: process.env.DATA_DIR,
     CACHE_DIR: process.env.CACHE_DIR,
     LOG_DIR: process.env.LOG_DIR,
+    ANNOTATION_DATA_DIR: process.env.ANNOTATION_DATA_DIR,
   };
   for (const k of REDIS_ENV_KEYS) snap[k] = process.env[k];
   return snap;
@@ -176,8 +178,10 @@ describe('data-dirs resolver (issue #671)', () => {
       delete process.env.REDIS_DATA_DIR;
     });
 
-    test('DATA_DIR does not affect cache or log paths', () => {
-      assert.equal(resolveTtsCacheDir(), resolve(process.cwd(), 'data/tts-cache'));
+    test('DATA_DIR derives the cache root (F770 Phase 2) but not log paths', () => {
+      assert.equal(resolveTtsCacheDir(), '/tmp/issue-671-data/cache/tts');
+      assert.equal(resolveConnectorMediaDir(), '/tmp/issue-671-data/cache/connector-media');
+      assert.equal(resolveAnnotationDataDir(MONOREPO_ROOT), '/tmp/issue-671-data/stories');
       assert.equal(resolveLogDir(), resolve(process.cwd(), 'data/logs/api'));
     });
   });
@@ -234,11 +238,12 @@ describe('data-dirs resolver (issue #671)', () => {
   });
 
   describe('describeDataPaths introspection', () => {
-    test('returns 12 specs with correct keys when no root set', () => {
+    test('returns 13 specs with correct keys when no root set', () => {
       const specs = describeDataPaths({ repoRoot: REPO_ROOT, monorepoRoot: MONOREPO_ROOT });
-      assert.equal(specs.length, 12);
+      assert.equal(specs.length, 13);
       const keys = specs.map((s) => s.key).sort();
       assert.deepEqual(keys, [
+        'annotationData',
         'auditLogs',
         'catCafeState',
         'cliRawArchive',

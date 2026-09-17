@@ -301,10 +301,18 @@ NEXT_PUBLIC_WHISPER_URL=http://localhost:9876
 # Text-to-Speech (TTS)
 TTS_URL=http://localhost:9879
 # Deprecated override, still honored for existing installs: when set, generated
-# audio is cached at this path. New installs should use CACHE_DIR instead —
-# the audio cache lives at CACHE_DIR/tts (default: data/tts-cache under the
-# API working directory).
+# audio is cached at this path. Unset, the audio cache lives under the derived
+# cache root — DATA_DIR/cache/tts when DATA_DIR is set, else data/tts-cache
+# under the API working directory.
 # TTS_CACHE_DIR=/absolute/path/to/tts-cache
+
+# Data roots (issue #671 / F770): DATA_DIR is the single user-facing root —
+# persistent data, cache (DATA_DIR/cache) and story annotations
+# (DATA_DIR/stories) all derive from it. The overrides below are deprecated
+# compatibility knobs: when explicitly set they still win, but new installs
+# should set DATA_DIR only.
+# CACHE_DIR=/absolute/path/to/cache             # deprecated override for DATA_DIR/cache
+# ANNOTATION_DATA_DIR=/absolute/path/to/stories # deprecated override for DATA_DIR/stories
 
 # Speech correction (LLM post-processing)
 NEXT_PUBLIC_LLM_POSTPROCESS_URL=http://localhost:9878

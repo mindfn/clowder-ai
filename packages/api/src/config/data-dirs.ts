@@ -15,6 +15,13 @@
  * (see each resolver below). EVIDENCE_DB/WORLD_DB were already removed.
  * TTS_CACHE_DIR survives as a deprecated compatibility override only: when
  * explicitly set it still wins, but new installs should use CACHE_DIR.
+ *
+ * F770 Gate 1 Phase 2: CACHE_DIR and ANNOTATION_DATA_DIR are themselves
+ * deprecated compatibility overrides now. The cache root derives from
+ * DATA_DIR (DATA_DIR/cache) and story annotations live at DATA_DIR/stories;
+ * an explicitly set CACHE_DIR / ANNOTATION_DATA_DIR still wins so existing
+ * installs keep their locations. With no root set, every legacy default is
+ * unchanged.
  */
 
 import { homedir } from 'node:os';
@@ -109,20 +116,42 @@ export function resolveRedisBackupDir(): string {
 }
 
 // --- CACHE_DIR consumers -------------------------------------------------
+// F770 Gate 1 Phase 2: the cache root is a fixed derivation — DATA_DIR/cache.
+// CACHE_DIR survives as a deprecated compatibility override only: when
+// explicitly set it still wins, but new installs should set DATA_DIR.
+
+function resolveCacheRoot(): string | undefined {
+  const override = readRoot('CACHE_DIR');
+  if (override) return override;
+  const dataRoot = readRoot('DATA_DIR');
+  return dataRoot ? joinUnder(dataRoot, 'cache') : undefined;
+}
 
 export function resolveTtsCacheDir(): string {
   // Deprecated compat (F770 Gate 1): an explicit TTS_CACHE_DIR still wins so
   // existing installs keep their cache location; `~` is expanded as before.
-  // Unset → CACHE_DIR/tts, else the cwd-based legacy default.
+  // Unset → cache root /tts, else the cwd-based legacy default.
   const legacyOverride = process.env.TTS_CACHE_DIR;
   if (legacyOverride && legacyOverride.trim() !== '') return resolve(expandHomePath(legacyOverride.trim()));
-  const root = readRoot('CACHE_DIR');
+  const root = resolveCacheRoot();
   return root ? joinUnder(root, 'tts') : resolve(process.cwd(), 'data/tts-cache');
 }
 
 export function resolveConnectorMediaDir(): string {
-  const root = readRoot('CACHE_DIR');
+  const root = resolveCacheRoot();
   return root ? joinUnder(root, 'connector-media') : resolve(process.cwd(), 'data/connector-media');
+}
+
+// --- Story annotations (F252 Phase D) -------------------------------------
+// F770 Gate 1 Phase 2: annotations live at DATA_DIR/stories (fixed
+// derivation); ANNOTATION_DATA_DIR survives as a deprecated compatibility
+// override only — when explicitly set it still wins.
+
+export function resolveAnnotationDataDir(monorepoRoot: string): string {
+  const override = process.env.ANNOTATION_DATA_DIR;
+  if (override && override.trim() !== '') return resolve(override.trim());
+  const root = readRoot('DATA_DIR');
+  return root ? joinUnder(root, 'stories') : resolve(monorepoRoot, 'data/stories');
 }
 
 // --- LOG_DIR (used directly, no subdirectory) ----------------------------
@@ -146,6 +175,7 @@ export type DataPathKey =
   | 'redisBackups'
   | 'ttsCache'
   | 'connectorMedia'
+  | 'annotationData'
   | 'logs';
 
 export interface DataPathSpec {
@@ -155,9 +185,14 @@ export interface DataPathSpec {
   readonly root: DataRoot;
   /** Sub-path under the root (empty for LOG_DIR which uses the root directly) */
   readonly subPath: string;
-  /** Path that would be used if the root env var is not set */
+  /** Path that would be used if no root env var is set */
   readonly legacyPath: string;
-  /** Path that would be used if the root env var IS set */
+  /**
+   * Path the item moves to when its root governs. For cache items this is
+   * non-null whenever the cache root resolves — i.e. when the deprecated
+   * CACHE_DIR override is set OR when DATA_DIR is set (fixed derivation
+   * DATA_DIR/cache). For all other items it tracks only the named root.
+   */
   readonly rootBasedPath: string | null;
   /** Currently active path (= rootBasedPath if root is set, else legacyPath) */
   readonly currentPath: string;
@@ -180,7 +215,7 @@ export interface DescribeOptions {
 
 export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[] {
   const dataRoot = readRoot('DATA_DIR');
-  const cacheRoot = readRoot('CACHE_DIR');
+  const cacheRoot = resolveCacheRoot();
   const logRoot = readRoot('LOG_DIR');
   const uploadsLegacy = opts.uploadsLegacyOverride ?? MODULE_DEFAULT_UPLOAD_DIR;
 
@@ -288,6 +323,15 @@ export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[
       legacyPath: resolve(process.cwd(), 'data/connector-media'),
       rootBasedPath: cacheRoot ? joinUnder(cacheRoot, 'connector-media') : null,
       currentPath: resolveConnectorMediaDir(),
+      isFile: false,
+    },
+    {
+      key: 'annotationData',
+      root: 'DATA_DIR',
+      subPath: 'stories',
+      legacyPath: resolve(opts.monorepoRoot, 'data/stories'),
+      rootBasedPath: dataRoot ? joinUnder(dataRoot, 'stories') : null,
+      currentPath: resolveAnnotationDataDir(opts.monorepoRoot),
       isFile: false,
     },
     {
