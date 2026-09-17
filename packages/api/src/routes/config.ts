@@ -37,7 +37,11 @@ import {
 } from '../config/env-registry.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
-import { readStoredLogLevel, resolveDeniedRoots } from '../config/user-preferences-store.js';
+import {
+  initRetentionTtlFromPreferences,
+  readStoredLogLevel,
+  resolveDeniedRoots,
+} from '../config/user-preferences-store.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 // F212 Phase F (cloud codex R4 P2-#2 on fc69597675): import logger's captured LOG_DIR
@@ -55,6 +59,7 @@ import { configCatOrderRoutes } from './config-cat-order.js';
 import { configDeniedRootsRoutes } from './config-denied-roots.js';
 import { configLogLevelRoutes } from './config-log-level.js';
 import { configMessageDispositionRoutes } from './config-message-disposition.js';
+import { configRetentionRoutes } from './config-retention.js';
 import { configThemeRoutes } from './config-theme.js';
 import { configThreadAttentionRoutes } from './config-thread-attention.js';
 
@@ -204,10 +209,19 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   // legacy env value — exactly the pre-#770 behavior, zero regression.
   setDeniedRootsProvider(() => resolveDeniedRoots(projectRoot).deniedRoots);
 
+  // F770: push persisted retention presets into the in-memory TTL provider so
+  // store reads stay zero-IO for the whole process (hot write path constraint —
+  // readUserPreferences does a file read per call, so it must never sit under a
+  // store write). Deliberately NO env→JSON migration here: env stays a read-only
+  // fallback until the owner picks a preset. Unpushed categories keep the live
+  // env fallback — exactly the pre-#770 behavior.
+  initRetentionTtlFromPreferences(projectRoot);
+
   await app.register(configCatOrderRoutes, { projectRoot });
   await app.register(configDeniedRootsRoutes, { projectRoot });
   await app.register(configLogLevelRoutes, { projectRoot });
   await app.register(configMessageDispositionRoutes, { projectRoot });
+  await app.register(configRetentionRoutes, { projectRoot });
   await app.register(configThemeRoutes, { projectRoot });
   await app.register(configThreadAttentionRoutes, { projectRoot, threadStore: opts.threadStore });
 

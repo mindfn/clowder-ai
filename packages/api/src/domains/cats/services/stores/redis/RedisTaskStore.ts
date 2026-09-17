@@ -66,13 +66,18 @@ const MAX_UNIQUE_SUBJECT_CREATE_RETRIES = 8;
 
 export class RedisTaskStore implements ITaskStore {
   private readonly redis: RedisClient;
-  private readonly ttlSeconds: number | null;
+  /**
+   * null means no expiration. May be a provider, re-evaluated per write so
+   * pushed retention config applies without restart.
+   */
+  private readonly ttlSecondsOption: number | (() => number | null) | undefined;
   private readonly managedWorkBindings: RedisTaskManagedWorkBindingStore;
   private readonly managedWorkRegistration: RedisTaskManagedWorkRegistrationStore;
   private readonly entrustedWorkMutations: RedisTaskEntrustedWorkMutationStore;
 
-  constructor(redis: RedisClient, options?: { ttlSeconds?: number }) {
+  constructor(redis: RedisClient, options?: { ttlSeconds?: number | (() => number | null) }) {
     this.redis = redis;
+    this.ttlSecondsOption = options?.ttlSeconds;
     this.managedWorkBindings = new RedisTaskManagedWorkBindingStore(redis);
     this.managedWorkRegistration = new RedisTaskManagedWorkRegistrationStore(redis, {
       mergeAutomationState: mergeTaskAutomationState,
@@ -85,12 +90,21 @@ export class RedisTaskStore implements ITaskStore {
       (task) => this.applyTtl(task),
       () => this.waitForInFlightTaskWrite(),
     );
-    const raw = options?.ttlSeconds ?? DEFAULT_TTL;
-    if (!Number.isFinite(raw) || raw <= 0) {
-      this.ttlSeconds = null;
-    } else {
-      this.ttlSeconds = Math.floor(raw);
+  }
+
+  /**
+   * Effective TTL for writes performed right now. A provider is re-evaluated per
+   * access so runtime-pushed retention config applies without a restart; null =
+   * persistent. A getter (not a method) so TS property narrowing at expire call
+   * sites keeps working exactly as it did for the old readonly field.
+   */
+  private get ttlSeconds(): number | null {
+    const option = this.ttlSecondsOption;
+    const raw = typeof option === 'function' ? option() : (option ?? DEFAULT_TTL);
+    if (raw === null || !Number.isFinite(raw) || raw <= 0) {
+      return null;
     }
+    return Math.floor(raw);
   }
 
   async create(input: CreateTaskInput): Promise<TaskItem> {

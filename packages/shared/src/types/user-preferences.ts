@@ -39,6 +39,26 @@ export interface ThreadAttentionPreferences {
   open?: Record<string, boolean>;
 }
 
+/**
+ * F770: retention categories governed by the lifecycle presets. Drafts are
+ * deliberately NOT a category — the 300s draft TTL is an auto-save functional
+ * constant (RedisDraftStore DEFAULT_TTL), not a retention strategy.
+ */
+export const RETENTION_CATEGORY_VALUES = ['message', 'thread', 'task', 'summary', 'backlog'] as const;
+export type RetentionCategory = (typeof RETENTION_CATEGORY_VALUES)[number];
+
+/** Seconds per category; 0 = keep forever. Absent key = not set (env fallback applies). */
+export type RetentionConfigPreferences = Partial<Record<RetentionCategory, number>>;
+
+export type RetentionConfigSource = 'preferences' | 'env-fallback' | 'default';
+
+export interface RetentionConfigResolution {
+  /** Effective seconds per category; 0 = keep forever. */
+  config: Record<RetentionCategory, number>;
+  /** Where each category's effective value came from. */
+  sources: Record<RetentionCategory, RetentionConfigSource>;
+}
+
 export interface UserPreferences {
   /** F166: Custom display order of cats. catIds not in this list fall back to cat-template.json order. */
   catOrder?: string[];
@@ -63,4 +83,14 @@ export interface UserPreferences {
    * fallback (security control must not silently revive).
    */
   deniedRoots?: string[];
+  /**
+   * F770: data-retention TTL presets in seconds per category (0 = keep forever).
+   * Migrated from the *_TTL_SECONDS env vars so retention changes apply to new
+   * writes without a restart. Unlike theme/log-level there is deliberately NO
+   * env→JSON auto-migration: six env vars (incl. DRAFT_TTL_SECONDS) lossily
+   * compress into five categories — drafts stay a functional constant outside
+   * the presets. Until the owner picks a preset, each category falls back
+   * read-only to its legacy env value.
+   */
+  retentionConfig?: RetentionConfigPreferences;
 }

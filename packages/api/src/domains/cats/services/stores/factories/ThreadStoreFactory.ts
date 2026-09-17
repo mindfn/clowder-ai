@@ -1,32 +1,21 @@
 /**
  * Thread Store Factory
  * REDIS_URL 有值 → RedisThreadStore
- * 无 → ThreadStore (内存)
+ * 无 → ThreadStore (内存，现有行为不变)
  */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import { getRetentionTtlSeconds } from '../../../../../config/retention-ttl-provider.js';
 import type { IThreadStore } from '../ports/ThreadStore.js';
 import { ThreadStore } from '../ports/ThreadStore.js';
 import { RedisThreadStore } from '../redis/RedisThreadStore.js';
 
-const log = createModuleLogger('thread-store-factory');
-
-function resolveThreadTtlSeconds(): number | undefined {
-  const raw = process.env.THREAD_TTL_SECONDS;
-  if (!raw) return undefined;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    log.warn({ raw }, 'Invalid THREAD_TTL_SECONDS, using default');
-    return undefined;
-  }
-  return Math.trunc(parsed);
-}
-
 export function createThreadStore(redis?: RedisClient): IThreadStore {
   if (redis) {
-    const ttlSeconds = resolveThreadTtlSeconds();
-    return new RedisThreadStore(redis, ttlSeconds !== undefined ? { ttlSeconds } : undefined);
+    // F770: TTL comes from the in-memory retention provider — JSON-pushed value
+    // or the legacy env fallback — re-evaluated per write, so a PUT applies
+    // without a restart and the hot path does zero file IO.
+    return new RedisThreadStore(redis, { ttlSeconds: () => getRetentionTtlSeconds('thread') });
   }
   return new ThreadStore();
 }

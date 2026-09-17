@@ -11,8 +11,13 @@ import type {
   MessageDispositionPreferenceSnapshot,
   MessageDispositionPreferences,
   MessageWorkDisposition,
+  RetentionCategory,
+  RetentionConfigPreferences,
+  RetentionConfigResolution,
   UserPreferences,
 } from '@cat-cafe/shared';
+import { RETENTION_CATEGORY_VALUES } from '@cat-cafe/shared';
+import { parseEnvTtlSeconds, pushRetentionTtlSecondsAll, RETENTION_ENV_BY_CATEGORY } from './retention-ttl-provider.js';
 
 export const MESSAGE_DISPOSITION_PRODUCT_DEFAULT: MessageWorkDisposition = 'next_work';
 
@@ -307,4 +312,98 @@ export function saveDeniedRoots(projectRoot: string, roots: string[]): DeniedRoo
   // Return the just-written value directly: re-resolving here would fall back
   // to the legacy env value right after an intentional clear of all denials.
   return { deniedRoots: sanitized, source: 'preferences', migratedFromEnv: false };
+}
+
+// --- F770 data retention (lifecycle presets) ---
+
+const RETENTION_MAX_SECONDS = 2147483647; // Redis EXPIRE upper bound (int32)
+
+function sanitizeRetentionSeconds(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const floored = Math.floor(value);
+  return floored >= 0 && floored <= RETENTION_MAX_SECONDS ? floored : undefined;
+}
+
+/**
+ * F770: retention presets live in user-preferences.json and apply to NEW writes
+ * via the in-memory TTL provider (no restart, zero read-side IO). Deliberately
+ * NO env→JSON auto-migration (unlike theme/log-level): six legacy env vars
+ * lossily compress into five categories — drafts stay a functional constant —
+ * so until the owner picks a preset each category falls back read-only to its
+ * legacy env value. A stored 0 means "keep forever" and, like an empty
+ * deniedRoots list, is meaningful: it overrides the env fallback.
+ */
+export function resolveRetentionConfig(projectRoot: string): RetentionConfigResolution {
+  const stored = readUserPreferences(projectRoot).retentionConfig;
+  const config: RetentionConfigResolution['config'] = { message: 0, thread: 0, task: 0, summary: 0, backlog: 0 };
+  const sources: RetentionConfigResolution['sources'] = {
+    message: 'default',
+    thread: 'default',
+    task: 'default',
+    summary: 'default',
+    backlog: 'default',
+  };
+  for (const category of RETENTION_CATEGORY_VALUES) {
+    const storedValue = sanitizeRetentionSeconds(stored?.[category]);
+    if (stored?.[category] !== undefined && storedValue !== undefined) {
+      config[category] = storedValue;
+      sources[category] = 'preferences';
+      continue;
+    }
+    const envValue = parseEnvTtlSeconds(process.env[RETENTION_ENV_BY_CATEGORY[category]]);
+    if (envValue !== null) {
+      config[category] = envValue;
+      sources[category] = 'env-fallback';
+    }
+  }
+  return { config, sources };
+}
+
+/**
+ * Merge per-category seconds into the JSON store and push the resolved values
+ * into the in-memory TTL provider so new writes pick them up in this process.
+ * Invalid provided keys are dropped (the route validates for UX). Absent keys
+ * are left untouched.
+ */
+export function saveRetentionConfig(
+  projectRoot: string,
+  config: RetentionConfigPreferences,
+): RetentionConfigResolution {
+  updateUserPreferences(projectRoot, (current) => {
+    const existing = current.retentionConfig ?? {};
+    const next: RetentionConfigPreferences = { ...existing };
+    for (const category of RETENTION_CATEGORY_VALUES) {
+      if (!(category in (config ?? {}))) continue;
+      const sanitized = sanitizeRetentionSeconds(config[category]);
+      if (sanitized === undefined) continue;
+      next[category] = sanitized;
+    }
+    return { ...current, retentionConfig: next };
+  });
+  const resolution = resolveRetentionConfig(projectRoot);
+  const pushed: Partial<Record<RetentionCategory, number | null>> = {};
+  for (const category of RETENTION_CATEGORY_VALUES) {
+    if (category in (config ?? {}))
+      pushed[category] = resolution.config[category] === 0 ? null : resolution.config[category];
+  }
+  pushRetentionTtlSecondsAll(pushed);
+  return resolution;
+}
+
+/**
+ * Startup wiring: resolve the persisted presets once and push every category
+ * into the in-memory provider, so store reads stay zero-IO for the rest of the
+ * process. Unpushed categories keep the live env fallback — exactly the
+ * pre-#770 behavior.
+ */
+export function initRetentionTtlFromPreferences(projectRoot: string): void {
+  const resolution = resolveRetentionConfig(projectRoot);
+  pushRetentionTtlSecondsAll(
+    Object.fromEntries(
+      RETENTION_CATEGORY_VALUES.map((category) => [
+        category,
+        resolution.config[category] === 0 ? null : resolution.config[category],
+      ]),
+    ) as Record<RetentionCategory, number | null>,
+  );
 }

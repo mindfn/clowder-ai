@@ -1587,10 +1587,15 @@ export type {
   MessageDispositionPreferenceSnapshot,
   MessageDispositionPreferenceSource,
   MessageDispositionPreferences,
+  RetentionCategory,
+  RetentionConfigPreferences,
+  RetentionConfigResolution,
+  RetentionConfigSource,
   ThreadAttentionGroup,
   ThreadAttentionPreferences,
   UserPreferences,
 } from './user-preferences.js';
+export { RETENTION_CATEGORY_VALUES } from './user-preferences.js';
 // F280: canonical wait termination event consumed by F281 feedback adapters.
 export {
   type UserCancelWaitTerminationEventV1,

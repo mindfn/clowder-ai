@@ -13,7 +13,10 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { DraftRecord, IDraftStore } from '../ports/DraftStore.js';
 import { DraftKeys } from '../redis-keys/draft-keys.js';
 
-const DEFAULT_TTL = 300; // 5 minutes
+/** Draft TTL is an auto-save functional constant, NOT a retention preset (F770) — exported for the settings surface to state as a fact. */
+export const DRAFT_TTL_SECONDS = 300; // 5 minutes
+
+const DEFAULT_TTL = DRAFT_TTL_SECONDS;
 
 export class RedisDraftStore implements IDraftStore {
   private readonly redis: RedisClient;

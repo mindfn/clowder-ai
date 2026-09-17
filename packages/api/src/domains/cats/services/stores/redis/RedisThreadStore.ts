@@ -223,19 +223,32 @@ function parseThreadMemoryJson(raw: string): ThreadMemoryV1 | null {
 export class RedisThreadStore implements IThreadStore {
   private static readonly LIST_REPAIR_COOLDOWN_MS = 5 * 60 * 1000;
   private readonly redis: RedisClient;
-  /** null means no expiration. */
-  private readonly ttlSeconds: number | null;
+  /**
+   * null means no expiration. May be a provider, re-evaluated per write so
+   * pushed retention config applies without restart.
+   */
+  private readonly ttlSecondsOption: number | (() => number | null) | undefined;
   /** Avoid re-scanning every request when a user genuinely only has one thread. */
   private readonly lastListRepairAt = new Map<string, number>();
 
-  constructor(redis: RedisClient, options?: { ttlSeconds?: number }) {
+  constructor(redis: RedisClient, options?: { ttlSeconds?: number | (() => number | null) }) {
     this.redis = redis;
-    const raw = options?.ttlSeconds ?? DEFAULT_TTL;
-    if (!Number.isFinite(raw) || raw <= 0) {
-      this.ttlSeconds = null;
-    } else {
-      this.ttlSeconds = Math.floor(raw);
+    this.ttlSecondsOption = options?.ttlSeconds;
+  }
+
+  /**
+   * Effective TTL for writes performed right now. A provider is re-evaluated per
+   * access so runtime-pushed retention config applies without a restart; null =
+   * persistent. A getter (not a method) so TS property narrowing at expire call
+   * sites keeps working exactly as it did for the old readonly field.
+   */
+  private get ttlSeconds(): number | null {
+    const option = this.ttlSecondsOption;
+    const raw = typeof option === 'function' ? option() : (option ?? DEFAULT_TTL);
+    if (raw === null || !Number.isFinite(raw) || raw <= 0) {
+      return null;
     }
+    return Math.floor(raw);
   }
 
   async create(

@@ -284,11 +284,11 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
-  it('defines exactly 26 registered, labelled, grouped, explicitly classified System variables', () => {
-    // F770: LOG_LEVEL and PROJECT_DENIED_ROOTS left the curated surface when
-    // they moved to user-preferences.json (deprecated vars must not be
-    // SYSTEM_VARS members).
-    assert.equal(SYSTEM_VARS.size, 26);
+  it('defines exactly 20 registered, labelled, grouped, explicitly classified System variables', () => {
+    // F770: LOG_LEVEL, PROJECT_DENIED_ROOTS, and the six *_TTL_SECONDS vars left
+    // the curated surface when they moved to user-preferences.json (deprecated
+    // vars must not be SYSTEM_VARS members).
+    assert.equal(SYSTEM_VARS.size, 20);
     for (const name of SYSTEM_VARS) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain in the full registry`);
@@ -1253,10 +1253,10 @@ describe('#770: isEditableEnvVar fail-closed default', () => {
 describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
   afterEach(() => restoreEnv());
 
-  it('SYSTEM_VARS contains exactly 26 curated variables', () => {
-    // F770: LOG_LEVEL and PROJECT_DENIED_ROOTS departed when they migrated to
-    // user-preferences.json.
-    assert.equal(SYSTEM_VARS.size, 26);
+  it('SYSTEM_VARS contains exactly 20 curated variables', () => {
+    // F770: LOG_LEVEL, PROJECT_DENIED_ROOTS, and the six *_TTL_SECONDS vars
+    // departed when they migrated to user-preferences.json.
+    assert.equal(SYSTEM_VARS.size, 20);
   });
 
   it('every SYSTEM_VAR exists in the registry', () => {
