@@ -10,6 +10,23 @@ created: 2026-07-06
 
 > **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；**当日事故修复切片 A 已合入（PR #44 @ 10dacad2b，2026-07-20）**：昵称唯一性/模糊 @ fail-closed + 运行实例写保护；**Console 六项判据 ①—⑥ 已全部合入 develop_base（PR #65 true-scene replay @ e33d4e7b，2026-07-27；PR #66 变量段呈现 @ 53082a4f，2026-07-28；PR #71 启禁用矩阵 @ e3b5b1cb，2026-07-29）**，post-merge build + focused tests 全绿；**当前下一切片 = Phase E 首个真实五环退役 + Objective 多指标端到端垂直切片**） | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
+> **2026-09-17 参考实现（未合入，co-creator 决定）** — 分层切片 `squash/f257-layered`，锚点 tag
+> `reference/f257-layered-on-main-22385b60e`（HEAD `69c699bc1`，已 merge 上游 `22385b60e`）。
+> 对应 PR zts212653/clowder-ai#1462 保持 OPEN/draft @ `5fce221c6`，**刻意不更新、不合入**。
+> 三条终态在这刀里成形，留作参考：
+> 1. **verdict 发布离开 Git** — `ArtifactPublisher` 写 owner-scoped 不可变 artifact，返回
+>    `artifactId`/`artifactUrl`；12 个 eval domain 的指令统一由单一 footer 提供，并有全表守卫
+>    禁止再出现 branch/PR 措辞（详见 F192 发布链路小节）。
+> 2. **L0 编译器退役，owner 画像改由 `S14` session 段交付** — 含 Phase E corpus 指针与
+>    primer/corpus 两层 `profilePointerEmitted` 计数；无编译缓存，改盘下次 invocation 即生效
+>    （详见 F231 Flow）。
+> 3. **安装只有一个 owner 身份** — `DEFAULT_OWNER_USER_ID` > `CAT_CAFE_USER_ID` > `default-user`，
+>    两者显式冲突时启动失败。
+>
+> 验收口径：相对上游 `22385b60e` 干净基线，harness-eval 套件**新增失败 0**（上游自身 66 个失败
+> 套件，本 HEAD 59），biome `--diagnostic-level=error` 干净。跨家族 review 由砚砚（gpt-5.6-sol）
+> 执行，两轮 P1 全部收口。
+
 ## 2026-08-04 当前评估模型（覆盖旧 SegmentJudgment 口径）
 
 > 实现与验收真相源：[`feature-specs/2026-08-04-f257-objective-eval-redesign.md`](../../feature-specs/2026-08-04-f257-objective-eval-redesign.md)。本文下方保留的早期时间窗、`SegmentJudgment`、统一分母/违规率和相关 KD 只是历史设计记录，不再是当前运行契约。
