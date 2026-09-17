@@ -24,8 +24,8 @@ issue: 671
 | | | `redis/` | Redis 持久化数据（dump.rdb + AOF） | ✅ |
 | | | `redis-backups/` | Redis 定时备份快照 | ✅ |
 | | | `cat-cafe/` | .cat-cafe 运行时可写状态（账户、凭证、catalog、治理…） | ✅ |
-| `CACHE_DIR` | 可重建缓存 | `tts/` | TTS 音频缓存 | ❌ |
-| | | `connector-media/` | 微信/飞书等下载的临时媒体 | ❌ |
+| | | `connector-media/` | 平台入站媒体（微信/飞书下载的附件图片等）。**唯一副本，不可重建**——没有重新下载的自愈路径，`localUrl` 已持久化进用户消息 contentBlocks（TTL=0），清了 = 历史消息永久裂图 | ✅ |
+| `CACHE_DIR` | 可重建缓存 | `tts/` | TTS 音频缓存（源文本在消息里，可重新合成） | ❌ |
 | `LOG_DIR` | 日志 | — | Pino 滚动日志（直接使用 LOG_DIR，无子目录） | ❌ |
 
 每个根的语义清晰：备份只需要照顾 `DATA_DIR`；磁盘紧张时可以放心清 `CACHE_DIR`；日志按 `LOG_DIR` 接独立磁盘/集中化平台。
@@ -105,6 +105,7 @@ curl -XPOST -H "X-Cat-Cafe-User: $OWNER_ID" \
 ## 注意
 
 - **uploads 归 DATA_DIR**：虽然名义上像"缓存"，但里面是用户上传的真实文件，丢了就没了。issue 原稿曾把它放在 CACHE_DIR 下，最终决定归 DATA_DIR。
+- **connector-media 归 DATA_DIR（F770 Gate 1 证据复核后修正）**：#671 曾把它判为"可重建缓存"，继承的是一条未验证的假设。复核结论：它是唯一副本用户数据——`ConnectorMediaService` 没有"文件缺失就重新下载"的自愈路径，且 `localUrl` 已写进用户消息 contentBlocks（TTL=0）。已从 cache 根迁到 `DATA_DIR/connector-media`；`554445c35` 之后的 Gate-1 中间位置（`{DATA_DIR}/cache/connector-media`、`{CACHE_DIR}/connector-media`）由启动迁移一次性搬迁。显式 `CACHE_DIR` override 不再影响它。
 - **目标已有数据**：如果新根下对应位置已经有非空数据（例如部分迁移过 / 手动复制过），该条会被 `skipReason: target-not-empty` 跳过，避免覆盖。需要重新迁移就先手动清空目标。
 - **环境变量优先级**：相对路径会用 `path.resolve()` 解析（相对 cwd），空字符串/纯空白视为未设置。
 - **测试隔离**：测试代码原本通过 `process.env.AUDIT_LOG_DIR=tempDir` 等 legacy var 隔离写入。Phase 2 后改为 `process.env.DATA_DIR=tempDir`，audit/upload/transcripts 自动落到 `tempDir/{audit-logs,uploads,transcripts}`。读取时拼上子路径。

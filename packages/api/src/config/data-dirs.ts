@@ -140,11 +140,14 @@ export function resolveTtsCacheDir(): string {
 
 export function resolveConnectorMediaDir(): string {
   // F770 Gate 1 evidence review: connector media is NOT rebuildable cache.
-  // Platform CDN references expire (e.g. weixin media keys are short-lived),
-  // so once downloaded these files are the only copy backing user-visible
-  // message attachments — clearing them is data loss. They therefore live
-  // under DATA_DIR, and the deprecated CACHE_DIR override deliberately does
-  // NOT apply. One-time relocation of the Gate-1 cache-based layout
+  // Two provable facts (see ConnectorMediaService / ConnectorRouter):
+  //   (a) no self-healing path — download() is the only writer and nothing
+  //       re-downloads a missing file;
+  //   (b) downloaded.localUrl is persisted into user message contentBlocks
+  //       (TTL=0), so deleting the files permanently breaks historical
+  //       message images.
+  // Clearing them is data loss. They therefore live under DATA_DIR, and the
+  // deprecated CACHE_DIR override deliberately does NOT apply. One-time relocation of the Gate-1 cache-based layout
   // ({DATA_DIR}/cache/connector-media, {CACHE_DIR}/connector-media) is
   // handled by data-dirs-migration.ts at startup.
   const root = readRoot('DATA_DIR');

@@ -179,8 +179,9 @@ const UPLOADS_PLACEHOLDER_FILES = new Set(['.gitkeep']);
 
 /**
  * F770 connector-media relocation (Gate 1 evidence review): connector media
- * moved from the cache root to DATA_DIR because platform CDN references
- * expire — local files are the only copy backing user-visible attachments.
+ * moved from the cache root to DATA_DIR because it is unique-copy user
+ * data — no self-healing re-download exists, and localUrls are persisted
+ * into message contentBlocks (TTL=0).
  * Installs that ran the intermediate Gate-1 layout hold files at cache-based
  * locations that are neither the legacy cwd path nor the new DATA_DIR path:
  *   - {DATA_DIR}/cache/connector-media  (derived cache root era)
