@@ -2,7 +2,7 @@
 
 **功能：** F202 — `docs/features/F202-plugin-framework.md`
 
-**目标：** 在 Clowder AI Core 中交付唯一的 Plugin Manager：用户和 Agent 从同一份 Host-owned 投影查询 catalog、已安装实例、配置/授权、启用意图、实时运行状态和能力，并通过同一服务完成安装、启用、禁用与卸载。Train B 结束时管理面即为终态；Train C 只迁出业务实现、切换默认路径并删除旧管理入口。
+**目标：** 在 Clowder AI Core 中交付唯一的 Plugin Manager：用户和 Agent 从同一份 Host-owned 投影查询 catalog、已安装实例、配置/授权、启用意图、实时运行状态和能力，并通过同一服务完成安装、启用、禁用与卸载。Train B 结束时管理面即为终态；Train C1 只迁出既有业务实现、切换默认路径并删除旧管理入口，Train C2 仅按真实消费者开放公共 hook/UI seam 与迁移 managed services，不重做管理面。
 
 **本 PR 验收标准：** 真实 Settings 产品壳在现有插件卡片样式上补充搜索和左右布局：左侧同一列表覆盖已安装/未安装，右侧复用现有展开卡片；安装状态不显示冗余 badge，而由左侧卡片当前可执行 action 直接表达——已安装插件只有卸载和启禁用 toggle，未安装插件只有 Install，右侧不重复这些生命周期动作；配置字段直接显示在展开卡片中，不新增“设置”按钮；离线安装复用 IM connector 的上传交互并放在页面右上角。卡片固定高度并截断溢出描述；列表与详情均从 verified `plugin.yaml` 读取同一份多语言描述与随包图标。API 与 Agent 工具复用同一个应用服务；官方 npm、本地目录/zip 和迁移期 repository-local 插件均投影到 Host inventory；公开管理面精确包含 list/search/get/install/set-enabled/uninstall，不公开通用 update/repair；启用后的动态插件能力通过两个静态治理入口 `plugin_list_tools`/`plugin_call` 仍由 Host supervisor 执行；所有写操作保留 loopback、身份、审计与 revision fence。
 
@@ -25,7 +25,7 @@
 - 一个 Plugin Manager 页面，不再让用户理解 “repo-local / official / IM connector” 三种内部来源。
 - 一个 `PluginManagerService`，组合 catalog 候选与 Host inventory，不建立第二份安装数据库。
 - 官方 npm catalog 查询与安装；本地 directory/archive 安装通过同一 package admission 和 inventory。
-- 迁移期 repository-local 与 connector 状态通过 compatibility adapters 进入同一只读投影；Train C 删除 adapters 与旧实现。
+- 迁移期 repository-local 与 connector 状态通过 compatibility adapters 进入同一只读投影；Train C1 删除 adapters 与旧实现。
 - Console 与 Agent 使用同一服务层和同一状态模型。
 - Agent public tools 精确为：
   - `plugin_list`
@@ -62,7 +62,7 @@
 - **Train C2**：由首个真实消费者逐点开放公共 hook 与 UI slot，再迁 managed services（含 TTS/ASR）。
   每个点位必须同时交付 contract schema、SDK registration、Host 业务无关调度，以及插件 disable/uninstall
   后 UI entry 与 handler 一起消失的验收。
-- Train C 不重做 Manager UX 或 Agent management contract；C2 也不反向把业务逻辑放回 Host。
+- Train C1/C2 都不重做 Manager UX 或 Agent management contract；C2 也不反向把业务逻辑放回 Host。
 
 ## 2. 终态用户旅程
 
@@ -102,7 +102,7 @@
 - **INV-PM5 — catalog 失效可降级：** catalog fetch 失败不能让已安装实例消失或不可禁用/卸载；候选搜索明确标记 unavailable/stale。
 - **INV-PM6 — 外部代码不入 API：** terminal path 只通过 supervisor 或 contract-declared builtin/no-op；本地 zip 不复活 F240 进程内 loader。
 - **INV-PM7 — 权限不自报：** identity、grants、capabilities 与 action availability 均从 Host admission 和 lease 派生。
-- **INV-PM8 — 不双跑：** 每个 instance + activation revision 最多一个有效 runtime lease；restart、retry 与 Train C cutover 均不允许旧新路径同时消费。
+- **INV-PM8 — 不双跑：** 每个 instance + activation revision 最多一个有效 runtime lease；restart、retry 与 Train C1 cutover 均不允许旧新路径同时消费。
 - **INV-PM9 — 卸载先撤权：** runtime/lease/grants 的不可用必须先于 package 与用户数据处置；失败时不得留下有权运行但 UI 显示已卸载的实例。
 - **INV-PM10 — 公开面收敛：** generic update/repair 不出现在 UI、Agent 工具或 canonical Manager API；内部 recovery primitive 不能被产品面反向发现。
 
@@ -155,7 +155,7 @@
 
 **Before:** Settings 将 Personal Chrome、官方 npm 插件、repository-local 插件和 IM connector 分散为多块/多 section；同一插件可能出现多张卡；official card 暴露 update/repair；用户和 Agent 看不到统一能力与五轴状态。
 
-**After:** Settings → Plugins 是唯一入口。保留现有插件卡片语言，只增加搜索和 VS Code 式左右结构：左侧是已安装+未安装列表，右侧是当前卡片的展开内容；窄屏先列表后详情并可返回。每个插件只出现一次。IM provider 在 Train C 后只是普通插件及其 typed configuration contribution。
+**After:** Settings → Plugins 是唯一入口。保留现有插件卡片语言，只增加搜索和 VS Code 式左右结构：左侧是已安装+未安装列表，右侧是当前卡片的展开内容；窄屏先列表后详情并可返回。每个插件只出现一次。IM provider 在 Train C1 后只是普通插件及其 typed configuration contribution。
 
 ### 6.2 页面结构
 
@@ -300,7 +300,7 @@ acceptance of the complete Manager journey; that remains due after formal compos
 
 1. Red：API loading/search/filter/detail/mutations、optimistic fence conflict、catalog degraded、poll dedup tests。
 2. Green：接 canonical REST；现有 typed panels 作为 detail contributions 迁入。
-3. Refactor：移除 public official update/repair UI；IM section 在 Train B 仅标记兼容入口，Train C 删除。
+3. Refactor：移除 public official update/repair UI；IM section 在 Train B 仅标记兼容入口，Train C1 删除。
 
 ### Task 8 — Composition、回归与交付门
 
@@ -332,7 +332,7 @@ revision-fenced typed configuration contribution；它不是第七个 generic Ag
 supervisor 持有并在每次调用前复核 live/grant authority。
 composition 同时提供 repository-local/connector compatibility projection、durable quarantine ledger
 与 authenticated same-origin package icon route。按既定 Train B/Train C 边界，Console live wiring 仍以
-non-production `pluginManagerLive=1` 显式启用，production default 留给 Train C 聚合切换，避免丢失
+non-production `pluginManagerLive=1` 显式启用，production default 留给 Train C1 聚合切换，避免丢失
 Personal Chrome pairing 等专属 journey。production machine catalog 已切换到 bounded HTTPS provider；
 `@clowder-ai/video-analysis@0.1.0-alpha.0`、contract beta.13 与 SDK beta.9 已发布，catalog/npm digest
 逐字一致，video package 携带 lockfile-v3 `npm-shrinkwrap.json` 并可由 terminal materializer 以
@@ -344,7 +344,7 @@ hands-on journey acceptance 仍是独立硬门禁。
 
 - Feishu owner auth、meeting intake、signal routes 的 typed product flows 不因 Manager 统一而失效。
 - Personal Chrome 明确安装/配对/会话绑定与 receipt semantics 不被 generic plugin status 替代。
-- Repo-local skill/MCP/limb enable/disable 与 capability ownership 在 Train C cutover 前保持兼容。
+- Repo-local skill/MCP/limb enable/disable 与 capability ownership 在 Train C1 cutover 前保持兼容。
 - Connector bindings、消息幂等、thread routing 与 secret tombstone 不在 Train B 搬迁或重写。
 - Host Broker handshake、lease、durable call settlement、restart recovery 与 closed child environment 保持原安全边界。
 - 用户可见/可恢复数据继续默认持久化；uninstall 数据处置只按 manifest policy 与用户显式选择执行。
