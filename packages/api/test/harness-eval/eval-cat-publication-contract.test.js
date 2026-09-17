@@ -11,7 +11,13 @@ import { evalDomainPublishInstructions } from '../../dist/infrastructure/harness
  * asserts the whole table.
  */
 const GIT_PUBLICATION_PROSE = [
-  /creates? .*(branch|PR\b)/i,
+  // `creates?` does not match `created`, which is how "evidence branch or PR is
+  // created" survived a sweep meant to be total. Match the verb in every tense and in
+  // either order relative to the noun, but keep them in one clause: a bare /branch/
+  // also hits eval:sop's `gitState ({branch, ahead, behind, clean})` trace field,
+  // which describes input data rather than instructing anyone to publish.
+  /creat(e|es|ed|ing)\b[^.]{0,40}\b(branch|PR|pull request|commit)\b/i,
+  /\b(branch|PR|pull request|commit)\b[^.]{0,40}\bcreat(e|es|ed|ing)\b/i,
   /opens? (a )?PR\b/i,
   /pull request/i,
   /PR URL/i,
@@ -91,6 +97,15 @@ describe('F257 eval-cat publication contract', () => {
     assert.ok(
       GIT_PUBLICATION_PROSE.some((pattern) => pattern.test(withoutDisclaimers(retired))),
       'guard would not have caught the footer it was written for',
+    );
+
+    // 砚砚 review: this exact sentence sat in the shared packet prose that every
+    // domain inherits, and the guard was green because `creates?` never matches
+    // `created`. Pin it so the blind spot cannot reopen.
+    const inheritedRetired = 'unknown refs fail before any evidence branch or PR is created';
+    assert.ok(
+      GIT_PUBLICATION_PROSE.some((pattern) => pattern.test(withoutDisclaimers(inheritedRetired))),
+      'guard must catch Git publication stated in the past tense',
     );
 
     // design-gate's footer was worded differently, which is exactly why the

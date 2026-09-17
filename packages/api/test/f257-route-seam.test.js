@@ -1,7 +1,8 @@
 /** F257 S5: serial and parallel routes share one session HookPipeline result. */
 
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
@@ -140,8 +141,17 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
   let catReg;
   let store;
   let buildStaticIdentity;
+  /** Isolated profile root. The routes build their own FileProfileRepository, which
+   *  falls back to $HOME/.cat-cafe when CAT_CAFE_DATA_DIR is unset — so an injected
+   *  repository would not protect them. Isolate the env the repository actually reads,
+   *  and restore whatever was there before. */
+  let profileDataDir;
+  let priorProfileDataDir;
 
   before(async () => {
+    priorProfileDataDir = process.env.CAT_CAFE_DATA_DIR;
+    profileDataDir = mkdtempSync(join(tmpdir(), 'f257-seam-profile-'));
+    process.env.CAT_CAFE_DATA_DIR = profileDataDir;
     const shared = await import('@cat-cafe/shared');
     catReg = shared.catRegistry;
     catReg.reset();
@@ -174,6 +184,9 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
 
   after(() => {
     catReg?.reset();
+    if (priorProfileDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+    else process.env.CAT_CAFE_DATA_DIR = priorProfileDataDir;
+    if (profileDataDir) rmSync(profileDataDir, { recursive: true, force: true });
   });
 
   async function drain(route, catId, threadId, captures) {
@@ -201,7 +214,10 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       // layout change cannot make this test silently stop covering delivery.
       const { FileProfileRepository } = await import('../dist/domains/cats/services/profile/ProfileRepository.js');
       const { installOwnerUserId } = await import('../dist/config/install-owner.js');
-      const repo = new FileProfileRepository();
+      // Explicit dataDir, matching the CAT_CAFE_DATA_DIR the suite pinned: this test
+      // writes owner profile files, and must never reach a real ~/.cat-cafe.
+      const repo = new FileProfileRepository({ dataDir: profileDataDir });
+      assert.equal(repo.dataDir, profileDataDir, 'profile writes must stay inside the isolated root');
       const ownerId = installOwnerUserId();
       const nativeDir = repo.profileDir(ownerId);
       mkdirSync(nativeDir, { recursive: true });
@@ -235,6 +251,43 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       // INV-6: a pointer says the trajectory exists and how to read it, never its content.
       assert.equal(nativeDelivered.includes('不应进入 prompt'), false, 'pointer must not leak primer content');
       assert.equal(prepended.includes('不应进入 prompt'), false, 'pointer must not leak primer content');
+    });
+
+    // 砚砚 P2: the on-disk r1/r2 regression in prompt-profile-delivery proves the
+    // repository and builder read new bytes, but it never re-enters a route. The cache
+    // that was removed with the L0 compiler sat in front of the route, so only a second
+    // real invocation can prove the route re-resolves instead of reusing its snapshot.
+    test(`${mode}: a later invocation delivers the edited capsule to both carriers`, async () => {
+      const { FileProfileRepository } = await import('../dist/domains/cats/services/profile/ProfileRepository.js');
+      const { installOwnerUserId } = await import('../dist/config/install-owner.js');
+      const repo = new FileProfileRepository({ dataDir: profileDataDir });
+      assert.equal(repo.dataDir, profileDataDir, 'profile writes must stay inside the isolated root');
+      const ownerId = installOwnerUserId();
+      const capsulePath = join(repo.profileDir(ownerId), 'operator-capsule.md');
+      mkdirSync(dirname(capsulePath), { recursive: true });
+
+      const deliver = async (catId, threadId) => {
+        const captures = [];
+        await drain(getRoute(), catId, threadId, captures);
+        return catId === 'nativecat'
+          ? (captures[0]?.nativeSessionPrompt ?? '')
+          : JSON.stringify(captures[0]?.__messages ?? []);
+      };
+
+      for (const catId of ['nativecat', 'plaincat']) {
+        writeFileSync(capsulePath, `r1 ${catId} 画像内容\n`);
+        const r1 = await deliver(catId, `seam-${mode}-r1-${catId}`);
+        assert.match(r1, new RegExp(`r1 ${catId} 画像内容`), `${catId}: first invocation delivers revision 1`);
+
+        writeFileSync(capsulePath, `r2 ${catId} 画像内容\n`);
+        const r2 = await deliver(catId, `seam-${mode}-r2-${catId}`);
+        assert.match(r2, new RegExp(`r2 ${catId} 画像内容`), `${catId}: later invocation delivers the edited file`);
+        assert.equal(
+          r2.includes(`r1 ${catId} 画像内容`),
+          false,
+          `${catId}: the route must not reuse the previous revision's snapshot`,
+        );
+      }
     });
 
     test(`${mode}: native carrier receives the exact route-owned session prompt and traces L1-L7`, async () => {
