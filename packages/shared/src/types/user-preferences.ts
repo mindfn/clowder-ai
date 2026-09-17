@@ -46,4 +46,9 @@ export interface UserPreferences {
   messageDisposition?: MessageDispositionPreferences;
   /** F277: owner-only Group aliases and fold overrides. Membership lives in thread metadata. No TTL. */
   threadAttention?: ThreadAttentionPreferences;
+  /**
+   * F770: OKLCH theme config payload (themeStore shape, JSON string). Migrated
+   * from the THEME_CONFIG env var so theme changes apply without a restart.
+   */
+  themeConfig?: string;
 }

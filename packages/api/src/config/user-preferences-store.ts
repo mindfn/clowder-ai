@@ -135,3 +135,46 @@ export function saveMessageDispositionPreference(
   });
   return resolveMessageDispositionPreference(projectRoot, input.scope === 'thread' ? input.threadId : undefined);
 }
+
+function sanitizeThemeConfig(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+export interface ThemeConfigResolution {
+  themeConfig: string | null;
+  /** Where the returned value came from. */
+  source: 'preferences' | 'env-fallback' | 'none';
+  /** True when a legacy process.env THEME_CONFIG value was migrated into the JSON store on this read. */
+  migratedFromEnv: boolean;
+}
+
+/**
+ * F770: theme config lives in user-preferences.json (runtime-readable, no
+ * restart). The legacy THEME_CONFIG env value is honored as a read-only
+ * fallback and migrated into the JSON store on first read so existing users
+ * do not lose their theme.
+ */
+export function resolveThemeConfig(projectRoot: string): ThemeConfigResolution {
+  const stored = sanitizeThemeConfig(readUserPreferences(projectRoot).themeConfig);
+  if (stored) return { themeConfig: stored, source: 'preferences', migratedFromEnv: false };
+  const envValue = sanitizeThemeConfig(process.env.THEME_CONFIG);
+  if (envValue) {
+    updateUserPreferences(projectRoot, (current) => ({ ...current, themeConfig: envValue }));
+    return { themeConfig: envValue, source: 'env-fallback', migratedFromEnv: true };
+  }
+  return { themeConfig: null, source: 'none', migratedFromEnv: false };
+}
+
+export function saveThemeConfig(projectRoot: string, value: string): ThemeConfigResolution {
+  const sanitized = sanitizeThemeConfig(value);
+  updateUserPreferences(projectRoot, (current) => {
+    const next = { ...current };
+    if (sanitized) next.themeConfig = sanitized;
+    else delete next.themeConfig;
+    return next;
+  });
+  // Return the just-written value directly: re-resolving here would fall back
+  // to the legacy env value (or re-migrate it) right after an intentional clear.
+  if (sanitized) return { themeConfig: sanitized, source: 'preferences', migratedFromEnv: false };
+  return { themeConfig: null, source: 'none', migratedFromEnv: false };
+}

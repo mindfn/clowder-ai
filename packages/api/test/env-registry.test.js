@@ -296,11 +296,7 @@ describe('#770: curated System Settings projection', () => {
   });
 
   it('opens filesystem-policy variables for Hub writes (#770 round 3: no disabled dead controls)', () => {
-    for (const name of [
-      'PROJECT_ALLOWED_ROOTS',
-      'PROJECT_ALLOWED_ROOTS_APPEND',
-      'PROJECT_DENIED_ROOTS',
-    ]) {
+    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain registered`);
       assert.equal(definition.runtimeEditable, true, `${name} must be editable from the System page`);
@@ -351,7 +347,6 @@ describe('#770: curated System Settings projection', () => {
       'CAT_CAFE_CODEX_CARRIER',
       'CODEX_AUTH_MODE',
       'OPENAI_API_KEY',
-      'THEME_CONFIG',
       'VAPID_PUBLIC_KEY',
       'VAPID_PRIVATE_KEY',
       'VAPID_SUBJECT',
@@ -719,15 +714,15 @@ describe('PATCH /api/config/env (route)', () => {
         url: '/api/config/env',
         headers: { 'x-cat-cafe-user': 'codex' },
         payload: {
-          updates: [{ name: 'THEME_CONFIG', value: literal }],
+          updates: [{ name: 'FRONTEND_URL', value: literal }],
         },
       });
 
       assert.equal(res.statusCode, 200);
       const persisted = readFileSync(envFilePath, 'utf8');
-      assert.match(persisted, /^THEME_CONFIG="https:\/\/proxy\.example\/\\\$HOME\/\\\$\(whoami\)\/\\`whoami\\`"$/m);
+      assert.match(persisted, /^FRONTEND_URL="https:\/\/proxy\.example\/\\\$HOME\/\\\$\(whoami\)\/\\`whoami\\`"$/m);
 
-      const sourced = execFileSync('sh', ['-lc', `set -a; . "${envFilePath}"; printf '%s' "$THEME_CONFIG"`], {
+      const sourced = execFileSync('sh', ['-lc', `set -a; . "${envFilePath}"; printf '%s' "$FRONTEND_URL"`], {
         encoding: 'utf8',
       }).trim();
       assert.equal(sourced, literal);
@@ -758,16 +753,16 @@ describe('PATCH /api/config/env (route)', () => {
         url: '/api/config/env',
         headers: { 'x-cat-cafe-user': 'codex' },
         payload: {
-          updates: [{ name: 'THEME_CONFIG', value: literal }],
+          updates: [{ name: 'FRONTEND_URL', value: literal }],
         },
       });
 
       assert.equal(res.statusCode, 200);
       const persisted = readFileSync(envFilePath, 'utf8');
-      assert.match(persisted, /^THEME_CONFIG="line1\\\\r\\\\nline2\\\\nline3"$/m);
+      assert.match(persisted, /^FRONTEND_URL="line1\\\\r\\\\nline2\\\\nline3"$/m);
       assert.equal(persisted.trimEnd().split('\n').length, 1);
 
-      const sourced = execFileSync('sh', ['-lc', `set -a; . "${envFilePath}"; printf '%s' "$THEME_CONFIG"`], {
+      const sourced = execFileSync('sh', ['-lc', `set -a; . "${envFilePath}"; printf '%s' "$FRONTEND_URL"`], {
         encoding: 'utf8',
       }).trim();
       assert.equal(sourced, 'line1\\r\\nline2\\nline3');
@@ -1071,11 +1066,7 @@ describe('PATCH /api/config/env (route)', () => {
       });
       await app.ready();
 
-      for (const name of [
-        'PROJECT_ALLOWED_ROOTS',
-        'PROJECT_ALLOWED_ROOTS_APPEND',
-        'PROJECT_DENIED_ROOTS',
-      ]) {
+      for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
         const response = await app.inject({
           method: 'PATCH',
           url: '/api/config/env',
@@ -1274,11 +1265,7 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
   });
 
   it('security SYSTEM_VARS are explicitly runtimeEditable: true, except the trust anchor (#770 round 4)', () => {
-    for (const name of [
-      'PROJECT_ALLOWED_ROOTS',
-      'PROJECT_ALLOWED_ROOTS_APPEND',
-      'PROJECT_DENIED_ROOTS',
-    ]) {
+    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
       assert.equal(def.runtimeEditable, true, `${name} must be editable from the System page`);

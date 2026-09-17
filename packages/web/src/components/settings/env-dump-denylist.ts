@@ -40,9 +40,6 @@ export const ENV_DUMP_DENYLIST = new Set([
   'VAPID_PRIVATE_KEY',
   'VAPID_SUBJECT',
 
-  // --- Theme (F056 Theme Tuner / themeStore) ---
-  'THEME_CONFIG',
-
   // --- Default cat selector ---
   'DEFAULT_CAT_ID',
 

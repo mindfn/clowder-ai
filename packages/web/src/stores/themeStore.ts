@@ -123,7 +123,6 @@ function writeLS(themes: ThemePreset[], activeId: string) {
 }
 
 /* ── Server-side persistence (survive browser cache clears) ── */
-const ENV_KEY = 'THEME_CONFIG';
 let serverSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function syncToServer(themes: ThemePreset[], activeId: string) {
@@ -136,10 +135,12 @@ function syncToServer(themes: ThemePreset[], activeId: string) {
       if (t.builtIn) builtInOverrides[t.id] = t.params;
     }
     const payload = JSON.stringify({ version: INIT_VERSION, activeId, custom, builtInOverrides });
-    apiFetch('/api/config/env', {
-      method: 'PATCH',
+    // F770: theme config lives in user-preferences.json (runtime-readable, no
+    // restart). The legacy THEME_CONFIG env var is a read-only fallback.
+    apiFetch('/api/config/theme', {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ updates: [{ name: ENV_KEY, value: payload }] }),
+      body: JSON.stringify({ themeConfig: payload }),
     }).catch(() => {
       /* best-effort — localStorage is primary */
     });
@@ -149,12 +150,11 @@ function syncToServer(themes: ThemePreset[], activeId: string) {
 /** Restore theme from server when localStorage is empty (e.g. after cache clear). */
 export async function restoreFromServer(): Promise<boolean> {
   try {
-    const res = await apiFetch('/api/config/env-summary');
+    const res = await apiFetch('/api/config/theme');
     if (!res.ok) return false;
-    const data = (await res.json()) as { variables?: Array<{ name: string; currentValue: string | null }> };
-    const entry = data.variables?.find((v) => v.name === ENV_KEY);
-    if (!entry?.currentValue) return false;
-    localStorage.setItem(LS_KEY, entry.currentValue);
+    const data = (await res.json()) as { themeConfig?: string | null };
+    if (!data.themeConfig) return false;
+    localStorage.setItem(LS_KEY, data.themeConfig);
     return true;
   } catch {
     return false;

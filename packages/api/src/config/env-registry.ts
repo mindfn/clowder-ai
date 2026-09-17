@@ -1686,7 +1686,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'COLLECTIVE_SERVICE_PORT',
     hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '5201',
-    description: '独立 Collective Service 端口；不得使用 Clowder AI runtime 3003/3004',
+    description: '独立 Collective Service 端口；不得使用主 runtime 3003/3004',
     category: 'connector',
     sensitive: false,
     runtimeEditable: false,
@@ -1706,7 +1706,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'COLLECTIVE_SERVICE_ALLOWED_HOST_ORIGINS',
     hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: '(空)',
-    description: '允许嵌入并配对的 Clowder AI Web origin，多个用逗号分隔',
+    description: '允许嵌入并配对的主 Web origin，多个用逗号分隔',
     category: 'connector',
     sensitive: false,
     runtimeEditable: false,
@@ -1757,7 +1757,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'NEXT_PUBLIC_COLLECTIVE_SERVICE_URL',
     hubVisible: false, // #770: upstream addition — internal/deploy/credential, .env-settable
     defaultValue: 'http://localhost:5201',
-    description: 'Clowder AI「进入 Collective」默认打开的独立 Service 地址',
+    description: '「进入 Collective」默认打开的独立 Service 地址',
     category: 'frontend',
     sensitive: false,
     runtimeEditable: false,
@@ -1806,7 +1806,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'OKLCH 主题配置 JSON（清浏览器缓存后可从此恢复）',
     category: 'frontend',
     sensitive: false,
-    runtimeEditable: true,
+    runtimeEditable: false,
+    hubVisible: false,
+    deprecated:
+      '已迁移到 .cat-cafe/user-preferences.json 的 themeConfig 字段（F770），运行时读写、改后无需重启；此 env 值仅作首次读取的只读回退',
   },
 
   // --- push ---
