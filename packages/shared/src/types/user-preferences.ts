@@ -51,4 +51,9 @@ export interface UserPreferences {
    * from the THEME_CONFIG env var so theme changes apply without a restart.
    */
   themeConfig?: string;
+  /**
+   * F770: runtime log level (pino LevelWithSilent). Migrated from the LOG_LEVEL
+   * env var so log level changes apply without a restart.
+   */
+  logLevel?: string;
 }

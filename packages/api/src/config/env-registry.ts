@@ -570,16 +570,14 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'LOG_LEVEL',
     defaultValue: 'info',
-    description:
-      '日志级别（Pino 消费：fatal / error / warn / info / debug / trace / silent）。保存后立即生效，无需重启',
+    description: '日志级别（Pino 消费：fatal / error / warn / info / debug / trace / silent）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: true,
-    exampleRecommended: true,
-    label: '日志级别',
-    settingsGroup: 'runtime',
-    restartRequired: false,
+    runtimeEditable: false,
+    hubVisible: false,
     allowedValues: ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'],
+    deprecated:
+      '已迁移到 .cat-cafe/user-preferences.json 的 logLevel 字段（F770），经 /api/config/log-level 运行时读写、保存后立即生效无需重启；此 env 值仅作启动期的只读回退（首次读取时迁入 JSON）',
   },
   {
     name: 'LOG_DIR',
@@ -2511,7 +2509,6 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'DRAFT_TTL_SECONDS',
   'FRONTEND_PORT',
   'FRONTEND_URL',
-  'LOG_LEVEL',
   'MAX_A2A_DEPTH',
   'MEMORY_STORE',
   'MESSAGE_TTL_SECONDS',

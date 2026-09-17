@@ -284,8 +284,10 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
-  it('defines exactly 28 registered, labelled, grouped, explicitly classified System variables', () => {
-    assert.equal(SYSTEM_VARS.size, 28);
+  it('defines exactly 27 registered, labelled, grouped, explicitly classified System variables', () => {
+    // F770: LOG_LEVEL left the curated surface when it moved to
+    // user-preferences.json (deprecated vars must not be SYSTEM_VARS members).
+    assert.equal(SYSTEM_VARS.size, 27);
     for (const name of SYSTEM_VARS) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain in the full registry`);
@@ -1228,8 +1230,9 @@ describe('#770: isEditableEnvVar fail-closed default', () => {
 describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
   afterEach(() => restoreEnv());
 
-  it('SYSTEM_VARS contains exactly 28 curated variables', () => {
-    assert.equal(SYSTEM_VARS.size, 28);
+  it('SYSTEM_VARS contains exactly 27 curated variables', () => {
+    // F770: LOG_LEVEL departed when it migrated to user-preferences.json.
+    assert.equal(SYSTEM_VARS.size, 27);
   });
 
   it('every SYSTEM_VAR exists in the registry', () => {

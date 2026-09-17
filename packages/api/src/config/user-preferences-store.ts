@@ -178,3 +178,55 @@ export function saveThemeConfig(projectRoot: string, value: string): ThemeConfig
   if (sanitized) return { themeConfig: sanitized, source: 'preferences', migratedFromEnv: false };
   return { themeConfig: null, source: 'none', migratedFromEnv: false };
 }
+
+// Keep in sync with the pino LevelWithSilent set and env-registry allowedValues.
+const LOG_LEVEL_VALUES = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
+
+function sanitizeLogLevel(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return LOG_LEVEL_VALUES.has(trimmed) ? trimmed : undefined;
+}
+
+export interface LogLevelResolution {
+  logLevel: string | null;
+  /** Where the returned value came from. */
+  source: 'preferences' | 'env-fallback' | 'none';
+  /** True when a legacy process.env LOG_LEVEL value was migrated into the JSON store on this read. */
+  migratedFromEnv: boolean;
+}
+
+/**
+ * F770: log level lives in user-preferences.json and is applied at runtime via
+ * setRuntimeLogLevel (no restart). The legacy LOG_LEVEL env value is honored as
+ * a read-only startup fallback (logger.ts reads it at module load) and migrated
+ * into the JSON store on first read so existing users do not lose their level.
+ */
+export function readStoredLogLevel(projectRoot: string): string | null {
+  return sanitizeLogLevel(readUserPreferences(projectRoot).logLevel) ?? null;
+}
+
+export function resolveLogLevel(projectRoot: string): LogLevelResolution {
+  const stored = readStoredLogLevel(projectRoot);
+  if (stored) return { logLevel: stored, source: 'preferences', migratedFromEnv: false };
+  const envValue = sanitizeLogLevel(process.env.LOG_LEVEL);
+  if (envValue) {
+    updateUserPreferences(projectRoot, (current) => ({ ...current, logLevel: envValue }));
+    return { logLevel: envValue, source: 'env-fallback', migratedFromEnv: true };
+  }
+  return { logLevel: null, source: 'none', migratedFromEnv: false };
+}
+
+export function saveLogLevel(projectRoot: string, value: string): LogLevelResolution {
+  const sanitized = sanitizeLogLevel(value);
+  updateUserPreferences(projectRoot, (current) => {
+    const next = { ...current };
+    if (sanitized) next.logLevel = sanitized;
+    else delete next.logLevel;
+    return next;
+  });
+  // Return the just-written value directly: re-resolving here would fall back
+  // to the legacy env value (or re-migrate it) right after an intentional clear.
+  if (sanitized) return { logLevel: sanitized, source: 'preferences', migratedFromEnv: false };
+  return { logLevel: null, source: 'none', migratedFromEnv: false };
+}

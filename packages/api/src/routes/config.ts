@@ -37,6 +37,7 @@ import {
 } from '../config/env-registry.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
+import { readStoredLogLevel } from '../config/user-preferences-store.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 // F212 Phase F (cloud codex R4 P2-#2 on fc69597675): import logger's captured LOG_DIR
@@ -50,6 +51,7 @@ import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { configCatOrderRoutes } from './config-cat-order.js';
+import { configLogLevelRoutes } from './config-log-level.js';
 import { configMessageDispositionRoutes } from './config-message-disposition.js';
 import { configThemeRoutes } from './config-theme.js';
 import { configThreadAttentionRoutes } from './config-thread-attention.js';
@@ -186,7 +188,16 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   const projectRoot = opts.projectRoot ?? resolveActiveProjectRoot();
   const envFilePath = opts.envFilePath ?? resolve(projectRoot, '.env');
 
+  // F770: the JSON store is the runtime tier for log level — apply a persisted
+  // level at startup so it wins over the import-time LOG_LEVEL env fallback in
+  // logger.ts. Read-only here (no env migration at boot): an env-only level is
+  // already effective via the logger's module-load constant, and env→JSON
+  // migration happens on the first GET of /api/config/log-level.
+  const storedLogLevel = readStoredLogLevel(projectRoot);
+  if (storedLogLevel) setRuntimeLogLevel(storedLogLevel);
+
   await app.register(configCatOrderRoutes, { projectRoot });
+  await app.register(configLogLevelRoutes, { projectRoot });
   await app.register(configMessageDispositionRoutes, { projectRoot });
   await app.register(configThemeRoutes, { projectRoot });
   await app.register(configThreadAttentionRoutes, { projectRoot, threadStore: opts.threadStore });
@@ -478,14 +489,6 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       if (isRestartRequiredEnvVar(name)) continue;
       if (value == null || value === '') delete process.env[name];
       else process.env[name] = value;
-      // #770 P0 D2: LOG_LEVEL is consumed from the frozen module-load constant in
-      // logger.ts, so hot-updating process.env alone changes nothing. Push the new
-      // level into the root pino logger and every tracked child immediately.
-      if (name === 'LOG_LEVEL' && typeof value === 'string' && value.trim()) {
-        if (!setRuntimeLogLevel(value.trim())) {
-          request.log.warn({ level: value }, '[config] Ignoring unknown LOG_LEVEL from env PATCH');
-        }
-      }
     }
 
     // Only emit if at least one key actually changed
