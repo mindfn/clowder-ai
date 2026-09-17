@@ -4983,17 +4983,10 @@ async function main(): Promise<void> {
     threadStore,
     workAuthority: collectiveWorkAuthority,
   });
-  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
   const { registerCollectiveParticipationCallbacks } = await import(
     './routes/callback-collective-participation-routes.js'
   );
   await registerCollectiveParticipationCallbacks(app, { registry, context: collectiveContext });
-  app.log.info(
-    `[api] K-2 external plugin runtime recovered ` +
-      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
-      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
-      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
-  );
   const { OfficialPluginAuthService } = await import('./domains/plugin/official-plugin-auth.js');
   const officialPluginAuth = new OfficialPluginAuthService({ packages: pluginRuntime.packages });
   app.addHook('onClose', async () => {

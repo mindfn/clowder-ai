@@ -115,6 +115,19 @@ describe('F202 terminal Plugin Manager projection', () => {
           policy: { overlap: 'skip', timeoutMs: 60_000 },
         },
         { type: 'skill', id: 'video-analysis-guide', path: 'skills/video-analysis/SKILL.md' },
+        {
+          type: 'content-editor-provider',
+          id: 'docx-editor',
+          mediaTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+          surface: {
+            entrypoint: 'dist/editor.js',
+            integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            sandbox: 'dedicated-origin-iframe',
+            navigationPolicy: 'navigation-api-deny',
+          },
+          bridgeVersion: '1.0.0',
+          operations: ['load', 'settle', 'comment', 'tracked-change'],
+        },
       ],
     };
 
@@ -128,6 +141,7 @@ describe('F202 terminal Plugin Manager projection', () => {
       },
       { id: 'daily-video-summary', kind: 'schedule', name: 'daily-video-summary' },
       { id: 'video-analysis-guide', kind: 'skill', name: 'video-analysis-guide' },
+      { id: 'docx-editor', kind: 'content-editor-provider', name: 'docx-editor' },
     ]);
   });
 

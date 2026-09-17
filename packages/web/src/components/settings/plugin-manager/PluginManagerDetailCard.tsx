@@ -31,6 +31,7 @@ const contributionKindLabel: Record<string, string> = {
   connector: 'Connector',
   service: 'Service',
   ui: 'UI',
+  'content-editor-provider': 'Content Editor',
 };
 
 interface CapabilityDocItem {

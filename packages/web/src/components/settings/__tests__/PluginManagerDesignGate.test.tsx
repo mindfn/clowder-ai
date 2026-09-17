@@ -407,6 +407,21 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(detail?.textContent).not.toContain('插件未提供用途说明。');
   });
 
+  it('labels content editor provider contributions from the manifest without Host-specific copy', async () => {
+    const editor = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
+      contributions: [{ id: 'docx-editor', kind: 'content-editor-provider' as const, name: 'docx-editor' }],
+    };
+
+    await act(async () => root.render(<PluginManagerContent fixtures={[editor]} />));
+
+    const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
+    expect(detail?.querySelector('[data-contribution-kind="content-editor-provider"]')?.textContent).toContain(
+      'Content Editor',
+    );
+    expect(detail?.textContent).toContain('docx-editor');
+  });
+
   it('does not relabel permission grants as exposed tools before package admission', async () => {
     const video = {
       ...PLUGIN_MANAGER_DESIGN_FIXTURES[2],
