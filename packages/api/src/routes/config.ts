@@ -22,7 +22,7 @@ import {
 } from '../config/cat-config-loader.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import type { ConfigSnapshot } from '../config/config-snapshot.js';
-import { resolveAuditLogsDir, resolveCliRawArchiveDir } from '../config/data-dirs.js';
+import { resolveAuditLogsDir, resolveCliRawArchiveDir, resolveRedisDataDir } from '../config/data-dirs.js';
 import {
   buildEnvSummary,
   buildSystemEnvSummary,
@@ -335,6 +335,24 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     return handleCoCreatorPatch(request, reply);
   });
 
+  // #770 Gate 2 status rows answer "where is my data" in absolute paths —
+  // never in env coordinates ("(未设置)"). DATA_DIR unset means legacy
+  // per-path defaults whose dominant persistent store is the Redis dataset
+  // dir (the three-conflicting-answers pain: #1132 / #1135 / #671).
+  // Null = nothing to point at (memory mode).
+  const systemStatusResolvedValue = (name: string): string | null => {
+    if (name === 'DATA_DIR') {
+      const raw = process.env.DATA_DIR?.trim();
+      if (raw) return resolve(raw);
+      return process.env.REDIS_URL?.trim() ? resolveRedisDataDir() : null;
+    }
+    if (name === 'CAT_CAFE_DATA_DIR') {
+      const raw = process.env.CAT_CAFE_DATA_DIR?.trim();
+      return raw ? resolve(raw) : resolve(os.homedir(), '.cat-cafe');
+    }
+    return null;
+  };
+
   app.get('/api/config/env-summary', async (request) => {
     const { surface } = request.query as { surface?: string };
     if (surface === 'system') {
@@ -362,6 +380,7 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
           ...entry,
           savedValue: rawSaved != null && rawSaved !== '' ? maskEnvValue(entry, rawSaved) : null,
           shadowedByLocal: localKeys.has(entry.name),
+          resolvedValue: systemStatusResolvedValue(entry.name),
         };
       });
       return { groups: SETTINGS_GROUPS, variables: annotated };

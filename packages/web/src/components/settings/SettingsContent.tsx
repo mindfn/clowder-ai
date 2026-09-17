@@ -12,7 +12,6 @@ import { HubAccountsTab } from '../HubAccountsTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
-import { HubEnvFilesTab } from '../HubEnvFilesTab';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { useConfirm } from '../useConfirm';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
@@ -225,11 +224,14 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
           </div>
         );
       case 'system':
+        // #770 Gate 2: the curated status + five-decisions view IS the whole
+        // system surface. The former 「环境 & 文件」 env-var dump that used to
+        // render below it carried changelog-era copy and is gone — its only
+        // entry point was this branch.
         return (
           <div className="space-y-6">
             <DesktopUpdateSettingsPanel />
             <HubSystemSettingsTab />
-            <HubEnvFilesTab excludeCategories={['connector']} />
           </div>
         );
       case 'notify':

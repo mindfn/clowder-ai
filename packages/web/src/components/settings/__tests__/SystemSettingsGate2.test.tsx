@@ -36,6 +36,7 @@ const VARIABLES: EnvVar[] = [
   envVar({
     name: 'DATA_DIR',
     currentValue: '/data',
+    resolvedValue: '/data',
     label: '数据根目录',
     restartRequired: true,
     runtimeEditable: true,
@@ -59,7 +60,8 @@ const VARIABLES: EnvVar[] = [
   envVar({ name: 'DEFAULT_OWNER_USER_ID', currentValue: '', label: '所有者用户 ID', restartRequired: true }),
   envVar({
     name: 'CAT_CAFE_DATA_DIR',
-    currentValue: '/home/user/.cat-cafe',
+    currentValue: null,
+    resolvedValue: '/home/user/.cat-cafe',
     label: '平台数据目录',
     restartRequired: true,
   }),
@@ -182,10 +184,14 @@ describe('SystemSettingsGate2', () => {
     expect(text).toContain('数据存在哪');
     expect(text).toContain('/data');
     expect(text).toContain('当前访问地址与端口');
-    expect(text).toContain('http://127.0.0.1:3001');
+    // P2-B: the row shows the address the user is actually looking at —
+    // never the API listen port (a human does not open :3001 to see a page).
+    expect(text).toContain(window.location.origin);
+    expect(text).not.toContain('http://127.0.0.1:3001');
     expect(text).toContain('所有者模式');
     expect(text).toContain('单用户本地');
     expect(text).toContain('平台状态目录');
+    expect(text).toContain('/home/user/.cat-cafe');
 
     // Five decisions
     expect(text).toContain('数据存放位置');
@@ -210,6 +216,32 @@ describe('SystemSettingsGate2', () => {
     );
     expect(container.textContent).toContain('内存模式');
     expect(container.textContent).toContain('重启后数据不会保留');
+  });
+
+  it('P1-B: 数据存在哪 answers with the resolved absolute path, never the env coordinate', async () => {
+    // DATA_DIR unset at the env layer — the API annotates the resolved path
+    // (e.g. the Redis dataset dir); the row must show it, not 「（未设置…）」.
+    await renderView(
+      VARIABLES.map((variable) =>
+        variable.name === 'DATA_DIR'
+          ? { ...variable, currentValue: null, resolvedValue: '/var/lib/clowder/redis-opensource' }
+          : variable,
+      ),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('/var/lib/clowder/redis-opensource');
+    expect(text).not.toContain('未设置');
+  });
+
+  it('P1-B: in memory mode 数据存在哪 states the primary store is not persisted', async () => {
+    // API contract: memory mode → resolvedValue null (nothing is persisted).
+    await renderView(
+      VARIABLES.map((variable) => (variable.name === 'REDIS_URL' ? { ...variable, currentValue: null } : variable)).map(
+        (variable) =>
+          variable.name === 'DATA_DIR' ? { ...variable, currentValue: null, resolvedValue: null } : variable,
+      ),
+    );
+    expect(container.textContent).toContain('内存（重启后丢失）');
   });
 
   it('LAN toggle writes both env vars together and the small print states the fact', async () => {
