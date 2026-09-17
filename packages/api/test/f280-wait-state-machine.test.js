@@ -109,4 +109,56 @@ describe('F280 wait state machine', () => {
     assert.deepEqual(result.state.waitOutcome?.ownerFence, ownerFence);
     assert.equal(Object.hasOwn(result.state.waitOutcome ?? {}, 'actionSuccessorFence'), false);
   });
+  // #1474: a subject that reached its terminal state, and an owner who explicitly cancelled,
+  // are facts the clock must not overwrite. Before this, `transitionWaitState` checked the
+  // deadline first, so a close/merge observed at or after `expiresAt` was reported as `expired`
+  // — and because `expired` is not a delivered reason, the owner was never told at all.
+  it('a subject terminal state outranks a deadline that has already passed', async () => {
+    const { transitionWaitState } = await import(MODULE_URL.href);
+    const current = { await: activeAwait({ expiresAt: 500, subjectRef: 'issue:zts212653/clowder-ai#1151' }) };
+
+    const result = transitionWaitState(current, {
+      type: 'subject_terminal',
+      generation: 4,
+      at: 500,
+      subjectState: 'closed',
+    });
+
+    assert.equal(result.applied, true);
+    assert.equal(result.state.waitOutcome?.reason, 'subject_terminal');
+    assert.equal(result.state.waitOutcome?.terminalSubjectState, 'closed');
+    assert.equal(
+      result.state.waitOutcome?.delivery,
+      'pending',
+      'the owner must be woken with the close, not silently expired',
+    );
+  });
+
+  it('a merge observed long after the deadline still reports as merged', async () => {
+    const { transitionWaitState } = await import(MODULE_URL.href);
+    const current = { await: activeAwait({ expiresAt: 500 }) };
+
+    const result = transitionWaitState(current, {
+      type: 'subject_terminal',
+      generation: 4,
+      at: 9_000_000,
+      subjectState: 'merged',
+    });
+
+    assert.equal(result.state.waitOutcome?.reason, 'subject_terminal');
+    assert.equal(result.state.waitOutcome?.terminalSubjectState, 'merged');
+  });
+
+  it('an explicit user cancel outranks a deadline that has already passed', async () => {
+    const { transitionWaitState } = await import(MODULE_URL.href);
+    const actor = { kind: 'cat', catId: 'opus' };
+    const result = transitionWaitState(
+      { await: activeAwait({ expiresAt: 500 }) },
+      { type: 'user_cancel', generation: 4, at: 700, actor },
+    );
+
+    assert.equal(result.applied, true);
+    assert.equal(result.state.waitOutcome?.reason, 'user_cancel');
+    assert.deepEqual(result.state.waitOutcome?.actor, actor);
+  });
 });

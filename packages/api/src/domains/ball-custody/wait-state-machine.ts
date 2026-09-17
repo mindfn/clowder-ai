@@ -85,13 +85,24 @@ function terminalize(
   };
 }
 
+/**
+ * #1474: the two events that carry a fact the clock must not overwrite.
+ *
+ * A subject that reached its terminal state (issue closed, PR merged) and an owner who explicitly
+ * cancelled are the answers the wait existed to deliver. Judging the deadline first rewrote both to
+ * `expired` — and `expired` is not a delivered reason, so the owner was never told at all. An
+ * ordinary observation still loses to the deadline: expiry must keep winning over a late predicate
+ * match, which is a guess about relevance rather than a settled fact.
+ */
+const TERMINAL_FACT_EVENTS: ReadonlySet<WaitTransitionEvent['type']> = new Set(['subject_terminal', 'user_cancel']);
+
 export function transitionWaitState(current: WaitRuntimeState, event: WaitTransitionEvent): WaitTransitionResult {
   const active = current.await;
   if (!active || active.generation !== event.generation) {
     return { applied: false, reason: 'generation_inactive', state: current };
   }
 
-  if (event.at >= active.expiresAt) {
+  if (!TERMINAL_FACT_EVENTS.has(event.type) && event.at >= active.expiresAt) {
     return terminalize(current, active, { reason: 'expired', at: event.at });
   }
 
