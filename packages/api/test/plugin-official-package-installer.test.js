@@ -267,6 +267,22 @@ test('admits a contract-valid builtin package without reinterpreting it as an ex
   assert.equal(snapshot.instances[0].runtimeState, 'stopped');
 });
 
+test('rejects an unsupported ipc runtime before publishing or mutating inventory', async () => {
+  const archive = await packageArchive({
+    packageManifest: manifest({ runtime: { transport: 'ipc', entrypoint: 'dist/entrypoint.js' } }),
+  });
+  const entry = catalogEntry(archive.integrity);
+  const { packagesRoot, store, installer } = await harness(archive, entry);
+
+  await assert.rejects(
+    installer.install('feishu-meeting-intake', releaseFence(entry)),
+    isInstallError('UNSUPPORTED_TRANSPORT'),
+  );
+
+  assert.equal((await store.snapshot()).instances.length, 0);
+  await assert.rejects(access(join(packagesRoot, packageDirectoryName(entry.packageDigest), 'package.tgz')));
+});
+
 test('admits the canonical plugin.yaml shipped by an npm package', async () => {
   const archive = await packageArchive({ manifestFilename: 'plugin.yaml' });
   const entry = catalogEntry(archive.integrity);

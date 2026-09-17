@@ -304,6 +304,9 @@ export class OfficialPluginPackageInstaller {
           'package presentation metadata differs from the official catalog',
         );
       }
+      if (located.manifest.runtime.transport !== 'stdio' && located.manifest.runtime.transport !== 'builtin') {
+        throw new OfficialPluginInstallError('UNSUPPORTED_TRANSPORT', 'official package has no supported Host runtime');
+      }
       const staticEditors = staticEditorContributions(located.manifest);
       const declaresStaticEditor =
         located.manifest.contributions?.some((item) => item.type === 'content-editor-provider') === true ||
