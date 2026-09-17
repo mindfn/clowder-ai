@@ -124,6 +124,10 @@ class PluginRuntimeSupervisorRouter implements PluginRuntimeLifecyclePort {
     return this.builtin;
   }
 
+  private baseOwnsBuiltin(pluginId: string, manifest: PluginManifest): boolean {
+    return this.baseBuiltinPluginIds.has(pluginId) || staticEditorContributions(manifest).length > 0;
+  }
+
   async start(pluginInstanceId: string): Promise<unknown> {
     const snapshot = await this.inventory.snapshot();
     const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
@@ -133,7 +137,7 @@ class PluginRuntimeSupervisorRouter implements PluginRuntimeLifecyclePort {
     if (
       packageRecord?.manifest.runtime.transport === 'builtin' &&
       instance &&
-      !this.baseBuiltinPluginIds.has(instance.pluginId)
+      !this.baseOwnsBuiltin(instance.pluginId, packageRecord.manifest)
     ) {
       if (!this.builtin) throw new Error('builtin contribution supervisor is unavailable');
       return this.builtin.start(pluginInstanceId);
@@ -150,7 +154,7 @@ class PluginRuntimeSupervisorRouter implements PluginRuntimeLifecyclePort {
     if (
       packageRecord?.manifest.runtime.transport === 'builtin' &&
       instance &&
-      !this.baseBuiltinPluginIds.has(instance.pluginId)
+      !this.baseOwnsBuiltin(instance.pluginId, packageRecord.manifest)
     ) {
       if (!this.builtin) throw new Error('builtin contribution supervisor is unavailable');
       await this.builtin.stop(pluginInstanceId, reason);

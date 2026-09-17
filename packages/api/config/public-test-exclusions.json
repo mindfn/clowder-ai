@@ -69,23 +69,6 @@
       }
     },
     {
-      "id": "codex-agent-service",
-      "match": "codex-agent-service",
-      "category": "source_only",
-      "reason": "A fresh public-like run without private cat model configuration fails before exercising provider behavior, so this remains source-only coverage.",
-      "owner": "@zts212653",
-      "introducedBy": "78f3bc57c",
-      "expiresOn": "2026-10-01",
-      "audit": {
-        "reviewedOn": "2026-09-10",
-        "sourceHead": "06c052010c01745da02aace324aa067e69c3ce75",
-        "publicHead": "6b6fbbaa863ced704081f0ddc718d797b619f8c2",
-        "status": "source_dependency_failure",
-        "matchedFileCount": 2,
-        "matchedFilesHash": "bb6f15490d1f0a407ece89b4a005c9fbea371b0d2b57e3d3ce080c9b27f08113"
-      }
-    },
-    {
       "id": "kimi-agent-service",
       "match": "kimi-agent-service",
       "category": "source_only",

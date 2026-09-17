@@ -304,12 +304,17 @@ export class OfficialPluginPackageInstaller {
           'package presentation metadata differs from the official catalog',
         );
       }
-      if (located.manifest.runtime.transport !== 'stdio') {
-        const staticEditors = staticEditorContributions(located.manifest);
+      const staticEditors = staticEditorContributions(located.manifest);
+      const declaresStaticEditor =
+        located.manifest.contributions?.some((item) => item.type === 'content-editor-provider') === true ||
+        located.manifest.features.some(
+          (feature) => feature.contributions?.some((item) => item.type === 'content-editor-provider') === true,
+        );
+      if (declaresStaticEditor) {
         if (staticEditors.length === 0 || entry.effectiveGrants.length !== 0) {
           throw new OfficialPluginInstallError(
             'UNSUPPORTED_TRANSPORT',
-            'official package has no supported Host runtime',
+            'content editor package has no supported Host runtime',
           );
         }
         // Static builtin admission still consumes the exact archive and public
