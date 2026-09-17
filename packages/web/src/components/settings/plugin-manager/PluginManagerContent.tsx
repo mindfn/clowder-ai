@@ -170,9 +170,6 @@ export function PluginManagerContent({
               />
             </label>
           </div>
-          <SettingsText as="p" variant="sm" tone="default" className="px-1 font-semibold">
-            插件列表
-          </SettingsText>
           <div data-plugin-scroll-region="list" className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             {loading && (
               <div data-testid="plugin-manager-loading" className="space-y-2">

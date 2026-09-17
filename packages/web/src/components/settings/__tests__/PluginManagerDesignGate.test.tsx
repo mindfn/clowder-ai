@@ -353,6 +353,9 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
   it('keeps the list and detail as independent desktop scroll regions', async () => {
     await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
 
+    expect([...container.querySelectorAll('p')].some((element) => element.textContent?.trim() === '插件列表')).toBe(
+      false,
+    );
     const list = container.querySelector('[data-plugin-scroll-region="list"]');
     const detail = container.querySelector('[data-plugin-scroll-region="detail"]');
     expect(list).not.toBeNull();
