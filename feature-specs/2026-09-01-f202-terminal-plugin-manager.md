@@ -49,11 +49,20 @@
 - 不把 derived aggregate status 持久化成第四份状态；Manager 每次从权威轴投影。
 - 不把 catalog 候选当成已安装、已授权、已启用或健康证据。
 
-### 1.3 Train C 后续边界
+### 1.3 稳定内核与 Train C 后续边界
 
-- `clowder-ai-plugins` 一个聚合 PR 一次性迁移冻结 inventory 中剩余 IM providers、repository-local business plugins 与 managed services。
-- Clowder AI 一个聚合 PR 完成配置/数据映射、默认路径切换、旧新防双跑，并删除 provider-specific loader、route 和第二管理入口。
-- Train C 不再重做 Manager UX 或 Agent management contract。
+- Core 只稳定拥有生命周期阶段、类型化 hook/capability 契约、调度/隔离/授权/审计、UI slot policy
+  与 disable/uninstall 时的完整撤销；公共 SDK 是插件注册 handler 和声明式 contribution 的唯一作者面。
+  Host 触发阶段但不认识 TTS、翻译、IM provider 等业务语义，也不允许插件修改私有 Core 对象或任意 DOM。
+- Train B 用一个真实 `video-analysis` 包证明两仓闭环，不切生产默认路径。
+- **Train C1（目标 2026-09-24）**：`clowder-ai-plugins` 一个聚合 PR 迁移冻结 inventory 中剩余
+  IM providers、connectors 与 repository-local business plugins；Clowder AI 一个聚合 PR 完成
+  配置/binding/数据映射、默认路径切换、旧新防双跑，并删除 provider-specific loader、route 和第二管理入口。
+  Core PR 应以删除为主，只保留消费既有 Host plane 所需的窄迁移 wiring。
+- **Train C2**：由首个真实消费者逐点开放公共 hook 与 UI slot，再迁 managed services（含 TTS/ASR）。
+  每个点位必须同时交付 contract schema、SDK registration、Host 业务无关调度，以及插件 disable/uninstall
+  后 UI entry 与 handler 一起消失的验收。
+- Train C 不重做 Manager UX 或 Agent management contract；C2 也不反向把业务逻辑放回 Host。
 
 ## 2. 终态用户旅程
 

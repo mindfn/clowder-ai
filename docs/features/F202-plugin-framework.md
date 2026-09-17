@@ -5,7 +5,7 @@ topics: [plugin-framework, plugin-manager, host-inventory, capability-registry, 
 doc_kind: spec
 created: 2026-05-15
 architecture-cell: plugin
-tips_exempt: "The historical Phase 1 and K-2 acceptance records are retained below. The 2026-09-01 terminal direction supersedes their product ordering: Train B completes the Manager; Train C only migrates implementations and removes compatibility paths."
+tips_exempt: "The historical Phase 1 and K-2 acceptance records are retained below. The terminal direction supersedes their product ordering: Train B completes the Manager and one real package loop; Train C1 migrates existing plugins and removes compatibility paths; Train C2 opens bounded public hook/UI seams with real consumers."
 ---
 
 # F202: Terminal Plugin Manager and Host-governed Plugin Framework
@@ -94,6 +94,20 @@ plus locale-keyed translations so Agent, Console and catalog search share the ca
 Icons are either legacy Host icon names or package-relative SVG/PNG assets; the Host validates and serves
 package assets from a same-origin URL. Console source categories never select a placeholder icon.
 
+## Stable kernel and public extension boundary
+
+Clowder AI keeps a small, stable kernel. Core owns lifecycle stages, typed hook and capability contracts,
+Host-side scheduling/ordering/isolation, UI slot policy, authorization, trace, settlement, and complete
+revocation on disable or uninstall. The public SDK is the only plugin authoring surface: a plugin registers
+handlers and declarative contributions against those bounded contracts, while Core invokes them without
+knowing whether the implementation is TTS, translation, an IM provider, or another business feature.
+
+This is not arbitrary Core patching. Plugins cannot reach private Host objects, invent unreviewed hook names,
+or mutate Console DOM/layout. Each newly opened hook or UI slot must be driven by a real migrated consumer,
+review its public data shape, and prove that disabling or uninstalling the plugin removes both the visible
+entry and its handler. Existing in-process prompt `HookRegistry` behavior is an internal implementation,
+not the public plugin hook protocol.
+
 ## Train B / Train C Boundary
 
 ### Train B — terminal management plane
@@ -113,15 +127,32 @@ package assets from a same-origin URL. Console source categories never select a 
 - The terminal Console keeps lifecycle actions on the fixed-height list card (Install, or uninstall +
   enable toggle), places offline install at page top-right, and uses the right detail only for manifest
   description, configuration, capabilities and diagnostics.
+- Prove the two-repository closed loop with one real `video-analysis` package: publish an exact artifact,
+  discover/install/configure/enable/use/restart/disable/uninstall it through the public contract and final
+  Manager, without switching the production default path.
 
-### Train C — business migration and deletion
+### Train C1 — inventory migration and deletion (target: 2026-09-24)
 
 - `clowder-ai-plugins` delivers one aggregate migration PR containing every remaining in-scope IM provider,
-  business plugin and managed service from the frozen inventory.
+  connector and repository-local business plugin from the frozen inventory.
 - Clowder AI delivers one aggregate cutover PR: migrate config/bindings/data, switch the default paths,
   prove no double-run, then remove provider-specific implementation, in-process loader, routes and the old
   IM/plugin management surfaces.
-- Train C does not redesign the Manager or add a second Agent contract.
+- The Core cutover is deletion-dominant. It may add only the narrow migration/cutover wiring required to
+  consume the already-established Host plane; it does not redesign the Manager, add a second Agent contract,
+  or introduce business-specific Host branches.
+
+### Train C2 — public hook/UI extensions and managed services
+
+- Open a typed hook or UI slot only with its first real migrated consumer. The contract package defines the
+  point, payload/result, ordering, timeout/failure semantics and capability; the SDK exposes registration;
+  Host provides business-blind invocation and lifecycle revocation.
+- Migrate managed services, including TTS/ASR, through those public seams. For example, Core triggers a
+  stable output/render stage and a voice plugin registers the handler; Core does not know the provider or
+  synthesis business logic. Message events may remain an internal transport detail rather than the plugin
+  author's integration API.
+- Declarative UI contributions target only Host-owned registered slots and commands. A slot lands together
+  with the acceptance that plugin disable/uninstall removes both its button/icon and command handler.
 
 The detailed state census, invariants, Design Gate and TDD sequence live in
 `feature-specs/2026-09-01-f202-terminal-plugin-manager.md`.
@@ -167,7 +198,7 @@ This is not yet a Train B completion claim:
   composition/restart boundary and remains part of the open current-generation hands-on acceptance.
   `pluginManagerLive=1`
   consumes that composition in the feature checkout. Per the Train B/Train C boundary, production Settings
-  still keeps the existing panels as its default until the aggregate Train C cutover preserves specialized
+  still keeps the existing panels as its default until the aggregate Train C1 cutover preserves specialized
   journeys such as Personal Chrome pairing.
 - Rejected catalog/local archives now enter a separate durable, path-scrubbed quarantine ledger. Quarantine
   rows have no executable action and may only be removed with a revision fence. A rejection for an older
@@ -176,7 +207,7 @@ This is not yet a Train B completion claim:
 - Production keeps the legacy Feishu-only `RefreshingOfficialPluginCatalog` for the existing specialized
   routes, while the new Manager independently consumes the bounded HTTPS machine catalog and exact package
   digests. Its list/search projection includes repository-local plugins as read-only compatibility rows;
-  connector compatibility remains a Train C cutover concern rather than being represented by fixtures. The
+  connector compatibility remains a Train C1 cutover concern rather than being represented by fixtures. The
   owner Console detail may load a bounded, integrity-verified package-root `README.md` through a direct-local
   route; all six Agent management operations, including `plugin_get`, use only the short manifest description.
   Contribution discovery and invocation expose only live tool schemas/results and never read the README.
