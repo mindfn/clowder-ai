@@ -23,10 +23,6 @@ const mockCloseRightPanel = vi.fn(() => {
   mockRightPanelOpen = false;
 });
 
-vi.mock('@/hooks/useApprovalHub', () => ({
-  useApprovalHubSync: vi.fn(),
-}));
-
 vi.mock('@/hooks/useEntrustedWorkProjection', () => ({
   useEntrustedWorkProjection: (projection: string) => {
     if (projection !== 'needs-me') throw new Error(`unexpected projection: ${projection}`);
@@ -75,35 +71,6 @@ vi.mock('@/components/workbench/experience-workbench-store', () => ({
         surfaces: mockActiveSurface ? [mockActiveSurface] : [],
       },
     }),
-}));
-
-vi.mock('@/stores/callbackAuthStore', () => ({
-  useCallbackAuthAvailable: () => false,
-  useCallbackAuthAggregate: () => ({ unviewedFailures24h: 0 }),
-}));
-
-vi.mock('@/hooks/useCafeTheme', () => ({
-  useCafeTheme: () => ({ toggleTheme: vi.fn(), resolvedTheme: 'light' }),
-}));
-
-vi.mock('@/hooks/usePinnedSections', () => ({
-  usePinnedSections: () => ({ pinned: [], pin: vi.fn(), unpin: vi.fn(), isPinned: () => false }),
-}));
-
-vi.mock('@/components/icons/MemoryIcon', () => ({
-  MemoryIcon: () => React.createElement('span', null, 'M'),
-}));
-
-vi.mock('@/components/hub-icons', () => ({
-  HubIcon: () => React.createElement('span'),
-}));
-
-vi.mock('@/components/settings/settings-nav-config', () => ({
-  SETTINGS_SECTIONS: [],
-}));
-
-vi.mock('@/components/ThreadSidebar/thread-navigation', () => ({
-  getThreadIdFromPathname: () => 'default',
 }));
 
 import { AttentionRailButtons } from '@/components/attention/AttentionRailButtons';

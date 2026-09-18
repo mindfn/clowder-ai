@@ -29,6 +29,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '猫登录模型用的号。登录成功后不会自动换号。',
   },
   {
+    id: 'destinations',
+    label: '功能入口',
+    icon: 'blocks',
+    color: 'var(--cafe-accent)',
+    description: '打开记忆中心、信号和 Mission Hub 等低频完整页面。',
+  },
+  {
     id: 'im',
     label: 'IM 对接',
     icon: 'plug',

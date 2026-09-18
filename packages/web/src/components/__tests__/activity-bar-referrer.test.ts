@@ -2,19 +2,20 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getThreadIdFromPathname, pinnedSections } = vi.hoisted(() => ({
+const { getThreadIdFromPathname, navigation, pinnedSections } = vi.hoisted(() => ({
   getThreadIdFromPathname: vi.fn((pathname: string) => {
     const match = pathname.match(/^\/thread\/([^/?#]+)/);
     return match ? decodeURIComponent(match[1]) : 'default';
   }),
+  navigation: { pathname: '/thread/thread-abc', search: '' },
   pinnedSections: [] as string[],
 }));
 
 const mockPush = vi.fn();
 
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/thread/thread-abc',
-  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => navigation.pathname,
+  useSearchParams: () => new URLSearchParams(navigation.search),
   useRouter: () => ({
     push: mockPush,
     replace: vi.fn(),
@@ -60,6 +61,9 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mockPush.mockClear();
+    navigation.pathname = '/thread/thread-abc';
+    navigation.search = '';
+    window.history.replaceState({}, '', '/thread/thread-abc');
     pinnedSections.splice(0);
   });
 
@@ -105,6 +109,45 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
     );
     expect(titles).toEqual(['对话', '成员与运行时', '账户与密钥', '主题', '设置']);
     expect(container.querySelector('.h-px')).toBeNull();
+  });
+
+  it('appends the current thread referrer when opening a pinned Settings destination', () => {
+    pinnedSections.push('members');
+    React.act(() => root.render(React.createElement(ActivityBar)));
+
+    React.act(() => {
+      (container.querySelector('button[title="成员与运行时"]') as HTMLButtonElement).click();
+    });
+
+    expect(mockPush).toHaveBeenCalledWith('/settings?s=members&standalone=1&from=thread-abc');
+  });
+
+  it('does not add a referrer to a pinned destination when no thread context exists', () => {
+    navigation.pathname = '/';
+    getThreadIdFromPathname.mockReturnValueOnce('default');
+    pinnedSections.push('members');
+    React.act(() => root.render(React.createElement(ActivityBar)));
+
+    React.act(() => {
+      (container.querySelector('button[title="成员与运行时"]') as HTMLButtonElement).click();
+    });
+
+    expect(mockPush).toHaveBeenCalledWith('/settings?s=members&standalone=1');
+  });
+
+  it('forwards an existing referrer when cross-hopping to a pinned destination', () => {
+    navigation.pathname = '/settings';
+    navigation.search = '?from=thread-origin';
+    getThreadIdFromPathname.mockReturnValueOnce('default');
+    pinnedSections.push('accounts');
+    window.history.replaceState({}, '', '/settings?from=thread-origin');
+    React.act(() => root.render(React.createElement(ActivityBar)));
+
+    React.act(() => {
+      (container.querySelector('button[title="账户与密钥"]') as HTMLButtonElement).click();
+    });
+
+    expect(mockPush).toHaveBeenCalledWith('/settings?s=accounts&standalone=1&from=thread-origin');
   });
 
   it('encodes existing ?from= when routing back to a thread from the home button', () => {

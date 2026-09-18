@@ -99,6 +99,19 @@ describe('usePinnedSections', () => {
     expect(state.pinned).toEqual(['skills', 'members', 'accounts']);
   });
 
+  it('does not mark desktop seeding complete while a full pin list leaves a default missing', () => {
+    Object.defineProperty(window, 'desktopBridge', { value: {}, configurable: true, writable: true });
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(['skills', 'mcp', 'plugins', 'marketplace', 'concierge', 'voice', 'system', 'members']),
+    );
+
+    const state = renderHook();
+
+    expect(state.pinned).not.toContain('accounts');
+    expect(localStorage.getItem(DESKTOP_SEED_KEY)).toBeNull();
+  });
+
   it('remembers a user unpin after the desktop defaults have been seeded', () => {
     Object.defineProperty(window, 'desktopBridge', { value: {}, configurable: true, writable: true });
     let state = renderHook();
