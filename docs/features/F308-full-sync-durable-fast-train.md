@@ -126,18 +126,17 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   mapping fingerprint.
 - [x] **AC-D2**: A planner produces 4–6 deterministic, duration-balanced pure-test shards; every selected test
   appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the manifest.
-- [x] **AC-D3**: Redis, ports, fs.watch and other stateful classes remain serial within each runner. They may be
-  partitioned across fresh machine-isolated runners only when the classifier's serial reasons are machine-local; a
-  test enters an in-runner parallel lane only with explicit isolation proof.
+- [x] **AC-D3**: Redis, ports, fs.watch and other stateful classes remain in one global serial lane; a test enters a
+  parallel lane only with explicit isolation proof. Separate runners are not proof for remote/shared fixtures.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
   superficially similar source SHA.
-- [ ] **AC-D6**: Three same-selection target-CI artifacts report p50/p95, critical path and coverage count. PR #1482
-  established the reviewed isolation boundary: stateful files remain one-at-a-time within each runner while four
-  fresh GitHub runners execute deterministic serial shards. Its first exact-head artifact covers 2,176/2,176 files
-  exactly once with a 6m40.639s test critical path and an 8m53s slowest complete lane job. This is sample 1/3, so the
-  original p50 ≤10m / p95 ≤12m goal and AC-D6 remain incomplete until two more same-selection target artifacts exist.
+- [ ] **AC-D6**: Three same-selection target-CI artifacts report p50/p95, critical path and coverage count. The
+  original CI p50 ≤10m / p95 ≤12m goal is not yet credible: exact source-runner evidence
+  (`docs/ops/2026-08-27-f308-public-test-source-measurements.json`) measured p50 14m18s / p95 14m25s with the
+  serial lane dominant. Until a reviewed per-class isolation audit changes that boundary, the source-runner interim
+  ceiling is p50 ≤15m / p95 ≤16m. Source-runner evidence never substitutes for the required target-CI artifacts.
 
 ### Phase E — Dogfood, review and close
 
@@ -185,11 +184,10 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 - The target-owned CI patch landed in target PR #1413 at merge
   `71a9b707847f7ed2cd43a3de42e4ca40ec7520e3`. Exact-head target CI preserved the required `Test (Public)` check,
   Windows and public-contract surfaces; its serial bootstrap passed in 19m36s and the fail-closed aggregate passed.
-  PR #1482 exact HEAD `b2ca073ec08a7e10b406bd6133a3c71a824e6791` then expanded the schema-v2 evidence contract to four serial and
-  four pure lanes. Run `35328584722` covered 2,176 selected files exactly once with zero missing, duplicate, extra or
-  failed files; its test critical path was 6m40.639s, slowest complete lane job 8m53s, aggregate test runner time
-  30m00.023s, aggregate eight-job wall time about 46m07s and complete workflow time 11m29s. The under-10-minute claim
-  applies to the public-test lane/job critical path, not the whole workflow. This is AC-D6 sample 1/3.
+  Once the source shard contract arrives, the workflow requires exact-plan/report summary provenance for one serial
+  plus four pure lanes. Three real sharded target-CI artifacts are still required by AC-D6. PR #1482's four-runner
+  serial experiment was rejected because VM separation did not prove isolation for remote/shared/unproved tests; its
+  corrected scope preserves this global serial boundary and removes only deterministic lifecycle waits.
 
 ## Key Decisions
 
