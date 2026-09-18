@@ -1,12 +1,13 @@
 /**
- * F770 Gate 2: the curated system settings view (6 status facts + 5 decisions).
+ * F770 Gate 2: the curated system settings view (6 status facts + 6 decisions).
  *
  * Guards opus's three review points:
  *   ① 「（重启生效）」appears ONLY on decisions ①② (data dir, LAN access)
  *   ② the one-line small print states the current fact (LAN reachability,
  *     retention applies to new data only, platform defaults always enforced)
- *   ③ no env var names in user-facing text; decisions ③④⑤ call the dedicated
- *     JSON routes, never the generic PATCH /api/config/env
+ *   ③ no env var names in user-facing text; decisions ③④⑤⑥ call JSON routes
+ *     (dedicated or the ConfigStore hot-update PATCH /api/config), never the
+ *     generic PATCH /api/config/env
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -80,6 +81,7 @@ const ENV_VAR_NAMES = [
   'LOG_LEVEL',
   'PROJECT_DENIED_ROOTS',
   'MESSAGE_TTL_SECONDS',
+  'CLI_TIMEOUT_MS',
 ];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -108,6 +110,12 @@ function defaultMock(path: string, init?: RequestInit): Promise<Response> {
     return Promise.resolve(
       jsonResponse({ deniedRoots: [], source: 'none', migratedFromEnv: false, platformDefaults: true }),
     );
+  }
+  if (path === '/api/config' && !init?.method) {
+    return Promise.resolve(jsonResponse({ config: { cli: { timeoutMs: 1_800_000 } } }));
+  }
+  if (path === '/api/config' && init?.method === 'PATCH') {
+    return Promise.resolve(jsonResponse({ ok: true }));
   }
   if (path === '/api/config/env' && init?.method === 'PATCH') {
     return Promise.resolve(jsonResponse({ ok: true }));
@@ -174,7 +182,7 @@ describe('SystemSettingsGate2', () => {
     await flushEffects();
   }
 
-  it('shows status facts and five decisions; the restart marker appears only on ①②', async () => {
+  it('shows status facts and six decisions; the restart marker appears only on ①②', async () => {
     await renderView();
     const text = container.textContent ?? '';
 
@@ -193,12 +201,13 @@ describe('SystemSettingsGate2', () => {
     expect(text).toContain('平台状态目录');
     expect(text).toContain('/home/user/.cat-cafe');
 
-    // Five decisions
+    // Six decisions
     expect(text).toContain('数据存放位置');
     expect(text).toContain('允许局域网访问');
     expect(text).toContain('数据保留');
     expect(text).toContain('日志详细程度');
     expect(text).toContain('禁止访问目录');
+    expect(text).toContain('调用超时');
 
     // ① restart marker only on ①②
     const markerCount = text.split('（重启生效）').length - 1;
@@ -317,6 +326,68 @@ describe('SystemSettingsGate2', () => {
     const puts = callsTo('PUT', '/api/config/log-level');
     expect(puts).toHaveLength(1);
     expect(JSON.parse((puts[0].init?.body as string) ?? '{}')).toEqual({ logLevel: 'debug' });
+    expect(callsTo('PATCH', '/api/config/env')).toHaveLength(0);
+  });
+
+  it('CLI timeout ⑥: current effective value shows as a minute preset; change PATCHes the ConfigStore route', async () => {
+    await renderView();
+    const select = Array.from(container.querySelectorAll('select')).find(
+      (element) => element.getAttribute('aria-label') === '调用超时',
+    );
+    expect(select).toBeTruthy();
+    // defaultMock serves cli.timeoutMs = 1_800_000 → the 30-minute preset
+    expect(select!.value).toBe('30m');
+
+    setNativeValue(select!, '10m');
+    await act(async () => {
+      select!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const patches = callsTo('PATCH', '/api/config');
+    expect(patches).toHaveLength(1);
+    expect(JSON.parse((patches[0].init?.body as string) ?? '{}')).toEqual({
+      key: 'cli.timeoutMs',
+      value: 600_000,
+    });
+    // ⑥ is immediate-effect (ConfigStore writes through process.env), so the
+    // env file route must stay untouched — same guarantee as ③④⑤.
+    expect(callsTo('PATCH', '/api/config/env')).toHaveLength(0);
+    expect(container.textContent).toContain('已生效');
+  });
+
+  it('CLI timeout ⑥: custom minutes convert to ms on save', async () => {
+    await renderView();
+    const select = Array.from(container.querySelectorAll('select')).find(
+      (element) => element.getAttribute('aria-label') === '调用超时',
+    );
+    expect(select).toBeTruthy();
+
+    setNativeValue(select!, 'custom');
+    await act(async () => {
+      select!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const input = container.querySelector('input[aria-label="自定义超时分钟"]') as HTMLInputElement | null;
+    expect(input).toBeTruthy();
+    setNativeValue(input!, '2');
+    await act(async () => {
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const saveButton = input?.parentElement?.querySelector('button');
+    expect(saveButton).toBeTruthy();
+    await act(async () => {
+      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const patches = callsTo('PATCH', '/api/config');
+    expect(patches).toHaveLength(1);
+    expect(JSON.parse((patches[0].init?.body as string) ?? '{}')).toEqual({
+      key: 'cli.timeoutMs',
+      value: 120_000,
+    });
     expect(callsTo('PATCH', '/api/config/env')).toHaveLength(0);
   });
 

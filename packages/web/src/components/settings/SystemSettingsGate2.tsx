@@ -11,6 +11,9 @@
 //   ③ 数据保留      — PUT /api/config/retention, immediate
 //   ④ 日志详细程度  — PUT /api/config/log-level, immediate
 //   ⑤ 禁止访问目录  — PUT /api/config/denied-roots, immediate
+//   ⑥ 调用超时      — PATCH /api/config (ConfigStore cli.timeoutMs, writes
+//                     through process.env so per-invocation readers see it at
+//                     once), immediate
 //
 // Copy rule (四·七): label + control + (only when true)（重启生效）; at most one
 // line of small print under a label, and that line states the current fact —
@@ -22,6 +25,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { EnvVar } from './EnvSubComponents';
 import { HubFileLink } from './EnvSubComponents';
+import { CliTimeoutDecision } from './gate2/CliTimeoutDecision';
 import { DataLocationDecision } from './gate2/DataLocationDecision';
 import { type DecisionMessage } from './gate2/DecisionRow';
 import { DeniedRootsDecision } from './gate2/DeniedRootsDecision';
@@ -151,6 +155,7 @@ export function SystemSettingsGate2({ variables }: { variables: EnvVar[] }) {
           <RetentionDecision />
           <LogLevelDecision />
           <DeniedRootsDecision />
+          <CliTimeoutDecision />
         </div>
       </SettingsSection>
     </div>
