@@ -45,9 +45,15 @@ function assertExactFiles(actual, expected, lane) {
   }
 }
 
-export function summarizePublicTestShardReports({ plan, reports }) {
+export function summarizePublicTestShardReports({ plan, reports, maxCriticalPathMs }) {
   validatePublicTestShardPlan(plan, plan.selectedFiles);
   invariant(Array.isArray(reports), 'reports must be an array');
+  if (maxCriticalPathMs !== undefined) {
+    invariant(
+      Number.isFinite(maxCriticalPathMs) && maxCriticalPathMs > 0,
+      'critical-path budget must be a positive finite number',
+    );
+  }
   const serialLanes = plan.serialShards.map((shard) => shard.id);
   const expectedLanes = [...serialLanes, ...plan.pureShards.map((shard) => shard.id)];
   const byLane = new Map();
@@ -96,7 +102,7 @@ export function summarizePublicTestShardReports({ plan, reports }) {
     'shard reports do not cover every selected test exactly once',
   );
   const elapsedValues = lanes.map((lane) => lane.elapsedMs);
-  return {
+  const summary = {
     schemaVersion: 2,
     kind: 'public_test_shard_summary',
     status: 'succeeded',
@@ -114,6 +120,13 @@ export function summarizePublicTestShardReports({ plan, reports }) {
     ),
     provenance: stablePublicTestValue(referenceProvenance),
   };
+  if (maxCriticalPathMs !== undefined) {
+    invariant(
+      summary.criticalPathMs <= maxCriticalPathMs,
+      `public-test critical path ${summary.criticalPathMs}ms exceeds budget ${maxCriticalPathMs}ms`,
+    );
+  }
+  return summary;
 }
 
 function percentile(values, fraction) {
@@ -180,18 +193,26 @@ async function main() {
   const options = parsePublicTestCliOptions(normalizePublicTestCliArgv(process.argv.slice(2)));
   if (options.help) {
     process.stdout.write(
-      'Usage: node packages/api/scripts/summarize-public-test-shards.mjs --plan <path> --reports-dir <path> --output <path>\n',
+      'Usage: node packages/api/scripts/summarize-public-test-shards.mjs --plan <path> --reports-dir <path> --output <path> [--max-critical-path-ms <milliseconds>]\n',
     );
     return;
   }
   for (const name of ['plan', 'reports-dir', 'output']) invariant(options[name], `--${name} is required`);
+  const maxCriticalPathMs =
+    options['max-critical-path-ms'] === undefined ? undefined : Number(options['max-critical-path-ms']);
+  if (maxCriticalPathMs !== undefined) {
+    invariant(
+      Number.isFinite(maxCriticalPathMs) && maxCriticalPathMs > 0,
+      '--max-critical-path-ms must be a positive finite number',
+    );
+  }
   const plan = JSON.parse(await readFile(resolve(options.plan), 'utf8'));
   const reports = [];
   for (const path of await findJsonFiles(resolve(options['reports-dir']))) {
     const value = JSON.parse(await readFile(path, 'utf8'));
     if (value.kind === 'public_test_shard_run') reports.push(value);
   }
-  const summary = summarizePublicTestShardReports({ plan, reports });
+  const summary = summarizePublicTestShardReports({ plan, reports, maxCriticalPathMs });
   await atomicPublicTestJsonWrite(options.output, summary);
   process.stdout.write(
     `public-test summary: selected=${summary.selectedFileCount} critical_path_ms=${summary.criticalPathMs} runner_minutes=${summary.runnerMinutes.toFixed(2)}\n`,

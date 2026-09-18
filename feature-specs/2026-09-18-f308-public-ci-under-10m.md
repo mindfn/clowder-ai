@@ -2,7 +2,7 @@
 
 **Feature:** F308 — `docs/features/F308-full-sync-durable-fast-train.md`
 **Goal:** Reduce the complete target-CI public-test critical path below 10 minutes without changing selection, coverage, or per-runner serial execution for stateful tests.
-**Acceptance Criteria:** AC-D1–D6 remain fail-closed; the same selected files appear exactly once; stateful files execute one at a time inside isolated serial shards; local full-lane verification is green before any push; target CI demonstrates p50 ≤10m and p95 ≤12m.
+**Acceptance Criteria:** AC-D1–D6 remain fail-closed; the same selected files appear exactly once; stateful files execute one at a time inside isolated serial shards; local full-lane verification is green before any push; target CI demonstrates p50 ≤10m and p95 ≤12m across three same-selection runs. A single run over 10 minutes fails the evidence job immediately, while AC-D6 remains open until the three-run distribution exists.
 **Architecture cell:** `action-plane`
 **Map delta:** none
 **Map delta why:** This extends F308's existing target-owned CI planner/runner contract and introduces no new runtime owner, store, or external writer.
@@ -84,7 +84,7 @@ Invariant: each lane runner still invokes one test file at a time with `--test-c
 
 1. Replace `[serial, pure-1, pure-2, pure-3, pure-4]` with `[serial-1, serial-2, serial-3, serial-4, pure-1, pure-2, pure-3, pure-4]`.
 2. Keep per-file `--test-concurrency=1`; do not add `max-parallel` or global Node concurrency.
-3. Keep all required summary and `Test (Public)` gates fail-closed.
+3. Keep all required summary and `Test (Public)` gates fail-closed, including a 600,000ms maximum measured test critical path.
 4. Run: `node .github/scripts/check-public-test-ci-contract.mjs`.
    Expected: PASS with eight exact lanes.
 
@@ -96,6 +96,8 @@ Invariant: each lane runner still invokes one test file at a time with `--test-c
 1. Record isolated serial sharding as the reviewed boundary that makes the original p50 ≤10m / p95 ≤12m target testable again.
 2. Preserve the prohibition on coverage reduction and within-runner global concurrency.
 3. Keep AC-D6 incomplete until three new same-selection target-CI artifacts exist.
+
+The F308 owner document is a protected `manual-port` path in the fork-to-upstream boundary, so it must be updated through the guarded fork-local documentation path rather than bundled into this upstream PR. The public PR and issue must carry the complete target evidence and must not claim AC-D6 complete.
 
 ### Task 5: Local complete verification before push
 
@@ -119,8 +121,23 @@ Invariant: each lane runner still invokes one test file at a time with `--test-c
 4. Only after local full verification and review, push the commit to PR #1482.
 5. Collect target CI; do not merge. Three same-selection target runs are required only for the final design, not for intermediate edits.
 
+## First final-topology target evidence
+
+Run `35328584722` at exact HEAD `b2ca073ec08a7e10b406bd6133a3c71a824e6791` used one schema-v2 plan with selection hash `dc3ddcd7f86f3ab96c1ca78b232d54f69db064b023b2f17e4df86bd4471e4830`. Its eight green reports prove 2,176 selected / 2,176 observed / 2,176 unique files, with zero missing, duplicate, extra, or failed files.
+
+- Test-execution critical path: 6m40.639s.
+- Slowest complete lane job, including setup and build: 8m53s.
+- Aggregate test runner time: 30m00.023s.
+- Aggregate wall time across the eight lane jobs: about 46m07s.
+- Complete workflow end to end: 11m29s; the under-10-minute claim applies to the public-test lane/job critical path, not the whole workflow.
+
+This is sample 1/3 for AC-D6. It proves the topology and single-run budget but does not produce p50/p95 or close AC-D6.
+
 ## Follow-on audit, not a prerequisite for the safe split
 
 - Audit 757 dynamic-import-only files for transitive isolation and move proven files into pure shards.
 - Replace remaining real sleeps/timers in the long-tail files with deterministic clocks or deadlines.
 - Merge tests only when production branches, inputs, assertions, and side effects are equivalent; the current scan found zero byte-identical test files, so no deletion is assumed.
+- Feed a provenance-compatible prior timing summary into planning once CI has a canonical, non-stale artifact source. The first final-topology plan intentionally used the fail-closed `unmeasured_default` source; its observed serial lane spread was 5m58s–6m41s, so this wiring is not required for the safe split.
+- Make the machine-local scope of serial classification explicit in the classification schema before admitting any serial rule for a remotely shared fixture or account.
+- Derive serial lane validation from `SERIAL_PUBLIC_TEST_SHARDS` and version the run-report lane shape alongside future plan/summary schema changes.
