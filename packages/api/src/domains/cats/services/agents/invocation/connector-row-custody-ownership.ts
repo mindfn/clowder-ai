@@ -1,5 +1,5 @@
-import type { QueueEntry } from '../../domains/cats/services/agents/invocation/InvocationQueue.js';
-import type { StoredMessage } from '../../domains/cats/services/stores/ports/MessageStore.js';
+import type { StoredMessage } from '../../stores/ports/MessageStore.js';
+import type { QueueEntry } from './InvocationQueue.js';
 
 /**
  * Whether a connector row that was just admitted may stay in the Queue, judged

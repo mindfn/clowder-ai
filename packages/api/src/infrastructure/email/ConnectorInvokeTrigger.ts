@@ -31,6 +31,7 @@ import {
   waitContinuationCarrierFromStoredMessage,
   waitContinuationCarriersMatch,
 } from '../../domains/ball-custody/wait-continuation-carrier.js';
+import { resolveConnectorRowCustodyOwnership } from '../../domains/cats/services/agents/invocation/connector-row-custody-ownership.js';
 import type { InvocationQueue, QueueEntry } from '../../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationTracker } from '../../domains/cats/services/agents/invocation/InvocationTracker.js';
 import {
@@ -67,7 +68,6 @@ import { emitQueueUpdated, enrichQueueEntries } from '../../utils/queue-enrichme
 
 import type { OutboundDeliveryHook, ThreadMeta } from '../connectors/OutboundDeliveryHook.js';
 import type { StreamingOutboundHook } from '../connectors/StreamingOutboundHook.js';
-import { resolveConnectorRowCustodyOwnership } from './connector-row-custody-ownership.js';
 
 export type TriggerOutcome = 'dispatched' | 'enqueued' | 'full';
 
