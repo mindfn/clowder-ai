@@ -135,7 +135,15 @@ export class CycleEvaluationDelivery {
       `F257 cycle ${kind}: ${record.cycleId}`,
       messageId,
       undefined,
-      { forceQueue: true },
+      // Two declarations, two readers. `forceQueue` makes the Queue custody this
+      // wake even when the thread is idle, so its delivery receipt is durable.
+      // `sourceCategory` is how turn custody classifies the evaluator's turn: a
+      // cycle wake is a scheduler fire, and leaving that unsaid does not read as
+      // "scheduled with no extras" — resolveQueueTurnCustodyWake falls past every
+      // branch to `legacy/carrier_missing`, which opens as `unknown_legacy`. That
+      // state carries no baseline, so the F167 stop gate blocks the turn
+      // unconditionally and nothing the evaluator does can clear it (#180).
+      { forceQueue: true, sourceCategory: 'scheduled', reason: `F257 cycle ${kind}` },
     );
     if (outcome === 'full') throw new Error('cycle_invocation_queue_full');
     return messageId;
