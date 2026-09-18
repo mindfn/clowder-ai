@@ -211,8 +211,7 @@ dispatcher 与 production migration receipt，因此 registry/projection 可读�
 #### C1: Workspace Tab 迁移
 
 - **新 `workspaceMode: 'approval'`**：审批成为 workspace 顶层入口（与 开发/记忆/调度/任务/社区/产物 同级）
-- **入口行为变更**：历史实现由 ActivityBar 铃铛打开 Workspace 审批 tab；2026-09-18 rail 收敛后，
-  Approval Hub 统一从 Workspace launcher 进入，projection 仍在 AppShell 全局同步，不再保留常驻铃铛。
+- **Bell 铃铛行为变更**：ActivityBar 铃铛保留（badge count 常驻），点击从"弹 drawer" → "打开 workspace panel + 切到审批 tab"
 - **ApprovalHubDrawer 废弃**：drawer 组件标 deprecated，workspace 内的 ApprovalPanel 接替全部功能
 - **ApprovalPanel**：复用现有 ApprovalItemCard + store，嵌入 workspace 容器（flex 布局，享受完整 panel 宽度）
 
@@ -251,8 +250,7 @@ Goal: 把 Phase C 后真实遗留的成熟化工作收束成可执行交付，�
 
 - [x] **AC-D1**: AC-C8 收口：intercept mirror / line-start mention pruning 完成，正文内 `@cat` 不误触发 F193 approval intercept。
 - [x] **AC-D2**: WorkspaceTabBar 自动化 web 回归：full / overflow / icon-only 三档、overflow click、active-in-overflow swap 全覆盖。
-- [x] **AC-D3**: ApprovalPanel + attention-entry 行为由独立组件回归覆盖；2026-09-18 后默认 ActivityBar 不再承载 bell，
-  Workspace launcher → ApprovalPanel 是 canonical journey，fetchPending、loading/empty/error、inline/jump card rendering 保持覆盖。
+- [x] **AC-D3**: ApprovalPanel + ActivityBar 自动化 web 回归：bell → workspace approval、toggle close、fetchPending、loading/empty/error、inline/jump card rendering 全覆盖。
 - [x] **AC-D4**: Hub 筛选：by feature / by thread / by stale-expired 的组合筛选，作为 UI projection，不改变 canonical stores。
 - [x] **AC-D5**: 批量 approve/reject：只对安全 inline items 开放；F128/F225 等需要上下文/override 的项目不可被批量 approve。
 - [x] **AC-D6**: v2 adapter admission matrix：F231、F168 `direction-decision`、Knowledge Feed、Limb pair approval 逐项定 actor/outcome/store/inline fields/risk/first PR boundary。
@@ -596,7 +594,7 @@ harness_feedback: none | reason: non-harness feature, pure product capability
 **Phase D (PR #2477)**:
 - AC-D1 ✅ met — intercept mirror line-start mention pruning, regression tests `47fe67082`
 - AC-D2 ✅ met — WorkspaceTabBar automated web regression (full/overflow/icon-only), vitest
-- AC-D3 ✅ met — ApprovalPanel + attention behavior automated regression, vitest；默认 rail 入口已于 2026-09-18 收敛。
+- AC-D3 ✅ met — ApprovalPanel + ActivityBar automated regression, vitest
 - AC-D4 ✅ met — filter by feature/thread/stale, alpha 8/8 PASS
 - AC-D5 ✅ met — batch approve/reject with inline guard, alpha verified (select-all scoped to filteredItems)
 - AC-D6 ✅ met — v2 admission matrix: F231 ready, Limb dropped, F168/KF parked (operator verdict)
@@ -630,3 +628,4 @@ harness_feedback: none | reason: non-harness feature, pure product capability
 - AC-H8 ✅ met — backfill-f231-settled-index.mjs: dry-run default, --execute writes, sanctuary guard (4/4 tests pass)
 
 ## Reflection Capsule
+
