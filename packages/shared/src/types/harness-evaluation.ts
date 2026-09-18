@@ -168,6 +168,15 @@ export interface CycleRecord {
   assignedAt?: number;
   retriggerMessageId?: string;
   retriggeredAt?: number;
+  /**
+   * Set from the moment the latest evaluation wake (assignment or retrigger) is
+   * sent until its delivery receipt exists: the first exact body exposure on the
+   * wake message's durable Queue custody. A writeback clock measures the time
+   * the evaluator had to answer, so none runs while this is set; reconciliation
+   * then restamps `assignedAt` / `retriggeredAt` to the receipt's own time and
+   * clears the marker. Queue position is never the receipt.
+   */
+  pendingWakeMessageId?: string;
   stalledAlertMessageId?: string;
   stalledAt?: number;
   governanceAssignmentMessageId?: string;

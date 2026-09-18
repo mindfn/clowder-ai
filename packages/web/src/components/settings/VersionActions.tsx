@@ -14,6 +14,7 @@
  */
 
 import type { CycleEvaluationStatus, SegmentEnablementMatrix } from '@cat-cafe/shared';
+import { cycleAcceptsOperatorVersionTransition } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -107,7 +108,7 @@ export function ActivateVersionButton({
   const runtime = enablementMatrix.runtimeOverride;
   const perm = epochVersion === 1 ? runtime.actions.rollback : runtime.actions.activateVersion;
   const versionAvailable = epochVersion === 1 || runtime.availableEpochVersions.includes(epochVersion);
-  const tracing = currentEvalStatus === 'idle';
+  const tracing = cycleAcceptsOperatorVersionTransition(currentEvalStatus);
   const canActivate = tracing && perm.allowed && versionAvailable;
   const blockedReason = canActivate
     ? null

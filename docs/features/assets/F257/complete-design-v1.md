@@ -35,12 +35,16 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 
 未回写分支（步 5 或 6 超过 T=30 分钟没有回写）：系统投**一条**"你还没回写"的系统 message 重触发；再超过 T 仍无 → 周期记录 `evalStatus:stalled` + 告警到本 thread，**不再重试**，等人处理。
 
+`stalled` 不是终态（2026-09-15，生产首个 stalled 周期把 Objective 冻死后补）：它只表示自动催促已用尽，周期保留两个人工出口——① 评估 thread 迟到回写：读池与 `submit_cycle_evaluation` 对 stalled 保持开放，写回后照常进入 governance，`insufficient_evidence` 照常归档并开启下一周期；② operator 手动切版 / 创建版本（见 1.2）：不依赖评估猫，终止该周期并开启下一周期。告警消息明写这两个出口。
+
+回写计时的口径（同日补，2026-09-18 复审后改为回执口径）：T 计的是**评估猫拿到唤醒之后**的时间。每条 assignment / 重触发都以 `queued` 落库并强制经 Queue 投递（线程空闲时立即启动），因此每条唤醒都有持久 Queue custody；发出即记录 `pendingWakeMessageId`。**投递回执** = 该唤醒消息 custody 上最早一条 exact body exposure（只追加，跨重启存活）：回执出现前不重触发、不判 stalled；出现后 reconcile 把 `assignedAt` / `retriggeredAt` 重盖为回执自身的 `seenAt`（与哪个进程、何时观察到无关）再开始计 T。队列位置不是回执——启动失败会让条目 `queued → processing → queued` 而评估猫从未见过正文。唤醒若已不可能投递（消息已取消，或 custody 终结而无 exposure），自观察到之时起算有界重试，不永久冻结。唤醒的投递 key 幂等：重放（投递后 cycle CAS 未落地即崩溃、或迟到的重复 assignment）只在源消息仍为 `queued` 且尚无 custody（首次入队）或 custody 仍活且未送达（由原 carrier / 验证式接管继续）时才进 Queue；已送达、已取消、custody 已终结的源只复用原 messageId，不再建 Queue carrier——那样的 carrier 永远拿不到持久所有权。这条判定的权威位置在 Queue 入队缝内（`ConnectorInvokeTrigger.enqueueWhileActive`）：条目建好、custody 初始化 / 接管之后**重读源**，凡带 custody 或已取消的源，新条目必须正是 custody 点名的 exact carrier 且 custody 未终结，否则立即回滚——源是在建条目之前读的，原 carrier 可能在两者之间完成，而重启后的进程没有内存条目可去重。F257 外层的预读只用于省掉无谓的建-回滚，并把升级前无 custody 的旧唤醒消息挡在队列外，它本身闭合不了这个竞态。回执一直不出现（评估 invocation 长时间 active-but-silent、队列停住）属执行运行时 / Queue 的活性问题，不由 F257 状态机代偿：此时周期停在原状态且 F257 不发告警，可见面是评估线程的 Queue。
+
 ☑ 走查正确（07:37）
 
 ### 1.2 手动切换当前版本（operator 2026-09-07）
 
 - 入口在生命线中**已选历史版本**的版本内容区，按钮「切换为当前版本」。它不是编辑内容，也不创建版本；确认文案只说「切换后，将以该版本开启新周期并继续评估。」
-- 只允许 `evalStatus=idle`。按钮显示状态只是第一层，服务端在同一 Objective 串行锁内重新读取 current CycleRecord；`requested / retriggered / written / stalled` 一律 409，防止切版覆盖正在进行的评估或治理。
+- 只允许 `evalStatus=idle` 或 `stalled`。按钮显示状态只是第一层，服务端在同一 Objective 串行锁内重新读取 current CycleRecord；`requested / retriggered / written` 一律 409，防止切版覆盖正在进行的评估或治理。stalled 周期没有进行中的评估（自动催促已用尽），切版是 operator 不依赖评估猫的解冻出口：旧周期以 `termination` 归档，冻结的评估窗与 `stalledAt` 保留在归档记录上，其**全部**未消费窗口（前序 insufficient-evidence 窗、既有补充窗、原生窗延至 `switchAt`）都作为 `manual-version-switch` 补充窗随新周期保存——一律带来源，因为 assignment 会把无来源的额外窗口按 history 下标当作原生 skip 窗；idle 周期切版同样带走它本会在下次触发时回看的前序 skip 窗；此后对该周期的迟到回写按周期已关闭拒绝（409）。
 - 直接创建内容版本也必须经过同一周期边界：新版本成为 active 时同步归档旧 tracing 周期并建立绑定新版本的新周期，不能保留一条会让 active 指针与 CycleRecord 版本漂移的旁路。旧式 `POST /api/prompt-hooks/:hookId/override {action:'rollback'}` 与独立「回滚至基线」按钮退出公开入口；回到 v1 统一选择 v1 版本卡上的「切换为当前版本」。
 - 切换时以同一个逻辑 `switchAt` 收束两条轴：① override active 指针切到目标历史版本；② 当前 tracing 周期写 `termination:{kind:'manual-version-switch', fromVersion, toVersion, at, by, reason}` 并 append-only 归档；③ 建立 `cycleStart=switchAt`、新 Objective version snapshot 的 idle 周期。override 的审计事件按实际写入时间记录，允许比逻辑切换坐标晚数毫秒。CycleRecord 归档与 current 替换使用 Redis CAS；active 指针写入失败或 CAS 竞争失败时执行补偿，不能留下「版本已换、周期未换」的稳定状态。
 - 新周期的**原生窗**从 `switchAt` 开始：Console 周期计数、明细和 N/M/D 触发都只读原生窗。被终止周期尚未进入 evaluation 的数据不丢，作为带 `manual-version-switch` provenance 的补充窗随新周期保存；只有新周期原生窗触发后，它才进入 assignment 的可读证据范围。
