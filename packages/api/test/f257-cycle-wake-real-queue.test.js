@@ -23,8 +23,13 @@ const threadId = 'thread_eval_f257_obj';
 const catId = 'codex-sol';
 const record = { ownerUserId: 'owner-1', cycleId: 'cycle-1' };
 
-/** One API process over the durable message store; pass an existing store to model a restart. */
-function realQueue({ messageStore = new MessageStore(), busy = true } = {}) {
+/**
+ * One API process over the durable message store; pass an existing store to model a restart.
+ * `beforeAdmission` holds a send between the delivery guard and Queue admission. The guard then
+ * reads an independent snapshot, as a Redis read is — the in-memory store hands out live objects,
+ * which would quietly "update" under the held caller and hide the race.
+ */
+function realQueue({ messageStore = new MessageStore(), busy = true, beforeAdmission } = {}) {
   const queue = new InvocationQueue();
   const evaluator = { busy };
   const providerStarts = [];
@@ -106,16 +111,34 @@ function realQueue({ messageStore = new MessageStore(), busy = true } = {}) {
   const delivery = new CycleEvaluationDelivery({
     runtime: { catalog: { registry: { objectives: [] } } },
     threadStore: {},
-    messageStore,
+    messageStore: { getById: async (id) => structuredClone(await messageStore.getById(id)) },
     deliver: createDeliverFn({ messageStore, socketManager }),
-    getInvokeTrigger: () => trigger,
+    getInvokeTrigger: () => ({
+      async trigger(...args) {
+        await beforeAdmission?.();
+        return trigger.trigger(...args);
+      },
+    }),
     getDefaultCatId: () => catId,
   });
   const receipt = async (id) => resolveCycleWakeReceipt(await messageStore.getById(id));
   const row = (id) => queue.findEntryWithMessageId(threadId, id);
   const rows = () => queue.list(threadId, record.ownerUserId);
   const send = (kind) => delivery.deliverWake(record, threadId, catId, `## F257 Cycle Evaluation ${kind}`, kind);
-  return { messageStore, queue, processor, delivery, evaluator, providerStarts, failure, receipt, row, rows, send };
+  return {
+    messageStore,
+    queue,
+    processor,
+    trigger,
+    evaluator,
+    providerStarts,
+    failure,
+    receipt,
+    row,
+    rows,
+    send,
+    delivery,
+  };
 }
 
 test('a wake queued behind a busy evaluator is custodied; a failed start leaves it undelivered; the exposure delivers it', async () => {
@@ -238,4 +261,51 @@ test('a wake still pending when the process restarts is taken over by its exact 
   await settle();
   assert.equal(reborn.providerStarts.length, 1);
   assert.deepEqual(reborn.rows(), []);
+});
+
+// Review 2026-09-18 (round 3): a guard outside the Queue cannot close this. The source is read,
+// then the row is created; the carrier that owned the source can finish in between, and a
+// restarted process has no in-memory row to deduplicate against.
+test('a carrier finishing in another process between the replay guard and Queue admission leaves no row behind', async () => {
+  const old = realQueue({ busy: true });
+  const wakeId = await old.send('assignment');
+  await settle();
+  assert.deepEqual(await old.receipt(wakeId), { state: 'pending' });
+
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const next = realQueue({ messageStore: old.messageStore, busy: false, beforeAdmission: () => held });
+  const replay = next.send('assignment'); // its guard sees a pending source, then waits at the Queue's door
+  await settle();
+
+  old.evaluator.busy = false; // meanwhile the old carrier runs to completion
+  await old.processor.tryAutoExecute(threadId, { bypassNonAgentGate: true });
+  await settle();
+  assert.equal(old.providerStarts.length, 1);
+  assert.equal((await old.messageStore.getById(wakeId)).queueCustody?.status, 'terminal');
+
+  release();
+  assert.equal(await replay, wakeId);
+  await settle();
+  assert.equal(next.row(wakeId), null, 'a row the durable custody does not name does not outlive admission');
+  assert.deepEqual(next.rows(), []);
+  assert.equal(next.providerStarts.length, 0);
+});
+
+test('the Queue admission seam itself refuses a row for a source whose custody is terminal or names another carrier', async () => {
+  const q = realQueue({ busy: false });
+  const wakeId = await q.send('assignment');
+  await settle();
+  assert.equal((await q.messageStore.getById(wakeId)).queueCustody?.status, 'terminal');
+
+  // No F257 guard in front: any force-queue producer replaying a finished source.
+  const outcome = await q.trigger.trigger(threadId, catId, record.ownerUserId, 'replay', wakeId, undefined, {
+    forceQueue: true,
+  });
+  await settle();
+  assert.equal(outcome, 'enqueued', 'the wake was durably accepted long ago; the replay is a no-op');
+  assert.deepEqual(q.rows(), []);
+  assert.equal(q.providerStarts.length, 1);
 });
