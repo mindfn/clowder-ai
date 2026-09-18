@@ -5,7 +5,7 @@ topics: [console, settings, app-shell, community, inbound-pr, frontend, service-
 doc_kind: spec
 created: 2026-05-07
 community_pr: clowder-ai#645, clowder-ai#662, clowder-ai#669, clowder-ai#674, clowder-ai#1083
-tips_exempt: Retiring the unused generic permission dependency leaves the existing Settings and Approval Hub workflows unchanged and adds no new user action or discovery surface
+tips_exempt: "Renewed 2026-09-18 for Activity Rail convergence: the destination cards are already visible inside Settings → 功能入口, while adding a proactive tip would recreate the navigation noise this phase removes."
 ---
 
 # F190: Console Settings/AppShell Skeleton — 社区 Console 重构的可控切片
@@ -651,12 +651,26 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 - Collective 与猫猫星球在能力未完整前不暴露产品入口；route 保留供开发与既有 deep link 使用。
 - Approval / Needs Me 归 Workspace launcher，猫猫球显示状态归 Settings；它们不再占默认 rail button。
 
+### Supersede ledger（仅记录本轮 UI 入口迁移）
+
+以下旧条目描述的是历史入口位置，其业务能力与原 feature ownership 不变；本轮只由 F190 改写全局导航投影：
+
+- F058 AC-H1：Mission Hub 的左侧 rail 图标被 Settings → 功能入口取代。
+- F102 KD-48：Memory 仍以独立 `/memory` 页面为主入口，但物理入口从 rail 迁到 Settings → 功能入口；Workspace
+  Recall Feed 仍是副入口。
+- F229 AC-A6 / BUG-UX-11：隐藏猫猫球后的恢复入口从 Activity Rail 迁到 Settings → 猫猫球。
+- F246 C1 / AC-C2 / AC-D3：Approval 仍是 Workspace 顶层目的地并保持全局 projection；rail bell 被
+  常驻 Workspace 入口与 launcher 审批卡片上的待审批计数取代。
+- F258 AC-A7：`/starry` route 保留，但在能力完整前不再由全局 rail 主动暴露。
+
 ### Phase H Acceptance Criteria
 
 - [x] 默认 web rail 只渲染对话、主题、设置。
 - [x] packaged desktop 首次启动固定成员与运行时、账户与密钥；取消后重新挂载不恢复。
 - [x] pinned shortcut 紧邻对话且无分隔线。
 - [x] Collective 与猫猫星球不出现在 Activity Rail。
+- [x] 记忆中心、信号、Mission Hub 从 Settings → 功能入口可达。
+- [x] 常驻 Workspace 入口与 launcher 审批卡片显示全局待审批计数。
 - [x] Approval projection 继续全局同步；猫猫球 Settings 文案不再引用已移除的 rail 入口。
 
 ## Review Gate

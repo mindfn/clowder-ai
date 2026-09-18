@@ -12,10 +12,6 @@ import { getThreadIdFromPathname } from './ThreadSidebar/thread-navigation';
 
 const OklchTuner = lazy(() => import('./dev/OklchTuner').then((m) => ({ default: m.OklchTuner })));
 
-const NAV_ITEMS = [
-  { id: 'home', path: '/', label: '对话', match: (p: string) => p === '/' || p.startsWith('/thread/') },
-] as const;
-
 function ChatIcon({ className = 'w-5 h-5' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
@@ -42,10 +38,6 @@ function SettingsIcon({ className = 'w-5 h-5' }: { className?: string }) {
     </svg>
   );
 }
-
-const ICON_MAP: Record<string, ({ className }: { className?: string }) => JSX.Element> = {
-  home: ChatIcon,
-};
 
 interface ActivityBarProps {
   className?: string;
@@ -176,6 +168,7 @@ export function ActivityBar({ className }: ActivityBarProps) {
   const router = useRouter();
   const { pinned } = usePinnedSections();
   const [tunerOpen, setTunerOpen] = useState(false);
+  const conversationActive = pathname === '/' || pathname.startsWith('/thread/');
 
   // Approval remains a Workspace destination; keep its global projection fresh
   // without reserving a permanent rail button.
@@ -193,28 +186,21 @@ export function ActivityBar({ className }: ActivityBarProps) {
       className={`flex w-[52px] flex-shrink-0 flex-col items-center gap-1.5 py-2.5 px-[6px] bg-[var(--console-rail-bg)] ${className ?? ''}`}
       aria-label="主导航"
     >
-      {NAV_ITEMS.map((item) => {
-        const Icon = ICON_MAP[item.id];
-        const active = item.match(pathname);
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => handleNav(item.path)}
-            className={`flex h-10 w-10 items-center justify-center rounded-lg transition-all ${
-              active
-                ? 'bg-[var(--console-rail-active)] shadow-[var(--console-rail-shadow)]'
-                : 'hover:bg-[var(--console-rail-item)] hover:shadow-[var(--console-rail-shadow)]'
-            }`}
-            title={item.label}
-            aria-label={item.label}
-            aria-current={active ? 'page' : undefined}
-            data-guide-id={`nav.${item.id}`}
-          >
-            <Icon className="h-5 w-5" />
-          </button>
-        );
-      })}
+      <button
+        type="button"
+        onClick={() => handleNav('/')}
+        className={`flex h-10 w-10 items-center justify-center rounded-lg transition-all ${
+          conversationActive
+            ? 'bg-[var(--console-rail-active)] shadow-[var(--console-rail-shadow)]'
+            : 'hover:bg-[var(--console-rail-item)] hover:shadow-[var(--console-rail-shadow)]'
+        }`}
+        title="对话"
+        aria-label="对话"
+        aria-current={conversationActive ? 'page' : undefined}
+        data-guide-id="nav.home"
+      >
+        <ChatIcon className="h-5 w-5" />
+      </button>
 
       <Suspense>
         <PinnedSections pinned={pinned} onNav={handleNav} />

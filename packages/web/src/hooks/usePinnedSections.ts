@@ -35,15 +35,20 @@ function readWithDesktopDefaults(): string[] {
   if (typeof window === 'undefined' || !window.desktopBridge) return current;
 
   try {
+    // The seed receipt intentionally follows the packaged app's local profile.
+    // Clearing site data or moving to another device establishes a fresh install;
+    // cross-device preference sync is outside this local-only settings contract.
     if (localStorage.getItem(DESKTOP_SEED_KEY) === '1') return current;
 
     const next = [...current];
     for (const id of DESKTOP_DEFAULT_PINS) {
       if (!next.includes(id) && next.length < MAX_PINS) next.push(id);
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    localStorage.setItem(DESKTOP_SEED_KEY, '1');
-    window.dispatchEvent(new CustomEvent(SYNC_EVENT));
+
+    if (next.length !== current.length) writeAndBroadcast(next);
+    if (DESKTOP_DEFAULT_PINS.every((id) => next.includes(id))) {
+      localStorage.setItem(DESKTOP_SEED_KEY, '1');
+    }
     return next;
   } catch {
     return current;

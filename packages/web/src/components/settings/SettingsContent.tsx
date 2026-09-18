@@ -18,6 +18,7 @@ import { useConfirm } from '../useConfirm';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
 import { CatDossierContent } from './CatDossierContent';
 import { ConciergeSettingsContent } from './ConciergeSettingsContent';
+import { FeatureDestinationsContent } from './FeatureDestinationsContent';
 import { HubSystemSettingsTab } from './HubSystemSettingsTab';
 import { MarketplaceContent } from './MarketplaceContent';
 import { McpManageContent } from './McpManageContent';
@@ -205,6 +206,8 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
         );
       case 'accounts':
         return <HubAccountsTab />;
+      case 'destinations':
+        return <FeatureDestinationsContent />;
       case 'im':
         return <HubConnectorConfigTab refreshKey={imRefreshKey} />;
       case 'voice':
