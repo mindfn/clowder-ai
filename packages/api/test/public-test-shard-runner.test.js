@@ -19,14 +19,19 @@ const manifest = {
 };
 const plannerProvenance = currentPublicTestProvenance(process.cwd());
 const plan = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   selectedFiles,
   selectionHash: manifest.selectionHash,
   exclusionRegistryHash: manifest.exclusionRegistryHash,
   classificationVersion: 1,
   plannerProvenance,
   timingSource: { kind: 'unmeasured_default', estimatedDurationMs: 1_000 },
-  lanes: { serial: { files: ['test/serial-redis.test.js'], estimatedDurationMs: 10 } },
+  serialShards: [
+    { id: 'serial-1', files: ['test/serial-redis.test.js'], estimatedDurationMs: 10 },
+    { id: 'serial-2', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-3', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-4', files: [], estimatedDurationMs: 0 },
+  ],
   pureShards: [
     { id: 'pure-1', files: ['test/pure-alpha.test.js'], estimatedDurationMs: 5 },
     { id: 'pure-2', files: ['test/pure-beta.test.js'], estimatedDurationMs: 4 },
@@ -36,7 +41,7 @@ const plan = {
   assignments: {
     'test/pure-alpha.test.js': { lane: 'pure-1', ruleId: 'pure', estimatedDurationMs: 5 },
     'test/pure-beta.test.js': { lane: 'pure-2', ruleId: 'pure', estimatedDurationMs: 4 },
-    'test/serial-redis.test.js': { lane: 'serial', ruleId: 'stateful', estimatedDurationMs: 10 },
+    'test/serial-redis.test.js': { lane: 'serial-1', ruleId: 'stateful', estimatedDurationMs: 10 },
   },
 };
 
@@ -125,6 +130,7 @@ describe('F308 public-test shard runner', () => {
   });
 
   it('rejects a manifest or lane that cannot prove exact selected-file provenance', async () => {
+    assert.deepEqual(filesForPublicTestLane(plan, 'serial-1'), ['test/serial-redis.test.js']);
     assert.throws(() => filesForPublicTestLane(plan, 'pure-9'), /unknown public-test shard lane/);
     await assert.rejects(
       runPublicTestLane({

@@ -17,8 +17,7 @@ import {
 } from './public-test-support.mjs';
 
 function expectedLaneFiles(plan, lane) {
-  if (lane === 'serial') return [...plan.lanes.serial.files];
-  const shard = plan.pureShards.find((candidate) => candidate.id === lane);
+  const shard = [...plan.serialShards, ...plan.pureShards].find((candidate) => candidate.id === lane);
   invariant(shard, `plan has no lane ${lane}`);
   return [...shard.files];
 }
@@ -49,7 +48,8 @@ function assertExactFiles(actual, expected, lane) {
 export function summarizePublicTestShardReports({ plan, reports }) {
   validatePublicTestShardPlan(plan, plan.selectedFiles);
   invariant(Array.isArray(reports), 'reports must be an array');
-  const expectedLanes = ['serial', ...plan.pureShards.map((shard) => shard.id)];
+  const serialLanes = plan.serialShards.map((shard) => shard.id);
+  const expectedLanes = [...serialLanes, ...plan.pureShards.map((shard) => shard.id)];
   const byLane = new Map();
   for (const report of reports) {
     invariant(
@@ -97,7 +97,7 @@ export function summarizePublicTestShardReports({ plan, reports }) {
   );
   const elapsedValues = lanes.map((lane) => lane.elapsedMs);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'public_test_shard_summary',
     status: 'succeeded',
     planFingerprint: plan.planFingerprint,
@@ -105,7 +105,8 @@ export function summarizePublicTestShardReports({ plan, reports }) {
     exclusionRegistryHash: plan.exclusionRegistryHash,
     selectedFileCount: selected.length,
     lanes,
-    serialLaneMs: byLane.get('serial').elapsedMs,
+    serialCriticalPathMs: Math.max(...serialLanes.map((lane) => byLane.get(lane).elapsedMs)),
+    serialAggregateMs: serialLanes.reduce((total, lane) => total + byLane.get(lane).elapsedMs, 0),
     criticalPathMs: Math.max(...elapsedValues),
     runnerMinutes: lanes.reduce((total, lane) => total + lane.runnerMinutes, 0),
     perFileTimings: Object.fromEntries(
