@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { FakeWakeQueue } from './f257-stalled-cycle-fixture.js';
 
 const { CycleEvaluationCoordinator, CYCLE_WRITEBACK_TIMEOUT_MS } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js'
@@ -161,9 +162,9 @@ async function harness({ now = 1_500, traces = [trace('inv-1', 500)], annotation
   const requested = { ...idle, cycleEnd: 1_000, evalStatus: 'requested', windows: [{ start: 0, end: 1_000 }] };
   assert.equal(await cycles.request(idle, requested), true);
   const threadStore = new FakeThreadStore();
-  const deliveries = [];
-  const deliveredByKey = new Map();
-  const wakes = [];
+  // An idle evaluation thread: every wake is queued, custodied, and started at once.
+  const wakeQueue = new FakeWakeQueue({ clock: { now } });
+  const { deliveries, triggers: wakes } = wakeQueue;
   const runtime = {
     catalog,
     cycles,
@@ -196,21 +197,10 @@ async function harness({ now = 1_500, traces = [trace('inv-1', 500)], annotation
       async getByIds(ids) {
         return ids.flatMap((id) => (messages.has(id) ? [messages.get(id)] : []));
       },
+      getById: wakeQueue.messageStore.getById,
     },
-    async deliver(input) {
-      const existing = deliveredByKey.get(input.idempotencyKey);
-      if (existing) return existing;
-      const id = `message-${deliveries.length + 1}`;
-      deliveries.push({ id, ...input });
-      deliveredByKey.set(input.idempotencyKey, id);
-      return id;
-    },
-    getInvokeTrigger: () => ({
-      async trigger(...args) {
-        wakes.push(args);
-        return 'dispatched';
-      },
-    }),
+    deliver: wakeQueue.deliver,
+    getInvokeTrigger: () => wakeQueue.invokeTrigger,
     getDefaultCatId: () => 'cat-default',
     now: () => now,
   });
@@ -525,8 +515,10 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     const retriggered = await context.cycles.current('owner-1', 'obj');
     assert.equal(retriggered.evalStatus, 'retriggered');
 
+    // The first tick observes the retrigger's delivery receipt; the clock runs from there.
     await context.coordinator.reconcileKnownCycles(retriggered.retriggeredAt + CYCLE_WRITEBACK_TIMEOUT_MS);
     await context.coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 2 * CYCLE_WRITEBACK_TIMEOUT_MS);
+    await context.coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 3 * CYCLE_WRITEBACK_TIMEOUT_MS);
     assert.equal(context.deliveries.filter((item) => item.content.includes('Stalled')).length, 1);
     assert.equal(context.deliveries.filter((item) => item.content.includes('Retrigger')).length, 1);
     assert.equal((await context.cycles.current('owner-1', 'obj')).evalStatus, 'stalled');

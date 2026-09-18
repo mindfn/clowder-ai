@@ -85,6 +85,11 @@ export interface DeliverOpts {
   userId: string;
   /** Stable producer identity for retrying one exact persisted scheduler item. */
   idempotencyKey?: string;
+  /**
+   * Store the message as `queued` so a force-queued wake gets durable Queue
+   * custody (delivery receipts, restart recovery) instead of a process-local row.
+   */
+  deliveryStatus?: 'queued';
   extra?: SchedulerMessageExtra;
 }
 
@@ -104,6 +109,8 @@ export interface ScheduleTriggerPolicy {
   readonly sourceCategory?: string;
   readonly suggestedSkill?: string;
   readonly ownerAuthProvenance?: OwnerAuthProvenance;
+  /** Always go through the Queue, even when the thread is idle, so the wake is custodied. */
+  readonly forceQueue?: boolean;
 }
 
 export interface ScheduleLifecycleNotice {
