@@ -200,7 +200,7 @@ function multipartFile(bytes, { fieldName = 'file', filename = 'plugin.tgz' } = 
   };
 }
 
-function verifiedCallbackRegistry({ readOnly = false } = {}) {
+function verifiedCallbackRegistry({ policy } = {}) {
   return {
     verify: async (invocationId, callbackToken) =>
       invocationId === 'inv-plugin' && callbackToken === 'callback-secret'
@@ -216,7 +216,7 @@ function verifiedCallbackRegistry({ readOnly = false } = {}) {
               createdAt: Date.now(),
               expiresAt: null,
               state: 'active',
-              ...(readOnly ? { toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } } : {}),
+              ...(policy === undefined ? {} : { toolExecutionPolicy: policy }),
             },
           }
         : { ok: false, reason: 'invalid_token' },
@@ -490,58 +490,62 @@ test('verified Agent principal discovers and invokes only active Host-supervised
   }
 });
 
-test('invalid or read-only Agent authority cannot reach a Manager mutation', async () => {
-  const readOnlyHarness = await harness({ callbackRegistry: verifiedCallbackRegistry({ readOnly: true }) });
-  try {
-    const read = await readOnlyHarness.app.inject({
-      method: 'GET',
-      url: '/api/plugin-manager/plugins',
-      headers: {
-        host: 'localhost:3004',
-        origin: 'http://localhost:3004',
-        'x-invocation-id': 'inv-plugin',
-        'x-callback-token': 'callback-secret',
-      },
-      remoteAddress: '127.0.0.1',
-    });
-    assert.equal(read.statusCode, 200, read.payload);
+test('every restricted Agent policy is denied before Manager mutations and contribution calls', async () => {
+  for (const policy of [{ mode: 'read_only', replayDeniedToolNames: [] }, { mode: 'collective_participation' }]) {
+    const readOnlyHarness = await harness({ callbackRegistry: verifiedCallbackRegistry({ policy }) });
+    try {
+      const read = await readOnlyHarness.app.inject({
+        method: 'GET',
+        url: '/api/plugin-manager/plugins',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:3004',
+          'x-invocation-id': 'inv-plugin',
+          'x-callback-token': 'callback-secret',
+        },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(read.statusCode, 200, read.payload);
 
-    const denied = await readOnlyHarness.app.inject({
-      method: 'POST',
-      url: '/api/plugin-manager/plugins/official.video/uninstall',
-      headers: {
-        host: 'localhost:3004',
-        origin: 'http://localhost:3004',
-        'x-invocation-id': 'inv-plugin',
-        'x-callback-token': 'callback-secret',
-      },
-      remoteAddress: '127.0.0.1',
-      payload: { expectedRevision: 3 },
-    });
-    assert.equal(denied.statusCode, 403, denied.payload);
-    const contributionDenied = await readOnlyHarness.app.inject({
-      method: 'POST',
-      url: '/api/plugin-manager/plugins/official.video/contributions/call',
-      headers: {
-        host: 'localhost:3004',
-        origin: 'http://localhost:3004',
-        'x-invocation-id': 'inv-plugin',
-        'x-callback-token': 'callback-secret',
-      },
-      remoteAddress: '127.0.0.1',
-      payload: {
-        contributionId: 'video-analysis-toolset',
-        toolName: 'video_analysis',
-        arguments: {},
-      },
-    });
-    assert.equal(contributionDenied.statusCode, 403, contributionDenied.payload);
-    assert.deepEqual(readOnlyHarness.audits, []);
-    assert.deepEqual(readOnlyHarness.calls, [['list']]);
-  } finally {
-    await readOnlyHarness.app.close();
+      const denied = await readOnlyHarness.app.inject({
+        method: 'POST',
+        url: '/api/plugin-manager/plugins/official.video/uninstall',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:3004',
+          'x-invocation-id': 'inv-plugin',
+          'x-callback-token': 'callback-secret',
+        },
+        remoteAddress: '127.0.0.1',
+        payload: { expectedRevision: 3 },
+      });
+      assert.equal(denied.statusCode, 403, `${policy.mode}: ${denied.payload}`);
+      const contributionDenied = await readOnlyHarness.app.inject({
+        method: 'POST',
+        url: '/api/plugin-manager/plugins/official.video/contributions/call',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:3004',
+          'x-invocation-id': 'inv-plugin',
+          'x-callback-token': 'callback-secret',
+        },
+        remoteAddress: '127.0.0.1',
+        payload: {
+          contributionId: 'video-analysis-toolset',
+          toolName: 'video_analysis',
+          arguments: {},
+        },
+      });
+      assert.equal(contributionDenied.statusCode, 403, `${policy.mode}: ${contributionDenied.payload}`);
+      assert.deepEqual(readOnlyHarness.audits, []);
+      assert.deepEqual(readOnlyHarness.calls, [['list']]);
+    } finally {
+      await readOnlyHarness.app.close();
+    }
   }
+});
 
+test('invalid Agent authority cannot reach a Manager mutation', async () => {
   const invalidHarness = await harness({ callbackRegistry: verifiedCallbackRegistry() });
   try {
     const denied = await invalidHarness.app.inject({

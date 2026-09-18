@@ -5055,6 +5055,7 @@ async function main(): Promise<void> {
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
     runtime: pluginRuntime,
     catalogProvider: pluginManagerCatalog,
+    officialRouteCatalogProvider: officialPluginCatalog,
     catalogManifests: [],
     compatibility: repositoryPluginManagerCompatibility,
     auth: officialPluginAuth,
@@ -5110,7 +5111,7 @@ async function main(): Promise<void> {
     lifecycle: pluginRuntime.lifecycle,
     auth: officialPluginAuth,
     catalogProvider: officialPluginCatalog,
-    installer: pluginManagerRuntime.officialInstaller,
+    installer: pluginManagerRuntime.officialRouteInstaller,
     historyImport: officialPluginHistoryImport,
     meetingIntake: new OfficialPluginMeetingIntakeService({ homeDirectory: homedir() }),
   });

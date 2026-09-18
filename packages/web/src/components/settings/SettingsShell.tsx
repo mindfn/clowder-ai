@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback } from 'react';
+import { usesFixedPluginManagerLayout } from './plugin-manager/plugin-manager-design-gate';
 import { SettingsContent } from './SettingsContent';
 import { SettingsNav } from './SettingsNav';
 import { DEFAULT_SECTION } from './settings-nav-config';
@@ -12,6 +13,8 @@ function SettingsShellInner() {
   const activeSection = searchParams.get('s') ?? (searchParams.get('ops') ? 'ops' : DEFAULT_SECTION);
   const initialEditCatId = searchParams.get('cat') ?? undefined;
   const standalone = searchParams.get('standalone') === '1';
+  const fixedPluginManagerLayout =
+    activeSection === 'plugins' && usesFixedPluginManagerLayout(`?${searchParams.toString()}`);
 
   const handleSelect = useCallback(
     (sectionId: string) => {
@@ -26,9 +29,9 @@ function SettingsShellInner() {
     return (
       <div className="flex h-full flex-col bg-[var(--console-panel-bg)]">
         <div
-          className={`m-3 flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--console-shell-bg)] px-5 py-6 shadow-[var(--console-shadow-soft)] md:px-9 md:py-8 ${activeSection === 'plugins' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          className={`m-3 flex min-h-0 flex-1 flex-col rounded-[18px] bg-[var(--console-shell-bg)] px-5 py-6 shadow-[var(--console-shadow-soft)] md:px-9 md:py-8 ${fixedPluginManagerLayout ? 'overflow-hidden' : 'overflow-y-auto'}`}
         >
-          <div className={activeSection === 'plugins' ? 'flex min-h-0 flex-1 flex-col gap-5' : 'space-y-5'}>
+          <div className={fixedPluginManagerLayout ? 'flex min-h-0 flex-1 flex-col gap-5' : 'space-y-5'}>
             <SettingsContent section={activeSection} initialEditCatId={initialEditCatId} />
           </div>
         </div>
@@ -51,11 +54,11 @@ function SettingsShellInner() {
       </aside>
 
       <div
-        className={`min-w-0 flex-1 ${activeSection === 'plugins' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        className={`min-w-0 flex-1 ${fixedPluginManagerLayout ? 'overflow-hidden' : 'overflow-y-auto'}`}
         data-trajectory-origin-scroll
       >
         <div
-          className={`${activeSection === 'plugins' ? 'flex h-full min-h-0 flex-col gap-5' : 'space-y-5'} px-5 py-5 md:px-8 md:py-7`}
+          className={`${fixedPluginManagerLayout ? 'flex h-full min-h-0 flex-col gap-5' : 'space-y-5'} px-5 py-5 md:px-8 md:py-7`}
         >
           <SettingsContent section={activeSection} initialEditCatId={initialEditCatId} />
         </div>

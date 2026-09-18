@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
-import type { McpContribution, PluginManifest } from '@clowder-ai/plugin-contract';
+import type { ConfigurationField, McpContribution, PluginManifest } from '@clowder-ai/plugin-contract';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
   getDefaultEnvironment,
@@ -15,6 +15,7 @@ import type {
   PluginPackageRecord,
   RuntimeState,
 } from '../host-inventory/types.js';
+import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
 
 const DEFAULT_START_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 60_000;
@@ -62,6 +63,8 @@ export interface McpContributionRuntimeHandle {
       readonly $schema?: string;
     };
   }[];
+  /** Resolves when the owned transport loses liveness after startup. */
+  readonly closed?: Promise<{ readonly error?: Error }>;
   callTool(name: string, args: Readonly<Record<string, unknown>>): Promise<unknown>;
   close(): Promise<void>;
 }
@@ -143,6 +146,12 @@ export class StdioMcpContributionRuntime implements McpContributionRuntimePort {
     };
     const transport = new StdioClientTransport(server);
     const client = new Client({ name: `cat-cafe-plugin-${spec.pluginId}`, version: '0.1.0' }, { capabilities: {} });
+    let settleClosed: ((result: { readonly error?: Error }) => void) | undefined;
+    const closed = new Promise<{ readonly error?: Error }>((resolveClosed) => {
+      settleClosed = resolveClosed;
+    });
+    transport.onclose = () => settleClosed?.({});
+    transport.onerror = (error) => settleClosed?.({ error });
     try {
       const startTimeoutMs = this.options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
       await withTimeout(client.connect(transport), startTimeoutMs, `MCP contribution ${spec.contributionId} connect`);
@@ -158,6 +167,7 @@ export class StdioMcpContributionRuntime implements McpContributionRuntimePort {
       }));
       return {
         tools,
+        closed,
         callTool: (name, args) =>
           withTimeout(
             client.callTool({ name, arguments: { ...args } }),
@@ -190,6 +200,7 @@ interface ActiveExecution {
   readonly grantRevision: number;
   readonly materialized: MaterializedBuiltinPluginPackage;
   readonly contributions: readonly ActiveContribution[];
+  ending: boolean;
 }
 
 function isMcpContribution(
@@ -201,13 +212,6 @@ function isMcpContribution(
 function pathInside(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
-}
-
-function envValue(value: unknown): string | undefined {
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'boolean') return String(value);
-  return undefined;
 }
 
 function requestedContributions(manifest: PluginManifest): readonly McpContribution[] {
@@ -237,6 +241,19 @@ function requestedContributions(manifest: PluginManifest): readonly McpContribut
     selected.push(contribution);
   }
   return selected;
+}
+
+async function readContributionBinding(
+  configuration: PluginContributionConfigurationPort,
+  pluginInstanceId: string,
+  field: ConfigurationField | undefined,
+  binding: { readonly source: 'config' | 'secret'; readonly key: string },
+): Promise<string | undefined> {
+  const raw =
+    binding.source === 'secret'
+      ? await configuration.readSecret(pluginInstanceId, binding.key)
+      : await configuration.readConfig(pluginInstanceId, binding.key);
+  return field ? effectivePluginConfigurationValue(field, raw) : undefined;
 }
 
 export class BuiltinPluginContributionSupervisor {
@@ -289,8 +306,11 @@ export class BuiltinPluginContributionSupervisor {
         grantRevision: authority.grants.grantRevision,
         materialized,
         contributions: started,
+        ending: false,
       });
       await this.setRuntimeState(authority, 'healthy');
+      const execution = this.active.get(pluginInstanceId);
+      if (execution) this.watchContributionLiveness(pluginInstanceId, execution);
     } catch (error) {
       this.active.delete(pluginInstanceId);
       await Promise.allSettled([...started].reverse().map((contribution) => contribution.handle.close()));
@@ -307,10 +327,14 @@ export class BuiltinPluginContributionSupervisor {
   async stop(pluginInstanceId: string, _reason = 'host_stop'): Promise<void> {
     const execution = this.active.get(pluginInstanceId);
     if (!execution) return;
+    execution.ending = true;
     const settled = await Promise.allSettled(
       [...execution.contributions].reverse().map((contribution) => contribution.handle.close()),
     );
     if (settled.some((result) => result.status === 'rejected')) {
+      this.active.delete(pluginInstanceId);
+      await execution.materialized.release().catch(() => undefined);
+      await this.projectCrashed(pluginInstanceId, execution);
       throw new BuiltinPluginContributionError('STOP_FAILED', 'builtin plugin contribution failed to stop');
     }
     await execution.materialized.release();
@@ -395,6 +419,28 @@ export class BuiltinPluginContributionSupervisor {
       if (execution.pluginId === pluginId) return { pluginInstanceId, execution };
     }
     throw new BuiltinPluginContributionError('CONTRIBUTION_NOT_ACTIVE', `${pluginId} is not active`);
+  }
+
+  private watchContributionLiveness(pluginInstanceId: string, execution: ActiveExecution): void {
+    for (const contribution of execution.contributions) {
+      if (!contribution.handle.closed) continue;
+      void contribution.handle.closed.then((exit) =>
+        this.handleUnexpectedClose(pluginInstanceId, execution, exit).catch(() => undefined),
+      );
+    }
+  }
+
+  private async handleUnexpectedClose(
+    pluginInstanceId: string,
+    execution: ActiveExecution,
+    _exit: { readonly error?: Error },
+  ): Promise<void> {
+    if (execution.ending || this.active.get(pluginInstanceId) !== execution) return;
+    execution.ending = true;
+    this.active.delete(pluginInstanceId);
+    await Promise.allSettled(execution.contributions.map((contribution) => contribution.handle.close()));
+    await execution.materialized.release().catch(() => undefined);
+    await this.projectCrashed(pluginInstanceId, execution);
   }
 
   private async runnableAuthority(pluginInstanceId: string): Promise<RunnableAuthority> {
@@ -485,13 +531,15 @@ export class BuiltinPluginContributionSupervisor {
           `MCP contribution ${contribution.id} lacks Host grant ${grant}`,
         );
       }
-      const raw =
-        binding.source === 'secret'
-          ? await this.options.configuration.readSecret(authority.instance.pluginInstanceId, binding.key)
-          : await this.options.configuration.readConfig(authority.instance.pluginInstanceId, binding.key);
-      const value = envValue(raw);
+      const field = fields.get(binding.key);
+      const value = await readContributionBinding(
+        this.options.configuration,
+        authority.instance.pluginInstanceId,
+        field,
+        binding,
+      );
       if (value === undefined || value.length === 0) {
-        if (fields.get(binding.key)?.required) {
+        if (field?.required) {
           throw new BuiltinPluginContributionError(
             'CONFIG_UNAVAILABLE',
             `required ${binding.source} ${binding.key} is unavailable`,
@@ -576,6 +624,37 @@ export class BuiltinPluginContributionSupervisor {
       const instance = transaction.instances.get(pluginInstanceId);
       if (!instance || instance.packageDigest !== packageDigest) return;
       transaction.instances.put({ ...instance, runtimeState: 'stopped', updatedAt: this.now() });
+    });
+  }
+
+  private projectCrashed(pluginInstanceId: string, execution: ActiveExecution): Promise<void> {
+    return this.options.inventory.transaction((transaction) => {
+      const instance = transaction.instances.get(pluginInstanceId);
+      const grants = transaction.grants.get(pluginInstanceId);
+      if (
+        !instance ||
+        instance.packageDigest !== execution.packageDigest ||
+        instance.lifecycleState !== 'installed' ||
+        instance.activationState !== 'enabled' ||
+        instance.runtimeState !== 'healthy' ||
+        grants?.grantRevision !== execution.grantRevision
+      ) {
+        return;
+      }
+      const occurredAt = this.now();
+      transaction.instances.put({
+        ...instance,
+        activationState: 'error',
+        runtimeState: 'crashed',
+        lifecycleRevision: instance.lifecycleRevision + 1,
+        updatedAt: occurredAt,
+        lastRuntimeError: {
+          code: 'UNEXPECTED_RUNTIME_FAILURE',
+          exitCode: null,
+          signal: null,
+          occurredAt,
+        },
+      });
     });
   }
 }

@@ -59,7 +59,16 @@ function contract() {
   };
 }
 
-async function harness({ manifest = exactManifest(), config = {}, secrets = {}, inventoryStore } = {}) {
+async function harness({
+  manifest = exactManifest(),
+  config = {},
+  secrets = {},
+  inventoryStore,
+  effectiveGrants = ['plugin.config.read', 'secret.read'],
+  realRuntime = false,
+  entrypointSource = '// fixture\n',
+  closeError,
+} = {}) {
   const exactContract = contract();
   const store = new MemoryPluginInventoryStore(undefined, { contract: exactContract });
   const inventory = new HostInventoryControlPlane(store, {
@@ -72,7 +81,7 @@ async function harness({ manifest = exactManifest(), config = {}, secrets = {}, 
     computedPackageDigest: digest,
     expectedPackageDigest: digest,
     packagePluginId: manifest.pluginId,
-    effectiveGrants: ['plugin.config.read', 'secret.read'],
+    effectiveGrants,
   });
   await store.transaction((transaction) => {
     const instance = transaction.instances.get('pi_video');
@@ -84,7 +93,7 @@ async function harness({ manifest = exactManifest(), config = {}, secrets = {}, 
   });
   const rootDir = await mkdtemp(join(tmpdir(), 'f202-builtin-contribution-'));
   await mkdir(join(rootDir, 'dist'));
-  await writeFile(join(rootDir, 'dist/mcp-entrypoint.js'), '// fixture\n');
+  await writeFile(join(rootDir, 'dist/mcp-entrypoint.js'), entrypointSource);
   let releases = 0;
   const launches = [];
   let closes = 0;
@@ -103,28 +112,35 @@ async function harness({ manifest = exactManifest(), config = {}, secrets = {}, 
       readConfig: async (_instanceId, key) => config[key],
       readSecret: async (_instanceId, key) => secrets[key],
     },
-    runtime: {
-      start: async (spec) => {
-        launches.push(structuredClone(spec));
-        return {
-          tools: [
-            {
-              name: 'video_analysis',
-              description: 'Analyze a remote video.',
-              inputSchema: {
-                type: 'object',
-                properties: { videoUrl: { type: 'string' } },
-                required: ['videoUrl'],
-              },
+    ...(realRuntime
+      ? {}
+      : {
+          runtime: {
+            start: async (spec) => {
+              launches.push(structuredClone(spec));
+              return {
+                tools: [
+                  {
+                    name: 'video_analysis',
+                    description: 'Analyze a remote video.',
+                    inputSchema: {
+                      type: 'object',
+                      properties: { videoUrl: { type: 'string' } },
+                      required: ['videoUrl'],
+                    },
+                  },
+                ],
+                callTool: async (name, args) => ({
+                  content: [{ type: 'text', text: JSON.stringify({ name, args }) }],
+                }),
+                close: async () => {
+                  closes += 1;
+                  if (closeError) throw closeError;
+                },
+              };
             },
-          ],
-          callTool: async (name, args) => ({ content: [{ type: 'text', text: JSON.stringify({ name, args }) }] }),
-          close: async () => {
-            closes += 1;
           },
-        };
-      },
-    },
+        }),
     now: () => 2_000,
   });
   return {
@@ -136,6 +152,15 @@ async function harness({ manifest = exactManifest(), config = {}, secrets = {}, 
     closes: () => closes,
     releases: () => releases,
   };
+}
+
+async function waitFor(predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail('condition was not satisfied before timeout');
 }
 
 test('activates a typed MCP contribution with Host config/secret bindings and revokes it on stop', async () => {
@@ -229,6 +254,104 @@ test('missing required secret fails before capability publication and leaves run
   assert.deepEqual(h.launches, []);
   assert.equal(h.releases(), 1);
   assert.equal((await h.store.snapshot()).instances[0].runtimeState, 'stopped');
+});
+
+test('a failed normal close withdraws capability liveness and projects a crash', async () => {
+  const h = await harness({
+    config: { provider: 'gemini' },
+    secrets: { apiKey: 'isolated-secret' },
+    closeError: new Error('fixture close failed'),
+  });
+  await h.supervisor.start('pi_video');
+
+  await assert.rejects(h.supervisor.stop('pi_video'), /failed to stop/);
+
+  const instance = (await h.store.snapshot()).instances[0];
+  assert.equal(instance.activationState, 'error');
+  assert.equal(instance.runtimeState, 'crashed');
+  assert.deepEqual(h.supervisor.activeContributionIds('pi_video'), []);
+  assert.equal(h.releases(), 1);
+});
+
+test('uses typed manifest defaults for the same effective config accepted by readiness', async () => {
+  const h = await harness({
+    effectiveGrants: ['plugin.config.read'],
+    manifest: exactManifest({
+      configuration: [
+        { key: 'model', label: 'Model', kind: 'string', required: true, default: 'default-model' },
+        { key: 'retries', label: 'Retries', kind: 'number', required: true, default: 3 },
+        { key: 'stream', label: 'Stream', kind: 'boolean', required: true, default: false },
+      ],
+      contributions: [
+        {
+          type: 'mcp',
+          id: 'video-analysis-toolset',
+          runtime: { transport: 'stdio', entrypoint: 'dist/mcp-entrypoint.js' },
+          environment: {
+            MODEL: { source: 'config', key: 'model' },
+            RETRIES: { source: 'config', key: 'retries' },
+            STREAM: { source: 'config', key: 'stream' },
+          },
+        },
+      ],
+      features: [
+        {
+          id: 'analyze-video',
+          name: 'Analyze video',
+          resources: [],
+          contributions: [{ type: 'mcp', id: 'video-analysis-toolset' }],
+          capabilities: ['plugin.config.read'],
+        },
+      ],
+    }),
+  });
+
+  await h.supervisor.start('pi_video');
+
+  assert.deepEqual(h.launches[0].env, { MODEL: 'default-model', RETRIES: '3', STREAM: 'false' });
+});
+
+test('withdraws tools and projects a diagnostic when the real MCP child exits', async () => {
+  const entrypointSource = `
+const readline = require('node:readline');
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: {
+      protocolVersion: message.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: 'exit-fixture', version: '1.0.0' }
+    }});
+  } else if (message.method === 'tools/list') {
+    send({ jsonrpc: '2.0', id: message.id, result: { tools: [{
+      name: 'video_analysis', inputSchema: { type: 'object' }
+    }] }});
+  } else if (message.method === 'tools/call') {
+    process.exit(17);
+  }
+});
+`;
+  const h = await harness({
+    realRuntime: true,
+    entrypointSource,
+    config: { provider: 'gemini' },
+    secrets: { apiKey: 'isolated-secret' },
+  });
+  await h.supervisor.start('pi_video');
+
+  await assert.rejects(
+    h.supervisor.callPluginTool('dev.clowder.video-analysis', 'video-analysis-toolset', 'video_analysis', {}),
+  );
+  await waitFor(async () => (await h.store.snapshot()).instances[0].runtimeState === 'crashed');
+
+  const instance = (await h.store.snapshot()).instances[0];
+  assert.equal(instance.activationState, 'error');
+  assert.equal(instance.lastRuntimeError.code, 'UNEXPECTED_RUNTIME_FAILURE');
+  assert.deepEqual(h.supervisor.activeContributionIds('pi_video'), []);
+  await assert.rejects(h.supervisor.listPluginTools('dev.clowder.video-analysis'), /is not active/);
+  assert.equal(h.releases(), 1);
 });
 
 test('rejects a contribution entrypoint that resolves outside its materialized package', async () => {

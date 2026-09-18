@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import Fastify from 'fastify';
 
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import {
@@ -11,6 +12,7 @@ import {
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
 import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
+import { registerOfficialPluginRoutes } from '../dist/routes/plugin-official-routes.js';
 import { catalogEntry, manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
 
 const roots = [];
@@ -80,6 +82,78 @@ function contributionContractRuntime() {
 }
 
 describe('F202 Plugin Manager runtime composition', () => {
+  it('keeps legacy official discovery and installation on the same catalog authority', async () => {
+    const projectRoot = await root('cat-cafe-f202-official-route-composition-');
+    const packageManifest = manifest();
+    const archive = await packageArchive({ packageManifest });
+    const legacyEntry = catalogEntry(archive.integrity, {
+      pluginId: packageManifest.pluginId,
+      version: packageManifest.version,
+    });
+    const legacyCatalog = {
+      snapshot: async () => ({ entries: [legacyEntry], status: 'fresh', checkedAt: 8_000 }),
+    };
+    const machineCatalog = {
+      snapshot: async () => ({
+        entries: [
+          {
+            ...legacyEntry,
+            catalogId: 'video-analysis',
+            pluginId: 'dev.clowder.video-analysis',
+            packageName: '@clowder-ai/video-analysis',
+          },
+        ],
+        status: 'fresh',
+        checkedAt: 8_000,
+      }),
+    };
+    const runtime = createDormantPluginRuntimeComposition({
+      projectRoot,
+      routes: new MemorySignalRouteStore(),
+      intakes: new MemoryMeetingIntakeStore(),
+      messageStore: new MessageStore(),
+      contract: contributionContractRuntime(),
+    });
+    const composition = createPluginManagerRuntimeComposition({
+      runtime,
+      catalogProvider: machineCatalog,
+      officialRouteCatalogProvider: legacyCatalog,
+      catalogManifests: [],
+      fetchOfficialArchive: async () => archive.bytes,
+    });
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      request.sessionUserId = process.env.DEFAULT_OWNER_USER_ID ?? 'owner-user';
+    });
+    registerOfficialPluginRoutes(app, {
+      inventory: runtime.inventoryStore,
+      lifecycle: runtime.lifecycle,
+      catalogProvider: legacyCatalog,
+      installer: composition.officialRouteInstaller,
+    });
+    await app.ready();
+    try {
+      const listed = await app.inject({ method: 'GET', url: '/api/plugins/official' });
+      assert.equal(listed.statusCode, 200, listed.payload);
+      assert.equal(listed.json().plugins[0].catalogId, legacyEntry.catalogId);
+
+      const installed = await app.inject({
+        method: 'POST',
+        url: `/api/plugins/official/${legacyEntry.catalogId}/install`,
+        headers: { host: 'localhost:3004', origin: 'http://localhost:5173' },
+        remoteAddress: '127.0.0.1',
+        payload: {
+          expectedCatalogVersion: legacyEntry.version,
+          expectedPackageDigest: legacyEntry.packageDigest,
+        },
+      });
+      assert.equal(installed.statusCode, 200, installed.payload);
+      assert.equal(installed.json().pluginId, legacyEntry.pluginId);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('joins validated package metadata to release discovery and installs through the shared Host inventory', async () => {
     const { composition, entry, runtime } = await harness();
 
@@ -193,6 +267,37 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.equal(after.configFields.find((field) => field.key === 'provider').currentValue, 'gemini');
     assert.equal(after.configFields.find((field) => field.key === 'apiKey').currentValue, '••••••');
     assert.equal(JSON.stringify(await runtime.inventoryStore.snapshot()).includes('private-key'), false);
+  });
+
+  it('projects typed defaults as the same effective values used for readiness', async () => {
+    const packageManifest = manifest({
+      configuration: [
+        { key: 'model', label: 'Model', kind: 'string', required: true, default: 'default-model' },
+        { key: 'retries', label: 'Retries', kind: 'number', required: true, default: 3 },
+        { key: 'stream', label: 'Stream', kind: 'boolean', required: true, default: false },
+      ],
+    });
+    const { composition, entry } = await harness({
+      packageManifest,
+      contract: contributionContractRuntime(),
+    });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+
+    const plugin = (await composition.manager.get(entry.pluginId)).plugin;
+
+    assert.equal(plugin.config, 'ready');
+    assert.deepEqual(
+      plugin.configFields.map(({ key, currentValue }) => ({ key, currentValue })),
+      [
+        { key: 'model', currentValue: 'default-model' },
+        { key: 'retries', currentValue: '3' },
+        { key: 'stream', currentValue: 'false' },
+      ],
+    );
   });
 
   it('keeps an installed catalog plugin manageable while discovery is offline and fences uninstall', async () => {

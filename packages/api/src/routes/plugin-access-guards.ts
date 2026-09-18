@@ -1,11 +1,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-
 import {
   requireCapabilityWriteOwner,
   requireLocalCapabilityReadRequest,
   requireLocalCapabilityWriteRequest,
   resolveCapabilityWriteSessionUserId,
 } from '../config/capabilities/capability-write-guards.js';
+import { toolExecutionPolicyDenial } from '../domains/cats/services/agents/invocation/tool-execution-policy.js';
 
 interface PluginAccess {
   operator: string;
@@ -53,8 +53,11 @@ export function requirePluginOwnerLocalAccess(
     return { status: localError.status, error: `Plugin ${operation} endpoint requires direct localhost Hub access` };
   }
 
-  if (operation === 'write' && request.callbackAuth?.toolExecutionPolicy?.mode === 'read_only') {
-    return { status: 403, error: 'Plugin write endpoint is unavailable to a read-only invocation' };
+  if (
+    operation === 'write' &&
+    toolExecutionPolicyDenial(request.callbackAuth?.toolExecutionPolicy, 'cat_cafe_plugin_manager_mutation')
+  ) {
+    return { status: 403, error: 'Plugin write endpoint is unavailable to a restricted invocation' };
   }
 
   const access = resolvePluginOperator(request, options);

@@ -4,6 +4,7 @@ import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-i
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import { readPluginConfig, writePluginConfig } from '../plugin-config-store.js';
 import { type PluginManagerConfigurationPort, PluginManagerServiceError } from '../plugin-manager-service.js';
+import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
 
 const SECRET_MASK = '••••••';
 const CONFIGURATION_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;
@@ -42,7 +43,7 @@ function projection(
   field: ContractConfigurationField,
   stored: Readonly<Record<string, string>>,
 ): PluginManagerConfigField {
-  const value = stored[field.key];
+  const value = effectivePluginConfigurationValue(field, stored[field.key]);
   return {
     key: field.key,
     label: field.label,
@@ -99,8 +100,7 @@ function requiredFieldsReady(
 ): boolean {
   return fields.every((field) => {
     if (!field.required) return true;
-    const value = stored[field.key];
-    return (typeof value === 'string' && value.length > 0) || field.default !== undefined;
+    return effectivePluginConfigurationValue(field, stored[field.key]) !== undefined;
   });
 }
 

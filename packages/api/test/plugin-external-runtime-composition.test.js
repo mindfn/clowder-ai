@@ -280,7 +280,8 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
   assert.match(source, /contributions: pluginManagerRuntime\.builtinSupervisor/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
-  assert.match(source, /installer: pluginManagerRuntime\.officialInstaller/);
+  assert.match(source, /officialRouteCatalogProvider:\s*officialPluginCatalog/);
+  assert.match(source, /installer: pluginManagerRuntime\.officialRouteInstaller/);
   assert.doesNotMatch(source, /new OfficialPluginPackageInstaller\(/);
   assert.match(source, /registerOfficialPluginRoutes\(app/);
   assert.doesNotMatch(source, new RegExp(`${runtimeName}\\.supervisor\\.start\\(`));

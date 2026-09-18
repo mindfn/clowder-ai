@@ -597,6 +597,8 @@ class RuntimePluginManagerStateProjection implements PluginManagerStateProjectio
 export interface PluginManagerRuntimeCompositionOptions {
   readonly runtime: DormantPluginRuntimeComposition;
   readonly catalogProvider: OfficialPluginCatalogProvider;
+  /** Catalog authority used by the pre-Manager official routes during Train B compatibility. */
+  readonly officialRouteCatalogProvider?: OfficialPluginCatalogProvider;
   readonly catalogManifests: readonly unknown[];
   readonly auth?: OfficialPluginAuthPort;
   readonly localGrantPolicy?: (manifest: PluginManifest) => Promise<readonly Capability[]> | readonly Capability[];
@@ -609,6 +611,7 @@ export interface PluginManagerRuntimeCompositionOptions {
 export interface PluginManagerRuntimeComposition {
   readonly manager: PluginManagerService;
   readonly officialInstaller: OfficialPluginPackageInstaller;
+  readonly officialRouteInstaller: OfficialPluginPackageInstaller;
   readonly localAdmission: LocalPluginPackageAdmission;
   readonly assets: PluginManagerPackageAssetService;
   readonly quarantines: FilePluginPackageQuarantineStore;
@@ -643,14 +646,21 @@ export function createPluginManagerRuntimeComposition(
     resolve(dirname(options.runtime.paths.inventorySnapshotPath), 'quarantines.json'),
     { now },
   );
-  const officialInstaller = new OfficialPluginPackageInstaller({
-    inventory: options.runtime.inventory,
-    packagesRoot: options.runtime.paths.packagesRoot,
-    catalogProvider: options.catalogProvider,
-    ...(options.fetchOfficialArchive === undefined ? {} : { fetchArchive: options.fetchOfficialArchive }),
-    ...(options.runtime.contract === undefined ? {} : { validateManifest: options.runtime.contract.validateManifest }),
-    quarantine: quarantines,
-  });
+  const createOfficialInstaller = (catalogProvider: OfficialPluginCatalogProvider) =>
+    new OfficialPluginPackageInstaller({
+      inventory: options.runtime.inventory,
+      packagesRoot: options.runtime.paths.packagesRoot,
+      catalogProvider,
+      ...(options.fetchOfficialArchive === undefined ? {} : { fetchArchive: options.fetchOfficialArchive }),
+      ...(options.runtime.contract === undefined
+        ? {}
+        : { validateManifest: options.runtime.contract.validateManifest }),
+      quarantine: quarantines,
+    });
+  const officialInstaller = createOfficialInstaller(options.catalogProvider);
+  const officialRouteInstaller = createOfficialInstaller(
+    options.officialRouteCatalogProvider ?? options.catalogProvider,
+  );
   const localAdmission = new LocalPluginPackageAdmission({
     inventory: options.runtime.inventory,
     packagesRoot: options.runtime.paths.packagesRoot,
@@ -734,6 +744,7 @@ export function createPluginManagerRuntimeComposition(
   return {
     manager,
     officialInstaller,
+    officialRouteInstaller,
     localAdmission,
     assets,
     quarantines,

@@ -17,6 +17,7 @@ import { PersonalChromePluginPanel } from './PersonalChromePluginPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
 import { PluginManagerContent } from './plugin-manager/PluginManagerContent';
 import { PluginManagerLiveContent } from './plugin-manager/PluginManagerLiveContent';
+import { resolvePluginManagerDesignGate } from './plugin-manager/plugin-manager-design-gate';
 import { PLUGIN_MANAGER_DESIGN_FIXTURES } from './plugin-manager/plugin-manager-fixtures';
 import { SettingsBadge } from './primitives/SettingsBadge';
 import { SettingsText } from './primitives/SettingsText';
@@ -43,15 +44,7 @@ function pluginToggleFailure(data: { status?: string; error?: string }, actionLa
   return undefined;
 }
 
-export function resolvePluginManagerDesignGate(search: string, nodeEnv = process.env.NODE_ENV) {
-  const params = new URLSearchParams(search);
-  return {
-    resolved: true,
-    enabled: nodeEnv !== 'production' && params.get('pluginManagerDemo') === '1',
-    live: params.get('pluginManagerLive') === '1',
-    degradedCatalog: params.get('catalog') === 'degraded',
-  };
-}
+export { resolvePluginManagerDesignGate } from './plugin-manager/plugin-manager-design-gate';
 
 function RepositoryPluginCard({
   plugin,
