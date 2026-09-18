@@ -184,7 +184,8 @@ jobs:
           node packages/api/scripts/summarize-public-test-shards.mjs \
             --plan "$plan_path" \
             --reports-dir "$RUNNER_TEMP/public-test/reports" \
-            --output "$RUNNER_TEMP/public-test/summary.json"
+            --output "$RUNNER_TEMP/public-test/summary.json" \
+            --max-critical-path-ms 600000
       - name: Upload public-test evidence
         uses: actions/upload-artifact@v4
         with:

@@ -101,6 +101,18 @@ describe('F308 public-test shard summary', () => {
     assert.deepEqual(Object.keys(summary.perFileTimings), selectedFiles);
   });
 
+  it('fails closed when the measured critical path exceeds the enforced budget', () => {
+    assert.throws(
+      () =>
+        summarizePublicTestShardReports({
+          plan,
+          reports: greenReports(),
+          maxCriticalPathMs: 19,
+        }),
+      /critical path 20ms exceeds budget 19ms/,
+    );
+  });
+
   it('rejects missing, duplicate, stale, or non-green shard reports rather than manufacturing a green aggregate', () => {
     assert.throws(
       () => summarizePublicTestShardReports({ plan, reports: greenReports().slice(0, -1) }),
