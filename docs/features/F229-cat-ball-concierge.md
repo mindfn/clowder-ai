@@ -306,7 +306,7 @@ petState = compose(
 - [x] AC-A3: 记忆导航——3 个真实历史讨论 query 给出正确 thread/message 链接，且**两种动作都可用**：跳过去（teleport）+ 原地看（卡内 inline 展开）→ R3/Why-3——**基础设施 ✅；历史 alpha 验收由 KD-19 全量候选兜底完成（PR #2284，证据 `ac-a3-*.png`），该无 provenance 旁路已由 KD-26 sunset；现行普通导航 authority = 完整三字段 marker，或 KD-27 同 invocation 唯一、成功、身份匹配的 `get_thread_context` 读取。passage-level hit 保留 messageId，工具路径可生成精确 teleport；失败/多目标仍 fail-closed。**
 - [x] AC-A4: 求助场景能触发对应 F155 guide flow（录屏一条）→ R2/Why-2——intent 检测 + 9 guide 列举 + handoff 卡 ✅，证据 `ac-a4-*.png`
 - [x] AC-A5: 形象/人设/值班猫在设置页可配置，与 cat profile 解耦（截图）→ R5
-- [x] AC-A6: 安静默认——默认零主动文本弹出；低优先级事件只显示 badge（hover 才出文字）；用户可一键隐藏整个球并从 Activity Rail 明确“显示猫猫球”（录屏 + 设置截图）→ R8/调研红线。持久化字段 `muted` 仅为兼容旧配置保留，用户界面不再把“隐藏”误称为“静音”
+- [x] AC-A6: 安静默认——默认零主动文本弹出；低优先级事件只显示 badge（hover 才出文字）；用户可一键隐藏整个球并从 Settings → 猫猫球重新显示（2026-09-18 rail 收敛），不影响对话历史。持久化字段 `muted` 仅为兼容旧配置保留，用户界面不再把“隐藏”误称为“静音”
 
 ### Phase B（总机能力）
 - [x] AC-B1: 用户描述问题 → 前台猫给出分诊建议并经确认执行，**传话/跟去双路径**：relay（cross_post 投递 + 对方回复后回执卡）+ go（teleport 跟进），留痕可查 → R4 + operator 分叉反馈——TriagePlan state machine（proposed→confirmed→dispatched→completed/failed, retry from failed）+ atomic claimTransition（Redis Lua CAS + Memory sync CAS）+ targetCats resolver（fail-closed, registry validation）+ stripTriagePlanMarkers + CardBlock wiring；PR #2299 merged 2026-06-15
@@ -330,7 +330,7 @@ petState = compose(
 - [x] BUG-UX-8: 原地看（peek）内容无收起机制。**已修复**：同 PR #2488——re-click toggle + ✕ dismiss button
 - [x] BUG-UX-9: 跳转动作错误显示为"原地看" ✅ PR #2531 修复。根因：小模型（gemini-3.5-flash）默认写 `[原地看 Rn]`，旧 `shouldSkipAction` 静默丢弃不兼容组合。修复：`resolveAction` 自动纠正 verb↔anchor 不匹配（peek→teleport / teleport→peek），前端按钮文字改用 `action.action` 显示正确动词
 - [x] BUG-UX-10: 顶栏图标只有原生 `title`、含义难懂（clowder-ai#1265）——破坏性“隐藏”改为带文字按钮；放大/恢复与关闭使用 hover + keyboard focus 均可见的自定义 tooltip
-- [x] BUG-UX-11: `muted → hidden` 实现与“静音”文案冲突，点击后像猫消失——保留旧 `muted` API/持久化字段兼容，界面统一改为“隐藏/显示”；Activity Rail 唤醒会先清除 hidden 再打开工具栏
+- [x] BUG-UX-11: `muted → hidden` 实现与“静音”文案冲突，点击后像猫消失——保留旧 `muted` API/持久化字段兼容，界面统一改为“隐藏/显示”；2026-09-18 后重新显示的 canonical 入口为 Settings → 猫猫球，不再依赖 Activity Rail
 - [x] BUG-UX-12: `? 能帮什么` 与 `💬 聊聊` 是两个近重复入口——工具栏收敛为单一带文字“聊聊”；“我能帮你做什么？”移进空对话上下文作为 starter chip
 - [x] BUG-UX-13: 自主行为开关挤在对话 header 且点击反馈弱——移到 Settings → 主动性策略，使用现有 optimistic switch + PUT；header 只保留当前对话需要的控制
 

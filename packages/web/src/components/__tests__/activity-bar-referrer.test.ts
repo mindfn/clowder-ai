@@ -2,11 +2,12 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getThreadIdFromPathname } = vi.hoisted(() => ({
+const { getThreadIdFromPathname, pinnedSections } = vi.hoisted(() => ({
   getThreadIdFromPathname: vi.fn((pathname: string) => {
     const match = pathname.match(/^\/thread\/([^/?#]+)/);
     return match ? decodeURIComponent(match[1]) : 'default';
   }),
+  pinnedSections: [] as string[],
 }));
 
 const mockPush = vi.fn();
@@ -33,7 +34,7 @@ vi.mock('@/components/icons/MemoryIcon', () => ({
 }));
 
 vi.mock('@/hooks/usePinnedSections', () => ({
-  usePinnedSections: () => ({ pinned: [], pin: vi.fn(), unpin: vi.fn(), isPinned: () => false }),
+  usePinnedSections: () => ({ pinned: pinnedSections, pin: vi.fn(), unpin: vi.fn(), isPinned: () => false }),
 }));
 
 vi.mock('@/components/hub-icons', () => ({
@@ -42,7 +43,10 @@ vi.mock('@/components/hub-icons', () => ({
 }));
 
 vi.mock('@/components/settings/settings-nav-config', () => ({
-  SETTINGS_SECTIONS: [],
+  SETTINGS_SECTIONS: [
+    { id: 'members', label: '成员与运行时', icon: 'users' },
+    { id: 'accounts', label: '账户与密钥', icon: 'key' },
+  ],
 }));
 
 import { ActivityBar } from '@/components/ActivityBar';
@@ -56,6 +60,7 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mockPush.mockClear();
+    pinnedSections.splice(0);
   });
 
   afterEach(() => {
@@ -63,34 +68,15 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
     container.remove();
   });
 
-  it('appends ?from=threadId when navigating from /thread/xxx to signals', () => {
+  it('keeps only conversation, theme, and settings in the default rail', () => {
     React.act(() => {
       root.render(React.createElement(ActivityBar));
     });
 
-    const signalsBtn = container.querySelector('button[title="信号"]') as HTMLElement;
-    expect(signalsBtn).toBeTruthy();
-
-    React.act(() => {
-      signalsBtn.click();
-    });
-
-    expect(mockPush).toHaveBeenCalledWith('/signals?from=thread-abc');
-  });
-
-  it('appends ?from=threadId when navigating to memory', () => {
-    React.act(() => {
-      root.render(React.createElement(ActivityBar));
-    });
-
-    const memoryBtn = container.querySelector('button[title="记忆"]') as HTMLElement;
-    expect(memoryBtn).toBeTruthy();
-
-    React.act(() => {
-      memoryBtn.click();
-    });
-
-    expect(mockPush).toHaveBeenCalledWith('/memory?from=thread-abc');
+    const titles = Array.from(container.querySelectorAll('button[title]')).map((button) =>
+      button.getAttribute('title'),
+    );
+    expect(titles).toEqual(['对话', '主题', '设置']);
   });
 
   it('does NOT append ?from= when clicking the home button', () => {
@@ -108,48 +94,17 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
     expect(mockPush).toHaveBeenCalledWith('/');
   });
 
-  it('does NOT append ?from= when already on root (default thread)', () => {
-    getThreadIdFromPathname.mockReturnValueOnce('default');
-
+  it('places user-pinned settings immediately after conversation without a separator', () => {
+    pinnedSections.push('members', 'accounts');
     React.act(() => {
       root.render(React.createElement(ActivityBar));
     });
 
-    const signalsBtn = container.querySelector('button[title="信号"]') as HTMLElement;
-    React.act(() => {
-      signalsBtn.click();
-    });
-
-    expect(mockPush).toHaveBeenCalledWith('/signals');
-  });
-
-  it('forwards existing ?from= when cross-hopping between non-thread pages', () => {
-    getThreadIdFromPathname.mockReturnValueOnce('default');
-    const originalSearch = window.location.search;
-    Object.defineProperty(window, 'location', {
-      value: { ...window.location, search: '?from=thread-abc' },
-      writable: true,
-      configurable: true,
-    });
-
-    React.act(() => {
-      root.render(React.createElement(ActivityBar));
-    });
-
-    const memoryBtn = container.querySelector('button[title="记忆"]') as HTMLElement;
-    expect(memoryBtn).toBeTruthy();
-
-    React.act(() => {
-      memoryBtn.click();
-    });
-
-    expect(mockPush).toHaveBeenCalledWith('/memory?from=thread-abc');
-
-    Object.defineProperty(window, 'location', {
-      value: { ...window.location, search: originalSearch },
-      writable: true,
-      configurable: true,
-    });
+    const titles = Array.from(container.querySelectorAll('button[title]')).map((button) =>
+      button.getAttribute('title'),
+    );
+    expect(titles).toEqual(['对话', '成员与运行时', '账户与密钥', '主题', '设置']);
+    expect(container.querySelector('.h-px')).toBeNull();
   });
 
   it('encodes existing ?from= when routing back to a thread from the home button', () => {

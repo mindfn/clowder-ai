@@ -16,7 +16,8 @@ description_updated_at: 2026-07-07T16:45:00Z
 > 实现按既有 directive 传 opus 家族，Maine Coon (gpt-5.5) review，Siamese (gemini-3.5) 视觉守门。
 
 Architecture cell: `visible-cafe-render` + `hub-action-surface`
-Map delta: none — Activity Bar 只暴露既有 `/starry` route，不新增状态、事实源或并行渲染边界。
+Map delta: none — `/starry` route 与状态边界保留；2026-09-18 operator 要求在能力未完整前隐藏产品入口，
+Activity Bar 不再暴露该 route。重新公开必须经过 F258 自身完成度验收。
 
 ## Why
 
@@ -96,7 +97,8 @@ pixel-office 骨架接进 Hub + CatCafeAdapter（socket `agent_message` + `/queu
 - [x] AC-A4 empty-source：空状态源跑一小时，零有意义表演（宁可猫呆坐）
 - [x] AC-A5 勿扰感知：作息宪法勿扰时段，画面安静 + 动画帧率降低（违背初心检测）
 - [x] AC-A6 素材管线首跑通：Ragdoll三态 sprite 集 + 主星背景经Siamese审美守门后进渲染
-- [x] AC-A7 入口可发现：Hub 主导航提供“猫猫星球”入口，点击进入 `/starry` 并显示选中态；只交付隐藏 URL 不算完成
+- [ ] AC-A7 入口重新公开：2026-09-18 Activity Rail 收敛裁决 supersede 旧“已公开”结论；当前刻意隐藏，
+  待 F258 完整度验收后再恢复可发现入口。隐藏 route 不算最终交付。
 
 ### Phase B-D
 AC 于各 Phase Design Gate 细化；Phase D 验收基线 = operator 三场景原话（身体备忘 §1）。
@@ -117,7 +119,7 @@ AC 于各 Phase Design Gate 细化；Phase D 验收基线 = operator 三场景�
 | 成为第二个屏幕污染源 | AC-A5 勿扰感知硬验收 |
 | HD-2D 美学与素材现实相撞 | OQ-1 已派 gpt-pro 调研，Phase C 前必收敛 |
 | hover 语义在触屏不存在（Siamese多个设计基于悬停） | KD-5：触屏第一公民，所有 hover 必须有触点等价物 |
-| 页面实现完成但只能靠手改 URL 进入 | AC-A7 + Activity Bar 组件测试；入口与 route 同批交付 |
+| 未完成能力过早占用主导航 | 当前隐藏 `/starry` 产品入口；完成度验收与 AC-A7 重新打开时再恢复可发现性 |
 
 ## Key Decisions
 

@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'cat-cafe:pinned-settings-sections';
+const DESKTOP_SEED_KEY = 'cat-cafe:pinned-settings-sections:desktop-seeded';
 const SYNC_EVENT = 'cat-cafe:pinned-settings-sync';
 const MAX_PINS = 8;
+const DESKTOP_DEFAULT_PINS = ['members', 'accounts'] as const;
 
 function read(): string[] {
   if (typeof window === 'undefined') return [];
@@ -28,11 +30,31 @@ function writeAndBroadcast(ids: string[]) {
   window.dispatchEvent(new CustomEvent(SYNC_EVENT));
 }
 
+function readWithDesktopDefaults(): string[] {
+  const current = read();
+  if (typeof window === 'undefined' || !window.desktopBridge) return current;
+
+  try {
+    if (localStorage.getItem(DESKTOP_SEED_KEY) === '1') return current;
+
+    const next = [...current];
+    for (const id of DESKTOP_DEFAULT_PINS) {
+      if (!next.includes(id) && next.length < MAX_PINS) next.push(id);
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(DESKTOP_SEED_KEY, '1');
+    window.dispatchEvent(new CustomEvent(SYNC_EVENT));
+    return next;
+  } catch {
+    return current;
+  }
+}
+
 export function usePinnedSections() {
   const [pinned, setPinned] = useState<readonly string[]>([]);
 
   useEffect(() => {
-    setPinned(read());
+    setPinned(readWithDesktopDefaults());
     const refresh = () => setPinned(read());
     const onStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY) refresh();
