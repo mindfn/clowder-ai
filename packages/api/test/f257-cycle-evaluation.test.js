@@ -315,6 +315,21 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     assert.equal((await context.cycles.current('owner-1', 'obj')).assignmentThreadId, 'thread_eval_f257_obj');
   });
 
+  test('declares the scheduled wake category so turn custody reads a cron wake, not a legacy carrier', async () => {
+    const context = await harness();
+    await context.coordinator.ensureAssignment(context.requested);
+
+    // Positional contract of ScheduleInvokeTrigger.trigger:
+    // (threadId, catId, userId, message, messageId, contentBlocks?, policy?)
+    assert.equal(context.wakes.length, 1);
+    const policy = context.wakes[0][6];
+    assert.ok(policy, 'assignment wake must carry a ScheduleTriggerPolicy');
+    // Without this, resolveQueueTurnCustodyWake falls through every branch to
+    // `legacy/carrier_missing` -> `unknown_legacy`, which the F167 stop gate
+    // blocks unconditionally and which no turn transition can ever clear.
+    assert.equal(policy.sourceCategory, 'scheduled');
+  });
+
   test('reads counterexamples first and hydrates only owned message excerpts', async () => {
     const episodes = [trace('ordinary', 400), trace('priority', 500, 'input-1')];
     const annotations = [
