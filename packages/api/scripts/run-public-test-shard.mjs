@@ -22,8 +22,7 @@ function tailAppend(previous, chunk) {
 
 export function filesForPublicTestLane(plan, lane) {
   validatePublicTestShardPlan(plan, plan.selectedFiles);
-  if (lane === 'serial') return [...plan.lanes.serial.files];
-  const shard = plan.pureShards.find((candidate) => candidate.id === lane);
+  const shard = [...plan.serialShards, ...plan.pureShards].find((candidate) => candidate.id === lane);
   invariant(shard, `unknown public-test shard lane: ${lane}`);
   return [...shard.files];
 }
@@ -143,7 +142,7 @@ async function main() {
   const options = parsePublicTestCliOptions(normalizePublicTestCliArgv(process.argv.slice(2)));
   if (options.help) {
     process.stdout.write(
-      'Usage: node packages/api/scripts/run-public-test-shard.mjs --plan <path> --lane <serial|pure-N> --report <path>\n',
+      'Usage: node packages/api/scripts/run-public-test-shard.mjs --plan <path> --lane <serial-N|pure-N> --report <path>\n',
     );
     return;
   }

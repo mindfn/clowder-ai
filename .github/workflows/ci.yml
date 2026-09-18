@@ -118,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [serial, pure-1, pure-2, pure-3, pure-4]
+        lane: [serial-1, serial-2, serial-3, serial-4, pure-1, pure-2, pure-3, pure-4]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

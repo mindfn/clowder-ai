@@ -8,6 +8,7 @@ import { publicTestSelectionHash } from './resolve-public-test-files.mjs';
 
 export const MIN_PUBLIC_TEST_SHARDS = 4;
 const MAX_SHARDS = 6;
+export const SERIAL_PUBLIC_TEST_SHARDS = 4;
 
 function digest(value) {
   return publicTestArtifactFingerprint(value);
@@ -93,7 +94,7 @@ function durationFor(file, timingByFile) {
   return candidate;
 }
 
-function sortedShards(shards) {
+function sortedShards(shards, prefix) {
   return [...shards]
     .sort(
       (left, right) =>
@@ -101,10 +102,27 @@ function sortedShards(shards) {
         comparePublicTestStrings(left.files.join('\n'), right.files.join('\n')),
     )
     .map((shard, index) => ({
-      id: `pure-${index + 1}`,
+      id: `${prefix}-${index + 1}`,
       files: [...shard.files].sort(),
       estimatedDurationMs: shard.estimatedDurationMs,
     }));
+}
+
+function balancedShards(entries, shardCount, prefix) {
+  const worklist = [...entries].sort(
+    (left, right) => right.durationMs - left.durationMs || comparePublicTestStrings(left.file, right.file),
+  );
+  const shards = Array.from({ length: shardCount }, () => ({ files: [], estimatedDurationMs: 0 }));
+  for (const entry of worklist) {
+    const receiver = [...shards].sort(
+      (left, right) =>
+        left.estimatedDurationMs - right.estimatedDurationMs ||
+        comparePublicTestStrings(left.files.join('\n'), right.files.join('\n')),
+    )[0];
+    receiver.files.push(entry.file);
+    receiver.estimatedDurationMs += entry.durationMs;
+  }
+  return sortedShards(shards, prefix);
 }
 
 function normalizeTimingSource(source) {
@@ -131,7 +149,7 @@ function normalizePlannerProvenance(provenance) {
 }
 
 export function validatePublicTestShardPlan(plan, selectedFiles) {
-  invariant(plan && plan.schemaVersion === 1, 'shard plan schemaVersion must be 1');
+  invariant(plan && plan.schemaVersion === 2, 'shard plan schemaVersion must be 2');
   const expected = normalizeSelectedFiles(selectedFiles);
   invariant(
     plan.selectionHash === publicTestSelectionHash(expected),
@@ -143,7 +161,10 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
   );
   normalizePlannerProvenance(plan.plannerProvenance);
   normalizeTimingSource(plan.timingSource);
-  invariant(plan.lanes?.serial && Array.isArray(plan.lanes.serial.files), 'shard plan requires serial lane');
+  invariant(
+    Array.isArray(plan.serialShards) && plan.serialShards.length === SERIAL_PUBLIC_TEST_SHARDS,
+    `shard plan requires ${SERIAL_PUBLIC_TEST_SHARDS} serial shards`,
+  );
   invariant(
     Array.isArray(plan.pureShards) &&
       plan.pureShards.length >= MIN_PUBLIC_TEST_SHARDS &&
@@ -151,7 +172,11 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
     'shard plan requires 4–6 pure shards',
   );
   const assigned = [
-    ...plan.lanes.serial.files,
+    ...plan.serialShards.flatMap((shard, index) => {
+      invariant(shard.id === `serial-${index + 1}`, 'serial shard ids must be stable and contiguous');
+      invariant(Array.isArray(shard.files), 'serial shard files must be an array');
+      return shard.files;
+    }),
     ...plan.pureShards.flatMap((shard) => {
       invariant(Array.isArray(shard.files), 'pure shard files must be an array');
       return shard.files;
@@ -165,15 +190,15 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
     plan.assignments && typeof plan.assignments === 'object' && !Array.isArray(plan.assignments),
     'shard plan requires assignments',
   );
-  const laneByFile = new Map(plan.lanes.serial.files.map((file) => [file, 'serial']));
-  for (const shard of plan.pureShards) {
+  const laneByFile = new Map();
+  for (const shard of [...plan.serialShards, ...plan.pureShards]) {
     for (const file of shard.files) laneByFile.set(file, shard.id);
   }
   for (const file of expected) {
     const assignment = plan.assignments[file];
     invariant(assignment && typeof assignment === 'object', `shard plan missing assignment for ${file}`);
     invariant(
-      assignment.lane === 'serial' || /^pure-[1-6]$/.test(assignment.lane),
+      /^serial-[1-4]$/.test(assignment.lane) || /^pure-[1-6]$/.test(assignment.lane),
       `shard plan has invalid lane for ${file}`,
     );
     invariant(
@@ -226,47 +251,33 @@ export function planPublicTestShards({
     if (classificationResult.lane === 'serial') serial.push({ file, durationMs, ...classificationResult });
     else pure.push({ file, durationMs, ...classificationResult });
   }
-  const worklist = [...pure].sort(
-    (left, right) => right.durationMs - left.durationMs || comparePublicTestStrings(left.file, right.file),
-  );
-  const shards = Array.from({ length: shardCount }, () => ({ files: [], estimatedDurationMs: 0 }));
-  for (const entry of worklist) {
-    const receiver = [...shards].sort(
-      (left, right) =>
-        left.estimatedDurationMs - right.estimatedDurationMs ||
-        comparePublicTestStrings(left.files.join('\n'), right.files.join('\n')),
-    )[0];
-    receiver.files.push(entry.file);
-    receiver.estimatedDurationMs += entry.durationMs;
-  }
   const plan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     selectionHash,
     selectedFiles: selected,
     exclusionRegistryHash,
     classificationVersion: classification.version,
     plannerProvenance: normalizePlannerProvenance(plannerProvenance),
     timingSource: normalizeTimingSource(timingSource),
-    lanes: {
-      serial: {
-        files: serial.map((entry) => entry.file).sort(),
-        estimatedDurationMs: serial.reduce((total, entry) => total + entry.durationMs, 0),
-      },
-    },
-    pureShards: sortedShards(shards),
+    serialShards: balancedShards(serial, SERIAL_PUBLIC_TEST_SHARDS, 'serial'),
+    pureShards: balancedShards(pure, shardCount, 'pure'),
   };
   const assignments = {};
-  for (const entry of serial) {
-    assignments[entry.file] = {
-      lane: 'serial',
-      ruleId: entry.ruleId,
-      reason: entry.reason,
-      estimatedDurationMs: entry.durationMs,
-    };
+  const entryByFile = new Map([...serial, ...pure].map((entry) => [entry.file, entry]));
+  for (const shard of plan.serialShards) {
+    for (const file of shard.files) {
+      const entry = entryByFile.get(file);
+      assignments[file] = {
+        lane: shard.id,
+        ruleId: entry.ruleId,
+        reason: entry.reason,
+        estimatedDurationMs: entry.durationMs,
+      };
+    }
   }
   for (const shard of plan.pureShards) {
     for (const file of shard.files) {
-      const entry = pure.find((candidate) => candidate.file === file);
+      const entry = entryByFile.get(file);
       assignments[file] = {
         lane: shard.id,
         ruleId: entry.ruleId,

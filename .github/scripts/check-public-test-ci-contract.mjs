@@ -17,6 +17,11 @@ assert.equal(new Set(versions).size, 1, 'plan producers and consumers must use t
 
 const shardStep = workflow.jobs['public-test-shards'].steps.find((step) => step.name === 'Run public-test lane');
 assert.ok(shardStep, 'the public-test shard runner step must exist');
+assert.deepEqual(
+  workflow.jobs['public-test-shards'].strategy.matrix.lane,
+  ['serial-1', 'serial-2', 'serial-3', 'serial-4', 'pure-1', 'pure-2', 'pure-3', 'pure-4'],
+  'public-test CI must run four isolated serial shards and four pure shards',
+);
 assert.equal(
   shardStep.env?.DEFAULT_OWNER_USER_ID,
   'default-user',

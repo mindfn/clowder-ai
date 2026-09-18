@@ -18,7 +18,9 @@ import { buildPublicTestManifest, resolvePublicTestFiles } from './resolve-publi
 
 export function timingMapFromSummary({ summary, manifest, provenance }) {
   publicTestInvariant(
-    summary?.schemaVersion === 1 && summary.kind === 'public_test_shard_summary' && summary.status === 'succeeded',
+    (summary?.schemaVersion === 1 || summary?.schemaVersion === 2) &&
+      summary.kind === 'public_test_shard_summary' &&
+      summary.status === 'succeeded',
     'timing artifact must be a green public-test shard summary',
   );
   publicTestInvariant(
@@ -103,8 +105,9 @@ export async function runPublicTestShardPlannerCli(argv = process.argv.slice(2))
     shardCount: options.shards === undefined ? MIN_PUBLIC_TEST_SHARDS : Number(options.shards),
   });
   await atomicPublicTestJsonWrite(options.output, plan);
+  const serialFiles = plan.serialShards.reduce((total, shard) => total + shard.files.length, 0);
   const pureFiles = plan.pureShards.reduce((total, shard) => total + shard.files.length, 0);
   process.stdout.write(
-    `public-test shard plan: selected=${plan.selectedFiles.length} serial=${plan.lanes.serial.files.length} pure=${pureFiles} shards=${plan.pureShards.length} fingerprint=${plan.planFingerprint}\n`,
+    `public-test shard plan: selected=${plan.selectedFiles.length} serial=${serialFiles} pure=${pureFiles} serial_shards=${plan.serialShards.length} pure_shards=${plan.pureShards.length} fingerprint=${plan.planFingerprint}\n`,
   );
 }
