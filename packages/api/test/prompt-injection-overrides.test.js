@@ -110,6 +110,9 @@ function createRuntime(store, evalStatus = 'idle') {
       async current() {
         return current;
       },
+      async history() {
+        return [];
+      },
       async switchVersion(_expected, completed, version, carryoverWindows) {
         current = {
           ...current,

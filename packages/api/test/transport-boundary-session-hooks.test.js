@@ -21,18 +21,23 @@ describe('Transport boundary + session hook source', () => {
   let resolversMod;
   /** @type {typeof import('../dist/domains/cats/services/context/prompt-template-loader.js')} */
   let templateMod;
+  /** @type {readonly string[]} */
+  let canonicalUnitIds;
   /** @type {import('../dist/domains/prompt-hooks/HookRegistry.js').HookRegistry} */
   let registry;
   /** @type {string} */
   let monorepoRoot;
 
   before(async () => {
-    [registryMod, pipelineMod, resolversMod, templateMod] = await Promise.all([
-      import('../dist/domains/prompt-hooks/HookRegistry.js'),
-      import('../dist/domains/prompt-hooks/HookPipeline.js'),
-      import('../dist/domains/prompt-hooks/resolvers/index.js'),
-      import('../dist/domains/cats/services/context/prompt-template-loader.js'),
-    ]);
+    [registryMod, pipelineMod, resolversMod, templateMod, { CANONICAL_UNIT_IDS: canonicalUnitIds }] = await Promise.all(
+      [
+        import('../dist/domains/prompt-hooks/HookRegistry.js'),
+        import('../dist/domains/prompt-hooks/HookPipeline.js'),
+        import('../dist/domains/prompt-hooks/resolvers/index.js'),
+        import('../dist/domains/cats/services/context/prompt-template-loader.js'),
+        import('../dist/infrastructure/harness-eval/unit-evaluation-manifest.js'),
+      ],
+    );
     const { findMonorepoRoot } = await import('../dist/utils/monorepo-root.js');
     monorepoRoot = findMonorepoRoot();
     registry = new registryMod.HookRegistry(
@@ -72,9 +77,12 @@ describe('Transport boundary + session hook source', () => {
       }
     });
 
-    it('exactly 47 hooks in the pipeline (no transport leakage)', () => {
-      const allHooks = registry.getAllHooks();
-      assert.equal(allHooks.length, 47, `Expected 47 hooks, got ${allHooks.length}`);
+    it('contains exactly the governed hook ids (no transport leakage)', () => {
+      const hookIds = registry
+        .getAllHooks()
+        .map((hook) => hook.manifest.id)
+        .sort();
+      assert.deepEqual(hookIds, [...canonicalUnitIds, 'D22'].sort());
     });
   });
 
