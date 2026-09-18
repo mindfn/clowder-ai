@@ -168,6 +168,14 @@ export interface CycleRecord {
   assignedAt?: number;
   retriggerMessageId?: string;
   retriggeredAt?: number;
+  /**
+   * Set while the latest evaluation wake (assignment or retrigger) is still
+   * waiting in the invocation queue behind an active invocation. A writeback
+   * clock measures the time the evaluator had to answer, so none runs while
+   * this is set; once the wake is dispatched, reconciliation restamps
+   * `assignedAt` / `retriggeredAt` to that moment and clears the marker.
+   */
+  pendingWakeMessageId?: string;
   stalledAlertMessageId?: string;
   stalledAt?: number;
   governanceAssignmentMessageId?: string;

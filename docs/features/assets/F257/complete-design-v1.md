@@ -37,12 +37,14 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 
 `stalled` 不是终态（2026-09-15，生产首个 stalled 周期把 Objective 冻死后补）：它只表示自动催促已用尽，周期保留两个人工出口——① 评估 thread 迟到回写：读池与 `submit_cycle_evaluation` 对 stalled 保持开放，写回后照常进入 governance，`insufficient_evidence` 照常归档并开启下一周期；② operator 手动切版 / 创建版本（见 1.2）：不依赖评估猫，终止该周期并开启下一周期。告警消息明写这两个出口。
 
+回写计时的口径（同日补）：T 计的是**评估猫拿到唤醒之后**的时间。assignment 或重触发若因评估线程仍有 active invocation 而只是进入队列（trigger 返回 `enqueued`），记录 `pendingWakeMessageId`，排队期间不重触发、不判 stalled；reconcile 观察到该唤醒已 dispatch 时把 `assignedAt` / `retriggeredAt` 重盖为当时，再开始计 T。评估 invocation 本身长时间 active-but-silent 属执行运行时的 watchdog 问题，不由 F257 状态机代偿。
+
 ☑ 走查正确（07:37）
 
 ### 1.2 手动切换当前版本（operator 2026-09-07）
 
 - 入口在生命线中**已选历史版本**的版本内容区，按钮「切换为当前版本」。它不是编辑内容，也不创建版本；确认文案只说「切换后，将以该版本开启新周期并继续评估。」
-- 只允许 `evalStatus=idle` 或 `stalled`。按钮显示状态只是第一层，服务端在同一 Objective 串行锁内重新读取 current CycleRecord；`requested / retriggered / written` 一律 409，防止切版覆盖正在进行的评估或治理。stalled 周期没有进行中的评估（自动催促已用尽），切版是 operator 不依赖评估猫的解冻出口：旧周期以 `termination` 归档，冻结的评估窗与 `stalledAt` 保留在归档记录上，其证据作为 `manual-version-switch` 补充窗随新周期保存；此后对该周期的迟到回写按周期已关闭拒绝（409）。
+- 只允许 `evalStatus=idle` 或 `stalled`。按钮显示状态只是第一层，服务端在同一 Objective 串行锁内重新读取 current CycleRecord；`requested / retriggered / written` 一律 409，防止切版覆盖正在进行的评估或治理。stalled 周期没有进行中的评估（自动催促已用尽），切版是 operator 不依赖评估猫的解冻出口：旧周期以 `termination` 归档，冻结的评估窗与 `stalledAt` 保留在归档记录上，其**全部**未消费窗口（前序 insufficient-evidence 窗、既有补充窗、原生窗延至 `switchAt`）都作为 `manual-version-switch` 补充窗随新周期保存——一律带来源，因为 assignment 会把无来源的额外窗口按 history 下标当作原生 skip 窗；idle 周期切版同样带走它本会在下次触发时回看的前序 skip 窗；此后对该周期的迟到回写按周期已关闭拒绝（409）。
 - 直接创建内容版本也必须经过同一周期边界：新版本成为 active 时同步归档旧 tracing 周期并建立绑定新版本的新周期，不能保留一条会让 active 指针与 CycleRecord 版本漂移的旁路。旧式 `POST /api/prompt-hooks/:hookId/override {action:'rollback'}` 与独立「回滚至基线」按钮退出公开入口；回到 v1 统一选择 v1 版本卡上的「切换为当前版本」。
 - 切换时以同一个逻辑 `switchAt` 收束两条轴：① override active 指针切到目标历史版本；② 当前 tracing 周期写 `termination:{kind:'manual-version-switch', fromVersion, toVersion, at, by, reason}` 并 append-only 归档；③ 建立 `cycleStart=switchAt`、新 Objective version snapshot 的 idle 周期。override 的审计事件按实际写入时间记录，允许比逻辑切换坐标晚数毫秒。CycleRecord 归档与 current 替换使用 Redis CAS；active 指针写入失败或 CAS 竞争失败时执行补偿，不能留下「版本已换、周期未换」的稳定状态。
 - 新周期的**原生窗**从 `switchAt` 开始：Console 周期计数、明细和 N/M/D 触发都只读原生窗。被终止周期尚未进入 evaluation 的数据不丢，作为带 `manual-version-switch` provenance 的补充窗随新周期保存；只有新周期原生窗触发后，它才进入 assignment 的可读证据范围。

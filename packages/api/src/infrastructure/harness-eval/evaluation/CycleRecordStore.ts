@@ -89,7 +89,8 @@ function parseCycle(raw: string, key: string): CycleRecord {
     (record.triggerPolicy !== undefined && !isTriggerPolicy(record.triggerPolicy)) ||
     (record.objectiveLifecycle !== undefined && !['active', 'dormant'].includes(record.objectiveLifecycle)) ||
     (record.triggerPolicyChange !== undefined && !isTriggerPolicyChange(record.triggerPolicyChange)) ||
-    (record.termination !== undefined && !isCycleTermination(record.termination))
+    (record.termination !== undefined && !isCycleTermination(record.termination)) ||
+    (record.pendingWakeMessageId !== undefined && typeof record.pendingWakeMessageId !== 'string')
   ) {
     throw new Error(`invalid_cycle_record:${key}`);
   }

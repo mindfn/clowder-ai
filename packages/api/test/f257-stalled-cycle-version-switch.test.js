@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { catalog, FakeRedis, stalledRecord } from './f257-stalled-cycle-fixture.js';
+import { catalog, catalogWithThreshold, FakeRedis, stalledRecord } from './f257-stalled-cycle-fixture.js';
 
 const { CycleRecordStore } = await import('../dist/infrastructure/harness-eval/evaluation/CycleRecordStore.js');
 const { CycleTriggerChecker } = await import('../dist/infrastructure/harness-eval/evaluation/CycleTriggerChecker.js');
@@ -15,19 +15,19 @@ const { ManualVersionCycleService } = await import(
 );
 
 describe('F257 stalled cycle exits: operator version transition', () => {
-  function switchHarness() {
+  function switchHarness({ episodes = [], evaluationCatalog = catalog } = {}) {
     const redis = new FakeRedis();
     const store = new CycleRecordStore(redis);
     const checker = new CycleTriggerChecker({
-      catalog,
+      catalog: evaluationCatalog,
       cycles: store,
       traces: {
         async ensureOwnerEpisodeBackfilled() {},
         async getEpisodeByInvocationId() {
           return null;
         },
-        async countOwnerWindow() {
-          return 0;
+        async countOwnerWindow(_owner, start, end) {
+          return episodes.filter((at) => at >= start && at < end).length;
         },
         async earliestOwnerEpisode() {
           return null;
@@ -43,7 +43,7 @@ describe('F257 stalled cycle exits: operator version transition', () => {
     let activeVersion = 1;
     const service = new ManualVersionCycleService({
       runtime: {
-        catalog,
+        catalog: evaluationCatalog,
         cycles: store,
         cycleChecker: checker,
         async resolveVersion() {
@@ -70,7 +70,7 @@ describe('F257 stalled cycle exits: operator version transition', () => {
       async refreshOverrideSnapshot() {},
       now: () => 1_500,
     });
-    return { store, service, activeVersion: () => activeVersion };
+    return { store, checker, service, activeVersion: () => activeVersion };
   }
 
   test('switching the version terminates a stalled cycle and keeps its frozen evaluation window', async () => {
@@ -152,5 +152,109 @@ describe('F257 stalled cycle exits: operator version transition', () => {
       );
     }
     assert.equal(activeVersion(), 1, 'a blocked switch never mutates the active version');
+  });
+
+  /** One real insufficient-evidence cycle [0,100], then a fresh idle cycle at 100 — built by the production checker/store. */
+  async function afterOneSkippedCycle(h) {
+    await h.store.initialize('owner-1', 'obj', 0, { version: 'v1', versionContentRef: 'hooks:D1@1' });
+    const first = await h.checker.checkObjective('owner-1', 'obj', 100);
+    assert.equal(first.status, 'requested');
+    assert.deepEqual(first.record.windows, [{ start: 0, end: 100 }]);
+    const evaluation = { metrics: [], overall: 'insufficient_evidence', writtenAt: 100, by: 'cat-default' };
+    const completed = { ...first.record, evalStatus: 'written', evaluation, closedAt: 100 };
+    const next = await h.store.advance(first.record, completed, { version: 'v1', versionContentRef: 'hooks:D1@1' });
+    assert.equal(next.cycleStart, 100);
+    return first.record;
+  }
+
+  const provenanceOf = (cycleId) => ({
+    kind: 'manual-version-switch',
+    sourceCycleId: cycleId,
+    sourceVersion: 'v1',
+    sourceVersionContentRef: 'hooks:D1@1',
+    sourceSegmentId: 'D1',
+    sourceSegmentVersion: 1,
+  });
+
+  test('a stalled cycle frozen over a prior insufficient-evidence window carries every window into the next assignment', async () => {
+    const episodes = [50, 150];
+    const h = switchHarness({ episodes, evaluationCatalog: catalogWithThreshold(1) });
+    await afterOneSkippedCycle(h);
+    const second = await h.checker.checkObjective('owner-1', 'obj', 200);
+    assert.equal(second.status, 'requested');
+    assert.deepEqual(
+      second.record.windows,
+      [
+        { start: 0, end: 100 },
+        { start: 100, end: 200 },
+      ],
+      'production frozen set',
+    );
+    const retriggered = { ...second.record, evalStatus: 'retriggered', retriggeredAt: 210 };
+    assert.equal(await h.store.transition(second.record, retriggered), true);
+    const stalled = { ...retriggered, evalStatus: 'stalled', stalledAt: 220 };
+    assert.equal(await h.store.transition(retriggered, stalled), true);
+
+    const switched = await h.service.switch({
+      ownerUserId: 'owner-1',
+      segmentId: 'D1',
+      targetVersion: 2,
+      actorId: 'owner-1',
+      reason: '评估停滞，切到 v2',
+    });
+    const provenance = provenanceOf(stalled.cycleId);
+    assert.deepEqual(switched.currentCycle.carryoverWindows, [
+      { start: 0, end: 100, provenance },
+      { start: 100, end: 1_500, provenance },
+    ]);
+
+    episodes.push(1_600);
+    const third = await h.checker.checkObjective('owner-1', 'obj', 1_700);
+    assert.equal(third.status, 'requested');
+    assert.deepEqual(third.record.windows, [
+      { start: 0, end: 100, provenance },
+      { start: 100, end: 1_500, provenance },
+      { start: 1_500, end: 1_700 },
+    ]);
+    const { buildCycleAssignment } = await import(
+      '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationContent.js'
+    );
+    const assignment = await buildCycleAssignment(
+      {
+        catalog: catalogWithThreshold(1),
+        annotations: {
+          async queryMetricWindow() {
+            return [];
+          },
+        },
+        history: await h.store.history('owner-1', 'obj', 2),
+      },
+      third.record,
+    );
+    assert.equal(assignment.windows.length, 3, 'the next assignment still reads every unconsumed window');
+    assert.equal(
+      assignment.priorSkipReasons,
+      undefined,
+      'carried windows are never mis-indexed as native skip windows',
+    );
+  });
+
+  test('an idle cycle that follows an insufficient-evidence cycle keeps that window through a version switch', async () => {
+    const h = switchHarness({ episodes: [50], evaluationCatalog: catalogWithThreshold(1) });
+    await afterOneSkippedCycle(h);
+    const idle = await h.store.current('owner-1', 'obj');
+    assert.equal(idle.evalStatus, 'idle');
+    const switched = await h.service.switch({
+      ownerUserId: 'owner-1',
+      segmentId: 'D1',
+      targetVersion: 2,
+      actorId: 'owner-1',
+      reason: '切到 v2',
+    });
+    const provenance = provenanceOf(idle.cycleId);
+    assert.deepEqual(switched.currentCycle.carryoverWindows, [
+      { start: 0, end: 100, provenance },
+      { start: 100, end: 1_500, provenance },
+    ]);
   });
 });

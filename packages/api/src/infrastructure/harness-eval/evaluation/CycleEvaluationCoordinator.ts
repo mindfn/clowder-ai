@@ -5,6 +5,7 @@ import type { IThreadStore } from '../../../domains/cats/services/stores/ports/T
 import type { DeliverOpts, ScheduleInvokeTrigger } from '../../scheduler/types.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { buildCycleAssignment, formatCycleAssignment, MAX_CYCLE_ASSIGNMENT_BYTES } from './CycleEvaluationContent.js';
+import { CycleEvaluationDelivery, cycleEvaluationThreadId } from './CycleEvaluationDelivery.js';
 import { CycleEvaluationEvidence } from './CycleEvaluationEvidence.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
@@ -20,6 +21,7 @@ export interface CycleEvaluationPrincipal {
 export class CycleEvaluationCoordinator {
   private readonly now: () => number;
   private readonly evidence: CycleEvaluationEvidence;
+  private readonly delivery: CycleEvaluationDelivery;
   private writtenHandler?: (record: CycleRecord) => void | Promise<void>;
 
   constructor(
@@ -30,12 +32,19 @@ export class CycleEvaluationCoordinator {
       deliver: (input: DeliverOpts) => Promise<string>;
       getInvokeTrigger: () => ScheduleInvokeTrigger | null;
       getDefaultCatId: () => CatId;
+      /**
+       * True while the wake carried by `messageId` still waits in the invocation
+       * queue (accepted, not yet dispatched). Absent ⇒ every accepted wake counts
+       * as dispatched, which is the pre-queue-aware behaviour.
+       */
+      isWakeQueued?: (threadId: string, messageId: string) => boolean | Promise<boolean>;
       now?: () => number;
       log?: { warn: (value: unknown, message?: string) => void };
     },
   ) {
     this.now = deps.now ?? Date.now;
     this.evidence = new CycleEvaluationEvidence(deps.runtime, deps.messageStore);
+    this.delivery = new CycleEvaluationDelivery(deps);
     deps.runtime.cycleChecker.setRequestedHandler((record) => {
       void this.ensureAssignment(record).catch((error) =>
         this.deps.log?.warn({ err: error, cycleId: record.cycleId }, '[F257] cycle assignment delivery failed'),
@@ -44,7 +53,7 @@ export class CycleEvaluationCoordinator {
   }
 
   static threadIdFor(objectiveId: string): string {
-    return `thread_eval_f257_${objectiveId}`;
+    return cycleEvaluationThreadId(objectiveId);
   }
 
   setWrittenHandler(handler: (record: CycleRecord) => void | Promise<void>): void {
@@ -65,14 +74,15 @@ export class CycleEvaluationCoordinator {
     );
     const content = formatCycleAssignment(record, assignment);
     if (Buffer.byteLength(content) > MAX_CYCLE_ASSIGNMENT_BYTES) throw new Error('cycle_assignment_exceeds_limit');
-    const messageId = await this.deliverAndWake(record, thread.threadId, thread.catId, content, 'assignment');
+    const wake = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'assignment');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
     await this.deps.runtime.cycles.transition(current, {
       ...current,
       assignmentThreadId: thread.threadId,
-      assignmentMessageId: messageId,
+      assignmentMessageId: wake.messageId,
       assignedAt: this.now(),
+      ...(wake.queued ? { pendingWakeMessageId: wake.messageId } : {}),
     });
   }
 
@@ -95,9 +105,16 @@ export class CycleEvaluationCoordinator {
   private async reconcileCycle(ownerUserId: string, objectiveId: string, now: number): Promise<void> {
     let record = await this.deps.runtime.cycles.current(ownerUserId, objectiveId);
     if (!record) return;
-    if (record.evalStatus === 'requested') {
-      if (record.assignedAt === undefined) await this.ensureAssignment(record);
+    if (record.evalStatus !== 'requested' && record.evalStatus !== 'retriggered') return;
+    if (record.evalStatus === 'requested' && record.assignedAt === undefined) {
+      await this.ensureAssignment(record);
       record = (await this.deps.runtime.cycles.current(ownerUserId, objectiveId)) ?? record;
+    }
+    if (record.pendingWakeMessageId !== undefined) {
+      await this.settlePendingWake(record, now);
+      return;
+    }
+    if (record.evalStatus === 'requested') {
       if (
         record.evalStatus === 'requested' &&
         record.assignedAt !== undefined &&
@@ -148,16 +165,19 @@ export class CycleEvaluationCoordinator {
       writtenAt: this.now(),
       by: principal.catId,
     };
+    // A writeback settles the cycle whichever wake produced it; a retrigger
+    // that is still queued has nothing left to time.
+    const { pendingWakeMessageId: _settledWake, ...settled } = record;
     if (input.overall === 'insufficient_evidence') {
-      const completed = { ...record, evalStatus: 'written' as const, evaluation, closedAt: evaluation.writtenAt };
+      const completed = { ...settled, evalStatus: 'written' as const, evaluation, closedAt: evaluation.writtenAt };
       const next = await this.deps.runtime.cycles.advance(record, completed, {
         version: record.version,
         versionContentRef: record.versionContentRef,
       });
       if (next)
         return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written', nextCycleId: next.cycleId };
-    } else if (await this.deps.runtime.cycles.transition(record, { ...record, evalStatus: 'written', evaluation })) {
-      await this.notifyWritten({ ...record, evalStatus: 'written', evaluation });
+    } else if (await this.deps.runtime.cycles.transition(record, { ...settled, evalStatus: 'written', evaluation })) {
+      await this.notifyWritten({ ...settled, evalStatus: 'written', evaluation });
       return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written' };
     }
     const stored =
@@ -178,15 +198,35 @@ export class CycleEvaluationCoordinator {
       `Cycle \`${record.cycleId}\` has no structured evaluation writeback after 30 minutes.`,
       'Read the assignment above and call cat_cafe_submit_cycle_evaluation. This is the only automatic retry.',
     ].join('\n');
-    const messageId = await this.deliverAndWake(record, thread.threadId, thread.catId, content, 'retrigger');
+    const wake = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'retrigger');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
     await this.deps.runtime.cycles.transition(current, {
       ...current,
       evalStatus: 'retriggered',
-      retriggerMessageId: messageId,
+      retriggerMessageId: wake.messageId,
       retriggeredAt: now,
+      ...(wake.queued ? { pendingWakeMessageId: wake.messageId } : {}),
     });
+  }
+
+  /**
+   * A wake accepted into the queue behind an active invocation has given the
+   * evaluator no time yet, so it cannot be counted as unanswered. While it is
+   * still queued nothing advances; once dispatched, the phase window starts at
+   * the moment we observe it (within one reconcile tick of the real dispatch).
+   * The CAS keeps this from overwriting a writeback that landed meanwhile.
+   */
+  private async settlePendingWake(record: CycleRecord, now: number): Promise<void> {
+    const messageId = record.pendingWakeMessageId;
+    if (messageId === undefined) return;
+    const threadId = record.assignmentThreadId ?? CycleEvaluationCoordinator.threadIdFor(record.objectiveId);
+    if (await this.deps.isWakeQueued?.(threadId, messageId)) return;
+    const { pendingWakeMessageId: _dispatched, ...rest } = record;
+    await this.deps.runtime.cycles.transition(
+      record,
+      record.evalStatus === 'requested' ? { ...rest, assignedAt: now } : { ...rest, retriggeredAt: now },
+    );
   }
 
   private async stall(record: CycleRecord, now: number): Promise<void> {
@@ -199,7 +239,7 @@ export class CycleEvaluationCoordinator {
     const messageId = await this.deps.deliver({
       threadId: alertThreadId,
       userId: record.ownerUserId,
-      idempotencyKey: this.idempotencyKey(record, 'stalled'),
+      idempotencyKey: this.delivery.idempotencyKey(record, 'stalled'),
       content: [
         '## F257 Cycle Evaluation Stalled',
         '',
@@ -221,28 +261,8 @@ export class CycleEvaluationCoordinator {
     });
   }
 
-  async ensureObjectiveThread(objectiveId: string, ownerUserId: string): Promise<{ threadId: string; catId: CatId }> {
-    const objective = this.deps.runtime.catalog.registry.objectives.find((item) => item.id === objectiveId);
-    if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
-    if (objective.lifecycle === 'retired') throw new Error(`cycle_objective_retired:${objectiveId}`);
-    const threadId = CycleEvaluationCoordinator.threadIdFor(objectiveId);
-    await ensureEvalDomainThreads(
-      this.deps.threadStore,
-      [
-        {
-          domainId: `f257:${objectiveId}`,
-          systemThreadId: threadId,
-          displayName: `Harness Objective · ${objective.label}`,
-        },
-      ],
-      ownerUserId,
-    );
-    const existing = await this.deps.threadStore.get(threadId);
-    if (!existing) throw new Error(`cycle_evaluation_thread_missing:${threadId}`);
-    const catId = existing.preferredCats?.[0] ?? this.deps.getDefaultCatId();
-    if (!existing.preferredCats?.length) await this.deps.threadStore.updatePreferredCats(threadId, [catId]);
-    await this.deps.threadStore.addParticipants(threadId, [catId]);
-    return { threadId, catId };
+  ensureObjectiveThread(objectiveId: string, ownerUserId: string): Promise<{ threadId: string; catId: CatId }> {
+    return this.delivery.ensureObjectiveThread(objectiveId, ownerUserId);
   }
 
   async deliverAndWake(
@@ -252,32 +272,7 @@ export class CycleEvaluationCoordinator {
     content: string,
     kind: string,
   ): Promise<string> {
-    const messageId = await this.deps.deliver({
-      threadId,
-      userId: record.ownerUserId,
-      content,
-      idempotencyKey: this.idempotencyKey(record, kind),
-    });
-    const trigger = this.deps.getInvokeTrigger();
-    if (!trigger) throw new Error('cycle_invoke_trigger_unavailable');
-    const outcome = await trigger.trigger(
-      threadId,
-      catId,
-      record.ownerUserId,
-      `F257 cycle ${kind}: ${record.cycleId}`,
-      messageId,
-    );
-    if (outcome === 'full') throw new Error('cycle_invocation_queue_full');
-    return messageId;
-  }
-
-  private idempotencyKey(record: CycleRecord, kind: string): string {
-    // Reject deliberately re-evaluates the same frozen window under the same
-    // cycleId. The rejection count is therefore the delivery generation: it
-    // deduplicates retries within one attempt without hiding the next
-    // assignment (and its operator-provided rejection reason).
-    const generation = record.approval?.rejectCount ?? 0;
-    return `f257-cycle:${record.ownerUserId}:${record.cycleId}:${kind}:g${generation}`;
+    return (await this.delivery.deliverWake(record, threadId, catId, content, kind)).messageId;
   }
 
   private async notifyWritten(record: CycleRecord): Promise<void> {
