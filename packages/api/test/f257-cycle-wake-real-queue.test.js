@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { resolveQueueTurnCustodyWake } from '../dist/domains/ball-custody/turn-custody-wake-provenance.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
@@ -181,6 +182,26 @@ test('a wake queued behind a busy evaluator is custodied; a failed start leaves 
   const delivered = await q.receipt(wakeId);
   assert.deepEqual(delivered, { state: 'delivered', deliveredAt: exposures[0].seenAt });
   assert.ok(delivered.deliveredAt >= before && delivered.deliveredAt <= Date.now());
+});
+
+test('the force-queued wake row states its scheduler category, so turn custody reads the evaluator turn as a cron wake', async () => {
+  const q = realQueue();
+  const wakeId = await q.delivery.deliverWake(
+    record,
+    threadId,
+    catId,
+    '## F257 Cycle Evaluation Assignment',
+    'assignment',
+  );
+  await settle();
+
+  // Turn custody classifies the evaluator's turn from the Queue row alone. A row with
+  // no category falls through to `legacy/carrier_missing`, which opens as `unknown_legacy`:
+  // no baseline, so the F167 stop gate blocks the turn and no transition can clear it (#180).
+  // Force-queuing is what puts a real row here, so the row is where the category must survive.
+  const row = q.row(wakeId);
+  assert.equal(row?.sourceCategory, 'scheduled');
+  assert.deepEqual(await resolveQueueTurnCustodyWake(row, q.messageStore), { kind: 'unstructured', source: 'cron' });
 });
 
 test('an idle evaluator gets the force-queued wake at once, with the same durable receipt', async () => {
