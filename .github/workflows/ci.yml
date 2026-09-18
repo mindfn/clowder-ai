@@ -118,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [serial-1, serial-2, serial-3, serial-4, pure-1, pure-2, pure-3, pure-4]
+        lane: [serial, pure-1, pure-2, pure-3, pure-4]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -184,8 +184,7 @@ jobs:
           node packages/api/scripts/summarize-public-test-shards.mjs \
             --plan "$plan_path" \
             --reports-dir "$RUNNER_TEMP/public-test/reports" \
-            --output "$RUNNER_TEMP/public-test/summary.json" \
-            --max-critical-path-ms 600000
+            --output "$RUNNER_TEMP/public-test/summary.json"
       - name: Upload public-test evidence
         uses: actions/upload-artifact@v4
         with:

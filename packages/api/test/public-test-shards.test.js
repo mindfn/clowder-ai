@@ -106,19 +106,12 @@ describe('F308 public-test sharding', () => {
       shardCount: 4,
     });
 
-    assert.equal(plan.schemaVersion, 2);
-    assert.equal(plan.serialShards.length, 4);
-    assert.deepEqual(plan.serialShards.flatMap((shard) => shard.files).sort(), [
-      'test/fs-watch-state.test.js',
-      'test/redis-state.test.js',
-    ]);
+    assert.equal(plan.schemaVersion, 1);
+    assert.deepEqual(plan.lanes.serial.files.sort(), ['test/fs-watch-state.test.js', 'test/redis-state.test.js']);
     assert.equal(plan.pureShards.length, 4);
     assert.doesNotThrow(() => validatePublicTestShardPlan(plan, selectedFiles));
 
-    const assigned = [
-      ...plan.serialShards.flatMap((shard) => shard.files),
-      ...plan.pureShards.flatMap((shard) => shard.files),
-    ].sort();
+    const assigned = [...plan.lanes.serial.files, ...plan.pureShards.flatMap((shard) => shard.files)].sort();
     assert.deepEqual(assigned, [...selectedFiles].sort());
   });
 
@@ -139,10 +132,6 @@ describe('F308 public-test sharding', () => {
     assert.deepEqual(
       first.pureShards.map((shard) => shard.estimatedDurationMs),
       [...first.pureShards.map((shard) => shard.estimatedDurationMs)].sort((a, b) => a - b),
-    );
-    assert.deepEqual(
-      first.serialShards.map((shard) => shard.estimatedDurationMs),
-      [...first.serialShards.map((shard) => shard.estimatedDurationMs)].sort((a, b) => a - b),
     );
   });
 
@@ -203,7 +192,7 @@ describe('F308 public-test sharding', () => {
       shardCount: 4,
     });
 
-    assert.deepEqual(plan.serialShards.flatMap((shard) => shard.files).sort(), [...selectedFiles].sort());
+    assert.deepEqual(plan.lanes.serial.files, [...selectedFiles].sort());
     assert.equal(plan.pureShards.flatMap((shard) => shard.files).length, 0);
   });
 

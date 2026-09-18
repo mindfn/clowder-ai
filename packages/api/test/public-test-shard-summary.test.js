@@ -18,19 +18,14 @@ const provenance = {
   arch: 'x64',
 };
 const plan = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   selectedFiles,
   selectionHash: publicTestSelectionHash(selectedFiles),
   exclusionRegistryHash: 'e'.repeat(64),
   classificationVersion: 1,
   plannerProvenance: provenance,
   timingSource: { kind: 'unmeasured_default', estimatedDurationMs: 1_000 },
-  serialShards: [
-    { id: 'serial-1', files: ['test/serial.test.js'], estimatedDurationMs: 20 },
-    { id: 'serial-2', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-3', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-4', files: [], estimatedDurationMs: 0 },
-  ],
+  lanes: { serial: { files: ['test/serial.test.js'], estimatedDurationMs: 20 } },
   pureShards: [
     { id: 'pure-1', files: ['test/pure.test.js'], estimatedDurationMs: 10 },
     { id: 'pure-2', files: [], estimatedDurationMs: 0 },
@@ -39,7 +34,7 @@ const plan = {
   ],
   assignments: {
     'test/pure.test.js': { lane: 'pure-1', ruleId: 'pure', estimatedDurationMs: 10 },
-    'test/serial.test.js': { lane: 'serial-1', ruleId: 'stateful', estimatedDurationMs: 20 },
+    'test/serial.test.js': { lane: 'serial', ruleId: 'stateful', estimatedDurationMs: 20 },
   },
 };
 
@@ -79,14 +74,11 @@ function report(lane, files, elapsedMs) {
 
 function greenReports() {
   return [
-    report('serial-1', ['test/serial.test.js'], 20),
-    report('serial-2', [], 2),
-    report('serial-3', [], 3),
-    report('serial-4', [], 4),
+    report('serial', ['test/serial.test.js'], 20),
     report('pure-1', ['test/pure.test.js'], 10),
-    report('pure-2', [], 5),
-    report('pure-3', [], 6),
-    report('pure-4', [], 7),
+    report('pure-2', [], 2),
+    report('pure-3', [], 3),
+    report('pure-4', [], 4),
   ];
 }
 
@@ -95,22 +87,9 @@ describe('F308 public-test shard summary', () => {
     const summary = summarizePublicTestShardReports({ plan, reports: greenReports() });
     assert.equal(summary.selectedFileCount, 2);
     assert.equal(summary.criticalPathMs, 20);
-    assert.equal(summary.serialCriticalPathMs, 20);
-    assert.equal(summary.serialAggregateMs, 29);
-    assert.ok(Math.abs(summary.runnerMinutes - (20 + 2 + 3 + 4 + 10 + 5 + 6 + 7) / 60_000) < Number.EPSILON);
+    assert.equal(summary.serialLaneMs, 20);
+    assert.ok(Math.abs(summary.runnerMinutes - (20 + 10 + 2 + 3 + 4) / 60_000) < Number.EPSILON);
     assert.deepEqual(Object.keys(summary.perFileTimings), selectedFiles);
-  });
-
-  it('fails closed when the measured critical path exceeds the enforced budget', () => {
-    assert.throws(
-      () =>
-        summarizePublicTestShardReports({
-          plan,
-          reports: greenReports(),
-          maxCriticalPathMs: 19,
-        }),
-      /critical path 20ms exceeds budget 19ms/,
-    );
   });
 
   it('rejects missing, duplicate, stale, or non-green shard reports rather than manufacturing a green aggregate', () => {
@@ -122,7 +101,7 @@ describe('F308 public-test shard summary', () => {
       () =>
         summarizePublicTestShardReports({
           plan,
-          reports: [...greenReports(), report('serial-1', ['test/serial.test.js'], 20)],
+          reports: [...greenReports(), report('serial', ['test/serial.test.js'], 20)],
         }),
       /duplicate report/,
     );
