@@ -260,6 +260,17 @@ export class CycleEvaluationCoordinator {
       record.ownerUserId,
       `F257 cycle ${kind}: ${record.cycleId}`,
       messageId,
+      undefined,
+      // A cycle wake is a scheduler fire, and turn custody classifies wakes by
+      // this declaration alone. Leaving it unsaid does not read as "scheduled
+      // with no extras" — resolveQueueTurnCustodyWake falls past every branch to
+      // `legacy/carrier_missing`, which opens as `unknown_legacy`. That state
+      // carries no baseline, so the F167 stop gate blocks the turn unconditionally
+      // and no transition the evaluator can make will ever clear it: the exact
+      // terminals the remedial prompt offers (`complete_a2a_dispatch`,
+      // `complete_managed_hold`, an action-successor lease) all need a carrier a
+      // cron fire structurally lacks. Every other scheduled producer states this.
+      { sourceCategory: 'scheduled', reason: `F257 cycle ${kind}` },
     );
     if (outcome === 'full') throw new Error('cycle_invocation_queue_full');
     return messageId;
