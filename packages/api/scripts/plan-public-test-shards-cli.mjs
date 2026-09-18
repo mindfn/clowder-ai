@@ -105,9 +105,10 @@ export async function runPublicTestShardPlannerCli(argv = process.argv.slice(2))
     shardCount: options.shards === undefined ? MIN_PUBLIC_TEST_SHARDS : Number(options.shards),
   });
   await atomicPublicTestJsonWrite(options.output, plan);
-  const serialFiles = plan.serialShards.reduce((total, shard) => total + shard.files.length, 0);
+  const localSerialFiles = plan.serialShards.reduce((total, shard) => total + shard.files.length, 0);
+  const sharedSerialFiles = plan.sharedSerialLane.files.length;
   const pureFiles = plan.pureShards.reduce((total, shard) => total + shard.files.length, 0);
   process.stdout.write(
-    `public-test shard plan: selected=${plan.selectedFiles.length} serial=${serialFiles} pure=${pureFiles} serial_shards=${plan.serialShards.length} pure_shards=${plan.pureShards.length} fingerprint=${plan.planFingerprint}\n`,
+    `public-test shard plan: selected=${plan.selectedFiles.length} serial_local=${localSerialFiles} serial_shared=${sharedSerialFiles} pure=${pureFiles} serial_local_shards=${plan.serialShards.length} pure_shards=${plan.pureShards.length} fingerprint=${plan.planFingerprint}\n`,
   );
 }

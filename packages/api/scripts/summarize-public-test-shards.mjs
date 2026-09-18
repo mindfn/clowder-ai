@@ -17,7 +17,9 @@ import {
 } from './public-test-support.mjs';
 
 function expectedLaneFiles(plan, lane) {
-  const shard = [...plan.serialShards, ...plan.pureShards].find((candidate) => candidate.id === lane);
+  const shard = [plan.sharedSerialLane, ...plan.serialShards, ...plan.pureShards].find(
+    (candidate) => candidate.id === lane,
+  );
   invariant(shard, `plan has no lane ${lane}`);
   return [...shard.files];
 }
@@ -54,12 +56,13 @@ export function summarizePublicTestShardReports({ plan, reports, maxCriticalPath
       'critical-path budget must be a positive finite number',
     );
   }
-  const serialLanes = plan.serialShards.map((shard) => shard.id);
+  const localSerialLanes = plan.serialShards.map((shard) => shard.id);
+  const serialLanes = [plan.sharedSerialLane.id, ...localSerialLanes];
   const expectedLanes = [...serialLanes, ...plan.pureShards.map((shard) => shard.id)];
   const byLane = new Map();
   for (const report of reports) {
     invariant(
-      report && report.schemaVersion === 1 && report.kind === 'public_test_shard_run',
+      report && report.schemaVersion === 2 && report.kind === 'public_test_shard_run',
       'invalid public-test shard report',
     );
     invariant(report.planFingerprint === plan.planFingerprint, 'report plan fingerprint does not match');
@@ -111,6 +114,8 @@ export function summarizePublicTestShardReports({ plan, reports, maxCriticalPath
     exclusionRegistryHash: plan.exclusionRegistryHash,
     selectedFileCount: selected.length,
     lanes,
+    sharedSerialLaneMs: byLane.get(plan.sharedSerialLane.id).elapsedMs,
+    localSerialCriticalPathMs: Math.max(...localSerialLanes.map((lane) => byLane.get(lane).elapsedMs)),
     serialCriticalPathMs: Math.max(...serialLanes.map((lane) => byLane.get(lane).elapsedMs)),
     serialAggregateMs: serialLanes.reduce((total, lane) => total + byLane.get(lane).elapsedMs, 0),
     criticalPathMs: Math.max(...elapsedValues),

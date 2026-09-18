@@ -26,11 +26,13 @@ const plan = {
   classificationVersion: 1,
   plannerProvenance,
   timingSource: { kind: 'unmeasured_default', estimatedDurationMs: 1_000 },
+  sharedSerialLane: { id: 'serial-shared', files: [], estimatedDurationMs: 0 },
   serialShards: [
-    { id: 'serial-1', files: ['test/serial-redis.test.js'], estimatedDurationMs: 10 },
-    { id: 'serial-2', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-3', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-4', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-1', files: ['test/serial-redis.test.js'], estimatedDurationMs: 10 },
+    { id: 'serial-local-2', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-3', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-4', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-5', files: [], estimatedDurationMs: 0 },
   ],
   pureShards: [
     { id: 'pure-1', files: ['test/pure-alpha.test.js'], estimatedDurationMs: 5 },
@@ -41,7 +43,17 @@ const plan = {
   assignments: {
     'test/pure-alpha.test.js': { lane: 'pure-1', ruleId: 'pure', estimatedDurationMs: 5 },
     'test/pure-beta.test.js': { lane: 'pure-2', ruleId: 'pure', estimatedDurationMs: 4 },
-    'test/serial-redis.test.js': { lane: 'serial-1', ruleId: 'stateful', estimatedDurationMs: 10 },
+    'test/serial-redis.test.js': {
+      lane: 'serial-local-1',
+      ruleId: 'stateful',
+      estimatedDurationMs: 10,
+      scopeEvidence: {
+        kind: 'static-resource-scope',
+        rulesVersion: 'f308-scope-v1',
+        source: 'fixture:redis',
+        markers: ['redis'],
+      },
+    },
   },
 };
 
@@ -130,7 +142,8 @@ describe('F308 public-test shard runner', () => {
   });
 
   it('rejects a manifest or lane that cannot prove exact selected-file provenance', async () => {
-    assert.deepEqual(filesForPublicTestLane(plan, 'serial-1'), ['test/serial-redis.test.js']);
+    assert.deepEqual(filesForPublicTestLane(plan, 'serial-local-1'), ['test/serial-redis.test.js']);
+    assert.deepEqual(filesForPublicTestLane(plan, 'serial-shared'), []);
     assert.throws(() => filesForPublicTestLane(plan, 'pure-9'), /unknown public-test shard lane/);
     await assert.rejects(
       runPublicTestLane({

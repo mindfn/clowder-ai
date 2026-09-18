@@ -23,13 +23,40 @@ const summaryStep = workflow.jobs['public-test-summary'].steps.find(
 assert.ok(summaryStep, 'the public-test summary step must exist');
 assert.deepEqual(
   workflow.jobs['public-test-shards'].strategy.matrix.lane,
-  ['serial-1', 'serial-2', 'serial-3', 'serial-4', 'pure-1', 'pure-2', 'pure-3', 'pure-4'],
-  'public-test CI must run four isolated serial shards and four pure shards',
+  [
+    'serial-shared',
+    'serial-local-1',
+    'serial-local-2',
+    'serial-local-3',
+    'serial-local-4',
+    'serial-local-5',
+    'pure-1',
+    'pure-2',
+    'pure-3',
+    'pure-4',
+  ],
+  'public-test CI must retain one shared serial lane, five runner-local serial shards, and four pure shards',
+);
+assert.deepEqual(
+  workflow.jobs['public-test-shards'].permissions,
+  { contents: 'read' },
+  'public-test shard jobs must not receive repository write permission',
+);
+const checkoutStep = workflow.jobs['public-test-shards'].steps.find((step) => step.uses === 'actions/checkout@v4');
+assert.equal(
+  checkoutStep?.with?.['persist-credentials'],
+  false,
+  'public-test shard jobs must not persist repository credentials',
 );
 assert.equal(
   shardStep.env?.DEFAULT_OWNER_USER_ID,
   'default-user',
   'public tests must use a deterministic local owner identity',
+);
+assert.deepEqual(
+  Object.keys(shardStep.env ?? {}).sort(),
+  ['DEFAULT_OWNER_USER_ID', 'GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_NAME'],
+  'public-test shard execution must not receive external service credentials',
 );
 assert.match(
   summaryStep.run,

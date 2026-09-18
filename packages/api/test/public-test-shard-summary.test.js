@@ -25,11 +25,13 @@ const plan = {
   classificationVersion: 1,
   plannerProvenance: provenance,
   timingSource: { kind: 'unmeasured_default', estimatedDurationMs: 1_000 },
+  sharedSerialLane: { id: 'serial-shared', files: [], estimatedDurationMs: 0 },
   serialShards: [
-    { id: 'serial-1', files: ['test/serial.test.js'], estimatedDurationMs: 20 },
-    { id: 'serial-2', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-3', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-4', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-1', files: ['test/serial.test.js'], estimatedDurationMs: 20 },
+    { id: 'serial-local-2', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-3', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-4', files: [], estimatedDurationMs: 0 },
+    { id: 'serial-local-5', files: [], estimatedDurationMs: 0 },
   ],
   pureShards: [
     { id: 'pure-1', files: ['test/pure.test.js'], estimatedDurationMs: 10 },
@@ -39,7 +41,17 @@ const plan = {
   ],
   assignments: {
     'test/pure.test.js': { lane: 'pure-1', ruleId: 'pure', estimatedDurationMs: 10 },
-    'test/serial.test.js': { lane: 'serial-1', ruleId: 'stateful', estimatedDurationMs: 20 },
+    'test/serial.test.js': {
+      lane: 'serial-local-1',
+      ruleId: 'stateful',
+      estimatedDurationMs: 20,
+      scopeEvidence: {
+        kind: 'static-resource-scope',
+        rulesVersion: 'f308-scope-v1',
+        source: 'fixture:local',
+        markers: ['filesystem-write'],
+      },
+    },
   },
 };
 
@@ -59,7 +71,7 @@ plan.planFingerprint = createHash('sha256')
 
 function report(lane, files, elapsedMs) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'public_test_shard_run',
     status: 'succeeded',
     lane,
@@ -79,10 +91,12 @@ function report(lane, files, elapsedMs) {
 
 function greenReports() {
   return [
-    report('serial-1', ['test/serial.test.js'], 20),
-    report('serial-2', [], 2),
-    report('serial-3', [], 3),
-    report('serial-4', [], 4),
+    report('serial-shared', [], 1),
+    report('serial-local-1', ['test/serial.test.js'], 20),
+    report('serial-local-2', [], 2),
+    report('serial-local-3', [], 3),
+    report('serial-local-4', [], 4),
+    report('serial-local-5', [], 8),
     report('pure-1', ['test/pure.test.js'], 10),
     report('pure-2', [], 5),
     report('pure-3', [], 6),
@@ -95,9 +109,11 @@ describe('F308 public-test shard summary', () => {
     const summary = summarizePublicTestShardReports({ plan, reports: greenReports() });
     assert.equal(summary.selectedFileCount, 2);
     assert.equal(summary.criticalPathMs, 20);
+    assert.equal(summary.sharedSerialLaneMs, 1);
+    assert.equal(summary.localSerialCriticalPathMs, 20);
     assert.equal(summary.serialCriticalPathMs, 20);
-    assert.equal(summary.serialAggregateMs, 29);
-    assert.ok(Math.abs(summary.runnerMinutes - (20 + 2 + 3 + 4 + 10 + 5 + 6 + 7) / 60_000) < Number.EPSILON);
+    assert.equal(summary.serialAggregateMs, 38);
+    assert.ok(Math.abs(summary.runnerMinutes - (1 + 20 + 2 + 3 + 4 + 8 + 10 + 5 + 6 + 7) / 60_000) < Number.EPSILON);
     assert.deepEqual(Object.keys(summary.perFileTimings), selectedFiles);
   });
 
@@ -122,7 +138,7 @@ describe('F308 public-test shard summary', () => {
       () =>
         summarizePublicTestShardReports({
           plan,
-          reports: [...greenReports(), report('serial-1', ['test/serial.test.js'], 20)],
+          reports: [...greenReports(), report('serial-local-1', ['test/serial.test.js'], 20)],
         }),
       /duplicate report/,
     );

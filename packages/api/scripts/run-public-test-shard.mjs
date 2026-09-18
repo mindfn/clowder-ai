@@ -22,7 +22,9 @@ function tailAppend(previous, chunk) {
 
 export function filesForPublicTestLane(plan, lane) {
   validatePublicTestShardPlan(plan, plan.selectedFiles);
-  const shard = [...plan.serialShards, ...plan.pureShards].find((candidate) => candidate.id === lane);
+  const shard = [plan.sharedSerialLane, ...plan.serialShards, ...plan.pureShards].find(
+    (candidate) => candidate.id === lane,
+  );
   invariant(shard, `unknown public-test shard lane: ${lane}`);
   return [...shard.files];
 }
@@ -112,7 +114,7 @@ export async function runPublicTestLane({ plan, lane, packageRoot, manifest, exe
   const firstHardFailure = results.find((result) => result.status !== 'passed');
   const finishedAt = new Date().toISOString();
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'public_test_shard_run',
     planFingerprint: plan.planFingerprint,
     selectionHash: plan.selectionHash,
@@ -142,7 +144,7 @@ async function main() {
   const options = parsePublicTestCliOptions(normalizePublicTestCliArgv(process.argv.slice(2)));
   if (options.help) {
     process.stdout.write(
-      'Usage: node packages/api/scripts/run-public-test-shard.mjs --plan <path> --lane <serial-N|pure-N> --report <path>\n',
+      'Usage: node packages/api/scripts/run-public-test-shard.mjs --plan <path> --lane <serial-shared|serial-local-N|pure-N> --report <path>\n',
     );
     return;
   }

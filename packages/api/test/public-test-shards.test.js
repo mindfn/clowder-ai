@@ -21,6 +21,7 @@ const selectedFiles = [
   'test/pure-epsilon.test.js',
   'test/redis-state.test.js',
   'test/fs-watch-state.test.js',
+  'test/network-state.test.js',
 ];
 
 const classification = {
@@ -39,6 +40,12 @@ const classification = {
       reason: 'filesystem watcher lifecycle',
     },
     {
+      id: 'network-state',
+      match: '^test/network-state\\.test\\.js$',
+      lane: 'serial',
+      reason: 'external network scope requires global serialization',
+    },
+    {
       id: 'pure-contracts',
       match: '^test/pure-',
       lane: 'pure',
@@ -51,20 +58,27 @@ const classification = {
   ],
 };
 
+function audit(markers = []) {
+  return {
+    ok: markers.length === 0,
+    markers,
+    reason: markers.length > 0 ? `static isolation audit found ${markers.join(', ')}` : undefined,
+    evidence: {
+      kind: markers.length === 0 ? 'static-negative-scan' : 'static-resource-scope',
+      rulesVersion: 'f308-scope-v1',
+      source: `fixture:${markers.join('-') || 'pure'}`,
+      markers,
+    },
+  };
+}
+
 const isolationAuditByFile = Object.fromEntries(
-  selectedFiles
-    .filter((file) => file.startsWith('test/pure-'))
-    .map((file) => [
-      file,
-      {
-        ok: true,
-        evidence: {
-          kind: 'static-negative-scan',
-          rulesVersion: 'f308-v1',
-          source: `fixture:${file}`,
-        },
-      },
-    ]),
+  selectedFiles.map((file) => {
+    if (file === 'test/network-state.test.js') return [file, audit(['network'])];
+    if (file === 'test/redis-state.test.js') return [file, audit(['redis'])];
+    if (file === 'test/fs-watch-state.test.js') return [file, audit(['filesystem-watch'])];
+    return [file, audit()];
+  }),
 );
 
 const selectionHash = publicTestSelectionHash(selectedFiles);
@@ -88,7 +102,7 @@ function temporaryPackageRoot() {
 }
 
 describe('F308 public-test sharding', () => {
-  it('assigns every selected file exactly once, preserving stateful files in the serial lane', () => {
+  it('assigns every selected file exactly once and keeps external-network scope globally serial', () => {
     const plan = planPublicTestShards({
       selectedFiles,
       selectionHash,
@@ -107,15 +121,17 @@ describe('F308 public-test sharding', () => {
     });
 
     assert.equal(plan.schemaVersion, 2);
-    assert.equal(plan.serialShards.length, 4);
+    assert.equal(plan.serialShards.length, 5);
     assert.deepEqual(plan.serialShards.flatMap((shard) => shard.files).sort(), [
       'test/fs-watch-state.test.js',
       'test/redis-state.test.js',
     ]);
+    assert.deepEqual(plan.sharedSerialLane.files, ['test/network-state.test.js']);
     assert.equal(plan.pureShards.length, 4);
     assert.doesNotThrow(() => validatePublicTestShardPlan(plan, selectedFiles));
 
     const assigned = [
+      ...plan.sharedSerialLane.files,
       ...plan.serialShards.flatMap((shard) => shard.files),
       ...plan.pureShards.flatMap((shard) => shard.files),
     ].sort();
@@ -203,8 +219,25 @@ describe('F308 public-test sharding', () => {
       shardCount: 4,
     });
 
-    assert.deepEqual(plan.serialShards.flatMap((shard) => shard.files).sort(), [...selectedFiles].sort());
+    assert.deepEqual(plan.sharedSerialLane.files, [...selectedFiles].sort());
+    assert.equal(plan.serialShards.flatMap((shard) => shard.files).length, 0);
     assert.equal(plan.pureShards.flatMap((shard) => shard.files).length, 0);
+  });
+
+  it('rejects moving an external-network file into a runner-local serial shard', () => {
+    const plan = planPublicTestShards({
+      selectedFiles,
+      selectionHash,
+      exclusionRegistryHash,
+      classification,
+      plannerProvenance,
+      isolationAuditByFile,
+      shardCount: 4,
+    });
+    plan.sharedSerialLane.files = [];
+    plan.serialShards[0].files.push('test/network-state.test.js');
+    plan.assignments['test/network-state.test.js'].lane = plan.serialShards[0].id;
+    assert.throws(() => validatePublicTestShardPlan(plan, selectedFiles), /machine-local scope evidence/);
   });
 
   it('only reuses timing from an exact green summary with matching selection and provenance', () => {
@@ -244,6 +277,7 @@ describe('F308 public-test sharding', () => {
       'test/process-contract.test.js': 'spawn("node", []);\n',
       'test/worker-contract.test.js': 'new Worker("worker.js");\n',
       'test/network-contract.test.js': 'await fetch("https://example.invalid");\n',
+      'test/external-command-contract.test.js': 'execFileSync("git", ["fetch", "origin", "main"]);\n',
       'test/dynamic-load-contract.test.js': 'const name = "./stateful.js"; await import(name);\n',
       'test/computed-require-contract.test.js': 'const name = "./stateful.cjs"; require(name);\n',
       'test/isolated-contract.test.js': 'assert.equal(1 + 1, 2);\n',

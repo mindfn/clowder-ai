@@ -8,7 +8,9 @@ import { publicTestSelectionHash } from './resolve-public-test-files.mjs';
 
 export const MIN_PUBLIC_TEST_SHARDS = 4;
 const MAX_SHARDS = 6;
-export const SERIAL_PUBLIC_TEST_SHARDS = 4;
+export const SERIAL_PUBLIC_TEST_SHARDS = 5;
+export const SHARED_SERIAL_LANE = 'serial-shared';
+const SHARED_RESOURCE_MARKERS = new Set(['network', 'external-command']);
 
 function digest(value) {
   return publicTestArtifactFingerprint(value);
@@ -68,16 +70,37 @@ function classifyFile(file, rules, isolationAuditByFile) {
   const matches = rules.filter((rule) => rule.regex.test(file));
   invariant(matches.length <= 1, `classification has overlapping rules for ${file}`);
   if (matches.length === 0) {
-    return { lane: 'serial', ruleId: 'default-serial', reason: 'unproven isolation defaults to serial' };
+    return {
+      lane: 'serial-shared',
+      ruleId: 'default-serial-shared',
+      reason: 'unclassified resource scope defaults to the shared serial lane',
+    };
   }
   const [rule] = matches;
-  if (rule.lane === 'serial') return { lane: 'serial', ruleId: rule.id, reason: rule.reason };
   const audit = isolationAuditByFile?.[file];
+  const hasSharedResourceMarker = audit?.markers?.some((marker) => SHARED_RESOURCE_MARKERS.has(marker)) ?? false;
+  if (rule.lane === 'serial') {
+    if (!audit || hasSharedResourceMarker) {
+      return {
+        lane: 'serial-shared',
+        ruleId: rule.id,
+        reason: !audit ? 'missing current resource-scope audit' : audit.reason,
+        scopeEvidence: audit?.evidence,
+      };
+    }
+    return {
+      lane: 'serial-local',
+      ruleId: rule.id,
+      reason: rule.reason,
+      scopeEvidence: audit.evidence,
+    };
+  }
   if (!audit?.ok) {
     return {
-      lane: 'serial',
+      lane: !audit || hasSharedResourceMarker ? 'serial-shared' : 'serial-local',
       ruleId: `audit-${rule.id}`,
       reason: audit?.reason ?? 'missing current isolation proof',
+      scopeEvidence: audit?.evidence,
     };
   }
   return {
@@ -166,18 +189,27 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
     `shard plan requires ${SERIAL_PUBLIC_TEST_SHARDS} serial shards`,
   );
   invariant(
+    plan.sharedSerialLane?.id === SHARED_SERIAL_LANE && Array.isArray(plan.sharedSerialLane.files),
+    'shard plan requires the shared serial lane',
+  );
+  invariant(
     Array.isArray(plan.pureShards) &&
       plan.pureShards.length >= MIN_PUBLIC_TEST_SHARDS &&
       plan.pureShards.length <= MAX_SHARDS,
     'shard plan requires 4–6 pure shards',
   );
+  const allShards = [plan.sharedSerialLane, ...plan.serialShards, ...plan.pureShards];
+  const validLaneIds = new Set(allShards.map((shard) => shard.id));
+  invariant(validLaneIds.size === allShards.length, 'shard plan lane ids must be unique');
   const assigned = [
+    ...plan.sharedSerialLane.files,
     ...plan.serialShards.flatMap((shard, index) => {
-      invariant(shard.id === `serial-${index + 1}`, 'serial shard ids must be stable and contiguous');
+      invariant(shard.id === `serial-local-${index + 1}`, 'serial shard ids must be stable and contiguous');
       invariant(Array.isArray(shard.files), 'serial shard files must be an array');
       return shard.files;
     }),
-    ...plan.pureShards.flatMap((shard) => {
+    ...plan.pureShards.flatMap((shard, index) => {
+      invariant(shard.id === `pure-${index + 1}`, 'pure shard ids must be stable and contiguous');
       invariant(Array.isArray(shard.files), 'pure shard files must be an array');
       return shard.files;
     }),
@@ -191,16 +223,13 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
     'shard plan requires assignments',
   );
   const laneByFile = new Map();
-  for (const shard of [...plan.serialShards, ...plan.pureShards]) {
+  for (const shard of allShards) {
     for (const file of shard.files) laneByFile.set(file, shard.id);
   }
   for (const file of expected) {
     const assignment = plan.assignments[file];
     invariant(assignment && typeof assignment === 'object', `shard plan missing assignment for ${file}`);
-    invariant(
-      /^serial-[1-4]$/.test(assignment.lane) || /^pure-[1-6]$/.test(assignment.lane),
-      `shard plan has invalid lane for ${file}`,
-    );
+    invariant(validLaneIds.has(assignment.lane), `shard plan has invalid lane for ${file}`);
     invariant(
       assignment.lane === laneByFile.get(file),
       `shard plan assignment lane does not match file placement for ${file}`,
@@ -209,6 +238,14 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
       typeof assignment.ruleId === 'string' && assignment.ruleId.length > 0,
       `shard plan missing classification for ${file}`,
     );
+    if (/^serial-local-/.test(assignment.lane)) {
+      invariant(
+        ['static-resource-scope', 'static-negative-scan'].includes(assignment.scopeEvidence?.kind) &&
+          Array.isArray(assignment.scopeEvidence.markers) &&
+          assignment.scopeEvidence.markers.every((marker) => !SHARED_RESOURCE_MARKERS.has(marker)),
+        `local serial assignment lacks machine-local scope evidence for ${file}`,
+      );
+    }
   }
   invariant(Object.keys(plan.assignments).length === expected.length, 'shard plan assignments contain unknown files');
   const withoutFingerprint = { ...plan };
@@ -243,13 +280,16 @@ export function planPublicTestShards({
     'exclusionRegistryHash is required',
   );
   const rules = compileClassification(classification);
-  const serial = [];
+  const sharedSerial = [];
+  const localSerial = [];
   const pure = [];
   for (const file of selected) {
     const classificationResult = classifyFile(file, rules, isolationAuditByFile);
     const durationMs = durationFor(file, timingByFile);
-    if (classificationResult.lane === 'serial') serial.push({ file, durationMs, ...classificationResult });
-    else pure.push({ file, durationMs, ...classificationResult });
+    const entry = { file, durationMs, ...classificationResult };
+    if (classificationResult.lane === 'serial-shared') sharedSerial.push(entry);
+    else if (classificationResult.lane === 'serial-local') localSerial.push(entry);
+    else pure.push(entry);
   }
   const plan = {
     schemaVersion: 2,
@@ -259,18 +299,24 @@ export function planPublicTestShards({
     classificationVersion: classification.version,
     plannerProvenance: normalizePlannerProvenance(plannerProvenance),
     timingSource: normalizeTimingSource(timingSource),
-    serialShards: balancedShards(serial, SERIAL_PUBLIC_TEST_SHARDS, 'serial'),
+    sharedSerialLane: {
+      id: SHARED_SERIAL_LANE,
+      files: sharedSerial.map((entry) => entry.file).sort(),
+      estimatedDurationMs: sharedSerial.reduce((total, entry) => total + entry.durationMs, 0),
+    },
+    serialShards: balancedShards(localSerial, SERIAL_PUBLIC_TEST_SHARDS, 'serial-local'),
     pureShards: balancedShards(pure, shardCount, 'pure'),
   };
   const assignments = {};
-  const entryByFile = new Map([...serial, ...pure].map((entry) => [entry.file, entry]));
-  for (const shard of plan.serialShards) {
+  const entryByFile = new Map([...sharedSerial, ...localSerial, ...pure].map((entry) => [entry.file, entry]));
+  for (const shard of [plan.sharedSerialLane, ...plan.serialShards]) {
     for (const file of shard.files) {
       const entry = entryByFile.get(file);
       assignments[file] = {
         lane: shard.id,
         ruleId: entry.ruleId,
         reason: entry.reason,
+        scopeEvidence: entry.scopeEvidence,
         estimatedDurationMs: entry.durationMs,
       };
     }
@@ -304,6 +350,10 @@ const STATIC_STATEFUL_MARKERS = [
   { id: 'process', pattern: /\bchild_process\b|\b(?:spawn|spawnSync|execFile|execSync|fork)\s*\(/i },
   { id: 'worker', pattern: /\bworker_threads\b|\bnew\s+Worker\s*\(/i },
   { id: 'network', pattern: /\b(?:fetch|WebSocket)\s*\(|\b(?:http|https)\.request\b|\bundici\b/i },
+  {
+    id: 'external-command',
+    pattern: /\b(?:curl|wget|ssh|gh)\b|\bgit\b[^\n]{0,120}\b(?:fetch|pull|push)\b/i,
+  },
   { id: 'dynamic-module-load', pattern: /\b(?:import|require)\s*\(/ },
 ];
 
@@ -313,14 +363,26 @@ export async function auditPublicTestIsolation({ selectedFiles, packageRoot }) {
     const source = await readFile(resolve(packageRoot, file), 'utf8');
     const matched = STATIC_STATEFUL_MARKERS.filter((marker) => marker.pattern.test(source)).map((marker) => marker.id);
     if (matched.length > 0) {
-      audit[file] = { ok: false, reason: `static isolation audit found ${matched.join(', ')}` };
+      audit[file] = {
+        ok: false,
+        markers: matched,
+        reason: `static isolation audit found ${matched.join(', ')}`,
+        evidence: {
+          kind: 'static-resource-scope',
+          rulesVersion: 'f308-scope-v1',
+          source: `sha256:${digest(source)}`,
+          markers: matched,
+        },
+      };
     } else {
       audit[file] = {
         ok: true,
+        markers: [],
         evidence: {
           kind: 'static-negative-scan',
           rulesVersion: 'f308-static-v1',
           source: `sha256:${digest(source)}`,
+          markers: [],
         },
       };
     }

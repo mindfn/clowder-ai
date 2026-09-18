@@ -115,12 +115,16 @@ jobs:
     if: needs.public-test-prepare.outputs.mode == 'sharded'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
-        lane: [serial-1, serial-2, serial-3, serial-4, pure-1, pure-2, pure-3, pure-4]
+        lane: [serial-shared, serial-local-1, serial-local-2, serial-local-3, serial-local-4, serial-local-5, pure-1, pure-2, pure-3, pure-4]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
