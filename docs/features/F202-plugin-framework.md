@@ -10,7 +10,9 @@ tips_exempt: "The historical Phase 1 and K-2 acceptance records are retained bel
 
 # F202: Terminal Plugin Manager and Host-governed Plugin Framework
 
-> **Status**: in-progress (Train B terminal Manager implementation) | **Owner**: Clowder AI maintainers | **Priority**: P1
+> **Status**: in-progress (Train B direction accepted in
+> [clowder-ai#1478](https://github.com/zts212653/clowder-ai/issues/1478); formal review and
+> published-package integration pending) | **Owner**: Clowder AI maintainers | **Priority**: P1
 
 ## Architecture Ownership
 
@@ -131,7 +133,9 @@ not the public plugin hook protocol.
   discover/install/configure/enable/use/restart/disable/uninstall it through the public contract and final
   Manager, without switching the production default path.
 
-### Train C1 — inventory migration and deletion (target: 2026-09-24)
+### Train C1 — inventory migration and deletion (separate follow-up)
+
+The accepted Train B direction does not approve the aggregate migration or commit to a C1 delivery date.
 
 - `clowder-ai-plugins` delivers one aggregate migration PR containing every remaining in-scope IM provider,
   connector and repository-local business plugin from the frozen inventory.
@@ -157,7 +161,13 @@ not the public plugin hook protocol.
 The detailed state census, invariants, Design Gate and TDD sequence live in
 `feature-specs/2026-09-01-f202-terminal-plugin-manager.md`.
 
-### Train B implementation checkpoint (2026-09-01)
+### Train B direction and implementation checkpoint (updated 2026-09-18)
+
+Maintainers accepted the bounded Train B direction in
+[clowder-ai#1478](https://github.com/zts212653/clowder-ai/issues/1478): one Host-owned Manager and one
+real `video-analysis` package loop, with existing production defaults unchanged. Train C1 and C2 remain
+separate follow-ups. This accepts the review scope; it does not prove package publication, final
+integration acceptance, or merge readiness.
 
 The feature worktree now contains the shared closed projection contract, one
 `PluginManagerService`, safe local directory/archive admission, the six canonical management operations
@@ -168,7 +178,7 @@ Broker, supervisor, official installer and owner-auth port. Focused tests exerci
 revision fences, local path non-persistence, auth fail-closed recovery, uninstall failure, and the full
 install → config/auth → enable → Host restart → disable → uninstall journey.
 
-This is not yet a Train B completion claim:
+This is an implementation checkpoint, not a Train B completion or merge claim:
 
 - Co-creator approved the Settings list/detail direction on 2026-09-01 and authorized formal wiring to
   continue; the exact wording and architecture evidence are recorded in
@@ -178,14 +188,19 @@ This is not yet a Train B completion claim:
   wiring in the feature checkout. Configure remains a manifest-owned typed detail contribution, not a
   seventh generic Agent management operation. Dynamic plugin tools instead remain behind the governed
   `plugin_list_tools` → `plugin_call` path and the same live contribution authority used by Manager status.
-  This direction approval is not the final phase-4 hands-on
-  journey acceptance.
+  This historical UI-direction feedback is not evidence that the complete personal hands-on journey was
+  accepted. Per #1478, a new personal co-creator signoff is not a prerequisite for formal review;
+  maintainers own the still-pending reproducible end-to-end acceptance against the published exact package
+  and final integration before approval/merge.
 - Plugins Train B merged as `clowder-ai-plugins` commit
   `73d77f7efddb7a0b53829e9d88ebab51e03bdb32`. Contract beta.13, SDK beta.9 and
   `video-analysis` alpha.0 are public with the independently sealed integrities. The Core feature worktree
   consumes the canonical machine catalog through the published beta.13 validator while keeping Host grants
   separate and fail-closed. The catalog may contain later packages, but this Train B Host admission scope
   projects only `dev.clowder.video-analysis`; absent Host policy means an entry is not exposed or installable.
+  The companion [clowder-ai-plugins#50](https://github.com/zts212653/clowder-ai-plugins/pull/50)
+  carries the reviewed `video-analysis@0.1.0-alpha.1` package/catalog generation, but that exact version must
+  still be published and publicly consumable before this Core PR may merge.
 - Core production composition now owns fail-closed builtin dependency materialization: dependency-bearing
   packages must carry a publisher-owned lockfile-v3 `npm-shrinkwrap.json`, every locked package stays on the canonical
   npm registry with canonical sha512 integrity, and the Host runs script-free `npm ci`. It also owns the
@@ -195,7 +210,8 @@ This is not yet a Train B completion claim:
   install → Host config/secret binding → enable → supervisor-held real `video_analysis` call → Host
   restart/resume → real call → disable → uninstall; the final instance was retired and the secret never
   entered inventory. The current `plugin_list_tools` → `plugin_call` indirection is covered at the
-  composition/restart boundary and remains part of the open current-generation hands-on acceptance.
+  composition/restart boundary and remains part of the pending maintainer-owned final integration
+  acceptance.
   `pluginManagerLive=1`
   consumes that composition in the feature checkout. Per the Train B/Train C boundary, production Settings
   still keeps the existing panels as its default until the aggregate Train C1 cutover preserves specialized
@@ -211,12 +227,15 @@ This is not yet a Train B completion claim:
   owner Console detail may load a bounded, integrity-verified package-root `README.md` through a direct-local
   route; all six Agent management operations, including `plugin_get`, use only the short manifest description.
   Contribution discovery and invocation expose only live tool schemas/results and never read the README.
-  The published video alpha.0 package does not yet include that README, so the Manager reports the omission
-  honestly while a package follow-up is pending. Final
-  co-creator hands-on acceptance of this current Core generation remains open.
+  The published video alpha.0 package does not include that README, so the Manager reports the omission
+  honestly. The alpha.1 follow-up in clowder-ai-plugins#50 includes the package-owned guide, but its public
+  npm availability and the digest-matched final Manager journey remain pending. Maintainers must record the
+  reproducible install → configure → enable → invoke → restart → disable → uninstall result before final
+  approval/merge.
 
-External publication provenance: `[primary | npm registry + exact repository HEAD | checked 2026-09-08 |
-Train B deployability | high confidence]`.
+External publication provenance: `[primary | npm registry + clowder-ai-plugins#50 exact artifact |
+checked 2026-09-18 | alpha.0 public; alpha.1 npm lookup 404; final Train B integration pending | high
+confidence]`.
 
 ## What
 

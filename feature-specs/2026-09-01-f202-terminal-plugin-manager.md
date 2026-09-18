@@ -2,6 +2,11 @@
 
 **功能：** F202 — `docs/features/F202-plugin-framework.md`
 
+**方向准入：** Maintainers accepted the bounded Train B scope in
+[clowder-ai#1478](https://github.com/zts212653/clowder-ai/issues/1478). This admits formal review of one
+Host-owned Manager plus one real `video-analysis` package loop; it does not authorize a production-default
+cutover, Train C1/C2 delivery, npm publication, or merge.
+
 **目标：** 在 Clowder AI Core 中交付唯一的 Plugin Manager：用户和 Agent 从同一份 Host-owned 投影查询 catalog、已安装实例、配置/授权、启用意图、实时运行状态和能力，并通过同一服务完成安装、启用、禁用与卸载。Train B 结束时管理面即为终态；Train C1 只迁出既有业务实现、切换默认路径并删除旧管理入口，Train C2 仅按真实消费者开放公共 hook/UI seam 与迁移 managed services，不重做管理面。
 
 **本 PR 验收标准：** 真实 Settings 产品壳在现有插件卡片样式上补充搜索和左右布局：左侧同一列表覆盖已安装/未安装，右侧复用现有展开卡片；安装状态不显示冗余 badge，而由左侧卡片当前可执行 action 直接表达——已安装插件只有卸载和启禁用 toggle，未安装插件只有 Install，右侧不重复这些生命周期动作；配置字段直接显示在展开卡片中，不新增“设置”按钮；离线安装复用 IM connector 的上传交互并放在页面右上角。卡片固定高度并截断溢出描述；列表与详情均从 verified `plugin.yaml` 读取同一份多语言描述与随包图标。API 与 Agent 工具复用同一个应用服务；官方 npm、本地目录/zip 和迁移期 repository-local 插件均投影到 Host inventory；公开管理面精确包含 list/search/get/install/set-enabled/uninstall，不公开通用 update/repair；启用后的动态插件能力通过两个静态治理入口 `plugin_list_tools`/`plugin_call` 仍由 Host supervisor 执行；所有写操作保留 loopback、身份、审计与 revision fence。
@@ -55,7 +60,7 @@
   与 disable/uninstall 时的完整撤销；公共 SDK 是插件注册 handler 和声明式 contribution 的唯一作者面。
   Host 触发阶段但不认识 TTS、翻译、IM provider 等业务语义，也不允许插件修改私有 Core 对象或任意 DOM。
 - Train B 用一个真实 `video-analysis` 包证明两仓闭环，不切生产默认路径。
-- **Train C1（目标 2026-09-24）**：`clowder-ai-plugins` 一个聚合 PR 迁移冻结 inventory 中剩余
+- **Train C1（独立 follow-up；本期不承诺日期）**：`clowder-ai-plugins` 一个聚合 PR 迁移冻结 inventory 中剩余
   IM providers、connectors 与 repository-local business plugins；Clowder AI 一个聚合 PR 完成
   配置/binding/数据映射、默认路径切换、旧新防双跑，并删除 provider-specific loader、route 和第二管理入口。
   Core PR 应以删除为主，只保留消费既有 Host plane 所需的窄迁移 wiring。
@@ -196,13 +201,16 @@
 - 验证离线安装在页级右上角、卡片等高/截断、右侧无重复 lifecycle action、locale fallback 与 package icon 渲染。
 - 窄屏验证列表到详情、返回、primary action 不溢出。
 - 模拟 catalog offline、auth expired、crashed、quarantined 四个失败态；失败信息只在需要时进入展开卡片，不新增状态仪表盘。
-- co-creator 在 feature worktree 体验并明确确认后，才冻结正式 UI 实现。
+- 2026-09-01 的 co-creator 反馈只冻结 Settings list/detail UI 方向，不构成完整个人旅程验收。
+- 按 #1478，正式代码 review 不再等待新的个人签字；maintainers 必须在最终批准/合并前，用已发布且
+  digest 匹配的真实包复现完整旅程并记录结果。
 
 **2026-09-01 direction verdict:** co-creator accepted the real Settings-shell list/detail direction and
 authorized formal wiring to continue, with one required correction: complete PNG/SVG plugin icons must not
 render as tiny glyphs inside a second background. The correction is protected by
-`PluginManagerDesignGate.test.tsx`. This verdict unlocks Task 7 but is not the final phase-4 hands-on
-acceptance of the complete Manager journey; that remains due after formal composition is terminal.
+`PluginManagerDesignGate.test.tsx`. This historical verdict unlocks Task 7 but is not evidence of complete
+personal phase-4 acceptance. Maintainer direction acceptance in #1478 now admits formal review, while the
+published-package end-to-end journey remains pending before final approval/merge.
 
 ## 7. 实施任务（TDD）
 
@@ -314,7 +322,8 @@ acceptance of the complete Manager journey; that remains due after formal compos
 1. 在隔离 Redis 运行 install→configure/auth→enable→restart→disable→uninstall。
 2. 证明 catalog offline 仍可管理 installed；stale revision、crash、quarantine、uninstall failure 全 fail closed。
 3. 跑 focused API/Web/MCP tests、build、lint、`git diff --check`，再按风险进入 full gate。
-4. 跨家族 review 通过后，交 co-creator 在该 worktree 体验；确认后才合 fork 并 soak。
+4. 跨家族 review 通过后，按 #1478 进入 formal exact-content review；最终批准/合并前由 maintainers
+   用已发布 exact package 完成可复现集成验收。历史 UI 方向反馈不替代这条证据。
 
 **2026-09-01 exact-artifact checkpoint:** `clowder-ai-plugins` exact HEAD
 `03289dc0d0013ce75e90f2896b01baaf542e32a5` 的 contract beta.13、SDK beta.9、
@@ -338,7 +347,9 @@ Personal Chrome pairing 等专属 journey。production machine catalog 已切换
 逐字一致，video package 携带 lockfile-v3 `npm-shrinkwrap.json` 并可由 terminal materializer 以
 script-free `npm ci` 闭合依赖。外部发布状态 provenance：`[primary | npm registry + machine catalog +
 exact repository HEAD | checked 2026-09-10 | Train B deployability | high confidence]`。最终 co-creator
-hands-on journey acceptance 仍是独立硬门禁。
+hands-on journey acceptance 不是 formal review 的前置条件，也未被追认为历史完成事实。
+`clowder-ai-plugins#50` 中 reviewed `@clowder-ai/video-analysis@0.1.0-alpha.1` artifact 的公开 npm
+可用性与 digest-matched 最终集成仍待完成；maintainers 必须在最终批准/合并前记录完整旅程证据。
 
 ## 8. 既有正确行为保护
 

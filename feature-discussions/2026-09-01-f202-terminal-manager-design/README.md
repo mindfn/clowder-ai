@@ -9,19 +9,22 @@ created: 2026-09-01
 
 ## Verdict
 
-**Direction approved; full hands-on acceptance remains pending.** In the real Settings shell, co-creator
-accepted the searchable list/detail direction and authorized formal wiring to continue. The only new
-blocking implementation feedback was that plugin icons rendered incorrectly. Remaining observations were
-classified as minor polish, not a request to redesign the journey.
+**Historical UI direction accepted; bounded Train B direction now accepted by maintainers.** In the real
+Settings shell, co-creator accepted the searchable list/detail direction and authorized formal wiring to
+continue. The only new blocking implementation feedback was that plugin icons rendered incorrectly.
+Remaining observations were classified as minor polish, not a request to redesign the journey.
 
 Operator wording in `thread_mrkmxgdfqquounc9` on 2026-09-01:
 
 > “ui方向我看了；除了前面说的那几点没有什么大问题的；就是图标显示不太对需要调整下的；
 > ui这个先这样子吧；你们先继续吧……等完整做完后我再去实际体验和看看的”
 
-This is not phase-4 experience acceptance. The complete install → configure → enable → use → restart →
-disable → uninstall product journey must return to co-creator after formal Core composition and Console
-wiring are complete.
+This quote is not evidence of complete personal phase-4 experience acceptance. Maintainers subsequently
+accepted the bounded Train B scope in
+[clowder-ai#1478](https://github.com/zts212653/clowder-ai/issues/1478) and delegated the remaining product
+judgment to maintainer review, so a new personal co-creator signoff is not a prerequisite for formal code
+review. Reproducible install → configure → enable → invoke → restart → disable → uninstall acceptance
+against the published exact package and final integration remains required before approval/merge.
 
 ## Product and state decisions
 
@@ -35,8 +38,10 @@ wiring are complete.
 - Formal live wiring remains explicit in the feature checkout. Repository-local/connector compatibility,
   production package materialization, durable quarantine and package-icon delivery are now composed behind
   that path. Machine-catalog publication and its deployable index coordinate remain external prerequisites.
-  The Train C production-default switch must still preserve specialized plugin journeys rather than silently
-  dropping existing controls.
+  The accepted Train B slice keeps existing production defaults unchanged. Train C1 migration/deletion and
+  Train C2 public extension seams remain separate follow-ups with no delivery date accepted by #1478; any
+  later production-default switch must preserve specialized plugin journeys rather than silently dropping
+  existing controls.
 
 ## Architecture / contract integrity
 
@@ -80,6 +85,12 @@ packages are protected against disappearance/double-run across restart. A depend
 runtime-materializable only with a publisher-owned, lockfile-v3, registry-bounded, sha512-complete shrinkwrap. Production
 catalog selection therefore remains pending on published exact artifacts/index including that closure; the
 default Console cutover remains the Train C aggregate gate.
+
+The reviewed companion artifact is
+`@clowder-ai/video-analysis@0.1.0-alpha.1` in
+[clowder-ai-plugins#50](https://github.com/zts212653/clowder-ai-plugins/pull/50). Its public npm
+availability and digest-matched final integration remain pending; a locally packed artifact does not close
+that release gate.
 
 ## Verification at this gate
 
