@@ -17,9 +17,7 @@ import {
 } from './public-test-support.mjs';
 
 function expectedLaneFiles(plan, lane) {
-  const shard = [plan.sharedSerialLane, ...plan.serialShards, ...plan.pureShards].find(
-    (candidate) => candidate.id === lane,
-  );
+  const shard = [plan.sharedSerialLane, ...plan.distributableShards].find((candidate) => candidate.id === lane);
   invariant(shard, `plan has no lane ${lane}`);
   return [...shard.files];
 }
@@ -56,9 +54,8 @@ export function summarizePublicTestShardReports({ plan, reports, maxCriticalPath
       'critical-path budget must be a positive finite number',
     );
   }
-  const localSerialLanes = plan.serialShards.map((shard) => shard.id);
-  const serialLanes = [plan.sharedSerialLane.id, ...localSerialLanes];
-  const expectedLanes = [...serialLanes, ...plan.pureShards.map((shard) => shard.id)];
+  const distributableLanes = plan.distributableShards.map((shard) => shard.id);
+  const expectedLanes = [plan.sharedSerialLane.id, ...distributableLanes];
   const byLane = new Map();
   for (const report of reports) {
     invariant(
@@ -115,9 +112,8 @@ export function summarizePublicTestShardReports({ plan, reports, maxCriticalPath
     selectedFileCount: selected.length,
     lanes,
     sharedSerialLaneMs: byLane.get(plan.sharedSerialLane.id).elapsedMs,
-    localSerialCriticalPathMs: Math.max(...localSerialLanes.map((lane) => byLane.get(lane).elapsedMs)),
-    serialCriticalPathMs: Math.max(...serialLanes.map((lane) => byLane.get(lane).elapsedMs)),
-    serialAggregateMs: serialLanes.reduce((total, lane) => total + byLane.get(lane).elapsedMs, 0),
+    distributableCriticalPathMs: Math.max(...distributableLanes.map((lane) => byLane.get(lane).elapsedMs)),
+    distributableAggregateMs: distributableLanes.reduce((total, lane) => total + byLane.get(lane).elapsedMs, 0),
     criticalPathMs: Math.max(...elapsedValues),
     runnerMinutes: lanes.reduce((total, lane) => total + lane.runnerMinutes, 0),
     perFileTimings: Object.fromEntries(

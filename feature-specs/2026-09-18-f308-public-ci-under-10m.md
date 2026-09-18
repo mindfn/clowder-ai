@@ -2,21 +2,22 @@
 
 **Feature:** F308 — `docs/features/F308-full-sync-durable-fast-train.md`
 **Goal:** Reduce the target-CI public-test lane/job critical path below 10 minutes without reducing coverage, increasing in-process test concurrency, or assuming that every stateful test shares one global resource.
-**Acceptance:** All selected files execute exactly once. Tests with direct external-network or external-command markers remain in one global serial lane. Tests whose observed state is runner-local execute across five isolated VMs, one file at a time in each VM. Four existing pure shards remain unchanged. A measured critical path over 600,000 ms fails CI. AC-D6 remains open until three same-selection target artifacts establish p50/p95.
+**Acceptance:** All selected files execute exactly once. A test enters the one global serial lane only through explicit evidence that it uses a cross-VM remote endpoint, shared account, or shared quota. Every other file enters one duration-balanced pool across nine isolated VMs, one fresh process and one file at a time per VM; those processes reject non-loopback network access and network-capable external commands before I/O. A measured critical path over 600,000 ms fails CI. AC-D6 remains open until three same-selection target artifacts establish p50/p95.
 
 ## Evidence and boundary
 
 The accepted single-serial topology selects 2,176 files: 1,648 serial and 528 pure. Post-merge run `35342249618` measured a 25m42.409s serial critical path and a 27m41s serial job.
 
-The current source audit finds 95 files with a direct network or external-command marker. Their total measured time in the same-selection summary is 145.946s. The remaining serial files have no direct shared-resource marker; their observed markers are Redis, ports, filesystem, process, worker, dynamic loading, or naming fallbacks. Public shard jobs receive no service credentials, use read-only repository permission, and do not persist checkout credentials, so those observed resources remain runner-local. Missing audits and unknown classifications still fail closed into the shared lane.
+The previous source audit placed 95 files in a shared lane merely because their source mentioned network or command tokens. Direct inspection found that 63 of those files did not even reference an external host: examples included loopback HTTP servers, mocked `fetch` methods, local filesystem Git remotes, and command strings used as test data. The same audit also separated 1,562 runner-local files from 519 pure files even though the runner executes both groups identically: one fresh Node process per file, sequentially inside each VM.
+
+The revised boundary is behavioral instead of lexical. The shared lane is an explicit registry of proved cross-VM resources; it is empty for the current suite. The distributable runner installs a runtime guard that permits loopback/file-local resources but rejects real non-loopback HTTP/WebSocket/TCP use and network-capable commands before I/O. Public shard jobs additionally receive no service credentials, use read-only repository permission, do not persist checkout credentials, and restrict Git transports to local files.
 
 This plan therefore does not claim that all tests are pure. It distinguishes two actual execution scopes:
 
-- `serial-shared`: direct external-network/external-command scope, missing audits, and unknown classifications. One global lane, fail-closed.
-- `serial-local-1…5`: stateful tests with a current source-bound audit showing no shared-resource marker. Separate GitHub VMs provide isolation; files remain sequential inside each VM.
-- `pure-1…4`: existing explicit pure classification and current negative audit.
+- `serial-shared`: only files with explicit evidence for a real cross-VM endpoint/account/quota. One global lane.
+- `distributable-1…9`: every other file. Separate GitHub VMs provide process/machine isolation; the runtime external-resource guard makes an undeclared shared-resource use fail closed rather than silently running concurrently.
 
-Historical per-file replay of the exact 2,176-file selection predicts 145.946s for `serial-shared`. Four runner-local shards would leave only seconds of modeled job-level margin below 10 minutes; five reduce the slowest test shard to about 6m29s and the modeled complete job to about 8m42s. The prior unconstrained four-VM target run measured 6m40.639s test critical path and an 8m53s slowest complete lane job. These are forecasts/precedent, not completion evidence for the new topology.
+Replaying the exact 2,176-file local measurement into one nine-shard distributable pool predicts a 131.247s test critical path. This uses the same number of VMs as the rejected five-local-plus-four-pure topology; it removes idle capacity rather than adding runners. The number is a replay forecast, not completion evidence for the new topology.
 
 ## Machine contract
 
@@ -25,13 +26,9 @@ The schema-v2 plan contains:
 ```js
 {
   sharedSerialLane: { id: 'serial-shared', files: [...] },
-  serialShards: [
-    { id: 'serial-local-1', files: [...] },
-    // serial-local-2 ... serial-local-5
-  ],
-  pureShards: [
-    { id: 'pure-1', files: [...] },
-    // pure-2 ... pure-4
+  distributableShards: [
+    { id: 'distributable-1', files: [...] },
+    // distributable-2 ... distributable-9
   ]
 }
 ```
@@ -39,22 +36,23 @@ The schema-v2 plan contains:
 Required invariants:
 
 1. selected = assigned = observed = unique, with no missing, duplicate, extra, or failed files;
-2. any missing resource-scope audit defaults to `serial-shared`;
-3. any direct `network` or external-command marker defaults to `serial-shared`;
-4. a `serial-local-*` assignment must carry source-bound scope evidence with no shared-resource marker;
+2. every `serial-shared` assignment carries explicit shared-resource evidence for an endpoint/account/quota;
+3. every `distributable-*` assignment carries runtime external-resource-guard evidence;
+4. a forged shared → distributable assignment is rejected by plan validation;
 5. every lane runs files sequentially with `--test-concurrency=1`;
 6. shard jobs have `contents: read`, `persist-credentials: false`, and no external-service credentials;
 7. summary aggregation requires all ten reports and rejects critical path above 600,000 ms.
 
 ## TDD and verification
 
-1. Unit tests lock external-network → shared, runner-local state → five local shards, missing audit → shared, and reject a forged network → local assignment.
-2. Runner and summary tests lock all ten lanes, schema-v2 reports, exact coverage, provenance, and fail-closed timing.
-3. The workflow contract checker locks the lane matrix, read-only/no-persisted-credentials boundary, exact execution environment, and 10-minute gate.
-4. Generate the real plan and verify 2,176 assignments are unique; verify every shared assignment has a shared-resource marker or fail-closed reason and no local assignment has a shared-resource marker.
-5. Build as CI and run all ten lanes locally in the feature worktree with runtime Redis absent.
-6. Aggregate the reports locally, then run `pnpm check`.
-7. Obtain non-author exact-HEAD review before opening the upstream PR. Open as Draft, register tracking immediately, and use target CI as the Linux timing authority. Do not merge; maintainer owns merge.
+1. Unit tests lock explicit shared-resource evidence → shared, all other files → one nine-shard pool, and reject a forged shared → distributable assignment.
+2. Guard tests prove loopback/local Git remain usable while a real non-loopback fetch, `gh`, `ssh`, or remote `curl` fails before I/O.
+3. Runner and summary tests lock all ten lanes, schema-v2 reports, exact coverage, provenance, and fail-closed timing.
+4. The workflow contract checker locks the lane matrix, read-only/no-persisted-credentials boundary, exact execution environment, and 10-minute gate.
+5. Generate the real plan and verify every assignment exactly once plus the shared-resource evidence boundary.
+6. Build as CI and run all ten lanes locally in the feature worktree with runtime Redis absent.
+7. Aggregate the reports locally, then run `pnpm check`.
+8. Obtain non-author exact-HEAD review before updating the Draft PR; use target CI as the Linux timing authority. Do not merge; maintainer owns merge.
 
 ## Not in scope
 
@@ -62,5 +60,5 @@ Required invariants:
 - reducing test selection or deleting assertions;
 - global Node test concurrency;
 - claiming three-run p50/p95 from one sample;
-- moving shared/unknown network scope into runner-local shards;
+- bypassing the runtime external-resource guard or moving explicitly registered shared resources into distributable shards;
 - merging same-title tests without proof that inputs, branches, side effects, and assertions are equivalent.

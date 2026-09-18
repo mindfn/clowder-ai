@@ -8,7 +8,7 @@ description: "把 source repository→开源 target 全量同步从一次性长�
 description_source: human
 description_author: codex-terra
 description_updated_at: 2026-08-27T00:00:00-07:00
-tips_exempt: "维护者 CLI / CI 可靠性能力：F308 receipt recovery、no-write train 与 target CI evidence 不新增 Hub 可发现的终端用户功能；operator status 是命令输出，不是 capability tip surface。"
+tips_exempt: "Renewed 2026-09-19 for the public-test resource-scope correction: the change replaces lexical test classification with a runtime CI isolation guard and adds no Hub-discoverable user action; operator evidence remains CI output rather than a capability-tip surface."
 ---
 
 # F308: Full-Sync Durable Fast Train — Exact Cut、可恢复 Gate 与 CI Critical Path
@@ -49,7 +49,7 @@ F308 的终态是：维护者一次启动或恢复一个冻结 cut，就能看�
 | outbound writer | `scripts/sync-to-opensource.sh` 是唯一 export、F251、temp target gate 与 real target write 入口 | 继续由该脚本写入；F308 不另造 rsync writer |
 | community preservation | F251、reconciliation ledger、target-owned backup/restore | 所有 receipt 和 resume 都重新证明这三项；不得用 cache 越过 |
 | public CI workflow | 开源 target 的 `.github/workflows/ci.yml` 是 `sync-manifest.yaml` target-owned | 以独立 target-repo PR 维护；export 不覆盖它 |
-| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 按实际资源作用域拆 shared serial、runner-local serial 与证明隔离的 pure shards；绝不全局升 concurrency |
+| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 只把具备真实跨 VM 共享资源证据的文件留在 shared serial；其余测试由 runtime guard 约束后进入统一可分发池，绝不全局升 concurrency |
 
 ## User Journey — Operator
 
@@ -126,10 +126,10 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   mapping fingerprint.
 - [x] **AC-D2**: A planner produces 4–6 deterministic, duration-balanced pure-test shards; every selected test
   appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the manifest.
-- [x] **AC-D3**: Direct external-network scope, missing audits and unknown classifications remain in one globally
-  serial lane. Redis, ports, fs.watch, filesystem, process and worker tests may run across isolated GitHub VMs only
-  with a current source-bound audit proving no direct external-network marker; every VM remains file-serial with
-  `--test-concurrency=1`. Pure lanes still require their stricter explicit isolation proof.
+- [x] **AC-D3**: Only tests with explicit evidence for a real cross-VM remote endpoint, shared account or shared quota
+  remain in one globally serial lane. Every other file runs in one duration-balanced distributable pool across
+  isolated GitHub VMs; each file still receives a fresh Node process, every VM remains file-serial with
+  `--test-concurrency=1`, and a runtime guard rejects undeclared non-loopback access before I/O.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
@@ -167,7 +167,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
-| shared scope leaks across runner-local shards | direct network markers, missing audits and unknown rules fail closed into `serial-shared`; shard jobs have read-only repository permission, no persisted checkout credentials and no service credentials |
+| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; distributable processes deny non-loopback network/remote commands before I/O; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 
@@ -186,8 +186,8 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 - The target-owned CI patch landed in `clowder-ai` PR #1413 at merge
   `71a9b707847f7ed2cd43a3de42e4ca40ec7520e3`. Exact-head target CI preserved the required `Test (Public)` check,
   Windows and public-contract surfaces; its serial bootstrap passed in 19m36s and the fail-closed aggregate passed.
-  The workflow now requires exact-plan/report summary provenance for one shared serial lane, five runner-local serial
-  shards and four pure shards. Every selected file must appear exactly once, and the evidence job fails above a
+  The workflow now requires exact-plan/report summary provenance for one explicit shared-resource lane and nine
+  guarded distributable shards. Every selected file must appear exactly once, and the evidence job fails above a
   600,000ms critical path. Three same-selection target-CI artifacts are still required by AC-D6.
 
 ## Key Decisions

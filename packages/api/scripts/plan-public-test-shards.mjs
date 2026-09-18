@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,11 +5,8 @@ import { publicTestArtifactFingerprint, validatePublicTestProvenance } from './p
 import { comparePublicTestStrings, publicTestInvariant as invariant } from './public-test-support.mjs';
 import { publicTestSelectionHash } from './resolve-public-test-files.mjs';
 
-export const MIN_PUBLIC_TEST_SHARDS = 4;
-const MAX_SHARDS = 6;
-export const SERIAL_PUBLIC_TEST_SHARDS = 5;
+export const DISTRIBUTABLE_PUBLIC_TEST_SHARDS = 9;
 export const SHARED_SERIAL_LANE = 'serial-shared';
-const SHARED_RESOURCE_MARKERS = new Set(['network', 'external-command']);
 
 function digest(value) {
   return publicTestArtifactFingerprint(value);
@@ -30,83 +26,61 @@ export function normalizeSelectedFiles(selectedFiles) {
 }
 
 function compileClassification(classification) {
-  invariant(classification && classification.version === 1, 'classification version must be 1');
-  invariant(Array.isArray(classification.rules), 'classification.rules must be an array');
-  return classification.rules.map((rule) => {
+  invariant(classification && classification.version === 2, 'classification version must be 2');
+  invariant(
+    classification.defaultIsolationEvidence?.kind === 'runtime-external-resource-guard' &&
+      typeof classification.defaultIsolationEvidence.rulesVersion === 'string' &&
+      typeof classification.defaultIsolationEvidence.source === 'string',
+    'classification defaultIsolationEvidence is incomplete',
+  );
+  invariant(Array.isArray(classification.sharedResources), 'classification.sharedResources must be an array');
+  const sharedResources = classification.sharedResources.map((rule) => {
     invariant(rule && typeof rule.id === 'string' && rule.id.length > 0, 'classification rule id is required');
     invariant(
       typeof rule.match === 'string' && rule.match.length > 0,
       `classification rule ${rule.id} match is required`,
     );
-    invariant(rule.lane === 'serial' || rule.lane === 'pure', `classification rule ${rule.id} lane is invalid`);
     let regex;
     try {
       regex = new RegExp(rule.match);
     } catch (error) {
       throw new Error(`classification rule ${rule.id} has invalid regex: ${error.message}`);
     }
-    if (rule.lane === 'serial') {
-      invariant(
-        typeof rule.reason === 'string' && rule.reason.length > 0,
-        `classification rule ${rule.id} reason is required`,
-      );
-    } else {
-      invariant(
-        rule.isolationEvidence && typeof rule.isolationEvidence === 'object',
-        `classification rule ${rule.id} requires isolationEvidence`,
-      );
-      invariant(
-        typeof rule.isolationEvidence.kind === 'string' &&
-          typeof rule.isolationEvidence.rulesVersion === 'string' &&
-          typeof rule.isolationEvidence.source === 'string',
-        `classification rule ${rule.id} isolationEvidence is incomplete`,
-      );
-    }
+    invariant(
+      typeof rule.reason === 'string' && rule.reason.length > 0,
+      `classification rule ${rule.id} reason is required`,
+    );
+    invariant(
+      rule.sharedResourceEvidence?.kind === 'explicit-shared-resource' &&
+        ['remote-endpoint', 'shared-account', 'shared-quota'].includes(rule.sharedResourceEvidence.scope) &&
+        typeof rule.sharedResourceEvidence.source === 'string' &&
+        rule.sharedResourceEvidence.source.length > 0,
+      `classification rule ${rule.id} sharedResourceEvidence is incomplete`,
+    );
     return { ...rule, regex };
   });
+  return {
+    defaultIsolationEvidence: classification.defaultIsolationEvidence,
+    sharedResources,
+  };
 }
 
-function classifyFile(file, rules, isolationAuditByFile) {
-  const matches = rules.filter((rule) => rule.regex.test(file));
+function classifyFile(file, classification) {
+  const matches = classification.sharedResources.filter((rule) => rule.regex.test(file));
   invariant(matches.length <= 1, `classification has overlapping rules for ${file}`);
   if (matches.length === 0) {
     return {
-      lane: 'serial-shared',
-      ruleId: 'default-serial-shared',
-      reason: 'unclassified resource scope defaults to the shared serial lane',
+      scope: 'distributable',
+      ruleId: 'runtime-isolated-default',
+      isolationEvidence: classification.defaultIsolationEvidence,
     };
   }
   const [rule] = matches;
-  const audit = isolationAuditByFile?.[file];
-  const hasSharedResourceMarker = audit?.markers?.some((marker) => SHARED_RESOURCE_MARKERS.has(marker)) ?? false;
-  if (rule.lane === 'serial') {
-    if (!audit || hasSharedResourceMarker) {
-      return {
-        lane: 'serial-shared',
-        ruleId: rule.id,
-        reason: !audit ? 'missing current resource-scope audit' : audit.reason,
-        scopeEvidence: audit?.evidence,
-      };
-    }
-    return {
-      lane: 'serial-local',
-      ruleId: rule.id,
-      reason: rule.reason,
-      scopeEvidence: audit.evidence,
-    };
-  }
-  if (!audit?.ok) {
-    return {
-      lane: !audit || hasSharedResourceMarker ? 'serial-shared' : 'serial-local',
-      ruleId: `audit-${rule.id}`,
-      reason: audit?.reason ?? 'missing current isolation proof',
-      scopeEvidence: audit?.evidence,
-    };
-  }
   return {
-    lane: 'pure',
+    scope: 'shared',
     ruleId: rule.id,
-    isolationEvidence: audit?.evidence ?? rule.isolationEvidence,
+    reason: rule.reason,
+    sharedResourceEvidence: rule.sharedResourceEvidence,
   };
 }
 
@@ -171,6 +145,24 @@ function normalizePlannerProvenance(provenance) {
   return validatePublicTestProvenance(provenance);
 }
 
+function validateAssignmentEvidence(file, assignment) {
+  if (/^distributable-/.test(assignment.lane)) {
+    invariant(
+      assignment.sharedResourceEvidence === undefined,
+      `shared resource assignment cannot enter a distributable shard for ${file}`,
+    );
+    invariant(
+      assignment.isolationEvidence?.kind === 'runtime-external-resource-guard',
+      `distributable assignment lacks runtime external-resource guard evidence for ${file}`,
+    );
+    return;
+  }
+  invariant(
+    assignment.sharedResourceEvidence?.kind === 'explicit-shared-resource',
+    `shared resource assignment lacks explicit evidence for ${file}`,
+  );
+}
+
 export function validatePublicTestShardPlan(plan, selectedFiles) {
   invariant(plan && plan.schemaVersion === 2, 'shard plan schemaVersion must be 2');
   const expected = normalizeSelectedFiles(selectedFiles);
@@ -185,32 +177,21 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
   normalizePlannerProvenance(plan.plannerProvenance);
   normalizeTimingSource(plan.timingSource);
   invariant(
-    Array.isArray(plan.serialShards) && plan.serialShards.length === SERIAL_PUBLIC_TEST_SHARDS,
-    `shard plan requires ${SERIAL_PUBLIC_TEST_SHARDS} serial shards`,
+    Array.isArray(plan.distributableShards) && plan.distributableShards.length === DISTRIBUTABLE_PUBLIC_TEST_SHARDS,
+    `shard plan requires ${DISTRIBUTABLE_PUBLIC_TEST_SHARDS} distributable shards`,
   );
   invariant(
     plan.sharedSerialLane?.id === SHARED_SERIAL_LANE && Array.isArray(plan.sharedSerialLane.files),
     'shard plan requires the shared serial lane',
   );
-  invariant(
-    Array.isArray(plan.pureShards) &&
-      plan.pureShards.length >= MIN_PUBLIC_TEST_SHARDS &&
-      plan.pureShards.length <= MAX_SHARDS,
-    'shard plan requires 4–6 pure shards',
-  );
-  const allShards = [plan.sharedSerialLane, ...plan.serialShards, ...plan.pureShards];
+  const allShards = [plan.sharedSerialLane, ...plan.distributableShards];
   const validLaneIds = new Set(allShards.map((shard) => shard.id));
   invariant(validLaneIds.size === allShards.length, 'shard plan lane ids must be unique');
   const assigned = [
     ...plan.sharedSerialLane.files,
-    ...plan.serialShards.flatMap((shard, index) => {
-      invariant(shard.id === `serial-local-${index + 1}`, 'serial shard ids must be stable and contiguous');
-      invariant(Array.isArray(shard.files), 'serial shard files must be an array');
-      return shard.files;
-    }),
-    ...plan.pureShards.flatMap((shard, index) => {
-      invariant(shard.id === `pure-${index + 1}`, 'pure shard ids must be stable and contiguous');
-      invariant(Array.isArray(shard.files), 'pure shard files must be an array');
+    ...plan.distributableShards.flatMap((shard, index) => {
+      invariant(shard.id === `distributable-${index + 1}`, 'distributable shard ids must be stable and contiguous');
+      invariant(Array.isArray(shard.files), 'distributable shard files must be an array');
       return shard.files;
     }),
   ].sort();
@@ -238,14 +219,7 @@ export function validatePublicTestShardPlan(plan, selectedFiles) {
       typeof assignment.ruleId === 'string' && assignment.ruleId.length > 0,
       `shard plan missing classification for ${file}`,
     );
-    if (/^serial-local-/.test(assignment.lane)) {
-      invariant(
-        ['static-resource-scope', 'static-negative-scan'].includes(assignment.scopeEvidence?.kind) &&
-          Array.isArray(assignment.scopeEvidence.markers) &&
-          assignment.scopeEvidence.markers.every((marker) => !SHARED_RESOURCE_MARKERS.has(marker)),
-        `local serial assignment lacks machine-local scope evidence for ${file}`,
-      );
-    }
+    validateAssignmentEvidence(file, assignment);
   }
   invariant(Object.keys(plan.assignments).length === expected.length, 'shard plan assignments contain unknown files');
   const withoutFingerprint = { ...plan };
@@ -265,13 +239,7 @@ export function planPublicTestShards({
   plannerProvenance,
   timingByFile = {},
   timingSource,
-  isolationAuditByFile,
-  shardCount = MIN_PUBLIC_TEST_SHARDS,
 }) {
-  invariant(
-    Number.isInteger(shardCount) && shardCount >= MIN_PUBLIC_TEST_SHARDS && shardCount <= MAX_SHARDS,
-    'shardCount must be 4–6',
-  );
   invariant(typeof selectionHash === 'string' && selectionHash.length > 0, 'selectionHash is required');
   const selected = normalizeSelectedFiles(selectedFiles);
   invariant(selectionHash === publicTestSelectionHash(selected), 'selectionHash does not match selectedFiles');
@@ -279,17 +247,15 @@ export function planPublicTestShards({
     typeof exclusionRegistryHash === 'string' && exclusionRegistryHash.length > 0,
     'exclusionRegistryHash is required',
   );
-  const rules = compileClassification(classification);
+  const compiledClassification = compileClassification(classification);
   const sharedSerial = [];
-  const localSerial = [];
-  const pure = [];
+  const distributable = [];
   for (const file of selected) {
-    const classificationResult = classifyFile(file, rules, isolationAuditByFile);
+    const classificationResult = classifyFile(file, compiledClassification);
     const durationMs = durationFor(file, timingByFile);
     const entry = { file, durationMs, ...classificationResult };
-    if (classificationResult.lane === 'serial-shared') sharedSerial.push(entry);
-    else if (classificationResult.lane === 'serial-local') localSerial.push(entry);
-    else pure.push(entry);
+    if (classificationResult.scope === 'shared') sharedSerial.push(entry);
+    else distributable.push(entry);
   }
   const plan = {
     schemaVersion: 2,
@@ -304,24 +270,23 @@ export function planPublicTestShards({
       files: sharedSerial.map((entry) => entry.file).sort(),
       estimatedDurationMs: sharedSerial.reduce((total, entry) => total + entry.durationMs, 0),
     },
-    serialShards: balancedShards(localSerial, SERIAL_PUBLIC_TEST_SHARDS, 'serial-local'),
-    pureShards: balancedShards(pure, shardCount, 'pure'),
+    distributableShards: balancedShards(distributable, DISTRIBUTABLE_PUBLIC_TEST_SHARDS, 'distributable'),
   };
   const assignments = {};
-  const entryByFile = new Map([...sharedSerial, ...localSerial, ...pure].map((entry) => [entry.file, entry]));
-  for (const shard of [plan.sharedSerialLane, ...plan.serialShards]) {
+  const entryByFile = new Map([...sharedSerial, ...distributable].map((entry) => [entry.file, entry]));
+  for (const shard of [plan.sharedSerialLane]) {
     for (const file of shard.files) {
       const entry = entryByFile.get(file);
       assignments[file] = {
         lane: shard.id,
         ruleId: entry.ruleId,
         reason: entry.reason,
-        scopeEvidence: entry.scopeEvidence,
+        sharedResourceEvidence: entry.sharedResourceEvidence,
         estimatedDurationMs: entry.durationMs,
       };
     }
   }
-  for (const shard of plan.pureShards) {
+  for (const shard of plan.distributableShards) {
     for (const file of shard.files) {
       const entry = entryByFile.get(file);
       assignments[file] = {
@@ -337,57 +302,6 @@ export function planPublicTestShards({
   );
   plan.planFingerprint = digest(plan);
   return validatePublicTestShardPlan(plan, selected);
-}
-
-const STATIC_STATEFUL_MARKERS = [
-  { id: 'redis', pattern: /\b(?:redis|ioredis|redisClient|redisStore|REDIS_URL)\b/i },
-  { id: 'port', pattern: /\b(?:createServer|API_SERVER_PORT|FRONTEND_PORT)\b|\blisten\s*\(|localhost:/i },
-  { id: 'filesystem-watch', pattern: /\b(?:fs\.watch|watchFile|watchpack|chokidar)\b/i },
-  {
-    id: 'filesystem-write',
-    pattern: /\b(?:writeFile|appendFile|mkdir|mkdtemp|rename|unlink|rmSync?|chmod|copyFile)\b/i,
-  },
-  { id: 'process', pattern: /\bchild_process\b|\b(?:spawn|spawnSync|execFile|execSync|fork)\s*\(/i },
-  { id: 'worker', pattern: /\bworker_threads\b|\bnew\s+Worker\s*\(/i },
-  { id: 'network', pattern: /\b(?:fetch|WebSocket)\s*\(|\b(?:http|https)\.request\b|\bundici\b/i },
-  {
-    id: 'external-command',
-    pattern: /\b(?:curl|wget|ssh|gh)\b|\bgit\b[^\n]{0,120}\b(?:fetch|pull|push)\b/i,
-  },
-  { id: 'dynamic-module-load', pattern: /\b(?:import|require)\s*\(/ },
-];
-
-export async function auditPublicTestIsolation({ selectedFiles, packageRoot }) {
-  const audit = {};
-  for (const file of normalizeSelectedFiles(selectedFiles)) {
-    const source = await readFile(resolve(packageRoot, file), 'utf8');
-    const matched = STATIC_STATEFUL_MARKERS.filter((marker) => marker.pattern.test(source)).map((marker) => marker.id);
-    if (matched.length > 0) {
-      audit[file] = {
-        ok: false,
-        markers: matched,
-        reason: `static isolation audit found ${matched.join(', ')}`,
-        evidence: {
-          kind: 'static-resource-scope',
-          rulesVersion: 'f308-scope-v1',
-          source: `sha256:${digest(source)}`,
-          markers: matched,
-        },
-      };
-    } else {
-      audit[file] = {
-        ok: true,
-        markers: [],
-        evidence: {
-          kind: 'static-negative-scan',
-          rulesVersion: 'f308-static-v1',
-          source: `sha256:${digest(source)}`,
-          markers: [],
-        },
-      };
-    }
-  }
-  return audit;
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';

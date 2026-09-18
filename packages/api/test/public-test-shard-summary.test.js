@@ -22,35 +22,33 @@ const plan = {
   selectedFiles,
   selectionHash: publicTestSelectionHash(selectedFiles),
   exclusionRegistryHash: 'e'.repeat(64),
-  classificationVersion: 1,
+  classificationVersion: 2,
   plannerProvenance: provenance,
   timingSource: { kind: 'unmeasured_default', estimatedDurationMs: 1_000 },
-  sharedSerialLane: { id: 'serial-shared', files: [], estimatedDurationMs: 0 },
-  serialShards: [
-    { id: 'serial-local-1', files: ['test/serial.test.js'], estimatedDurationMs: 20 },
-    { id: 'serial-local-2', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-local-3', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-local-4', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-local-5', files: [], estimatedDurationMs: 0 },
-  ],
-  pureShards: [
-    { id: 'pure-1', files: ['test/pure.test.js'], estimatedDurationMs: 10 },
-    { id: 'pure-2', files: [], estimatedDurationMs: 0 },
-    { id: 'pure-3', files: [], estimatedDurationMs: 0 },
-    { id: 'pure-4', files: [], estimatedDurationMs: 0 },
+  sharedSerialLane: { id: 'serial-shared', files: ['test/serial.test.js'], estimatedDurationMs: 20 },
+  distributableShards: [
+    { id: 'distributable-1', files: ['test/pure.test.js'], estimatedDurationMs: 10 },
+    { id: 'distributable-2', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-3', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-4', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-5', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-6', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-7', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-8', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-9', files: [], estimatedDurationMs: 0 },
   ],
   assignments: {
-    'test/pure.test.js': { lane: 'pure-1', ruleId: 'pure', estimatedDurationMs: 10 },
+    'test/pure.test.js': {
+      lane: 'distributable-1',
+      ruleId: 'runtime-isolated-default',
+      estimatedDurationMs: 10,
+      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+    },
     'test/serial.test.js': {
-      lane: 'serial-local-1',
-      ruleId: 'stateful',
+      lane: 'serial-shared',
+      ruleId: 'shared-fixture',
       estimatedDurationMs: 20,
-      scopeEvidence: {
-        kind: 'static-resource-scope',
-        rulesVersion: 'f308-scope-v1',
-        source: 'fixture:local',
-        markers: ['filesystem-write'],
-      },
+      sharedResourceEvidence: { kind: 'explicit-shared-resource', scope: 'shared-account', source: 'fixture' },
     },
   },
 };
@@ -91,16 +89,16 @@ function report(lane, files, elapsedMs) {
 
 function greenReports() {
   return [
-    report('serial-shared', [], 1),
-    report('serial-local-1', ['test/serial.test.js'], 20),
-    report('serial-local-2', [], 2),
-    report('serial-local-3', [], 3),
-    report('serial-local-4', [], 4),
-    report('serial-local-5', [], 8),
-    report('pure-1', ['test/pure.test.js'], 10),
-    report('pure-2', [], 5),
-    report('pure-3', [], 6),
-    report('pure-4', [], 7),
+    report('serial-shared', ['test/serial.test.js'], 20),
+    report('distributable-1', ['test/pure.test.js'], 10),
+    report('distributable-2', [], 2),
+    report('distributable-3', [], 3),
+    report('distributable-4', [], 4),
+    report('distributable-5', [], 5),
+    report('distributable-6', [], 6),
+    report('distributable-7', [], 7),
+    report('distributable-8', [], 8),
+    report('distributable-9', [], 9),
   ];
 }
 
@@ -109,11 +107,10 @@ describe('F308 public-test shard summary', () => {
     const summary = summarizePublicTestShardReports({ plan, reports: greenReports() });
     assert.equal(summary.selectedFileCount, 2);
     assert.equal(summary.criticalPathMs, 20);
-    assert.equal(summary.sharedSerialLaneMs, 1);
-    assert.equal(summary.localSerialCriticalPathMs, 20);
-    assert.equal(summary.serialCriticalPathMs, 20);
-    assert.equal(summary.serialAggregateMs, 38);
-    assert.ok(Math.abs(summary.runnerMinutes - (1 + 20 + 2 + 3 + 4 + 8 + 10 + 5 + 6 + 7) / 60_000) < Number.EPSILON);
+    assert.equal(summary.sharedSerialLaneMs, 20);
+    assert.equal(summary.distributableCriticalPathMs, 10);
+    assert.equal(summary.distributableAggregateMs, 54);
+    assert.ok(Math.abs(summary.runnerMinutes - (20 + 10 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9) / 60_000) < Number.EPSILON);
     assert.deepEqual(Object.keys(summary.perFileTimings), selectedFiles);
   });
 
@@ -138,7 +135,7 @@ describe('F308 public-test shard summary', () => {
       () =>
         summarizePublicTestShardReports({
           plan,
-          reports: [...greenReports(), report('serial-local-1', ['test/serial.test.js'], 20)],
+          reports: [...greenReports(), report('distributable-1', ['test/pure.test.js'], 10)],
         }),
       /duplicate report/,
     );

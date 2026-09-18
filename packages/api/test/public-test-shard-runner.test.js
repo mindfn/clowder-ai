@@ -23,36 +23,39 @@ const plan = {
   selectedFiles,
   selectionHash: manifest.selectionHash,
   exclusionRegistryHash: manifest.exclusionRegistryHash,
-  classificationVersion: 1,
+  classificationVersion: 2,
   plannerProvenance,
   timingSource: { kind: 'unmeasured_default', estimatedDurationMs: 1_000 },
   sharedSerialLane: { id: 'serial-shared', files: [], estimatedDurationMs: 0 },
-  serialShards: [
-    { id: 'serial-local-1', files: ['test/serial-redis.test.js'], estimatedDurationMs: 10 },
-    { id: 'serial-local-2', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-local-3', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-local-4', files: [], estimatedDurationMs: 0 },
-    { id: 'serial-local-5', files: [], estimatedDurationMs: 0 },
-  ],
-  pureShards: [
-    { id: 'pure-1', files: ['test/pure-alpha.test.js'], estimatedDurationMs: 5 },
-    { id: 'pure-2', files: ['test/pure-beta.test.js'], estimatedDurationMs: 4 },
-    { id: 'pure-3', files: [], estimatedDurationMs: 0 },
-    { id: 'pure-4', files: [], estimatedDurationMs: 0 },
+  distributableShards: [
+    { id: 'distributable-1', files: ['test/pure-alpha.test.js'], estimatedDurationMs: 5 },
+    { id: 'distributable-2', files: ['test/pure-beta.test.js'], estimatedDurationMs: 4 },
+    { id: 'distributable-3', files: ['test/serial-redis.test.js'], estimatedDurationMs: 10 },
+    { id: 'distributable-4', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-5', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-6', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-7', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-8', files: [], estimatedDurationMs: 0 },
+    { id: 'distributable-9', files: [], estimatedDurationMs: 0 },
   ],
   assignments: {
-    'test/pure-alpha.test.js': { lane: 'pure-1', ruleId: 'pure', estimatedDurationMs: 5 },
-    'test/pure-beta.test.js': { lane: 'pure-2', ruleId: 'pure', estimatedDurationMs: 4 },
+    'test/pure-alpha.test.js': {
+      lane: 'distributable-1',
+      ruleId: 'runtime-isolated-default',
+      estimatedDurationMs: 5,
+      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+    },
+    'test/pure-beta.test.js': {
+      lane: 'distributable-2',
+      ruleId: 'runtime-isolated-default',
+      estimatedDurationMs: 4,
+      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+    },
     'test/serial-redis.test.js': {
-      lane: 'serial-local-1',
-      ruleId: 'stateful',
+      lane: 'distributable-3',
+      ruleId: 'runtime-isolated-default',
       estimatedDurationMs: 10,
-      scopeEvidence: {
-        kind: 'static-resource-scope',
-        rulesVersion: 'f308-scope-v1',
-        source: 'fixture:redis',
-        markers: ['redis'],
-      },
+      isolationEvidence: { kind: 'runtime-external-resource-guard' },
     },
   },
 };
@@ -76,11 +79,12 @@ describe('F308 public-test shard runner', () => {
     const calls = [];
     const report = await runPublicTestLane({
       plan,
-      lane: 'pure-1',
+      lane: 'distributable-1',
       packageRoot: process.cwd(),
       manifest,
-      executeFile: async ({ file }) => {
+      executeFile: async ({ file, resourceScope }) => {
         calls.push(file);
+        assert.equal(resourceScope, 'distributable');
         return {
           file,
           status: 'passed',
@@ -106,9 +110,9 @@ describe('F308 public-test shard runner', () => {
 
   it('does not run a later file after the first hard failure', async () => {
     const twoFilePlan = structuredClone(plan);
-    twoFilePlan.pureShards[0].files = ['test/pure-alpha.test.js', 'test/pure-beta.test.js'];
-    twoFilePlan.pureShards[1].files = [];
-    twoFilePlan.assignments['test/pure-beta.test.js'].lane = 'pure-1';
+    twoFilePlan.distributableShards[0].files = ['test/pure-alpha.test.js', 'test/pure-beta.test.js'];
+    twoFilePlan.distributableShards[1].files = [];
+    twoFilePlan.assignments['test/pure-beta.test.js'].lane = 'distributable-1';
     const unsigned = { ...twoFilePlan };
     delete unsigned.planFingerprint;
     twoFilePlan.planFingerprint = createHash('sha256')
@@ -117,7 +121,7 @@ describe('F308 public-test shard runner', () => {
     const calls = [];
     const report = await runPublicTestLane({
       plan: twoFilePlan,
-      lane: 'pure-1',
+      lane: 'distributable-1',
       packageRoot: process.cwd(),
       manifest,
       executeFile: async ({ file }) => {
@@ -142,13 +146,13 @@ describe('F308 public-test shard runner', () => {
   });
 
   it('rejects a manifest or lane that cannot prove exact selected-file provenance', async () => {
-    assert.deepEqual(filesForPublicTestLane(plan, 'serial-local-1'), ['test/serial-redis.test.js']);
+    assert.deepEqual(filesForPublicTestLane(plan, 'distributable-3'), ['test/serial-redis.test.js']);
     assert.deepEqual(filesForPublicTestLane(plan, 'serial-shared'), []);
-    assert.throws(() => filesForPublicTestLane(plan, 'pure-9'), /unknown public-test shard lane/);
+    assert.throws(() => filesForPublicTestLane(plan, 'distributable-10'), /unknown public-test shard lane/);
     await assert.rejects(
       runPublicTestLane({
         plan,
-        lane: 'pure-1',
+        lane: 'distributable-1',
         packageRoot: process.cwd(),
         manifest: { ...manifest, exclusionRegistryHash: 'd'.repeat(64) },
       }),
