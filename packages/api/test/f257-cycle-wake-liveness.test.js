@@ -206,6 +206,52 @@ describe('F257 cycle wake liveness: only an exact delivery receipt starts a writ
     assert.deepEqual(await h.current(), running, 'observing it again restamps nothing');
   });
 
+  test('a late duplicate assignment after delivery admits nothing and changes nothing', async () => {
+    const h = await harness();
+    const requested = await h.current();
+    await h.coordinator.reconcileKnownCycles(100);
+    const wake = (await h.current()).assignmentMessageId;
+    h.wakes.expose(wake, 150);
+    h.wakes.complete(wake); // the evaluator's invocation already finished
+    await h.coordinator.reconcileKnownCycles(200);
+    const running = await h.current();
+
+    await h.coordinator.ensureAssignment(requested); // a stale caller arrives late with the pre-assignment record
+    assert.deepEqual(await h.current(), running);
+    assert.equal(h.wakes.triggers.length, 1, 'a delivered source is never re-admitted to the Queue');
+    assert.deepEqual(h.wakes.poisonRows, []);
+  });
+
+  test('a delivery whose cycle CAS never landed is replayed after restart without a second admission', async () => {
+    const h = await harness();
+    const requested = await h.current();
+    const crashed = h.coordinator.ensureObjectiveThread('obj', 'owner-1');
+    const thread = await crashed;
+    // The process delivered the wake and died before recording it on the cycle.
+    const wake = await h.coordinator.deliverAndWake(requested, thread.threadId, thread.catId, 'x', 'assignment');
+    h.wakes.expose(wake, 150);
+    h.wakes.complete(wake);
+    assert.equal((await h.current()).assignedAt, undefined);
+
+    const reborn = h.restart();
+    await reborn.reconcileKnownCycles(5_000);
+    await reborn.reconcileKnownCycles(6_000);
+    const recovered = await h.current();
+    assert.equal(recovered.assignmentMessageId, wake, 'the same key returns the same wake');
+    assert.equal(recovered.assignedAt, 150, 'and its receipt still dates the clock exactly');
+    assert.equal(h.wakes.triggers.length, 1);
+    assert.deepEqual(h.wakes.poisonRows, []);
+  });
+
+  test('concurrent sends of one wake share one delivery', async () => {
+    const h = await harness();
+    const requested = await h.current();
+    await Promise.all([h.coordinator.ensureAssignment(requested), h.coordinator.ensureAssignment(requested)]);
+    assert.equal(h.wakes.deliveries.length, 1);
+    assert.equal(h.wakes.triggers.length, 1);
+    assert.deepEqual(h.wakes.poisonRows, []);
+  });
+
   test('a wake that can never be delivered does not freeze the cycle forever', async () => {
     const h = await harness();
     await h.coordinator.reconcileKnownCycles(100);

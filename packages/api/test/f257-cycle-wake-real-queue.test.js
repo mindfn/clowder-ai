@@ -23,10 +23,10 @@ const threadId = 'thread_eval_f257_obj';
 const catId = 'codex-sol';
 const record = { ownerUserId: 'owner-1', cycleId: 'cycle-1' };
 
-function realQueue() {
-  const messageStore = new MessageStore();
+/** One API process over the durable message store; pass an existing store to model a restart. */
+function realQueue({ messageStore = new MessageStore(), busy = true } = {}) {
   const queue = new InvocationQueue();
-  const evaluator = { busy: true };
+  const evaluator = { busy };
   const providerStarts = [];
   const invocationTracker = {
     start: () => new AbortController(),
@@ -99,19 +99,23 @@ function realQueue() {
     invocationTracker,
     invocationQueue: queue,
     queueProcessor: processor,
+    queueCustodyCoordinator: custody,
     messageStore,
     log,
   });
   const delivery = new CycleEvaluationDelivery({
     runtime: { catalog: { registry: { objectives: [] } } },
     threadStore: {},
+    messageStore,
     deliver: createDeliverFn({ messageStore, socketManager }),
     getInvokeTrigger: () => trigger,
     getDefaultCatId: () => catId,
   });
   const receipt = async (id) => resolveCycleWakeReceipt(await messageStore.getById(id));
   const row = (id) => queue.findEntryWithMessageId(threadId, id);
-  return { messageStore, processor, delivery, evaluator, providerStarts, failure, receipt, row };
+  const rows = () => queue.list(threadId, record.ownerUserId);
+  const send = (kind) => delivery.deliverWake(record, threadId, catId, `## F257 Cycle Evaluation ${kind}`, kind);
+  return { messageStore, queue, processor, delivery, evaluator, providerStarts, failure, receipt, row, rows, send };
 }
 
 test('a wake queued behind a busy evaluator is custodied; a failed start leaves it undelivered; the exposure delivers it', async () => {
@@ -169,4 +173,69 @@ test('an idle evaluator gets the force-queued wake at once, with the same durabl
   await settle();
   assert.equal(q.providerStarts.length, 1, 'force-queue does not delay an idle thread');
   assert.equal((await q.receipt(wakeId)).state, 'delivered');
+});
+
+// Review 2026-09-18 (round 2): the wake key is idempotent, so a replay returns the
+// original message — after a crash between delivery and the cycle CAS, or from a
+// late duplicate assignment. Re-admitting a source whose custody is already
+// terminal creates a connector row that can never take durable ownership.
+test('replaying a wake that was already delivered creates no Queue row and starts nothing, in this process or the next', async () => {
+  const q = realQueue({ busy: false });
+  const wakeId = await q.send('assignment');
+  await settle();
+  assert.equal(q.providerStarts.length, 1);
+  assert.equal((await q.receipt(wakeId)).state, 'delivered');
+  assert.equal((await q.messageStore.getById(wakeId)).queueCustody?.status, 'terminal');
+
+  assert.equal(await q.send('assignment'), wakeId, 'the same key returns the same message');
+  await settle();
+  assert.equal(q.providerStarts.length, 1, 'the provider is not started again');
+  assert.equal(q.row(wakeId), null, 'no carrier without custody is left behind');
+  assert.deepEqual(q.rows(), []);
+
+  // The cycle CAS never landed and the API restarted: only the message store survives.
+  const reborn = realQueue({ messageStore: q.messageStore, busy: false });
+  assert.equal(await reborn.send('assignment'), wakeId);
+  await settle();
+  assert.equal(reborn.providerStarts.length, 0);
+  assert.deepEqual(reborn.rows(), []);
+});
+
+test('replaying a wake the operator canceled creates no Queue row either', async () => {
+  const q = realQueue({ busy: true });
+  const wakeId = await q.send('retrigger');
+  await settle();
+  const carrier = q.row(wakeId);
+  assert.ok(q.queue.remove(threadId, record.ownerUserId, carrier.id));
+  assert.equal(q.messageStore.markCanceled(wakeId)?.deliveryStatus, 'canceled');
+  assert.deepEqual(await q.receipt(wakeId), { state: 'dead' });
+
+  q.evaluator.busy = false;
+  assert.equal(await q.send('retrigger'), wakeId);
+  await settle();
+  assert.equal(q.providerStarts.length, 0);
+  assert.deepEqual(q.rows(), []);
+});
+
+test('a wake still pending when the process restarts is taken over by its exact custody and delivered once', async () => {
+  const q = realQueue({ busy: true });
+  const wakeId = await q.send('assignment');
+  await settle();
+  assert.deepEqual(await q.receipt(wakeId), { state: 'pending' });
+  const firstEntryId = (await q.messageStore.getById(wakeId)).queueCustody.entryId;
+
+  // Restart: the in-memory row is gone, the custody on the message is still live.
+  const reborn = realQueue({ messageStore: q.messageStore, busy: false });
+  assert.equal(await reborn.send('assignment'), wakeId);
+  await settle();
+  assert.equal(reborn.providerStarts.length, 1, 'the pending wake is delivered, exactly once');
+  const custody = (await reborn.messageStore.getById(wakeId)).queueCustody;
+  assert.notEqual(custody.entryId, firstEntryId, 'custody moved to the verified replacement carrier');
+  assert.equal(custody.bodyExposures?.length, 1);
+  assert.equal((await reborn.receipt(wakeId)).state, 'delivered');
+
+  assert.equal(await reborn.send('assignment'), wakeId);
+  await settle();
+  assert.equal(reborn.providerStarts.length, 1);
+  assert.deepEqual(reborn.rows(), []);
 });
