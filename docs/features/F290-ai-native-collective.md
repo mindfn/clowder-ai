@@ -182,7 +182,9 @@ Workbench。
    产品入口；PR #4296 已完成 review 与合入。它仍须用真实 GitHub 账号从
    干净 Alpha 完成首次创建、授权、登录与当前 Café pairing，才能勾选 AC-L1 或打开本机激活门。
 2. **真实 Collective 入口 / world switch**：生产 Clowder AI 尚未把 5102 baseline 的 global rail、
-   Collective destination 与返回个人 Café 的完整旅程做实。
+   Collective destination 与返回个人 Café 的完整旅程做实。operator 于 2026-09-18 明确要求在这条旅程
+   完整前隐藏现有 Activity Rail 入口与主动 capability tips；route 与已安装 Connector 的 Settings 恢复入口保留，
+   KD-3 仍是完成后的终态，不得把当前隐藏误记为 F290 已交付。
 3. **Roadmap operating model**：Roadmap 还没有成为从 Channel / Meeting / Decision 生长出 Work、
    显示依赖与历史、再回流结果的团队运行面。
 4. **共同产物系统**：Asset / Artifact library、树与派生、版本、lineage、锚定批注、权限和结果

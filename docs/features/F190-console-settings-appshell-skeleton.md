@@ -632,9 +632,32 @@ Header 和 Sidebar 松紧不同**是设计意图**（spacious vs default），�
 - ChatContainerHeader.tsx 是 F183/F184/F194 红区文件，D-1/D-2/D-3 修改前必须获得 operator override 确认
 - ChatContainer/AppShell ownership 涉及 F183/F184/F194 红区，D-7 必须小刀修改 + focused smoke，不得整文件覆盖
 - 不开新 Feature，以 F190 follow-up PR 形式修复
-- 所有入口去重必须确保 ActivityBar 对应入口仍在且可用
+- ActivityBar 只承担核心入口与用户主动固定的 Settings shortcut；非核心目的地必须有 Settings 或 Workspace
+  替代入口，不再要求每项能力都占一个 rail button（2026-09-18 入口收敛裁决）。
 - IM connector 修复必须保留家里 owner-gated secret write / redaction / hot reload 语义；恢复 source UX，不回退安全边界
 - Signal 修复必须保留家里 stats/batch/timeline/tier filter，只补开源缺口
+
+## Phase H: Activity Rail 入口收敛（2026-09-18）
+
+> Source: `thread_mu5cf8fpujtesgzn#0001789638449393-000639-09e31777` +
+> `thread_mu5cf8fpujtesgzn#0001789700666600-000982-df932f7e`（operator）。
+
+Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留 **对话 / 主题 / 设置**；只有用户从 Settings
+主动固定的分区可以排在对话之后。正在进行的演示浮窗允许出现临时召回控制，但不属于默认入口。
+
+- 安装包通过 `window.desktopBridge` 识别；首次启动只播种一次 `members` 与 `accounts` pins。
+- 一次播种后以持久化用户选择为准：用户取消固定后，后续启动不得重新添加。
+- 常驻对话与 pinned Settings shortcut 共用 rail 的 `gap-1.5`，中间不放 divider 或额外 margin。
+- Collective 与猫猫星球在能力未完整前不暴露产品入口；route 保留供开发与既有 deep link 使用。
+- Approval / Needs Me 归 Workspace launcher，猫猫球显示状态归 Settings；它们不再占默认 rail button。
+
+### Phase H Acceptance Criteria
+
+- [x] 默认 web rail 只渲染对话、主题、设置。
+- [x] packaged desktop 首次启动固定成员与运行时、账户与密钥；取消后重新挂载不恢复。
+- [x] pinned shortcut 紧邻对话且无分隔线。
+- [x] Collective 与猫猫星球不出现在 Activity Rail。
+- [x] Approval projection 继续全局同步；猫猫球 Settings 文案不再引用已移除的 rail 入口。
 
 ## Review Gate
 
