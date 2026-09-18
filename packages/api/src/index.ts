@@ -3460,9 +3460,6 @@ async function main(): Promise<void> {
         deliver: schedulerDeliver,
         getInvokeTrigger: () => invokeTriggerHolder.get(),
         getDefaultCatId,
-        // A wake accepted behind an active invocation has not reached the evaluator yet.
-        isWakeQueued: (threadId, messageId) =>
-          invocationQueue.findEntryWithMessageId(threadId, messageId)?.status === 'queued',
         log: app.log,
       })
     : undefined;

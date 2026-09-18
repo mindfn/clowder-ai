@@ -1,32 +1,33 @@
-// F257: a writeback clock measures the time an evaluator had to answer. A wake
-// that is still waiting in the invocation queue behind an active invocation
-// has given the evaluator no time at all, so it must not start that clock.
+// F257: a writeback clock measures the time an evaluator had to answer, so it
+// starts at the exact moment the wake's body reached a provider invocation — the
+// durable, append-only exposure on the wake message's Queue custody.
 // Production 2026-09-15 (S13): the only retrigger was enqueued behind a silent
 // evaluator invocation at 11:54, the second 30-minute window ran anyway, and the
 // cycle was declared stalled at 12:35 — 58 minutes before the retrigger even ran.
+// Review 2026-09-18: "no longer queued" is not delivery either. The queue moves
+// queued → processing → queued when a start fails, and forgets its rows on restart.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { catalog, FakeRedis, FakeThreadStore, principal, submission, trace } from './f257-stalled-cycle-fixture.js';
+import {
+  catalog,
+  FakeRedis,
+  FakeThreadStore,
+  FakeWakeQueue,
+  principal,
+  submission,
+  trace,
+} from './f257-stalled-cycle-fixture.js';
 
 const { CycleEvaluationCoordinator, CYCLE_WRITEBACK_TIMEOUT_MS: T } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js'
 );
 const { CycleRecordStore } = await import('../dist/infrastructure/harness-eval/evaluation/CycleRecordStore.js');
 
-/** A requested cycle whose wakes answer with a scripted outcome and whose queue state is controllable. */
-async function harness({ outcomes }) {
-  const redis = new FakeRedis();
+/** One API process: everything it holds in memory is rebuilt, only Redis and the stored messages are shared. */
+function processOver(redis, wakes, clock) {
   const cycles = new CycleRecordStore(redis);
-  const idle = await cycles.initialize('owner-1', 'obj', 0, { version: 'v1', versionContentRef: 'hooks:D1@1' });
-  const requested = { ...idle, cycleEnd: 1_000, evalStatus: 'requested', windows: [{ start: 0, end: 1_000 }] };
-  assert.equal(await cycles.request(idle, requested), true);
   const traces = [trace('inv-1', 500)];
-  const deliveries = [];
-  const deliveredByKey = new Map();
-  const queued = new Set();
-  const clock = { now: 100 };
-  const scripted = [...outcomes];
   const coordinator = new CycleEvaluationCoordinator({
     runtime: {
       catalog,
@@ -47,110 +48,183 @@ async function harness({ outcomes }) {
       cycleChecker: { setRequestedHandler() {} },
     },
     threadStore: new FakeThreadStore(),
-    messageStore: {
-      async getByIds() {
-        return [];
-      },
-    },
-    async deliver(input) {
-      const existing = deliveredByKey.get(input.idempotencyKey);
-      if (existing) return existing;
-      const id = `message-${deliveries.length + 1}`;
-      deliveries.push({ id, ...input });
-      deliveredByKey.set(input.idempotencyKey, id);
-      return id;
-    },
-    getInvokeTrigger: () => ({
-      async trigger(_threadId, _catId, _userId, _reason, messageId) {
-        const outcome = scripted.shift() ?? 'dispatched';
-        if (outcome === 'enqueued') queued.add(messageId);
-        return outcome;
-      },
-    }),
-    isWakeQueued: (_threadId, messageId) => queued.has(messageId),
+    messageStore: wakes.messageStore,
+    deliver: wakes.deliver,
+    getInvokeTrigger: () => wakes.invokeTrigger,
     getDefaultCatId: () => 'cat-default',
     now: () => clock.now,
   });
-  const count = (word) => deliveries.filter((item) => item.content.includes(word)).length;
-  const current = () => cycles.current('owner-1', 'obj');
-  return { cycles, coordinator, deliveries, queued, clock, count, current };
+  return { cycles, coordinator };
 }
 
-describe('F257 cycle wake liveness: a queued wake starts no writeback clock', () => {
-  test('a retrigger queued behind a running invocation cannot stall the cycle until it is dispatched', async () => {
-    const h = await harness({ outcomes: ['dispatched', 'enqueued'] });
+/** A requested cycle on an evaluation thread whose queue never starts a wake unless the test says so. */
+async function harness() {
+  const redis = new FakeRedis();
+  const clock = { now: 100 };
+  const wakes = new FakeWakeQueue({ clock, autoDeliver: false });
+  const { cycles, coordinator } = processOver(redis, wakes, clock);
+  const idle = await cycles.initialize('owner-1', 'obj', 0, { version: 'v1', versionContentRef: 'hooks:D1@1' });
+  const requested = { ...idle, cycleEnd: 1_000, evalStatus: 'requested', windows: [{ start: 0, end: 1_000 }] };
+  assert.equal(await cycles.request(idle, requested), true);
+  return {
+    wakes,
+    coordinator,
+    current: () => cycles.current('owner-1', 'obj'),
+    restart: () => processOver(redis, wakes, clock).coordinator,
+  };
+}
+
+/** requested → assignment delivered at 150 → retriggered at 150 + T, the retrigger still waiting in the queue. */
+async function queuedRetrigger() {
+  const h = await harness();
+  await h.coordinator.reconcileKnownCycles(100);
+  h.wakes.expose((await h.current()).assignmentMessageId, 150);
+  await h.coordinator.reconcileKnownCycles(200);
+  await h.coordinator.reconcileKnownCycles(150 + T);
+  const retriggered = await h.current();
+  assert.equal(retriggered.evalStatus, 'retriggered');
+  assert.equal(retriggered.pendingWakeMessageId, retriggered.retriggerMessageId, 'the retrigger awaits its receipt');
+  return { ...h, retriggered };
+}
+
+describe('F257 cycle wake liveness: only an exact delivery receipt starts a writeback clock', () => {
+  test('every wake is stored queued and force-queued, so the Queue keeps durable custody of it', async () => {
+    const h = await harness();
     await h.coordinator.reconcileKnownCycles(100);
+    assert.equal(h.wakes.deliveries[0].deliveryStatus, 'queued');
+    assert.equal(h.wakes.triggers[0].policy?.forceQueue, true);
     const assigned = await h.current();
-    assert.equal(assigned.pendingWakeMessageId, undefined, 'a dispatched assignment is not pending');
-
-    await h.coordinator.reconcileKnownCycles(assigned.assignedAt + T);
-    const retriggered = await h.current();
-    assert.equal(retriggered.evalStatus, 'retriggered');
-    assert.equal(retriggered.pendingWakeMessageId, retriggered.retriggerMessageId, 'the queued retrigger is marked');
-
-    // The original invocation stays active for hours: the retrigger never got its turn.
-    await h.coordinator.reconcileKnownCycles(retriggered.retriggeredAt + T);
-    await h.coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 5 * T);
-    assert.equal((await h.current()).evalStatus, 'retriggered', 'a queued retrigger is not a failed retrigger');
-    assert.equal(h.count('Stalled'), 0);
-
-    // The queue dispatches it: the second window starts when the evaluator actually got the wake.
-    h.queued.clear();
-    const dispatchedAt = retriggered.retriggeredAt + 6 * T;
-    await h.coordinator.reconcileKnownCycles(dispatchedAt);
-    const running = await h.current();
-    assert.equal(running.evalStatus, 'retriggered');
-    assert.equal(running.pendingWakeMessageId, undefined);
-    assert.equal(running.retriggeredAt, dispatchedAt, 'the writeback window is restamped at dispatch');
-
-    await h.coordinator.reconcileKnownCycles(dispatchedAt + T - 1);
-    assert.equal((await h.current()).evalStatus, 'retriggered');
-    await h.coordinator.reconcileKnownCycles(dispatchedAt + T);
-    await h.coordinator.reconcileKnownCycles(dispatchedAt + 3 * T);
-    assert.equal((await h.current()).evalStatus, 'stalled');
-    assert.equal(h.count('Stalled'), 1, 'exactly one stall alert');
-    assert.equal(h.count('Retrigger'), 1, 'exactly one retrigger');
+    assert.equal(assigned.pendingWakeMessageId, assigned.assignmentMessageId, 'sent is not delivered');
   });
 
-  test('an assignment queued behind a running invocation starts no retrigger clock either', async () => {
-    const h = await harness({ outcomes: ['enqueued', 'dispatched'] });
+  test('the clock starts at the exact first exposure, not at the tick that noticed it', async () => {
+    const h = await harness();
+    await h.coordinator.reconcileKnownCycles(100);
+    const { assignmentMessageId } = await h.current();
+    h.wakes.expose(assignmentMessageId, 150);
+    h.wakes.expose(assignmentMessageId, 900, 'a-retry-after-a-crash');
+    await h.coordinator.reconcileKnownCycles(40_000);
+    const running = await h.current();
+    assert.equal(running.assignedAt, 150);
+    assert.equal(running.pendingWakeMessageId, undefined);
+  });
+
+  test('an assignment reserved and rolled back by a failed start has not reached the evaluator', async () => {
+    const h = await harness();
     await h.coordinator.reconcileKnownCycles(100);
     const assigned = await h.current();
-    assert.equal(assigned.pendingWakeMessageId, assigned.assignmentMessageId);
+    const wake = assigned.assignmentMessageId;
 
+    h.wakes.reserve(wake); // queued → processing; reconciliation lands inside this window
+    await h.coordinator.reconcileKnownCycles(assigned.assignedAt + 10);
+    assert.equal((await h.current()).pendingWakeMessageId, wake, 'processing is not a delivery receipt');
+    h.wakes.rollback(wake); // the start failed: processing → queued
+
+    await h.coordinator.reconcileKnownCycles(assigned.assignedAt + T);
     await h.coordinator.reconcileKnownCycles(assigned.assignedAt + 4 * T);
-    assert.equal(h.count('Retrigger'), 0, 'the evaluator has not even received the assignment');
+    assert.equal(
+      h.wakes.count('Retrigger'),
+      0,
+      'a wake waiting again after a failed start has not reached the evaluator',
+    );
     assert.equal((await h.current()).evalStatus, 'requested');
 
-    h.queued.clear();
-    const dispatchedAt = assigned.assignedAt + 5 * T;
-    await h.coordinator.reconcileKnownCycles(dispatchedAt);
-    assert.equal((await h.current()).assignedAt, dispatchedAt);
-    assert.equal(h.count('Retrigger'), 0);
-    await h.coordinator.reconcileKnownCycles(dispatchedAt + T);
-    assert.equal(h.count('Retrigger'), 1);
+    const deliveredAt = assigned.assignedAt + 5 * T;
+    h.wakes.expose(wake, deliveredAt);
+    await h.coordinator.reconcileKnownCycles(deliveredAt + 1_000);
+    assert.equal((await h.current()).assignedAt, deliveredAt);
+    await h.coordinator.reconcileKnownCycles(deliveredAt + T - 1);
+    assert.equal(h.wakes.count('Retrigger'), 0);
+    await h.coordinator.reconcileKnownCycles(deliveredAt + T);
+    assert.equal(h.wakes.count('Retrigger'), 1);
     assert.equal((await h.current()).evalStatus, 'retriggered');
   });
 
-  test('a writeback that lands while the retrigger is still queued wins, and the late dispatch changes nothing', async () => {
-    const h = await harness({ outcomes: ['dispatched', 'enqueued'] });
-    await h.coordinator.reconcileKnownCycles(100);
-    const assigned = await h.current();
-    await h.coordinator.reconcileKnownCycles(assigned.assignedAt + T);
-    const retriggered = await h.current();
-    assert.ok(retriggered.pendingWakeMessageId);
+  test('a retrigger queued behind a running invocation cannot stall the cycle, through a failed start or not', async () => {
+    const { coordinator, wakes, current, retriggered } = await queuedRetrigger();
+    const wake = retriggered.retriggerMessageId;
+
+    // The original invocation stays active for hours: the retrigger never got its turn.
+    await coordinator.reconcileKnownCycles(retriggered.retriggeredAt + T);
+    await coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 5 * T);
+    wakes.reserve(wake);
+    await coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 5 * T + 1);
+    wakes.rollback(wake);
+    await coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 7 * T);
+    assert.deepEqual(await current(), retriggered, 'nothing moved: a queued retrigger is not a failed retrigger');
+    assert.equal(wakes.count('Stalled'), 0);
+
+    const deliveredAt = retriggered.retriggeredAt + 8 * T;
+    wakes.expose(wake, deliveredAt);
+    await coordinator.reconcileKnownCycles(deliveredAt + 40_000);
+    const running = await current();
+    assert.equal(running.evalStatus, 'retriggered');
+    assert.equal(running.pendingWakeMessageId, undefined);
+    assert.equal(running.retriggeredAt, deliveredAt, 'the second window starts when the evaluator got the wake');
+
+    await coordinator.reconcileKnownCycles(deliveredAt + T - 1);
+    assert.equal((await current()).evalStatus, 'retriggered');
+    await coordinator.reconcileKnownCycles(deliveredAt + T);
+    await coordinator.reconcileKnownCycles(deliveredAt + 3 * T);
+    assert.equal((await current()).evalStatus, 'stalled');
+    assert.equal(wakes.count('Stalled'), 1, 'exactly one stall alert');
+    assert.equal(wakes.count('Retrigger'), 1, 'exactly one retrigger');
+  });
+
+  test('a writeback that lands first wins, and the late receipt changes nothing', async () => {
+    const { coordinator, wakes, current, retriggered } = await queuedRetrigger();
 
     // The original, slow invocation finally writes back.
-    const result = await h.coordinator.submitEvaluation(principal, { ...submission, cycleId: retriggered.cycleId });
+    const result = await coordinator.submitEvaluation(principal, { ...submission, cycleId: retriggered.cycleId });
     assert.equal(result.outcome, 'written');
-    const written = await h.current();
+    const written = await current();
     assert.equal(written.evalStatus, 'written');
     assert.equal(written.pendingWakeMessageId, undefined, 'a written cycle has no pending wake');
 
-    // The queued retrigger is dispatched afterwards; reconciliation must not reopen or restamp anything.
-    h.queued.clear();
-    await h.coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 10 * T);
-    assert.deepEqual(await h.current(), written);
-    assert.equal(h.count('Stalled'), 0);
+    wakes.expose(retriggered.retriggerMessageId, retriggered.retriggeredAt + 9 * T);
+    await coordinator.reconcileKnownCycles(retriggered.retriggeredAt + 10 * T);
+    assert.deepEqual(await current(), written);
+    assert.equal(wakes.count('Stalled'), 0);
+  });
+
+  test('a restarted process reaches the same judgment from durable truth alone', async () => {
+    const h = await harness();
+    await h.coordinator.reconcileKnownCycles(100);
+    const assigned = await h.current();
+
+    // Restart while the wake still waits: nothing in memory survives, the wake is still undelivered.
+    await h.restart().reconcileKnownCycles(assigned.assignedAt + 4 * T);
+    assert.deepEqual(await h.current(), assigned);
+    assert.equal(h.wakes.count('Retrigger'), 0);
+
+    const deliveredAt = assigned.assignedAt + 5 * T;
+    h.wakes.expose(assigned.assignmentMessageId, deliveredAt);
+    await h.restart().reconcileKnownCycles(deliveredAt + 5_000);
+    const running = await h.current();
+    assert.equal(running.assignedAt, deliveredAt, 'the receipt time, however late a process observes it');
+    await h.restart().reconcileKnownCycles(deliveredAt + 9_000);
+    assert.deepEqual(await h.current(), running, 'observing it again restamps nothing');
+  });
+
+  test('a wake that can never be delivered does not freeze the cycle forever', async () => {
+    const h = await harness();
+    await h.coordinator.reconcileKnownCycles(100);
+    h.wakes.cancel((await h.current()).assignmentMessageId); // the operator cleared the queue before it ran
+
+    await h.coordinator.reconcileKnownCycles(1_000);
+    const abandoned = await h.current();
+    assert.equal(abandoned.pendingWakeMessageId, undefined);
+    assert.equal(abandoned.assignedAt, 1_000, 'the bounded retry clock starts when the loss is observed');
+
+    await h.coordinator.reconcileKnownCycles(1_000 + T - 1);
+    assert.equal(h.wakes.count('Retrigger'), 0);
+    await h.coordinator.reconcileKnownCycles(1_000 + T);
+    const retriggered = await h.current();
+    assert.equal(retriggered.evalStatus, 'retriggered');
+    assert.equal(
+      retriggered.pendingWakeMessageId,
+      retriggered.retriggerMessageId,
+      'the retry is a fresh custodied wake',
+    );
   });
 });

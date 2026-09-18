@@ -37,7 +37,7 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 
 `stalled` 不是终态（2026-09-15，生产首个 stalled 周期把 Objective 冻死后补）：它只表示自动催促已用尽，周期保留两个人工出口——① 评估 thread 迟到回写：读池与 `submit_cycle_evaluation` 对 stalled 保持开放，写回后照常进入 governance，`insufficient_evidence` 照常归档并开启下一周期；② operator 手动切版 / 创建版本（见 1.2）：不依赖评估猫，终止该周期并开启下一周期。告警消息明写这两个出口。
 
-回写计时的口径（同日补）：T 计的是**评估猫拿到唤醒之后**的时间。assignment 或重触发若因评估线程仍有 active invocation 而只是进入队列（trigger 返回 `enqueued`），记录 `pendingWakeMessageId`，排队期间不重触发、不判 stalled；reconcile 观察到该唤醒已 dispatch 时把 `assignedAt` / `retriggeredAt` 重盖为当时，再开始计 T。评估 invocation 本身长时间 active-but-silent 属执行运行时的 watchdog 问题，不由 F257 状态机代偿。
+回写计时的口径（同日补，2026-09-18 复审后改为回执口径）：T 计的是**评估猫拿到唤醒之后**的时间。每条 assignment / 重触发都以 `queued` 落库并强制经 Queue 投递（线程空闲时立即启动），因此每条唤醒都有持久 Queue custody；发出即记录 `pendingWakeMessageId`。**投递回执** = 该唤醒消息 custody 上最早一条 exact body exposure（只追加，跨重启存活）：回执出现前不重触发、不判 stalled；出现后 reconcile 把 `assignedAt` / `retriggeredAt` 重盖为回执自身的 `seenAt`（与哪个进程、何时观察到无关）再开始计 T。队列位置不是回执——启动失败会让条目 `queued → processing → queued` 而评估猫从未见过正文。唤醒若已不可能投递（消息已取消，或 custody 终结而无 exposure），自观察到之时起算有界重试，不永久冻结。回执一直不出现（评估 invocation 长时间 active-but-silent、队列停住）属执行运行时 / Queue 的活性问题，不由 F257 状态机代偿：此时周期停在原状态且 F257 不发告警，可见面是评估线程的 Queue。
 
 ☑ 走查正确（07:37）
 

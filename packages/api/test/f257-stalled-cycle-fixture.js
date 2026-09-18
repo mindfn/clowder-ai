@@ -153,6 +153,85 @@ export const submission = {
   },
 };
 
+/**
+ * The durable side of an evaluation wake: the stored message plus the Queue
+ * custody the connector trigger initializes on it. Like production, custody is
+ * created only for a message stored as `queued` and force-queued; tests then
+ * move it through the states the real queue moves it through.
+ * `autoDeliver` models an idle evaluation thread (queued, then started at once).
+ */
+export class FakeWakeQueue {
+  messages = new Map();
+  deliveries = [];
+  triggers = [];
+  #byKey = new Map();
+  #clock;
+  #autoDeliver;
+  constructor({ clock = { now: 0 }, autoDeliver = true } = {}) {
+    this.#clock = clock;
+    this.#autoDeliver = autoDeliver;
+  }
+  deliver = async (input) => {
+    const existing = this.#byKey.get(input.idempotencyKey);
+    if (existing) return existing;
+    const id = `message-${this.deliveries.length + 1}`;
+    this.deliveries.push({ id, ...input });
+    this.#byKey.set(input.idempotencyKey, id);
+    this.messages.set(id, { id, threadId: input.threadId, deliveryStatus: input.deliveryStatus });
+    return id;
+  };
+  invokeTrigger = {
+    trigger: async (threadId, catId, userId, reason, messageId, _blocks, policy) => {
+      this.triggers.push({ threadId, catId, userId, reason, messageId, policy });
+      const message = this.messages.get(messageId);
+      if (policy?.forceQueue && message?.deliveryStatus === 'queued' && !message.queueCustody) {
+        message.queueCustody = {
+          version: 1,
+          entryId: `entry-${messageId}`,
+          revision: 1,
+          status: 'queued',
+          allTargetCats: [catId],
+          pendingTargetCats: [catId],
+          priority: 'normal',
+          createdAt: this.#clock.now,
+          updatedAt: this.#clock.now,
+        };
+      }
+      if (this.#autoDeliver) this.expose(messageId, this.#clock.now);
+      return policy?.forceQueue ? 'enqueued' : 'dispatched';
+    },
+  };
+  messageStore = {
+    getById: async (id) => structuredClone(this.messages.get(id) ?? null),
+    getByIds: async () => [],
+  };
+  count(word) {
+    return this.deliveries.filter((item) => item.content.includes(word)).length;
+  }
+  /** queued → processing: the queue reserved the entry; no provider child has the body yet. */
+  reserve(id) {
+    this.messages.get(id).queueCustody.status = 'processing';
+  }
+  /** processing → queued: the start failed before the body reached a provider child. */
+  rollback(id) {
+    this.messages.get(id).queueCustody.status = 'queued';
+  }
+  /** Append-only exact body exposure, as bound at the provider launch boundary. */
+  expose(id, seenAt, invocationId = `invocation-${id}-${seenAt}`) {
+    const custody = this.messages.get(id)?.queueCustody;
+    if (!custody) return;
+    const [targetCatId] = custody.allTargetCats;
+    custody.bodyExposures = [...(custody.bodyExposures ?? []), { targetCatId, invocationId, seenAt }];
+  }
+  /** The operator cleared the queue before the wake ever ran. */
+  cancel(id) {
+    const message = this.messages.get(id);
+    message.deliveryStatus = 'canceled';
+    message.queueCustody.status = 'terminal';
+    message.queueCustody.pendingTargetCats = [];
+  }
+}
+
 /** idle → requested (frozen window [0, 1000]) → retriggered → stalled, through the store CAS only. */
 export async function stalledRecord(store) {
   const idle = await store.initialize('owner-1', 'obj', 0, { version: 'v1', versionContentRef: 'hooks:D1@1' });

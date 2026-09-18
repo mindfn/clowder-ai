@@ -5,7 +5,11 @@ import type { IThreadStore } from '../../../domains/cats/services/stores/ports/T
 import type { DeliverOpts, ScheduleInvokeTrigger } from '../../scheduler/types.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { buildCycleAssignment, formatCycleAssignment, MAX_CYCLE_ASSIGNMENT_BYTES } from './CycleEvaluationContent.js';
-import { CycleEvaluationDelivery, cycleEvaluationThreadId } from './CycleEvaluationDelivery.js';
+import {
+  CycleEvaluationDelivery,
+  cycleEvaluationThreadId,
+  resolveCycleWakeReceipt,
+} from './CycleEvaluationDelivery.js';
 import { CycleEvaluationEvidence } from './CycleEvaluationEvidence.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
@@ -28,16 +32,11 @@ export class CycleEvaluationCoordinator {
     private readonly deps: {
       runtime: ObjectiveEvaluationRuntime;
       threadStore: IThreadStore;
-      messageStore: Pick<IMessageStore, 'getByIds'>;
+      /** `getById` reads a wake's durable Queue custody: the only source of its delivery receipt. */
+      messageStore: Pick<IMessageStore, 'getByIds' | 'getById'>;
       deliver: (input: DeliverOpts) => Promise<string>;
       getInvokeTrigger: () => ScheduleInvokeTrigger | null;
       getDefaultCatId: () => CatId;
-      /**
-       * True while the wake carried by `messageId` still waits in the invocation
-       * queue (accepted, not yet dispatched). Absent ⇒ every accepted wake counts
-       * as dispatched, which is the pre-queue-aware behaviour.
-       */
-      isWakeQueued?: (threadId: string, messageId: string) => boolean | Promise<boolean>;
       now?: () => number;
       log?: { warn: (value: unknown, message?: string) => void };
     },
@@ -74,15 +73,15 @@ export class CycleEvaluationCoordinator {
     );
     const content = formatCycleAssignment(record, assignment);
     if (Buffer.byteLength(content) > MAX_CYCLE_ASSIGNMENT_BYTES) throw new Error('cycle_assignment_exceeds_limit');
-    const wake = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'assignment');
+    const messageId = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'assignment');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
     await this.deps.runtime.cycles.transition(current, {
       ...current,
       assignmentThreadId: thread.threadId,
-      assignmentMessageId: wake.messageId,
+      assignmentMessageId: messageId,
       assignedAt: this.now(),
-      ...(wake.queued ? { pendingWakeMessageId: wake.messageId } : {}),
+      pendingWakeMessageId: messageId,
     });
   }
 
@@ -198,34 +197,36 @@ export class CycleEvaluationCoordinator {
       `Cycle \`${record.cycleId}\` has no structured evaluation writeback after 30 minutes.`,
       'Read the assignment above and call cat_cafe_submit_cycle_evaluation. This is the only automatic retry.',
     ].join('\n');
-    const wake = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'retrigger');
+    const messageId = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'retrigger');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
     await this.deps.runtime.cycles.transition(current, {
       ...current,
       evalStatus: 'retriggered',
-      retriggerMessageId: wake.messageId,
+      retriggerMessageId: messageId,
       retriggeredAt: now,
-      ...(wake.queued ? { pendingWakeMessageId: wake.messageId } : {}),
+      pendingWakeMessageId: messageId,
     });
   }
 
   /**
-   * A wake accepted into the queue behind an active invocation has given the
-   * evaluator no time yet, so it cannot be counted as unanswered. While it is
-   * still queued nothing advances; once dispatched, the phase window starts at
-   * the moment we observe it (within one reconcile tick of the real dispatch).
-   * The CAS keeps this from overwriting a writeback that landed meanwhile.
+   * A sent wake has given the evaluator no time until its delivery receipt
+   * exists, so nothing advances while the receipt is pending. The phase window
+   * then starts at the receipt's own time — the same value whichever process
+   * observes it, however late. A wake that can never be delivered starts the
+   * bounded retry clock now instead of freezing the cycle. The CAS keeps either
+   * from overwriting a writeback that landed meanwhile.
    */
   private async settlePendingWake(record: CycleRecord, now: number): Promise<void> {
     const messageId = record.pendingWakeMessageId;
     if (messageId === undefined) return;
-    const threadId = record.assignmentThreadId ?? CycleEvaluationCoordinator.threadIdFor(record.objectiveId);
-    if (await this.deps.isWakeQueued?.(threadId, messageId)) return;
-    const { pendingWakeMessageId: _dispatched, ...rest } = record;
+    const receipt = resolveCycleWakeReceipt(await this.deps.messageStore.getById(messageId));
+    if (receipt.state === 'pending') return;
+    const startedAt = receipt.state === 'delivered' ? receipt.deliveredAt : now;
+    const { pendingWakeMessageId: _settled, ...rest } = record;
     await this.deps.runtime.cycles.transition(
       record,
-      record.evalStatus === 'requested' ? { ...rest, assignedAt: now } : { ...rest, retriggeredAt: now },
+      record.evalStatus === 'requested' ? { ...rest, assignedAt: startedAt } : { ...rest, retriggeredAt: startedAt },
     );
   }
 
@@ -272,7 +273,7 @@ export class CycleEvaluationCoordinator {
     content: string,
     kind: string,
   ): Promise<string> {
-    return (await this.delivery.deliverWake(record, threadId, catId, content, kind)).messageId;
+    return this.delivery.deliverWake(record, threadId, catId, content, kind);
   }
 
   private async notifyWritten(record: CycleRecord): Promise<void> {

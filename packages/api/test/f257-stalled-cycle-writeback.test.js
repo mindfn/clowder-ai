@@ -6,7 +6,15 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { catalog, FakeRedis, FakeThreadStore, principal, submission, trace } from './f257-stalled-cycle-fixture.js';
+import {
+  catalog,
+  FakeRedis,
+  FakeThreadStore,
+  FakeWakeQueue,
+  principal,
+  submission,
+  trace,
+} from './f257-stalled-cycle-fixture.js';
 
 const { CycleEvaluationCoordinator, CYCLE_WRITEBACK_TIMEOUT_MS } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js'
@@ -39,30 +47,16 @@ async function stalledHarness() {
     },
     cycleChecker: { setRequestedHandler() {} },
   };
-  const deliveries = [];
-  const deliveredByKey = new Map();
+  // An idle evaluation thread: every wake is queued, custodied, and started at once (clock 5_000).
+  const wakeQueue = new FakeWakeQueue({ clock: { now: 5_000 } });
+  const { deliveries } = wakeQueue;
   const written = [];
   const coordinator = new CycleEvaluationCoordinator({
     runtime,
     threadStore: new FakeThreadStore(),
-    messageStore: {
-      async getByIds() {
-        return [];
-      },
-    },
-    async deliver(input) {
-      const existing = deliveredByKey.get(input.idempotencyKey);
-      if (existing) return existing;
-      const id = `message-${deliveries.length + 1}`;
-      deliveries.push({ id, ...input });
-      deliveredByKey.set(input.idempotencyKey, id);
-      return id;
-    },
-    getInvokeTrigger: () => ({
-      async trigger() {
-        return 'dispatched';
-      },
-    }),
+    messageStore: wakeQueue.messageStore,
+    deliver: wakeQueue.deliver,
+    getInvokeTrigger: () => wakeQueue.invokeTrigger,
     getDefaultCatId: () => 'cat-default',
     now: () => 5_000,
   });
@@ -75,6 +69,7 @@ async function stalledHarness() {
     true,
   );
   await coordinator.reconcileKnownCycles(100 + CYCLE_WRITEBACK_TIMEOUT_MS);
+  await coordinator.reconcileKnownCycles(101 + CYCLE_WRITEBACK_TIMEOUT_MS); // observes the retrigger's delivery receipt
   const retriggered = await cycles.current('owner-1', 'obj');
   await coordinator.reconcileKnownCycles(retriggered.retriggeredAt + CYCLE_WRITEBACK_TIMEOUT_MS);
   const stalled = await cycles.current('owner-1', 'obj');

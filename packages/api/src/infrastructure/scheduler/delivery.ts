@@ -38,6 +38,7 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
       threadId: opts.threadId,
       source: SCHEDULER_SOURCE,
       ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+      ...(opts.deliveryStatus ? { deliveryStatus: opts.deliveryStatus } : {}),
       ...(opts.extra ? { extra: opts.extra } : {}),
     });
     const schedulerExtra = stored.extra?.scheduler ?? opts.extra?.scheduler;

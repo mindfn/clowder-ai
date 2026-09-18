@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { FakeWakeQueue } from './f257-stalled-cycle-fixture.js';
 
 const { CycleEvaluationCoordinator } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js'
@@ -188,29 +189,14 @@ async function harness() {
     },
   };
   const threadStore = new FakeThreadStore();
-  const deliveries = [];
-  const deliveredByKey = new Map();
+  const wakeQueue = new FakeWakeQueue({ clock });
+  const { deliveries } = wakeQueue;
   const evaluation = new CycleEvaluationCoordinator({
     runtime,
     threadStore,
-    messageStore: {
-      async getByIds() {
-        return [];
-      },
-    },
-    async deliver(input) {
-      const previous = deliveredByKey.get(input.idempotencyKey);
-      if (previous) return previous;
-      const id = `message-${deliveries.length + 1}`;
-      deliveries.push({ id, ...input });
-      deliveredByKey.set(input.idempotencyKey, id);
-      return id;
-    },
-    getInvokeTrigger: () => ({
-      async trigger() {
-        return 'dispatched';
-      },
-    }),
+    messageStore: wakeQueue.messageStore,
+    deliver: wakeQueue.deliver,
+    getInvokeTrigger: () => wakeQueue.invokeTrigger,
     getDefaultCatId: () => 'cat-default',
     now: () => clock.now,
   });
