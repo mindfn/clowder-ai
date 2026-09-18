@@ -151,7 +151,18 @@ export class CycleEvaluationCoordinator {
         versionContentRef: record.versionContentRef,
       });
       if (next)
-        return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written', nextCycleId: next.cycleId };
+        return {
+          outcome: 'written',
+          cycleId: record.cycleId,
+          evalStatus: 'written',
+          nextCycleId: next.cycleId,
+          // The successor is only the container for the next accumulation window. A bare
+          // id reads as "an assignment is already pending delivery", which made evaluators
+          // hold and escalate a missing delivery that was never due. State it explicitly:
+          // the successor is idle, and its assignment is pushed once its own trigger fires.
+          nextCycleStatus: next.evalStatus,
+          nextAssignmentPending: next.evalStatus === 'requested',
+        };
     } else if (await this.deps.runtime.cycles.transition(record, { ...record, evalStatus: 'written', evaluation })) {
       await this.notifyWritten({ ...record, evalStatus: 'written', evaluation });
       return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written' };
