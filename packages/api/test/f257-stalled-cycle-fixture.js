@@ -164,6 +164,8 @@ export class FakeWakeQueue {
   messages = new Map();
   deliveries = [];
   triggers = [];
+  /** Rows production would create for a source nothing can take durable ownership of. */
+  poisonRows = [];
   #byKey = new Map();
   #clock;
   #autoDeliver;
@@ -184,6 +186,10 @@ export class FakeWakeQueue {
     trigger: async (threadId, catId, userId, reason, messageId, _blocks, policy) => {
       this.triggers.push({ threadId, catId, userId, reason, messageId, policy });
       const message = this.messages.get(messageId);
+      const delivered = (message?.queueCustody?.bodyExposures ?? []).length > 0;
+      if (message?.deliveryStatus !== 'queued' || message.queueCustody?.status === 'terminal' || delivered) {
+        this.poisonRows.push(messageId);
+      }
       if (policy?.forceQueue && message?.deliveryStatus === 'queued' && !message.queueCustody) {
         message.queueCustody = {
           version: 1,
@@ -223,10 +229,16 @@ export class FakeWakeQueue {
     const [targetCatId] = custody.allTargetCats;
     custody.bodyExposures = [...(custody.bodyExposures ?? []), { targetCatId, invocationId, seenAt }];
   }
-  /** The operator cleared the queue before the wake ever ran. */
+  /** The operator cleared the queue before the wake ever ran; like the real store, cancel drops the custody. */
   cancel(id) {
     const message = this.messages.get(id);
     message.deliveryStatus = 'canceled';
+    delete message.queueCustody;
+  }
+  /** The evaluator's invocation finished: the message is delivered and its custody terminal. */
+  complete(id) {
+    const message = this.messages.get(id);
+    message.deliveryStatus = 'delivered';
     message.queueCustody.status = 'terminal';
     message.queueCustody.pendingTargetCats = [];
   }

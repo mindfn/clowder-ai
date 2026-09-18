@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-const { resolveCycleWakeReceipt } = await import(
+const { resolveCycleWakeReceipt, wakeAwaitsQueueAdmission } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationDelivery.js'
 );
 
@@ -91,5 +91,34 @@ describe('F257 cycle wake receipt: read from durable Queue custody', () => {
       { state: 'dead' },
       'no Queue custody: nothing durable will ever report this wake',
     );
+  });
+});
+
+describe('F257 cycle wake admission: an idempotent replay enters the Queue only while its source can still be owned', () => {
+  test('a queued source with no custody yet is the first admission', () => {
+    assert.equal(wakeAwaitsQueueAdmission({ id: 'wake-1', deliveryStatus: 'queued' }), true);
+  });
+
+  test('a queued source whose live custody has not delivered it continues through its exact carrier', () => {
+    assert.equal(wakeAwaitsQueueAdmission(queuedMessage(custody())), true);
+    assert.equal(wakeAwaitsQueueAdmission(queuedMessage(custody({ status: 'processing' }))), true);
+  });
+
+  test('a source that was delivered, canceled, terminal, or never queued gets no new Queue row', () => {
+    const delivered = custody({ status: 'terminal', pendingTargetCats: [], bodyExposures: [exposure(500)] });
+    for (const [source, why] of [
+      [null, 'the message is gone'],
+      [{ id: 'wake-1' }, 'a plain message from before wakes were custodied'],
+      [{ id: 'wake-1', deliveryStatus: 'delivered', queueCustody: delivered }, 'already delivered'],
+      [queuedMessage(delivered), 'terminal custody, whatever the delivery flag still says'],
+      [
+        queuedMessage(custody({ bodyExposures: [exposure(500)], failedByCatIds: ['cat-default'] })),
+        'the Queue owns its retry',
+      ],
+      [queuedMessage(custody({ status: 'terminal', pendingTargetCats: [] })), 'terminal without exposure'],
+      [{ id: 'wake-1', deliveryStatus: 'canceled' }, 'canceled: the store dropped its custody'],
+    ]) {
+      assert.equal(wakeAwaitsQueueAdmission(source), false, why);
+    }
   });
 });

@@ -76,6 +76,8 @@ export class CycleEvaluationCoordinator {
     const messageId = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'assignment');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
+    // A caller holding a stale record arrives after the assignment was recorded: it changes nothing.
+    if (current.assignedAt !== undefined) return;
     await this.deps.runtime.cycles.transition(current, {
       ...current,
       assignmentThreadId: thread.threadId,
