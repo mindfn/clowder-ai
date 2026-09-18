@@ -562,6 +562,7 @@ describe('F257 CycleRecord trigger checker', () => {
         catalog: catalog(),
         cycles: {
           current: (...args) => context.store.current(...args),
+          history: (...args) => context.store.history(...args),
           async switchVersion() {
             return null;
           },

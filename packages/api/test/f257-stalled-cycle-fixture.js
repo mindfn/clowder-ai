@@ -110,6 +110,17 @@ export const catalog = {
   },
 };
 
+/** Same one-Objective catalog with a different cumulative trigger threshold (minimum interval 0). */
+export function catalogWithThreshold(cumulativeThreshold) {
+  return {
+    ...catalog,
+    registry: {
+      ...catalog.registry,
+      evaluationModels: [{ ...model, cycleTrigger: { ...model.cycleTrigger, cumulativeThreshold } }],
+    },
+  };
+}
+
 export function trace(invocationId, terminalAt) {
   return {
     terminal: {

@@ -190,7 +190,7 @@ function activeObjectives(catalog: EvaluationCatalog) {
   return catalog.registry.objectives.filter((objective) => objective.lifecycle !== 'retired');
 }
 
-function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {
+export function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {
   const windows: CycleWindow[] = [];
   for (const record of history) {
     if (!isSkippedCycle(record)) break;
