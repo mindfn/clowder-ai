@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 const { resolveConnectorRowCustodyOwnership } = await import(
-  '../dist/infrastructure/email/connector-row-custody-ownership.js'
+  '../dist/domains/cats/services/agents/invocation/connector-row-custody-ownership.js'
 );
 
 const row = { id: 'row-new', targetCats: ['cat-a'] };
