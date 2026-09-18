@@ -26,7 +26,7 @@ import {
 } from '../../agents/routing/routing-attempt.js';
 import type { StoredMessage } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
-import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
+import { RoutingFactKeys } from '../redis-keys/routing/routing-fact-keys.js';
 import {
   type PersistedMessageInvalidReason,
   parsePersistedMessageRecord,
