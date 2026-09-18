@@ -4,7 +4,7 @@ related_features: [F221, F203, F102, F200, F229, F260, F263, F287, F296, F312]
 topics: [user-profile-capsule, per-user-alignment, l0-layering, relationship-distillation, nurturing-moat]
 doc_kind: spec
 created: 2026-06-11
-tips_exempt: "Renewed 2026-09-07 after Phase E implementation: corpus layer adds owner-wide shared facts via cat-initiated propose_profile_update(targetLayer:'corpus'), approved by operator in Approval Hub. This is internal cat infrastructure — no new user-facing action or surface to advertise."
+tips_exempt: "Renewed 2026-09-18 for F257 S14 delivery: the existing owner capsule, relationship pointer, and corpus pointer now use the prompt-hook pipeline; no new user action or capability surface was added."
 ---
 
 # F231: 启动胶囊 — per-user 画像注入与 L0 分层

@@ -3,7 +3,7 @@ feature_ids: [F274]
 related_features: [F203, F236, F262]
 topics: [harness, kimi, native-l0, system-prompt, hooks, permission]
 doc_kind: spec
-tips_exempt: harness-internal L0 injection channel — no user/cat workflow surface for a capability tip
+tips_exempt: Renewed 2026-09-18 for the F257 single-pipeline migration; Kimi's native carrier receives the same session prompt through internal plumbing, with no new user or cat workflow surface
 created: 2026-07-25
 description: "Kimi CLI 在家里的 harness 能力差距盘点（对照 claude/codex），并把 L0 身份注入迁到 kimi-code 原生 --agent-file 系统提示词通道。"
 description_source: model

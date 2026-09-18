@@ -3,7 +3,7 @@ feature_ids: [F203]
 related_features: [F086, F128, F167, F198, F210, F211, F061]
 topics: [system-prompt, governance, prompt-engineering, compression-immunity, l0-injection]
 doc_kind: spec
-tips_exempt: internal native L0 cache freshness fix; no user-facing capability surface
+tips_exempt: Renewed 2026-09-18 for the F257 prompt-hook migration; native L0 compilation and cache replacement are internal delivery changes with no new user-facing capability surface
 created: 2026-05-15
 updated: 2026-08-01
 ---

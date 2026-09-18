@@ -4,7 +4,7 @@ related_features: [F167, F153, F086, F188, F200, F245, F266, F267, F275, F299]
 topics: [harness-engineering, eval, socio-technical, observability, cat-user-feedback]
 doc_kind: spec
 created: 2026-05-07
-tips_exempt: Dual-trigger dispatch, F299 bounded transcript repair and handoff truth, and generic-permission sunset are harness-internal control-plane changes with no new user-visible capability
+tips_exempt: Renewed 2026-09-18 for F257 owner-scoped artifact publication; the publish transport and closure wiring are harness-internal control-plane changes with no new user action or capability surface
 user_journey_exempt: "Internal harness eval infrastructure — all surfaces are developer/cat-facing, no end-user journey"
 ---
 
