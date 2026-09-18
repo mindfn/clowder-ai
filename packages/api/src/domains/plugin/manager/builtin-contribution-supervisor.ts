@@ -200,7 +200,8 @@ interface ActiveExecution {
   readonly grantRevision: number;
   readonly materialized: MaterializedBuiltinPluginPackage;
   readonly contributions: readonly ActiveContribution[];
-  ending: boolean;
+  available: boolean;
+  cleanup?: Promise<void>;
 }
 
 function isMcpContribution(
@@ -306,15 +307,31 @@ export class BuiltinPluginContributionSupervisor {
         grantRevision: authority.grants.grantRevision,
         materialized,
         contributions: started,
-        ending: false,
+        available: true,
       });
       await this.setRuntimeState(authority, 'healthy');
       const execution = this.active.get(pluginInstanceId);
       if (execution) this.watchContributionLiveness(pluginInstanceId, execution);
     } catch (error) {
-      this.active.delete(pluginInstanceId);
-      await Promise.allSettled([...started].reverse().map((contribution) => contribution.handle.close()));
-      await materialized?.release().catch(() => undefined);
+      const cleanupOwner =
+        this.active.get(pluginInstanceId) ??
+        (materialized && started.length > 0
+          ? {
+              pluginId: authority.instance.pluginId,
+              packageDigest: authority.instance.packageDigest,
+              grantRevision: authority.grants.grantRevision,
+              materialized,
+              contributions: started,
+              available: false,
+            }
+          : undefined);
+      if (cleanupOwner) {
+        cleanupOwner.available = false;
+        this.active.set(pluginInstanceId, cleanupOwner);
+        await this.cleanupExecution(pluginInstanceId, cleanupOwner).catch(() => undefined);
+      } else {
+        await materialized?.release().catch(() => undefined);
+      }
       await this.setRuntimeState(authority, 'stopped').catch(() => undefined);
       throw error instanceof BuiltinPluginContributionError
         ? error
@@ -327,18 +344,15 @@ export class BuiltinPluginContributionSupervisor {
   async stop(pluginInstanceId: string, _reason = 'host_stop'): Promise<void> {
     const execution = this.active.get(pluginInstanceId);
     if (!execution) return;
-    execution.ending = true;
-    const settled = await Promise.allSettled(
-      [...execution.contributions].reverse().map((contribution) => contribution.handle.close()),
-    );
-    if (settled.some((result) => result.status === 'rejected')) {
-      this.active.delete(pluginInstanceId);
-      await execution.materialized.release().catch(() => undefined);
+    execution.available = false;
+    try {
+      await this.cleanupExecution(pluginInstanceId, execution);
+    } catch (error) {
       await this.projectCrashed(pluginInstanceId, execution);
-      throw new BuiltinPluginContributionError('STOP_FAILED', 'builtin plugin contribution failed to stop');
+      throw new BuiltinPluginContributionError('STOP_FAILED', 'builtin plugin contribution failed to stop', {
+        cause: error,
+      });
     }
-    await execution.materialized.release();
-    this.active.delete(pluginInstanceId);
     await this.projectStopped(pluginInstanceId, execution.packageDigest);
   }
 
@@ -361,7 +375,7 @@ export class BuiltinPluginContributionSupervisor {
     args: Readonly<Record<string, unknown>>,
   ): Promise<unknown> {
     const execution = this.active.get(pluginInstanceId);
-    if (!execution) {
+    if (!execution?.available) {
       throw new BuiltinPluginContributionError(
         'CONTRIBUTION_NOT_ACTIVE',
         `${pluginInstanceId}/${contributionId} is not active`,
@@ -408,7 +422,8 @@ export class BuiltinPluginContributionSupervisor {
   }
 
   activeContributionIds(pluginInstanceId: string): readonly string[] {
-    return this.active.get(pluginInstanceId)?.contributions.map((contribution) => contribution.id) ?? [];
+    const execution = this.active.get(pluginInstanceId);
+    return execution?.available ? execution.contributions.map((contribution) => contribution.id) : [];
   }
 
   private activePluginExecution(pluginId: string): {
@@ -416,7 +431,7 @@ export class BuiltinPluginContributionSupervisor {
     readonly execution: ActiveExecution;
   } {
     for (const [pluginInstanceId, execution] of this.active) {
-      if (execution.pluginId === pluginId) return { pluginInstanceId, execution };
+      if (execution.pluginId === pluginId && execution.available) return { pluginInstanceId, execution };
     }
     throw new BuiltinPluginContributionError('CONTRIBUTION_NOT_ACTIVE', `${pluginId} is not active`);
   }
@@ -435,12 +450,37 @@ export class BuiltinPluginContributionSupervisor {
     execution: ActiveExecution,
     _exit: { readonly error?: Error },
   ): Promise<void> {
-    if (execution.ending || this.active.get(pluginInstanceId) !== execution) return;
-    execution.ending = true;
-    this.active.delete(pluginInstanceId);
-    await Promise.allSettled(execution.contributions.map((contribution) => contribution.handle.close()));
-    await execution.materialized.release().catch(() => undefined);
-    await this.projectCrashed(pluginInstanceId, execution);
+    if (!execution.available || this.active.get(pluginInstanceId) !== execution) return;
+    execution.available = false;
+    const projection = this.projectCrashed(pluginInstanceId, execution).catch(() => undefined);
+    try {
+      await this.cleanupExecution(pluginInstanceId, execution);
+    } finally {
+      await projection;
+    }
+  }
+
+  private cleanupExecution(pluginInstanceId: string, execution: ActiveExecution): Promise<void> {
+    if (execution.cleanup) return execution.cleanup;
+    const cleanup = (async () => {
+      const settled = await Promise.allSettled(
+        [...execution.contributions].reverse().map((contribution) => contribution.handle.close()),
+      );
+      const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failure) throw failure.reason;
+      await execution.materialized.release();
+      if (this.active.get(pluginInstanceId) === execution) this.active.delete(pluginInstanceId);
+    })();
+    execution.cleanup = cleanup;
+    void cleanup.then(
+      () => {
+        if (execution.cleanup === cleanup) execution.cleanup = undefined;
+      },
+      () => {
+        if (execution.cleanup === cleanup) execution.cleanup = undefined;
+      },
+    );
+    return cleanup;
   }
 
   private async runnableAuthority(pluginInstanceId: string): Promise<RunnableAuthority> {

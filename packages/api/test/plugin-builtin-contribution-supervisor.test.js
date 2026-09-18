@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   BuiltinPluginContributionSupervisor,
+  ExternalPluginLifecycleService,
   HostInventoryControlPlane,
   MemoryPluginInventoryStore,
 } from '../dist/domains/plugin/index.js';
@@ -68,6 +69,7 @@ async function harness({
   realRuntime = false,
   entrypointSource = '// fixture\n',
   closeError,
+  closeRuntime,
 } = {}) {
   const exactContract = contract();
   const store = new MemoryPluginInventoryStore(undefined, { contract: exactContract });
@@ -135,6 +137,7 @@ async function harness({
                 }),
                 close: async () => {
                   closes += 1;
+                  if (closeRuntime) await closeRuntime(closes);
                   if (closeError) throw closeError;
                 },
               };
@@ -270,7 +273,35 @@ test('a failed normal close withdraws capability liveness and projects a crash',
   assert.equal(instance.activationState, 'error');
   assert.equal(instance.runtimeState, 'crashed');
   assert.deepEqual(h.supervisor.activeContributionIds('pi_video'), []);
+  assert.equal(h.releases(), 0, 'failed cleanup must retain the materialized runtime for retry');
+});
+
+test('retains cleanup custody after a failed close so lifecycle retry can stop before retiring', async () => {
+  let running = true;
+  const h = await harness({
+    config: { provider: 'gemini' },
+    secrets: { apiKey: 'isolated-secret' },
+    closeRuntime: async (attempt) => {
+      if (attempt === 1) throw new Error('fixture close failed');
+      running = false;
+    },
+  });
+  await h.supervisor.start('pi_video');
+
+  await assert.rejects(h.supervisor.stop('pi_video'), /failed to stop/);
+
+  assert.equal(running, true);
+  assert.equal(h.releases(), 0, 'materialization remains owned while the process may still be alive');
+  assert.deepEqual(h.supervisor.activeContributionIds('pi_video'), []);
+
+  const failed = (await h.store.snapshot()).instances[0];
+  const lifecycle = new ExternalPluginLifecycleService({ store: h.store, supervisor: h.supervisor });
+  const retired = await lifecycle.uninstall('pi_video', failed.lifecycleRevision);
+
+  assert.equal(running, false);
+  assert.equal(h.closes(), 2, 'lifecycle retry must invoke the retained cleanup handle');
   assert.equal(h.releases(), 1);
+  assert.equal(retired.lifecycleState, 'retired');
 });
 
 test('uses typed manifest defaults for the same effective config accepted by readiness', async () => {
@@ -354,6 +385,97 @@ lines.on('line', (line) => {
   assert.equal(h.releases(), 1);
 });
 
+test('uninstall joins in-flight cleanup after one of two real MCP children exits', async () => {
+  const entrypointSource = `
+const fs = require('node:fs');
+const readline = require('node:readline');
+const role = process.argv[2];
+fs.writeFileSync(role + '.pid', String(process.pid));
+const keepAlive = setInterval(() => {}, 1_000);
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+lines.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: {
+      protocolVersion: message.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: role, version: '1.0.0' }
+    }});
+  } else if (message.method === 'tools/list') {
+    send({ jsonrpc: '2.0', id: message.id, result: { tools: [{
+      name: role + '_tool', inputSchema: { type: 'object' }
+    }] }});
+  } else if (message.method === 'tools/call' && role === 'crash') {
+    process.exit(17);
+  }
+});
+process.on('SIGTERM', () => setTimeout(() => process.exit(0), 200));
+setTimeout(() => { clearInterval(keepAlive); process.exit(0); }, 8_000).unref();
+`;
+  const contributions = ['crash', 'stubborn'].map((role) => ({
+    type: 'mcp',
+    id: `${role}-toolset`,
+    runtime: { transport: 'stdio', entrypoint: 'dist/mcp-entrypoint.js', args: [role] },
+    environment: {},
+  }));
+  const h = await harness({
+    realRuntime: true,
+    entrypointSource,
+    manifest: exactManifest({
+      configuration: [],
+      contributions,
+      features: contributions.map((contribution) => ({
+        id: contribution.id,
+        name: contribution.id,
+        resources: [],
+        contributions: [{ type: 'mcp', id: contribution.id }],
+        capabilities: [],
+      })),
+    }),
+    effectiveGrants: [],
+  });
+  const pidPath = join(h.rootDir, 'stubborn.pid');
+  let stubbornPid;
+  try {
+    await h.supervisor.start('pi_video');
+    stubbornPid = Number(await readFile(pidPath, 'utf8'));
+
+    await assert.rejects(h.supervisor.callPluginTool('dev.clowder.video-analysis', 'crash-toolset', 'crash_tool', {}));
+    await waitFor(() => h.supervisor.activeContributionIds('pi_video').length === 0);
+
+    const beforeUninstall = (await h.store.snapshot()).instances[0];
+    let uninstallSettled = false;
+    const lifecycle = new ExternalPluginLifecycleService({ store: h.store, supervisor: h.supervisor });
+    const uninstall = lifecycle.uninstall('pi_video', beforeUninstall.lifecycleRevision).then((result) => {
+      uninstallSettled = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(uninstallSettled, false, 'retirement must wait for the surviving child cleanup');
+    assert.doesNotThrow(() => process.kill(stubbornPid, 0));
+
+    const retired = await uninstall;
+    await waitFor(() => {
+      try {
+        process.kill(stubbornPid, 0);
+        return false;
+      } catch (error) {
+        return error?.code === 'ESRCH';
+      }
+    });
+    assert.equal(retired.lifecycleState, 'retired');
+    assert.equal(h.releases(), 1);
+  } finally {
+    if (Number.isInteger(stubbornPid)) {
+      try {
+        process.kill(stubbornPid, 'SIGKILL');
+      } catch {}
+    }
+  }
+});
+
 test('rejects a contribution entrypoint that resolves outside its materialized package', async () => {
   const h = await harness({
     manifest: exactManifest({
@@ -398,4 +520,31 @@ test('clears the active execution when the final healthy projection fails', asyn
   assert.equal(h.closes(), 1);
   assert.equal(h.releases(), 1);
   assert.equal((await h.store.snapshot()).instances[0].runtimeState, 'stopped');
+});
+
+test('retains startup cleanup custody when final projection and first close both fail', async () => {
+  let transactions = 0;
+  const h = await harness({
+    config: { provider: 'gemini' },
+    secrets: { apiKey: 'isolated-secret' },
+    inventoryStore: (store) => ({
+      snapshot: () => store.snapshot(),
+      transaction: (operation) => {
+        transactions += 1;
+        if (transactions === 2) throw new Error('fixture healthy projection failure');
+        return store.transaction(operation);
+      },
+    }),
+    closeRuntime: async (attempt) => {
+      if (attempt === 1) throw new Error('fixture startup cleanup failed');
+    },
+  });
+
+  await assert.rejects(h.supervisor.start('pi_video'), /failed to start/);
+
+  assert.deepEqual(h.supervisor.activeContributionIds('pi_video'), []);
+  assert.equal(h.releases(), 0);
+  await h.supervisor.stop('pi_video', 'retry_failed_start_cleanup');
+  assert.equal(h.closes(), 2);
+  assert.equal(h.releases(), 1);
 });
