@@ -15,7 +15,29 @@ for (const [index, version] of versions.entries()) {
 }
 assert.equal(new Set(versions).size, 1, 'plan producers and consumers must use the same Node runtime');
 
-const shardStep = workflow.jobs['public-test-shards'].steps.find((step) => step.name === 'Run public-test lane');
+const shardJob = workflow.jobs['public-test-shards'];
+assert.match(
+  String(shardJob['timeout-minutes']),
+  /^\$\{\{ matrix\.timeout_minutes \}\}$/,
+  'public-test lane timeout must come from the per-lane matrix budget',
+);
+
+const laneMatrix = shardJob.strategy?.matrix?.include;
+assert.ok(Array.isArray(laneMatrix), 'public-test lanes must declare explicit per-lane budgets');
+const laneTimeouts = Object.fromEntries(laneMatrix.map((entry) => [entry.lane, entry.timeout_minutes]));
+assert.deepEqual(
+  laneTimeouts,
+  {
+    serial: 45,
+    'pure-1': 30,
+    'pure-2': 30,
+    'pure-3': 30,
+    'pure-4': 30,
+  },
+  'serial must have independent headroom while pure lane budgets remain unchanged',
+);
+
+const shardStep = shardJob.steps.find((step) => step.name === 'Run public-test lane');
 assert.ok(shardStep, 'the public-test shard runner step must exist');
 assert.equal(
   shardStep.env?.DEFAULT_OWNER_USER_ID,
@@ -24,5 +46,6 @@ assert.equal(
 );
 
 process.stdout.write(
-  `public-test CI contract OK (Node ${versions[0]}, owner ${shardStep.env.DEFAULT_OWNER_USER_ID})\n`,
+  `public-test CI contract OK (Node ${versions[0]}, owner ${shardStep.env.DEFAULT_OWNER_USER_ID}, ` +
+    `timeouts serial=${laneTimeouts.serial}m pure=30m)\n`,
 );

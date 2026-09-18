@@ -114,11 +114,21 @@ jobs:
     needs: public-test-prepare
     if: needs.public-test-prepare.outputs.mode == 'sharded'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
-        lane: [serial, pure-1, pure-2, pure-3, pure-4]
+        include:
+          - lane: serial
+            timeout_minutes: 45
+          - lane: pure-1
+            timeout_minutes: 30
+          - lane: pure-2
+            timeout_minutes: 30
+          - lane: pure-3
+            timeout_minutes: 30
+          - lane: pure-4
+            timeout_minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
