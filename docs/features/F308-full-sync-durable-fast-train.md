@@ -4,7 +4,7 @@ related_features: [F116, F153, F251]
 topics: [outbound-sync, release-train, receipts, recovery, ci, test-sharding, provenance]
 doc_kind: spec
 created: 2026-08-27
-description: "把 Clowder AI→开源 target 全量同步从一次性长脚本升级为绑定 exact cut 的持久 receipt、可恢复单飞 gate 与不减覆盖的 public-test 分片。"
+description: "把 Cat Café→开源 target 全量同步从一次性长脚本升级为绑定 exact cut 的持久 receipt、可恢复单飞 gate 与不减覆盖的 public-test 分片。"
 description_source: human
 description_author: codex-terra
 description_updated_at: 2026-08-27T00:00:00-07:00
@@ -29,7 +29,7 @@ head 漂移后正确恢复。F308 只扩展既有外部动作的 audit / dry-run
 ## Why
 
 2026-08-27 的完整同步闭环最终安全完成，但约耗时 28 小时。已核验基线为：public landed
-`1700bf30…61e0`、Clowder AI closure `8660f89c…5ee6`；F251 为 `614 pass / 0 block / 0 override`，35
+`1700bf30…61e0`、source closure `8660f89c…5ee6`；F251 为 `614 pass / 0 block / 0 override`，35
 条 reconciliation 全闭环，随后 6 个社区 PR / 79 files 已被 intake 或 absorbed，16 条 target-owned
 item 仍保留，`.env` 元数据未变。
 
@@ -126,17 +126,18 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   mapping fingerprint.
 - [x] **AC-D2**: A planner produces 4–6 deterministic, duration-balanced pure-test shards; every selected test
   appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the manifest.
-- [x] **AC-D3**: Redis, ports, fs.watch and other stateful classes remain in a serial lane; a test enters a parallel
-  lane only with explicit isolation proof.
+- [x] **AC-D3**: Redis, ports, fs.watch and other stateful classes remain serial within each runner. They may be
+  partitioned across fresh machine-isolated runners only when the classifier's serial reasons are machine-local; a
+  test enters an in-runner parallel lane only with explicit isolation proof.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
   superficially similar source SHA.
-- [ ] **AC-D6**: Three same-selection target-CI artifacts report p50/p95, critical path and coverage count. The
-  original CI p50 ≤10m / p95 ≤12m goal is not yet credible: exact source-runner evidence
-  (`docs/ops/2026-08-27-f308-public-test-source-measurements.json`) measured p50 14m18s / p95 14m25s with the
-  serial lane dominant. Until a reviewed per-class isolation audit changes that boundary, the source-runner interim
-  ceiling is p50 ≤15m / p95 ≤16m. Source-runner evidence never substitutes for the required target-CI artifacts.
+- [ ] **AC-D6**: Three same-selection target-CI artifacts report p50/p95, critical path and coverage count. PR #1482
+  established the reviewed isolation boundary: stateful files remain one-at-a-time within each runner while four
+  fresh GitHub runners execute deterministic serial shards. Its first exact-head artifact covers 2,176/2,176 files
+  exactly once with a 6m40.639s test critical path and an 8m53s slowest complete lane job. This is sample 1/3, so the
+  original p50 ≤10m / p95 ≤12m goal and AC-D6 remain incomplete until two more same-selection target artifacts exist.
 
 ### Phase E — Dogfood, review and close
 
@@ -164,7 +165,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 |---|---|
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
-| target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
+| target CI change gets overwritten later | keep workflow target-owned and require its own target PR / F251 preservation proof |
 | pure shard leaks shared state | classifier is deny-by-default; stateful lane remains serial; isolation proof is versioned/tested |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
@@ -181,11 +182,14 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   toolchain and workspace provenance. They measure p50 14m18s / p95 14m25s; the four pure lanes are balanced, while
   the 884-file serial lane dominates. Full machine-readable evidence is
   `docs/ops/2026-08-27-f308-public-test-source-measurements.json`.
-- The target-owned CI patch landed in `clowder-ai` PR #1413 at merge
+- The target-owned CI patch landed in target PR #1413 at merge
   `71a9b707847f7ed2cd43a3de42e4ca40ec7520e3`. Exact-head target CI preserved the required `Test (Public)` check,
   Windows and public-contract surfaces; its serial bootstrap passed in 19m36s and the fail-closed aggregate passed.
-  Once the source shard contract arrives, the workflow requires exact-plan/report summary provenance for one serial
-  plus four pure lanes. Three real sharded target-CI artifacts are still required by AC-D6.
+  PR #1482 exact HEAD `b2ca073ec08a7e10b406bd6133a3c71a824e6791` then expanded the schema-v2 evidence contract to four serial and
+  four pure lanes. Run `35328584722` covered 2,176 selected files exactly once with zero missing, duplicate, extra or
+  failed files; its test critical path was 6m40.639s, slowest complete lane job 8m53s, aggregate test runner time
+  30m00.023s, aggregate eight-job wall time about 46m07s and complete workflow time 11m29s. The under-10-minute claim
+  applies to the public-test lane/job critical path, not the whole workflow. This is AC-D6 sample 1/3.
 
 ## Key Decisions
 
@@ -194,5 +198,5 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | KD-1 | F308 is separate from F116/F251 | Existing F116/F251 scope is export/preservation; durable cross-run orchestration and CI critical-path ownership are new state contracts. |
 | KD-2 | Receipts live in a durable local operator-state root, not in Git or target tree | They survive runtime/carrier restart without polluting exported/public content; their path is explicit in every receipt. |
 | KD-3 | `sync-to-opensource.sh` remains the only writer | Receipt orchestration wraps and proves the existing writer instead of creating a second rsync path. |
-| KD-4 | Clowder `ci.yml` stays target-owned | It must be changed by a dedicated target-repo PR, not smuggled through source export. |
+| KD-4 | Target `ci.yml` stays target-owned | It must be changed by a dedicated target-repo PR, not smuggled through source export. |
 | KD-5 | Sharding starts with deterministic planning + serial stateful lane | The 2026-05 pollution incident proves global concurrency is not a valid optimization. |
