@@ -519,6 +519,37 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     assert.equal(archived.evaluation.overall, 'insufficient_evidence');
   });
 
+  test('reports the successor cycle as not-yet-assigned so a writeback is a terminal, not a wait', async () => {
+    const context = await harness();
+    const input = { ...submission, cycleId: context.requested.cycleId, overall: 'insufficient_evidence' };
+    const result = await context.coordinator.submitEvaluation(principal, input);
+    const current = await context.cycles.current('owner-1', 'obj');
+
+    // A bare successor id reads as "an assignment is already pending delivery"; the
+    // successor is idle and carries no assignment until its own trigger fires.
+    assert.equal(result.nextCycleId, current.cycleId);
+    assert.equal(result.nextCycleStatus, 'idle');
+    assert.equal(result.nextAssignmentPending, false);
+  });
+
+  test('tells the evaluator that the next assignment is pushed, so it must not wait for one', async () => {
+    const context = await harness();
+    const assignment = await buildCycleAssignment(
+      {
+        catalog,
+        annotations: {
+          async queryMetricWindow() {
+            return [];
+          },
+        },
+        history: [],
+      },
+      context.requested,
+    );
+
+    assert.match(formatCycleAssignment(context.requested, assignment), /delivered to this thread when it triggers/);
+  });
+
   test('emits one 30-minute retrigger, then one stalled alert, with no further retry', async () => {
     const context = await harness();
     const active = await context.cycles.current('owner-1', 'obj');

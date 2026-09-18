@@ -73,6 +73,7 @@ export function formatCycleAssignment(record: CycleRecord, assignment: CycleEval
     supplementaryGuidance,
     rejectionGuidance,
     'Conversation text is not a writeback. Do not compare this cycle with another version.',
+    'That writeback completes this assignment. The next cycle is delivered to this thread when it triggers, so do not hold, wait, or escalate a missing assignment after writing back.',
     '',
     '```json',
     JSON.stringify(assignment),
