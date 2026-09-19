@@ -24,6 +24,9 @@ test('shortThreadRef discriminates real-shaped thread ids', () => {
 test('shortThreadRef strips only the thread_ namespace prefix', () => {
   assert.equal(shortThreadRef('thread_mrkmxgdfqquounc9'), 'mrkmxgdf');
   assert.equal(shortThreadRef('thread_eval_a2a'), 'eval_a2a');
+  // Exactly ONE prefix is removed: a literal `thread_` inside the id is part of the id,
+  // not a second namespace to strip. Repeated stripping would silently rewrite ids.
+  assert.equal(shortThreadRef('thread_thread_x'), 'thread_x');
   // Ids that do not carry the namespace prefix are truncated as-is.
   assert.equal(shortThreadRef('source-thread-abc123'), 'source-t');
   assert.equal(shortThreadRef('short'), 'short');

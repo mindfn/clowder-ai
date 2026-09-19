@@ -175,12 +175,25 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 
 **2026-09-19 裁决（`docs/bug-report/ghost-thread-cross-thread-session-routing/`）**：
 "cross-post 后 session continuation 绑错 thread" 这条旧 P2 断言 **已证伪** ——
-全量语料 7,755 条因果边里**未声明的跨线程 continuation 为 0**，663 个带 A2A 触发的 session 里
-**绑定错配为 0**。服务端把消息投到了你**要求**的那条 thread，一条不多一条不少。
+全量语料实跑（三轮，最近一轮 7,787 条因果边 / 666 个带 A2A 触发的 session）里
+**未声明的跨线程 continuation 为 0**、**唤醒绑定错配为 0**。
+服务端把消息投到了你**要求**的那条 thread，一条不多一条不少。
 
 真实风险在你这一侧：`cross_post_message` 只校验 thread 存在 + 属于同一 principal scope，
 **不校验 source→target 的语义关联**。你给一个存在的 threadId，它就投进去。
-已确认的 6 次误投全部是调用方选错 target（含 1 次"平行实例在哪条 thread"选错）。
+
+已确认的 6 个事件**不是同一种错**，别当成一类记（分型见 bug-report §2）：
+
+| 分型 | 次数 | 长什么样 |
+|------|------|---------|
+| 选错 target thread | 2（I-1 / I-2a） | 要投给"F167 的 owner thread"，而那条 thread 根本不存在 → 猜了一个 |
+| 平行实例定位错误 | 1（I-3） | 要投给"我的平行实例"，选错了 thread；正确答案就在源 thread 的 `parentThreadId` 里 |
+| **本不该再发** | 1（I-2b） | 同一个 turn 已经就地正确回复了，又多发一条跨线程 |
+| **工具选择错误** | 1（I-5） | 该在本 thread 直接发，却用了跨 thread |
+| 汇报目的地过载（不是误投，是噪声） | 1（I-4） | 一条执行线把主线程当默认汇报口 |
+
+**共同点不是"选错 id"，是全部发生在调用方侧——没有一次是服务端绑错。**
+所以下面的自检要逐条过，不能只检查"id 对不对"。
 
 因此：
 
@@ -192,6 +205,8 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
   **服务端已记录的事实**，不是推断。I-3 那次误投里，operator 指出的正确目标
   （`thread_mrdip0u5aw4ysi97`）**正是源 thread 自己的 `parentThreadId`**：答案当时就在库里，
   猫却去猜了一个最近见过的 id。查一次的成本远低于误投。
+  **反过来不成立**：没有血缘边**不等于**不该投——Core↔Plugins 这类正常的跨 feature 协作
+  本来就没有血缘边。血缘是**线索**，不是合法 target 的 allowlist。
 - **查不到 verified owner thread → `propose_thread`（F128），不要猜一个近似 thread。**
   I-1/I-2a 两次误投的根源都是"F167 压根没有 owner thread"，而猫选择了猜。
 - **被唤醒后"只需阅读知悉"时，就不要再发跨线程消息。** I-2b 是同一个 turn 在已经就地

@@ -59,7 +59,7 @@ git ls-tree -r HEAD --name-only | grep ghost  → (空)
 
 ---
 
-## 2. Incident Corpus（operator 确认的误投，跨 6 个 thread）
+## 2. Incident Corpus（operator 确认的 6 个事件，跨 11 条 thread）
 
 扫描方法：全量消息正文匹配误投投诉语（`投递错|投错|误投|通知错了|跑这儿|错误投递|发错`），
 取 `catId` 为空（= operator 本人）的命中，再与该 thread 前 45 分钟内**投递进来的** cross-post 关联。
@@ -75,9 +75,10 @@ git ls-tree -r HEAD --name-only | grep ghost  → (空)
 | **I-4** | 2026-07-19 14:27 | 多个执行 thread | `thread_mrkmxgdfqquounc9`<br>(MAIN) | 各自执行 thread | 窗口内 6 条投入 MAIN 的 cross-post | `0001784471269998-000257-9809e71a`<br>「我们thread当前应该有且只和 thread_mrkn6povq4zzgh45 有关联的」 | **C. 汇报目的地过载（非误投，是噪声）** |
 | **I-5** | 2026-04-30 09:38:02 | `thread_moicgl47en8m98do`<br>(develop) | `thread_mnb92h3yio4jbtw8` | **不该跨投**（应在源 thread 内直接发） | `0001777541882284-004585-5d668ca3`<br>by `opus`, mentions=`["codex"]`,<br>**无 targetCats / coordination / effectClass**<br>crossPost.sourceThreadId=`thread_moicgl47en8m98do` | `0001777541980958-004592-9e6c6222`<br>（+98 秒）「@opus 你跑错位置了；这不是一个跨线程的操作」 | **E. 工具选择错误（该同 thread 却用了跨 thread）** |
 
-**独立 thread 数：≥10**（`mrkmxgdfqquounc9` / `msr51149hym0i79f` / `mrkn6povq4zzgh45` /
-`ms2kxwwny5z5fcom` / `eval_a2a` / `mrrucuwlotamwuom` / `mq6alvzotw9ryo8r` /
-`mrdip0u5aw4ysi97` / `moicgl47en8m98do` / `mnb92h3yio4jbtw8`）。时间跨度 2026-04-30 → 2026-09-19。
+**独立 thread 数：11**——上表 10 条（`mrkmxgdfqquounc9` / `msr51149hym0i79f` /
+`mrkn6povq4zzgh45` / `ms2kxwwny5z5fcom` / `eval_a2a` / `mrrucuwlotamwuom` /
+`mq6alvzotw9ryo8r` / `mrdip0u5aw4ysi97` / `moicgl47en8m98do` / `mnb92h3yio4jbtw8`），
+加 I-4 明细表里第 6 条的源 thread `mpf86bj4ejq306oo`。时间跨度 2026-04-30 → 2026-09-19。
 **这不是单次操作失误。**
 
 ### 2.1 被唤醒的 invocation（exact wake binding）
@@ -212,21 +213,28 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 | 候选 fence | 合法跨投的基线 | 本 corpus 误投是否会被拦 |
 |-----------|--------------|----------------------|
 | 「发送方在目标 thread 没有历史发言」（cold-open） | 957 条 cross-post 中 **92.7% 是 warm**（发送方此前发过言），7.3% cold-open | I-1 是 **WARM**（sol 当时正在 A2A#1398 干活）；I-3 也是 **WARM**。**拦不住** |
-| 「coordination.subjectRef 在目标 thread 未出现过」 | 带 subjectRef 的 134 条里 **51.5% 是 novel subject**（Core↔Plugins 正常开新 subject 就是这样） | I-1 会被拦，但误杀率 ~50%。**不可用** |
+| 「coordination.subjectRef 在目标 thread 未出现过」 | 带 subjectRef 的 134 条里 **51.5% 是 novel subject**（Core↔Plugins 正常开新 subject 就是这样） | I-1 会被拦，但**拒绝比例** ~50%。**不可用** |
 
 **结论（严格限定在本节量化的范围内）：不要做内容启发式 guard。**
-它既拦不住真误投，又会砸掉一半合法协作。
+它既拦不住本 corpus 的真误投（两条判据对 I-1/I-3 都失效），又会拒掉一半"正常开新 subject"的跨投。
+
+> ⚠️ **口径声明（贯穿 R-2 / R-2b 全部百分比）**：线上语料**没有 per-delivery 标注**——
+> 没有一条历史 cross-post 记着"这次投对了/投错了"。所以本节与下节的每个百分比都是
+> **拒绝比例**（rejection share：这道 fence 会拒掉多少真实流量），**不是误杀率 / precision**
+> （被拒的里面有多少本来是对的）。算 precision 需要这个库里不存在的标注。
+> 初稿在多处把拒绝比例写成"误杀率"，是**无标注推断**，本轮已全部改正。
 
 > ⚠️ **这条结论只否掉"内容启发式"这一类判据，不构成"没有任何可用判据"。**
 > 初稿在这里做了过度外推。可核验的 **standing / 结构性**判据是另一类东西——它不推断消息
 > "讲的是什么"，只查服务端已经记录的关系事实。下面 R-2b 补上这类判据的量化与裁决，
 > R-2c 补上 `routing_preflight` 这条被点名的路径。
 
-#### R-2b · 结构性 standing fence：不是判据无效，是**判据几乎没被记录**（**Severity: P2，产品级**）
+#### R-2b · 结构性 standing fence：判据既没被记录，也**没有标注能证明拒绝是对的**（**Severity: P2，产品级**）
 
 `RedisThreadStore` **已经**持久化 `parentThreadId`，并维护 `ThreadKeys.children(parent)` 索引
 （`RedisThreadStore.ts:207-242 / 773-775`）。也就是说"source thread 与 target thread 是否同族"
-是一个**服务端此刻就能判定的事实**，不需要任何内容推断。对全量 960 条 cross-post 实测：
+是一个**服务端此刻就能判定的事实**，不需要任何内容推断。对全量 960 条 cross-post 实测
+（下表为**第三轮**实跑，2026-09-19；R-2 的口径声明同样适用——全是**拒绝比例**，不是误杀率）：
 
 | 口径 | 数值 | 含义 |
 |------|------|------|
@@ -234,36 +242,62 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 | 其中**声明了 `parentThreadId`** | **29（5.5%）** | 血缘图基本是空的 |
 | 两端都可解析的 cross-post | 960/960 | 判据本身可计算 |
 | source/target 同族 | 244（25.4%） | — |
-| **不同族** | **716（74.6%）** | 一刀切 fail-closed 会拒掉的真实流量 |
-| **限定在"source 自己声明了血缘"的子集** | **139（14.5%）** | 可适用范围 |
-| **该子集中跨出家族的** | **26（18.7%）** | scoped fence 的真实误杀率 |
+| **不同族** | **716（74.6%）** | 一刀切 fail-closed 的**拒绝比例** |
+| scope A（窄）：source 自己声明了 `parentThreadId` | **139（14.5%）** | 适用面 |
+| … 其中跨出家族的 | **26（18.7%）** | **拒绝比例**（precision 未知） |
+| scope B（宽）：source 声明了父 **或自己就是别人的父**（children 索引） | **671（69.9%）** | 适用面 |
+| … 其中跨出家族的 | **427（63.6%）** | **拒绝比例**（precision 未知） |
+
+**scope B 是本轮新增，它推翻了初稿对这条路线的乐观定调。** 初稿只统计了 scope A
+（"source 自己有 parent"），那是血缘记录两种形态里更窄的一种——一条 thread 作为**父**
+被别人指向（`children` 索引），同样是服务端已记录的血缘，同样可判定。两种形态都算上，
+适用面 14.5% → 69.9%，拒绝比例 18.7% → **63.6%**。
+**"有界的 18.7%"是选了最窄 scope 才得到的假象，不是这条判据的性质。**
+
+还有一条比数字更根本的语义限制：**`parentThreadId` 是开放世界。** 它证明"存在一条血缘关系"，
+它的缺席**不证明**"这次投递没有 standing"。族外投递 ≠ 无依据投递——Core↔Plugins 这类正常的
+跨 feature 协作本来就不该有血缘边。**血缘不是合法 target 的 allowlist，"不同族就拒"这个推断
+本身不成立。**
 
 两条裁决，必须分开：
 
-1. **一刀切 fail-closed 结构 fence：否决。** 74.6% 误杀，比 subject fence（50.7%）更差。
-2. **限定在"source 已声明血缘"的 scoped fence：不否决，且是本次调查里唯一一条构造性线索。**
-   适用面 14.5%，误杀 18.7%——有界、可评估。
+1. **一刀切 fail-closed 结构 fence：否决。** 拒绝比例 74.6%，比 subject fence（50.7%）更差。
+2. **scoped fence：不作为拒绝策略，只作为 advisory / grounding 信号。** 两个 scope 的拒绝比例
+   （18.7% / 63.6%）差 3.4 倍且 precision 两者都未知——这个证据强度支撑"把已知血缘呈现给猫"，
+   不支撑"据此 400"。
 
-**I-3 是决定性样本**（实测，非推演）：
+**I-3 是决定性样本**（实测，非推演，也是本调查里**唯一一个已确认的真阳性**）：
 
 ```
 源 thread thread_mrrucuwlotamwuom  parentThreadId = thread_mrdip0u5aw4ysi97
-实际投递  thread_mq6alvzotw9ryo8r   → FAMILY_LINKED = false   （会被 scoped fence 拦下）
+实际投递  thread_mq6alvzotw9ryo8r   → FAMILY_LINKED = false   （判据判定为族外）
 operator 说的正确目标 thread_mrdip0u5aw4ysi97 → FAMILY_LINKED = true
 ```
 
 operator 当时的原话是「平行的是 thread_mrdip0u5aw4ysi97 这个啊」。
 **那条 thread 就是源 thread 自己的 `parentThreadId`——出错的那一刻，正确答案已经躺在服务端的
-thread store 里，而猫在猜。** 所以 scoped fence 不只是"能拒绝"，它**能直接把正确 target 说出来**，
-这是内容启发式永远做不到的。
+thread store 里，而猫在猜。** 所以这条判据的价值**不在"能拒绝"**（拒绝需要 precision，我们没有），
+而在它**能直接把正确 target 说出来**——这是内容启发式永远做不到的，也正是"advisory 而非 fence"
+这个定位的依据。
 
-**但它救不了大多数事件**：I-1 / I-1b / I-2a / I-2b / I-4 的源 thread 全部 `parentThreadId = null`，
-scoped fence 对它们完全不适用。**真正的阻塞不是判据设计，是 5.5% 的血缘覆盖率**——
-`propose_thread` 本该建立的 standing graph 基本没有被建起来。
+**而且它救不了大多数事件**：I-1 / I-1b / I-2a / I-2b / I-4 的源 thread 全部 `parentThreadId = null`
+（11 条涉事 thread 逐条实测，只有 I-3 那条有血缘），这条判据对它们完全不适用。
+**最表层的阻塞就是 5.5% 的血缘覆盖率**——`propose_thread` 本该建立的 standing graph 基本没被建起来；
+另外两层阻塞（无标注、开放世界）见下方裁决，三层都得解掉才谈得上"拒绝"。
 
-> **裁决：standing fence 在概念上成立、在数据上今天不成立。** 先把血缘覆盖率做上去（谁写、是否
-> 回填、是否强制），才谈得上 fence。这是 product-level routing policy 决策，不是本 PR 能单方面
-> 加的 guard —— 已进 `decision-packet.md`。
+> **裁决（本轮收紧）：结构性 standing 判据可以做 advisory / grounding，不足以支撑 fail-closed 拒绝。**
+> 三层理由，缺一条都不行：
+>
+> 1. **覆盖率**：只有 5.5% 的 thread 声明了血缘，判据本身几乎没被记录；
+> 2. **口径**：拒绝比例窄 scope 18.7%、宽 scope 63.6%，**precision 两者都未知**——
+>    语料无标注，26 条里已知**至少一条是真阳性**（I-3），其余既不能算对也不能算错；
+> 3. **世界观**：血缘是开放世界，族外 ≠ 无 standing。
+>
+> **现在就能做、且不依赖上面任何一条的是 advisory**：源 thread 有血缘记录时直接呈现给猫
+> （I-3 里正确答案就躺在源 thread 自己的 `parentThreadId` 里）。
+> 要谈**拒绝**，前提是先有标注样本，或一份**显式、排他**的关联契约（"本 thread 只与 X 关联"
+> ——I-4 里 operator 亲口说过这种话，但系统没地方存）。
+> 这是 product-level routing policy 决策，不是本 PR 能单方面加的 guard —— 已进 `decision-packet.md`。
 
 #### R-2c · `routing_preflight.resolverState=degraded` 为什么仍然放行（**必答项 · 裁决：不是缺陷，是范畴错置**）
 
@@ -288,8 +322,9 @@ export interface RoutingDispatchPreflightInput {
 （`git grep -n threadId` 空结果）。它消费的是 capability / health / quota catalog，产出的是每个
 **targetCatId** 的 `allowed | warned | rejected`。
 
-→ 因此它在 `fresh` 状态下也**一条都拦不住**本 corpus 的 6 次误投：这 6 次的 target **猫**都是对的
-（I-1 的 `targetCats=["opus"]` 完全正确），错的是 **thread**。
+→ 因此它在 `fresh` 状态下也**一条都拦不住**本 corpus 的 6 个事件：没有一次的错误出在**目标猫**上
+（I-1 的 `targetCats=["opus"]` 完全正确；I-2a / I-5 甚至没传 `targetCats`、路由来自行首 `@`，
+而 §2.1 的 wake 表显示被唤醒的确实就是意图中的 `codex`），错的是 **thread**。
 **把它当成误投闸是范畴错置——它从来不是，也不应该被改造成 thread 闸。**
 
 **(2) `degraded` 放行不是疏漏，是被 schema 强制的 fail-open 不变量。**
@@ -305,11 +340,23 @@ if (decision.resolverState === 'degraded') {
 }
 ```
 
-`degraded` 的唯一来源是 catalog 取不到（`catalog_error` / `consumer_error` →
-`unavailableRoutingDispatchDecision`，全部 target 置 `warned` + `routing_context_unavailable`）。
-**resolver 赖以判断的证据本身缺失时，它没有任何依据做 reject**；此时 reject 等于"Redis 抖一下
-就静默掐断全家猫的互相派发"。fail-open + 显式 `warned` 回执是正确取舍，而且这条不变量是写进
-zod schema 强制的，不是约定俗成。
+`degraded` 有**两条**产生路径、合计 **8 类 `failureClass`**（逐条读 `upstream/main` 源码得到，
+不是回忆；初稿写"唯一来源是 catalog 取不到"是错的，已改正）：
+
+| 产生路径 | `failureClass` | 代码位置（`upstream/main`） |
+|---------|---------------|--------------------------|
+| `unavailableRoutingDispatchDecision` | `catalog_error`（catalog 加载或 preflight 抛错） | `RoutingDispatchPreflightPort.ts:97` |
+| 同上 | `consumer_error`（port 本身抛错） | `RoutingDispatchPreflightPort.ts:109` |
+| `RoutingPreflightService.degradedDecision` | `circuit_open` / `half_open_busy`（熔断器挡住本次 attempt） | `RoutingPreflightService.ts:135` |
+| 同上 | `resolver_timeout`（超 `readBudgetMs`，默认 120ms）/ `resolver_error` | `RoutingPreflightService.ts:144` |
+| 同上 | `resolver_degraded:<reason>`，`reason` ∈ `dossier_unavailable` / `dossier_unreadable_or_empty` / `built_in_profile_missing` / `model_missing` | `RoutingPreflightService.ts:151` + `CapabilityProfileRevisionSource.ts:3-7` |
+
+**八类的共同点才是裁决依据**：每一类都表示 **resolver 赖以判断的证据本身缺失、过期或取不到**
+（catalog 拿不到 / 熔断中 / 超读预算 / dossier 读不出 / profile 或 model 缺失），
+**没有任何一类携带"目标 thread 不对"这种信息**——它们连 thread 维度都没有（见上文 (1)）。
+证据缺失时 reject 等于"Redis 抖一下、dossier 迟 120ms 就静默掐断全家猫的互相派发"。
+fail-open + 显式 `warned` 回执是正确取舍，而且这条不变量是写进 zod schema 强制的，
+不是约定俗成。
 
 > **裁决：R-2c 不是缺陷，无需修复。** 必答问题隐含的前提（"preflight 本该拦住误投"）不成立。
 > 但它留下一个**有用的先例**：系统里已经有一套成熟的 typed advisory receipt
@@ -427,7 +474,7 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 |------|------|----------|------|
 | R-1 | **设计不合理**（工具契约缺口） | P1 | 需 operator 决策（契约变更） |
 | R-2 | 不是缺陷，是**排除性证据**（只否掉**内容启发式** guard 这一类） | — | — |
-| R-2b | **能力缺口**：standing 判据概念成立，但血缘覆盖率仅 5.5%，今天用不了 | P2 | Decision Packet → operator |
+| R-2b | **能力缺口**：结构性 standing 只够做 advisory；拒绝策略缺覆盖率（5.5%）、缺标注（precision 未知）、且血缘是开放世界 | P2 | Decision Packet → operator |
 | R-2c | **不是缺陷**（范畴错置：`routing_preflight` 是猫可用性顾问，非 thread 闸） | — | 无需修复 |
 | R-3 | **实现 bug** | P1 | 本 PR 修复 |
 | R-4 | **实现 bug**（briefing 不校验触发消息 provenance） | P2 | 本 PR 只记录，不改（涉及 briefing 组装面，需独立 slice） |
@@ -469,16 +516,17 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
    - RED（修复前）：两个真实形状 threadId 产出同一个 tag `thread_m`
    - GREEN（修复后）：产出 `mrkmxgdf` / `mu8dg6h7`，且等于前端 `parse-direction` 的短 ref
 2. **证伪结论可复现**：`forensics/scan-cross-thread-routing.mjs`（**只读**，仅 SCAN/HMGET/GET，
-   不写不删不设过期；`--redis` / `--prefix` 可指向任意实例）。2026-09-19 对运行实例实跑输出：
+   不写不删不设过期；`--redis` / `--prefix` 可指向任意实例）。2026-09-19 对运行实例实跑输出
+   （**第三轮**，含本轮新增的 scope B）：
 
    ```
-   corpus: 106802 messages, 2079 sessions, 960 cross-posts
+   corpus: 106810 messages, 2081 sessions, 960 cross-posts
 
    — §3.1 falsification —
-     causal reply edges                         : 7780
+     causal reply edges                         : 7787
      replies landing outside the trigger thread : 236
      ... of which UNDECLARED (ghost signature)  : 0   <- expect 0
-     sessions with an A2A trigger               : 664
+     sessions with an A2A trigger               : 666
      ... wake bound to the wrong thread         : 0  <- expect 0
      continuityCapsule / session thread drift   : 0  <- expect 0
      cliSessionId shared across threads         : 1
@@ -487,20 +535,29 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
    — §3.2 R-2: the two candidate fences —
      sender had prior participation in target   : 890/960 (92.7% 不会被 cold-open fence 拦到)
      cross-posts carrying a subjectRef          : 136/960
-     ... subject already present in target      : 67 (50.7% 会被 subject fence 误杀)
+     ... subject already present in target      : 67 (50.7% rejection share of a subject fence)
 
    — §3.2 R-2b: the structural standing fence —
      threads with a detail record               : 531
      ... of which declare a parentThreadId      : 29
      cross-posts with both endpoints resolvable : 960/960
      ... source/target in the same thread family: 244 (25.4%)
-     ... NOT family-linked                      : 716 (74.6% 一刀切 fence 会拒掉的真实流量)
-     SCOPED: source 声明了血缘的 cross-post      : 139/960 (14.5%)
-     ... 其中跨出家族的                          : 26 (18.7% = scoped fence 误杀率)
+     ... NOT family-linked                      : 716 (74.6% rejection share, 一刀切)
+     SCOPED/narrow: source declares a parentThreadId : 139/960 (14.5%)
+     ... of those, leaving the family           : 26 (18.7% = rejection share)
+     SCOPED/broad: source declares a parent OR is one : 671/960 (69.9%)
+     ... of those, leaving the family           : 427 (63.6% = rejection share)
+
+     NOTE: the corpus carries no per-delivery verdict. Every "rejection share" above is the
+           fraction of REAL past traffic a fence would refuse — NOT a measured false-positive
+           rate. Precision is unknown; incident I-3 is the one confirmed true positive.
    ```
 
-   （§3.1 正文写的是首轮扫描的 7,755 / 663 / 957；上面是补测 R-2b 时的**第二轮**实跑。
-   差值来自实例在调查期间持续产生新消息，两轮的所有"expect 0"判据均为 0，不影响任何裁决。）
+   （§3.1 正文写的是首轮扫描的 7,755 / 663 / 957；上面是第三轮实跑。差值来自实例在调查期间
+   持续产生新消息，三轮的所有"expect 0"判据均为 0，不影响任何裁决。
+   **脚本本身在本轮改了两处**：① 所有 fence 指标从 `false-positive rate` 改称 `rejection share`
+   并在输出里声明"语料无标注"；② 新增 scope B（source 声明父 **或** 自己是父）——
+   这条改动直接推翻了初稿"18.7% 有界"的乐观读数，见 R-2b。）
 
    **R-2b 的 I-3 决定性样本可单独复验**（只读，两条 `HGET`）：
 

@@ -10,6 +10,14 @@
  *
  * ONLY read commands (SCAN / HMGET / GET) are issued. It never writes, deletes or expires.
  * Point it at whichever instance you want to audit; it does not assume a specific deployment.
+ *
+ * MEASUREMENT SEMANTICS — read this before quoting any percentage below.
+ * The corpus is UNLABELLED: no past cross-post carries a verdict saying whether it was a
+ * correct delivery. Therefore every fence number this script prints is a REJECTION SHARE
+ * ("what fraction of real past traffic would this fence refuse"), never a false-positive
+ * rate / precision ("what fraction of those refusals would be wrong"). Computing precision
+ * needs labels this store does not have. Treat a high rejection share as a cost signal, not
+ * as proof the refused deliveries were legitimate.
  */
 
 import { createRequire } from 'node:module';
@@ -169,7 +177,15 @@ for (const cp of crossPosts) {
 // broader claim "no fence is available": thread lineage is a declared server-side fact, not an
 // inference about what a message is "about". RedisThreadStore persists parentThreadId and keeps
 // a children index, so source→target family membership is decidable without guessing.
-// This measures the cost of a FAIL-CLOSED structural fence against real traffic.
+// This measures the COST (rejection share) of a FAIL-CLOSED structural fence against real traffic.
+//
+// Two limits are structural, not tuning knobs:
+//   (a) parentThreadId is an OPEN world. It proves a relation exists; its absence proves
+//       nothing. "Target is outside the source's family" is therefore NOT equivalent to
+//       "the delivery had no standing" — lineage is not an allowlist of legitimate targets.
+//   (b) "Source declares a parent" is the NARROW scope. A source thread can also be the
+//       PARENT of other threads (the children index), which is just as much recorded lineage.
+//       Both scopes are reported below; neither is a complete measure of standing.
 const threadParent = new Map();
 const threadDetailKey = new RegExp(`^${PREFIX}thread:[^:]+$`);
 await scanKeys(
@@ -197,13 +213,21 @@ const familyLinked = (source, target) => {
   return Boolean(parentOfSource && parentOfTarget && parentOfSource === parentOfTarget);
 };
 
+/** Threads that some other thread points at as its parent — the children index, inverted. */
+const declaredAsParent = new Set([...threadParent.values()].filter(Boolean));
+/** Any recorded lineage at all: the thread declares a parent, or is itself declared a parent. */
+const hasAnyLineage = (threadId) => Boolean(threadParent.get(threadId)) || declaredAsParent.has(threadId);
+
 let knownBothEnds = 0;
 let structurallyLinked = 0;
-// Scoped variant: only fence cross-posts whose SOURCE thread actually declares a family.
+// Scoped variant: only fence cross-posts whose SOURCE thread has recorded lineage.
 // Those are the cases where the store demonstrably holds a better answer than a guess
 // (incident I-3: the source's own parentThreadId WAS the operator-confirmed correct target).
+// NARROW = source declares a parentThreadId. BROAD = source declares one OR is one.
 let sourceDeclaresFamily = 0;
 let sourceDeclaresFamilyButLeaves = 0;
+let sourceHasLineage = 0;
+let sourceHasLineageButLeaves = 0;
 for (const cp of crossPosts) {
   const source = cp.extra.crossPost.sourceThreadId;
   if (!threadParent.has(source) || !threadParent.has(cp.threadId)) continue;
@@ -213,6 +237,10 @@ for (const cp of crossPosts) {
   if (threadParent.get(source)) {
     sourceDeclaresFamily++;
     if (!linked) sourceDeclaresFamilyButLeaves++;
+  }
+  if (hasAnyLineage(source)) {
+    sourceHasLineage++;
+    if (!linked) sourceHasLineageButLeaves++;
   }
 }
 
@@ -237,7 +265,7 @@ console.log(
 );
 console.log(`  cross-posts carrying a subjectRef          : ${withSubject}/${crossPosts.length}`);
 console.log(
-  `  ... subject already present in target      : ${subjectAlreadyPresent} (${pct(withSubject - subjectAlreadyPresent, withSubject)} of subject-bearing cross-posts open a NEW subject = false-positive rate of a subject fence)`,
+  `  ... subject already present in target      : ${subjectAlreadyPresent} (${pct(withSubject - subjectAlreadyPresent, withSubject)} of subject-bearing cross-posts open a NEW subject = rejection share of a subject fence)`,
 );
 console.log('\n— §3.2 R-2b: the structural standing fence —');
 console.log(`  threads with a detail record               : ${threadParent.size}`);
@@ -250,10 +278,21 @@ console.log(
   `  ... NOT family-linked                      : ${knownBothEnds - structurallyLinked} (${pct(knownBothEnds - structurallyLinked, knownBothEnds)} = share of REAL traffic a fail-closed structural fence would refuse)`,
 );
 console.log(
-  `  SCOPED: cross-posts whose source declares a family : ${sourceDeclaresFamily}/${knownBothEnds} (${pct(sourceDeclaresFamily, knownBothEnds)})`,
+  `  SCOPED/narrow: source declares a parentThreadId : ${sourceDeclaresFamily}/${knownBothEnds} (${pct(sourceDeclaresFamily, knownBothEnds)})`,
 );
 console.log(
-  `  ... of those, leaving the family           : ${sourceDeclaresFamilyButLeaves} (${pct(sourceDeclaresFamilyButLeaves, sourceDeclaresFamily)} = false-positive cost of a fence scoped to lineage-bearing sources)`,
+  `  ... of those, leaving the family           : ${sourceDeclaresFamilyButLeaves} (${pct(sourceDeclaresFamilyButLeaves, sourceDeclaresFamily)} = rejection share)`,
+);
+console.log(
+  `  SCOPED/broad: source declares a parent OR is one : ${sourceHasLineage}/${knownBothEnds} (${pct(sourceHasLineage, knownBothEnds)})`,
+);
+console.log(
+  `  ... of those, leaving the family           : ${sourceHasLineageButLeaves} (${pct(sourceHasLineageButLeaves, sourceHasLineage)} = rejection share)`,
+);
+console.log(
+  '\n  NOTE: the corpus carries no per-delivery verdict. Every "rejection share" above is the\n' +
+    '        fraction of REAL past traffic a fence would refuse — NOT a measured false-positive\n' +
+    '        rate. Precision is unknown; incident I-3 is the one confirmed true positive.',
 );
 
 await redis.quit();
