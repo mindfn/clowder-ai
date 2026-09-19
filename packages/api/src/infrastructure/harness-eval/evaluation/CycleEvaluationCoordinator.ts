@@ -260,6 +260,14 @@ export class CycleEvaluationCoordinator {
       record.ownerUserId,
       `F257 cycle ${kind}: ${record.cycleId}`,
       messageId,
+      undefined,
+      // Without this category the queue entry matches no wake-provenance branch and
+      // resolves to legacy/carrier_missing, which blocks the turn while offering no
+      // terminal producer: complete_a2a_dispatch rejects a scheduler-authored message
+      // as source_missing. Classified as scheduled, the non-hold-ball scheduler
+      // connector resolves to an unstructured cron wake that carries no ball, so the
+      // submit_cycle_evaluation writeback is the terminal it already is.
+      { sourceCategory: 'scheduled', reason: `f257_cycle_${kind}` },
     );
     if (outcome === 'full') throw new Error('cycle_invocation_queue_full');
     return messageId;

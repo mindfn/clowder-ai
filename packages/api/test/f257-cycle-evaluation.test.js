@@ -315,6 +315,18 @@ describe('F257 cycle evaluation delivery and writeback', () => {
     assert.equal((await context.cycles.current('owner-1', 'obj')).assignmentThreadId, 'thread_eval_f257_obj');
   });
 
+  test('wakes the evaluator as a scheduled delivery, not an unclassified connector ball', async () => {
+    const context = await harness();
+    await context.coordinator.ensureAssignment(context.requested);
+
+    // Without sourceCategory the queue entry falls through every wake-provenance
+    // branch to legacy/carrier_missing, which blocks the turn with no terminal
+    // producer: complete_a2a_dispatch rejects a scheduler message as source_missing.
+    const [, , , , , contentBlocks, policy] = context.wakes[0];
+    assert.equal(contentBlocks, undefined);
+    assert.equal(policy?.sourceCategory, 'scheduled');
+  });
+
   test('reads counterexamples first and hydrates only owned message excerpts', async () => {
     const episodes = [trace('ordinary', 400), trace('priority', 500, 'input-1')];
     const annotations = [
