@@ -1,6 +1,6 @@
 'use client';
 
-import { isCrossThreadProvenance } from '@cat-cafe/shared';
+import { isCrossThreadProvenance, shortThreadRef } from '@cat-cafe/shared';
 import { type CSSProperties, memo, type ReactNode, useState } from 'react';
 import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
@@ -869,7 +869,7 @@ export const ChatMessage = memo(function ChatMessage({
           (() => {
             const sourceId = crossThreadSourceThreadId;
             const sourceName = crossThreadSourceName ?? '未命名对话';
-            const shortId = sourceId.replace(/^thread_/, '').slice(0, 8);
+            const shortId = shortThreadRef(sourceId);
             const senderLabel = catStyle?.label;
             return (
               <a

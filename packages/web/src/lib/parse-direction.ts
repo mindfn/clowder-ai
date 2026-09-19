@@ -3,7 +3,7 @@
  * Priority: whisper > crossPost > @mention in content.
  */
 
-import { isCrossThreadProvenance } from '@cat-cafe/shared';
+import { isCrossThreadProvenance, shortThreadRef } from '@cat-cafe/shared';
 
 export interface DirectionInfo {
   type: 'mention' | 'crossPost' | 'whisper';
@@ -37,7 +37,7 @@ export function parseDirection(
 
   // CrossPost — has source thread metadata
   if (isCrossThreadProvenance(message.extra?.crossPost?.sourceThreadId, currentThreadId)) {
-    const shortId = message.extra.crossPost.sourceThreadId.replace(/^thread_/, '').slice(0, 8);
+    const shortId = shortThreadRef(message.extra.crossPost.sourceThreadId);
     return { type: 'crossPost', targets: [shortId], arrow: '↗' };
   }
 
