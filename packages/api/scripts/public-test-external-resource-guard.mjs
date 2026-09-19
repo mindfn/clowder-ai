@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 const DISTRIBUTABLE_SCOPE = 'distributable';
 const LOCAL_HOSTS = new Set(['localhost', '::1']);
 const NETWORK_COMMANDS = new Set(['curl', 'wget', 'ssh', 'scp', 'sftp', 'gh']);
+const GIT_NETWORK_SUBCOMMANDS = new Set(['clone', 'fetch', 'ls-remote', 'pull', 'push']);
 
 function violation(detail) {
   const error = new Error(`external_resource_violation: ${detail}`);
@@ -78,6 +79,22 @@ function shellCommandAllowed(command) {
   }
 }
 
+function gitNetworkPolicy(args) {
+  const subcommandIndex = args.findIndex((arg) => GIT_NETWORK_SUBCOMMANDS.has(arg));
+  if (subcommandIndex < 0) return undefined;
+  const target = args.slice(subcommandIndex + 1).find((arg) => !arg.startsWith('-'));
+  if (!target) throw violation(`git ${args[subcommandIndex]} has no provably local target`);
+  if (target.startsWith('/') || target.startsWith('./') || target.startsWith('../') || target.startsWith('file:')) {
+    return undefined;
+  }
+  if (!target.includes('://') && !target.includes('@')) return undefined;
+  const parsed = assertDistributableUrl(target, `git ${args[subcommandIndex]}`);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw violation(`git ${args[subcommandIndex]} cannot use ${parsed.protocol}`);
+  }
+  return { gitAllowProtocol: `file:${parsed.protocol.slice(0, -1)}` };
+}
+
 export function assertDistributableCommand(command, args = []) {
   const executable = basename(String(command)).toLowerCase();
   const normalizedArgs = Array.isArray(args) ? args.map(String) : [];
@@ -94,6 +111,7 @@ export function assertDistributableCommand(command, args = []) {
       assertDistributableCommand(normalizedArgs[nestedIndex], normalizedArgs.slice(nestedIndex + 1));
     return;
   }
+  if (executable === 'git') return gitNetworkPolicy(normalizedArgs);
   if (!NETWORK_COMMANDS.has(executable)) return;
   if (['gh', 'ssh', 'scp', 'sftp'].includes(executable)) {
     throw violation(`distributable tests cannot execute ${executable}`);
@@ -101,6 +119,18 @@ export function assertDistributableCommand(command, args = []) {
   const urls = urlsIn(normalizedArgs);
   if (urls.length === 0) throw violation(`${executable} has no provably loopback target`);
   for (const url of urls) assertDistributableUrl(url, executable);
+}
+
+function commandRestWithPolicy(rest, policy) {
+  if (!policy?.gitAllowProtocol) return rest;
+  const [first, ...tail] = rest;
+  const hasOptions = first && typeof first === 'object' && !Array.isArray(first);
+  const options = hasOptions ? first : {};
+  const guardedOptions = {
+    ...options,
+    env: { ...process.env, ...(options.env ?? {}), GIT_ALLOW_PROTOCOL: policy.gitAllowProtocol },
+  };
+  return hasOptions ? [guardedOptions, ...tail] : [guardedOptions, ...rest];
 }
 
 function requestTarget(args, protocol) {
@@ -192,8 +222,8 @@ function installGuard() {
   for (const method of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
     const original = childProcess[method];
     childProcess[method] = preserveFunctionProperties(function guardedFileCommand(command, args, ...rest) {
-      assertDistributableCommand(command, Array.isArray(args) ? args : []);
-      return original.call(this, command, args, ...rest);
+      const policy = assertDistributableCommand(command, Array.isArray(args) ? args : []);
+      return original.call(this, command, args, ...commandRestWithPolicy(rest, policy));
     }, original);
   }
   for (const method of ['exec', 'execSync']) {

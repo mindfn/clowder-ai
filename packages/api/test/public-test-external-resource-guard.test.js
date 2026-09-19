@@ -16,6 +16,7 @@ describe('F308 public-test external resource guard', () => {
       assert.doesNotThrow(() => assertDistributableUrl(value, 'fixture'));
     }
     assert.doesNotThrow(() => assertDistributableCommand('git', ['fetch', '/tmp/repo.git', 'main']));
+    assert.doesNotThrow(() => assertDistributableCommand('git', ['push', 'origin', 'main']));
     assert.doesNotThrow(() => assertDistributableCommand('curl', ['http://127.0.0.1:3004/health']));
   });
 
@@ -33,6 +34,27 @@ describe('F308 public-test external resource guard', () => {
       () => assertDistributableCommand('sh', ['-c', 'wget https://example.com/fixture']),
       /external_resource_violation/,
     );
+    assert.throws(
+      () => assertDistributableCommand('git', ['ls-remote', 'https://example.com/repo.git']),
+      /external_resource_violation/,
+    );
+  });
+
+  it('allows an explicit loopback Git probe without opening Git access to remote hosts', () => {
+    const guardPath = fileURLToPath(new URL('../scripts/public-test-external-resource-guard.mjs', import.meta.url));
+    const script = [
+      'const { execFile } = await import("node:child_process");',
+      'execFile("git", ["ls-remote", "https://127.0.0.1:1/nonexistent.git"], (error, _stdout, stderr) => {',
+      '  if (!error) process.exit(2);',
+      '  if (/transport .https. not allowed/i.test(stderr)) process.exit(3);',
+      '  process.exit(/failed to connect|connection refused/i.test(stderr) ? 0 : 4);',
+      '});',
+    ].join('');
+    const result = spawnSync(process.execPath, ['--import', guardPath, '--eval', script], {
+      encoding: 'utf8',
+      env: { ...process.env, CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: 'distributable' },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   });
 
   it('does not confuse fixture strings or harmless local commands with external use', () => {
