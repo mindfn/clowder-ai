@@ -461,7 +461,7 @@ export type {
   CrossThreadCoordinationInput,
   CrossThreadCoordinationInputPhase,
 } from './cross-thread-coordination.js';
-export { isCrossThreadProvenance } from './cross-thread-coordination.js';
+export { isCrossThreadProvenance, shortThreadRef } from './cross-thread-coordination.js';
 export type {
   CycleCoverageAssessment,
   CycleCoverageFinding,

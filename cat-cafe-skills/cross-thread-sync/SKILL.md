@@ -171,15 +171,27 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 
 **§15 家规**：BLOCKING 信息不能只留在 cross-post 消息里，必须同时写入可追溯状态（feature doc / workflow / task），至少包含 `subjectRef / terminalPredicate / slaUntil / custody owner`。
 
-## Ghost Thread Bug 保守规则
+## 误投风险：错在调用方，不在服务端
 
-**已知 Bug (P2, OPEN)**：cross-post 后 session continuation 可能绑错 thread（见 `docs/bug-report/ghost-thread-cross-thread-session-routing/`）。
+**2026-09-19 裁决（`docs/bug-report/ghost-thread-cross-thread-session-routing/`）**：
+"cross-post 后 session continuation 绑错 thread" 这条旧 P2 断言 **已证伪** ——
+全量语料 7,755 条因果边里**未声明的跨线程 continuation 为 0**，663 个带 A2A 触发的 session 里
+**绑定错配为 0**。服务端把消息投到了你**要求**的那条 thread，一条不多一条不少。
 
-在此 bug 修复前：
+真实风险在你这一侧：`cross_post_message` 只校验 thread 存在 + 属于同一 principal scope，
+**不校验 source→target 的语义关联**。你给一个存在的 threadId，它就投进去。
+已确认的 6 次误投全部是调用方选错 target（含 1 次"平行实例在哪条 thread"选错）。
 
-- cross-post 只用于**单次通知**，不做来回对话
-- 不做自动 hook 广播（避免路由 bug 扩大为系统噪音）
-- 如果发现自己收到了不属于自己 thread 的 mention → 停下来报告
+因此：
+
+- **别用"服务端 ghost thread bug"给自己的误投归因。** 那条路已经关了。
+- 投递前必须能说出**你是怎么解析出这个 threadId 的**：feature doc / thread 标题与上下文 /
+  standing custody 至少一项。"最近见过这个 id"不是解析路径。
+- **查不到 verified owner thread → `propose_thread`（F128），不要猜一个近似 thread。**
+  I-1/I-2a 两次误投的根源都是"F167 压根没有 owner thread"，而猫选择了猜。
+- 收到跨线程消息、发现它不属于本 thread → **立刻停止，不要基于它继续二次协调**。
+  实测两次（2026-07-27、2026-09-19）误投后的被唤醒猫都立刻把内容再投给了第三条无关 thread。
+- cross-post 只用于**单次通知**，不做来回对话；不做自动 hook 广播。
 
 ## 常见误区
 

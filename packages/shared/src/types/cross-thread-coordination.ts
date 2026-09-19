@@ -30,3 +30,19 @@ export function isCrossThreadProvenance(
 ): sourceThreadId is string {
   return Boolean(sourceThreadId && targetThreadId && sourceThreadId !== targetThreadId);
 }
+
+/** Length of the human/agent-facing short thread reference. */
+const SHORT_THREAD_REF_LENGTH = 8;
+
+/**
+ * Discriminating short form of a threadId, for UI bubbles and prompt provenance tags.
+ *
+ * Every real threadId is `thread_<id>`, so truncating the RAW id yields the constant
+ * prefix `thread_m` for essentially every thread — a tag that cannot tell two source
+ * threads apart. Strip the namespace prefix first, then truncate.
+ *
+ * Bug-report: docs/bug-report/ghost-thread-cross-thread-session-routing/ (R-3).
+ */
+export function shortThreadRef(threadId: string): string {
+  return threadId.replace(/^thread_/, '').slice(0, SHORT_THREAD_REF_LENGTH);
+}
