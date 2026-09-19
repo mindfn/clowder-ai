@@ -3,7 +3,7 @@
   "defaultIsolationEvidence": {
     "kind": "runtime-external-resource-guard",
     "rulesVersion": "f308-runtime-v1",
-    "source": "Each distributable test file runs in a fresh process; the runtime guard denies direct non-loopback network access and recognized network-capable command invocations in-process and in guard-propagated child processes, except an exact temporary executable explicitly declared as a local test fixture."
+    "source": "Each distributable test file runs in a fresh process; the bounded runtime guard denies non-loopback fetch, WebSocket, HTTP(S), TCP/TLS, recognized network-capable commands, and guard-propagated child-process use, except an exact temporary executable explicitly declared as a local test fixture. This is not a general Node/native egress sandbox."
   },
   "sharedResources": []
 }

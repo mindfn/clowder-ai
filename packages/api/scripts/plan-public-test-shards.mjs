@@ -5,7 +5,7 @@ import { publicTestArtifactFingerprint, validatePublicTestProvenance } from './p
 import { comparePublicTestStrings, publicTestInvariant as invariant } from './public-test-support.mjs';
 import { publicTestSelectionHash } from './resolve-public-test-files.mjs';
 
-export const DISTRIBUTABLE_PUBLIC_TEST_SHARDS = 9;
+export const DISTRIBUTABLE_PUBLIC_TEST_SHARDS = 6;
 export const SHARED_SERIAL_LANE = 'serial-shared';
 
 function digest(value) {

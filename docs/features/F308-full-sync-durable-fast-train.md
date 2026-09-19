@@ -79,7 +79,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | R2 | DAG early failure + typed next action | AC-B1–B2 | [x] |
 | R3 | admission / single-flight / restart recovery | AC-B3–B5 | [x] |
 | R4 | F251, ledger and community preservation remain fail-closed | AC-C1–C4 | [x] |
-| R5 | deterministic 4–6 public-test shards without coverage loss | AC-D1–D6 | [ ] |
+| R5 | deterministic 4–6 distributable public-test shards plus one explicit shared-resource lane, without coverage loss | AC-D1–D6 | [ ] |
 | R6 | launch/resume/status observability and real no-write dogfood | AC-A1, AC-B3–B5, AC-E1 | [x] |
 
 ## Acceptance Criteria
@@ -124,15 +124,18 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 
 - [x] **AC-D1**: Resolver emits deterministic selected-file manifest, per-file timing, failure category and stable
   mapping fingerprint.
-- [x] **AC-D2**: A planner produces 4–6 deterministic, duration-balanced pure-test shards; every selected test
-  appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the manifest.
+- [x] **AC-D2**: A planner produces 4–6 deterministic distributable shards plus one explicit shared-resource lane;
+  current CI uses six count-balanced distributable shards because it has no measured timing artifact. Every selected
+  test appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the
+  manifest. Duration balancing remains an operator-side replay capability, not a claim about the CI-produced plan.
 - [x] **AC-D3**: Only tests with explicit evidence for a real cross-VM remote endpoint, shared account or shared quota
   remain in one globally serial lane. Every other file runs in one count-balanced distributable pool across isolated
-  GitHub VMs; each file still receives a fresh Node process, every VM remains file-serial with
-  `--test-concurrency=1`, and a runtime guard rejects direct undeclared non-loopback access in-process and in
-  guard-propagated child processes. An exact temporary executable can run only when the test explicitly declares it
-  as a local command fixture. Duration balancing exists as an operator-side replay tool but current CI does not supply
-  a measured timing artifact.
+  GitHub VMs; each file still receives a fresh Node process and every VM remains file-serial with
+  `--test-concurrency=1`. The runtime guard rejects undeclared non-loopback use through `fetch`, WebSocket,
+  HTTP(S), TCP/TLS, recognized network-capable commands, and guard-propagated child processes. It is a bounded guard
+  for those exercised Node surfaces, not a general Node/native egress sandbox. An exact temporary executable can run
+  only when the test explicitly declares it as a local command fixture. Duration balancing exists as an operator-side
+  replay tool but current CI does not supply a measured timing artifact.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
@@ -142,9 +145,11 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   (`docs/ops/2026-08-27-f308-public-test-source-measurements.json`) measured p50 14m18s / p95 14m25s with the
   serial lane dominant. The resource-scope split makes the original target measurable again but does not complete it:
   source-runner evidence and single target runs never substitute for the required three target-CI artifacts. The
-  count-balanced `64d948e1f` source run measured a 184,650ms critical path against a 147,264ms nine-lane mean, leaving
-  37,386ms (20.2%) of measured scheduling headroom for a future timing-artifact design that preserves selection and
-  provenance fail-closed behavior.
+  exact target run `35439924398` measured a 319,657ms nine-lane test critical path. Replaying that run's 2,189
+  per-file timings through the same deterministic count balancer yields a 396,477ms six-lane projection; adding the
+  run's observed 122,343ms slowest-job setup/build overhead projects 518,820ms (8m38.820s). This is design evidence,
+  not target-CI completion evidence; the six-lane target must still run, and a future timing-artifact design must
+  preserve selection and provenance fail-closed behavior.
 
 ### Phase E — Dogfood, review and close
 
@@ -173,7 +178,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
-| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; the runtime guard denies direct non-loopback access and recognized remote commands in-process and in guard-propagated child processes, with an exact temporary-path declaration required for local executable fixtures; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
+| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; the bounded runtime guard denies non-loopback `fetch`, WebSocket, HTTP(S), TCP/TLS and recognized remote commands in-process and in guard-propagated child processes, with an exact temporary-path declaration required for local executable fixtures; it is not claimed as a general Node/native sandbox; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 
@@ -192,7 +197,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 - The target-owned CI patch landed in `clowder-ai` PR #1413 at merge
   `71a9b707847f7ed2cd43a3de42e4ca40ec7520e3`. Exact-head target CI preserved the required `Test (Public)` check,
   Windows and public-contract surfaces; its serial bootstrap passed in 19m36s and the fail-closed aggregate passed.
-  The workflow now requires exact-plan/report summary provenance for one explicit shared-resource lane and nine
+  The workflow now requires exact-plan/report summary provenance for one explicit shared-resource lane and six
   guarded distributable shards. Every selected file must appear exactly once, and the evidence job fails above a
   600,000ms critical path. Three same-selection target-CI artifacts are still required by AC-D6.
 

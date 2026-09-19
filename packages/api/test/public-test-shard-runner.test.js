@@ -34,9 +34,6 @@ const plan = {
     { id: 'distributable-4', files: [], estimatedDurationMs: 0 },
     { id: 'distributable-5', files: [], estimatedDurationMs: 0 },
     { id: 'distributable-6', files: [], estimatedDurationMs: 0 },
-    { id: 'distributable-7', files: [], estimatedDurationMs: 0 },
-    { id: 'distributable-8', files: [], estimatedDurationMs: 0 },
-    { id: 'distributable-9', files: [], estimatedDurationMs: 0 },
   ],
   assignments: {
     'test/pure-alpha.test.js': {
@@ -148,7 +145,7 @@ describe('F308 public-test shard runner', () => {
   it('rejects a manifest or lane that cannot prove exact selected-file provenance', async () => {
     assert.deepEqual(filesForPublicTestLane(plan, 'distributable-3'), ['test/serial-redis.test.js']);
     assert.deepEqual(filesForPublicTestLane(plan, 'serial-shared'), []);
-    assert.throws(() => filesForPublicTestLane(plan, 'distributable-10'), /unknown public-test shard lane/);
+    assert.throws(() => filesForPublicTestLane(plan, 'distributable-7'), /unknown public-test shard lane/);
     await assert.rejects(
       runPublicTestLane({
         plan,

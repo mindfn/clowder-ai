@@ -33,9 +33,6 @@ const plan = {
     { id: 'distributable-4', files: [], estimatedDurationMs: 0 },
     { id: 'distributable-5', files: [], estimatedDurationMs: 0 },
     { id: 'distributable-6', files: [], estimatedDurationMs: 0 },
-    { id: 'distributable-7', files: [], estimatedDurationMs: 0 },
-    { id: 'distributable-8', files: [], estimatedDurationMs: 0 },
-    { id: 'distributable-9', files: [], estimatedDurationMs: 0 },
   ],
   assignments: {
     'test/pure.test.js': {
@@ -96,9 +93,6 @@ function greenReports() {
     report('distributable-4', [], 4),
     report('distributable-5', [], 5),
     report('distributable-6', [], 6),
-    report('distributable-7', [], 7),
-    report('distributable-8', [], 8),
-    report('distributable-9', [], 9),
   ];
 }
 
@@ -109,8 +103,8 @@ describe('F308 public-test shard summary', () => {
     assert.equal(summary.criticalPathMs, 20);
     assert.equal(summary.sharedSerialLaneMs, 20);
     assert.equal(summary.distributableCriticalPathMs, 10);
-    assert.equal(summary.distributableAggregateMs, 54);
-    assert.ok(Math.abs(summary.runnerMinutes - (20 + 10 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9) / 60_000) < Number.EPSILON);
+    assert.equal(summary.distributableAggregateMs, 30);
+    assert.ok(Math.abs(summary.runnerMinutes - (20 + 10 + 2 + 3 + 4 + 5 + 6) / 60_000) < Number.EPSILON);
     assert.deepEqual(Object.keys(summary.perFileTimings), selectedFiles);
   });
 

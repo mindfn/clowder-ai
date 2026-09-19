@@ -67,7 +67,7 @@ describe('F308 public-test sharding', () => {
     });
 
     assert.equal(plan.schemaVersion, 2);
-    assert.equal(plan.distributableShards.length, 9);
+    assert.equal(plan.distributableShards.length, 6);
     assert.deepEqual(plan.sharedSerialLane.files, ['test/network-state.test.js']);
     assert.deepEqual(
       plan.distributableShards.flatMap((shard) => shard.files).sort(),

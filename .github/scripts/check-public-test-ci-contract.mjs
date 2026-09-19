@@ -31,11 +31,8 @@ assert.deepEqual(
     'distributable-4',
     'distributable-5',
     'distributable-6',
-    'distributable-7',
-    'distributable-8',
-    'distributable-9',
   ],
-  'public-test CI must retain one explicit shared-resource lane and nine guarded distributable shards',
+  'public-test CI must retain one explicit shared-resource lane and six guarded distributable shards',
 );
 assert.deepEqual(
   workflow.jobs['public-test-shards'].permissions,

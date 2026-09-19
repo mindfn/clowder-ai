@@ -120,7 +120,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [serial-shared, distributable-1, distributable-2, distributable-3, distributable-4, distributable-5, distributable-6, distributable-7, distributable-8, distributable-9]
+        lane: [serial-shared, distributable-1, distributable-2, distributable-3, distributable-4, distributable-5, distributable-6]
     steps:
       - uses: actions/checkout@v4
         with:
