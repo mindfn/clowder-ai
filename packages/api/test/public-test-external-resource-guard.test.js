@@ -140,8 +140,25 @@ describe('F308 public-test external resource guard', () => {
     const guardPath = fileURLToPath(new URL('../scripts/public-test-external-resource-guard.mjs', import.meta.url));
     const script = [
       'const { promisify } = await import("node:util");',
-      'const { execFile } = await import("node:child_process");',
-      'const { stdout } = await promisify(execFile)(process.execPath, ["--version"]);',
+      'const { exec, execFile } = await import("node:child_process");',
+      'const execAsync = promisify(exec);',
+      'const execFileAsync = promisify(execFile);',
+      'const expectViolation = async (run) => {',
+      '  try { await run(); } catch (error) {',
+      '    if (/external_resource_violation/.test(String(error))) return;',
+      '    throw error;',
+      '  }',
+      '  process.exit(3);',
+      '};',
+      'await expectViolation(() => execAsync("curl https://example.com/should-not-run"));',
+      'await expectViolation(() => execFileAsync("curl", ["https://example.com/should-not-run"]));',
+      'const { stdout: protocol } = await execFileAsync(',
+      '  process.execPath,',
+      '  ["-p", "process.env.GIT_ALLOW_PROTOCOL"],',
+      '  { env: {} },',
+      ');',
+      'if (protocol.trim() !== "file") process.exit(4);',
+      'const { stdout } = await execFileAsync(process.execPath, ["--version"]);',
       'if (!stdout.startsWith("v")) process.exit(2);',
     ].join('');
     const result = spawnSync(process.execPath, ['--import', guardPath, '--eval', script], {

@@ -130,8 +130,9 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   remain in one globally serial lane. Every other file runs in one count-balanced distributable pool across isolated
   GitHub VMs; each file still receives a fresh Node process, every VM remains file-serial with
   `--test-concurrency=1`, and a runtime guard rejects direct undeclared non-loopback access in-process and in
-  guard-propagated child processes. Duration balancing exists as an operator-side replay tool but current CI does not
-  supply a measured timing artifact.
+  guard-propagated child processes. An exact temporary executable can run only when the test explicitly declares it
+  as a local command fixture. Duration balancing exists as an operator-side replay tool but current CI does not supply
+  a measured timing artifact.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
@@ -172,7 +173,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
-| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; the runtime guard denies direct non-loopback access and recognized remote commands in-process and in guard-propagated child processes; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
+| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; the runtime guard denies direct non-loopback access and recognized remote commands in-process and in guard-propagated child processes, with an exact temporary-path declaration required for local executable fixtures; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 

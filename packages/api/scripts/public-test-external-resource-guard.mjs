@@ -1,16 +1,21 @@
 import childProcess from 'node:child_process';
+import { existsSync, realpathSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
-import { basename } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import tls from 'node:tls';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 const DISTRIBUTABLE_SCOPE = 'distributable';
 const LOCAL_HOSTS = new Set(['localhost', '::1']);
 const NETWORK_COMMANDS = new Set(['curl', 'wget', 'ssh', 'scp', 'sftp', 'gh']);
 const GIT_NETWORK_SUBCOMMANDS = new Set(['clone', 'fetch', 'ls-remote', 'pull', 'push']);
+const PROMISIFY_CUSTOM = promisify.custom;
+const LOCAL_COMMAND_FIXTURES_ENV = 'CAT_CAFE_PUBLIC_TEST_LOCAL_COMMAND_FIXTURES';
 
 function violation(detail) {
   const error = new Error(`external_resource_violation: ${detail}`);
@@ -60,14 +65,58 @@ function shellCommands(command) {
       const match = /^(?:command\s+|env(?:\s+(?:-[^\s]+|[A-Za-z_][A-Za-z0-9_]*=\S+))*\s+)?([^\s]+)/.exec(
         withoutAssignments,
       );
-      return match ? { executable: basename(match[1]).toLowerCase(), text: withoutAssignments } : undefined;
+      return match
+        ? { command: match[1], executable: basename(match[1]).toLowerCase(), text: withoutAssignments }
+        : undefined;
     })
     .filter(Boolean);
 }
 
-function shellCommandAllowed(command) {
+function resolvedExecutable(command, options = {}) {
+  const value = String(command);
+  const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
+  const environment = options.env ?? process.env;
+  const candidates =
+    isAbsolute(value) || value.includes('/') || value.includes('\\')
+      ? [resolve(cwd, value)]
+      : String(environment.PATH ?? '')
+          .split(delimiter)
+          .filter(Boolean)
+          .map((directory) => resolve(cwd, directory, value));
+  const candidate = candidates.find((path) => existsSync(path));
+  if (!candidate) return undefined;
+  try {
+    return realpathSync(candidate);
+  } catch {
+    return undefined;
+  }
+}
+
+function isDeclaredLocalCommandFixture(command, options = {}) {
+  const executable = resolvedExecutable(command, options);
+  if (!executable) return false;
+  const temporaryRoot = realpathSync(tmpdir());
+  const declared = String(process.env[LOCAL_COMMAND_FIXTURES_ENV] ?? '')
+    .split(delimiter)
+    .filter((path) => isAbsolute(path))
+    .flatMap((path) => {
+      try {
+        const candidate = realpathSync(path);
+        const fromTemporaryRoot = relative(temporaryRoot, candidate);
+        return fromTemporaryRoot && !fromTemporaryRoot.startsWith('..') && !isAbsolute(fromTemporaryRoot)
+          ? [candidate]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+  return declared.includes(executable);
+}
+
+function shellCommandAllowed(command, options = {}) {
   const text = String(command);
   for (const commandPart of shellCommands(text)) {
+    if (isDeclaredLocalCommandFixture(commandPart.command, options)) continue;
     if (['gh', 'ssh', 'scp', 'sftp'].includes(commandPart.executable)) {
       throw violation(`distributable tests cannot execute ${commandPart.executable}`);
     }
@@ -95,20 +144,21 @@ function gitNetworkPolicy(args) {
   return { gitAllowProtocol: `file:${parsed.protocol.slice(0, -1)}` };
 }
 
-export function assertDistributableCommand(command, args = []) {
+export function assertDistributableCommand(command, args = [], options = {}) {
   const executable = basename(String(command)).toLowerCase();
   const normalizedArgs = Array.isArray(args) ? args.map(String) : [];
+  if (isDeclaredLocalCommandFixture(command, options)) return;
   if (['sh', 'bash', 'zsh'].includes(executable)) {
     const commandIndex = normalizedArgs.indexOf('-c');
     if (commandIndex >= 0 && normalizedArgs[commandIndex + 1]) {
-      shellCommandAllowed(normalizedArgs[commandIndex + 1]);
+      shellCommandAllowed(normalizedArgs[commandIndex + 1], options);
     }
     return;
   }
   if (executable === 'env') {
     const nestedIndex = normalizedArgs.findIndex((arg) => !arg.startsWith('-') && !arg.includes('='));
     if (nestedIndex >= 0)
-      assertDistributableCommand(normalizedArgs[nestedIndex], normalizedArgs.slice(nestedIndex + 1));
+      assertDistributableCommand(normalizedArgs[nestedIndex], normalizedArgs.slice(nestedIndex + 1), options);
     return;
   }
   if (executable === 'git') return gitNetworkPolicy(normalizedArgs);
@@ -142,6 +192,14 @@ function guardedFileCommandArguments(args, rest, policy) {
   return [guardedCommandOptions({}, policy), ...rest];
 }
 
+function fileCommandOptions(args, rest) {
+  if (Array.isArray(args)) {
+    const [first] = rest;
+    return first && typeof first === 'object' && !Array.isArray(first) ? first : {};
+  }
+  return args && typeof args === 'object' ? args : {};
+}
+
 function guardedShellCommandArguments(args) {
   const [first, ...tail] = args;
   if (first && typeof first === 'object' && !Array.isArray(first)) {
@@ -170,10 +228,22 @@ function connectHost(args) {
 
 function preserveFunctionProperties(wrapper, original) {
   for (const key of Reflect.ownKeys(original)) {
-    if (['length', 'name', 'prototype'].includes(key)) continue;
+    if (['length', 'name', 'prototype'].includes(key) || key === PROMISIFY_CUSTOM) continue;
     const descriptor = Object.getOwnPropertyDescriptor(original, key);
     if (descriptor) Object.defineProperty(wrapper, key, descriptor);
   }
+  return wrapper;
+}
+
+function preserveGuardedPromisify(wrapper, original, guard) {
+  const descriptor = Object.getOwnPropertyDescriptor(original, PROMISIFY_CUSTOM);
+  if (!descriptor || typeof descriptor.value !== 'function') return wrapper;
+  Object.defineProperty(wrapper, PROMISIFY_CUSTOM, {
+    ...descriptor,
+    value: function guardedPromisifiedCommand(...args) {
+      return guard(descriptor.value, this, args);
+    },
+  });
   return wrapper;
 }
 
@@ -238,17 +308,35 @@ function installGuard() {
 
   for (const method of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
     const original = childProcess[method];
-    childProcess[method] = preserveFunctionProperties(function guardedFileCommand(command, args, ...rest) {
-      const policy = assertDistributableCommand(command, Array.isArray(args) ? args : []);
+    const wrapper = preserveFunctionProperties(function guardedFileCommand(command, args, ...rest) {
+      const policy = assertDistributableCommand(
+        command,
+        Array.isArray(args) ? args : [],
+        fileCommandOptions(args, rest),
+      );
       return original.call(this, command, ...guardedFileCommandArguments(args, rest, policy));
     }, original);
+    childProcess[method] = preserveGuardedPromisify(wrapper, original, (originalPromisified, receiver, args) => {
+      const [command, commandArgs, ...rest] = args;
+      const policy = assertDistributableCommand(
+        command,
+        Array.isArray(commandArgs) ? commandArgs : [],
+        fileCommandOptions(commandArgs, rest),
+      );
+      return originalPromisified.call(receiver, command, ...guardedFileCommandArguments(commandArgs, rest, policy));
+    });
   }
   for (const method of ['exec', 'execSync']) {
     const original = childProcess[method];
-    childProcess[method] = preserveFunctionProperties(function guardedShellCommand(command, ...args) {
-      shellCommandAllowed(command);
+    const wrapper = preserveFunctionProperties(function guardedShellCommand(command, ...args) {
+      shellCommandAllowed(command, args[0]);
       return original.call(this, command, ...guardedShellCommandArguments(args));
     }, original);
+    childProcess[method] = preserveGuardedPromisify(wrapper, original, (originalPromisified, receiver, args) => {
+      const [command, ...rest] = args;
+      shellCommandAllowed(command, rest[0]);
+      return originalPromisified.call(receiver, command, ...guardedShellCommandArguments(rest));
+    });
   }
   syncBuiltinESMExports();
 }

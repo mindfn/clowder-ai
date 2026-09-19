@@ -3,7 +3,7 @@
   "defaultIsolationEvidence": {
     "kind": "runtime-external-resource-guard",
     "rulesVersion": "f308-runtime-v1",
-    "source": "Each distributable test file runs in a fresh process; the runtime guard denies direct non-loopback network access and recognized network-capable command invocations in-process and in guard-propagated child processes."
+    "source": "Each distributable test file runs in a fresh process; the runtime guard denies direct non-loopback network access and recognized network-capable command invocations in-process and in guard-propagated child processes, except an exact temporary executable explicitly declared as a local test fixture."
   },
   "sharedResources": []
 }
