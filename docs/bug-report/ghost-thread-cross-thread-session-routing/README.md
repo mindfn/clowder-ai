@@ -210,13 +210,13 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 
 在提"加个 guard"之前先量化了两个最自然的 fence，**两个都不可用**：
 
-| 候选 fence | 合法跨投的基线 | 本 corpus 误投是否会被拦 |
+| 候选 fence | **历史真实流量**的基线（无标注，不代表这些投递都是对的） | 本 corpus 误投是否会被拦 |
 |-----------|--------------|----------------------|
 | 「发送方在目标 thread 没有历史发言」（cold-open） | 957 条 cross-post 中 **92.7% 是 warm**（发送方此前发过言），7.3% cold-open | I-1 是 **WARM**（sol 当时正在 A2A#1398 干活）；I-3 也是 **WARM**。**拦不住** |
-| 「coordination.subjectRef 在目标 thread 未出现过」 | 带 subjectRef 的 134 条里 **51.5% 是 novel subject**（Core↔Plugins 正常开新 subject 就是这样） | I-1 会被拦，但**拒绝比例** ~50%。**不可用** |
+| 「coordination.subjectRef 在目标 thread 未出现过」 | 带 subjectRef 的 134 条里 **51.5% 是 novel subject**（Core↔Plugins 这类协作**会**长成这样，但语料没标注，不能反推这 51.5% 都是对的） | I-1 会被拦，但**拒绝比例** ~50%。**不可用** |
 
 **结论（严格限定在本节量化的范围内）：不要做内容启发式 guard。**
-它既拦不住本 corpus 的真误投（两条判据对 I-1/I-3 都失效），又会拒掉一半"正常开新 subject"的跨投。
+它既拦不住本 corpus 的真误投（两条判据对 I-1/I-3 都失效），又会拒掉一半"开新 subject"的历史真实跨投。
 
 > ⚠️ **口径声明（贯穿 R-2 / R-2b 全部百分比）**：线上语料**没有 per-delivery 标注**——
 > 没有一条历史 cross-post 记着"这次投对了/投错了"。所以本节与下节的每个百分比都是
@@ -239,7 +239,7 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 | 口径 | 数值 | 含义 |
 |------|------|------|
 | 有 detail 记录的 thread | 531 | — |
-| 其中**声明了 `parentThreadId`** | **29（5.5%）** | 血缘图基本是空的 |
+| 其中**声明了 `parentThreadId`** | **29（5.5%）** | **父链接填充率**（图稀疏度），≠ standing 覆盖率 |
 | 两端都可解析的 cross-post | 960/960 | 判据本身可计算 |
 | source/target 同族 | 244（25.4%） | — |
 | **不同族** | **716（74.6%）** | 一刀切 fail-closed 的**拒绝比例** |
@@ -282,13 +282,15 @@ thread store 里，而猫在猜。** 所以这条判据的价值**不在"能拒�
 
 **而且它救不了大多数事件**：I-1 / I-1b / I-2a / I-2b / I-4 的源 thread 全部 `parentThreadId = null`
 （11 条涉事 thread 逐条实测，只有 I-3 那条有血缘），这条判据对它们完全不适用。
-**最表层的阻塞就是 5.5% 的血缘覆盖率**——`propose_thread` 本该建立的 standing graph 基本没被建起来；
+**最表层的阻塞是父链接填充率只有 5.5%**——`propose_thread` 本该建立的 standing graph 极其稀疏；
 另外两层阻塞（无标注、开放世界）见下方裁决，三层都得解掉才谈得上"拒绝"。
 
 > **裁决（本轮收紧）：结构性 standing 判据可以做 advisory / grounding，不足以支撑 fail-closed 拒绝。**
 > 三层理由，缺一条都不行：
 >
-> 1. **覆盖率**：只有 5.5% 的 thread 声明了血缘，判据本身几乎没被记录；
+> 1. **图稀疏**：只有 5.5% 的 thread 声明了 `parentThreadId`。注意这是**父链接填充率**，
+>    **不是 standing 覆盖率**——scope B 已经证明 69.9% 的历史跨投流量，其 source 至少带一条 lineage。
+>    "有多少投递真的有 standing"仍然是**未知量**，这个库里没有能回答它的字段；
 > 2. **口径**：拒绝比例窄 scope 18.7%、宽 scope 63.6%，**precision 两者都未知**——
 >    语料无标注，26 条里已知**至少一条是真阳性**（I-3），其余既不能算对也不能算错；
 > 3. **世界观**：血缘是开放世界，族外 ≠ 无 standing。
@@ -340,8 +342,10 @@ if (decision.resolverState === 'degraded') {
 }
 ```
 
-`degraded` 有**两条**产生路径、合计 **8 类 `failureClass`**（逐条读 `upstream/main` 源码得到，
-不是回忆；初稿写"唯一来源是 catalog 取不到"是错的，已改正）：
+`degraded` 有**两条**产生路径、**7 个 `failureClass` family**、展开后 **10 个具体字符串**
+（`resolver_degraded` 这个 family 自己带 4 个 `reason`）。逐条读 `upstream/main` 源码得到，
+不是回忆；初稿先写"唯一来源是 catalog 取不到"、再写"8 类"，两次都错，这是第三次数，按 family /
+具体值两个口径分开记，免得再数错：
 
 | 产生路径 | `failureClass` | 代码位置（`upstream/main`） |
 |---------|---------------|--------------------------|
@@ -351,12 +355,16 @@ if (decision.resolverState === 'degraded') {
 | 同上 | `resolver_timeout`（超 `readBudgetMs`，默认 120ms）/ `resolver_error` | `RoutingPreflightService.ts:144` |
 | 同上 | `resolver_degraded:<reason>`，`reason` ∈ `dossier_unavailable` / `dossier_unreadable_or_empty` / `built_in_profile_missing` / `model_missing` | `RoutingPreflightService.ts:151` + `CapabilityProfileRevisionSource.ts:3-7` |
 
-**八类的共同点才是裁决依据**：每一类都表示 **resolver 赖以判断的证据本身缺失、过期或取不到**
-（catalog 拿不到 / 熔断中 / 超读预算 / dossier 读不出 / profile 或 model 缺失），
-**没有任何一类携带"目标 thread 不对"这种信息**——它们连 thread 维度都没有（见上文 (1)）。
-证据缺失时 reject 等于"Redis 抖一下、dossier 迟 120ms 就静默掐断全家猫的互相派发"。
-fail-open + 显式 `warned` 回执是正确取舍，而且这条不变量是写进 zod schema 强制的，
-不是约定俗成。
+**共同点只有一条，而且只需要这一条**：**没有任何一个 `failureClass` 携带 thread 维度的判断信息**
+——它们连 threadId 都没有（见上文 (1)），所以没有一个能对"这条投递该不该进这个 thread"表态。
+
+（**不要把共同点写成"全都表示 resolver 证据缺失"**——这不成立。`catalog_error` / `circuit_open` /
+`resolver_timeout` / `resolver_degraded:*` 确实是证据取不到或过期，但 `consumer_error` 是
+**调用方那一侧**抛了异常，跟 resolver 手里有没有证据无关。共同裁决只能立在"都不含 thread 信息"上。）
+
+在这个前提下 reject 等于"Redis 抖一下、dossier 迟 120ms、或者上游调用栈自己抛个错，
+就静默掐断全家猫的互相派发"。fail-open + 显式 `warned` 回执是正确取舍，
+而且这条不变量是写进 zod schema 强制的，不是约定俗成。
 
 > **裁决：R-2c 不是缺陷，无需修复。** 必答问题隐含的前提（"preflight 本该拦住误投"）不成立。
 > 但它留下一个**有用的先例**：系统里已经有一套成熟的 typed advisory receipt
@@ -427,7 +435,7 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 
 #### R-6 · 诊断埋点现状是纯噪音（**Severity: P2，已在本 PR 处理**）
 
-`[DIAG/ghost-thread] post-message: cross-thread detected` 在**每一次**合法跨线程投递时打印，
+`[DIAG/ghost-thread] post-message: cross-thread detected` 在**每一次**跨线程投递时打印，
 `pending-mentions: polling` 在**每一次**轮询时打印。两者都不携带判别力，
 而真正能判别的两个埋点（invocation 创建、session_init 绑定）没有合入 main。
 "有埋点"给了一种虚假的在监控感。
@@ -474,7 +482,7 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 |------|------|----------|------|
 | R-1 | **设计不合理**（工具契约缺口） | P1 | 需 operator 决策（契约变更） |
 | R-2 | 不是缺陷，是**排除性证据**（只否掉**内容启发式** guard 这一类） | — | — |
-| R-2b | **能力缺口**：结构性 standing 只够做 advisory；拒绝策略缺覆盖率（5.5%）、缺标注（precision 未知）、且血缘是开放世界 | P2 | Decision Packet → operator |
+| R-2b | **能力缺口**：结构性 standing 只够做 advisory；拒绝策略卡在图稀疏（父链接填充率 5.5%）、无标注（precision 未知）、血缘开放世界三层 | P2 | Decision Packet → operator |
 | R-2c | **不是缺陷**（范畴错置：`routing_preflight` 是猫可用性顾问，非 thread 闸） | — | 无需修复 |
 | R-3 | **实现 bug** | P1 | 本 PR 修复 |
 | R-4 | **实现 bug**（briefing 不校验触发消息 provenance） | P2 | 本 PR 只记录，不改（涉及 briefing 组装面，需独立 slice） |
