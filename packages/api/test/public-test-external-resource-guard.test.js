@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { assertDistributableCommand, assertDistributableUrl } from '../scripts/public-test-external-resource-guard.mjs';
+
+const LOCAL_COMMAND_FIXTURES_ENV = 'CAT_CAFE_PUBLIC_TEST_LOCAL_COMMAND_FIXTURES';
+
+function withLocalCommandFixtures(value, run) {
+  const original = process.env[LOCAL_COMMAND_FIXTURES_ENV];
+  process.env[LOCAL_COMMAND_FIXTURES_ENV] = value;
+  try {
+    return run();
+  } finally {
+    if (original === undefined) delete process.env[LOCAL_COMMAND_FIXTURES_ENV];
+    else process.env[LOCAL_COMMAND_FIXTURES_ENV] = original;
+  }
+}
 
 describe('F308 public-test external resource guard', () => {
   it('allows process-local endpoints and local filesystem git transports', () => {
@@ -61,6 +77,52 @@ describe('F308 public-test external resource guard', () => {
     assert.doesNotThrow(() => assertDistributableCommand('node', ['-e', 'console.log("gh ssh curl")']));
     assert.doesNotThrow(() => assertDistributableCommand('git', ['status', '--short']));
     assert.doesNotThrow(() => assertDistributableCommand('sh', ['-c', 'printf "gh ssh curl"']));
+  });
+
+  it('binds local command fixture declarations to one exact temporary executable', () => {
+    const root = mkdtempSync(join(tmpdir(), 'cat-cafe-public-test-command-'));
+    const declaredDirectory = join(root, 'declared');
+    const undeclaredDirectory = join(root, 'undeclared');
+    const escapedDirectory = join(root, 'escaped');
+    mkdirSync(declaredDirectory);
+    mkdirSync(undeclaredDirectory);
+    mkdirSync(escapedDirectory);
+    const declaredGh = join(declaredDirectory, 'gh');
+    const undeclaredGh = join(undeclaredDirectory, 'gh');
+    const escapedGh = join(escapedDirectory, 'gh');
+    writeFileSync(declaredGh, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(undeclaredGh, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    symlinkSync(process.execPath, escapedGh);
+
+    try {
+      withLocalCommandFixtures(declaredGh, () => {
+        assert.doesNotThrow(() =>
+          assertDistributableCommand('gh', ['api', '/repos/a/b'], { env: { PATH: declaredDirectory } }),
+        );
+        assert.throws(
+          () => assertDistributableCommand('gh', ['api', '/repos/a/b'], { env: { PATH: undeclaredDirectory } }),
+          /external_resource_violation/,
+          'declaring one fixture must not authorize another executable with the same basename',
+        );
+        assert.throws(
+          () =>
+            assertDistributableCommand('sh', ['-c', `${declaredGh} && curl https://example.com/fixture`], {
+              env: { PATH: declaredDirectory },
+            }),
+          /external_resource_violation/,
+          'a declared fixture must not authorize a sibling shell command',
+        );
+      });
+      withLocalCommandFixtures(escapedGh, () => {
+        assert.throws(
+          () => assertDistributableCommand('gh', ['api', '/repos/a/b'], { env: { PATH: escapedDirectory } }),
+          /external_resource_violation/,
+          'a temporary symlink must not authorize a real executable outside the temporary root',
+        );
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('blocks a real external fetch in a guarded child before network I/O', () => {
