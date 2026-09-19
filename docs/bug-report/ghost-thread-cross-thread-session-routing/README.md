@@ -510,7 +510,7 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 - R-1 的解析原语与 `targetGrounding` 契约 → 契约变更，走 Decision Packet
 - R-5 的误投标记/撤回能力 → 改 message 生命周期语义，走 Decision Packet
 - R-4 的 briefing provenance 校验 → 独立 slice，需 briefing 组装面的 owner
-- R-2b 的血缘覆盖率（29/531）→ product-level routing policy，走 Decision Packet 取舍 2
+- R-2b 的父链接填充率（29/531 = 5.5%，图稀疏度）→ product-level routing policy，走 Decision Packet 取舍 2
 - **跨线程消息被 append 进在飞 turn 而不铸造自己的 invocation**（I-1b 实证）→ 单独跟踪，
   与 R-4 同属"外来消息被落点上下文认领"这一类
 - `cliSessionId` 跨 thread 孤例 → 单独跟踪
