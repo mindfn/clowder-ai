@@ -387,10 +387,16 @@ Phase 2 is accepted as the correct home for schedule resources and the existing 
 
 Concrete product plugins such as Weixin MP (F204) and MediaHub providers (F205) keep their own feature anchors because they add new user-visible capabilities on top of F202. GitHub schedule migration is different: it moves an existing core integration into the F202 lifecycle boundary and therefore belongs under this feature.
 
-K-2A through K-2D are accepted as the Host-owned external-package foundation. The Host now has a
-supervised stdio process boundary and a production composition object, but startup only performs
-fail-closed persistence recovery. No package is installed or started by that wiring, no activation
-route exists, and real plugin co-run remains separately gated. Core must continue importing the
-exact public contract rather than growing a private wire registry.
+Historical K-2D checkpoint: K-2A through K-2D established the Host-owned external-package foundation,
+including the supervised stdio process boundary, production composition, and fail-closed persistence
+recovery. At that checkpoint no activation route or real package co-run had landed.
+
+Current Train B position: explicit owner operations can install, configure, enable, disable, and uninstall
+a plugin through the Host-owned Manager. Maintainers completed the digest-matched published alpha.1 package
+journey and formally accepted its real co-run and restart recovery before #1477 merged. Production defaults
+and existing specialized Settings entries remain unchanged; their aggregate cutover belongs to Train C1,
+while public hooks, UI contributions, and managed services remain Train C2. This acceptance does not claim
+that the co-creator personally completed the full experience journey. Core must continue importing the exact
+public contract rather than growing a private wire registry.
 
 [小太阳·Maine Coon/GPT-5.6 Sol🐾]
