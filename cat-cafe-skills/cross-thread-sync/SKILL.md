@@ -187,8 +187,15 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 - **别用"服务端 ghost thread bug"给自己的误投归因。** 那条路已经关了。
 - 投递前必须能说出**你是怎么解析出这个 threadId 的**：feature doc / thread 标题与上下文 /
   standing custody 至少一项。"最近见过这个 id"不是解析路径。
+- **先查本 thread 自己的血缘，再谈"猜"。** 找"我的平行实例 / 相关 thread"时，
+  `cat_cafe_get_thread_metadata` 能拿到本 thread 的 `parentThreadId`——同父 / 父子关系是
+  **服务端已记录的事实**，不是推断。I-3 那次误投里，operator 指出的正确目标
+  （`thread_mrdip0u5aw4ysi97`）**正是源 thread 自己的 `parentThreadId`**：答案当时就在库里，
+  猫却去猜了一个最近见过的 id。查一次的成本远低于误投。
 - **查不到 verified owner thread → `propose_thread`（F128），不要猜一个近似 thread。**
   I-1/I-2a 两次误投的根源都是"F167 压根没有 owner thread"，而猫选择了猜。
+- **被唤醒后"只需阅读知悉"时，就不要再发跨线程消息。** I-2b 是同一个 turn 在已经就地
+  正确回复之后，又多发了一条跨线程——不是选错 target，是**本不该再发**。
 - 收到跨线程消息、发现它不属于本 thread → **立刻停止，不要基于它继续二次协调**。
   实测两次（2026-07-27、2026-09-19）误投后的被唤醒猫都立刻把内容再投给了第三条无关 thread。
 - cross-post 只用于**单次通知**，不做来回对话；不做自动 hook 广播。

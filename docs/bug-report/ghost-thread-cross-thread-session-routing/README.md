@@ -67,18 +67,66 @@ git ls-tree -r HEAD --name-only | grep ghost  → (空)
 
 | # | 时间 (UTC) | 源 thread | 实际落点 | 预期落点 | 触发消息 | operator 投诉 | 分型 |
 |---|-----------|----------|---------|---------|---------|--------------|------|
-| **I-1** | 2026-09-19 12:50:59 | `thread_mrkmxgdfqquounc9`<br>(MAIN K-1/F258) | `thread_msr51149hym0i79f`<br>(A2A Lifecycle 1398) | **不存在**（无可核验的 F167 owner thread） | `0001789822259945-001848-58dc2307`<br>by `cat-eqdvbcxw`, effect=`investigate`,<br>subject=`subject:f167:c1-custody-recall-deviation`,<br>targetCats=`["opus"]` | `0001789823649818-001882-b9fd95e2`<br>（+23 分钟） | **A. 调用方 target 选错（无解析路径，靠猜）** |
+| **I-1** | 2026-09-19 12:50:59 | `thread_mrkmxgdfqquounc9`<br>(MAIN K-1/F258) | `thread_msr51149hym0i79f`<br>(A2A Lifecycle 1398) | **不存在**（无可核验的 F167 owner thread） | `0001789822259945-001848-58dc2307`<br>by `cat-eqdvbcxw`, effectClass=`investigate`,<br>subjectRef=`subject:f167:c1-custody-recall-deviation`,<br>targetCats=`["opus"]` | `0001789823649818-001882-b9fd95e2`<br>（+23 分钟） | **A. 调用方 target 选错（无解析路径，靠猜）** |
 | **I-1b** | 2026-09-19 12:52:51 | `thread_msr51149hym0i79f` | `thread_mrkn6povq4zzgh45`<br>(C1-Plugins) | 源 thread `thread_mrkmxgdfqquounc9` | opus 被误投消息唤醒后的**再投递** | 未单独投诉（混入 I-1） | **D. 误投后的二次污染** |
-| **I-2a** | 2026-07-27 07:28:58 | `thread_ms2kxwwny5z5fcom`<br>(echo core design) | `thread_eval_a2a`<br>(A2A Harness Eval) | F167 owner thread（同样不存在） | `0001785137338540-000817-6c44b56e`<br>effect=`fyi`, targetCats=`null`（仅行首 `@codex`） | `0001785137394610-000824-a7217225`<br>「你投递错了的」（+56 秒） | **A** |
-| **I-2b** | 2026-07-27 07:29:21 | `thread_eval_a2a` | `thread_ms2kxwwny5z5fcom` | — | codex 被 I-2a 唤醒后立刻回投 `0001785137361768-000821-5cbfb470` | `0001785137437651-000825-e40851aa`<br>「@sol 你刚投递错了吧」 | **D** |
+| **I-2a** | 2026-07-27 07:28:58 | `thread_ms2kxwwny5z5fcom`<br>(echo core design) | `thread_eval_a2a`<br>(A2A Harness Eval) | F167 owner thread（同样不存在） | `0001785137338540-000817-6c44b56e`<br>effectClass=`fyi`，**无 `targetCats`**<br>（路由来自 `routingFact` 的行首 `@codex`） | `0001785137394610-000824-a7217225`<br>「你投递错了的」（+56 秒） | **A** |
+| **I-2b** | 2026-07-27 07:29:21 | `thread_eval_a2a` | `thread_ms2kxwwny5z5fcom` | **`thread_eval_a2a`**（就地回复；codex 其实**已经**在 07:28:59 就地回过 `0001785137339391-000822-b0b645cb`） | codex 被 I-2a 唤醒后的**同一个 turn 的第二次发射** `0001785137361768-000821-5cbfb470`<br>effectClass=`fyi`, targetCats=`["cat-eqdvbcxw"]` | `0001785137437651-000825-e40851aa`<br>「@sol 你刚投递错了吧」 | **D′. 冗余跨投**（不是选错 target，是**本不该再发**——codex 自陈「应只阅读知悉，不应另发跨线程消息」`0001785137394820-000826-491adc72`） |
 | **I-3** | 2026-07-19 22:06:00 | `thread_mrrucuwlotamwuom`<br>(F257 V2/Phase B) | `thread_mq6alvzotw9ryo8r`<br>(develop_base_dev) | `thread_mrdip0u5aw4ysi97`<br>(F257 工作线) | `0001784498760629-000387-b9ecea13`<br>「[平行实例通报]」targetCats=`["opus"]` | `0001784498996539-000006-696c7213`<br>「你的平行的通知错了啊 平行的是 thread_mrdip0u5aw4ysi97 这个啊」 | **B. 同 catId 平行实例定位错误** |
 | **I-4** | 2026-07-19 14:27 | 多个执行 thread | `thread_mrkmxgdfqquounc9`<br>(MAIN) | 各自执行 thread | 窗口内 6 条投入 MAIN 的 cross-post | `0001784471269998-000257-9809e71a`<br>「我们thread当前应该有且只和 thread_mrkn6povq4zzgh45 有关联的」 | **C. 汇报目的地过载（非误投，是噪声）** |
-| **I-5** | 2026-04-30 09:39 | — | `thread_moicgl47en8m98do` (develop) | 同 thread 操作 | — | `0001777541980958-004592-9e6c6222`<br>「@opus 你跑错位置了；这不是一个跨线程的操作」 | **E. 工具选择错误（该同 thread 却用了跨 thread）** |
+| **I-5** | 2026-04-30 09:38:02 | `thread_moicgl47en8m98do`<br>(develop) | `thread_mnb92h3yio4jbtw8` | **不该跨投**（应在源 thread 内直接发） | `0001777541882284-004585-5d668ca3`<br>by `opus`, mentions=`["codex"]`,<br>**无 targetCats / coordination / effectClass**<br>crossPost.sourceThreadId=`thread_moicgl47en8m98do` | `0001777541980958-004592-9e6c6222`<br>（+98 秒）「@opus 你跑错位置了；这不是一个跨线程的操作」 | **E. 工具选择错误（该同 thread 却用了跨 thread）** |
 
-**独立 thread 数：≥6**（`mrkmxgdfqquounc9` / `msr51149hym0i79f` / `mrkn6povq4zzgh45` /
+**独立 thread 数：≥10**（`mrkmxgdfqquounc9` / `msr51149hym0i79f` / `mrkn6povq4zzgh45` /
 `ms2kxwwny5z5fcom` / `eval_a2a` / `mrrucuwlotamwuom` / `mq6alvzotw9ryo8r` /
-`mrdip0u5aw4ysi97` / `moicgl47en8m98do`）。时间跨度 2026-04-30 → 2026-09-19。
+`mrdip0u5aw4ysi97` / `moicgl47en8m98do` / `mnb92h3yio4jbtw8`）。时间跨度 2026-04-30 → 2026-09-19。
 **这不是单次操作失误。**
+
+### 2.1 被唤醒的 invocation（exact wake binding）
+
+每个事件误投后**实际被唤醒的是谁**——这是判定"服务端有没有绑错"的唯一硬证据。
+invocation 记录在 `cat-cafe:invoc:<uuid>`（注意：该 hash **没有 `catId` 字段**，绑定的猫是 `targetCats`）。
+
+| # | wokenInvocationId | 绑定 threadId | 绑定 catId | session capsule 验证 | 状态 / 备注 |
+|---|------------------|--------------|-----------|---------------------|------------|
+| **I-1** | `275b6f23-8a53-4dbe-be07-798c66c1a631` | `thread_msr51149hym0i79f` = **声明的 target** | `opus` | ✅ `session:e68eaa79-9a5a-4f3c-aa42-4dbef338a477` 的 `continuityCapsule.a2aTriggerMessageId` = 触发消息 id | `failed` / `a2a_dispatch_disposition_missing`（turn 本身执行成功） |
+| **I-1b** | — **从未创建** | （宿主 turn `339d7da3-45a5-4df8-8f1b-72cf3bc0104d` 绑在 `thread_mrkn6povq4zzgh45`） | `cat-eqdvbcxw` | n/a | **消息被 append 进一个早 6 分 13 秒就已在飞的 turn**（该 turn 自己的 trigger 是另一条消息）。`queueCustody.status=queued`，carrier `1c7cb444-…` **从未派发**。<br>⚠️ 即 I-1b 的"二次污染"消息**落了库但没真正唤醒新 invocation** |
+| **I-2a** | `822c7f0c-8e25-476c-8954-fe4ba0bc746e` | `thread_eval_a2a` = **声明的 target** | `codex` | ❌ **不可恢复**（见 §2.2-3） | `succeeded` |
+| **I-2b** | `1aaad6b6-433d-40c0-b20c-4d4ad0ac0a57` | `thread_ms2kxwwny5z5fcom` = **声明的 target** | `cat-eqdvbcxw` | ❌ 不可恢复 | `canceled` |
+| **I-3** | `fa22b940-2da9-4402-a17d-a9708d308052` | `thread_mq6alvzotw9ryo8r` = **声明的 target** | `opus` | ✅ `session:176c2f01-375c-47eb-805c-48d9028aa5ae` capsule 匹配 | `succeeded` |
+| **I-4** | `fad4d70c-5ea8-4add-8857-ca3236595dc9`（由 operator 投诉本身唤醒） | `thread_mrkmxgdfqquounc9` | `cat-eqdvbcxw` | n/a（user-origin，`idempotencyKey` 是裸 UUID） | 各条 cross-post 的唤醒见下表 |
+| **I-5** | `08b71901-b72a-4d91-857b-1704051a098b` | `thread_mnb92h3yio4jbtw8` = **声明的 target** | `codex` | ❌ 不可恢复 | `canceled`；opus 随后自陈「应该在当前 thread 直接发」(`0001777541981379-004598-f9c90f6e`) 并就地重发 (`0001777542015341-004594-a317cccc`) |
+
+> **这张表是 §3.1 裁决的 incident 级佐证**：每一条可恢复的 wake 都绑在**调用方声明的那个 target**上，
+> 没有一条绑到别处。聚合口径的 `0/663` 说的是同一件事，但**它不能替代样本级证据**——这是上一轮
+> review 的 P1，已补齐。
+
+**I-4 的完整调用参数**（投诉前 30 分钟内投进 `thread_mrkmxgdfqquounc9` 的全部 cross-post，
+`ZRANGEBYSCORE cat-cafe:msg:thread:thread_mrkmxgdfqquounc9 1784469469998 1784471269998`，
+并与全量 106,855 个 `msg:*` key 交叉核对，**共 6 条，完整**）：
+
+| # | message id | UTC | 作者 | sourceThreadId | targetCats | effectClass | 投递 | 被唤醒 invocation |
+|---|-----------|-----|------|---------------|-----------|------------|------|------------------|
+| 1 | `0001784470210629-000133-d45b3114` | 14:10:10 | `opus` | `thread_mrrucuwlotamwuom` | `["cat-eqdvbcxw"]` | 无 | 已投递 | `263df753-8a56-4dd0-a203-cb337a174300` |
+| 2 | `0001784470254929-000135-5975ba70` | 14:10:54 | `cat-8zfu14fb` | `thread_mrkn6povq4zzgh45` | `["cat-8zfu14fb"]` | `fyi` | 已投递 | `5d828ed6-3ace-43d6-8242-a31e8a4cfda8`（**自己 @ 自己**，`routingFact.attempts[0].outcome=unknown_token`） |
+| 3 | `0001784470322242-000149-e191ecb3` | 14:12:02 | `opus` | `thread_mrrucuwlotamwuom` | `["cat-eqdvbcxw"]` | 无 | 已投递 | `33bf89c2-17d0-432d-9020-80123ee44a6c` |
+| 4 | `0001784470387327-000163-e8428f0b` | 14:13:07 | `opus` | `thread_mrrucuwlotamwuom` | `["cat-eqdvbcxw"]` | 无 | 已投递 | `e1e8fed7-3420-46ed-8961-60f3c1b7e98d` |
+| 5 | `0001784470629057-000197-56a6a17f` | 14:17:09 | `opus` | `thread_mrrucuwlotamwuom` | `["cat-eqdvbcxw"]` | 无 | **canceled** | ❌ **从未持久化**（见 §2.2-2） |
+| 6 | `0001784470983053-000226-f8a50443` | 14:23:03 | `cat-8zfu14fb` | `thread_mpf86bj4ejq306oo` | `["cat-eqdvbcxw"]` | `coordinate` | 已投递 | `e80b10e3-ec1b-40cf-ad68-ce18c40d0f98`（`canceled`） |
+
+6 条里 4 条来自同一个源 thread `thread_mrrucuwlotamwuom`、且全部由 `opus` 发出——
+与 operator 那句"有且只和 `thread_mrkn6povq4zzgh45` 有关联"正好吻合：**I-4 不是一次投错，
+是一条执行线把主线程当成了默认汇报口**。
+
+### 2.2 不可恢复字段（逐项给出查询式与结果，不猜不填）
+
+| # | 字段 | 执行的查询 | 结果与原因 |
+|---|------|-----------|-----------|
+| 1 | I-1b 专属 woken invocation | 对全部 23,201 条 `invoc` 记录子串搜 `0001789822371139-001854-0c381ae9` 与 carrier `1c7cb444-…` | **0 命中 → 从未创建**（消息被 append 进在飞 turn，不是被驱逐） |
+| 2 | I-4 第 5 条的 woken invocation | 跨 `invoc`(23,201) / `turnexec:record`(7,790) / `auth:inv`(4,225) / `session`(2,079) 四个命名空间子串搜 | **四处均 0 命中**；该消息 `deliveryStatus=canceled` → **从未持久化** |
+| 3 | I-2a / I-2b / I-5 的 session 级 wake binding | 对全部 2,079 个 session 搜 `continuityCapsule.a2aTriggerMessageId` | **0 命中**。I-2a 当时在 `thread_eval_a2a` 的 codex session (`6824b1b0-…`) capsule 里存的是 2026-07-12 的**陈旧** trigger；后继 session 根本没有该字段。<br>⚠️ **因此 I-2a 的 session 归属是时间推断，不是记录的绑定**——本表按"不可恢复"记，不按"已验证"记 |
+| 4 | 4–7 月事件的 `sourceInvocationId` 解引用 | 对 `7096cf7f` / `a0a76fa0` / `666d55e2` / `0d3f4c71` 及 I-4 的 6 个 id 逐个 `EXISTS` 四命名空间 | 全部 0 命中。原因是**保留下限**：`turnexec:record:*` 最早 2026-08-07，`auth:inv:*` 最早 2026-08-27 |
+| 5 | `extra.effect` | 审计全部 **960** 条 cross-post | **0 条携带**——该字段在本 schema 中**不存在**。最接近的是 `crossPost.effectClass`（`coordinate` 487 / 无 269 / `fyi` 136 / `investigate` 52 / `assign_work` 16）。<br>（初稿把它写成 `effect=` 是错的，已改正） |
+| 6 | I-2a/I-2b/I-3/I-4 的 `coordination` / `subjectRef` | 读 `extra` | 字段缺席。全量 960 条里只有 148 条带 `extra.coordination`，最早在 2026-08 之后 → **当时没发射，不是被驱逐** |
+| 7 | I-2a…I-5 的 `extra.causal` | 读 `extra` | 缺席；最早带 `extra.causal` 的 cross-post 是 2026-08-07。这些事件的 trigger 归属改由 `extra.stream.invocationId` → `invoc:<id>.userMessageId` 推出，**该链路是持久化且可核验的** |
 
 ### I-1 完整时间线（一次误投的真实成本）
 
@@ -98,6 +146,15 @@ git ls-tree -r HEAD --name-only | grep ghost  → (空)
 
 **1 次误投 → 1 次错线程唤醒 → 1 次二次污染 → 4 条纠正/撤回 = 6 条污染消息、3 条无关 thread、
 23 分钟才被发现、全程只有人类能发现。**
+
+> **精确化（§2.1 查证后收紧的措辞）**：12:52:51 那条二次污染消息**落了库、在 thread 里可见**，
+> 但它**没有唤醒一个新的 invocation**——它被 append 进了一个早在 6 分 13 秒前就已在飞、
+> 且 trigger 是另一条消息的 turn（`339d7da3-…`），carrier `1c7cb444-…` 始终 `queued`、从未派发。
+>
+> 这条路径本身值得单独记一笔：**一条跨线程消息可以进入某个 turn 的上下文，而不为自己铸造
+> invocation**。它不构成"绑错 thread"（thread 是对的），但它意味着**接收猫是在一个主题不同的
+> turn 里读到这条消息的**——这和 R-4（briefing 用落点 thread 的 standing 认领外来消息）是同一类
+> 二次失败的两个面。已记入 §5「不在本 PR 范围」跟踪项。
 
 ---
 
@@ -148,7 +205,7 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 宁可提案待批，也不猜一个近似 thread"）。规则存在、被反复违反——与 F167 Case E1 的既有结论一致：
 **「写进规则 ≠ 模型执行」**。
 
-#### R-2 · 没有任何内容侧特征能机械区分误投与合法跨 feature 协作（**证据，不是缺陷**）
+#### R-2 · **内容侧**启发式无法机械区分误投与合法跨 feature 协作（**证据，不是缺陷**）
 
 在提"加个 guard"之前先量化了两个最自然的 fence，**两个都不可用**：
 
@@ -157,8 +214,107 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 | 「发送方在目标 thread 没有历史发言」（cold-open） | 957 条 cross-post 中 **92.7% 是 warm**（发送方此前发过言），7.3% cold-open | I-1 是 **WARM**（sol 当时正在 A2A#1398 干活）；I-3 也是 **WARM**。**拦不住** |
 | 「coordination.subjectRef 在目标 thread 未出现过」 | 带 subjectRef 的 134 条里 **51.5% 是 novel subject**（Core↔Plugins 正常开新 subject 就是这样） | I-1 会被拦，但误杀率 ~50%。**不可用** |
 
-**结论：不要做内容启发式 guard。** 它既拦不住真误投，又会砸掉一半合法协作。
-正确方向是**消除猜测**（给解析原语 + 给"不知道"的合法出口），不是**惩罚猜测**。
+**结论（严格限定在本节量化的范围内）：不要做内容启发式 guard。**
+它既拦不住真误投，又会砸掉一半合法协作。
+
+> ⚠️ **这条结论只否掉"内容启发式"这一类判据，不构成"没有任何可用判据"。**
+> 初稿在这里做了过度外推。可核验的 **standing / 结构性**判据是另一类东西——它不推断消息
+> "讲的是什么"，只查服务端已经记录的关系事实。下面 R-2b 补上这类判据的量化与裁决，
+> R-2c 补上 `routing_preflight` 这条被点名的路径。
+
+#### R-2b · 结构性 standing fence：不是判据无效，是**判据几乎没被记录**（**Severity: P2，产品级**）
+
+`RedisThreadStore` **已经**持久化 `parentThreadId`，并维护 `ThreadKeys.children(parent)` 索引
+（`RedisThreadStore.ts:207-242 / 773-775`）。也就是说"source thread 与 target thread 是否同族"
+是一个**服务端此刻就能判定的事实**，不需要任何内容推断。对全量 960 条 cross-post 实测：
+
+| 口径 | 数值 | 含义 |
+|------|------|------|
+| 有 detail 记录的 thread | 531 | — |
+| 其中**声明了 `parentThreadId`** | **29（5.5%）** | 血缘图基本是空的 |
+| 两端都可解析的 cross-post | 960/960 | 判据本身可计算 |
+| source/target 同族 | 244（25.4%） | — |
+| **不同族** | **716（74.6%）** | 一刀切 fail-closed 会拒掉的真实流量 |
+| **限定在"source 自己声明了血缘"的子集** | **139（14.5%）** | 可适用范围 |
+| **该子集中跨出家族的** | **26（18.7%）** | scoped fence 的真实误杀率 |
+
+两条裁决，必须分开：
+
+1. **一刀切 fail-closed 结构 fence：否决。** 74.6% 误杀，比 subject fence（50.7%）更差。
+2. **限定在"source 已声明血缘"的 scoped fence：不否决，且是本次调查里唯一一条构造性线索。**
+   适用面 14.5%，误杀 18.7%——有界、可评估。
+
+**I-3 是决定性样本**（实测，非推演）：
+
+```
+源 thread thread_mrrucuwlotamwuom  parentThreadId = thread_mrdip0u5aw4ysi97
+实际投递  thread_mq6alvzotw9ryo8r   → FAMILY_LINKED = false   （会被 scoped fence 拦下）
+operator 说的正确目标 thread_mrdip0u5aw4ysi97 → FAMILY_LINKED = true
+```
+
+operator 当时的原话是「平行的是 thread_mrdip0u5aw4ysi97 这个啊」。
+**那条 thread 就是源 thread 自己的 `parentThreadId`——出错的那一刻，正确答案已经躺在服务端的
+thread store 里，而猫在猜。** 所以 scoped fence 不只是"能拒绝"，它**能直接把正确 target 说出来**，
+这是内容启发式永远做不到的。
+
+**但它救不了大多数事件**：I-1 / I-1b / I-2a / I-2b / I-4 的源 thread 全部 `parentThreadId = null`，
+scoped fence 对它们完全不适用。**真正的阻塞不是判据设计，是 5.5% 的血缘覆盖率**——
+`propose_thread` 本该建立的 standing graph 基本没有被建起来。
+
+> **裁决：standing fence 在概念上成立、在数据上今天不成立。** 先把血缘覆盖率做上去（谁写、是否
+> 回填、是否强制），才谈得上 fence。这是 product-level routing policy 决策，不是本 PR 能单方面
+> 加的 guard —— 已进 `decision-packet.md`。
+
+#### R-2c · `routing_preflight.resolverState=degraded` 为什么仍然放行（**必答项 · 裁决：不是缺陷，是范畴错置**）
+
+先说一个影响本节可信度的事实：**`routing_preflight` 不在本 PR 的 base 上。**
+本分支基于本地 `main`（`bb9f9f08e`），该服务只存在于 `upstream/main`（`9ab0eaf28`，领先 11 个
+commit）与 `develop_base`。初稿因此完全没有分析它——这是 base 落后造成的盲区，不是判断分歧。
+下面的结论读的是 `upstream/main` 的真实代码。
+
+**(1) 它管的是"哪只猫"，不是"哪条 thread"。**
+
+```ts
+// upstream/main:packages/api/src/domains/routing-context/RoutingDispatchPreflightPort.ts:5-12
+export interface RoutingDispatchPreflightInput {
+  ownerId: string;
+  targetCatIds: readonly string[];
+  intent?: 'review' | 'architecture';
+  ownerRequestedAttempt?: boolean;
+}
+```
+
+入参里**没有 threadId**；`RoutingPreflightService.ts` 全文 **0 处**引用 `threadId`
+（`git grep -n threadId` 空结果）。它消费的是 capability / health / quota catalog，产出的是每个
+**targetCatId** 的 `allowed | warned | rejected`。
+
+→ 因此它在 `fresh` 状态下也**一条都拦不住**本 corpus 的 6 次误投：这 6 次的 target **猫**都是对的
+（I-1 的 `targetCats=["opus"]` 完全正确），错的是 **thread**。
+**把它当成误投闸是范畴错置——它从来不是，也不应该被改造成 thread 闸。**
+
+**(2) `degraded` 放行不是疏漏，是被 schema 强制的 fail-open 不变量。**
+
+```ts
+// upstream/main:packages/shared/src/types/routing-context-projections.ts:168-178
+if (decision.resolverState === 'degraded') {
+  decision.targets.forEach((target, index) => {
+    if (target.disposition === 'rejected') {
+      ctx.addIssue({ ..., message: 'a degraded advisory resolver cannot reject a target' });
+    }
+  });
+}
+```
+
+`degraded` 的唯一来源是 catalog 取不到（`catalog_error` / `consumer_error` →
+`unavailableRoutingDispatchDecision`，全部 target 置 `warned` + `routing_context_unavailable`）。
+**resolver 赖以判断的证据本身缺失时，它没有任何依据做 reject**；此时 reject 等于"Redis 抖一下
+就静默掐断全家猫的互相派发"。fail-open + 显式 `warned` 回执是正确取舍，而且这条不变量是写进
+zod schema 强制的，不是约定俗成。
+
+> **裁决：R-2c 不是缺陷，无需修复。** 必答问题隐含的前提（"preflight 本该拦住误投"）不成立。
+> 但它留下一个**有用的先例**：系统里已经有一套成熟的 typed advisory receipt
+> （`resolverState` + `disposition` + `reasons[].sourceRefs`），**这正是 R-1 `targetGrounding`
+> 应该复用的形状**——不是发明新机制，而是把同一套回执语义搬到 thread 维度。
 
 #### R-3 · 接收侧 provenance 在 prompt 里被截断成常量（**Severity: P1，已在本 PR 修复**）
 
@@ -270,7 +426,9 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 | 编号 | 裁决 | Severity | 归属 |
 |------|------|----------|------|
 | R-1 | **设计不合理**（工具契约缺口） | P1 | 需 operator 决策（契约变更） |
-| R-2 | 不是缺陷，是**排除性证据**（否掉内容启发式 guard 这条路） | — | — |
+| R-2 | 不是缺陷，是**排除性证据**（只否掉**内容启发式** guard 这一类） | — | — |
+| R-2b | **能力缺口**：standing 判据概念成立，但血缘覆盖率仅 5.5%，今天用不了 | P2 | Decision Packet → operator |
+| R-2c | **不是缺陷**（范畴错置：`routing_preflight` 是猫可用性顾问，非 thread 闸） | — | 无需修复 |
 | R-3 | **实现 bug** | P1 | 本 PR 修复 |
 | R-4 | **实现 bug**（briefing 不校验触发消息 provenance） | P2 | 本 PR 只记录，不改（涉及 briefing 组装面，需独立 slice） |
 | R-5 | **能力缺口**（产品级 routing policy） | P1 | Decision Packet → operator |
@@ -286,7 +444,8 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 
 | # | 改动 | 理由 | 可逆性 |
 |---|------|------|--------|
-| 1 | `shortThreadRef()` 提取到 `@cat-cafe/shared`，`ContextAssembler` 与 web `parse-direction` 共用 | R-3。前端已有正确实现，提取即单一真相源（P4） | ≤1 commit 回滚 |
+| 1 | `shortThreadRef()` 提取到 `@cat-cafe/shared`，`ContextAssembler`、web `parse-direction` **与 `ChatMessage.tsx` 来源卡**三处共用 | R-3。前端已有正确实现，提取即单一真相源（P4）。`ChatMessage.tsx` 是**用户实际可见**的来源卡，漏掉它等于留着第二套实现 | ≤1 commit 回滚 |
+| 1b | `cross-post-short-ref-single-source.test.ts`：断言全仓**只有** `shortThreadRef` 一处实现该规则 | 本缺陷的本质是"两套实现会漂移"，不是"当前值算错了"——断言渲染值的测试改前改后都绿，**拿不到 RED**；只有断言"重复不存在"才真正锁住 | — |
 | 2 | `context-assembler.test.js` 增加**真实形状 threadId** 的回归（两个不同来源必须产出不同 tag；必须等于前端短 ref） | 旧 fixture 形状不真实是这个 bug 活 6 个月的直接原因 | — |
 | 3 | 恢复本 bug-report 到 skill 已引用的路径，写入**裁决而非假设** | R-6。skill 的规范性约束不能挂在悬空路径上 | 文档 |
 | 4 | 修正 `cross-thread-sync/SKILL.md` 的"P2 OPEN 服务端 bug"断言为已证伪 + 保留真实的调用方风险提示 | R-6。错误断言在给猫提供错误归因出口 | 文档 |
@@ -296,6 +455,9 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 - R-1 的解析原语与 `targetGrounding` 契约 → 契约变更，走 Decision Packet
 - R-5 的误投标记/撤回能力 → 改 message 生命周期语义，走 Decision Packet
 - R-4 的 briefing provenance 校验 → 独立 slice，需 briefing 组装面的 owner
+- R-2b 的血缘覆盖率（29/531）→ product-level routing policy，走 Decision Packet 取舍 2
+- **跨线程消息被 append 进在飞 turn 而不铸造自己的 invocation**（I-1b 实证）→ 单独跟踪，
+  与 R-4 同属"外来消息被落点上下文认领"这一类
 - `cliSessionId` 跨 thread 孤例 → 单独跟踪
 - 不改 F202 C1 / A2A #1398 / 任何生产数据
 
@@ -310,29 +472,83 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
    不写不删不设过期；`--redis` / `--prefix` 可指向任意实例）。2026-09-19 对运行实例实跑输出：
 
    ```
-   corpus: 106759 messages, 2077 sessions, 958 cross-posts
+   corpus: 106802 messages, 2079 sessions, 960 cross-posts
 
    — §3.1 falsification —
-     causal reply edges                         : 7760
-     replies landing outside the trigger thread : 234
+     causal reply edges                         : 7780
+     replies landing outside the trigger thread : 236
      ... of which UNDECLARED (ghost signature)  : 0   <- expect 0
-     sessions with an A2A trigger               : 663
+     sessions with an A2A trigger               : 664
      ... wake bound to the wrong thread         : 0  <- expect 0
      continuityCapsule / session thread drift   : 0  <- expect 0
      cliSessionId shared across threads         : 1
      duplicate active sessions per (cat,thread) : 5
 
    — §3.2 R-2: the two candidate fences —
-     sender had prior participation in target   : 888/958 (92.7% 不会被 cold-open fence 拦到)
-     cross-posts carrying a subjectRef          : 135/958
-     ... subject already present in target      : 66 (51.1% 会被 subject fence 误杀)
+     sender had prior participation in target   : 890/960 (92.7% 不会被 cold-open fence 拦到)
+     cross-posts carrying a subjectRef          : 136/960
+     ... subject already present in target      : 67 (50.7% 会被 subject fence 误杀)
+
+   — §3.2 R-2b: the structural standing fence —
+     threads with a detail record               : 531
+     ... of which declare a parentThreadId      : 29
+     cross-posts with both endpoints resolvable : 960/960
+     ... source/target in the same thread family: 244 (25.4%)
+     ... NOT family-linked                      : 716 (74.6% 一刀切 fence 会拒掉的真实流量)
+     SCOPED: source 声明了血缘的 cross-post      : 139/960 (14.5%)
+     ... 其中跨出家族的                          : 26 (18.7% = scoped fence 误杀率)
    ```
 
-   （与 §3 正文的 7,755 / 957 等数字的个位差异是实例在调查期间仍在产生新消息，不影响任何裁决。）
+   （§3.1 正文写的是首轮扫描的 7,755 / 663 / 957；上面是补测 R-2b 时的**第二轮**实跑。
+   差值来自实例在调查期间持续产生新消息，两轮的所有"expect 0"判据均为 0，不影响任何裁决。）
+
+   **R-2b 的 I-3 决定性样本可单独复验**（只读，两条 `HGET`）：
+
+   ```
+   HGET cat-cafe:thread:thread_mrrucuwlotamwuom parentThreadId
+     → thread_mrdip0u5aw4ysi97      # 源 thread 自己声明的血缘
+   HGET cat-cafe:thread:thread_mq6alvzotw9ryo8r parentThreadId
+     → (nil)                        # 实际误投落点，与源无任何族关系
+   ```
+
+   即 operator 当时口头给出的正确目标 = 源 thread 的 `parentThreadId`。
 3. **Corpus 可复现**：误投投诉的检索式与关联窗口（45 分钟）见 §2 首段。
 4. **回归护栏**：`packages/api/test/cross-thread-misdelivery-attribution.test.js` 把"服务端忠实于
    调用方声明的 target"这条不变量钉成可执行断言——将来若真出现服务端改路由/错绑唤醒，
-   它会直接变红，不必再做一次全量扫描才能重新立案。
+   它会直接变红，不必再做一次全量扫描才能重新立案。覆盖三跳：
+
+   | 跳 | 断言 | 若服务端在这一跳错绑会怎样 |
+   |----|------|--------------------------|
+   | 投递 | 消息落在调用方声明的 target，不回灌源、不漏到第三方 | 红 |
+   | 唤醒 | `invocationRecord.threadId` == 声明的 target | 红 |
+   | **continuation** | 被唤醒 invocation 发**默认回复**（不带 `threadId`）仍留在自己绑定的 thread | 红 |
+
+   continuation 这一跳的被唤醒 invocation 是**从实际 wake record 派生**（`wake.threadId`）而不是
+   硬编码常量——因此 wake 绑定漂移无法在这一跳被掩盖。
+   **该测试做过突变验证**：把被唤醒 invocation 改绑到源 thread 后，用例如期变红并停在
+   "a default continuation must stay in the thread the wake bound to"，证明它**能红**，
+   不是一条恒绿断言。
+
+5. **CHARACTERIZATION 的边界**：`CHARACTERIZATION: a semantically unrelated target is accepted`
+   只钉"投递被接受 + 消息确实落库"。它**不**断言响应里没有 grounding/receipt 字段——
+   否则将来只要加一条非阻断回执就会被误判成政策已变。未来的 fence 形状写在同文件的
+   `test.skip('FUTURE(R-1): ...')` 里，让契约留在套件里而不是只留在散文里。
+
+6. **Fallback 层数自检**（`scripts/check-fallback-layers.mjs` 触发 ≥3 层提示）：
+   命中的是 `forensics/scan-cross-thread-routing.mjs`（10 层）。逐层必要性：
+
+   | 层 | 为什么不能去掉 |
+   |----|--------------|
+   | `argOf('--redis', env ?? default)` | 脚本刻意不绑定部署；审计任意实例的前提 |
+   | `if (err \|\| !values?.[0]) return` | pipeline 逐条结果独立失败；一条坏 key 不能中断全量扫描 |
+   | `JSON.parse` try/catch ×2 | 线上 `extra` / `continuityCapsule` 存在历史上不可解析的记录 |
+   | `values[1] \|\| 'USER'` | `catId` 为空即 operator 本人，是**语义**不是缺省 |
+   | `if (!parent \|\| parent.threadId === m.threadId) continue` | 触发消息可能已被驱逐；不可把"查不到父"算成跨线程边 |
+   | `?? null` / `?? []` 若干 | 字段按 §2.2 逐项确认为**当时未发射**，不是被驱逐 |
+
+   **坐标系自检结论**：这些不是给错误坐标系打补丁。对象是一个**仍在写入、且 schema 随时间漂移**
+   的只读线上语料；换成严格 schema 解析会在第一条 legacy 记录上中止，直接拿不到 corpus。
+   防御层全部集中在**读取边界**，判据计算本身没有 fallback——这正是想要的分层。
 
 ---
 

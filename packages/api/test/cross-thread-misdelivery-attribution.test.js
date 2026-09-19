@@ -225,10 +225,71 @@ describe('cross-thread misdelivery — sender-target vs server-routing attributi
     );
   });
 
+  // The wake test above proves the FIRST hop binds to the declared target. On its own it
+  // cannot support the claim that a continuation mis-binding would go red: the woken cat
+  // had not yet spoken. This test closes that gap by letting the woken invocation emit its
+  // default reply (no explicit threadId — the overwhelmingly common case) and pinning where
+  // it lands.
+  //
+  // The continuation invocation is deliberately created from the OBSERVED wake record rather
+  // than from a hardcoded constant, so a drifted wake binding cannot be masked here: if the
+  // wake ever bound to the source thread, the default reply would follow it there and the
+  // final assertions fail.
+  test('the woken cat default reply continues in its own bound thread, not the source thread', async () => {
+    const app = await createApp();
+    await crossPost(app, {
+      threadId: UNRELATED_TARGET,
+      content: 'F167 behavioral evidence candidate\n@codex',
+      targetCats: ['codex'],
+      clientMessageId: 'attribution-5',
+    });
+
+    const [wake] = invocationRecordStore.getRecords();
+    assert.ok(wake, 'the cross-post must have produced a wake record to continue from');
+
+    // Simulates the runtime spawning the woken cat against the thread the wake bound to.
+    const woken = await registry.create('user-1', 'codex', wake.threadId);
+    const continuation = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': woken.invocationId, 'x-callback-token': woken.callbackToken },
+      // No threadId: the default continuation path, which resolves to the actor's bound thread.
+      payload: { content: 'continuation reply from the woken cat', clientMessageId: 'attribution-5-reply' },
+    });
+
+    assert.equal(continuation.statusCode, 200, continuation.body);
+    assert.equal(
+      continuation.json().threadId,
+      UNRELATED_TARGET,
+      'a default continuation must stay in the thread the wake bound to — drifting to another thread IS the ghost-thread hypothesis',
+    );
+
+    const sourceMessages = messageStore.getByThread(SOURCE_THREAD, 10, 'user-1');
+    assert.equal(
+      sourceMessages.length,
+      0,
+      `continuation must not leak back into the source thread, got ${JSON.stringify(sourceMessages.map((m) => m.content))}`,
+    );
+    assert.equal(
+      messageStore.getByThread(THIRD_THREAD, 10, 'user-1').length,
+      0,
+      'continuation must not leak into an unrelated third thread',
+    );
+    assert.equal(
+      messageStore.getByThread(UNRELATED_TARGET, 10, 'user-1').length,
+      2,
+      'the delivered cross-post and the continuation reply both belong to the declared target',
+    );
+  });
+
   // CHARACTERIZATION (not an endorsement): documents root cause R-1 — the server has no
   // source→target semantic fence. Changing this behavior is an intentional policy decision
   // (Decision Packet, 取舍 1); if this test goes red, that decision was made and the
   // bug-report + skill guidance must be updated in the same change.
+  //
+  // Scope note: this pins ONLY that delivery is accepted. It deliberately does NOT assert the
+  // absence of a grounding/receipt field — adding a non-blocking receipt is an observability
+  // improvement that must stay possible without tripping a policy characterization.
   test('CHARACTERIZATION: a semantically unrelated target is accepted with no subject fence', async () => {
     const app = await createApp();
     const response = await crossPost(app, {
@@ -239,10 +300,26 @@ describe('cross-thread misdelivery — sender-target vs server-routing attributi
     });
 
     assert.equal(response.statusCode, 200, 'today: existence + principal scope are the ONLY target checks');
-    const body = response.json();
-    assert.ok(
-      !('target_grounding' in body) && !('targetGrounding' in body),
-      'no grounding receipt exists yet — the caller is never asked how it resolved this threadId',
+    assert.equal(
+      messageStore.getByThread(UNRELATED_TARGET, 10, 'user-1').length,
+      1,
+      'acceptance means the message is actually delivered, not merely acknowledged',
     );
+  });
+
+  // TODO(decision-packet R-1): when/if the operator adopts a source→target grounding contract,
+  // this is the shape that replaces the characterization above — the caller declares HOW it
+  // resolved the target, and an unresolvable declaration is refused rather than delivered.
+  // Left as an explicit skip so the intended contract stays visible in the suite instead of
+  // living only in prose.
+  test.skip('FUTURE(R-1): an ungrounded target declaration is refused', async () => {
+    const app = await createApp();
+    const response = await crossPost(app, {
+      threadId: UNRELATED_TARGET,
+      content: 'subject the target thread has never seen\n@codex',
+      targetCats: ['codex'],
+      clientMessageId: 'attribution-6',
+    });
+    assert.equal(response.statusCode, 400, 'a target the caller cannot justify must not be delivered silently');
   });
 });

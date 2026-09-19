@@ -164,6 +164,58 @@ for (const cp of crossPosts) {
   }
 }
 
+// Judgement 5 — the STRUCTURAL standing fence (§3.2 R-2b).
+// Judgements 3/4 test two CONTENT heuristics and rule them out. That does not license the
+// broader claim "no fence is available": thread lineage is a declared server-side fact, not an
+// inference about what a message is "about". RedisThreadStore persists parentThreadId and keeps
+// a children index, so source→target family membership is decidable without guessing.
+// This measures the cost of a FAIL-CLOSED structural fence against real traffic.
+const threadParent = new Map();
+const threadDetailKey = new RegExp(`^${PREFIX}thread:[^:]+$`);
+await scanKeys(
+  `${PREFIX}thread:*`,
+  async (batch) => {
+    const detailKeys = batch.filter((k) => threadDetailKey.test(k));
+    if (!detailKeys.length) return;
+    const pipeline = redis.pipeline();
+    for (const key of detailKeys) pipeline.hget(key, 'parentThreadId');
+    const results = await pipeline.exec();
+    results.forEach(([err, parentThreadId], i) => {
+      if (err) return;
+      threadParent.set(detailKeys[i].slice(`${PREFIX}thread:`.length), parentThreadId ?? null);
+    });
+  },
+  800,
+);
+
+/** Parent, child or sibling — the relationships propose_thread actually records. */
+const familyLinked = (source, target) => {
+  if (!source || !target) return false;
+  const parentOfSource = threadParent.get(source) ?? null;
+  const parentOfTarget = threadParent.get(target) ?? null;
+  if (parentOfTarget === source || parentOfSource === target) return true;
+  return Boolean(parentOfSource && parentOfTarget && parentOfSource === parentOfTarget);
+};
+
+let knownBothEnds = 0;
+let structurallyLinked = 0;
+// Scoped variant: only fence cross-posts whose SOURCE thread actually declares a family.
+// Those are the cases where the store demonstrably holds a better answer than a guess
+// (incident I-3: the source's own parentThreadId WAS the operator-confirmed correct target).
+let sourceDeclaresFamily = 0;
+let sourceDeclaresFamilyButLeaves = 0;
+for (const cp of crossPosts) {
+  const source = cp.extra.crossPost.sourceThreadId;
+  if (!threadParent.has(source) || !threadParent.has(cp.threadId)) continue;
+  knownBothEnds++;
+  const linked = familyLinked(source, cp.threadId);
+  if (linked) structurallyLinked++;
+  if (threadParent.get(source)) {
+    sourceDeclaresFamily++;
+    if (!linked) sourceDeclaresFamilyButLeaves++;
+  }
+}
+
 const pct = (n, d) => (d ? `${((100 * n) / d).toFixed(1)}%` : 'n/a');
 console.log(`corpus: ${messages.size} messages, ${sessions} sessions, ${crossPosts.length} cross-posts\n`);
 console.log('— §3.1 falsification —');
@@ -186,6 +238,22 @@ console.log(
 console.log(`  cross-posts carrying a subjectRef          : ${withSubject}/${crossPosts.length}`);
 console.log(
   `  ... subject already present in target      : ${subjectAlreadyPresent} (${pct(withSubject - subjectAlreadyPresent, withSubject)} of subject-bearing cross-posts open a NEW subject = false-positive rate of a subject fence)`,
+);
+console.log('\n— §3.2 R-2b: the structural standing fence —');
+console.log(`  threads with a detail record               : ${threadParent.size}`);
+console.log(`  ... of which declare a parentThreadId      : ${[...threadParent.values()].filter(Boolean).length}`);
+console.log(`  cross-posts with both endpoints resolvable : ${knownBothEnds}/${crossPosts.length}`);
+console.log(
+  `  ... source/target in the same thread family: ${structurallyLinked} (${pct(structurallyLinked, knownBothEnds)})`,
+);
+console.log(
+  `  ... NOT family-linked                      : ${knownBothEnds - structurallyLinked} (${pct(knownBothEnds - structurallyLinked, knownBothEnds)} = share of REAL traffic a fail-closed structural fence would refuse)`,
+);
+console.log(
+  `  SCOPED: cross-posts whose source declares a family : ${sourceDeclaresFamily}/${knownBothEnds} (${pct(sourceDeclaresFamily, knownBothEnds)})`,
+);
+console.log(
+  `  ... of those, leaving the family           : ${sourceDeclaresFamilyButLeaves} (${pct(sourceDeclaresFamilyButLeaves, sourceDeclaresFamily)} = false-positive cost of a fence scoped to lineage-bearing sources)`,
 );
 
 await redis.quit();
