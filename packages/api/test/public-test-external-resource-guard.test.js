@@ -51,6 +51,21 @@ describe('F308 public-test external resource guard', () => {
       /external_resource_violation/,
     );
     assert.throws(
+      () => assertDistributableCommand('bash', ['-c', 'echo >/dev/tcp/198.51.100.1/9']),
+      /external_resource_violation/,
+      'Bash pseudo-device TCP redirection must fail before the child is spawned',
+    );
+    assert.throws(
+      () => assertDistributableCommand('bash', ['-c', 'echo >/dev/udp/example.com/53']),
+      /external_resource_violation/,
+      'Bash pseudo-device UDP redirection must fail before the child is spawned',
+    );
+    assert.throws(
+      () => assertDistributableCommand('bash', ['-c', 'echo >/dev/tcp/$TARGET_HOST/9']),
+      /external_resource_violation/,
+      'dynamic Bash pseudo-device targets are not provably loopback',
+    );
+    assert.throws(
       () => assertDistributableCommand('git', ['ls-remote', 'https://example.com/repo.git']),
       /external_resource_violation/,
     );
@@ -77,6 +92,7 @@ describe('F308 public-test external resource guard', () => {
     assert.doesNotThrow(() => assertDistributableCommand('node', ['-e', 'console.log("gh ssh curl")']));
     assert.doesNotThrow(() => assertDistributableCommand('git', ['status', '--short']));
     assert.doesNotThrow(() => assertDistributableCommand('sh', ['-c', 'printf "gh ssh curl"']));
+    assert.doesNotThrow(() => assertDistributableCommand('bash', ['-c', 'echo >/dev/tcp/127.0.0.1/9']));
   });
 
   it('binds local command fixture declarations to one exact temporary executable', () => {

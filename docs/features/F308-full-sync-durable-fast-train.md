@@ -49,7 +49,7 @@ F308 的终态是：维护者一次启动或恢复一个冻结 cut，就能看�
 | outbound writer | `scripts/sync-to-opensource.sh` 是唯一 export、F251、temp target gate 与 real target write 入口 | 继续由该脚本写入；F308 不另造 rsync writer |
 | community preservation | F251、reconciliation ledger、target-owned backup/restore | 所有 receipt 和 resume 都重新证明这三项；不得用 cache 越过 |
 | public CI workflow | 开源 target 的 `.github/workflows/ci.yml` 是 `sync-manifest.yaml` target-owned | 以独立 target-repo PR 维护；export 不覆盖它 |
-| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 只把具备真实跨 VM 共享资源证据的文件留在 shared serial；其余测试由 runtime guard 约束后进入统一可分发池，绝不全局升 concurrency |
+| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 只把具备真实跨 VM 共享资源证据的文件留在 shared serial；其余 target-CI 测试在仅保留 loopback 的 Linux network namespace 与 runtime guard 双重约束下进入统一可分发池，绝不全局升 concurrency |
 
 ## User Journey — Operator
 
@@ -131,11 +131,13 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 - [x] **AC-D3**: Only tests with explicit evidence for a real cross-VM remote endpoint, shared account or shared quota
   remain in one globally serial lane. Every other file runs in one count-balanced distributable pool across isolated
   GitHub VMs; each file still receives a fresh Node process and every VM remains file-serial with
-  `--test-concurrency=1`. The runtime guard rejects undeclared non-loopback use through `fetch`, WebSocket,
-  HTTP(S), TCP/TLS, recognized network-capable commands, and guard-propagated child processes. It is a bounded guard
-  for those exercised Node surfaces, not a general Node/native egress sandbox. An exact temporary executable can run
-  only when the test explicitly declares it as a local command fixture. Duration balancing exists as an operator-side
-  replay tool but current CI does not supply a measured timing artifact.
+  `--test-concurrency=1`. Each target-CI distributable command enters a new Linux network namespace with only
+  loopback enabled, then drops root before running tests; the kernel therefore rejects unknown Node/native/shell IP
+  egress without a lexical classifier. The bounded preload guard adds earlier typed failures for recognized `fetch`,
+  WebSocket, HTTP(S), TCP/TLS and child-process paths, including non-loopback Bash `/dev/tcp` and `/dev/udp`
+  redirections. An exact temporary executable can run only when the test explicitly declares it as a local command
+  fixture. Duration balancing exists as an operator-side replay tool but current CI does not supply a measured timing
+  artifact.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
@@ -178,7 +180,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
-| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; the bounded runtime guard denies non-loopback `fetch`, WebSocket, HTTP(S), TCP/TLS and recognized remote commands in-process and in guard-propagated child processes, with an exact temporary-path declaration required for local executable fixtures; it is not claimed as a general Node/native sandbox; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
+| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; every target-CI distributable command runs unprivileged inside a loopback-only Linux network namespace, so unknown Node/native/shell IP egress has no route; the bounded preload guard adds earlier typed failures for recognized paths and requires exact temporary-path declarations for local executable fixtures; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 
@@ -198,8 +200,9 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   `71a9b707847f7ed2cd43a3de42e4ca40ec7520e3`. Exact-head target CI preserved the required `Test (Public)` check,
   Windows and public-contract surfaces; its serial bootstrap passed in 19m36s and the fail-closed aggregate passed.
   The workflow now requires exact-plan/report summary provenance for one explicit shared-resource lane and six
-  guarded distributable shards. Every selected file must appear exactly once, and the evidence job fails above a
-  600,000ms critical path. Three same-selection target-CI artifacts are still required by AC-D6.
+  guarded distributable shards. The distributable workflow additionally enters a loopback-only Linux network
+  namespace and drops root before test execution. Every selected file must appear exactly once, and the evidence job
+  fails above a 600,000ms critical path. Three same-selection target-CI artifacts are still required by AC-D6.
 
 ## Key Decisions
 

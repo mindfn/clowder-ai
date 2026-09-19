@@ -72,6 +72,16 @@ function shellCommands(command) {
     .filter(Boolean);
 }
 
+function assertShellPseudoDeviceTargets(command) {
+  const text = String(command);
+  for (const marker of text.matchAll(/\/dev\/(?:tcp|udp)(?=$|\/|\s|["'`])/g)) {
+    const target = /^\/dev\/(tcp|udp)\/([^\s/'"`;&|<>(){}]+)\/([^\s/'"`;&|<>(){}]+)/.exec(text.slice(marker.index));
+    if (!target || !isLoopbackHostname(target[2]) || !/^\d+$/.test(target[3])) {
+      throw violation('shell pseudo-device has no provably loopback target');
+    }
+  }
+}
+
 function resolvedExecutable(command, options = {}) {
   const value = String(command);
   const cwd = typeof options.cwd === 'string' ? options.cwd : process.cwd();
@@ -115,6 +125,7 @@ function isDeclaredLocalCommandFixture(command, options = {}) {
 
 function shellCommandAllowed(command, options = {}) {
   const text = String(command);
+  assertShellPseudoDeviceTargets(text);
   for (const commandPart of shellCommands(text)) {
     if (isDeclaredLocalCommandFixture(commandPart.command, options)) continue;
     if (['gh', 'ssh', 'scp', 'sftp'].includes(commandPart.executable)) {
