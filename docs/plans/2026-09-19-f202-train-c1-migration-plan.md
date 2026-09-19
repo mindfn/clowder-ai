@@ -91,7 +91,7 @@ manifest 根：`packages/api/src/plugins/`（`index.ts:4317` 硬编码）；枚�
 | entry | 资源声明 | 配置/secret | 自有持久数据 | disposition |
 |---|---|---|---|---|
 | `github` | 7 个 schedule | `GITHUB_TOKEN`、`GITHUB_MCP_PAT`、`GITHUB_SETUP_NOISE_BOT_LOGINS` | `schedule:github:*` ×7；`capabilities.json` ownership；迁移标记 `.cat-cafe/f202-phase2-github-schedule-migrated`、`.cat-cafe/f168-github-schedule-backfilled`；Redis `community:repo-comment:cursor:{repo}` | in-scope C1 |
-| `video-analysis` | 1 个 mcp | 5 个 `VIDEO_ANALYSIS_*` | `capabilities.json` + 生成的 CLI MCP config | **既有 external baseline，非 C1 migration row**（alpha.1 已发布，`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位）；Core 只保兼容 |
+| `video-analysis` | 1 个 mcp | 5 个 `VIDEO_ANALYSIS_*` | `capabilities.json` + 生成的 CLI MCP config | **既有 external baseline，非 C1 migration row**（alpha.1 已发布，`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位）；**但有 Core 删除面**：切到 alpha.1 外部包并删除本地 duplicate（§2.0 baseline ledger、§5 Stage 4 第 5 步） |
 | `video-gen` | 1 个 mcp | 7 个 `VIDEO_GEN_*` | 同上 | in-scope C1 |
 | `weixin-mp` | limb + skill | `WEIXIN_MP_APP_ID/APP_SECRET` | `capabilities.json` ×2；skill 挂载副作用（跨项目级联）；限时 access token | in-scope C1 |
 | `wechat-visible-reader` | limb | 无 | 仅内存 arm 授权窗口（无持久化） | in-scope C1 |
@@ -111,7 +111,7 @@ manifest 根：`packages/api/src/plugins/`（`index.ts:4317` 硬编码）；枚�
 > 是「精确坐标」表，不含该表述——该引用不成立，已替换为上述可核验来源。
 
 因此 Core C1 的删除面**必须显式绕开**它：安装、配对、Settings 面板与 receipt authority 仍归 Host，
-不得随旧通用 plugin 管理面一并删除（§5 Stage 3 已加排除项）。
+不得随旧通用 plugin 管理面一并删除（§5 Stage 4 已加排除项）。
 
 ### 2.3 第二处静默缺口 — enterprise workflow 的 provider-specific 实现
 
@@ -190,7 +190,7 @@ F288 已冻结 v0 契约——插件以 `thread_handle` 用自己的声音说话
 自行派生目标并唤醒。所以正确的红灯是"**已认证 ingress 不唤醒**"，而不是"SDK `send()` 应当解析 `@`"。
 
 **路线裁定（reviewer ruling，2026-09-19）**：F-1 的修复**并入唯一的 Core C1 聚合 PR**，作为
-"切默认路径前"的内部 substage，**不另开 C1 PR**。依据 `docs/features/F202-plugin-framework.md:140`：
+"切默认路径前"的内部 substage（即 §5 Stage 2a），**不另开 C1 PR**。依据 `docs/features/F202-plugin-framework.md:140`：
 Core cutover "may add only the narrow migration/cutover wiring required to consume the
 already-established Host plane"——本修复正是窄、业务无关的 migration wiring，整体大量删除后 PR
 仍保持 deletion-dominant。
@@ -284,12 +284,23 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ## 5. 两仓串行计划
 
-> **权威顺序（不可重排）**：Plugins 聚合迁移 → exact publication / consumption proof → Core 聚合 cutover。
+> **权威顺序（不可重排）**：Plugins 聚合迁移 → 精确发布 → **Core 业务无关 activation prerequisite**
+> → 非默认路径消费证明 → Core cutover/删除。
 > Plugins 侧不发布精确 package，Core 侧无从 pin，也无从证明迁移后的 provider 语义等价。
 >
-> **本文初版把 Core 的 wake GREEN 实现排在 Plugins 之前，方向反了，已修正。** 红灯证据（§6）可以、
-> 也已经先行提交——它不依赖任何 Plugins artifact；但**转绿的实现属于 Stage 3 内部 substage 3a**，
-> 在 Plugins 发布之后、切默认路径之前执行。
+> **第二版修正（本文初版把 Core 的 wake 实现排在 Plugins 之前，方向反了）** 已在上一轮改掉。
+>
+> **第三版修正（2026-09-19 reviewer P1）——原 Stage 2 是不可达循环，必须拆开。** 上一版要求
+> "Stage 2 走完 `use→restart` 才允许 Core 开始任何实现"。但 `use` 本身依赖两项**只有 Core 能提供**
+> 的 Host 能力，二者在冻结基线上都不存在（证据见 §5.1）：外部 runtime 拿不到任何 provider
+> config/secret，且没有生产路径为 package 签发 / 恢复 `connector_binding` handle。
+> 于是「Stage 2 未完成 → Core 不得实现」与「Core 未实现 → Stage 2 无法完成」互锁。
+>
+> 解开的方式是**按依赖方向切开消费证明**：不依赖 Host 新能力的部分（安装/配置/启用/卸载）
+> 留在 Stage 2 作为 Core 的进入条件；依赖 Host 新能力的部分（`use→restart` 往返）后移到 Stage 3，
+> 在 Core 的业务无关 activation prerequisite（Stage 2a）之后、切默认路径之前完成。
+> **Stage 2a 只做业务无关的 Host 能力，不含任何 provider 业务逻辑，也不切默认路径**——
+> 因此它不违反"先发布再消费"的权威顺序。
 
 ### Stage 0 — 治理落盘（小，先做）
 
@@ -308,37 +319,75 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 - 每个包自带 config/state/secret/data mapping、rollback fixture 与真实 composition test。
 - 至少一个 provider 先行完成 ingress→thread→subscription→platform 往返（§6.3 Phase 2 出口）。
 
-### Stage 2 — exact publication / consumption proof（Core 的进入条件）
+### Stage 2 — 精确发布 + 不依赖 Host 新能力的消费证明（Core 的进入条件）
 
 - Plugins 侧发布精确版本；Core 侧按 **exact version + digest** pin，不按 range、不按 dist-tag。
-- 消费证明：至少一个已迁移 provider 在 Core 侧走完 discover→install→configure→enable→use→restart→
-  disable→uninstall，**且不切换生产默认路径**。
-- **本阶段未完成前，Core 侧不开始 Stage 3 的任何实现**——包括 substage 3a。
+- 消费证明（**本阶段只到这里**）：至少一个已迁移 provider 在 Core 侧走完
+  discover→install→configure→enable→disable→uninstall，**且不切换生产默认路径**。
+  这一段只用既有 Host inventory/lifecycle 能力，今天就可达。
+- **`use→restart` 往返不在本阶段**——它依赖 Stage 2a 的 Host 能力，放在这里即构成循环依赖。
+- 本阶段未完成前，Core 侧不得开始 Stage 3 / Stage 4 的任何实现；**Stage 2a 例外且仅限业务无关能力**。
 
-### Stage 3 — Core 聚合 cutover PR（PR 5/5，以删除为主）
+### Stage 2a — Core 业务无关 activation prerequisite（Core 聚合 PR 内最先执行）
 
-顺序严格：**先建 wake parity → 再映射 → 再切默认 → 再证明不双跑 → 最后删除**。
+> 三项缺口都是**业务无关的 Host 能力**：不含任何 provider 业务逻辑、不切默认路径、不删除任何东西。
+> 它们是 `use` 得以发生的前提，因此必须早于消费证明，而不是等待它。
 
-0. **substage 3a — ingress wake parity（解决 F-1 / F-2；§6 红灯转绿）**
-   - 建立 Host-owned canonical message admission，使 Hub UI / `ConnectorRouter` / Plugin SDK
-     三入口产生同一 envelope、ledger、广播与 wake 语义；source 由 Host 验证，payload 不可伪装。
-   - wake 必须 **source-derived**（Host 从已验证的 provider identity + 已绑定 thread 推出），
-     不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
-   - 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
-     → 默认猫。只接默认猫是用户可见回归（§6 用例 2/3）。
-   - 只消费既有 Host plane 的窄 wiring，seam 落在 `createMessagingDomain(...)` 这个 K-2 装配点。
-     **不新增 public method / hook / UI slot**；一旦发现必须新增，停下转 C2。
-   - **门**：§6 四条 RED 转绿 **且** 两条 GREEN guard 仍绿 = §6.3 Phase 1 出口条件达成。
+#### 5.1 三项缺口（冻结基线 `9ab0eaf28` 上 code-derived）
+
+| # | 缺口 | 一手证据 | C1 分类 |
+|---|---|---|---|
+| A | ingress wake parity：已认证 `connector_binding` 不唤醒 | `send-service.ts:154` 恒 `mentions: []`；`MessagingDomainDeps`（`messaging-service.ts:21-26`）无 broadcast/wake/thread 协作者 | **C1 内**（§3 F-1 已裁定） |
+| B | **生产 composition 不注入 Host 协作者** | `runtime-composition.ts:213` 以 `{messageStore, redis}` 组装 messaging domain | **C1 内**：窄 wiring，无公共面变更 |
+| C | 外部 stdio runtime 收不到 config/secret | `external-runtime/supervisor.ts:191-201` 只传 `CLOWDER_PLUGIN_ID/PACKAGE_DIGEST/CONTRACT_VERSION/WIRE_VERSION` 四个协议变量 | **C1 内**：既有机制平移，见下 |
+| D | **无法签发 / 恢复 `connector_binding` handle** | `issueConnectorBindingHandle`（`handles.ts:60`）**零生产调用者**（全仓仅 `messaging-service.ts:67` 转发 + 3 个测试）；contract 无任何 `connector.*` wire method | **C1 boundary blocker**，需 maintainer 签字（§7.2） |
+
+**C 为什么在 C1 内而不是 C2**：这套投影**已经存在**——`BuiltinPluginContributionSupervisor.contributionEnvironment`
+（`manager/builtin-contribution-supervisor.ts:558-585`）已实现声明式 `{source: 'config'|'secret', key}`
+绑定、`secret.read`/`plugin.config.read` 授权校验、必填缺失时 `CONFIG_UNAVAILABLE` fail-closed。
+缺的只是把同一机制接到 stdio spawn 路径上，属于
+`F202-plugin-framework.md:140` 的"消费既有 Host plane 的窄 migration wiring"，不新增任何公共面。
+
+**D 为什么是 boundary blocker**：contract 的 wire method 全集里没有 `connector.*`，
+`M0CDeliverInput` 也只有 `{deliveryId, threadHandle, envelope}`；package 拿到 provider 坐标
+`(connectorId, externalChatId)` 后**无法向 Host 索取 handle**，重启后也无法恢复
+`threadId ↔ externalChatId`。三条退路都不可接受：把 handle 塞进 config/env 是 multi-chat 不完备
+且把绑定权移进不可信包代码；让 package 自行合成 handle 直接击穿 D-4；只做单聊则不满足既有旅程。
+因此**任何可行实现都需要一次 wire/schema 变更**——这超出冻结的 C1 公共面，
+**在 maintainer 签字前不得动工，也不得让 Plugins 侧先写 provider runtime wrapper**（§7.2 第 4 条）。
+
+#### 5.2 Stage 2a 出口门
+
+- §6 的 **8 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**。
+- wake 必须 **source-derived**（Host 从已验证 provider identity + 已绑定 thread 推出），
+  不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
+- 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
+  → 默认猫。只接默认猫是用户可见回归（§6 用例 2/3）。
+- seam 落在 `createMessagingDomain(...)` 这个 K-2 装配点，**且生产 composition 必须真正注入**（用例 7）。
+- 除 D 的 wire 变更（须先签字）外，**不新增 public method / hook / UI slot**；一旦发现必须新增，停下转 C2。
+- 达成即 §6.3 Phase 1 出口条件。
+
+### Stage 3 — 非默认路径消费证明（`use→restart` 往返）
+
+- 在 Stage 2a 落地的 Host 能力之上，至少一个已迁移 provider 完成
+  ingress→thread→subscription→platform 往返 + 重启后恢复绑定，**仍不切换生产默认路径**。
+- 这是 §6.3 Phase 2 出口证据，也是允许进入 Stage 4 的唯一凭据。
+
+### Stage 4 — Core cutover 与删除（以删除为主）
+
+顺序严格：**先映射 → 再切默认 → 再证明不双跑 → 最后删除**。
+
 1. 幂等迁移 §4.1 全部配置/binding/data（只读镜像，D2）。
 2. 反转 `isStaticConnectorId()` 使迁移包可认领 7 个 id。
-3. 切换默认路径（含 Console 门控翻转）。**substage 3a 未过门，本步不得开始。**
+3. 切换默认路径（含 Console 门控翻转）。**Stage 2a 出口门 + Stage 3 往返证明未完成，本步不得开始。**
 4. 提交 no-double-run 证明（§4.2 验收矩阵）+ rollback 演练证据。
 5. 删除：provider-specific 实现、`im-connector-loader` 在进程内加载业务的路径、
    `ConnectorRouter` / `OutboundDeliveryHook` 业务路径、provider-specific
    `ScheduleFactoryRegistry` 实现、旧 `plugin-routes.ts` / `PluginsContent.tsx` /
    IM 管理面（`connector-hub.ts` 的 9 条 provider 路由、`connector-plugins.ts` 等第二安装入口），
    以及 `video-analysis` 的 repository-local duplicate（§2.0 baseline ledger）。
-   删除前必须先完成陷阱 3 的 compatibility provider 换源。
+   删除前必须先完成陷阱 3 的 compatibility provider 换源，
+   **且每一类删除都必须先过 §5.3 的贡献执行矩阵（新 owner 就位 + 旅程证明）**。
 6. 保留：通用 Plugin Manager、connector binding、service lifecycle、scheduler、MCP runtime，
    以及 `plugin-access-guards.ts`。
 7. **删除面显式排除项**（扫旧管理面时不得波及，依据 §2.2 / §2.3 / §2.4 裁定）：
@@ -347,6 +396,43 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
    - `infrastructure/enterprise/` 的 Lark/WeCom action service 及其回调路由。
    - `feishu-meeting-intake` 的 Host wiring（既有 package，无删除面）。
    - `collective-service` 与 5 个 managed services 的现状 wiring（`deferred → C2`）。
+
+#### 5.3 贡献执行矩阵 —— 删除的前置条件（每类都必须有新 owner）
+
+> 上一版只说"删除 provider 实现与旧管理面"，没说**删完谁来执行这些贡献**。
+> 11 行声明的贡献不止 MCP 一类；删掉旧执行 owner 而新 owner 不存在，
+> 就是把飞书/微信扫码登录、企微回调校验、visible-reader arm 授权、GitHub 7 个 schedule
+> 静默删成不可用。本矩阵是 Stage 4 第 5 步每一类删除的准入条件。
+
+**冻结基线上外部包实际能拿到的执行面（code-derived，不是推测）**：
+
+- Host broker 在生产组装里只注册**两族** method（`runtime-composition.ts:220-229`）：
+  `events.publish` 与 `messaging.*`。**contract 声明的 `schedule.register` 在 Core 没有任何 handler。**
+- 贡献类型驱动的执行只有两处：`runtime-composition.ts:443-448`（capability 仅在 feature 的
+  contribution 引用**全部**是 `mcp` 时才激活）与 `static-feature-authority.ts:267-269`
+  （只接受 `content-editor-provider`）。
+- 其余类型（`connector` / `webhook` / `schedule` / `limb` / `skill`）**今天只有 repository-local
+  实现**：`plugin-manifest.ts:29` 的 `SUPPORTED_RESOURCE_TYPES` + `PluginResourceActivator`——
+  **正是 C1 要删的那条路径**。
+
+| 贡献类 | 需要它的行 | 今天的执行 owner（Stage 4 要删） | 外部包路径的新 owner | 专属旅程证明 | 删除门 |
+|---|---|---|---|---|---|
+| connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **不存在** → Stage 2a 的 A/B/D | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 | D 签字 + §6 全绿 + Stage 3 往返证明 |
+| provider 专属操作（QR/validate） | feishu QR ×3、weixin QR ×4、wecom-bot validate ×2 | `connector-hub.ts` 9 条 provider 路由 + `<id>.json` 的 `_operations` 状态机 | **不存在** | 扫码登录走通；企微回调校验通过 | 新 owner 就位 + 旅程绿 |
+| webhook | wecom-agent（XML content-type 分支 `connector-webhooks.ts:51-66`）及通用回调 | `connector-webhooks.ts` 共享路由 | **不存在** | 回调签名校验 + 投递落 thread | 新 owner 就位 + 回调旅程绿 |
+| schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：contract 有 `schedule.register` wire，但 Core 未注册 handler | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵 |
+| limb | `weixin-mp`、`wechat-visible-reader` | `PluginResourceActivator.ts:170` | **不存在** | weixin-mp 发文；visible-reader arm 授权窗口仍受限 | 新 owner + 旅程绿 |
+| skill | `weixin-mp` | `PluginResourceActivator.ts:331-366`（跨项目级联挂载） | **不存在** | 挂载 + **卸载完整回收**（陷阱 6，不留悬挂 symlink） | 新 owner + 回收证明 |
+| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:443-448`） | MCP tool 实际可调用 | 已有 owner，按现状过门 |
+
+**读法**：只有最后一行今天是通的。其余六类要么需要 Stage 2a 的 Host 能力，要么需要一个
+本计划尚未指派的新执行 owner。**任何一类在新 owner 就位并交出旅程证明之前，
+对应的旧实现与旧路由都不得删除**——这比"删除面排除项"更强：排除项说的是"不要误删"，
+本矩阵说的是"没接住就不准删"。
+
+> **未决**：六类里除 connector 外，新 owner 归 C1 还是 C2 尚未裁定。若某类需要新的 typed
+> hook / UI slot，按 §3 F-1 的硬止损线它属于 C2，届时该类的**迁移与删除一并后移**，
+> 而不是删了之后留空。该裁定需要 Plugins owner thread 与 maintainer 共同确认（§7.2 第 5 条）。
 
 ### 组织约束
 
@@ -357,10 +443,19 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ## 6. 红灯测试证据
 
-`packages/api/test/f202-c1-im-cutover-wake-parity.test.js` —— 6 例，断言点全部落在 **Host 信任边界**：
-已认证 `connector_binding` ingress 的唤醒契约，而不是要求 SDK `send()` 改变插件消息语义。
+红灯由**两个文件共同构成一道 10 例门**，断言点全部落在 **Host 信任边界**：已认证
+`connector_binding` ingress 的唤醒契约与激活前提，而不是要求 SDK `send()` 改变插件消息语义。
 
-在冻结基线（Core `9ab0eaf28`）上跑：**4 红 2 绿**。
+| 文件 | 例 | 关注 |
+|---|---|---|
+| `packages/api/test/f202-c1-im-cutover-wake-parity.test.js` | 1–6 | **唤醒语义**：在 `createMessagingDomain(...)` 隔离注入协作者，精确钉住三段式路由与两条围栏 |
+| `packages/api/test/f202-c1-production-composition-activation.test.js` | 7–10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入、binding 签发/重启恢复、config/secret 投影 |
+
+在冻结基线（Core `9ab0eaf28`）上跑：**8 红 2 绿**。
+
+**为什么必须分两层**：只有 1–6 时，一个"永远不被生产组装调用"的实现即可全绿——
+用例 1–4 的协作者是测试手工注入的。7–10 把同样的契约搬到**真实组装**上，
+因此 1–6 定义"正确的唤醒长什么样"，7–10 保证"它真的发生在发布出去的进程里"。
 
 | # | 用例 | 现状 | 语义 |
 |---|---|---|---|
@@ -370,6 +465,10 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | 4 | no-double-run：同 `idempotencyKey` 重放 → 回放同一 receipt 且**不第二次唤醒** | **红** | §4.2 防双跑契约在唤醒维度的可执行表达 |
 | 5 | GREEN guard：`thread_handle` 插件自述文本含 `@opus`（且 thread 有活跃参与者） → 仍 `mentions=[]`、0 唤醒 | **绿（须保持）** | 围栏：修复不得以破坏 F288 v0 插件声音契约为代价 |
 | 6 | GREEN guard：伪造 external origin → `PERMISSION`，0 persist / 0 broadcast / 0 wake | **绿（须保持）** | 围栏：ingress 权限来自 host-issued binding（D-4），不来自自报 origin |
+| 7 | 生产组装下已认证 ingress → wake ×1 + broadcast ×1 | **红**（观测 0 wake） | 缺口 B：`runtime-composition.ts:213` 以 `{messageStore, redis}` 组装，协作者根本没有入口 |
+| 8 | Host 路由为已认证 `(pluginInstanceId, connectorId, externalChatId)` resolve-or-create binding 并返回 handle | **红** | 缺口 D：`issueConnectorBindingHandle` 零生产调用者；contract 无 `connector.*` wire |
+| 9 | 重启后同一外部会话坐标解析回同一 threadId（出站可恢复） | **红** | 缺口 D 的重启维度：多聊天 connector 失去全部既有会话的出站寻址 |
+| 10 | manifest 声明的 config/secret 投影进外部 stdio runtime | **红**（实测 spawn env 仅 4 个 `CLOWDER_*`） | 缺口 C：`supervisor.ts:191-201`；builtin 路径已有同款授权校验投影 |
 
 **为什么 2 和 3 必须分开**：现网路由是**三段式**（mention → 最近活跃参与者 → 默认猫）。
 只写一条"无 mention 就默认猫"的断言，会让一个只接默认猫的实现转绿，而真实回归——
@@ -386,8 +485,10 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
 放进 `SendService`、包一层 `MessageIngress`、或单开 admission service，都同样满足这些断言。
 不隐含任何面向插件的新 public method / hook / UI slot（那属于 C2）。
 
-本测试是 Stage 3 substage 3a 的完成门，也是 Stage 3 第 3 步允许切换默认 IM 路径的前置条件。
-红灯本身不依赖任何 Plugins artifact，故先行提交；**转绿实现在 Stage 2 发布证明之后才开始**。
+这道门是 **Stage 2a 的完成门**，也是 Stage 4 第 3 步允许切换默认 IM 路径的前置条件之一
+（另一个是 Stage 3 的往返证明）。红灯本身不依赖任何 Plugins artifact，故先行提交；
+**转绿实现属于 Stage 2a**——在 Stage 2 精确发布之后开始，且用例 8/9 对应的缺口 D
+需 maintainer 先签字（§7.2 第 4 条）才能动工。
 
 ## 7. disposition 状态
 
@@ -398,7 +499,7 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
 | `personal-chrome-host` 归属 | 非 C1 migration row，非 `PluginManifest`/installer；Host 保留安装/配对/Settings/receipt authority，删除面绕开 | roadmap §2.2 存量迁移行；`ownership/cells/plugin.md:131`（§2.2） |
 | `infrastructure/enterprise/` Lark/WeCom | 不进 C1 inventory；受保护的独立业务消费者 | §6.4 判据针对 IM connector 控制面（§2.3） |
 | `collective-service` / `audio-capture` | 前者记 supplemental census 非 C1 entry；后者作 C2 风险记录 | §2.4 |
-| F-1 修复是否独立 PR | **并入唯一 Core C1 聚合 PR**，作切默认路径前的内部 substage | `F202-plugin-framework.md:140` 窄 migration wiring 条款（§3 F-1） |
+| F-1 修复是否独立 PR | **并入唯一 Core C1 聚合 PR**，作切默认路径前的内部 substage（§5 Stage 2a） | `F202-plugin-framework.md:140` 窄 migration wiring 条款（§3 F-1） |
 | 5 个 managed services | `deferred → C2`；Train C 在 C1 后未闭环是预期状态 | §2.4 |
 
 ### 7.2 仍需 maintainer 签字（本计划不自决）
@@ -407,3 +508,13 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
    冲突（INV-R4 规定该 roadmap 拥有跨仓执行顺序）。需 maintainer 批准把拆分落盘到 roadmap。
 2. **陷阱 2 的 4 个 env 变量**：显式 mapping 还是显式放弃——放弃需签字，不能静默丢。
 3. **旧持久数据的最终删除**（契约 D2 的第二步）：soak 之后单独审批，不与默认路径切换同 PR。
+4. **缺口 D 的 wire/schema 变更（C1 boundary blocker）**：为已认证
+   `(pluginInstanceId, connectorId, externalChatId)` 提供 Host 侧 resolve-or-create binding
+   与重启恢复，contract 现无 `connector.*` method、`M0CDeliverInput` 也不带外部会话坐标。
+   三条退路（config/env 塞 handle、包内自造 handle、只做单聊）分别是 multi-chat 不完备、
+   击穿 D-4、不满足既有旅程，**没有不改 wire 的实现**。
+   需 maintainer 裁定：并入 C1 公共面，还是整体后移 C2。
+   **在此签字前，Core 不动工，Plugins 侧也不应基于假定的 handle 形态写 provider runtime wrapper。**
+5. **§5.3 六类贡献的新执行 owner 归属**：除 mcp 外，connector / provider 操作 / webhook /
+   schedule / limb / skill 今天都没有外部包执行路径。逐类裁定归 C1 还是 C2；
+   凡判 C2 者，其**迁移与删除一并后移**，不得先删后补。
