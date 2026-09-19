@@ -330,10 +330,10 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ### Stage 2a — Core 业务无关 activation prerequisite（Core 聚合 PR 内最先执行）
 
-> 三项缺口都是**业务无关的 Host 能力**：不含任何 provider 业务逻辑、不切默认路径、不删除任何东西。
+> 五项缺口都是**业务无关的 Host 能力**：不含任何 provider 业务逻辑、不切默认路径、不删除任何东西。
 > 它们是 `use` 得以发生的前提，因此必须早于消费证明，而不是等待它。
 
-#### 5.1 三项缺口（冻结基线 `9ab0eaf28` 上 code-derived）
+#### 5.1 五项缺口（冻结基线 `9ab0eaf28` 上 code-derived）
 
 | # | 缺口 | 一手证据 | C1 分类 |
 |---|---|---|---|
@@ -341,6 +341,7 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | B | **生产 composition 不注入 Host 协作者** | `runtime-composition.ts:213` 以 `{messageStore, redis}` 组装 messaging domain | **C1 内**：窄 wiring，无公共面变更 |
 | C | 外部 stdio runtime 收不到 config/secret | `external-runtime/supervisor.ts:191-201` 只传 `CLOWDER_PLUGIN_ID/PACKAGE_DIGEST/CONTRACT_VERSION/WIRE_VERSION` 四个协议变量 | **C1 内**：既有机制平移，见下 |
 | D | **无法签发 / 恢复 `connector_binding` handle** | `issueConnectorBindingHandle`（`handles.ts:60`）**零生产调用者**（全仓仅 `messaging-service.ts:67` 转发 + 3 个测试）；contract 无任何 `connector.*` wire method | **C1 boundary blocker**，需 maintainer 签字（§7.2） |
+| E | **connector 无持久 checkpoint**（provider cursor/sequence） | `plugin.state.get/set` 仅为**保留的 L0 能力名**，不在 13 行 wire registry 内，Core 无 handler / store / composition 路径；subscription cursor、inventory snapshot、7 天 TTL 的 messaging settlement ledger 均非替代 | **C1 boundary blocker**，需 maintainer 签字（§7.2） |
 
 **C 为什么在 C1 内而不是 C2**：这套投影**已经存在**——`BuiltinPluginContributionSupervisor.contributionEnvironment`
 （`manager/builtin-contribution-supervisor.ts:558-585`）已实现声明式 `{source: 'config'|'secret', key}`
@@ -355,6 +356,15 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 且把绑定权移进不可信包代码；让 package 自行合成 handle 直接击穿 D-4；只做单聊则不满足既有旅程。
 因此**任何可行实现都需要一次 wire/schema 变更**——这超出冻结的 C1 公共面，
 **在 maintainer 签字前不得动工，也不得让 Plugins 侧先写 provider runtime wrapper**（§7.2 第 4 条）。
+
+**E 为什么是 boundary blocker（第四轮 review 新增）**：Telegram long polling 与 WeCom Bot / XiaoYi 的 WebSocket resume 需要**重启安全**的 provider offset，否则重启后重复投递或漏投。
+我曾一度判其为窄 wiring，理由是"wire 已声明 `plugin.state.get/set`"——**该判断错误，已撤回**：
+这两个名字只存在于 capability 枚举与设计稿，**13 行 wire registry 里没有对应行**，Core 侧也无任何实现。
+（取证教训：当时把 `dist/wire/` 与 `dist/generated/` 合并 grep，命中来自能力枚举却被当成 wire row。）
+因此它与 D 同类——**需要一次公共 wire/trust boundary 变更**。
+最小安全契约（不可降级为裸 KV，也不可让 package 自写文件，否则绕过 inventory/lifecycle/rollback 权威）：
+**声明式 per-contribution key + 实例自有命名空间 + TTL=0 + 限定 schema/大小 + CAS/operation-id 幂等 + settlement-ordered commit**，
+且不得承载消息正文或 secret。红灯见 §6 case 12。
 
 #### 5.2 Stage 2a 出口门
 
@@ -417,7 +427,7 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 | 贡献类 | 需要它的行 | 今天的执行 owner（Stage 4 要删） | 外部包路径的新 owner | 专属旅程证明 | 删除门 |
 |---|---|---|---|---|---|
-| connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **不存在** → Stage 2a 的 A/B/D | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 | D 签字 + §6 全绿 + Stage 3 往返证明 |
+| connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **不存在** → Stage 2a 的 A/B/D/E | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 + **重启后 provider cursor 续传且不重复投递（replay/dedup）** | D **与 E** 签字 + §6 全绿 + Stage 3 往返证明 |
 | provider 专属操作（QR/validate） | feishu QR ×3、weixin QR ×4、wecom-bot validate ×2 | `connector-hub.ts` 9 条 provider 路由 + `<id>.json` 的 `_operations` 状态机 | **不存在** | 扫码登录走通；企微回调校验通过 | 新 owner 就位 + 旅程绿 |
 | webhook | wecom-agent（XML content-type 分支 `connector-webhooks.ts:51-66`）及通用回调 | `connector-webhooks.ts` 共享路由 | **不存在** | 回调签名校验 + 投递落 thread | 新 owner 就位 + 回调旅程绿 |
 | schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：contract 有 `schedule.register` wire，但 Core 未注册 handler | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵 |
@@ -443,19 +453,21 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ## 6. 红灯测试证据
 
-红灯由**两个文件共同构成一道 10 例门**，断言点全部落在 **Host 信任边界**：已认证
+红灯由**三个文件共同构成一道 12 例门**，断言点全部落在 **Host 信任边界**：已认证
 `connector_binding` ingress 的唤醒契约与激活前提，而不是要求 SDK `send()` 改变插件消息语义。
 
 | 文件 | 例 | 关注 |
 |---|---|---|
 | `packages/api/test/f202-c1-im-cutover-wake-parity.test.js` | 1–6 | **唤醒语义**：在 `createMessagingDomain(...)` 隔离注入协作者，精确钉住三段式路由与两条围栏 |
-| `packages/api/test/f202-c1-production-composition-activation.test.js` | 7–10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入、binding 签发/重启恢复、config/secret 投影 |
+| `packages/api/test/f202-c1-production-composition-activation.test.js` | 7、10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入与 config/secret 投影 |
+| `packages/api/test/f202-c1-connector-binding-durability.test.js` | 8、9、11、12 | **绑定权威与持久性**：broker 身份驱动的 resolve-or-create、跨插件伪造否定例、共享持久权威下的重启恢复、connector checkpoint（CAS/TTL=0/实例隔离） |
+| `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免两文件重复组装并越过 350 行硬限） |
 
-在冻结基线（Core `9ab0eaf28`）上跑：**8 红 2 绿**。
+在冻结基线（Core `9ab0eaf28`）上跑：**10 红 2 绿**（12 例）。每条红灯均因其声明的缺口而红，非 fixture 错误。
 
 **为什么必须分两层**：只有 1–6 时，一个"永远不被生产组装调用"的实现即可全绿——
-用例 1–4 的协作者是测试手工注入的。7–10 把同样的契约搬到**真实组装**上，
-因此 1–6 定义"正确的唤醒长什么样"，7–10 保证"它真的发生在发布出去的进程里"。
+用例 1–4 的协作者是测试手工注入的。7–12 把同样的契约搬到**真实组装**上，
+因此 1–6 定义"正确的唤醒长什么样"，7–12 保证"它真的发生在发布出去的进程里"。
 
 | # | 用例 | 现状 | 语义 |
 |---|---|---|---|
@@ -466,9 +478,11 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | 5 | GREEN guard：`thread_handle` 插件自述文本含 `@opus`（且 thread 有活跃参与者） → 仍 `mentions=[]`、0 唤醒 | **绿（须保持）** | 围栏：修复不得以破坏 F288 v0 插件声音契约为代价 |
 | 6 | GREEN guard：伪造 external origin → `PERMISSION`，0 persist / 0 broadcast / 0 wake | **绿（须保持）** | 围栏：ingress 权限来自 host-issued binding（D-4），不来自自报 origin |
 | 7 | 生产组装下已认证 ingress → wake ×1 + broadcast ×1 | **红**（观测 0 wake） | 缺口 B：`runtime-composition.ts:213` 以 `{messageStore, redis}` 组装，协作者根本没有入口 |
-| 8 | Host 路由为已认证 `(pluginInstanceId, connectorId, externalChatId)` resolve-or-create binding 并返回 handle | **红** | 缺口 D：`issueConnectorBindingHandle` 零生产调用者；contract 无 `connector.*` wire |
-| 9 | 重启后同一外部会话坐标解析回同一 threadId（出站可恢复） | **红** | 缺口 D 的重启维度：多聊天 connector 失去全部既有会话的出站寻址 |
-| 10 | manifest 声明的 config/secret 投影进外部 stdio runtime | **红**（实测 spawn env 仅 4 个 `CLOWDER_*`） | 缺口 C：`supervisor.ts:191-201`；builtin 路径已有同款授权校验投影 |
+| 8 | Host 路由**仅凭 broker 身份 + provider 坐标** resolve-or-create binding（package 不传 `userId`，owner 由 Host 派生） | **红** | 缺口 D：`issueConnectorBindingHandle` 零生产调用者；contract 无 `connector.*` wire。**第四轮修正**：旧版让 package 自带 `userId`，等于让不可信代码选择写入谁的 thread（旧路径由 `ConnectorRouter` 用 `defaultUserId` 派生） |
+| 9 | 重启后同一外部会话坐标解析回同一 threadId，且绑定落在**注入的共享持久权威**里 | **红** | 缺口 D 的重启维度。**第四轮修正**：旧版两个 composition 都是内存态、只共享 `projectRoot`，会逼正确的 Redis 实现（`RedisConnectorThreadBindingStore`，`index.ts:7389`）失败并诱导自造文件存储 |
+| 10 | manifest 声明的 config/secret 投影进外部 stdio runtime，且**精确值**送达 | **红**（实测 spawn env 仅 4 个 `CLOWDER_*`） | 缺口 C：`supervisor.ts:191-201`；builtin 路径已有同款授权校验投影。**第四轮修正**：readiness 现由真实权威 `HostPluginConfigurationService.configure/reconcile` 挣得（不再手翻 `configReadiness`），并断言精确值而非仅 key，避免空值/占位转绿 |
+| 11 | 否定例：实例只声明 `feishu`，为 `telegram` 索取 binding 必须 fail closed | **红** | 缺口 D 的权限维度：不设此例，用例 8 可经**跨插件绑定伪造**转绿——任一获准包都能为目录里其它 connector 铸 binding |
+| 12 | 每个 connector 实例获得持久 checkpoint 面：CAS 拒绝过期 revision、TTL=0 跨重启存活、跨实例命名空间隔离 | **红** | 缺口 E：`plugin.state.get/set` 仅保留能力名，不在 13 行 wire registry 内，Core 无实现；subscription cursor / inventory snapshot / 7 天 settlement ledger 均非替代 |
 
 **为什么 2 和 3 必须分开**：现网路由是**三段式**（mention → 最近活跃参与者 → 默认猫）。
 只写一条"无 mention 就默认猫"的断言，会让一个只接默认猫的实现转绿，而真实回归——
@@ -515,6 +529,12 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
    击穿 D-4、不满足既有旅程，**没有不改 wire 的实现**。
    需 maintainer 裁定：并入 C1 公共面，还是整体后移 C2。
    **在此签字前，Core 不动工，Plugins 侧也不应基于假定的 handle 形态写 provider runtime wrapper。**
-5. **§5.3 六类贡献的新执行 owner 归属**：除 mcp 外，connector / provider 操作 / webhook /
+5. **缺口 E 的 wire/schema 变更（C1 boundary blocker）**：为每个已验证 connector 实例提供有界的持久
+   checkpoint 面（provider cursor/sequence/resume token），要求声明式 key、实例隔离、TTL=0、限定 schema/大小、
+   CAS/operation-id 幂等、settlement-ordered commit，且不承载消息正文或 secret。
+   `plugin.state.get/set` 只是保留能力名，**不在 13 行 wire registry 内**，Core 无实现。
+   需 maintainer 裁定：并入 C1 公共面，还是整体后移 C2。
+   **在此签字前，Core 不动工，Plugins 侧也不应假定 checkpoint 形态写 provider runtime。**
+6. **§5.3 六类贡献的新执行 owner 归属**：除 mcp 外，connector / provider 操作 / webhook /
    schedule / limb / skill 今天都没有外部包执行路径。逐类裁定归 C1 还是 C2；
    凡判 C2 者，其**迁移与删除一并后移**，不得先删后补。
