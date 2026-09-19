@@ -39,7 +39,7 @@ const plan = {
       lane: 'distributable-1',
       ruleId: 'runtime-isolated-default',
       estimatedDurationMs: 10,
-      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+      isolationEvidence: { kind: 'kernel-no-egress-plus-runtime-guard' },
     },
     'test/serial.test.js': {
       lane: 'serial-shared',

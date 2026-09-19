@@ -20,9 +20,9 @@ const selectedFiles = [
 const classification = {
   version: 2,
   defaultIsolationEvidence: {
-    kind: 'runtime-external-resource-guard',
-    rulesVersion: 'f308-runtime-v1',
-    source: 'every distributable file runs in its own process with non-loopback egress denied',
+    kind: 'kernel-no-egress-plus-runtime-guard',
+    rulesVersion: 'f308-runtime-v2',
+    source: 'every distributable file runs in a loopback-only network namespace and its own process',
   },
   sharedResources: [
     {

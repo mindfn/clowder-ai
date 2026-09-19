@@ -40,19 +40,19 @@ const plan = {
       lane: 'distributable-1',
       ruleId: 'runtime-isolated-default',
       estimatedDurationMs: 5,
-      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+      isolationEvidence: { kind: 'kernel-no-egress-plus-runtime-guard' },
     },
     'test/pure-beta.test.js': {
       lane: 'distributable-2',
       ruleId: 'runtime-isolated-default',
       estimatedDurationMs: 4,
-      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+      isolationEvidence: { kind: 'kernel-no-egress-plus-runtime-guard' },
     },
     'test/serial-redis.test.js': {
       lane: 'distributable-3',
       ruleId: 'runtime-isolated-default',
       estimatedDurationMs: 10,
-      isolationEvidence: { kind: 'runtime-external-resource-guard' },
+      isolationEvidence: { kind: 'kernel-no-egress-plus-runtime-guard' },
     },
   },
 };

@@ -28,7 +28,7 @@ export function normalizeSelectedFiles(selectedFiles) {
 function compileClassification(classification) {
   invariant(classification && classification.version === 2, 'classification version must be 2');
   invariant(
-    classification.defaultIsolationEvidence?.kind === 'runtime-external-resource-guard' &&
+    classification.defaultIsolationEvidence?.kind === 'kernel-no-egress-plus-runtime-guard' &&
       typeof classification.defaultIsolationEvidence.rulesVersion === 'string' &&
       typeof classification.defaultIsolationEvidence.source === 'string',
     'classification defaultIsolationEvidence is incomplete',
@@ -152,8 +152,8 @@ function validateAssignmentEvidence(file, assignment) {
       `shared resource assignment cannot enter a distributable shard for ${file}`,
     );
     invariant(
-      assignment.isolationEvidence?.kind === 'runtime-external-resource-guard',
-      `distributable assignment lacks runtime external-resource guard evidence for ${file}`,
+      assignment.isolationEvidence?.kind === 'kernel-no-egress-plus-runtime-guard',
+      `distributable assignment lacks kernel no-egress and runtime guard evidence for ${file}`,
     );
     return;
   }
