@@ -2,7 +2,7 @@
 
 **Feature:** F308 — `docs/features/F308-full-sync-durable-fast-train.md`
 **Goal:** Reduce the target-CI public-test lane/job critical path below 10 minutes without reducing coverage, increasing in-process test concurrency, or assuming that every stateful test shares one global resource.
-**Acceptance:** All selected files execute exactly once. A test enters the one global serial lane only through explicit evidence that it uses a cross-VM remote endpoint, shared account, or shared quota. Every other file enters one duration-balanced pool across nine isolated VMs, one fresh process and one file at a time per VM; those processes reject non-loopback network access and network-capable external commands before I/O. A measured critical path over 600,000 ms fails CI. AC-D6 remains open until three same-selection target artifacts establish p50/p95.
+**Acceptance:** All selected files execute exactly once. A test enters the one global serial lane only through explicit evidence that it uses a cross-VM remote endpoint, shared account, or shared quota. Every other file enters one count-balanced pool across nine isolated VMs, one fresh process and one file at a time per VM; the runtime guard rejects direct non-loopback network access and recognized network-capable command invocations in-process and in guard-propagated child processes. A measured critical path over 600,000 ms fails CI. AC-D6 remains open until three same-selection target artifacts establish p50/p95.
 
 ## Evidence and boundary
 
@@ -10,14 +10,14 @@ The accepted single-serial topology selects 2,176 files: 1,648 serial and 528 pu
 
 The previous source audit placed 95 files in a shared lane merely because their source mentioned network or command tokens. Direct inspection found that 63 of those files did not even reference an external host: examples included loopback HTTP servers, mocked `fetch` methods, local filesystem Git remotes, and command strings used as test data. The same audit also separated 1,562 runner-local files from 519 pure files even though the runner executes both groups identically: one fresh Node process per file, sequentially inside each VM.
 
-The revised boundary is behavioral instead of lexical. The shared lane is an explicit registry of proved cross-VM resources; it is empty for the current suite. The distributable runner installs a runtime guard that permits loopback/file-local resources but rejects real non-loopback HTTP/WebSocket/TCP use and network-capable commands before I/O. Public shard jobs additionally receive no service credentials, use read-only repository permission, do not persist checkout credentials, and restrict Git transports to local files.
+The revised boundary is behavioral instead of lexical. The shared lane is an explicit registry of proved cross-VM resources; it is empty for the current suite. The distributable runner installs a runtime guard that permits loopback/file-local resources but rejects direct non-loopback HTTP/WebSocket/TCP use and recognized network-capable commands before I/O, including in child processes to which it propagates its mandatory scope, loader, and Git-protocol variables. Public shard jobs additionally receive no service credentials, use read-only repository permission, do not persist checkout credentials, and restrict Git transports to local files.
 
 This plan therefore does not claim that all tests are pure. It distinguishes two actual execution scopes:
 
 - `serial-shared`: only files with explicit evidence for a real cross-VM endpoint/account/quota. One global lane.
 - `distributable-1…9`: every other file. Separate GitHub VMs provide process/machine isolation; the runtime external-resource guard makes an undeclared shared-resource use fail closed rather than silently running concurrently.
 
-Replaying the exact 2,176-file local measurement into one nine-shard distributable pool predicts a 131.247s test critical path. This uses the same number of VMs as the rejected five-local-plus-four-pure topology; it removes idle capacity rather than adding runners. The number is a replay forecast, not completion evidence for the new topology.
+Replaying the exact 2,176-file local measurement into one nine-shard distributable pool predicted a 131.247s test critical path. Current CI does not consume that timing artifact: it deterministically balances by file count so selection changes cannot invalidate the plan. The `64d948e1f` source run measured a 184.650s critical path against a 147.264s nine-lane mean, leaving 37.386s (20.2%) of measured scheduling headroom. Wiring measured duration balancing without weakening selection/provenance validation remains AC-D6 follow-up work; neither the replay nor this single source run is target-CI completion evidence.
 
 ## Machine contract
 
@@ -46,7 +46,7 @@ Required invariants:
 ## TDD and verification
 
 1. Unit tests lock explicit shared-resource evidence → shared, all other files → one nine-shard pool, and reject a forged shared → distributable assignment.
-2. Guard tests prove loopback/local Git remain usable while a real non-loopback fetch, `gh`, `ssh`, or remote `curl` fails before I/O.
+2. Guard tests prove loopback/local Git remain usable while a real non-loopback fetch, `gh`, `ssh`, or remote `curl` fails before I/O, and mandatory guard state survives child-process environment replacement and options-only overloads.
 3. Runner and summary tests lock all ten lanes, schema-v2 reports, exact coverage, provenance, and fail-closed timing.
 4. The workflow contract checker locks the lane matrix, read-only/no-persisted-credentials boundary, exact execution environment, and 10-minute gate.
 5. Generate the real plan and verify every assignment exactly once plus the shared-resource evidence boundary.

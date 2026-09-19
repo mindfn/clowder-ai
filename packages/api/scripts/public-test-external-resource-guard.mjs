@@ -121,16 +121,33 @@ export function assertDistributableCommand(command, args = []) {
   for (const url of urls) assertDistributableUrl(url, executable);
 }
 
-function commandRestWithPolicy(rest, policy) {
-  if (!policy?.gitAllowProtocol) return rest;
-  const [first, ...tail] = rest;
-  const hasOptions = first && typeof first === 'object' && !Array.isArray(first);
-  const options = hasOptions ? first : {};
-  const guardedOptions = {
-    ...options,
-    env: { ...process.env, ...(options.env ?? {}), GIT_ALLOW_PROTOCOL: policy.gitAllowProtocol },
-  };
-  return hasOptions ? [guardedOptions, ...tail] : [guardedOptions, ...rest];
+function guardedCommandOptions(options = {}, policy) {
+  const env = { ...(options.env ?? process.env) };
+  for (const key of ['CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE', 'NODE_OPTIONS']) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  env.GIT_ALLOW_PROTOCOL = policy?.gitAllowProtocol ?? process.env.GIT_ALLOW_PROTOCOL ?? 'file';
+  return { ...options, env };
+}
+
+function guardedFileCommandArguments(args, rest, policy) {
+  if (Array.isArray(args)) {
+    const [first, ...tail] = rest;
+    const hasOptions = first && typeof first === 'object' && !Array.isArray(first);
+    const options = guardedCommandOptions(hasOptions ? first : {}, policy);
+    return hasOptions ? [args, options, ...tail] : [args, options, ...rest];
+  }
+  if (args && typeof args === 'object') return [guardedCommandOptions(args, policy), ...rest];
+  if (typeof args === 'function') return [guardedCommandOptions({}, policy), args, ...rest];
+  return [guardedCommandOptions({}, policy), ...rest];
+}
+
+function guardedShellCommandArguments(args) {
+  const [first, ...tail] = args;
+  if (first && typeof first === 'object' && !Array.isArray(first)) {
+    return [guardedCommandOptions(first), ...tail];
+  }
+  return [guardedCommandOptions({}), ...args];
 }
 
 function requestTarget(args, protocol) {
@@ -223,14 +240,14 @@ function installGuard() {
     const original = childProcess[method];
     childProcess[method] = preserveFunctionProperties(function guardedFileCommand(command, args, ...rest) {
       const policy = assertDistributableCommand(command, Array.isArray(args) ? args : []);
-      return original.call(this, command, args, ...commandRestWithPolicy(rest, policy));
+      return original.call(this, command, ...guardedFileCommandArguments(args, rest, policy));
     }, original);
   }
   for (const method of ['exec', 'execSync']) {
     const original = childProcess[method];
     childProcess[method] = preserveFunctionProperties(function guardedShellCommand(command, ...args) {
       shellCommandAllowed(command);
-      return original.call(this, command, ...args);
+      return original.call(this, command, ...guardedShellCommandArguments(args));
     }, original);
   }
   syncBuiltinESMExports();

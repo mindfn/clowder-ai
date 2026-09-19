@@ -77,6 +77,65 @@ describe('F308 public-test external resource guard', () => {
     assert.match(result.stderr, /external_resource_violation/);
   });
 
+  it('propagates the guard through allowed children that replace their environment', () => {
+    const guardPath = fileURLToPath(new URL('../scripts/public-test-external-resource-guard.mjs', import.meta.url));
+    const childScript = [
+      'const { spawnSync } = await import("node:child_process");',
+      'const nestedCode = [',
+      '  "if (process.env.CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE !== \\\"distributable\\\") process.exit(3);",',
+      '  "if (process.env.GIT_ALLOW_PROTOCOL !== \\\"file\\\") process.exit(4);",',
+      '  "await fetch(\\\"https://example.com/should-not-run\\\");",',
+      '].join("");',
+      'const nested = spawnSync(process.execPath, ["--eval", nestedCode], {',
+      '  encoding: "utf8",',
+      '  env: {',
+      '    CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: "",',
+      '    GIT_ALLOW_PROTOCOL: "https",',
+      '    NODE_OPTIONS: "",',
+      '  },',
+      '});',
+      'if (nested.status === 0 || !/external_resource_violation/.test(nested.stderr)) process.exit(2);',
+    ].join('');
+    const result = spawnSync(process.execPath, ['--import', guardPath, '--eval', childScript], {
+      encoding: 'utf8',
+      env: { ...process.env, CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: 'distributable' },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  });
+
+  it('propagates the guard through the child_process options-only overload', () => {
+    const guardPath = fileURLToPath(new URL('../scripts/public-test-external-resource-guard.mjs', import.meta.url));
+    const childScript = [
+      'const { spawnSync } = await import("node:child_process");',
+      'const nested = spawnSync(process.execPath, {',
+      '  encoding: "utf8",',
+      '  env: {},',
+      '  input: "await fetch(\\"https://example.com/should-not-run\\")",',
+      '});',
+      'if (nested.status === 0 || !/external_resource_violation/.test(nested.stderr)) process.exit(2);',
+    ].join('');
+    const result = spawnSync(process.execPath, ['--import', guardPath, '--eval', childScript], {
+      encoding: 'utf8',
+      env: { ...process.env, CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: 'distributable' },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  });
+
+  it('propagates the guard through shell-command children that replace their environment', () => {
+    const guardPath = fileURLToPath(new URL('../scripts/public-test-external-resource-guard.mjs', import.meta.url));
+    const childScript = [
+      'const { execSync } = await import("node:child_process");',
+      'const command = `${JSON.stringify(process.execPath)} -p process.env.GIT_ALLOW_PROTOCOL`;',
+      'const output = execSync(command, { encoding: "utf8", env: {} });',
+      'if (output.trim() !== "file") process.exit(2);',
+    ].join('');
+    const result = spawnSync(process.execPath, ['--import', guardPath, '--eval', childScript], {
+      encoding: 'utf8',
+      env: { ...process.env, CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: 'distributable' },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  });
+
   it('preserves child_process promisify semantics while guarding commands', () => {
     const guardPath = fileURLToPath(new URL('../scripts/public-test-external-resource-guard.mjs', import.meta.url));
     const script = [
