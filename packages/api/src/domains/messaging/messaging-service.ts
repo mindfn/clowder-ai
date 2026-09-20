@@ -14,15 +14,31 @@ import { AppendService } from './append-service.js';
 import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } from './contract/host-types.js';
 import { EventStreamService } from './event-stream.js';
 import { HandleService, type IssueConnectorBindingHandleInput, type IssueThreadHandleInput } from './handles.js';
+import type { MessagingIngressWakeDeps } from './ingress-wake.js';
 import { MessagingLedger } from './ledger.js';
 import { SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
 
-export interface MessagingDomainDeps {
+export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
   readonly messageStore: IMessageStore;
   readonly redis?: RedisClient;
   /** Event log retention per thread (events beyond this are trimmed; stale+snapshot covers the gap). */
   readonly retentionCount?: number;
+}
+
+/**
+ * F202 C1 gaps A/B: the wake collaborators are offered flat at this K-2 assembly point, and are
+ * only honoured as a complete set. A partial set would silently derive a target it cannot deliver.
+ */
+function ingressWakeDeps(deps: MessagingDomainDeps): MessagingIngressWakeDeps | undefined {
+  if (!deps.invokeTrigger || !deps.getDefaultCatId || !deps.getMentionPatterns) return undefined;
+  return {
+    invokeTrigger: deps.invokeTrigger,
+    getDefaultCatId: deps.getDefaultCatId,
+    getMentionPatterns: deps.getMentionPatterns,
+    ...(deps.socketManager === undefined ? {} : { socketManager: deps.socketManager }),
+    ...(deps.threadStore === undefined ? {} : { threadStore: deps.threadStore }),
+  };
 }
 
 export class MessagingService {
@@ -35,12 +51,14 @@ export class MessagingService {
     const stores = createMessagingStores(deps.redis);
     const ledger = new MessagingLedger(stores.ledger);
     this.handles = new HandleService(stores.handles, stores.cursors);
+    const ingressWake = ingressWakeDeps(deps);
     this.sendService = new SendService({
       messageStore: deps.messageStore,
       handles: this.handles,
       ledger,
       events: stores.events,
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
+      ...(ingressWake === undefined ? {} : { ingressWake }),
     });
     this.appendService = new AppendService({
       messageStore: deps.messageStore,

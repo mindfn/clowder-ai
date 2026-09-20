@@ -27,6 +27,7 @@ import { MessagingError } from './contract/host-types.js';
 import { validateDraft } from './contract/validate.js';
 import { projectEnvelope, readPluginMessageExtra, renderElementsText } from './envelope.js';
 import type { HandleService } from './handles.js';
+import { broadcastIngress, deriveIngressTarget, type MessagingIngressWakeDeps } from './ingress-wake.js';
 import type { MessagingLedger } from './ledger.js';
 import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
 import { clampRetention } from './stores/ports.js';
@@ -39,6 +40,8 @@ export interface SendServiceDeps {
   readonly retentionCount?: number;
   /** Defaults to the runtime CatRegistry; injectable so unit tests do not mutate the global registry. */
   readonly isKnownCatId?: (catId: string) => boolean;
+  /** F202 C1 gap A. Absent means authenticated ingress keeps the pre-C1 behaviour: no wake. */
+  readonly ingressWake?: MessagingIngressWakeDeps;
 }
 
 /** D-4: validate the declared origin against handle-derived truth; return the stamped provenance. */
@@ -129,6 +132,21 @@ export class SendService {
       const handle = await this.deps.handles.resolveForSend(ctx.pluginInstanceId, draft.address);
       const provenance = stampProvenance(ctx, draft, handle);
       const audience = deriveAudience(draft, handle, this.isKnownCatId);
+      const content = renderElementsText(draft.payload.elements);
+      // F202 C1 gap A: authenticated external ingress carries the wake authority a
+      // `thread_handle` deliberately does not (F288 v0). Whisper ingress is excluded — an
+      // audience-restricted message must not be broadcast to the thread room.
+      const ingress =
+        handle.kind === 'connector_binding' &&
+        handle.connectorBinding &&
+        this.deps.ingressWake &&
+        audience.kind !== 'whisper'
+          ? {
+              deps: this.deps.ingressWake,
+              binding: handle.connectorBinding,
+              catId: await deriveIngressTarget(this.deps.ingressWake, handle.threadId, content),
+            }
+          : undefined;
 
       if (draft.replyTo !== undefined) {
         // Fail-closed: the kernel's sanctioned resolver (fetch + eligibility gate,
@@ -146,13 +164,17 @@ export class SendService {
         }
       }
 
+      const timestamp = Date.now();
       const stored = await this.deps.messageStore.append({
         threadId: handle.threadId,
         userId: handle.userId,
         catId: null,
-        content: renderElementsText(draft.payload.elements),
-        mentions: [], // v0: plugin sends never trigger @-routing (wake power is K-3a scope)
-        timestamp: Date.now(),
+        content,
+        // v0: plugin sends never trigger @-routing (wake power is K-3a scope). Authenticated
+        // connector ingress is the one exception, and its target is Host-derived — never read
+        // from the package's own text claim.
+        mentions: ingress ? [ingress.catId] : [],
+        timestamp,
         ...(audience.kind === 'whisper'
           ? { visibility: 'whisper' as const, whisperTo: audience.targets as readonly CatId[] }
           : {}),
@@ -210,6 +232,24 @@ export class SendService {
             throw new MessagingError('CONFLICT', 'message revision changed before publish watermark persisted');
           throw new MessagingError('NOT_FOUND', `message ${stored.id} disappeared before publish watermark persisted`);
         }
+      }
+
+      // Deliver the ingress BEFORE settling. Settlement is this domain's record that the whole
+      // ingress ran, so a failure here releases the claim and the retry re-executes (D-3) —
+      // persist converges on the same message id and the publish dedupes on its deterministic
+      // event key. Waking after settle would instead lose the wake permanently, because the
+      // retry returns the settled receipt without re-deriving anything. Case 4's at-most-once
+      // comes from the settled-replay early return at the top of send().
+      if (ingress) {
+        broadcastIngress(ingress.deps, {
+          threadId: handle.threadId,
+          messageId: stored.id,
+          content,
+          connectorId: ingress.binding.connectorId,
+          externalChatId: ingress.binding.externalChatId,
+          timestamp,
+        });
+        await ingress.deps.invokeTrigger.trigger(handle.threadId, ingress.catId, handle.userId, content, stored.id);
       }
 
       const receipt: SendReceipt = {
