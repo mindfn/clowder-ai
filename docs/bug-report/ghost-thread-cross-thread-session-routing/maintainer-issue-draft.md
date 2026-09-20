@@ -1,161 +1,137 @@
 ---
-title: "Maintainer issue draft — cross-thread addressing"
+title: "Maintainer issue draft — cross-thread boundary protocol"
 doc_kind: note
 feature_ids: []
 related_features: [F052, F128, F167, F193]
-topics: [cross-thread, coordination, addressing, maintainer-issue, draft]
+topics: [cross-thread, thread-relation, addressing, maintainer-issue, draft]
 created: 2026-09-20
 updated: 2026-09-20
 status: draft
 author: "opus"
-description: "送往上游 maintainer 的跨 thread 寻址设计 issue 草稿：精确缺陷陈述、可复现证据、方向提议与明确不提议的范围。"
+description: "送往上游 maintainer 的跨 thread 边界协议 issue 草稿：已核实现状、期望不变量、MCP 影响提案三层结构。"
 description_source: human
 description_author: opus
-description_updated_at: 2026-09-20T02:55:00Z
+description_updated_at: 2026-09-20T05:40:00Z
 ---
 
-# Maintainer issue — DRAFT for review
+# Maintainer issue — DRAFT (rewritten from RFC v3.1)
 
-> ⛔ **PAUSED — DO NOT FILE.** The operator challenged the object model as over-complex and as a
-> *server-side workflow* design rather than a *client-side agent application* design. That objection
-> was accepted; the RFC has been rewritten (v2: one `ThreadRelation` object instead of five).
-> **This draft still argues the v1 model and is therefore stale.** It must be re-derived from the
-> v2 RFC before anything is filed.
->
-> What survives unchanged: the precise defect claim, the incident corpus, the falsification of the
-> server-side hypothesis, and the pinned 148/960 figure. What does not: the proposed direction and
-> the "what we are not proposing" section.
->
-> Target: `zts212653/clowder-ai` · Status: **paused, not filed** · Author: opus · Final review: sol
+> Target: `zts212653/clowder-ai` · Status: **draft, pending final review** · Author: opus · Review: sol
 > Proposed title:
-> `design: cross-thread delivery accepts any scope-valid threadId when no authorized endpoint exists`
+> `design: cross-thread delivery has no boundary protocol — asking to confirm direction`
 
 ---
 
 ## What we are asking
 
-Direction confirmation on an **addressing-model** change before we build anything. We are not
-asking for a merge, and we have no PR to offer for it. If you disagree with the direction, we would
-rather find out now than after an implementation.
+**Direction confirmation, not a merge.** There is no PR behind this and we are not asking you to
+approve an implementation. We would rather find out now if you disagree.
 
-Concretely: **should a cross-thread delivery be addressed to a coordination object rather than to a
-thread id supplied by the caller?**
+The question: **should a cross-thread delivery be authorized by a declared relationship between two
+work contexts, instead of by a thread id the caller supplies?**
 
-## The defect
+## 1. Verified current behavior
 
-For **ordinary cross-post** and **PR-review initial handoff**: when the system cannot resolve an
-independently authorized endpoint, the API still accepts any scope-valid `threadId` and produces
-messages, wakes and custody side effects — and the caller has **no legitimate unknown-target or
-proposal-only exit**.
+All read from source.
 
-The load-bearing part is **"no authoritative endpoint, yet effectful delivery is permitted."**
-It is *not* "the target thread did not exist" — replying in the source thread, or doing nothing,
-may well have been correct handling in some of these cases.
+| Fact | Where |
+|---|---|
+| Cross-thread target validation is **existence + principal scope only** — no source→target semantic check | `callback-scope-helpers.ts:92-122` |
+| One tool carries `threadId` + `targetCats` + `action` + `proposedAction` + `localReviewVerdict` + `coordination` + `effectClass` | `cat_cafe_cross_post_message` schema |
+| At the moment a parent/child edge is created, we **inject a raw call template into the child's header** — `` cat_cafe_cross_post_message(threadId: "…", targetCats: […]) `` | `proposal-enrich-header.ts:57-58` |
+| Thread lineage exists (`parentThreadId`, `sourceThreadId`, `getChildThreads()`) but **no delivery path reads it**; present on **29/531 threads (5.5%)** | `ThreadStore.ts:238-240`, `:834` |
+| `ActionSuccessorLease` records one holder + one predecessor — an **execution edge**, not a relationship graph | `action-successor-state-machine.ts:90-99` |
+| Discovery results (`list_threads`, `feat_index`) are routinely treated as routing credentials | tool descriptions |
 
-`resolveScopedThreadId()` validates exactly two things: the thread exists, and it is in the caller's
-principal scope (`packages/api/src/routes/callback-scope-helpers.ts:92-122`). There is no
-source→target semantic check.
-
-### Not every structured path is affected
-
-We want to be precise, because our own first draft was too broad here:
+**Not every structured path is broken** — we want to be precise, because our own early drafts were
+not:
 
 | Path | Constraint today |
 |---|---|
 | Ordinary cross-post | existence + principal scope only |
-| task / implement first handoff | **already validated** against `task.threadId` (`ActionSubjectTruthResolver.ts:292`) |
-| PR / review first handoff | freshness returns no thread, so the `target_thread` check silently no-ops |
+| task/implement first handoff | **already validated** against `task.threadId` (`ActionSubjectTruthResolver.ts:292`) |
+| PR/review first handoff | freshness returns no thread → the check silently no-ops |
 | local review terminal return | **already forced** back to the predecessor thread |
 
-So two paths are already anchored. The gap is the other two.
+### The defect, stated precisely
 
-## Evidence
+> For **ordinary cross-post** and **PR-review initial handoff**: when the system cannot resolve an
+> independently authorized endpoint, the API still accepts any scope-valid `threadId` and produces
+> messages, wakes and custody side effects — and the caller has **no legitimate unknown-target /
+> proposal-only exit.**
 
-**Six operator-confirmed misdeliveries across eleven threads, 2026-04-30 → 2026-09-19.** Not a
-single operation slip: five distinct failure shapes, five months apart, different cats, different
-models.
+The load-bearing part is **"no authoritative endpoint, yet effectful delivery is permitted"** — not
+"the target thread did not exist".
 
-**We falsified our own first hypothesis.** We assumed the server was binding continuations to the
-wrong thread — a claim that had been sitting in one of our skills as a "known open bug." A
-full-corpus scan returns three zeros:
+### Evidence
 
-- undeclared cross-thread continuations: **0**
-- wake bound to the wrong thread: **0**
-- `continuityCapsule` / session thread drift: **0**
+Six operator-confirmed misdeliveries across eleven threads, 2026-04-30 → 2026-09-19 — five distinct
+failure shapes, months apart, different cats and models.
 
-These are computed over the **live** corpus (~107k messages, ~7.9k causal edges, ~670 A2A-triggered
-sessions at time of writing), so the totals grow between runs — we deliberately do not quote them as
-fixed figures. The **zeros** are the load-bearing part, and they have held on every re-run.
+**We falsified our own first hypothesis.** We had assumed the server was binding continuations to
+the wrong thread — a claim that had been sitting in one of our skills as a "known open bug". A
+full-corpus scan returns three zeros: undeclared cross-thread continuations **0**, wake bound to the
+wrong thread **0**, `continuityCapsule`/session drift **0**. These are live-corpus counters that
+grow between runs, so we do not quote the totals as fixed figures — the **zeros** are the
+load-bearing part and have held on every re-run.
 
-The server delivered exactly where it was asked to. That is the point — **the asking is what has no
-design.**
+The server delivered exactly where it was asked to. **The asking is what has no design.**
 
-**Reproducible counts.** Cross-posts carrying any coordination metadata: **148 / 960 (15.4%)** at a
-pinned boundary (cutoff message `0001789825570936-001932-e5185384`). A bare live scan is *not*
-reproducible — `SCAN` is not a snapshot and consecutive reads drifted — so the forensics script now
-takes the boundary as a flag and refuses to present unpinned numbers as citable.
+Reproducible: of cross-posts up to a pinned cutoff (`0001789825570936-001932-e5185384`),
+**148 / 960 (15.4%)** carry any coordination metadata.
 
-Thread lineage density, for the alternative we rejected: **29/531 threads (5.5%)** declare a
-`parentThreadId`; lineage-based fail-closed would reject 63.6–74.6% of real traffic.
+## 2. Desired invariants
 
-## Why this is not a discipline problem
+These are what we would like confirmed — they matter more than any object model.
 
-The correct rule already exists in our `cross-thread-sync` skill: *"cannot verify an owner thread →
-`propose_thread`; never guess a nearby thread."* It is written down, and it was violated repeatedly
-across five months — consistent with the existing F167 Case E1 finding that **writing a rule is not
-executing it**.
+1. **Discovery ≠ authorization.** A thread id returned by search is candidate evidence, never a
+   delivery credential.
+2. **The source does not name the acting cat.** The relation authorizes a *context*; the receiving
+   thread routes internally.
+3. **Child creation establishes the relation atomically** — the one place the edge is known for
+   certain must not hand out a string to copy.
+4. **Effectful delivery only along an active relation.** Read-only discovery and query stay legal
+   throughout; what gets restricted is delivering without one.
+5. **A cross-thread message never transfers custody on the far side.** Creating a new work context
+   goes through `propose_thread`; an already-independent thread decomposes itself.
 
-There is also nothing to check a guess against. `ActionSuccessorLease` records `holderThreadId` and
-`predecessorThreadId`, but those are **two execution endpoints, not a participation set**
-(`action-successor-state-machine.ts:90-99`) — no membership, no invitation, no exit, no multi-party
-relation. **The participation graph does not exist.**
+Framing we arrived at, if it is useful: this is **not** a message-routing protocol and **not** a
+server-side workflow — it is the **boundary protocol between independent agent work contexts**.
+Crossing exists so two contexts that remain independent can exchange what a real dependency
+requires, without mixing their goals, memory or execution state.
 
-We also considered and rejected using `PrTrackingStore` as the PR-side authority: its contract is to
-"route **notifications** to the correct cat/thread," and re-registering the same subject **overwrites
-`threadId`**. Wiring it into custody would let the last tracking registration rewrite the review
-holder — subscription ownership misfiled as execution ownership.
+## 3. Proposed MCP impact — *proposed for confirmation*
 
-## Proposed direction
+Summary only; the full parameter surface is in the RFC.
 
-> **Address the work, not the place.** A cross-thread message is addressed to a **coordination**;
-> the thread it renders in is **derived** from that coordination's participation set, never typed by
-> the caller.
+| | Tools |
+|---|---|
+| **Retain** | `post_message`, `multi_mention`, A2A disposition — all intra-thread, untouched |
+| **Modify** | `propose_thread` (emit a relation id; stop emitting raw address templates), `list_threads` / `feat_index` (say plainly that a returned id is not a routing credential), `get_thread_metadata` (read-only relation projection), `set_thread_metadata` (must not edit relations) |
+| **Add** | `propose_thread_relation`, `respond_thread_relation`, `cross_thread_send` (relation + typed purpose + content; no thread id, no target cats, no custody fields) |
+| **Deprecate** | `cross_post_message` — unbundled in stages, never removing a capability before its replacement exists |
 
-Two supporting invariants we think matter more than the object model itself:
+We are **not** proposing a big-bang rewrite. The first slice is read-only: write the relation graph,
+backfill from existing lineage, enforce nothing, and measure relation coverage, candidate
+cardinality and direction ambiguity. Restricting the legacy path is last and gated on those numbers.
 
-1. **Derive, don't validate.** A thread coordinate must come from an object that owns that fact
-   independently of the delivery call. Validating a caller-supplied value against a field the same
-   call path seeded is circular — which is exactly what our first proposal did, before review caught
-   it.
-2. **You may enroll only the thread you are running in.** The server takes it from the invocation,
-   never from a parameter. To bring another thread in, you *invite*; the invitee enrolls itself.
-   (agent-key callers have no invocation thread, so they get query and proposal only — never a
-   caller-supplied fallback.)
+One thing we will not do: infer from historical prose what purpose a past message "would have had".
+There is no typed ground truth there, and a derived-vs-actual disagreement is **not** evidence of a
+routing error — the actual route is precisely the guess this investigation found unreliable.
 
-## What we are explicitly *not* proposing
+## 4. Links
 
-- **No big-bang rewrite.** Our proposed first slice is a **shadow plane** for one PR-review flow:
-  persist coordination/participation/invitation, change **no delivery**, and only observe.
-- **Fail-closed is last, and gated on data we do not have yet.** We initially claimed participation
-  would be "dense by construction"; review correctly struck that as unevidenced. It is an external
-  contract change requiring coverage measurement and staged rollout.
-- **The legacy route is not ground truth.** In the shadow plane, `derived !== actual` is a
-  *disagreement*, never an error — `actual` is precisely the guess this investigation found
-  unreliable. Correctness can only come from operator or typed-incident labels.
-
-## Links
-
-- RFC (draft, ~470 lines, our fork):
-  `docs/architecture/cross-thread-protocol.md` on `mindfn/clowder-ai:fix/crosspost-source-thread-tag`
-- Investigation + incident corpus + reproducible scanner:
+- RFC (draft, our fork): `docs/architecture/cross-thread-protocol.md` on
+  `mindfn/clowder-ai:fix/crosspost-source-thread-tag`
+- Investigation, incident corpus, reproducible scanner:
   `docs/bug-report/ghost-thread-cross-thread-session-routing/`
-- `mindfn/clowder-ai#181` — kept **Draft** on purpose. It contains a real but *separate* fix (a
-  provenance-label single-source extraction). We are deliberately **not** presenting it as a
+- `mindfn/clowder-ai#181` — deliberately kept **Draft**. It contains a real but *separate* fix (a
+  provenance-label single-source extraction). We are explicitly **not** presenting it as a
   misdelivery fix.
 
 ## Note on provenance
 
-Our first three drafts each contained a claim we later had to retract — including our most quotable
-line, which turned out to be false. Everything above has been independently re-derived from source
-by a second reviewer. Where a number appears, it has a pinned, re-runnable boundary. We would rather
-hand you a smaller claim that holds.
+This RFC went through four revisions and retracted thirteen claims — including its most quotable
+line, which turned out to be false, and two object models that were the wrong shape entirely. Every
+factual claim above was independently re-derived from source by a second reviewer, and every number
+has a pinned, re-runnable boundary. We would rather hand you a smaller claim that holds.

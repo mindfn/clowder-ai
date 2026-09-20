@@ -91,9 +91,13 @@ path**. B keeps its own goal, context and execution state; the result comes back
 > an independent sub-problem, **not because the activity is called review**.
 
 > **This purpose does not have a send verb.** A new work context can only be created by
-> `cat_cafe_propose_thread`: on operator approval it atomically creates the child, the
-> `parent_child` relation, the initial task and the child-local wake. There is **no `handoff`
-> purpose on the generic send tool** — see §8.
+> `cat_cafe_propose_thread`: on operator approval the child thread, the `parent_child` relation and
+> the goal / initial-message **seed** are established atomically — or committed recoverably. There
+> is **no `handoff` purpose on the generic send tool** — see §8.
+>
+> An earlier draft said "the initial **task**". Withdrawn: the approval path persists a child plus a
+> proposal **seed** and creates no `Task` (`proposal-routes.ts:82-84`; no `createTask` on that
+> path). Requiring one would have smuggled a server-side workflow object in through the RFC.
 >
 > If an *already independent* thread needs further decomposition, **it creates its own child**. The
 > source never reaches across a boundary to create work on the other side.
@@ -200,8 +204,23 @@ server-side aggregate root. The existing lease keeps meaning only **who holds th
 A message carries **the purpose of this boundary crossing** — not a generic action name:
 
 ```ts
-thread_relation_propose({ candidateThreadId, type, reason })
-thread_relation_accept({ relationId })
+cat_cafe_propose_thread_relation({
+  candidateThreadId,
+  kind: "peer" | "depends_on" | "reports_to",
+  reason,
+  clientRequestId,
+})
+// -> { relationId, status: "proposed" }
+// posts no message, wakes nothing, creates no custody
+
+cat_cafe_respond_thread_relation({
+  relationId,
+  decision: "accept" | "reject",
+  reason?,
+  clientRequestId,
+})
+// -> canonical relation status
+// the responder identity (target thread, or operator) is derived server-side
 
 cat_cafe_cross_thread_send({
   relationId,                 // never a threadId
@@ -210,7 +229,14 @@ cat_cafe_cross_thread_send({
   replyTo?,
   clientMessageId,
 })
+// -> { messageId, relationId, derivedTargetThreadId, deliveryState, attentionState }
 ```
+
+Every write verb takes an explicit idempotency key and returns a real receipt — no verb reports
+completion from "it was written".
+
+> **`replyTo` must be validated against the relation-derived target thread.** Otherwise it becomes a
+> second addressing channel and reintroduces the exact defect this protocol removes.
 
 > **No `targetCats`.** v2 kept it; removed here. The relation authorizes a *context*, and the
 > receiving thread routes internally. Letting the source name the acting cat is precisely the
@@ -251,7 +277,7 @@ read from source; rows without one are proposals, not findings.
 | `cat_cafe_post_message` · `multi_mention` · A2A disposition | **Keep as-is.** They are *intra*-thread: collaboration, lease, review, custody inside one context. This protocol does not touch them. |
 | `cat_cafe_propose_thread` | Already carries `parentThreadId` and resolves it at approve time (`proposal-routes.ts:20`, `proposal-approve-overrides.ts:54`). Change: emit a **`relationId`**, and make child + relation + initial task one atomic commit. |
 | **`proposal-enrich-header.ts`** | **The sharpest single fix.** At the exact moment a `parent_child` edge is born, it injects a raw call template into the child's header: `` `cat_cafe_cross_post_message(threadId: "…", targetCats: […])` `` (`:57-58`). The relation is *known for certain* here, and we hand the child a string to copy instead. Replace with the `relationId`. |
-| `cat_cafe_cross_post_message` | Mark **legacy**. Today one tool carries `threadId` + `targetCats` + `action` + `proposedAction` + `localReviewVerdict` + `coordination` + `effectClass`. That bundle is the defect in tool form. Unbundle, then restrict. |
+| `cat_cafe_cross_post_message` | Mark **legacy**. Today one tool carries `threadId` + `targetCats` + `action` + `proposedAction` + `localReviewVerdict` + `coordination` + `effectClass`. That bundle is the defect in tool form. Unbundle in the order below — never remove a capability before its replacement path exists. |
 | `cat_cafe_cross_thread_send` | **New.** `relationId` + `purpose` + `content` + `clientMessageId` (+ `replyTo`). No `threadId`, no `targetCats`, no custody fields. |
 | `cat_cafe_propose_thread_relation` | **New.** Proposes `peer` / `depends_on` / `reports_to` between *existing* contexts. Carries no body, wakes nothing, transfers no custody. |
 | `cat_cafe_respond_thread_relation` | **New.** Accept/reject — only from the target thread's own invocation, or the operator. |
@@ -262,6 +288,21 @@ read from source; rows without one are proposals, not findings.
 | Backlog dispatch gate | Gates on `dispatchedThreadId` (`RedisBacklogStore.ts:338,369`). Should gate on relation/proposal state instead. |
 | `DispatchProposal` | Persists caller-supplied `targetThreadId` (`DispatchActionApprovalService.ts:79`) in the entity and its canonical key — so its **approval lifecycle and UI are reusable, its addressing payload is not**. |
 | PR / Issue tracking | Description must state it is a **notification subscription only** — never a review holder or endpoint authority. |
+
+### Legacy unbundling order
+
+"Unbundle, then restrict" was not executable. The order, chosen so that **every step leaves a
+working replacement path**:
+
+1. Add the relation store / projection and the **opt-in** send. Change no existing behavior.
+2. Switch `propose_thread` to the relation return route; **stop emitting raw address templates**.
+3. Give the new path target-side internal routing; drop source-supplied `targetCats`.
+4. Split the most dangerous structured side effects out of legacy cross-post:
+   `action`, `proposedAction`, `localReviewVerdict`.
+5. Replace `effectClass` with the typed `purpose`; `coordination` degrades to compatibility
+   provenance and **grants no authority**.
+6. Once coverage and ambiguity data clear their thresholds, restrict raw `threadId`.
+7. Only then remove the legacy tool.
 
 ### Surfaces that must migrate in the same wave
 
@@ -333,6 +374,7 @@ Inherits the five in `a2a-protocol.md`, and adds one:
 | `handoff` purpose on the generic send (v3 draft 1) | Would smuggle remote custody transfer back into a message parameter; creation belongs to `propose_thread` |
 | `leftThreadId` / `rightThreadId` (v3 draft 1) | Cannot express direction — the server could not tell who may send a `result` or where an `escalation` goes |
 | Inferring historical message purpose during migration (v3 draft 1) | No typed ground truth in prose; it is speculation wearing a metric's clothes |
+| "child + relation + **initial task**" atomic commit (v3.1) | The F128 approval path persists a child and a seed and creates no `Task` (`proposal-routes.ts:82-84`) — requiring one smuggles a server workflow object in |
 | "Primitives are mostly built, just not wired" | A lease is an execution edge, not a relationship graph |
 | Anchor PR subjects to `PrTrackingStore` | Notification subscription, overwritten on re-registration; subscription ownership ≠ execution ownership |
 | "The system held the answer" (I-1) | **False.** A `subjectRef` says *what is discussed*, not *who to deliver to*; no owner thread existed |
@@ -341,7 +383,12 @@ Inherits the five in `a2a-protocol.md`, and adds one:
 
 ## 13. Open for review
 
-1. Are `parent_child` and `subtask_of` one type or two? Likewise `peer` / `depends_on`.
+1. ~~Are `peer` and `depends_on` one purpose or two?~~ **Resolved: one.** The difference is
+   *relation topology* (who depends on whom — useful for impact analysis, defaults and UI), not a
+   difference in the boundary act. `dependency_update` means the same thing on both: one context
+   syncing a fact that affects another's work. Whether the receiver adjusts or negotiates is **its**
+   judgement. Splitting into `upstream_change` / `peer_negotiation` would put business workflow back
+   into the server.
 2. Should `peer` relations expire, or stay `active` until explicitly closed?
 3. Is `reports_to` a distinct type, or `peer` with a restricted purpose set?
 4. Relation to F128 `propose_thread` — is a relation proposal the same approval object?
