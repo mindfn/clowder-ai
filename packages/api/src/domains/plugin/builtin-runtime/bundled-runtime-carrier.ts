@@ -18,7 +18,7 @@ export interface BundledPluginRuntime {
   /**
    * The carrier hands over the package record it fenced, so a runtime that needs the
    * manifest reads the Host's admitted truth instead of re-deriving one that could have
-   * drifted since the fence (F202 Train C1 migration plan §8.6 step 2).
+   * drifted since the fence was taken.
    */
   start(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;

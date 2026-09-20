@@ -13,10 +13,10 @@ import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 /**
  * What the module at `runtime.entrypoint` must export by default.
  *
- * Asserted structurally on purpose. The published SDK does not yet carry
- * `PluginModuleEntrypoint` (F202 Train C1 migration plan §8.8), so the Host pins the
- * shape it actually needs instead of importing a type no artifact ships. When the SDK
- * publishes it, this narrows to that type in one place.
+ * Asserted structurally on purpose, and it stays that way. The Host defines the shape it
+ * needs and the SDK is published afterwards to wrap it, so importing an SDK type here would
+ * invert that direction — the Host would end up depending on the package authors' library.
+ * Pinning it structurally keeps the dependency one-way with a single place to check.
  */
 export interface PluginModuleEntrypointShape {
   create(manifest: PluginManifest): unknown;
@@ -40,9 +40,10 @@ interface LoadedModule {
  * lifecycle state machine and failure isolation — a second copy of that machinery is
  * exactly the carrier-shaped duplication clause 1 exists to remove.
  *
- * Steps 1 and 2 of §8.6 land here. Step 3 (per-feature activation returning an action
- * table) and step 4 (`FeatureContext`) stay blocked on the SDK release tracked in §8.8,
- * so a loaded package is defined but not yet activated.
+ * Loading is done here; activation is not. What is still missing is the step that turns a
+ * loaded package into a table of callable methods — the thing `HostInvocationPort` needs in
+ * order to call a method the package declared. Until that exists a package is defined but
+ * never called, which is why nothing reaches a loaded module today.
  */
 export class ModulePluginRuntime implements BundledPluginRuntime {
   readonly #loaded = new Map<string, LoadedModule>();
