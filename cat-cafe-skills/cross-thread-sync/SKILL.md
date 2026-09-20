@@ -171,7 +171,7 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 
 **§15 家规**：BLOCKING 信息不能只留在 cross-post 消息里，必须同时写入可追溯状态（feature doc / workflow / task），至少包含 `subjectRef / terminalPredicate / slaUntil / custody owner`。
 
-## 误投风险：错在调用方，不在服务端
+## 误投风险：**显影在调用方，根因在寻址模型**
 
 **2026-09-19 裁决（`docs/bug-report/ghost-thread-cross-thread-session-routing/`）**：
 "cross-post 后 session continuation 绑错 thread" 这条旧 P2 断言 **已证伪** ——
@@ -192,8 +192,20 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 | **工具选择错误** | 1（I-5） | 该在本 thread 直接发，却用了跨 thread |
 | 汇报目的地过载（不是误投，是噪声） | 1（I-4） | 一条执行线把主线程当默认汇报口 |
 
-**共同点不是"选错 id"，是全部发生在调用方侧——没有一次是服务端绑错。**
+**共同点不是"选错 id"，是全部**显影**在调用方填的 `threadId` 上——没有一次是服务端绑错。**
 所以下面的自检要逐条过，不能只检查"id 对不对"。
+
+> ⚠️ **别把"显影在调用方"读成"错在调用方"。** `threadId` 是这条链路上**唯一可写的字段**，
+> 所以任何错误都只能在那里显影——这跟"所有车祸都发生在方向盘上"是同一类陈述。
+>
+> 真正的结构事实（2026-09-20 复核代码）：系统**已经有** subject 寻址的一等协作对象
+> （`ActionSuccessorLease`，identity 不含 threadId，且记录 `holderThreadId`），
+> **但投递不读它**——`threadId` 必填、`action.subjectRef` 可选，两者从不比对。
+> **subject 是乘客，thread 才是地址。**
+>
+> ⇒ 下面这些自检是**结构缺口的代偿纪律，不是根因修复**。它们今天必须照做（结构杠杆还没接上），
+> 但别因为"规则已经写了"就认为问题已解决——规则存在且被反复违反，正是 F167 Case E1 的既有结论。
+> 根因与修复路径见 `docs/bug-report/ghost-thread-cross-thread-session-routing/` §3.2 R-1 更正 + §4.1。
 
 因此：
 

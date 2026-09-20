@@ -170,6 +170,33 @@ I-4 里你亲口给出过正确不变量：**"我们 thread 当前应该有且�
 
 **我的立场**：B 现在做，C 记进 backlog 等数据。
 
+> **⚠️ 更正（2026-09-20，复核代码后）：上面给 C 的定价错了，而且错得偏贵。**
+>
+> 我把 C 写成"需要一套注册 + 争用 + 迁移语义"，前提是**这个 subject→thread 对象要从零建**。
+> 复核代码后这个前提不成立：
+>
+> | C 需要的东西 | 是否已存在 | 证据 |
+> |---|---|---|
+> | subject 寻址的一等对象 | **已有** `ActionSuccessorLease` | `domains/ball-custody/ActionSuccessorLeaseStore.ts` |
+> | identity 不绑 thread | **已有**：`action:successor:identity:{tenant}:{subjectRef}:{family}:{slot}` | `action-successor-keys.ts:14-16` |
+> | 记录参与线程 | **已有** `holderThreadId` / `predecessorThreadId` | `action-successor-state-machine.ts:97,99` |
+> | 争用语义 | **已有**：generation + CAS + `replace` + `returnToPredecessor` | 同域 state machine |
+> | 迁移/终态语义 | **已有**：`subjectTerminal` + terminal predicate catalog | `action-successor-keys.ts` / `ActionTerminalPredicateCatalog.ts` |
+> | **投递据此解析/校验 thread** | ❌ **缺的只有这一条** | `callback-scope-helpers.ts:92-122` 只校验存在 + principal scope |
+>
+> ⇒ **C 不是"建一套新注册表"，是"把投递接到已经建好的那套上"。**
+>
+> **这直接改变 C 的适用切分**（因此也改变这题的建议）：
+>
+> - **带 action 的投递**（`actionFamily ∈ {review, implement}`，即**跨线程 review 交接**——
+>   你点名"跨thread review 更是很奇怪的调度"的那一类）：lease 已经知道 holder 在哪条 thread。
+>   让 `cross_post_message` 拿 `subjectRef` 解析 / 比对 `threadId`，**成本接近接线，不是造物**。
+> - **纯角色查询**（"F167 的 owner thread"、"我的平行实例"——I-1 / I-2a / I-3）：**没有 lease**，
+>   这部分 C 的原定价仍然成立，仍需新真相源。
+>
+> **修正后的立场**：B 仍然现在做；**C 拆成 C1 / C2**——
+> **C1（action 子集，接线）值得现在就做**，不必等 B 的数据；C2（纯角色解析）维持"等数据"。
+
 ---
 
 ### 取舍 3（小，但要你点头）：`[DIAG/ghost-thread]` 怎么处置

@@ -206,6 +206,23 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 宁可提案待批，也不猜一个近似 thread"）。规则存在、被反复违反——与 F167 Case E1 的既有结论一致：
 **「写进规则 ≠ 模型执行」**。
 
+> **更正（2026-09-20，复核代码后）**：初稿把 R-1 写成"猫无法核验这个坐标"，暗示出路是
+> **给猫一个解析原语**。这个口径不准确——**系统已经持有这个坐标，只是投递不读它。**
+>
+> | 复核到的事实 | 位置 |
+> |---|---|
+> | 存在 subject 寻址的一等协作对象 `ActionSuccessorLease`（及其 Redis 实现） | `packages/api/src/domains/ball-custody/ActionSuccessorLeaseStore.ts` / `RedisActionSuccessorLeaseStore.ts` |
+> | 它的 identity key **不含 threadId**：`action:successor:identity:{tenantScope}:{subjectRef}:{actionFamily}:{successorSlot}` | `action-successor-keys.ts:14-16` |
+> | 它**记录**参与线程：`holderThreadId` / `predecessorThreadId` | `action-successor-state-machine.ts:97,99` |
+> | `cross_post_message` 可携带 `action.subjectRef` / `coordination.subjectRef`——但 `action` **可选**、`threadId` **必填** | 工具 schema |
+> | 投递寻址只校验 thread 存在 + 同 principal scope，**不查 lease、不比对 subject** | `callback-scope-helpers.ts:92-122` |
+>
+> ⇒ **subject 是乘客，thread 才是地址。** I-1 是决定性样本：源猫**正确声明了**
+> `subjectRef=subject:f167:c1-custody-recall-deviation`，投递仍然落进一条无关 thread——
+> 因为没有任何一段代码拿这个 subject 去解析或校验 `threadId`。
+>
+> 这把 R-1 的出路从"发明一套解析原语"改成**"接上已经存在的那个对象"**，成本量级完全不同。
+
 #### R-2 · **内容侧**启发式无法机械区分误投与合法跨 feature 协作（**证据，不是缺陷**）
 
 在提"加个 guard"之前先量化了两个最自然的 fence，**两个都不可用**：
@@ -489,9 +506,29 @@ cross-post。"刚"有至少 7 个可能的 referent。sol 选错了一个，于�
 | R-5 | **能力缺口**（产品级 routing policy） | P1 | Decision Packet → operator |
 | R-6 | **harness 缺陷**（诊断资产半合入 + skill 引用悬空 + 错误断言） | P2 | 本 PR 修复 |
 
-**总裁决：多因叠加，但主因是工具契约缺口（R-1），不是模型失误，也不是服务端路由 bug。**
+**总裁决：多因叠加，主因是 R-1；但 R-1 的准确形态是「投递不走已经存在的 subject 寻址」，
+不是「系统缺少解析能力」。不是模型失误，也不是服务端路由 bug。**
 之所以长期被当成"猫不小心"，是因为 (a) skill 里那条未经证实的"服务端已知 bug"提供了现成的错误归因出口，
 (b) R-3 让接收猫看不见 provenance，(c) R-5 让每一次都只能靠人发现。
+
+### 4.1 归因口径更正：「调用方侧」是**可写字段的位置**，不是**因果的位置**
+
+§2 把 6 个事件的分型全部落在调用方动作上（A / B / D / D' / E）。这个描述**技术上成立**：
+每一次错误确实都显影在调用方填的那个 `threadId` 上。但把它读成因果归属是错的——
+
+**`threadId` 是这条链路上唯一可写的字段，因此任何错误都只能在那里显影。**
+说"错在调用方侧"，约等于说"所有车祸都发生在方向盘上"。
+
+区别不在措辞，在于两种读法指向完全不同的修复：
+
+| 读法 | 指向的修复 | 代价与历史表现 |
+|---|---|---|
+| 调用方选错了坐标 | 纪律条款 + 新造解析原语（"教猫别猜"） | 规则已存在且被反复违反（F167 Case E1）|
+| 地址空间里没有协作对象可寻址 | 让投递**从 subject 解析 thread**，或至少比对后拒绝 | 对象已存在（见 R-1 更正），接线即可 |
+
+**本 PR 交付的是第一类里的可辨识性地板（R-3 / R-6），不是 R-1 的修复。**
+R-1 的修复在 Decision Packet 里，不在这个 diff 里。写明这一点，是为了不让后来的猫
+把"已合入"误读成"已解决"，也不让"调用方侧"这个口径把他们继续指向纪律修复。
 
 ---
 
