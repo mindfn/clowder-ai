@@ -1537,3 +1537,57 @@ operator 挑战原话："为什么不是改完后天然收敛了的"、"请你�
 `:131 logger`、`:71 deliverConnectorMessage`）。
 npm 上 `plugin-contract` 已到 **beta.16**，而 `plugin-sdk` 停在 **beta.11**。
 所以这不是"等外部发布"，是**我们自己的包没发出去**；此前把它写成外部阻塞是措辞错误。
+
+### 9.6 §9.5.1 的再更正：入站不是"自动收敛"，但缺口全部落在 Host 一侧（2026-09-20）
+
+§9.5.1 说"provider 改走 SDK `send()` 即天然收敛"——**这条过头了，现在更正**。
+`ConnectorRouter.route()` 的行为做了逐条对照（18 项差异，cross-cat 取证），
+结论不是"收敛自动发生"，而是：**差异项几乎全部已经由 beta.12 的 connector 契约表达，
+缺的只是 Host 侧没有任何代码去消费它。**
+
+#### 9.6.1 两条真正承重的差异（其余都是它们的衍生）
+
+- **D1 首次接触时的 thread + binding 创建**：`SendService.send()` 的地址是**预先签发的 handle**，
+  `threadId` 在签发时就固定（`handles.ts:60-70`）；它没有 `threadStore.create`、没有
+  `bindingStore.bind`。而 IM 首次接触必须**现场创建** thread 与 binding
+  （`ConnectorRouter.ts:412-423`）。
+- **D2 出站靠另一个 store**：`OutboundDeliveryHook.deliver()` 读
+  `bindingStore.getByThread(threadId)`，空则**静默跳过**（`OutboundDeliveryHook.ts:142-149`）。
+  该 store 的正向写入者只有 `ConnectorRouter.ts:419` 与 `ConnectorCommandLayer.ts:200/262/294`。
+  **provider 若只改走 SDK `send()` 而无人写 binding，猫的每一条回复都会静默消失。**
+
+#### 9.6.2 已落在 #1487 里、但今天在生产中不可达的部分（自查）
+
+`issueConnectorBindingHandle` 的**生产调用点为 0**（仅定义 `handles.ts:60`、门面
+`messaging-service.ts:85`、5 个测试）。因此 `handle.kind === 'connector_binding'` 恒为假，
+`send-service.ts:147-156` / `:257-268` 与整个 `ingress-wake.ts` **在运行进程中从未执行**。
+这是 F-1 修复的"接收半边"——它是 cutover 的前置件，但在有人 mint handle 之前不产生任何用户可见行为。
+**这正是 operator 质疑的"只做了一半"在本 PR 内的具体形态，需在同一 PR 内补齐另一半。**
+
+#### 9.6.3 好消息：契约已经够用，不触发 C1/C2 硬止损线
+
+beta.12 SDK 源码里两个方向的形状都已定义，恰好覆盖差异清单：
+
+| 差异项 | beta.12 契约里的承载字段 | 位置 |
+|---|---|---|
+| D1 thread/binding 解析键 | `externalConversationId` | `feature-context.ts:49` |
+| D17 幂等键来源 | `providerMessageId` | `:50` |
+| D7 媒体附件 | `attachments?` | `:52` |
+| D3/D4/D6 发送者 | `sender?: {id,name?}` | `:53` |
+| **D5 群/单聊 + 群名** | `conversation?: {type:'direct'\|'group', title?}` | `:54-58` |
+| D9/D14 卡片与 Host 口吻 | `presentation{header,body,origin,subtitle,footer,cardActions}`，`origin` 含 `'system'` | `connector-runtime.ts:65-71` |
+
+**因此不需要新增 public contract 字段**——§F-1 的"新增 public method/hook/UI slot 即转 C2"
+硬止损线**不被触发**，C1 单 PR 终态仍然成立。
+
+#### 9.6.4 终态工作形状（据此收口，不再分期）
+
+1. **新增（Host 侧，唯一新增面）**：一个消费 `ConnectorContribution`
+   （`{id,identityRef,inboundMethod,outboundMethod}`）的 connector host-adapter——
+   激活时登记；入站 `externalConversationId` → 解析/创建 thread + binding + mint
+   `connector_binding` handle → `SendService.send()`；出站 `OutboundDeliveryHook`
+   按 binding 找到插件并调其 `outboundMethod`。
+2. **发布**：`@clowder-ai/plugin-sdk` beta.12（我们自己的包，见 §9.5.3）。
+3. **删除**：`ConnectorRouter` + `ConnectorCommandLayer` + `im-connectors/` 7 个 provider
+   + `im-connector-loader` 静态 import。斜杠命令 / 群白名单 / 表情 ack / skip 原因
+   （D8/D9/D11/D12/D16）随 provider 迁往插件仓，**不在 Host 侧重建**。
