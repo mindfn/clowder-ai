@@ -53,6 +53,7 @@ const evaluation: SegmentEvaluationResponse = {
         threadId: 'thread_s13_showcase',
         turnId: 'turn_schema_failure',
         catId: 'cat-reviewer',
+        segmentIds: ['S13'],
       },
     ],
   },
