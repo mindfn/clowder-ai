@@ -117,7 +117,7 @@ function hostOf(records) {
       return {
         rootDir: record.rootDir,
         manifest: record.locatedManifest ?? record.manifest,
-        verifyIntegrity: async () => {},
+        verifyIntegrity: record.verifyIntegrity ?? (async () => {}),
         release: async () => {
           released.push(packageDigest);
         },
@@ -281,4 +281,25 @@ test('a failed start releases the module instance before it rolls back', async (
   await assert.rejects(host.router.start('instance-0'));
 
   assert.equal(host.released.length, 1, 'start-failure rollback must reach the same disposal seam');
+});
+
+test('a staged tree that changed after admission is never imported into the Host', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(wellFormedModule);
+  let integrityCalls = 0;
+  const host = hostOf([
+    {
+      manifest: manifest(),
+      rootDir,
+      verifyIntegrity: async () => {
+        integrityCalls += 1;
+        throw new Error('launchable package bytes changed after verified staging');
+      },
+    },
+  ]);
+
+  await assert.rejects(host.router.start('instance-0'), /bytes changed after verified staging/);
+
+  assert.equal(integrityCalls, 1, 'the module carrier verifies admitted bytes exactly once');
+  assert.deepEqual(moduleLog(), [], 'a tree that failed integrity must never reach dynamic import');
 });

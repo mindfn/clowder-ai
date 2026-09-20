@@ -70,6 +70,10 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     let plugin: unknown;
     try {
       const { entrypoint } = await verifyPackageEntrypoint(packageRecord, located);
+      // This carrier's integrity instant: the bytes are re-snapshotted immediately before
+      // they become live code in THIS process. There is no projection window to straddle
+      // here the way the child-process carrier has, so the check belongs next to `import()`.
+      await located.verifyIntegrity();
       const namespace = (await import(pathToFileURL(entrypoint).href)) as { default?: unknown };
       const entry = namespace.default;
       if (typeof (entry as PluginModuleEntrypointShape | undefined)?.create !== 'function') {

@@ -34,6 +34,15 @@ async function rejectSymlinkComponents(rootDir: string, entrypoint: string): Pro
  * It sits under `external-runtime/` because that directory already holds the Host's
  * shared package vocabulary (`VerifiedPluginPackage`, `ExternalPluginRuntimeError`).
  * The directory name predates carrier neutrality; renaming it is its own change.
+ *
+ * Scope: entrypoint authority only. Byte integrity is deliberately NOT verified here,
+ * because the two carriers need that check at different instants and only the carrier
+ * knows its own instant. The child-process carrier re-snapshots AFTER it has projected
+ * `starting`, so a tree mutated inside the projection window still cannot reach spawn
+ * (`supervisor.ts`, pinned by "rechecks the staged tree after runtime-state projection").
+ * The module carrier snapshots immediately before `import()`. Verifying here too would
+ * add a second full-tree snapshot per child start that catches nothing the carrier's own
+ * later check would miss.
  */
 export async function verifyPackageEntrypoint(
   packageRecord: PluginPackageRecord,
@@ -85,6 +94,5 @@ export async function verifyPackageEntrypoint(
     if (error instanceof ExternalPluginRuntimeError) throw error;
     throw new ExternalPluginRuntimeError('INVALID_ENTRYPOINT', 'plugin entrypoint is unavailable', { cause: error });
   }
-  await located.verifyIntegrity();
   return { rootDir, entrypoint };
 }
