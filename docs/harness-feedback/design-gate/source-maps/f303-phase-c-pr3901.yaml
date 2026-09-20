@@ -1,0 +1,27 @@
+# Provenance: bootstrap catalog reconstructed from the self-contained contract fixture in
+# packages/api/test/harness-eval/design-gate-episode-source-provider.test.js#createRepo.
+# The window and unresolved refs below are fixture values, not observations independently
+# verified in this home. This home cannot currently resolve the admission document, legacy
+# GitHub PR, persisted non-author review, or landed-Alpha receipt. The registry also keeps
+# measurement validity unmigrated/keep_observe_only. Treat this entry as an explicit
+# unobservable source-gap input, not as a home-verified episode or a live observation clock.
+kind: f303-design-gate-episode-source-map
+schemaVersion: 1
+sourceMapId: f303-phase-c-pr3901
+window:
+  startMs: 1787500000000
+  endMs: 1787510000000
+episodes:
+  - episodeId: f303-phase-c-pr3901
+    featureId: F303
+    admissionRef: repo:docs/plans/2026-08-23-f303-phase-c-sop-evidence.md#finish-line
+    triggerContractRef: repo:docs/features/F083-design-gate-sop.md#f303-architecture-contract-integrity-admission维护加固
+    consumerBoundaryRefs:
+      - repo:packages/api/src/infrastructure/harness-eval/eval-cat-invocation.ts
+      - repo:packages/mcp-server/src/tools/publish-verdict-tool.ts
+    pullRequestRef: github:pr:zts212653/cat-cafe#3901
+    exactHeadRef: git:a21fd76826fd38401b44172ce551778ca29fdac0
+    gateReceiptRef: github:pr:zts212653/cat-cafe#3901@a21fd76826fd38401b44172ce551778ca29fdac0#validation/pnpm-gate
+    reviewMessageRef: cat-cafe:thread:thread_mt5xeb8e7qs467i2/message:0001787501286658-000077-5d3e5e07
+    reviewVerdictRef: local-review:0001787501286658-000077-5d3e5e07:g1:approved
+    landedAlphaReceiptRef: repo:docs/harness-feedback/design-gate/receipts/f303-phase-c-pr3901-alpha.yaml
