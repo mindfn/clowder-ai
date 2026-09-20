@@ -10,16 +10,14 @@ import {
 } from '../messaging/messaging-service.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
 import type { SignalRouteStore } from '../signal-intake/SignalRouteStore.js';
+import { BundledPluginRuntimeCarrier } from './builtin-runtime/bundled-runtime-carrier.js';
 import {
   CollectiveConnectorBuiltinRuntime,
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
-import { HybridPluginRuntimeSupervisor } from './builtin-runtime/hybrid-supervisor.js';
-import { staticEditorContributions } from './content-editor-runtime/admission.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
-import type { PluginRuntimeLifecyclePort } from './external-plugin-lifecycle-types.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeSupervisor } from './external-runtime/supervisor.js';
 import type { ExternalPluginProcessAdapter, VerifiedPluginPackageLocator } from './external-runtime/types.js';
@@ -63,6 +61,7 @@ import {
   PluginManagerServiceError,
   type PluginManagerStateProjectionPort,
 } from './plugin-manager-service.js';
+import { PluginRuntimeCarrierRouter } from './runtime-carrier.js';
 
 export interface PluginRuntimePersistencePaths {
   readonly inventorySnapshotPath: string;
@@ -118,7 +117,10 @@ export interface DormantPluginRuntimeComposition {
   readonly brokerStore: FileHostBrokerStore;
   readonly inventory: HostInventoryControlPlane;
   readonly broker: HostBrokerControlPlane;
-  readonly supervisor: HybridPluginRuntimeSupervisor;
+  readonly supervisor: PluginRuntimeCarrierRouter;
+  /** The child-process carrier itself. Exposed so the Host's one pre-active budget
+   * stays assertable against the runtime that spends it, not just the constant. */
+  readonly externalRuntime: ExternalPluginRuntimeSupervisor;
   readonly collectiveConnectorRuntime?: CollectiveConnectorBuiltinRuntime;
   readonly contentEditors?: ContentEditorPluginRuntime;
   readonly contentMaterializers?: ContentMaterializerPluginRuntime;
@@ -131,70 +133,6 @@ export interface DormantPluginRuntimeComposition {
   ): BuiltinPluginContributionSupervisor;
   recoverAfterRestart(): Promise<DormantPluginRuntimeRecovery>;
   shutdown(reason?: string): Promise<void>;
-}
-
-class PluginRuntimeSupervisorRouter implements PluginRuntimeLifecyclePort {
-  private builtin: BuiltinPluginContributionSupervisor | undefined;
-
-  constructor(
-    private readonly inventory: FilePluginInventoryStore,
-    private readonly base: HybridPluginRuntimeSupervisor,
-    private readonly baseBuiltinPluginIds: ReadonlySet<string>,
-  ) {}
-
-  registerBuiltin(options: Omit<BuiltinPluginContributionSupervisorOptions, 'inventory'>) {
-    if (this.builtin) throw new Error('builtin contribution supervisor is already registered');
-    this.builtin = new BuiltinPluginContributionSupervisor({ inventory: this.inventory, ...options });
-    return this.builtin;
-  }
-
-  private baseOwnsBuiltin(pluginId: string, manifest: PluginManifest): boolean {
-    return this.baseBuiltinPluginIds.has(pluginId) || staticEditorContributions(manifest).length > 0;
-  }
-
-  async start(pluginInstanceId: string): Promise<unknown> {
-    const snapshot = await this.inventory.snapshot();
-    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    const packageRecord = instance
-      ? snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest)
-      : undefined;
-    if (
-      packageRecord?.manifest.runtime.transport === 'builtin' &&
-      instance &&
-      !this.baseOwnsBuiltin(instance.pluginId, packageRecord.manifest)
-    ) {
-      if (!this.builtin) throw new Error('builtin contribution supervisor is unavailable');
-      return this.builtin.start(pluginInstanceId);
-    }
-    return this.base.start(pluginInstanceId);
-  }
-
-  async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
-    const snapshot = await this.inventory.snapshot();
-    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    const packageRecord = instance
-      ? snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest)
-      : undefined;
-    if (
-      packageRecord?.manifest.runtime.transport === 'builtin' &&
-      instance &&
-      !this.baseOwnsBuiltin(instance.pluginId, packageRecord.manifest)
-    ) {
-      if (!this.builtin) throw new Error('builtin contribution supervisor is unavailable');
-      await this.builtin.stop(pluginInstanceId, reason);
-      return;
-    }
-    await this.base.stop(pluginInstanceId, reason);
-  }
-
-  async stopAll(reason = 'host_shutdown'): Promise<void> {
-    const settled = await Promise.allSettled([
-      this.base.stopAll(reason),
-      ...(this.builtin ? [this.builtin.stopAll(reason)] : []),
-    ]);
-    const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (failure) throw failure.reason;
-  }
 }
 
 // External runtimes must finish their own bounded source-readiness checks before
@@ -307,23 +245,24 @@ export function createDormantPluginRuntimeComposition(
         });
   if (contentEditors)
     contentMaterializers = new ContentMaterializerPluginRuntime({ editors: contentEditors, packages });
-  const supervisor = new HybridPluginRuntimeSupervisor({
-    inventory: inventoryStore,
-    external: externalSupervisor,
-    builtinRuntimes: new Map(
-      collectiveConnectorRuntime ? [['official.collective-connector', collectiveConnectorRuntime] as const] : [],
-    ),
-    resolveBuiltinRuntime: (pkg) => (staticEditorContributions(pkg.manifest).length > 0 ? contentEditors : undefined),
-    ...(options.now === undefined ? {} : { now: options.now }),
-  });
-  const runtimeSupervisor = new PluginRuntimeSupervisorRouter(
-    inventoryStore,
-    supervisor,
-    new Set(collectiveConnectorRuntime ? ['official.collective-connector'] : []),
+  // Every admitted instance takes this one path; the carrier is selected from the
+  // package's own manifest, most specific claim first (F202 C1 clauses 1/2/6).
+  const supervisor = new PluginRuntimeCarrierRouter(inventoryStore);
+  supervisor.register(
+    new BundledPluginRuntimeCarrier({
+      inventory: inventoryStore,
+      runtimes: [
+        ...(collectiveConnectorRuntime ? [collectiveConnectorRuntime] : []),
+        ...(contentEditors ? [contentEditors] : []),
+      ],
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
   );
+  supervisor.register(externalSupervisor);
+  let builtinContributions: BuiltinPluginContributionSupervisor | undefined;
   const lifecycle = new ExternalPluginLifecycleService({
     store: inventoryStore,
-    supervisor: runtimeSupervisor,
+    supervisor,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 
@@ -335,6 +274,7 @@ export function createDormantPluginRuntimeComposition(
     inventory,
     broker,
     supervisor,
+    externalRuntime: externalSupervisor,
     ...(collectiveConnectorRuntime === undefined ? {} : { collectiveConnectorRuntime }),
     ...(contentEditors === undefined ? {} : { contentEditors }),
     ...(contentMaterializers === undefined ? {} : { contentMaterializers }),
@@ -342,7 +282,15 @@ export function createDormantPluginRuntimeComposition(
     lifecycle,
     packages,
     ...(options.contract === undefined ? {} : { contract: options.contract }),
-    registerBuiltinContributions: (builtinOptions) => runtimeSupervisor.registerBuiltin(builtinOptions),
+    registerBuiltinContributions: (builtinOptions) => {
+      if (builtinContributions) throw new Error('builtin contribution supervisor is already registered');
+      builtinContributions = new BuiltinPluginContributionSupervisor({
+        inventory: inventoryStore,
+        ...builtinOptions,
+      });
+      supervisor.register(builtinContributions);
+      return builtinContributions;
+    },
     async recoverAfterRestart() {
       await Promise.all([inventoryStore.snapshot(), brokerStore.snapshot()]);
       const brokerSessions = await supervisor.recoverAfterRestart();
@@ -353,7 +301,7 @@ export function createDormantPluginRuntimeComposition(
         resumeRequested: inventoryRecovery.resumeRequested,
       };
     },
-    shutdown: (reason = 'host_shutdown') => runtimeSupervisor.stopAll(reason),
+    shutdown: (reason = 'host_shutdown') => supervisor.stopAll(reason),
   };
 }
 
@@ -475,7 +423,7 @@ function activeBuiltinCapabilities(
         (candidate) => candidate.packageDigest === instance.packageDigest && candidate.packageState === 'installed',
       )
     : undefined;
-  if (!packageRecord || packageRecord.manifest.runtime.transport !== 'builtin') return [];
+  if (!packageRecord) return [];
 
   const capabilities = new Set<Capability>();
   for (const feature of packageRecord.manifest.features) {

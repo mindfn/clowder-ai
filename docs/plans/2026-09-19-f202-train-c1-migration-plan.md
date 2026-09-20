@@ -957,6 +957,13 @@ feature 激活规则 + 一个 `healthCheck` manifest 字段**（§7.4.2）。原
 | `runtime-composition.ts:322` | `new Set(collectiveConnectorRuntime ? ['official.collective-connector'] : [])` —— 硬编码具体 pluginId 进 Core 组装 |
 | `runtime-composition.ts:152` | 路由判据 = 该 id 集合 ∪ `staticEditorContributions(manifest)`，即"身份 + 贡献形状"，不是统一生命周期 |
 
+> **状态（本表两行 + 上表分流三处均已闭合，见 §8.8「已落地 2」）**：分流收敛成
+> `runtime-carrier.ts` 一处 claim 选择；`baseBuiltinPluginIds` 与两个 `official.collective-connector`
+> 字面量从 Core 组装与路由中删除——bundled runtime 自报它实现哪个包
+> （`CollectiveConnectorBuiltinRuntime.claims()` 读 `COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST.pluginId`，
+> 即该 bundled 包自己的 manifest）。**尚未闭合的是条款 1+2 的下一段**：Core 仍无 in-process
+> 模块载体，`builtin` 仍等于"每个 MCP contribution 一个子进程"。
+
 **违反条款 1 + 2（`builtin` 在两仓是两个不同的东西 → #54 合入后 install+enable 在 Core 上启动即红）**：
 
 这一条不是推导，是两侧一手代码对读出来的。Plugins 在 `3ae7ad2` 用 `builtin` 表示 **Host 进程内
@@ -1121,9 +1128,32 @@ telegram `plugin-entrypoint.ts:71`、dingtalk `:66` 都是 `export default`，�
 **生命周期**收口、条款 6 的 package-specific 分支清除、旧执行路径删除；action 路由在对侧发布落地后
 接上。首个落地切片见下。
 
-**已落地（本次提交）**：配置授权改为载体中立——`resolveManifestConfiguration` 成为唯一裁决点并
+**已落地 1（`b2c5163`）**：配置授权改为载体中立——`resolveManifestConfiguration` 成为唯一裁决点并
 保留每个字段的 `kind`（模块载体要把 secret 送进 `FeatureContext.secrets`、把 string/select 送进
 `config`，这是两个命名空间）；`projectManifestConfigurationEnv` 降为"该裁决的 env 投递"，stdio
 载体行为逐字节不变（`test/f202-c1-carrier-neutral-configuration.test.js` 的 parity 例钉死）。
 三条 fail-closed 规则一条没改；规则 1（`CLOWDER_` 协议命名空间）**保持 manifest 级拒绝**而不是
 env 级，否则同一个包会因载体不同而准入不同——那本身就是条款 1 的泄漏。
+
+**已落地 2（本次提交）**：载体选择收敛成一处，条款 6 的 package-specific 分支删除。
+
+| 项 | 之前 | 现在 |
+|---|---|---|
+| 选择点 | `PluginRuntimeSupervisorRouter`（transport + pluginId 集合）→ `HybridPluginRuntimeSupervisor`（再按 transport 分叉）→ 各 supervisor 自己的 authority | `PluginRuntimeCarrierRouter.#select` **一处**：解析 admission → 按注册序取第一个 `claims(admission)` 为真的 carrier |
+| 选择判据 | `transport === 'builtin'` 出现在 `runtime-composition.ts:162/:179/:478` + `hybrid-supervisor.ts:49/:93/:131` 六处 | 每个 carrier 各自一个 `claims()`；`:478` 的能力投影不再复述该判据（carrier 早已决定谁能进 active 表） |
+| package-specific 分支 | `new Set(['official.collective-connector'])` 在 Core 组装里 | `runtimes: [...]` 列表，由 runtime 自报 `claims(packageRecord)`；Core 侧无任何具体 pluginId |
+| 未实现的载体 | 外层 `throw new Error('builtin contribution supervisor is unavailable')`（裸 Error，Manager 只能落到 `LIFECYCLE_UNAVAILABLE`） | `ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT')`，与其他运行时失败同族 |
+| `recoverAfterRestart` / `deliver` | hybrid 内按 transport 转发，builtin 直接 `DELIVERY_REJECTED` | carrier 可选实现；router 汇总 recovery、对无投递面的 carrier 给同一个 `DELIVERY_REJECTED` |
+
+`HybridPluginRuntimeSupervisor` 按 §8.2「不推翻」保留其全部机制（`#active` 槽、starting/healthy/stopped
+状态机、instance + lifecycleRevision fence、late-cancel 与 stale-cleanup 两条竞态防线，原测试逐条仍绿），
+只是更名为 `BundledPluginRuntimeCarrier` 并卸掉 external 分支——"hybrid"这个名字本身就是条款 1
+要消除的那个二分。stdio 侧由 `ExternalPluginRuntimeSupervisor` 直接实现 carrier 契约，未新增包装层。
+
+测试：`test/f202-c1-carrier-neutral-lifecycle.test.js` 6 例（先 RED 后绿），
+`test/plugin-bundled-runtime-carrier.test.js` 由原 hybrid 用例改写并新增"不实现即拒绝、不转发"一条；
+`test/plugin-*.test.js` 全量 691/691 通过，F202 C1 24 例全绿。
+
+**剩余（不属本切片）**：条款 1+2 的 in-process 模块载体本身 —— `runtime.entrypoint` 默认导出 →
+`create()` → 逐 feature 激活。§8.8 上表的步 1/2/4/5 现在可以直接挂到 `BundledPluginRuntimeCarrier`
+旁边作为第四个 carrier；步 3（action 表）仍等 #54 发布。

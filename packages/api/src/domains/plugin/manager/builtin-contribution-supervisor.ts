@@ -15,6 +15,7 @@ import type {
   PluginPackageRecord,
   RuntimeState,
 } from '../host-inventory/types.js';
+import type { PluginRuntimeAdmission } from '../runtime-carrier.js';
 import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
 
 const DEFAULT_START_TIMEOUT_MS = 10_000;
@@ -265,6 +266,12 @@ export class BuiltinPluginContributionSupervisor {
   constructor(private readonly options: BuiltinPluginContributionSupervisorOptions) {
     this.runtime = options.runtime ?? new StdioMcpContributionRuntime();
     this.now = options.now ?? Date.now;
+  }
+
+  /** Carries the builtin-transport packages no bundled Host runtime implements. It is
+   * registered after those, so selection order — not a pluginId — decides. */
+  claims({ packageRecord }: PluginRuntimeAdmission): boolean {
+    return packageRecord.manifest.runtime.transport === 'builtin';
   }
 
   async start(pluginInstanceId: string): Promise<void> {

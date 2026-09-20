@@ -9,6 +9,7 @@ import type { BrokerConnection } from '../host-broker/builtin-loopback.js';
 import { HostBrokerError } from '../host-broker/types.js';
 import type { PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { RuntimeState } from '../host-inventory/types.js';
+import type { PluginRuntimeAdmission } from '../runtime-carrier.js';
 import { NodeExternalPluginProcessAdapter } from './node-process-adapter.js';
 import { verifyExternalPackage } from './package-authority.js';
 import { deferred, type RuntimeExecution } from './runtime-execution.js';
@@ -66,6 +67,12 @@ export class ExternalPluginRuntimeSupervisor {
       },
       projectFailure: (target) => projectRuntimeReplacementFailure(options.inventory, target, this.now),
     });
+  }
+
+  /** The child-process carrier. Every transport other than the Host's own in-process
+   * one is a package that runs beside the Host, so it is carried here. */
+  claims({ packageRecord }: PluginRuntimeAdmission): boolean {
+    return packageRecord.manifest.runtime.transport !== 'builtin';
   }
 
   start(pluginInstanceId: string): Promise<ExternalPluginRuntimeHandle> {

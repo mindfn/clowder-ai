@@ -1,23 +1,22 @@
-import type { M0CDeliverInput, M0CDeliverResult } from '@clowder-ai/plugin-contract';
-
-import type { ExternalPluginRuntimeSupervisor } from '../external-runtime/supervisor.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord, RuntimeState } from '../host-inventory/types.js';
+import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../runtime-carrier.js';
 
-export interface BuiltinPluginRuntime {
+/**
+ * A runtime that ships inside the Host and implements one admitted package. It declares
+ * which package that is — the Host's carrier selection must never name a pluginId
+ * (F202 Train C1 terminal contract, clause 6).
+ */
+export interface BundledPluginRuntime {
+  claims(packageRecord: Pick<PluginPackageRecord, 'manifest'>): boolean;
   start(pluginInstanceId: string): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
 }
 
-export interface HybridPluginRuntimeSupervisorOptions {
-  readonly inventory: PluginInventoryStore;
-  readonly external: Pick<
-    ExternalPluginRuntimeSupervisor,
-    'start' | 'stop' | 'stopAll' | 'recoverAfterRestart' | 'deliver' | 'handshakeTimeoutMs'
-  >;
-  readonly builtinRuntimes: ReadonlyMap<string, BuiltinPluginRuntime>;
-  readonly resolveBuiltinRuntime?: (packageRecord: PluginPackageRecord) => BuiltinPluginRuntime | undefined;
+export interface BundledPluginRuntimeCarrierOptions {
+  readonly inventory: Pick<PluginInventoryStore, 'snapshot' | 'transaction'>;
+  readonly runtimes: readonly BundledPluginRuntime[];
   readonly now?: () => number;
 }
 
@@ -26,38 +25,35 @@ interface RuntimeAuthority {
   readonly packageRecord: PluginPackageRecord;
 }
 
-interface ActiveBuiltin {
-  readonly runtime: BuiltinPluginRuntime;
+interface ActiveBundled {
+  readonly runtime: BundledPluginRuntime;
   readonly closed: Promise<void>;
   readonly resolveClosed: () => void;
 }
 
-export class HybridPluginRuntimeSupervisor {
-  readonly #active = new Map<string, ActiveBuiltin>();
+/** The in-Host-process carrier. It runs packages a bundled runtime implements; every
+ * other admitted package belongs to another carrier and is declined here. */
+export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
+  readonly #active = new Map<string, ActiveBundled>();
   readonly #now: () => number;
 
-  constructor(private readonly options: HybridPluginRuntimeSupervisorOptions) {
+  constructor(private readonly options: BundledPluginRuntimeCarrierOptions) {
     this.#now = options.now ?? Date.now;
   }
 
-  get handshakeTimeoutMs(): number {
-    return this.options.external.handshakeTimeoutMs;
+  claims({ packageRecord }: PluginRuntimeAdmission): boolean {
+    return packageRecord.manifest.runtime.transport === 'builtin' && this.#runtimeFor(packageRecord) !== undefined;
   }
 
   async start(pluginInstanceId: string): Promise<unknown> {
     const authority = await this.authority(pluginInstanceId);
-    if (authority.packageRecord.manifest.runtime.transport !== 'builtin') {
-      return this.options.external.start(pluginInstanceId);
-    }
     if (this.#active.has(pluginInstanceId)) {
       throw new ExternalPluginRuntimeError(
         'RUNTIME_ALREADY_ACTIVE',
         `${pluginInstanceId} already has a builtin runtime owner`,
       );
     }
-    const runtime =
-      this.options.builtinRuntimes.get(authority.instance.pluginId) ??
-      this.options.resolveBuiltinRuntime?.(authority.packageRecord);
+    const runtime = this.#runtimeFor(authority.packageRecord);
     if (!runtime) {
       throw new ExternalPluginRuntimeError(
         'UNSUPPORTED_TRANSPORT',
@@ -70,17 +66,17 @@ export class HybridPluginRuntimeSupervisor {
     });
     this.#active.set(pluginInstanceId, { runtime, closed, resolveClosed });
     try {
-      await this.setBuiltinRuntimeState(authority, 'starting');
+      await this.setBundledRuntimeState(authority, 'starting');
       await runtime.start(pluginInstanceId);
       if (this.#active.get(pluginInstanceId)?.closed !== closed) {
         throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'builtin startup was cancelled');
       }
-      await this.setBuiltinRuntimeState(authority, 'healthy');
+      await this.setBundledRuntimeState(authority, 'healthy');
       return { pluginInstanceId, closed };
     } catch (error) {
       if (this.#active.get(pluginInstanceId)?.closed === closed) {
         await runtime.stop(pluginInstanceId, 'start_failed').catch(() => undefined);
-        await this.setBuiltinRuntimeState(authority, 'stopped').catch(() => undefined);
+        await this.setBundledRuntimeState(authority, 'stopped').catch(() => undefined);
         if (this.#active.get(pluginInstanceId)?.closed === closed) this.#active.delete(pluginInstanceId);
       }
       resolveClosed();
@@ -90,51 +86,37 @@ export class HybridPluginRuntimeSupervisor {
 
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
     const authority = await this.authority(pluginInstanceId, true);
-    if (authority.packageRecord.manifest.runtime.transport !== 'builtin') {
-      await this.options.external.stop(pluginInstanceId, reason);
-      return;
-    }
     const active = this.#active.get(pluginInstanceId);
     if (active) {
       await active.runtime.stop(pluginInstanceId, reason);
       try {
-        await this.setBuiltinRuntimeState(authority, 'stopped');
+        await this.setBundledRuntimeState(authority, 'stopped');
       } finally {
         if (this.#active.get(pluginInstanceId) === active) this.#active.delete(pluginInstanceId);
         active.resolveClosed();
       }
     } else {
-      await this.setBuiltinRuntimeState(authority, 'stopped');
+      await this.setBundledRuntimeState(authority, 'stopped');
     }
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {
-    const builtinIds = [...this.#active.keys()];
-    await Promise.all([
-      this.options.external.stopAll(reason),
-      ...builtinIds.map((pluginInstanceId) => this.stop(pluginInstanceId, reason)),
-    ]);
+    await Promise.all([...this.#active.keys()].map((pluginInstanceId) => this.stop(pluginInstanceId, reason)));
   }
 
-  recoverAfterRestart(): Promise<number> {
+  /** In-process runtimes never survive the restart they are recovering from. */
+  async recoverAfterRestart(): Promise<number> {
     if (this.#active.size > 0) {
       throw new ExternalPluginRuntimeError(
         'RUNTIME_ALREADY_ACTIVE',
         'restart recovery requires a fresh supervisor with no builtin authority',
       );
     }
-    return this.options.external.recoverAfterRestart();
+    return 0;
   }
 
-  async deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
-    const authority = await this.authority(pluginInstanceId, true);
-    if (authority.packageRecord.manifest.runtime.transport === 'builtin') {
-      throw new ExternalPluginRuntimeError(
-        'DELIVERY_REJECTED',
-        `${pluginInstanceId} has no stdio Host delivery surface`,
-      );
-    }
-    return this.options.external.deliver(pluginInstanceId, input);
+  #runtimeFor(packageRecord: Pick<PluginPackageRecord, 'manifest'>): BundledPluginRuntime | undefined {
+    return this.options.runtimes.find((runtime) => runtime.claims(packageRecord));
   }
 
   private async authority(pluginInstanceId: string, allowStopping = false): Promise<RuntimeAuthority> {
@@ -167,7 +149,7 @@ export class HybridPluginRuntimeSupervisor {
     return { instance, packageRecord };
   }
 
-  private setBuiltinRuntimeState(authority: RuntimeAuthority, runtimeState: RuntimeState): Promise<void> {
+  private setBundledRuntimeState(authority: RuntimeAuthority, runtimeState: RuntimeState): Promise<void> {
     return this.options.inventory.transaction((transaction) => {
       const current = transaction.instances.get(authority.instance.pluginInstanceId);
       if (
