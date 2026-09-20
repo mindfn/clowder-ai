@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'cat-cafe:pinned-settings-sections';
-const DEFAULTS_SEED_KEY = 'cat-cafe:pinned-settings-sections:defaults-seeded';
+const SEEDED_DEFAULTS_KEY = 'cat-cafe:pinned-settings-sections:seeded-defaults';
+const LEGACY_DEFAULTS_SEED_KEY = 'cat-cafe:pinned-settings-sections:defaults-seeded';
 const LEGACY_DESKTOP_SEED_KEY = 'cat-cafe:pinned-settings-sections:desktop-seeded';
 const SYNC_EVENT = 'cat-cafe:pinned-settings-sync';
 const MAX_PINS = 8;
@@ -31,6 +32,22 @@ function writeAndBroadcast(ids: string[]) {
   window.dispatchEvent(new CustomEvent(SYNC_EVENT));
 }
 
+function readSeededDefaults(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SEEDED_DEFAULTS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(DEFAULT_PINS.filter((id) => parsed.includes(id)));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeSeededDefaults(ids: ReadonlySet<string>) {
+  localStorage.setItem(SEEDED_DEFAULTS_KEY, JSON.stringify(DEFAULT_PINS.filter((id) => ids.has(id))));
+}
+
 function readWithDefaults(): string[] {
   const current = read();
   if (typeof window === 'undefined') return current;
@@ -39,24 +56,28 @@ function readWithDefaults(): string[] {
     // Seed through the same persisted pin list used by manual pin/unpin actions.
     // Clearing site data establishes a fresh local install; cross-device preference
     // sync is outside this browser-profile contract.
-    if (localStorage.getItem(DEFAULTS_SEED_KEY) === '1') return current;
-
-    // Packaged installs that already consumed the former desktop-only seed must
-    // retain their user's later unpin choices while moving to the shared receipt.
-    if (localStorage.getItem(LEGACY_DESKTOP_SEED_KEY) === '1') {
-      localStorage.setItem(DEFAULTS_SEED_KEY, '1');
-      return current;
-    }
+    const hasLegacyCompleteReceipt =
+      localStorage.getItem(LEGACY_DEFAULTS_SEED_KEY) === '1' || localStorage.getItem(LEGACY_DESKTOP_SEED_KEY) === '1';
+    const seeded = hasLegacyCompleteReceipt ? new Set<string>(DEFAULT_PINS) : readSeededDefaults();
+    let receiptChanged = hasLegacyCompleteReceipt;
 
     const next = [...current];
     for (const id of DEFAULT_PINS) {
-      if (!next.includes(id) && next.length < MAX_PINS) next.push(id);
+      if (seeded.has(id)) continue;
+      if (next.includes(id)) {
+        seeded.add(id);
+        receiptChanged = true;
+        continue;
+      }
+      if (next.length < MAX_PINS) {
+        next.push(id);
+        seeded.add(id);
+        receiptChanged = true;
+      }
     }
 
     if (next.length !== current.length) writeAndBroadcast(next);
-    if (DEFAULT_PINS.every((id) => next.includes(id))) {
-      localStorage.setItem(DEFAULTS_SEED_KEY, '1');
-    }
+    if (receiptChanged) writeSeededDefaults(seeded);
     return next;
   } catch {
     return current;

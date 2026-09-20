@@ -647,7 +647,7 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 主动固定的分区可以排在对话之后。正在进行的演示浮窗允许出现临时召回控制，但不属于默认入口。
 
 - 源码版与安装包首次启动都通过现有持久化 pin 机制播种一次 `members` 与 `accounts`，不把两项写死为不可取消的常驻入口。
-- 一次播种后以持久化用户选择为准：用户取消固定后，后续启动不得重新添加。
+- 播种 receipt 按默认项分别记录：容量不足时尚未播种的项可在以后补入，已经播种的项被用户取消后不得复活。
 - 常驻对话与 pinned Settings shortcut 共用 rail 的 `gap-1.5`，中间不放 divider 或额外 margin。
 - Collective 与猫猫星球在能力未完整前不暴露产品入口；route 保留供开发与既有 deep link 使用。
 - Approval / Needs Me 归 Workspace launcher，猫猫球显示状态归 Settings；它们不再占默认 rail button。
