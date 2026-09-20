@@ -656,7 +656,7 @@ checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二�
    结论：**只有第 9 行（`video-generation`）今天在 C1 内可交付**；第 8 / 10 / 11 行都需要新公共面。
    **这是阻塞证据，不是改判授权（第六轮 review P1）**：三行仍在 §2.0 的 11 行冻结集内，在 C1 内
    的处置是**卡在 §5.3 删除门上**——不删、不提新公共面、迁移不完成。是否改判 C2 是 operator 裁定，
-   本 PR 不做（Decision Packet 见 §7.4.5）。
+   本 PR 不做（当时的 Decision Packet 见 §7.4.5；**终局结论已由 §8.3 取代**：三行在 C1 内由通用载体无关边界承接）。
 
 **移出 C1 门禁的只有测试面（不重写、不丢失）**：
 
@@ -814,7 +814,7 @@ parity 之后再删"。这与 `video-analysis` baseline 的删除面（§2.0）�
    **这两句话不等于"C1 只剩一行"**（第六轮 review P1 纠正）：「没接住就不准删」是 C1 **门内**的
    结果，管的是"今天不删"；把行移出 11 行冻结集是**改 operator 冻结的迁移集**，是另一件事，本节
    此前把前者当成了后者的依据。11 行仍然全在 C1；三行的状态是"迁移未完成、阻塞待裁"，
-   处置选项与代价见 §7.4.5。
+   处置选项与代价见 §7.4.5，**终局结论以 §8.3 为准**。
 6. **更正 §2.0 baseline ledger 与 §2.2 的 `video-analysis` 行**（本节执行时发现，方向与第 5 条
    相反——这两处不是把 C1 说小了，是把第 9 行的既有机制说强了）。两处原写
    "`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位"，暗示运行时切换已就绪、Core 只差
@@ -852,7 +852,11 @@ parity 之后再删"。这与 `video-analysis` baseline 的删除面（§2.0）�
 本节对 `video-analysis` baseline 的重新核实（repo-local 目录与 `plugin.yaml` 今天完整存在）
 就是这条判据的直接产物。
 
-#### 7.4.5 待 operator 裁定：第 8 / 10 / 11 行的 C1 结局（Decision Packet）
+#### 7.4.5 ~~待 operator 裁定~~：第 8 / 10 / 11 行的 C1 结局（**已由 §8.3 取代，本节仅存推导记录**）
+
+> **读者先看 §8**：本节的"三选一"与"按选项 2 落盘"已被 2026-09-20 的 operator anchor
+> （`…-002857-30d55ba2` / `…-002875-f1e0d445`）取代——这三行改为由 §8 条款 2 的通用
+> 载体无关 lifecycle / action 边界在 C1 内承接。下文保留是为了记录推导与越权更正的过程。
 
 **为什么是 operator 的题**：§2.0 的 11 行 migration set 是 operator 冻结的。本节核出的
 「三行今天无法在 C1 内完成迁移」是**阻塞证据**；把行移出冻结集是**改冻结契约**。第六轮 review
@@ -903,3 +907,88 @@ feature 激活规则 + 一个 `healthCheck` manifest 字段**（§7.4.2）。原
 
 **不随选择改变的一条**：第 10 行 `wechat-visible-reader` 的 arm/disarm 隐私授权权威，在三个选项
 下都按 `personal-chrome-host` 同例**保留为 Host truth**，不下放给包。
+
+---
+
+## 8. C1 Terminal Acceptance Contract（2026-09-20 冻结）
+
+> **本节的地位**：这是两仓 C1 的**共同终局契约**在 Core 侧的写定。它由 operator 的
+> pause-and-align gate 要求产生（`0001789886680827-002881-10e236ef`，经 sol relay
+> `0001789886789246-002888-19d5ba70`）：两条车道先把共同终点写进各自 PR 内的持久验收文档，
+> 互读对方 exact HEAD，回传实质确认，齐了才解除实现暂停。
+> **本节优先于本文件第 1–7 节中与之冲突的任何表述**，也优先于此前所有聊天更正。
+
+### 8.0 权威 anchor（一手，全部 operator 原话）
+
+| anchor | 内容（要点） |
+|---|---|
+| `0001789885765960-002823-862c7258` | 我们是**客户端应用**（Eclipse 热加载 / VSCode / IDEA 插件机制的同类）；插件提供**完整 runtime 的 package 包**供 host 加载调用；插件仓是官方来源之一，**本地自行安装不应被拦截**，用户自担风险；**"不是一个插件就来一个子进程"** |
+| `0001789886247327-002857-30d55ba2` | 模型应当简单清晰：host 提供稳定 runtime + 接口；插件按 SDK + yaml 契约补完实现；**插件可以是独立子进程也可以是一个 package 包，对 host 不关心**；host 只按**生命周期与 action** 操作；`start` 可能什么都不干、也可能拉起子进程，**这应在 yaml / SDK 中声明**；只要插件**启动加载失败不影响主 host** 即可；插件实现有错误是允许的，**禁用 / 卸载即可恢复** |
+| `0001789886563068-002875-f1e0d445` | **C1 这边也一样**：把现有能力收敛成**载体无关的统一生命周期**，本来就该做完；所以这次 **host 侧应在清理旧代码时一次性补齐** |
+| `0001789886427425-002863-501608eb` | 插件仓已有一批存量插件，其 SDK / yaml 是否 ok 要一并核，不 ok 就在迁移时补齐；这一轮两个 PR 合入后插件仓阶段性收尾，下一轮才是涉及前端的 C2 |
+
+### 8.1 七条冻结条款
+
+| # | 条款 | Core 侧可验收判据 |
+|---|---|---|
+| 1 | **package 是分发单位；runtime carrier 是 manifest 声明的实现细节** | Core 不得把 carrier 当作分类依据向 Manager / catalog / domain 泄漏；carrier 只在 adapter 内部可见 |
+| 2 | **Host 只暴露一条载体中立的 lifecycle / action 边界** | `start / stop / reload / action` 对所有已安装 instance 走同一条路径；carrier adapter 由 manifest 选出，不由调用方选 |
+| 3 | **#54 收口全插件仓 SDK / YAML / package 兼容性** | Plugins 车道交付物，是 Core 的**输入**；Core 只消费 exact artifact，不代改包 |
+| 4 | **#1487 在同一 PR 内原子完成 Host lifecycle 收口 + 旧执行路径删除** | 收口与删除不得拆成两个 PR，也不得只改计划不落生产代码 |
+| 5 | **Plugins exact artifact → Core 集成旅程 → 依赖序合并** | Core 钉 exact 版本 / digest；#54 先于 #1487 合入 |
+| 6 | **disable / uninstall 可恢复、启动失败隔离、重启恢复、Core 内无 package-specific 分支** | 四条各需可观察证据；Core 代码内不得出现任何具体 pluginId 的分支 |
+| 7 | **C2 才做前端 contribution 扩展；C1 不留 lifecycle / 删除 follow-up PR** | C1 结束时不得有"下轮再收口 / 下轮再删"的尾巴 |
+
+### 8.2 今天的差距（code-derived at `91d9ad9`，全部落在本 PR 验收范围内）
+
+**违反条款 2（载体分流仍在 domain 层）**：
+
+| 坐标 | 事实 |
+|---|---|
+| `runtime-composition.ts:136-197` | `PluginRuntimeSupervisorRouter` 按 `manifest.runtime.transport === 'builtin'` 分流到两套 supervisor |
+| `runtime-composition.ts:162` / `:179` / `:478` | 同一 transport 判据出现在 start / stop / capability 投影三处 |
+| `builtin-runtime/hybrid-supervisor.ts:49` / `:93` / `:131` | supervisor 内部再次按 transport 分叉 |
+| `content-editor-runtime/admission.ts:10`、`manager/builtin-contribution-supervisor.ts:292`、`manager/local-package-admission.ts:234`、`official-package-installer.ts:307` / `:368` | 准入 / 安装路径同样以 transport 为分类依据 |
+
+**违反条款 6（Core 内存在 package-specific 分支）**：
+
+| 坐标 | 事实 |
+|---|---|
+| `runtime-composition.ts:322` | `new Set(collectiveConnectorRuntime ? ['official.collective-connector'] : [])` —— 硬编码具体 pluginId 进 Core 组装 |
+| `runtime-composition.ts:152` | 路由判据 = 该 id 集合 ∪ `staticEditorContributions(manifest)`，即"身份 + 贡献形状"，不是统一生命周期 |
+
+**已在位、可直接复用的地基（不推翻）**：`PluginRuntimeLifecyclePort`
+（`external-plugin-lifecycle-types.ts:43`）、`HybridPluginRuntimeSupervisor`、
+`start-authority.ts` 的 instance / grant revision fence、`ingress-wake.ts` 的 broadcast / wake
+双 fence、`manifest-configuration-projection.ts` 的 fail-closed 三规则。**这批地基与载体无关，
+在新模型下全部保留**——它们约束的是**权威**（谁能读 secret、谁能唤醒、谁能删），不是**载体**。
+
+### 8.3 §7.4.5 的重新定位（第 8 / 10 / 11 行不再是"待裁定三选一"）
+
+§7.4.5 把这三行的结局呈为"放宽 B / 带伤落地 / 改判 C2"三选一，并按选项 2 落盘。**该三选一已被
+§8.0 的后到 anchor 取代**：`…-002875-f1e0d445` 明确要求 host 侧在本轮清理旧代码时**一次性补齐
+载体无关的统一生命周期**，条款 7 又禁止留 follow-up。两者合起来的结论是唯一的——
+
+> 第 8 / 10 / 11 行所缺的"宿主消费面"，不再是**为这三行新增的专用 wire**（那才需要放宽 B），
+> 而是**条款 2 那条本来就要建的通用 lifecycle / action / contribution 边界**的自然消费者。
+> 它们在 C1 内完成，不推 C2，不留 follow-up。
+
+§7.4.5 中"本 PR 当前按选项 2 的形状落盘"一句**到此失效**；该节保留为推导记录，结论以本节为准。
+
+**留给对侧精确退回的唯一残留**：条款 7 的"前端 contribution 扩展 = C2"是否覆盖 limb / skill
+两类宿主消费面（第 10 / 11 行）。本计划的判断是**不覆盖**——limb 与 skill 是 agent 侧消费面，
+不是前端 slot / 面板，而 operator 在 `…-002863-501608eb` 里把 C2 描述为"涉及前端的"。若 owner
+thread 或 Plugins 车道不同意，请**精确退回到本段**，不要笼统说"范围有分歧"。
+
+### 8.4 作废项
+
+- **`host.connector.deliver` 窄行作废**：该提案已由 Plugins 车道撤回（对应 worktree 已 revert、
+  未 push）。Core **不实现、不评审**该行 / 其 grant / 其 state 形状。
+- 受此影响，§7.4.5 末段以"connector 上只花掉一个窄方法"为基准做的**量级对比失效**；该比较所服务的
+  三选一本身已由 §8.3 取代。
+
+### 8.5 暂停与解除条件
+
+本 PR 自 `91d9ad9` 起**暂停新增生产实现**（本节为 docs-only 对齐提交）。解除条件是且仅是：
+两条车道的实质确认齐全 + owner thread `thread_mrkmxgdfqquounc9` 明确解除暂停。解除后 #1487 的
+下一步是**按条款 2 / 6 收口 Host 生命周期**，而不是继续在旧分流上补丁。
