@@ -39,7 +39,7 @@ Source-backed facts are cited below; runtime measurements are labeled separately
 | Cross-thread target validation is **existence + principal scope only** — no source→target semantic check | `callback-scope-helpers.ts:92-122` |
 | One tool carries `threadId` + `targetCats` + `action` + `proposedAction` + `localReviewVerdict` + `coordination` + `effectClass` | `cat_cafe_cross_post_message` schema |
 | At the moment a parent/child edge is created, we **inject a raw call template into the child's header** — `` cat_cafe_cross_post_message(threadId: "…", targetCats: […]) `` | `proposal-enrich-header.ts:57-58` |
-| Thread lineage exists (`parentThreadId`, `sourceThreadId`, `getChildThreads()`) but **no delivery path reads it** | `ThreadStore.ts:238-240`, `:834` |
+| Thread lineage exists (`parentThreadId`, `sourceThreadId`, `getChildThreads()`), but **ordinary cross-post target validation does not consult it** | `ThreadStore.ts:238-240`, `:834`; `callback-scope-helpers.ts:92-122` |
 | `ActionSuccessorLease` records one holder thread + `holderCatIds[]` + an optional predecessor endpoint — an **execution / custody edge**, not a relationship graph | `action-successor-state-machine.ts:90-99` |
 | `cross_post_message` **instructs callers** to resolve an owning thread via `feat_index`/`list_threads` and then supply that `threadId` — *"use feat_index/list_threads plus thread truth to verify the exact owning thread; never guess a nearby thread"* — while those discovery tools themselves confer no delivery authority | `packages/mcp-server/src/tools/callback-tools.ts:3390` |
 
@@ -140,7 +140,7 @@ routing error — the actual route is precisely the guess this investigation fou
 
 ## Note on provenance
 
-This RFC went through four revisions and retracted fourteen claims — including its most quotable
+This RFC went through five iterations and retracted fifteen claims — including its most quotable
 line, which turned out to be false, and two object models that were the wrong shape entirely. The
 source-level claims above were independently reviewed; runtime measurements use explicit
 reproducible boundaries. We would rather hand you a smaller claim that holds.
