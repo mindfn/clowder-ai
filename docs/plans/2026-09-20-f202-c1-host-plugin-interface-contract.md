@@ -189,3 +189,32 @@ operator 问它具体是什么：`ConnectorRouter.ts:32-47` 广播
 7 个 connector 包的 contribution 声明总计：`connector` ×14、`identity` ×14、`webhook` ×4，
 **`ui` ×0**。因此 C1 不涉及任何插件改前端 UI 的情形。
 
+## 8. G5（2026-09-20 实现中发现，承重）：猫的回复不在订阅者可见的事件流里
+
+**症状**：按裁定的 outbound 设计，插件订阅 thread 后应收到该 thread 的新消息。
+但今天订阅者**只看得见插件自己发的消息**，看不见猫的回复——**出站因此走不通**。
+
+**取证**：往 messaging 事件日志写入的调用点全仓只有两处，且都属于插件消息域自身：
+
+| 写入点 | 谁触发 |
+|---|---|
+| `domains/messaging/send-service.ts:215` | 插件 `messaging.send` |
+| `domains/messaging/append-output.ts:207` | 插件 `messaging.appendElements` |
+
+而猫的回复走 `messageStore.append`，调用点散在 cats 域：
+`agents/routing/route-serial.ts`、`route-parallel.ts`、`agents/invocation/invoke-single-cat.ts`、
+`PersistedQueueDelivery.ts`、`StartupReconciler.ts`、`agents/providers/CodexAgentService.ts`、
+`duty-briefing/briefing-delivery.ts`……**没有任何一处产生 `message.publish` 事件。**
+
+**这就是为什么今天出站得靠 `OutboundDeliveryHook` 被调用链直接调用**——它不是设计选择，
+是因为猫的消息从来没有进过统一的发布流。
+
+**修法（与本文件第 1 条原则一致）**：所有作者的消息必须进**同一条 admission**。
+不逐个改散落的调用点——那是 N 份实现 N 种错法；
+`IMessageStore.append` 是唯一的汇聚点，在装配处用一个发布装饰器包住它，
+一处接入、全部作者收敛。这同时是 operator "前端也只是 outbound 的一个实现" 的前提：
+前端将来接进订阅面时，看到的必须是同一条流。
+
+**次序**：G5 必须早于删除 `OutboundDeliveryHook` 的 connector 分支——
+否则猫的回复会在两条路都断的窗口里静默消失。
+
