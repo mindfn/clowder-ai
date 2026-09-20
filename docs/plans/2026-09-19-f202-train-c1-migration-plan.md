@@ -385,6 +385,8 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 
 #### 5.2 Stage 2a 出口门
 
+> **状态（本 branch 实测）：已满足。** 8 例全绿 0 错误；实现见 §6 转绿表（缺口 C/A/B 三提交）。
+
 - §6 的 **6 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**（合计 8 例）。
 - wake 必须 **source-derived**（Host 从已验证 provider identity + 已绑定 thread 推出），
   不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
@@ -486,10 +488,31 @@ binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 
 | `packages/api/test/f202-c1-production-composition-activation.test.js` | 7、10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入与 config/secret 投影 |
 | `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免文件重复组装并越过 350 行硬限） |
 
-实测：**6 红 2 绿**（8 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
+**红灯基线（`51d08596a`，实测）：6 红 2 绿**（8 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
 1–4 停在 `send-service.ts:154` 的恒 `mentions: []`，7 停在 `runtime-composition.ts:213` 的协作者缺口，
 10 停在 `supervisor.ts:191-201` 只投影四个协议变量；
 且失败发生在 install → 挣得 config readiness → **写入 enabled 权威状态** → 认证握手**全部成功之后**。
+
+**转绿现状（Stage 2a 已落地）：8 例全绿、0 错误**，两条 GREEN guard 仍绿。实现按缺口拆成三个提交
+（顺序 C → A → B）：
+
+| 缺口 | 提交 | 生产落点 |
+|---|---|---|
+| C | `da0508bbd` | `plugin/manifest-configuration-projection.ts`（新）+ `external-runtime/supervisor.ts` spawn env；composition 默认接 Host 自有 plugin-config store |
+| A | `1cb65492c` | `messaging/ingress-wake.ts`（新）+ `send-service.ts` ingress 分支；`parseMentions` 与 catRegistry pattern 收敛为单一真相源 |
+| B | `9b866e3f0` | `runtime-composition.ts` 转发协作者 + `index.ts` 注入真实 `invokeTrigger`/`threadStore`/`socketManager`/默认猫/mention patterns |
+
+复现（exact HEAD 本地运行，CI serial lane 因 fail-fast 只跑到第一个文件，见 PR 正文 CI provenance）：
+
+```
+node --test packages/api/test/f202-c1-im-cutover-wake-parity.test.js \
+             packages/api/test/f202-c1-production-composition-activation.test.js
+```
+
+**缺口 C 附带的信任边界**（`plugin-external-runtime-config-projection.test.js`，**不属于这 8 例门**）：
+投影一旦存在，manifest 就能命名子进程环境变量，因此三条 fail-closed 规则各有可执行断言——
+`CLOWDER_` 协议命名空间内的声明键拒绝启动（否则包可自称别的插件身份）、无对应 grant 的字段永不投影、
+required 缺值拒绝启动。
 
 **关于"激活"的措辞更正（第六轮 review P2）**：fixture 并不执行 lifecycle activation——
 `lifecycle.enable()` 会拉起 stdio 进程并阻塞在这些用例自己要做的握手上，直接调用会死锁；
@@ -511,14 +534,14 @@ helper 最后一段 transaction 是**直接写入 enabled 权威状态**，随�
 
 | # | 用例 | 现状 | 语义 |
 |---|---|---|---|
-| 1 | 已认证 ingress 含 `@opus` → persist / broadcast / wake **各一次**，目标 = `opus` | **红**（`mentions=[]`，0 broadcast，0 wake） | C1 阻塞：`send-service.ts:154` 对所有 address kind 恒写 `mentions: []`，且 `MessagingDomainDeps` 根本没有 broadcast/wake/thread 协作者 |
-| 2 | 无 mention **且 thread 有活动** → 唤醒**最近活跃参与者** | **红** | `ConnectorRouter.ts:455-463`：先按 `messageCount > 0` 过滤，再按 `lastMessageAt` 取最新。用例里默认猫 `codex` 时间戳更新但从未发言，正确实现必须仍然路由到 `opus` |
-| 3 | 无 mention **且 thread 无活动** → 才回退默认猫 | **红** | 默认猫是**终点**而非唯一分支（`parseMentions(..., defaultCatId)`） |
-| 4 | no-double-run：同 `idempotencyKey` 重放 → 回放同一 receipt 且**不第二次唤醒** | **红** | §4.2 防双跑契约在唤醒维度的可执行表达 |
+| 1 | 已认证 ingress 含 `@opus` → persist / broadcast / wake **各一次**，目标 = `opus` | 基线**红**（`mentions=[]`，0 broadcast，0 wake）→ 现**绿**（缺口 A） | C1 阻塞：`send-service.ts:154` 对所有 address kind 恒写 `mentions: []`，且 `MessagingDomainDeps` 根本没有 broadcast/wake/thread 协作者 |
+| 2 | 无 mention **且 thread 有活动** → 唤醒**最近活跃参与者** | 基线**红** → 现**绿**（缺口 A） | `ConnectorRouter.ts:455-463`：先按 `messageCount > 0` 过滤，再按 `lastMessageAt` 取最新。用例里默认猫 `codex` 时间戳更新但从未发言，正确实现必须仍然路由到 `opus` |
+| 3 | 无 mention **且 thread 无活动** → 才回退默认猫 | 基线**红** → 现**绿**（缺口 A） | 默认猫是**终点**而非唯一分支（`parseMentions(..., defaultCatId)`） |
+| 4 | no-double-run：同 `idempotencyKey` 重放 → 回放同一 receipt 且**不第二次唤醒** | 基线**红** → 现**绿**（缺口 A：settled-replay 提前返回） | §4.2 防双跑契约在唤醒维度的可执行表达 |
 | 5 | GREEN guard：`thread_handle` 插件自述文本含 `@opus`（且 thread 有活跃参与者） → 仍 `mentions=[]`、0 唤醒 | **绿（须保持）** | 围栏：修复不得以破坏 F288 v0 插件声音契约为代价 |
 | 6 | GREEN guard：伪造 external origin → `PERMISSION`，0 persist / 0 broadcast / 0 wake | **绿（须保持）** | 围栏：ingress 权限来自 host-issued binding（D-4），不来自自报 origin |
-| 7 | 生产组装下已认证 ingress → wake ×1 + broadcast ×1 | **红**（观测 0 wake） | 缺口 B：`runtime-composition.ts:213` 以 `{messageStore, redis}` 组装，协作者根本没有入口 |
-| 10 | manifest 声明的 config/secret 投影进外部 stdio runtime，且**精确值**送达 | **红**（实测 spawn env 仅 4 个 `CLOWDER_*`） | 缺口 C：`supervisor.ts:191-201`；builtin 路径已有同款授权校验投影。**第四轮修正**：readiness 现由真实权威 `HostPluginConfigurationService.configure/reconcile` 挣得（不再手翻 `configReadiness`），并断言精确值而非仅 key，避免空值/占位转绿 |
+| 7 | 生产组装下已认证 ingress → wake ×1 + broadcast ×1 | 基线**红**（观测 0 wake）→ 现**绿**（缺口 B） | 缺口 B：`runtime-composition.ts:213` 以 `{messageStore, redis}` 组装，协作者根本没有入口 |
+| 10 | manifest 声明的 config/secret 投影进外部 stdio runtime，且**精确值**送达 | 基线**红**（实测 spawn env 仅 4 个 `CLOWDER_*`）→ 现**绿**（缺口 C） | 缺口 C：`supervisor.ts:191-201`；builtin 路径已有同款授权校验投影。**第四轮修正**：readiness 现由真实权威 `HostPluginConfigurationService.configure/reconcile` 挣得（不再手翻 `configReadiness`），并断言精确值而非仅 key，避免空值/占位转绿 |
 
 **为什么 2 和 3 必须分开**：现网路由是**三段式**（mention → 最近活跃参与者 → 默认猫）。
 只写一条"无 mention 就默认猫"的断言，会让一个只接默认猫的实现转绿，而真实回归——
@@ -540,8 +563,12 @@ durable checkpoint）按定义各要求一条新的 public wire row，因此已�
 
 这道门是 **Stage 2a 的完成门**，也是 Stage 4 第 3 步允许切换默认 IM 路径的前置条件之一
 （另一个是 Stage 3 的往返证明）。红灯本身不依赖任何 Plugins artifact，故先行提交；
-**转绿实现属于 Stage 2a**——在 Stage 2 精确发布之后开始。本门现在**不含任何待签字的公共面变更**，
-因此不再有"签字前不得动工"的阻塞项：8 例全部落在冻结契约内的 Host wiring 上。
+转绿实现同样只动业务无关的 Host 能力，因此按 §5 line 336 的明确例外，**先于** Stage 2 的精确发布落地。
+本门**不含任何待签字的公共面变更**：8 例全部落在冻结契约内的 Host wiring 上。
+
+**Stage 2a 出口门已满足，但它不是 C1 的完成。** 仍未做、且不得跳过的是：Stage 2 精确发布与消费证明、
+Stage 3 `use→restart` 往返、Stage 4 的 mapping / 切默认路径 / no-double-run 证明 / 逐 provider parity
+证据后的删除。**切默认路径与删除仍未开始**，本阶段没有触碰任何 provider 业务逻辑，也没有删除任何东西。
 
 ## 7. disposition 状态
 
