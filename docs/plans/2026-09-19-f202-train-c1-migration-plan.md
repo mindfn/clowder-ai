@@ -1158,6 +1158,38 @@ exact 版本"才是**。Core 侧按本节的推进顺序继续做不依赖该发
 这不违反条款 7：条款 5 本就规定 #54 先于 #1487 合入，Core 消费对侧本轮发布物是**既定依赖序**，
 不是留到下一轮的尾巴。
 
+**二次复核（2026-09-20，对 Plugins `clowder-ai-plugins#54` exact HEAD `d1865f7e3` 一手取证）**
+
+上一条"对 Plugins 车道的精确请求"**在对侧源码里已经全部兑现**，但**发布仍未发生**，所以阻塞性质不变、
+只是不确定性从"形状未知"降到"仅等发布"。逐条取证（`gh api .../contents/...?ref=d1865f7e3`）：
+
+| 请求项 | beta.12 源码 | 坐标 |
+|---|---|---|
+| `PluginModuleEntrypoint` / `definePluginModule` / `activateDefinedFeature` / `ActivePluginFeature` | **四个全部已导出** | `packages/plugin-sdk/src/index.ts` 的 `./feature-context.js` 导出块 |
+| `FeatureContext.logger` | 已有 `Readonly<Record<PluginLogLevel, …>>` | `feature-context.ts:131`（构造在 `:331`） |
+| `FeatureContext.connectors.deliver` | 已有 | `:129`；装配在 `:330` |
+| `FeatureHostAdapter.deliverConnectorMessage` | 已有，经 `runWhileActive` 包裹 | `:71`，实现 `:300-304` |
+| 包版本 | `@clowder-ai/plugin-sdk@0.1.0-beta.12` | `packages/plugin-sdk/package.json` |
+| **npm 上最新已发布** | **仍是 `0.1.0-beta.11`** | `npm view @clowder-ai/plugin-sdk versions` |
+
+**解除条件不变**：按条款 5，Core 钉的是 immutable 制品。#54 仍是 draft，其 `Publish to npm` 为 SKIPPED，
+且该 HEAD 上有一轮 CHANGES_REQUESTED（5 条 blocking）未收口，因此发布不在眼前。
+
+**两条会改变未来实现的新事实**（本次一手读出，上文各表均未记，属对上文的更正）：
+
+1. **`FeatureActivator` 是联合类型，不是"返回 `{actions, dispose}`"。** 实际形状为
+   `(context: FeatureContext) => void | FeatureActivation | Promise<void | FeatureActivation>`
+   （`feature-context.ts:368-370`），且 `FeatureActivation.actions` 本身是 optional（`:363-366`）。
+   上文步 4 更正表里写的"返回 `{ actions, dispose }`"**过窄**。
+   Core 的 action 路由必须同时处理三种返回：`void`、`FeatureActivation` 无 `actions`、以及带 `actions`——
+   **不能假定每个 activator 都交回 action 表**，否则老式（beta.10 形状）activator 一激活就会取到 `undefined`。
+   注意 `ActivePluginFeature.actions`（`:381-384`）是**非** optional 的，所以这层收窄发生在
+   `activateDefinedFeature` 内部，Core 消费其返回值时可以依赖它——但**自己直接调 activator 时不行**。
+
+2. **`requirePluginModuleEntrypoint` 已作为 fail-closed 守卫随包导出**，配套 `PluginModuleEntrypointError`。
+   Core 在 §8.6 步 1 自己实现的结构化鸭子类型判定，在 beta.12 落地后会与之重复；届时应切到 SDK 的守卫，
+   避免两侧对"合法 entrypoint"各判一次。**这不是现在的返工项**，是钉版本那一刻要一起做掉的收口。
+
 **Core 在此期间的推进顺序**（据上表，不等待）：先做不依赖该发布的部分——载体中立的**权威**与
 **生命周期**收口、条款 6 的 package-specific 分支清除、旧执行路径删除；action 路由在对侧发布落地后
 接上。首个落地切片见下。
