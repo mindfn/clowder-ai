@@ -58,7 +58,7 @@ INV-R2 规定"沉默遗漏不等于排除"，因此下表把新发现 entry 显�
 
 | baseline | 冻结树中的发布状态 | Core C1 义务 |
 |---|---|---|
-| `video-analysis` | **已发布** `0.1.0-alpha.1`；catalog 有 `dev.clowder.video-analysis` 行 | **有删除面**：Core 切到 alpha.1 外部包，并删除 `packages/api/src/plugins/` 下的 repository-local duplicate（`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位） |
+| `video-analysis` | **已发布** `0.1.0-alpha.1`；catalog 有 `dev.clowder.video-analysis` 行 | **有删除面，且今天未删**：Core 切到 alpha.1 外部包，并删除 `packages/api/src/plugins/` 下的 repository-local duplicate。`index.ts:5027-5032` 的 `replacesRepositoryPluginId` 策略已在位，**但它只抑制 Plugin Manager 列表、不做运行时替换**（§7.4.0 第 3 条）——repo-local 实现今天完整存在且 toolset 仍注册，故删除是 parity 验收的**前置**而非收尾（§7.4.3 第 6 条） |
 | `personal-chrome-companion` | **未发布**——`packages/personal-chrome-companion/README.md:42`"This package is a review candidate only. It does not publish to npm or the Chrome Web Store"；catalog **无**该行 | **拆成两半**：可外置的 extension / native-host payload 跟随 Plugins 车道，**不在 C1**；Host 侧 installer / pairing / Settings / receipt authority **保留且删除面必须绕开**（§2.2） |
 | `feishu-meeting-intake` | 已有独立 npm/stdio package（roadmap §2.1 记 `next = 0.1.0-alpha.9`）；catalog 无该行 | **无删除面**：既有 package 继续存在，Core 侧保留其 Host wiring，不迁移不删除 |
 
@@ -98,7 +98,7 @@ manifest 根：`packages/api/src/plugins/`（`index.ts:4317` 硬编码）；枚�
 | entry | 资源声明 | 配置/secret | 自有持久数据 | disposition |
 |---|---|---|---|---|
 | `github` | 7 个 schedule | `GITHUB_TOKEN`、`GITHUB_MCP_PAT`、`GITHUB_SETUP_NOISE_BOT_LOGINS` | `schedule:github:*` ×7；`capabilities.json` ownership；迁移标记 `.cat-cafe/f202-phase2-github-schedule-migrated`、`.cat-cafe/f168-github-schedule-backfilled`；Redis `community:repo-comment:cursor:{repo}` | in-scope C1 |
-| `video-analysis` | 1 个 mcp | 5 个 `VIDEO_ANALYSIS_*` | `capabilities.json` + 生成的 CLI MCP config | **既有 external baseline，非 C1 migration row**（alpha.1 已发布，`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位）；**但有 Core 删除面**：切到 alpha.1 外部包并删除本地 duplicate（§2.0 baseline ledger、§5 Stage 4 第 5 步） |
+| `video-analysis` | 1 个 mcp | 5 个 `VIDEO_ANALYSIS_*` | `capabilities.json` + 生成的 CLI MCP config | **既有 external baseline，非 C1 migration row**（alpha.1 已发布，`index.ts:5027-5032` 的 `replacesRepositoryPluginId` 策略已在位——**仅列表抑制，非运行时替换**，见 §7.4.0 第 3 条）；**但有 Core 删除面且今天未删**：切到 alpha.1 外部包并删除本地 duplicate（§2.0 baseline ledger、§5 Stage 4 第 5 步、§7.4.3 第 6 条） |
 | `video-gen` | 1 个 mcp | 7 个 `VIDEO_GEN_*` | 同上 | in-scope C1 |
 | `weixin-mp` | limb + skill | `WEIXIN_MP_APP_ID/APP_SECRET` | `capabilities.json` ×2；skill 挂载副作用（跨项目级联）；限时 access token | in-scope C1 |
 | `wechat-visible-reader` | limb | 无 | 仅内存 arm 授权窗口（无持久化） | in-scope C1 |
@@ -418,6 +418,12 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
    以及 `video-analysis` 的 repository-local duplicate（§2.0 baseline ledger）。
    删除前必须先完成陷阱 3 的 compatibility provider 换源，
    **且每一类删除都必须先过 §5.3 的贡献执行矩阵（新 owner 就位 + 旅程证明）**。
+   **mcp 一类的取证顺序例外**（`video-gen` + `video-analysis` baseline）：Core 没有运行时替换
+   机制——`replacesRepositoryPluginId` 只抑制 Manager 列表（§7.4.0 第 3 条）——所以 duplicate
+   未删时旅程只能证明"两份并存"，证不了"外部包接住了"。该类的门因此读作**"新 owner 就位（包已
+   发布且可安装）→ 删除 repo-local → 在删除后的树上取旅程证明"**，与 co-creator 裁定的两 PR 顺序
+   一致（§7.4.1 第 9 行）。**此例外只对 mcp 一行成立**，不得套用到 connector / schedule / limb /
+   skill / webhook——那五类今天连 owner 都不在位，先删就是净损失。
 6. 保留：通用 Plugin Manager、connector binding、service lifecycle、scheduler、MCP runtime，
    以及 `plugin-access-guards.ts`。
 7. **删除面显式排除项**（扫旧管理面时不得波及，依据 §2.2 / §2.3 / §2.4 裁定）：
@@ -455,7 +461,7 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 | schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：wire registry 无 `schedule.*` 行，host→plugin 也无通用 invoke 行（§7.4.0） | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵；**§7.4.2 已判该行迁移与删除一并后移 C2** |
 | limb | `weixin-mp`、`wechat-visible-reader` | `PluginResourceActivator.ts:170` | **不存在** | weixin-mp 发文；visible-reader arm 授权窗口仍受限 | 新 owner + 旅程绿 |
 | skill | `weixin-mp` | `PluginResourceActivator.ts:331-366`（跨项目级联挂载） | **不存在** | 挂载 + **卸载完整回收**（陷阱 6，不留悬挂 symlink） | 新 owner + 回收证明 |
-| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:462-490`）——**仅对 `runtime.transport === 'builtin'` 的包成立**（`:477`），stdio lane 不适用 | MCP tool 实际可调用 | 已有 owner，按现状过门（§7.4.2 判第 9 行留在 C1） |
+| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:462-490`）——**仅对 `runtime.transport === 'builtin'` 的包成立**（`:477`），stdio lane 不适用 | MCP tool 实际可调用，**且须在已删除 repo-local duplicate 的树上取证**（无运行时替换机制，未删时只证得出"两份并存"，§7.4.0 第 3 条） | 已有 owner，按现状过门（§7.4.2 判第 9 行留在 C1）；**取证顺序例外见 §5 Stage 4 第 5 步** |
 
 **读法**：今天**直接通**的只有 mcp 一行。connector 一行的执行 owner **已经指定**——Host 侧保留既有
 binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 车道的 11 行冻结包承担——
@@ -697,6 +703,16 @@ checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二�
    （`stdio` / `ipc`，`:276-279`）与 `BuiltinRuntimeDeclaration`（`builtin`，`:280-283`）两支。
    所以第 9 行要走通这条 owner，**包必须发成 `transport: 'builtin'`**，与 7 个 IM connector 走的
    stdio + broker wire 是两条不同的 lane，不能互相引证。
+3. **`replacesRepositoryPluginId` 只抑制 Plugin Manager 列表，不做运行时替换。**
+   `resolveRepositoryReplacementPluginIds`（`machine-catalog-provider.ts:136-147`）在 `src` 内的
+   **唯一**消费点是 `loadSuppressedPluginIds`（`index.ts:5056-5066`），而它的唯一消费点是
+   `plugin-manager-compatibility.ts:93-96` 的 `.filter((plugin) => !suppressed.has(plugin.id))`
+   ——即只把 repo-local 条目从 Manager 列表里隐藏。repo-local MCP toolset 的**运行时**注册走的是
+   另一条路：`capabilities.json` 的 capability 条目 → `acp-mcp-resolver.ts:283`
+   （`type === 'mcp' && !disabled && !retired`），**完全不读 suppression**。Core 今天唯一的
+   运行时"退役 capability"机制是 `isRetiredGithubMcpCapability`
+   （`retired-github-mcp.ts:67-72`），判据硬编码 `capability.pluginId?.toLowerCase() === 'github'`,
+   **GitHub 专用，不可复用为通用替换**。
 
 #### 7.4.1 逐行结果
 
@@ -717,9 +733,21 @@ checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二�
 **第 9 行 `video-generation` — 唯一今天可交付的一行。** cutover 用的是 Core **已有且已投产**的
 机制：`pluginManagerHostPolicies`（`index.ts:5027-5032`）今天恰好只有一条
 `{ pluginId: 'dev.clowder.video-analysis', replacesRepositoryPluginId: 'video-analysis', … }`，
-经 `resolveRepositoryReplacementPluginIds`（`machine-catalog-provider.ts:143-144`）让外部包
-影子掉 repo-local id。第 9 行照此加一行即可，**不新增任何 public method / hook / UI slot**，
-符合 §5.2。
+经 `resolveRepositoryReplacementPluginIds`（`machine-catalog-provider.ts:143-144`）把 repo-local
+条目从 Plugin Manager 列表里抑制掉。第 9 行照此加一行即可，**不新增任何 public method / hook /
+UI slot**，符合 §5.2。
+
+**但这条机制只覆盖列表视图，不覆盖运行时（§7.4.0 第 3 条）**，因此第 9 行的删除顺序不是可选的：
+在 repo-local `video-gen` 的 `plugin.yaml` 与 capability 条目仍在时，旧 toolset 照常注册，与外部包
+的 toolset **并存**；suppression 只是让用户在 Manager 里看不见旧的那份。所以**删除是 parity 的
+前置条件，不是收尾动作**——不先删就无从证明"外部包接住了"，只能证明"两份都在"。这与 co-creator
+裁定的两 PR 顺序（core 删代码 → 插件仓补实现发包 → core 在删除后的代码上做安装/卸载与功能验收）
+同向，且为其提供代码级依据：该顺序不是流程偏好，是因为 Core 没有运行时替换机制。
+
+**baseline `video-analysis` 今天正处在这个中间态**（本节执行时一手核实）：host policy 已投产，
+而 `packages/api/src/plugins/video-analysis/` 连同其 `plugin.yaml`（`resources: [{type: mcp,
+name: video-analysis-toolset}]`）**完整存在**。§2.0 把它记为"策略已在位"是把列表抑制读成了
+运行时切换——更正见 §7.4.3 第 6 条。
 
 **第 10 行 `wechat-visible-reader` — 三处硬编码 Host 分支 keyed on repo-local id**
 （全部在 `index.ts`）：
@@ -742,16 +770,17 @@ arm 路由**静默 fail-closed**；`beforePluginDisable` 的 disarm 语义直接
 | # | 处置 | 依据 |
 |---|---|---|
 | 8 | **迁移与删除一并后移 C2** | 需新增 schedule 触发线（新 public wire）→ §3 F-1 硬止损线 + §7.2 第 4 条"判 C2 者迁移与删除一并后移，不得先删后补" |
-| 9 | **留在 C1 并交付**：加 host policy 一行 + 删 repo-local duplicate；门 = 包以 `transport: 'builtin'` 发布 + MCP tool 实际可调用的旅程证明 | 走既有 `replacesRepositoryPluginId` 机制，无新公共面 |
+| 9 | **留在 C1 并交付**：加 host policy 一行 + 删 repo-local duplicate（**删除在前，验收在删除后的树上**）；门 = 包以 `transport: 'builtin'` 发布 + 在已删除 repo-local 实现的 Core 上证明 MCP tool 实际可调用 | 走既有 `replacesRepositoryPluginId` 机制，无新公共面；但该机制只抑制 Manager 列表、不做运行时替换（§7.4.0 第 3 条），故 duplicate 未删时 parity 不可证 |
 | 10 | **迁移与删除一并后移 C2**；另需裁定 Host 侧 arm/disarm 隐私授权权威是否按 `personal-chrome-host` 同例**保留为 Host truth** | 需 limb 宿主消费面（新公共面）；三处 Host 分支见 §7.4.1 |
 | 11 | **迁移与删除一并后移 C2** | 需 limb + skill 两类宿主消费面、混合类型 feature 激活规则、`healthCheck` manifest 字段——三者都是新公共面 |
 
 **对 Stage 4 第 5 步删除面的直接后果**：`github-schedule-factories.ts`、`weixin-mp` 的 limb/skill
 挂载、`wechat-visible-reader` 的 limb 与上述三处 Host 分支，**在 C1 内均不得删除**；只有
-`video-gen` 的 repo-local 实现在其包发布并证明 parity 之后可删。这与 `video-analysis` baseline
-的删除面（§2.0）形状相同，可同批执行。
+`video-gen` 的 repo-local 实现可删——且按 §7.4.1 第 9 行，**删除必须先于 parity 验收**，不是"证明
+parity 之后再删"。这与 `video-analysis` baseline 的删除面（§2.0）形状相同，可同批执行；两者今天
+都**尚未删除**，所以是同一批待收尾面，而不是"照着一个已完成的先例做"。
 
-#### 7.4.3 对 §5.3 / §7.2 的更正与影响
+#### 7.4.3 对 §5.3 / §7.2 / §2.0 的更正与影响
 
 1. **更正 §5.3 schedule 行**："contract 有 `schedule.register` wire，但 Core 未注册 handler"
    → 应为"**wire registry 无 `schedule.*` 行**；`schedule.register` 仅是 `L1_CAPABILITIES`
@@ -765,3 +794,39 @@ arm 路由**静默 fail-closed**；`beforePluginDisable` 的 disarm 语义直接
    与本节四行的阻塞原因不同源，两边的结论不可互相套用。
 5. **C1 第 8–11 行的实际交付面因此收敛为一行**（第 9 行）。这不是范围缩水，而是把"删了没人接住"
    的三行按既定规则挡在门外；§5.3 的删除门本来就写着"没接住就不准删"。
+6. **更正 §2.0 baseline ledger 与 §2.2 的 `video-analysis` 行**（本节执行时发现，方向与第 5 条
+   相反——这两处不是把 C1 说小了，是把第 9 行的既有机制说强了）。两处原写
+   "`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位"，暗示运行时切换已就绪、Core 只差
+   删文件。一手事实是：该策略**只抑制 Plugin Manager 列表**，运行时 toolset 仍由
+   `capabilities.json` 驱动（§7.4.0 第 3 条），且 `video-analysis` 的 repo-local 实现今天
+   **完整存在**。故更正为"策略已在位（仅列表抑制）；运行时 duplicate 未删，parity 未证"，
+   并同步坐标 `index.ts:5011` → `index.ts:5027-5032`（冻结基线后已漂移）。
+   **对删除门的影响**：§5.3 "没接住就不准删"在第 9 行这一类上不能反推成"证明接住了再删"——
+   Core 无运行时替换机制时，不删就无从证明接住，只能证明两份并存。故第 9 行的门读作
+   **"删除在前，在删除后的树上验收 parity"**（§7.4.2）。
+
+#### 7.4.4 取证深度教训（本节第 6 条是**自查**所得，不是外部退回）
+
+§7.3 的偏差记录结尾写着"这两次都由外部裁定纠回，不是我自查出来的"。本节第 6 条是第三次更正，
+性质与前两次都不同，记下来以免后来者误以为所有更正都得靠外部。
+
+| | 前两次（§7.3） | 本次（§7.4.3 第 6 条） |
+|---|---|---|
+| 错在哪 | **范围**判断：C1/C2 边界 | **机制强度**判断：既有机制能到哪 |
+| 方向 | 过度扩张 → 过度后移（把 C1 说小了） | 把既有机制说强了（把 C1 说容易了） |
+| 纠回路径 | 外部裁定 | 自查（追消费链） |
+
+**共同根因仍是同一个，只是换了表面**：前两次是"用自己的推导替代回读一手裁定"，本次是
+**停在"机制存在"而没追到"消费链终点"**——两者都是**取证深度不足**。我看到
+`pluginManagerHostPolicies` 里确有 `replacesRepositoryPluginId: 'video-analysis'`，就据此写下
+"已有且已投产的机制"；实际要追三跳才见底：`resolveRepositoryReplacementPluginIds`
+→ 唯一消费点 `loadSuppressedPluginIds`（`index.ts:5056-5066`）
+→ 唯一消费点 `plugin-manager-compatibility.ts:93-96` 的列表 `.filter()`。第三跳才暴露它**只管
+列表不管运行时**。
+
+**流程沉淀（与 §7.3 末尾那条并列，同样适用于本计划的后续修改）**：
+凡在计划中写下"走既有机制 / 已有 owner / 策略已在位"，**必须把该机制的消费链追到终点消费者
+并记录坐标**，不得只记机制的定义点或注册点。判据是可证伪的一句话：
+**"这个机制被谁读？读了之后改变了什么可观察行为？"**——答不上来就不算"已有 owner"。
+本节对 `video-analysis` baseline 的重新核实（repo-local 目录与 `plugin.yaml` 今天完整存在）
+就是这条判据的直接产物。
