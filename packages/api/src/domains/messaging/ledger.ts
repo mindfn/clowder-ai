@@ -3,8 +3,11 @@
  *
  * Key spaces (instance-scoped; reinstalled instances get fresh instanceIds so
  * old key spaces are never reused):
- *   send   = (pluginInstanceId, idempotencyKey)
- *   append = (pluginInstanceId, messageId, operationId)
+ *   send    = (pluginInstanceId, idempotencyKey)
+ *   append  = (pluginInstanceId, messageId, operationId)
+ *   ingress = (pluginInstanceId, idempotencyKey) — the Host-side effects of one authenticated
+ *             connector ingress (broadcast + wake), fenced separately from `send` because they
+ *             are not undone by releasing the send claim.
  * Segments are URI-encoded before joining so ':' inside ids cannot forge a
  * foreign key space.
  *
@@ -15,6 +18,12 @@
 
 import type { AppendReceipt, SendReceipt } from '@clowder-ai/plugin-contract';
 import type { LedgerStore, SettleResult } from './stores/ports.js';
+
+/** What an ingress fence records: which message the Host already delivered effects for. */
+export interface IngressDeliveryReceipt {
+  readonly messageId: string;
+  readonly catId: string;
+}
 
 export const LEDGER_CLAIM_TTL_MS = 60_000;
 export const LEDGER_RETENTION_MS = 7 * 24 * 3600 * 1000;
@@ -45,6 +54,10 @@ export class MessagingLedger {
 
   private static appendKey(instanceId: string, messageId: string, operationId: string): string {
     return key(['append', instanceId, messageId, operationId]);
+  }
+
+  private static ingressKey(instanceId: string, idempotencyKey: string): string {
+    return key(['ingress', instanceId, idempotencyKey]);
   }
 
   async claimSend(instanceId: string, idempotencyKey: string): Promise<TypedClaim<SendReceipt>> {
@@ -96,5 +109,31 @@ export class MessagingLedger {
 
   async releaseAppend(instanceId: string, messageId: string, operationId: string, claimToken: string): Promise<void> {
     await this.store.release(MessagingLedger.appendKey(instanceId, messageId, operationId), claimToken);
+  }
+
+  /**
+   * Fences the Host-side effects of one authenticated ingress. The send claim cannot do this job:
+   * releasing it is how a failed attempt hands the work back, but a broadcast already on the wire
+   * and a cat already woken do not come back with it.
+   */
+  async claimIngressDelivery(instanceId: string, idempotencyKey: string): Promise<TypedClaim<IngressDeliveryReceipt>> {
+    return (await this.store.claim(
+      MessagingLedger.ingressKey(instanceId, idempotencyKey),
+      this.claimTtlMs,
+    )) as TypedClaim<IngressDeliveryReceipt>;
+  }
+
+  async settleIngressDelivery(
+    instanceId: string,
+    idempotencyKey: string,
+    claimToken: string,
+    receipt: IngressDeliveryReceipt,
+  ): Promise<SettleResult> {
+    return this.store.settle(
+      MessagingLedger.ingressKey(instanceId, idempotencyKey),
+      claimToken,
+      receipt,
+      this.retentionMs,
+    );
   }
 }

@@ -28,8 +28,21 @@ import { validateDraft } from './contract/validate.js';
 import { projectEnvelope, readPluginMessageExtra, renderElementsText } from './envelope.js';
 import type { HandleService } from './handles.js';
 import { broadcastIngress, deriveIngressTarget, type MessagingIngressWakeDeps } from './ingress-wake.js';
+
 import type { MessagingLedger } from './ledger.js';
 import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
+
+/**
+ * One authenticated connector ingress after the Host has resolved whose wake it carries. Derived
+ * once per send so the delivery step cannot re-derive a different target than the one persisted
+ * into `mentions`.
+ */
+interface ResolvedIngress {
+  readonly deps: MessagingIngressWakeDeps;
+  readonly binding: { readonly connectorId: string; readonly externalChatId: string };
+  readonly catId: CatId;
+}
+
 import { clampRetention } from './stores/ports.js';
 
 export interface SendServiceDeps {
@@ -234,22 +247,30 @@ export class SendService {
         }
       }
 
-      // Deliver the ingress BEFORE settling. Settlement is this domain's record that the whole
-      // ingress ran, so a failure here releases the claim and the retry re-executes (D-3) —
-      // persist converges on the same message id and the publish dedupes on its deterministic
-      // event key. Waking after settle would instead lose the wake permanently, because the
-      // retry returns the settled receipt without re-deriving anything. Case 4's at-most-once
-      // comes from the settled-replay early return at the top of send().
+      // The ingress effects carry their own durable fence, claimed and settled BEFORE they run.
+      // The send claim cannot fence them: releasing it is how a failed attempt hands the work
+      // back, but a broadcast already on the wire and a cat already woken do not come back with
+      // it. Persist converges on one message id and publish dedupes on its deterministic event
+      // key; broadcast and wake had neither, so a settlement failure let the retry wake the same
+      // cat a second time (sixth-round review P1, case 7).
+      //
+      // The fence settles first on purpose. Cases 4 and 7 pin at-most-once, and the two failure
+      // modes are not symmetric: a duplicated wake spends a whole agent turn again and can emit
+      // real external side effects, while losing the race in the other direction — a crash in the
+      // window between the fence and the broadcast — drops one wake that the next inbound message
+      // recovers. Exactly-once across a non-transactional boundary is not on offer; this picks
+      // the recoverable side.
       if (ingress) {
-        broadcastIngress(ingress.deps, {
+        await this.deliverIngressOnce({
+          instanceId: ctx.pluginInstanceId,
+          idempotencyKey: draft.idempotencyKey,
           threadId: handle.threadId,
+          userId: handle.userId,
           messageId: stored.id,
           content,
-          connectorId: ingress.binding.connectorId,
-          externalChatId: ingress.binding.externalChatId,
           timestamp,
+          ingress,
         });
-        await ingress.deps.invokeTrigger.trigger(handle.threadId, ingress.catId, handle.userId, content, stored.id);
       }
 
       const receipt: SendReceipt = {
@@ -275,5 +296,46 @@ export class SendService {
       await this.deps.ledger.releaseSend(ctx.pluginInstanceId, draft.idempotencyKey, claim.claimToken);
       throw err;
     }
+  }
+
+  /**
+   * Runs the Host-side effects of one authenticated ingress at most once across every attempt at
+   * the same idempotency key. See the call site for why the send claim cannot fence these and why
+   * the fence settles before the effects rather than after.
+   */
+  private async deliverIngressOnce(input: {
+    instanceId: string;
+    idempotencyKey: string;
+    threadId: string;
+    userId: string;
+    messageId: string;
+    content: string;
+    timestamp: number;
+    ingress: ResolvedIngress;
+  }): Promise<void> {
+    const delivery = await this.deps.ledger.claimIngressDelivery(input.instanceId, input.idempotencyKey);
+    // 'settled' — a previous attempt already delivered. 'inflight' — a concurrent attempt owns the
+    // effects. Either way this attempt must not repeat them.
+    if (delivery.status !== 'new') return;
+    const { ingress } = input;
+    await this.deps.ledger.settleIngressDelivery(input.instanceId, input.idempotencyKey, delivery.claimToken, {
+      messageId: input.messageId,
+      catId: ingress.catId,
+    });
+    broadcastIngress(ingress.deps, {
+      threadId: input.threadId,
+      messageId: input.messageId,
+      content: input.content,
+      connectorId: ingress.binding.connectorId,
+      externalChatId: ingress.binding.externalChatId,
+      timestamp: input.timestamp,
+    });
+    await ingress.deps.invokeTrigger.trigger(
+      input.threadId,
+      ingress.catId,
+      input.userId,
+      input.content,
+      input.messageId,
+    );
   }
 }

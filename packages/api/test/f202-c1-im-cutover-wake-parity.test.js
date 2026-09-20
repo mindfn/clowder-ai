@@ -199,6 +199,49 @@ describe('F202 C1 Core cutover gate — IM ingress wake parity at the Host bound
     assert.equal(broadcasts.length, 1, 'a replayed ingress send must not re-broadcast');
   });
 
+  /**
+   * Sixth-round review P1. Case 4 only replays a send whose settlement already succeeded, which
+   * the settled-receipt early return answers on its own. The window that actually threatens
+   * at-most-once is the other one: the ingress effects ran, then settlement failed, so the catch
+   * released the claim and the retry re-entered a send that had already woken a cat. Before the
+   * fence this produced wakes=2 and broadcasts=2 for one stored message.
+   */
+  test('4b/RED — a settlement failure must not let the retry wake the cat a second time', async () => {
+    const handleId = await issueIngressHandle();
+    const ledgerMod = await import('../dist/domains/messaging/ledger.js');
+    const settleSend = ledgerMod.MessagingLedger.prototype.settleSend;
+    let injected = false;
+
+    ledgerMod.MessagingLedger.prototype.settleSend = async function injectOnce(...args) {
+      if (!injected) {
+        injected = true;
+        throw new Error('injected settlement failure');
+      }
+      return settleSend.apply(this, args);
+    };
+
+    let receipt;
+    try {
+      await assert.rejects(
+        service.send(CTX, ingressDraft(handleId, '@opus hello', 'k-settle-window')),
+        /injected settlement failure/,
+        'the first attempt must surface the settlement failure rather than swallow it',
+      );
+      receipt = await service.send(CTX, ingressDraft(handleId, '@opus hello', 'k-settle-window'));
+    } finally {
+      ledgerMod.MessagingLedger.prototype.settleSend = settleSend;
+    }
+
+    assert.equal(wakes.length, 1, 'a retry after a failed settlement must not wake the cat again');
+    assert.equal(broadcasts.length, 1, 'a retry after a failed settlement must not re-broadcast');
+    assert.equal(wakes[0]?.catId, 'opus', 'the one wake that did happen still targets the derived cat');
+    assert.equal(
+      wakes[0]?.messageId,
+      receipt.messageId,
+      'the delivered wake must carry the same message id the retry converged on',
+    );
+  });
+
   test('5/GREEN guard — a plain thread_handle plugin send still neither parses @ nor wakes (F288 v0)', async () => {
     participants = [{ catId: 'opus', lastMessageAt: 2_000, messageCount: 3 }];
     const { handleId } = await service.issueThreadHandle({
