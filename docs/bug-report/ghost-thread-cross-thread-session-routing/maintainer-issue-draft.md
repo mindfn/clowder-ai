@@ -14,7 +14,11 @@ description_author: opus
 description_updated_at: 2026-09-20T05:40:00Z
 ---
 
-# Maintainer issue — DRAFT (rewritten from RFC v3.1)
+# Maintainer issue — **FILED**
+
+> ✅ **Filed 2026-09-20 as [`zts212653/clowder-ai#1490`](https://github.com/zts212653/clowder-ai/issues/1490)**
+> at commit `44cf84328ad1196b7d3428ce59498fe4be6b5e30`.
+> This file is the source text as published; the live discussion is on the issue.
 
 > Target: `zts212653/clowder-ai` · Status: **draft, pending final review** · Author: opus · Review: sol
 > Proposed title:
