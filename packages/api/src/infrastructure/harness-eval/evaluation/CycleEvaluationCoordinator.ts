@@ -1,9 +1,15 @@
 import type { CatId, CycleEvaluationSubmission, CycleRecord, CycleTracePage } from '@cat-cafe/shared';
+import { cycleAcceptsEvaluationWriteback } from '@cat-cafe/shared';
 import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 import type { DeliverOpts, ScheduleInvokeTrigger } from '../../scheduler/types.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { buildCycleAssignment, formatCycleAssignment, MAX_CYCLE_ASSIGNMENT_BYTES } from './CycleEvaluationContent.js';
+import {
+  CycleEvaluationDelivery,
+  cycleEvaluationThreadId,
+  resolveCycleWakeReceipt,
+} from './CycleEvaluationDelivery.js';
 import { CycleEvaluationEvidence } from './CycleEvaluationEvidence.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
@@ -19,13 +25,15 @@ export interface CycleEvaluationPrincipal {
 export class CycleEvaluationCoordinator {
   private readonly now: () => number;
   private readonly evidence: CycleEvaluationEvidence;
+  private readonly delivery: CycleEvaluationDelivery;
   private writtenHandler?: (record: CycleRecord) => void | Promise<void>;
 
   constructor(
     private readonly deps: {
       runtime: ObjectiveEvaluationRuntime;
       threadStore: IThreadStore;
-      messageStore: Pick<IMessageStore, 'getByIds'>;
+      /** `getById` reads a wake's durable Queue custody: the only source of its delivery receipt. */
+      messageStore: Pick<IMessageStore, 'getByIds' | 'getById'>;
       deliver: (input: DeliverOpts) => Promise<string>;
       getInvokeTrigger: () => ScheduleInvokeTrigger | null;
       getDefaultCatId: () => CatId;
@@ -35,6 +43,7 @@ export class CycleEvaluationCoordinator {
   ) {
     this.now = deps.now ?? Date.now;
     this.evidence = new CycleEvaluationEvidence(deps.runtime, deps.messageStore);
+    this.delivery = new CycleEvaluationDelivery(deps);
     deps.runtime.cycleChecker.setRequestedHandler((record) => {
       void this.ensureAssignment(record).catch((error) =>
         this.deps.log?.warn({ err: error, cycleId: record.cycleId }, '[F257] cycle assignment delivery failed'),
@@ -43,7 +52,7 @@ export class CycleEvaluationCoordinator {
   }
 
   static threadIdFor(objectiveId: string): string {
-    return `thread_eval_f257_${objectiveId}`;
+    return cycleEvaluationThreadId(objectiveId);
   }
 
   setWrittenHandler(handler: (record: CycleRecord) => void | Promise<void>): void {
@@ -64,14 +73,17 @@ export class CycleEvaluationCoordinator {
     );
     const content = formatCycleAssignment(record, assignment);
     if (Buffer.byteLength(content) > MAX_CYCLE_ASSIGNMENT_BYTES) throw new Error('cycle_assignment_exceeds_limit');
-    const messageId = await this.deliverAndWake(record, thread.threadId, thread.catId, content, 'assignment');
+    const messageId = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'assignment');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
+    // A caller holding a stale record arrives after the assignment was recorded: it changes nothing.
+    if (current.assignedAt !== undefined) return;
     await this.deps.runtime.cycles.transition(current, {
       ...current,
       assignmentThreadId: thread.threadId,
       assignmentMessageId: messageId,
       assignedAt: this.now(),
+      pendingWakeMessageId: messageId,
     });
   }
 
@@ -94,9 +106,16 @@ export class CycleEvaluationCoordinator {
   private async reconcileCycle(ownerUserId: string, objectiveId: string, now: number): Promise<void> {
     let record = await this.deps.runtime.cycles.current(ownerUserId, objectiveId);
     if (!record) return;
-    if (record.evalStatus === 'requested') {
-      if (record.assignedAt === undefined) await this.ensureAssignment(record);
+    if (record.evalStatus !== 'requested' && record.evalStatus !== 'retriggered') return;
+    if (record.evalStatus === 'requested' && record.assignedAt === undefined) {
+      await this.ensureAssignment(record);
       record = (await this.deps.runtime.cycles.current(ownerUserId, objectiveId)) ?? record;
+    }
+    if (record.pendingWakeMessageId !== undefined) {
+      await this.settlePendingWake(record, now);
+      return;
+    }
+    if (record.evalStatus === 'requested') {
       if (
         record.evalStatus === 'requested' &&
         record.assignedAt !== undefined &&
@@ -132,7 +151,10 @@ export class CycleEvaluationCoordinator {
       }
       throw new Error(`cycle_evaluation_conflict:${record.cycleId}`);
     }
-    if (record.evalStatus !== 'requested' && record.evalStatus !== 'retriggered') {
+    // A closed record without an evaluation was terminated by an operator
+    // version transition; its cycleId still resolves from history, but the
+    // evaluation it never received cannot land on the successor cycle.
+    if (record.closedAt !== undefined || !cycleAcceptsEvaluationWriteback(record.evalStatus)) {
       throw new Error(`cycle_evaluation_not_active:${record.cycleId}`);
     }
     await this.evidence.validateSubmission(record, input);
@@ -144,16 +166,19 @@ export class CycleEvaluationCoordinator {
       writtenAt: this.now(),
       by: principal.catId,
     };
+    // A writeback settles the cycle whichever wake produced it; a retrigger
+    // that is still queued has nothing left to time.
+    const { pendingWakeMessageId: _settledWake, ...settled } = record;
     if (input.overall === 'insufficient_evidence') {
-      const completed = { ...record, evalStatus: 'written' as const, evaluation, closedAt: evaluation.writtenAt };
+      const completed = { ...settled, evalStatus: 'written' as const, evaluation, closedAt: evaluation.writtenAt };
       const next = await this.deps.runtime.cycles.advance(record, completed, {
         version: record.version,
         versionContentRef: record.versionContentRef,
       });
       if (next)
         return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written', nextCycleId: next.cycleId };
-    } else if (await this.deps.runtime.cycles.transition(record, { ...record, evalStatus: 'written', evaluation })) {
-      await this.notifyWritten({ ...record, evalStatus: 'written', evaluation });
+    } else if (await this.deps.runtime.cycles.transition(record, { ...settled, evalStatus: 'written', evaluation })) {
+      await this.notifyWritten({ ...settled, evalStatus: 'written', evaluation });
       return { outcome: 'written', cycleId: record.cycleId, evalStatus: 'written' };
     }
     const stored =
@@ -174,7 +199,7 @@ export class CycleEvaluationCoordinator {
       `Cycle \`${record.cycleId}\` has no structured evaluation writeback after 30 minutes.`,
       'Read the assignment above and call cat_cafe_submit_cycle_evaluation. This is the only automatic retry.',
     ].join('\n');
-    const messageId = await this.deliverAndWake(record, thread.threadId, thread.catId, content, 'retrigger');
+    const messageId = await this.delivery.deliverWake(record, thread.threadId, thread.catId, content, 'retrigger');
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
     if (!current || current.cycleId !== record.cycleId || current.evalStatus !== 'requested') return;
     await this.deps.runtime.cycles.transition(current, {
@@ -182,7 +207,29 @@ export class CycleEvaluationCoordinator {
       evalStatus: 'retriggered',
       retriggerMessageId: messageId,
       retriggeredAt: now,
+      pendingWakeMessageId: messageId,
     });
+  }
+
+  /**
+   * A sent wake has given the evaluator no time until its delivery receipt
+   * exists, so nothing advances while the receipt is pending. The phase window
+   * then starts at the receipt's own time — the same value whichever process
+   * observes it, however late. A wake that can never be delivered starts the
+   * bounded retry clock now instead of freezing the cycle. The CAS keeps either
+   * from overwriting a writeback that landed meanwhile.
+   */
+  private async settlePendingWake(record: CycleRecord, now: number): Promise<void> {
+    const messageId = record.pendingWakeMessageId;
+    if (messageId === undefined) return;
+    const receipt = resolveCycleWakeReceipt(await this.deps.messageStore.getById(messageId));
+    if (receipt.state === 'pending') return;
+    const startedAt = receipt.state === 'delivered' ? receipt.deliveredAt : now;
+    const { pendingWakeMessageId: _settled, ...rest } = record;
+    await this.deps.runtime.cycles.transition(
+      record,
+      record.evalStatus === 'requested' ? { ...rest, assignedAt: startedAt } : { ...rest, retriggeredAt: startedAt },
+    );
   }
 
   private async stall(record: CycleRecord, now: number): Promise<void> {
@@ -195,7 +242,7 @@ export class CycleEvaluationCoordinator {
     const messageId = await this.deps.deliver({
       threadId: alertThreadId,
       userId: record.ownerUserId,
-      idempotencyKey: this.idempotencyKey(record, 'stalled'),
+      idempotencyKey: this.delivery.idempotencyKey(record, 'stalled'),
       content: [
         '## F257 Cycle Evaluation Stalled',
         '',
@@ -203,6 +250,8 @@ export class CycleEvaluationCoordinator {
         `Cycle: \`${record.cycleId}\``,
         `Evaluation thread: \`${CycleEvaluationCoordinator.threadIdFor(record.objectiveId)}\``,
         'The one bounded retrigger also received no structured writeback. Automatic retries have stopped.',
+        'A late writeback is still accepted: continue in the evaluation thread (read the pool, submit the evaluation).',
+        'Or an operator can end this cycle by switching or creating a segment version; the next cycle starts there.',
       ].join('\n'),
     });
     const current = await this.deps.runtime.cycles.current(record.ownerUserId, record.objectiveId);
@@ -215,28 +264,8 @@ export class CycleEvaluationCoordinator {
     });
   }
 
-  async ensureObjectiveThread(objectiveId: string, ownerUserId: string): Promise<{ threadId: string; catId: CatId }> {
-    const objective = this.deps.runtime.catalog.registry.objectives.find((item) => item.id === objectiveId);
-    if (!objective) throw new Error(`cycle_objective_not_found:${objectiveId}`);
-    if (objective.lifecycle === 'retired') throw new Error(`cycle_objective_retired:${objectiveId}`);
-    const threadId = CycleEvaluationCoordinator.threadIdFor(objectiveId);
-    await ensureEvalDomainThreads(
-      this.deps.threadStore,
-      [
-        {
-          domainId: `f257:${objectiveId}`,
-          systemThreadId: threadId,
-          displayName: `Harness Objective · ${objective.label}`,
-        },
-      ],
-      ownerUserId,
-    );
-    const existing = await this.deps.threadStore.get(threadId);
-    if (!existing) throw new Error(`cycle_evaluation_thread_missing:${threadId}`);
-    const catId = existing.preferredCats?.[0] ?? this.deps.getDefaultCatId();
-    if (!existing.preferredCats?.length) await this.deps.threadStore.updatePreferredCats(threadId, [catId]);
-    await this.deps.threadStore.addParticipants(threadId, [catId]);
-    return { threadId, catId };
+  ensureObjectiveThread(objectiveId: string, ownerUserId: string): Promise<{ threadId: string; catId: CatId }> {
+    return this.delivery.ensureObjectiveThread(objectiveId, ownerUserId);
   }
 
   async deliverAndWake(
@@ -246,43 +275,7 @@ export class CycleEvaluationCoordinator {
     content: string,
     kind: string,
   ): Promise<string> {
-    const messageId = await this.deps.deliver({
-      threadId,
-      userId: record.ownerUserId,
-      content,
-      idempotencyKey: this.idempotencyKey(record, kind),
-    });
-    const trigger = this.deps.getInvokeTrigger();
-    if (!trigger) throw new Error('cycle_invoke_trigger_unavailable');
-    const outcome = await trigger.trigger(
-      threadId,
-      catId,
-      record.ownerUserId,
-      `F257 cycle ${kind}: ${record.cycleId}`,
-      messageId,
-      undefined,
-      // A cycle wake is a scheduler fire, and turn custody classifies wakes by
-      // this declaration alone. Leaving it unsaid does not read as "scheduled
-      // with no extras" — resolveQueueTurnCustodyWake falls past every branch to
-      // `legacy/carrier_missing`, which opens as `unknown_legacy`. That state
-      // carries no baseline, so the F167 stop gate blocks the turn unconditionally
-      // and no transition the evaluator can make will ever clear it: the exact
-      // terminals the remedial prompt offers (`complete_a2a_dispatch`,
-      // `complete_managed_hold`, an action-successor lease) all need a carrier a
-      // cron fire structurally lacks. Every other scheduled producer states this.
-      { sourceCategory: 'scheduled', reason: `F257 cycle ${kind}` },
-    );
-    if (outcome === 'full') throw new Error('cycle_invocation_queue_full');
-    return messageId;
-  }
-
-  private idempotencyKey(record: CycleRecord, kind: string): string {
-    // Reject deliberately re-evaluates the same frozen window under the same
-    // cycleId. The rejection count is therefore the delivery generation: it
-    // deduplicates retries within one attempt without hiding the next
-    // assignment (and its operator-provided rejection reason).
-    const generation = record.approval?.rejectCount ?? 0;
-    return `f257-cycle:${record.ownerUserId}:${record.cycleId}:${kind}:g${generation}`;
+    return this.delivery.deliverWake(record, threadId, catId, content, kind);
   }
 
   private async notifyWritten(record: CycleRecord): Promise<void> {
@@ -303,9 +296,7 @@ export class CycleEvaluationCoordinator {
     if (principal.threadId !== threadId) throw new Error(`cycle_evaluation_principal_mismatch:${cycleId}`);
     const record = await this.deps.runtime.cycles.current(principal.userId, objectiveId);
     if (!record || record.cycleId !== cycleId) throw new Error(`cycle_evaluation_not_found:${cycleId}`);
-    if (record.evalStatus !== 'requested' && record.evalStatus !== 'retriggered') {
-      throw new Error(`cycle_evaluation_not_active:${cycleId}`);
-    }
+    if (!cycleAcceptsEvaluationWriteback(record.evalStatus)) throw new Error(`cycle_evaluation_not_active:${cycleId}`);
     return record;
   }
 

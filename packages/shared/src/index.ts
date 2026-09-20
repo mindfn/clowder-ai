@@ -68,6 +68,7 @@ export * from './types/index.js';
 // F287 bounded opportunity/cue contract (kept explicit for API/MCP consumers).
 export * from './types/memory-cue.js';
 // F257 Console: segment enablement matrix (pure logic, safe for frontend).
+export * from './utils/cycle-evaluation-status.js';
 export * from './utils/segment-enablement.js';
 // Export subject key utilities (#320)
 export * from './utils/subject-key.js';
