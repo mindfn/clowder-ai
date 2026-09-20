@@ -11,7 +11,7 @@ import type { PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { RuntimeState } from '../host-inventory/types.js';
 import type { PluginRuntimeAdmission } from '../runtime-carrier.js';
 import { NodeExternalPluginProcessAdapter } from './node-process-adapter.js';
-import { verifyExternalPackage } from './package-authority.js';
+import { verifyPackageEntrypoint } from './package-entrypoint-authority.js';
 import { deferred, type RuntimeExecution } from './runtime-execution.js';
 import { closeRuntimeExecutionResources } from './runtime-execution-cleanup.js';
 import {
@@ -163,7 +163,7 @@ export class ExternalPluginRuntimeSupervisor {
     }
     const located = await this.options.packages.resolveInstalledPackage(authority.instance.packageDigest);
     execution.locatedPackage = located;
-    const verified = await verifyExternalPackage(authority.packageRecord, located);
+    const verified = await verifyPackageEntrypoint(authority.packageRecord, located);
     await setRuntimeState(this.projection, execution, 'starting');
     execution.projected = true;
     await located.verifyIntegrity();

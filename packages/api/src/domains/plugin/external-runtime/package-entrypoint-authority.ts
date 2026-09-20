@@ -22,7 +22,20 @@ async function rejectSymlinkComponents(rootDir: string, entrypoint: string): Pro
   }
 }
 
-export async function verifyExternalPackage(
+/**
+ * Resolve the module a package declares, against the manifest the Host admitted.
+ *
+ * Carrier-neutral by construction (F202 Train C1 clause 1): every carrier that runs
+ * package-supplied code — a child process speaking the broker protocol, or a module
+ * loaded inside the Host — resolves its entrypoint here. Which transports a carrier
+ * runs is that carrier's own claim, asserted before it reaches this function; restating
+ * it here would put a carrier branch back inside the shared authority.
+ *
+ * It sits under `external-runtime/` because that directory already holds the Host's
+ * shared package vocabulary (`VerifiedPluginPackage`, `ExternalPluginRuntimeError`).
+ * The directory name predates carrier neutrality; renaming it is its own change.
+ */
+export async function verifyPackageEntrypoint(
   packageRecord: PluginPackageRecord,
   located: VerifiedPluginPackage,
 ): Promise<{ readonly rootDir: string; readonly entrypoint: string }> {
@@ -32,10 +45,11 @@ export async function verifyExternalPackage(
       'located package manifest differs from the admitted package record',
     );
   }
-  if (packageRecord.manifest.runtime.transport !== 'stdio') {
+  const declared = packageRecord.manifest.runtime.entrypoint;
+  if (declared === undefined) {
     throw new ExternalPluginRuntimeError(
-      'UNSUPPORTED_TRANSPORT',
-      `runtime transport ${packageRecord.manifest.runtime.transport} is not executable by the stdio Host`,
+      'INVALID_ENTRYPOINT',
+      `${packageRecord.pluginId} declares no runtime entrypoint to load`,
     );
   }
   const rootDir = resolve(located.rootDir);
@@ -50,7 +64,6 @@ export async function verifyExternalPackage(
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new ExternalPluginRuntimeError('INVALID_PACKAGE_ROOT', 'plugin package root must be a real directory');
   }
-  const declared = packageRecord.manifest.runtime.entrypoint;
   if (isAbsolute(declared)) {
     throw new ExternalPluginRuntimeError('INVALID_ENTRYPOINT', 'plugin entrypoint must be package-relative');
   }

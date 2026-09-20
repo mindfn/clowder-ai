@@ -15,6 +15,7 @@ import {
   CollectiveConnectorBuiltinRuntime,
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
+import { ModulePluginRuntime } from './builtin-runtime/module-plugin-runtime.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
@@ -254,6 +255,9 @@ export function createDormantPluginRuntimeComposition(
       runtimes: [
         ...(collectiveConnectorRuntime ? [collectiveConnectorRuntime] : []),
         ...(contentEditors ? [contentEditors] : []),
+        // Last: the runtimes above implement one package the Host itself carries, so
+        // their narrower claims win. This one claims whatever declares a module to load.
+        new ModulePluginRuntime({ packages }),
       ],
       ...(options.now === undefined ? {} : { now: options.now }),
     }),

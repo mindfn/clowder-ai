@@ -1244,9 +1244,66 @@ owner 的诊断**。记录用已有的 `UNEXPECTED_RUNTIME_FAILURE`，`exitCode`
 > 文件行数：`bundled-runtime-carrier.ts` 由 175 → 207 行，越过 200 行**警戒线**（硬上限 350）。
 > 该类是一个内聚的载体实现，为凑 200 行拆开只会制造认知脚手架，故不拆，在此显式标注而不是藏着。
 
-**剩余（不属本切片）**：条款 1+2 的 in-process 模块载体本身 —— `runtime.entrypoint` 默认导出 →
-`create()` → 逐 feature 激活。§8.8 上表的步 1/2/5 现在可以直接挂到 `BundledPluginRuntimeCarrier`
-旁边作为第四个 carrier；步 3（action 表）与步 4（`FeatureContext` 形状）仍等 #54 发布。
+**已落地 4（本次提交）**：in-process 模块载体 —— §8.6 的步 1 与步 2 真正落地，步 5 只落**接缝**。
+
+先纠正本节上一版自己写的落点。上一版说"步 1/2/5 挂到 `BundledPluginRuntimeCarrier` **旁边**作为
+第四个 carrier"。读完 carrier 代码后这个落点是错的，已改：
+
+| | 上一版判断 | 本次实际做法 | 为什么改 |
+|---|---|---|---|
+| 落点 | 第四个 `PluginRuntimeCarrier` | 第四个**载体内 runtime**，挂在既有 in-process carrier 下 | 新开 carrier 要把 authority fence、`lifecycleRevision` fence、`#active` 槽、starting/healthy/stopped 状态机、late-cancel、失败记录**再抄一遍**——今天已有两份（bundled carrier + external supervisor），抄成三份正是条款 1 要消除的那种载体形状重复，也正是 §8.9 警告的"复制到第三处" |
+
+`builtin` 因此收敛成 §8.6 说的那**一个**语义"Host 进程内模块载体"，其下两类 runtime 来源：
+Host 自带的（collective connector / content editor，manifest **无** entrypoint）与**包自带的模块**
+（manifest **有** entrypoint）。两者 claim 互斥，且 Host 自带的注册在前、claim 更窄。
+
+**顺带修掉一条条款 1 泄漏（本次的前置）**：入口点权威 `verifyExternalPackage` 里硬编码了
+`transport !== 'stdio'` 即拒——一条**载体特定**分支长在**共享**权威里。它同时还是**不可达**的：
+唯一调用者 `external-runtime/supervisor.ts:166` 之前，`:158` 已先拒掉所有非 stdio。故删除该分支
+对既有调用者**行为不变**（`plugin-external-runtime-package.test.js:124` 仍绿，且是靠 `:158` 绿的），
+函数改名 `verifyPackageEntrypoint`，两个载体**共用同一份**入口点权威（manifest 一致性、包含性、
+symlink、regular file、realpath、integrity），Core 里不存在第二条入口点解析路径。
+
+| §8.6 步 | 本次结果 | 诚实边界 |
+|---|---|---|
+| 1 取默认导出并断言 `create` | **真落地** | 结构化鸭子类型；已发布 SDK 无 `PluginModuleEntrypoint`，故钉形状不钉类型，待发布后一处收窄 |
+| 2 Host 认定的 manifest 传进 `create()` | **真落地** | carrier 把它**已 fence 的** `packageRecord` 交给 runtime（`BundledPluginRuntime.start` 增加该入参），runtime 不自己回读 inventory |
+| 5 四条路径都调到 dispose | **只落接缝** | stop / disable / uninstall / 启动失败回卷四条路径**确实**都到达 runtime 的同一个拆卸点，且拆卸后重启会重新 `create()`；但**SDK 级 dispose 今天拿不到**——它要么来自步 3 的 `activateDefinedFeature`，要么来自步 4 的 `FeatureContextSession.revoke`，两者都被发布序阻塞。本次**不**声称步 5 完成 |
+
+测试 `test/f202-c1-module-carrier.test.js` 8 例，**磁盘上的真模块 + 真 `import()`**，不用录制替身。
+
+**这 8 例逐条做了反证**（改坏生产代码，看它是否真红；还原后 8/8 绿，`plugin-*` + `f202-*` 全量
+781 例 780 通过 / 1 skipped / 0 失败）：
+
+| 反证 | 打红 |
+|---|---|
+| `create()` 不传 Host 的 manifest | 步 2 那条 |
+| 去掉 `create` 存在性断言 | 畸形包那条 |
+| 绕开共享入口点权威（路径解析仍正确） | manifest 漂移 + 入口点逃逸两条，**且只有这两条** |
+| 启动失败路径不 release | 启动失败回卷那条 |
+| `stop` 不清实例槽 | 四条拆卸路径那条 |
+| `stop` 不 release | 四条拆卸路径那条 |
+
+**取证过程中抓到一条自己写的假绿，已修**：最初"入口点逃逸"用例把 entrypoint 指向 `../outside.js`
+（一个不存在的文件），于是"被权威拒绝"与"import 自己失败"两种原因**无法区分**；更糟的是这台机器
+`$TMPDIR` 下**恰好存在** `outside.js`，绕开权威的变异因此没被打红。改法：逃逸目标改成一个**真实存在、
+完全合法**的邻居包模块——那样唯一能拒绝它的就只剩包含性检查，变异随即打红。
+
+**今天在生产里是惰性的**：官方 catalog 中唯一的 `builtin` manifest（collective connector）**没有**
+entrypoint，新 runtime 的 claim 不会命中它；要命中需要有包声明 `builtin` + entrypoint，今天没有。
+即本次不改变任何现有包的执行路径。
+
+**登记两条债，不藏**：
+1. `package-entrypoint-authority.ts` 仍放在 `external-runtime/` 目录下——该目录早已同时存放共享词汇
+   （`VerifiedPluginPackage`、`ExternalPluginRuntimeError`）与载体特定实现，目录名先于载体中立存在。
+   本次不改目录名（那是独立一刀）；放在此处也使 `domains/plugin/` 根目录文件数不增（目录大小闸的
+   error 阈值是 25，根目录当前正好在线上）。
+2. `BundledPluginRuntime` 这个接口名此刻已不准确——它现在既承载 Host 自带 runtime，也承载包自带模块。
+   改名 `InProcessPluginRuntime` 是纯机械重命名，留给本车道下一刀，不塞进本切片。
+
+**剩余（不属本切片）**：步 3（`activateDefinedFeature` → action 表）与步 4（`FeatureContext` 形状）
+仍等 #54 发布；两者落地前，模块被 `create()` 出来但**不会被激活**，所以本次也不构成条款 2 的
+**行为性**收口（见本节「对上面"结论"一行的收窄」）。
 
 ### 8.9 投递内核依赖（2026-09-20 operator 口径纠正，**C1 实现约束**）
 

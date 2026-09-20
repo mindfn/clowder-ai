@@ -15,7 +15,12 @@ import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../runtime-ca
  */
 export interface BundledPluginRuntime {
   claims(packageRecord: Pick<PluginPackageRecord, 'manifest'>): boolean;
-  start(pluginInstanceId: string): Promise<void>;
+  /**
+   * The carrier hands over the package record it fenced, so a runtime that needs the
+   * manifest reads the Host's admitted truth instead of re-deriving one that could have
+   * drifted since the fence (F202 Train C1 migration plan §8.6 step 2).
+   */
+  start(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
 }
 
@@ -77,7 +82,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     try {
       await this.setBundledRuntimeState(authority, 'starting');
       try {
-        await runtime.start(pluginInstanceId);
+        await runtime.start(pluginInstanceId, authority.packageRecord);
       } catch (error) {
         packageFailed = true;
         throw error;
