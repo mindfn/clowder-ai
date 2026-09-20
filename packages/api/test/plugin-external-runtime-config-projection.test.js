@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { HostPluginConfigurationService } from '../dist/domains/plugin/manager/plugin-manager-configuration.js';
+import { projectManifestConfigurationEnv } from '../dist/domains/plugin/manifest-configuration-projection.js';
 import { productionComposition } from './f202-c1-production-composition-helpers.js';
 import {
   EXTERNAL_PACKAGE_DIGEST,
@@ -37,7 +38,10 @@ import {
  * configuration authority, then writes the enabled authority state directly — `lifecycle.enable`
  * blocks on a handshake the fixture process never completes.
  */
-async function fixture(configuration, { grants = ['events.publish', 'secret.read'], store = true } = {}) {
+async function fixture(
+  configuration,
+  { grants = ['events.publish', 'secret.read'], store = true, onVerifyIntegrity } = {},
+) {
   const projectRoot = await mkdtemp(resolve(tmpdir(), 'f202-c1-projection-guard-'));
   await mkdir(resolve(projectRoot, 'dist'), { recursive: true });
   await writeFile(resolve(projectRoot, 'dist/plugin.js'), '// fixture entrypoint\n', 'utf8');
@@ -52,9 +56,21 @@ async function fixture(configuration, { grants = ['events.publish', 'secret.read
     configuration,
   };
   const processes = new FakePluginProcessAdapter();
+  /**
+   * `verifyIntegrity` is the last Host step before the configuration projection and the spawn, so
+   * it is the exact seam a revoke-during-start race has to enter through.
+   */
+  const started = {};
   const packages = {
     async resolveInstalledPackage() {
-      return { rootDir: projectRoot, manifest, verifyIntegrity: async () => undefined, release: async () => undefined };
+      return {
+        rootDir: projectRoot,
+        manifest,
+        verifyIntegrity: async () => {
+          if (onVerifyIntegrity) await onVerifyIntegrity(started);
+        },
+        release: async () => undefined,
+      };
     },
   };
   const { runtime } = await productionComposition(projectRoot, { processes, packages });
@@ -93,6 +109,8 @@ async function fixture(configuration, { grants = ['events.publish', 'secret.read
       updatedAt: 5_001,
     });
   });
+  started.runtime = runtime;
+  started.pluginInstanceId = installed.pluginInstanceId;
   return { runtime, processes, pluginInstanceId: installed.pluginInstanceId };
 }
 
@@ -168,5 +186,101 @@ describe('F202 C1 gap C — stdio config projection trust boundary', () => {
 
     await runtime.shutdown('test');
     await starting;
+  });
+
+  /**
+   * Sixth-round review P1. Rule 2 (skip an ungranted field) ran before rule 3 (a required field
+   * must fail closed), so a required secret whose grant the instance does not hold disappeared
+   * silently and the child started blind. Missing authority is not the same as an absent optional
+   * value: the first must refuse, the second must still be omitted (the case above this one).
+   */
+  test('a required field whose grant the instance does not hold refuses to start', async () => {
+    const { runtime, processes, pluginInstanceId } = await fixture(
+      [{ key: 'FEISHU_APP_SECRET', label: 'Feishu app secret', kind: 'secret', required: true }],
+      { grants: ['events.publish'] },
+    );
+
+    const { refusal, spec, starting } = await startOutcome(runtime, pluginInstanceId, processes);
+
+    assert.equal(spec, undefined, 'a required authority the instance cannot read must never reach a spawn');
+    assert.match(
+      String(refusal?.message ?? refusal),
+      /FEISHU_APP_SECRET/,
+      'the refusal must name the required field whose grant is missing',
+    );
+
+    await runtime.shutdown('test');
+    await starting;
+  });
+
+  /**
+   * Sixth-round review P1. `startOwned()` snapshots the grant record once, then crosses package
+   * resolution, integrity verification and the configuration read before spawning. A revoke landing
+   * inside that window used to still hand the revoked secret to the child, because nothing
+   * re-validated `grantRevision` before process authority received the environment.
+   */
+  test('a grant revoked inside the start window refuses before the child receives the secret', async () => {
+    const { runtime, processes, pluginInstanceId } = await fixture(
+      [{ key: 'FEISHU_APP_SECRET', label: 'Feishu app secret', kind: 'secret', required: true }],
+      {
+        async onVerifyIntegrity(started) {
+          const snapshot = await started.runtime.inventoryStore.snapshot();
+          const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === started.pluginInstanceId);
+          await started.runtime.inventory.revokeGrant({
+            pluginInstanceId: started.pluginInstanceId,
+            capability: 'secret.read',
+            expectedGrantRevision: grants.grantRevision,
+          });
+        },
+      },
+    );
+
+    const { refusal, spec, starting } = await startOutcome(runtime, pluginInstanceId, processes);
+
+    assert.equal(spec, undefined, 'a revoked secret must never reach process authority');
+    assert.notEqual(refusal, undefined, 'the supervisor must refuse once the authority it read has changed');
+
+    await runtime.shutdown('test');
+    await starting;
+  });
+
+  /**
+   * Sixth-round review P1, at the level that decides it. A Host with no configuration port used to
+   * return an empty environment before the manifest was consulted at all, so a package declaring a
+   * required secret started blind. The composition always supplies a port, which is exactly why
+   * this contract has to be pinned on the projector rather than only through the supervisor.
+   */
+  test('an unreadable configuration port still refuses a required field', async () => {
+    const unreadable = { readConfig: async () => undefined, readSecret: async () => undefined };
+    const manifest = {
+      ...externalManifest(),
+      configuration: [{ key: 'FEISHU_APP_SECRET', label: 'Feishu app secret', kind: 'secret', required: true }],
+    };
+
+    await assert.rejects(
+      projectManifestConfigurationEnv({
+        pluginInstanceId: 'inst-unreadable',
+        manifest,
+        effectiveGrants: ['secret.read'],
+        configuration: unreadable,
+      }),
+      /FEISHU_APP_SECRET/,
+      'a required field must refuse when nothing can read its value',
+    );
+
+    const optional = {
+      ...externalManifest(),
+      configuration: [{ key: 'FEISHU_APP_SECRET', label: 'Feishu app secret', kind: 'secret', required: false }],
+    };
+    assert.deepEqual(
+      await projectManifestConfigurationEnv({
+        pluginInstanceId: 'inst-unreadable',
+        manifest: optional,
+        effectiveGrants: ['secret.read'],
+        configuration: unreadable,
+      }),
+      {},
+      'an optional field with nothing to read is still omitted, not a refusal',
+    );
   });
 });

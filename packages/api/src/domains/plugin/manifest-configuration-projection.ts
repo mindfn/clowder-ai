@@ -13,10 +13,15 @@
  *     manifest field landing there would let a package restate its own Host-issued identity, so
  *     a declared key inside that namespace refuses the projection instead of being overridden.
  *  2. A field is projected only if the instance actually holds the grant its kind requires —
- *     `secret.read` for secrets, `plugin.config.read` otherwise. An ungranted field is skipped,
- *     never read into the child, even when a value is stored.
+ *     `secret.read` for secrets, `plugin.config.read` otherwise. An ungranted field is never read
+ *     into the child, even when a value is stored.
  *  3. A required field with no effective value refuses the projection: a provider that cannot
  *     authenticate must fail closed rather than start blind.
+ *
+ * Rule 2 does not short-circuit rule 3 (sixth-round review P1). Missing *authority* and an absent
+ * *optional* value are different outcomes for a required field: skipping an ungranted required
+ * field would start the child blind, which is precisely what rule 3 exists to prevent. So an
+ * ungranted field is omitted only when it is optional, and refuses when it is required.
  */
 
 import type { ConfigurationField, PluginManifest } from '@clowder-ai/plugin-contract';
@@ -32,16 +37,28 @@ export interface PluginRuntimeConfigurationPort {
 
 export type ManifestConfigurationProjectionFailure =
   | { readonly reason: 'protocol_namespace'; readonly key: string }
-  | { readonly reason: 'value_unavailable'; readonly key: string; readonly kind: ConfigurationField['kind'] };
+  | { readonly reason: 'value_unavailable'; readonly key: string; readonly kind: ConfigurationField['kind'] }
+  | {
+      readonly reason: 'grant_unavailable';
+      readonly key: string;
+      readonly kind: ConfigurationField['kind'];
+      readonly grant: string;
+    };
 
 export class ManifestConfigurationProjectionError extends Error {
   constructor(readonly failure: ManifestConfigurationProjectionFailure) {
-    super(
-      failure.reason === 'protocol_namespace'
-        ? `configuration key ${failure.key} is inside the ${HOST_PROTOCOL_ENV_PREFIX} protocol namespace and cannot be projected`
-        : `required ${failure.kind} ${failure.key} is unavailable`,
-    );
+    super(ManifestConfigurationProjectionError.describe(failure));
     this.name = 'ManifestConfigurationProjectionError';
+  }
+
+  private static describe(failure: ManifestConfigurationProjectionFailure): string {
+    if (failure.reason === 'protocol_namespace') {
+      return `configuration key ${failure.key} is inside the ${HOST_PROTOCOL_ENV_PREFIX} protocol namespace and cannot be projected`;
+    }
+    if (failure.reason === 'grant_unavailable') {
+      return `required ${failure.kind} ${failure.key} needs the ${failure.grant} grant this instance does not hold`;
+    }
+    return `required ${failure.kind} ${failure.key} is unavailable`;
   }
 }
 
@@ -72,7 +89,20 @@ export async function projectManifestConfigurationEnv(
     if (field.key.startsWith(HOST_PROTOCOL_ENV_PREFIX)) {
       throw new ManifestConfigurationProjectionError({ reason: 'protocol_namespace', key: field.key });
     }
-    if (!grants.has(requiredGrant(field))) continue;
+    const grant = requiredGrant(field);
+    if (!grants.has(grant)) {
+      // Rule 3 outranks rule 2 for a required field: a provider that cannot read its own
+      // mandatory authority must refuse, not start without it.
+      if (field.required) {
+        throw new ManifestConfigurationProjectionError({
+          reason: 'grant_unavailable',
+          key: field.key,
+          kind: field.kind,
+          grant,
+        });
+      }
+      continue;
+    }
 
     const stored =
       field.kind === 'secret'

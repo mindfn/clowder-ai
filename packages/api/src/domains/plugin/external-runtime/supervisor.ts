@@ -16,9 +16,20 @@ import type {
 } from '../host-inventory/types.js';
 import {
   ManifestConfigurationProjectionError,
+  type PluginRuntimeConfigurationPort,
   projectManifestConfigurationEnv,
 } from '../manifest-configuration-projection.js';
 import { NodeExternalPluginProcessAdapter } from './node-process-adapter.js';
+
+/**
+ * A Host that offers no configuration port can read no stored value. Expressing that as a port
+ * rather than an early return keeps one authority over "may this child start" — the projector.
+ */
+const UNREADABLE_CONFIGURATION: PluginRuntimeConfigurationPort = {
+  readConfig: async () => undefined,
+  readSecret: async () => undefined,
+};
+
 import { verifyExternalPackage } from './package-authority.js';
 import { projectRuntimeCrash } from './runtime-crash-projection.js';
 import { closeRuntimeExecutionResources } from './runtime-execution-cleanup.js';
@@ -204,6 +215,12 @@ export class ExternalPluginRuntimeSupervisor {
     // the CLOWDER_ namespace is refused outright, so a package can never restate its own
     // Host-issued identity by shadowing one of them.
     const declaredEnv = await this.projectConfiguration(authority);
+    // The authority above was read before package resolution, integrity verification and the
+    // configuration read. A revoke landing in that window is legal for this instance, so the
+    // values resolved from the old snapshot must not reach a child without revalidation
+    // (sixth-round review P1) — same fence the builtin contribution supervisor applies at
+    // manager/builtin-contribution-supervisor.ts:595-616.
+    await this.assertAuthorityUnchanged(authority, 'starting');
     execution.process = await this.processes.spawn({
       command: process.execPath,
       args: [verified.entrypoint],
@@ -280,9 +297,13 @@ export class ExternalPluginRuntimeSupervisor {
   }
 
   private async projectConfiguration(authority: RunnableAuthority): Promise<Readonly<Record<string, string>>> {
-    const configuration = this.options.configuration;
     const declared = authority.packageRecord.manifest.configuration ?? [];
-    if (!configuration || declared.length === 0) return {};
+    if (declared.length === 0) return {};
+    // An absent configuration port is *no readable value*, not *no declared requirement*
+    // (sixth-round review P1). Returning {} here used to start a child whose manifest declared a
+    // required secret, so the absent port is expressed as a port that reads nothing and the
+    // projector's own fail-closed rule decides the outcome.
+    const configuration = this.options.configuration ?? UNREADABLE_CONFIGURATION;
     try {
       return await projectManifestConfigurationEnv({
         pluginInstanceId: authority.instance.pluginInstanceId,
@@ -295,6 +316,32 @@ export class ExternalPluginRuntimeSupervisor {
         throw new ExternalPluginRuntimeError('CONFIG_UNAVAILABLE', error.message, { cause: error });
       }
       throw error;
+    }
+  }
+
+  /**
+   * Re-reads the inventory and refuses when anything the start decision depended on has moved.
+   * Mirrors the builtin supervisor's fence so the two runtimes cannot drift on what "the authority
+   * I read is still mine" means.
+   */
+  private async assertAuthorityUnchanged(authority: RunnableAuthority, runtimeState: RuntimeState): Promise<void> {
+    const snapshot = await this.options.inventory.snapshot();
+    const pluginInstanceId = authority.instance.pluginInstanceId;
+    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
+    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
+    if (
+      !instance ||
+      instance.lifecycleState !== 'installed' ||
+      instance.packageDigest !== authority.instance.packageDigest ||
+      instance.activationState !== 'enabled' ||
+      instance.configReadiness !== 'ready' ||
+      instance.runtimeState !== runtimeState ||
+      grants?.grantRevision !== authority.grants?.grantRevision
+    ) {
+      throw new ExternalPluginRuntimeError(
+        'INSTANCE_NOT_RUNNABLE',
+        `${pluginInstanceId} authority changed during start`,
+      );
     }
   }
 
