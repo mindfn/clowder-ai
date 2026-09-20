@@ -640,12 +640,13 @@ Header 和 Sidebar 松紧不同**是设计意图**（spacious vs default），�
 ## Phase H: Activity Rail 入口收敛（2026-09-18）
 
 > Source: `thread_mu5cf8fpujtesgzn#0001789638449393-000639-09e31777` +
-> `thread_mu5cf8fpujtesgzn#0001789700666600-000982-df932f7e`（operator）。
+> `thread_mu5cf8fpujtesgzn#0001789700666600-000982-df932f7e` +
+> `thread_mu5cf8fpujtesgzn#0001789870249927-002117-9835e459`（operator）。
 
 Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留 **对话 / 主题 / 设置**；只有用户从 Settings
 主动固定的分区可以排在对话之后。正在进行的演示浮窗允许出现临时召回控制，但不属于默认入口。
 
-- 安装包通过 `window.desktopBridge` 识别；首次启动只播种一次 `members` 与 `accounts` pins。
+- 源码版与安装包首次启动都通过现有持久化 pin 机制播种一次 `members` 与 `accounts`，不把两项写死为不可取消的常驻入口。
 - 一次播种后以持久化用户选择为准：用户取消固定后，后续启动不得重新添加。
 - 常驻对话与 pinned Settings shortcut 共用 rail 的 `gap-1.5`，中间不放 divider 或额外 margin。
 - Collective 与猫猫星球在能力未完整前不暴露产品入口；route 保留供开发与既有 deep link 使用。
@@ -666,7 +667,7 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 ### Phase H Acceptance Criteria
 
 - [x] 默认 web rail 只渲染对话、主题、设置。
-- [x] packaged desktop 首次启动固定成员与运行时、账户与密钥；取消后重新挂载不恢复。
+- [x] 源码版与安装包首次启动都固定成员与运行时、账户与密钥；取消后重新挂载不恢复。
 - [x] pinned shortcut 紧邻对话且无分隔线。
 - [x] Collective 与猫猫星球不出现在 Activity Rail。
 - [x] 记忆、Mission Hub、信号分别作为 Settings 二级项可达；不增加聚合“功能入口”中间层。
