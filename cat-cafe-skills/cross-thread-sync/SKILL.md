@@ -171,15 +171,71 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 
 **§15 家规**：BLOCKING 信息不能只留在 cross-post 消息里，必须同时写入可追溯状态（feature doc / workflow / task），至少包含 `subjectRef / terminalPredicate / slaUntil / custody owner`。
 
-## Ghost Thread Bug 保守规则
+## 误投风险：**显影在调用方，根因在寻址模型**
 
-**已知 Bug (P2, OPEN)**：cross-post 后 session continuation 可能绑错 thread（见 `docs/bug-report/ghost-thread-cross-thread-session-routing/`）。
+**2026-09-19 裁决（`docs/bug-report/ghost-thread-cross-thread-session-routing/`）**：
+"cross-post 后 session continuation 绑错 thread" 这条旧 P2 断言 **已证伪** ——
+全量语料实跑（三轮，最近一轮 7,787 条因果边 / 666 个带 A2A 触发的 session）里
+**未声明的跨线程 continuation 为 0**、**唤醒绑定错配为 0**。
+服务端把消息投到了你**要求**的那条 thread，一条不多一条不少。
 
-在此 bug 修复前：
+真实风险在你这一侧：`cross_post_message` 只校验 thread 存在 + 属于同一 principal scope，
+**不校验 source→target 的语义关联**。你给一个存在的 threadId，它就投进去。
 
-- cross-post 只用于**单次通知**，不做来回对话
-- 不做自动 hook 广播（避免路由 bug 扩大为系统噪音）
-- 如果发现自己收到了不属于自己 thread 的 mention → 停下来报告
+已确认的 6 个事件**不是同一种错**，别当成一类记（分型见 bug-report §2）：
+
+| 分型 | 次数 | 长什么样 |
+|------|------|---------|
+| 选错 target thread | 2（I-1 / I-2a） | 要投给"F167 的 owner thread"，而那条 thread 根本不存在 → 猜了一个 |
+| 平行实例定位错误 | 1（I-3） | 要投给"我的平行实例"，选错了 thread；正确答案就在源 thread 的 `parentThreadId` 里 |
+| **本不该再发** | 1（I-2b） | 同一个 turn 已经就地正确回复了，又多发一条跨线程 |
+| **工具选择错误** | 1（I-5） | 该在本 thread 直接发，却用了跨 thread |
+| 汇报目的地过载（不是误投，是噪声） | 1（I-4） | 一条执行线把主线程当默认汇报口 |
+
+**共同点不是"选错 id"，是全部**显影**在调用方填的 `threadId` 上——没有一次是服务端绑错。**
+所以下面的自检要逐条过，不能只检查"id 对不对"。
+
+> ⚠️ **别把"显影在调用方"读成"错在调用方"。** `threadId` 是这条链路上**唯一可写的字段**，
+> 所以任何错误都只能在那里显影——这跟"所有车祸都发生在方向盘上"是同一类陈述。
+>
+> 结构事实（2026-09-20 复核代码 + 跨猫复审）——**按路径分，不是一刀切**：
+>
+> | 路径 | 当前约束 |
+> |---|---|
+> | **普通 cross-post**（你大多数时候走的）| 仅存在性 + principal scope——**没有任何语义校验** |
+> | task/implement 首次交接 | 已用 `task.threadId` 校验 |
+> | PR/review 首次交接 | freshness 不返回 thread，校验静默空转 |
+> | local review 终态返回 | 已强制回 predecessor thread |
+>
+> 所以：**你手写 `threadId` 的那条路径，今天确实没人替你兵。**
+>
+> ⚠️ 不要再往下推：系统里**没有**一张现成的"参与图"可供校验。
+> `ActionSuccessorLease` 只有 holder + predecessor，是**一条执行边**，不是稳定参与集合。
+> 该怎么重建寻址模型仍在设计中（`docs/architecture/cross-thread-protocol.md`，**draft，未定案**）。
+>
+> ⇒ 下面这些自检是**结构缺口的代偿纪律，不是根因修复**。它们今天必须照做（结构杠杆还没接上），
+> 但别因为"规则已经写了"就认为问题已解决——规则存在且被反复违反，正是 F167 Case E1 的既有结论。
+> 根因与修复路径见 `docs/bug-report/ghost-thread-cross-thread-session-routing/` §3.2 R-1 更正 + §4.1。
+
+因此：
+
+- **别用"服务端 ghost thread bug"给自己的误投归因。** 那条路已经关了。
+- 投递前必须能说出**你是怎么解析出这个 threadId 的**：feature doc / thread 标题与上下文 /
+  standing custody 至少一项。"最近见过这个 id"不是解析路径。
+- **先查本 thread 自己的血缘，再谈"猜"。** 找"我的平行实例 / 相关 thread"时，
+  `cat_cafe_get_thread_metadata` 能拿到本 thread 的 `parentThreadId`——同父 / 父子关系是
+  **服务端已记录的事实**，不是推断。I-3 那次误投里，operator 指出的正确目标
+  （`thread_mrdip0u5aw4ysi97`）**正是源 thread 自己的 `parentThreadId`**：答案当时就在库里，
+  猫却去猜了一个最近见过的 id。查一次的成本远低于误投。
+  **反过来不成立**：没有血缘边**不等于**不该投——Core↔Plugins 这类正常的跨 feature 协作
+  本来就没有血缘边。血缘是**线索**，不是合法 target 的 allowlist。
+- **查不到 verified owner thread → `propose_thread`（F128），不要猜一个近似 thread。**
+  I-1/I-2a 两次误投的根源都是"F167 压根没有 owner thread"，而猫选择了猜。
+- **被唤醒后"只需阅读知悉"时，就不要再发跨线程消息。** I-2b 是同一个 turn 在已经就地
+  正确回复之后，又多发了一条跨线程——不是选错 target，是**本不该再发**。
+- 收到跨线程消息、发现它不属于本 thread → **立刻停止，不要基于它继续二次协调**。
+  实测两次（2026-07-27、2026-09-19）误投后的被唤醒猫都立刻把内容再投给了第三条无关 thread。
+- cross-post 只用于**单次通知**，不做来回对话；不做自动 hook 广播。
 
 ## 常见误区
 

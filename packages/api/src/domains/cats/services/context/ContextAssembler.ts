@@ -6,7 +6,7 @@
  * formatMessage() 也被 export route 复用 (聊天记录导出)。
  */
 
-import { catRegistry, isCrossThreadProvenance } from '@cat-cafe/shared';
+import { catRegistry, isCrossThreadProvenance, shortThreadRef } from '@cat-cafe/shared';
 import { estimateTokens } from '../../../../utils/token-counter.js';
 import { formatPromptTime } from '../format-time.js';
 import { isDelivered, type StoredMessage } from '../stores/ports/MessageStore.js';
@@ -134,8 +134,13 @@ export function formatMessage(
   const sender = msg.source ? getSourceDisplayName(msg.source) : getSenderName(msg.catId);
   // F52: Annotate cross-thread messages with source thread
   const sourceThreadId = msg.extra?.crossPost?.sourceThreadId;
+  // shortThreadRef (not a raw slice): every threadId starts with the constant `thread_`
+  // prefix, so slicing the raw id collapsed every source thread to the same tag and left
+  // the receiving cat unable to tell provenance apart. Shared with the web bubble so a cat
+  // and a human read the SAME short ref.
+  // Bug-report: docs/bug-report/ghost-thread-cross-thread-session-routing/ (R-3).
   const crossPostTag = isCrossThreadProvenance(sourceThreadId, msg.threadId)
-    ? ` ← from thread:${sourceThreadId.slice(0, 8)}`
+    ? ` ← from thread:${shortThreadRef(sourceThreadId)}`
     : '';
 
   // #699: Inline reply-to preview — saves agents a get_message tool call.

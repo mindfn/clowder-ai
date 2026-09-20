@@ -451,6 +451,56 @@ describe('F052: cross-thread source annotation', () => {
     assert.ok(!result.includes('← from thread:'), 'same-thread metadata must not claim cross-thread provenance');
   });
 
+  // Ghost-thread incident 2026-09-19 (bug-report: cross-thread-misdelivery-and-ghost-thread).
+  // Real thread ids are `thread_<mongo-ish id>`; truncating the RAW id to 8 chars yields the
+  // constant prefix "thread_m" for every thread, so the receiving cat cannot tell two source
+  // threads apart — or tell a misdelivered cross-post from a native one. The web bubble
+  // (parse-direction.ts) already strips the `thread_` prefix before truncating; the prompt path
+  // must produce the SAME discriminating short ref (P4 single source of truth).
+  test('formatMessage source annotation discriminates real-shaped thread ids', async () => {
+    const { formatMessage } = await import('../dist/domains/cats/services/context/ContextAssembler.js');
+    const render = (sourceThreadId) =>
+      formatMessage(
+        mockMsg({
+          threadId: 'thread_msr51149hym0i79f',
+          catId: 'codex',
+          content: 'cross-thread body',
+          extra: { crossPost: { sourceThreadId } },
+        }),
+      );
+
+    const a = render('thread_mrkmxgdfqquounc9');
+    const b = render('thread_mu8dg6h7l2x4ohsk');
+    const tagOf = (line) => line.match(/← from thread:(\S+)\]/)?.[1];
+
+    assert.ok(tagOf(a), `expected a source-thread tag, got: ${a}`);
+    assert.notStrictEqual(
+      tagOf(a),
+      tagOf(b),
+      `two different source threads must not collapse to the same tag (got "${tagOf(a)}" for both)`,
+    );
+    assert.ok(!tagOf(a).startsWith('thread_'), `tag must drop the constant "thread_" prefix, got "${tagOf(a)}"`);
+  });
+
+  test('formatMessage source annotation matches the web bubble short ref', async () => {
+    const { formatMessage } = await import('../dist/domains/cats/services/context/ContextAssembler.js');
+    const sourceThreadId = 'thread_mrkmxgdfqquounc9';
+    const result = formatMessage(
+      mockMsg({
+        threadId: 'thread_msr51149hym0i79f',
+        catId: 'codex',
+        content: 'cross-thread body',
+        extra: { crossPost: { sourceThreadId } },
+      }),
+    );
+    // Same derivation as packages/web/src/lib/parse-direction.ts
+    const webShortId = sourceThreadId.replace(/^thread_/, '').slice(0, 8);
+    assert.ok(
+      result.includes(`← from thread:${webShortId}`),
+      `prompt tag must equal the web short ref "${webShortId}", got: ${result}`,
+    );
+  });
+
   test('formatMessage handles crossPost without sourceThreadId gracefully', async () => {
     const { formatMessage } = await import('../dist/domains/cats/services/context/ContextAssembler.js');
     const msg = mockMsg({
