@@ -111,3 +111,23 @@ test('claimed carrier is recognized as already processing without another progre
   assert.deepEqual(result, { state: 'already_processing', entryId: admitted.entryId });
   assert.equal(progressed, false);
 });
+
+test('a producer that states no provenance fails closed as unknown, never strict', async () => {
+  const f = fixture();
+  const delivered = await f.delivery.deliver(input);
+  assert.ok('entryId' in delivered);
+  const entry = await f.queue.getDurableEntry(input.threadId, delivered.entryId);
+  assert.equal(
+    entry?.execution.ownerAuthProvenance,
+    'unknown',
+    'strict is what grants a ManagedWorkBinding, so it must never be inherited by default',
+  );
+});
+
+test('a producer that owns an authenticated continuation states strict explicitly', async () => {
+  const f = fixture();
+  const delivered = await f.delivery.deliver({ ...input, ownerAuthProvenance: 'strict' });
+  assert.ok('entryId' in delivered);
+  const entry = await f.queue.getDurableEntry(input.threadId, delivered.entryId);
+  assert.equal(entry?.execution.ownerAuthProvenance, 'strict');
+});

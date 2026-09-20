@@ -108,7 +108,10 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         userId: input.ownerUserId,
         sourceId: input.idempotencyKey,
         kind: 'conversation_input',
-        ownerAuthProvenance: input.ownerAuthProvenance ?? 'strict',
+        // Fail closed: a non-user producer that does not state its provenance is `unknown`. A
+        // `strict` value is what grants a ManagedWorkBinding (managed-work-invocation-binding.ts),
+        // so inheriting it by default would hand external input the owner's managed-work authority.
+        ownerAuthProvenance: input.ownerAuthProvenance ?? 'unknown',
         idempotencyKey: input.idempotencyKey,
         content: input.content,
         from,
