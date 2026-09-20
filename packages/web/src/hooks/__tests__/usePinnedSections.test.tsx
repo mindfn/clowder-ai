@@ -5,6 +5,7 @@ import { usePinnedSections } from '@/hooks/usePinnedSections';
 
 const STORAGE_KEY = 'cat-cafe:pinned-settings-sections';
 const DESKTOP_SEED_KEY = 'cat-cafe:pinned-settings-sections:desktop-seeded';
+const DEFAULTS_SEED_KEY = 'cat-cafe:pinned-settings-sections:defaults-seeded';
 
 type PinnedSectionsState = ReturnType<typeof usePinnedSections>;
 
@@ -47,9 +48,9 @@ describe('usePinnedSections', () => {
 
     const state = renderHook();
 
-    expect(state.pinned).toEqual([]);
+    expect(state.pinned).toEqual(['members', 'accounts']);
     expect(() => state.isPinned('accounts')).not.toThrow();
-    expect(state.isPinned('accounts')).toBe(false);
+    expect(state.isPinned('accounts')).toBe(true);
   });
 
   it('ignores string localStorage payloads', () => {
@@ -57,9 +58,9 @@ describe('usePinnedSections', () => {
 
     const state = renderHook();
 
-    expect(state.pinned).toEqual([]);
+    expect(state.pinned).toEqual(['members', 'accounts']);
     expect(() => state.isPinned('accounts')).not.toThrow();
-    expect(state.isPinned('accounts')).toBe(false);
+    expect(state.isPinned('accounts')).toBe(true);
   });
 
   it('filters non-string entries from array payloads', () => {
@@ -67,31 +68,31 @@ describe('usePinnedSections', () => {
 
     const state = renderHook();
 
-    expect(state.pinned).toEqual(['accounts', 'skills']);
+    expect(state.pinned).toEqual(['accounts', 'skills', 'members']);
     expect(state.isPinned('accounts')).toBe(true);
     expect(state.isPinned('skills')).toBe(true);
   });
 
-  it('does not seed desktop defaults in an ordinary browser', () => {
+  it('seeds members and accounts once on the first browser mount', () => {
     const state = renderHook();
 
-    expect(state.pinned).toEqual([]);
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(state.pinned).toEqual(['members', 'accounts']);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')).toEqual(['members', 'accounts']);
+    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
     expect(localStorage.getItem(DESKTOP_SEED_KEY)).toBeNull();
   });
 
-  it('seeds members and accounts once on the first packaged-desktop mount', () => {
+  it('uses the same persisted default pins on the first packaged-desktop mount', () => {
     Object.defineProperty(window, 'desktopBridge', { value: {}, configurable: true, writable: true });
 
     const state = renderHook();
 
     expect(state.pinned).toEqual(['members', 'accounts']);
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')).toEqual(['members', 'accounts']);
-    expect(localStorage.getItem(DESKTOP_SEED_KEY)).toBe('1');
+    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
   });
 
-  it('preserves existing pins while adding desktop defaults on the first packaged launch', () => {
-    Object.defineProperty(window, 'desktopBridge', { value: {}, configurable: true, writable: true });
+  it('preserves existing pins while adding defaults on the first launch', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(['skills', 'members']));
 
     const state = renderHook();
@@ -99,8 +100,7 @@ describe('usePinnedSections', () => {
     expect(state.pinned).toEqual(['skills', 'members', 'accounts']);
   });
 
-  it('does not mark desktop seeding complete while a full pin list leaves a default missing', () => {
-    Object.defineProperty(window, 'desktopBridge', { value: {}, configurable: true, writable: true });
+  it('does not mark seeding complete while a full pin list leaves a default missing', () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(['skills', 'mcp', 'plugins', 'marketplace', 'concierge', 'voice', 'system', 'members']),
@@ -109,11 +109,10 @@ describe('usePinnedSections', () => {
     const state = renderHook();
 
     expect(state.pinned).not.toContain('accounts');
-    expect(localStorage.getItem(DESKTOP_SEED_KEY)).toBeNull();
+    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBeNull();
   });
 
-  it('remembers a user unpin after the desktop defaults have been seeded', () => {
-    Object.defineProperty(window, 'desktopBridge', { value: {}, configurable: true, writable: true });
+  it('remembers a user unpin after the defaults have been seeded', () => {
     let state = renderHook();
 
     React.act(() => state.unpin('members'));
@@ -123,6 +122,16 @@ describe('usePinnedSections', () => {
     state = renderHook();
 
     expect(state.pinned).toEqual(['accounts']);
-    expect(localStorage.getItem(DESKTOP_SEED_KEY)).toBe('1');
+    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
+  });
+
+  it('honours the legacy desktop seed receipt without restoring a cancelled pin', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['accounts']));
+    localStorage.setItem(DESKTOP_SEED_KEY, '1');
+
+    const state = renderHook();
+
+    expect(state.pinned).toEqual(['accounts']);
+    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
   });
 });
