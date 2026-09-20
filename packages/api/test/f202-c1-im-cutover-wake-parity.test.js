@@ -238,5 +238,9 @@ describe('F202 C1 Core cutover gate — IM ingress wake parity at the Host bound
     );
     assert.equal(wakes.length, 0, 'an unauthenticated ingress claim must never reach the wake route');
     assert.equal(broadcasts.length, 0, 'an unauthenticated ingress claim must never broadcast');
+    // Eighth-round review P1: this case has always CLAIMED "before any persist" while only
+    // observing wake and broadcast. A forged origin that lands in the message store and then
+    // throws would have satisfied it, so the persist half is now observed too.
+    assert.equal(messageStore.messages.length, 0, 'a forged external origin must never be persisted');
   });
 });

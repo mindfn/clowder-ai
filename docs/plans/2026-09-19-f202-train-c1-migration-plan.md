@@ -493,6 +493,18 @@ helper 最后一段 transaction 是**直接写入 enabled 权威状态**，随�
 2b. **跨实例读取的形状**（第七轮 review P1）：读取**不接受调用方传入的实例 id**——能让包指名他人
    实例的 wire 本身就是泄漏，断言"这种调用被拒"等于为错误形状背书。用例 20 改为邻居仅以
    `{key}` 读取自己的槽位，断言 **scoped-empty/not-found**，且绝不得为 owner 的值。
+2c. **fail-closed 边界的原子性不变量**（第八轮 review P1，**系统性**，非逐点）：`assert.rejects`
+   只证明"调用失败"，不证明"没有落盘"——写完再抛的实现可以让全部负例转绿却已损坏游标。故本门
+   所有 fail-closed 边界一律**同时**验证两件事：拒绝发生 **且** 无持久副作用。落地面：
+   checkpoint 负例 13/14/15/17/19 各自持有可观测权威并断言 `commits.length === 0`；binding 用例
+   11 注入 `MemoryConnectorThreadBindingStore` 并断言未声明 connector **没有**留下任何 binding；
+   forged-origin 用例 6 增断言 `messageStore.messages.length === 0`——它此前只观测 wake/broadcast，
+   标题里的"before any persist"是**未被观测的宣称**。
+2d. **scoped-miss 只认一种结局**（第八轮 review P1）：用例 20 此前把"除 plumbing 与
+   `CAPABILITY_DENIED` 外的任何异常"都当作 scoped-empty，于是 `INVALID_CALL_INPUT` /
+   `INTERNAL_ERROR` 也能转绿而完全不证明隔离。现收紧为二选一：**canonical empty 结果**，或
+   **唯一一个** canonical scoped-not-found 拒绝码（拼写 provisional，随 §7.2 第 5 条签字冻结）。
+
 3. **grant 隔离**：checkpoint row 要求的 grant **由 row 自己定义**（`control-plane.ts:322` 把
    `row.grant` 交给 `currentCallContext`），故 fixture 从 registry **推导** grant 而不写死名字；
    可达性断言（第七轮 review P1 收紧）要求该 grant **不得复用任何既有 row 的 grant**——从

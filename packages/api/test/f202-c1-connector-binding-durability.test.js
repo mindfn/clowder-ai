@@ -98,7 +98,10 @@ describe('F202 C1 Core cutover gate — connector binding authority and durabili
 
   test('11/RED — a package cannot bootstrap a binding for a connector it did not declare', async () => {
     const projectRoot = await connectorProjectRoot('f202-c1-forgery-');
-    const { runtime } = await productionComposition(projectRoot);
+    // Eighth-round review P1: an observable store is what separates "refused" from "created the
+    // foreign binding, then threw". assert.rejects alone cannot see the durable write.
+    const bindingStore = new MemoryConnectorThreadBindingStore();
+    const { runtime } = await productionComposition(projectRoot, { bindingStore });
     const pluginInstanceId = await installConnectorInstance(runtime, projectRoot);
     const connection = await authenticatedConnection(runtime, pluginInstanceId);
 
@@ -132,6 +135,13 @@ describe('F202 C1 Core cutover gate — connector binding authority and durabili
       !PLUMBING_FAILURES.has(rejection?.code),
       `the refusal must be a connector-scope decision, not plumbing (${rejection?.code}): this ` +
         `instance is installed, enabled, and declares only ${CONNECTOR_ID}`,
+    );
+    // The atomicity half: refusing the call is not enough if the foreign binding was already
+    // minted. Nothing for the undeclared connector may exist at the store afterwards.
+    assert.equal(
+      await bindingStore.getByExternal(SIBLING_CONNECTOR_ID, EXTERNAL_CHAT_ID),
+      null,
+      'a refused bootstrap must leave NO binding for the undeclared connector',
     );
 
     await runtime.shutdown('test');

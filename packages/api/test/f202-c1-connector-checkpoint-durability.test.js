@@ -18,6 +18,7 @@ import {
   checkpointFixture,
   DECLARED_KEY,
   IsolatedCheckpointAuthority,
+  SCOPED_NOT_FOUND,
 } from './f202-c1-checkpoint-fixture.js';
 import {
   authenticatedConnection,
@@ -179,23 +180,31 @@ describe('F202 C1 Core cutover gate — durable connector checkpoints', () => {
     // package name someone else's instance would already BE the leak, so asserting that such a
     // call is refused would bless the wrong shape. The neighbour asks for its own slot under the
     // same key; instance scope must make that slot empty rather than the owner's value.
-    let neighbourRead = null;
+    let neighbourRead;
+    let refusal;
     try {
       neighbourRead = await neighbour.call(CHECKPOINT_READ, { key: DECLARED_KEY });
     } catch (error) {
-      assert.notEqual(error?.code, 'CAPABILITY_DENIED', 'the neighbour holds the grant; scope must decide the read');
-      assertNotPlumbingFailure(error);
+      refusal = error;
     }
-    assert.notDeepEqual(
-      neighbourRead?.value ?? null,
-      { offset: 77 },
-      'a read handler that forgets instance scope leaks the neighbouring cursor',
-    );
-    assert.equal(
-      neighbourRead?.value ?? null,
-      null,
-      'an unwritten slot under the same key must read scoped-empty/not-found for another instance',
-    );
+    // Eighth-round review P1: treating ANY throw as "scoped empty" let INVALID_CALL_INPUT or
+    // INTERNAL_ERROR turn this green without proving isolation at all. Exactly two outcomes are
+    // admissible - the canonical empty result, or the ONE canonical scoped-miss refusal.
+    if (refusal) {
+      assert.notEqual(refusal.code, 'CAPABILITY_DENIED', 'the neighbour holds the grant; scope must decide the read');
+      assertNotPlumbingFailure(refusal);
+      assert.equal(
+        refusal.code,
+        SCOPED_NOT_FOUND,
+        `a scoped miss must be the one canonical not-found refusal, not ${refusal.code}`,
+      );
+    } else {
+      assert.equal(
+        neighbourRead?.value ?? null,
+        null,
+        'an unwritten slot under the same key must read scoped-empty for another instance',
+      );
+    }
 
     await owner.runtime.shutdown('test');
   });

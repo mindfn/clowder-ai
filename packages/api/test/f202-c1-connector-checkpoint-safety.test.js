@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   assertCheckpointRowsReachable,
+  assertNoDurableCommit,
   checkpointFixture,
   DECLARED_KEY,
   settledCheckpointFixture,
@@ -46,6 +47,7 @@ describe('F202 C1 Core cutover gate — connector checkpoint safety contract', (
         }),
       'checkpoint keys must be declared per contribution, not chosen freely at runtime',
     );
+    assertNoDurableCommit(fixture.checkpointStore, 'declared-key');
 
     await fixture.runtime.shutdown('test');
   });
@@ -68,6 +70,7 @@ describe('F202 C1 Core cutover gate — connector checkpoint safety contract', (
         }),
       'the checkpoint value must be bounded by a declared schema and size limit',
     );
+    assertNoDurableCommit(fixture.checkpointStore, 'value-bound');
 
     await fixture.runtime.shutdown('test');
   });
@@ -90,6 +93,7 @@ describe('F202 C1 Core cutover gate — connector checkpoint safety contract', (
         }),
       'a checkpoint naming an unsettled delivery must be refused, not committed optimistically',
     );
+    assertNoDurableCommit(fixture.checkpointStore, 'settlement-ordering');
 
     await fixture.runtime.shutdown('test');
   });
@@ -113,6 +117,7 @@ describe('F202 C1 Core cutover gate — connector checkpoint safety contract', (
         }),
       'checkpoint values must carry neither message bodies nor secrets',
     );
+    assertNoDurableCommit(fixture.checkpointStore, 'content-ban');
 
     await fixture.runtime.shutdown('test');
   });
@@ -141,6 +146,7 @@ describe('F202 C1 Core cutover gate — connector checkpoint safety contract', (
       },
       'holding messaging grants alone must not reach the checkpoint rows',
     );
+    assertNoDurableCommit(fixture.checkpointStore, 'grant');
 
     await fixture.runtime.shutdown('test');
   });

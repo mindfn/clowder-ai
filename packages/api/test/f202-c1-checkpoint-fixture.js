@@ -77,13 +77,38 @@ export async function checkpointFixture(prefix, overrides = {}) {
   const projectRoot = overrides.projectRoot ?? (await mkdtemp(resolve(tmpdir(), prefix)));
   await mkdir(resolve(projectRoot, 'dist'), { recursive: true });
   await writeFile(resolve(projectRoot, 'dist/plugin.js'), '// fixture entrypoint\n', 'utf8');
-  const { runtime } = await productionComposition(projectRoot, { checkpointStore: overrides.checkpointStore });
+  // Eighth-round review P1: EVERY fixture owns an observable authority, not just the durability
+  // cases. A negative with no visible store cannot tell "refused" from "committed, then threw".
+  const checkpointStore = overrides.checkpointStore ?? new IsolatedCheckpointAuthority();
+  const { runtime } = await productionComposition(projectRoot, { checkpointStore });
   const effectiveGrants = overrides.effectiveGrants ?? [...BASE_GRANTS, ...checkpointGrants()];
   const pluginInstanceId =
     overrides.pluginInstanceId ?? (await installConnectorInstance(runtime, projectRoot, { effectiveGrants }));
   const connection = await authenticatedConnection(runtime, pluginInstanceId);
-  return { projectRoot, runtime, pluginInstanceId, connection };
+  return { projectRoot, runtime, pluginInstanceId, connection, checkpointStore };
 }
+
+/**
+ * The atomicity half of every fail-closed boundary (eighth-round review P1).
+ *
+ * `assert.rejects` alone only proves the CALL failed. An implementation that writes the record
+ * and then throws satisfies it while durably corrupting the cursor, so each refusal must also be
+ * shown to have left nothing behind at the authority.
+ */
+export function assertNoDurableCommit(checkpointStore, rule) {
+  assert.equal(
+    checkpointStore.commits.length,
+    0,
+    `a commit refused by the ${rule} rule must leave NO durable write at the authority`,
+  );
+}
+
+/**
+ * The single refusal outcome a scoped read may use before §7.2 item 5 is signed. Spelling is
+ * provisional like the row names; what is frozen is that exactly ONE outcome counts as a scoped
+ * miss - accepting any throw would let INVALID_CALL_INPUT or INTERNAL_ERROR fake isolation.
+ */
+export const SCOPED_NOT_FOUND = 'NOT_FOUND';
 
 /**
  * A fixture whose settlement precondition is already satisfied (seventh-round review P1).
