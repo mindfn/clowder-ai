@@ -221,7 +221,24 @@ F193 AC-A4 的 routing-credential 前置校验）覆盖了原假设的攻击面�
 > `subjectRef=subject:f167:c1-custody-recall-deviation`，投递仍然落进一条无关 thread——
 > 因为没有任何一段代码拿这个 subject 去解析或校验 `threadId`。
 >
-> 这把 R-1 的出路从"发明一套解析原语"改成**"接上已经存在的那个对象"**，成本量级完全不同。
+> ~~这把 R-1 的出路改成"接上已经存在的那个对象"。~~
+>
+> **再更正（2026-09-20，跨猫复审后）**：上一句过强，**撑不住，撕掉**。
+> `ActionSuccessorLease` 只持有 `holderCatIds/holderThreadId` + `predecessorCatId/predecessorThreadId`
+> （`action-successor-state-machine.ts:90-99`）——那是**一条执行边，不是参与图**：
+> 没有 membership、没有邀请、没有退出、没有多方关系。把它当成"稳定参与集合"是我的误读。
+>
+> 准确的当前路由矩阵（而不是"所有投递都不读 subject"）：
+>
+> | 路径 | 当前约束 |
+> |---|---|
+> | 普通 cross-post | 仅存在性 + principal scope |
+> | task/implement 首次交接 | **已用 `task.threadId` 校验** |
+> | PR/review 首次交接 | freshness 不返回 thread，校验静默空转 |
+> | local review 终态返回 | **已强制回 predecessor thread** |
+>
+> 缺陷集中在**普通投递 + PR review 初始交接**两条，不是所有结构化路径。
+> 参与图**不存在，必须新建**——这不是接线量级。设计见 `docs/architecture/cross-thread-protocol.md`（draft）。
 
 #### R-2 · **内容侧**启发式无法机械区分误投与合法跨 feature 协作（**证据，不是缺陷**）
 

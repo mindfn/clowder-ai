@@ -194,8 +194,21 @@ I-4 里你亲口给出过正确不变量：**"我们 thread 当前应该有且�
 > - **纯角色查询**（"F167 的 owner thread"、"我的平行实例"——I-1 / I-2a / I-3）：**没有 lease**，
 >   这部分 C 的原定价仍然成立，仍需新真相源。
 >
-> **修正后的立场**：B 仍然现在做；**C 拆成 C1 / C2**——
-> **C1（action 子集，接线）值得现在就做**，不必等 B 的数据；C2（纯角色解析）维持"等数据"。
+> ~~**修正后的立场**：C1（action 子集，接线）值得现在就做。~~
+>
+> **再更正（2026-09-20，跨猫复审后）—— C1 撤回。** 两条硬证据：
+>
+> 1. **lease 不是参与图**，只是一条执行边（holder + predecessor，
+>    `action-successor-state-machine.ts:90-99`）。"对象已齐全、只差接线"不成立。
+> 2. **`PrTrackingStore` 不能当 review 路由权威**。它的契约原文是"route **notifications**
+>    to the correct cat/thread"（`PrTrackingStore.ts:2-5`），注册 `why` 写的是
+>    "**Notify** this thread about external GitHub activity"（`callbacks.ts:5595`），
+>    而且同 subject 重注册会**直接覆写 `threadId`**（`TaskStore.ts:133`）。
+>    → 接进 custody 等于**让最后一次 tracking 注册改写 review holder**，
+>    把"订阅/通知所有权"误写成"review 执行所有权"。
+>
+> **修正后的立场**：B 仍然现在做。**C 整体回到"需要设计"**，不再声称有廉价子集；
+> `PrTrackingStore` 最多做 discovery signal，永不做 holder thread 真相源。
 
 ---
 

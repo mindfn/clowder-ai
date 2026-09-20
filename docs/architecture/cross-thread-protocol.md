@@ -41,7 +41,24 @@ exactly what it was asked to do, and the asking is what has no design.**
 
 ## What exists today — Verified
 
-The primitives are mostly already built. They are just not connected to delivery.
+**Revised after review (sol, CHANGES REQUESTED).** An earlier draft said the primitives were
+"mostly built, just not wired." That was wrong in two ways, both load-bearing:
+
+- `ActionSuccessorLease` holds `holderCatIds/holderThreadId` + `predecessorCatId/predecessorThreadId`
+  and nothing else (`action-successor-state-machine.ts:90-99`). That is **one execution edge, not a
+  participation graph** — no membership, no invitation, no exit, no multi-party relation.
+  **The participation graph does not exist and must be built.**
+- "No delivery path reads the subject" is also too broad. The accurate matrix:
+
+| Path | Constraint today |
+|---|---|
+| Ordinary cross-post | existence + principal scope only |
+| task/implement first handoff | **already validated against `task.threadId`** |
+| PR/review first handoff | freshness returns no thread → the check silently no-ops |
+| local review terminal return | **already forced back to the predecessor thread** |
+
+The defect is concentrated in **ordinary delivery and PR-review initial handoff** — not in every
+structured path. What follows lists primitives that exist, which is not the same as being sufficient.
 
 | Primitive | Status | Source |
 |---|---|---|
@@ -96,8 +113,10 @@ Three of five. The incidents are not six mistakes; they are one missing design s
 
 Consequences:
 
-- **Misdelivery becomes structurally impossible** for coordination-bearing messages. You cannot
-  address a thread that is not a participant; there is no field in which to express the mistake.
+- **Out-of-membership delivery becomes inexpressible** for coordination-bearing messages: there is
+  no field in which to name a non-participant thread. **This is narrower than "misdelivery becomes
+  impossible"** — it does nothing about *wrongly admitting* a participant in the first place, which
+  is why admission needs its own authority model (below). The earlier stronger claim is withdrawn.
 - **Adding a participant is a first-class act**, not a free-text id. It is visible, attributable,
   and reversible.
 - **Peer collaboration is native.** A finds its change affects B and C → A *expands* (or proposes
@@ -120,10 +139,33 @@ That is not a coordination yet. It is a **proposal to form one**.
 This replaces today's fail-open default and is the principle-5 repair. The proposal path already
 exists in shape (`propose_thread` / Approval Hub / `effectClass=assign_work`).
 
-Note this rule is **cheap in a way lineage-based rejection is not**: participation is *created by
-the act of coordinating*, so it is dense by construction. Measured lineage density is 5.5%
-(29/531 threads), and lineage-based fail-closed would reject 63.6–74.6% of real traffic — which is
-why the bug report rejected it. Participation-based fail-closed has no such penalty.
+**"Dense by construction" is withdrawn — it had no evidence.** There is no persistent participation
+set today, so its future density is unmeasured. Of 960 historical cross-posts only 148 carry any
+coordination metadata (reviewer measurement), and metadata is not membership truth anyway.
+
+Fail-closed is therefore **not** a free consequence of this design. It is an external contract
+change that requires, in order: build the participation set → backfill → **quantify real coverage** →
+staged rollout. It needs operator and maintainer sign-off, not just this document.
+
+For contrast, the rejected alternative: lineage density is 5.5% (29/531 threads) and lineage-based
+fail-closed would reject 63.6–74.6% of real traffic. Participation *should* do better — but
+"should" is a hypothesis to be measured, not a property to be assumed.
+
+## Proposed — Recipient semantics (participation is not an audience)
+
+Membership answers *who may take part*. It does **not** answer *who this message is for*.
+A, B, C all being in a coordination does not mean every sentence A writes should reach B and C.
+Four distinct concepts, deliberately not collapsed:
+
+| Concept | Answers | Owner |
+|---|---|---|
+| **Participation** | who is eligible to take part | Coordination |
+| **Recipient** | who *this* message is addressed to | The message |
+| **Render thread** | where it surfaces | **Derived** by the server from the recipient's endpoint |
+| **Broadcast** | reach everyone | A separate, explicit operation — never a default |
+
+An earlier draft wrote "rendered in each participant thread," which silently made broadcast the
+default. Withdrawn.
 
 ## Proposed — Thread relationship management
 
@@ -140,6 +182,12 @@ never an allowlist.
 
 `goal` (F306) already records what a thread is *for*. It should feed **coordination formation and
 review** (does this thread's purpose match what it is being pulled into?) — advisory, never a gate.
+
+**On the operator's "thread metadata should hold the association graph":** agreed in intent, but it
+must not become a second writable table. Coordination + versioned Participation is the single source
+of truth; thread metadata exposes only a **rebuildable projection** —
+`coordinationId / subjectRef / role / status / provenance`. An independently writable association
+table would drift from the authority by construction, which is principle 1 all over again.
 
 ## Proposed — Tool surface
 
@@ -200,16 +248,42 @@ Nobody can ever write another thread's id into a delivery path, because the only
 name is their own — and they don't get to name it, the server does. Bootstrap for the first
 participant comes from lineage (thread creation) or operator approval (`effectClass=assign_work`).
 
+**This rule is necessary but not sufficient.** Invocation-bound self-enrollment prevents *forging
+someone else's thread*. It does not prevent a wrong invitation, the wrong parallel invocation
+accepting, or a wrong admission. Those need subject/role standing, invitation capability, and —
+where responsibility expands — human approval.
+
+### agent-key: fail closed, no fallback
+
+An agent-key caller has **no invocation thread**, so it has no self to enroll. Today the server
+already refuses coordination/action metadata from agent-key callers and accepts only a raw
+`threadId` under scope validation (`callbacks.ts:1365`).
+
+> **A caller-supplied thread must never be accepted as a self-enrollment fallback.**
+
+Without a server-pre-bound endpoint/capability, an agent-key caller may only **query** or **propose**.
+
+### Invitation protocol
+
+An invitation must bind, at minimum: `coordinationId`, `subjectRef`, `role`, target cat,
+`generation`/nonce, and `expiry`. The **acceptor** proves its own cat/user/current thread from its
+invocation, and consumes the invitation **once, idempotently**. Operator/system admission is a
+separate explicit path carrying its own permission and audit trail.
+
 ## Proposed — Migration
 
 1. ~~**Wire, don't build** — resolve/validate `threadId` against the lease.~~
    **Withdrawn** — circular for PR subjects (see above). Replaced by:
 
-   **1'. Anchor the subject, then derive.** Give PR subjects the anchor task subjects already have:
-   resolve `holderThreadId` from `PrTrackingStore` instead of echoing the caller. The existing
-   `target_thread` standing check (`:69`) then stops no-opping and becomes load-bearing **for free** —
-   no new comparison logic, just a non-`undefined` value from an independent owner.
-   This still covers cross-thread review, the operator's sharpest case. *(Decision Packet C1, revised.)*
+   ~~**1'. Anchor PR subjects to `PrTrackingStore`.**~~ **Also withdrawn** — it is the wrong owner.
+   `PrTrackingStore` is a *notification subscription*: its contract is "route **notifications** to the
+   correct cat/thread" (`PrTrackingStore.ts:2-5`), registration states `why: "**Notify** this thread
+   about external GitHub activity"` (`callbacks.ts:5595`), and re-registering the same subject
+   **overwrites `threadId`** (`TaskStore.ts:133`). Wiring it into custody would let the *last tracking
+   registration* rewrite the review holder — writing "subscription ownership" into "review execution
+   ownership." It may serve as a **discovery signal only, never as holder-thread truth.**
+
+   **There is no cheap subset.** Migration starts at step 2.
 2. **Generalize the coordination** beyond the two action families.
 3. **Invert the tool surface** — coordination-addressed posting becomes primary.
 4. **Fail closed** — un-coordinated cross-post degrades to proposal. *(Last, once 1–3 make the
@@ -226,15 +300,29 @@ Inherits all five from `a2a-protocol.md`, and adds one:
    Where it renders is derived. A caller is never asked for a coordinate the system already holds —
    and never allowed to invent one it does not.
 
-## Open questions for review
+## Resolved positions (review round 2)
 
-1. **Coordination granularity.** One per subject (PR, feat, task)? Long-lived per feature, or
-   per handoff chain? Today's lease is per `(subject, family, slot)` — is that the right grain
-   to generalize, or an artifact of custody?
-2. **Who may admit a participant?** Any current participant, the originator only, or
-   operator-gated for `assign_work`-class expansion?
-3. **Does step 4 (fail closed) need operator approval per the bug report's Decision Packet**, or
-   is it implied once the proposal path is always available?
-4. **Relationship to F128 `propose_thread`** — is "propose a coordination" the same object as
-   "propose a thread", or a sibling?
-5. **What happens to a coordination when a participant thread is archived or deleted?**
+These five were open questions; the reviewer proposed answers and this draft adopts them. They are
+positions to be confirmed by the maintainer, not settled facts.
+
+1. **Granularity.** Coordination persists per bounded **subject/workstream**. The lease keeps
+   expressing **one execution responsibility** per action family/slot/revision. Two objects, two
+   lifetimes — do not merge them.
+2. **Admission authority.** A participant may *propose* admission. Responsibility expansion requires
+   invitation-acceptance, owner policy, or operator approval. **No participant may directly write
+   another party's endpoint.**
+3. **Fail-closed** is an external contract change: requires operator + maintainer sign-off, coverage
+   quantification, and staged rollout. Not implied by this design.
+4. **F128 `propose_thread`** and "propose a coordination" are **siblings**, not the same object.
+5. **Archived/deleted participant thread** → participation becomes `inactive`/tombstoned: history
+   retained, no new delivery, no cascade delete; restoring requires explicit reactivation.
+
+## Status and next step
+
+**Not ready for a maintainer issue, and not eligible for ADR promotion.** Consensus holds on the
+diagnosis (this is an addressing-model defect, not a cat-attention defect) and on the direction
+(coordination should be the address authority). Still unconverged: the **object boundary** between
+coordination and lease, **admission authority**, **recipient semantics**, and **migration**.
+
+Order: revise this RFC → one more design re-review → then the maintainer design issue → then
+implementation. Draft conclusions must not be written into normative skills before that.

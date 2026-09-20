@@ -198,10 +198,20 @@ Action Needed 必须标注级别。**这些标签只描述期望/紧急度，不
 > ⚠️ **别把"显影在调用方"读成"错在调用方"。** `threadId` 是这条链路上**唯一可写的字段**，
 > 所以任何错误都只能在那里显影——这跟"所有车祸都发生在方向盘上"是同一类陈述。
 >
-> 真正的结构事实（2026-09-20 复核代码）：系统**已经有** subject 寻址的一等协作对象
-> （`ActionSuccessorLease`，identity 不含 threadId，且记录 `holderThreadId`），
-> **但投递不读它**——`threadId` 必填、`action.subjectRef` 可选，两者从不比对。
-> **subject 是乘客，thread 才是地址。**
+> 结构事实（2026-09-20 复核代码 + 跨猫复审）——**按路径分，不是一刀切**：
+>
+> | 路径 | 当前约束 |
+> |---|---|
+> | **普通 cross-post**（你大多数时候走的）| 仅存在性 + principal scope——**没有任何语义校验** |
+> | task/implement 首次交接 | 已用 `task.threadId` 校验 |
+> | PR/review 首次交接 | freshness 不返回 thread，校验静默空转 |
+> | local review 终态返回 | 已强制回 predecessor thread |
+>
+> 所以：**你手写 `threadId` 的那条路径，今天确实没人替你兵。**
+>
+> ⚠️ 不要再往下推：系统里**没有**一张现成的"参与图"可供校验。
+> `ActionSuccessorLease` 只有 holder + predecessor，是**一条执行边**，不是稳定参与集合。
+> 该怎么重建寻址模型仍在设计中（`docs/architecture/cross-thread-protocol.md`，**draft，未定案**）。
 >
 > ⇒ 下面这些自检是**结构缺口的代偿纪律，不是根因修复**。它们今天必须照做（结构杠杆还没接上），
 > 但别因为"规则已经写了"就认为问题已解决——规则存在且被反复违反，正是 F167 Case E1 的既有结论。
