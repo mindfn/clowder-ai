@@ -1220,3 +1220,63 @@ owner 的诊断**。记录用已有的 `UNEXPECTED_RUNTIME_FAILURE`，`exitCode`
 **剩余（不属本切片）**：条款 1+2 的 in-process 模块载体本身 —— `runtime.entrypoint` 默认导出 →
 `create()` → 逐 feature 激活。§8.8 上表的步 1/2/4/5 现在可以直接挂到 `BundledPluginRuntimeCarrier`
 旁边作为第四个 carrier；步 3（action 表）仍等 #54 发布。
+
+### 8.9 投递内核依赖（2026-09-20 operator 口径纠正，**C1 实现约束**）
+
+**operator 原话（本节的权威 anchor）**：
+
+> 「对于 github 通知就和用户消息一样；进入队列正常出队列再触发就好了的；不需要特殊流程；到队列后已经持久化了的」
+> 「除了 github 通知；还有其他的 im connector；……其他的都是先进队列再出队列；**不同的消息只有来源、消息类型、target 有区别；其他的没有任何特殊的逻辑和处理**」
+> 「github 不是 connector；他是通知没错；但是我理解**都是一个思路**吧」
+> 「那个是我们根据推理设计出来；简洁有效合理的架构和实现的；**不应该是一堆的 if else 特殊分支**」
+
+**真相源**：`docs/architecture/message-delivery-handling-handoff-audit.md`（A2A 消息投递 RFC，PR #1356）§5.1 / §5.2 / §5.4。
+
+#### 事实：入口的"载体差异"不得产生第二条投递路径
+
+RFC §5.1 把四类来源合流到**同一个 envelope**，并明令禁止按载体分流：
+
+| 项 | 观测 | 取证方式 |
+|---|---|---|
+| §5.1 来源合流 | 「用户 / external connector / **plugin** / system 的公开消息 → `conversation_input` + inline payload → priority Queue」 | RFC `:690-692` |
+| §5.1 禁令 | 「入口不能搜索正文关键词，也**不能根据 transport**、payload 内容、是否存在 predecessor 或当前 thread holder 改写 `kind`」 | RFC §5.1 |
+| §5.2 顺序 | 持久化 sourceRecordId + 创建 QueueEntry → Queue commit 后 `requestDrain` → 队首确认 targets → admission 写 History | RFC `:708-716` |
+| F117 终态实现 | `PersistedQueueDelivery.deliver()` → `appendAndEnqueueDurable(...)`，`kind: 'conversation_input'` 写死；`from = { kind:'external', connectorId: source.connector }` | `clowder-1398-ci-1392` `PersistedQueueDelivery.ts:28,37-70` |
+| 注释自述 | 「Dispatch owns **atomic** Message + Queue admission; producers supply only an authorized immutable envelope」 | 同上 `:27` |
+| **信号已经在走同一条路** | `ThreadMeetingArtifactDispatcher`（feishu 会议纪要信号落地）两处调用 `appendAndEnqueueDurable` | 同上 `:215`、`:393` |
+
+即：**`events.publish` 是入口 API，不是独立管道**。信号进来之后仍然变成同一个 `conversation_input` QueueEntry。
+"消息 / 信号 / 动作"是**契约面**（谁有权往 Host 灌、灌什么形状）的分法，**不是投递路径**的分法；
+把它读成三条路径，正好撞上 §5.1 的"不得按 transport 改写 kind"。
+
+#### 差距：C1 正在把一个**待退役形状**复制到第三处
+
+| 项 | 观测 | 取证方式 |
+|---|---|---|
+| C1 基线尚无投递内核 | `appendAndEnqueueDurable` 在本 worktree **零命中** | `grep -rn appendAndEnqueueDurable packages/api/src` @ `826b4f4b` |
+| 今天 IM 入站（要删的形状） | `messageStore.append` → `emitConnectorMessage` → `await invokeTrigger.trigger`，三步非原子，无 Queue | `ConnectorRouter.ts:458,471,479` |
+| C1 新写的插件入站 | `deliverIngressEffectsOnce` = broadcast fence + wake fence **两个独立 ledger claim**，末端仍直接 `invokeTrigger.trigger` | `messaging/ingress-wake.ts:136-195`，调用点 `send-service.ts:258` |
+| 它的自述 | 「The three-way routing below is **ConnectorRouter's** … so the two paths cannot drift while both exist during the cutover」 | `ingress-wake.ts:12-18` |
+
+`ingress-wake.ts` 的设计目标是"和 ConnectorRouter 不漂移"——但 **ConnectorRouter 那条路本身就是 F117 要删的**。
+于是 C1 把同一个两步舞复制成了第三份实现，并且正准备把它固化进插件契约的入站语义。
+这不是"多一处重复"，是**方向相反**：RFC 要收敛成一次原子 Queue commit，C1 在增加一个需要自建幂等 fence 的旁路。
+
+#### 处置（C1 实现约束，非契约变更）
+
+1. **C1 的 connector 入站不自建 broadcast/wake。** 目标形状是：插件 `messaging.send(connector_binding)` 经 Host
+   校验 provenance 后，交给 F117 的 `PersistedQueueDeliveryPort.deliver(...)`，由投递内核完成
+   原子 Message+Queue admission。C1 只负责"验明身份并构造 envelope"，不负责"送达与唤醒"。
+2. **`ingress-wake.ts` 在 F117 合入前标记为 transitional。** 它可以继续存在以保持现有 IM 行为不回归，
+   但**不得进入契约面**，也不得被引用为插件入站的目标语义。
+3. **`deriveIngressTarget` 的归属存疑，留给 F117 裁定。** RFC §5.4 写"enqueue 只记 target intent、队首才确认
+   fallback"；F117 线上 operator 已纠正为"发送时取最近成员，不保持空 targets"。两者冲突**归 F117 线**，
+   C1 不在此自行选边——无论哪种，都不改变第 1 条（fallback 归投递内核，不归 messaging 域）。
+4. **排序含义**：C1 的 connector 入站终态**依赖 F117 合入**。在 F117 落地前，C1 可以完成载体/生命周期/
+   action 半边（§8.8 的步 1/2/4/5），但不应宣称 connector 入站已达终态。
+
+#### 与 §8.2 的关系
+
+§8.2 记的是 `builtin` 同词不同义（载体层）。本节记的是**投递层**：即使载体层修好、包能 enable，
+入站仍会落到一条 RFC 要删的旁路上。两者独立，都必须修，**且本节不构成两份契约之间的分歧**——
+Plugins 侧契约（`messaging.send` + `connector_binding`）无需改动，改的全是 Core 内部把 envelope 交给谁。
