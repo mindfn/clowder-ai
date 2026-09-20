@@ -670,7 +670,12 @@ Phase A 写门也只保护显式 Clowder AI MCP 发消息路径，普通 stdout 
 写完首条 prompt 即关闭 stdin；Claude Code 2.1.210 虽支持 stream-json input，但官方允许工作中消息排为
 自己的 internal turn，必须经 live fixture 区分 `exact_active_turn` 与 `queued_internal_turn`。共享 Queue、
 notice broker、seen/handled truth 和 eval 不分叉，只在 Codex/Claude 最后一米 adapter 分叉。
-operator 未授权 shared core、carrier 迁移与 Claude capability spike 前不写正式实现。
+这段是 Phase 0 的历史 gate。[2026-09-20 的 F117 公开 owner 决策](https://github.com/zts212653/clowder-ai/pull/1398#issuecomment-5747658094)只授权 Claude Agent SDK 已有 streaming
+adapter 的**当前 invocation 非中断追加能力**，不授权把 queued acceptance 提升为 exact-active-turn 证据。
+共享契约因此拆为两个独立字段：`activeInvocationGuidance='supported'` 表示可追加到同一运行，
+`deliverySemantics='queued_internal_turn'` 表示只能承诺下一内部轮次读取。未来若要把后者提升为
+`exact_active_turn`，仍须生产形状 fixture 证明 same-result UUID consumption、queue count 不增长、模型实际认知、
+以及 terminal race 的诚实降级；本决策不豁免这些证据。
 
 ### Phase E: Catch Closure（检测 → 消费 → 处理 → 最终交付）
 
