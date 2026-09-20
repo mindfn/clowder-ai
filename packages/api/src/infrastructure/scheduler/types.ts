@@ -93,6 +93,15 @@ export interface DeliverOpts {
   extra?: SchedulerMessageExtra;
   /** Queued sources remain off the timeline until Queue admission marks them delivered. */
   deliveryStatus?: 'queued';
+  /**
+   * RFC §5.1/§5.2: when a scheduled input needs a member to act, it names that member here and the
+   * delivery becomes ONE atomic Message + Queue admission — never an append followed by a bind.
+   */
+  targetCatId?: string;
+  priority?: 'urgent' | 'normal';
+  suggestedSkill?: string;
+  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  ownerAuthProvenance?: import('../../domains/cats/services/owner-auth-provenance.js').OwnerAuthProvenance;
   /** Optional canonical source identity for scheduler-backed continuation producers. */
   source?: ConnectorSource;
 }

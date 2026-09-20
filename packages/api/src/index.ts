@@ -1495,7 +1495,17 @@ async function main(): Promise<void> {
   // Phase 4: delivery + content fetch for template execution
   const { createDeliverFn, createLifecycleToastFn } = await import('./infrastructure/scheduler/delivery.js');
   const { createFetchContentFn } = await import('./infrastructure/scheduler/content-fetcher.js');
-  const schedulerDeliver = createDeliverFn({ messageStore, socketManager });
+  // RFC §5.1: one component owns atomic Message + Queue admission for every producer. `progress` is
+  // late-bound: queueProcessor is constructed further down in boot, and no delivery runs before then.
+  const { PersistedQueueDelivery } = await import(
+    './domains/cats/services/agents/invocation/PersistedQueueDelivery.js'
+  );
+  const persistedQueueDelivery = new PersistedQueueDelivery({
+    messages: messageStore,
+    queue: invocationQueue,
+    progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
+  });
+  const schedulerDeliver = createDeliverFn({ messageStore, socketManager, persistedQueueDelivery });
   const schedulerLifecycleToast = createLifecycleToastFn({ socketManager });
   const schedulerFetchContent = createFetchContentFn();
 
@@ -5387,17 +5397,6 @@ async function main(): Promise<void> {
   const { createArtifactReviewIntegration } = await import('./domains/growing/artifact-review-composition.js');
   const { registerArtifactReviewRoutes } = await import('./routes/artifact-review-routes.js');
   const { registerCallbackArtifactReviewRoutes } = await import('./routes/callback-artifact-review-routes.js');
-  const { PersistedQueueDelivery } = await import(
-    './domains/cats/services/agents/invocation/PersistedQueueDelivery.js'
-  );
-  // RFC §5.1: one component owns atomic Message + Queue admission. Every producer — user sends,
-  // IM connectors, GitHub notifications, artifact returns — hands it the same envelope shape, so
-  // reliability is defined once instead of being reinvented per source.
-  const persistedQueueDelivery = new PersistedQueueDelivery({
-    messages: messageStore,
-    queue: invocationQueue,
-    progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
-  });
   const artifactReview = createArtifactReviewIntegration({
     dataDir: process.env.CAT_CAFE_DATA_DIR ?? join(resolveActiveProjectRoot(), '.cat-cafe'),
     uploadDir: getDefaultUploadDir(process.env.UPLOAD_DIR),

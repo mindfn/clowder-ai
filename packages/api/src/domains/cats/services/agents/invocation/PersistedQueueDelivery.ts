@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { createCatId } from '@cat-cafe/shared';
+import type { OwnerAuthProvenance } from '../../owner-auth-provenance.js';
 import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { InvocationQueue, QueueEntry } from './InvocationQueue.js';
 import type { OwnedQueueProgress, PersistedCarrierResult } from './PersistedQueueCarrier.js';
@@ -16,6 +17,17 @@ export interface PersistedQueueDeliveryInput {
   extra?: NonNullable<StoredMessage['extra']>;
   /** RFC §5.1: the envelope states its own urgency; the Queue never infers it from the payload. */
   priority?: 'urgent' | 'normal';
+  /**
+   * RFC §5.1 lists user, external connector, plugin AND system producers under the same envelope.
+   * The producer declares who it is; defaults to the external-connector shape from `source`.
+   */
+  from?: StoredMessage['from'];
+  /** Verified owner provenance for producers that carry an explicit authorization. */
+  ownerAuthProvenance?: OwnerAuthProvenance;
+  /** Producer hint about which skill this input needs; carried on the Queue row, not inferred. */
+  suggestedSkill?: string;
+  /** Producer's own category label for the Queue row (ci / review / scheduled / issue / a2a). */
+  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
   /** Structured payload parts (IM media, cards) that belong to the same input as its text. */
   contentBlocks?: StoredMessage['contentBlocks'];
 }
@@ -38,11 +50,13 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
 
   async deliver(input: PersistedQueueDeliveryInput) {
     const targetCat = createCatId(input.targetCatId);
-    const from = {
-      kind: 'external' as const,
-      connectorId: input.source.connector,
-      ...(input.source.label ? { sender: { id: input.source.label, name: input.source.label } } : {}),
-    };
+    const from =
+      input.from ??
+      ({
+        kind: 'external' as const,
+        connectorId: input.source.connector,
+        ...(input.source.label ? { sender: { id: input.source.label, name: input.source.label } } : {}),
+      } as NonNullable<StoredMessage['from']>);
     const existing = await this.deps.messages.getByIdempotencyKey(
       input.ownerUserId,
       input.threadId,
@@ -71,13 +85,15 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         userId: input.ownerUserId,
         sourceId: input.idempotencyKey,
         kind: 'conversation_input',
-        ownerAuthProvenance: 'strict',
+        ownerAuthProvenance: input.ownerAuthProvenance ?? 'strict',
         idempotencyKey: input.idempotencyKey,
         content: input.content,
         from,
         targetCats: [targetCat],
         intent: 'execute',
         ...(input.priority ? { priority: input.priority } : {}),
+        ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
+        ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
       },
     );
     if (admitted.outcome === 'full') throw new Error('Producer return queue is full');

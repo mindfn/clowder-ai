@@ -231,11 +231,16 @@ async function executeMainHealth(
     quarantine: project.quarantine,
   });
   const threadId = subjectKey.slice('thread-'.length);
-  const messageId = await ctx.deliver({ threadId, content, userId: 'scheduler' });
-  await ctx.invokeTrigger.trigger(threadId, input.guardianCatId, deps.triggerUserId, content, messageId, undefined, {
-    reason: 'scheduled_main_health_triage',
-    sourceCategory: 'scheduled',
+  // The stored owner and the Queue owner are the same tenant by construction now: one admission
+  // cannot disagree with itself, where the old two-step could persist under a different userId.
+  await ctx.deliver({
+    threadId,
+    content,
+    userId: deps.triggerUserId,
+    targetCatId: input.guardianCatId,
+    idempotencyKey: `main-health:${threadId}:${status}`,
     priority: status === 'red' ? 'urgent' : 'normal',
+    sourceCategory: 'scheduled',
   });
 }
 
