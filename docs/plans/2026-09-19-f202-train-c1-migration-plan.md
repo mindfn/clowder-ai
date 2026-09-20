@@ -437,7 +437,9 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 **冻结基线上外部包实际能拿到的执行面（code-derived，不是推测）**：
 
 - Host broker 在生产组装里只注册**两族** method（`runtime-composition.ts:220-229`）：
-  `events.publish` 与 `messaging.*`。**contract 声明的 `schedule.register` 在 Core 没有任何 handler。**
+  `events.publish` 与 `messaging.*`（`runtime-composition.ts:254-265`，合计 7 个方法）。
+  **`schedule.register` 只是 `L1_CAPABILITIES` 的授权名，13 行 wire registry 里没有 `schedule.*` 行**——
+  不是"有线没 handler"，而是没有线（§7.4.0 更正）。
 - 贡献类型驱动的执行只有两处：`runtime-composition.ts:443-448`（capability 仅在 feature 的
   contribution 引用**全部**是 `mcp` 时才激活）与 `static-feature-authority.ts:267-269`
   （只接受 `content-editor-provider`）。
@@ -450,10 +452,10 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 | connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **双边已指定**：Host 侧留既有 binding/config/state 权威（`HandleService.issueConnectorBindingHandle` + handle store + `HostPluginConfigurationService` + `MessagingLedger` 幂等门）；包侧由 Plugins 车道 11 行冻结包的 stdio runtime 承担 | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 + **重启后不重复投递（replay/dedup）** | **per-provider package parity 证据** + §6 全绿 + Stage 3 往返证明（**不含任何 D/E 新 ABI 签字**） |
 | provider 专属操作（QR/validate） | feishu QR ×3、weixin QR ×4、wecom-bot validate ×2 | `connector-hub.ts` 9 条 provider 路由 + `<id>.json` 的 `_operations` 状态机 | **不存在** | 扫码登录走通；企微回调校验通过 | 新 owner 就位 + 旅程绿 |
 | webhook | wecom-agent（XML content-type 分支 `connector-webhooks.ts:51-66`）及通用回调 | `connector-webhooks.ts` 共享路由 | **不存在** | 回调签名校验 + 投递落 thread | 新 owner 就位 + 回调旅程绿 |
-| schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：contract 有 `schedule.register` wire，但 Core 未注册 handler | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵 |
+| schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：wire registry 无 `schedule.*` 行，host→plugin 也无通用 invoke 行（§7.4.0） | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵；**§7.4.2 已判该行迁移与删除一并后移 C2** |
 | limb | `weixin-mp`、`wechat-visible-reader` | `PluginResourceActivator.ts:170` | **不存在** | weixin-mp 发文；visible-reader arm 授权窗口仍受限 | 新 owner + 旅程绿 |
 | skill | `weixin-mp` | `PluginResourceActivator.ts:331-366`（跨项目级联挂载） | **不存在** | 挂载 + **卸载完整回收**（陷阱 6，不留悬挂 symlink） | 新 owner + 回收证明 |
-| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:443-448`） | MCP tool 实际可调用 | 已有 owner，按现状过门 |
+| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:462-490`）——**仅对 `runtime.transport === 'builtin'` 的包成立**（`:477`），stdio lane 不适用 | MCP tool 实际可调用 | 已有 owner，按现状过门（§7.4.2 判第 9 行留在 C1） |
 
 **读法**：今天**直接通**的只有 mcp 一行。connector 一行的执行 owner **已经指定**——Host 侧保留既有
 binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 车道的 11 行冻结包承担——
@@ -627,9 +629,10 @@ checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二�
    由 Plugins owner thread 在既有契约下直接完成；Core 不代写、也不等它的 schema 裁定。
 4. **Host 前置（缺口 A/B/C）不变**，仍是现在这道 8 例门；用例 10 的 config/secret 投影
    正是 Plugins 侧 stdio entrypoint 需要的那一半。
-5. **仍需逐行核验**：§2.0 第 8–11 行（`github-operations` / `video-generation` /
+5. **逐行核验已完成，见 §7.4**：§2.0 第 8–11 行（`github-operations` / `video-generation` /
    `wechat-visible-reader` / `weixin-mp`）各自落在 §5.3 哪一类贡献、新 owner 是否就位。
-   这是本车道的下一个具体工作项，此处不预判。
+   结论：**只有第 9 行（`video-generation`）今天在 C1 内可交付**；第 8 / 10 / 11 行都需要新公共面，
+   按 §7.2 第 4 条**迁移与删除一并后移 C2**。
 
 **移出 C1 门禁的只有测试面（不重写、不丢失）**：
 
@@ -657,3 +660,108 @@ checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二�
 跨猫 review 能验门内部自洽，**验不出坐标系选错**；这两次都由外部裁定纠回，不是我自查出来的。
 结构性后果写进流程：**凡改动 C1/C2 边界，必须在同一次提交里引用一手裁定原文，并同步 §5.3 的删除门**，
 不得只改结论段。
+
+### 7.4 §2.0 第 8–11 行逐行核验（§7.3 第 5 条指定的下一工作项）
+
+> 执行于 `6c793db6`（Stage 2a 落地后）。全部**重新 code-derive**，不照抄 §5.3 的既有结论；
+> 与 §5.3 冲突处以本节为准，更正在 §7.4.3 列出。契约坐标均为 api 实际解析到的
+> `@clowder-ai/plugin-contract@0.1.0-beta.15`。
+
+#### 7.4.0 先决事实 —— Core 今天只消费两类 external contribution
+
+契约侧 `StaticContribution` 是 12 类联合（`contract.generated.d.ts:267`），`schedule` / `skill` /
+`limb` 各有正式类型（`:141` / `:171` / `:176`）——外部包**声明得出来**。但 Core 侧对这些类型的
+消费只有两处：
+
+| 消费点 | 接受的类型 | 坐标 |
+|---|---|---|
+| capability 激活 | feature 的 contribution **非空且全部**是 `mcp`，且包的 `runtime.transport === 'builtin'` | `runtime-composition.ts:477-486` |
+| static feature authority | 仅 `content-editor-provider` | `official-package-installer.ts:312-314` |
+
+`PhysicalLimbContribution` / `PhysicalLimbGrant` / `L1_CAPABILITIES` 在 `packages/api/src` 内
+**零引用**（grep @ HEAD）。结论：外部包声明的 `schedule` / `skill` / `limb` / `webhook`
+**在 Core 今天是惰性的**——既不报错，也不执行。
+
+**两条被 §5.3 说弱了的事实：**
+
+1. **`schedule.register` 不是 wire，是 grant 名。** 13 行 wire registry
+   （`dist/wire/registry.js:29-42`）里没有任何 `schedule.*` 行；`schedule.register` 只出现在
+   `L1_CAPABILITIES`（`contract.generated.js:8`）。即不是"有线没 handler"，而是**没有线**——
+   包拿到该授权也无方法可调。且 `ScheduleContribution.action` 是 `CallbackAction{method}`
+   （`:130`/`:151`），而 host→plugin 方向只有 `host.messaging.deliver` / `host.grants.changed` /
+   `host.lifecycle.ping` / `host.lifecycle.drain` 四行，**没有通用 invoke 行**，Host 无从触发
+   包内的 schedule action。
+2. **mcp 这条"已有 owner"只覆盖 builtin transport lane。** `activeBuiltinCapabilities` 在
+   `packageRecord.manifest.runtime.transport !== 'builtin'` 时直接返回空
+   （`runtime-composition.ts:477`）。契约把 runtime 分成 `ExternalRuntimeDeclaration`
+   （`stdio` / `ipc`，`:276-279`）与 `BuiltinRuntimeDeclaration`（`builtin`，`:280-283`）两支。
+   所以第 9 行要走通这条 owner，**包必须发成 `transport: 'builtin'`**，与 7 个 IM connector 走的
+   stdio + broker wire 是两条不同的 lane，不能互相引证。
+
+#### 7.4.1 逐行结果
+
+| # | 行 | 声明（一手，`packages/api/src/plugins/<id>/plugin.yaml`） | §5.3 类 | 新 owner 就位？ |
+|---|---|---|---|---|
+| 8 | `github-operations` ← `github` | 7 × `schedule`（`factoryId: github.*`，其中 3 个 `optional`） | schedule | ❌ |
+| 9 | `video-generation` ← `video-gen` | 1 × `mcp`（`video-gen-toolset`） | mcp | ✅（限 builtin lane） |
+| 10 | `wechat-visible-reader` | 1 × `limb` | limb | ❌ |
+| 11 | `weixin-mp` | 1 × `limb` + 1 × `skill` + `healthCheck.limbCommand` | limb + skill | ❌ |
+
+**第 8 行 `github-operations` — 阻塞点两条。** 除 §7.4.0 的"无触发线"外，Host 的排程注册表是
+**用户可见面**：7 个 schedule 以 `scheduleTaskId: schedule:github:<name>`
+（`github-schedule-factories.ts:548`）进入 `taskRunnerV2`，激活判据硬编码
+`c.type === 'schedule' && c.pluginId === 'github'`（`:656`、`:441`），rehydrate 入口在
+`index.ts:4509-4517`。外部包既无线注册进来，Core 的判据也认不出它。把实现删掉而包接不住，
+等于把 7 个排程静默删成不可用。
+
+**第 9 行 `video-generation` — 唯一今天可交付的一行。** cutover 用的是 Core **已有且已投产**的
+机制：`pluginManagerHostPolicies`（`index.ts:5027-5032`）今天恰好只有一条
+`{ pluginId: 'dev.clowder.video-analysis', replacesRepositoryPluginId: 'video-analysis', … }`，
+经 `resolveRepositoryReplacementPluginIds`（`machine-catalog-provider.ts:143-144`）让外部包
+影子掉 repo-local id。第 9 行照此加一行即可，**不新增任何 public method / hook / UI slot**，
+符合 §5.2。
+
+**第 10 行 `wechat-visible-reader` — 三处硬编码 Host 分支 keyed on repo-local id**
+（全部在 `index.ts`）：
+
+- `isWeChatVisibleReaderEnabled`（`:4520-4528`）：以 `capability.type === 'limb' &&
+  capability.pluginId === 'wechat-visible-reader' && capability.enabled` 为 arm 路由的启用判据；
+- `registerWeChatVisibleReaderArmRoutes`（`:4530-4534`）：Host 自有的 arm 路由 + armStore + metrics；
+- `beforePluginDisable`（`:4540-4542`）：停用插件时 `disarm()`，外部包路径没有对应钩子。
+
+迁移后该 capability 记录不再出现在 `capabilities.json` → `isPluginEnabled` 返回 false →
+arm 路由**静默 fail-closed**；`beforePluginDisable` 的 disarm 语义直接丢失。
+
+**第 11 行 `weixin-mp` — 三重阻塞。** (a) limb 与 skill 两类都无 owner；(b) 即便有，它是
+**混合类型 feature**，`runtime-composition.ts:485` 要求 `every(type === 'mcp')`，**永不激活**；
+(c) `healthCheck.limbCommand` 在**契约里根本不存在**——`PluginManifest`（`:284-296`）无
+`healthCheck` 字段，该字段只存在于 Core 的 repo-local schema（`plugin-manifest.ts:323-329`）。
+
+#### 7.4.2 C1 处置
+
+| # | 处置 | 依据 |
+|---|---|---|
+| 8 | **迁移与删除一并后移 C2** | 需新增 schedule 触发线（新 public wire）→ §3 F-1 硬止损线 + §7.2 第 4 条"判 C2 者迁移与删除一并后移，不得先删后补" |
+| 9 | **留在 C1 并交付**：加 host policy 一行 + 删 repo-local duplicate；门 = 包以 `transport: 'builtin'` 发布 + MCP tool 实际可调用的旅程证明 | 走既有 `replacesRepositoryPluginId` 机制，无新公共面 |
+| 10 | **迁移与删除一并后移 C2**；另需裁定 Host 侧 arm/disarm 隐私授权权威是否按 `personal-chrome-host` 同例**保留为 Host truth** | 需 limb 宿主消费面（新公共面）；三处 Host 分支见 §7.4.1 |
+| 11 | **迁移与删除一并后移 C2** | 需 limb + skill 两类宿主消费面、混合类型 feature 激活规则、`healthCheck` manifest 字段——三者都是新公共面 |
+
+**对 Stage 4 第 5 步删除面的直接后果**：`github-schedule-factories.ts`、`weixin-mp` 的 limb/skill
+挂载、`wechat-visible-reader` 的 limb 与上述三处 Host 分支，**在 C1 内均不得删除**；只有
+`video-gen` 的 repo-local 实现在其包发布并证明 parity 之后可删。这与 `video-analysis` baseline
+的删除面（§2.0）形状相同，可同批执行。
+
+#### 7.4.3 对 §5.3 / §7.2 的更正与影响
+
+1. **更正 §5.3 schedule 行**："contract 有 `schedule.register` wire，但 Core 未注册 handler"
+   → 应为"**wire registry 无 `schedule.*` 行**；`schedule.register` 仅是 `L1_CAPABILITIES`
+   授权名，且 host→plugin 无通用 invoke 行"。
+2. **精确化 §5.3 mcp 行**：`BuiltinPluginContributionSupervisor` 这条 owner **只对
+   `runtime.transport === 'builtin'` 的包成立**，对 stdio external runtime 不成立。
+3. **§7.2 第 4 条的五类里，本节给出三类的 code-derived 归属建议：schedule / limb / skill → C2**
+   （连同其迁移一并后移）。仍需 maintainer 签字确认。**webhook 与 provider 专属操作两类不在本节
+   范围**——它们属第 1–7 行，本节只核 8–11。
+4. **不改变 §7.3 对第 1–7 行的裁定**：connector 行走既有 Host 权威 + messaging/events wire，
+   与本节四行的阻塞原因不同源，两边的结论不可互相套用。
+5. **C1 第 8–11 行的实际交付面因此收敛为一行**（第 9 行）。这不是范围缩水，而是把"删了没人接住"
+   的三行按既定规则挡在门外；§5.3 的删除门本来就写着"没接住就不准删"。
