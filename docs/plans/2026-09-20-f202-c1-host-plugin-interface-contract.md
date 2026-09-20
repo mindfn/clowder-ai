@@ -50,7 +50,7 @@ contract 内**没有** `HostToPluginMethod` 类型；broker `BrokerConnection` �
 声明载体已存在且通用——`MessageSubscriptionContribution { binding, filter?, action: CallbackAction }`
 （:189-195），`CallbackAction = { method, params? }`（:130）。
 
-> **止损线覆盖记录**：§F-1 原定"新增 public method/hook 即转 C2"。operator 已裁定方向 B
+> **止损线覆盖记录**：本车道原定"新增 public method/hook 即转 C2"。operator 已裁定方向 B
 > 是基础能力且必须在本 PR 内完成，该止损线在此项上被显式覆盖，不适用。
 
 ## 3. 缺口清单（要补的，共 4 项）
