@@ -8,7 +8,16 @@ import {
 import type { BrokerConnection } from '../host-broker/builtin-loopback.js';
 import { HostBrokerError } from '../host-broker/types.js';
 import type { PluginInventoryTransaction } from '../host-inventory/ports.js';
-import type { PluginInstanceRecord, PluginPackageRecord, RuntimeState } from '../host-inventory/types.js';
+import type {
+  PluginGrantRecord,
+  PluginInstanceRecord,
+  PluginPackageRecord,
+  RuntimeState,
+} from '../host-inventory/types.js';
+import {
+  ManifestConfigurationProjectionError,
+  projectManifestConfigurationEnv,
+} from '../manifest-configuration-projection.js';
 import { NodeExternalPluginProcessAdapter } from './node-process-adapter.js';
 import { verifyExternalPackage } from './package-authority.js';
 import { projectRuntimeCrash } from './runtime-crash-projection.js';
@@ -35,6 +44,8 @@ const TRANSIENT_EXIT_RECOVERY_COOLDOWN_MS = 5 * 60_000;
 interface RunnableAuthority {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
+  /** F202 C1 gap C: the grant set a config/secret projection must be checked against. */
+  readonly grants: PluginGrantRecord | undefined;
 }
 
 interface Deferred<Value> {
@@ -188,11 +199,17 @@ export class ExternalPluginRuntimeSupervisor {
     await this.setRuntimeState(execution, 'starting');
     execution.projected = true;
     await located.verifyIntegrity();
+    // F202 C1 gap C: manifest-declared config/secrets, grant-checked and fail-closed. Declared
+    // fields are resolved BEFORE the protocol variables are written, and a declared key inside
+    // the CLOWDER_ namespace is refused outright, so a package can never restate its own
+    // Host-issued identity by shadowing one of them.
+    const declaredEnv = await this.projectConfiguration(authority);
     execution.process = await this.processes.spawn({
       command: process.execPath,
       args: [verified.entrypoint],
       cwd: verified.rootDir,
       env: {
+        ...declaredEnv,
         CLOWDER_PLUGIN_ID: authority.instance.pluginId,
         CLOWDER_PACKAGE_DIGEST: authority.instance.packageDigest,
         CLOWDER_CONTRACT_VERSION: authority.packageRecord.contractVersion,
@@ -262,6 +279,25 @@ export class ExternalPluginRuntimeSupervisor {
     }
   }
 
+  private async projectConfiguration(authority: RunnableAuthority): Promise<Readonly<Record<string, string>>> {
+    const configuration = this.options.configuration;
+    const declared = authority.packageRecord.manifest.configuration ?? [];
+    if (!configuration || declared.length === 0) return {};
+    try {
+      return await projectManifestConfigurationEnv({
+        pluginInstanceId: authority.instance.pluginInstanceId,
+        manifest: authority.packageRecord.manifest,
+        effectiveGrants: authority.grants?.effectiveGrants ?? [],
+        configuration,
+      });
+    } catch (error) {
+      if (error instanceof ManifestConfigurationProjectionError) {
+        throw new ExternalPluginRuntimeError('CONFIG_UNAVAILABLE', error.message, { cause: error });
+      }
+      throw error;
+    }
+  }
+
   private async runnableAuthority(pluginInstanceId: string): Promise<RunnableAuthority> {
     const snapshot = await this.options.inventory.snapshot();
     const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
@@ -286,7 +322,8 @@ export class ExternalPluginRuntimeSupervisor {
     ) {
       throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', `${pluginInstanceId} is not a runnable instance`);
     }
-    return { instance, packageRecord };
+    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
+    return { instance, packageRecord, grants };
   }
 
   private async setRuntimeState(execution: RuntimeExecution, runtimeState: RuntimeState): Promise<void> {

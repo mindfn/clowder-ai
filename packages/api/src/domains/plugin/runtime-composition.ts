@@ -39,10 +39,12 @@ import {
   FilePluginPackageQuarantineStore,
   PluginPackageQuarantineManagerAdapter,
 } from './manager/plugin-package-quarantine.js';
+import type { PluginRuntimeConfigurationPort } from './manifest-configuration-projection.js';
 import { type OfficialPluginCatalogEntry, officialPluginPresentationMatches } from './official-catalog.js';
 import type { OfficialPluginCatalogProvider } from './official-catalog-provider.js';
 import { OfficialPluginPackageInstaller } from './official-package-installer.js';
 import type { OfficialPluginAuthPort, OfficialPluginAuthStatus } from './official-plugin-auth.js';
+import { readPluginConfig } from './plugin-config-store.js';
 import {
   type PluginManagerCatalogCandidate,
   pluginManagerCapabilitiesFromManifest,
@@ -76,6 +78,13 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly contract?: PackageAdmissionContractRuntime;
   readonly now?: () => number;
   readonly editorParentOrigin?: string;
+  /**
+   * F202 C1 gap C: where the stdio runtime reads an instance's stored configuration. Defaults to
+   * the Host's own plugin-config store under `projectRoot`, which is where
+   * `HostPluginConfigurationService.configure` writes — so an instance that earned readiness
+   * through the real authority is projectable without extra wiring.
+   */
+  readonly configuration?: PluginRuntimeConfigurationPort;
   readonly collectiveConnector?: Omit<CollectiveConnectorBuiltinRuntimeOptions, 'dataDirectory'> & {
     readonly dataDirectory?: string;
   };
@@ -235,10 +244,20 @@ export function createDormantPluginRuntimeComposition(
     new FilesystemVerifiedPluginPackageLocator(paths.packagesRoot, {
       ...(options.contract === undefined ? {} : { validateManifest: options.contract.validateManifest }),
     });
+  const readStoredConfigurationValue = async (pluginInstanceId: string, key: string) => {
+    const snapshot = await inventoryStore.snapshot();
+    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
+    return instance ? readPluginConfig(options.projectRoot, instance.pluginId)[key] : undefined;
+  };
+  const configuration: PluginRuntimeConfigurationPort = options.configuration ?? {
+    readConfig: readStoredConfigurationValue,
+    readSecret: readStoredConfigurationValue,
+  };
   const externalSupervisor = new ExternalPluginRuntimeSupervisor({
     inventory: inventoryStore,
     broker,
     packages,
+    configuration,
     handshakeTimeoutMs: EXTERNAL_PLUGIN_PRE_ACTIVE_TIMEOUT_MS,
     ...(options.processes === undefined ? {} : { processes: options.processes }),
     ...(options.now === undefined ? {} : { now: options.now }),
