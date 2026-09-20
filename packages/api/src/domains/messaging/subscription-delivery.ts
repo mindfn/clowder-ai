@@ -59,6 +59,21 @@ export interface SubscriptionDeliveryDeps {
   readonly maxPagesPerDrain?: number;
 }
 
+/**
+ * What a subscriber declares about which of the thread's messages it wants. Declared by the
+ * subscriber rather than decided by the Host, but applied by the Host — a subscriber filtering
+ * itself would already have received what it wanted excluded.
+ */
+export interface SubscriptionFilter {
+  /**
+   * Skip messages this subscriber authored. A package that relays a thread outward is also
+   * subscribed to it, so without this its own relayed message comes straight back and it relays
+   * it again — one inbound "hi" becomes an endless conversation on a real platform. Subscribers
+   * that want their own echo, like a live view confirming an optimistic update, simply omit it.
+   */
+  readonly excludeOwnMessages?: boolean;
+}
+
 /** What a subscriber declared: the thread it wants and the outbound method it implements. */
 export interface SubscriptionDeclaration {
   readonly subscriberId: string;
@@ -66,6 +81,7 @@ export interface SubscriptionDeclaration {
   readonly handleId: string;
   readonly method: string;
   readonly params?: Readonly<Record<string, unknown>>;
+  readonly filter?: SubscriptionFilter;
 }
 
 interface Registration {
@@ -73,6 +89,7 @@ interface Registration {
   readonly subscriptionId: string;
   readonly method: string;
   readonly params?: Readonly<Record<string, unknown>>;
+  readonly filter?: SubscriptionFilter;
 }
 
 /** Raised when the log was trimmed past a subscriber's cursor (INV-9: surface, never skip). */
@@ -86,6 +103,13 @@ export class SubscriptionDeliveryStaleError extends Error {
 }
 
 const DEFAULT_MAX_PAGES = 32;
+
+/** True when this subscriber wrote the event and asked not to be handed its own messages. */
+function authoredBy(event: unknown, registration: Registration): boolean {
+  if (registration.filter?.excludeOwnMessages !== true) return false;
+  const actor = (event as { envelope?: { actor?: { kind?: unknown; id?: unknown } } })?.envelope?.actor;
+  return actor?.kind === 'plugin' && actor.id === registration.subscriberId;
+}
 
 export class SubscriptionDelivery {
   private readonly deps: SubscriptionDeliveryDeps;
@@ -107,6 +131,7 @@ export class SubscriptionDelivery {
       subscriptionId,
       method: declaration.method,
       ...(declaration.params === undefined ? {} : { params: declaration.params }),
+      ...(declaration.filter === undefined ? {} : { filter: declaration.filter }),
     });
     this.byThread.set(declaration.threadId, existing);
   }
@@ -141,8 +166,11 @@ export class SubscriptionDelivery {
       if (result.events.length === 0 || result.ackToken === null) return;
 
       // Ack covers the whole page, so every event in it must be accepted first. A throw here
-      // leaves the cursor where it was and the page returns on the next drain.
+      // leaves the cursor where it was and the page returns on the next drain. A filtered-out
+      // event is still covered by that ack: skipping is a decision about this subscriber, not a
+      // failure, and leaving it unacked would replay it forever.
       for (const event of result.events) {
+        if (authoredBy(event, registration)) continue;
         await this.deps.invocation.invoke(registration.subscriberId, registration.method, {
           subscriptionId: registration.subscriptionId,
           event,

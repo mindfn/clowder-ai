@@ -18,10 +18,18 @@ import type { MessagingIngressWakeDeps } from './ingress-wake.js';
 import { MessagingLedger } from './ledger.js';
 import { SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
+import type { MessagingStores } from './stores/ports.js';
 
 export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
   readonly messageStore: IMessageStore;
   readonly redis?: RedisClient;
+  /**
+   * Stores already built by composition. Supply these when something outside the domain must
+   * write to the same event log the domain reads — the publishing store that puts every
+   * author's message on the stream is exactly that case, and against Redis it would happen to
+   * agree by key while silently disagreeing anywhere else.
+   */
+  readonly stores?: MessagingStores;
   /** Event log retention per thread (events beyond this are trimmed; stale+snapshot covers the gap). */
   readonly retentionCount?: number;
 }
@@ -48,7 +56,7 @@ export class MessagingService {
   private readonly stream: EventStreamService;
 
   constructor(deps: MessagingDomainDeps) {
-    const stores = createMessagingStores(deps.redis);
+    const stores = deps.stores ?? createMessagingStores(deps.redis);
     const ledger = new MessagingLedger(stores.ledger);
     this.handles = new HandleService(stores.handles, stores.cursors);
     const ingressWake = ingressWakeDeps(deps);
