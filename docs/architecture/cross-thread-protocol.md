@@ -155,11 +155,61 @@ The tool shape is where today's model is taught. It currently teaches addressing
 Legacy `cross_post_message` remains for the un-coordinated case but **fails closed** and routes
 to the proposal path.
 
+## Proposed — Derivation, not validation (reviewer-driven correction)
+
+**Review objection (sol, 2026-09-20):** *"`ActionSuccessorLease` recording `holderThreadId` does not
+mean it owns a pre-trustworthy participation set. If the lease is seeded with a caller-supplied
+target thread at creation, then 'validate the address against the lease' is circular."*
+
+**Verdict: confirmed, and bounded.** Traced through the real call chain:
+
+| Where | `holderThreadId` comes from | Circular? |
+|---|---|---|
+| Lease creation | `holderThreadId: input.targetThreadId` — the caller's target (`ActionSuccessorAdmissionService.ts:255,325`) | **yes, by itself** |
+| Standing check | compares `input.targetThreadId !== freshness.holderThreadId` (`:69`) | depends on `freshness` |
+| `freshness` for **task** subjects | **`task.threadId`** — an independently persisted object (`ActionSubjectTruthResolver.ts:292`) | ❌ **no — already anchored** |
+| `freshness` for **PR** subjects | not produced; `holderThreadId` only flows in as `context.holderThreadId` (`:233`), so the `!== undefined` guard **silently no-ops** | ✅ **yes — caller echo** |
+| Local-review terminal route | `holderThreadId: actor.threadId` — server-known from the invocation (`callbacks.ts:2266`) | ❌ **no** |
+
+So the objection is exactly right for `review`/PR subjects, and already solved for `implement`/task
+subjects — and the in-tree solution shows the general shape.
+
+### The invariant this forces
+
+> **A thread coordinate must be *derived* from an object that owns that fact independently of the
+> delivery call — never *validated* against a value the same call path seeded.**
+
+Validation cannot repair a first write that was never checked. Only derivation can.
+
+Three non-circular anchors, all already present:
+
+| Anchor | Owns the thread fact | Status |
+|---|---|---|
+| `task.threadId` | task subjects | in use today (`:292`) |
+| `PrTrackingStore`: `(repoFullName + prNumber) → { catId, threadId, userId }` | PR subjects | **exists, not wired to custody** |
+| `actor.threadId` — the invocation the caller is actually running in | self-enrollment | in use today (`callbacks.ts:2266`) |
+
+### Enrollment rule
+
+The third anchor generalizes into the rule that makes misdelivery inexpressible:
+
+> **You may enroll only the thread you are running in.** The server takes it from the invocation,
+> never from a parameter. To bring another thread in, you *invite*; the invitee enrolls itself.
+
+Nobody can ever write another thread's id into a delivery path, because the only thread anyone can
+name is their own — and they don't get to name it, the server does. Bootstrap for the first
+participant comes from lineage (thread creation) or operator approval (`effectClass=assign_work`).
+
 ## Proposed — Migration
 
-1. **Wire, don't build** — for `actionFamily ∈ {review, implement}` the lease already holds
-   subject + participants. Resolve/validate `threadId` from it; mismatch → reject with the lease's
-   own answer. This covers cross-thread review, the operator's sharpest case. *(Decision Packet C1.)*
+1. ~~**Wire, don't build** — resolve/validate `threadId` against the lease.~~
+   **Withdrawn** — circular for PR subjects (see above). Replaced by:
+
+   **1'. Anchor the subject, then derive.** Give PR subjects the anchor task subjects already have:
+   resolve `holderThreadId` from `PrTrackingStore` instead of echoing the caller. The existing
+   `target_thread` standing check (`:69`) then stops no-opping and becomes load-bearing **for free** —
+   no new comparison logic, just a non-`undefined` value from an independent owner.
+   This still covers cross-thread review, the operator's sharpest case. *(Decision Packet C1, revised.)*
 2. **Generalize the coordination** beyond the two action families.
 3. **Invert the tool surface** — coordination-addressed posting becomes primary.
 4. **Fail closed** — un-coordinated cross-post degrades to proposal. *(Last, once 1–3 make the
