@@ -510,12 +510,19 @@ binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 
 | A | `1cb65492c` | `messaging/ingress-wake.ts`（新）+ `send-service.ts` ingress 分支；`parseMentions` 与 catRegistry pattern 收敛为单一真相源 |
 | B | `9b866e3f0` | `runtime-composition.ts` 转发协作者 + `index.ts` 注入真实 `invokeTrigger`/`threadStore`/`socketManager`/默认猫/mention patterns |
 
-复现（exact HEAD 本地运行，CI serial lane 因 fail-fast 只跑到第一个文件，见 PR 正文 CI provenance）：
+复现（exact HEAD 本地运行）：
 
 ```
 node --test packages/api/test/f202-c1-im-cutover-wake-parity.test.js \
              packages/api/test/f202-c1-production-composition-activation.test.js
 ```
+
+**CI 承载 job（随 base 变动；本节自 `2e5a2769c` 合入 base `6291ff079` 起）**：#1483 把 public test 改成按资源域分片后，
+v1 的 `Public test (serial)` lane 已不存在，`serial-shared` 的文件集为空（合并后 planner 实测 `serial_shared=0 distributable=2192`）。
+这两个门文件落在 `runtime-isolated-default` 规则下的两条不同 distributable lane——
+`f202-c1-im-cutover-wake-parity` → `distributable-2`，`f202-c1-production-composition-activation` → `distributable-3`
+（下面那条附带边界用例 `plugin-external-runtime-config-projection` → `distributable-4`）。
+因此"这道门在 CI 绿"**必须读多个 job**，不能再指向单一 serial job；原先"serial 因 fail-fast 只跑到第一个文件"的叙述同步作废。
 
 **缺口 C 附带的信任边界**（`plugin-external-runtime-config-projection.test.js`，**不属于这 8 例门**）：
 投影一旦存在，manifest 就能命名子进程环境变量，因此三条 fail-closed 规则各有可执行断言——
