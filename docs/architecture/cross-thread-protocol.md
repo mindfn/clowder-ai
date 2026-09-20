@@ -3,472 +3,247 @@ title: "Cross-Thread Protocol — RFC (DRAFT)"
 doc_kind: architecture
 feature_ids: []
 related_features: [F052, F128, F167, F193, F246, F306]
-topics: [cross-thread, coordination, routing, addressing, custody, thread-relationship, rfc]
+topics: [cross-thread, thread-relation, routing, addressing, rfc]
 created: 2026-09-20
 updated: 2026-09-20
 status: draft
 author: "opus"
-description: "跨 thread 协作的寻址模型 RFC：把协作对象（coordination）提为投递地址，thread 降为参与集合推导出的渲染位置；包含现状核实、与 A2A 五条原则的冲突、工具面与分步迁移。"
+description: "跨 thread 协作的寻址模型 RFC（精简版）：只新增 ThreadRelation 一个对象，关系边同时是投递授权；服务端只做机械约束，语义判断留给 Agent。"
 description_source: human
 description_author: opus
-description_updated_at: 2026-09-20T02:30:00Z
+description_updated_at: 2026-09-20T03:15:00Z
 ---
 
 # Cross-Thread Protocol — RFC (DRAFT, not implemented)
 
-> **Status: DRAFT for review.** Nothing here is built. This document proposes the design;
-> it does not describe current behavior. Sections marked **Verified today** are read from
-> source at the cited lines; everything under **Proposed** is up for debate.
->
+> **Status: DRAFT for review.** Nothing here is built.
 > Companion: [`a2a-protocol.md`](./a2a-protocol.md) — the message lifecycle *inside* one thread.
+>
+> **v2 — coordinate system corrected.** v1 of this RFC proposed five persistent objects
+> (`Coordination` + `Participation` + `Invitation` + `Delivery` + `Lease`) and four commands. The
+> operator's objection was that this is a **server-side workflow orchestrator**, not the design of a
+> **client-side agent application** — and that it was simply too complex for the problem. Both are
+> correct. v1 used complexity to compensate for the wrong coordinate system: it tried to make the
+> *server* understand the collaboration. In a client-side agent app the **agent** understands the
+> collaboration; the server only has to stop it escaping a confirmed relationship.
+>
+> The operator had also already stated the answer several rounds earlier — *"if thread A and B have
+> a delivery relationship, the association graph belongs in metadata; each thread's metadata should
+> maintain what it is doing."* v2 is that sentence. v1 was me building past it.
 
 ## The gap this fills
 
-The A2A protocol defines a message's lifecycle to five design principles — but it explicitly
-stops at the thread boundary:
+The A2A protocol defines a message's lifecycle to five design principles, then stops at the thread
+boundary:
 
-> **Thread independence.** Each thread has its own event-driven drain and its own queue head.
-> Work in one thread never crosses into another's scheduling; anything shared between threads
-> is **an explicit, recorded cross-post**. — `a2a-protocol.md`
+> **Thread independence.** Each thread has its own event-driven drain and its own queue head. Work
+> in one thread never crosses into another's scheduling; anything shared between threads is **an
+> explicit, recorded cross-post**. — `a2a-protocol.md`
 
-"An explicit, recorded cross-post" is the entire specification of the cross-thread hop. It was
-never designed to those five principles. This RFC designs it.
+That sentence is the entire specification of the cross-thread hop. This RFC designs it.
 
 Motivating evidence: six operator-confirmed misdeliveries across eleven threads,
 2026-04-30 → 2026-09-19 — see `docs/bug-report/ghost-thread-cross-thread-session-routing/`.
-The server never mis-bound a thread in any of them. That is the point: **the delivery did
-exactly what it was asked to do, and the asking is what has no design.**
 
 ## What exists today — Verified
 
-**Revised after review (sol, CHANGES REQUESTED).** An earlier draft said the primitives were
-"mostly built, just not wired." That was wrong in two ways, both load-bearing:
-
-- `ActionSuccessorLease` holds `holderCatIds/holderThreadId` + `predecessorCatId/predecessorThreadId`
-  and nothing else (`action-successor-state-machine.ts:90-99`). That is **one execution edge, not a
-  participation graph** — no membership, no invitation, no exit, no multi-party relation.
-  **The participation graph does not exist and must be built.**
-- "No delivery path reads the subject" is also too broad. The accurate matrix:
-
 | Path | Constraint today |
 |---|---|
-| Ordinary cross-post | existence + principal scope only |
-| task/implement first handoff | **already validated against `task.threadId`** |
-| PR/review first handoff | freshness returns no thread → the check silently no-ops |
-| local review terminal return | **already forced back to the predecessor thread** |
+| Ordinary cross-post | existence + principal scope only (`callback-scope-helpers.ts:92-122`) |
+| task/implement first handoff | **already validated** against `task.threadId` (`ActionSubjectTruthResolver.ts:292`) |
+| PR/review first handoff | freshness returns no thread → the `target_thread` check silently no-ops |
+| local review terminal return | **already forced** back to the predecessor thread |
 
-> **Scope of this matrix: semantic *target authorization* only.** It deliberately omits the other
-> constraints already in force on these paths — routing credentials (F193 AC-A4), deleted-thread
-> handling, same-thread `replyTo`, agent-key's ban on structured actions, and cloud exact-return.
-> Those are real and unchanged; they simply do not answer "should this land in *this* thread".
+Relevant primitives that already exist: `Thread.parentThreadId` / `sourceThreadId` /
+`createdFromProposalId` (`ThreadStore.ts:238-240`), `getChildThreads()` (`:834`), and
+`Thread.goal` (F306, `:206`). Lineage is recorded on **29/531 threads (5.5%)** and no delivery path
+reads any of it.
 
-The defect is concentrated in **ordinary delivery and PR-review initial handoff** — not in every
-structured path. What follows lists primitives that exist, which is not the same as being sufficient.
+`ActionSuccessorLease` holds `holderCatIds/holderThreadId` + `predecessorCatId/predecessorThreadId`
+(`action-successor-state-machine.ts:90-99`) — **one execution edge**, not a relationship graph.
 
-| Primitive | Status | Source |
-|---|---|---|
-| Subject-keyed **execution edge** `ActionSuccessorLease` (NOT a coordination object) | **exists** | `domains/ball-custody/ActionSuccessorLeaseStore.ts` |
-| …its identity key contains **no threadId**: `action:successor:identity:{tenant}:{subjectRef}:{family}:{slot}` | **exists** | `action-successor-keys.ts:14-16` |
-| …it records **two execution endpoints** — `holderThreadId` / `predecessorThreadId`. **These are not a participation set.** | **exists** | `action-successor-state-machine.ts:97,99` |
-| …contention: generation + CAS, `replace`, `returnToPredecessor` | **exists** | same domain |
-| …terminal semantics: `subjectTerminal` + predicate catalog | **exists** | `ActionTerminalPredicateCatalog.ts` |
-| Thread lineage: `parentThreadId`, `sourceThreadId`, `createdFromProposalId` | **exists** | `ThreadStore.ts:238-240` |
-| Child index: `getChildThreads(parentThreadId)` | **exists** | `ThreadStore.ts:834` |
-| Thread purpose: `goal?: ThreadGoalStateV1` (F306) | **exists** | `ThreadStore.ts:206` |
-| `cross_post_message` may carry `action.subjectRef` / `coordination.subjectRef` | **exists, optional** | tool schema |
-| Delivery resolves an independently authorized endpoint — **for ordinary cross-post and PR-review initial handoff** (task handoff and local-review terminal return already do; see the matrix above) | ❌ **absent** on those two paths | `callback-scope-helpers.ts:92-122` |
+## The defect, stated precisely
 
-`resolveScopedThreadId()` checks exactly two things: the thread exists, and it is in the
-caller's principal scope. `threadId` is **required**; `subjectRef` is **optional**; the two
-are **never compared**.
+> For **ordinary cross-post** and **PR-review initial handoff**: when the system cannot resolve an
+> independently authorized endpoint, the API still accepts any scope-valid `threadId` and produces
+> messages, wakes and custody side effects — and the caller has **no legitimate unknown-target /
+> proposal-only exit**.
 
-## The defect, in one line
+The load-bearing part is **"no authoritative endpoint, yet effectful delivery is permitted"** — not
+"the target thread did not exist". Replying in the source thread, or doing nothing, may well have
+been correct handling in several of the incidents.
 
-**There is no addressable target, and the tool accepts a guess anyway.**
+## The design
 
-> **Correction (review round 2).** An earlier draft called I-1 a "decisive sample" and claimed
-> *"the system held the answer and asked the caller to guess it anyway."* **That was false and is
-> withdrawn.** I-1 declared `subjectRef=subject:f167:c1-custody-recall-deviation`, but a subjectRef
-> states *what is being discussed*, not *who to deliver to* — and no lease or owner thread existed
-> for that subject at all (the bug report's own finding: F167 had no owner thread). The system did
-> **not** hold the answer.
+> **The server maintains the thread relationship graph and guarantees messages cannot escape a
+> confirmed relation. The agent decides whether to collaborate, with whom, and what to say.**
 >
-> What I-1 actually demonstrates is weaker but still damning — and "no legitimate target existed" is
-> itself too strong, since replying in the source thread or doing nothing may both have been correct
-> handling. The precise claim is the one below.
+> Rails and guardrails from the server. Driving from the cats.
 
-So the accurate framing is **not** "subject is a passenger, thread is the address" — that presumes a
-subject→thread truth exists to be ignored. It does not exist. It has to be built.
+### One new object
 
-> **The defect, stated precisely.** For **ordinary cross-post** and **PR-review initial handoff**:
-> when the system cannot resolve an independently authorized endpoint, the API still accepts any
-> scope-valid `threadId` and produces messages, wakes and custody side effects — and the caller has
-> **no legitimate unknown-target / proposal-only exit**.
->
-> The load-bearing part is **"no authoritative endpoint, yet effectful delivery is permitted"** —
-> not "the target thread did not exist". Together with the six historical incidents, this is the
-> claim the maintainer issue rests on.
-
-### Which A2A principles the cross-thread hop violates
-
-| A2A principle | Cross-thread hop today | |
-|---|---|---|
-| 1. One owner per fact | **No object owns "where this belongs"** on these paths — so the caller supplies a literal `threadId` and nothing can contradict it. (Not "the coordination is overridden": today there is no coordination to override.) | ❌ |
-| 2. Change on one cutover | Coordination generation and message delivery commit **separately** | ⚠️ |
-| 3. Don't infer one fact from another | Caller infers *target thread* from *a threadId it saw recently* | ❌ |
-| 4. One terminal per run | Leases do hold this | ✅ |
-| 5. Projections rebuildable; **fail closed** | Delivery **fails open**: unknown or unrelated target → delivered anyway, silently | ❌ |
-
-Three of five. The incidents are not six mistakes; they are one missing design surfacing six times.
-
-## Proposed — Three things the system should track
-
-| Object | Persisted | What it is |
-|---|---|---|
-| **Coordination** | yes | The collaboration **aggregate root**: a bounded subject/workstream with identity, lifecycle and terminal. **Independent of any thread or message.** A lease is *not* generalized into it — a lease is one execution-responsibility edge **under** a coordination, per action family/slot/revision. Two objects, two lifetimes. |
-| **Participation** | yes | The set of (thread, cat, role) admitted into a coordination. **This — not lineage — is the delivery authority.** Expanding it is an explicit, audited act. |
-| **Cross-post delivery** | yes | A message admitted **into a coordination** and addressed to a **recipient** (participant or role). Its render thread is derived from that recipient's endpoint. **Not broadcast** — reaching everyone is a separate explicit operation. |
-
-## Proposed — The central inversion
-
-> **A cross-thread message is addressed to a coordination, not to a thread.
-> The thread is where it renders — derived from the participation set, never typed by the caller.**
-
-Consequences:
-
-- **Out-of-membership delivery becomes inexpressible** for coordination-bearing messages: there is
-  no field in which to name a non-participant thread. **This is narrower than "misdelivery becomes
-  impossible"** — it does nothing about *wrongly admitting* a participant in the first place, which
-  is why admission needs its own authority model (below). The earlier stronger claim is withdrawn.
-- **Adding a participant is a first-class act**, not a free-text id. It is visible, attributable,
-  and reversible.
-- **Peer collaboration is native.** A finds its change affects B and C → A *expands* (or proposes
-  expanding) the coordination to include them. No parent-child relation is required — this answers
-  the operator's case directly: lineage was never the right authority.
-- **Parent/child is the easy case — but lineage still grants nothing by itself.** A child may join
-  at birth **only** when it is created from inside an already-authorized coordination and its
-  participation is committed **atomically with thread creation**. A bare `parentThreadId` never
-  confers participation. (Round-2 correction: an earlier draft let lineage bootstrap membership,
-  which contradicted "lineage is discovery only".)
-- **"Cross-thread review" stops being a scheduling category.** Review is bound to a *subject*
-  (a PR at an exact HEAD), never to a thread. The reviewer is woken **in the coordination**;
-  which thread that surfaces in is a rendering decision. Today's "cross-thread review" is a
-  category error the addressing model forces us to commit.
-
-### The residual case — and the fail-closed rule
-
-Some contact is genuinely un-addressed: *"I found something that may matter to whoever owns X."*
-That is not a coordination yet. It is a **proposal to form one**.
-
-> **Rule: no coordination → no *effectful* delivery; you may only propose.**
-> Read-only discovery and query remain legal — you may always *look*.
-
-This replaces today's fail-open default and is the principle-5 repair. The approval path is
-reusable for **lifecycle and UI only**, not for addressing (see the `DispatchProposal` caveat below).
-
-**"Dense by construction" is withdrawn — it had no evidence.** There is no persistent participation
-set today, so its future density is unmeasured. Of **960** historical cross-posts only **148** carry
-any coordination metadata — and metadata is not membership truth anyway.
-
-> **Provenance for 960 / 148 — reproduced twice, independently.** Reviewer measured it via read-only
-> `SCAN + HMGET`; the author then re-derived the same figures (960 cross-posts, 148 with coordination
-> metadata, 15.4%) from the committed scanner, which now takes the boundary as a flag:
->
-> ```
-> node forensics/scan-cross-thread-routing.mjs \
->   --through-message-id 0001789825570936-001932-e5185384
-> ```
->
-> Fixed snapshot boundary:
->
-> - cutoff timestamp `1789825570936`, cutoff message `0001789825570936-001932-e5185384`
-> - predicate: `timestamp <= cutoff && extra?.crossPost?.sourceThreadId` → 960;
->   of those, `extra.coordination` present → 148
->
-> **A bare scan of the live store is not reproducible** — two consecutive reads drifted 965 → 966
-> (and 154), and `SCAN` is not a snapshot. Any use of these numbers must pin the cutoff.
-
-Fail-closed is therefore **not** a free consequence of this design. It is an external contract
-change that requires, in order: build the participation set → backfill → **quantify real coverage** →
-staged rollout. It needs operator and maintainer sign-off, not just this document.
-
-For contrast, the rejected alternative: lineage density is 5.5% (29/531 threads) and lineage-based
-fail-closed would reject 63.6–74.6% of real traffic. Participation *should* do better — but
-"should" is a hypothesis to be measured, not a property to be assumed.
-
-## Proposed — Recipient semantics (participation is not an audience)
-
-Membership answers *who may take part*. It does **not** answer *who this message is for*.
-A, B, C all being in a coordination does not mean every sentence A writes should reach B and C.
-Four distinct concepts, deliberately not collapsed:
-
-| Concept | Answers | Owner |
-|---|---|---|
-| **Participation** | who is eligible to take part | Coordination |
-| **Recipient** | who *this* message is addressed to | The message |
-| **Render thread** | where it surfaces | **Derived** by the server from the recipient's endpoint |
-| **Broadcast** | reach everyone | A separate, explicit operation — never a default |
-
-An earlier draft wrote "rendered in each participant thread," which silently made broadcast the
-default. Withdrawn.
-
-## Proposed — Thread relationship management
-
-Two different relations, deliberately not merged:
-
-| Relation | Authority for | Filled by |
-|---|---|---|
-| **Lineage** (`parentThreadId`, `sourceThreadId`) | **Discovery only** — a hint when *forming* a coordination | Thread creation |
-| **Participation** (coordination membership) | **Delivery** — the only thing that authorizes a hop | The act of coordinating |
-
-Lineage must stay advisory. Absence of a lineage edge does **not** mean a delivery is illegitimate:
-Core↔Plugins-style cross-feature collaboration legitimately has no lineage edge. Lineage is a clue,
-never an allowlist.
-
-`goal` (F306) already records what a thread is *for*. It should feed **coordination formation and
-review** (does this thread's purpose match what it is being pulled into?) — advisory, never a gate.
-
-**On the operator's "thread metadata should hold the association graph":** agreed in intent, but it
-must not become a second writable table. Coordination + versioned Participation is the single source
-of truth; thread metadata exposes only a **rebuildable projection** —
-`coordinationId / subjectRef / role / status / provenance`. An independently writable association
-table would drift from the authority by construction, which is principle 1 all over again.
-
-## Proposed — Tool surface
-
-The tool shape is where today's model is taught. It currently teaches addressing-by-thread.
-
-**Separate faces, or collaboration semantics keep living on the message.** A single
-`coordination_post` that can also carry review/assign_work would reproduce today's defect one layer
-up. Four distinct verbs:
+`Thread` already carries `goal`, its metadata, and its active cats. Exactly **one** object is added:
 
 ```ts
-coordination_post({                    // ordinary message, addressed to a recipient
-  coordinationId,
-  recipient:
-    | { kind: "participant"; participantId: string }
-    | { kind: "role"; role: string; cardinality: "exactly_one" | "all" },
+ThreadRelation {
+  id
+  leftThreadId
+  rightThreadId
+  type: "parent_child" | "peer" | "reports_to"
+  status: "proposed" | "active" | "closed"
+  reason
+  provenance
+  allowedIntents
+}
+```
+
+It is simultaneously **an edge in the relationship graph** and **the authorization to deliver**.
+
+**Explicitly not created:** `Coordination`, `Participation`, `Invitation`, `Delivery`. An
+"invitation" is just a `proposed` relation; accepting makes it `active`. What v1 called a
+coordination is the *process* that relations and messages form dynamically — it does not need to be
+materialized as a server-side aggregate root. The existing lease keeps meaning only **who holds the
+ball**, and is never used to express a thread relationship.
+
+### Sending
+
+```ts
+cross_thread_send({
+  relationId,                                        // not a threadId
+  intent: "delegate" | "result" | "notify" | "coordinate" | "report",
   content,
-  replyToMessageId?,
-  clientMessageId,
-})                                     // no threadId, no raw targetCats
-
-coordination_broadcast({ ... })        // reaching everyone is explicit, never a default
-coordination_propose({ subject, rationale, candidates? })   // the legal "I don't know" exit
-
-coordination_transfer({                // review / implement responsibility movement
-  coordinationId,
-  expectedCoordinationRevision,
-  responsibility: { actionFamily, successorSlot, mode: "single" | "parallel", terminalPredicate },
-  assignee:
-    | { kind: "participant";  participantId: string }
-    | { kind: "role";         role: string; cardinality: "exactly_one" }
-    | { kind: "participants"; participantIds: string[] },
-  returnPolicy: { kind: "to_predecessor" } | { kind: "terminal_here" },
-  precondition?: { leaseId: string; generation: number },
-  idempotencyKey,
+  targetCats?,
 })
 ```
 
-`coordination_transfer` invariants:
+The server derives the far end from the relation. **There is no field in which to express a wrong
+target** — which is a stronger guarantee than v1's, and needs one object instead of five.
 
-- accepts **no** `threadId`, **no** bare `catId`, **no** source participant, **no** message content;
-- the issuing participant is derived from the current invocation;
-- the assignee must be an **active** participation;
-- a `role` assignee resolving to **0 or >1** fails closed;
-- `parallel` freezes the exact participant set;
-- coordination revision, subject freshness and lease generation are checked in **one durable
-  cutover**;
-- the **lease claim/replace is the authoritative state**; the carrier message is generated from it
-  and is recoverable — it never owns the semantics.
+## Three flows
 
-`verdict` / `completion` are **lease state transitions**; the carrier message is a projection
-generated atomically with the transition — never the authority itself.
+### 1. Review — normally does not cross threads at all
 
-| Today | Proposed |
-|---|---|
-| `cross_post_message(threadId, …)` — `threadId` required, `subjectRef` optional | `coordination_post` above — recipient-addressed, render thread derived |
-| No way to say "I don't know the id" | `coordination_propose` — the legal "I don't know" exit |
-| Target expansion = type another threadId | invite → accept (below) — explicit, audited, never a direct write of another party's endpoint |
-| Misdelivery has no signal | out-of-membership addressing is rejected at the API, not discovered by a human |
+A feature is developed in thread A:
 
-> **Caveat on reuse:** the existing approval path is reusable only for its **lifecycle and UI**.
-> `DispatchProposal` persists caller-supplied `targetThreadId` in the entity *and its canonical key*
-> (`callbacks.ts:2493`), so its **addressing payload cannot be carried over**.
-
-Legacy `cross_post_message` remains for the un-coordinated case but fails closed **for effectful
-delivery only** — read-only discovery and query stay legal.
-
-## Proposed — Derivation, not validation (reviewer-driven correction)
-
-**Review objection (sol, 2026-09-20):** *"`ActionSuccessorLease` recording `holderThreadId` does not
-mean it owns a pre-trustworthy participation set. If the lease is seeded with a caller-supplied
-target thread at creation, then 'validate the address against the lease' is circular."*
-
-**Verdict: confirmed, and bounded.** Traced through the real call chain:
-
-| Where | `holderThreadId` comes from | Circular? |
-|---|---|---|
-| Lease creation | `holderThreadId: input.targetThreadId` — the caller's target (`ActionSuccessorAdmissionService.ts:255,325`) | **yes, by itself** |
-| Standing check | compares `input.targetThreadId !== freshness.holderThreadId` (`:69`) | depends on `freshness` |
-| `freshness` for **task** subjects | **`task.threadId`** — an independently persisted object (`ActionSubjectTruthResolver.ts:292`) | ❌ **no — already anchored** |
-| `freshness` for **PR** subjects | not produced; `holderThreadId` only flows in as `context.holderThreadId` (`:233`), so the `!== undefined` guard **silently no-ops** | ✅ **yes — caller echo** |
-| Local-review terminal route | `holderThreadId: actor.threadId` — server-known from the invocation (`callbacks.ts:2266`) | ❌ **no** |
-
-So the objection is exactly right for `review`/PR subjects, and already solved for `implement`/task
-subjects — and the in-tree solution shows the general shape.
-
-### The invariant this forces
-
-> **A thread coordinate must be *derived* from an object that owns that fact independently of the
-> delivery call — never *validated* against a value the same call path seeded.**
-
-Validation cannot repair a first write that was never checked. Only derivation can.
-
-Non-circular anchors that exist today — **there are two, not three**:
-
-| Anchor | Owns the thread fact | Status |
-|---|---|---|
-| `task.threadId` | task subjects | in use today (`ActionSubjectTruthResolver.ts:292`) |
-| `actor.threadId` — the invocation the caller is actually running in | self-enrollment | in use today (`callbacks.ts:2266`) |
-| — | **PR review** | ❌ **no independent authoritative endpoint exists** |
-
-> An earlier draft listed `PrTrackingStore` here. **Removed** — it is a notification subscription,
-> not an execution authority, and it is overwritten on re-registration (see the withdrawn migration
-> step). Listing it as an anchor while rejecting it downstream was a contradiction, not a nuance.
-
-### Enrollment rule
-
-The third anchor generalizes into the rule that makes misdelivery inexpressible:
-
-> **You may enroll only the thread you are running in.** The server takes it from the invocation,
-> never from a parameter. To bring another thread in, you *invite*; the invitee enrolls itself.
-
-Nobody can ever write another thread's id into a delivery path, because the only thread anyone can
-name is their own — and they don't get to name it, the server does. The first participant is
-bootstrapped by **operator approval** (`effectClass=assign_work`) or by atomic creation inside an
-already-authorized coordination — **not by bare lineage**.
-
-**This rule is necessary but not sufficient.** Invocation-bound self-enrollment prevents *forging
-someone else's thread*. It does not prevent a wrong invitation, the wrong parallel invocation
-accepting, or a wrong admission. Those need subject/role standing, invitation capability, and —
-where responsibility expands — human approval.
-
-### agent-key: fail closed, no fallback
-
-An agent-key caller has **no invocation thread**, so it has no self to enroll. Today the server
-already refuses coordination/action metadata from agent-key callers and accepts only a raw
-`threadId` under scope validation (`callbacks.ts:1365`).
-
-> **A caller-supplied thread must never be accepted as a self-enrollment fallback.**
-
-Without a server-pre-bound endpoint/capability, an agent-key caller may only **query** or **propose**.
-
-### Invitation protocol
-
-```ts
-coordination_invite({ coordinationId,
-                      inviteeSelector: { catId } | { role },   // who may claim it
-                      admittedRole,                            // who they become once admitted
-                      authorityRef, subjectRevision, expiresAt, idempotencyKey })
-coordination_accept({ invitationId, idempotencyKey })
+```text
+thread A
+  ├─ developer cat
+  └─ reviewer cat
 ```
 
-`inviteeSelector` (eligibility to claim) and `admittedRole` (role upon joining) are deliberately
-separate — an earlier draft collapsed them into one `role`, which conflated "who may accept" with
-"what they become".
+Review wakes the reviewer **in thread A**. It is a role switch inside one work context — there is
+no reason to go looking for "which other thread is the reviewer in right now".
 
-On accept the **server derives** cat / user / thread / invocation and validates tenant, generation,
-subject standing, role and uniqueness. Operator/system admission is a separate explicit path with
-its own permission and audit trail.
+If review genuinely needs an isolated environment:
 
-> **Idempotency is not eligibility.** Single idempotent consumption solves the *race*, not the
-> *correctness* question: when one `catId` has several equally-qualified live endpoints (parallel
-> invocations), arrival order must **not** decide. The server returns **`ambiguous_endpoint`** and
-> escalates to explicit selection or operator approval.
+```text
+thread A
+  └─ review child thread R      (parent_child edge written atomically at creation)
+```
 
-An agent-key caller may accept **only** with a server-pre-bound capability; otherwise it is limited
-to query and proposal.
+and the result returns along that edge. No query, no guess, no candidate selection.
 
-## Proposed — Migration
+> **Most "cross-thread review" should disappear from the product vocabulary.** It was never a
+> scheduling category; it was an artifact of having no other way to express the handoff.
 
-1. ~~**Wire, don't build** — resolve/validate `threadId` against the lease.~~
-   **Withdrawn** — circular for PR subjects (see above). Replaced by:
+### 2. Parent/child — the edge is written at birth
 
-   ~~**1'. Anchor PR subjects to `PrTrackingStore`.**~~ **Also withdrawn** — it is the wrong owner.
-   `PrTrackingStore` is a *notification subscription*: its contract is "route **notifications** to the
-   correct cat/thread" (`PrTrackingStore.ts:2-5`), registration states `why: "**Notify** this thread
-   about external GitHub activity"` (`callbacks.ts:5595`), and re-registering the same subject
-   **overwrites `threadId`** (`TaskStore.ts:133`). Wiring it into custody would let the *last tracking
-   registration* rewrite the review holder — writing "subscription ownership" into "review execution
-   ownership." It may serve as a **discovery signal only, never as holder-thread truth.**
+```text
+A creates B  →  parent_child(A, B) written in the same transaction
+             →  A may delegate to B
+             →  B may report/result back to A
+```
 
-   **There is no cheap subset.** Migration starts at step 2.
-2. **Shadow plane — the first independently shippable slice.** For **one** PR-review flow, persist
-   Coordination / Participation / Invitation for real: source enrolls only via its own invocation,
-   target joins by cat-scoped invite + accept. Record the audit trail and the metadata projection,
-   but **do not change delivery**. Ships alone, reverts alone, and produces the coverage/ambiguity
-   data that step 4 needs before it can even be evaluated.
+The caller never types a target thread. Misdelivery in this shape becomes impossible by
+construction — which is what the operator meant by *"A creating B obviously cannot misdeliver."*
 
-   > **The legacy route is not ground truth.** `derived !== actual` is a **disagreement**, never a
-   > "routing error" — `actual` is exactly the guess this whole investigation found unreliable.
-   > Scoring the new model against it would re-commit the attribution mistake the report already
-   > retracted once.
-   >
-   > Therefore: measure only a **prospective cohort** where participation/invitation existed *before*
-   > delivery. `null` counts toward **coverage**, never toward mismatch. Ambiguity is its own bucket.
-   > **Correctness may only be computed from an operator or typed-incident label** — never from
-   > agreement with the legacy target. Minimum output:
-   >
-   > ```text
-   > eligible
-   > resolved_agree
-   > resolved_disagree
-   > unresolved_no_coordination
-   > unresolved_no_recipient
-   > ambiguous_endpoint
-   > labelled_correct / labelled_misdelivery
-   > ```
-   >
-   > Widespread `null` on historical traffic means **backfill coverage is thin** — it says nothing
-   > about the design's accuracy.
-3. **Opt-in `coordination_post`**, then structured `coordination_transfer`.
-4. **Fail closed for legacy effectful delivery** — last, and only on the shadow plane's numbers.
+### 3. Peer collaboration — relate first, deliver second
 
-Each step is independently shippable and independently reversible. **No step is "near-free"** — the
-earlier claim that one was is withdrawn (see the withdrawn steps above).
+A finds its change affects B and C:
+
+```ts
+thread_relation_propose({ candidateThreadId, type: "peer", reason })
+thread_relation_accept({ relationId })
+cross_thread_send({ relationId, intent: "coordinate", content })
+```
+
+Candidate selection still happens **once**, here. But a wrong guess now creates only an
+**auditable, rejectable relation proposal** — it does not inject content, context and a work ball
+into a stranger's thread. That is the whole difference.
+
+After B receives coordination info, **B decides what to do inside B's own thread.** A must not
+manipulate B's custody through a cross-thread message.
+
+### `reports_to` — MAIN stops being a public inbox
+
+```text
+feature thread ──reports_to──► project/main thread
+```
+
+`allowedIntents` on this relation type permits only **terminal report**, **milestone report**, and
+**blocking escalation**. Not review, not implement, not ordinary chatter. This directly addresses
+incident I-4, where several execution threads treated MAIN as a default place to dump updates.
+
+## What the server enforces — mechanically, with no business knowledge
+
+- Source thread is derived from the invocation; it cannot be forged.
+- A cross-thread send **must** reference an `active` relation.
+- The target is derived from the relation; a bare `threadId` is not accepted.
+- `type` constrains which `intent` values are legal.
+- Replies travel back along the originating relation.
+- The `parent_child` edge is committed atomically with child creation.
+- A relation *proposal* carries no work ball and no content side effects.
+- agent-key callers cannot bypass a relation to supply a thread directly.
+- Thread metadata exposes `goal` and the relation graph.
+
+## What stays with the agent
+
+Whether to notify B and C · whether this is peer / parent-child / reports-to · what the content is ·
+whether to close a relation · what the receiving cat should do locally.
+
+These are judgements. Freezing them into server-side workflow was v1's mistake.
+
+## Migration
+
+1. **`ThreadRelation` + graph projection**, written but not enforced. Backfill `parent_child` from
+   existing lineage. Read-only: measure how much real traffic *would* have had an active relation.
+2. **Atomic parent-child edge on child creation**, and `cross_thread_send` by `relationId` as an
+   opt-in path alongside today's `cross_post_message`.
+3. **Peer propose/accept**, plus `reports_to` for feature→MAIN.
+4. **Restrict legacy `cross_post_message`** — last, and only on the coverage numbers step 1
+   produces. Read-only discovery and query stay legal throughout; what gets restricted is
+   *effectful delivery without a relation*.
+
+Each step ships and reverts independently. **No step is claimed to be near-free.**
+
+> **The legacy route is not ground truth.** When comparing a derived target against what actually
+> happened, `derived !== actual` is a **disagreement**, never an error — `actual` is exactly the
+> guess this investigation found unreliable. Correctness may only be computed from operator or
+> typed-incident labels; `null` counts toward coverage, not mismatch.
 
 ## Design principles
 
-Inherits all five from `a2a-protocol.md`, and adds one:
+Inherits the five in `a2a-protocol.md`, and adds one:
 
-6. **Address the work, not the place.** A collaboration act names the subject it belongs to.
-   Where it renders is derived. A caller is never asked for a coordinate the system already holds —
+6. **Address the relationship, not the place.** A cross-thread act names the relation it belongs to.
+   Where it lands is derived. The caller is never asked for a coordinate the system already holds,
    and never allowed to invent one it does not.
 
-## Resolved positions (review round 2)
+## Withdrawn from v1 — kept as provenance
 
-These five were open questions; the reviewer proposed answers and this draft adopts them. They are
-positions to be confirmed by the maintainer, not settled facts.
+| v1 claim | Why withdrawn |
+|---|---|
+| Five objects (`Coordination`/`Participation`/`Invitation`/`Delivery` + lease) | Server-side workflow orchestration; wrong coordinate system for a client-side agent app |
+| "Primitives are mostly built, just not wired" | A lease is an execution edge, not a participation graph |
+| Anchor PR subjects to `PrTrackingStore` | It is a notification subscription, overwritten on re-registration — subscription ownership is not execution ownership |
+| "The system held the answer" (I-1) | False. A `subjectRef` says *what is discussed*, not *who to deliver to*; no owner thread existed |
+| "Participation is dense by construction" | Unevidenced; 148/960 (15.4%) of historical cross-posts carry any coordination metadata |
+| "Misdelivery becomes structurally impossible" | Narrowed: out-of-relation delivery becomes inexpressible; wrongly *accepting* a relation is a separate problem |
 
-1. **Granularity.** Coordination persists per bounded **subject/workstream**. The lease keeps
-   expressing **one execution responsibility** per action family/slot/revision. Two objects, two
-   lifetimes — do not merge them.
-2. **Admission authority.** A participant may *propose* admission. Responsibility expansion requires
-   invitation-acceptance, owner policy, or operator approval. **No participant may directly write
-   another party's endpoint.**
-3. **Fail-closed** is an external contract change: requires operator + maintainer sign-off, coverage
-   quantification, and staged rollout. Not implied by this design.
-4. **F128 `propose_thread`** and "propose a coordination" are **siblings**, not the same object.
-5. **Archived/deleted participant thread** → participation becomes `inactive`/tombstoned: history
-   retained, no new delivery, no cascade delete; restoring requires explicit reactivation.
+## Open for review
 
-## Status and next step
-
-**Not ready for a maintainer issue, and not eligible for ADR promotion.** Consensus holds on the
-diagnosis (this is an addressing-model defect, not a cat-attention defect) and on the direction
-(coordination should be the address authority). Still unconverged: the **object boundary** between
-coordination and lease, **admission authority**, **recipient semantics**, and **migration**.
-
-Order: revise this RFC → one more design re-review → then the maintainer design issue → then
-implementation. Draft conclusions must not be written into normative skills before that.
+1. Does `allowedIntents` belong on the relation instance, or is it derivable from `type` alone?
+2. Should `peer` relations expire, or stay `active` until explicitly closed?
+3. Is `reports_to` a distinct type, or a `peer` relation with a restricted intent set?
+4. Relation to F128 `propose_thread` — is a relation proposal the same approval object?
+5. What happens to relations when a thread is archived or deleted?

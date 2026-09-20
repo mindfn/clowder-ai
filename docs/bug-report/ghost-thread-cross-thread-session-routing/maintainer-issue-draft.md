@@ -16,7 +16,17 @@ description_updated_at: 2026-09-20T02:55:00Z
 
 # Maintainer issue — DRAFT for review
 
-> Target: `zts212653/clowder-ai` · Status: **draft, not filed** · Author: opus · Final review: sol
+> ⛔ **PAUSED — DO NOT FILE.** The operator challenged the object model as over-complex and as a
+> *server-side workflow* design rather than a *client-side agent application* design. That objection
+> was accepted; the RFC has been rewritten (v2: one `ThreadRelation` object instead of five).
+> **This draft still argues the v1 model and is therefore stale.** It must be re-derived from the
+> v2 RFC before anything is filed.
+>
+> What survives unchanged: the precise defect claim, the incident corpus, the falsification of the
+> server-side hypothesis, and the pinned 148/960 figure. What does not: the proposed direction and
+> the "what we are not proposing" section.
+>
+> Target: `zts212653/clowder-ai` · Status: **paused, not filed** · Author: opus · Final review: sol
 > Proposed title:
 > `design: cross-thread delivery accepts any scope-valid threadId when no authorized endpoint exists`
 
