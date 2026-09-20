@@ -364,11 +364,15 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 因此它与 D 同类——**需要一次公共 wire/trust boundary 变更**。
 最小安全契约（不可降级为裸 KV，也不可让 package 自写文件，否则绕过 inventory/lifecycle/rollback 权威）：
 **声明式 per-contribution key + 实例自有命名空间 + TTL=0 + 限定 schema/大小 + CAS/operation-id 幂等 + settlement-ordered commit**，
-且不得承载消息正文或 secret。红灯见 §6 case 12–17（含声明式 key / schema-size / settlement / replay / 内容禁令五条安全负例）。
+且不得承载消息正文或 secret。红灯见 §6 case 12–21（含声明式 key〔provisional〕/ schema-size / settlement 顺序与缺 ref / replay 只写一次 / 内容禁令 / 缺 grant fail-closed / 跨实例读取拒绝）。
 
 #### 5.2 Stage 2a 出口门
 
-- §6 的 **15 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**（合计 17 例）。
+- §6 的 **18 条 RED 全部转绿，且 3 条 GREEN guard 仍绿**（合计 21 例）。
+- **例外（第六轮 review P1）**：用例 12/13 是 declared-key **配对**，在 §7.2 第 5 条签字前
+  **无法同时转绿**——契约今天没有任何合法位置能声明 per-contribution key（见 §6 provisional
+  说明）。因此这一对在签字前只是 **provisional gate**，不能作为 Stage 2a 已静止的完成证据；
+  用例 21 是其自退役守卫：声明通道一旦落地它立刻转红，强制把这对改成真实正负例。
 - wake 必须 **source-derived**（Host 从已验证 provider identity + 已绑定 thread 推出），
   不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
 - 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
@@ -453,7 +457,7 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ## 6. 红灯测试证据
 
-红灯由**四个文件共同构成一道 17 例门**，断言点全部落在 **Host 信任边界**：已认证
+红灯由**五个文件共同构成一道 21 例门**，断言点全部落在 **Host 信任边界**：已认证
 `connector_binding` ingress 的唤醒契约与激活前提，而不是要求 SDK `send()` 改变插件消息语义。
 
 | 文件 | 例 | 关注 |
@@ -461,17 +465,51 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | `packages/api/test/f202-c1-im-cutover-wake-parity.test.js` | 1–6 | **唤醒语义**：在 `createMessagingDomain(...)` 隔离注入协作者，精确钉住三段式路由与两条围栏 |
 | `packages/api/test/f202-c1-production-composition-activation.test.js` | 7、10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入与 config/secret 投影 |
 | `packages/api/test/f202-c1-connector-binding-durability.test.js` | 8、9、11 | **binding 权威与持久性**（缺口 D）：经已认证 Broker 连接 resolve-or-create、重启恢复、跨 connector 伪造否定例 |
-| `packages/api/test/f202-c1-connector-checkpoint-durability.test.js` | 12–17 | **checkpoint 权威与安全契约**（缺口 E）：CAS/重启/注入共享权威，外加声明式 key、schema-size、settlement 顺序、operationId 重放、内容禁令五条安全负例 |
-| `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免两文件重复组装并越过 350 行硬限） |
+| `packages/api/test/f202-c1-connector-checkpoint-durability.test.js` | 12、16、18、20 | **checkpoint 持久性与 settlement 顺序**（缺口 E）：CAS/重启/注入共享权威、真实 Host 受理回执、重放只写一次、跨实例读取拒绝 |
+| `packages/api/test/f202-c1-connector-checkpoint-safety.test.js` | 13、14、15、17、19、21 | **checkpoint 安全负例**（缺口 E）：声明式 key（provisional）、schema-size、unsettled ref、内容禁令、缺 grant fail-closed，外加声明通道自退役守卫 |
+| `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免文件重复组装并越过 350 行硬限） |
+| `packages/api/test/f202-c1-checkpoint-fixture.js` | — | 缺口 E 专用 fixture：隔离 checkpoint 权威（含 commit 计数）、可达性前置断言与 grant 反逃逸断言 |
 
-实测：**15 红 2 绿**（17 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
-8/9/11 全部停在「registry 无 `connector.*` 行」，12–17 全部停在「registry 无 checkpoint 行」，
-且失败发生在 install → 挣得 readiness → 激活 → 认证握手**全部成功之后**，证明红灯来自缺口而非管道。
+实测：**18 红 3 绿**（21 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
+8/9/11 全部停在「registry 无 `connector.*` 行」，12–20 中的 9 条全部停在「registry 无 checkpoint 行」，
+且失败发生在 install → 挣得 config readiness → **写入 enabled 权威状态** → 认证握手**全部成功之后**。
+
+**关于"激活"的措辞更正（第六轮 review P2）**：fixture 并不执行 lifecycle activation——
+`lifecycle.enable()` 会拉起 stdio 进程并阻塞在这些用例自己要做的握手上，直接调用会死锁；
+helper 最后一段 transaction 是**直接写入 enabled 权威状态**，随后由用例完成真实认证握手。
+这不能被当作"激活成功"的证据。可被实现伪造的那一半（config readiness）仍经真实
+`HostPluginConfigurationService` **挣得**，未手工翻转。
+
+**第六轮新增的三条硬化**（对应 review 的三条 P1）：
+1. **真实 settlement**：12/16/18/20 的成功 commit 携带的 `settlementRef` 来自**今天真的跑通**的
+   `messaging.send` 行（经同一条已认证连接），是 Host 自己签发的 `SendReceipt.messageId`；
+   用例 18 另补「完全不带 ref 也必须拒绝」，堵住"只拒无效 ref"的最大逃逸口。
+2. **重放只写一次**：注入权威记录 commit 次数，16 断言持久层只 commit 一次、revision 只进一格——
+   仅比较两次返回值相等的写法，仍放行"写两次、回第一次结果"的实现。
+3. **grant 隔离**：checkpoint row 要求的 grant **由 row 自己定义**（`control-plane.ts:322` 把
+   `row.grant` 交给 `currentCallContext`），故 fixture 从 registry **推导** grant 而不写死名字；
+   可达性断言额外要求该 grant **不得**复用 `messaging.send`/`secret.read`，否则 checkpoint 等于
+   没有权限隔离。用例 19 用同一份 manifest、扣掉 checkpoint grant，断言 `CAPABILITY_DENIED`
+   （这是 `control-plane.ts:608` **已存在**的错误码，不是本门虚构的契约）。
+
+**两条本轮第一手查证的 Host 约束**（此前未验，差点让红灯红错原因）：
+- Host 强制 **effective grants ⊆ manifest requests**（`PluginInventoryError`），所以 fixture 的
+  feature 必须**真实请求** `plugin.state.get/set`；"请求"不等于"持有"，用例 19 正是靠这一点成立。
+- `plugin.state.get/set` 虽在 manifest Capability 枚举内，但在 `packages/api/src` 中**零引用**——
+  保留名，无 Host 执行路径，这是 E 被判为 boundary blocker 的直接证据。
+
+**provisional gate 说明（第六轮 review P1）**：用例 12（声明 key 成功）与 13（未声明 key 拒绝）
+是一对，而契约今天**没有任何合法位置**能表达 per-contribution key 声明——`ConnectorContribution`
+封闭于 `{type,id,identityRef,inboundMethod,outboundMethod}` + `additionalProperties:false`；
+唯一的候选 manifest 顶层 `data[]` 是固定 `dataClass/strategy` 词表的目录元数据，Core 除
+`official-catalog.ts` 外不消费。遵守声明式 key 的实现因此**无法同时满足两半**。故这一对在
+§7.2 第 5 条签字前是 **provisional**，不构成 Stage 2a 静止完成证据；用例 21 守卫该状态：
+声明通道一旦出现（新增 ConnectorContribution 属性或 `data[]` 获得 key 语义）它立刻转红。
 
 **为什么必须分两层**：只有 1–6 时，一个"永远不被生产组装调用"的实现即可全绿——
 用例 1–4 的协作者是测试手工注入的。7–17 把同样的契约搬到**真实组装**上，
 因此 1–6 定义"正确的唤醒长什么样"，7–17 保证"它真的发生在发布出去的进程里"。
-**第五轮修正**：8/9/11/12–17 一律经**已认证 Broker 连接**调用（`openExternalConnection` → `hello` → `ready` → `call`），
+**第五轮修正**：8/9/11/12–21 一律经**已认证 Broker 连接**调用（`openExternalConnection` → `hello` → `ready` → `call`），
 由 `HostBrokerControlPlane.call()` 先后校验 wire-registry 成员资格 → handler 注册 → 活跃 lease → grant 持有。
 断言内部 `runtime.messaging.*` 方法是不够的：给 `MessagingService` 加一个方法即可转绿，而外部 stdio 包仍然调不到。
 
@@ -509,14 +547,15 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
 **把 seam 定在这个装配点是一个被选择的架构决定，不是"零绑定"**；而域内部的落点刻意不约束——
 放进 `SendService`、包一层 `MessageIngress`、或单开 admission service，都同样满足这些断言。
 对 **wake 用例 1–7** 不隐含任何面向插件的新 public method / hook / UI slot（那属于 C2）。
-此限定**不适用于缺口 D / E**：用例 8/9/11（binding bootstrap）与用例 12–17（durable checkpoint）
+此限定**不适用于缺口 D / E**：用例 8/9/11（binding bootstrap）与用例 12–21（durable checkpoint）
 按定义各自要求一条新的 public wire row，这正是它们被分类为 boundary blocker 的原因。
 
 这道门是 **Stage 2a 的完成门**，也是 Stage 4 第 3 步允许切换默认 IM 路径的前置条件之一
 （另一个是 Stage 3 的往返证明）。红灯本身不依赖任何 Plugins artifact，故先行提交；
 **转绿实现属于 Stage 2a**——在 Stage 2 精确发布之后开始，且两条 boundary blocker 均须
-maintainer 先签字（§7.2 第 4 条）才能动工：**用例 8/9/11 对应缺口 D**（connector binding
-bootstrap/recovery），**用例 12–17 对应缺口 E**（durable connector checkpoint）。
+maintainer 先签字才能动工：**用例 8/9/11 对应缺口 D**（connector binding bootstrap/recovery，
+§7.2 **第 4 条**），**用例 12–21 对应缺口 E**（durable connector checkpoint，§7.2 **第 5 条**）。
+其中 12/13 这一对在第 5 条签字前只是 provisional gate（见 §6），Stage 2a 的完成声明不得建立在它上面。
 
 ## 7. disposition 状态
 

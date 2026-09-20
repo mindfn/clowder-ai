@@ -9,6 +9,7 @@
  * The per-case source coordinates for every gap live in the plan
  * (docs/plans/2026-09-19-f202-train-c1-migration-plan.md §5.1), not in these headers.
  */
+import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { createDormantPluginRuntimeComposition } from '../dist/domains/plugin/index.js';
 import { HostPluginConfigurationService } from '../dist/domains/plugin/manager/plugin-manager-configuration.js';
@@ -45,8 +46,14 @@ export const SYNTHETIC_INSTANCE = 'pi_external';
  * shape non-obvious: a connector contribution needs a paired `identity` contribution, both must
  * be owned by the SAME feature, and every top-level contribution must be feature-referenced.
  * SIBLING_CONNECTOR_ID is deliberately absent — that absence is what the forgery case measures.
+ *
+ * The feature REQUESTS the checkpoint capabilities because the Host enforces effective grants ⊆
+ * manifest requests (PluginInventoryError: "effective grants must be a subset of manifest
+ * requests"). Requesting is not holding: case 19 installs the same manifest with the checkpoint
+ * grants withheld, which is what makes its fail-closed negative legitimate.
  */
 export function connectorManifest(overrides = {}) {
+  const { capabilities: _capabilities, ...manifestOverrides } = overrides;
   return {
     pluginId: EXTERNAL_PLUGIN_ID,
     version: '1.0.0',
@@ -72,11 +79,11 @@ export function connectorManifest(overrides = {}) {
           { type: 'connector', id: CONNECTOR_ID },
           { type: 'identity', id: CONNECTOR_IDENTITY_ID },
         ],
-        capabilities: ['messaging.send', 'secret.read'],
+        capabilities: overrides.capabilities ?? [...BASE_GRANTS, ...checkpointGrants()],
       },
     ],
     runtime: { transport: 'stdio', entrypoint: 'dist/plugin.js' },
-    ...overrides,
+    ...manifestOverrides,
   };
 }
 
@@ -85,9 +92,12 @@ export function connectorManifest(overrides = {}) {
  * Host-assigned instance id. Readiness is EARNED through HostPluginConfigurationService — never
  * hand-flipped — so a fail-closed implementation cannot be made green by manufacturing state.
  *
- * Activation is the one explicit transition: lifecycle.enable() spawns the stdio package and
- * blocks on the very handshake these cases are about to perform themselves, so enabling through
- * it would deadlock. Config readiness — the part an implementation could cheat — stays earned.
+ * It does NOT perform lifecycle activation: lifecycle.enable() spawns the stdio package and
+ * blocks on the very handshake these cases perform themselves, so enabling through it would
+ * deadlock. The final transaction writes the enabled AUTHORITY STATE directly, and the cases
+ * then complete a real authenticated handshake against it. Sixth-round review P2: that is not
+ * evidence of a successful activation and must never be described as one. Config readiness —
+ * the part an implementation could actually cheat — stays earned through the real service.
  */
 export async function installConnectorInstance(composition, projectRoot, overrides = {}) {
   const manifest = overrides.manifest ?? connectorManifest();
@@ -203,4 +213,59 @@ export async function waitForSpec(processes, timeoutMs = 2_000) {
     await new Promise((done) => setTimeout(done, 5));
   }
   return processes.specs[0];
+}
+
+/**
+ * The PROPOSED gap-E wire rows. Spelling stays provisional until §7.2 item 5 is signed; what the
+ * gate pins is the requirement, not the name.
+ */
+export const CHECKPOINT_COMMIT = 'connector.checkpoint.commit';
+export const CHECKPOINT_READ = 'connector.checkpoint.read';
+
+/** Grants a migrated connector already holds for reasons that have nothing to do with checkpoints. */
+export const BASE_GRANTS = ['messaging.send', 'secret.read'];
+
+/**
+ * Reserved-but-unwired capability names: both appear in the manifest Capability enum of
+ * @clowder-ai/plugin-contract@0.1.0-beta.15, yet `plugin.state.get` / `plugin.state.set` have
+ * ZERO references anywhere in packages/api/src. They are the pre-signature stand-in only.
+ */
+export const RESERVED_CHECKPOINT_GRANTS = ['plugin.state.set', 'plugin.state.get'];
+
+/**
+ * A checkpoint row's required grant is defined BY THE ROW — control-plane.ts:322 feeds
+ * `row.grant` into currentCallContext(), which throws CAPABILITY_DENIED when the instance does
+ * not hold it. Deriving the grant from the registry makes the gate self-adapt to whatever §7.2
+ * signs instead of hard-coding a name the maintainer has not chosen yet.
+ */
+export function checkpointGrants() {
+  const rows = [WIRE_METHOD_REGISTRY[CHECKPOINT_COMMIT], WIRE_METHOD_REGISTRY[CHECKPOINT_READ]];
+  const declared = rows.filter(Boolean).map((row) => row.grant);
+  return declared.length === rows.length ? [...new Set(declared)] : [...RESERVED_CHECKPOINT_GRANTS];
+}
+
+/**
+ * Produces a REAL Host-accepted delivery and returns the Host's own SendReceipt.
+ *
+ * Sixth-round review P1: a success path that commits a cursor without naming a delivery the Host
+ * actually accepted lets an implementation advance the cursor before settlement and lose every
+ * message inside the crash window. This runs the genuine `messaging.send` row through the same
+ * authenticated connection — so the reference the checkpoint case carries is minted by the Host,
+ * not fabricated by the test.
+ */
+export async function hostAcceptedDelivery(runtime, connection, pluginInstanceId, idempotencyKey) {
+  const { handleId } = await runtime.messaging.issueThreadHandle({
+    pluginInstanceId,
+    threadId: THREAD_ID,
+    userId: 'user-1',
+    scope: { canSend: true, canSubscribe: false },
+  });
+  return connection.call('messaging.send', {
+    address: { kind: 'thread_handle', handle: handleId },
+    idempotencyKey,
+    payload: {
+      provenance: { epistemicStatus: 'observation' },
+      elements: [{ elementId: 'el-settle-1', kind: 'text', payload: { text: 'provider batch delivered' } }],
+    },
+  });
 }
