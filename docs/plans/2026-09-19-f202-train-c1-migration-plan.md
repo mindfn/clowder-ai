@@ -939,7 +939,7 @@ feature 激活规则 + 一个 `healthCheck` manifest 字段**（§7.4.2）。原
 | 6 | **disable / uninstall 可恢复、启动失败隔离、重启恢复、Core 内无 package-specific 分支** | 四条各需可观察证据；Core 代码内不得出现任何具体 pluginId 的分支 |
 | 7 | **C2 才做前端 contribution 扩展；C1 不留 lifecycle / 删除 follow-up PR** | C1 结束时不得有"下轮再收口 / 下轮再删"的尾巴 |
 
-### 8.2 今天的差距（code-derived at `91d9ad9`，全部落在本 PR 验收范围内）
+### 8.2 今天的差距（code-derived at `a275987`；生产代码自 `91d9ad9` 起未变，两个标签指同一棵树）
 
 **违反条款 2（载体分流仍在 domain 层）**：
 
@@ -956,6 +956,25 @@ feature 激活规则 + 一个 `healthCheck` manifest 字段**（§7.4.2）。原
 |---|---|
 | `runtime-composition.ts:322` | `new Set(collectiveConnectorRuntime ? ['official.collective-connector'] : [])` —— 硬编码具体 pluginId 进 Core 组装 |
 | `runtime-composition.ts:152` | 路由判据 = 该 id 集合 ∪ `staticEditorContributions(manifest)`，即"身份 + 贡献形状"，不是统一生命周期 |
+
+**违反条款 1 + 2（`builtin` 在两仓是两个不同的东西 → #54 合入后 install+enable 在 Core 上启动即红）**：
+
+这一条不是推导，是两侧一手代码对读出来的。Plugins 在 `3ae7ad2` 用 `builtin` 表示 **Host 进程内
+加载的包模块**；Core 今天的 `builtin` 是"**每个 MCP contribution 一个子进程**"。两个声明值同名
+不同义，而且 Core 对非 MCP contribution 是**抛错**而不是降级：
+
+| 侧 | 坐标（exact HEAD） | 事实 |
+|---|---|---|
+| Plugins `3ae7ad2` | `packages/connector-telegram/plugin.yaml` | `runtime.transport: builtin` + `entrypoint: dist/plugin-entrypoint.js`；feature `telegram-messaging` 只引用 `identity` + `connector` 两类 contribution，**一个 MCP 都没有** |
+| Plugins `3ae7ad2` | `packages/connector-telegram/src/plugin-entrypoint.ts:71`（dingtalk 同形 `:66`） | `export default createTelegramPluginModule()` —— 默认导出一个 `PluginModuleEntrypoint` |
+| Core `a275987` | `runtime-composition.ts:162-167` / `:179-184` | `transport === 'builtin'` 且不属 `baseOwnsBuiltin`（`:151`）→ 路由到 `BuiltinPluginContributionSupervisor` |
+| Core `a275987` | `manager/builtin-contribution-supervisor.ts:218-241` | `requestedContributions()` 对**任何非 MCP contribution 直接抛 `UNSUPPORTED_CONTRIBUTION`**（`:232`），MCP 非 stdio 也抛（`:238`） |
+| Core `a275987` | `manager/builtin-contribution-supervisor.ts:517-534` | `launchSpec()` 只会 `command: process.execPath, args: [entrypoint, …]`，即**子进程**载体 |
+
+结论：**Core 里一行 in-process 模块载体都不存在**——两个 transport 取值都是进程载体。这正是
+operator `…-002823-862c7258`"不是一个插件就来一个子进程"指着的位置，也说明条款 1 的"carrier 是
+manifest 声明的实现细节"今天在 Core 上并不成立。按条款 3 + 4，这是 **#1487 的活**（Core 补齐
+载体中立 adapter，形状见 §8.6），**不是退回 Plugins 改包**。
 
 **已在位、可直接复用的地基（不推翻）**：`PluginRuntimeLifecyclePort`
 （`external-plugin-lifecycle-types.ts:43`）、`HybridPluginRuntimeSupervisor`、
@@ -975,10 +994,16 @@ feature 激活规则 + 一个 `healthCheck` manifest 字段**（§7.4.2）。原
 
 §7.4.5 中"本 PR 当前按选项 2 的形状落盘"一句**到此失效**；该节保留为推导记录，结论以本节为准。
 
-**留给对侧精确退回的唯一残留**：条款 7 的"前端 contribution 扩展 = C2"是否覆盖 limb / skill
-两类宿主消费面（第 10 / 11 行）。本计划的判断是**不覆盖**——limb 与 skill 是 agent 侧消费面，
-不是前端 slot / 面板，而 operator 在 `…-002863-501608eb` 里把 C2 描述为"涉及前端的"。若 owner
-thread 或 Plugins 车道不同意，请**精确退回到本段**，不要笼统说"范围有分歧"。
+**曾留给对侧精确退回的残留（已闭合）**：条款 7 的"前端 contribution 扩展 = C2"是否覆盖
+limb / skill 两类宿主消费面（第 10 / 11 行）。本计划的判断是**不覆盖**——limb 与 skill 是 agent 侧
+消费面，不是前端 slot / 面板，而 operator 在 `…-002863-501608eb` 里把 C2 描述为"涉及前端的"。
+
+Plugins 车道在 `3ae7ad2` 采纳了同一判断，且不是只改了 prose，而是**同时改到可执行账本**：
+`docs/plans/2026-09-19-train-c1-plugins-aggregate-migration.md` 条款 7 的括号收窄为"deferred
+audio/managed-service surfaces and the retained StackChan physical-hardware limb product"并显式
+排除 `wechat-visible-reader` / `weixin-mp` 的 agent 侧 limb/skill 消费；`migration/f202-train-c1-inventory.json`
+新增 `c1AgentContributionConsumers` 两行；`scripts/train-c1-inventory.test.mjs:73-77` 把它写成断言。
+**本残留到此关闭，不再是解除暂停的前置条件。**
 
 ### 8.4 作废项
 
@@ -989,6 +1014,61 @@ thread 或 Plugins 车道不同意，请**精确退回到本段**，不要笼统
 
 ### 8.5 暂停与解除条件
 
-本 PR 自 `91d9ad9` 起**暂停新增生产实现**（本节为 docs-only 对齐提交）。解除条件是且仅是：
-两条车道的实质确认齐全 + owner thread `thread_mrkmxgdfqquounc9` 明确解除暂停。解除后 #1487 的
-下一步是**按条款 2 / 6 收口 Host 生命周期**，而不是继续在旧分流上补丁。
+本 PR 自 `91d9ad9` 起**暂停新增生产实现**（§8 各节均为 docs-only 对齐提交）。解除条件是且仅是：
+两条车道的实质确认齐全 + owner thread `thread_mrkmxgdfqquounc9` 明确解除暂停。
+
+齐备情况（截至本次提交）：
+
+- Plugins 侧确认：**已到位**——`3ae7ad2`，owner thread `0001789887656811-002946-931f06b4`，裁定
+  `aligned—no disagreement`。
+- Core 侧确认：**本次提交即是**——§8.7 记录互读 exact HEAD 与裁定；§8.2 的 C-1 与 §8.6 的
+  adapter 目标形状把原先只存在于聊天里的执行缺口写成了验收项。
+- 仍差的只有一项：owner thread 明确解除暂停。**不再等对侧回答接口形状**——§8.6 已由 SDK 源码
+  推导出来，不需要猜；唯一残留（导出名写进契约）不阻塞实现。
+
+解除后 #1487 的下一步是**按条款 2 / 6 收口 Host 生命周期 + §8.6 的 adapter**，而不是继续在旧分流
+上补丁。
+
+
+### 8.6 载体中立 adapter 的目标形状（code-derived at Plugins `3ae7ad2`，不是猜的）
+
+§8.2 的 C-1 要求 Core 补齐"模块载体"。它的目标形状**不需要等对侧口头确认**——Plugins SDK 在
+`packages/plugin-sdk/src/feature-context.ts` 已经把它写死了，Core 照着实现即可。以下坐标全部
+在 Plugins exact HEAD `3ae7ad2`：
+
+| 步 | 一手坐标 | Core adapter 必须做的事 |
+|---|---|---|
+| 1 | `:387-389` `PluginModuleEntrypoint { create(manifest: unknown): DefinedPlugin }`；`:392-396` `definePluginModule` 返回冻结对象 | 从 `runtime.entrypoint` 指向的模块取**默认导出**，断言其有 `create` |
+| 2 | `:465-480` `definePlugin` —— 包侧自校验并冻结 manifest | Core 把**自己认定的 manifest 真相**传进 `create()`，不接受包自报的那份 |
+| 3 | `:428-461` `activateDefinedFeature(plugin, featureId, context)` → `ActivePluginFeature { actions, dispose }`（`:382-385`） | 按 Host 授权**逐 feature** 激活；未声明 / 缺失的 action handler 由 SDK 抛 `TypeError` 并自动 dispose，Core 不必重复校验 |
+| 4 | `:109-135` `FeatureContext` | Core 提供 `config` / `secrets` / `state` / 各 contribution registrar / `connectors.deliver` / `logger`；**secret 读取权威仍在 Host**（§8.2 已落的 fail-closed 配置投影原样复用） |
+| 5 | `:458` `disposePromise ??= …` | **dispose 幂等已由 SDK 保证**，Core 不需要自建去重；但必须在 stop / disable / uninstall / 启动失败回滚四条路径上都真的调到它（条款 6 的可观察证据） |
+
+action 方法名的**合法集合**由 manifest 推导（`:398-412` `actionMethods`）：connector → `outboundMethod`；
+schedule / tool / webhook / message-subscription → `action.method`；service → `healthMethod`；
+ui command → `action.method`。Core 的 action 路由按同一推导做，**不得**按 pluginId 或 contribution
+形状另建分支（条款 6）。
+
+**`builtin` 取值的处置**：Core 把 `builtin` 收敛为"**Host 进程内模块载体**"这一个语义，MCP 降回
+**一种 contribution 类型**（由 adapter 内部按需拉子进程），不再是一个载体取值。这样条款 1
+（carrier 只在 adapter 内可见）与 operator"不是一个插件就来一个子进程"同时成立。
+
+**唯一仍需对侧钉死的一点**（不阻塞 Core 实现，只求写进契约）：模块导出名目前是**约定**——
+telegram `plugin-entrypoint.ts:71`、dingtalk `:66` 都是 `export default`，但 SDK 类型和
+`plugin.yaml` schema 里都没写这条。请 Plugins 车道把"`runtime.entrypoint` 的默认导出必须是
+`PluginModuleEntrypoint`"写进 SDK 契约或 manifest schema；否则第三方包可以合法地导出别的名字，
+而 Host 无从发现。Core 先按默认导出实现，对侧钉死后若取值不同再改 adapter 一处。
+
+### 8.7 互读记录（exact HEAD，两条车道各一次）
+
+| 项 | 值 |
+|---|---|
+| Core exact HEAD | `a2759879e3f64b357c8ba90c3cf486f8b607c07f`（#1487 draft，docs-only） |
+| Core 契约位置 | 本文件 §8 |
+| Plugins exact HEAD（本次读的） | `3ae7ad2006ec3f2d7688bd145d8092bf3d89eabb`（#54 draft） |
+| Plugins 契约位置 | `docs/plans/2026-09-19-train-c1-plugins-aggregate-migration.md` + `migration/f202-train-c1-inventory.json` + `scripts/train-c1-inventory.test.mjs` |
+| 契约裁定 | **aligned — no disagreement**（七条条款逐条对读一致；§8.3 残留已由对侧在同一 HEAD 闭合） |
+| 非契约分歧 | 无。§8.2 的 C-1 是**实现缺口**，按条款 3 + 4 落在 #1487 自己的验收范围内，不是两份契约之间的分歧 |
+
+对侧的对应记录：Plugins 在 `migration/f202-train-c1-inventory.json` 的 `scopeAuthority.coreCounterpartRead`
+里把 Core HEAD 钉为 `a2759879e…`，并由 `scripts/train-c1-inventory.test.mjs:232-236` 断言。两侧互钉完成。
