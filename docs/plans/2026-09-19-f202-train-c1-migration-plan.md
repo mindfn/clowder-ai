@@ -1104,6 +1104,13 @@ telegram `plugin-entrypoint.ts:71`、dingtalk `:66` 都是 `export default`，�
 即：§8.6 表格里的坐标（`:387-389` / `:392-396` / `:428-461`）是 Plugins **源码** `3ae7ad2` 的坐标，
 不是 Core 能 `import` 的制品坐标。
 
+**复核（2026-09-20 晚，一手重查，不是转述）**：本阻塞项**仍然成立**。
+`npm view @clowder-ai/plugin-sdk versions` 的最大值仍是 `0.1.0-beta.11`；对侧 review 里提到的
+`0.1.0-beta.12` 当时只存在于 Plugins **源码与构建产物**中，**npm 上至今没有**。Plugins #54 仍是
+draft，HEAD 已从 `87faa66` 前进到 `9e285ec`。按条款 5，Core 要钉的是 **immutable 制品**，不是对侧
+工作分支的源码状态——所以"#54 已经导出那四个符号"不构成 Core 的解除条件，**"#54 发布并给出可钉的
+exact 版本"才是**。Core 侧按本节的推进顺序继续做不依赖该发布的部分（见已落地 1/2/3）。
+
 **影响按步拆开（不是整体阻塞）**：
 
 | §8.6 步 | 内容 | 今天能不能做 | 依据 |
@@ -1153,6 +1160,62 @@ env 级，否则同一个包会因载体不同而准入不同——那本身就�
 测试：`test/f202-c1-carrier-neutral-lifecycle.test.js` 6 例（先 RED 后绿），
 `test/plugin-bundled-runtime-carrier.test.js` 由原 hybrid 用例改写并新增"不实现即拒绝、不转发"一条；
 `test/plugin-*.test.js` 全量 691/691 通过，F202 C1 24 例全绿。
+
+**已落地 3（本次提交）**：条款 6 的"启动失败隔离"与"disable / uninstall 可恢复"拿到**载体中立**的
+可观察证据，并在取证过程中**修掉一条真缺陷**。
+
+先说缺陷，因为它是 RED 先于 GREEN 的那一条：
+
+| 项 | 事实 |
+|---|---|
+| 现象 | 包代码在 in-Host 载体里 `start()` 抛错 → 实例落 `runtimeState: 'stopped'`，`lastRuntimeError` **为空** |
+| 后果 | `plugin-manager-projection.ts:283` 的 `runtimeDiagnostic` 只在 `lastRuntimeError` 存在时产出 diagnostic；`OfficialPluginCard.tsx:44` 读的就是它。**owner 在 UI 上只看到"没在跑"，看不到"为什么"** |
+| 与条款 6 的关系 | operator 的原话是"插件实现有错误是允许的，**禁用 / 卸载即可恢复**"（`…-002857-30d55ba2`）。**看不见的失败无法被 owner 恢复**——这不是锦上添花，是条款 6 的可观察证据本身 |
+| 根因 | `PluginRuntimeErrorRecord`（`host-inventory/types.ts:31`）是**进程形状**的（`exitCode` / `signal`）。进程载体失败时 `runtime-crash-projection.ts:42` 有东西可写；in-Host 载体既无 exit code 也无 signal，于是这条路径**整个没写** |
+| 范围诚实说明 | 这**不是 C1 引入的回归**。旧 `manager/builtin-contribution-supervisor.ts:342` 的 start 失败路径同样只落 `stopped`；外部载体也只在**已 spawn** 之后失败才记（`supervisor.ts:93` 的 `execution.process ? 'crashed' : 'stopped'`）。C1 把三条路收敛成一条之后，这个洞第一次变成**单点**可修，而且模块载体落地后它会从边角变成常态 |
+
+修法（`bundled-runtime-carrier.ts`）：把"**包自己的代码抛了**"与"**Host 在包跑起来之前就拒绝了**"分开——
+只有 `runtime.start()` 抛出才标 `packageFailed`，启动竞态丢槽与 Host 侧拒绝不算，**不把 Host 的事写进
+owner 的诊断**。记录用已有的 `UNEXPECTED_RUNTIME_FAILURE`，`exitCode` / `signal` 诚实地为 `null`
+（in-Host 没有进程，`null` 本就是该字段的合法取值，不是编造）。**没有新增错误码、没有改 `RuntimeState`
+语义**：仍是 `stopped`，只是多了一条 owner 能看见的原因；`starting` 清空旧错误的既有约定原样保留。
+
+证据（`test/f202-c1-carrier-neutral-failure-isolation.test.js`，3 例，一个 inventory 里同时装**两个不同
+载体**的包 —— bundled 的包在 in-Host 抛错，external 的包起真子进程）：
+
+| 例 | 钉住什么 |
+|---|---|
+| 一个包加载时抛错，不影响另一条载体跑起来 | 失败方不假装 `healthy`、被正确回卷（`stops === ['start_failed']`）；幸存方**真子进程**起来并 `healthy`、未被误杀；`stopAll` 穿过 router 真的终止了那个子进程 |
+| 启动失败被记成失败，而不是静默的 stop | 上表那条缺陷的 RED |
+| 禁用坏插件后清除失败、修好的插件能再起来 | 失败不留残渣阻断后续启动；成功启动清掉旧错误；修好的 runtime **确实被再次 start** |
+
+**这三例不是第二份假货**——逐条做了反证（改坏生产代码，看它是否真红）：
+
+| 反证 | 结果 |
+|---|---|
+| 去掉 `start_failed` 回卷 | 例 1 红 |
+| `stopAll` 只到第一个 carrier | 例 1 红 |
+| 撤掉本次的失败记录 | 例 2 红（= 修复前实际观测到的 RED） |
+| `starting` 不再清空旧错误 | 例 3 红 |
+
+四次变异**各只打红一条**，还原后 3/3 绿。另需诚实标注：例 1 的"跨载体互不影响"半边，目前**找不到能
+证伪它的局部变异**——它守的是未来有人给 router 加共享状态 / 全局失败闩，不是今天的 bug；该例真正可
+证伪的断言是回卷与 `stopAll` 两条（如上表）。
+
+`test/plugin-external-runtime-helpers.js` 的 `createExternalRuntimeHarness` 增加可选 `inventory` /
+`instanceId` 注入（默认行为逐字节不变），否则"一个 Host 里两个载体"这件事根本没法在测试里成立。
+
+回到条款 6 的四条，现状：
+
+| 条款 6 子项 | 可观察证据 |
+|---|---|
+| Core 内无 package-specific 分支 | 已落地 2 |
+| 启动失败隔离 | **本次** `f202-c1-carrier-neutral-failure-isolation.test.js` 例 1 |
+| disable / uninstall 可恢复 | **本次** 例 2 + 例 3 |
+| 重启恢复 | **既有**：`plugin-external-runtime-restart.test.js:77`、`plugin-manager-restart.test.js:81/174/309`、`plugin-external-runtime-composition.test.js:108`（均为真 supervisor，不是 fake carrier） |
+
+> 文件行数：`bundled-runtime-carrier.ts` 由 175 → 207 行，越过 200 行**警戒线**（硬上限 350）。
+> 该类是一个内聚的载体实现，为凑 200 行拆开只会制造认知脚手架，故不拆，在此显式标注而不是藏着。
 
 **剩余（不属本切片）**：条款 1+2 的 in-process 模块载体本身 —— `runtime.entrypoint` 默认导出 →
 `create()` → 逐 feature 激活。§8.8 上表的步 1/2/4/5 现在可以直接挂到 `BundledPluginRuntimeCarrier`

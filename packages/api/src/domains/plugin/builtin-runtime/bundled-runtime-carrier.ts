@@ -1,6 +1,11 @@
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
-import type { PluginInstanceRecord, PluginPackageRecord, RuntimeState } from '../host-inventory/types.js';
+import type {
+  PluginInstanceRecord,
+  PluginPackageRecord,
+  PluginRuntimeErrorRecord,
+  RuntimeState,
+} from '../host-inventory/types.js';
 import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../runtime-carrier.js';
 
 /**
@@ -65,9 +70,18 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
       resolveClosed = resolve;
     });
     this.#active.set(pluginInstanceId, { runtime, closed, resolveClosed });
+    // Only a throw out of the package's own start counts as a package failure. A Host-side
+    // refusal or a lost startup race is the Host's business and must not be written into the
+    // owner's diagnostic as if the package misbehaved.
+    let packageFailed = false;
     try {
       await this.setBundledRuntimeState(authority, 'starting');
-      await runtime.start(pluginInstanceId);
+      try {
+        await runtime.start(pluginInstanceId);
+      } catch (error) {
+        packageFailed = true;
+        throw error;
+      }
       if (this.#active.get(pluginInstanceId)?.closed !== closed) {
         throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'builtin startup was cancelled');
       }
@@ -76,7 +90,9 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     } catch (error) {
       if (this.#active.get(pluginInstanceId)?.closed === closed) {
         await runtime.stop(pluginInstanceId, 'start_failed').catch(() => undefined);
-        await this.setBundledRuntimeState(authority, 'stopped').catch(() => undefined);
+        await this.setBundledRuntimeState(authority, 'stopped', packageFailed ? this.#startFailure() : undefined).catch(
+          () => undefined,
+        );
         if (this.#active.get(pluginInstanceId)?.closed === closed) this.#active.delete(pluginInstanceId);
       }
       resolveClosed();
@@ -115,6 +131,17 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     return 0;
   }
 
+  /**
+   * An in-Host runtime has no exit code and no signal, so the process-shaped fields are
+   * honestly null. What the owner needs is the same thing the process carrier gives them:
+   * a durable record that this start attempt failed, so a plugin that throws while loading
+   * is recoverable by disabling or uninstalling it rather than silently not running
+   * (F202 Train C1 terminal contract, clause 6).
+   */
+  #startFailure(): PluginRuntimeErrorRecord {
+    return { code: 'UNEXPECTED_RUNTIME_FAILURE', exitCode: null, signal: null, occurredAt: this.#now() };
+  }
+
   #runtimeFor(packageRecord: Pick<PluginPackageRecord, 'manifest'>): BundledPluginRuntime | undefined {
     return this.options.runtimes.find((runtime) => runtime.claims(packageRecord));
   }
@@ -149,7 +176,11 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     return { instance, packageRecord };
   }
 
-  private setBundledRuntimeState(authority: RuntimeAuthority, runtimeState: RuntimeState): Promise<void> {
+  private setBundledRuntimeState(
+    authority: RuntimeAuthority,
+    runtimeState: RuntimeState,
+    failure?: PluginRuntimeErrorRecord,
+  ): Promise<void> {
     return this.options.inventory.transaction((transaction) => {
       const current = transaction.instances.get(authority.instance.pluginInstanceId);
       if (
@@ -166,7 +197,8 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
       }
       const { lastRuntimeError: _lastRuntimeError, ...withoutError } = current;
       transaction.instances.put({
-        ...(runtimeState === 'starting' ? withoutError : current),
+        ...(runtimeState === 'starting' || failure !== undefined ? withoutError : current),
+        ...(failure === undefined ? {} : { lastRuntimeError: failure }),
         runtimeState,
         updatedAt: this.#now(),
       });
