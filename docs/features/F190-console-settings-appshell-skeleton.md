@@ -670,6 +670,7 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 - [x] pinned shortcut 紧邻对话且无分隔线。
 - [x] Collective 与猫猫星球不出现在 Activity Rail。
 - [x] 记忆、Mission Hub、信号分别作为 Settings 二级项可达；不增加聚合“功能入口”中间层。
+- [x] 三个二级项复用业务正文但不嵌套整页壳：统一由 SettingsPageHeader 提供标题，并由 Settings shell 保持单一纵向滚动。
 - [x] 系统配置位于 Settings 二级导航的最后一项。
 - [x] 常驻 Workspace 入口与 launcher 审批卡片显示全局待审批计数。
 - [x] Approval projection 继续全局同步；猫猫球 Settings 文案不再引用已移除的 rail 入口。
