@@ -141,6 +141,22 @@ describe('usePinnedSections', () => {
     expect(state.pinned).toEqual(customPins);
   });
 
+  it('respects an explicit unpin after the user manually pinned a pending default', () => {
+    const customPins = ['skills', 'mcp', 'plugins', 'marketplace', 'concierge', 'voice', 'system'];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(customPins));
+
+    let state = renderHook();
+    expect(state.pinned).toEqual([...customPins, 'members']);
+
+    React.act(() => state.unpin('skills'));
+    React.act(() => state.pin('accounts'));
+    React.act(() => state.unpin('accounts'));
+    React.act(() => root.render(null));
+    state = renderHook();
+
+    expect(state.pinned).not.toContain('accounts');
+  });
+
   it('remembers a user unpin after the defaults have been seeded', () => {
     let state = renderHook();
 
@@ -171,6 +187,18 @@ describe('usePinnedSections', () => {
     const state = renderHook();
 
     expect(state.pinned).toEqual(['members']);
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
+  });
+
+  it('prefers an existing per-item receipt over legacy complete receipts', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['members']));
+    localStorage.setItem(SEEDED_DEFAULTS_KEY, JSON.stringify(['members']));
+    localStorage.setItem(DESKTOP_SEED_KEY, '1');
+    localStorage.setItem(LEGACY_DEFAULTS_SEED_KEY, '1');
+
+    const state = renderHook();
+
+    expect(state.pinned).toEqual(['members', 'accounts']);
     expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
   });
 });
