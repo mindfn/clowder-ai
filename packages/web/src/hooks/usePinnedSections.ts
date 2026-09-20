@@ -9,6 +9,8 @@ const LEGACY_DESKTOP_SEED_KEY = 'cat-cafe:pinned-settings-sections:desktop-seede
 const SYNC_EVENT = 'cat-cafe:pinned-settings-sync';
 const MAX_PINS = 8;
 const DEFAULT_PINS = ['members', 'accounts'] as const;
+type DefaultPin = (typeof DEFAULT_PINS)[number];
+const LEGACY_DEFAULT_PINS: readonly DefaultPin[] = ['members', 'accounts'];
 
 function read(): string[] {
   if (typeof window === 'undefined') return [];
@@ -32,20 +34,48 @@ function writeAndBroadcast(ids: string[]) {
   window.dispatchEvent(new CustomEvent(SYNC_EVENT));
 }
 
-function readSeededDefaults(): Set<string> {
+function readSeededDefaults(): Set<DefaultPin> | null {
   try {
     const raw = localStorage.getItem(SEEDED_DEFAULTS_KEY);
-    if (!raw) return new Set();
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
+    if (!Array.isArray(parsed)) return null;
     return new Set(DEFAULT_PINS.filter((id) => parsed.includes(id)));
   } catch {
-    return new Set();
+    return null;
   }
 }
 
-function writeSeededDefaults(ids: ReadonlySet<string>) {
+function writeSeededDefaults(ids: ReadonlySet<DefaultPin>) {
   localStorage.setItem(SEEDED_DEFAULTS_KEY, JSON.stringify(DEFAULT_PINS.filter((id) => ids.has(id))));
+}
+
+function readSeedState(): { seeded: Set<DefaultPin>; migratedLegacy: boolean } {
+  const explicit = readSeededDefaults();
+  if (explicit) return { seeded: explicit, migratedLegacy: false };
+
+  const hasLegacyCompleteReceipt =
+    localStorage.getItem(LEGACY_DEFAULTS_SEED_KEY) === '1' || localStorage.getItem(LEGACY_DESKTOP_SEED_KEY) === '1';
+  return {
+    seeded: new Set(hasLegacyCompleteReceipt ? LEGACY_DEFAULT_PINS : []),
+    migratedLegacy: hasLegacyCompleteReceipt,
+  };
+}
+
+function isDefaultPin(id: string): id is DefaultPin {
+  return DEFAULT_PINS.some((candidate) => candidate === id);
+}
+
+function rememberDefaultUnpin(id: string) {
+  if (!isDefaultPin(id)) return;
+  try {
+    const { seeded } = readSeedState();
+    if (seeded.has(id)) return;
+    seeded.add(id);
+    writeSeededDefaults(seeded);
+  } catch {
+    /* ignore */
+  }
 }
 
 function readWithDefaults(): string[] {
@@ -56,10 +86,8 @@ function readWithDefaults(): string[] {
     // Seed through the same persisted pin list used by manual pin/unpin actions.
     // Clearing site data establishes a fresh local install; cross-device preference
     // sync is outside this browser-profile contract.
-    const hasLegacyCompleteReceipt =
-      localStorage.getItem(LEGACY_DEFAULTS_SEED_KEY) === '1' || localStorage.getItem(LEGACY_DESKTOP_SEED_KEY) === '1';
-    const seeded = hasLegacyCompleteReceipt ? new Set<string>(DEFAULT_PINS) : readSeededDefaults();
-    let receiptChanged = hasLegacyCompleteReceipt;
+    const { seeded, migratedLegacy } = readSeedState();
+    let receiptChanged = migratedLegacy;
 
     const next = [...current];
     for (const id of DEFAULT_PINS) {
@@ -111,6 +139,7 @@ export function usePinnedSections() {
   }, []);
 
   const unpin = useCallback((id: string) => {
+    rememberDefaultUnpin(id);
     setPinned((prev) => {
       const next = prev.filter((x) => x !== id);
       writeAndBroadcast(next as string[]);
