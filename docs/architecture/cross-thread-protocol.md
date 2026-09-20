@@ -275,7 +275,7 @@ read from source; rows without one are proposals, not findings.
 | Tool today | Change |
 |---|---|
 | `cat_cafe_post_message` · `multi_mention` · A2A disposition | **Keep as-is.** They are *intra*-thread: collaboration, lease, review, custody inside one context. This protocol does not touch them. |
-| `cat_cafe_propose_thread` | Already carries `parentThreadId` and resolves it at approve time (`proposal-routes.ts:20`, `proposal-approve-overrides.ts:54`). Change: emit a **`relationId`**, and make child + relation + initial task one atomic commit. |
+| `cat_cafe_propose_thread` | Already carries `parentThreadId` and resolves it at approve time (`proposal-routes.ts:20`, `proposal-approve-overrides.ts:54`). Change: emit a **`relationId`**, so that child + `parent_child` relation + goal/initial-message **seed** are created through one atomic or recoverably coordinated approval transition. (No `Task`: the approval path creates none — `proposal-routes.ts:82-84`.) |
 | **`proposal-enrich-header.ts`** | **The sharpest single fix.** At the exact moment a `parent_child` edge is born, it injects a raw call template into the child's header: `` `cat_cafe_cross_post_message(threadId: "…", targetCats: […])` `` (`:57-58`). The relation is *known for certain* here, and we hand the child a string to copy instead. Replace with the `relationId`. |
 | `cat_cafe_cross_post_message` | Mark **legacy**. Today one tool carries `threadId` + `targetCats` + `action` + `proposedAction` + `localReviewVerdict` + `coordination` + `effectClass`. That bundle is the defect in tool form. Unbundle in the order below — never remove a capability before its replacement path exists. |
 | `cat_cafe_cross_thread_send` | **New.** `relationId` + `purpose` + `content` + `clientMessageId` (+ `replyTo`). No `threadId`, no `targetCats`, no custody fields. |
@@ -333,10 +333,16 @@ delivery path reads any of it**. `ActionSuccessorLease` is one execution edge
 
 ## 10. Migration
 
-1. **`ThreadRelation` + graph projection**, written but **not enforced**. Backfill `parent_child`
-   from existing lineage. Read-only, measuring exactly three things: **relation coverage**
+1. **Non-enforcing shadow slice.** Add the `ThreadRelation` store and graph projection; backfill
+   `parent_child` from existing lineage. Measures exactly three things: **relation coverage**
    (active or backfilled), **candidate cardinality** (zero / one / multiple), and **direction
    ambiguity**.
+
+   > **This is not "read-only".** Writing a new projection and backfilling it *is* a persistent data
+   > change. What is non-enforcing is the **behavior layer**: nothing is intercepted and legacy
+   > delivery is unchanged. The **data layer** writes. Therefore: dry-run before any real backfill,
+   > and review this migration as a persistent data change — the word "read-only" must not be used
+   > to lower its risk classification.
 
    > **It must not classify what purpose a historical message "would have been".** Prose carries no
    > typed ground truth, so any such label is speculation — the same mistake as treating the legacy
@@ -375,6 +381,8 @@ Inherits the five in `a2a-protocol.md`, and adds one:
 | `leftThreadId` / `rightThreadId` (v3 draft 1) | Cannot express direction — the server could not tell who may send a `result` or where an `escalation` goes |
 | Inferring historical message purpose during migration (v3 draft 1) | No typed ground truth in prose; it is speculation wearing a metric's clothes |
 | "child + relation + **initial task**" atomic commit (v3.1) | The F128 approval path persists a child and a seed and creates no `Task` (`proposal-routes.ts:82-84`) — requiring one smuggles a server workflow object in |
+| "read-only first slice" (v3.2) | Writing a projection and backfilling **is** a persistent data change; only the *behavior* layer is non-enforcing. Renamed "non-enforcing shadow slice" so the wording cannot lower its risk classification |
+| "the source never names the acting cat" as a blanket invariant (v3.2) | Too broad — creation-time `preferredCats` on an operator-approved new child (`proposal.ts:52`) is staffing, not cross-thread recipient addressing. Scoped to delivery into an already-existing context |
 | "Primitives are mostly built, just not wired" | A lease is an execution edge, not a relationship graph |
 | Anchor PR subjects to `PrTrackingStore` | Notification subscription, overwritten on re-registration; subscription ownership ≠ execution ownership |
 | "The system held the answer" (I-1) | **False.** A `subjectRef` says *what is discussed*, not *who to deliver to*; no owner thread existed |
