@@ -69,6 +69,13 @@ INV-R2 规定"沉默遗漏不等于排除"，因此下表把新发现 entry 显�
 connector-thread bindings、durable cursor/checkpoint 与 dedup state、delivery retry/dead-letter、
 通用 schedule/webhook activation、lifecycle 与 no-double-run 开关。
 
+> **这一行说的是归属，不是现状实现度**（第九轮 review 精确化）：它规定这些面**留在 Host、不随
+> provider 实现一起删**，不代表每一项在冻结基线上都已有持久实现。code-derived 现状：
+> `MessagingLedger` 的 `idempotencyKey` 幂等门**是持久的**（`ledger.ts:12`：claim TTL 60s、
+> settled 保留 7 天）；connector 入站 dedup 目前是**进程内** `Map`（`InboundMessageDedup.ts:6`），
+> 重启即失忆；**声明式 checkpoint 面今天不存在**（缺口 E）。E 的新 ABI 设计不在 C1（§7.3），
+> 重启行为因此逐 provider 用 package parity 证据验（§5.3 connector 行删除门）。
+
 ### 2.1 IM providers — 7 项，与旧清单精确一致（无静默新增）
 
 枚举源：`packages/api/src/infrastructure/connectors/im-connector-loader.ts:22-30`（硬编码 7 元
@@ -330,8 +337,9 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ### Stage 2a — Core 业务无关 activation prerequisite（Core 聚合 PR 内最先执行）
 
-> 五项缺口都是**业务无关的 Host 能力**：不含任何 provider 业务逻辑、不切默认路径、不删除任何东西。
-> 它们是 `use` 得以发生的前提，因此必须早于消费证明，而不是等待它。
+> **Stage 2a 只做缺口 A/B/C**——它们都是**业务无关的 Host 能力**：不含任何 provider 业务逻辑、
+> 不切默认路径、不删除任何东西。它们是 `use` 得以发生的前提，因此必须早于消费证明，而不是等待它。
+> 缺口 D/E 不在 Stage 2a：其**新 ABI 设计线已停**（§7.3），迁移侧改用既有 Host 权威。
 
 #### 5.1 五项缺口（冻结基线 `9ab0eaf28` 上 code-derived）
 
@@ -340,8 +348,8 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | A | ingress wake parity：已认证 `connector_binding` 不唤醒 | `send-service.ts:154` 恒 `mentions: []`；`MessagingDomainDeps`（`messaging-service.ts:21-26`）无 broadcast/wake/thread 协作者 | **C1 内**（§3 F-1 已裁定） |
 | B | **生产 composition 不注入 Host 协作者** | `runtime-composition.ts:213` 以 `{messageStore, redis}` 组装 messaging domain | **C1 内**：窄 wiring，无公共面变更 |
 | C | 外部 stdio runtime 收不到 config/secret | `external-runtime/supervisor.ts:191-201` 只传 `CLOWDER_PLUGIN_ID/PACKAGE_DIGEST/CONTRACT_VERSION/WIRE_VERSION` 四个协议变量 | **C1 内**：既有机制平移，见下 |
-| D | **无法签发 / 恢复 `connector_binding` handle** | `issueConnectorBindingHandle`（`handles.ts:60`）**零生产调用者**（全仓仅 `messaging-service.ts:67` 转发 + 3 个测试）；contract 无任何 `connector.*` wire method | **已裁定：整体后移 C2**（§7.3；C1 不新增 public seam） |
-| E | **connector 无持久 checkpoint**（provider cursor/sequence） | `plugin.state.get/set` 仅为**保留的 L0 能力名**，不在 13 行 wire registry 内，Core 无 handler / store / composition 路径；subscription cursor、inventory snapshot、7 天 TTL 的 messaging settlement ledger 均非替代 | **已裁定：整体后移 C2**（§7.3；C1 不新增 public seam） |
+| D | **无法签发 / 恢复 `connector_binding` handle** | `issueConnectorBindingHandle`（`handles.ts:60`）**零生产调用者**（全仓仅 `messaging-service.ts:67` 转发 + 3 个测试）；contract 无任何 `connector.*` wire method | **新 public seam 不入 C1**：签发/恢复留在既有 Host 权威，迁移按冻结契约的 `ConnectorBindingAddress` 走（§7.3） |
+| E | **connector 无持久 checkpoint**（provider cursor/sequence） | `plugin.state.get/set` 仅为**保留的 L0 能力名**，不在 13 行 wire registry 内，Core 无 handler / store / composition 路径；subscription cursor、inventory snapshot、7 天 TTL 的 messaging settlement ledger 均非替代 | **新 public seam 不入 C1**：重放由既有 `idempotencyKey` 幂等门挡（§6 用例 4），包侧 offset 属逐 provider parity 证据（§7.3） |
 
 **C 为什么在 C1 内而不是 C2**：这套投影**已经存在**——`BuiltinPluginContributionSupervisor.contributionEnvironment`
 （`manager/builtin-contribution-supervisor.ts:558-585`）已实现声明式 `{source: 'config'|'secret', key}`
@@ -349,24 +357,31 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 缺的只是把同一机制接到 stdio spawn 路径上，属于
 `F202-plugin-framework.md:140` 的"消费既有 Host plane 的窄 migration wiring"，不新增任何公共面。
 
-**D 为什么是 boundary blocker**：contract 的 wire method 全集里没有 `connector.*`，
-`M0CDeliverInput` 也只有 `{deliveryId, threadHandle, envelope}`；package 拿到 provider 坐标
-`(connectorId, externalChatId)` 后**无法向 Host 索取 handle**，重启后也无法恢复
-`threadId ↔ externalChatId`。三条退路都不可接受：把 handle 塞进 config/env 是 multi-chat 不完备
-且把绑定权移进不可信包代码；让 package 自行合成 handle 直接击穿 D-4；只做单聊则不满足既有旅程。
-因此**任何可行实现都需要一次 wire/schema 变更**——这超出冻结的 C1 公共面。
-**已裁定：整体后移 C2**（§7.3）。C1 不实现、不红灯、也不再等 maintainer 裁定；
-Core 侧继续用现有机制保管既有 Host-owned binding 状态，并**不删除**仍无外部执行路径的 provider 实现。
+**D 的边界处置（第九轮范围纠正）**：contract 的 wire method 全集里没有 `connector.*`，
+`M0CDeliverInput` 也只有 `{deliveryId, threadHandle, envelope}`——所以**在 C1 内设计一条
+`connector.binding.*` 签发/恢复 wire 是越界的，这条设计线已停**（§7.3），不提案、不红灯、不等签字。
+但"不开新 wire"**不等于**"迁移后移"：冻结契约里 `ConnectorBindingAddress`
+（`@clowder-ai/plugin-contract` `dist/generated/contract.generated.d.ts:451`）**本身就是合法 send 地址**，
+Host 侧 `HandleService.issueConnectorBindingHandle`（`handles.ts:60`）与 handle store 也已存在。
+C1 的做法因此是**把签发/恢复留在既有 Host 权威侧**（§2.0「Core 保留的 Host truth」），
+包只消费已签发的 binding 地址。两条禁令不变：不把签发权塞进不可信包代码，不让 package 自行合成 handle
+（击穿 D-4）。**具体接线逐 provider 用 parity 证据验**（§5.3 connector 行删除门），Core 不在 C1 预判。
 
-**E 为什么是 boundary blocker（第四轮 review 新增）**：Telegram long polling 与 WeCom Bot / XiaoYi 的 WebSocket resume 需要**重启安全**的 provider offset，否则重启后重复投递或漏投。
+**E 的边界处置（第九轮范围纠正）**：Telegram long polling 与 WeCom Bot / XiaoYi 的 WebSocket resume 需要**重启安全**的 provider offset，否则重启后重复投递或漏投。
 我曾一度判其为窄 wiring，理由是"wire 已声明 `plugin.state.get/set`"——**该判断错误，已撤回**：
-这两个名字只存在于 capability 枚举与设计稿，**13 行 wire registry 里没有对应行**，Core 侧也无任何实现。
+这两个名字只存在于 capability 枚举与设计稿，**13 行 wire registry 里没有对应行**
+（`dist/wire/registry.js:29-43` 的 `WIRE_METHOD_NAMES`），Core 侧也无任何实现。
 （取证教训：当时把 `dist/wire/` 与 `dist/generated/` 合并 grep，命中来自能力枚举却被当成 wire row。）
-因此它与 D 同类——**需要一次公共 wire/trust boundary 变更**，故**一并后移 C2**（§7.3）。
-最小安全契约（不可降级为裸 KV，也不可让 package 自写文件，否则绕过 inventory/lifecycle/rollback 权威）：
-**声明式 per-contribution key + 实例自有命名空间 + TTL=0 + 限定 schema/大小 + CAS/operation-id 幂等 + settlement-ordered commit**，
-且不得承载消息正文或 secret。该契约的可执行红灯曾以 §6 case 12–21 存在，**已随本次边界纠正移出 C1 门禁**；
-原文完整保留在 commit `7075c3aed`（取回方式见 §7.3），C2 立项时直接复用，不重写。
+**因此 C1 不声明 checkpoint wire / schema / grant——这条设计线同样已停**（§7.3）。
+同样地，这**不推出**"IM 迁移整体后移"：重放在 Host 边界已有冻结契约内的防线——
+`MessagingLedger` 的 `idempotencyKey` 幂等门（`ledger.ts:12`：claim TTL 60s、settled 保留 7 天），
+其唤醒维度的可执行表达就是 §6 用例 4。**注意不要把它和 `InboundMessageDedup` 混为一谈**：
+后者是**进程内** `Map`（`InboundMessageDedup.ts:6`），重启即失忆，不能算重启安全面。
+包侧是否还需要额外 offset、怎么拿到，属于**逐 provider 的 package parity 证据**
+（§5.3 connector 行删除门），由 Plugins 车道在 Stage 1/3 交付。
+原先那套声明式 checkpoint 契约（per-contribution key + 实例命名空间 + TTL=0 + schema/大小限 +
+CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 case 12–21 存在，
+**已移出 C1 门禁**；原文完整保留在 commit `7075c3aed`（取回方式见 §7.3），C2 立项时直接复用，不重写。
 
 #### 5.2 Stage 2a 出口门
 
@@ -376,7 +391,8 @@ Core 侧继续用现有机制保管既有 Host-owned binding 状态，并**不�
 - 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
   → 默认猫。只接默认猫是用户可见回归（§6 用例 2/3）。
 - seam 落在 `createMessagingDomain(...)` 这个 K-2 装配点，**且生产 composition 必须真正注入**（用例 7）。
-- **不新增任何 public method / hook / UI slot**；一旦发现需要新增，停下转 C2——缺口 D/E 正是按这条被移出 C1 的（§7.3）。
+- **不新增任何 public method / hook / UI slot**；一旦发现需要新增，停下转 C2——缺口 D/E 的
+  **新 ABI 设计线**正是按这条停在 C1 之外（§7.3）；对应的**迁移本身仍在 C1**，走既有 Host 权威。
 - 达成即 §6.3 Phase 1 出口条件。
 
 ### Stage 3 — 非默认路径消费证明（`use→restart` 往返）
@@ -429,7 +445,7 @@ Core 侧继续用现有机制保管既有 Host-owned binding 状态，并**不�
 
 | 贡献类 | 需要它的行 | 今天的执行 owner（Stage 4 要删） | 外部包路径的新 owner | 专属旅程证明 | 删除门 |
 |---|---|---|---|---|---|
-| connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **不存在** → Stage 2a 的 A/B/D/E | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 + **重启后 provider cursor 续传且不重复投递（replay/dedup）** | D **与 E** 签字 + §6 全绿 + Stage 3 往返证明 |
+| connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **双边已指定**：Host 侧留既有 binding/config/state 权威（`HandleService.issueConnectorBindingHandle` + handle store + `HostPluginConfigurationService` + `MessagingLedger` 幂等门）；包侧由 Plugins 车道 11 行冻结包的 stdio runtime 承担 | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 + **重启后不重复投递（replay/dedup）** | **per-provider package parity 证据** + §6 全绿 + Stage 3 往返证明（**不含任何 D/E 新 ABI 签字**） |
 | provider 专属操作（QR/validate） | feishu QR ×3、weixin QR ×4、wecom-bot validate ×2 | `connector-hub.ts` 9 条 provider 路由 + `<id>.json` 的 `_operations` 状态机 | **不存在** | 扫码登录走通；企微回调校验通过 | 新 owner 就位 + 旅程绿 |
 | webhook | wecom-agent（XML content-type 分支 `connector-webhooks.ts:51-66`）及通用回调 | `connector-webhooks.ts` 共享路由 | **不存在** | 回调签名校验 + 投递落 thread | 新 owner 就位 + 回调旅程绿 |
 | schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：contract 有 `schedule.register` wire，但 Core 未注册 handler | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵 |
@@ -437,14 +453,20 @@ Core 侧继续用现有机制保管既有 Host-owned binding 状态，并**不�
 | skill | `weixin-mp` | `PluginResourceActivator.ts:331-366`（跨项目级联挂载） | **不存在** | 挂载 + **卸载完整回收**（陷阱 6，不留悬挂 symlink） | 新 owner + 回收证明 |
 | mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:443-448`） | MCP tool 实际可调用 | 已有 owner，按现状过门 |
 
-**读法**：只有最后一行今天是通的。其余六类要么需要 Stage 2a 的 Host 能力，要么需要一个
-本计划尚未指派的新执行 owner。**任何一类在新 owner 就位并交出旅程证明之前，
+**读法**：今天**直接通**的只有 mcp 一行。connector 一行的执行 owner **已经指定**——Host 侧保留既有
+binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 车道的 11 行冻结包承担——
+但"已指定"不等于"已证明"：它的删除门仍然是**逐 provider 的 package parity 证据**，
+拿不出证据的 provider 就不放行删除，而不是把整行挪出 C1。
+其余五类（provider 专属操作 / webhook / schedule / limb / skill）今天既无外部包执行路径，
+也还没有指派的新 owner。**任何一类在新 owner 就位并交出旅程证明之前，
 对应的旧实现与旧路由都不得删除**——这比"删除面排除项"更强：排除项说的是"不要误删"，
 本矩阵说的是"没接住就不准删"。
 
-> **未决**：六类里除 connector 外，新 owner 归 C1 还是 C2 尚未裁定。若某类需要新的 typed
+> **未决**：除 connector 与 mcp 外的五类，新 owner 归 C1 还是 C2 尚未裁定。若某类需要新的 typed
 > hook / UI slot，按 §3 F-1 的硬止损线它属于 C2，届时该类的**迁移与删除一并后移**，
-> 而不是删了之后留空。该裁定需要 Plugins owner thread 与 maintainer 共同确认（§7.2 第 5 条）。
+> 而不是删了之后留空。该裁定需要 Plugins owner thread 与 maintainer 共同确认（§7.2 第 4 条）。
+> **connector 一行不在此列**：其 owner 已由既有 Host 权威 + Plugins 包 runtime 双边承担（§7.3），
+> 待证明的是 parity 证据，不是 owner 归属。
 
 ### 组织约束
 
@@ -481,7 +503,7 @@ helper 最后一段 transaction 是**直接写入 enabled 权威状态**，随�
 增断言 `messageStore.messages.length === 0`；它此前只观测 wake/broadcast，标题里的
 "before any persist"是一句**从未被观测的宣称**。
 
-（checkpoint / binding 负例上的同款原子性断言随缺口 D/E 一并移出 C1，见 §7.3。）
+（checkpoint / binding 负例上的同款原子性断言随 D/E 的新 ABI 设计线一并移出 C1 门禁，见 §7.3。）
 
 **为什么必须分两层**：只有 1–6 时，一个"永远不被生产组装调用"的实现即可全绿——
 用例 1–4 的协作者是测试手工注入的。7 与 10 把同样的契约搬到**真实组装**上，
@@ -513,7 +535,8 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
 放进 `SendService`、包一层 `MessageIngress`、或单开 admission service，都同样满足这些断言。
 对 **wake 用例 1–7 与 config 投影用例 10** 不隐含任何面向插件的新 public method / hook / UI slot。
 这条限定现在**无例外**：原先仅有的两处例外（用例 8/9/11 的 binding bootstrap、用例 12–21 的
-durable checkpoint）按定义各要求一条新的 public wire row，因此已随边界纠正整体移出 C1（§7.3）。
+durable checkpoint）按定义各要求一条新的 public wire row，因此已随边界纠正移出 C1 门禁（§7.3）。
+移出的是**这些新 ABI 的红灯**，不是 11 行的迁移与删除——后者仍在 C1，按 §5.3 的删除门逐行放行。
 
 这道门是 **Stage 2a 的完成门**，也是 Stage 4 第 3 步允许切换默认 IM 路径的前置条件之一
 （另一个是 Stage 3 的往返证明）。红灯本身不依赖任何 Plugins artifact，故先行提交；
@@ -538,35 +561,50 @@ durable checkpoint）按定义各要求一条新的 public wire row，因此已�
    冲突（INV-R4 规定该 roadmap 拥有跨仓执行顺序）。需 maintainer 批准把拆分落盘到 roadmap。
 2. **陷阱 2 的 4 个 env 变量**：显式 mapping 还是显式放弃——放弃需签字，不能静默丢。
 3. **旧持久数据的最终删除**（契约 D2 的第二步）：soak 之后单独审批，不与默认路径切换同 PR。
-4. **§5.3 六类贡献的新执行 owner 归属**：除 mcp 外，connector / provider 操作 / webhook /
-   schedule / limb / skill 今天都没有外部包执行路径。逐类裁定归 C1 还是 C2；
-   凡判 C2 者，其**迁移与删除一并后移**，不得先删后补。
+4. **§5.3 五类贡献的新执行 owner 归属**：provider 专属操作 / webhook / schedule / limb / skill
+   今天都没有外部包执行路径。逐类裁定归 C1 还是 C2；凡判 C2 者，其**迁移与删除一并后移**，
+   不得先删后补。**connector 与 mcp 不在此条**：前者由既有 Host 权威 + Plugins 包 runtime 双边承担
+   （§7.3），后者已有 owner；两者的放行条件是 parity/旅程证据，不是签字。
 
-### 7.3 C1 ↔ C2 边界纠正（2026-09-20，已裁定：缺口 D / E 整体后移 C2）
+### 7.3 C1 ↔ C2 边界纠正（2026-09-20，已裁定：**C1 不新增 D/E public wire；迁移与删除仍在 C1**）
 
 **裁定**：§7.2 原第 4 条（缺口 D，`connector.binding` 签发/恢复）与原第 5 条（缺口 E，声明式持久
-checkpoint）的两个选项——「并入 C1 公共面」vs「整体后移 C2」——取**后者**。C1 不新增任何 public
-wire row / hook / UI slot。
+checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二选一——**这个二分本身是错的**。
+真正成立的只有一件事：**C1 不新增任何 public wire row / hook / UI slot**，所以这两条的
+**新 ABI 设计线停止**：不提案、不红灯、也不等 maintainer 签字。
+**§2.0 的 11 行 migration set，其迁移与删除仍然在 C1**，用冻结契约 + 既有 Host 机制做，
+按 §5.3 的删除门逐行放行。
 
 **依据（均为一手核验，非转述）**：
 
 | 来源 | 内容 |
 |---|---|
 | co-creator `0001789821850712-001832-35062316` | 主仓 thread「主要是删代码」，新增代码走平行的 Plugins 仓 |
-| Plugins 结论 `0001789822832664-001868-63e5a564` | 既有 `ConnectorBindingAddress` 已足够，**无需新增 C2 public seam**；「Core 只负责 Host 前置与删除式切换，不越界实现插件业务代码」 |
-| 本计划 §5.2 自身条款 | C1 除已签字项外**不新增 public method / hook / UI slot** |
-| 本计划 §6 自身论证 | 用例 8/9/11 与 12–21「按定义各自要求一条新的 public wire row」 |
+| co-creator 第九轮范围纠正 | 契约已完成，不在 C1 重开；**Plugins 补齐包与 runtime，Core 做映射、切默认、防双跑与删除**；删除只在 package parity 证据之后 |
+| Plugins 结论 `0001789822832664-001868-63e5a564` | 既有 `ConnectorBindingAddress` **已足以表达正确路径**，无需新增 public seam；「Core 只负责 Host 前置与删除式切换，不越界实现插件业务代码」 |
+| 冻结契约（一手） | `ConnectorBindingAddress` 是合法 send 地址（`dist/generated/contract.generated.d.ts:451`）；13 行 wire registry（`dist/wire/registry.js:29-43`）里无 `connector.*` / `plugin.state.*` |
+| 本计划 §5.2 自身条款 | C1 不新增 public method / hook / UI slot |
 
-后两行合起来即自证：这两组用例与 C1 的冻结公共面互斥，**不需要额外裁定就已出界**。
+**纠正的边界在哪里（第九轮，已撤回上一版的过头推导）**：上一版把「停止扩契约」推成了
+「§2.0 第 1–7 行（7 个 IM connector）在 C1 内没有可交付的删除面，随 D/E 一并进 C2」。
+**该推导过头，已撤回。** 证据只支持「不新增 D/E 公共面」，不支持「迁移整体延期」。现行裁定：
 
-**作者自述偏差（不掩饰）**：第 6 轮我已一手查实 `ConnectorContribution` 是封闭类型
-（`additionalProperties:false`，实测加 `checkpointKeys` 即 invalid）、13 行 wire registry 无
-`connector.*` 行——那时证据就已指向「声明通道今天不存在 ⇒ 属 C2」，我却读成「所以要在 C1 里
-设计这条通道」，并在第 5–8 轮持续硬化这个**未签字**的面，直接违反本计划自己写下的
-「在此签字前，Core 不动工」。跨猫 review 只能验证门内部的自洽，**验不出坐标系选错**——
-四轮 P1 全部成立且我无一 pushback，恰恰说明高质量 review 替代不了边界自检。
+1. **7 个 IM connector 仍在 C1 的 cutover/delete 范围内**。顺序不变（§5 Stage 4）：
+   映射 → 切默认 → 防双跑证明 → 删除；删除门见 §5.3——**per-provider package parity 证据**，
+   证据不到位就不放行该 provider 的删除，而不是把整行挪去 C2。
+2. **既有 Host-owned binding / config / state 权威由 Core 用现有机制继续保管**（§2.0「Host truth」）：
+   `HandleService.issueConnectorBindingHandle`（`handles.ts:60`）+ handle store、
+   `HostPluginConfigurationService`、`MessagingLedger` 的 `idempotencyKey` 幂等门
+   （`ledger.ts:12`：claim TTL 60s、settled 保留 7 天）。**Core 不为它们新开公共面。**
+3. **Core 不实现 Plugins 业务代码**：stdio entrypoint、catalog/包闭合、fresh-consumer 证据
+   由 Plugins owner thread 在既有契约下直接完成；Core 不代写、也不等它的 schema 裁定。
+4. **Host 前置（缺口 A/B/C）不变**，仍是现在这道 8 例门；用例 10 的 config/secret 投影
+   正是 Plugins 侧 stdio entrypoint 需要的那一半。
+5. **仍需逐行核验**：§2.0 第 8–11 行（`github-operations` / `video-generation` /
+   `wechat-visible-reader` / `weixin-mp`）各自落在 §5.3 哪一类贡献、新 owner 是否就位。
+   这是本车道的下一个具体工作项，此处不预判。
 
-**移出物的取回方式**（不重写、不丢失）：
+**移出 C1 门禁的只有测试面（不重写、不丢失）**：
 
 | 移出面 | 用例 | 原文位置（均 @ `7075c3aed`） |
 |---|---|---|
@@ -576,23 +614,19 @@ wire row / hook / UI slot。
 | 缺口 E 专用 fixture（含 commit 计数与专属 grant 推导） | — | `packages/api/test/f202-c1-checkpoint-fixture.js` |
 
 这 13 例经 4 轮跨猫 review 收敛（`f444e91c3..7075c3aed`），C2 立项时直接 `git show` 取回。
+**它们描述的是尚未存在的公共面，不是 11 行迁移的前置条件**——把两者绑在一起正是上一版的错误。
 
-**由本裁定推导出的 C1 范围后果（必须与 §2.0 同读）**
+**作者自述偏差（不掩饰，两次同源）**：
 
-§7.2 原第 6 条（现第 4 条）订立的规则是「凡判 C2 者，其**迁移与删除一并后移，不得先删后补**」。据此：
+- **第一次（第 5–8 轮）**：我已一手查实 `ConnectorContribution` 是封闭类型
+  （`additionalProperties:false`）、13 行 wire registry 无 `connector.*` 行——证据指向
+  「声明通道今天不存在 ⇒ 属 C2」，我却读成「所以要在 C1 里设计这条通道」，
+  并连续硬化这个**未签字**的公共面，违反本计划自己写下的「签字前不动工」。
+- **第二次（第九轮）**：纠正方向对，但**纠正过头**——把「不扩契约」推成「7 个 IM 行整体后移 C2」，
+  用一个范围错误替换了另一个范围错误。
 
-1. **§2.0 第 1–7 行（7 个 IM connector）在 C1 内没有可交付的删除面。** 外部 connector 包若既不能
-   向 Host 索取 / 恢复 `connector_binding`（D），也没有重启安全的 provider cursor（E），就跑不完
-   ingress → thread → 投递的最小闭环，因此拿不到 package parity evidence；先删即制造用户可见回归。
-   这与 F-2 独立得出的结论一致：roadmap §6.3 的 Phase 1（Host-owned canonical admission）与
-   Phase 2（一条真实外部化 IM slice 往返）都未完成，Core PR 本就无法对 IM「以删除为主」。
-2. **C1 仍然成立的删除面**：`video-analysis` baseline 的 repository-local duplicate
-   （`replacesRepositoryPluginId` 策略已在 `index.ts:5011` 就位，§2.0 三 baseline 表已裁定）。
-3. **待逐行核验**：§2.0 第 8–11 行（`github-operations` / `video-generation` /
-   `wechat-visible-reader` / `weixin-mp`）是否依赖 D/E。action 型贡献很可能不依赖，
-   但**尚未逐行查证**，此处不预判——这是本车道的下一个具体工作项。
-4. **Host 前置（缺口 A/B/C）不受影响**，仍在 C1 内：它们消费冻结契约下的既有机制，
-   对应现在这道 8 例门；Plugins 侧的 stdio entrypoint 也正需要用例 10 的 config/secret 投影。
-
-**结论**：C1 从「7 个 IM connector 的切换与删除」收敛为「**Host 前置 + 不依赖 D/E 的贡献行迁移 +
-`video-analysis` duplicate 删除**」；IM connector 的迁移与删除随 D/E 一并进入 C2。
+两次共同根因：**我用自己的推导替代了对一手裁定的回读**——第一次没回读 §5.2 自己写的限制，
+第二次没回读 co-creator 原话与 Plugins 的「`ConnectorBindingAddress` 已足够」结论。
+跨猫 review 能验门内部自洽，**验不出坐标系选错**；这两次都由外部裁定纠回，不是我自查出来的。
+结构性后果写进流程：**凡改动 C1/C2 边界，必须在同一次提交里引用一手裁定原文，并同步 §5.3 的删除门**，
+不得只改结论段。
