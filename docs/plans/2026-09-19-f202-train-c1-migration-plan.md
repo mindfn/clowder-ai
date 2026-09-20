@@ -462,7 +462,7 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 | schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：wire registry 无 `schedule.*` 行，host→plugin 也无通用 invoke 行（§7.4.0） | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵；**§7.4.2：该行在 C1 内阻塞于本门（不删、不补新公共面），是否改判 C2 待 operator 裁定** |
 | limb | `weixin-mp`、`wechat-visible-reader` | `PluginResourceActivator.ts:170` | **不存在** | weixin-mp 发文；visible-reader arm 授权窗口仍受限 | 新 owner + 旅程绿 |
 | skill | `weixin-mp` | `PluginResourceActivator.ts:331-366`（跨项目级联挂载） | **不存在** | 挂载 + **卸载完整回收**（陷阱 6，不留悬挂 symlink） | 新 owner + 回收证明 |
-| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:462-490`）——**仅对 `runtime.transport === 'builtin'` 的包成立**（`:477`），stdio lane 不适用 | MCP tool 实际可调用，**且须在已删除 repo-local duplicate 的树上取证**（无运行时替换机制，未删时只证得出"两份并存"，§7.4.0 第 3 条） | 已有 owner，按现状过门（§7.4.2 判第 9 行留在 C1）；**取证顺序例外见 §5 Stage 4 第 5 步** |
+| mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`——**仅对 `runtime.transport === 'builtin'` 的包成立**，stdio lane 不适用。**坐标自 `9f12da8` 起变更**：该判据不再是 `runtime-composition.ts:477` 的能力投影复检，而是 `builtin-contribution-supervisor.ts` 自己的 `claims()`；投影侧的那份复述已删（它是同一条选择规则的第四份拷贝，正是条款 2 禁止的） | MCP tool 实际可调用，**且须在已删除 repo-local duplicate 的树上取证**（无运行时替换机制，未删时只证得出"两份并存"，§7.4.0 第 3 条） | 已有 owner，按现状过门（§7.4.2 判第 9 行留在 C1）；**取证顺序例外见 §5 Stage 4 第 5 步** |
 
 **读法**：今天**直接通**的只有 mcp 一行。connector 一行的执行 owner **已经指定**——Host 侧保留既有
 binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 车道的 11 行冻结包承担——
