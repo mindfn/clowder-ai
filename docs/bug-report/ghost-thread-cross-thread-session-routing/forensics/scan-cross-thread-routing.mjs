@@ -31,6 +31,14 @@ const argOf = (name, fallback) => {
 const REDIS_URL = argOf('--redis', process.env.REDIS_URL ?? 'redis://127.0.0.1:6379');
 const PREFIX = argOf('--prefix', 'cat-cafe:');
 
+// Snapshot boundary. A bare scan of a live store is NOT reproducible: SCAN is not a
+// snapshot and new traffic lands mid-run (observed drift 960 -> 965 -> 966 across
+// consecutive reads). Pin a cutoff so a stated number can be re-derived later.
+//   --before-ts <unix_ms>          exclude messages with ts > cutoff
+//   --through-message-id <msgId>   same, using the message's own ts as the cutoff
+const BEFORE_TS_ARG = argOf('--before-ts', null);
+const THROUGH_MESSAGE_ID = argOf('--through-message-id', null);
+
 const Redis = require('ioredis');
 const redis = new Redis(REDIS_URL);
 
@@ -138,11 +146,35 @@ await scanKeys(
   400,
 );
 
+// Resolve the snapshot boundary. --through-message-id wins; it is the more honest form
+// because the cutoff is then a real, citable message rather than a bare epoch number.
+let cutoffTs = BEFORE_TS_ARG === null ? null : Number(BEFORE_TS_ARG);
+let cutoffMessageId = null;
+if (THROUGH_MESSAGE_ID) {
+  const cutoffMessage = messages.get(THROUGH_MESSAGE_ID);
+  if (!cutoffMessage) {
+    console.error(`--through-message-id ${THROUGH_MESSAGE_ID} not found in the scanned corpus`);
+    process.exit(2);
+  }
+  cutoffTs = cutoffMessage.ts;
+  cutoffMessageId = THROUGH_MESSAGE_ID;
+}
+if (cutoffTs !== null && !Number.isFinite(cutoffTs)) {
+  console.error(`--before-ts must be a unix-ms number, got: ${BEFORE_TS_ARG}`);
+  process.exit(2);
+}
+const withinCutoff = (m) => cutoffTs === null || m.ts <= cutoffTs;
+
 // Judgement 3/4 — the two candidate content-side fences, quantified against real traffic.
 const crossPosts = [...messages.entries()]
-  .filter(([, m]) => m.extra?.crossPost?.sourceThreadId)
+  .filter(([, m]) => m.extra?.crossPost?.sourceThreadId && withinCutoff(m))
   .map(([id, m]) => ({ id, ...m }))
   .sort((a, b) => a.ts - b.ts);
+
+// Participation-density input: how many historical cross-posts carry ANY coordination
+// metadata. Note this is metadata presence, NOT membership truth -- it is an upper bound
+// on what a participation backfill could recover from history, nothing stronger.
+const crossPostsWithCoordination = crossPosts.filter((cp) => cp.extra?.coordination).length;
 
 const firstPostByCatThread = new Map();
 for (const [, m] of messages) {
@@ -245,7 +277,19 @@ for (const cp of crossPosts) {
 }
 
 const pct = (n, d) => (d ? `${((100 * n) / d).toFixed(1)}%` : 'n/a');
-console.log(`corpus: ${messages.size} messages, ${sessions} sessions, ${crossPosts.length} cross-posts\n`);
+console.log(`corpus: ${messages.size} messages, ${sessions} sessions, ${crossPosts.length} cross-posts`);
+if (cutoffTs === null) {
+  console.log(
+    '  snapshot boundary                          : NONE (live scan -- NOT reproducible; pass --through-message-id or --before-ts before citing any number)',
+  );
+} else {
+  console.log(`  snapshot boundary (cutoff ts)              : ${cutoffTs}`);
+  if (cutoffMessageId) console.log(`  snapshot boundary (cutoff message)         : ${cutoffMessageId}`);
+}
+console.log(
+  `  cross-posts carrying coordination metadata : ${crossPostsWithCoordination}/${crossPosts.length} (${pct(crossPostsWithCoordination, crossPosts.length)}) <- upper bound for participation backfill, not membership truth`,
+);
+console.log('');
 console.log('— §3.1 falsification —');
 console.log(`  causal reply edges                         : ${causalEdges}`);
 console.log(`  replies landing outside the trigger thread : ${crossThreadReplies}`);

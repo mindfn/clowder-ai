@@ -57,14 +57,19 @@ exactly what it was asked to do, and the asking is what has no design.**
 | PR/review first handoff | freshness returns no thread → the check silently no-ops |
 | local review terminal return | **already forced back to the predecessor thread** |
 
+> **Scope of this matrix: semantic *target authorization* only.** It deliberately omits the other
+> constraints already in force on these paths — routing credentials (F193 AC-A4), deleted-thread
+> handling, same-thread `replyTo`, agent-key's ban on structured actions, and cloud exact-return.
+> Those are real and unchanged; they simply do not answer "should this land in *this* thread".
+
 The defect is concentrated in **ordinary delivery and PR-review initial handoff** — not in every
 structured path. What follows lists primitives that exist, which is not the same as being sufficient.
 
 | Primitive | Status | Source |
 |---|---|---|
-| Subject-addressed coordination object `ActionSuccessorLease` | **exists** | `domains/ball-custody/ActionSuccessorLeaseStore.ts` |
+| Subject-keyed **execution edge** `ActionSuccessorLease` (NOT a coordination object) | **exists** | `domains/ball-custody/ActionSuccessorLeaseStore.ts` |
 | …its identity key contains **no threadId**: `action:successor:identity:{tenant}:{subjectRef}:{family}:{slot}` | **exists** | `action-successor-keys.ts:14-16` |
-| …it records participating threads: `holderThreadId` / `predecessorThreadId` | **exists** | `action-successor-state-machine.ts:97,99` |
+| …it records **two execution endpoints** — `holderThreadId` / `predecessorThreadId`. **These are not a participation set.** | **exists** | `action-successor-state-machine.ts:97,99` |
 | …contention: generation + CAS, `replace`, `returnToPredecessor` | **exists** | same domain |
 | …terminal semantics: `subjectTerminal` + predicate catalog | **exists** | `ActionTerminalPredicateCatalog.ts` |
 | Thread lineage: `parentThreadId`, `sourceThreadId`, `createdFromProposalId` | **exists** | `ThreadStore.ts:238-240` |
@@ -79,12 +84,21 @@ are **never compared**.
 
 ## The defect, in one line
 
-**Subject is a passenger. Thread is the address.**
+**There is no addressable target, and the tool accepts a guess anyway.**
 
-Decisive sample (I-1): the sender declared the correct
-`subjectRef=subject:f167:c1-custody-recall-deviation` and the message still landed in an
-unrelated thread — because no code path resolves or validates `threadId` from that subject.
-The system held the answer and asked the caller to guess it anyway.
+> **Correction (review round 2).** An earlier draft called I-1 a "decisive sample" and claimed
+> *"the system held the answer and asked the caller to guess it anyway."* **That was false and is
+> withdrawn.** I-1 declared `subjectRef=subject:f167:c1-custody-recall-deviation`, but a subjectRef
+> states *what is being discussed*, not *who to deliver to* — and no lease or owner thread existed
+> for that subject at all (the bug report's own finding: F167 had no owner thread). The system did
+> **not** hold the answer.
+>
+> What I-1 actually demonstrates is weaker but still damning: **there was no legitimate target in
+> existence, and delivery succeeded regardless.** That is a fail-open defect (A2A principle 5), not
+> evidence that a usable answer was ignored.
+
+So the accurate framing is **not** "subject is a passenger, thread is the address" — that presumes a
+subject→thread truth exists to be ignored. It does not exist. It has to be built.
 
 ### Which A2A principles the cross-thread hop violates
 
@@ -102,9 +116,9 @@ Three of five. The incidents are not six mistakes; they are one missing design s
 
 | Object | Persisted | What it is |
 |---|---|---|
-| **Coordination** | yes | A subject being worked. Has identity, lifecycle, and a terminal. **Independent of any thread or message.** Generalizes today's `ActionSuccessorLease` beyond `review`/`implement`. |
+| **Coordination** | yes | The collaboration **aggregate root**: a bounded subject/workstream with identity, lifecycle and terminal. **Independent of any thread or message.** A lease is *not* generalized into it — a lease is one execution-responsibility edge **under** a coordination, per action family/slot/revision. Two objects, two lifetimes. |
 | **Participation** | yes | The set of (thread, cat, role) admitted into a coordination. **This — not lineage — is the delivery authority.** Expanding it is an explicit, audited act. |
-| **Cross-post delivery** | yes | A message admitted **into a coordination**, rendered in each participant thread. Carries causal refs to the coordination and its source. |
+| **Cross-post delivery** | yes | A message admitted **into a coordination** and addressed to a **recipient** (participant or role). Its render thread is derived from that recipient's endpoint. **Not broadcast** — reaching everyone is a separate explicit operation. |
 
 ## Proposed — The central inversion
 
@@ -122,8 +136,11 @@ Consequences:
 - **Peer collaboration is native.** A finds its change affects B and C → A *expands* (or proposes
   expanding) the coordination to include them. No parent-child relation is required — this answers
   the operator's case directly: lineage was never the right authority.
-- **Parent/child is just the easy case.** Child-thread creation registers participation at birth,
-  so the A→B hop the operator called "impossible to get wrong" becomes actually impossible.
+- **Parent/child is the easy case — but lineage still grants nothing by itself.** A child may join
+  at birth **only** when it is created from inside an already-authorized coordination and its
+  participation is committed **atomically with thread creation**. A bare `parentThreadId` never
+  confers participation. (Round-2 correction: an earlier draft let lineage bootstrap membership,
+  which contradicted "lineage is discovery only".)
 - **"Cross-thread review" stops being a scheduling category.** Review is bound to a *subject*
   (a PR at an exact HEAD), never to a thread. The reviewer is woken **in the coordination**;
   which thread that surfaces in is a rendering decision. Today's "cross-thread review" is a
@@ -134,14 +151,33 @@ Consequences:
 Some contact is genuinely un-addressed: *"I found something that may matter to whoever owns X."*
 That is not a coordination yet. It is a **proposal to form one**.
 
-> **Rule: no coordination → you may not deliver; you may only propose.**
+> **Rule: no coordination → no *effectful* delivery; you may only propose.**
+> Read-only discovery and query remain legal — you may always *look*.
 
-This replaces today's fail-open default and is the principle-5 repair. The proposal path already
-exists in shape (`propose_thread` / Approval Hub / `effectClass=assign_work`).
+This replaces today's fail-open default and is the principle-5 repair. The approval path is
+reusable for **lifecycle and UI only**, not for addressing (see the `DispatchProposal` caveat below).
 
 **"Dense by construction" is withdrawn — it had no evidence.** There is no persistent participation
-set today, so its future density is unmeasured. Of 960 historical cross-posts only 148 carry any
-coordination metadata (reviewer measurement), and metadata is not membership truth anyway.
+set today, so its future density is unmeasured. Of **960** historical cross-posts only **148** carry
+any coordination metadata — and metadata is not membership truth anyway.
+
+> **Provenance for 960 / 148 — reproduced twice, independently.** Reviewer measured it via read-only
+> `SCAN + HMGET`; the author then re-derived the same figures (960 cross-posts, 148 with coordination
+> metadata, 15.4%) from the committed scanner, which now takes the boundary as a flag:
+>
+> ```
+> node forensics/scan-cross-thread-routing.mjs \
+>   --through-message-id 0001789825570936-001932-e5185384
+> ```
+>
+> Fixed snapshot boundary:
+>
+> - cutoff timestamp `1789825570936`, cutoff message `0001789825570936-001932-e5185384`
+> - predicate: `timestamp <= cutoff && extra?.crossPost?.sourceThreadId` → 960;
+>   of those, `extra.coordination` present → 148
+>
+> **A bare scan of the live store is not reproducible** — two consecutive reads drifted 965 → 966
+> (and 154), and `SCAN` is not a snapshot. Any use of these numbers must pin the cutoff.
 
 Fail-closed is therefore **not** a free consequence of this design. It is an external contract
 change that requires, in order: build the participation set → backfill → **quantify real coverage** →
@@ -193,15 +229,42 @@ table would drift from the authority by construction, which is principle 1 all o
 
 The tool shape is where today's model is taught. It currently teaches addressing-by-thread.
 
+**Separate faces, or collaboration semantics keep living on the message.** A single
+`coordination_post` that can also carry review/assign_work would reproduce today's defect one layer
+up. Four distinct verbs:
+
+```ts
+coordination_post({                    // ordinary message, addressed to a recipient
+  coordinationId,
+  recipient:
+    | { kind: "participant"; participantId: string }
+    | { kind: "role"; role: string; cardinality: "exactly_one" | "all" },
+  content,
+  replyToMessageId?,
+  clientMessageId,
+})                                     // no threadId, no raw targetCats
+
+coordination_broadcast({ ... })        // reaching everyone is explicit, never a default
+coordination_transfer({ ... })         // review / implement responsibility movement
+coordination_propose({ subject, rationale, candidates? })   // the legal "I don't know" exit
+```
+
+`verdict` / `completion` are **lease state transitions**; the carrier message is a projection
+generated atomically with the transition — never the authority itself.
+
 | Today | Proposed |
 |---|---|
-| `cross_post_message(threadId, …)` — `threadId` required, `subjectRef` optional | `coordination_post(coordinationId, …)` — participation resolves rendering; **no caller-supplied thread** |
-| No way to say "I don't know the id" | `coordination_propose(subject, rationale, candidates?)` — the legal "I don't know" exit |
-| Target expansion = type another threadId | `coordination_admit(coordinationId, participant, evidence)` — explicit, audited |
-| Misdelivery has no signal | Wrong-participant admission is rejected at the API, not discovered by a human |
+| `cross_post_message(threadId, …)` — `threadId` required, `subjectRef` optional | `coordination_post` above — recipient-addressed, render thread derived |
+| No way to say "I don't know the id" | `coordination_propose` — the legal "I don't know" exit |
+| Target expansion = type another threadId | invite → accept (below) — explicit, audited, never a direct write of another party's endpoint |
+| Misdelivery has no signal | out-of-membership addressing is rejected at the API, not discovered by a human |
 
-Legacy `cross_post_message` remains for the un-coordinated case but **fails closed** and routes
-to the proposal path.
+> **Caveat on reuse:** the existing approval path is reusable only for its **lifecycle and UI**.
+> `DispatchProposal` persists caller-supplied `targetThreadId` in the entity *and its canonical key*
+> (`callbacks.ts:2493`), so its **addressing payload cannot be carried over**.
+
+Legacy `cross_post_message` remains for the un-coordinated case but fails closed **for effectful
+delivery only** — read-only discovery and query stay legal.
 
 ## Proposed — Derivation, not validation (reviewer-driven correction)
 
@@ -245,8 +308,9 @@ The third anchor generalizes into the rule that makes misdelivery inexpressible:
 > never from a parameter. To bring another thread in, you *invite*; the invitee enrolls itself.
 
 Nobody can ever write another thread's id into a delivery path, because the only thread anyone can
-name is their own — and they don't get to name it, the server does. Bootstrap for the first
-participant comes from lineage (thread creation) or operator approval (`effectClass=assign_work`).
+name is their own — and they don't get to name it, the server does. The first participant is
+bootstrapped by **operator approval** (`effectClass=assign_work`) or by atomic creation inside an
+already-authorized coordination — **not by bare lineage**.
 
 **This rule is necessary but not sufficient.** Invocation-bound self-enrollment prevents *forging
 someone else's thread*. It does not prevent a wrong invitation, the wrong parallel invocation
@@ -265,10 +329,23 @@ Without a server-pre-bound endpoint/capability, an agent-key caller may only **q
 
 ### Invitation protocol
 
-An invitation must bind, at minimum: `coordinationId`, `subjectRef`, `role`, target cat,
-`generation`/nonce, and `expiry`. The **acceptor** proves its own cat/user/current thread from its
-invocation, and consumes the invitation **once, idempotently**. Operator/system admission is a
-separate explicit path carrying its own permission and audit trail.
+```ts
+coordination_invite({ coordinationId, invitee: { catId } | { role },
+                      role, authorityRef, subjectRevision, expiresAt, idempotencyKey })
+coordination_accept({ invitationId, idempotencyKey })
+```
+
+On accept the **server derives** cat / user / thread / invocation and validates tenant, generation,
+subject standing, role and uniqueness. Operator/system admission is a separate explicit path with
+its own permission and audit trail.
+
+> **Idempotency is not eligibility.** Single idempotent consumption solves the *race*, not the
+> *correctness* question: when one `catId` has several equally-qualified live endpoints (parallel
+> invocations), arrival order must **not** decide. The server returns **`ambiguous_endpoint`** and
+> escalates to explicit selection or operator approval.
+
+An agent-key caller may accept **only** with a server-pre-bound capability; otherwise it is limited
+to query and proposal.
 
 ## Proposed — Migration
 
@@ -284,13 +361,17 @@ separate explicit path carrying its own permission and audit trail.
    ownership." It may serve as a **discovery signal only, never as holder-thread truth.**
 
    **There is no cheap subset.** Migration starts at step 2.
-2. **Generalize the coordination** beyond the two action families.
-3. **Invert the tool surface** — coordination-addressed posting becomes primary.
-4. **Fail closed** — un-coordinated cross-post degrades to proposal. *(Last, once 1–3 make the
-   legal path always available.)*
+2. **Shadow plane — the first independently shippable slice.** For **one** PR-review flow, persist
+   Coordination / Participation / Invitation for real: source enrolls only via its own invocation,
+   target joins by cat-scoped invite + accept. Record the audit trail and the metadata projection,
+   but **do not change delivery** — only compare the *derived* endpoint against the *actual* target.
+   Ships alone, reverts alone, and produces the coverage/ambiguity data that step 4 requires before
+   it can even be evaluated.
+3. **Opt-in `coordination_post`**, then structured `coordination_transfer`.
+4. **Fail closed for legacy effectful delivery** — last, and only on the shadow plane's numbers.
 
-Each step is independently shippable and independently reversible. Step 1 is near-free and does
-not depend on the rest.
+Each step is independently shippable and independently reversible. **No step is "near-free"** — the
+earlier claim that one was is withdrawn (see the withdrawn steps above).
 
 ## Design principles
 
