@@ -174,13 +174,27 @@ describe('F202 C1 Core cutover gate — durable connector checkpoints', () => {
       effectiveGrants: [...BASE_GRANTS, ...checkpointGrants()],
     });
     const neighbour = await authenticatedConnection(owner.runtime, neighbourId);
-    await assert.rejects(
-      () => neighbour.call(CHECKPOINT_READ, { key: DECLARED_KEY, pluginInstanceId: owner.pluginInstanceId }),
-      (error) => {
-        assert.notEqual(error?.code, 'CAPABILITY_DENIED', 'the neighbour holds the grant; scope must be what refuses');
-        return assertNotPlumbingFailure(error);
-      },
-      'checkpoint reads must be scoped to the calling instance',
+
+    // Seventh-round review P1: the read carries NO caller-supplied instance id. A wire that let a
+    // package name someone else's instance would already BE the leak, so asserting that such a
+    // call is refused would bless the wrong shape. The neighbour asks for its own slot under the
+    // same key; instance scope must make that slot empty rather than the owner's value.
+    let neighbourRead = null;
+    try {
+      neighbourRead = await neighbour.call(CHECKPOINT_READ, { key: DECLARED_KEY });
+    } catch (error) {
+      assert.notEqual(error?.code, 'CAPABILITY_DENIED', 'the neighbour holds the grant; scope must decide the read');
+      assertNotPlumbingFailure(error);
+    }
+    assert.notDeepEqual(
+      neighbourRead?.value ?? null,
+      { offset: 77 },
+      'a read handler that forgets instance scope leaks the neighbouring cursor',
+    );
+    assert.equal(
+      neighbourRead?.value ?? null,
+      null,
+      'an unwritten slot under the same key must read scoped-empty/not-found for another instance',
     );
 
     await owner.runtime.shutdown('test');

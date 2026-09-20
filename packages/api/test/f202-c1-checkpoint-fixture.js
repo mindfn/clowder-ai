@@ -33,6 +33,7 @@ import {
   CHECKPOINT_COMMIT,
   CHECKPOINT_READ,
   checkpointGrants,
+  hostAcceptedDelivery,
   installConnectorInstance,
   productionComposition,
 } from './f202-c1-production-composition-helpers.js';
@@ -85,6 +86,25 @@ export async function checkpointFixture(prefix, overrides = {}) {
 }
 
 /**
+ * A fixture whose settlement precondition is already satisfied (seventh-round review P1).
+ *
+ * Case 18 makes "no settlementRef at all" a refusal. Any negative that omits the field therefore
+ * gets rejected by the SETTLEMENT rule and never exercises its own rule - a declared-key, size or
+ * content negative would pass against an implementation that enforces none of them. These cases
+ * must carry a reference the Host actually minted, so settlement is the one reason left standing.
+ */
+export async function settledCheckpointFixture(prefix, overrides = {}) {
+  const fixture = await checkpointFixture(prefix, overrides);
+  const receipt = await hostAcceptedDelivery(
+    fixture.runtime,
+    fixture.connection,
+    fixture.pluginInstanceId,
+    `${prefix}settle`,
+  );
+  return { ...fixture, settlementRef: { messageId: receipt.messageId } };
+}
+
+/**
  * The public-surface precondition every gap-E case shares. Fails first, and for one reason.
  *
  * The grant assertion is the anti-escape half (sixth-round review P1): the required grant is
@@ -95,11 +115,21 @@ export async function checkpointFixture(prefix, overrides = {}) {
 export function assertCheckpointRowsReachable(runtime) {
   assert.ok(isWireMethod(CHECKPOINT_COMMIT), GAP_E_WIRE_ABSENT);
   assert.ok(isWireMethod(CHECKPOINT_READ), GAP_E_WIRE_ABSENT);
+  // Seventh-round review P1: excluding only BASE_GRANTS still lets the rows hang off ANY other
+  // pre-existing grant, which is no isolation at all. The frozen requirement is a DEDICATED
+  // state-class grant - derived from the registry, so it binds whatever §7.2 item 5 signs without
+  // this gate inventing a name. Only the SPELLING stays provisional; the requirement does not.
+  const incumbentGrants = new Set(
+    Object.entries(WIRE_METHOD_REGISTRY)
+      .filter(([method]) => method !== CHECKPOINT_COMMIT && method !== CHECKPOINT_READ)
+      .map(([, row]) => row.grant),
+  );
   for (const method of [CHECKPOINT_COMMIT, CHECKPOINT_READ]) {
+    const grant = WIRE_METHOD_REGISTRY[method].grant;
     assert.ok(
-      !BASE_GRANTS.includes(WIRE_METHOD_REGISTRY[method].grant),
-      `${method} must be gated by its own state-class grant; reusing ${BASE_GRANTS.join('/')} ` +
-        'would give checkpoints no isolation from the messaging surface',
+      !incumbentGrants.has(grant),
+      `${method} must be gated by a state-class grant of its own; reusing the incumbent grant ` +
+        `'${grant}' (already held for another row) gives checkpoints no permission isolation`,
     );
   }
   const registered = runtime.broker.options.methods.map((handler) => handler.method);

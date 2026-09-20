@@ -364,15 +364,15 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 因此它与 D 同类——**需要一次公共 wire/trust boundary 变更**。
 最小安全契约（不可降级为裸 KV，也不可让 package 自写文件，否则绕过 inventory/lifecycle/rollback 权威）：
 **声明式 per-contribution key + 实例自有命名空间 + TTL=0 + 限定 schema/大小 + CAS/operation-id 幂等 + settlement-ordered commit**，
-且不得承载消息正文或 secret。红灯见 §6 case 12–21（含声明式 key〔provisional〕/ schema-size / settlement 顺序与缺 ref / replay 只写一次 / 内容禁令 / 缺 grant fail-closed / 跨实例读取拒绝）。
+且不得承载消息正文或 secret。红灯见 §6 case 12–21（含声明式 key〔provisional〕/ schema-size / settlement 顺序与缺 ref / replay 只写一次 / 内容禁令 / 缺 grant fail-closed / 跨实例读取 scoped-empty）。
 
 #### 5.2 Stage 2a 出口门
 
 - §6 的 **18 条 RED 全部转绿，且 3 条 GREEN guard 仍绿**（合计 21 例）。
 - **例外（第六轮 review P1）**：用例 12/13 是 declared-key **配对**，在 §7.2 第 5 条签字前
-  **无法同时转绿**——契约今天没有任何合法位置能声明 per-contribution key（见 §6 provisional
+  **无法同时转绿**——两处候选声明面今天都不表达 per-contribution key（见 §6 provisional
   说明）。因此这一对在签字前只是 **provisional gate**，不能作为 Stage 2a 已静止的完成证据；
-  用例 21 是其自退役守卫：声明通道一旦落地它立刻转红，强制把这对改成真实正负例。
+  用例 21 是**这两处声明面的 tripwire**（第七轮 review P2：它不证明、也无法证明"任何通道都不存在"）：任一面变动即转红，强制重新审视并把这对改成真实正负例。
 - wake 必须 **source-derived**（Host 从已验证 provider identity + 已绑定 thread 推出），
   不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
 - 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
@@ -466,9 +466,9 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | `packages/api/test/f202-c1-production-composition-activation.test.js` | 7、10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入与 config/secret 投影 |
 | `packages/api/test/f202-c1-connector-binding-durability.test.js` | 8、9、11 | **binding 权威与持久性**（缺口 D）：经已认证 Broker 连接 resolve-or-create、重启恢复、跨 connector 伪造否定例 |
 | `packages/api/test/f202-c1-connector-checkpoint-durability.test.js` | 12、16、18、20 | **checkpoint 持久性与 settlement 顺序**（缺口 E）：CAS/重启/注入共享权威、真实 Host 受理回执、重放只写一次、跨实例读取拒绝 |
-| `packages/api/test/f202-c1-connector-checkpoint-safety.test.js` | 13、14、15、17、19、21 | **checkpoint 安全负例**（缺口 E）：声明式 key（provisional）、schema-size、unsettled ref、内容禁令、缺 grant fail-closed，外加声明通道自退役守卫 |
+| `packages/api/test/f202-c1-connector-checkpoint-safety.test.js` | 13、14、15、17、19、21 | **checkpoint 安全负例**（缺口 E）：声明式 key（provisional）、schema-size、unsettled ref、内容禁令、缺 grant fail-closed，外加两处声明面的 tripwire |
 | `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免文件重复组装并越过 350 行硬限） |
-| `packages/api/test/f202-c1-checkpoint-fixture.js` | — | 缺口 E 专用 fixture：隔离 checkpoint 权威（含 commit 计数）、可达性前置断言与 grant 反逃逸断言 |
+| `packages/api/test/f202-c1-checkpoint-fixture.js` | — | 缺口 E 专用 fixture：隔离 checkpoint 权威（含 commit 计数）、settled 夹具、可达性前置断言与专属 state-class grant 断言 |
 
 实测：**18 红 3 绿**（21 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
 8/9/11 全部停在「registry 无 `connector.*` 行」，12–20 中的 9 条全部停在「registry 无 checkpoint 行」，
@@ -486,10 +486,20 @@ helper 最后一段 transaction 是**直接写入 enabled 权威状态**，随�
    用例 18 另补「完全不带 ref 也必须拒绝」，堵住"只拒无效 ref"的最大逃逸口。
 2. **重放只写一次**：注入权威记录 commit 次数，16 断言持久层只 commit 一次、revision 只进一格——
    仅比较两次返回值相等的写法，仍放行"写两次、回第一次结果"的实现。
+2a. **负例的 settlement 前置**（第七轮 review P1）：用例 18 已把"完全不带 `settlementRef`"定为
+   拒绝理由，因此任何省略该字段的负例都会被 **settlement 规则**拒掉，自己那条规则一次也没被执行
+   到——声明键 / 尺寸 / 内容三条负例会对"一条都没实现"的实现假绿。13/14/17 现在经
+   `settledCheckpointFixture` 携带 Host 真实签发的 ref，使**各自的规则**成为唯一剩下的拒绝理由。
+2b. **跨实例读取的形状**（第七轮 review P1）：读取**不接受调用方传入的实例 id**——能让包指名他人
+   实例的 wire 本身就是泄漏，断言"这种调用被拒"等于为错误形状背书。用例 20 改为邻居仅以
+   `{key}` 读取自己的槽位，断言 **scoped-empty/not-found**，且绝不得为 owner 的值。
 3. **grant 隔离**：checkpoint row 要求的 grant **由 row 自己定义**（`control-plane.ts:322` 把
    `row.grant` 交给 `currentCallContext`），故 fixture 从 registry **推导** grant 而不写死名字；
-   可达性断言额外要求该 grant **不得**复用 `messaging.send`/`secret.read`，否则 checkpoint 等于
-   没有权限隔离。用例 19 用同一份 manifest、扣掉 checkpoint grant，断言 `CAPABILITY_DENIED`
+   可达性断言（第七轮 review P1 收紧）要求该 grant **不得复用任何既有 row 的 grant**——从
+   `WIRE_METHOD_REGISTRY` 推出全部既有 row 的 grant 集合并排除之，而不只是排除
+   `messaging.send`/`secret.read` 两个名字（只排两个名字时，实现挂到任何其它既有 grant 上仍可
+   全绿，隔离性为零）。冻结的是"**专属 state-class grant**"这个要求，**拼写**仍随 §7.2 第 5 条
+   签字而定。用例 19 用同一份 manifest、扣掉 checkpoint grant，断言 `CAPABILITY_DENIED`
    （这是 `control-plane.ts:608` **已存在**的错误码，不是本门虚构的契约）。
 
 **两条本轮第一手查证的 Host 约束**（此前未验，差点让红灯红错原因）：
@@ -499,16 +509,18 @@ helper 最后一段 transaction 是**直接写入 enabled 权威状态**，随�
   保留名，无 Host 执行路径，这是 E 被判为 boundary blocker 的直接证据。
 
 **provisional gate 说明（第六轮 review P1）**：用例 12（声明 key 成功）与 13（未声明 key 拒绝）
-是一对，而契约今天**没有任何合法位置**能表达 per-contribution key 声明——`ConnectorContribution`
+是一对，而**两处候选声明面**今天都不表达 per-contribution key 声明——`ConnectorContribution`
 封闭于 `{type,id,identityRef,inboundMethod,outboundMethod}` + `additionalProperties:false`；
 唯一的候选 manifest 顶层 `data[]` 是固定 `dataClass/strategy` 词表的目录元数据，Core 除
 `official-catalog.ts` 外不消费。遵守声明式 key 的实现因此**无法同时满足两半**。故这一对在
-§7.2 第 5 条签字前是 **provisional**，不构成 Stage 2a 静止完成证据；用例 21 守卫该状态：
-声明通道一旦出现（新增 ConnectorContribution 属性或 `data[]` 获得 key 语义）它立刻转红。
+§7.2 第 5 条签字前是 **provisional**，不构成 Stage 2a 静止完成证据；用例 21 是**这两处声明面的
+tripwire**——任一面变动（新增 ConnectorContribution 属性、或 `data[]` 新增属性）即转红，强制
+重新审视这对配对。第七轮 review P2 明确了它的边界：tripwire 只覆盖这两个面，不等于"不存在
+任何声明通道"的存在性证明。
 
 **为什么必须分两层**：只有 1–6 时，一个"永远不被生产组装调用"的实现即可全绿——
-用例 1–4 的协作者是测试手工注入的。7–17 把同样的契约搬到**真实组装**上，
-因此 1–6 定义"正确的唤醒长什么样"，7–17 保证"它真的发生在发布出去的进程里"。
+用例 1–4 的协作者是测试手工注入的。7–21 把同样的契约搬到**真实组装**上，
+因此 1–6 定义"正确的唤醒长什么样"，7–21 保证"它真的发生在发布出去的进程里"。
 **第五轮修正**：8/9/11/12–21 一律经**已认证 Broker 连接**调用（`openExternalConnection` → `hello` → `ready` → `call`），
 由 `HostBrokerControlPlane.call()` 先后校验 wire-registry 成员资格 → handler 注册 → 活跃 lease → grant 持有。
 断言内部 `runtime.messaging.*` 方法是不够的：给 `MessagingService` 加一个方法即可转绿，而外部 stdio 包仍然调不到。
