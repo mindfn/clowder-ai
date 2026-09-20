@@ -49,7 +49,7 @@ F308 的终态是：维护者一次启动或恢复一个冻结 cut，就能看�
 | outbound writer | `scripts/sync-to-opensource.sh` 是唯一 export、F251、temp target gate 与 real target write 入口 | 继续由该脚本写入；F308 不另造 rsync writer |
 | community preservation | F251、reconciliation ledger、target-owned backup/restore | 所有 receipt 和 resume 都重新证明这三项；不得用 cache 越过 |
 | public CI workflow | 开源 target 的 `.github/workflows/ci.yml` 是 `sync-manifest.yaml` target-owned | 以独立 target-repo PR 维护；export 不覆盖它 |
-| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 按 file classification 拆 stateful serial lane 与证明隔离的 pure shards；绝不全局升 concurrency |
+| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 一个明确的跨 VM shared-resource lane 加 4–6 条可分发 lane；绝不全局升 concurrency，且可分发前必须证明 Linux 内核 egress 边界真的生效 |
 
 ## User Journey — Operator
 
@@ -79,7 +79,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | R2 | DAG early failure + typed next action | AC-B1–B2 | [x] |
 | R3 | admission / single-flight / restart recovery | AC-B3–B5 | [x] |
 | R4 | F251, ledger and community preservation remain fail-closed | AC-C1–C4 | [x] |
-| R5 | deterministic 4–6 public-test shards without coverage loss | AC-D1–D6 | [ ] |
+| R5 | deterministic 4–6 distributable public-test shards plus one explicit shared-resource lane, without coverage loss | AC-D1–D6 | [ ] |
 | R6 | launch/resume/status observability and real no-write dogfood | AC-A1, AC-B3–B5, AC-E1 | [x] |
 
 ## Acceptance Criteria
@@ -122,12 +122,27 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 
 ### Phase D — Public CI critical path
 
+> **Owner direction (2026-09-20):** F308 replaces the lexical “stateful/pure” split with a resource-scope
+> contract. This is the canonical decision source for the target-owned implementation; a downstream manual-port
+> cannot amend it. The direction authorizes a single explicit shared-resource lane plus four to six distributable
+> lanes, but neither this decision nor a local run completes AC-D2, AC-D3 or AC-D6. Each exact target head must
+> prove its own execution boundary and coverage.
+
 - [x] **AC-D1**: Resolver emits deterministic selected-file manifest, per-file timing, failure category and stable
   mapping fingerprint.
-- [x] **AC-D2**: A planner produces 4–6 deterministic, duration-balanced pure-test shards; every selected test
-  appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the manifest.
-- [x] **AC-D3**: Redis, ports, fs.watch and other stateful classes remain in one global serial lane; a test enters a
-  parallel lane only with explicit isolation proof. Separate runners are not proof for remote/shared fixtures.
+- [ ] **AC-D2**: A planner produces four to six deterministic distributable shards plus one explicit shared-resource
+  lane. Until CI receives a measured timing artifact, the distributable pool is count-balanced; duration balancing is
+  an operator-side replay capability, not a claim about the CI-produced plan. Every selected test appears exactly
+  once, no excluded test is silently reintroduced, and the mapping is reproducible from the manifest.
+- [ ] **AC-D3**: Only a file with explicit evidence of a real cross-VM remote endpoint, shared account or shared quota
+  enters the one globally serial lane. Every other file may enter the distributable pool only when its target-CI
+  launcher proves the following before tests begin: a fresh Linux network namespace has loopback and no external
+  interface or route; `no_new_privs` is set; all capability sets are empty; and `sudo` plus `nsenter` cannot recover
+  the parent namespace. The launcher must fail closed when any postcondition or negative escape probe fails. Each VM
+  remains file-serial with `--test-concurrency=1` and each file receives a fresh Node process. A bounded preload guard
+  provides earlier typed rejection for its recognized fetch, WebSocket, HTTP(S), TCP/TLS, child-process and Bash
+  `/dev/tcp`/`/dev/udp` paths; it is defense in depth, not the proof for unrecognized APIs. An exact temporary
+  executable is permitted only when explicitly declared as a local test fixture.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
@@ -165,7 +180,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own target PR / F251 preservation proof |
-| pure shard leaks shared state | classifier is deny-by-default; stateful lane remains serial; isolation proof is versioned/tested |
+| distributable shard leaks a cross-VM resource | one serial lane requires explicit endpoint/account/quota evidence; every distributable target invocation must prove loopback-only namespace, `no_new_privs`, empty capability sets and failed `sudo`/`nsenter` escape probes before test execution; the preload guard remains an earlier diagnostic layer, not a universal sandbox |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 
@@ -184,10 +199,11 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 - The target-owned CI patch landed in target PR #1413 at merge
   `71a9b707847f7ed2cd43a3de42e4ca40ec7520e3`. Exact-head target CI preserved the required `Test (Public)` check,
   Windows and public-contract surfaces; its serial bootstrap passed in 19m36s and the fail-closed aggregate passed.
-  Once the source shard contract arrives, the workflow requires exact-plan/report summary provenance for one serial
-  plus four pure lanes. Three real sharded target-CI artifacts are still required by AC-D6. PR #1482's four-runner
-  serial experiment was rejected because VM separation did not prove isolation for remote/shared/unproved tests; its
-  corrected scope preserves this global serial boundary and removes only deterministic lifecycle waits.
+- A later target-owned candidate must emit exact-plan/report provenance for the one serial plus four-to-six
+  distributable lanes, prove the AC-D3 Linux boundary in the target runner, and then collect three same-selection
+  artifacts for AC-D6. Historical serial results and local projections are not substitute evidence. The earlier
+  four-runner serial experiment was rejected because VM separation alone did not prove isolation for
+  remote/shared/unproved tests.
 
 ## Key Decisions
 
@@ -197,4 +213,4 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | KD-2 | Receipts live in a durable local operator-state root, not in Git or target tree | They survive runtime/carrier restart without polluting exported/public content; their path is explicit in every receipt. |
 | KD-3 | `sync-to-opensource.sh` remains the only writer | Receipt orchestration wraps and proves the existing writer instead of creating a second rsync path. |
 | KD-4 | Target `ci.yml` stays target-owned | It must be changed by a dedicated target-repo PR, not smuggled through source export. |
-| KD-5 | Sharding starts with deterministic planning + serial stateful lane | The 2026-05 pollution incident proves global concurrency is not a valid optimization. |
+| KD-5 | Sharding follows resource scope, not a blanket “stateful” label | The 2026-05 pollution incident proves unisolated shared keyspaces are unsafe; it does not prove that runner-local ports, files, processes or names must share one global queue. The replacement boundary is enforceable only when the target launcher proves the AC-D3 Linux namespace and privilege-drop postconditions. |
