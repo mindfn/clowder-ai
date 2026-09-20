@@ -1,6 +1,18 @@
 /**
- * F202 Train C1 gap C — project manifest-declared configuration into an external runtime's
- * environment.
+ * F202 Train C1 gap C — decide which manifest-declared configuration an instance may actually
+ * read, then deliver that decision to whichever runtime carrier is loading the package.
+ *
+ * CARRIER NEUTRALITY (C1 clause 1+2, plan §8.6 step 4). The decision and its delivery are two
+ * different things, and only the delivery is carrier-specific:
+ *   - {@link resolveManifestConfiguration} owns the decision. It is the single authority, and it
+ *     keeps each field's `kind`, because the in-process module carrier hands a plugin a
+ *     `FeatureContext` whose `config` and `secrets` are separate namespaces (plugin-sdk
+ *     `feature-context.d.ts`). Flattening them away here would force that carrier to re-derive
+ *     `kind` and thereby fork the authority this module exists to centralise.
+ *   - {@link projectManifestConfigurationEnv} is the spawned-child delivery: that same resolution
+ *     flattened into environment variables. It is the only carrier-specific part.
+ * Rule 1 below stays a *manifest-level* refusal rather than an env-only one for the same reason:
+ * carrier-dependent admission would itself leak the carrier into the domain (clause 1).
  *
  * The builtin MCP path already performs exactly this grant-checked projection
  * (manager/builtin-contribution-supervisor.ts:558-585) from a contribution's explicit
@@ -73,53 +85,80 @@ export interface ManifestConfigurationProjectionInput {
   readonly configuration: PluginRuntimeConfigurationPort;
 }
 
+/** One declared field this instance is allowed to read, with the kind its carrier routes on. */
+export interface ResolvedConfigurationField {
+  readonly key: string;
+  readonly kind: ConfigurationField['kind'];
+  readonly value: string;
+}
+
 /**
- * Resolves the environment a verified package may receive on top of the protocol variables.
- * Throws {@link ManifestConfigurationProjectionError} rather than degrading, so a caller can
- * never spawn a child that is missing an authority it declared as required.
+ * Applies all three rules to one declared field — the unit a carrier-neutral decision is made in.
+ * Returns `undefined` when an *optional* field is legitimately absent (rules 2 and 3); throws when
+ * a *required* one cannot be satisfied.
+ */
+async function resolveDeclaredField(
+  field: ConfigurationField,
+  grants: ReadonlySet<string>,
+  input: ManifestConfigurationProjectionInput,
+): Promise<ResolvedConfigurationField | undefined> {
+  if (field.key.startsWith(HOST_PROTOCOL_ENV_PREFIX)) {
+    throw new ManifestConfigurationProjectionError({ reason: 'protocol_namespace', key: field.key });
+  }
+  const grant = requiredGrant(field);
+  if (!grants.has(grant)) {
+    // Rule 3 outranks rule 2 for a required field: a provider that cannot read its own
+    // mandatory authority must refuse, not start without it.
+    if (field.required) {
+      throw new ManifestConfigurationProjectionError({
+        reason: 'grant_unavailable',
+        key: field.key,
+        kind: field.kind,
+        grant,
+      });
+    }
+    return undefined;
+  }
+
+  const stored =
+    field.kind === 'secret'
+      ? await input.configuration.readSecret(input.pluginInstanceId, field.key)
+      : await input.configuration.readConfig(input.pluginInstanceId, field.key);
+  const value = effectivePluginConfigurationValue(field, stored);
+  if (value === undefined || value.length === 0) {
+    if (field.required) {
+      throw new ManifestConfigurationProjectionError({ reason: 'value_unavailable', key: field.key, kind: field.kind });
+    }
+    return undefined;
+  }
+  return { key: field.key, kind: field.kind, value };
+}
+
+/**
+ * Resolves the declared configuration a verified package may actually read, in declaration order.
+ * Throws {@link ManifestConfigurationProjectionError} rather than degrading, so no carrier can
+ * start an instance that is missing an authority it declared as required.
+ */
+export async function resolveManifestConfiguration(
+  input: ManifestConfigurationProjectionInput,
+): Promise<readonly ResolvedConfigurationField[]> {
+  const grants = new Set(input.effectiveGrants);
+  const resolved: ResolvedConfigurationField[] = [];
+  for (const field of input.manifest.configuration ?? []) {
+    const entry = await resolveDeclaredField(field, grants, input);
+    if (entry !== undefined) resolved.push(entry);
+  }
+  return resolved;
+}
+
+/**
+ * Spawned-child delivery of {@link resolveManifestConfiguration}: the environment a verified
+ * package may receive on top of the protocol variables. Every refusal is the resolver's.
  */
 export async function projectManifestConfigurationEnv(
   input: ManifestConfigurationProjectionInput,
 ): Promise<Readonly<Record<string, string>>> {
-  const fields = input.manifest.configuration ?? [];
-  const grants = new Set(input.effectiveGrants);
   const env: Record<string, string> = {};
-
-  for (const field of fields) {
-    if (field.key.startsWith(HOST_PROTOCOL_ENV_PREFIX)) {
-      throw new ManifestConfigurationProjectionError({ reason: 'protocol_namespace', key: field.key });
-    }
-    const grant = requiredGrant(field);
-    if (!grants.has(grant)) {
-      // Rule 3 outranks rule 2 for a required field: a provider that cannot read its own
-      // mandatory authority must refuse, not start without it.
-      if (field.required) {
-        throw new ManifestConfigurationProjectionError({
-          reason: 'grant_unavailable',
-          key: field.key,
-          kind: field.kind,
-          grant,
-        });
-      }
-      continue;
-    }
-
-    const stored =
-      field.kind === 'secret'
-        ? await input.configuration.readSecret(input.pluginInstanceId, field.key)
-        : await input.configuration.readConfig(input.pluginInstanceId, field.key);
-    const value = effectivePluginConfigurationValue(field, stored);
-    if (value === undefined || value.length === 0) {
-      if (field.required) {
-        throw new ManifestConfigurationProjectionError({
-          reason: 'value_unavailable',
-          key: field.key,
-          kind: field.kind,
-        });
-      }
-      continue;
-    }
-    env[field.key] = value;
-  }
+  for (const field of await resolveManifestConfiguration(input)) env[field.key] = field.value;
   return env;
 }

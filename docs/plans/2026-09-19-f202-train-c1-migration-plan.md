@@ -1029,6 +1029,9 @@ audio/managed-service surfaces and the retained StackChan physical-hardware limb
 解除后 #1487 的下一步是**按条款 2 / 6 收口 Host 生命周期 + §8.6 的 adapter**，而不是继续在旧分流
 上补丁。
 
+**暂停已于 2026-09-20 解除**：owner thread `…-002967` 正式解除两仓暂停，`…-002980` 确认两条实现线
+继续；Core `f20cc2d` 的裁定为 `aligned—no disagreement`。实现自本节之后恢复，推进顺序见 §8.8。
+
 
 ### 8.6 载体中立 adapter 的目标形状（code-derived at Plugins `3ae7ad2`，不是猜的）
 
@@ -1053,7 +1056,8 @@ ui command → `action.method`。Core 的 action 路由按同一推导做，**�
 **一种 contribution 类型**（由 adapter 内部按需拉子进程），不再是一个载体取值。这样条款 1
 （carrier 只在 adapter 内可见）与 operator"不是一个插件就来一个子进程"同时成立。
 
-**唯一仍需对侧钉死的一点**（不阻塞 Core 实现，只求写进契约）：模块导出名目前是**约定**——
+**需对侧钉死的一点**（~~不阻塞~~ —— 本段的"不阻塞"判断已被 **§8.8** 修正：开工后核实际制品发现
+`PluginModuleEntrypoint` 等符号根本未发布，该请求已与发布序依赖合并，见 §8.8）：模块导出名目前是**约定**——
 telegram `plugin-entrypoint.ts:71`、dingtalk `:66` 都是 `export default`，但 SDK 类型和
 `plugin.yaml` schema 里都没写这条。请 Plugins 车道把"`runtime.entrypoint` 的默认导出必须是
 `PluginModuleEntrypoint`"写进 SDK 契约或 manifest schema；否则第三方包可以合法地导出别的名字，
@@ -1072,3 +1076,54 @@ telegram `plugin-entrypoint.ts:71`、dingtalk `:66` 都是 `export default`，�
 
 对侧的对应记录：Plugins 在 `migration/f202-train-c1-inventory.json` 的 `scopeAuthority.coreCounterpartRead`
 里把 Core HEAD 钉为 `a2759879e…`，并由 `scripts/train-c1-inventory.test.mjs:232-236` 断言。两侧互钉完成。
+
+### 8.8 §8.6 的发布序依赖（2026-09-20 实现开工首日 code-derived，**升级为阻塞项**）
+
+§8.6 把"唯一仍需对侧钉死的一点"记为**导出名约定**，并判定其**不阻塞**。开工后按条款 5
+（"Core 钉 exact 版本 / digest"）去核实际要消费的 artifact，发现一条**比它更硬的**事实：
+§8.6 的目标形状所依赖的 SDK 符号**在任何已发布制品里都不存在**。
+
+**一手证据**（全部可复算）：
+
+| 项 | 观测 | 取证方式 |
+|---|---|---|
+| Core 当前钉的版本 | `@clowder-ai/plugin-sdk` `0.1.0-beta.10`、`@clowder-ai/plugin-contract` `0.1.0-beta.15` | `packages/api/package.json:62-63` |
+| npm 上最新已发布 | sdk `0.1.0-beta.11`、contract `0.1.0-beta.16` | `npm view @clowder-ai/plugin-sdk versions` |
+| beta.11 的 feature-context 公共面 | `createFeatureContextSession` / `definePlugin` / `FeatureHostAdapter` / `FeatureContext` / `DefinedPlugin` / `FeatureActivator` / `FeatureBinding` / `ContributionRegistrar` …（14 个） | `npm pack @clowder-ai/plugin-sdk@0.1.0-beta.11` 后读 `package/dist/index.d.ts:20` |
+| beta.11 **没有**的符号 | `PluginModuleEntrypoint`、`definePluginModule`、`activateDefinedFeature`、`ActivePluginFeature` | 同上，导出清单里逐名核对，beta.10 同样没有 |
+| `FeatureActivator` 在已发布 SDK 的形状 | `(context: FeatureContext) => void \| Promise<void>` —— **返回 void，没有 actions** | beta.10 `dist/feature-context.d.ts` |
+| Core 今天对 SDK 的消费面 | **只有一个文件**：`external-runtime/stdio-broker-transport.ts:26`；feature-context 一行未用 | `grep -rn '@clowder-ai/plugin-sdk' packages/api/src` |
+
+即：§8.6 表格里的坐标（`:387-389` / `:392-396` / `:428-461`）是 Plugins **源码** `3ae7ad2` 的坐标，
+不是 Core 能 `import` 的制品坐标。
+
+**影响按步拆开（不是整体阻塞）**：
+
+| §8.6 步 | 内容 | 今天能不能做 | 依据 |
+|---|---|---|---|
+| 1 | 取 `runtime.entrypoint` 默认导出、断言其有 `create` | **能** —— 结构化鸭子类型，不需要 SDK 导出该 type（§8.6 已授权"先按默认导出实现"） | 本节 |
+| 2 | Host 把**自己认定的 manifest 真相**传进 `create()` | **能** —— 纯 Core 侧 | 本节 |
+| 4 | Host 提供 `FeatureContext`（config/secrets/state/registrar） | **能** —— `createFeatureContextSession(binding, adapter)` 与 `FeatureHostAdapter` 已发布 | beta.10/11 `dist/feature-context.d.ts` |
+| 5 | dispose 幂等 | **能** —— 已发布 SDK 以 `FeatureContextSession.revoke` 提供，且 `revokePromise` 已做记忆化 | beta.10 `dist/feature-context.js:182-190` |
+| 3 | `activateDefinedFeature` → `ActivePluginFeature { actions, dispose }` | **不能** —— 符号未发布；`FeatureActivator` 返回 void，运行时不存在 actions 对象 | 本节 |
+
+结论：**条款 2 的 lifecycle 半边（start / stop / reload）不被此依赖阻塞**，Core 可以照常收口；
+**action 半边被阻塞**，因为"载体中立的 action 路由"需要 SDK 侧的逐 feature 激活返回 action 表。
+
+**对 Plugins 车道的精确请求（属条款 3 + 5，不是新 follow-up）**：#54 在收口 SDK 时需发布一个
+导出 `PluginModuleEntrypoint` / `definePluginModule` / `activateDefinedFeature` /
+`ActivePluginFeature` 的版本（即把 `3ae7ad2` 的源码形状带进制品），Core 随后按条款 5 钉该 exact
+版本。§8.6 原来那条"导出名写进契约"的请求**并入本项一起交付**——两者都是同一个发布的内容。
+这不违反条款 7：条款 5 本就规定 #54 先于 #1487 合入，Core 消费对侧本轮发布物是**既定依赖序**，
+不是留到下一轮的尾巴。
+
+**Core 在此期间的推进顺序**（据上表，不等待）：先做不依赖该发布的部分——载体中立的**权威**与
+**生命周期**收口、条款 6 的 package-specific 分支清除、旧执行路径删除；action 路由在对侧发布落地后
+接上。首个落地切片见下。
+
+**已落地（本次提交）**：配置授权改为载体中立——`resolveManifestConfiguration` 成为唯一裁决点并
+保留每个字段的 `kind`（模块载体要把 secret 送进 `FeatureContext.secrets`、把 string/select 送进
+`config`，这是两个命名空间）；`projectManifestConfigurationEnv` 降为"该裁决的 env 投递"，stdio
+载体行为逐字节不变（`test/f202-c1-carrier-neutral-configuration.test.js` 的 parity 例钉死）。
+三条 fail-closed 规则一条没改；规则 1（`CLOWDER_` 协议命名空间）**保持 manifest 级拒绝**而不是
+env 级，否则同一个包会因载体不同而准入不同——那本身就是条款 1 的泄漏。
