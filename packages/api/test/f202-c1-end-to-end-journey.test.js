@@ -149,7 +149,7 @@ describe('F202 C1 — external message in, cat reply out, nothing connector-spec
     assert.equal(wakes[0].catId, DEFAULT_CAT);
 
     loadPackage(RELAY_PACKAGE, 'outbound');
-    await subscribe(RELAY_PACKAGE, admitted.threadId, 'outbound', { excludeOwnMessages: true });
+    await subscribe(RELAY_PACKAGE, admitted.threadId, 'outbound');
 
     await catReplies(admitted.threadId, '看完了');
     await delivery.drain(admitted.threadId);
@@ -160,10 +160,12 @@ describe('F202 C1 — external message in, cat reply out, nothing connector-spec
     assert.deepEqual(publishFailures, []);
   });
 
-  test('case 2: the relaying package is never handed back its own message', async () => {
-    // Subscribing BEFORE the inbound arrives is the whole point: a subscription starts at the
-    // current head, so registering afterwards would skip the message for the wrong reason and
-    // prove nothing about the echo.
+  test('case 2: a package declaring nothing is still not handed back its own message', async () => {
+    // Two things are load-bearing here. Subscribing BEFORE the inbound arrives, because a
+    // subscription starts at the current head and registering afterwards would skip the message
+    // for the wrong reason. And declaring no filter at all, because `filter` is an untyped
+    // pocket that validates anything — so safety that depends on every package remembering an
+    // unchecked key is not safety.
     loadPackage(RELAY_PACKAGE, 'outbound');
     const { handleId } = await messaging.issueThreadHandle({
       pluginInstanceId: RELAY_PACKAGE,
@@ -176,7 +178,7 @@ describe('F202 C1 — external message in, cat reply out, nothing connector-spec
       threadId: 'thread-1',
       handleId,
       method: 'outbound',
-      filter: { excludeOwnMessages: true },
+      // Deliberately no filter: safety must not depend on anyone remembering to ask for it.
     });
 
     const admitted = await ingress.admit({
@@ -210,7 +212,7 @@ describe('F202 C1 — external message in, cat reply out, nothing connector-spec
     });
 
     loadPackage(FRONT_DESK, 'deliver');
-    await subscribe(FRONT_DESK, admitted.threadId, 'deliver', { excludeOwnMessages: true });
+    await subscribe(FRONT_DESK, admitted.threadId, 'deliver');
 
     await catReplies(admitted.threadId, '好的');
     await delivery.drain(admitted.threadId);
@@ -219,4 +221,69 @@ describe('F202 C1 — external message in, cat reply out, nothing connector-spec
     assert.equal(forFrontDesk.length, 1, 'a front-desk package is the identical path');
     assert.equal(forFrontDesk[0].method, 'deliver');
   });
+
+  test('case 4: a subscriber that deliberately asks for its own echo receives it', async () => {
+    // Proves the suppression is a default and not a hard rule — a live view confirming an
+    // optimistic update is the case that wants it.
+    loadPackage(RELAY_PACKAGE, 'outbound');
+    const { handleId } = await messaging.issueThreadHandle({
+      pluginInstanceId: RELAY_PACKAGE,
+      threadId: 'thread-1',
+      userId: 'user-1',
+      scope: { canSend: false, canSubscribe: true },
+    });
+    await delivery.register({
+      subscriberId: RELAY_PACKAGE,
+      threadId: 'thread-1',
+      handleId,
+      method: 'outbound',
+      filter: { includeOwnMessages: true },
+    });
+
+    const admitted = await ingress.admit({
+      connectorId: CONNECTOR,
+      externalConversationId: CONVERSATION,
+      providerMessageId: 'om_1',
+      text: 'hi',
+    });
+    await delivery.drain(admitted.threadId);
+
+    assert.equal(outboundCalls.length, 1, 'opting in must actually deliver the echo');
+  });
+
+  // `filter` is an untyped pocket — `additionalProperties: true`, and absent from `required` —
+  // so every one of these validates against the contract. Inverted, each degrades to silence.
+  for (const [label, filter] of [
+    ['a misspelled opt-in key', { includeOwnMessage: true }],
+    ['a string where a boolean was meant', { includeOwnMessages: 'true' }],
+    ['an opt-in explicitly set false', { includeOwnMessages: false }],
+  ]) {
+    test(`case 5: ${label} falls back to suppression`, async () => {
+      loadPackage(RELAY_PACKAGE, 'outbound');
+      const { handleId } = await messaging.issueThreadHandle({
+        pluginInstanceId: RELAY_PACKAGE,
+        threadId: 'thread-1',
+        userId: 'user-1',
+        scope: { canSend: false, canSubscribe: true },
+      });
+      await delivery.register({
+        subscriberId: RELAY_PACKAGE,
+        threadId: 'thread-1',
+        handleId,
+        method: 'outbound',
+        filter,
+      });
+
+      const admitted = await ingress.admit({
+        connectorId: CONNECTOR,
+        externalConversationId: CONVERSATION,
+        providerMessageId: 'om_1',
+        text: 'hi',
+      });
+      assert.equal(admitted.threadId, 'thread-1', 'guard: the subscription must cover the created thread');
+
+      await delivery.drain(admitted.threadId);
+      assert.deepEqual(outboundCalls, [], 'an unchecked key must degrade to silence, not to a flood');
+    });
+  }
 });

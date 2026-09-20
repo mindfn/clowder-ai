@@ -66,12 +66,21 @@ export interface SubscriptionDeliveryDeps {
  */
 export interface SubscriptionFilter {
   /**
-   * Skip messages this subscriber authored. A package that relays a thread outward is also
-   * subscribed to it, so without this its own relayed message comes straight back and it relays
-   * it again — one inbound "hi" becomes an endless conversation on a real platform. Subscribers
-   * that want their own echo, like a live view confirming an optimistic update, simply omit it.
+   * Opt in to being handed back the messages this subscriber itself authored. Off by default,
+   * and the default is the whole point.
+   *
+   * A package that relays a thread outward is also subscribed to it, so if its own relayed
+   * message comes back it relays that onward too — one inbound "hi" becoming an endless
+   * conversation on somebody's real platform. Making echo opt-out would have put that outcome
+   * one forgotten line away in every relaying package, and `filter` is an untyped pocket
+   * (`additionalProperties: true`, absent from `required`), so a misspelled key, a string
+   * `"true"`, or no filter at all would all have validated and then looped.
+   *
+   * Inverted, every one of those mistakes degrades to silence instead of a flood, and no
+   * package has to remember anything to be safe. A subscriber that genuinely wants its own
+   * echo — a live view confirming an optimistic update — asks for it deliberately.
    */
-  readonly excludeOwnMessages?: boolean;
+  readonly includeOwnMessages?: boolean;
 }
 
 /** What a subscriber declared: the thread it wants and the outbound method it implements. */
@@ -104,9 +113,13 @@ export class SubscriptionDeliveryStaleError extends Error {
 
 const DEFAULT_MAX_PAGES = 32;
 
-/** True when this subscriber wrote the event and asked not to be handed its own messages. */
-function authoredBy(event: unknown, registration: Registration): boolean {
-  if (registration.filter?.excludeOwnMessages !== true) return false;
+/**
+ * True when this subscriber authored the event and has not asked for its own echo. Only an
+ * explicit `true` opts in, so a pocket key that is misspelled or carries a string falls through
+ * to suppression — the safe side.
+ */
+function isUnwantedEcho(event: unknown, registration: Registration): boolean {
+  if (registration.filter?.includeOwnMessages === true) return false;
   const actor = (event as { envelope?: { actor?: { kind?: unknown; id?: unknown } } })?.envelope?.actor;
   return actor?.kind === 'plugin' && actor.id === registration.subscriberId;
 }
@@ -170,7 +183,7 @@ export class SubscriptionDelivery {
       // event is still covered by that ack: skipping is a decision about this subscriber, not a
       // failure, and leaving it unacked would replay it forever.
       for (const event of result.events) {
-        if (authoredBy(event, registration)) continue;
+        if (isUnwantedEcho(event, registration)) continue;
         await this.deps.invocation.invoke(registration.subscriberId, registration.method, {
           subscriptionId: registration.subscriptionId,
           event,

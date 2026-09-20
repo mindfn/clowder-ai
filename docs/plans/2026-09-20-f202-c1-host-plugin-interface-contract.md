@@ -244,3 +244,35 @@ operator 问它具体是什么：`ConnectorRouter.ts:32-47` 广播
 **待 operator 在验收时确认的一点**：这会给已发布的 `PluginToHostMethod` 增加一项。
 按"Host 先定接口、SDK 后发"的裁定，现在加是最便宜的时机；但它确实是新公共面。
 
+## 10. 回声抑制默认反转（2026-09-20，跨线 review 促成）
+
+**背景**：端到端串通时发现，转发包既往 thread 送消息又订阅同一 thread，
+不加过滤就会把自己送进去的消息再发回外部平台——用户一句 "hi" 在真实群里变成无限对话。
+
+**我的第一版修法是 fail-open，已撤回。** 原方案让包声明 `filter: {excludeOwnMessages:true}`，
+即 echo 为默认、安全靠 7 个包各记一次。Plugins 线一手核出致命处，证据我已复核：
+
+| 核查项 | 事实 |
+|---|---|
+| `filter` 类型 | `Readonly<Record<string, unknown>>` —— 无类型口袋 |
+| schema 约束 | `{"type":"object","additionalProperties":true}` |
+| `filter` 是否必填 | 否（`required: ['type','id','binding','action']`） |
+| `excludeOwnMessages` 在契约中 | **零命中**，纯魔法字符串 |
+
+所以拼错一个字母、写成字符串 `"true"`、或干脆不写，**三种都通过全部校验然后循环**。
+
+**裁定（采纳 Plugins 线建议）**：**默认排除自身消息**；要回声的订阅者显式
+`filter: { includeOwnMessages: true }` opt-in。
+
+**为什么这比"类型化那个键"更根本**：反转之后，那三种错误**全部降级为静默**而不是刷屏——
+无类型口袋不再是危险来源。更重要的是，它**直接取消了"7 个包都必须声明"这条要求本身**：
+没有要求要记，就没有要求会漏。
+
+> 这与本车道在 G5 上用的是同一条原则：**一个靠 N 个地方各记一次才成立的安全性，不是安全性。**
+> 我在 G5 上讲了这条，却在回声上自己违反了；由跨线 review 纠正。
+
+**证据**：`f202-c1-end-to-end-journey.test.js` 共 7 例，其中
+case 2「什么都不声明也不会收到自己的消息」、
+case 4「显式 opt-in 确实能拿回回声」（证明抑制是默认而非写死）、
+case 5 三例「拼错 / 字符串 / 显式 false 全部降级为静默」。
+
