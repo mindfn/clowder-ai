@@ -46,9 +46,28 @@ contract 内**没有** `HostToPluginMethod` 类型；broker `BrokerConnection` �
 > 我插件可以监听某个 thread 的回调消息注册 callback；
 > 那我们正常成员或者 thread 这边产生消息的时候就往这个 callback 推送
 
-**新增面必须是通用的**：Host 在 thread 产生消息时，按订阅推给插件声明的回调方法。
-声明载体已存在且通用——`MessageSubscriptionContribution { binding, filter?, action: CallbackAction }`
-（:189-195），`CallbackAction = { method, params? }`（:130）。
+### 裁定的机制（operator 2026-09-20，覆盖此前的 A/B 二选一）
+
+> sdk 提供这个 outbound 接口；然后插件调用 host 注册声明需要订阅哪个 thread 的消息，
+> 然后 thread 那边产生新消息后；发现有哪些插件有订阅；然后调用插件实现的这个 outbound 接口；
+> 插件实现的这个 outbound 接口再按照自己的逻辑处理……那都是插件内部闭环的
+
+**声明不需要新契约类型**——已存在且通用：
+`MessageSubscriptionContribution { binding, filter?, action: CallbackAction }`（:189-195），
+`CallbackAction = { method, params? }`（:130）。插件声明要 Host 调哪个方法，这已经是契约语言。
+
+**投递的持久性放在 Host，不放进公共面**——复用已有机制，不新建：
+`EventLogStore.append/readAfter/minSequence` + `CursorStore.get/advanceDelivered/advanceAck`
+（`domains/messaging/stores/ports.ts:112,198`）。Host 驱动游标，调插件的方法，成功才推进；
+插件抛错就不推进，下一轮重投。**插件作者只实现一个函数，不实现循环。**
+
+> **为什么不是"只推一个信号、插件自己 read/ack"**（我此前的推荐，已撤回）：
+> 那把同一个消费循环复制到每一个插件作者手里，N 份实现 N 种错法；
+> 而循环放在 Host 只有一份。公共面反而更小——signal 方案还得额外冻一个信号方法。
+
+**载体实现**（同一套语义，不漂移）：
+- 进程内模块载体：就是一次函数调用（TS 的 SPI 形态，`22eba9a45` 已能加载插件自有模块）
+- stdio 外部载体：已有连接上的反向帧
 
 > **止损线覆盖记录**：本车道原定"新增 public method/hook 即转 C2"。operator 已裁定方向 B
 > 是基础能力且必须在本 PR 内完成，该止损线在此项上被显式覆盖，不适用。
@@ -57,7 +76,8 @@ contract 内**没有** `HostToPluginMethod` 类型；broker `BrokerConnection` �
 
 | # | 缺口 | 取证 |
 |---|---|---|
-| **G1** | Host→插件推送方向不存在 | contract 无 `HostToPluginMethod`；`BrokerConnection` 仅 plugin→Host |
+| **G1** | Host→插件调用方向不存在 | contract 无 `HostToPluginMethod`；`BrokerConnection` 仅 plugin→Host |
+| **G1b** | 订阅投递驱动不存在 | 无代码按订阅游标调插件声明的方法 |
 | **G2** | `message-subscription` 无功能消费者 | 全仓仅 `plugin-manager-projection.ts:91` 一处，是 UI 投影 |
 | **G3** | 无 thread 创建能力 | Capability 只有 `thread.listMetadata` / `thread.readContent` |
 | **G4** | 地址签发无路径 | `issueConnectorBindingHandle` 生产调用点 0 |

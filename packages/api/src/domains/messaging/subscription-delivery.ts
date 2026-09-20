@@ -1,0 +1,149 @@
+/**
+ * F202 Train C1 — Host-driven outbound to subscribing plugins.
+ *
+ * THE SHAPE. A plugin declares which thread it wants and which of its own methods the Host
+ * should call; when that thread produces a message the Host calls that method, and whatever the
+ * plugin does next is closed inside the plugin. Nothing here knows what an IM connector is —
+ * a front-desk plugin subscribing to its own thread is the same code path.
+ *
+ * WHY THE LOOP IS HERE AND NOT IN EVERY PLUGIN. The durable half already exists and is already
+ * published: `subscribe`/`read`/`ack` carry the cursor, the replay floor and the INV-9 stale
+ * signal. This driver is a Host-side consumer of the Host's own published API, so there is one
+ * consume loop with one set of failure semantics instead of one per plugin author. The only
+ * surface this adds is the direction itself — calling a plugin.
+ *
+ * DELIVERY GUARANTEE. The cursor advances only on an accepted call: a page is acked after every
+ * event in it was accepted, so a plugin that was briefly down comes back to its messages rather
+ * than to a hole, and an accepted message is never sent twice (a duplicate outbound is a
+ * duplicate message in someone's chat).
+ */
+
+export interface PluginInvokePort {
+  /** The Host→plugin direction. Rejects if the plugin did not accept the call. */
+  invoke(pluginInstanceId: string, method: string, params: unknown): Promise<void>;
+}
+
+interface DeliveryCallContext {
+  readonly pluginInstanceId: string;
+}
+
+export interface SubscriptionDeliveryMessaging {
+  subscribe(ctx: DeliveryCallContext, handleId: string): Promise<{ subscriptionId: string }>;
+  read(
+    ctx: DeliveryCallContext,
+    subscriptionId: string,
+    options: { limit?: number },
+  ): Promise<{ readonly events: readonly unknown[]; readonly ackToken: string | null; readonly stale: boolean }>;
+  ack(ctx: DeliveryCallContext, subscriptionId: string, token: string): Promise<void>;
+}
+
+export interface SubscriptionDeliveryDeps {
+  readonly messaging: SubscriptionDeliveryMessaging;
+  readonly invoke: PluginInvokePort;
+  /** Events per read page. */
+  readonly readLimit?: number;
+  /**
+   * Pages drained per call before yielding. A backlog is not lost — the cursor holds it and the
+   * next drain continues — but one thread cannot monopolise the Host either.
+   */
+  readonly maxPagesPerDrain?: number;
+}
+
+/** What a plugin declared: the thread it wants and the method it implements. */
+export interface SubscriptionDeclaration {
+  readonly pluginInstanceId: string;
+  readonly threadId: string;
+  readonly handleId: string;
+  readonly method: string;
+  readonly params?: Readonly<Record<string, unknown>>;
+}
+
+interface Registration {
+  readonly pluginInstanceId: string;
+  readonly subscriptionId: string;
+  readonly method: string;
+  readonly params?: Readonly<Record<string, unknown>>;
+}
+
+/** Raised when the log was trimmed past a subscriber's cursor (INV-9: surface, never skip). */
+export class SubscriptionDeliveryStaleError extends Error {
+  readonly subscriptionId: string;
+  constructor(subscriptionId: string) {
+    super(`subscription ${subscriptionId} fell behind the retained window — replay required`);
+    this.name = 'SubscriptionDeliveryStaleError';
+    this.subscriptionId = subscriptionId;
+  }
+}
+
+const DEFAULT_MAX_PAGES = 32;
+
+export class SubscriptionDelivery {
+  private readonly deps: SubscriptionDeliveryDeps;
+  private readonly byThread = new Map<string, Registration[]>();
+
+  constructor(deps: SubscriptionDeliveryDeps) {
+    this.deps = deps;
+  }
+
+  /** Idempotent: re-declaring the same handle reuses its subscription rather than doubling it. */
+  async register(declaration: SubscriptionDeclaration): Promise<void> {
+    const ctx = { pluginInstanceId: declaration.pluginInstanceId };
+    const { subscriptionId } = await this.deps.messaging.subscribe(ctx, declaration.handleId);
+
+    const existing = this.byThread.get(declaration.threadId) ?? [];
+    if (existing.some((entry) => entry.subscriptionId === subscriptionId)) return;
+    existing.push({
+      pluginInstanceId: declaration.pluginInstanceId,
+      subscriptionId,
+      method: declaration.method,
+      ...(declaration.params === undefined ? {} : { params: declaration.params }),
+    });
+    this.byThread.set(declaration.threadId, existing);
+  }
+
+  /**
+   * Deliver everything outstanding on this thread. Subscribers are independent: one plugin being
+   * down must not starve the others, so each is attempted and the first failure is surfaced only
+   * after all of them have had their turn.
+   */
+  async drain(threadId: string): Promise<void> {
+    const registrations = this.byThread.get(threadId) ?? [];
+    let failure: unknown;
+    for (const registration of registrations) {
+      try {
+        await this.drainOne(registration);
+      } catch (err) {
+        if (failure === undefined) failure = err;
+      }
+    }
+    if (failure !== undefined) throw failure;
+  }
+
+  private async drainOne(registration: Registration): Promise<void> {
+    const ctx = { pluginInstanceId: registration.pluginInstanceId };
+    const maxPages = this.deps.maxPagesPerDrain ?? DEFAULT_MAX_PAGES;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.deps.messaging.read(ctx, registration.subscriptionId, {
+        ...(this.deps.readLimit === undefined ? {} : { limit: this.deps.readLimit }),
+      });
+      if (result.stale) throw new SubscriptionDeliveryStaleError(registration.subscriptionId);
+      if (result.events.length === 0 || result.ackToken === null) return;
+
+      // Ack covers the whole page, so every event in it must be accepted first. A throw here
+      // leaves the cursor where it was and the page returns on the next drain.
+      for (const event of result.events) {
+        await this.deps.invoke.invoke(registration.pluginInstanceId, registration.method, {
+          subscriptionId: registration.subscriptionId,
+          event,
+          ...(registration.params === undefined ? {} : { params: registration.params }),
+        });
+      }
+      await this.deps.messaging.ack(ctx, registration.subscriptionId, result.ackToken);
+    }
+  }
+}
+
+export function createSubscriptionDelivery(deps: SubscriptionDeliveryDeps): SubscriptionDelivery {
+  return new SubscriptionDelivery(deps);
+}
