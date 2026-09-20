@@ -8,27 +8,6 @@ export interface SettingsSection {
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
-    id: 'members',
-    label: '成员与运行时',
-    icon: 'users',
-    color: 'var(--color-opus-primary)',
-    description: '成员名册、runtime 结构配置，以及只读路由账本。',
-  },
-  {
-    id: 'profiles',
-    label: '能力画像来源',
-    icon: 'file-text',
-    color: 'var(--color-opus-primary)',
-    description: 'F208 能力画像的观察、证据与来源追溯；不编辑实时路由状态或协作偏好。',
-  },
-  {
-    id: 'accounts',
-    label: '账户与密钥',
-    icon: 'key',
-    color: 'var(--color-opus-primary)',
-    description: '模型账户、凭据和执行身份的归属关系。',
-  },
-  {
     id: 'memory',
     label: '记忆',
     icon: 'brain',
@@ -48,6 +27,27 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: 'megaphone',
     color: 'var(--cafe-accent)',
     description: '查看订阅来源、文章和研究时间线。',
+  },
+  {
+    id: 'members',
+    label: '成员与运行时',
+    icon: 'users',
+    color: 'var(--color-opus-primary)',
+    description: '成员名册、runtime 结构配置，以及只读路由账本。',
+  },
+  {
+    id: 'profiles',
+    label: '能力画像来源',
+    icon: 'file-text',
+    color: 'var(--color-opus-primary)',
+    description: 'F208 能力画像的观察、证据与来源追溯；不编辑实时路由状态或协作偏好。',
+  },
+  {
+    id: 'accounts',
+    label: '账户与密钥',
+    icon: 'key',
+    color: 'var(--color-opus-primary)',
+    description: '模型账户、凭据和执行身份的归属关系。',
   },
   {
     id: 'im',
@@ -85,13 +85,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '搜索和安装 MCP、Skill、插件等能力包。',
   },
   {
-    id: 'concierge',
-    label: '猫猫球',
-    icon: 'cat',
-    color: 'var(--cafe-accent)',
-    description: '猫猫球的形象、人设、值班猫和主动性策略。',
-  },
-  {
     id: 'voice',
     label: '语音管理',
     icon: 'mic',
@@ -106,18 +99,25 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '会话生命周期、注入体系、协作规则与模型指南。',
   },
   {
-    id: 'notify',
-    label: '通知',
-    icon: 'bell',
-    color: 'var(--color-gemini-primary)',
-    description: '推送订阅、提醒策略与设备联动。',
-  },
-  {
     id: 'ops',
     label: '运维监控',
     icon: 'activity',
     color: 'var(--color-gemini-primary)',
     description: '服务健康、命令工具和运行态观测。',
+  },
+  {
+    id: 'concierge',
+    label: '猫猫球',
+    icon: 'cat',
+    color: 'var(--cafe-accent)',
+    description: '猫猫球的形象、人设、值班猫和主动性策略。',
+  },
+  {
+    id: 'notify',
+    label: '通知',
+    icon: 'bell',
+    color: 'var(--color-gemini-primary)',
+    description: '推送订阅、提醒策略与设备联动。',
   },
   {
     id: 'system',

@@ -641,7 +641,8 @@ Header 和 Sidebar 松紧不同**是设计意图**（spacious vs default），�
 
 > Source: `thread_mu5cf8fpujtesgzn#0001789638449393-000639-09e31777` +
 > `thread_mu5cf8fpujtesgzn#0001789700666600-000982-df932f7e` +
-> `thread_mu5cf8fpujtesgzn#0001789870249927-002117-9835e459`（operator）。
+> `thread_mu5cf8fpujtesgzn#0001789870249927-002117-9835e459` +
+> `thread_mu5cf8fpujtesgzn#0001789872870155-002278-addb1787`（operator）。
 
 Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留 **对话 / 主题 / 设置**；只有用户从 Settings
 主动固定的分区可以排在对话之后。正在进行的演示浮窗允许出现临时召回控制，但不属于默认入口。
@@ -671,6 +672,9 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 - [x] pinned shortcut 紧邻对话且无分隔线。
 - [x] Collective 与猫猫星球不出现在 Activity Rail。
 - [x] 记忆、Mission Hub、信号分别作为 Settings 二级项可达；不增加聚合“功能入口”中间层。
+- [x] Settings 二级项依 operator 指定顺序排列：记忆 / Mission Hub / 信号 / 成员与运行时 / 能力画像来源 /
+  账户与密钥 / IM 对接 / Skill 管理 / MCP 管理 / 插件集成 / 能力市场 / 语音管理 / 协作与规则 /
+  运维监控 / 猫猫球 / 通知 / 系统配置。
 - [x] 三个二级项复用业务正文但不嵌套整页壳：统一由 SettingsPageHeader 提供标题，并由 Settings shell 保持单一纵向滚动。
 - [x] 系统配置位于 Settings 二级导航的最后一项。
 - [x] 常驻 Workspace 入口与 launcher 审批卡片显示全局待审批计数。
