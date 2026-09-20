@@ -153,9 +153,30 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
 
   if (section === 'marketplace') return <MarketplaceContent />;
   if (section === 'skills') return <SkillsContent />;
-  if (section === 'memory') return <MemoryHub activeTab="feed" initialReferrerThread={initialReferrerThread} />;
-  if (section === 'mission-hub') return <MissionControlPage />;
-  if (section === 'signals') return <SignalInboxView initialReferrerThread={initialReferrerThread} />;
+  if (section === 'memory') {
+    return (
+      <div className="space-y-5">
+        <SettingsPageHeader title="记忆" subtitle="查看知识动态、检索证据、索引状态与记忆健康度" />
+        <MemoryHub variant="settings" activeTab="feed" initialReferrerThread={initialReferrerThread} />
+      </div>
+    );
+  }
+  if (section === 'mission-hub') {
+    return (
+      <div className="space-y-5">
+        <SettingsPageHeader title="Mission Hub" subtitle="查看 Feature、依赖关系与任务推进状态" />
+        <MissionControlPage variant="settings" />
+      </div>
+    );
+  }
+  if (section === 'signals') {
+    return (
+      <div className="space-y-5">
+        <SettingsPageHeader title="信号" subtitle="查看订阅来源、文章和研究时间线" />
+        <SignalInboxView variant="settings" initialReferrerThread={initialReferrerThread} />
+      </div>
+    );
+  }
   if (section === 'profiles') {
     return (
       <div className="space-y-4">
