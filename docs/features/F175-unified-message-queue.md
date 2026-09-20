@@ -20,7 +20,7 @@ tips_exempt: 2026-09-03 ADR-043 replaces internal Queue custody and settlement m
 >
 > **Fixes**: clowder-ai#564 — urgent connector 消息不再通过 bypass 抢占 A2A 链，改走队列内优先级排序。
 
-> ⚠️ **2026-09-02 终态修订**：priority / position comparator 与拖拽重排语义**保持有效**；reorder 契约使用 `expectedQueueRevision + orderedVisibleEntryIds` 原子整批替换（RFC #1356 §4.1），且「吸走相邻条目」的 `exactSteerBatch` fence 已被 Lua 原子 claim 取代。持久 Queue row 为单目标；前缀批处理可共用一次 invocation，但不合并 Message 身份或正文。见 [ADR-043](../decisions/043-queue-durable-single-ledger.md)。
+> ⚠️ **2026-09-20 终态修订**：priority / position comparator 与拖拽重排语义**保持有效**；reorder 契约使用 `expectedQueueRevision + orderedVisibleEntryIds` 原子整批替换（RFC #1356 §4.1），且「吸走相邻条目」的 `exactSteerBatch` fence 已被 Lua 原子 claim 取代。持久模型是一条 source message 对应一条 Queue row，`targets[]` 保存全部尚未投递成员；普通 drain 以整条 source 为领取单位，完整 target set 可 admission 时一次并发 fan-out，不再做相邻 source 的前缀批处理，也不合并 Message identity 或正文。下方 Phase A 的 batching 方案仅保留为演进历史；当前真相源见 [ADR-043](../decisions/043-queue-durable-single-ledger.md) 与 [F117 Phase D](F117-message-delivery-lifecycle.md)。
 
 ## Why
 

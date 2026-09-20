@@ -13,6 +13,8 @@ tips_exempt: "Renewed 2026-09-09 for the F117/ADR-043 lifecycle calibration: exa
 
 > **Status**: done | **Owner**: 三猫
 
+> ⚠️ **2026-09-20 delivery calibration**：本文关于 `WorklistRegistry`、独立 multi-mention 状态机、per-target `TargetStatus` 与 read/handled Queue receipt 的段落只保留为演进历史。当前所有文本 `@`、structured multi-mention、用户与 connector 输入都进入 F117 / ADR-043 的单一 durable Queue：一条 source 一条 entry，`targets[]` 只保存 pending recipients，actual dispatch / response terminal 归 History lifecycle。当前真相源见 [F117](F117-message-delivery-lifecycle.md)、[ADR-043](../decisions/043-queue-durable-single-ledger.md) 与 [A2A protocol](../architecture/a2a-protocol.md)。
+
 ## Why
 
 ### 核心痛点（operator采访 2026-03-08 20:25-20:36）
@@ -416,9 +418,9 @@ F086 multi_mention（MCP 工具）:
 
 ---
 
-## Follow-up: Per-Target Queued Message State (ADR-040)
+## Historical follow-up (superseded): Per-Target Queued Message State (ADR-040)
 
-> Added 2026-07-01 | Source: F254 D1.2 dogfood + 斑斑/Maine Coon consensus
+> Added 2026-07-01 | Superseded 2026-09-02 by ADR-043 / F117 Phase D. The checklist below is not pending work.
 
 F254 实测发现 queued 消息的 read/handled/target consumed 语义混在一起，导致重复唤醒或多目标吞并。ADR-040 统一定义了四层状态分离模型。
 

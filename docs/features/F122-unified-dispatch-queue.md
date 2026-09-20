@@ -15,7 +15,7 @@ tips_exempt: 2026-09-03 ADR-043 consolidates existing A2A and Queue dispatch tru
 
 > **当前校准（2026-09-09）**：A2A、multi-mention、用户与 connector 均进入同一持久 Queue ledger。
 > 一条 source message 始终只有一条 Queue entry，`targets[]` 只保存 pending recipients；Message 与该 single-source
-> entry 原子 admission，不再做 per-target fan-out、不再 `backfillMessageId`，也不再用 `message.queueCustody`
+> entry 原子 admission，不再拆成 per-target Queue rows、不再 `backfillMessageId`，也不再用 `message.queueCustody`
 > 保存投递状态。multi-mention 必须先创建正文一致、可引用的真实 Agent History source，不能让 Queue payload
 > 挂在另一条 callback response identity 上。实际投递与终局只写 History `dispatchRefs` / response lifecycle；
 > 重放以 exact `sourceRecordId × targetCatId` 幂等跳过。

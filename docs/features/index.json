@@ -711,7 +711,7 @@
     {
       "id": "F117",
       "name": "Message Delivery Lifecycle — 消息投递生命周期真相源",
-      "status": "implementing — PR #1398 已按 2026-09-09 co-creator 验收反馈收敛为单 source Queue Entry + History actual-dispatch lifecycle，并完成 carrier 能力真相与副作用出口去门卫化；待本轮 exact-HEAD review、worktree 体验与 fork soak | **Owner**: Ragdoll + Maine Coon | **Priority**: P1",
+      "status": "implementing — PR #1398 已收敛单 source Queue Entry、History actual-dispatch lifecycle、carrier 能力真相、managed-hold 统一恢复与 caller runtime outbound dispatch view；exact-HEAD 本地跨族代码复审已通过，co-creator 已完成基础旅程 1–5 验收，剩余完整 worktree UAT、fork soak 与上游 owner gates | **Owner**: Ragdoll + Maine Coon | **Priority**: P1",
       "file": "F117-message-delivery-lifecycle.md"
     },
     {
@@ -1515,7 +1515,7 @@
     {
       "id": "F254",
       "name": "Side-Effect Freshness Gate — 副作用出口 freshness 拦截",
-      "status": "partially superseded — **Phase A HELD + Phase B1 MCP piggyback + Phase B2 hold reminder retired by F117/#1398 on 2026-09-09**; dedicated stream-output/catch-closure/glass-box supplement work remains historical or independently owned as marked below. Live delivery capability now follows each member's canonical `carrier`, not a global Codex environment selector. | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1",
+      "status": "partially superseded — **Phase A HELD + Phase B1 MCP piggyback + Phase B2 hold reminder + D1.2 Queue seen/handled ownership are retired by F117/#1398**; exact output-commit closure, glass-box supplements, provider-native freshness evaluation and honest carrier precision remain independently owned here. Live delivery capability follows each member's canonical `carrier`; `activeInvocationGuidance` is a separate adapter capability and must not be inferred from freshness precision. | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1",
       "file": "F254-side-effect-freshness-gate.md"
     },
     {

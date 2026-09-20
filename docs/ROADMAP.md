@@ -7,7 +7,7 @@ created: 2026-02-26
 
 # Clowder AI Feature Roadmap
 
-> 维护者：三猫 | 最后更新：2026-09-18（F117 重新进入实现与验收；F220 已完成并按“只放活跃”规则下线）
+> 维护者：三猫 | 最后更新：2026-09-20（F117 exact candidate 已通过本地跨族代码复审与基础旅程 1–5 验收；完整 UAT、fork soak 与上游 gates 仍待完成）
 >
 > **规则**：只放活跃 Feature（idea/spec/in-progress/review），done 后移除。
 > 详细信息见 `docs/features/Fxxx-*.md`。

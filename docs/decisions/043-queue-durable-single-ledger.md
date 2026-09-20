@@ -8,7 +8,7 @@ created: 2026-09-02
 
 # ADR-043: 消息队列 = 独立持久化的有序工单账本
 
-> **Status**: implemented locally; carrier/replay acceptance follow-up under review | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
+> **Status**: exact candidate implemented and locally reviewed; basic journeys 1–5 accepted; full UAT, fork soak, and upstream gates pending | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
 > **Supersedes (设计层)**: F039 / F122 / F175 / F047 中关于队列状态与 Steer 预留的描述
 
 ## 背景
@@ -81,7 +81,7 @@ return admission.targetCats.map((targetCatId) => createQueueRow(sourceId, target
 
 职责边界：
 
-- **source message**：内容、结构化 `from`、公开时间线身份；
+- **source message**：内容、结构化 `from`、稳定 source identity，以及在 actual dispatch 后取得的公开时间线身份；
 - **Queue Entry**：尚未投递的 `targets[]`、顺序、默认/单目标作者意图和短暂可回滚 claim；
 - **History lifecycle**：每个实际 source→target 投递的 `dispatchRefs[]`，以及对应 response bubble 的 processing/completed/failed/canceled 终局。
 
@@ -145,7 +145,7 @@ Queue admission，不在客户端 admission 后追加第二次 Steer。Steer mod
 成员信息逐成员投影，前端不得硬编码或从本地活跃态猜测。不支持时 action 禁用，原因只在 hover/focus tooltip
 呈现，不增加常驻解释行；默认 `continue_current` 与显式 Steer 在无 active parent 时都诚实保留为 `next_work`，不自动中断，并由普通 FIFO drain 处理。
 
-targetless input 使用与普通 drain 相同的 fallback resolver；没有显式目标的用户/connector source 不会仅因进入存储就提前离开 Queue。真正选定并投递 target 后，才追加 History dispatchRef 并 materialize source。
+普通用户输入没有 authored `@` 时，在 source + Queue 原子 admission **之前**用 canonical resolver 绑定最近一个当前可路由的 completed responder，再退 configured default；Queue 持久化该 target，source 的 `mentions` 仍为空。只有历史/恢复 row，或 authored mention 无效且携带 routing warning 的 row，才会以 targetless 形式留在 Queue head：thread 活跃时原位等待，空闲后再用同一 resolver 绑定 target。无论哪种来源，真正投递后才追加 History dispatchRef 并 materialize source。
 
 Steer modal 可多选，成员候选为 thread participants、路由目标与 fallback 的并集去重；fallback 直接读取 Queue admission 使用的同一 resolver 投影，Web 不另算。每位成员可以分别选择 guide 或 interrupt。
 

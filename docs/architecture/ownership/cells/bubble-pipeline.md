@@ -44,7 +44,7 @@ cited_by:
   - {feature: F117-canonical-source-entry, date: 2026-09-08, delta: the source bubble is materialized once at first actual delivery; MessageStore dispatchRefs own per-target delivery identity and time, while each exact response bubble owns processing and terminal state without Queue receipt projection}
   - {feature: F264-author-intent-steer-ui, date: 2026-09-03, delta: the Steer modal offers non-interrupting send as author intent for every selectable target; admission appends to an exact accepting run or preserves the same row for ordinary drain when the carrier is unavailable or already stopped}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: full queued-body adoption links the original source dispatchRef to the already-processing response so its member avatar and processing bubble appear on the original timeline message without copying or moving the body}
-  - {feature: F117-ADR-043, date: 2026-09-03, delta: live queue updates and F5 history project the same QueueMessageReceipt from exact QueueLedger rows while MessageStore retains only body, coarse delivery state, and immutable timeline publication fact}
+  - {feature: F117-ADR-043, date: 2026-09-20, delta: Queue owns pending targets without a receipt projection; first actual dispatch materializes the one source bubble, MessageStore dispatchRefs own per-target delivery identity and time, and each exact response owns processing and terminal state}
   - {feature: F306, date: 2026-08-26, delta: provider raw streams remain adapter-specific but converge into a provider-neutral semantic event contract; one projector registry serves live, background, hydration, callback, and replay, while unknown structured payloads fail closed instead of rendering raw JSON}
   - {feature: F295, date: 2026-08-13, delta: a managed-command hold bubble consumes the same execution projection and exact taskId cancel target as thread/workspace running chrome; message identity and hold lifecycle ownership remain unchanged}
   - {feature: F177-F254-F264-child-execution-truth, date: 2026-07-16, delta: live and F5 consume one typed child identity projection; routing guards render as system-assisted execution without copied prose, supplements remain distinct replies, and receipt timing separates body-read from terminal handling}
@@ -92,8 +92,10 @@ bubble itself owns `processing`, streamed content, `completed`, `failed`, and `c
 partial content and appends its structured diagnostic. The source ref never manufactures a second response.
 
 Live socket updates and F5 hydration read the same MessageStore lifecycle. They must converge without content,
-timestamp, Queue receipt, or log-text guesses. A targetless user/external entry remains outside History until
-some real dispatch occurs; a source already in History does not need to be moved or copied.
+timestamp, Queue receipt, or log-text guesses. Ordinary no-mention user input already has a server-bound Queue
+target before admission; a historical/recovered or invalid-mention warning row may remain targetless. Either way,
+a user/external source remains outside History until some real dispatch occurs, while a source already in History
+does not need to be moved or copied.
 
 A bodyless processing response renders a lifecycle tip; once content streams, that same response identity
 becomes the bubble. Empty terminal responses use their typed lifecycle notice and remain available to peer

@@ -10,7 +10,7 @@ tips_exempt: 2026-09-10 Phase G moves managed-hold recovery onto the existing Hi
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: implementing — PR #1398 已收敛单 source Queue Entry、History actual-dispatch lifecycle、carrier 能力真相与 managed-hold 统一恢复；2026-09-14 co-creator 将 caller observation 修订为独立的 runtime outbound dispatch view（覆盖预期目标、Steer 增删与 actual result），总体模型已完成方案复核并实现，待 exact-HEAD 代码复审与 worktree UAT | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: implementing — PR #1398 已收敛单 source Queue Entry、History actual-dispatch lifecycle、carrier 能力真相、managed-hold 统一恢复与 caller runtime outbound dispatch view；exact-HEAD 本地跨族代码复审已通过，co-creator 已完成基础旅程 1–5 验收，剩余完整 worktree UAT、fork soak 与上游 owner gates | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -548,7 +548,7 @@ runtime restart 后，actual dispatch/result 仍可从 canonical History 查询�
 - [x] AC-D9: terminal work 不可复活；重做必须由新用户意图产生新 source/attempt
 - [x] AC-D10: targetless 队首（历史无目标 row 或带无效显式 `@` 的 warning-bearing row）在 thread 有活跃执行时原位等待，不绕过、不猜目标；thread 空闲后才走 canonical resolver。无 `@` 的普通新输入则在 source+Queue admission 前绑定最近 completed responder/default；只有 resolver 最终仍无可用目标时才 terminal failure
 
-### Phase E（验收修正，2026-09-03）— 代码与测试完成，待跨族复审 / worktree 体验
+### Phase E（验收修正，2026-09-03）— 代码与跨族复审完成，完整 worktree UAT / fork soak 待完成
 
 - [x] AC-E1: 隔离 Redis 下，猫的 terminal 回复获得 `visibilitySeq` 并进入 `msg:visibility` index；另一只猫的 cursor 读（prompt 增量 / `get_thread_context`）返回该回复
 - [x] AC-E2: processing 态 lifecycle 回复行显示脉冲头像 + capability tip；message 下小头像与回复气泡由同一 `activeRun` 驱动；恢复 capability-tip 组件测试
@@ -583,16 +583,16 @@ runtime restart 后，actual dispatch/result 仍可从 canonical History 查询�
 - [x] AC-G5: completion MCP 从 callback/API/tool registry/governance baseline 同批删除，且不存在可调用别名或双轨 fallback
 - [ ] AC-G6: co-creator 在 feature worktree 验证「等待可见 → 条件满足进入优先 Queue → 出队后单一 response 终局 → 其他成员可读」完整旅程
 
-### Phase H（caller outbound dispatch view，2026-09-14）— 实现待代码复审与 UAT
+### Phase H（caller outbound dispatch view，2026-09-14）— 实现与跨族复审完成，完整 UAT 待完成
 
-- [ ] AC-H1: Agent source Queue admission 成功后，按 exact `(owner, thread, caller, sourceMessageId, targetId)` 初始化 runtime view；item 保存 monotonic revision/presentedRevision、firstAddedBy、最近 selectionChange 与 selectionChangedBy；若当前进程首次观察到的是遗留 remove/actual 事件，firstAddedBy 必须为 unknown；同一 caller 的后续新 source 只追加 items，不覆盖旧 source；无 canonical targetId 的解析失败只记 routing diagnostic
-- [ ] AC-H2: Steer remove/add 只在对应 Queue mutation 成功后更新同一 view item revision 与最小变更事实；actual admission 赢得并发时 History ref 优先，旧 snapshot 不得制造假的 withdrawn；重启不承诺恢复 runtime-only 增删说明
-- [ ] AC-H3: 已进入 durable Queue、随后在 actual admission 前失效的 target 不从 view 静默消失，关联 canonical `delivery_failure`；durable Queue admission 前被 routing preflight 拒绝的 target 则在本次发送结果中立即返回 typed fail-back，不登记 view；dispatchRef 只关联已经发生的投递或投递失败事实，不能仅凭 ref 存在断言 provider 已收到消息；真实状态与 response identity 始终从 Queue + source `dispatchRefs[]` + canonical response 反查
-- [ ] AC-H4: caller 下一自然 invocation 先反查所有保留 items，以 canonical fingerprint 变化推进 revision，再只注入 `revision > presentedRevision` 的变化；能表达 pending、executing、completed/failed/canceled/interrupted、delivery_failure 与 not-delivered/withdrawn；pending/open 成功呈现后仍保留 item但不重复推送未变化版本；executing 已确认且无 Queue mutation 时，response 单独转 terminal 仍必须被下一 turn 发现
-- [ ] AC-H5: projection 冻结生成正文时的 includedRevision；查询期间再次 Steer 必须重读或保留待核对，不能用最新 revision 标记旧正文。成功后 pending/open 推进 presentedRevision，terminal/withdrawn 仅在 current revision 匹配时 compare-and-clear；失败、裁剪、取消与本 turn 新 revision 均不确认
-- [ ] AC-H6: active-runs 共享快照与 caller 私有 dispatch view 职责分离；completed/canceled/interrupted 的自动 continuation 只来自显式 owner；failed terminal 只创建一条 exact、幂等、Queue-only `a2a_failure` 控制载体，不创建第二条 status message且不得递归
-- [ ] AC-H7: runtime view 不持久化、不扫描 History 重建；每个 caller scope 获得一次成功交付的有界 `process_start` 说明，失败后重试、成功后同 generation 不重复，且确认说明不清理当前 view items
-- [ ] AC-H8: 回归覆盖 A 发 M1→B/C/D 后 B unavailable、C 被 Steer 移除再重新加入、D actual terminal、E 由 Steer 新增，以及 M1 未终结时 A 再发 M2→B/D；另锁住 pending 连续两轮不变不重复、投影查询期间再次 Steer、terminal 清理后同 key 重建不会复用旧 revision
+- [x] AC-H1: Agent source Queue admission 成功后，按 exact `(owner, thread, caller, sourceMessageId, targetId)` 初始化 runtime view；item 保存 monotonic revision/presentedRevision、firstAddedBy、最近 selectionChange 与 selectionChangedBy；若当前进程首次观察到的是遗留 remove/actual 事件，firstAddedBy 必须为 unknown；同一 caller 的后续新 source 只追加 items，不覆盖旧 source；无 canonical targetId 的解析失败只记 routing diagnostic
+- [x] AC-H2: Steer remove/add 只在对应 Queue mutation 成功后更新同一 view item revision 与最小变更事实；actual admission 赢得并发时 History ref 优先，旧 snapshot 不得制造假的 withdrawn；重启不承诺恢复 runtime-only 增删说明
+- [x] AC-H3: 已进入 durable Queue、随后在 actual admission 前失效的 target 不从 view 静默消失，关联 canonical `delivery_failure`；durable Queue admission 前被 routing preflight 拒绝的 target 则在本次发送结果中立即返回 typed fail-back，不登记 view；dispatchRef 只关联已经发生的投递或投递失败事实，不能仅凭 ref 存在断言 provider 已收到消息；真实状态与 response identity 始终从 Queue + source `dispatchRefs[]` + canonical response 反查
+- [x] AC-H4: caller 下一自然 invocation 先反查所有保留 items，以 canonical fingerprint 变化推进 revision，再只注入 `revision > presentedRevision` 的变化；能表达 pending、executing、completed/failed/canceled/interrupted、delivery_failure 与 not-delivered/withdrawn；pending/open 成功呈现后仍保留 item但不重复推送未变化版本；executing 已确认且无 Queue mutation 时，response 单独转 terminal 仍必须被下一 turn 发现
+- [x] AC-H5: projection 冻结生成正文时的 includedRevision；查询期间再次 Steer 必须重读或保留待核对，不能用最新 revision 标记旧正文。成功后 pending/open 推进 presentedRevision，terminal/withdrawn 仅在 current revision 匹配时 compare-and-clear；失败、裁剪、取消与本 turn 新 revision 均不确认
+- [x] AC-H6: active-runs 共享快照与 caller 私有 dispatch view 职责分离；completed/canceled/interrupted 的自动 continuation 只来自显式 owner；failed terminal 只创建一条 exact、幂等、Queue-only `a2a_failure` 控制载体，不创建第二条 status message且不得递归
+- [x] AC-H7: runtime view 不持久化、不扫描 History 重建；每个 caller scope 获得一次成功交付的有界 `process_start` 说明，失败后重试、成功后同 generation 不重复，且确认说明不清理当前 view items
+- [x] AC-H8: 回归覆盖 A 发 M1→B/C/D 后 B unavailable、C 被 Steer 移除再重新加入、D actual terminal、E 由 Steer 新增，以及 M1 未终结时 A 再发 M2→B/D；另锁住 pending 连续两轮不变不重复、投影查询期间再次 Steer、terminal 清理后同 key 重建不会复用旧 revision
 
 ## Scope Boundary
 
@@ -660,4 +660,4 @@ evidence that main composition roots survived.
 - Phase E: Fable 做 exact-HEAD delta 复审，硬门为 AC-E1、AC-E3 的「typed custody 行存在时仍 200」与 AC-E7 的 `reconciled` / pre-start TTL 收窄；
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase G: 跨族 reviewer 核验等待可见性、queued-before-admission、唯一 response 终局、MCP/route/Ball writer 全链 absence；co-creator 验证 AC-G6 后才进入 fork soak
-- Phase H: Astra 先复核「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」边界；实现后由 Fable/opus 逐条核验 AC-H1..H8，再交 co-creator 做初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart 的 worktree UAT
+- Phase H: 「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」实现与跨族复审已完成；co-creator 的完整 worktree UAT 仍覆盖初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart

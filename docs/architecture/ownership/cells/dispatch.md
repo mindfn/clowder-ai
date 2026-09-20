@@ -42,8 +42,8 @@ code_anchors:
   - packages/web/src/components/ThreadExecutionBar.tsx
   - packages/web/src/components/MessageDispatchAvatars.tsx
   - packages/web/src/components/workspace/WorkspaceNowSurface.tsx
-  - packages/api/src/domains/cats/services/freshness/FreshnessClosureStore.ts
-  - packages/api/src/domains/cats/services/freshness/FreshnessClosurePreflight.ts
+  - packages/api/src/domains/cats/services/freshness/closure/FreshnessClosureStore.ts
+  - packages/api/src/domains/cats/services/freshness/closure/FreshnessClosurePreflight.ts
   - packages/api/src/domains/cats/services/freshness/FreshnessRelevancePolicy.ts
   - packages/api/src/domains/cats/services/freshness/glass-box/FreshnessSupplementStartupReconciler.ts
   - packages/api/src/routes/callback-a2a-trigger.ts
@@ -76,10 +76,10 @@ doc_anchors:
 static_scan_hints: [QueueLedgerEntry, QueueLedgerStore, QueueLedgerAdmission, RedisQueueLedgerStore, InMemoryQueueLedgerStore, queueEntryId, sourceRecordId, targets, authorIntentByTarget, expandTargets, InvocationQueue, QueueProcessor, StartupReconciler, TurnExecutionRecord, TurnExecutionStore, executionKind, InvocationRecordStore, WaitContinuationCarrierV1, waitContinuationCarrier, claimPrefix, claimExactSteerEntryDurable, restoreClaimedEntries, ConnectorInvokeTrigger, actionSuccessorFence, actionLeaseId, actionGeneration, freshnessClosureId, freshnessSupplementId, readOnlyToolPolicy, priority, sourceCategory, autoExecute, reconcileInactiveLiveInvocation, EXECUTION_CONTROL_UNAVAILABLE]
 cited_by:
   - {feature: F117-canonical-source-entry, date: 2026-09-08, delta: Queue owns one source entry with only pending targets, order, author intent and a short reversible claim; actual delivery moves exact targets into MessageStore dispatchRefs while response and TurnExecution records own processing and terminal truth}
-  - {feature: F117-steer-per-target, date: 2026-09-07, delta: default delivery copy separates queueing from immediate guidance; static configured-client guide capability is projected per member; composer and Queue Steer support multi-select with per-target guide or interrupt; targetless binding plus sibling fan-out is one atomic ledger mutation}
+  - {feature: F117-steer-per-target, date: 2026-09-20, delta: default delivery copy separates queueing from immediate guidance; static configured-client guide capability is projected per member; composer and Queue Steer support multi-select with per-target guide or interrupt; historical or warning-bearing targetless recovery plus target-set reconciliation is one atomic ledger mutation}
   - {feature: F220-KD9-stop-ladder, date: 2026-09-03, delta: Stop is the only user-facing termination; an exact live cancel escalates server-side to per-target reconciliation of durable running truth instead of 409, an incomplete process-owner snapshot terminalizes the execution as failed instead of prompting, and force-reset is demoted to an internal thread-scoped reconciler}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: an exact full same-thread read adopts only that target from the one source Queue Entry into the current lifecycle response, records its History dispatchRef, and leaves sibling targets pending on the same entry}
-  - {feature: F117-ADR-043, date: 2026-09-03, delta: QueueLedger becomes the only durable Queue truth; deterministic source-by-target rows atomically admit Messages, retain terminal receipt tombstones outside active order, and drive live/history receipt projection through an exact message index}
+  - {feature: F117-ADR-043, date: 2026-09-20, delta: QueueLedger is the only durable pending-delivery truth; one source row owns pending targets and a bounded claim, actual dispatch writes MessageStore dispatchRefs, and Queue retains neither per-target rows nor processing/terminal receipt tombstones}
   - {feature: F295-post-close-thread-admission, date: 2026-08-22, delta: active-execution read and exact-cancel reuse canonical owner/default/user-index/external-anchor thread admission before liveness lookup while retaining masked shared occupancy and execution-principal control fences}
   - {feature: F295, date: 2026-08-13, delta: one project-scoped read projection joins canonical live invocation truth with existing managed-command receipts; every displayed execution carries thread, kind, exact identity and an identity-fenced cancel target or an explicit non-cancelable reason}
   - {feature: issue-1291-gate6-batch-steer, date: 2026-08-13, delta: Batch Steer accepts only an exact allowlist of compatible ordinary-user entries for one cat; Queue reserves the complete set before one preempt and QueueProcessor creates one replacement invocation without F175 absorbing unselected neighbors}
@@ -170,9 +170,10 @@ multi-select, and enable guide from static member capability rather than a local
 rereads the exact active parent: a present parent receives the non-interrupting append, while an absent parent
 falls back to ordinary Queue admission. Both `exact_active_turn` and `queued_internal_turn` support
 current-invocation guidance; only the former proves exact consumption by the visible provider turn.
-Unsupported default guide preserves the target as `next_work` and never cancels the current execution. Targetless binding and
-multi-target updates mutate the one source entry atomically; after actual delivery each target proceeds
-independently. A successful
+Unsupported default guide preserves the target as `next_work` and never cancels the current execution. Ordinary
+no-mention user input is bound before Queue admission; only historical/recovered or invalid-mention warning rows use
+head-time targetless binding. That recovery and every multi-target update mutate the one source entry atomically;
+after actual delivery each target proceeds independently. A successful
 `runtime_replacement` already completed its recovered attempt and must not enqueue a second source-less
 continuation.
 

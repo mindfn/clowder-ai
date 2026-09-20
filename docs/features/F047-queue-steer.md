@@ -24,7 +24,7 @@ operator 在 Codex 原生体验中使用 **Steer**：当消息在队列里等待
 - QueuePanel 的 **queued** 条目显示 **Steer** 按钮
 - 弹窗候选取 thread participants、消息路由目标与 Queue fallback 的去重并集；已处理目标可见但禁选
 - 支持多选，并为每个选中成员分别选择“立即发送，引导回复”或“立即发送，中断回复”
-- targetless source entry 的绑定与 `targets[]` 增删在同一持久 mutation 完成；随后各 target 独立投递和终局
+- 历史/恢复或无效 mention warning row 的 targetless 绑定与 `targets[]` 增删在同一持久 mutation 完成；普通无 `@` 用户输入已在入队前绑定 target；随后各 target 独立投递和终局
 - 普通重排继续由 drag/move API 独立提供，不再借用 Steer 名称
 
 ## Acceptance Criteria
@@ -110,7 +110,7 @@ target mapping 自身还必须联结 History actual-dispatch、membership 与 av
 
 ## Risk / Blast Radius
 
-- **原子映射**：targetless binding 与 target-set reconcile 不能留下 ghost/半组 targets
+- **原子映射**：历史/恢复 targetless binding 与 target-set reconcile 不能留下 ghost/半组 targets
 - **状态机复杂度**：interrupt 会触发 cancel → 需要确保 queue 不被错误 pause；guide 不得暗中升级成 cancel
 - **并发/互斥**：需要保持 QueueProcessor mutex 语义；逐 target 动作可以独立终局，但同一 target 不能 double-start
 

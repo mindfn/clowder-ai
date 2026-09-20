@@ -716,11 +716,13 @@ CLI output 来自已经运行的 Agent Client：stream 更新既有 response bub
 
 ```text
 收到输入
-  → 构造 from，并解析结构化 mention 得到 targets（可为空）
+  → 构造 from，并解析结构化 mention
+  → 普通无 authored @：在入队前绑定最近 completed responder/default
+     authored @ 无效：保留 routing warning，允许 targetless compatibility row
   → 持久化 sourceRecordId + 创建 QueueEntry(conversation_input, inline payload, from, targets)
   → Queue Panel 直接回显 entry payload
   → Queue commit 后 requestDrain(threadId)
-  → 队首按当前 membership 重验 targets；为空时选择合法 fallback，得到 actualTargets
+  → 队首按当前 membership 重验 stored targets；仅历史/恢复或 warning-bearing targetless row 在 idle 时绑定 fallback
   → admission 时复用 sourceRecordId 为 messageId、分配 orderKey，并以 actualTargets 的 dispatchRefs=dispatched 写入 Chat History
 ```
 
