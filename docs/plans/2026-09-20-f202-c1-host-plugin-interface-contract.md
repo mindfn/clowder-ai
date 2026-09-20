@@ -137,3 +137,55 @@ G1 是底座：**connector 专用设计的 `outboundMethod` 同样依赖它，�
 3. Host 侧删除清单（删代码）
 4. plugins 仓按整改后的 Host 接口重发 SDK，改造 7 个包
 5. 验收：插件可独立安装 / 卸载 / 使用，且 Host 内无任何 connector 专属代码
+
+## 7. operator 裁定补遗（2026-09-20，D1/D2/D3 全部闭合）
+
+### 7.1 Host→插件是一个机制，不是 outbound 专属
+
+> outbound 机制这个可以泛化一下；如果其他的插件也涉及到 host 主动调用插件的应该也是这个思路的
+
+**已落地**：`domains/plugin/host-invocation.ts` 的 `HostInvocationPort.invoke(targetId, method, params)`
+是**唯一**的 Host→插件方向；订阅投递只是它的第一个消费者，没有特权。
+schedule 触发、webhook 到达、以及将来任何 Host 要主动调包的理由，都是同一个调用换一个已声明的方法名。
+**方法名永远来自插件自己的声明（`CallbackAction.method`），Host 不发明方法名。**
+
+### 7.2 历史数据（原 D1）：迁移脚本 + 统一的插件配置目录
+
+> 单独写个迁移脚本迁移下就好……主要是配置文件……让用户重新操作下也行反正也不复杂
+> 插件加载后我们可以在 .cat-cafe 下开个插件配置目录；然后插件的运行时配置其实都是写那里的
+
+**裁定**：插件运行时配置统一落在 `.cat-cafe/` 下的插件配置目录；写一个迁移脚本把
+`.cat-cafe/im-connector-config/<id>.json`（`FEISHU_APP_ID/SECRET`、`WEIXIN_BOT_TOKEN` 与扫码状态机）
+搬过去。**用户重新操作是可接受的退路，因此迁移不阻塞删除。**
+
+### 7.3 斜杠命令（原 D2）：归 SDK，不在 7 个包里各写一遍
+
+> slash 命令完全可以归属到我们的 sdk 中，因为这些命令其实对应的是某个 api 操作；
+> 然后这些操作不会触发实际的 agent 操作……插件自己先判断下是不是 slash 命令；
+> 是的话不丢给 send 接口；走 slash 命令接口……
+> 比如我们 slash 的切换 thread 的那个；其实也就是重新注册 inbound 和 outbound 的回调的
+
+**裁定**：14 个命令（`/where /new /threads /use /thread /commands /cats /status /history
+/unbind /allow-group /deny-group /focus /ask`）对应的是 **Host 的 API 操作**，不触发 agent。
+插件侧先判定是否 slash → 不走 `send` → 走 SDK 的命令面 → 调 Host API → 记录到按来源固定的系统 thread。
+`/use` 一类切换 thread 的命令 = **重新注册 inbound/outbound 回调**。
+**Host 侧不重建命令层；SDK 提供一份，7 个包复用。**
+
+### 7.4 `connector_message`（原 D3）：不保留专用事件，用已声明的 identity 渲染
+
+operator 问它具体是什么：`ConnectorRouter.ts:32-47` 广播
+`{threadId, message:{id, type:'connector', content, source:{connector,label,icon,sender}, timestamp}}`
+——本质就是**一个带身份的消息气泡**。
+
+> 我理解就和我们的 host 的成员甚至其实已经是一样了；插件注册的时候提供自己的 icon 还有背景颜色
+> 这些；然后我们消息气泡渲染的时候直接用就好了的
+
+**裁定成立，而且插件侧已经是这么写的**：7 个包各声明 `identity` ×2
+（`IdentityContribution { displayName, icon?, color? }` 已在已发布契约内）。
+因此 `connector_message` 不需要作为专用事件保留——插件消息与成员消息同构，身份来自 identity 声明。
+
+### 7.5 这批插件不碰前端 UI（已核实）
+
+7 个 connector 包的 contribution 声明总计：`connector` ×14、`identity` ×14、`webhook` ×4，
+**`ui` ×0**。因此 C1 不涉及任何插件改前端 UI 的情形。
+

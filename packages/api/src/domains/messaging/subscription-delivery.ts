@@ -23,13 +23,7 @@
  * duplicate message in someone's chat).
  */
 
-/**
- * One implementation of outbound. Rejects if the subscriber did not accept the call — that
- * rejection is what holds the cursor still, so it must not be swallowed by the sink.
- */
-export interface OutboundSinkPort {
-  deliver(subscriberId: string, method: string, params: unknown): Promise<void>;
-}
+import type { HostInvocationPort } from '../plugin/host-invocation.js';
 
 /**
  * The messaging domain identifies a subscriber by `pluginInstanceId`; that field is its name for
@@ -51,7 +45,11 @@ export interface SubscriptionDeliveryMessaging {
 
 export interface SubscriptionDeliveryDeps {
   readonly messaging: SubscriptionDeliveryMessaging;
-  readonly sink: OutboundSinkPort;
+  /**
+   * The Host→plugin direction, shared with every other reason the Host calls a package. Message
+   * delivery is one consumer of it, not its owner.
+   */
+  readonly invocation: HostInvocationPort;
   /** Events per read page. */
   readonly readLimit?: number;
   /**
@@ -145,7 +143,7 @@ export class SubscriptionDelivery {
       // Ack covers the whole page, so every event in it must be accepted first. A throw here
       // leaves the cursor where it was and the page returns on the next drain.
       for (const event of result.events) {
-        await this.deps.sink.deliver(registration.subscriberId, registration.method, {
+        await this.deps.invocation.invoke(registration.subscriberId, registration.method, {
           subscriptionId: registration.subscriptionId,
           event,
           ...(registration.params === undefined ? {} : { params: registration.params }),

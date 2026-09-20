@@ -50,8 +50,8 @@ beforeEach(async () => {
 
   delivery = createSubscriptionDelivery({
     messaging,
-    sink: {
-      async deliver(subscriberId, method, params) {
+    invocation: {
+      async invoke(subscriberId, method, params) {
         const failure = invokeFailures.shift();
         if (failure) throw new Error(failure);
         calls.push({ subscriberId, method, params });
