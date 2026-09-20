@@ -65,6 +65,29 @@ contract 内**没有** `HostToPluginMethod` 类型；broker `BrokerConnection` �
 > 那把同一个消费循环复制到每一个插件作者手里，N 份实现 N 种错法；
 > 而循环放在 Host 只有一份。公共面反而更小——signal 方案还得额外冻一个信号方法。
 
+### 泛化裁定（operator 2026-09-20 续）
+
+> 公共面甚至不需要理解什么是插件；它只知道有 n 个实现了 outbound 的实现；然后现在有哪些需要调用的
+>
+> 我们自己的前端的消息其实也是这个 outbound 的一个实现而已
+
+**已采纳**：投递驱动只认 **sink**（outbound 的一个实现），不认"插件"。
+`OutboundSinkPort.deliver(subscriberId, method, params)`，driver 内无任何按订阅者类型的分支。
+测试 case 5 用一个 `ui:live-view` 形态的 sink 钉死这一点。
+
+**证据支持这条泛化**：Host 内 `broadcastToRoom(` 有 **112 处**调用点，事件名散成
+`connector_message`(31) / `intent_mode` / `task_updated` / `heartbeat`……
+前端出站今天不是一个实现，是 112 个散落推送点——与本 PR 在入站上治的是同一个病，长在读的一侧。
+**收敛它属于 C2（operator 已明确把前端部分划给 C2），本 PR 只保证抽象能容纳它而不需改动。**
+
+> **push back：注册不能省，过滤不能交给订阅者。**
+> operator 提议"完全 SPI 就不用注册、插件自己过滤"。**注册不是手续，是授权边界**：
+> `handles.ts:99-107 resolveForSubscribe` 逐条校验 handle 存活、绑定到该实例（INV-8）、
+> `scope.canSubscribe`。若 Host 把每条消息发给所有 sink 再由对方自行过滤，
+> **数据已经离开 Host 了**——每个插件都将看到它从未被授权的 thread 内容，包括 whisper。
+> 过滤必须在 Host 侧，因为投递之后的过滤不是过滤。
+> 次要理由：全量扇出的成本，以及每个 (sink, thread) 需要独立游标才能各自重投。
+
 **载体实现**（同一套语义，不漂移）：
 - 进程内模块载体：就是一次函数调用（TS 的 SPI 形态，`22eba9a45` 已能加载插件自有模块）
 - stdio 外部载体：已有连接上的反向帧

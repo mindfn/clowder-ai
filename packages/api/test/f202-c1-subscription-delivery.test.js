@@ -50,11 +50,11 @@ beforeEach(async () => {
 
   delivery = createSubscriptionDelivery({
     messaging,
-    invoke: {
-      async invoke(pluginInstanceId, method, params) {
+    sink: {
+      async deliver(subscriberId, method, params) {
         const failure = invokeFailures.shift();
         if (failure) throw new Error(failure);
-        calls.push({ pluginInstanceId, method, params });
+        calls.push({ subscriberId, method, params });
       },
     },
   });
@@ -90,7 +90,7 @@ async function produce(text, idempotencyKey) {
 describe('F202 C1 — Host-driven subscription delivery', () => {
   test('case 1: a message on a subscribed thread calls the declared method once', async () => {
     await delivery.register({
-      pluginInstanceId: SUBSCRIBER_A,
+      subscriberId: SUBSCRIBER_A,
       threadId: THREAD_ID,
       handleId: await subscribeHandle(SUBSCRIBER_A),
       method: 'outbound',
@@ -99,13 +99,13 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     await delivery.drain(THREAD_ID);
 
     assert.equal(calls.length, 1, 'the subscriber must be called exactly once');
-    assert.equal(calls[0].pluginInstanceId, SUBSCRIBER_A);
+    assert.equal(calls[0].subscriberId, SUBSCRIBER_A);
     assert.equal(calls[0].method, 'outbound', 'the Host must call the method the plugin declared');
   });
 
   test('case 2: a failing plugin does not lose the message — it is redelivered', async () => {
     await delivery.register({
-      pluginInstanceId: SUBSCRIBER_A,
+      subscriberId: SUBSCRIBER_A,
       threadId: THREAD_ID,
       handleId: await subscribeHandle(SUBSCRIBER_A),
       method: 'outbound',
@@ -122,7 +122,7 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
 
   test('case 3: an accepted message is not redelivered', async () => {
     await delivery.register({
-      pluginInstanceId: SUBSCRIBER_A,
+      subscriberId: SUBSCRIBER_A,
       threadId: THREAD_ID,
       handleId: await subscribeHandle(SUBSCRIBER_A),
       method: 'outbound',
@@ -136,13 +136,13 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
 
   test('case 4: every subscriber of the thread is called, and the Host knows no connector', async () => {
     await delivery.register({
-      pluginInstanceId: SUBSCRIBER_A,
+      subscriberId: SUBSCRIBER_A,
       threadId: THREAD_ID,
       handleId: await subscribeHandle(SUBSCRIBER_A),
       method: 'outbound',
     });
     await delivery.register({
-      pluginInstanceId: SUBSCRIBER_B,
+      subscriberId: SUBSCRIBER_B,
       threadId: THREAD_ID,
       handleId: await subscribeHandle(SUBSCRIBER_B),
       method: 'deliver',
@@ -150,9 +150,27 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     await produce('hello', 'k1');
     await delivery.drain(THREAD_ID);
 
-    const byInstance = new Map(calls.map((c) => [c.pluginInstanceId, c.method]));
+    const byInstance = new Map(calls.map((c) => [c.subscriberId, c.method]));
     assert.equal(byInstance.get(SUBSCRIBER_A), 'outbound');
     assert.equal(byInstance.get(SUBSCRIBER_B), 'deliver', 'each plugin declares its own method name');
     assert.equal(calls.length, 2);
+  });
+
+  test('case 5: a subscriber that is not a package is delivered identically', async () => {
+    // The operator's generalisation: the live view is just another implementation of outbound.
+    // Nothing in the driver may branch on what kind of subscriber this is.
+    const LIVE_VIEW = 'ui:live-view';
+    await delivery.register({
+      subscriberId: LIVE_VIEW,
+      threadId: THREAD_ID,
+      handleId: await subscribeHandle(LIVE_VIEW),
+      method: 'push',
+    });
+    await produce('hello', 'k1');
+    await delivery.drain(THREAD_ID);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].subscriberId, LIVE_VIEW);
+    assert.equal(calls[0].method, 'push');
   });
 });

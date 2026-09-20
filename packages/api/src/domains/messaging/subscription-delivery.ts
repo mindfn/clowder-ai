@@ -1,10 +1,15 @@
 /**
  * F202 Train C1 — Host-driven outbound to subscribing plugins.
  *
- * THE SHAPE. A plugin declares which thread it wants and which of its own methods the Host
+ * THE SHAPE. A subscriber declares which thread it wants and which of its own methods the Host
  * should call; when that thread produces a message the Host calls that method, and whatever the
- * plugin does next is closed inside the plugin. Nothing here knows what an IM connector is —
- * a front-desk plugin subscribing to its own thread is the same code path.
+ * subscriber does next is closed inside it.
+ *
+ * THIS MODULE HAS NO NOTION OF A PLUGIN. It knows only that N sinks implement an outbound method
+ * and which of them are owed this thread's messages. A package relaying to an IM platform, a
+ * front-desk subscriber, and — once the UI's 112 scattered `broadcastToRoom` call sites are
+ * converged onto it — the live view itself are all the same kind of thing here, differing only
+ * in the sink that carries the call.
  *
  * WHY THE LOOP IS HERE AND NOT IN EVERY PLUGIN. The durable half already exists and is already
  * published: `subscribe`/`read`/`ack` carry the cursor, the replay floor and the INV-9 stale
@@ -18,11 +23,18 @@
  * duplicate message in someone's chat).
  */
 
-export interface PluginInvokePort {
-  /** The Host→plugin direction. Rejects if the plugin did not accept the call. */
-  invoke(pluginInstanceId: string, method: string, params: unknown): Promise<void>;
+/**
+ * One implementation of outbound. Rejects if the subscriber did not accept the call — that
+ * rejection is what holds the cursor still, so it must not be swallowed by the sink.
+ */
+export interface OutboundSinkPort {
+  deliver(subscriberId: string, method: string, params: unknown): Promise<void>;
 }
 
+/**
+ * The messaging domain identifies a subscriber by `pluginInstanceId`; that field is its name for
+ * whoever holds the handle, not a claim that the subscriber is a package.
+ */
 interface DeliveryCallContext {
   readonly pluginInstanceId: string;
 }
@@ -39,7 +51,7 @@ export interface SubscriptionDeliveryMessaging {
 
 export interface SubscriptionDeliveryDeps {
   readonly messaging: SubscriptionDeliveryMessaging;
-  readonly invoke: PluginInvokePort;
+  readonly sink: OutboundSinkPort;
   /** Events per read page. */
   readonly readLimit?: number;
   /**
@@ -49,9 +61,9 @@ export interface SubscriptionDeliveryDeps {
   readonly maxPagesPerDrain?: number;
 }
 
-/** What a plugin declared: the thread it wants and the method it implements. */
+/** What a subscriber declared: the thread it wants and the outbound method it implements. */
 export interface SubscriptionDeclaration {
-  readonly pluginInstanceId: string;
+  readonly subscriberId: string;
   readonly threadId: string;
   readonly handleId: string;
   readonly method: string;
@@ -59,7 +71,7 @@ export interface SubscriptionDeclaration {
 }
 
 interface Registration {
-  readonly pluginInstanceId: string;
+  readonly subscriberId: string;
   readonly subscriptionId: string;
   readonly method: string;
   readonly params?: Readonly<Record<string, unknown>>;
@@ -87,13 +99,13 @@ export class SubscriptionDelivery {
 
   /** Idempotent: re-declaring the same handle reuses its subscription rather than doubling it. */
   async register(declaration: SubscriptionDeclaration): Promise<void> {
-    const ctx = { pluginInstanceId: declaration.pluginInstanceId };
+    const ctx = { pluginInstanceId: declaration.subscriberId };
     const { subscriptionId } = await this.deps.messaging.subscribe(ctx, declaration.handleId);
 
     const existing = this.byThread.get(declaration.threadId) ?? [];
     if (existing.some((entry) => entry.subscriptionId === subscriptionId)) return;
     existing.push({
-      pluginInstanceId: declaration.pluginInstanceId,
+      subscriberId: declaration.subscriberId,
       subscriptionId,
       method: declaration.method,
       ...(declaration.params === undefined ? {} : { params: declaration.params }),
@@ -102,7 +114,7 @@ export class SubscriptionDelivery {
   }
 
   /**
-   * Deliver everything outstanding on this thread. Subscribers are independent: one plugin being
+   * Deliver everything outstanding on this thread. Subscribers are independent: one sink being
    * down must not starve the others, so each is attempted and the first failure is surfaced only
    * after all of them have had their turn.
    */
@@ -120,7 +132,7 @@ export class SubscriptionDelivery {
   }
 
   private async drainOne(registration: Registration): Promise<void> {
-    const ctx = { pluginInstanceId: registration.pluginInstanceId };
+    const ctx = { pluginInstanceId: registration.subscriberId };
     const maxPages = this.deps.maxPagesPerDrain ?? DEFAULT_MAX_PAGES;
 
     for (let page = 0; page < maxPages; page += 1) {
@@ -133,7 +145,7 @@ export class SubscriptionDelivery {
       // Ack covers the whole page, so every event in it must be accepted first. A throw here
       // leaves the cursor where it was and the page returns on the next drain.
       for (const event of result.events) {
-        await this.deps.invoke.invoke(registration.pluginInstanceId, registration.method, {
+        await this.deps.sink.deliver(registration.subscriberId, registration.method, {
           subscriptionId: registration.subscriptionId,
           event,
           ...(registration.params === undefined ? {} : { params: registration.params }),
