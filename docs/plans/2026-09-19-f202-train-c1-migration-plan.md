@@ -1456,8 +1456,9 @@ P3 的已知项，**登记在此而不在本 PR 内处理**，理由逐条写明
 于是每一步都要搭桥维持双路不漂移。`domains/messaging/ingress-wake.ts` 的存在即此病征——
 它把 wake 推导放进了汇聚域（方向对），但它服务的是"双路并存期"，而不是"汇聚后只剩一条路"。
 
-**修正后的顺序**：Phase 1 合流 **先做** → 再迁移 → 再删除。合流完成后，`ConnectorRouter` 的
-自有写入 / 广播 / 幂等 / mention 解析全部成为可删面，删除面因此大幅收窄。
+**~~修正后的顺序：Phase 1 合流先做 → 再迁移 → 再删除~~ — 本条于 2026-09-20 撤回，见 §9.5。**
+把"合流"当成一件独立的前置工程是错的：入站合流在 provider 改走 SDK `send()` 的那一刻**由构造
+自动成立**，没有单独的 Phase 1 工程量。真正不存在的东西是**出站**，见 §9.5 的 code-derived 证据。
 
 ### 9.3 距验收标准的实际距离（code-derived，不是估算）
 
@@ -1478,7 +1479,7 @@ P3 的已知项，**登记在此而不在本 PR 内处理**，理由逐条写明
 IM 外部入站经 Host 验证过的 `connector_binding`，人的 @ 有权威。
 **一个开关在一个地方**，而不是今天的三份实现。
 
-**路径 B — runtime 接管：硬依赖 beta.12 发布，绕不过去。**
+**路径 B — runtime 接管：依赖 beta.12，但 beta.12 是我们自己的未发布包，不是外部依赖（§9.5 纠正）。**
 `clowder-ai-plugins#54` 的 7 个 connector 包 `plugin.yaml` 均声明
 `runtime.transport: builtin` + `entrypoint: dist/plugin-entrypoint.js`（exact HEAD `d1865f7e3`
 一手核验），即必须走进程内模块载体；模块载体要能激活 feature 就需要 beta.12 的
@@ -1487,3 +1488,52 @@ IM 外部入站经 Host 验证过的 `connector_binding`，人的 @ 有权威。
 
 **结论**：等发布期间并非无事可做——路径 A 是 operator 指出的方向，且是删除面收窄的前提。
 先做 A，beta.12 一到即做 B + 删除，全部落在同一个 PR 内，符合 §9.1。
+
+### 9.5 撤回"合流是前置工程"，并给出终态缺口的 code-derived 边界（2026-09-20）
+
+operator 挑战原话："为什么不是改完后天然收敛了的"、"请你证明它存在"。核完的结论是
+**operator 对、我错**，错在入站；但出站确实有一个不存在的东西。以下全部一手取证。
+
+#### 9.5.1 入站：合流是自动的，没有独立工程量（撤回 §9.2 的"先做合流"）
+
+`SendService.send()`（`domains/messaging/send-service.ts:126-294`）已经是单一 admission，
+对 `connector_binding` 地址已经完整覆盖 ConnectorRouter 的入站语义：
+
+| admission 步骤 | canonical 落点 |
+|---|---|
+| thread 解析 | `handles.resolveForSend` → `handle.threadId`（`send-service.ts:138`） |
+| 幂等 | `ledger.claimSend`（`:131`）+ store 级 `plugmsg:` key（`:190`） |
+| 来源校验 | `stampProvenance` D-4（`:63-91`） |
+| mention → wake 目标 | `deriveIngressTarget`（`:154` → `ingress-wake.ts:57-71`） |
+| 持久化 | `messageStore.append`（`:176`），`mentions: [ingress.catId]`（`:184`） |
+| publish / 事件流 | `events.append`（`:216`）+ publish watermark（`:232`） |
+| 广播 + 唤醒（各自独立 fence） | `deliverIngressEffectsOnce`（`:258` → `ingress-wake.ts:136-196`） |
+
+`ConnectorRouter` 只有**一个**公共入口 `route()`（`ConnectorRouter.ts:171`），且**只管入站**，
+由 `connector-gateway-bootstrap.ts:403 createOnMessage` 接成 `InboundMessageCallback`。
+因此 7 个 provider 改走 SDK `send()` 后，`route()` **没有调用者 = 直接可删**。
+不需要"先建汇聚点"——汇聚点已经在，且 C1 已把 wake 授权补齐（§F-1 修复）。
+
+#### 9.5.2 出站：Host 侧真的不存在，这是唯一的真缺口
+
+- 契约侧已经齐了：`ConnectorContribution`（plugin-contract **beta.15**，我们已钉）声明
+  `{ id, identityRef, inboundMethod, outboundMethod }`
+  （`plugin-contract/dist/generated/contract.generated.d.ts:203-209`）——**两个方向都是
+  "Host 去调插件的方法名"**，所以插件侧并不需要 `connectors.deliver()`。
+- Host 侧零实现：全仓 `grep -rn "outboundMethod|inboundMethod" packages/api/src` → **0 命中**。
+  今天的出站是 repository-local 的 `OutboundDeliveryHook.ts` / `StreamingOutboundHook.ts`
+  （装配于 `connector-gateway-bootstrap.ts:993`），按内置 adapter 查表投递，
+  **无法到达任何插件注册的 connector**。
+
+**结论**：终态缺口 = Host 侧一个消费 `ConnectorContribution` 的 connector host-adapter
+（激活时登记 → 入站转 `SendService.send()`、出站调插件 `outboundMethod`），
+量级与 operator 估计一致（数千行新增），其余为删除。
+
+#### 9.5.3 "等 beta.12"的措辞纠正
+
+`@clowder-ai/plugin-sdk` 与 `plugin-contract` 的**源码在我们自己的 plugins 仓**
+（`packages/plugin-sdk`，worktree `clowder-ai-plugins-train-c1` @ `d1865f7`，
+`package.json.version = 0.1.0-beta.12`，含 `feature-context.ts:129 connectors.deliver`、
+`:131 logger`、`:71 deliverConnectorMessage`）。
+npm 上 `plugin-contract` 已到 **beta.16**，而 `plugin-sdk` 停在 **beta.11**。
+所以这不是"等外部发布"，是**我们自己的包没发出去**；此前把它写成外部阻塞是措辞错误。
