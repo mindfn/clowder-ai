@@ -965,36 +965,9 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
 
         if (signal.reviewLoopBrake?.kind === 'pause_once') return;
 
-        if (opts.invokeTrigger) {
-          const hasChangesRequested = signal.newDecisions.some((d) => d.state === 'CHANGES_REQUESTED');
-          const policy: ConnectorTriggerPolicy = {
-            priority: hasChangesRequested ? 'urgent' : 'normal',
-            reason:
-              signal.subjectState === 'merged'
-                ? 'github_pr_merged'
-                : signal.subjectState === 'closed'
-                  ? 'github_pr_closed'
-                  : 'github_wait_satisfied',
-            sourceCategory: 'review',
-            coalesceKey: `${subjectKey}:wait:${routeResult.catId || 'unassigned'}`,
-          };
-          try {
-            await opts.invokeTrigger.trigger(
-              routeResult.threadId,
-              routeResult.catId as CatId,
-              repairedTask.userId ?? '',
-              routeResult.content,
-              routeResult.messageId,
-              undefined,
-              policy,
-            );
-          } catch (err) {
-            opts.log.warn(
-              { err },
-              `[review-feedback] trigger failed for ${signal.repoFullName}#${signal.prNumber} (best-effort)`,
-            );
-          }
-        }
+        // RFC §5.2: the observation above admitted this input to the Queue in one transaction and
+        // carried its own urgency. Queue drain owes the owner wake, so no second trigger exists to
+        // swallow an error or settle an outbox before the input was durable.
 
         // F208 AC-E2: distillation checkpoint on review-complete (best-effort, all approvals)
         if (opts.distillationCheckpoint) {

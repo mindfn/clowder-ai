@@ -205,10 +205,11 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
     assert.equal(triggers.length, 1, 'a matched typed route is not suppressed by removed legacy intent');
   });
 
-  test('IssueCommentTaskSpec retires comment_posted holds after routing and persisting the pending wake', async () => {
+  // Contract kept: a delivered issue comment retires its matching comment_posted hold. There is no
+  // longer a "routed but not woken" state to guard against — a confirmed route IS the admission.
+  test('IssueCommentTaskSpec retires comment_posted holds once the comment is admitted', async () => {
     const { createIssueCommentTaskSpec } = await import('../dist/infrastructure/email/IssueCommentTaskSpec.js');
     const retired = [];
-    let routedWakePersisted = false;
     let wakeAccepted = false;
 
     const spec = createIssueCommentTaskSpec({
@@ -252,9 +253,6 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
         repoFullName: 'owner/repo',
         issueNumber: 42,
         newComments: [{ id: 1002, author: 'maintainer', body: 'done', createdAt: new Date().toISOString() }],
-        commitRoutedWake: async () => {
-          routedWakePersisted = true;
-        },
         commitWakeAccepted: async () => {
           wakeAccepted = true;
         },
@@ -263,8 +261,7 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
       {},
     );
 
-    assert.equal(routedWakePersisted, true);
-    assert.equal(wakeAccepted, false, 'a missing invoke trigger must not claim that the owner was woken');
+    assert.equal(wakeAccepted, true, 'a confirmed route admitted the envelope, so the wake is owed');
     assert.deepEqual(retired, [
       {
         threadId: 'thread-Q',

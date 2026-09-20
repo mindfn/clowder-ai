@@ -113,6 +113,8 @@ export interface ConnectorGatewayConfig {
 }
 
 export interface ConnectorGatewayDeps {
+  /** RFC §5.1: the single component that makes a producer envelope durable via Queue admission. */
+  readonly persistedQueueDelivery: import('../../domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort;
   readonly messageStore: {
     append(input: {
       from: MessageFrom;
@@ -538,11 +540,11 @@ export async function startConnectorGateway(
   }
 
   const connectorRouter = new ConnectorRouter({
+    persistedQueueDelivery: deps.persistedQueueDelivery,
     bindingStore,
     dedup,
     messageStore: deps.messageStore,
     threadStore: deps.threadStore,
-    invokeTrigger: deps.invokeTrigger,
     socketManager: deps.socketManager,
     defaultUserId: effectiveUserId,
     defaultCatId: deps.defaultCatId,
@@ -878,14 +880,10 @@ export async function startConnectorGateway(
         bindingStore,
         threadStore: deps.threadStore,
         deliverFn: deliverConnectorMessage,
-        invokeTrigger: deps.invokeTrigger,
         dedup: ghDedup,
         reconciliationDedup: ghReconciliationDedup,
         redis: deps.redis as import('./github-repo-event/RedisDeliveryDedup.js').RedisLike,
-        deliveryDeps: {
-          messageStore:
-            deps.messageStore as import('../../domains/cats/services/stores/ports/MessageStore.js').IMessageStore,
-        },
+        deliveryDeps: { delivery: deps.persistedQueueDelivery },
         // F168 Phase A P1-1b: pass community event services to webhook handler
         eventLog: ghEventLog,
         projector:

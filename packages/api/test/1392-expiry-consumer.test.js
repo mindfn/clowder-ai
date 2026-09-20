@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
  * production builds.
  */
 const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
-const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+const { connectorDeliveryHarness } = await import('./helpers/connector-delivery-harness.js');
 const { GitHubWaitLifecycleService } = await import('../dist/domains/github-signals/GitHubWaitLifecycleService.js');
 const { ConflictRouter } = await import('../dist/infrastructure/email/ConflictRouter.js');
 const { createConflictCheckTaskSpec } = await import('../dist/infrastructure/email/ConflictCheckTaskSpec.js');
@@ -48,7 +48,7 @@ function prAwait(when, expiresAt) {
 /** A live PR wait, plus the poller that watches it, wired the way bootstrap wires them. */
 async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoResolve }) {
   const taskStore = new TaskStore();
-  const messageStore = new MessageStore();
+  const harness = connectorDeliveryHarness();
   const task = await taskStore.create({
     kind: 'pr_tracking',
     subjectKey: SUBJECT,
@@ -65,7 +65,7 @@ async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoR
   });
   const lifecycle = new GitHubWaitLifecycleService({
     taskStore,
-    deliveryDeps: { messageStore },
+    deliveryDeps: harness.deliveryDeps,
     log,
     now: () => now,
   });
@@ -74,7 +74,12 @@ async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoR
   const spec = createConflictCheckTaskSpec({
     taskStore,
     checkMergeable: async () => ({ mergeState, headSha: HEAD }),
-    conflictRouter: new ConflictRouter({ taskStore, deliveryDeps: { messageStore }, waitLifecycle: lifecycle, log }),
+    conflictRouter: new ConflictRouter({
+      taskStore,
+      deliveryDeps: harness.deliveryDeps,
+      waitLifecycle: lifecycle,
+      log,
+    }),
     ...(autoResolve
       ? {
           autoExecutor: {
@@ -94,7 +99,7 @@ async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoR
       await spec.run.execute(item.signal, item.subjectKey, {});
     }
   };
-  const contents = () => messageStore.getByThread('thread_1').map((message) => message.content);
+  const contents = () => harness.contents('thread_1');
   return { taskStore, task, poll, resolves, wakes, contents };
 }
 

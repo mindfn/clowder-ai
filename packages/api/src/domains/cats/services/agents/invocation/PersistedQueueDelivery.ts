@@ -12,6 +12,12 @@ export interface PersistedQueueDeliveryInput {
   idempotencyKey: string;
   content: string;
   source: NonNullable<StoredMessage['source']>;
+  /** Producer-owned envelope metadata (e.g. memory cues); never routing or reliability state. */
+  extra?: NonNullable<StoredMessage['extra']>;
+  /** RFC §5.1: the envelope states its own urgency; the Queue never infers it from the payload. */
+  priority?: 'urgent' | 'normal';
+  /** Structured payload parts (IM media, cards) that belong to the same input as its text. */
+  contentBlocks?: StoredMessage['contentBlocks'];
 }
 
 export interface PersistedQueueDeliveryPort {
@@ -56,7 +62,8 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         timestamp: Date.now(),
         deliveryStatus: 'queued',
         source: input.source,
-        extra: { targetCats: [targetCat] },
+        extra: { ...(input.extra ?? {}), targetCats: [targetCat] },
+        ...(input.contentBlocks ? { contentBlocks: input.contentBlocks } : {}),
         idempotencyKey: input.idempotencyKey,
       },
       {
@@ -70,6 +77,7 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         from,
         targetCats: [targetCat],
         intent: 'execute',
+        ...(input.priority ? { priority: input.priority } : {}),
       },
     );
     if (admitted.outcome === 'full') throw new Error('Producer return queue is full');

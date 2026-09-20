@@ -47,6 +47,8 @@ export interface GitHubWaitObservation {
   readonly at?: number;
   /** Source-owned, typed metadata for the connector message created by this observation. */
   readonly deliveryExtra?: ConnectorDeliveryInput['extra'];
+  /** RFC §5.1: urgency travels in the producer envelope, not in a second wake call. */
+  readonly deliveryPriority?: 'urgent' | 'normal';
   /** Action-time review-history observation; projected only through the existing outcome nextStep. */
   readonly reviewLoopBrake?: GitHubReviewLoopBrake;
 }
@@ -68,7 +70,7 @@ export type GitHubWaitLifecycleResult =
        * collector state, not its match. Its source must collect it again — a cursor moved past it loses it.
        */
       readonly kind: 'unrecorded';
-      readonly reason: 'generation_changed_concurrently';
+      readonly reason: 'generation_changed_concurrently' | 'queue_admission_unavailable';
     };
 
 /**
@@ -205,7 +207,9 @@ export class GitHubWaitLifecycleService {
     if (!pending || outbox.ids.has(pending.outcomeId)) return 'empty';
     const raced = outbox.ids.size > 0;
     outbox.ids.add(pending.outcomeId);
-    await this.wakeForFlushedOutcome(await this.publishPending(task, pending, input.deliveryExtra));
+    await this.wakeForFlushedOutcome(
+      await this.publishPending(task, pending, input.deliveryExtra, input.deliveryPriority),
+    );
     return raced ? 'raced' : 'drained';
   }
 
@@ -319,7 +323,7 @@ export class GitHubWaitLifecycleService {
     if (outcome.delivery !== 'pending') {
       return { kind: 'state_only', reason: outcome.reason };
     }
-    return this.publishPending(installed, outcome, input.deliveryExtra);
+    return this.publishPending(installed, outcome, input.deliveryExtra, input.deliveryPriority);
   }
 
   async cancel(
@@ -401,6 +405,7 @@ export class GitHubWaitLifecycleService {
     task: TaskItem,
     outcome: WaitOutcomeV1,
     deliveryExtra?: ConnectorDeliveryInput['extra'],
+    deliveryPriority?: 'urgent' | 'normal',
   ): Promise<GitHubWaitLifecycleResult> {
     if (!parseWaitOwnerFence(outcome.ownerFence)) {
       return this.quarantineLegacyUnfencedOutcome(task, outcome);
@@ -423,7 +428,19 @@ export class GitHubWaitLifecycleService {
         meta: { waitContinuationCarrier },
       },
       ...(deliveryExtra ? { extra: deliveryExtra } : {}),
+      ...(deliveryPriority ? { priority: deliveryPriority } : {}),
     });
+
+    // RFC §5.2: "Queue commit 自身就是外部输入的持久边界." The outbox may only be settled once the
+    // envelope is durably in the Queue. Settling on a bare append would strand the wake: the source
+    // would be neither a History member nor queued work, while no poll would ever re-deliver it.
+    if (!result.admitted) {
+      this.opts.log.warn(
+        { taskId: task.id, outcomeId: outcome.outcomeId },
+        '[F280] wait outcome stays pending: Queue admission did not happen',
+      );
+      return { kind: 'unrecorded', reason: 'queue_admission_unavailable' };
+    }
 
     const current = await this.opts.taskStore.get(task.id);
     if (current?.automationState?.waitOutcome?.outcomeId === outcome.outcomeId) {

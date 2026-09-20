@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
-const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+const { connectorDeliveryHarness } = await import('./helpers/connector-delivery-harness.js');
 const { GitHubWaitLifecycleService } = await import('../dist/domains/github-signals/GitHubWaitLifecycleService.js');
 const { CiCdRouter } = await import('../dist/infrastructure/email/CiCdRouter.js');
 const { createCiCdCheckTaskSpec } = await import('../dist/infrastructure/email/CiCdCheckTaskSpec.js');
@@ -49,7 +49,7 @@ function prAwait(when) {
 
 async function tracked(when) {
   const taskStore = new TaskStore();
-  const messageStore = new MessageStore();
+  const harness = connectorDeliveryHarness();
   const outboxWakes = [];
   const task = await taskStore.create({
     kind: 'pr_tracking',
@@ -69,13 +69,14 @@ async function tracked(when) {
   });
   const lifecycle = new GitHubWaitLifecycleService({
     taskStore,
-    deliveryDeps: { messageStore },
+    deliveryDeps: harness.deliveryDeps,
     log,
     wakeOwner: (delivered) => {
       outboxWakes.push(delivered.outcome.outcomeId);
     },
   });
-  const contents = () => messageStore.getByThread('thread_1').map((message) => message.content);
+  // RFC §5.2: Queue commit is the durable boundary, so that is what a delivery is observed on.
+  const contents = () => harness.contents('thread_1');
   return { taskStore, task, lifecycle, outboxWakes, contents };
 }
 

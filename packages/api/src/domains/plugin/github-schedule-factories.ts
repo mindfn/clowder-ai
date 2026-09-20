@@ -183,7 +183,6 @@ const cicdCheckFactory: ScheduleFactory = {
       taskStore: d.taskStore,
       cicdRouter: d.cicdRouter,
       fetchPrStatuses: d.fetchPrStatuses,
-      invokeTrigger: d.invokeTrigger,
       isSelfMerge: d.isSelfMerge,
       log: d.log,
       ...(d.externalReviewCoordinator
@@ -203,7 +202,6 @@ const conflictCheckFactory: ScheduleFactory = {
       taskStore: d.taskStore,
       checkMergeable: d.checkMergeable,
       conflictRouter: d.conflictRouter,
-      invokeTrigger: d.invokeTrigger,
       autoExecutor: d.autoExecutor,
       log: d.log,
     }) as TaskSpec_P1;
@@ -269,7 +267,6 @@ const repoScanFactory: ScheduleFactory = {
       threadStore: d.threadStore,
       deliverFn: d.deliverFn,
       deliveryDeps: d.deliveryDeps,
-      invokeTrigger: d.invokeTrigger,
       fetchOpenPRs: d.fetchOpenPRs,
       fetchOpenIssues: d.fetchOpenIssues,
       log: d.log,

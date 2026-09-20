@@ -5390,6 +5390,14 @@ async function main(): Promise<void> {
   const { PersistedQueueDelivery } = await import(
     './domains/cats/services/agents/invocation/PersistedQueueDelivery.js'
   );
+  // RFC §5.1: one component owns atomic Message + Queue admission. Every producer — user sends,
+  // IM connectors, GitHub notifications, artifact returns — hands it the same envelope shape, so
+  // reliability is defined once instead of being reinvented per source.
+  const persistedQueueDelivery = new PersistedQueueDelivery({
+    messages: messageStore,
+    queue: invocationQueue,
+    progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
+  });
   const artifactReview = createArtifactReviewIntegration({
     dataDir: process.env.CAT_CAFE_DATA_DIR ?? join(resolveActiveProjectRoot(), '.cat-cafe'),
     uploadDir: getDefaultUploadDir(process.env.UPLOAD_DIR),
@@ -5398,11 +5406,7 @@ async function main(): Promise<void> {
     tasks: taskStore,
     threads: threadStore,
     messages: messageStore,
-    delivery: new PersistedQueueDelivery({
-      messages: messageStore,
-      queue: invocationQueue,
-      progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
-    }),
+    delivery: persistedQueueDelivery,
     emit: (userId, event, data) => socketManager?.emitToUser(userId, event, data),
     onError: (error) => app.log.warn({ err: error }, '[artifact-review] recovery remains pending'),
   });
@@ -7102,7 +7106,8 @@ async function main(): Promise<void> {
   // Router/service creation stays here — same deps available as before.
   // Task registration moved to plugin framework via rehydrateGitHubSchedules closure.
   {
-    const deliveryDeps = { messageStore, socketManager };
+    // RFC §5.1: a GitHub notification is a producer envelope, not its own delivery mechanism.
+    const deliveryDeps = { delivery: persistedQueueDelivery };
     const [{ GitHubWaitLifecycleService }, waitEventLogModule] = await Promise.all([
       import('./domains/github-signals/GitHubWaitLifecycleService.js'),
       import('./domains/ball-custody/WaitLifecycleEventLog.js'),
@@ -8023,6 +8028,7 @@ async function main(): Promise<void> {
 
   // F088: Start connector gateway (best-effort, after listen)
   const gatewayDeps = {
+    persistedQueueDelivery,
     messageStore: {
       async append(input: Parameters<typeof messageStore.append>[0]) {
         const result = await messageStore.append(input);
