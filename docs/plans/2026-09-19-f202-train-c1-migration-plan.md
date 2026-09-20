@@ -1117,12 +1117,39 @@ exact 版本"才是**。Core 侧按本节的推进顺序继续做不依赖该发
 |---|---|---|---|
 | 1 | 取 `runtime.entrypoint` 默认导出、断言其有 `create` | **能** —— 结构化鸭子类型，不需要 SDK 导出该 type（§8.6 已授权"先按默认导出实现"） | 本节 |
 | 2 | Host 把**自己认定的 manifest 真相**传进 `create()` | **能** —— 纯 Core 侧 | 本节 |
-| 4 | Host 提供 `FeatureContext`（config/secrets/state/registrar） | **能** —— `createFeatureContextSession(binding, adapter)` 与 `FeatureHostAdapter` 已发布 | beta.10/11 `dist/feature-context.d.ts` |
+| 4 | Host 提供 `FeatureContext`（config/secrets/state/registrar） | ~~**能**~~ → **不能**（2026-09-20 晚更正，见下） | 本节「步 4 更正」 |
 | 5 | dispose 幂等 | **能** —— 已发布 SDK 以 `FeatureContextSession.revoke` 提供，且 `revokePromise` 已做记忆化 | beta.10 `dist/feature-context.js:182-190` |
 | 3 | `activateDefinedFeature` → `ActivePluginFeature { actions, dispose }` | **不能** —— 符号未发布；`FeatureActivator` 返回 void，运行时不存在 actions 对象 | 本节 |
 
 结论：**条款 2 的 lifecycle 半边（start / stop / reload）不被此依赖阻塞**，Core 可以照常收口；
 **action 半边被阻塞**，因为"载体中立的 action 路由"需要 SDK 侧的逐 feature 激活返回 action 表。
+
+**步 4 更正（2026-09-20 晚，在 #1487 的 worktree 内对 Core 实际 pin 的制品一手复核）**
+
+上表原判"步 4 能做"的理由是 `createFeatureContextSession` + `FeatureHostAdapter` 已发布。
+**名字发布了，形状不是 C1 迁移包要消费的那个**，所以原判作废：
+
+| 面 | Core 实际 pin 的 `@clowder-ai/plugin-sdk@0.1.0-beta.10` | Plugins 源码 beta.12（未发布） |
+|---|---|---|
+| `FeatureContext.logger` | **不存在**（`dist/feature-context.d.ts` 全文 `logger` 命中 0 次） | `Readonly<Record<PluginLogLevel, …>>` |
+| `FeatureContext.connectors` | `ContributionRegistrar<ConnectorContribution>`（`:63`），**全文无 `deliver`** | `registrar & { deliver(contributionId, message) }` |
+| `FeatureActivator` | `(context) => void \| Promise<void>`（`:78`） | 返回 `{ actions, dispose }` |
+| `PluginModuleEntrypoint` / `definePluginModule` / `activateDefinedFeature` | **整个包内不存在**（全目录 grep 零命中） | 已在源码 |
+
+取证路径：`node_modules/.pnpm/@clowder-ai+plugin-sdk@0.1.0-beta.10/node_modules/@clowder-ai/plugin-sdk/`。
+`telegram` 的 activator 实际调用的是 `context.connectors.deliver(...)` 与 `context.logger`——
+**用 beta.10 形状的 context 去激活它，会在运行时炸**。所以步 4 不是"能做但形状要调"，是**做不了**。
+
+**对上面"结论"一行的收窄**：条款 2 的 lifecycle 半边可以**结构性**收口（载体存在、四条 dispose 路径
+接好、manifest 真相由 Host 传入），但**不能宣称行为性收口**——在 beta.12 发布前，没有任何真实 bundled
+包能在 Host 进程内跑起来。步 5 的"能"复核后仍成立（`revoke(): Promise<void>` 在 `:69`，
+`revokePromise` 记忆化在 `dist/feature-context.js:184-187`；注意 187 行在失败时把它清回 `undefined`，
+即幂等只对成功路径成立，Core 不能把它当成失败后也不会重入的保证）。
+
+**对条款 4 的影响（不自决，交 operator）**：条款 4 要求 #1487 在同一 PR 内**原子**完成 lifecycle 收口
+与旧路径删除。旧路径删除的前提是新路径真的能跑；新路径真的能跑的前提是 beta.12 发布。
+因此**条款 4 在对侧 #54 发布前不可能被满足**，这不是"再想想办法"，是发布序推出来的。
+本计划不自行放宽这条冻结条款。
 
 **对 Plugins 车道的精确请求（属条款 3 + 5，不是新 follow-up）**：#54 在收口 SDK 时需发布一个
 导出 `PluginModuleEntrypoint` / `definePluginModule` / `activateDefinedFeature` /
@@ -1218,8 +1245,8 @@ owner 的诊断**。记录用已有的 `UNEXPECTED_RUNTIME_FAILURE`，`exitCode`
 > 该类是一个内聚的载体实现，为凑 200 行拆开只会制造认知脚手架，故不拆，在此显式标注而不是藏着。
 
 **剩余（不属本切片）**：条款 1+2 的 in-process 模块载体本身 —— `runtime.entrypoint` 默认导出 →
-`create()` → 逐 feature 激活。§8.8 上表的步 1/2/4/5 现在可以直接挂到 `BundledPluginRuntimeCarrier`
-旁边作为第四个 carrier；步 3（action 表）仍等 #54 发布。
+`create()` → 逐 feature 激活。§8.8 上表的步 1/2/5 现在可以直接挂到 `BundledPluginRuntimeCarrier`
+旁边作为第四个 carrier；步 3（action 表）与步 4（`FeatureContext` 形状）仍等 #54 发布。
 
 ### 8.9 投递内核依赖（2026-09-20 operator 口径纠正，**C1 实现约束**）
 
@@ -1273,7 +1300,7 @@ RFC §5.1 把四类来源合流到**同一个 envelope**，并明令禁止按载
    fallback"；F117 线上 operator 已纠正为"发送时取最近成员，不保持空 targets"。两者冲突**归 F117 线**，
    C1 不在此自行选边——无论哪种，都不改变第 1 条（fallback 归投递内核，不归 messaging 域）。
 4. **排序含义**：C1 的 connector 入站终态**依赖 F117 合入**。在 F117 落地前，C1 可以完成载体/生命周期/
-   action 半边（§8.8 的步 1/2/4/5），但不应宣称 connector 入站已达终态。
+   action 半边（§8.8 的步 1/2/5），但不应宣称 connector 入站已达终态。
 
 #### 与 §8.2 的关系
 
