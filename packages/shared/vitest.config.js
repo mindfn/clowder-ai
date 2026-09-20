@@ -55,6 +55,7 @@ export default defineConfig({
       'src/__tests__/routing-context.test.ts',
       'src/__tests__/routing-context-api.test.ts',
       'src/utils/__tests__/segment-enablement.test.ts',
+      'src/__tests__/plugin-manager-contract.test.ts',
       'test/message-bundle-schema.test.ts',
       'test/markdown-readable-text.test.ts',
       'src/__tests__/profile-contract.test.ts',
