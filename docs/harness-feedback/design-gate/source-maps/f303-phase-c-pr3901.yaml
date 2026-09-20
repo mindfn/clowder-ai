@@ -1,3 +1,9 @@
+# Provenance: bootstrap catalog reconstructed from the self-contained contract fixture in
+# packages/api/test/harness-eval/design-gate-episode-source-provider.test.js#createRepo.
+# This home cannot currently resolve the admission document, legacy GitHub PR, persisted
+# non-author review, or landed-Alpha receipt below. The registry also keeps measurement
+# validity unmigrated/keep_observe_only. Treat this entry as an explicit unobservable
+# source-gap input, not as a home-verified episode or a live observation clock.
 kind: f303-design-gate-episode-source-map
 schemaVersion: 1
 sourceMapId: f303-phase-c-pr3901
