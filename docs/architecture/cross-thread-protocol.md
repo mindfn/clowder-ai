@@ -14,7 +14,53 @@ description_author: opus
 description_updated_at: 2026-09-20T05:00:00Z
 ---
 
-# Cross-Thread Protocol — RFC (DRAFT, not implemented)
+# Cross-Thread Protocol — RFC (**SUPERSEDED — gating model rejected**)
+
+> ⛔ **The authorization model in this document was rejected by upstream maintainers on 2026-09-20**
+> ([`zts212653/clowder-ai#1490`](https://github.com/zts212653/clowder-ai/issues/1490), correction
+> superseding the earlier triage). **Do not implement any part of it as a gate.**
+>
+> **Rejected:** an active `ThreadRelation` as a prerequisite for ordinary cross-thread delivery ·
+> staged enforcement of a relation allowlist · replacing or deprecating `cross_post_message` with a
+> relation-gated send · removing source-selected `targetCats`.
+>
+> **Why — and it is decisive.** Precedent: `cat-cafe#4255`, *"retire local review custody"*
+> (merged 2026-09-03, ~8,088 lines removed). Local review delivery previously had **this same
+> architecture at narrower scope** — lease, generation, replacement, issuer-route authority,
+> reentry, verdict settlement, recovery. In a real review, a reviewer who had already completed the
+> exact-HEAD review and produced three blocking findings **could not deliver them**, failing through
+> `local_review_verdict_identity_unavailable → lease_not_active → replacement/generation →
+> issuer-route authority`. Work resumed only when the findings were sent as an ordinary typed A2A
+> message. The fix was **subtraction**, not refinement.
+>
+> **Verification status (honest).** That PR is **not verifiable from here** — `zts212653/cat-cafe`
+> does not resolve for this account. The *substance* is corroborated in our own tree:
+> `lease_not_active` appears across **17 source files**,
+> `local_review_verdict_identity_unavailable` exists, and three `Legacy*LocalReview*` shims remain —
+> the shape a retirement leaves behind. It is also corroborated first-hand: while closing out this
+> very RFC, **both structured completion producers rejected with 409**
+> (`managed_hold_disposition_source_mismatch`, `a2a_dispatch_disposition_source_missing`) and the
+> author could not dispose of his own ball through the structured path.
+>
+> **The self-refutation.** This RFC's `escalation` purpose is the one most needed when things are
+> broken — and under a relation gate it is the one most likely to be blocked, because a cat that is
+> stuck is exactly the cat that may lack an accepted relation.
+> *Making a mistake inexpressible also makes the needed message inexpressible.*
+>
+> **The invariant that survives, and that this document violated:**
+>
+> > **Automation failure must degrade automation. It must not freeze communication.**
+>
+> **What remains acceptable — strictly non-blocking:** relation data for observability,
+> recommendations, provenance display and misdelivery *warnings*; and emitting a **structured
+> child/parent reference** instead of a raw call template, *provided that reference never becomes a
+> delivery credential*. Any follow-up must make **non-gating an invariant**, not a phase before
+> enforcement.
+>
+> Retained as an investigation record. **§1–6 (boundary, purposes, counter-examples, the four
+> questions) stand. §7–10 (relation-as-authority, the three-verb tool surface, migration) are
+> rejected.**
+
 
 > **Status: DRAFT for review.** Nothing here is built.
 > Companion: [`a2a-protocol.md`](./a2a-protocol.md) — the message lifecycle *inside* one thread.
@@ -411,7 +457,7 @@ Inherits the five in `a2a-protocol.md`, and adds one:
 6. **Cross a boundary for a purpose, not to reach a place.** A cross-thread act names the
    dependency it serves. Where it lands is derived from the relation that dependency created.
 
-## 11b. Upstream status
+## 11b. Upstream status — **direction rejected**
 
 Filed as [`zts212653/clowder-ai#1490`](https://github.com/zts212653/clowder-ai/issues/1490);
 triaged `enhancement` + `needs-maintainer-decision`, **open**.
@@ -424,11 +470,21 @@ custody; enforcement must be phased and evidence-gated; historical prose must no
 feature** spanning thread creation/relations, cross-thread transport, custody admission and Approval
 Hub semantics — **not** as authorization to extend F193 or to begin implementation.
 
-Their open items #2, #3 and #5 were real gaps in this document and are now closed above. Item #1
-(feature admission) is a maintainer governance decision. Item #4 (MCP admission evidence for the
-three new verbs — independent authority/failure boundaries and consumer migration, so that a second
-semantic surface does not become an open-ended dual protocol) is **still owed by us** and is not yet
-written.
+**That triage was then superseded.** The correction rejects the authorization model outright (see
+the banner at the top). The target-side handler and Needs-Me refinements we added in response did
+**not** resolve the central problem — they made the authorization lifecycle *more complete*, and the
+lifecycle itself was the problem.
+
+The previously-owed item #4 (MCP admission evidence) and the persistent shadow slice are therefore
+**no longer requested and will not be produced** under this design.
+
+**Preserved maintainer boundary:**
+
+1. Ordinary message delivery is not custody transfer and does not require structured relationship authority.
+2. Evidence and authority are consumed when admitting real custody or executing consequential / irreversible actions — **not as permission to communicate, coordinate, ask for help, or report findings**.
+3. Automation failure must degrade automation; it must not freeze communication.
+4. `fyi` / `coordinate` / `investigate` remain non-obligation delivery; a real `assign_work` keeps its own explicit authorization and admission path.
+5. Misdelivery is addressed through discovery UX, explicit addressing, **receiver-side** constraints, diagnostics and warnings — **not a send-admission allowlist**.
 
 > **No implementation is authorized.** `mindfn/clowder-ai#181` remains a separate draft provenance
 > fix and is explicitly **not** the implementation anchor for this protocol.
@@ -451,7 +507,8 @@ written.
 | Anchor PR subjects to `PrTrackingStore` | Notification subscription, overwritten on re-registration; subscription ownership ≠ execution ownership |
 | "The system held the answer" (I-1) | **False.** A `subjectRef` says *what is discussed*, not *who to deliver to*; no owner thread existed |
 | "Participation is dense by construction" | Unevidenced; 148/960 (15.4%) of historical cross-posts carry any coordination metadata |
-| "Misdelivery becomes structurally impossible" | Narrowed: out-of-relation delivery becomes inexpressible; wrongly *accepting* a relation is a separate problem |
+| "Misdelivery becomes structurally impossible" | Narrowed once, then **rejected entirely**: an inexpressible mistake makes the *needed* message inexpressible too |
+| **Relation-as-gate — the whole authorization model** (v1–v3.3) | Rejected upstream. A second authorization lifecycle sitting between a cat and reporting a blocker freezes communication when it is absent, expired, disputed or unrecoverable. Precedent: `cat-cafe#4255` deleted ~8,088 lines of exactly this shape |
 
 ## 13. Open for review
 
