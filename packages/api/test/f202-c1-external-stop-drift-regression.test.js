@@ -25,10 +25,18 @@ import {
  * threw `INSTANCE_NOT_RUNNABLE`, the caller marked the instance failed, and the child
  * process stayed alive — an orphan the Host could no longer reach.
  *
- * `f202-c1-carrier-neutral-lifecycle.test.js` proves the router *delegates*; a fake
- * carrier cannot prove the process actually dies. These cases own that half: a real
- * `ExternalPluginRuntimeSupervisor`, a real spawned child, real inventory drift. Restoring
- * the old fence turns them red.
+ * `f202-c1-carrier-neutral-lifecycle.test.js` proves the router *delegates*; a recording
+ * carrier can never prove the process is even asked to die. These cases own that half: a
+ * real `ExternalPluginRuntimeSupervisor`, a real `PluginRuntimeCarrierRouter.stop()`, and
+ * real inventory drift. Restoring the old fence turns them red; a recording carrier stays
+ * green either way.
+ *
+ * Be exact about what is still a double, because the sin these cases exist to correct is a
+ * test claiming more than it proved. `FakeExternalPluginProcess` is in-memory and its
+ * `terminate()` resolves `exited` itself, so no OS process is ever reaped here. What is
+ * genuinely pinned is the seam that regressed: stop reaches `terminate()` with no authority
+ * fence in front of it, the execution is released, and a second stop is a no-op. Coverage of
+ * a real reaped child belongs to the spawn-level suites, not to this drift regression.
  *
  * DRIFT_STATES are exactly the states the removed fence rejected even in its stop-tolerant
  * mode — it already allowed `disabling` / `error` / `disabled` activation, so those would
@@ -100,7 +108,7 @@ async function instanceRecord(inventory) {
 }
 
 for (const drift of DRIFT_STATES) {
-  test(`stops the real child of an instance that has ${drift.name}`, async () => {
+  test(`terminates, unfenced, the process of an instance that has ${drift.name}`, async () => {
     const running = await runningExternalInstance();
     assert.equal(running.child.terminateCalls, 0, 'precondition: the child is alive before the drift');
 

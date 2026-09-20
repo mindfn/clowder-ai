@@ -1280,3 +1280,34 @@ RFC §5.1 把四类来源合流到**同一个 envelope**，并明令禁止按载
 §8.2 记的是 `builtin` 同词不同义（载体层）。本节记的是**投递层**：即使载体层修好、包能 enable，
 入站仍会落到一条 RFC 要删的旁路上。两者独立，都必须修，**且本节不构成两份契约之间的分歧**——
 Plugins 侧契约（`messaging.send` + `connector_binding`）无需改动，改的全是 Core 内部把 envelope 交给谁。
+
+---
+
+### 8.10 已知项：cross-cat review 留下的三条 P3（2026-09-20，exact HEAD `826b4f4bd`）
+
+小狸对 `602a04d2b..826b4f4bd` 的独立复核结论是**无 P1/P2**（证伪实验自行复现：旧栅栏还原 3/3 红、
+还原 3/3 绿；`plugin-*` + `f202-c1-*` 全套 722 tests / 721 pass / 1 skipped）。以下三条是他判为
+P3 的已知项，**登记在此而不在本 PR 内处理**，理由逐条写明。
+
+1. **`FakeExternalPluginProcess` 仍是内存 double（已修措辞，不修接缝）**
+   `plugin-external-runtime-helpers.js:152` 的 `terminate()` 无条件 `exit({signal:'SIGTERM'})`，
+   所以 `exited` 是 double 自己兑现的。`f202-c1-external-stop-drift-regression.test.js` 原文头注
+   写的 "a real spawned child" 是**作者夸大**，已在 exact HEAD 之后改为精确表述。接缝本身正确：
+   被钉住的性质是"stop 无 authority 栅栏地到达 `terminate()`、execution 被释放、二次 stop 幂等"，
+   真实 reaped child 的覆盖属于 spawn 级套件。**记为措辞债已清，不构成返工。**
+
+2. **bundled 载体的适配器自身 bug 会被归罪于包**
+   `runtime.start()` 抛出即判定 `packageFailed = true`。bundled 路径下这段执行的是 Host 适配器代码，
+   若适配器自己出 bug（非包的错），会记成 `UNEXPECTED_RUNTIME_FAILURE` 挂在包头上。要细分必须让适配器
+   作者包装错误类型；当前"start 抛出 = 包加载失败"的契约边界是自觉取舍，**不在本轮改**。
+
+3. **`runtime-state-projection.ts:67` 的 `.catch(() => undefined)` 静默吞终态投影失败**
+   第七轮设计即已存在，非本 diff 引入。风险在未来：若出现**新的退休路径不 co-write
+   `runtimeState: 'stopped'`**，这个 catch 会把残渣藏住。当前 `lifecycleState: 'retired'` 的写入者
+   只有 `control-plane.ts:203-211`（reinstall）与 `external-plugin-lifecycle.ts:122-128`（uninstall），
+   两者均在同事务 co-write `stopped`，所以 §8.2 记的 retired-healthy 残渣**仅能由绕过控制面的直接库存
+   手术产生**（drift 回归测试正是这么造的）。**新增退休路径时必须回到本条。**
+
+另附一条作者自记（非 review findings）：mid-start disable 撞上 healthy 写时，unwind 以
+`reason: 'start_failed'` 调 `runtime.stop()`，对 Host 侧取消而言理由名不副实；仅存在于内存数组、
+不落库、不改行为，与上面第 2 条同源，一并留到适配器错误分类那轮处理。
