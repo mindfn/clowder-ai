@@ -83,7 +83,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
           `${packageRecord.pluginId} entrypoint must default-export a module with create()`,
         );
       }
-      // The Host hands over the record IT admitted (§8.6 step 2). The authority above
+      // The Host hands over the record IT admitted. The authority above
       // already refused a located tree whose manifest differs from that record, so the
       // package cannot smuggle a second truth in; what this adds is that whatever the
       // module reads about itself at runtime is not what the Host acts on.
@@ -99,7 +99,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
    * The Host's single disposal seam for a loaded module. Stop, owner disable, uninstall
    * and start-failure rollback all arrive here through the carrier, so the staged package
    * is released and the next start calls `create()` again rather than reusing whatever the
-   * previous run left behind (§8.6 step 5).
+   * previous run left behind.
    *
    * Node keeps the module namespace itself cached per URL, which is why the SDK's shape is
    * a `create()` factory rather than module-level state: the instance is per-start even
@@ -114,9 +114,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   /**
    * What `create()` returned, while the instance is loaded — the package's live in-Host
-   * instance. The activation slice consumes it once the SDK publishes per-feature
-   * activation (§8.8 step 3); until then it is how "the Host is holding this package"
-   * stays observable rather than implied.
+   * instance. This is what the Host→plugin direction calls into: a method the package
+   * declared is resolved against this object, which is why the carrier exposes it rather
+   * than keeping it private.
    */
   definedPlugin(pluginInstanceId: string): unknown {
     return this.#loaded.get(pluginInstanceId)?.plugin;
