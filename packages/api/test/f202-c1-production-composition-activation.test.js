@@ -6,8 +6,10 @@
  * seam with hand-injected Host collaborators. That isolation is deliberate and still correct —
  * but on its own it is satisfiable by an implementation nothing in production ever composes.
  *
- * Binding authority/durability moved to f202-c1-connector-binding-durability.test.js
- * (fourth-round review P2). Per-gap source coordinates live in the plan §5.1.
+ * Binding authority/durability (gaps D/E) was dispositioned out of C1 to C2 on 2026-09-20:
+ * both required a new public wire row, which C1 does not add. See plan §7.3 for the ruling
+ * and the exact `7075c3aed` coordinates to recover those 13 cases. Per-gap source
+ * coordinates for the surviving gaps A/B/C live in the plan §5.1.
  */
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
