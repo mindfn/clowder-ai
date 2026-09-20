@@ -157,12 +157,12 @@ jobs:
         run: |
           runner_uid="$(id -u)"
           runner_gid="$(id -g)"
-          sudo --preserve-env unshare --net -- bash -c '
-            set -euo pipefail
-            ip link set lo up
-            exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-          ' bash "$runner_uid" "$runner_gid" \
-            pnpm --filter @cat-cafe/api run test:public:shard -- \
+          runner_path="$PATH"
+          pnpm_path="$(command -v pnpm)"
+          sudo --preserve-env unshare --net -- \
+            .github/scripts/run-public-test-distributable.sh \
+            "$runner_uid" "$runner_gid" "$runner_path" \
+            "$pnpm_path" --filter @cat-cafe/api run test:public:shard -- \
             --plan "${{ runner.temp }}/public-test/plan.json" \
             --lane "${{ matrix.lane }}" \
             --report "${{ runner.temp }}/public-test/reports/${{ matrix.lane }}.json"

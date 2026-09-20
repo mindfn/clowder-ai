@@ -80,14 +80,36 @@ assert.match(
 );
 assert.match(
   distributableShardStep.run,
-  /ip link set lo up/,
-  'the distributable network namespace must retain loopback for local test servers',
+  /\.github\/scripts\/run-public-test-distributable\.sh/,
+  'distributable public tests must enter the checked no-egress launcher',
 );
 assert.match(
   distributableShardStep.run,
-  /setpriv .*--clear-groups/,
-  'the distributable test command must drop root after configuring its network namespace',
+  /runner_path="\$PATH"/,
+  'the launcher must receive the runner toolchain path rather than sudo secure_path',
 );
+assert.match(
+  distributableShardStep.run,
+  /pnpm_path="\$\(command -v pnpm\)"/,
+  'the shard command must use the resolved pnpm executable across the sudo boundary',
+);
+const distributableLauncher = readFileSync(new URL('./run-public-test-distributable.sh', import.meta.url), 'utf8');
+for (const [pattern, message] of [
+  [/ip link set lo up/, 'the distributable network namespace must retain loopback for local test servers'],
+  [/--no-new-privs/, 'the distributable test process must not regain privilege through setuid executables'],
+  [/--bounding-set=-all/, 'the distributable test process must have an empty capability bounding set'],
+  [/--inh-caps=-all/, 'the distributable test process must have an empty inheritable capability set'],
+  [/--ambient-caps=-all/, 'the distributable test process must have an empty ambient capability set'],
+  [/NoNewPrivs/, 'the launcher must verify no-new-privileges after dropping root'],
+  [/CapInh.*CapPrm.*CapEff.*CapBnd.*CapAmb/s, 'the launcher must verify every capability set is empty'],
+  [/command -v sudo[\s\S]*sudo_path.*-n true/, 'the launcher must prove passwordless sudo cannot regain root'],
+  [
+    /command -v nsenter[\s\S]*nsenter_path.*-t 1 -n true/,
+    'the launcher must prove the parent network namespace cannot be entered',
+  ],
+]) {
+  assert.match(distributableLauncher, pattern, message);
+}
 assert.match(
   summaryStep.run,
   /--max-critical-path-ms 600000(?:\s|$)/,

@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 const DISTRIBUTABLE_SCOPE = 'distributable';
 const LOCAL_HOSTS = new Set(['localhost', '::1']);
 const NETWORK_COMMANDS = new Set(['curl', 'wget', 'ssh', 'scp', 'sftp', 'gh']);
+const PRIVILEGE_ESCAPE_COMMANDS = new Set(['sudo', 'nsenter', 'unshare', 'setpriv']);
 const GIT_NETWORK_SUBCOMMANDS = new Set(['clone', 'fetch', 'ls-remote', 'pull', 'push']);
 const PROMISIFY_CUSTOM = promisify.custom;
 const LOCAL_COMMAND_FIXTURES_ENV = 'CAT_CAFE_PUBLIC_TEST_LOCAL_COMMAND_FIXTURES';
@@ -128,6 +129,9 @@ function shellCommandAllowed(command, options = {}) {
   assertShellPseudoDeviceTargets(text);
   for (const commandPart of shellCommands(text)) {
     if (isDeclaredLocalCommandFixture(commandPart.command, options)) continue;
+    if (PRIVILEGE_ESCAPE_COMMANDS.has(commandPart.executable)) {
+      throw violation(`distributable tests cannot execute ${commandPart.executable}`);
+    }
     if (['gh', 'ssh', 'scp', 'sftp'].includes(commandPart.executable)) {
       throw violation(`distributable tests cannot execute ${commandPart.executable}`);
     }
@@ -159,6 +163,9 @@ export function assertDistributableCommand(command, args = [], options = {}) {
   const executable = basename(String(command)).toLowerCase();
   const normalizedArgs = Array.isArray(args) ? args.map(String) : [];
   if (isDeclaredLocalCommandFixture(command, options)) return;
+  if (PRIVILEGE_ESCAPE_COMMANDS.has(executable)) {
+    throw violation(`distributable tests cannot execute ${executable}`);
+  }
   if (['sh', 'bash', 'zsh'].includes(executable)) {
     const commandIndex = normalizedArgs.indexOf('-c');
     if (commandIndex >= 0 && normalizedArgs[commandIndex + 1]) {

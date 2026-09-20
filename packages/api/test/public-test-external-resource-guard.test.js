@@ -69,6 +69,18 @@ describe('F308 public-test external resource guard', () => {
       () => assertDistributableCommand('git', ['ls-remote', 'https://example.com/repo.git']),
       /external_resource_violation/,
     );
+    for (const command of ['sudo', 'nsenter', 'unshare', 'setpriv']) {
+      assert.throws(
+        () => assertDistributableCommand(command, ['--help']),
+        /external_resource_violation/,
+        `${command} must not be available as a namespace escape primitive`,
+      );
+      assert.throws(
+        () => assertDistributableCommand('bash', ['-c', `${command} --help`]),
+        /external_resource_violation/,
+        `${command} must remain blocked through shell command parsing`,
+      );
+    }
   });
 
   it('allows an explicit loopback Git probe without opening Git access to remote hosts', () => {

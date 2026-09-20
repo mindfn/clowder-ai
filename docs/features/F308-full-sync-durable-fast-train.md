@@ -132,8 +132,9 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
   remain in one globally serial lane. Every other file runs in one count-balanced distributable pool across isolated
   GitHub VMs; each file still receives a fresh Node process and every VM remains file-serial with
   `--test-concurrency=1`. Each target-CI distributable command enters a new Linux network namespace with only
-  loopback enabled, then drops root before running tests; the kernel therefore rejects unknown Node/native/shell IP
-  egress without a lexical classifier. The bounded preload guard adds earlier typed failures for recognized `fetch`,
+  loopback enabled, then sets `no_new_privs`, clears every capability set, and verifies `sudo`/`nsenter` cannot escape
+  before running tests; the kernel therefore rejects unknown Node/native/shell IP egress without a lexical classifier.
+  The bounded preload guard adds earlier typed failures for recognized `fetch`,
   WebSocket, HTTP(S), TCP/TLS and child-process paths, including non-loopback Bash `/dev/tcp` and `/dev/udp`
   redirections. An exact temporary executable can run only when the test explicitly declares it as a local command
   fixture. Duration balancing exists as an operator-side replay tool but current CI does not supply a measured timing
@@ -180,7 +181,7 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
-| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; every target-CI distributable command runs unprivileged inside a loopback-only Linux network namespace, so unknown Node/native/shell IP egress has no route; the bounded preload guard adds earlier typed failures for recognized paths and requires exact temporary-path declarations for local executable fixtures; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
+| shared scope leaks across distributable shards | explicit shared-resource rules are globally serial; every target-CI distributable command runs unprivileged inside a loopback-only Linux network namespace with `no_new_privs` and empty capability sets, and Linux probes prove passwordless `sudo` plus `nsenter` cannot recover the parent namespace; unknown Node/native/shell IP egress therefore has no route; the bounded preload guard adds earlier typed failures for recognized paths and requires exact temporary-path declarations for local executable fixtures; shard jobs have read-only repository permission, local-only Git transport, no persisted checkout credentials and no service credentials |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 
