@@ -1493,7 +1493,9 @@ async function main(): Promise<void> {
   const packTemplateStore = new PackTemplateStore(schedulerDb);
 
   // Phase 4: delivery + content fetch for template execution
-  const { createDeliverFn, createLifecycleToastFn } = await import('./infrastructure/scheduler/delivery.js');
+  const { createDeliverFn, createDeliverPrivateFn, createLifecycleToastFn } = await import(
+    './infrastructure/scheduler/delivery.js'
+  );
   const { createFetchContentFn } = await import('./infrastructure/scheduler/content-fetcher.js');
   // RFC §5.1: one component owns atomic Message + Queue admission for every producer. `progress` is
   // late-bound: queueProcessor is constructed further down in boot, and no delivery runs before then.
@@ -1506,6 +1508,7 @@ async function main(): Promise<void> {
     progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
   });
   const schedulerDeliver = createDeliverFn({ messageStore, socketManager, persistedQueueDelivery });
+  const schedulerDeliverPrivate = createDeliverPrivateFn({ persistedQueueDelivery });
   const schedulerLifecycleToast = createLifecycleToastFn({ socketManager });
   const schedulerFetchContent = createFetchContentFn();
 
@@ -1516,6 +1519,7 @@ async function main(): Promise<void> {
     globalControlStore,
     emissionStore,
     deliver: schedulerDeliver,
+    deliverPrivate: schedulerDeliverPrivate,
     cancelQueuedDelivery: async (messageId) => {
       const source = await messageStore.getById(messageId);
       if (source?.threadId) {
@@ -7119,24 +7123,9 @@ async function main(): Promise<void> {
       deliveryDeps,
       eventLog: waitEventLog,
       log: app.log,
-      // #1392 AC-1: a message flushed from the delivery outbox is one whose own generation never got
-      // it out, so nothing else will start its owner for it. The collector whose poll happened to
-      // flush it must not: that message is not its poll's result.
-      wakeOwner: async ({ task, outcome, content, messageId }) => {
-        await invokeTrigger.trigger(
-          task.threadId,
-          (task.ownerCatId ?? '') as CatId,
-          task.userId ?? '',
-          content,
-          messageId,
-          undefined,
-          {
-            priority: 'normal',
-            reason: 'github_wait_satisfied',
-            coalesceKey: `${outcome.subjectRef}:wait:${task.ownerCatId ?? 'unassigned'}`,
-          },
-        );
-      },
+      // #1392 AC-1 is structural now: publishPending admits the flushed outcome to the Queue in the
+      // same transaction that persists it, so the flush IS the owner's wake. There is no second
+      // trigger that a collector could mistake for its own poll's result.
     });
     waitLifecycleHolder.current = waitLifecycle;
     const [{ PrWaitMigrationService }, { IssueWaitMigrationService }, { WaitLifecycleRecoverySweep }] =

@@ -367,7 +367,7 @@ describe('F278 seven-day capacity contract', () => {
         delivered.push(input);
         return 'capacity-notice-1';
       },
-      invokeTrigger: { async trigger() {} },
+      async deliverPrivate() {},
     });
     assert.equal(delivered.length, 1);
     assert.equal(watermarkStore.current.status, 'awaiting_receipt');

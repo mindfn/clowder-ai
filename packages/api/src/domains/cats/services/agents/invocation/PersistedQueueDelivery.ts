@@ -32,8 +32,28 @@ export interface PersistedQueueDeliveryInput {
   contentBlocks?: StoredMessage['contentBlocks'];
 }
 
+/**
+ * RFC §5.1's third envelope: an input whose payload belongs only to its target. It is admitted to
+ * the same priority Queue and dispatched by the same drain, but it creates no public History
+ * message — §5.4: "不在用户 Queue Panel 或聊天面板展示，只在被投递目标的 exact input 中可见".
+ */
+export interface PrivateQueueDeliveryInput {
+  ownerUserId: string;
+  threadId: string;
+  targetCatId: string;
+  idempotencyKey: string;
+  /** The exact input the target receives; never projected into the thread. */
+  content: string;
+  from: NonNullable<StoredMessage['from']>;
+  priority?: 'urgent' | 'normal';
+  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  ownerAuthProvenance?: OwnerAuthProvenance;
+}
+
 export interface PersistedQueueDeliveryPort {
   deliver(input: PersistedQueueDeliveryInput): Promise<PersistedCarrierResult & { message?: StoredMessage }>;
+  /** Admit a target-only payload: same Queue, same drain, no public History member. */
+  deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }>;
 }
 
 type PersistedQueueDeliveryResult = PersistedCarrierResult & { message?: StoredMessage };
@@ -43,7 +63,10 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
   constructor(
     private readonly deps: {
       messages: IMessageStore;
-      queue: Pick<InvocationQueue, 'appendAndEnqueueDurable' | 'findAdmittedEntriesForMessages' | 'getDurableEntry'>;
+      queue: Pick<
+        InvocationQueue,
+        'appendAndEnqueueDurable' | 'enqueueDurable' | 'findAdmittedEntriesForMessages' | 'getDurableEntry'
+      >;
       progress: (entry: QueueEntry, targetCatId: string) => Promise<OwnedQueueProgress>;
     },
   ) {}
@@ -107,6 +130,31 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
       return { state: 'already_processing' as const, entryId: entry.id, message };
     }
     return { state: await this.deps.progress(entry, input.targetCatId), entryId: entry.id, message };
+  }
+
+  async deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }> {
+    const targetCat = createCatId(input.targetCatId);
+    const admitted = await this.deps.queue.enqueueDurable({
+      threadId: input.threadId,
+      userId: input.ownerUserId,
+      sourceId: input.idempotencyKey,
+      kind: 'private_input',
+      ownerAuthProvenance: input.ownerAuthProvenance ?? 'unknown',
+      idempotencyKey: input.idempotencyKey,
+      content: input.content,
+      from: input.from,
+      targetCats: [targetCat],
+      intent: 'execute',
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
+    });
+    if (admitted.outcome === 'full') return { admitted: false };
+    const entry = admitted.entry;
+    if (!entry) return { admitted: false };
+    if (entry.status !== 'claimed' && entry.status !== 'processing') {
+      await this.deps.progress(entry, input.targetCatId);
+    }
+    return { admitted: true, entryId: entry.id };
   }
 
   private async progressExistingMessage(

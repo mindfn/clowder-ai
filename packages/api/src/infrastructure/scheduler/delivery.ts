@@ -22,7 +22,57 @@ export const SCHEDULER_SOURCE = {
   icon: 'scheduler',
 } as const;
 
+/** RFC §5.4: admit a target-only payload — same Queue and drain, no public History member. */
+export function createDeliverPrivateFn(
+  deps: Pick<DeliveryDeps, 'persistedQueueDelivery'>,
+): (opts: import('./types.js').PrivateDeliverOpts) => Promise<void> {
+  return async (opts): Promise<void> => {
+    if (!deps.persistedQueueDelivery) throw new Error('scheduler private Queue admission requires a delivery port');
+    const admitted = await deps.persistedQueueDelivery.deliverPrivate({
+      ownerUserId: opts.userId,
+      threadId: opts.threadId,
+      targetCatId: opts.targetCatId,
+      idempotencyKey: opts.idempotencyKey,
+      content: opts.content,
+      from: { kind: 'system', service: SCHEDULER_SOURCE.connector },
+      ...(opts.priority ? { priority: opts.priority } : {}),
+      ...(opts.sourceCategory ? { sourceCategory: opts.sourceCategory } : {}),
+      ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
+    });
+    if (!admitted.admitted) throw new Error('scheduler private Queue admission did not happen');
+  };
+}
+
 export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Promise<string> {
+  /** A message the thread should show and no member must act on: History only, never a Queue row. */
+  const publishVisible = async (opts: DeliverOpts, source: DeliverOpts['source'] & object): Promise<string> => {
+    const stored = await deps.messageStore.append({
+      from: { kind: 'system', service: source.connector },
+      userId: opts.userId,
+      content: opts.content,
+      mentions: [],
+      origin: 'callback',
+      timestamp: Date.now(),
+      threadId: opts.threadId,
+      source,
+      ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+      ...(opts.extra ? { extra: opts.extra } : {}),
+    });
+    const schedulerExtra = stored.extra?.scheduler ?? opts.extra?.scheduler;
+    deps.socketManager.broadcastToRoom(`thread:${opts.threadId}`, 'connector_message', {
+      threadId: opts.threadId,
+      message: {
+        id: stored.id,
+        type: 'connector',
+        content: typeof stored.content === 'string' ? stored.content : opts.content,
+        source,
+        ...(schedulerExtra ? { extra: { scheduler: schedulerExtra } } : {}),
+        timestamp: stored.timestamp,
+      },
+    });
+    return stored.id;
+  };
+
   return async (opts: DeliverOpts): Promise<string> => {
     const source = opts.source ?? SCHEDULER_SOURCE;
 
@@ -32,6 +82,27 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
     if (opts.targetCatId) {
       if (!deps.persistedQueueDelivery) throw new Error('scheduler Queue admission requires a delivery port');
       if (!opts.idempotencyKey) throw new Error('scheduler Queue admission requires a stable idempotencyKey');
+
+      // When the target's exact input differs from what the thread should show, the public line is
+      // an ordinary History-only message and the payload is a `private_input` Queue entry. Both are
+      // still one Queue, one drain — the split is in visibility, never in the reliability path.
+      if (opts.privateContent !== undefined) {
+        const publicId = await publishVisible(opts, source);
+        const privateAdmission = await deps.persistedQueueDelivery.deliverPrivate({
+          ownerUserId: opts.userId,
+          threadId: opts.threadId,
+          targetCatId: opts.targetCatId,
+          idempotencyKey: `${opts.idempotencyKey}:private`,
+          content: opts.privateContent,
+          from: { kind: 'system', service: source.connector },
+          ...(opts.priority ? { priority: opts.priority } : {}),
+          ...(opts.sourceCategory ? { sourceCategory: opts.sourceCategory } : {}),
+          ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
+        });
+        if (!privateAdmission.admitted) throw new Error('scheduler private Queue admission did not happen');
+        return publicId;
+      }
+
       const admitted = await deps.persistedQueueDelivery.deliver({
         ownerUserId: opts.userId,
         threadId: opts.threadId,

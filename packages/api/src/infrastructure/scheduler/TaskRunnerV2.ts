@@ -33,6 +33,8 @@ export interface TaskRunnerV2Options {
   emissionStore?: import('./EmissionStore.js').EmissionStore;
   /** Phase 4 (AC-H1): deliver message to a thread */
   deliver?: (opts: DeliverOpts) => Promise<string>;
+  /** RFC §5.4 private_input: admit a target-only payload without a second History member. */
+  deliverPrivate?: (opts: import('./types.js').PrivateDeliverOpts) => Promise<void>;
   /** Cancel a scheduler-owned queued message that failed before Queue admission. */
   cancelQueuedDelivery?: (messageId: string) => Promise<boolean>;
   /** Phase 4 (AC-H2): fetch web content with browser-automation routing */
@@ -174,6 +176,7 @@ export class TaskRunnerV2 {
   private globalControlStore: TaskRunnerV2Options['globalControlStore'];
   private emissionStore: TaskRunnerV2Options['emissionStore'];
   private deliver: TaskRunnerV2Options['deliver'];
+  private deliverPrivate: TaskRunnerV2Options['deliverPrivate'];
   private cancelQueuedDelivery: TaskRunnerV2Options['cancelQueuedDelivery'];
   private fetchContent: TaskRunnerV2Options['fetchContent'];
   private invokeTrigger: TaskRunnerV2Options['invokeTrigger'];
@@ -202,6 +205,7 @@ export class TaskRunnerV2 {
     this.globalControlStore = opts.globalControlStore;
     this.emissionStore = opts.emissionStore;
     this.deliver = opts.deliver;
+    this.deliverPrivate = opts.deliverPrivate;
     this.cancelQueuedDelivery = opts.cancelQueuedDelivery;
     this.fetchContent = opts.fetchContent;
     this.invokeTrigger = opts.invokeTrigger;
@@ -789,6 +793,7 @@ export class TaskRunnerV2 {
       isManualTrigger,
       schedule,
       deliver: this.deliver,
+      deliverPrivate: this.deliverPrivate,
       cancelQueuedDelivery: this.cancelQueuedDelivery,
       fetchContent: this.fetchContent,
       invokeTrigger: this.invokeTrigger,

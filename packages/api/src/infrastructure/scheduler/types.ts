@@ -84,6 +84,18 @@ export interface TaskDisplayMeta {
 }
 
 /** Phase 4: options for delivering a message to a thread */
+export interface PrivateDeliverOpts {
+  threadId: string;
+  userId: string;
+  targetCatId: string;
+  /** The exact input the target receives; never projected into the thread. */
+  content: string;
+  idempotencyKey: string;
+  priority?: 'urgent' | 'normal';
+  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  ownerAuthProvenance?: import('../../domains/cats/services/owner-auth-provenance.js').OwnerAuthProvenance;
+}
+
 export interface DeliverOpts {
   threadId: string;
   content: string;
@@ -98,6 +110,11 @@ export interface DeliverOpts {
    * delivery becomes ONE atomic Message + Queue admission — never an append followed by a bind.
    */
   targetCatId?: string;
+  /**
+   * RFC §5.1/§5.4 `private_input`: the exact payload the target receives when it differs from what
+   * the thread should show. The public `content` stays a History-only message; this never is.
+   */
+  privateContent?: string;
   priority?: 'urgent' | 'normal';
   suggestedSkill?: string;
   sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
@@ -159,6 +176,11 @@ export interface ExecuteContext {
   schedule?: ScheduleRunTiming;
   /** Phase 4: deliver message to a thread */
   deliver?: (opts: DeliverOpts) => Promise<string>;
+  /**
+   * RFC §5.1/§5.4 `private_input`: admit a target-only payload when the public notice already
+   * exists (or must not exist at all). Same Queue, same drain, no second History member.
+   */
+  deliverPrivate?: (opts: PrivateDeliverOpts) => Promise<void>;
   /** Cancel a scheduler-owned queued message that failed before Queue admission. */
   cancelQueuedDelivery?: (messageId: string) => Promise<boolean>;
   /** Phase 4: fetch web content with browser-automation routing */
