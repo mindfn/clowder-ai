@@ -45,13 +45,12 @@ export async function handleTriggerNow(
     return { status: 400, error: `Domain '${input.domainId}' not registered in eval-domains/` };
   }
 
-  const trigger = deps.invokeTriggerProvider?.get();
-  if (!trigger) {
+  const delivery = deps.invokeTriggerProvider?.get();
+  if (!delivery) {
     return {
       status: 503,
-      error: 'invokeTrigger not ready',
-      detail:
-        'Server still initializing — manual eval trigger unavailable until invokeTrigger is constructed (index.ts ~line 2600)',
+      error: 'delivery not ready',
+      detail: 'Server still initializing — manual eval trigger unavailable until Queue admission is wired',
     };
   }
 
@@ -118,34 +117,26 @@ export async function handleTriggerNow(
     '```',
   ].join('\n');
 
-  const stored = await deps.messageStore.append({
-    from: { kind: 'system', service: 'scheduler' },
-    userId: 'scheduler',
-    content,
-    mentions: [],
-    timestamp: Date.now(),
+  // One admission: the packet becomes a thread message and the eval cat's wake in the same
+  // transaction. There is no window where the packet is visible but nobody was woken for it.
+  const admitted = await delivery.deliver({
+    ownerUserId: input.userId,
     threadId: invocation.targetThreadId,
+    targetCatId: invocation.evalCat.catId,
+    idempotencyKey: `manual-eval-trigger:${input.domainId}:${Date.now()}`,
+    content,
+    source: { connector: 'scheduler', label: '定时任务', icon: 'scheduler' },
+    from: { kind: 'system', service: 'scheduler' },
+    sourceCategory: 'scheduled',
   });
-  const messageId = typeof stored === 'string' ? stored : stored.id;
-
-  // 真 wake — call late-bound invokeTrigger (砚砚 R0 P1: NOT just messageStore.append).
-  // Cloud codex R2 P2: capture TriggerOutcome — 'full' = queue at capacity,
-  // invocation silently dropped; surface as 503.
-  const outcome = await trigger.trigger(
-    invocation.targetThreadId,
-    invocation.evalCat.catId,
-    input.userId,
-    `Manual eval trigger: ${input.domainId}`,
-    messageId,
-  );
-
-  if (outcome === 'full') {
+  if (admitted.state === 'conflict' || admitted.state === 'unavailable') {
     return {
       status: 503,
-      error: 'invocation_queue_full',
-      detail: `Eval thread ${invocation.targetThreadId} invocation queue is at capacity — the cat is busy with backlog. The message was delivered but the wake-up was NOT scheduled. Retry after the queue drains (typically a few seconds).`,
+      error: 'invocation_queue_unavailable',
+      detail: `Eval thread ${invocation.targetThreadId} could not admit the manual trigger, so no wake was scheduled. Nothing was published either — retry once the queue drains.`,
     };
   }
+  const messageId = admitted.message?.id ?? '';
 
   return {
     ok: true,
@@ -154,6 +145,6 @@ export async function handleTriggerNow(
     messageId,
     evalCatId: invocation.evalCat.catId,
     invocationTriggered: true,
-    triggerOutcome: outcome,
+    triggerOutcome: 'dispatched' as const,
   };
 }

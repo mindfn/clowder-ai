@@ -77,7 +77,7 @@ async function tracked(when) {
   });
   // RFC §5.2: Queue commit is the durable boundary, so that is what a delivery is observed on.
   const contents = () => harness.contents('thread_1');
-  return { taskStore, task, lifecycle, outboxWakes, contents };
+  return { taskStore, task, lifecycle, outboxWakes, contents, harnessWakes: harness.wakes };
 }
 
 /*
@@ -124,7 +124,9 @@ describe('#1392 a flushed outcome is never this poll’s result', () => {
   });
 
   it('never reports a flushed outcome as this poll’s merge, and leaves the wait alive to retry', async () => {
-    const { taskStore, task, lifecycle, outboxWakes, contents } = await tracked([{ kind: 'pr_ci_terminal' }]);
+    const { harnessWakes, taskStore, task, lifecycle, outboxWakes, contents } = await tracked([
+      { kind: 'pr_ci_terminal' },
+    ]);
     const replace = taskStore.replaceAutomationStateIfGeneration.bind(taskStore);
     let lostCloses = 3;
     taskStore.replaceAutomationStateIfGeneration = (taskId, input) => {
@@ -146,7 +148,6 @@ describe('#1392 a flushed outcome is never this poll’s result', () => {
         aggregateBucket: 'pass',
         checks: [{ name: 'tests', bucket: 'pass' }],
       }),
-      invokeTrigger: { trigger: async (...args) => wakes.push({ reason: args[6].reason, content: args[3] }) },
       log,
     });
     const poll = async () => {
@@ -160,7 +161,7 @@ describe('#1392 a flushed outcome is never this poll’s result', () => {
     await poll();
 
     assert.equal(lostCloses, 0, 'every attempt to close the wait lost its race');
-    assert.deepEqual(wakes, [], 'a merge nothing recorded is not a merge to report');
+    assert.equal(harnessWakes.length, 1, 'only the flushed outcome was admitted; no merge to report');
     const contended = await taskStore.get(task.id);
     assert.notEqual(contended.status, 'done', 'the close did not happen, so the task is still tracked');
     assert.equal(contended.automationState.await.generation, 2, 'and its wait is still live to retry');
@@ -169,13 +170,10 @@ describe('#1392 a flushed outcome is never this poll’s result', () => {
 
     await poll();
 
-    assert.deepEqual(
-      wakes.map((wake) => wake.reason),
-      ['github_pr_merged'],
-      'the retry closes the wait and reports the merge itself',
-    );
-    assert.match(wakes[0].content, /merged/);
-    assert.doesNotMatch(wakes[0].content, /HEAD 9999999/, 'never the flushed body');
+    // Admission is the wake: the flushed N lands first, then this poll's own merge.
+    assert.equal(harnessWakes.length, 2, 'the flushed outcome and this poll’s merge each admitted once');
+    assert.match(harnessWakes[1].content, /merged/, 'the retry closes the wait and reports the merge itself');
+    assert.doesNotMatch(harnessWakes[1].content, /HEAD 9999999/, 'never the flushed body');
     assert.equal((await taskStore.get(task.id)).status, 'done');
   });
 });

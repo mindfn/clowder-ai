@@ -18,22 +18,20 @@ import type { IThreadStore } from '../../../domains/cats/services/stores/ports/T
  */
 export type InvokeTriggerOutcome = 'dispatched' | 'enqueued' | 'full';
 
-export interface InvokeTriggerLike {
-  trigger(
-    threadId: string,
-    catId: string,
-    userId: string,
-    reason: string,
-    messageId: string,
-  ): InvokeTriggerOutcome | Promise<InvokeTriggerOutcome>;
-}
+/**
+ * RFC §5.1/§5.4: a manual eval trigger publishes a visible packet and hands the eval cat its own
+ * exact input. Both cross the one component that owns durable admission — not an append followed
+ * by a bind, which could leave the packet in the thread with nobody woken for it.
+ */
+export type EvalDeliveryLike =
+  import('../../../domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort;
 
 /**
  * Late-bound provider — eval-hub routes register before invokeTrigger is
  * constructed in index.ts. Provider returns null until index.ts wires it.
  */
 export interface InvokeTriggerProvider {
-  get(): InvokeTriggerLike | null;
+  get(): EvalDeliveryLike | null;
 }
 
 export interface ManualTriggerDeps {

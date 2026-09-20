@@ -3268,8 +3268,12 @@ async function main(): Promise<void> {
   // resolves the live trigger at request time via this holder, so the provider
   // returns null until index.ts wires it after invokeTrigger construction.
   const invokeTriggerHolder: {
-    current: ConnectorInvokeTrigger | null;
-    get(): ConnectorInvokeTrigger | null;
+    current:
+      | import('./domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort
+      | null;
+    get():
+      | import('./domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort
+      | null;
   } = {
     current: null,
     get() {
@@ -7096,7 +7100,7 @@ async function main(): Promise<void> {
   // the holder pattern lets `POST /api/eval-domains/:domainId/trigger-now`
   // resolve the live trigger at request time. Without this bind, the route
   // returns 503 instead of waking the eval cat.
-  invokeTriggerHolder.current = invokeTrigger;
+  invokeTriggerHolder.current = persistedQueueDelivery;
 
   // F167 Phase M: late-bind busy checker for pre-fire defer (hold_ball activation).
   // Same thread-busy signal as delivery-batch-done (messages.ts:1822 /

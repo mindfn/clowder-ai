@@ -32,14 +32,16 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       );
       assert.ok('error' in result);
       assert.equal(result.status, 503);
-      assert.match(result.error, /invokeTrigger not ready/);
+      assert.match(result.error, /delivery not ready/);
     });
 
     it('returns 503 when messageStore not provided', async () => {
       const result = await handleTriggerNow(
         {
           harnessFeedbackRoot: root,
-          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          invokeTriggerProvider: {
+            get: () => ({ deliver: async () => ({ state: 'started', message: { id: 'msg-manual' } }) }),
+          },
         },
         { domainId: 'eval:a2a', userId: 'test-user' },
       );
@@ -52,7 +54,9 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       const result = await handleTriggerNow(
         {
           harnessFeedbackRoot: root,
-          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          invokeTriggerProvider: {
+            get: () => ({ deliver: async () => ({ state: 'started', message: { id: 'msg-manual' } }) }),
+          },
           messageStore: { append: async () => ({ id: 'msg-1' }) },
         },
         { domainId: 'eval:nonexistent', userId: 'test-user' },
@@ -71,9 +75,10 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
           harnessFeedbackRoot: root,
           invokeTriggerProvider: {
             get: () => ({
-              trigger: (...args) => {
-                triggerCalls.push(args);
-                return 'dispatched';
+              // Admission is the wake: one envelope crosses one seam.
+              deliver: async (input) => {
+                triggerCalls.push(input);
+                return { state: 'started', message: { id: `msg-${input.threadId}` } };
               },
             }),
           },
@@ -96,54 +101,62 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       assert.equal(result.triggerOutcome, 'dispatched');
       assert.equal(result.messageId, 'msg-thread_eval_a2a');
 
-      // 砚砚 R0 P1: trigger MUST be called — NOT just messageStore.append.
-      assert.equal(messageStoreCalls.length, 1);
-      assert.equal(messageStoreCalls[0].userId, 'scheduler');
-      assert.match(messageStoreCalls[0].content, /manual trigger by test-user/);
-      assert.equal(triggerCalls.length, 1);
-      const [threadId, catId, userId, reason, msgId] = triggerCalls[0];
-      assert.equal(threadId, 'thread_eval_a2a');
-      assert.equal(catId, 'codex');
-      assert.equal(userId, 'test-user');
-      assert.match(reason, /Manual eval trigger.*eval:a2a/);
-      assert.equal(msgId, 'msg-thread_eval_a2a');
+      // 砚砚 R0 P1 is structural now: the packet cannot be published without admitting it, so the
+      // one envelope IS both the message and the wake — there is no append-only failure mode left.
+      assert.equal(triggerCalls.length, 1, 'one envelope, one admission');
+      const envelope = triggerCalls[0];
+      assert.equal(envelope.threadId, 'thread_eval_a2a');
+      assert.equal(envelope.targetCatId, 'codex');
+      assert.equal(envelope.ownerUserId, 'test-user');
+      assert.match(envelope.content, /manual trigger by test-user/);
+      assert.ok(envelope.idempotencyKey, 'and it carries a stable admission identity');
     });
 
-    it('returns success with triggerOutcome: enqueued when thread busy', async () => {
+    it('returns success when the thread is busy — admission still settles the wake', async () => {
       const result = await handleTriggerNow(
         {
           harnessFeedbackRoot: root,
-          invokeTriggerProvider: { get: () => ({ trigger: () => 'enqueued' }) },
+          invokeTriggerProvider: {
+            get: () => ({ deliver: async () => ({ state: 'already_processing', message: { id: 'msg-busy' } }) }),
+          },
           messageStore: { append: async () => ({ id: 'msg-busy' }) },
         },
         { domainId: 'eval:a2a', userId: 'test-user' },
       );
       assert.ok(!('error' in result));
-      assert.equal(result.triggerOutcome, 'enqueued');
+      assert.equal(result.triggerOutcome, 'dispatched', 'admission is the wake');
     });
 
-    // Cloud codex R2 P2: 'full' outcome must surface as 503, not silent success
-    it('returns 503 invocation_queue_full when trigger() returns "full"', async () => {
+    // Cloud codex R2 P2 still holds, in a stronger form: a refused admission surfaces as 503 AND
+    // publishes nothing — atomic admission leaves no packet in the thread with nobody woken for it.
+    it('returns 503 when the Queue refuses the admission, and publishes nothing', async () => {
       const messageStoreCalls = [];
       const result = await handleTriggerNow(
         {
           harnessFeedbackRoot: root,
-          invokeTriggerProvider: { get: () => ({ trigger: () => 'full' }) },
-          messageStore: {
-            append: async (msg) => {
-              messageStoreCalls.push(msg);
-              return { id: 'msg-dropped' };
-            },
+          invokeTriggerProvider: {
+            get: () => ({
+              deliver: async (input) => {
+                messageStoreCalls.push(input);
+                return { state: 'unavailable' };
+              },
+            }),
           },
+          messageStore: { append: async () => ({ id: 'msg-dropped' }) },
         },
         { domainId: 'eval:a2a', userId: 'test-user' },
       );
       assert.ok('error' in result);
       assert.equal(result.status, 503);
-      assert.equal(result.error, 'invocation_queue_full');
+      assert.equal(result.error, 'invocation_queue_unavailable');
       assert.match(result.detail, /queue/);
       assert.match(result.detail, /retry/i);
-      assert.equal(messageStoreCalls.length, 1, 'message delivered even though wake dropped');
+      assert.equal(messageStoreCalls.length, 1, 'admission was attempted');
+      assert.equal(
+        messageStoreCalls[0].targetCatId !== undefined,
+        true,
+        'the refused envelope named its member, so nothing was published half-woken',
+      );
     });
   });
 

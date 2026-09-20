@@ -23,7 +23,6 @@ import type { CiCdRouter, CiPollResult } from '../../infrastructure/email/CiCdRo
 import type { ConflictAutoExecutor } from '../../infrastructure/email/ConflictAutoExecutor.js';
 import { createConflictCheckTaskSpec } from '../../infrastructure/email/ConflictCheckTaskSpec.js';
 import type { ConflictRouter } from '../../infrastructure/email/ConflictRouter.js';
-import type { ConnectorInvokeTrigger } from '../../infrastructure/email/ConnectorInvokeTrigger.js';
 import type { PrCiStatusTarget } from '../../infrastructure/email/ci-status-batch-fetcher.js';
 import type {
   ConnectorDeliveryDeps,
@@ -82,7 +81,6 @@ export interface GitHubScheduleDeps extends ScheduleFactoryDeps {
   /** F140/#949 correction + F167 R2: `get` lets ReviewFeedbackTaskSpec repair already-rotated
    *  PR tracking tasks; `create`/`updateThreadKind` are for RepoScanTaskSpec reconciliation. */
   threadStore?: Pick<IThreadStore, 'create' | 'get' | 'updateThreadKind'>;
-  invokeTrigger: ConnectorInvokeTrigger;
   // Repo-scan connector delivery deps. Review-feedback delivery stays encapsulated
   // in ReviewFeedbackRouter; no rotation/backlink delivery path exists post-#2394.
   checkMergeable: (repo: string, pr: number) => Promise<{ mergeState: string; headSha: string }>;
@@ -221,7 +219,6 @@ const reviewFeedbackFactory: ScheduleFactory = {
       fetchReviews: d.fetchReviews,
       reviewFeedbackRouter: d.reviewFeedbackRouter,
       threadStore: d.threadStore,
-      invokeTrigger: d.invokeTrigger,
       log: d.log,
       isEchoComment: d.isEchoComment,
       isEchoReview: d.isEchoReview,
@@ -299,7 +296,6 @@ const issueTrackingFactory: ScheduleFactory = {
       fetchComments: d.fetchIssueComments,
       fetchIssueState: d.fetchIssueState,
       fetchIssueMetadata: d.fetchIssueMetadata,
-      invokeTrigger: d.invokeTrigger,
       isEchoComment: d.isEchoIssueComment,
       isNoiseComment: d.isNoiseIssueComment,
       classifyComment: d.classifyIssueComment,

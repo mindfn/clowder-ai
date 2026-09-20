@@ -26,10 +26,10 @@ import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-a
 import { registerPublishVerdictRefreshRoute } from './publish-verdict-refresh-route.js';
 
 export type {
+  EvalDeliveryLike,
   GenerateNowInput,
   GenerateNowSuccess,
   HandlerError,
-  InvokeTriggerLike,
   InvokeTriggerOutcome,
   InvokeTriggerProvider,
   ManualTriggerDeps,

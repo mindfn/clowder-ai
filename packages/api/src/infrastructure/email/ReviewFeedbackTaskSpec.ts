@@ -33,7 +33,6 @@ import {
 } from '../../domains/github-signals/github-wait-renderer.js';
 import type { DistillationCheckpoint } from '../distillation/DistillationCheckpoint.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
 import type {
   PrFeedbackComment,
   PrReviewDecision,
@@ -104,7 +103,6 @@ export interface ReviewFeedbackTaskSpecOptions {
    * ownership back to the original registration thread.
    */
   readonly threadStore?: Pick<IThreadStore, 'get'>;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
   readonly log: {
     info: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;

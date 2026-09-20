@@ -146,7 +146,8 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
     const spec = createCiCdCheckTaskSpec({
       taskStore: {},
       cicdRouter: {
-        async route() {
+        async route(...args) {
+          triggers.push(args);
           return {
             kind: 'notified',
             threadId: 'thread-Q',
@@ -165,11 +166,6 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
         aggregateBucket: 'pass',
         checks: [],
       }),
-      invokeTrigger: {
-        async trigger(...args) {
-          triggers.push(args);
-        },
-      },
       holdLifecycle: {
         retireSatisfiedWait(event) {
           retired.push(event);
@@ -202,7 +198,11 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
     );
 
     assert.deepEqual(retired, []);
-    assert.equal(triggers.length, 1, 'a matched typed route is not suppressed by removed legacy intent');
+    assert.equal(
+      triggers.length,
+      1,
+      'a matched typed route — which IS the admission — is not suppressed by removed legacy intent',
+    );
   });
 
   // Contract kept: a delivered issue comment retires its matching comment_posted hold. There is no

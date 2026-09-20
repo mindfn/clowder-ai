@@ -24,7 +24,6 @@ import {
 } from '../../domains/community/issue-analysis/issue-comment-classifier.js';
 import type { GitHubWaitLifecycleService } from '../../domains/github-signals/GitHubWaitLifecycleService.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
 import type { IssueComment, IssueCommentRouter } from './IssueCommentRouter.js';
 
 export interface IssueCommentSignal {
@@ -58,7 +57,6 @@ export interface IssueCommentTaskSpecOptions {
   readonly fetchIssueState: (repoFullName: string, issueNumber: number) => Promise<'open' | 'closed'>;
   /** Preferred actor-aware metadata path; fetchIssueState remains for backward-compatible adapters. */
   readonly fetchIssueMetadata?: (repoFullName: string, issueNumber: number) => Promise<IssueTrackingMetadata>;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
   /** F280 Phase C canonical one-shot wait lifecycle. Production wiring requires this. */
   readonly waitLifecycle?: Pick<GitHubWaitLifecycleService, 'observe'>;
   readonly log: {
