@@ -76,7 +76,7 @@ structured path. What follows lists primitives that exist, which is not the same
 | Child index: `getChildThreads(parentThreadId)` | **exists** | `ThreadStore.ts:834` |
 | Thread purpose: `goal?: ThreadGoalStateV1` (F306) | **exists** | `ThreadStore.ts:206` |
 | `cross_post_message` may carry `action.subjectRef` / `coordination.subjectRef` | **exists, optional** | tool schema |
-| **Delivery resolves or validates the target from any of the above** | ❌ **absent** | `callback-scope-helpers.ts:92-122` |
+| Delivery resolves an independently authorized endpoint — **for ordinary cross-post and PR-review initial handoff** (task handoff and local-review terminal return already do; see the matrix above) | ❌ **absent** on those two paths | `callback-scope-helpers.ts:92-122` |
 
 `resolveScopedThreadId()` checks exactly two things: the thread exists, and it is in the
 caller's principal scope. `threadId` is **required**; `subjectRef` is **optional**; the two
@@ -93,18 +93,27 @@ are **never compared**.
 > for that subject at all (the bug report's own finding: F167 had no owner thread). The system did
 > **not** hold the answer.
 >
-> What I-1 actually demonstrates is weaker but still damning: **there was no legitimate target in
-> existence, and delivery succeeded regardless.** That is a fail-open defect (A2A principle 5), not
-> evidence that a usable answer was ignored.
+> What I-1 actually demonstrates is weaker but still damning — and "no legitimate target existed" is
+> itself too strong, since replying in the source thread or doing nothing may both have been correct
+> handling. The precise claim is the one below.
 
 So the accurate framing is **not** "subject is a passenger, thread is the address" — that presumes a
 subject→thread truth exists to be ignored. It does not exist. It has to be built.
+
+> **The defect, stated precisely.** For **ordinary cross-post** and **PR-review initial handoff**:
+> when the system cannot resolve an independently authorized endpoint, the API still accepts any
+> scope-valid `threadId` and produces messages, wakes and custody side effects — and the caller has
+> **no legitimate unknown-target / proposal-only exit**.
+>
+> The load-bearing part is **"no authoritative endpoint, yet effectful delivery is permitted"** —
+> not "the target thread did not exist". Together with the six historical incidents, this is the
+> claim the maintainer issue rests on.
 
 ### Which A2A principles the cross-thread hop violates
 
 | A2A principle | Cross-thread hop today | |
 |---|---|---|
-| 1. One owner per fact | The coordination owns "who acts next / where"; the caller **re-adjudicates it by hand** and passes a literal `threadId` | ❌ |
+| 1. One owner per fact | **No object owns "where this belongs"** on these paths — so the caller supplies a literal `threadId` and nothing can contradict it. (Not "the coordination is overridden": today there is no coordination to override.) | ❌ |
 | 2. Change on one cutover | Coordination generation and message delivery commit **separately** | ⚠️ |
 | 3. Don't infer one fact from another | Caller infers *target thread* from *a threadId it saw recently* | ❌ |
 | 4. One terminal per run | Leases do hold this | ✅ |
@@ -245,9 +254,33 @@ coordination_post({                    // ordinary message, addressed to a recip
 })                                     // no threadId, no raw targetCats
 
 coordination_broadcast({ ... })        // reaching everyone is explicit, never a default
-coordination_transfer({ ... })         // review / implement responsibility movement
 coordination_propose({ subject, rationale, candidates? })   // the legal "I don't know" exit
+
+coordination_transfer({                // review / implement responsibility movement
+  coordinationId,
+  expectedCoordinationRevision,
+  responsibility: { actionFamily, successorSlot, mode: "single" | "parallel", terminalPredicate },
+  assignee:
+    | { kind: "participant";  participantId: string }
+    | { kind: "role";         role: string; cardinality: "exactly_one" }
+    | { kind: "participants"; participantIds: string[] },
+  returnPolicy: { kind: "to_predecessor" } | { kind: "terminal_here" },
+  precondition?: { leaseId: string; generation: number },
+  idempotencyKey,
+})
 ```
+
+`coordination_transfer` invariants:
+
+- accepts **no** `threadId`, **no** bare `catId`, **no** source participant, **no** message content;
+- the issuing participant is derived from the current invocation;
+- the assignee must be an **active** participation;
+- a `role` assignee resolving to **0 or >1** fails closed;
+- `parallel` freezes the exact participant set;
+- coordination revision, subject freshness and lease generation are checked in **one durable
+  cutover**;
+- the **lease claim/replace is the authoritative state**; the carrier message is generated from it
+  and is recoverable — it never owns the semantics.
 
 `verdict` / `completion` are **lease state transitions**; the carrier message is a projection
 generated atomically with the transition — never the authority itself.
@@ -292,13 +325,17 @@ subjects — and the in-tree solution shows the general shape.
 
 Validation cannot repair a first write that was never checked. Only derivation can.
 
-Three non-circular anchors, all already present:
+Non-circular anchors that exist today — **there are two, not three**:
 
 | Anchor | Owns the thread fact | Status |
 |---|---|---|
-| `task.threadId` | task subjects | in use today (`:292`) |
-| `PrTrackingStore`: `(repoFullName + prNumber) → { catId, threadId, userId }` | PR subjects | **exists, not wired to custody** |
+| `task.threadId` | task subjects | in use today (`ActionSubjectTruthResolver.ts:292`) |
 | `actor.threadId` — the invocation the caller is actually running in | self-enrollment | in use today (`callbacks.ts:2266`) |
+| — | **PR review** | ❌ **no independent authoritative endpoint exists** |
+
+> An earlier draft listed `PrTrackingStore` here. **Removed** — it is a notification subscription,
+> not an execution authority, and it is overwritten on re-registration (see the withdrawn migration
+> step). Listing it as an anchor while rejecting it downstream was a contradiction, not a nuance.
 
 ### Enrollment rule
 
@@ -330,10 +367,16 @@ Without a server-pre-bound endpoint/capability, an agent-key caller may only **q
 ### Invitation protocol
 
 ```ts
-coordination_invite({ coordinationId, invitee: { catId } | { role },
-                      role, authorityRef, subjectRevision, expiresAt, idempotencyKey })
+coordination_invite({ coordinationId,
+                      inviteeSelector: { catId } | { role },   // who may claim it
+                      admittedRole,                            // who they become once admitted
+                      authorityRef, subjectRevision, expiresAt, idempotencyKey })
 coordination_accept({ invitationId, idempotencyKey })
 ```
+
+`inviteeSelector` (eligibility to claim) and `admittedRole` (role upon joining) are deliberately
+separate — an earlier draft collapsed them into one `role`, which conflated "who may accept" with
+"what they become".
 
 On accept the **server derives** cat / user / thread / invocation and validates tenant, generation,
 subject standing, role and uniqueness. Operator/system admission is a separate explicit path with
@@ -364,9 +407,31 @@ to query and proposal.
 2. **Shadow plane — the first independently shippable slice.** For **one** PR-review flow, persist
    Coordination / Participation / Invitation for real: source enrolls only via its own invocation,
    target joins by cat-scoped invite + accept. Record the audit trail and the metadata projection,
-   but **do not change delivery** — only compare the *derived* endpoint against the *actual* target.
-   Ships alone, reverts alone, and produces the coverage/ambiguity data that step 4 requires before
-   it can even be evaluated.
+   but **do not change delivery**. Ships alone, reverts alone, and produces the coverage/ambiguity
+   data that step 4 needs before it can even be evaluated.
+
+   > **The legacy route is not ground truth.** `derived !== actual` is a **disagreement**, never a
+   > "routing error" — `actual` is exactly the guess this whole investigation found unreliable.
+   > Scoring the new model against it would re-commit the attribution mistake the report already
+   > retracted once.
+   >
+   > Therefore: measure only a **prospective cohort** where participation/invitation existed *before*
+   > delivery. `null` counts toward **coverage**, never toward mismatch. Ambiguity is its own bucket.
+   > **Correctness may only be computed from an operator or typed-incident label** — never from
+   > agreement with the legacy target. Minimum output:
+   >
+   > ```text
+   > eligible
+   > resolved_agree
+   > resolved_disagree
+   > unresolved_no_coordination
+   > unresolved_no_recipient
+   > ambiguous_endpoint
+   > labelled_correct / labelled_misdelivery
+   > ```
+   >
+   > Widespread `null` on historical traffic means **backfill coverage is thin** — it says nothing
+   > about the design's accuracy.
 3. **Opt-in `coordination_post`**, then structured `coordination_transfer`.
 4. **Fail closed for legacy effectful delivery** — last, and only on the shadow plane's numbers.
 

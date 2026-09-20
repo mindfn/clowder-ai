@@ -163,11 +163,20 @@ if (cutoffTs !== null && !Number.isFinite(cutoffTs)) {
   console.error(`--before-ts must be a unix-ms number, got: ${BEFORE_TS_ARG}`);
   process.exit(2);
 }
-const withinCutoff = (m) => cutoffTs === null || m.ts <= cutoffTs;
+// Truncate on the (timestamp, messageId) tuple, not timestamp alone: several messages
+// can share a millisecond, and `ts <= cutoff` would include siblings that sort after the
+// named cutoff message. Message ids are zero-padded `<ts>-<seq>-<hash>`, so lexicographic
+// comparison is a total order consistent with arrival.
+const withinCutoff = (m, id) => {
+  if (cutoffTs === null) return true;
+  if (m.ts !== cutoffTs) return m.ts < cutoffTs;
+  // Same millisecond as the boundary: only meaningful when the boundary names a message.
+  return cutoffMessageId === null ? true : id <= cutoffMessageId;
+};
 
 // Judgement 3/4 — the two candidate content-side fences, quantified against real traffic.
 const crossPosts = [...messages.entries()]
-  .filter(([, m]) => m.extra?.crossPost?.sourceThreadId && withinCutoff(m))
+  .filter(([id, m]) => m.extra?.crossPost?.sourceThreadId && withinCutoff(m, id))
   .map(([id, m]) => ({ id, ...m }))
   .sort((a, b) => a.ts - b.ts);
 
@@ -277,15 +286,18 @@ for (const cp of crossPosts) {
 }
 
 const pct = (n, d) => (d ? `${((100 * n) / d).toFixed(1)}%` : 'n/a');
-console.log(`corpus: ${messages.size} messages, ${sessions} sessions, ${crossPosts.length} cross-posts`);
+console.log(`loaded live corpus: ${messages.size} messages, ${sessions} sessions`);
+console.log('  (the boundary below bounds ONLY the cross-post metrics; the 3.1 counters above');
+console.log('   are computed over the whole live corpus and are not snapshot-pinned)');
 if (cutoffTs === null) {
   console.log(
-    '  snapshot boundary                          : NONE (live scan -- NOT reproducible; pass --through-message-id or --before-ts before citing any number)',
+    '  cross-post analysis boundary               : NONE (live scan -- NOT reproducible; pass --through-message-id or --before-ts before citing any number)',
   );
 } else {
-  console.log(`  snapshot boundary (cutoff ts)              : ${cutoffTs}`);
-  if (cutoffMessageId) console.log(`  snapshot boundary (cutoff message)         : ${cutoffMessageId}`);
+  console.log(`  cross-post analysis boundary (ts)          : ${cutoffTs}`);
+  if (cutoffMessageId) console.log(`  cross-post analysis boundary (message)     : ${cutoffMessageId}`);
 }
+console.log(`  cross-posts within boundary                : ${crossPosts.length}`);
 console.log(
   `  cross-posts carrying coordination metadata : ${crossPostsWithCoordination}/${crossPosts.length} (${pct(crossPostsWithCoordination, crossPosts.length)}) <- upper bound for participation backfill, not membership truth`,
 );
