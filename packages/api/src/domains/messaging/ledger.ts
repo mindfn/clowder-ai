@@ -5,9 +5,13 @@
  * old key spaces are never reused):
  *   send    = (pluginInstanceId, idempotencyKey)
  *   append  = (pluginInstanceId, messageId, operationId)
- *   ingress = (pluginInstanceId, idempotencyKey) — the Host-side effects of one authenticated
- *             connector ingress (broadcast + wake), fenced separately from `send` because they
- *             are not undone by releasing the send claim.
+ *   ingress = (effect, pluginInstanceId, idempotencyKey) — one Host-side effect of one
+ *             authenticated connector ingress, fenced separately from `send` because releasing
+ *             the send claim does not undo a broadcast already on the wire or a cat already woken.
+ *             The two effects carry SEPARATE fences on purpose: `broadcast` is at-most-once on its
+ *             own terms (a duplicate doubles a visible bubble; a miss is recovered by any refetch),
+ *             while `wake` must never be skipped, so a shared fence would let the cheap effect
+ *             decide the expensive one (seventh-round review P1).
  * Segments are URI-encoded before joining so ':' inside ids cannot forge a
  * foreign key space.
  *
@@ -19,7 +23,13 @@
 import type { AppendReceipt, SendReceipt } from '@clowder-ai/plugin-contract';
 import type { LedgerStore, SettleResult } from './stores/ports.js';
 
-/** What an ingress fence records: which message the Host already delivered effects for. */
+/**
+ * The two Host-side effects of an ingress. They are fenced independently because they have
+ * different costs of being wrong: a duplicate broadcast is cosmetic, a missing wake is silence.
+ */
+export type IngressEffect = 'broadcast' | 'wake';
+
+/** What an ingress fence records: which message the Host already delivered this effect for. */
 export interface IngressDeliveryReceipt {
   readonly messageId: string;
   readonly catId: string;
@@ -56,8 +66,8 @@ export class MessagingLedger {
     return key(['append', instanceId, messageId, operationId]);
   }
 
-  private static ingressKey(instanceId: string, idempotencyKey: string): string {
-    return key(['ingress', instanceId, idempotencyKey]);
+  private static ingressKey(effect: IngressEffect, instanceId: string, idempotencyKey: string): string {
+    return key(['ingress', effect, instanceId, idempotencyKey]);
   }
 
   async claimSend(instanceId: string, idempotencyKey: string): Promise<TypedClaim<SendReceipt>> {
@@ -112,28 +122,43 @@ export class MessagingLedger {
   }
 
   /**
-   * Fences the Host-side effects of one authenticated ingress. The send claim cannot do this job:
+   * Fences ONE Host-side effect of one authenticated ingress. The send claim cannot do this job:
    * releasing it is how a failed attempt hands the work back, but a broadcast already on the wire
    * and a cat already woken do not come back with it.
    */
-  async claimIngressDelivery(instanceId: string, idempotencyKey: string): Promise<TypedClaim<IngressDeliveryReceipt>> {
+  async claimIngressEffect(
+    effect: IngressEffect,
+    instanceId: string,
+    idempotencyKey: string,
+  ): Promise<TypedClaim<IngressDeliveryReceipt>> {
     return (await this.store.claim(
-      MessagingLedger.ingressKey(instanceId, idempotencyKey),
+      MessagingLedger.ingressKey(effect, instanceId, idempotencyKey),
       this.claimTtlMs,
     )) as TypedClaim<IngressDeliveryReceipt>;
   }
 
-  async settleIngressDelivery(
+  async settleIngressEffect(
+    effect: IngressEffect,
     instanceId: string,
     idempotencyKey: string,
     claimToken: string,
     receipt: IngressDeliveryReceipt,
   ): Promise<SettleResult> {
     return this.store.settle(
-      MessagingLedger.ingressKey(instanceId, idempotencyKey),
+      MessagingLedger.ingressKey(effect, instanceId, idempotencyKey),
       claimToken,
       receipt,
       this.retentionMs,
     );
+  }
+
+  /** Hands an undelivered effect back so the next attempt re-runs it (failure path). */
+  async releaseIngressEffect(
+    effect: IngressEffect,
+    instanceId: string,
+    idempotencyKey: string,
+    claimToken: string,
+  ): Promise<void> {
+    await this.store.release(MessagingLedger.ingressKey(effect, instanceId, idempotencyKey), claimToken);
   }
 }

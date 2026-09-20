@@ -49,6 +49,11 @@ let service;
 /** Host-side effects the cutover must produce. Today nothing ever pushes into these. */
 let wakes;
 let broadcasts;
+/** Wake attempts vs. successes: the seventh-round P1 is a wake that is attempted once, fails, and
+ *  is then never retried, so counting successes alone cannot see it. */
+let wakeAttempts;
+/** Failures to inject into successive `trigger()` calls (one entry consumed per attempt). */
+let wakeFailures;
 /** Thread activity the Host consults when no @-mention matched (ConnectorRouter.ts:455-463). */
 let participants;
 
@@ -67,12 +72,17 @@ beforeEach(async () => {
   wakes = [];
   broadcasts = [];
   participants = [];
+  wakeAttempts = 0;
+  wakeFailures = [];
 
   service = messagingMod.createMessagingDomain({
     messageStore,
     // Host collaborators at the K-2 assembly point. Ignored by today's domain.
     invokeTrigger: {
       async trigger(threadId, catId, userId, message, messageId) {
+        wakeAttempts += 1;
+        const failure = wakeFailures.shift();
+        if (failure) throw new Error(failure);
         wakes.push({ threadId, catId, userId, message, messageId });
         return 'dispatched';
       },
@@ -240,6 +250,99 @@ describe('F202 C1 Core cutover gate — IM ingress wake parity at the Host bound
       receipt.messageId,
       'the delivered wake must carry the same message id the retry converged on',
     );
+  });
+
+  /**
+   * Seventh-round review P1 (sol). The sixth-round fence settled BEFORE the effects ran, on the
+   * argument that a duplicated wake costs a whole agent turn. That argument was wrong on a fact
+   * this repo already owns: connector-sourced invocations are admitted under the durable
+   * idempotency key `connector-${messageId}` (QueueProcessor.ts:4247-4255), so a retry is deduped
+   * where it lands rather than spending a second turn. Settling first therefore bought nothing and
+   * cost everything: one failed `trigger()` fenced the wake out permanently while the send still
+   * returned a success receipt — the message is stored, the API says OK, and no cat ever wakes.
+   */
+  test('4c/RED — a failed wake must be retried, not fenced out permanently', async () => {
+    const handleId = await issueIngressHandle();
+    wakeFailures.push('injected wake failure');
+
+    await assert.rejects(
+      service.send(CTX, ingressDraft(handleId, '@opus hello', 'k-wake-window')),
+      /injected wake failure/,
+      'a wake that never happened must not be reported to the caller as a successful send',
+    );
+
+    const receipt = await service.send(CTX, ingressDraft(handleId, '@opus hello', 'k-wake-window'));
+
+    assert.equal(wakeAttempts, 2, 'the retry must re-run the wake the first attempt failed to deliver');
+    assert.equal(wakes.length, 1, 'exactly one wake survives the retry');
+    assert.equal(
+      wakes[0]?.messageId,
+      receipt.messageId,
+      'the delivered wake carries the message id the retry converged on',
+    );
+    assert.equal(broadcasts.length, 1, 'the broadcast stays at-most-once across the retry');
+  });
+
+  test('4d/RED — a wake fence that is rejected or owned elsewhere must fail the send', async () => {
+    const handleId = await issueIngressHandle();
+    const ledgerMod = await import('../dist/domains/messaging/ledger.js');
+    const settle = ledgerMod.MessagingLedger.prototype.settleIngressEffect;
+    const claim = ledgerMod.MessagingLedger.prototype.claimIngressEffect;
+
+    // A settle the store refused means the admission was never recorded. Reporting success here
+    // would strand the wake: no fence to replay from, and a receipt that says it is done.
+    ledgerMod.MessagingLedger.prototype.settleIngressEffect = async function rejectWake(effect, ...rest) {
+      if (effect === 'wake') return { status: 'rejected' };
+      return settle.apply(this, [effect, ...rest]);
+    };
+    try {
+      await assert.rejects(
+        service.send(CTX, ingressDraft(handleId, '@opus one', 'k-fence-rejected')),
+        /retry/i,
+        'a fence that did not record the admission must not settle as a successful send',
+      );
+    } finally {
+      ledgerMod.MessagingLedger.prototype.settleIngressEffect = settle;
+    }
+
+    // `inflight` is a concurrent attempt owning the wake, not proof that it landed.
+    ledgerMod.MessagingLedger.prototype.claimIngressEffect = async function ownedWake(effect, ...rest) {
+      if (effect === 'wake') return { status: 'inflight' };
+      return claim.apply(this, [effect, ...rest]);
+    };
+    try {
+      await assert.rejects(
+        service.send(CTX, ingressDraft(handleId, '@opus two', 'k-fence-inflight')),
+        /retry/i,
+        'a wake owned by a concurrent attempt must not be reported as this send delivering it',
+      );
+    } finally {
+      ledgerMod.MessagingLedger.prototype.claimIngressEffect = claim;
+    }
+  });
+
+  test('4e/RED — the broadcast fence must never suppress the durable wake', async () => {
+    const handleId = await issueIngressHandle();
+    const ledgerMod = await import('../dist/domains/messaging/ledger.js');
+    const claim = ledgerMod.MessagingLedger.prototype.claimIngressEffect;
+
+    // The socket broadcast is at-most-once on its own terms: a duplicate would double a visible
+    // bubble, and a missed one is recovered by any refetch. That trade is its own, and it may
+    // never decide whether a cat gets woken.
+    ledgerMod.MessagingLedger.prototype.claimIngressEffect = async function ownedBroadcast(effect, ...rest) {
+      if (effect === 'broadcast') return { status: 'inflight' };
+      return claim.apply(this, [effect, ...rest]);
+    };
+    let receipt;
+    try {
+      receipt = await service.send(CTX, ingressDraft(handleId, '@opus hello', 'k-broadcast-owned'));
+    } finally {
+      ledgerMod.MessagingLedger.prototype.claimIngressEffect = claim;
+    }
+
+    assert.equal(broadcasts.length, 0, 'the concurrent owner of the broadcast fence keeps this attempt out');
+    assert.equal(wakes.length, 1, 'the wake carries its own fence and is still delivered');
+    assert.equal(wakes[0]?.messageId, receipt.messageId, 'the wake targets the message this send stored');
   });
 
   test('5/GREEN guard — a plain thread_handle plugin send still neither parses @ nor wakes (F288 v0)', async () => {

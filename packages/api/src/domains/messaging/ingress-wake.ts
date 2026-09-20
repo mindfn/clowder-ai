@@ -19,6 +19,8 @@
 
 import { type CatId, type ConnectorSource, getConnectorDefinition } from '@cat-cafe/shared';
 import { parseMentions } from '../../infrastructure/connectors/mention-parser.js';
+import { MessagingError } from './contract/host-types.js';
+import type { MessagingLedger } from './ledger.js';
 
 export interface IngressThreadActivity {
   readonly catId: string;
@@ -111,4 +113,84 @@ export function broadcastIngress(
       timestamp: input.timestamp,
     },
   });
+}
+
+/**
+ * One authenticated connector ingress after the Host has resolved whose wake it carries. Derived
+ * once per send so the delivery step cannot re-derive a different target than the one persisted
+ * into `mentions`.
+ */
+export interface ResolvedIngress {
+  readonly deps: MessagingIngressWakeDeps;
+  readonly binding: { readonly connectorId: string; readonly externalChatId: string };
+  readonly catId: CatId;
+}
+
+/**
+ * Runs the Host-side effects of one authenticated ingress under two independent fences: the
+ * broadcast is at-most-once (a duplicate doubles a visible bubble; a miss is recovered by any
+ * refetch), while the wake is fenced on *durable admission* — it settles only once the trigger
+ * accepted the work, so a failure stays retryable instead of becoming silence. See the call site
+ * for why the send claim cannot fence either of them.
+ */
+export async function deliverIngressEffectsOnce(
+  ledger: MessagingLedger,
+  input: {
+    instanceId: string;
+    idempotencyKey: string;
+    threadId: string;
+    userId: string;
+    messageId: string;
+    content: string;
+    timestamp: number;
+    ingress: ResolvedIngress;
+  },
+): Promise<void> {
+  const { ingress } = input;
+  const receipt = { messageId: input.messageId, catId: ingress.catId };
+  const { instanceId, idempotencyKey } = input;
+
+  // Broadcast: at-most-once, settled first. Anything other than a fresh settlement means some
+  // other attempt owns this bubble. It is never allowed to decide the wake below.
+  const wire = await ledger.claimIngressEffect('broadcast', instanceId, idempotencyKey);
+  if (wire.status === 'new') {
+    const fenced = await ledger.settleIngressEffect('broadcast', instanceId, idempotencyKey, wire.claimToken, receipt);
+    if (fenced.status === 'freshly_settled') {
+      broadcastIngress(ingress.deps, {
+        threadId: input.threadId,
+        messageId: input.messageId,
+        content: input.content,
+        connectorId: ingress.binding.connectorId,
+        externalChatId: ingress.binding.externalChatId,
+        timestamp: input.timestamp,
+      });
+    }
+  }
+
+  // Wake: 'settled' is the only status that proves a cat was admitted. 'inflight' is a
+  // concurrent attempt owning it — not evidence it landed — so this send must not report
+  // success on the strength of someone else's unfinished work.
+  const wake = await ledger.claimIngressEffect('wake', instanceId, idempotencyKey);
+  if (wake.status === 'settled') return;
+  if (wake.status === 'inflight')
+    throw new MessagingError('RETRYABLE_INFLIGHT', 'ingress wake is owned by a concurrent attempt — retry');
+
+  try {
+    await ingress.deps.invokeTrigger.trigger(
+      input.threadId,
+      ingress.catId,
+      input.userId,
+      input.content,
+      input.messageId,
+    );
+  } catch (err) {
+    // Hand the wake back so the next attempt re-runs it. The trigger's own durable admission
+    // key is what keeps that retry from spending a second agent turn.
+    await ledger.releaseIngressEffect('wake', instanceId, idempotencyKey, wake.claimToken);
+    throw err;
+  }
+
+  const settled = await ledger.settleIngressEffect('wake', instanceId, idempotencyKey, wake.claimToken, receipt);
+  if (settled.status === 'rejected')
+    throw new MessagingError('RETRYABLE_INFLIGHT', 'ingress wake fence was superseded — retry');
 }

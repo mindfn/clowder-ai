@@ -27,21 +27,15 @@ import { MessagingError } from './contract/host-types.js';
 import { validateDraft } from './contract/validate.js';
 import { projectEnvelope, readPluginMessageExtra, renderElementsText } from './envelope.js';
 import type { HandleService } from './handles.js';
-import { broadcastIngress, deriveIngressTarget, type MessagingIngressWakeDeps } from './ingress-wake.js';
+import {
+  deliverIngressEffectsOnce,
+  deriveIngressTarget,
+  type MessagingIngressWakeDeps,
+  type ResolvedIngress,
+} from './ingress-wake.js';
 
 import type { MessagingLedger } from './ledger.js';
 import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
-
-/**
- * One authenticated connector ingress after the Host has resolved whose wake it carries. Derived
- * once per send so the delivery step cannot re-derive a different target than the one persisted
- * into `mentions`.
- */
-interface ResolvedIngress {
-  readonly deps: MessagingIngressWakeDeps;
-  readonly binding: { readonly connectorId: string; readonly externalChatId: string };
-  readonly catId: CatId;
-}
 
 import { clampRetention } from './stores/ports.js';
 
@@ -247,21 +241,21 @@ export class SendService {
         }
       }
 
-      // The ingress effects carry their own durable fence, claimed and settled BEFORE they run.
-      // The send claim cannot fence them: releasing it is how a failed attempt hands the work
-      // back, but a broadcast already on the wire and a cat already woken do not come back with
-      // it. Persist converges on one message id and publish dedupes on its deterministic event
-      // key; broadcast and wake had neither, so a settlement failure let the retry wake the same
-      // cat a second time (sixth-round review P1, case 7).
+      // The ingress effects carry their own durable fences. The send claim cannot fence them:
+      // releasing it is how a failed attempt hands the work back, but a broadcast already on the
+      // wire and a cat already woken do not come back with it. Persist converges on one message id
+      // and publish dedupes on its deterministic event key; broadcast and wake had neither, so a
+      // settlement failure let the retry wake the same cat a second time (sixth-round review P1).
       //
-      // The fence settles first on purpose. Cases 4 and 7 pin at-most-once, and the two failure
-      // modes are not symmetric: a duplicated wake spends a whole agent turn again and can emit
-      // real external side effects, while losing the race in the other direction — a crash in the
-      // window between the fence and the broadcast — drops one wake that the next inbound message
-      // recovers. Exactly-once across a non-transactional boundary is not on offer; this picks
-      // the recoverable side.
+      // Each effect settles on its OWN terms, and the wake settles only AFTER it is admitted
+      // (seventh-round review P1). The earlier fence settled before the effects on the argument
+      // that a duplicated wake costs a whole agent turn — which is false here: connector-sourced
+      // invocations are admitted under the durable key `connector-${messageId}`
+      // (QueueProcessor.ts:4247-4255), so a retry is deduped where it lands. Settling first bought
+      // nothing and cost a permanent silence: one failed trigger fenced the wake out forever while
+      // this send still returned a success receipt.
       if (ingress) {
-        await this.deliverIngressOnce({
+        await deliverIngressEffectsOnce(this.deps.ledger, {
           instanceId: ctx.pluginInstanceId,
           idempotencyKey: draft.idempotencyKey,
           threadId: handle.threadId,
@@ -296,46 +290,5 @@ export class SendService {
       await this.deps.ledger.releaseSend(ctx.pluginInstanceId, draft.idempotencyKey, claim.claimToken);
       throw err;
     }
-  }
-
-  /**
-   * Runs the Host-side effects of one authenticated ingress at most once across every attempt at
-   * the same idempotency key. See the call site for why the send claim cannot fence these and why
-   * the fence settles before the effects rather than after.
-   */
-  private async deliverIngressOnce(input: {
-    instanceId: string;
-    idempotencyKey: string;
-    threadId: string;
-    userId: string;
-    messageId: string;
-    content: string;
-    timestamp: number;
-    ingress: ResolvedIngress;
-  }): Promise<void> {
-    const delivery = await this.deps.ledger.claimIngressDelivery(input.instanceId, input.idempotencyKey);
-    // 'settled' — a previous attempt already delivered. 'inflight' — a concurrent attempt owns the
-    // effects. Either way this attempt must not repeat them.
-    if (delivery.status !== 'new') return;
-    const { ingress } = input;
-    await this.deps.ledger.settleIngressDelivery(input.instanceId, input.idempotencyKey, delivery.claimToken, {
-      messageId: input.messageId,
-      catId: ingress.catId,
-    });
-    broadcastIngress(ingress.deps, {
-      threadId: input.threadId,
-      messageId: input.messageId,
-      content: input.content,
-      connectorId: ingress.binding.connectorId,
-      externalChatId: ingress.binding.externalChatId,
-      timestamp: input.timestamp,
-    });
-    await ingress.deps.invokeTrigger.trigger(
-      input.threadId,
-      ingress.catId,
-      input.userId,
-      input.content,
-      input.messageId,
-    );
   }
 }
