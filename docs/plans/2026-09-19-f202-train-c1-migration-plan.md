@@ -385,9 +385,10 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 
 #### 5.2 Stage 2a 出口门
 
-> **状态（本 branch 实测）：已满足。** 8 例全绿 0 错误；实现见 §6 转绿表（缺口 C/A/B 三提交）。
+> **状态（本 branch 实测）：已满足。** 9 例全绿 0 错误；实现见 §6 转绿表（缺口 C/A/B 三提交，
+> 外加第六轮 review 补的 settle-window 栅栏）。
 
-- §6 的 **6 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**（合计 8 例）。
+- §6 的 **7 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**（合计 9 例）。
 - wake 必须 **source-derived**（Host 从已验证 provider identity + 已绑定 thread 推出），
   不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
 - 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
@@ -458,7 +459,7 @@ CAS/operation-id 幂等 + settlement-ordered commit）的可执行红灯以 §6 
 | connector ingress/outbound | 7 个 IM provider | `im-connector-loader.ts:22-30` 进程内加载 + `ConnectorRouter` 自有写入/广播/唤醒 | **双边已指定**：Host 侧留既有 binding/config/state 权威（`HandleService.issueConnectorBindingHandle` + handle store + `HostPluginConfigurationService` + `MessagingLedger` 幂等门）；包侧由 Plugins 车道 11 行冻结包的 stdio runtime 承担 | 每 provider：ingress→thread→wake→outbound 往返 + 重启后绑定恢复 + **重启后不重复投递（replay/dedup）** | **per-provider package parity 证据** + §6 全绿 + Stage 3 往返证明（**不含任何 D/E 新 ABI 签字**） |
 | provider 专属操作（QR/validate） | feishu QR ×3、weixin QR ×4、wecom-bot validate ×2 | `connector-hub.ts` 9 条 provider 路由 + `<id>.json` 的 `_operations` 状态机 | **不存在** | 扫码登录走通；企微回调校验通过 | 新 owner 就位 + 旅程绿 |
 | webhook | wecom-agent（XML content-type 分支 `connector-webhooks.ts:51-66`）及通用回调 | `connector-webhooks.ts` 共享路由 | **不存在** | 回调签名校验 + 投递落 thread | 新 owner 就位 + 回调旅程绿 |
-| schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：wire registry 无 `schedule.*` 行，host→plugin 也无通用 invoke 行（§7.4.0） | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵；**§7.4.2 已判该行迁移与删除一并后移 C2** |
+| schedule | `github` ×7 | `PluginResourceActivator` + provider-specific `ScheduleFactoryRegistry` | **不存在**：wire registry 无 `schedule.*` 行，host→plugin 也无通用 invoke 行（§7.4.0） | 7 个 schedule 各自触发 + 幂等（不双跑） | 新 owner + 触发证明 + §4.2 矩阵；**§7.4.2：该行在 C1 内阻塞于本门（不删、不补新公共面），是否改判 C2 待 operator 裁定** |
 | limb | `weixin-mp`、`wechat-visible-reader` | `PluginResourceActivator.ts:170` | **不存在** | weixin-mp 发文；visible-reader arm 授权窗口仍受限 | 新 owner + 旅程绿 |
 | skill | `weixin-mp` | `PluginResourceActivator.ts:331-366`（跨项目级联挂载） | **不存在** | 挂载 + **卸载完整回收**（陷阱 6，不留悬挂 symlink） | 新 owner + 回收证明 |
 | mcp | `video-gen`（`video-analysis` 为 baseline） | `PluginResourceActivator` | ✅ `BuiltinPluginContributionSupervisor`（`runtime-composition.ts:462-490`）——**仅对 `runtime.transport === 'builtin'` 的包成立**（`:477`），stdio lane 不适用 | MCP tool 实际可调用，**且须在已删除 repo-local duplicate 的树上取证**（无运行时替换机制，未删时只证得出"两份并存"，§7.4.0 第 3 条） | 已有 owner，按现状过门（§7.4.2 判第 9 行留在 C1）；**取证顺序例外见 §5 Stage 4 第 5 步** |
@@ -487,21 +488,21 @@ binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 
 
 ## 6. 红灯测试证据
 
-红灯由**三个文件共同构成一道 8 例门**，断言点全部落在 **Host 信任边界**：已认证
+红灯由**三个文件共同构成一道 9 例门**，断言点全部落在 **Host 信任边界**：已认证
 `connector_binding` ingress 的唤醒契约与激活前提，而不是要求 SDK `send()` 改变插件消息语义。
 
 | 文件 | 例 | 关注 |
 |---|---|---|
-| `packages/api/test/f202-c1-im-cutover-wake-parity.test.js` | 1–6 | **唤醒语义**：在 `createMessagingDomain(...)` 隔离注入协作者，精确钉住三段式路由与两条围栏 |
+| `packages/api/test/f202-c1-im-cutover-wake-parity.test.js` | 1–6、4b | **唤醒语义**：在 `createMessagingDomain(...)` 隔离注入协作者，精确钉住三段式路由与两条围栏 |
 | `packages/api/test/f202-c1-production-composition-activation.test.js` | 7、10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入与 config/secret 投影 |
 | `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免文件重复组装并越过 350 行硬限） |
 
-**红灯基线（`51d08596a`，实测）：6 红 2 绿**（8 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
+**红灯基线（`51d08596a`，实测）：6 红 2 绿**（8 例）；第六轮 review 后补入 **case 4b**（settle 失败窗口），门为 **9 例**。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
 1–4 停在 `send-service.ts:154` 的恒 `mentions: []`，7 停在 `runtime-composition.ts:213` 的协作者缺口，
 10 停在 `supervisor.ts:191-201` 只投影四个协议变量；
 且失败发生在 install → 挣得 config readiness → **写入 enabled 权威状态** → 认证握手**全部成功之后**。
 
-**转绿现状（Stage 2a 已落地）：8 例全绿、0 错误**，两条 GREEN guard 仍绿。实现按缺口拆成三个提交
+**转绿现状（Stage 2a 已落地）：9 例全绿、0 错误**，两条 GREEN guard 仍绿。实现按缺口拆成三个提交
 （顺序 C → A → B）：
 
 | 缺口 | 提交 | 生产落点 |
@@ -509,6 +510,14 @@ binding/config/state 权威（不新增公共面，§7.3），包侧由 Plugins 
 | C | `da0508bbd` | `plugin/manifest-configuration-projection.ts`（新）+ `external-runtime/supervisor.ts` spawn env；composition 默认接 Host 自有 plugin-config store |
 | A | `1cb65492c` | `messaging/ingress-wake.ts`（新）+ `send-service.ts` ingress 分支；`parseMentions` 与 catRegistry pattern 收敛为单一真相源 |
 | B | `9b866e3f0` | `runtime-composition.ts` 转发协作者 + `index.ts` 注入真实 `invokeTrigger`/`threadStore`/`socketManager`/默认猫/mention patterns |
+
+**第六轮 review 补入的一条（case 4b）**：case 4 只证"settle 成功后重放不重复唤醒"，那条由
+settled-receipt 提前返回本身保证。真正威胁 at-most-once 的是另一个窗口——ingress 副作用已执行、
+settle 失败、catch 释放 claim、重试重新进入。实测该窗口下 `messages=1, wakes=2, broadcasts=2`。
+修法是给 ingress 副作用一条**独立的持久栅栏**（`ledger.ts` 的 `ingress` key space），
+**先 settle 栅栏再执行副作用**：send claim 释放得掉，已上线的 broadcast 和已唤醒的猫释放不掉。
+代价写明在 `send-service.ts` 注释里——栅栏与副作用之间崩溃会丢一次唤醒；重复唤醒会重跑一整轮
+agent 并可能产生真实外部副作用，两者不对称，故取可恢复的那一侧。
 
 复现（exact HEAD 本地运行）：
 
@@ -524,7 +533,7 @@ v1 的 `Public test (serial)` lane 已不存在，`serial-shared` 的文件集�
 （下面那条附带边界用例 `plugin-external-runtime-config-projection` → `distributable-4`）。
 因此"这道门在 CI 绿"**必须读多个 job**，不能再指向单一 serial job；原先"serial 因 fail-fast 只跑到第一个文件"的叙述同步作废。
 
-**缺口 C 附带的信任边界**（`plugin-external-runtime-config-projection.test.js`，**不属于这 8 例门**）：
+**缺口 C 附带的信任边界**（`plugin-external-runtime-config-projection.test.js`，**不属于这 9 例门**）：
 投影一旦存在，manifest 就能命名子进程环境变量，因此三条 fail-closed 规则各有可执行断言——
 `CLOWDER_` 协议命名空间内的声明键拒绝启动（否则包可自称别的插件身份）、无对应 grant 的字段永不投影、
 required 缺值拒绝启动。
@@ -579,7 +588,7 @@ durable checkpoint）按定义各要求一条新的 public wire row，因此已�
 这道门是 **Stage 2a 的完成门**，也是 Stage 4 第 3 步允许切换默认 IM 路径的前置条件之一
 （另一个是 Stage 3 的往返证明）。红灯本身不依赖任何 Plugins artifact，故先行提交；
 转绿实现同样只动业务无关的 Host 能力，因此按 §5 line 336 的明确例外，**先于** Stage 2 的精确发布落地。
-本门**不含任何待签字的公共面变更**：8 例全部落在冻结契约内的 Host wiring 上。
+本门**不含任何待签字的公共面变更**：9 例全部落在冻结契约内的 Host wiring 上。
 
 **Stage 2a 出口门已满足，但它不是 C1 的完成。** 仍未做、且不得跳过的是：Stage 2 精确发布与消费证明、
 Stage 3 `use→restart` 往返、Stage 4 的 mapping / 切默认路径 / no-double-run 证明 / 逐 provider parity
@@ -640,12 +649,14 @@ checkpoint）曾被写成「并入 C1 公共面」vs「整体后移 C2」的二�
    （`ledger.ts:12`：claim TTL 60s、settled 保留 7 天）。**Core 不为它们新开公共面。**
 3. **Core 不实现 Plugins 业务代码**：stdio entrypoint、catalog/包闭合、fresh-consumer 证据
    由 Plugins owner thread 在既有契约下直接完成；Core 不代写、也不等它的 schema 裁定。
-4. **Host 前置（缺口 A/B/C）不变**，仍是现在这道 8 例门；用例 10 的 config/secret 投影
+4. **Host 前置（缺口 A/B/C）不变**，仍是现在这道 9 例门；用例 10 的 config/secret 投影
    正是 Plugins 侧 stdio entrypoint 需要的那一半。
 5. **逐行核验已完成，见 §7.4**：§2.0 第 8–11 行（`github-operations` / `video-generation` /
    `wechat-visible-reader` / `weixin-mp`）各自落在 §5.3 哪一类贡献、新 owner 是否就位。
-   结论：**只有第 9 行（`video-generation`）今天在 C1 内可交付**；第 8 / 10 / 11 行都需要新公共面，
-   按 §7.2 第 4 条**迁移与删除一并后移 C2**。
+   结论：**只有第 9 行（`video-generation`）今天在 C1 内可交付**；第 8 / 10 / 11 行都需要新公共面。
+   **这是阻塞证据，不是改判授权（第六轮 review P1）**：三行仍在 §2.0 的 11 行冻结集内，在 C1 内
+   的处置是**卡在 §5.3 删除门上**——不删、不提新公共面、迁移不完成。是否改判 C2 是 operator 裁定，
+   本 PR 不做（Decision Packet 见 §7.4.5）。
 
 **移出 C1 门禁的只有测试面（不重写、不丢失）**：
 
@@ -776,10 +787,10 @@ arm 路由**静默 fail-closed**；`beforePluginDisable` 的 disarm 语义直接
 
 | # | 处置 | 依据 |
 |---|---|---|
-| 8 | **迁移与删除一并后移 C2** | 需新增 schedule 触发线（新 public wire）→ §3 F-1 硬止损线 + §7.2 第 4 条"判 C2 者迁移与删除一并后移，不得先删后补" |
+| 8 | **留在 C1，阻塞于 §5.3 删除门**：不删 `github-schedule-factories.ts`、不提新 wire，迁移不完成；改判 C2 待 operator | 需新增 schedule 触发线（新 public wire）→ §3 F-1 硬止损线 + §7.2 第 4 条"判 C2 者迁移与删除一并后移，不得先删后补" |
 | 9 | **留在 C1 并交付**：加 host policy 一行 + 删 repo-local duplicate（**删除在前，验收在删除后的树上**）；门 = 包以 `transport: 'builtin'` 发布 + 在已删除 repo-local 实现的 Core 上证明 MCP tool 实际可调用 | 走既有 `replacesRepositoryPluginId` 机制，无新公共面；但该机制只抑制 Manager 列表、不做运行时替换（§7.4.0 第 3 条），故 duplicate 未删时 parity 不可证 |
-| 10 | **迁移与删除一并后移 C2**；另需裁定 Host 侧 arm/disarm 隐私授权权威是否按 `personal-chrome-host` 同例**保留为 Host truth** | 需 limb 宿主消费面（新公共面）；三处 Host 分支见 §7.4.1 |
-| 11 | **迁移与删除一并后移 C2** | 需 limb + skill 两类宿主消费面、混合类型 feature 激活规则、`healthCheck` manifest 字段——三者都是新公共面 |
+| 10 | **留在 C1，阻塞于 §5.3 删除门**（同上）；改判 C2 待 operator。**arm/disarm 隐私授权权威在任一结局下都按 `personal-chrome-host` 同例保留为 Host truth**，不随该行的处置改变 | 需 limb 宿主消费面（新公共面）；三处 Host 分支见 §7.4.1 |
+| 11 | **留在 C1，阻塞于 §5.3 删除门**（同上）；改判 C2 待 operator | 需 limb + skill 两类宿主消费面、混合类型 feature 激活规则、`healthCheck` manifest 字段——三者都是新公共面 |
 
 **对 Stage 4 第 5 步删除面的直接后果**：`github-schedule-factories.ts`、`weixin-mp` 的 limb/skill
 挂载、`wechat-visible-reader` 的 limb 与上述三处 Host 分支，**在 C1 内均不得删除**；只有
@@ -799,8 +810,11 @@ parity 之后再删"。这与 `video-analysis` baseline 的删除面（§2.0）�
    范围**——它们属第 1–7 行，本节只核 8–11。
 4. **不改变 §7.3 对第 1–7 行的裁定**：connector 行走既有 Host 权威 + messaging/events wire，
    与本节四行的阻塞原因不同源，两边的结论不可互相套用。
-5. **C1 第 8–11 行的实际交付面因此收敛为一行**（第 9 行）。这不是范围缩水，而是把"删了没人接住"
-   的三行按既定规则挡在门外；§5.3 的删除门本来就写着"没接住就不准删"。
+5. **C1 第 8–11 行今天的可交付面只有一行**（第 9 行），另外三行卡在 §5.3 删除门上。
+   **这两句话不等于"C1 只剩一行"**（第六轮 review P1 纠正）：「没接住就不准删」是 C1 **门内**的
+   结果，管的是"今天不删"；把行移出 11 行冻结集是**改 operator 冻结的迁移集**，是另一件事，本节
+   此前把前者当成了后者的依据。11 行仍然全在 C1；三行的状态是"迁移未完成、阻塞待裁"，
+   处置选项与代价见 §7.4.5。
 6. **更正 §2.0 baseline ledger 与 §2.2 的 `video-analysis` 行**（本节执行时发现，方向与第 5 条
    相反——这两处不是把 C1 说小了，是把第 9 行的既有机制说强了）。两处原写
    "`index.ts:5011` 的 `replacesRepositoryPluginId` 策略已在位"，暗示运行时切换已就绪、Core 只差
@@ -837,3 +851,35 @@ parity 之后再删"。这与 `video-analysis` baseline 的删除面（§2.0）�
 **"这个机制被谁读？读了之后改变了什么可观察行为？"**——答不上来就不算"已有 owner"。
 本节对 `video-analysis` baseline 的重新核实（repo-local 目录与 `plugin.yaml` 今天完整存在）
 就是这条判据的直接产物。
+
+#### 7.4.5 待 operator 裁定：第 8 / 10 / 11 行的 C1 结局（Decision Packet）
+
+**为什么是 operator 的题**：§2.0 的 11 行 migration set 是 operator 冻结的。本节核出的
+「三行今天无法在 C1 内完成迁移」是**阻塞证据**；把行移出冻结集是**改冻结契约**。第六轮 review
+（sol）判定本计划此前用前者当后者的依据，属越权改范围——此处收回，改为呈给 operator。
+
+**冲突的两条硬约束**（都不是本计划能放弃的）：
+
+| 约束 | 出处 | 内容 |
+|---|---|---|
+| A | §2.0（operator 冻结） | 11 行都在 C1 迁移 |
+| B | §3 F-1 + §7.3 裁定 | C1 不新增任何 public wire / hook / UI slot |
+
+第 8 / 10 / 11 行要完成迁移**必须**新增公共面（第 8 行：schedule 触发线；第 10 行：limb 宿主消费面；
+第 11 行：limb + skill 两类消费面 + 混合 feature 激活规则 + `healthCheck` 字段）。A 与 B 在这三行上
+不可同时满足——**这是一个取舍，不是一个技术选型**。
+
+**三个结局，各自的代价**：
+
+| 选项 | 内容 | 代价 |
+|---|---|---|
+| 1 | 为这三行**放宽 B**：允许 C1 新增所需公共面 | C1 从"主要是删代码"变成"扩 ABI"；新公共面需 maintainer 签字，C1 周期显著变长；F-1 止损线失效 |
+| 2 | **守 B，C1 带伤落地**：三行留在 C1 但迁移不完成、repo-local 实现不删 | 11 行冻结集在 C1 结束时只完成 8 行；Core 里三份 repo-local 实现继续存在，删除面推到 C2 |
+| 3 | **正式改判 C2**：operator 把这三行移出 C1 冻结集 | 冻结集被改小；需 operator 明确认可这不是猫自决的范围缩水 |
+
+**本 PR 当前按选项 2 的形状落盘**（不删、不提新公共面、状态记为"阻塞待裁"），因为它是三者中
+**唯一不需要新授权就能停在原地**的，且对另外两个选项都不造成不可逆损失。operator 选 1 或 3 时，
+本节按裁定改写即可。
+
+**不随选择改变的一条**：第 10 行 `wechat-visible-reader` 的 arm/disarm 隐私授权权威，在三个选项
+下都按 `personal-chrome-host` 同例**保留为 Host truth**，不下放给包。
