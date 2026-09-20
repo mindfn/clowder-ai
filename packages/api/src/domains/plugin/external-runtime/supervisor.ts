@@ -8,30 +8,10 @@ import {
 import type { BrokerConnection } from '../host-broker/builtin-loopback.js';
 import { HostBrokerError } from '../host-broker/types.js';
 import type { PluginInventoryTransaction } from '../host-inventory/ports.js';
-import type {
-  PluginGrantRecord,
-  PluginInstanceRecord,
-  PluginPackageRecord,
-  RuntimeState,
-} from '../host-inventory/types.js';
-import {
-  ManifestConfigurationProjectionError,
-  type PluginRuntimeConfigurationPort,
-  projectManifestConfigurationEnv,
-} from '../manifest-configuration-projection.js';
+import type { RuntimeState } from '../host-inventory/types.js';
 import { NodeExternalPluginProcessAdapter } from './node-process-adapter.js';
-
-/**
- * A Host that offers no configuration port can read no stored value. Expressing that as a port
- * rather than an early return keeps one authority over "may this child start" — the projector.
- */
-const UNREADABLE_CONFIGURATION: PluginRuntimeConfigurationPort = {
-  readConfig: async () => undefined,
-  readSecret: async () => undefined,
-};
-
 import { verifyExternalPackage } from './package-authority.js';
-import { projectRuntimeCrash } from './runtime-crash-projection.js';
+import { deferred, type RuntimeExecution } from './runtime-execution.js';
 import { closeRuntimeExecutionResources } from './runtime-execution-cleanup.js';
 import {
   createRuntimeHeartbeatController,
@@ -40,6 +20,13 @@ import {
   resolveRuntimeHeartbeatPolicy,
 } from './runtime-heartbeat.js';
 import { projectRuntimeReplacementFailure, RuntimeLeaseRecoveryCoordinator } from './runtime-lease-recovery.js';
+import { projectTerminalState, type RuntimeProjectionDeps, setRuntimeState } from './runtime-state-projection.js';
+import {
+  assertAuthorityUnchanged,
+  projectStartConfiguration,
+  type RunnableAuthority,
+  resolveRunnableAuthority,
+} from './start-authority.js';
 import { createExternalStdioBrokerTransport, type ExternalStdioBrokerTransport } from './stdio-broker-transport.js';
 import type {
   ExternalPluginProcess,
@@ -52,46 +39,6 @@ import { ExternalPluginRuntimeError } from './types.js';
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 const TRANSIENT_EXIT_RECOVERY_COOLDOWN_MS = 5 * 60_000;
 
-interface RunnableAuthority {
-  readonly instance: PluginInstanceRecord;
-  readonly packageRecord: PluginPackageRecord;
-  /** F202 C1 gap C: the grant set a config/secret projection must be checked against. */
-  readonly grants: PluginGrantRecord | undefined;
-}
-
-interface Deferred<Value> {
-  readonly promise: Promise<Value>;
-  resolve(value: Value): void;
-  reject(error: unknown): void;
-}
-
-interface RuntimeExecution {
-  readonly pluginInstanceId: string;
-  packageDigest: string;
-  readonly ready: Deferred<void>;
-  readonly closed: Deferred<void>;
-  process?: ExternalPluginProcess;
-  exit?: Awaited<ExternalPluginProcess['exited']>;
-  locatedPackage?: VerifiedPluginPackage;
-  connection?: BrokerConnection;
-  transport?: ExternalStdioBrokerTransport;
-  heartbeat?: RuntimeHeartbeatController;
-  projected: boolean;
-  started: boolean;
-  ending: boolean;
-  terminal?: Promise<void>;
-}
-
-function deferred<Value>(): Deferred<Value> {
-  let resolve!: (value: Value) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-}
-
 export class ExternalPluginRuntimeSupervisor {
   private readonly active = new Map<string, RuntimeExecution>();
   readonly handshakeTimeoutMs: number;
@@ -100,10 +47,13 @@ export class ExternalPluginRuntimeSupervisor {
   private readonly processes;
   private readonly recovery: RuntimeLeaseRecoveryCoordinator;
   private readonly transientRecoveryAt = new Map<string, number>();
+  /** The two collaborators every runtime-state write needs, bound once. */
+  private readonly projection: RuntimeProjectionDeps;
 
   constructor(private readonly options: ExternalPluginRuntimeSupervisorOptions) {
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
+    this.projection = { inventory: options.inventory, now: () => this.now() };
     this.heartbeatPolicy = resolveRuntimeHeartbeatPolicy(
       options.broker.activeRuntimeLeaseTtlMs,
       options.heartbeatIntervalMs,
@@ -196,7 +146,7 @@ export class ExternalPluginRuntimeSupervisor {
   }
 
   private async startOwned(execution: RuntimeExecution): Promise<ExternalPluginRuntimeHandle> {
-    const authority = await this.runnableAuthority(execution.pluginInstanceId);
+    const authority = await resolveRunnableAuthority(this.options, execution.pluginInstanceId);
     execution.packageDigest = authority.instance.packageDigest;
     if (authority.packageRecord.manifest.runtime.transport !== 'stdio') {
       throw new ExternalPluginRuntimeError(
@@ -207,20 +157,20 @@ export class ExternalPluginRuntimeSupervisor {
     const located = await this.options.packages.resolveInstalledPackage(authority.instance.packageDigest);
     execution.locatedPackage = located;
     const verified = await verifyExternalPackage(authority.packageRecord, located);
-    await this.setRuntimeState(execution, 'starting');
+    await setRuntimeState(this.projection, execution, 'starting');
     execution.projected = true;
     await located.verifyIntegrity();
     // F202 C1 gap C: manifest-declared config/secrets, grant-checked and fail-closed. Declared
     // fields are resolved BEFORE the protocol variables are written, and a declared key inside
     // the CLOWDER_ namespace is refused outright, so a package can never restate its own
     // Host-issued identity by shadowing one of them.
-    const declaredEnv = await this.projectConfiguration(authority);
+    const declaredEnv = await projectStartConfiguration(this.options, authority);
     // The authority above was read before package resolution, integrity verification and the
     // configuration read. A revoke landing in that window is legal for this instance, so the
     // values resolved from the old snapshot must not reach a child without revalidation
     // (sixth-round review P1) — same fence the builtin contribution supervisor applies at
     // manager/builtin-contribution-supervisor.ts:595-616.
-    await this.assertAuthorityUnchanged(authority, 'starting');
+    await assertAuthorityUnchanged(this.options, authority, 'starting');
     execution.process = await this.processes.spawn({
       command: process.execPath,
       args: [verified.entrypoint],
@@ -239,7 +189,7 @@ export class ExternalPluginRuntimeSupervisor {
       return this.finish(execution, 'process_exit', terminalState, false);
     });
     this.assertOpen(execution);
-    await this.setRuntimeState(execution, 'handshaking');
+    await setRuntimeState(this.projection, execution, 'handshaking');
     execution.connection = await this.options.broker.openExternalConnection(execution.pluginInstanceId);
     this.assertOpen(execution);
     execution.transport = createExternalStdioBrokerTransport({
@@ -296,107 +246,6 @@ export class ExternalPluginRuntimeSupervisor {
     }
   }
 
-  private async projectConfiguration(authority: RunnableAuthority): Promise<Readonly<Record<string, string>>> {
-    const declared = authority.packageRecord.manifest.configuration ?? [];
-    if (declared.length === 0) return {};
-    // An absent configuration port is *no readable value*, not *no declared requirement*
-    // (sixth-round review P1). Returning {} here used to start a child whose manifest declared a
-    // required secret, so the absent port is expressed as a port that reads nothing and the
-    // projector's own fail-closed rule decides the outcome.
-    const configuration = this.options.configuration ?? UNREADABLE_CONFIGURATION;
-    try {
-      return await projectManifestConfigurationEnv({
-        pluginInstanceId: authority.instance.pluginInstanceId,
-        manifest: authority.packageRecord.manifest,
-        effectiveGrants: authority.grants?.effectiveGrants ?? [],
-        configuration,
-      });
-    } catch (error) {
-      if (error instanceof ManifestConfigurationProjectionError) {
-        throw new ExternalPluginRuntimeError('CONFIG_UNAVAILABLE', error.message, { cause: error });
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Re-reads the inventory and refuses when anything the start decision depended on has moved.
-   * Mirrors the builtin supervisor's fence so the two runtimes cannot drift on what "the authority
-   * I read is still mine" means.
-   */
-  private async assertAuthorityUnchanged(authority: RunnableAuthority, runtimeState: RuntimeState): Promise<void> {
-    const snapshot = await this.options.inventory.snapshot();
-    const pluginInstanceId = authority.instance.pluginInstanceId;
-    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    if (
-      !instance ||
-      instance.lifecycleState !== 'installed' ||
-      instance.packageDigest !== authority.instance.packageDigest ||
-      instance.activationState !== 'enabled' ||
-      instance.configReadiness !== 'ready' ||
-      instance.runtimeState !== runtimeState ||
-      grants?.grantRevision !== authority.grants?.grantRevision
-    ) {
-      throw new ExternalPluginRuntimeError(
-        'INSTANCE_NOT_RUNNABLE',
-        `${pluginInstanceId} authority changed during start`,
-      );
-    }
-  }
-
-  private async runnableAuthority(pluginInstanceId: string): Promise<RunnableAuthority> {
-    const snapshot = await this.options.inventory.snapshot();
-    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    const current = instance
-      ? snapshot.instances.find(
-          (candidate) => candidate.pluginId === instance.pluginId && candidate.lifecycleState === 'installed',
-        )
-      : undefined;
-    const packageRecord = instance
-      ? snapshot.packages.find(
-          (candidate) => candidate.packageDigest === instance.packageDigest && candidate.packageState === 'installed',
-        )
-      : undefined;
-    if (
-      !instance ||
-      current?.pluginInstanceId !== pluginInstanceId ||
-      instance.lifecycleState !== 'installed' ||
-      instance.configReadiness !== 'ready' ||
-      instance.activationState !== 'enabled' ||
-      (instance.runtimeState !== 'stopped' && instance.runtimeState !== 'crashed') ||
-      !packageRecord
-    ) {
-      throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', `${pluginInstanceId} is not a runnable instance`);
-    }
-    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    return { instance, packageRecord, grants };
-  }
-
-  private async setRuntimeState(execution: RuntimeExecution, runtimeState: RuntimeState): Promise<void> {
-    await this.options.inventory.transaction((transaction: PluginInventoryTransaction) => {
-      const instance = transaction.instances.get(execution.pluginInstanceId);
-      if (
-        !instance ||
-        instance.lifecycleState !== 'installed' ||
-        instance.packageDigest !== execution.packageDigest ||
-        instance.configReadiness !== 'ready' ||
-        instance.activationState !== 'enabled'
-      ) {
-        throw new ExternalPluginRuntimeError(
-          'INSTANCE_NOT_RUNNABLE',
-          `${execution.pluginInstanceId} authority changed before runtime projection`,
-        );
-      }
-      if (runtimeState === 'starting') {
-        const { lastRuntimeError: _lastRuntimeError, ...withoutRuntimeError } = instance;
-        transaction.instances.put({ ...withoutRuntimeError, runtimeState, updatedAt: this.now() });
-      } else {
-        transaction.instances.put({ ...instance, runtimeState, updatedAt: this.now() });
-      }
-    });
-  }
-
   private finish(
     execution: RuntimeExecution,
     reason: string,
@@ -418,7 +267,7 @@ export class ExternalPluginRuntimeSupervisor {
     execution.heartbeat?.stop();
     execution.transport?.close();
     await closeRuntimeExecutionResources(execution, reason, terminateProcess);
-    await this.projectTerminalState(execution, terminalState);
+    await projectTerminalState(this.projection, execution, terminalState);
     this.active.delete(execution.pluginInstanceId);
     execution.closed.resolve(undefined);
     if (terminalState === 'restartable') {
@@ -426,22 +275,6 @@ export class ExternalPluginRuntimeSupervisor {
         pluginInstanceId: execution.pluginInstanceId,
         packageDigest: execution.packageDigest,
       });
-    }
-  }
-
-  private async projectTerminalState(
-    execution: RuntimeExecution,
-    terminalState: 'stopped' | 'crashed' | 'restartable',
-  ): Promise<void> {
-    if (execution.projected && (terminalState === 'crashed' || terminalState === 'restartable')) {
-      await projectRuntimeCrash(this.options.inventory, execution, this.now, {
-        preserveActivation: terminalState === 'restartable',
-        suppressExitDiagnostic: terminalState === 'restartable',
-      }).catch(() => undefined);
-      return;
-    }
-    if (execution.projected && !execution.connection) {
-      await this.setRuntimeState(execution, 'stopped').catch(() => undefined);
     }
   }
 
