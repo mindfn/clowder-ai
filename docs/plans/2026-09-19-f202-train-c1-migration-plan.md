@@ -364,17 +364,17 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 因此它与 D 同类——**需要一次公共 wire/trust boundary 变更**。
 最小安全契约（不可降级为裸 KV，也不可让 package 自写文件，否则绕过 inventory/lifecycle/rollback 权威）：
 **声明式 per-contribution key + 实例自有命名空间 + TTL=0 + 限定 schema/大小 + CAS/operation-id 幂等 + settlement-ordered commit**，
-且不得承载消息正文或 secret。红灯见 §6 case 12。
+且不得承载消息正文或 secret。红灯见 §6 case 12–17（含声明式 key / schema-size / settlement / replay / 内容禁令五条安全负例）。
 
 #### 5.2 Stage 2a 出口门
 
-- §6 的 **8 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**。
+- §6 的 **15 条 RED 全部转绿，且 2 条 GREEN guard 仍绿**（合计 17 例）。
 - wake 必须 **source-derived**（Host 从已验证 provider identity + 已绑定 thread 推出），
   不接受插件自报 mention / 唤醒目标——否则等于把唤醒权交给外部进程。
 - 无显式 mention 时必须复刻**三段式**路由：mention → 最近活跃参与者（`messageCount > 0`）
   → 默认猫。只接默认猫是用户可见回归（§6 用例 2/3）。
 - seam 落在 `createMessagingDomain(...)` 这个 K-2 装配点，**且生产 composition 必须真正注入**（用例 7）。
-- 除 D 的 wire 变更（须先签字）外，**不新增 public method / hook / UI slot**；一旦发现必须新增，停下转 C2。
+- 除**缺口 D 与缺口 E 各自的 wire 变更（两条均须 maintainer 先签字）**外，**不新增 public method / hook / UI slot**；一旦发现还要新增第三条，停下转 C2。
 - 达成即 §6.3 Phase 1 出口条件。
 
 ### Stage 3 — 非默认路径消费证明（`use→restart` 往返）
@@ -453,21 +453,27 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 
 ## 6. 红灯测试证据
 
-红灯由**三个文件共同构成一道 12 例门**，断言点全部落在 **Host 信任边界**：已认证
+红灯由**四个文件共同构成一道 17 例门**，断言点全部落在 **Host 信任边界**：已认证
 `connector_binding` ingress 的唤醒契约与激活前提，而不是要求 SDK `send()` 改变插件消息语义。
 
 | 文件 | 例 | 关注 |
 |---|---|---|
 | `packages/api/test/f202-c1-im-cutover-wake-parity.test.js` | 1–6 | **唤醒语义**：在 `createMessagingDomain(...)` 隔离注入协作者，精确钉住三段式路由与两条围栏 |
 | `packages/api/test/f202-c1-production-composition-activation.test.js` | 7、10 | **生产可达性**：真实 `createDormantPluginRuntimeComposition(...)` 组装下的协作者注入与 config/secret 投影 |
-| `packages/api/test/f202-c1-connector-binding-durability.test.js` | 8、9、11、12 | **绑定权威与持久性**：broker 身份驱动的 resolve-or-create、跨插件伪造否定例、共享持久权威下的重启恢复、connector checkpoint（CAS/TTL=0/实例隔离） |
+| `packages/api/test/f202-c1-connector-binding-durability.test.js` | 8、9、11 | **binding 权威与持久性**（缺口 D）：经已认证 Broker 连接 resolve-or-create、重启恢复、跨 connector 伪造否定例 |
+| `packages/api/test/f202-c1-connector-checkpoint-durability.test.js` | 12–17 | **checkpoint 权威与安全契约**（缺口 E）：CAS/重启/注入共享权威，外加声明式 key、schema-size、settlement 顺序、operationId 重放、内容禁令五条安全负例 |
 | `packages/api/test/f202-c1-production-composition-helpers.js` | — | 共享 fixture（P2 抽取，避免两文件重复组装并越过 350 行硬限） |
 
-在冻结基线（Core `9ab0eaf28`）上跑：**10 红 2 绿**（12 例）。每条红灯均因其声明的缺口而红，非 fixture 错误。
+实测：**15 红 2 绿**（17 例）。每条红灯均因其**声明的缺口**而红，非 fixture 错误——
+8/9/11 全部停在「registry 无 `connector.*` 行」，12–17 全部停在「registry 无 checkpoint 行」，
+且失败发生在 install → 挣得 readiness → 激活 → 认证握手**全部成功之后**，证明红灯来自缺口而非管道。
 
 **为什么必须分两层**：只有 1–6 时，一个"永远不被生产组装调用"的实现即可全绿——
-用例 1–4 的协作者是测试手工注入的。7–12 把同样的契约搬到**真实组装**上，
-因此 1–6 定义"正确的唤醒长什么样"，7–12 保证"它真的发生在发布出去的进程里"。
+用例 1–4 的协作者是测试手工注入的。7–17 把同样的契约搬到**真实组装**上，
+因此 1–6 定义"正确的唤醒长什么样"，7–17 保证"它真的发生在发布出去的进程里"。
+**第五轮修正**：8/9/11/12–17 一律经**已认证 Broker 连接**调用（`openExternalConnection` → `hello` → `ready` → `call`），
+由 `HostBrokerControlPlane.call()` 先后校验 wire-registry 成员资格 → handler 注册 → 活跃 lease → grant 持有。
+断言内部 `runtime.messaging.*` 方法是不够的：给 `MessagingService` 加一个方法即可转绿，而外部 stdio 包仍然调不到。
 
 | # | 用例 | 现状 | 语义 |
 |---|---|---|---|
@@ -478,11 +484,16 @@ C1/C2 拆分本身有正当理由（C2 需要新建 typed hook/UI slot = §3.4 �
 | 5 | GREEN guard：`thread_handle` 插件自述文本含 `@opus`（且 thread 有活跃参与者） → 仍 `mentions=[]`、0 唤醒 | **绿（须保持）** | 围栏：修复不得以破坏 F288 v0 插件声音契约为代价 |
 | 6 | GREEN guard：伪造 external origin → `PERMISSION`，0 persist / 0 broadcast / 0 wake | **绿（须保持）** | 围栏：ingress 权限来自 host-issued binding（D-4），不来自自报 origin |
 | 7 | 生产组装下已认证 ingress → wake ×1 + broadcast ×1 | **红**（观测 0 wake） | 缺口 B：`runtime-composition.ts:213` 以 `{messageStore, redis}` 组装，协作者根本没有入口 |
-| 8 | Host 路由**仅凭 broker 身份 + provider 坐标** resolve-or-create binding（package 不传 `userId`，owner 由 Host 派生） | **红** | 缺口 D：`issueConnectorBindingHandle` 零生产调用者；contract 无 `connector.*` wire。**第四轮修正**：旧版让 package 自带 `userId`，等于让不可信代码选择写入谁的 thread（旧路径由 `ConnectorRouter` 用 `defaultUserId` 派生） |
-| 9 | 重启后同一外部会话坐标解析回同一 threadId，且绑定落在**注入的共享持久权威**里 | **红** | 缺口 D 的重启维度。**第四轮修正**：旧版两个 composition 都是内存态、只共享 `projectRoot`，会逼正确的 Redis 实现（`RedisConnectorThreadBindingStore`，`index.ts:7389`）失败并诱导自造文件存储 |
+| 8 | **已认证包经公共 wire** 仅凭 broker 身份 + provider 坐标 resolve-or-create binding（package 不传 `userId`/`pluginInstanceId`） | **红** | 缺口 D：`issueConnectorBindingHandle` 零生产调用者；13 行 registry 无 `connector.*` 行。**第五轮修正**：改经已认证 Broker 连接调用，并断言该 row 同时进入 wire registry 与 Core 出厂 handler 集——内部方法无法满足 |
+| 9 | 重启后同一外部会话坐标解析回同一 threadId，且绑定落在**注入的共享持久权威**里 | **红** | 缺口 D 的重启维度。**第四轮修正**：旧版两个 composition 都是内存态、只共享 `projectRoot`，会逼正确的 Redis 实现（`RedisConnectorThreadBindingStore`，`index.ts:7389`）失败并诱导自造文件存储 ；**第五轮修正**：解析改经已认证 Broker 连接，重启腿复用同一 projectRoot 的 inventory 快照（实例由磁盘恢复，非重新安装） |
 | 10 | manifest 声明的 config/secret 投影进外部 stdio runtime，且**精确值**送达 | **红**（实测 spawn env 仅 4 个 `CLOWDER_*`） | 缺口 C：`supervisor.ts:191-201`；builtin 路径已有同款授权校验投影。**第四轮修正**：readiness 现由真实权威 `HostPluginConfigurationService.configure/reconcile` 挣得（不再手翻 `configReadiness`），并断言精确值而非仅 key，避免空值/占位转绿 |
-| 11 | 否定例：实例只声明 `feishu`，为 `telegram` 索取 binding 必须 fail closed | **红** | 缺口 D 的权限维度：不设此例，用例 8 可经**跨插件绑定伪造**转绿——任一获准包都能为目录里其它 connector 铸 binding |
-| 12 | 每个 connector 实例获得持久 checkpoint 面：CAS 拒绝过期 revision、TTL=0 跨重启存活、跨实例命名空间隔离 | **红** | 缺口 E：`plugin.state.get/set` 仅保留能力名，不在 13 行 wire registry 内，Core 无实现；subscription cursor / inventory snapshot / 7 天 settlement ledger 均非替代 |
+| 11 | 否定例：实例**真实安装且只声明** `feishu`，为 `telegram` 索取 binding 必须 fail closed | **红** | 缺口 D 的权限维度。**第五轮修正**：`pi_external` 曾是无实例背书的裸字符串，导致「实例不存在」这一错误原因也能满足裸 `assert.rejects`。现先断言**已声明 connector 正例解析成功**再验否定例，并排除 `METHOD_NOT_READY`/`METHOD_NOT_REGISTERED`/`INSTANCE_NOT_READY` 三类管道失败 |
+| 12 | 持久 checkpoint 面：CAS 拒绝过期 revision、TTL=0 跨重启存活，且落在**注入的跨 composition 共享权威**里 | **红** | 缺口 E。**第五轮修正**：旧版 before/after 只共享 `projectRoot`，与上一轮 case 9 同病，会诱导 package-local/projectRoot 文件存储 |
+| 13 | 否定例：contribution 从未声明的 key 必须拒绝 | **红** | 缺口 E 的声明式边界。`ConnectorContribution` 今天是**封闭类型**（`additionalProperties:false`，实测加 `checkpointKeys` 即 invalid），故 key 声明机制本身属 E 的 schema delta。无声明则 package 可圈占任意命名空间，checkpoint 面退化为通用插件存储 |
+| 14 | 否定例：超限/无界 value 必须拒绝 | **红** | 缺口 E 的 schema/大小上限。无界 value 把游标槽变成消息缓冲，使 Host 存储成为不可信包行为的函数 |
+| 15 | 否定例：Host 未接受投递前不得推进游标 | **红** | 缺口 E 的 settlement-ordered commit。允许先推进则崩溃窗口内**永久丢消息**——防双跑契约的静默丢失一侧，且因 provider offset 已移动而不可恢复 |
+| 16 | 同一 `operationId` 重放返回 canonical result，不二次生效 | **红** | 缺口 E 的幂等维度。at-least-once 传输下同一 commit 必然到达两次；二次生效会多吃一个 revision，使所有并发 CAS 围栏虚假过期 |
+| 17 | 否定例：消息正文与 secret 必须拒绝 | **红** | 缺口 E 的内容禁令。checkpoint 是恢复元数据；纳入正文/凭据等于把用户内容路由进与消息面不同保留/脱敏/导出规则的存储，绕过 Host 内容权威 |
 
 **为什么 2 和 3 必须分开**：现网路由是**三段式**（mention → 最近活跃参与者 → 默认猫）。
 只写一条"无 mention 就默认猫"的断言，会让一个只接默认猫的实现转绿，而真实回归——
@@ -497,12 +508,15 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
 `threadStore.getParticipantsWithActivity`），不新造概念。
 **把 seam 定在这个装配点是一个被选择的架构决定，不是"零绑定"**；而域内部的落点刻意不约束——
 放进 `SendService`、包一层 `MessageIngress`、或单开 admission service，都同样满足这些断言。
-不隐含任何面向插件的新 public method / hook / UI slot（那属于 C2）。
+对 **wake 用例 1–7** 不隐含任何面向插件的新 public method / hook / UI slot（那属于 C2）。
+此限定**不适用于缺口 D / E**：用例 8/9/11（binding bootstrap）与用例 12–17（durable checkpoint）
+按定义各自要求一条新的 public wire row，这正是它们被分类为 boundary blocker 的原因。
 
 这道门是 **Stage 2a 的完成门**，也是 Stage 4 第 3 步允许切换默认 IM 路径的前置条件之一
 （另一个是 Stage 3 的往返证明）。红灯本身不依赖任何 Plugins artifact，故先行提交；
-**转绿实现属于 Stage 2a**——在 Stage 2 精确发布之后开始，且用例 8/9 对应的缺口 D
-需 maintainer 先签字（§7.2 第 4 条）才能动工。
+**转绿实现属于 Stage 2a**——在 Stage 2 精确发布之后开始，且两条 boundary blocker 均须
+maintainer 先签字（§7.2 第 4 条）才能动工：**用例 8/9/11 对应缺口 D**（connector binding
+bootstrap/recovery），**用例 12–17 对应缺口 E**（durable connector checkpoint）。
 
 ## 7. disposition 状态
 
@@ -533,6 +547,9 @@ Host 协作者，复用 `ConnectorRouter` 既有词汇（`invokeTrigger` / `sock
    checkpoint 面（provider cursor/sequence/resume token），要求声明式 key、实例隔离、TTL=0、限定 schema/大小、
    CAS/operation-id 幂等、settlement-ordered commit，且不承载消息正文或 secret。
    `plugin.state.get/set` 只是保留能力名，**不在 13 行 wire registry 内**，Core 无实现。
+   实测 `@clowder-ai/plugin-contract@0.1.0-beta.15`（与 `contract-policy.ts:9` 声明一致）：
+   `WIRE_METHOD_COUNT === 13`、`isWireMethod('plugin.state.get'|'plugin.state.set') === false`、无任何 `connector.*` 行。
+   另：`ConnectorContribution` 是**封闭类型**（实测加 `checkpointKeys` 即 invalid），故"声明式 key"机制本身也在本条 schema delta 内。
    需 maintainer 裁定：并入 C1 公共面，还是整体后移 C2。
    **在此签字前，Core 不动工，Plugins 侧也不应假定 checkpoint 形态写 provider runtime。**
 6. **§5.3 六类贡献的新执行 owner 归属**：除 mcp 外，connector / provider 操作 / webhook /

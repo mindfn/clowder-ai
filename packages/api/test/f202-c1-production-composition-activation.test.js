@@ -16,9 +16,9 @@ import { resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { HostPluginConfigurationService } from '../dist/domains/plugin/manager/plugin-manager-configuration.js';
 import {
-  EXTERNAL_INSTANCE,
   ingressDraft,
   productionComposition,
+  SYNTHETIC_INSTANCE,
   THREAD_ID,
   waitForSpec,
 } from './f202-c1-production-composition-helpers.js';
@@ -40,7 +40,7 @@ describe('F202 C1 Core cutover gate — production-composition activation prereq
     // Internal issuance is used HERE ON PURPOSE: this case isolates collaborator wiring.
     // Bootstrap reachability is a different gap, measured in the binding-durability file.
     const { handleId } = await runtime.messaging.issueConnectorBindingHandle({
-      pluginInstanceId: EXTERNAL_INSTANCE,
+      pluginInstanceId: SYNTHETIC_INSTANCE,
       threadId: THREAD_ID,
       userId: 'user-1',
       scope: { canSend: true, canSubscribe: false },
@@ -49,7 +49,7 @@ describe('F202 C1 Core cutover gate — production-composition activation prereq
     });
 
     await runtime.messaging.send(
-      { pluginInstanceId: EXTERNAL_INSTANCE },
+      { pluginInstanceId: SYNTHETIC_INSTANCE },
       ingressDraft(handleId, '@opus 看一下', 'prod-7'),
     );
 
