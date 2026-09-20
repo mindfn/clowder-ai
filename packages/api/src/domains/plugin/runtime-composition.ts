@@ -3,7 +3,11 @@ import type { PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
-import { createMessagingDomain, type MessagingService } from '../messaging/messaging-service.js';
+import {
+  createMessagingDomain,
+  type MessagingDomainDeps,
+  type MessagingService,
+} from '../messaging/messaging-service.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
 import type { SignalRouteStore } from '../signal-intake/SignalRouteStore.js';
 import {
@@ -85,6 +89,17 @@ export interface DormantPluginRuntimeCompositionOptions {
    * through the real authority is projectable without extra wiring.
    */
   readonly configuration?: PluginRuntimeConfigurationPort;
+  /**
+   * F202 C1 gap B: the Host collaborators an authenticated connector ingress needs. The wake
+   * itself lives in the messaging domain (gap A); what was missing is that the composition which
+   * actually ships never offered them, so a wake proven with hand-injected collaborators did not
+   * exist in the running process. Offered as a set — see `ingressWakeDeps` in messaging-service.
+   */
+  readonly invokeTrigger?: MessagingDomainDeps['invokeTrigger'];
+  readonly socketManager?: MessagingDomainDeps['socketManager'];
+  readonly threadStore?: MessagingDomainDeps['threadStore'];
+  readonly getDefaultCatId?: MessagingDomainDeps['getDefaultCatId'];
+  readonly getMentionPatterns?: MessagingDomainDeps['getMentionPatterns'];
   readonly collectiveConnector?: Omit<CollectiveConnectorBuiltinRuntimeOptions, 'dataDirectory'> & {
     readonly dataDirectory?: string;
   };
@@ -222,6 +237,11 @@ export function createDormantPluginRuntimeComposition(
   const messaging = createMessagingDomain({
     messageStore: options.messageStore,
     ...(options.redis === undefined ? {} : { redis: options.redis }),
+    ...(options.invokeTrigger === undefined ? {} : { invokeTrigger: options.invokeTrigger }),
+    ...(options.socketManager === undefined ? {} : { socketManager: options.socketManager }),
+    ...(options.threadStore === undefined ? {} : { threadStore: options.threadStore }),
+    ...(options.getDefaultCatId === undefined ? {} : { getDefaultCatId: options.getDefaultCatId }),
+    ...(options.getMentionPatterns === undefined ? {} : { getMentionPatterns: options.getMentionPatterns }),
   });
   const broker = new HostBrokerControlPlane({
     inventory: inventoryStore,

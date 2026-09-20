@@ -289,6 +289,7 @@ import {
 import { restartConnectorGateway } from './infrastructure/connectors/connector-gateway-lifecycle.js';
 import { createConnectorReloadSubscriber } from './infrastructure/connectors/connector-reload-subscriber.js';
 import type { RepoIssueComment } from './infrastructure/connectors/github-repo-event/RepoCommentPollTaskSpec.js';
+import { catRegistryMentionPatterns } from './infrastructure/connectors/mention-parser.js';
 import { IssueCommentRouter } from './infrastructure/email/IssueCommentRouter.js';
 import {
   CiCdRouter,
@@ -4949,6 +4950,21 @@ async function main(): Promise<void> {
     intakes: meetingIntakeStore,
     messageStore,
     ...(redis ? { redis } : {}),
+    // F202 C1 gap B: the Host collaborators an authenticated connector ingress needs, in the
+    // process that actually ships. `invokeTrigger` is constructed further down this file, so it
+    // is resolved late through the same holder the eval-hub manual trigger route uses — the
+    // composition only ever calls it while serving a request, never during construction.
+    invokeTrigger: {
+      async trigger(threadId, catId, userId, message, messageId) {
+        const trigger = invokeTriggerHolder.get();
+        if (!trigger) throw new Error('connector invoke trigger is not wired yet');
+        return trigger.trigger(threadId, catId, userId, message, messageId);
+      },
+    },
+    socketManager: { broadcastToRoom: (room, event, data) => socketManager?.broadcastToRoom(room, event, data) },
+    threadStore,
+    getDefaultCatId,
+    getMentionPatterns: catRegistryMentionPatterns,
     collectiveConnector: {
       verifyAgent: createCollectiveAgentVerifier({
         resolveCatDisplayName: (catId) => resolveCollectiveAgentIdentity(catId)?.displayName,
