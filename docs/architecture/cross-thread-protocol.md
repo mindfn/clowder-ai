@@ -241,6 +241,24 @@ completion from "it was written".
 > **No `targetCats`.** v2 kept it; removed here. The relation authorizes a *context*, and the
 > receiving thread routes internally. Letting the source name the acting cat is precisely the
 > remote manipulation question 4 rules out. The relation **is** the routing credential.
+
+### The attention contract (maintainer gap #2)
+
+Removing `targetCats` answered *where delivery may go* but left *which participant wakes*
+unanswered — a real hole, raised in maintainer triage of `zts212653/clowder-ai#1490`. The resolving
+principle:
+
+> **The receiving context owns its own attention routing.**
+
+- The relation carries a **target-side handler**, designated **by the target at accept time** and
+  changeable unilaterally by the target thereafter. The source never sets or sees it as an input.
+- **No handler designated → no silent wake.** The message lands as a Needs-Me item in the target
+  thread that any participant may claim. Waking an arbitrary cat because a thread has several is
+  not a fallback; it is the defect in miniature.
+- `escalation` keeps its `pending_ack` semantics on top of this: unacknowledged is not done.
+
+This preserves "the source does not name the acting cat" while making target-side wake-up a
+defined, owned behavior rather than an omission.
 >
 > **No `handoff`.** v3 first draft kept it, which would have smuggled remote custody transfer back
 > into a message parameter. This is the mechanical answer to question 4:
@@ -250,6 +268,23 @@ completion from "it was written".
 >
 > Prose can still *sound* like an order and no server can fully detect that — but a structured
 > workflow can no longer hide inside the parameters.
+
+### Structured custody transfer keeps its own carrier (maintainer gap #3)
+
+"Messages do not transfer custody" is necessary but not sufficient: an **independently authorized**
+successor action across a boundary is a legitimate need, and deleting `handoff` without naming its
+replacement left that need homeless.
+
+> **A relation authorizes *where*. Custody admission requires its *own* authorization on top.**
+> They are never the same grant.
+
+- The generic send **never** carries custody. Unchanged.
+- A structured cross-boundary successor action uses a **separate, explicit carrier** with **atomic
+  custody admission** — one durable cutover, or nothing.
+- Today's shape is already close: `action` / `proposedAction` with Approval Hub gating for
+  `assign_work`. The change is to make that carrier **relation-bound instead of `threadId`-bound**,
+  **not** to fold it into `cross_thread_send`.
+- Being a relation participant does **not** by itself make one eligible to receive custody.
 
 The server enforces mechanics only, with no business knowledge:
 
@@ -340,9 +375,16 @@ delivery path reads any of it**. `ActionSuccessorLease` is one execution edge
 
    > **This is not "read-only".** Writing a new projection and backfilling it *is* a persistent data
    > change. What is non-enforcing is the **behavior layer**: nothing is intercepted and legacy
-   > delivery is unchanged. The **data layer** writes. Therefore: dry-run before any real backfill,
-   > and review this migration as a persistent data change — the word "read-only" must not be used
-   > to lower its risk classification.
+   > delivery is unchanged. The **data layer** writes. Therefore the word "read-only" must not be
+   > used to lower its risk classification.
+   >
+   > **Prerequisites before any write (maintainer gap #5) — "non-enforcing" authorizes nothing:**
+   >
+   > 1. a **dry run** that produces a diff report and writes nothing;
+   > 2. a written **schema + backfill + recovery/rollback contract**, agreed before the first write;
+   > 3. a **named accepted owner** for the projection.
+   >
+   > Absent all three, the slice is not ready regardless of how little it enforces.
 
    > **It must not classify what purpose a historical message "would have been".** Prose carries no
    > typed ground truth, so any such label is speculation — the same mistake as treating the legacy
@@ -368,6 +410,28 @@ Inherits the five in `a2a-protocol.md`, and adds one:
 
 6. **Cross a boundary for a purpose, not to reach a place.** A cross-thread act names the
    dependency it serves. Where it lands is derived from the relation that dependency created.
+
+## 11b. Upstream status
+
+Filed as [`zts212653/clowder-ai#1490`](https://github.com/zts212653/clowder-ai/issues/1490);
+triaged `enhancement` + `needs-maintainer-decision`, **open**.
+
+**Accepted:** the problem, and the core safety direction — discovery is not delivery authority;
+server-owned return paths where provenance is already known; generic messaging must not confer
+custody; enforcement must be phased and evidence-gated; historical prose must not be reclassified.
+
+**Not accepted as-is:** the protocol surface. Maintainers are treating this as a **candidate new
+feature** spanning thread creation/relations, cross-thread transport, custody admission and Approval
+Hub semantics — **not** as authorization to extend F193 or to begin implementation.
+
+Their open items #2, #3 and #5 were real gaps in this document and are now closed above. Item #1
+(feature admission) is a maintainer governance decision. Item #4 (MCP admission evidence for the
+three new verbs — independent authority/failure boundaries and consumer migration, so that a second
+semantic surface does not become an open-ended dual protocol) is **still owed by us** and is not yet
+written.
+
+> **No implementation is authorized.** `mindfn/clowder-ai#181` remains a separate draft provenance
+> fix and is explicitly **not** the implementation anchor for this protocol.
 
 ## 12. Withdrawn — kept as provenance
 
