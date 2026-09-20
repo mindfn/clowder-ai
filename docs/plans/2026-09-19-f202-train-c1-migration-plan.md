@@ -1591,3 +1591,23 @@ beta.12 SDK 源码里两个方向的形状都已定义，恰好覆盖差异清�
 3. **删除**：`ConnectorRouter` + `ConnectorCommandLayer` + `im-connectors/` 7 个 provider
    + `im-connector-loader` 静态 import。斜杠命令 / 群白名单 / 表情 ack / skip 原因
    （D8/D9/D11/D12/D16）随 provider 迁往插件仓，**不在 Host 侧重建**。
+
+### 9.7 依赖方向缺陷（operator 2026-09-20 诊断，一手证实）
+
+operator 原话："sdk 是对你们接口的封装；但是看你的描述似乎是一个双向依赖"。**成立。**
+
+| 事实 | 取证 |
+|---|---|
+| `plugin-contract` 是干净叶子 | `package.json.dependencies = {ajv, ajv-formats}`，不依赖 Host / SDK |
+| Host 大量依赖 contract | 55 个文件 `from '@clowder-ai/plugin-contract'` |
+| **Host 反向依赖 SDK** | `domains/plugin/external-runtime/stdio-broker-transport.ts:26` 取 `classifyFrame / createStdioChannel / StdioChannel / StdioFrame` |
+| **connector 线形状不在 contract 里** | `ConnectorInboundMessage` / `ConnectorOutboundDelivery` 在 `plugin-sdk/src/feature-context.ts:48`、`connector-runtime.ts:56`；已发布 contract beta.15 内 grep **0 命中** |
+
+**这就是"等 beta.12"错觉的根因**：Host↔插件的线形状被放进了**面向作者的封装层**，
+而不是双方共享的契约层。contract 已发布到 beta.16，若形状在契约里，Host 今天即可编译。
+
+**修正方向（与 operator 的模型一致）**：Host 定义 connector port，SDK 封装之。
+因此本 PR 的 host-adapter **在 Host 侧自有 port 类型，不 import `@clowder-ai/plugin-sdk`**；
+SDK 的 `ConnectorInboundMessage` / `ConnectorOutboundDelivery` 与之对齐（plugins 仓侧）。
+结论：**"那边不发我们也能做"从此是结构性成立，而不是凑巧成立。**
+已存的 `stdio-broker-transport.ts` 反向依赖单独记为遗留项，不在本 PR 扩大。
