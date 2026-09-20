@@ -5,7 +5,8 @@ import { usePinnedSections } from '@/hooks/usePinnedSections';
 
 const STORAGE_KEY = 'cat-cafe:pinned-settings-sections';
 const DESKTOP_SEED_KEY = 'cat-cafe:pinned-settings-sections:desktop-seeded';
-const DEFAULTS_SEED_KEY = 'cat-cafe:pinned-settings-sections:defaults-seeded';
+const LEGACY_DEFAULTS_SEED_KEY = 'cat-cafe:pinned-settings-sections:defaults-seeded';
+const SEEDED_DEFAULTS_KEY = 'cat-cafe:pinned-settings-sections:seeded-defaults';
 
 type PinnedSectionsState = ReturnType<typeof usePinnedSections>;
 
@@ -78,7 +79,7 @@ describe('usePinnedSections', () => {
 
     expect(state.pinned).toEqual(['members', 'accounts']);
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')).toEqual(['members', 'accounts']);
-    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
     expect(localStorage.getItem(DESKTOP_SEED_KEY)).toBeNull();
   });
 
@@ -89,7 +90,7 @@ describe('usePinnedSections', () => {
 
     expect(state.pinned).toEqual(['members', 'accounts']);
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')).toEqual(['members', 'accounts']);
-    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
   });
 
   it('preserves existing pins while adding defaults on the first launch', () => {
@@ -100,16 +101,44 @@ describe('usePinnedSections', () => {
     expect(state.pinned).toEqual(['skills', 'members', 'accounts']);
   });
 
-  it('does not mark seeding complete while a full pin list leaves a default missing', () => {
+  it('does not restore a seeded default after capacity blocked the other default', () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify(['skills', 'mcp', 'plugins', 'marketplace', 'concierge', 'voice', 'system', 'members']),
     );
 
-    const state = renderHook();
+    let state = renderHook();
 
     expect(state.pinned).not.toContain('accounts');
-    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members']);
+
+    React.act(() => state.unpin('members'));
+    React.act(() => root.render(null));
+    state = renderHook();
+
+    expect(state.pinned).not.toContain('members');
+    expect(state.pinned).toContain('accounts');
+  });
+
+  it('seeds each default at most once when only one slot is initially available', () => {
+    const customPins = ['skills', 'mcp', 'plugins', 'marketplace', 'concierge', 'voice', 'system'];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(customPins));
+
+    let state = renderHook();
+    expect(state.pinned).toEqual([...customPins, 'members']);
+
+    React.act(() => state.unpin('members'));
+    React.act(() => root.render(null));
+    state = renderHook();
+
+    expect(state.pinned).toEqual([...customPins, 'accounts']);
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
+
+    React.act(() => state.unpin('accounts'));
+    React.act(() => root.render(null));
+    state = renderHook();
+
+    expect(state.pinned).toEqual(customPins);
   });
 
   it('remembers a user unpin after the defaults have been seeded', () => {
@@ -122,7 +151,7 @@ describe('usePinnedSections', () => {
     state = renderHook();
 
     expect(state.pinned).toEqual(['accounts']);
-    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
   });
 
   it('honours the legacy desktop seed receipt without restoring a cancelled pin', () => {
@@ -132,6 +161,16 @@ describe('usePinnedSections', () => {
     const state = renderHook();
 
     expect(state.pinned).toEqual(['accounts']);
-    expect(localStorage.getItem(DEFAULTS_SEED_KEY)).toBe('1');
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
+  });
+
+  it('migrates the former shared complete receipt without restoring cancelled pins', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['members']));
+    localStorage.setItem(LEGACY_DEFAULTS_SEED_KEY, '1');
+
+    const state = renderHook();
+
+    expect(state.pinned).toEqual(['members']);
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
   });
 });
