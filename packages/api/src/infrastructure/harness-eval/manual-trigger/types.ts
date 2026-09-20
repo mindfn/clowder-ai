@@ -1,5 +1,4 @@
 import type { Redis } from 'ioredis';
-import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 
 /**
@@ -9,14 +8,6 @@ import type { IThreadStore } from '../../../domains/cats/services/stores/ports/T
  * hard limit per AGENTS.md). See `trigger-now.ts` + `generate-now.ts` for
  * the actual handlers.
  */
-
-/**
- * Matches the `TriggerOutcome` return type of `ConnectorInvokeTrigger.trigger()`:
- *  - `'dispatched'` — durable execution-start receipt exists; remaining work continues in background
- *  - `'enqueued'`  — thread busy, queued; processor will pick up when slot frees
- *  - `'full'`      — thread queue at capacity, **invocation dropped, not retried**
- */
-export type InvokeTriggerOutcome = 'dispatched' | 'enqueued' | 'full';
 
 /**
  * RFC §5.1/§5.4: a manual eval trigger publishes a visible packet and hands the eval cat its own
@@ -37,7 +28,6 @@ export interface InvokeTriggerProvider {
 export interface ManualTriggerDeps {
   harnessFeedbackRoot: string;
   invokeTriggerProvider?: InvokeTriggerProvider;
-  messageStore?: Pick<IMessageStore, 'append'>;
   threadStore?: IThreadStore;
   redis?: Redis;
   /**

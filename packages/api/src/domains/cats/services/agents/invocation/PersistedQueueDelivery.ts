@@ -122,7 +122,12 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
       },
     );
-    if (admitted.outcome === 'full') throw new Error('Producer return queue is full');
+    // Typed like every other queue-full refusal in the codebase (ROUTE_QUEUE_FULL) so callers can
+    // tell retryable back-pressure from a genuine fault. A bare Error forces them to either mask
+    // real bugs as back-pressure or let back-pressure escape as a 500.
+    if (admitted.outcome === 'full') {
+      throw Object.assign(new Error('Producer return queue is full'), { code: 'ROUTE_QUEUE_FULL' });
+    }
     const message = admitted.message;
     if (!matchesPersistedEnvelope(message, input)) {
       return { state: 'conflict' as const, reason: 'Persisted producer envelope does not match', message };
