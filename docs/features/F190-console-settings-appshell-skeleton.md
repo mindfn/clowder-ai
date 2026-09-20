@@ -5,7 +5,7 @@ topics: [console, settings, app-shell, community, inbound-pr, frontend, service-
 doc_kind: spec
 created: 2026-05-07
 community_pr: clowder-ai#645, clowder-ai#662, clowder-ai#669, clowder-ai#674, clowder-ai#1083
-tips_exempt: "Renewed 2026-09-18 for Activity Rail convergence: the destination cards are already visible inside Settings → 功能入口, while adding a proactive tip would recreate the navigation noise this phase removes."
+tips_exempt: "Renewed 2026-09-20 for Activity Rail convergence: Memory, Mission Hub, and Signals are first-class secondary sections in Settings, while adding a proactive tip would recreate the navigation noise this phase removes."
 ---
 
 # F190: Console Settings/AppShell Skeleton — 社区 Console 重构的可控切片
@@ -655,8 +655,8 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 
 以下旧条目描述的是历史入口位置，其业务能力与原 feature ownership 不变；本轮只由 F190 改写全局导航投影：
 
-- F058 AC-H1：Mission Hub 的左侧 rail 图标被 Settings → 功能入口取代。
-- F102 KD-48：Memory 仍以独立 `/memory` 页面为主入口，但物理入口从 rail 迁到 Settings → 功能入口；Workspace
+- F058 AC-H1：Mission Hub 的左侧 rail 图标被 Settings → Mission Hub 二级项取代。
+- F102 KD-48：Memory 的完整页面能力保留，但物理入口从 rail 迁到 Settings → 记忆二级项；Workspace
   Recall Feed 仍是副入口。
 - F229 AC-A6 / BUG-UX-11：隐藏猫猫球后的恢复入口从 Activity Rail 迁到 Settings → 猫猫球。
 - F246 C1 / AC-C2 / AC-D3：Approval 仍是 Workspace 顶层目的地并保持全局 projection；rail bell 被
@@ -669,7 +669,8 @@ Activity Rail 是高频全局骨架，不是功能清单。默认常驻只保留
 - [x] packaged desktop 首次启动固定成员与运行时、账户与密钥；取消后重新挂载不恢复。
 - [x] pinned shortcut 紧邻对话且无分隔线。
 - [x] Collective 与猫猫星球不出现在 Activity Rail。
-- [x] 记忆中心、信号、Mission Hub 从 Settings → 功能入口可达。
+- [x] 记忆、Mission Hub、信号分别作为 Settings 二级项可达；不增加聚合“功能入口”中间层。
+- [x] 系统配置位于 Settings 二级导航的最后一项。
 - [x] 常驻 Workspace 入口与 launcher 审批卡片显示全局待审批计数。
 - [x] Approval projection 继续全局同步；猫猫球 Settings 文案不再引用已移除的 rail 入口。
 

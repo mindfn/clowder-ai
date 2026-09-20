@@ -13,12 +13,14 @@ import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
 import { HubEnvFilesTab } from '../HubEnvFilesTab';
+import { MemoryHub } from '../memory/MemoryHub';
+import { MissionControlPage } from '../mission-control/MissionControlPage';
 import { PushSettingsPanel } from '../PushSettingsPanel';
+import { SignalInboxView } from '../signals/SignalInboxView';
 import { useConfirm } from '../useConfirm';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
 import { CatDossierContent } from './CatDossierContent';
 import { ConciergeSettingsContent } from './ConciergeSettingsContent';
-import { FeatureDestinationsContent } from './FeatureDestinationsContent';
 import { HubSystemSettingsTab } from './HubSystemSettingsTab';
 import { MarketplaceContent } from './MarketplaceContent';
 import { McpManageContent } from './McpManageContent';
@@ -36,9 +38,10 @@ import { SETTINGS_SECTIONS } from './settings-nav-config';
 interface SettingsContentProps {
   section: string;
   initialEditCatId?: string;
+  initialReferrerThread?: string | null;
 }
 
-export function SettingsContent({ section, initialEditCatId }: SettingsContentProps) {
+export function SettingsContent({ section, initialEditCatId, initialReferrerThread = null }: SettingsContentProps) {
   const { cats, refresh } = useCatData();
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -150,6 +153,9 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
 
   if (section === 'marketplace') return <MarketplaceContent />;
   if (section === 'skills') return <SkillsContent />;
+  if (section === 'memory') return <MemoryHub activeTab="feed" initialReferrerThread={initialReferrerThread} />;
+  if (section === 'mission-hub') return <MissionControlPage />;
+  if (section === 'signals') return <SignalInboxView initialReferrerThread={initialReferrerThread} />;
   if (section === 'profiles') {
     return (
       <div className="space-y-4">
@@ -206,8 +212,6 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
         );
       case 'accounts':
         return <HubAccountsTab />;
-      case 'destinations':
-        return <FeatureDestinationsContent />;
       case 'im':
         return <HubConnectorConfigTab refreshKey={imRefreshKey} />;
       case 'voice':

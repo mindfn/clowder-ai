@@ -29,11 +29,25 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '模型账户、凭据和执行身份的归属关系。',
   },
   {
-    id: 'destinations',
-    label: '功能入口',
-    icon: 'blocks',
+    id: 'memory',
+    label: '记忆',
+    icon: 'brain',
     color: 'var(--cafe-accent)',
-    description: '打开记忆中心、信号和 Mission Hub 等低频完整页面。',
+    description: '查看知识动态、检索证据、索引状态与记忆健康度。',
+  },
+  {
+    id: 'mission-hub',
+    label: 'Mission Hub',
+    icon: 'target',
+    color: 'var(--cafe-accent)',
+    description: '查看 Feature、依赖关系与任务推进状态。',
+  },
+  {
+    id: 'signals',
+    label: '信号',
+    icon: 'megaphone',
+    color: 'var(--cafe-accent)',
+    description: '查看订阅来源、文章和研究时间线。',
   },
   {
     id: 'im',
@@ -85,13 +99,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '语音输入输出、术语表和 TTS 服务状态。',
   },
   {
-    id: 'system',
-    label: '系统配置',
-    icon: 'settings',
-    color: 'var(--color-gemini-primary)',
-    description: '环境选项、默认行为和运行时总开关。',
-  },
-  {
     id: 'rules',
     label: '协作与规则',
     icon: 'file-text',
@@ -111,6 +118,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     icon: 'activity',
     color: 'var(--color-gemini-primary)',
     description: '服务健康、命令工具和运行态观测。',
+  },
+  {
+    id: 'system',
+    label: '系统配置',
+    icon: 'settings',
+    color: 'var(--color-gemini-primary)',
+    description: '环境选项、默认行为和运行时总开关。',
   },
 ];
 
