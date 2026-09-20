@@ -1427,3 +1427,63 @@ P3 的已知项，**登记在此而不在本 PR 内处理**，理由逐条写明
 另附一条作者自记（非 review findings）：mid-start disable 撞上 healthy 写时，unwind 以
 `reason: 'start_failed'` 调 `runtime.stop()`，对 Host 侧取消而言理由名不副实；仅存在于内存数组、
 不落库、不改行为，与上面第 2 条同源，一并留到适配器错误分类那轮处理。
+
+---
+
+## 9. Operator 终态验收标准（2026-09-20 裁定，覆盖 §5 的分阶段交付）
+
+### 9.1 operator 原话（权威，不转述）
+
+> 这个 pr 必须做到终态；除了那个 c2 阶段明确是涉及到前端的
+>
+> 这个 pr 的验收标准就是：我们的插件 / im connector 的代码一行都不应该在 clowder-ai host 出现；
+> 全部都在插件仓；插件仓那边的插件都可以在我们这里独立安装卸载和使用的
+
+**效力**：本条覆盖 §5 把 Stage 2a / 3 / 4 拆成多个 Core PR 的安排。C1 的 Core 交付是**一个**
+达到上述验收标准的 PR，唯一豁免是 C2 明确属于前端的部分。**不得以 follow-up 形式外移删除面。**
+
+### 9.2 operator 同时给出的架构判据（这是根因，不是风格意见）
+
+> 我们正常前端发消息；怎么解析 @ 怎么处理；从 im 渠道的不应该是一个逻辑么
+> 前端 → send message 接口；插件 → sdk 的 send_message 接口；然后这两个 send 汇聚到一个接口；
+> 然后开始处理和 dispatch 不就好了的
+
+**这与 F-2 记录的缺口是同一件事**：`ConnectorRouter.ts` 对 `domains/messaging` 零 import，
+自带写入 / 广播 / 幂等 / thread 绑定 / mention 解析；SDK 侧走 `SendService` → `MessagingLedger`。
+两条路不共享 admission，即 roadmap §6.3 **Phase 1（Host-owned canonical admission）未建立**。
+
+**本计划此前的执行顺序是错的**：在 Phase 1 未完成时直接做 Phase 3（迁移）+ Phase 4（删除），
+于是每一步都要搭桥维持双路不漂移。`domains/messaging/ingress-wake.ts` 的存在即此病征——
+它把 wake 推导放进了汇聚域（方向对），但它服务的是"双路并存期"，而不是"汇聚后只剩一条路"。
+
+**修正后的顺序**：Phase 1 合流 **先做** → 再迁移 → 再删除。合流完成后，`ConnectorRouter` 的
+自有写入 / 广播 / 幂等 / mention 解析全部成为可删面，删除面因此大幅收窄。
+
+### 9.3 距验收标准的实际距离（code-derived，不是估算）
+
+| 项 | 行数 | 取证 |
+|---|---|---|
+| `packages/api/src/domains/plugin/` | 17,921 | `find … -name '*.ts' \| xargs wc -l` |
+| `packages/api/src/infrastructure/connectors/` | 16,121 | 同上 |
+| 其中 7 个 IM provider 实现 `connectors/im-connectors/` | 8,180 | 同上 |
+| **#1487 当前已删除** | **282** | `git diff --shortstat <base>...HEAD` |
+
+7 个 provider 今天由 `im-connector-loader.ts:23-29` **静态 import** 进程内加载（"Built-in"）。
+
+### 9.4 两条独立的关键路径（必须分开看，不能混为"都在等发布"）
+
+**路径 A — 合流（Phase 1）：不依赖 beta.12，Core 侧自有，现在就能做。**
+汇聚点按地址类型一次性裁定 wake 权威，三种地址权威不同且必须显式分流：
+前端用户 @ 有权威；插件以自身身份说话时的 @ **无**唤醒权（F288 v0 冻结，安全属性，不可放宽）；
+IM 外部入站经 Host 验证过的 `connector_binding`，人的 @ 有权威。
+**一个开关在一个地方**，而不是今天的三份实现。
+
+**路径 B — runtime 接管：硬依赖 beta.12 发布，绕不过去。**
+`clowder-ai-plugins#54` 的 7 个 connector 包 `plugin.yaml` 均声明
+`runtime.transport: builtin` + `entrypoint: dist/plugin-entrypoint.js`（exact HEAD `d1865f7e3`
+一手核验），即必须走进程内模块载体；模块载体要能激活 feature 就需要 beta.12 的
+`FeatureContext`（`logger` / `connectors.deliver`）。因此"插件能在我们这里独立安装卸载使用"
+这半个验收条件，确实卡在对侧发布上。
+
+**结论**：等发布期间并非无事可做——路径 A 是 operator 指出的方向，且是删除面收窄的前提。
+先做 A，beta.12 一到即做 B + 删除，全部落在同一个 PR 内，符合 §9.1。
