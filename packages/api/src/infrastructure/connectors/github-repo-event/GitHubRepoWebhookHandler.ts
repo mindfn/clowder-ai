@@ -61,7 +61,8 @@ export interface GitHubRepoHandlerDeps {
   readonly threadStore: InboxThreadStore;
   readonly deliverFn: (deps: ConnectorDeliveryDeps, input: ConnectorDeliveryInput) => Promise<ConnectorDeliveryResult>;
   readonly dedup: RedisDeliveryDedup;
-  readonly deliveryDeps?: ConnectorDeliveryDeps;
+  /** Required: a missing delivery port must fail at composition, not deep inside delivery. */
+  readonly deliveryDeps: ConnectorDeliveryDeps;
   readonly redis?: RedisLike; // KD-20: per-repo inbox thread creation lock
   readonly reconciliationDedup?: Pick<ReconciliationDedup, 'markNotified'>; // Phase B bridge
   // F168 Phase A: community event log + projector (best-effort, optional)
@@ -200,7 +201,7 @@ export class GitHubRepoWebhookHandler {
       };
 
       // 11. Deliver (AC-A7)
-      delivered = await this.deps.deliverFn(this.deps.deliveryDeps ?? ({} as ConnectorDeliveryDeps), {
+      delivered = await this.deps.deliverFn(this.deps.deliveryDeps, {
         threadId,
         userId: this.config.defaultUserId,
         catId: this.config.inboxCatId,

@@ -233,6 +233,7 @@ import { RedisWriteOpportunityTerminalLedger } from './domains/memory/people/Red
 import { EvidenceStoreWorkspacePersonResolver } from './domains/memory/people/WorkspacePersonResolver.js';
 import { refreshCanonicalProfileIndex } from './domains/memory/private-collection-bindings.js';
 import { RedisDeferredPersonMemoryReceiptStore } from './domains/memory/RedisDeferredPersonMemoryReceiptStore.js';
+import type { GitHubScheduleDeps } from './domains/plugin/github-schedule-factories.js';
 import { PortDiscoveryService } from './domains/preview/port-discovery.js';
 import { collectRuntimePorts } from './domains/preview/port-validator.js';
 import { PreviewGateway } from './domains/preview/preview-gateway.js';
@@ -297,6 +298,7 @@ import {
   fetchPrCiStatus,
   ReviewFeedbackRouter,
 } from './infrastructure/email/index.js';
+import type { ReviewFeedbackPrMetadata } from './infrastructure/email/ReviewFeedbackTaskSpec.js';
 import { fetchLatestIssueCommentCursor } from './infrastructure/github/comment-cursors.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
 import { readGitHubApiResource, validateGitHubApiResource } from './infrastructure/github/github-object-validator.js';
@@ -4216,7 +4218,7 @@ async function main(): Promise<void> {
   });
 
   // F202-2B: Hoisted for late-binding GitHub schedule rehydration (closure set inside F202 block)
-  let rehydrateGitHubSchedules: ((githubDeps: Record<string, unknown>) => Promise<void>) | undefined;
+  let rehydrateGitHubSchedules: ((githubDeps: Partial<GitHubScheduleDeps>) => Promise<void>) | undefined;
   let getGitHubPluginEnv: () => Record<string, string | undefined> = () => ({});
   const getGitHubEnvValue = (key: string): string | undefined => {
     const pluginEnv = getGitHubPluginEnv();
@@ -4553,7 +4555,7 @@ async function main(): Promise<void> {
 
     // F202-2B: Schedule rehydration deferred — GitHub factories need deps created later.
     // Closure captures F202 scope; called after GitHub services are created (before taskRunnerV2.start).
-    rehydrateGitHubSchedules = async (githubDeps: Record<string, unknown>) => {
+    rehydrateGitHubSchedules = async (githubDeps: Partial<GitHubScheduleDeps>) => {
       // Populate the mutable deps ref (also updates pluginActivator's reference)
       Object.assign(scheduleFactoryDeps, githubDeps);
 
@@ -4574,7 +4576,7 @@ async function main(): Promise<void> {
           hasGitHubScheduleBackfillRun,
           markGitHubScheduleBackfillDone,
         } = await import('./domains/plugin/github-schedule-factories.js');
-        const hasRepoScanRuntimeDeps = !!(githubDeps as Record<string, unknown>).reconciliationDedup;
+        const hasRepoScanRuntimeDeps = !!githubDeps.reconciliationDedup;
         const migrationEnv = buildGitHubMigrationEnv(getGitHubPluginEnv());
         let latestCaps = existingCaps;
         if (shouldRunGitHubScheduleMigration(root, existingCaps)) {
@@ -7242,7 +7244,7 @@ async function main(): Promise<void> {
     const fetchPaginated = (endpoint: string, sinceId?: number) =>
       fetchPaginatedFn(endpoint, { sinceId, ghToken: getGitHubToken() });
 
-    const fetchPrMetadata = async (repo: string, pr: number) => {
+    const fetchPrMetadata = async (repo: string, pr: number): Promise<ReviewFeedbackPrMetadata | null> => {
       const { execFile } = await import('node:child_process');
       const { promisify } = await import('node:util');
       const execFileAsync = promisify(execFile);
@@ -7388,7 +7390,7 @@ async function main(): Promise<void> {
     // Repo-scan deps (conditional on env vars + redis)
     const ghRepoAllowlist = getGitHubEnvValue('GITHUB_REPO_ALLOWLIST');
     const ghInboxCatId = getGitHubEnvValue('GITHUB_REPO_INBOX_CAT_ID');
-    let repoScanDeps: Record<string, unknown> = {};
+    let repoScanDeps: Partial<GitHubScheduleDeps> = {};
 
     if (ghRepoAllowlist && ghInboxCatId && redisClient) {
       const { ReconciliationDedup } = await import(
@@ -7482,7 +7484,7 @@ async function main(): Promise<void> {
         reconciliationDedup,
         bindingStore: new RedisConnectorThreadBindingStore(redisClient),
         deliverFn: deliverConnectorMessage,
-        deliveryDeps: { messageStore },
+        deliveryDeps: { delivery: persistedQueueDelivery },
         fetchOpenPRs,
         fetchOpenIssues,
         // F168 C0.3: repo-level comment poller wiring
