@@ -19,7 +19,8 @@ export interface PersistedQueueDeliveryInput {
   priority?: 'urgent' | 'normal';
   /**
    * RFC §5.1 lists user, external connector, plugin AND system producers under the same envelope.
-   * The producer declares who it is; defaults to the external-connector shape from `source`.
+   * The producer declares who it is; defaults to the external-connector shape from `source.sender`.
+   * `source.label` names the ROOM and is never an actor — see the derivation below.
    */
   from?: StoredMessage['from'];
   /** Verified owner provenance for producers that carry an explicit authorization. */
@@ -85,12 +86,17 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
 
   async deliver(input: PersistedQueueDeliveryInput) {
     const targetCat = createCatId(input.targetCatId);
+    // `from.sender` is the canonical ACTOR identity: bundle author grouping keys on it, the
+    // envelope maps it to `{kind:'user', id}`, and receipts address it. `source.sender` is the
+    // person; `source.label` is the room's display name. Defaulting to the label would give every
+    // member of a group chat the same fabricated identity named after the room, so a producer that
+    // knows no person leaves it absent — consumers already fall back to connectorId/label to show.
     const from =
       input.from ??
       ({
         kind: 'external' as const,
         connectorId: input.source.connector,
-        ...(input.source.label ? { sender: { id: input.source.label, name: input.source.label } } : {}),
+        ...(input.source.sender ? { sender: input.source.sender } : {}),
       } as NonNullable<StoredMessage['from']>);
     const existing = await this.deps.messages.getByIdempotencyKey(
       input.ownerUserId,
