@@ -1013,6 +1013,10 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.equal(h.appended.length, 1);
     assert.equal(h.appended[0].idempotencyKey, 'hold-ball-lost:hold-ball-task-1');
     assert.equal(h.appended[0].source.meta.phase, 'status');
+    // Runner loss is terminal, and `phase:'status'` cannot say so. The card the
+    // engine really emits states it, so a failed status probe cannot leave live
+    // cancel controls on a hold whose runner is already gone.
+    assert.equal(h.appended[0].source.meta.cancelable, false);
     assert.match(h.appended[0].content, /服务重启/);
   });
 

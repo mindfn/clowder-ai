@@ -27,6 +27,7 @@ export async function persistHoldTerminalVisibility(
     meta: {
       managedHold: true,
       phase: 'terminal',
+      cancelable: false,
       taskId: input.taskId,
       threadId: input.threadId,
       catId: input.catId,

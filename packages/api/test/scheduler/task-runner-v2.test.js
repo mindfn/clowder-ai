@@ -1773,9 +1773,13 @@ describe('TaskRunnerV2 — once trigger (#415)', () => {
     assert.equal(deliveries[0].threadId, 'thread-hold-missed');
     assert.equal(deliveries[0].userId, 'user-42');
     assert.equal(deliveries[0].idempotencyKey, 'hold-ball-missed:hold-ball-missed-1');
+    // A missed wake window is terminal even though it is announced under the
+    // generic `status` phase — which is exactly why cancelability is stated by
+    // the producer here rather than inferred from `phase` by the card.
     assert.deepEqual(deliveries[0].source.meta, {
       managedHold: true,
       phase: 'status',
+      cancelable: false,
       taskId: 'hold-ball-missed-1',
       threadId: 'thread-hold-missed',
       catId: 'codex',

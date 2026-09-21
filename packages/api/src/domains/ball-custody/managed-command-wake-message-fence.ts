@@ -151,6 +151,7 @@ export async function publishManagedCommandWakeMessage(
     meta: {
       managedHold: true,
       phase: 'wake',
+      cancelable: false,
       taskId: claimed.task.id,
       threadId: claimed.threadId,
       catId: claimed.catId,

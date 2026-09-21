@@ -211,9 +211,13 @@ describe('F167 Phase J AC-J1: DELETE /api/callbacks/hold-ball/:taskId', () => {
     assert.equal(deps._storedMessages[0].threadId, 'thread-del1');
     assert.equal(deps._storedMessages[0].userId, 'user1', 'terminal visibility belongs to the hold owner');
     assert.equal(deps._storedMessages[0].idempotencyKey, 'hold-ball-terminal:hold-ball-123-abc:cancel');
+    // A terminal card states its own cancelability; the web card reads that fact
+    // instead of re-deriving it from `phase`. Dropping the key here would hand a
+    // finished hold live cancel controls again.
     assert.deepEqual(deps._storedMessages[0].source.meta, {
       managedHold: true,
       phase: 'terminal',
+      cancelable: false,
       taskId: 'hold-ball-123-abc',
       threadId: 'thread-del1',
       catId: 'codex',

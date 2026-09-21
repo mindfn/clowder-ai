@@ -171,6 +171,7 @@ export class ManagedCommandWakeRecoveryEngine {
         meta: {
           managedHold: true,
           phase: 'status',
+          cancelable: false,
           taskId: parsed.task.id,
           threadId: parsed.threadId,
           catId: parsed.catId,

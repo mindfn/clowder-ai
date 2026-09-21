@@ -177,6 +177,7 @@ async function publish(
             catId: claimed.catId,
             wakeWhen: true,
             terminalReceipt: true,
+            cancelable: false,
           },
         },
       }));

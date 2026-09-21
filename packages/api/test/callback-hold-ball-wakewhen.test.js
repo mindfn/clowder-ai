@@ -21,6 +21,17 @@ import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import { tryAutoCancelPendingHolds } from '../dist/routes/messages.js';
 
+/**
+ * Each exceptional launch terminal below is announced under the generic
+ * `phase:'status'`, which cannot say whether the wait is over. The card states
+ * that itself, so a hold that already ended keeps no cancel controls even when
+ * the status probe is unavailable. Asserted here on the card the route really
+ * emitted — one helper rather than a copy per terminal.
+ */
+function assertStatesTerminal(message, label) {
+  assert.equal(message?.source?.meta?.cancelable, false, `${label} must state cancelable: false on its card`);
+}
+
 describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
   let registry;
   let threadStore;
@@ -569,9 +580,12 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     );
     assert.ok(terminal);
     assert.equal(terminal.userId, 'owner-user');
+    // Retirement is terminal, so the card must state that it can no longer be
+    // canceled — the consumer trusts this stated fact over any status probe.
     assert.deepEqual(terminal.source.meta, {
       managedHold: true,
       phase: 'terminal',
+      cancelable: false,
       taskId: 'hold-ball-auto-retire',
       threadId: 'thread-auto-retire',
       catId: 'codex',
@@ -752,6 +766,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     // the three-way formatter maps to the cancellation terminal state.
     const admissionMessages = t8cMessages.filter((m) => m.content.includes('未启动'));
     assert.ok(admissionMessages.length > 0, 'durable admission fact (未启动) must be appended after cancellation');
+    assertStatesTerminal(admissionMessages[0], 'launch cancellation');
     const cancelledMessages = t8cMessages.filter((m) => m.content.includes('已取消'));
     assert.ok(cancelledMessages.length > 0, 'cancellation admission must say "已取消", not generic spawn failure');
     const falseScheduledMessages = t8cMessages.filter((m) => m.content.includes('定时唤醒将触发'));
@@ -799,6 +814,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       // recovery sweep must not later invent a second "service restart" end.
       const terminalMessages = deps._appendedMessages.filter((m) => m.source?.meta?.phase === 'status');
       assert.equal(terminalMessages.length, 1, 'spawn failure must project exactly one terminal status');
+      assertStatesTerminal(terminalMessages[0], 'pre-admission failure');
       assert.match(terminalMessages[0].content, /未启动/);
       assert.doesNotMatch(terminalMessages[0].content, /服务重启/);
 
@@ -849,6 +865,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       const body = JSON.parse(response.body);
       const terminalMessages = deps._appendedMessages.filter((m) => m.source?.meta?.phase === 'status');
       assert.equal(terminalMessages.length, 1);
+      assertStatesTerminal(terminalMessages[0], 'rejected spawn admission');
       assert.match(terminalMessages[0].content, /未启动.*spawn ENOENT/);
       assert.doesNotMatch(terminalMessages[0].content, /服务重启/);
       const task = deps.dynamicTaskStore.getById(body.taskId);
@@ -894,6 +911,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       const body = JSON.parse(response.body);
       const terminalMessages = deps._appendedMessages.filter((m) => m.source?.meta?.phase === 'status');
       assert.equal(terminalMessages.length, 1);
+      assertStatesTerminal(terminalMessages[0], 'post-spawn runner failure');
       assert.match(terminalMessages[0].content, /执行进程异常终止.*runner pipe failed/);
       assert.doesNotMatch(terminalMessages[0].content, /服务重启/);
       const task = deps.dynamicTaskStore.getById(body.taskId);

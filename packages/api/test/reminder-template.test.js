@@ -300,6 +300,11 @@ describe('reminderTemplate managed-hold terminal visibility', () => {
     assert.equal(delivered[0].idempotencyKey, `hold-ball-wake:${taskId}`);
     assert.equal(delivered[1].idempotencyKey, `hold-ball-wake-failed:${taskId}`);
     assert.equal(delivered[1].source.meta.phase, 'status');
+    // Both cards this run emits are terminal: the wake itself ends the wait, and
+    // a failed wake admission ends it too. Neither phase (`wake`, `status`) can
+    // carry that, so each card states its own cancelability for the consumer.
+    assert.equal(delivered[0].source.meta.cancelable, false);
+    assert.equal(delivered[1].source.meta.cancelable, false);
     assert.match(delivered[1].content, /唤醒入队失败/);
     assert.match(delivered[1].content, /queue admission rejected/);
   });

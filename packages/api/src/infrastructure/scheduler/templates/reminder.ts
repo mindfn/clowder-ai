@@ -100,7 +100,7 @@ export const reminderTemplate: TaskTemplate = {
             connector: 'hold-ball',
             label: '持球唤醒',
             icon: '🏓',
-            meta: { managedHold: true, phase: 'wake', taskId: instanceId, threadId: tid, catId },
+            meta: { managedHold: true, phase: 'wake', cancelable: false, taskId: instanceId, threadId: tid, catId },
           } as const;
           try {
             await ctx.deliver({
@@ -130,7 +130,14 @@ export const reminderTemplate: TaskTemplate = {
                 connector: 'hold-ball',
                 label: '持球状态',
                 icon: '🏓',
-                meta: { managedHold: true, phase: 'status', taskId: instanceId, threadId: tid, catId },
+                meta: {
+                  managedHold: true,
+                  phase: 'status',
+                  cancelable: false,
+                  taskId: instanceId,
+                  threadId: tid,
+                  catId,
+                },
               },
             });
           }

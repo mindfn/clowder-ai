@@ -738,6 +738,8 @@ export {
   custodyOpportunityEpisodeInputV1Schema,
   custodyOpportunityEpisodeV1Schema,
 } from './growing-opportunity.js';
+export type { HoldCancelEntry, HoldCardCancelability, HoldCardRef } from './hold-card-cancelability.js';
+export { decideHoldCancelEntry, readHoldCardCancelability } from './hold-card-cancelability.js';
 // F281 Phase A: server-bound human disposition feedback and exact-subject eligibility contract
 export {
   buildHumanDispositionEnvelope,

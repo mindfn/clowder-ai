@@ -196,6 +196,7 @@ export class ManagedCommandWakeRecoverySweep {
               meta: {
                 managedHold: true,
                 phase: 'status',
+                cancelable: false,
                 taskId: task.id,
                 threadId: parsed.threadId,
                 catId: parsed.catId,

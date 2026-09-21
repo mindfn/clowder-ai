@@ -912,6 +912,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       meta: {
         managedHold: true,
         phase: 'waiting',
+        cancelable: true,
         mode: wakeWhen ? 'command' : 'timer',
         taskId,
         threadId,
@@ -1159,7 +1160,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       // launch terminal adds a second, distinct lifecycle fact.
       if (!spawnResult.spawned && isCancellationOutcome) {
         const admissionFact = `等待已取消：命令「${wakeWhen.command}」未启动。`;
-        const statusSource = { ...holdSource, meta: { ...holdSource.meta, phase: 'status' } };
+        const statusSource = { ...holdSource, meta: { ...holdSource.meta, phase: 'status', cancelable: false } };
         try {
           const admStored = await messageStore.append({
             from: { kind: 'system', service: 'hold-ball' },

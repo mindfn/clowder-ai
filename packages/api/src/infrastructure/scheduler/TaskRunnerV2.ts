@@ -652,6 +652,7 @@ export class TaskRunnerV2 {
             meta: {
               managedHold: true,
               phase: 'status',
+              cancelable: false,
               taskId: def.id,
               threadId: def.deliveryThreadId,
               catId,
