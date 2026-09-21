@@ -124,58 +124,53 @@ SubscriptionDelivery.register  → 零生产调用点    （插件声明的 mess
 我原先那条按目录划的线是错的，它会把下面这些原封不动留在 Host 里：
 
 | 位置 | 行数 | 内容 | 判定 |
-|---|---|---|---|
+|---|---:|---|---|
 | `infrastructure/connectors/` 全部 | 16,121 | Router / CommandLayer / gateway / 7 provider / Outbound hooks | ❌ 删 |
-| `domains/plugin/official-plugin-meeting-intake.ts` | 216 | `createFeishuMeetingCatchUpService`、`createLarkCliFeishuPollingGateway` | ❌ **飞书会议业务** |
-| `domains/plugin/official-plugin-history-import.ts` | 153 | `FeishuArtifactLocator`、飞书制品解析 | ❌ **飞书特有** |
-| `domains/plugin/official-plugin-auth.ts` | 295 | 硬编码 `accounts.feishu.cn` / `accounts.larksuite.com` | ❌ **飞书特有** |
-| `domains/plugin/official-catalog.ts` | 181 | **硬编码的官方插件货架**：3 条（`feishu-meeting-intake` / `collective-connector` / `genoffice-docx`），各带 packageName / version / archiveUrl / packageDigest / effectiveGrants / ownerAuth / presentation | ⚠️ **不是整文件删**，见下 |
-| `domains/plugin/official-catalog-provider.ts` | 335 | 从 `https://registry.npmjs.org` 拉取并校验 URL 形状与 digest | ✅ **通用机制，保留** |
+| `domains/plugin/official-plugin-meeting-intake.ts` | 216 | `createFeishuMeetingCatchUpService`、`createLarkCliFeishuPollingGateway` | ❌ **具体插件 service 整体迁走**；只有能独立证明与任何插件无关的生命周期/进程原语才留 Host |
+| `domains/plugin/official-plugin-history-import.ts` | 153 | `FeishuArtifactLocator`、飞书制品解析 | ❌ **具体插件 service 整体迁走**；不以厂商字符串行数切割职责 |
+| `domains/plugin/official-plugin-auth.ts` | 295 | Lark CLI device 登录、状态解析、飞书账号域名校验 | ❌ **具体插件 auth service 整体迁走**；通用授权协议另按消费者证明后抽取 |
+| `domains/plugin/official-catalog.ts` | 181 | 具体插件条目 + 带 `lark-cli-device` / `meeting-intake` 的类型与策略 | ⚠️ 具体条目/策略迁到插件仓；Host 仅保留或重建仓目录契约与通用校验 |
+| `domains/plugin/official-catalog-provider.ts` | 335 | 写死 npm registry、npm tarball URL 与 npm SLSA attestation | ⚠️ **npm 专用 resolver，不是通用多仓 provider**；可复用的有界读取、semver、digest/provenance 校验按职责抽取 |
 | `domains/plugin/runtime-composition.ts` | 781 | 仅一行注释提到飞书超时 | ✅ 通用，保留 |
 
-**已知删除面 ≈ 16,785 行**（不含 catalog 的替代工程）。
+**当前可直接计数的删除面只有 connector 业务树约 16,121 行。** 其余文件必须按职责迁移/抽取，
+不能把总行数、文件名或厂商字符串命中数当作删除量或通用性证据。
 
-#### ⚠️ 重大更正：`domains/plugin/` 那几个文件是**混合制**，要拆不要删
+#### Catalog 终态：Host 认仓，不认具体插件
 
-operator 一眼看出：
+operator 冻结的终态是：Host 配置 **N 个 Git 插件仓地址**；官方仓与内网仓提供同一种 catalog，
+每个仓自己维护其中有哪些插件。Host 不硬编码具体插件 id、包名或厂商策略。
 
-> 这个听着不是像是我们插件的通用的管理机制的？但是又是混合制的既有通用的又有插件定制的？
+一手代码事实先钉住两个边界：
 
-量出来比预想极端得多：
+- `LocalPluginPackageAdmission` 只接受已经位于本机的
+  `{kind:'local-directory'|'local-archive', path}`。它是安装流水线的**末端**，没有
+  Git clone/fetch/remote discovery；所以“已有本地目录安装 = 已支持 Git/内网仓”是错误结论。
+- `official-catalog-provider.ts` 写死 `https://registry.npmjs.org`、npm tarball URL 和 npm
+  SLSA attestation。它是 **npm resolver**，不是可直接改一个 origin 就得到的多 Git 仓 provider。
 
-| 文件 | 总行 | 厂商相关行 | 占比 |
-|---|---|---|---|
-| `official-plugin-auth.ts` | 295 | 7 | **2.4%** |
-| `official-plugin-meeting-intake.ts` | 216 | 18 | **8.3%** |
-| `official-plugin-history-import.ts` | 153 | 8 | **5.2%** |
-| `official-catalog.ts` | 181 | 9 | **5.0%** |
-| **合计** | **845** | **42** | **5%** |
+实现边界固定为五层：
 
-`official-plugin-auth.ts` 导出的全是通用面（`OfficialPluginAuthStatus` / `AuthPort` /
-`AuthService`），厂商味只有一处 hostname 校验。**我此前把这 4 个文件整体标成"删"，
-那会砍掉约 800 行通用插件管理机制，只为清掉 42 行飞书代码。**
+1. **Repository sources**：Host 只保存/读取 N 个受信插件仓声明（仓 URL、信任与刷新策略），不列具体插件。
+2. **Repository catalog**：每个官方或内网仓按同一 Host 契约发布 catalog；具体插件条目与厂商策略归仓所有。
+3. **Artifact source**：每条 catalog entry 明确制品来源：npm 条目钉 exact package/version/integrity/provenance；
+   Git/source 条目钉 commit、仓内 package path 与 tree/archive digest。
+4. **Repository resolver**：按来源把选中的制品物化到 Host 控制的本地 directory/archive；网络获取、
+   commit/path 约束和 digest 验证在这一层完成，不能把任意远端地址直接交给安装器。
+5. **Local admission**：复用现有 `LocalPluginPackageAdmission` 消费受控本地制品，继续负责打包、
+   manifest/schema 校验、grant policy、digest/quarantine 与 inventory 安装。
 
-**正确动作是「拆」不是「删」**：抽走那 ~42 行厂商特有部分（随插件走），保留 95% 的通用机制。
-`infrastructure/connectors/` 那 16,121 行是另一回事——那是整棵 connector 业务树，删。
+因此 `official-catalog.ts` 里的具体条目、`lark-cli-device`、`meeting-intake` 等策略随 catalog
+迁出 Core；Host 侧只保留 carrier-neutral 的仓目录契约、解析/校验和安装机制。
+`official-catalog-provider.ts` 中 npm 专用部分成为一种 artifact resolver；通用校验原语可以抽取，
+但不能把整个现状标成“机制已经通用”。
 
-> **这是我今晚第六次同形状的错**：看到文件名/少量命中就整体归类，没有量它的构成。
-> 判据是 operator 的"具体插件相关"，但**判据要作用在代码行上，不是文件名上**。
+同理，具体插件 service 是否迁走按**“这段行为为何存在、由谁消费”**判定，不按文件名，也不按
+出现厂商字符串的行数判定。`OfficialPluginAuthService` 即使暴露通用命名接口，其实现仍为 Lark CLI
+device flow 服务；保留接口名不能成为把实现留在 Host 的理由。
 
-#### official-catalog 的正解：把货架变成数据，不是删文件
-
-取数据的机制**已经是通用的**（`official-catalog-provider.ts` 从 npm registry 拉取、校验 URL 与 digest）。
-**硬编码的只是「哪 3 个包」**，所以：
-
-- **3 条目 → 变成数据**（配置 / 远端清单 / 插件仓提供）—— 这才是"具体插件相关"的部分
-- `OfficialPluginCatalogEntry` 等类型定义 → 通用，保留
-- **但类型里有一处带厂商味**：`ownerAuth.kind: 'lark-cli-device'` 是字面量类型，
-  把飞书 CLI 登录方式写进了通用定义 —— 按判据应一般化
-
-> 我第一次把它描述成"安装目录、需替代方案、不可裸删"，是**只看了 grep 命中的 4 行**就下的判断。
-> 读完文件后成本判断完全不同：机制已通用，要动的只是数据。**又一次推理代替清点。**
-
-> **这份清单不完整。** 我只扫了 `domains/plugin/`；`routes/`、`index.ts`、`infrastructure/` 其余子树未扫。
-> **实施前必须用同一把尺子全仓重扫**——我今晚四次栽在"用推理代替清点"，这份范围同样不应被采信。
+> **这份清单不完整。** 当前只确认了上述位置；`routes/`、`index.ts`、`infrastructure/` 其余子树仍须
+> 按消费者与职责全仓重扫，不能从路径、导出名称或字符串命中推导归属。
 
 **次序**：C-6 接线 → C-5 删除。
 ```
