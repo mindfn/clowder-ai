@@ -201,4 +201,41 @@ describe('#1398 private input idempotency on Redis', { skip: redisIsolationSkipR
     assert.deepEqual(await connector.queue.listAllDurable(threadId), [], 'and no durable work survives it');
     assert.equal(connector.progressed.length, 1, 'only the original admission ever ran');
   });
+
+  /**
+   * The same refusal, one step earlier in the row's life.
+   *
+   * The case above retires the first admission first, so the receipt is the only survivor and the
+   * Lua receipt comparison decides. While the row is still LIVE the verdict used to short-circuit
+   * on its mere existence and answer `settled` without ever comparing the envelope — so a
+   * different payload reusing the key got past the preflight, the notice was published, and only
+   * a TypeScript check afterwards raised the conflict. By then the thread already showed a
+   * "triggered" line for work that was refused, which is precisely the half-commit the single
+   * transition exists to make impossible.
+   */
+  it('publishes no notice when a live row is reused by a different envelope', async () => {
+    const connector = redisHarness();
+    const threadId = nextThreadId();
+
+    const first = await deliverVisible(connector, threadId);
+    assert.equal(first.admitted, true);
+    assert.ok(
+      await connector.queue.getDurableEntry(threadId, first.entryId),
+      'the row must still be live — this case is about the live branch, not the receipt',
+    );
+    const afterFirst = await connector.messageStore.getByThreadIncludingQueued(threadId);
+
+    await assert.rejects(
+      () => deliverVisible(connector, threadId, { content: 'delete the production index' }),
+      /identity conflict/i,
+      'a live row must refuse a different envelope on its key, exactly as a retired one does',
+    );
+
+    assert.deepEqual(
+      (await connector.messageStore.getByThreadIncludingQueued(threadId)).map((m) => m.id),
+      afterFirst.map((m) => m.id),
+      'the refusal must happen before any Message write, so no notice may appear',
+    );
+    assert.equal(connector.progressed.length, 1, 'and the conflicting envelope never starts work');
+  });
 });
