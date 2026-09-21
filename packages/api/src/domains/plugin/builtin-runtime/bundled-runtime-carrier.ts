@@ -1,3 +1,4 @@
+import { type M0CDeliverInput, type M0CDeliverResult, WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import type {
@@ -22,6 +23,7 @@ export interface BundledPluginRuntime {
    */
   start(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
+  deliver?(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult>;
 }
 
 export interface BundledPluginRuntimeCarrierOptions {
@@ -33,6 +35,7 @@ export interface BundledPluginRuntimeCarrierOptions {
 interface RuntimeAuthority {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
+  readonly effectiveGrants: readonly string[];
 }
 
 interface ActiveBundled {
@@ -125,6 +128,18 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     await Promise.all([...this.#active.keys()].map((pluginInstanceId) => this.stop(pluginInstanceId, reason)));
   }
 
+  async deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
+    const authority = await this.authority(pluginInstanceId);
+    if (!authority.effectiveGrants.includes(WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant)) {
+      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} lacks Host delivery authority`);
+    }
+    const active = this.#active.get(pluginInstanceId);
+    if (!active?.runtime.deliver) {
+      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host delivery surface`);
+    }
+    return active.runtime.deliver(pluginInstanceId, input);
+  }
+
   /** In-process runtimes never survive the restart they are recovering from. */
   async recoverAfterRestart(): Promise<number> {
     if (this.#active.size > 0) {
@@ -162,6 +177,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     const packageRecord = instance
       ? snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest)
       : undefined;
+    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
     const activationAllowed =
       instance?.activationState === 'enabled' ||
       (allowStopping && ['disabling', 'error', 'disabled'].includes(instance?.activationState ?? ''));
@@ -178,7 +194,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
         `${pluginInstanceId} is not a runnable plugin instance`,
       );
     }
-    return { instance, packageRecord };
+    return { instance, packageRecord, effectiveGrants: grants?.effectiveGrants ?? [] };
   }
 
   private setBundledRuntimeState(

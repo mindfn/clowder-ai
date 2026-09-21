@@ -53,6 +53,21 @@ export default {
 };
 `;
 
+const deliveryModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create(hostManifest) {
+    return {
+      manifest: hostManifest,
+      async 'host.messaging.deliver'(input) {
+        log.push({ call: 'deliver', input });
+        return { deliveryId: input.deliveryId };
+      },
+    };
+  },
+};
+`;
+
 const noCreateModule = `
 export default { activate() {} };
 `;
@@ -90,9 +105,16 @@ function inventoryOf(records) {
     updatedAt: 0,
   }));
   const live = new Map(instances.map((instance) => [instance.pluginInstanceId, instance]));
+  const grants = instances.map((instance, index) => ({
+    pluginInstanceId: instance.pluginInstanceId,
+    requestedCapabilities: records[index].effectiveGrants ?? [],
+    effectiveGrants: records[index].effectiveGrants ?? [],
+    grantRevision: 1,
+    updatedAt: 0,
+  }));
   return {
     live,
-    snapshot: async () => ({ packages, instances: [...live.values()], grants: [] }),
+    snapshot: async () => ({ packages, instances: [...live.values()], grants }),
     transaction: async (apply) =>
       apply({
         instances: {
@@ -157,6 +179,61 @@ test('takes the default export of runtime.entrypoint and runs it in the Host pro
 
   await host.router.stop('instance-0', 'host_stop');
   assert.equal(host.moduleRuntime.definedPlugin('instance-0'), undefined, 'teardown must let the instance go');
+});
+
+test('routes the frozen Host delivery row through the selected module carrier', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(deliveryModule);
+  const host = hostOf([{ manifest: manifest(), rootDir, effectiveGrants: ['onMessage'] }]);
+  const input = {
+    deliveryId: 'delivery-module-1',
+    threadHandle: { kind: 'thread_handle', handle: 'thread-handle-1' },
+    envelope: {
+      messageId: 'message-1',
+      revision: 1,
+      threadId: 'thread-1',
+      actor: { kind: 'cat', id: 'opus' },
+      audience: { kind: 'public' },
+      occurredAt: '2026-09-21T00:00:00.000Z',
+      payload: {
+        provenance: { epistemicStatus: 'inference', origin: { kind: 'host' } },
+        elements: [{ elementId: 'e1', kind: 'text', payload: { text: 'hello' } }],
+      },
+    },
+  };
+
+  await host.router.start('instance-0');
+  assert.deepEqual(await host.router.deliver('instance-0', input), { deliveryId: input.deliveryId });
+  assert.deepEqual(moduleLog(), [{ call: 'deliver', input }]);
+});
+
+test('module delivery fails closed when the instance lacks the published onMessage grant', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(deliveryModule);
+  const host = hostOf([{ manifest: manifest(), rootDir }]);
+
+  await host.router.start('instance-0');
+  await assert.rejects(
+    () =>
+      host.router.deliver('instance-0', {
+        deliveryId: 'delivery-denied',
+        threadHandle: { kind: 'thread_handle', handle: 'thread-handle-1' },
+        envelope: {
+          messageId: 'message-denied',
+          revision: 1,
+          threadId: 'thread-1',
+          actor: { kind: 'cat', id: 'opus' },
+          audience: { kind: 'public' },
+          occurredAt: '2026-09-21T00:00:00.000Z',
+          payload: {
+            provenance: { epistemicStatus: 'inference', origin: { kind: 'host' } },
+            elements: [{ elementId: 'e1', kind: 'text', payload: { text: 'must not arrive' } }],
+          },
+        },
+      }),
+    (error) => error.code === 'DELIVERY_REJECTED',
+  );
+  assert.deepEqual(moduleLog(), [], 'the module must not run after delivery authority was denied');
 });
 
 // What this pins: the Host actually hands its admitted record to `create()`. The other

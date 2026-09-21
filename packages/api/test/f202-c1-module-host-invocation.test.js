@@ -47,24 +47,43 @@ function load(instanceId, methods) {
   loaded.set(instanceId, methods);
 }
 
-describe('F202 C1 — Host→plugin invocation over the module carrier', () => {
-  test('case 1: calls the method the package declared, with its params', async () => {
+const INPUT = {
+  deliveryId: 'delivery-1',
+  threadHandle: { kind: 'thread_handle', handle: 'thread-handle-1' },
+  envelope: {
+    messageId: 'message-1',
+    revision: 1,
+    threadId: 'thread-1',
+    actor: { kind: 'cat', id: 'opus' },
+    audience: { kind: 'public' },
+    occurredAt: '2026-09-21T00:00:00.000Z',
+    payload: {
+      provenance: { epistemicStatus: 'inference', origin: { kind: 'host' } },
+      elements: [{ elementId: 'e1', kind: 'text', payload: { text: 'hello' } }],
+    },
+  },
+};
+
+describe('F202 C1 — standard Host delivery over the module carrier', () => {
+  test('case 1: calls only host.messaging.deliver with the frozen input and receipt', async () => {
     load(INSTANCE, {
-      async outbound(params) {
-        calls.push(params);
+      async 'host.messaging.deliver'(input) {
+        calls.push(input);
+        return { deliveryId: input.deliveryId };
       },
     });
 
-    await invocation.invoke(INSTANCE, 'outbound', { event: 'e1' });
+    const result = await invocation.deliver(INSTANCE, INPUT);
 
-    assert.deepEqual(calls, [{ event: 'e1' }]);
+    assert.deepEqual(calls, [INPUT]);
+    assert.deepEqual(result, { deliveryId: INPUT.deliveryId });
   });
 
-  test('case 2: a declared method the package never implemented rejects', async () => {
+  test('case 2: a module without the standard delivery method rejects', async () => {
     load(INSTANCE, { outbound: async () => {} });
 
     await assert.rejects(
-      () => invocation.invoke(INSTANCE, 'notImplemented', {}),
+      () => invocation.deliver(INSTANCE, INPUT),
       (err) => err.code === 'PROTOCOL_VIOLATION',
       'silently succeeding would mark a message delivered that nobody received',
     );
@@ -73,42 +92,49 @@ describe('F202 C1 — Host→plugin invocation over the module carrier', () => {
   test('case 3: a rejection from the package reaches the caller unchanged', async () => {
     const boom = new Error('feishu API is down');
     load(INSTANCE, {
-      async outbound() {
+      async 'host.messaging.deliver'() {
         throw boom;
       },
     });
 
     await assert.rejects(
-      () => invocation.invoke(INSTANCE, 'outbound', {}),
+      () => invocation.deliver(INSTANCE, INPUT),
       (err) => err === boom,
     );
   });
 
   test('case 4: calling an instance the Host is not holding rejects', async () => {
     await assert.rejects(
-      () => invocation.invoke('inst-never-started', 'outbound', {}),
+      () => invocation.deliver('inst-never-started', INPUT),
       (err) => err.code === 'INSTANCE_NOT_RUNNABLE',
     );
   });
 
-  test('case 5: inherited names are not callable methods', async () => {
-    load(INSTANCE, { outbound: async () => {} });
-
-    for (const name of ['toString', 'constructor', 'valueOf', '__proto__', 'hasOwnProperty']) {
-      await assert.rejects(
-        () => invocation.invoke(INSTANCE, name, {}),
-        (err) => err.code === 'PROTOCOL_VIOLATION',
-        `${name} resolves to something callable on every object and must not be invoked`,
-      );
-    }
-  });
-
-  test('case 6: a non-function own property is not callable either', async () => {
-    load(INSTANCE, { outbound: 'not a function' });
+  test('case 5: a mismatched delivery receipt rejects', async () => {
+    load(INSTANCE, {
+      async 'host.messaging.deliver'() {
+        return { deliveryId: 'another-delivery' };
+      },
+    });
 
     await assert.rejects(
-      () => invocation.invoke(INSTANCE, 'outbound', {}),
+      () => invocation.deliver(INSTANCE, INPUT),
       (err) => err.code === 'PROTOCOL_VIOLATION',
     );
+  });
+
+  test('case 6: the module boundary rejects input outside the closed published schema', async () => {
+    load(INSTANCE, {
+      async 'host.messaging.deliver'(input) {
+        calls.push(input);
+        return { deliveryId: input.deliveryId };
+      },
+    });
+
+    await assert.rejects(
+      () => invocation.deliver(INSTANCE, { ...INPUT, method: 'outbound' }),
+      (err) => err.code === 'PROTOCOL_VIOLATION',
+    );
+    assert.deepEqual(calls, [], 'invalid wire input must be rejected before package code runs');
   });
 });

@@ -1,12 +1,11 @@
 /**
  * F202 Train C1 — Host-driven outbound to subscribing plugins.
  *
- * THE SHAPE. A subscriber declares which thread it wants and which of its own methods the Host
- * should call; when that thread produces a message the Host calls that method, and whatever the
- * subscriber does next is closed inside it.
+ * THE SHAPE. A subscriber declares which thread it wants; when that thread publishes a complete
+ * message envelope the Host sends the frozen `host.messaging.deliver` row to its runtime.
  *
- * THIS MODULE HAS NO NOTION OF A PLUGIN. It knows only that N sinks implement an outbound method
- * and which of them are owed this thread's messages. A package relaying to an IM platform, a
+ * THIS MODULE HAS NO NOTION OF A PLUGIN. It knows only that N sinks implement the standard
+ * delivery row and which of them are owed this thread's messages. A package relaying to an IM platform, a
  * front-desk subscriber, and — once the UI's 112 scattered `broadcastToRoom` call sites are
  * converged onto it — the live view itself are all the same kind of thing here, differing only
  * in the sink that carries the call.
@@ -19,11 +18,15 @@
  *
  * DELIVERY GUARANTEE. The cursor advances only on an accepted call: a page is acked after every
  * event in it was accepted, so a plugin that was briefly down comes back to its messages rather
- * than to a hole, and an accepted message is never sent twice (a duplicate outbound is a
- * duplicate message in someone's chat).
+ * than to a hole. Retries keep the same Host-issued deliveryId, including a crash between remote
+ * acceptance and cursor ack, so the receiving adapter can settle the call idempotently instead
+ * of producing a duplicate message in someone's chat.
  */
 
-import type { HostInvocationPort } from '../plugin/host-invocation.js';
+import { createHash } from 'node:crypto';
+
+import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
+import type { HostMessagingDeliveryPort } from '../plugin/host-invocation.js';
 
 /**
  * The messaging domain identifies a subscriber by `pluginInstanceId`; that field is its name for
@@ -39,17 +42,18 @@ export interface SubscriptionDeliveryMessaging {
     ctx: DeliveryCallContext,
     subscriptionId: string,
     options: { limit?: number },
-  ): Promise<{ readonly events: readonly unknown[]; readonly ackToken: string | null; readonly stale: boolean }>;
+  ): Promise<{
+    readonly events: readonly MessageOutputEvent[];
+    readonly ackToken: string | null;
+    readonly stale: boolean;
+  }>;
   ack(ctx: DeliveryCallContext, subscriptionId: string, token: string): Promise<void>;
 }
 
 export interface SubscriptionDeliveryDeps {
   readonly messaging: SubscriptionDeliveryMessaging;
-  /**
-   * The Host→plugin direction, shared with every other reason the Host calls a package. Message
-   * delivery is one consumer of it, not its owner.
-   */
-  readonly invocation: HostInvocationPort;
+  /** The already-published `host.messaging.deliver` direction. */
+  readonly delivery: HostMessagingDeliveryPort;
   /** Events per read page. */
   readonly readLimit?: number;
   /**
@@ -88,16 +92,13 @@ export interface SubscriptionDeclaration {
   readonly subscriberId: string;
   readonly threadId: string;
   readonly handleId: string;
-  readonly method: string;
-  readonly params?: Readonly<Record<string, unknown>>;
   readonly filter?: SubscriptionFilter;
 }
 
 interface Registration {
   readonly subscriberId: string;
   readonly subscriptionId: string;
-  readonly method: string;
-  readonly params?: Readonly<Record<string, unknown>>;
+  readonly handleId: string;
   readonly filter?: SubscriptionFilter;
 }
 
@@ -118,10 +119,42 @@ const DEFAULT_MAX_PAGES = 32;
  * explicit `true` opts in, so a pocket key that is misspelled or carries a string falls through
  * to suppression — the safe side.
  */
-function isUnwantedEcho(event: unknown, registration: Registration): boolean {
+function isUnwantedEcho(event: MessageOutputEvent, registration: Registration): boolean {
   if (registration.filter?.includeOwnMessages === true) return false;
-  const actor = (event as { envelope?: { actor?: { kind?: unknown; id?: unknown } } })?.envelope?.actor;
+  const actor = event.type === 'message.publish' ? event.envelope.actor : undefined;
   return actor?.kind === 'plugin' && actor.id === registration.subscriberId;
+}
+
+function deliveryIdFor(registration: Registration, event: MessageOutputEvent): string {
+  const digest = createHash('sha256')
+    .update(registration.subscriberId)
+    .update('\0')
+    .update(registration.subscriptionId)
+    .update('\0')
+    .update(event.eventId)
+    .digest('hex');
+  return `delivery_${digest}`;
+}
+
+async function deliverPublishedEvent(
+  delivery: HostMessagingDeliveryPort,
+  registration: Registration,
+  event: MessageOutputEvent,
+): Promise<void> {
+  if (isUnwantedEcho(event, registration)) return;
+  // The frozen callback row carries a complete envelope. Append events remain available
+  // through explicit stream reads and must not be disguised as a different wire shape.
+  if (event.type !== 'message.publish') return;
+
+  const input = {
+    deliveryId: deliveryIdFor(registration, event),
+    threadHandle: { kind: 'thread_handle' as const, handle: registration.handleId },
+    envelope: event.envelope,
+  };
+  const receipt = await delivery.deliver(registration.subscriberId, input);
+  if (receipt.deliveryId !== input.deliveryId) {
+    throw new Error(`delivery receipt mismatch for ${input.deliveryId}`);
+  }
 }
 
 export class SubscriptionDelivery {
@@ -142,8 +175,7 @@ export class SubscriptionDelivery {
     existing.push({
       subscriberId: declaration.subscriberId,
       subscriptionId,
-      method: declaration.method,
-      ...(declaration.params === undefined ? {} : { params: declaration.params }),
+      handleId: declaration.handleId,
       ...(declaration.filter === undefined ? {} : { filter: declaration.filter }),
     });
     this.byThread.set(declaration.threadId, existing);
@@ -183,12 +215,7 @@ export class SubscriptionDelivery {
       // event is still covered by that ack: skipping is a decision about this subscriber, not a
       // failure, and leaving it unacked would replay it forever.
       for (const event of result.events) {
-        if (isUnwantedEcho(event, registration)) continue;
-        await this.deps.invocation.invoke(registration.subscriberId, registration.method, {
-          subscriptionId: registration.subscriptionId,
-          event,
-          ...(registration.params === undefined ? {} : { params: registration.params }),
-        });
+        await deliverPublishedEvent(this.deps.delivery, registration, event);
       }
       await this.deps.messaging.ack(ctx, registration.subscriptionId, result.ackToken);
     }

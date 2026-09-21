@@ -18,7 +18,6 @@ import {
   CollectiveConnectorBuiltinRuntime,
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
-import { createModuleHostInvocation } from './builtin-runtime/module-host-invocation.js';
 import { ModulePluginRuntime } from './builtin-runtime/module-plugin-runtime.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
@@ -284,12 +283,6 @@ export function createDormantPluginRuntimeComposition(
   // Every admitted instance takes this one path; the carrier is selected from the
   // package's own manifest, most specific claim first (F202 C1 clauses 1/2/6).
   const moduleRuntime = new ModulePluginRuntime({ packages });
-  // The Host→plugin direction over the in-process carrier: a declared method resolved against
-  // the instance the carrier is already holding. Delivery is its first consumer, not its owner.
-  const subscriptionDelivery = createSubscriptionDelivery({
-    messaging,
-    invocation: createModuleHostInvocation({ runtime: moduleRuntime }),
-  });
   const supervisor = new PluginRuntimeCarrierRouter(inventoryStore);
   supervisor.register(
     new BundledPluginRuntimeCarrier({
@@ -305,6 +298,7 @@ export function createDormantPluginRuntimeComposition(
     }),
   );
   supervisor.register(externalSupervisor);
+  const subscriptionDelivery = createSubscriptionDelivery({ messaging, delivery: supervisor });
   let builtinContributions: BuiltinPluginContributionSupervisor | undefined;
   const lifecycle = new ExternalPluginLifecycleService({
     store: inventoryStore,

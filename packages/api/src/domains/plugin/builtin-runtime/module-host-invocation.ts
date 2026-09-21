@@ -1,35 +1,34 @@
 /**
  * F202 Train C1 — the Host→plugin direction over the in-process module carrier.
  *
- * The carrier already holds what a package's `create(manifest)` returned, so calling a method
- * that package declared is a function call on that instance. This is the TypeScript shape of the
- * SPI: no transport, no serialisation, no second lifecycle. Message delivery is one caller of it
- * and holds no special status — a schedule firing or a webhook arriving is the same call with a
- * different declared method.
+ * The carrier already holds what a package's `create(manifest)` returned, so the published
+ * `host.messaging.deliver` call is a function call on that instance. There is no second wire
+ * shape, transport, serialisation path, or lifecycle.
  *
  * WHY EVERY FAILURE PATH REJECTS. Callers read a resolved promise as "the package accepted this
  * work"; the delivery driver advances its cursor on exactly that signal. A method the package
  * never implemented must therefore reject rather than quietly do nothing, or a message would be
  * recorded as delivered while nobody ever received it.
  *
- * WHY THE NAME IS NOT TRUSTED. The method name comes from a package manifest, so it is
- * attacker-influenced input arriving at a property lookup. `toString`, `constructor`, `valueOf`
- * and `__proto__` all resolve to something callable on any object at all — invoking one would
- * run code the package never wrote and then report success for it. So the lookup walks only the
- * package's own instance and its own classes, stopping before the shared object roots, and a
- * short list of names that are never a package's method is refused outright.
+ * The fixed wire method is still resolved only on the package instance and its own classes. A
+ * shared object-root property can never stand in for an implemented Host callback.
  */
 
+import {
+  type M0CDeliverInput,
+  type M0CDeliverResult,
+  validateMessagingRowInput,
+  validateMessagingRowResult,
+} from '@clowder-ai/plugin-contract';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import type { HostInvocationPort } from '../host-invocation.js';
+import type { HostMessagingDeliveryPort } from '../host-invocation.js';
 
 export interface ModuleHostInvocationDeps {
   /** The carrier holding loaded instances; `definedPlugin` returns what `create()` returned. */
   readonly runtime: { definedPlugin(pluginInstanceId: string): unknown };
 }
 
-/** Names that are never a package's own method, whatever the prototype chain says. */
-const NEVER_A_METHOD = new Set(['constructor', 'prototype', '__proto__']);
+const DELIVERY_METHOD = 'host.messaging.deliver';
 
 /**
  * Resolve a method the package itself defines — on the instance or on its own classes — and
@@ -46,9 +45,9 @@ function resolvePackageMethod(instance: object, method: string): unknown {
   return undefined;
 }
 
-export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): HostInvocationPort {
+export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): HostMessagingDeliveryPort {
   return {
-    async invoke(targetId: string, method: string, params: unknown): Promise<void> {
+    async deliver(targetId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
       const instance = deps.runtime.definedPlugin(targetId);
       if (instance === undefined || instance === null) {
         throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', `${targetId} has no module loaded in this Host`);
@@ -59,24 +58,21 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Host
           `${targetId} did not produce an instance that can carry methods`,
         );
       }
-      if (NEVER_A_METHOD.has(method)) {
-        throw new ExternalPluginRuntimeError(
-          'PROTOCOL_VIOLATION',
-          `${targetId} declared the reserved name '${method}', which is never a package method`,
-        );
-      }
-
-      const candidate = resolvePackageMethod(instance as object, method);
+      const candidate = resolvePackageMethod(instance as object, DELIVERY_METHOD);
       if (typeof candidate !== 'function') {
-        throw new ExternalPluginRuntimeError(
-          'PROTOCOL_VIOLATION',
-          `${targetId} declared '${method}' but its module does not implement it`,
-        );
+        throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} does not implement ${DELIVERY_METHOD}`);
       }
 
-      // Awaited so a rejected promise reaches the caller; the return value is deliberately
-      // ignored — acceptance is signalled by not throwing, never by what comes back.
-      await (candidate as (input: unknown) => unknown).call(instance, params);
+      const validatedInput = validateMessagingRowInput(DELIVERY_METHOD, input);
+      if (!validatedInput.valid) {
+        throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} received invalid Host delivery input`);
+      }
+      const result = await (candidate as (value: M0CDeliverInput) => unknown).call(instance, validatedInput.value);
+      const validatedResult = validateMessagingRowResult(DELIVERY_METHOD, result);
+      if (!validatedResult.valid || validatedResult.value.deliveryId !== validatedInput.value.deliveryId) {
+        throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} returned an invalid delivery receipt`);
+      }
+      return validatedResult.value;
     },
   };
 }

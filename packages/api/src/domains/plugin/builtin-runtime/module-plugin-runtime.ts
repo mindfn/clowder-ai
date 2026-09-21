@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-import type { PluginManifest } from '@clowder-ai/plugin-contract';
+import type { M0CDeliverInput, M0CDeliverResult, PluginManifest } from '@clowder-ai/plugin-contract';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -9,6 +9,7 @@ import {
 } from '../external-runtime/types.js';
 import type { PluginPackageRecord } from '../host-inventory/types.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
+import { createModuleHostInvocation } from './module-host-invocation.js';
 
 /**
  * What the module at `runtime.entrypoint` must export by default.
@@ -40,10 +41,9 @@ interface LoadedModule {
  * lifecycle state machine and failure isolation — a second copy of that machinery is
  * exactly the carrier-shaped duplication clause 1 exists to remove.
  *
- * Loading is done here; activation is not. What is still missing is the step that turns a
- * loaded package into a table of callable methods — the thing `HostInvocationPort` needs in
- * order to call a method the package declared. Until that exists a package is defined but
- * never called, which is why nothing reaches a loaded module today.
+ * Loading is done here; activation is not. The standard Host delivery adapter can call an
+ * already-exposed delivery handler, while per-feature activation remains the step that will
+ * produce that handler from the package's declared actions.
  */
 export class ModulePluginRuntime implements BundledPluginRuntime {
   readonly #loaded = new Map<string, LoadedModule>();
@@ -110,6 +110,10 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     if (!loaded) return;
     this.#loaded.delete(pluginInstanceId);
     await loaded.located.release();
+  }
+
+  deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
+    return createModuleHostInvocation({ runtime: this }).deliver(pluginInstanceId, input);
   }
 
   /**

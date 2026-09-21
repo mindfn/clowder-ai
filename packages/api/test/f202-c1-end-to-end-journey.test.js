@@ -64,7 +64,7 @@ beforeEach(async () => {
     messageStore,
     stores,
     invokeTrigger: {
-      async trigger(threadId, catId, userId, message, messageId) {
+      async trigger(threadId, catId, _userId, message, messageId) {
         wakes.push({ threadId, catId, message, messageId });
         return 'dispatched';
       },
@@ -80,7 +80,7 @@ beforeEach(async () => {
 
   delivery = subscriptionDelivery.createSubscriptionDelivery({
     messaging,
-    invocation: moduleInvocation.createModuleHostInvocation({
+    delivery: moduleInvocation.createModuleHostInvocation({
       runtime: { definedPlugin: (id) => loadedModules.get(id) },
     }),
   });
@@ -88,8 +88,9 @@ beforeEach(async () => {
 
 function loadPackage(instanceId, methodName) {
   loadedModules.set(instanceId, {
-    async [methodName](params) {
-      outboundCalls.push({ instanceId, method: methodName, envelope: params.event?.envelope });
+    async 'host.messaging.deliver'(input) {
+      outboundCalls.push({ instanceId, method: methodName, envelope: input.envelope });
+      return { deliveryId: input.deliveryId };
     },
   });
 }
@@ -130,7 +131,7 @@ async function relayInbound(text, providerMessageId = 'om_1') {
   );
 }
 
-async function subscribe(instanceId, method, filter) {
+async function subscribe(instanceId, filter) {
   const { handleId } = await messaging.issueThreadHandle({
     pluginInstanceId: instanceId,
     threadId: FIXED_THREAD,
@@ -141,7 +142,6 @@ async function subscribe(instanceId, method, filter) {
     subscriberId: instanceId,
     threadId: FIXED_THREAD,
     handleId,
-    method,
     ...(filter === undefined ? {} : { filter }),
   });
 }
@@ -165,7 +165,7 @@ describe('F202 C1 — a package relays inward, a cat replies outward', () => {
     assert.equal(wakes[0].threadId, FIXED_THREAD);
 
     loadPackage(RELAY_PACKAGE, 'outbound');
-    await subscribe(RELAY_PACKAGE, 'outbound');
+    await subscribe(RELAY_PACKAGE);
 
     await catReplies('看完了');
     await delivery.drain(FIXED_THREAD);
@@ -179,7 +179,7 @@ describe('F202 C1 — a package relays inward, a cat replies outward', () => {
     // Subscribing BEFORE the inbound arrives is load-bearing: a subscription starts at the
     // current head, so registering afterwards would skip it for the wrong reason.
     loadPackage(RELAY_PACKAGE, 'outbound');
-    await subscribe(RELAY_PACKAGE, 'outbound');
+    await subscribe(RELAY_PACKAGE);
 
     await relayInbound('hi');
     await delivery.drain(FIXED_THREAD);
@@ -194,7 +194,7 @@ describe('F202 C1 — a package relays inward, a cat replies outward', () => {
   test('case 3: a second, unrelated subscriber gets the same reply', async () => {
     await relayInbound('hi');
     loadPackage(FRONT_DESK, 'deliver');
-    await subscribe(FRONT_DESK, 'deliver');
+    await subscribe(FRONT_DESK);
 
     await catReplies('好的');
     await delivery.drain(FIXED_THREAD);
@@ -206,7 +206,7 @@ describe('F202 C1 — a package relays inward, a cat replies outward', () => {
 
   test('case 4: a subscriber that deliberately asks for its own echo receives it', async () => {
     loadPackage(RELAY_PACKAGE, 'outbound');
-    await subscribe(RELAY_PACKAGE, 'outbound', { includeOwnMessages: true });
+    await subscribe(RELAY_PACKAGE, { includeOwnMessages: true });
 
     await relayInbound('hi');
     await delivery.drain(FIXED_THREAD);
@@ -222,7 +222,7 @@ describe('F202 C1 — a package relays inward, a cat replies outward', () => {
   ]) {
     test(`case 5: ${label} falls back to suppression`, async () => {
       loadPackage(RELAY_PACKAGE, 'outbound');
-      await subscribe(RELAY_PACKAGE, 'outbound', filter);
+      await subscribe(RELAY_PACKAGE, filter);
 
       await relayInbound('hi');
       await delivery.drain(FIXED_THREAD);
