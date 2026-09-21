@@ -70,21 +70,36 @@ factory」改成「插件声明要跑什么」，limb 同理，7 个 github fact
 据此，Host 侧的活一句话：**让能力注册由「已安装的包」驱动，而不是由「源码目录」驱动。**
 做完这一条，github 目录才能从 `packages/api/src/plugins` 变成一个可安装包。
 
-## 0.02　接头形状：命令式（Fable 独立 review 定案，2026-09-21）
+## 0.02　接头形状：两层互补（operator 2026-09-21 纠正了 §0.02 初稿的伪二选一）
 
-§0.01 只说了「要接上」，没说**怎么接**。两种接法，选命令式：
+初稿把它写成「声明式 vs 命令式，二选一」，**operator 指出这是伪命题**：
 
-| 接法 | 做法 | 后果 |
-|---|---|---|
-| 声明式 | Host 读 `manifest.contributions` 自己激活 | **否决**——会在 Host 里长出 12 类 contribution 解释器，那张矩阵又回来了 |
-| **命令式（选定）** | 插件在 lifecycle 钩子里调 Host 的注册动词 | operator 原话：「插件在自己的 lifecycle 中比如 enable 的时候去调用 sdk 的 skill/mcp 的注册接口」 |
+> 「plugin.yaml 插件的元数据和能力声明；sdk 让插件能和 host 主动双向交互；两者是互补的」
 
-**决定性证据：SDK 已经实现了命令式，而且是全的。**
-`plugin-sdk` `feature-context.d.ts:40-66` 的 `FeatureContext` 上已有
-`skills` / `scheduler` / `mcp` / `limbs` / `webhooks` / `messaging.subscribe` /
-`services` / `connectors` / `ui` / `contentEditors` / `identity` / `tools`
-十二个 `ContributionRegistrar`，外加 `state.get/set`。
-**插件作者的代码一行都不用变。**
+**两层，各管各的：**
+
+| 层 | 载体 | 管什么 | 今天状态 |
+|---|---|---|---|
+| 声明 | plugin.yaml（main 那套 `PluginManifest{ id, config, resources[] }`） | 元数据 + 提供哪些能力 + 配置 | **能用**，skill/mcp 无白名单 |
+| 交互 | SDK `FeatureContext` | 运行时双向调用（插件要执行代码的那些） | SDK 侧已备齐，Host 侧无动词 |
+
+**按能力类型分工，不是全局二选一：**
+
+- **skill / mcp**（静态资源：挂文件、起进程）→ 声明就够，Host 照 main 的路径激活。**今天就没有白名单。**
+- **schedule / limb**（要执行插件代码）→ 必须有双向通道，这正是两个白名单的由来：
+  插件不能提供 handler，所以 handler 只能写在 Host 里。
+
+### 收敛方向：C1 往 main 收敛，不是反过来
+
+> operator：「c1 往我们当前的 main 的那套收敛本来就是合理的；
+> main 上那一套就是为了在做拆分做准备的……已有的插件只是很早就在帮我们补齐相关的能力；但是没有解耦而已」
+
+main 的 4 类 `PluginResourceDef`（skill/mcp/limb/schedule）是**有实现的那一套**；
+contract 的 12 类 `StaticContribution` 只有 2 类被真正消费。
+**收敛 = 让已安装包的能力声明走 main 的激活路径，不是在 Host 里新建一台 12 类解释器。**
+
+Fable review 担心的「Host 长出 12 类解释器」是真风险，**但解法是不采纳 12 类模型**，
+不是把 skill 这种静态资源也改成运行时注册。该 review 的这一条据此更正。
 
 ### 「造适配器」错在方向，不是错在存在
 
@@ -93,14 +108,17 @@ factory」改成「插件声明要跑什么」，limb 同理，7 个 github fact
 
 ### Host 侧实际缺的三处（全是接线，无新机制）
 
-1. **加 wire 动词**：skill / mcp / schedule / limb 各一对 register / unregister。
-   handler 薄包**已有原语**：`addSkill` / `removeSkill`、
-   `taskRunner.registerPostStart` / `unregister`、`limbRegistry.register` / `deregister`。
+1. **把已安装包接上 main 的激活路径**（声明层，**不需要 wire 动词**）：
+   已安装包的能力声明今天到不了 `addSkill` / `installMcpCapability`。
+   薄包**已有原语**即可：`addSkill` / `removeSkill`、`installMcpCapability` / `removeMcpCapability`。
    **不要直接调 `PluginResourceActivator`**——它假定插件住在 `pluginsDir`
    （`assertPluginResourceInsideRoot` 走 `join(pluginsDir, manifest.id)`），
    已安装包不在那儿；要接在它下面一层。
-2. **加两个 Host→插件回调**：schedule 触发、limb 调用，形状照 `host.messaging.deliver`。
-   **加上之后两个白名单自然消失**——factory 和 adapter 就是插件自己的 handler，不用专门拆。
+   **这一条就能让 skill / mcp 类插件完整工作**，且零跨仓依赖。
+2. **加两个 Host→插件回调**（交互层，**只为 schedule / limb**）：schedule 触发、limb 调用，
+   形状照 `host.messaging.deliver`。**加上之后两个白名单自然消失**——
+   factory 和 adapter 就是插件自己的 handler，不用专门拆。
+   只有这一条需要 contract 加 wire 行（见下）。
 3. **module 载体补两件**：今天只调 `create(manifest)`（`module-plugin-runtime.ts:90`）；
    需要给插件实例一个回环连接（`openBuiltinConnection` 已存在，`control-plane.ts:164`，
    目前只有 content-editor 在用），并在 enable/disable 时调它的钩子。
