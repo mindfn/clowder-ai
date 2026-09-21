@@ -76,6 +76,7 @@ import type {
 import {
   advanceLifecycleInputDispatchMetadata,
   applyStreamMetadataAugment,
+  assertPrivateNoticeQueueAdmission,
   assertValidStoredMessageTimestamp,
   assignLifecycleDispatchTargetsMetadata,
   COORDINATION_TERMINAL_SCAN_PAGE_SIZE,
@@ -1249,6 +1250,27 @@ export class RedisMessageStore {
       entries: persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
       deduped: true,
     };
+  }
+
+  async appendNoticeWithPrivateQueueAdmission(
+    notice: AppendMessageInput,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+  ): Promise<QueueLedgerMessageAdmissionResult> {
+    if (!(ledgerStore instanceof RedisQueueLedgerStore) || !ledgerStore.usesRedisClient(this.redis)) {
+      throw new Error('Redis message admission requires the matching Redis Queue ledger');
+    }
+    assertPrivateNoticeQueueAdmission(entries);
+    // Same single atomic append+admit path the bound variant uses; the rows simply stay unbound,
+    // which is the only reason this needs its own entry point. One transition, so there is no
+    // window where a crash can publish the notice without the work or admit work without the notice.
+    const result = await this.appendWithReservedId(notice, undefined, { entries });
+    if (result.outcome === 'queue_full') return { outcome: 'full' };
+    if (result.outcome === 'queue_conflict') {
+      throw new Error('Queue admission identity conflict for a visible-notice private input');
+    }
+    if (result.outcome !== 'stored') throw new Error('unreachable Queue admission outcome');
+    return { outcome: 'enqueued', message: result.message, entries: [...entries], deduped: result.replayed };
   }
 
   async enqueueExistingMessageWithQueueLedgerAdmission(

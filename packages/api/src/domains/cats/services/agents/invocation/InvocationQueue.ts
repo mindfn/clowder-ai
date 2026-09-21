@@ -477,6 +477,35 @@ export class InvocationQueue {
     };
   }
 
+  /**
+   * Admit private work and publish the line announcing it in one storage transition.
+   *
+   * The visible notice is not the work's source record — a `private_input` row may never reference
+   * a History message — so this cannot go through the bound `appendWithQueueLedgerAdmission` path.
+   * Committing them together is still required: split into two writes, the second can fail and
+   * leave either a "triggered" notice with nothing behind it, or durable work whose producer was
+   * told it failed and will be retried or reported as `trigger_failed`.
+   */
+  async enqueueDurableWithVisibleNotice(
+    input: QueueEnqueueInput,
+    notice: AppendMessageInput,
+    messageStore: IMessageStore,
+  ): Promise<EnqueueResult & { entries?: QueueEntry[]; notice?: StoredMessage }> {
+    const sourceId = InvocationQueue.persistentSourceId(input);
+    const rows = this.createLedgerRows(input, sourceId, this.nextEnqueuedAt(), undefined);
+    const result = await messageStore.appendNoticeWithPrivateQueueAdmission(notice, rows, this.ledgerStore);
+    if (result.outcome === 'full') return { outcome: 'full' };
+    const entries = this.cacheLedgerEntries(result.entries);
+    const primary = entries[0];
+    return {
+      outcome: 'enqueued',
+      ...(primary ? { entry: primary } : {}),
+      entries,
+      notice: result.message,
+      deduped: result.deduped,
+    };
+  }
+
   /** Synchronous durable admission for the in-memory store used by local/test hosts. */
   enqueueDurableNow(input: QueueEnqueueInput): EnqueueResult & { entries?: QueueEntry[] } {
     if (!(this.ledgerStore instanceof InMemoryQueueLedgerStore)) {

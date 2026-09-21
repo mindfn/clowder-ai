@@ -78,7 +78,11 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
       messages: IMessageStore;
       queue: Pick<
         InvocationQueue,
-        'appendAndEnqueueDurable' | 'enqueueDurable' | 'findAdmittedEntriesForMessages' | 'getDurableEntry'
+        | 'appendAndEnqueueDurable'
+        | 'enqueueDurable'
+        | 'enqueueDurableWithVisibleNotice'
+        | 'findAdmittedEntriesForMessages'
+        | 'getDurableEntry'
       >;
       progress: (entry: QueueEntry, targetCatId: string) => Promise<OwnedQueueProgress>;
     },
@@ -168,23 +172,32 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     return { admitted: true, entryId: row.entry.id };
   }
 
-  /** Durable Queue admission for a target-only payload, without starting the work. */
-  private async admitPrivateRow(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entry?: QueueEntry }> {
-    const targetCat = createCatId(input.targetCatId);
-    const admitted = await this.deps.queue.enqueueDurable({
+  /**
+   * The one envelope shape for private work, shared by the bare and notice-carrying paths.
+   *
+   * Both must produce byte-identical rows: the admission receipt is keyed on this envelope's
+   * fingerprint, so any divergence would make the same logical input look like a conflicting one.
+   */
+  private privateEnqueueInput(input: PrivateQueueDeliveryInput) {
+    return {
       threadId: input.threadId,
       userId: input.ownerUserId,
       sourceId: input.idempotencyKey,
-      kind: 'private_input',
-      ownerAuthProvenance: input.ownerAuthProvenance ?? 'unknown',
+      kind: 'private_input' as const,
+      ownerAuthProvenance: input.ownerAuthProvenance ?? ('unknown' as const),
       idempotencyKey: input.idempotencyKey,
       content: input.content,
       from: input.from,
-      targetCats: [targetCat],
-      intent: 'execute',
+      targetCats: [createCatId(input.targetCatId)],
+      intent: 'execute' as const,
       ...(input.priority ? { priority: input.priority } : {}),
       ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
-    });
+    };
+  }
+
+  /** Durable Queue admission for a target-only payload, without starting the work. */
+  private async admitPrivateRow(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entry?: QueueEntry }> {
+    const admitted = await this.deps.queue.enqueueDurable(this.privateEnqueueInput(input));
     if (admitted.outcome === 'full') return { admitted: false };
     const entry = admitted.entry;
     if (!entry) {
@@ -199,19 +212,24 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
   async deliverVisibleWithPrivateInput(
     input: VisibleWithPrivateQueueDeliveryInput,
   ): Promise<{ admitted: boolean; entryId?: string; notice?: StoredMessage }> {
-    // Every atomic Message+Queue primitive in this store requires its rows to bind the exact
-    // message identity, and a `private_input` row is forbidden from referencing a public History
-    // message. A single transaction across the two is therefore structurally excluded. Ordering
-    // gives the guarantee that actually matters: the work is durable before anything claims it
-    // happened, so a refusal or a crash can leave work without decoration, never a notice without
-    // work. The notice carries the producer's idempotency key, so a replay republishes at most once.
-    const row = await this.admitPrivateRow(input);
-    if (!row.admitted) return { admitted: false };
-    const notice = await this.deps.messages.append(input.notice);
-    if (row.entry && row.entry.status !== 'claimed' && row.entry.status !== 'processing') {
-      await this.deps.progress(row.entry, input.targetCatId);
+    // One transition for both halves. Ordering two writes is not enough: whichever runs second can
+    // fail, leaving either a visible "triggered" notice with no admitted work, or durable work whose
+    // producer was handed an error and will report `trigger_failed` while the work still runs.
+    const admitted = await this.deps.queue.enqueueDurableWithVisibleNotice(
+      this.privateEnqueueInput(input),
+      input.notice,
+      this.deps.messages,
+    );
+    if (admitted.outcome === 'full') return { admitted: false };
+    const entry = admitted.entry;
+    if (entry && entry.status !== 'claimed' && entry.status !== 'processing') {
+      await this.deps.progress(entry, input.targetCatId);
     }
-    return { admitted: true, ...(row.entry ? { entryId: row.entry.id } : {}), notice };
+    return {
+      admitted: true,
+      ...(entry ? { entryId: entry.id } : {}),
+      ...(admitted.notice ? { notice: admitted.notice } : {}),
+    };
   }
 
   private async progressExistingMessage(

@@ -740,6 +740,26 @@ export function prepareQueueLedgerMessageAdmission(
   return { ...message, lifecycle: prepareQueueLedgerSourceLifecycle(storedIdentity, entries) };
 }
 
+/**
+ * Guard the one admission shape where the Queue rows deliberately do NOT belong to the message.
+ *
+ * `appendWithQueueLedgerAdmission` requires every row to bind the exact message identity, which is
+ * precisely what a `private_input` row may never do. That is why announcing private work needs its
+ * own primitive rather than the existing one: the notice is decoration for work that owns no
+ * History member, so the rows must stay unbound while still committing in the same transaction.
+ */
+export function assertPrivateNoticeQueueAdmission(entries: readonly QueueLedgerEntry[]): void {
+  if (entries.length === 0) throw new Error('visible-notice admission requires at least one private row');
+  for (const entry of entries) {
+    if (entry.kind !== 'private_input') {
+      throw new Error('visible-notice admission carries only private_input rows');
+    }
+    if (entry.payload.messageId != null) {
+      throw new Error('private_input cannot reference a public History message');
+    }
+  }
+}
+
 /** Prepare the History half of existing-source Queue admission without changing its visibility. */
 export function prepareQueueLedgerSourceLifecycle(
   message: StoredMessage,
@@ -1687,6 +1707,17 @@ export interface IMessageStore {
     ledgerStore: QueueLedgerStore,
     maxQueuedUserEntries?: number,
   ): QueueLedgerMessageAdmissionResult | Promise<QueueLedgerMessageAdmissionResult>;
+  /**
+   * Atomically publish a visible notice and admit the private Queue work it announces.
+   *
+   * Two separate writes cannot express this: whichever runs second can fail, leaving either a
+   * "triggered" line with no work behind it or durable work the caller was told had failed.
+   */
+  appendNoticeWithPrivateQueueAdmission(
+    notice: AppendMessageInput,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+  ): QueueLedgerMessageAdmissionResult | Promise<QueueLedgerMessageAdmissionResult>;
   /** Atomically bind an already-persisted connector message to its Queue fan-out. */
   enqueueExistingMessageWithQueueLedgerAdmission(
     messageId: string,
@@ -2182,6 +2213,36 @@ export class MessageStore {
         deduped: admitted.outcome === 'replayed',
       };
     } catch (error) {
+      if (admitted.outcome === 'enqueued') ledgerStore.removeEnqueuedNow(admitted.entries);
+      throw error;
+    }
+  }
+
+  appendNoticeWithPrivateQueueAdmission(
+    notice: AppendMessageInput,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+  ): QueueLedgerMessageAdmissionResult {
+    if (!(ledgerStore instanceof InMemoryQueueLedgerStore)) {
+      throw new Error('memory message admission requires the matching in-memory Queue ledger');
+    }
+    assertPrivateNoticeQueueAdmission(entries);
+    const admitted = ledgerStore.enqueueNow(entries);
+    if (admitted.outcome === 'full') return { outcome: 'full' };
+    if (admitted.outcome === 'conflict') {
+      throw new Error('Queue admission identity conflict for a visible-notice private input');
+    }
+    try {
+      const message = this.append(notice);
+      return {
+        outcome: 'enqueued',
+        message,
+        entries: admitted.entries,
+        deduped: admitted.outcome === 'replayed',
+      };
+    } catch (error) {
+      // The notice is the half that failed, so the work it would have announced must not survive.
+      // Rollback retracts the receipt too, or this identity would be refused forever.
       if (admitted.outcome === 'enqueued') ledgerStore.removeEnqueuedNow(admitted.entries);
       throw error;
     }

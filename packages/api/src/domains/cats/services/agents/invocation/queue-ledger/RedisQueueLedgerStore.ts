@@ -10,6 +10,7 @@ import {
   type QueueLedgerTargetExpansionResult,
   type QueueLedgerTargetReconcileResult,
   type QueueLedgerTransitionResult,
+  queueLedgerAdmissionFingerprint,
   queueLedgerAdmissionsMatch,
 } from './QueueLedger.js';
 import { QueueLedgerKeys } from './queue-ledger-keys.js';
@@ -34,6 +35,7 @@ import {
   listAllRedisQueueLedgerEntries,
   listRedisQueueLedgerEntries,
   listRedisQueueLedgerThreadIds,
+  verifyRedisQueueLedgerReplay,
 } from './RedisQueueLedgerReader.js';
 
 export { hydrateQueueLedgerEntry, migrateQueueLedgerRowsToV2 } from './RedisQueueLedgerCodec.js';
@@ -105,6 +107,9 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     if (entries.some((entry) => entry.threadId !== threadId))
       throw new Error('queue ledger enqueue must be one thread');
     const serialized = entries.map((entry) => JSON.stringify(entry));
+    // Computed here, never in Lua: the receipt comparison must use the exact same bytes the
+    // in-memory store compares, or the two backends could disagree about what a replay is.
+    const fingerprints = entries.map(queueLedgerAdmissionFingerprint);
     const raw = Number(
       await this.redis.eval(
         ENQUEUE_QUEUE_ROWS_LUA,
@@ -116,26 +121,14 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
         maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
         String(entries.length),
         ...serialized,
+        ...fingerprints,
       ),
     );
     if (raw === 0) return { outcome: 'full', entries: [] };
     if (raw === -1) return { outcome: 'conflict', entries: [] };
     if (raw !== 1 && raw !== 2) throw new Error(`unexpected queue ledger enqueue outcome: ${raw}`);
     if (raw === 1) return { outcome: 'enqueued', entries: entries.map(cloneQueueLedgerEntry) };
-    const existingRaws = await this.redis.hmget(QueueLedgerKeys.entries(threadId), ...entries.map((entry) => entry.id));
-    if (existingRaws.some((value) => typeof value !== 'string')) {
-      throw new Error('Queue replay identity vanished after atomic preflight');
-    }
-    const existing = existingRaws.map((value) => hydrateQueueLedgerEntry(value as string));
-    if (
-      !existing.every((entry, index) => {
-        const input = entries[index];
-        return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
-      })
-    ) {
-      return { outcome: 'conflict', entries: [] };
-    }
-    return { outcome: 'replayed', entries: existing };
+    return verifyRedisQueueLedgerReplay(this.redis, threadId, entries);
   }
 
   async expandTargets(

@@ -1,5 +1,6 @@
 import { commitInMemoryQueueLedgerEntry } from './InMemoryQueueLedgerCommit.js';
 import { InMemoryQueueLedgerMessageIndex } from './InMemoryQueueLedgerMessageIndex.js';
+import { InMemoryQueueLedgerPrivateAdmissions } from './InMemoryQueueLedgerPrivateAdmissions.js';
 import {
   assertQueueLedgerEntry,
   cloneQueueLedgerEntry,
@@ -18,16 +19,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
   private readonly messageIndex = new InMemoryQueueLedgerMessageIndex();
 
-  /**
-   * Durable admission receipts for `private_input` rows. A public input's winner is its History
-   * message; a private input has none, and its row is retired on purpose at the processing
-   * boundary, so this receipt is the only thing that can refuse a replayed stable key.
-   */
-  private readonly privateAdmissions = new Map<string, Set<string>>();
-
-  private hasPrivateAdmission(threadId: string, entryId: string): boolean {
-    return this.privateAdmissions.get(threadId)?.has(entryId) === true;
-  }
+  private readonly privateAdmissions = new InMemoryQueueLedgerPrivateAdmissions();
 
   enqueueNow(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): QueueLedgerEnqueueResult {
     if (entries.length === 0) throw new Error('queue ledger enqueue requires at least one row');
@@ -50,12 +42,13 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
         : { outcome: 'conflict', entries: [] };
     }
     // Settled means "this identity already won admission": a live row, or a retired private row
-    // whose receipt outlived it. A replay of either must never become a second execution.
-    const settled = entries.map(
-      (entry, index) =>
-        existing[index] !== undefined ||
-        (entry.kind === 'private_input' && this.hasPrivateAdmission(threadId, entry.id)),
+    // whose receipt outlived it. A replay of either must never become a second execution — but a
+    // different envelope reusing a settled key is a conflict, never a silent admission.
+    const verdicts = entries.map((entry, index) =>
+      existing[index] !== undefined ? 'replay' : this.privateAdmissions.verdict(threadId, entry),
     );
+    if (verdicts.includes('conflict')) return { outcome: 'conflict', entries: [] };
+    const settled = verdicts.map((verdict) => verdict !== 'unseen');
     if (settled.every(Boolean)) {
       return { outcome: 'replayed', entries: existingEntries.map(cloneQueueLedgerEntry) };
     }
@@ -78,12 +71,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     current.push(...inserted);
     this.rows.set(threadId, current);
     this.messageIndex.index(threadId, inserted);
-    for (const entry of inserted) {
-      if (entry.kind !== 'private_input') continue;
-      const receipts = this.privateAdmissions.get(threadId) ?? new Set<string>();
-      receipts.add(entry.id);
-      this.privateAdmissions.set(threadId, receipts);
-    }
+    this.privateAdmissions.remember(threadId, inserted);
     return { outcome: 'enqueued', entries: inserted.map(cloneQueueLedgerEntry) };
   }
 
@@ -201,6 +189,10 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (remaining.length === 0) this.rows.delete(threadId);
     else this.rows.set(threadId, remaining);
     this.messageIndex.unindex(threadId, removed);
+    // Rolling back an admission must also retract its receipt. A receipt left behind would keep
+    // refusing the identity forever, turning a compensated write into a permanent tombstone that
+    // silently swallows every later retry of the same producer key.
+    this.privateAdmissions.forget(threadId, removed);
   }
 
   async list(threadId: string): Promise<QueueLedgerEntry[]> {

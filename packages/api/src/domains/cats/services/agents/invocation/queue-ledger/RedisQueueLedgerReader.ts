@@ -1,5 +1,5 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { QueueLedgerEntry } from './QueueLedger.js';
+import { type QueueLedgerEnqueueResult, type QueueLedgerEntry, queueLedgerAdmissionsMatch } from './QueueLedger.js';
 import { QueueLedgerKeys } from './queue-ledger-keys.js';
 import { GET_QUEUE_ROWS_BY_MESSAGE_IDS_LUA, LIST_QUEUE_ROWS_LUA } from './queue-ledger-redis-scripts.js';
 import { hydrateQueueLedgerEntry } from './RedisQueueLedgerCodec.js';
@@ -91,4 +91,29 @@ export async function getRedisQueueLedgerEntry(
 ): Promise<QueueLedgerEntry | null> {
   const raw = await redis.hget(QueueLedgerKeys.entries(threadId), entryId);
   return raw ? hydrateQueueLedgerEntry(raw) : null;
+}
+
+/**
+ * Confirm what an atomic enqueue already decided was a replay.
+ *
+ * The Lua script answers "every identity was already settled" without shipping the stored rows
+ * back, so the verdict still has to be checked against the rows on disk: same envelope is a
+ * replay, a different one reusing the ids is a conflict. A missing row here means the atomic
+ * preflight and the follow-up read disagree, which is corruption rather than a normal outcome.
+ */
+export async function verifyRedisQueueLedgerReplay(
+  redis: RedisClient,
+  threadId: string,
+  entries: readonly QueueLedgerEntry[],
+): Promise<QueueLedgerEnqueueResult> {
+  const raws = await redis.hmget(QueueLedgerKeys.entries(threadId), ...entries.map((entry) => entry.id));
+  if (raws.some((value) => typeof value !== 'string')) {
+    throw new Error('Queue replay identity vanished after atomic preflight');
+  }
+  const existing = raws.map((value) => hydrateQueueLedgerEntry(value as string));
+  const matches = existing.every((entry, index) => {
+    const input = entries[index];
+    return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
+  });
+  return matches ? { outcome: 'replayed', entries: existing } : { outcome: 'conflict', entries: [] };
 }
