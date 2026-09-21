@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
 
@@ -97,6 +97,11 @@ test('enabling a locally installed package registers its declared skill capabili
     ),
     'a skill declared by an enabled installed package must be present in Host capabilities',
   );
+  const activeSkill = capabilities?.capabilities.find(
+    (capability) => capability.type === 'skill' && capability.pluginId === installed.pluginId,
+  );
+  assert.ok(activeSkill?.skillsSource);
+  const activeSkillSource = resolve(projectRoot, activeSkill.skillsSource);
   await writeCapabilitiesConfig(projectRoot, {
     ...capabilities,
     capabilities: [
@@ -124,6 +129,11 @@ test('enabling a locally installed package registers its declared skill capabili
     ),
     false,
     'disabling the package must remove every persisted skill capability owned by the plugin',
+  );
+  await assert.rejects(
+    access(activeSkillSource),
+    /ENOENT/,
+    'disabling the package must remove its copied skill source',
   );
 });
 
@@ -188,8 +198,10 @@ test('a skill activation failure leaves no capability registered by the package'
   );
   const capabilities = await readCapabilitiesConfig(projectRoot);
   assert.equal(
-    capabilities?.capabilities.some(
-      (capability) => capability.type === 'skill' && capability.pluginId === installed.pluginId,
+    Boolean(
+      capabilities?.capabilities.some(
+        (capability) => capability.type === 'skill' && capability.pluginId === installed.pluginId,
+      ),
     ),
     false,
     'failed startup must roll back skills that were registered before the failure',

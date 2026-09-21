@@ -292,7 +292,11 @@ export function createDormantPluginRuntimeComposition(
       else moduleLogger[level](fields, message);
     },
   });
-  const supervisor = new PluginRuntimeCarrierRouter(inventoryStore, { projectRoot: options.projectRoot, packages });
+  const supervisor = new PluginRuntimeCarrierRouter(inventoryStore, {
+    projectRoot: options.projectRoot,
+    packages,
+    resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), 'resources'),
+  });
   supervisor.register(
     new BundledPluginRuntimeCarrier({
       inventory: inventoryStore,

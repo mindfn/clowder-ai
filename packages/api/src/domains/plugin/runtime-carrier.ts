@@ -1,7 +1,3 @@
-import { realpath, stat } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
-
 import {
   type M0CDeliverInput,
   type M0CDeliverResult,
@@ -9,15 +5,9 @@ import {
   validateMessagingRowResult,
 } from '@clowder-ai/plugin-contract';
 
-import { readCapabilitiesConfig, withCapabilityLock } from '../../config/capabilities/capability-orchestrator.js';
-import { readMountRules } from '../../config/mount/mount-rules-store.js';
-import { addSkill, removeSkill } from '../../skills/skill-manage.js';
+import { activateDeclaredSkills, removeDeclaredSkills } from './declared-static-resources.js';
 import type { PluginRuntimeLifecyclePort } from './external-plugin-lifecycle-types.js';
-import {
-  ExternalPluginRuntimeError,
-  type VerifiedPluginPackage,
-  type VerifiedPluginPackageLocator,
-} from './external-runtime/types.js';
+import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from './external-runtime/types.js';
 import type { PluginInventoryStore } from './host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from './host-inventory/types.js';
 
@@ -50,16 +40,13 @@ export interface PluginRuntimeCarrier {
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   readonly #carriers: PluginRuntimeCarrier[] = [];
-  readonly #resourcePackages = new Map<
-    string,
-    { readonly pluginId: string; readonly located: VerifiedPluginPackage }
-  >();
 
   constructor(
     private readonly inventory: Pick<PluginInventoryStore, 'snapshot'>,
     private readonly resources?: {
       readonly projectRoot: string;
       readonly packages: VerifiedPluginPackageLocator;
+      readonly resourcesRoot?: string;
     },
   ) {}
 
@@ -78,7 +65,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const carrier = this.#selectAdmission(admission);
     const result = await carrier.start(pluginInstanceId);
     try {
-      await this.#activateDeclaredSkills(admission);
+      await activateDeclaredSkills(admission, this.resources);
       return result;
     } catch (error) {
       await this.#rollbackStartedRuntime(error, carrier, admission);
@@ -89,10 +76,8 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
     await carrier.stop(pluginInstanceId, reason);
-    try {
-      await this.#removePersistedSkills(admission.packageRecord.pluginId);
-    } finally {
-      await this.#releaseResourcePackage(pluginInstanceId);
+    if (reason === 'owner_disabled' || reason === 'owner_uninstalled') {
+      await removeDeclaredSkills(admission.packageRecord.pluginId, this.resources);
     }
   }
 
@@ -102,17 +87,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );
     if (carrierFailure) throw carrierFailure.reason;
-    const resourceResults = await Promise.allSettled(
-      [...this.#resourcePackages].map(async ([pluginInstanceId, resource]) => {
-        try {
-          await this.#removePersistedSkills(resource.pluginId);
-        } finally {
-          await this.#releaseResourcePackage(pluginInstanceId);
-        }
-      }),
-    );
-    const failure = resourceResults.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (failure) throw failure.reason;
   }
 
   async recoverAfterRestart(): Promise<number> {
@@ -167,50 +141,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     return carrier;
   }
 
-  async #activateDeclaredSkills(admission: PluginRuntimeAdmission): Promise<void> {
-    const skills = (admission.packageRecord.manifest.contributions ?? []).filter(
-      (contribution) => contribution.type === 'skill',
-    );
-    if (skills.length === 0) return;
-    if (!this.resources) {
-      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host static-resource activation is unavailable');
-    }
-    const resources = this.resources;
-    const located = await resources.packages.resolveInstalledPackage(admission.packageRecord.packageDigest);
-    this.#resourcePackages.set(admission.instance.pluginInstanceId, {
-      pluginId: admission.packageRecord.pluginId,
-      located,
-    });
-    if (!isDeepStrictEqual(located.manifest, admission.packageRecord.manifest)) {
-      throw new ExternalPluginRuntimeError(
-        'PACKAGE_AUTHORITY_MISMATCH',
-        'located package manifest differs from the admitted package record',
-      );
-    }
-    await located.verifyIntegrity();
-    const mountRules = await readMountRules(resources.projectRoot, resources.projectRoot);
-    await withCapabilityLock(resources.projectRoot, async () => {
-      for (const skill of skills) {
-        const skillSourceDir = await resolvePackageSkillDirectory(located.rootDir, skill.path);
-        const skillName = basename(skillSourceDir);
-        const skillsSource = dirname(skillSourceDir);
-        const result = await addSkill(resources.projectRoot, skillName, skillsSource, {
-          mountRules,
-          pluginId: admission.packageRecord.pluginId,
-          capabilityId: skillName,
-          skillsSource: relative(resources.projectRoot, skillsSource),
-        });
-        if (result.mounted.length === 0 && result.conflicts.length > 0) {
-          throw new Error(
-            `All skill mount points conflict for plugin skill '${skillName}': ${result.conflicts
-              .map((conflict) => conflict.path)
-              .join(', ')}`,
-          );
-        }
-      }
-    });
-  }
-
   async #rollbackStartedRuntime(
     startError: unknown,
     carrier: PluginRuntimeCarrier,
@@ -223,12 +153,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       rollbackErrors.push(error);
     }
     try {
-      await this.#removePersistedSkills(admission.packageRecord.pluginId);
-    } catch (error) {
-      rollbackErrors.push(error);
-    }
-    try {
-      await this.#releaseResourcePackage(admission.instance.pluginInstanceId);
+      await removeDeclaredSkills(admission.packageRecord.pluginId, this.resources);
     } catch (error) {
       rollbackErrors.push(error);
     }
@@ -239,41 +164,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       );
     }
     throw startError;
-  }
-
-  async #removePersistedSkills(pluginId: string): Promise<void> {
-    if (!this.resources) return;
-    const resources = this.resources;
-    const mountRules = await readMountRules(resources.projectRoot, resources.projectRoot);
-    await withCapabilityLock(resources.projectRoot, async () => {
-      const config = await readCapabilitiesConfig(resources.projectRoot);
-      const ownedSkills =
-        config?.capabilities.filter((capability) => capability.type === 'skill' && capability.pluginId === pluginId) ??
-        [];
-      const removalErrors: unknown[] = [];
-      for (const skill of ownedSkills) {
-        try {
-          await removeSkill(resources.projectRoot, skill.id, {
-            mountRules,
-            pluginId,
-            capabilityId: skill.id,
-            ...(skill.skillsSource ? { skillsSource: resolve(resources.projectRoot, skill.skillsSource) } : {}),
-          });
-        } catch (error) {
-          removalErrors.push(error);
-        }
-      }
-      if (removalErrors.length > 0) {
-        throw new AggregateError(removalErrors, `Failed to remove all persisted skills for ${pluginId}`);
-      }
-    });
-  }
-
-  async #releaseResourcePackage(pluginInstanceId: string): Promise<void> {
-    const resource = this.#resourcePackages.get(pluginInstanceId);
-    if (!resource) return;
-    this.#resourcePackages.delete(pluginInstanceId);
-    await resource.located.release();
   }
 
   /**
@@ -295,20 +185,4 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     }
     return { instance, packageRecord };
   }
-}
-
-async function resolvePackageSkillDirectory(packageRoot: string, declaredPath: string): Promise<string> {
-  const realPackageRoot = await realpath(packageRoot);
-  const skillSourceDir = await realpath(resolve(realPackageRoot, declaredPath));
-  const relativePath = relative(realPackageRoot, skillSourceDir);
-  if (relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
-    throw new Error(`Skill resource escapes the verified package root: ${declaredPath}`);
-  }
-  const skillStat = await stat(skillSourceDir);
-  if (!skillStat.isDirectory()) throw new Error(`Skill resource must be a directory: ${declaredPath}`);
-  const skillManifestStat = await stat(join(skillSourceDir, 'SKILL.md')).catch(() => undefined);
-  if (!skillManifestStat?.isFile()) {
-    throw new Error(`Skill resource directory must contain SKILL.md: ${declaredPath}`);
-  }
-  return skillSourceDir;
 }
