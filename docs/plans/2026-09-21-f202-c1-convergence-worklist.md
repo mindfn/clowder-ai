@@ -46,6 +46,10 @@ host.messaging.deliver
 - `host-broker/control-plane.ts:376` 已读它的 grant
 
 `builtin-runtime/module-host-invocation.ts` 保留为**进程内载体的实现**，但其对外形状要对齐上面这个签名，不要另立一套参数。
+
+> **分层别搞混**：`host.messaging.deliver` 是**传输层**方法（`plane:'host-to-plugin-delivery'`、
+> `operation:'deliverOnMessage'`）；插件在 `message-subscription` 里声明的 `action.method`
+> 是**应用层**方法名（无枚举约束），由前者的参数携带。换掉自造 port ≠ 丢掉插件声明的方法名。
 **验收**：`f202-c1-end-to-end-journey.test.js` 全绿且不再出现自造签名。
 
 ### C-2　把已声明但调不到的能力接上线
@@ -80,12 +84,38 @@ im-connector-loader 224 · im-connectors/ 8,180（7 provider）
 
 | # | 项 | 依据 |
 |---|---|---|
-| P-1 | `contract-mirror.ts`(212) 删除 —— 让 `plugin-contract` **导出运行时枚举值**（它本就由 JSON schema 生成） | 文件自述 DELETION TARGET |
-| P-2 | `wire-dispatch.ts`(1,113) **挪进 `plugin-contract`** | Host 正 `import { classifyFrame } from '@clowder-ai/plugin-sdk'`（`stdio-broker-transport.ts:26`）= 反向依赖 |
+| **P-1+2** | **合并（Plugins 线 2026-09-21 修正，已复核）**：让契约**从 schema 生成**帧级闭合键集 + 错误码 → `contract-mirror.ts`(212) 整文件删 → `wire-dispatch.ts`(1,113) 改消费生成值并**挪进 `plugin-contract`** → Host 改从契约 import `classifyFrame`，反向依赖消失 | 见 §3.1 |
 | P-3 | connector 专属栈作废：`connector-runtime.ts`、`ConnectorInboundMessage`、`ConnectorOutboundDelivery`、`requireConnectorOutboundDelivery`、`FeatureContext.connectors` | `host.messaging.deliver` 才是标准 |
 | P-4 | 两个 `standalone-host` 收成一份，且**不公开导出** | 两份 Host 模拟必然漂移 |
 | P-5 | `messaging-client.ts`(141) 零使用 —— 接上或删 | 零使用的公开面最坏 |
 | P-6 | 7 个 connector：`connector` contribution → `message-subscription` + 实现自己的方法 | **不需要声明回声 filter**，Host 默认抑制 |
+
+### 3.1 P-1+2 的前提更正（我原文写错了，Plugins 线纠正）
+
+我原文写「`plugin-contract` 只导出类型、不导出运行时值」——**错的**。一手复核：
+
+```
+契约已导出运行时常量：ACCEPT_CLASSES / ALL_ERROR_CODES / APPLICATION_ERROR_CODES / ACK_* 边界 …
+契约缺的是帧级闭合键集：RESPONSE_SUCCESS_KEYS / PARAMS_ALLOWED_KEYS / DELIVER_RESULT_KEYS → 零命中
+```
+
+`contract-mirror.ts` 手抄的 25 组全是**帧级闭合键集 + 错误码**，属于后一类。
+它们**全都在 schema 里**（`messaging.schema.json` 有 42 处 `additionalProperties:false` + `properties`），
+只是生成器没吐出来。
+
+**必须从 schema 生成，不能手工补 export**——手工补只是把手抄从 SDK 挪进契约，下一个人还会在别处再抄一遍。
+
+> 顺带：契约已有 `ALL_ERROR_CODES` / `APPLICATION_ERROR_CODES`，而 mirror 里也有 `MESSAGING_ERROR_CODES`。
+> **那 25 组里可能有一部分已经有对应物——生成前先对一遍，别生成已经存在的。**
+
+### 3.2 P-3 与 P-6 不冲突（分属两层，文档并排会让人卡住）
+
+- `host.messaging.deliver` 是**传输层 wire 方法**：`plane:'host-to-plugin-delivery'`、
+  `operation:'deliverOnMessage'`（`contract.generated.d.ts:848,875,1066,1072`）
+- 插件声明的 `action.method` 是**应用层方法名**，`{type:'string', minLength:1}`，**无枚举约束**，
+  由前者的参数携带去分发
+
+**所以"用标准 wire 方法"和"插件实现自己的方法"说的是两件事，同时成立。**
 
 ## 4. 顺序（跨仓）
 
