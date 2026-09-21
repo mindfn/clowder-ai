@@ -25,8 +25,12 @@ export interface PluginTaskUpdateInput {
 export interface PluginTaskHost {
   get(taskId: string): Promise<TaskItem | null>;
   listByThread(threadId: string): Promise<readonly TaskItem[]>;
+  listByKind(kind: TaskKind): Promise<readonly TaskItem[]>;
+  getBySubject(subjectKey: string): Promise<TaskItem | null>;
   create(input: PluginTaskCreateInput): Promise<TaskItem>;
+  upsertBySubject(input: PluginTaskCreateInput): Promise<TaskItem>;
   update(taskId: string, input: PluginTaskUpdateInput): Promise<TaskItem | null>;
+  updateIfThreadId(taskId: string, expectedThreadId: string, input: PluginTaskUpdateInput): Promise<TaskItem | null>;
 }
 
 function boundedString(value: unknown, field: string, maximum: number, allowEmpty = false): string {
@@ -75,6 +79,17 @@ function updateInput(value: PluginTaskUpdateInput): UpdateTaskInput {
   return result;
 }
 
+function taskKind(value: unknown): TaskKind {
+  if (typeof value !== 'string' || !TASK_KINDS.has(value as TaskKind)) throw new TypeError('task kind is invalid');
+  return value as TaskKind;
+}
+
+function subjectUpsertInput(value: PluginTaskCreateInput): CreateTaskInput {
+  const input = createInput(value);
+  if (!input.subjectKey) throw new TypeError('subjectKey is required for task upsert');
+  return input;
+}
+
 export function createPluginTaskHost(taskStore?: ITaskStore): PluginTaskHost {
   const store = () => {
     if (!taskStore) throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task store is unavailable');
@@ -83,7 +98,16 @@ export function createPluginTaskHost(taskStore?: ITaskStore): PluginTaskHost {
   return {
     get: async (taskId) => store().get(boundedString(taskId, 'taskId', 500)),
     listByThread: async (threadId) => store().listByThread(boundedString(threadId, 'threadId', 500)),
+    listByKind: async (kind) => store().listByKind(taskKind(kind)),
+    getBySubject: async (subjectKey) => store().getBySubject(boundedString(subjectKey, 'subjectKey', 500)),
     create: async (input) => store().create(createInput(input)),
+    upsertBySubject: async (input) => store().upsertBySubject(subjectUpsertInput(input)),
     update: async (taskId, input) => store().update(boundedString(taskId, 'taskId', 500), updateInput(input)),
+    updateIfThreadId: async (taskId, expectedThreadId, input) =>
+      store().updateIfThreadId(
+        boundedString(taskId, 'taskId', 500),
+        boundedString(expectedThreadId, 'expectedThreadId', 500),
+        updateInput(input),
+      ),
   };
 }

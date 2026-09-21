@@ -50,6 +50,10 @@ async function writeTaskFixture() {
       "              if (operation === 'create') return host.tasks.create(input);",
       "              if (operation === 'get') return host.tasks.get(input.taskId);",
       "              if (operation === 'list') return host.tasks.listByThread(input.threadId);",
+      "              if (operation === 'listByKind') return host.tasks.listByKind(input.kind);",
+      "              if (operation === 'getBySubject') return host.tasks.getBySubject(input.subjectKey);",
+      "              if (operation === 'upsertBySubject') return host.tasks.upsertBySubject(input);",
+      "              if (operation === 'updateIfThreadId') return host.tasks.updateIfThreadId(input.taskId, input.expectedThreadId, input.patch);",
       '              return host.tasks.update(input.taskId, input.patch);',
       '            },',
       '          },',
@@ -107,4 +111,46 @@ test('module plugins create, read, and update ordinary tasks through the Host ta
   const updated = await invoke({ operation: 'update', taskId: created.id, patch: { status: 'doing' } });
   assert.equal(updated.status, 'doing');
   assert.equal((await taskStore.listByThread('thread-plugin-task'))[0]?.status, 'doing');
+
+  const tracking = await invoke({
+    operation: 'upsertBySubject',
+    threadId: 'thread-plugin-task',
+    title: 'Track pull request',
+    why: 'Fixture tracking task',
+    kind: 'pr_tracking',
+    subjectKey: 'pr:owner/repo#42',
+  });
+  assert.equal((await invoke({ operation: 'getBySubject', subjectKey: 'pr:owner/repo#42' })).id, tracking.id);
+  assert.deepEqual(
+    (await invoke({ operation: 'listByKind', kind: 'pr_tracking' })).map((task) => task.id),
+    [tracking.id],
+  );
+  const upserted = await invoke({
+    operation: 'upsertBySubject',
+    threadId: 'thread-plugin-task-updated',
+    title: 'Track pull request (updated)',
+    why: 'Idempotent fixture tracking task',
+    kind: 'pr_tracking',
+    subjectKey: 'pr:owner/repo#42',
+  });
+  assert.equal(upserted.id, tracking.id);
+  assert.equal(upserted.threadId, 'thread-plugin-task-updated');
+
+  assert.equal(
+    await invoke({
+      operation: 'updateIfThreadId',
+      taskId: tracking.id,
+      expectedThreadId: 'thread-plugin-task',
+      patch: { threadId: 'thread-stale-overwrite' },
+    }),
+    null,
+    'a stale routing repair must not overwrite a task moved by another actor',
+  );
+  const conditionallyUpdated = await invoke({
+    operation: 'updateIfThreadId',
+    taskId: tracking.id,
+    expectedThreadId: 'thread-plugin-task-updated',
+    patch: { threadId: 'thread-plugin-task-repaired' },
+  });
+  assert.equal(conditionallyUpdated.threadId, 'thread-plugin-task-repaired');
 });
