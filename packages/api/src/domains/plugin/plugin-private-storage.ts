@@ -5,18 +5,34 @@ const MAX_STORAGE_KEY_LENGTH = 256;
 const MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
 
 const WRITE_LUA = `
+-- plugin-private-storage:write-v1
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 local currentRevision = nil
 if raw then
-  local current = cjson.decode(raw)
-  currentRevision = tonumber(current.revision)
+  local revision, kind = string.match(raw, '^(%d+):([vd]):')
+  if not revision or not kind then return redis.error_reply('malformed plugin storage record') end
+  currentRevision = tonumber(revision)
 end
 if ARGV[2] ~= '*' then
   local expectedRevision = ARGV[2] == '' and nil or tonumber(ARGV[2])
   if currentRevision ~= expectedRevision then return 0 end
 end
 local nextRevision = (currentRevision or 0) + 1
-redis.call('HSET', KEYS[1], ARGV[1], cjson.encode({ revision = nextRevision, value = cjson.decode(ARGV[3]) }))
+redis.call('HSET', KEYS[1], ARGV[1], tostring(nextRevision) .. ':v:' .. ARGV[3])
+return nextRevision
+`;
+
+const DELETE_LUA = `
+-- plugin-private-storage:delete-v1
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then return 0 end
+local revision, kind = string.match(raw, '^(%d+):([vd]):')
+if not revision or not kind then return redis.error_reply('malformed plugin storage record') end
+if kind == 'd' then return 0 end
+local currentRevision = tonumber(revision)
+if ARGV[2] ~= '*' and currentRevision ~= tonumber(ARGV[2]) then return 0 end
+local nextRevision = currentRevision + 1
+redis.call('HSET', KEYS[1], ARGV[1], tostring(nextRevision) .. ':d:')
 return nextRevision
 `;
 
@@ -30,6 +46,11 @@ export interface PluginStorageCompareAndSetResult {
   readonly revision?: number;
 }
 
+export interface PluginStorageDeleteResult {
+  readonly deleted: boolean;
+  readonly revision?: number;
+}
+
 export interface PluginPrivateStoragePort {
   get(pluginId: string, key: string): Promise<PluginStorageEntry | undefined>;
   list(pluginId: string): Promise<Readonly<Record<string, PluginStorageEntry>>>;
@@ -40,6 +61,7 @@ export interface PluginPrivateStoragePort {
     expectedRevision: number | null,
     value: unknown,
   ): Promise<PluginStorageCompareAndSetResult>;
+  delete(pluginId: string, key: string, expectedRevision?: number): Promise<PluginStorageDeleteResult>;
 }
 
 export interface PluginStorageHost {
@@ -51,6 +73,7 @@ export interface PluginStorageHost {
     expectedRevision: number | null,
     value: unknown,
   ): Promise<PluginStorageCompareAndSetResult>;
+  delete(key: string, expectedRevision?: number): Promise<PluginStorageDeleteResult>;
 }
 
 export function createPluginStorageHost(input: {
@@ -73,6 +96,7 @@ export function createPluginStorageHost(input: {
     set: (key, value) => requireGrant('plugin.state.set').set(input.pluginId, key, value),
     compareAndSet: (key, expectedRevision, value) =>
       requireGrant('plugin.state.set').compareAndSet(input.pluginId, key, expectedRevision, value),
+    delete: (key, expectedRevision) => requireGrant('plugin.state.set').delete(input.pluginId, key, expectedRevision),
   };
 }
 
@@ -100,12 +124,25 @@ function encodeValue(value: unknown): string {
   return encoded;
 }
 
-function decodeEntry(raw: string): PluginStorageEntry {
-  const candidate = JSON.parse(raw) as Partial<PluginStorageEntry>;
-  if (!Number.isSafeInteger(candidate.revision) || (candidate.revision ?? 0) < 1 || !('value' in candidate)) {
+type DecodedStorageRecord =
+  | { readonly kind: 'value'; readonly entry: PluginStorageEntry }
+  | { readonly kind: 'deleted'; readonly revision: number };
+
+function decodeRecord(raw: string): DecodedStorageRecord {
+  const match = /^(\d+):([vd]):([\s\S]*)$/.exec(raw);
+  const revision = match ? Number(match[1]) : Number.NaN;
+  if (!match || !Number.isSafeInteger(revision) || revision < 1) {
     throw new TypeError('plugin storage record is malformed');
   }
-  return { revision: candidate.revision as number, value: candidate.value };
+  if (match[2] === 'd') {
+    if (match[3] !== '') throw new TypeError('plugin storage tombstone is malformed');
+    return { kind: 'deleted', revision };
+  }
+  try {
+    return { kind: 'value', entry: { revision, value: JSON.parse(match[3]) } };
+  } catch (error) {
+    throw new TypeError('plugin storage record is malformed', { cause: error });
+  }
 }
 
 /** Durable, plugin-id-scoped JSON records. No method in this adapter creates a TTL. */
@@ -115,12 +152,19 @@ export class RedisPluginPrivateStorage implements PluginPrivateStoragePort {
   async get(pluginId: string, key: string): Promise<PluginStorageEntry | undefined> {
     assertStorageKey(key);
     const raw = await this.redis.hget(storageHashKey(pluginId), key);
-    return raw === null ? undefined : decodeEntry(raw);
+    if (raw === null) return undefined;
+    const record = decodeRecord(raw);
+    return record.kind === 'value' ? record.entry : undefined;
   }
 
   async list(pluginId: string): Promise<Readonly<Record<string, PluginStorageEntry>>> {
     const raw = await this.redis.hgetall(storageHashKey(pluginId));
-    return Object.fromEntries(Object.entries(raw).map(([key, value]) => [key, decodeEntry(value)]));
+    return Object.fromEntries(
+      Object.entries(raw).flatMap(([key, value]) => {
+        const record = decodeRecord(value);
+        return record.kind === 'value' ? [[key, record.entry]] : [];
+      }),
+    );
   }
 
   async set(pluginId: string, key: string, value: unknown): Promise<{ readonly revision: number }> {
@@ -134,11 +178,30 @@ export class RedisPluginPrivateStorage implements PluginPrivateStoragePort {
     expectedRevision: number | null,
     value: unknown,
   ): Promise<PluginStorageCompareAndSetResult> {
-    if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) {
-      throw new TypeError('plugin storage expectedRevision must be null or a non-negative safe integer');
+    if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
+      throw new TypeError('plugin storage expectedRevision must be null or a positive safe integer');
     }
     const revision = await this.#write(pluginId, key, expectedRevision === null ? '' : String(expectedRevision), value);
     return revision === 0 ? { applied: false } : { applied: true, revision };
+  }
+
+  async delete(pluginId: string, key: string, expectedRevision?: number): Promise<PluginStorageDeleteResult> {
+    assertStorageKey(key);
+    if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) {
+      throw new TypeError('plugin storage expectedRevision must be a positive safe integer');
+    }
+    const revision = Number(
+      await this.redis.eval(
+        DELETE_LUA,
+        1,
+        storageHashKey(pluginId),
+        key,
+        expectedRevision === undefined ? '*' : String(expectedRevision),
+      ),
+    );
+    if (!Number.isSafeInteger(revision) || revision < 0)
+      throw new TypeError('plugin storage returned an invalid revision');
+    return revision === 0 ? { deleted: false } : { deleted: true, revision };
   }
 
   async #write(pluginId: string, key: string, expectedRevision: string, value: unknown): Promise<number> {
