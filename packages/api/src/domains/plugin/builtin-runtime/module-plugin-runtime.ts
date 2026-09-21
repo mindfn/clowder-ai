@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 
 import type { PluginManifest } from '@clowder-ai/plugin-contract';
+import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -17,6 +18,7 @@ import {
   type PluginPrivateStoragePort,
   type PluginStorageHost,
 } from '../plugin-private-storage.js';
+import { createPluginTaskHost, type PluginTaskHost } from '../plugin-task-host.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 import { createModuleHostInvocation } from './module-host-invocation.js';
 
@@ -38,6 +40,7 @@ export interface ModulePluginHostShape {
   readonly config: { get(key: string): Promise<unknown> };
   readonly secrets: { get(key: string): Promise<string | undefined> };
   readonly storage: PluginStorageHost;
+  readonly tasks: PluginTaskHost;
   readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -54,6 +57,7 @@ export interface ModulePluginRuntimeOptions {
   readonly packages: VerifiedPluginPackageLocator;
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly storage?: PluginPrivateStoragePort;
+  readonly taskStore?: ITaskStore;
   readonly log: ModulePluginHostShape['log'];
 }
 
@@ -143,6 +147,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
+        tasks: createPluginTaskHost(this.options.taskStore),
         log: (level, message, fields) =>
           this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });

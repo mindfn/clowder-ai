@@ -4954,6 +4954,7 @@ async function main(): Promise<void> {
     routes: signalRouteStore,
     intakes: meetingIntakeStore,
     messageStore,
+    taskStore,
     ...(redis ? { redis } : {}),
     // F202 C1 gap B: the Host collaborators an authenticated connector ingress needs, in the
     // process that actually ships. `invokeTrigger` is constructed further down this file, so it

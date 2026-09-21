@@ -5,6 +5,7 @@ import { type Capability, type PluginManifest, validateManifest } from '@clowder
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import {
   createMessagingDomain,
@@ -84,6 +85,7 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly routes: SignalRouteStore;
   readonly intakes: MeetingIntakeStore;
   readonly messageStore: IMessageStore;
+  readonly taskStore?: ITaskStore;
   readonly redis?: RedisClient;
   /**
    * Where a failed publish goes. The store stays the truth and the stream is derived from it, so
@@ -297,6 +299,7 @@ export function createDormantPluginRuntimeComposition(
     packages,
     configuration,
     ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
+    ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
     log: (level, message, fields) => {
       if (fields === undefined) moduleLogger[level](message);
       else moduleLogger[level](fields, message);
