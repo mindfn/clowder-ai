@@ -8,6 +8,9 @@ import {
   type MessagingDomainDeps,
   type MessagingService,
 } from '../messaging/messaging-service.js';
+import { createPublishingMessageStore } from '../messaging/publishing-message-store.js';
+import { createMessagingStores } from '../messaging/stores/factory.js';
+import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
 import type { SignalRouteStore } from '../signal-intake/SignalRouteStore.js';
 import { BundledPluginRuntimeCarrier } from './builtin-runtime/bundled-runtime-carrier.js';
@@ -15,6 +18,7 @@ import {
   CollectiveConnectorBuiltinRuntime,
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
+import { createModuleHostInvocation } from './builtin-runtime/module-host-invocation.js';
 import { ModulePluginRuntime } from './builtin-runtime/module-plugin-runtime.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
@@ -77,6 +81,12 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly intakes: MeetingIntakeStore;
   readonly messageStore: IMessageStore;
   readonly redis?: RedisClient;
+  /**
+   * Where a failed publish goes. The store stays the truth and the stream is derived from it, so
+   * a publish failure must not fail the append — but a message no subscriber will ever receive is
+   * not something to discard quietly, so absent a handler it still reaches stderr.
+   */
+  readonly onMessagePublishFailure?: (error: unknown, messageId: string, threadId: string) => void;
   readonly processes?: ExternalPluginProcessAdapter;
   readonly packages?: VerifiedPluginPackageLocator;
   readonly contract?: PackageAdmissionContractRuntime;
@@ -126,6 +136,11 @@ export interface DormantPluginRuntimeComposition {
   readonly contentEditors?: ContentEditorPluginRuntime;
   readonly contentMaterializers?: ContentMaterializerPluginRuntime;
   readonly messaging: MessagingService;
+  /**
+   * Drives thread activity out to whichever subscribers declared they want it. Exposed so the
+   * Host can drain a thread after it produces a message; it knows nothing about connectors.
+   */
+  readonly subscriptionDelivery: SubscriptionDelivery;
   readonly lifecycle: ExternalPluginLifecycleService;
   readonly packages: VerifiedPluginPackageLocator;
   readonly contract?: PackageAdmissionContractRuntime;
@@ -173,8 +188,28 @@ export function createDormantPluginRuntimeComposition(
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
   });
+  // One store set, shared. The publishing wrapper has to write to the very event log the domain
+  // reads, and against Redis two independently built sets would agree by key while hiding the
+  // coupling — then disagree silently anywhere else.
+  const messagingStores = createMessagingStores(options.redis);
+  const publishingMessageStore = createPublishingMessageStore(options.messageStore, {
+    events: messagingStores.events,
+    onPublishFailure: (error, stored) => {
+      if (options.onMessagePublishFailure) {
+        options.onMessagePublishFailure(error, stored.id, stored.threadId);
+        return;
+      }
+      console.error('[messaging] publish failed; subscribers will not see this message', {
+        messageId: stored.id,
+        threadId: stored.threadId,
+        error,
+      });
+    },
+  });
+
   const messaging = createMessagingDomain({
-    messageStore: options.messageStore,
+    messageStore: publishingMessageStore,
+    stores: messagingStores,
     ...(options.redis === undefined ? {} : { redis: options.redis }),
     ...(options.invokeTrigger === undefined ? {} : { invokeTrigger: options.invokeTrigger }),
     ...(options.socketManager === undefined ? {} : { socketManager: options.socketManager }),
@@ -248,6 +283,13 @@ export function createDormantPluginRuntimeComposition(
     contentMaterializers = new ContentMaterializerPluginRuntime({ editors: contentEditors, packages });
   // Every admitted instance takes this one path; the carrier is selected from the
   // package's own manifest, most specific claim first (F202 C1 clauses 1/2/6).
+  const moduleRuntime = new ModulePluginRuntime({ packages });
+  // The Host→plugin direction over the in-process carrier: a declared method resolved against
+  // the instance the carrier is already holding. Delivery is its first consumer, not its owner.
+  const subscriptionDelivery = createSubscriptionDelivery({
+    messaging,
+    invocation: createModuleHostInvocation({ runtime: moduleRuntime }),
+  });
   const supervisor = new PluginRuntimeCarrierRouter(inventoryStore);
   supervisor.register(
     new BundledPluginRuntimeCarrier({
@@ -257,7 +299,7 @@ export function createDormantPluginRuntimeComposition(
         ...(contentEditors ? [contentEditors] : []),
         // Last: the runtimes above implement one package the Host itself carries, so
         // their narrower claims win. This one claims whatever declares a module to load.
-        new ModulePluginRuntime({ packages }),
+        moduleRuntime,
       ],
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
@@ -283,6 +325,7 @@ export function createDormantPluginRuntimeComposition(
     ...(contentEditors === undefined ? {} : { contentEditors }),
     ...(contentMaterializers === undefined ? {} : { contentMaterializers }),
     messaging,
+    subscriptionDelivery,
     lifecycle,
     packages,
     ...(options.contract === undefined ? {} : { contract: options.contract }),
