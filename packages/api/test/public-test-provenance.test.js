@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
+import { planPublicTestShards } from '../scripts/plan-public-test-shards.mjs';
 import { currentPublicTestProvenance } from '../scripts/public-test-provenance.mjs';
+import { publicTestSelectionHash } from '../scripts/resolve-public-test-files.mjs';
+import { runPublicTestLane } from '../scripts/run-public-test-shard.mjs';
 
 const temporaryRepositories = [];
 
@@ -61,4 +64,33 @@ describe('F308 public-test provenance', () => {
       assert.throws(() => currentPublicTestProvenance(repository), /public-test provenance requires a clean workspace/);
     });
   }
+
+  it('keeps the shard runner wired to the dirty-workspace guard by default', async () => {
+    const repository = createRepository();
+    const selectedFiles = ['test/example.test.js'];
+    const manifest = {
+      selectedFiles,
+      selectionHash: publicTestSelectionHash(selectedFiles),
+      exclusionRegistryHash: 'registry',
+    };
+    const plan = planPublicTestShards({
+      ...manifest,
+      classification: {
+        version: 2,
+        defaultIsolationEvidence: {
+          kind: 'kernel-no-egress-plus-runtime-guard',
+          rulesVersion: 'test',
+          source: 'test fixture',
+        },
+        sharedResources: [],
+      },
+      plannerProvenance: currentPublicTestProvenance(repository),
+    });
+    writeFileSync(join(repository, 'untracked.txt'), 'untracked\n');
+
+    await assert.rejects(
+      runPublicTestLane({ plan, lane: 'distributable-1', packageRoot: repository, manifest }),
+      /public-test provenance requires a clean workspace/,
+    );
+  });
 });
