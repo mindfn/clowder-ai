@@ -35,6 +35,8 @@ import { clampRetention } from './stores/ports.js';
 
 export interface PublishingMessageStoreDeps {
   readonly events: Pick<EventLogStore, 'append'>;
+  /** Schedules subscriber delivery after a durable publish. Must return immediately. */
+  readonly onPublished?: (threadId: string) => void;
   /** Event-log retention per thread; the same bound the send path uses. */
   readonly retentionCount?: number;
   /**
@@ -44,7 +46,7 @@ export interface PublishingMessageStoreDeps {
   onPublishFailure(error: unknown, stored: StoredMessage): void;
 }
 
-export function createPublishingMessageStore(inner: IMessageStore, deps: PublishingMessageStoreDeps): IMessageStore {
+export function createPublishingMessageStore<T extends IMessageStore>(inner: T, deps: PublishingMessageStoreDeps): T {
   const retention = clampRetention(deps.retentionCount);
 
   async function publish(stored: StoredMessage): Promise<void> {
@@ -62,6 +64,7 @@ export function createPublishingMessageStore(inner: IMessageStore, deps: Publish
         { eventId: `ev_pub_${stored.id}_1`, type: 'message.publish', envelope },
         retention,
       );
+      deps.onPublished?.(stored.threadId);
     } catch (error) {
       deps.onPublishFailure(error, stored);
     }
@@ -88,5 +91,5 @@ export function createPublishingMessageStore(inner: IMessageStore, deps: Publish
       const value = Reflect.get(target, property, receiver) as unknown;
       return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
     },
-  });
+  }) as T;
 }

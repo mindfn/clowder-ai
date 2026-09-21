@@ -204,4 +204,63 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     assert.equal(rejected.length, 2, 'the unacked envelope must be offered again');
     assert.equal(rejected[0].input.deliveryId, rejected[1].input.deliveryId);
   });
+
+  test('case 7: concurrent drains of one thread serialize and deliver each event once', async () => {
+    const handleId = await subscribeHandle(SUBSCRIBER_A);
+    await delivery.register({
+      subscriberId: SUBSCRIBER_A,
+      threadId: THREAD_ID,
+      handleId,
+    });
+    await produce('hello', 'k1');
+
+    let releaseFirst;
+    const firstBlocked = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    delivery = createSubscriptionDelivery({
+      messaging,
+      delivery: {
+        async deliver(subscriberId, input) {
+          attempts.push({ subscriberId, input });
+          if (attempts.length === 1) await firstBlocked;
+          calls.push({ subscriberId, input });
+          return { deliveryId: input.deliveryId };
+        },
+      },
+    });
+    await delivery.register({
+      subscriberId: SUBSCRIBER_A,
+      threadId: THREAD_ID,
+      handleId,
+    });
+
+    const first = delivery.drain(THREAD_ID);
+    const second = delivery.drain(THREAD_ID);
+    const deadline = Date.now() + 1_000;
+    while (attempts.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(attempts.length, 1, 'the second drain must wait instead of reading the same unacked page');
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.equal(calls.length, 1, 'serial drains must deliver the published event exactly once');
+  });
+
+  test('case 8: unregister removes only the named subscriber from the live delivery set', async () => {
+    const handleA = await subscribeHandle(SUBSCRIBER_A);
+    const handleB = await subscribeHandle(SUBSCRIBER_B);
+    await delivery.register({ subscriberId: SUBSCRIBER_A, threadId: THREAD_ID, handleId: handleA });
+    await delivery.register({ subscriberId: SUBSCRIBER_B, threadId: THREAD_ID, handleId: handleB });
+
+    delivery.unregister(SUBSCRIBER_A, THREAD_ID);
+    await produce('hello', 'k1');
+    await delivery.drain(THREAD_ID);
+
+    assert.deepEqual(
+      calls.map((call) => call.subscriberId),
+      [SUBSCRIBER_B],
+    );
+  });
 });

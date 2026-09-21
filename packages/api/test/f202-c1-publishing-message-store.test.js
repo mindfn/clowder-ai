@@ -24,6 +24,7 @@ import { beforeEach, describe, test } from 'node:test';
 let createPublishingMessageStore;
 let createMessagingStores;
 let MessageStore;
+let SubscriptionDrainScheduler;
 
 let events;
 let store;
@@ -51,6 +52,7 @@ beforeEach(async () => {
   ({ createPublishingMessageStore } = await import('../dist/domains/messaging/publishing-message-store.js'));
   ({ createMessagingStores } = await import('../dist/domains/messaging/stores/factory.js'));
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
+  ({ SubscriptionDrainScheduler } = await import('../dist/domains/messaging/subscription-drain-scheduler.js'));
 
   events = createMessagingStores().events;
   failures = [];
@@ -126,5 +128,51 @@ describe('F202 C1 G5 — publishing message store', () => {
     const stored = await store.append(catReply());
     const fetched = await store.getById(stored.id);
     assert.equal(fetched?.id, stored.id);
+  });
+
+  test('case 7: a successful publish schedules delivery without waiting for a slow subscriber', async () => {
+    let scheduledThread;
+    let releaseDrain;
+    const blockedDrain = new Promise((resolve) => {
+      releaseDrain = resolve;
+    });
+    const draining = createPublishingMessageStore(new MessageStore(), {
+      events,
+      onPublishFailure: (error, stored) => failures.push({ error, stored }),
+      onPublished(threadId) {
+        scheduledThread = threadId;
+        return blockedDrain;
+      },
+    });
+
+    const stored = await draining.append(catReply());
+    assert.ok(stored.id);
+    assert.equal(scheduledThread, THREAD, 'the one post-publish seam must schedule this thread');
+    releaseDrain();
+  });
+
+  test('case 8: a failed subscriber drain is reported without rejecting the stored message', async () => {
+    const drainFailures = [];
+    const scheduler = new SubscriptionDrainScheduler((error, threadId) => {
+      drainFailures.push({ error, threadId });
+    });
+    scheduler.attach({
+      async drain() {
+        throw new Error('subscriber unavailable');
+      },
+    });
+    const draining = createPublishingMessageStore(new MessageStore(), {
+      events,
+      onPublishFailure: (error, stored) => failures.push({ error, stored }),
+      onPublished: scheduler.schedule,
+    });
+
+    const stored = await draining.append(catReply());
+    assert.ok(stored.id, 'subscriber delivery is downstream of the durable message');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(failures.length, 0, 'a drain failure is not a publish failure');
+    assert.equal(drainFailures.length, 1);
+    assert.equal(drainFailures[0].threadId, THREAD);
+    assert.match(drainFailures[0].error.message, /subscriber unavailable/);
   });
 });

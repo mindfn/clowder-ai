@@ -49,6 +49,8 @@ export interface SendServiceDeps {
   readonly isKnownCatId?: (catId: string) => boolean;
   /** F202 C1 gap A. Absent means authenticated ingress keeps the pre-C1 behaviour: no wake. */
   readonly ingressWake?: MessagingIngressWakeDeps;
+  /** Fire-and-forget subscriber delivery after a durable public event is appended. */
+  readonly onPublished?: (threadId: string) => void;
 }
 
 /** D-4: validate the declared origin against handle-derived truth; return the stamped provenance. */
@@ -221,6 +223,7 @@ export class SendService {
         if (emitted.fencedOut || emitted.sequence === undefined) {
           throw new MessagingError('VALIDATION', 'publish event was not assigned a durable sequence');
         }
+        this.deps.onPublished?.(handle.threadId);
         publishSequence = emitted.sequence;
         const plugin = readPluginMessageExtra(stored);
         if (!plugin) throw new MessagingError('VALIDATION', 'persisted message lost its canonical plugin payload');

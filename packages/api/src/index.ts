@@ -233,6 +233,9 @@ import { RedisWriteOpportunityTerminalLedger } from './domains/memory/people/Red
 import { EvidenceStoreWorkspacePersonResolver } from './domains/memory/people/WorkspacePersonResolver.js';
 import { refreshCanonicalProfileIndex } from './domains/memory/private-collection-bindings.js';
 import { RedisDeferredPersonMemoryReceiptStore } from './domains/memory/RedisDeferredPersonMemoryReceiptStore.js';
+import { createPublishingMessageStore } from './domains/messaging/publishing-message-store.js';
+import { createMessagingStores } from './domains/messaging/stores/factory.js';
+import { SubscriptionDrainScheduler } from './domains/messaging/subscription-drain-scheduler.js';
 import { PortDiscoveryService } from './domains/preview/port-discovery.js';
 import { collectRuntimePorts } from './domains/preview/port-validator.js';
 import { PreviewGateway } from './domains/preview/preview-gateway.js';
@@ -833,10 +836,24 @@ async function main(): Promise<void> {
     | ReturnType<typeof import('./domains/growing/CustodyOpportunityRuntime.js').startCustodyOpportunityObservation>
     | undefined;
 
-  const messageStore = createMessageStore(redis, {
+  const rawMessageStore = createMessageStore(redis, {
     onAppend: (msg) => {
       appendListener?.(msg);
       custodyOpportunityObservation?.notifySourceChanged(msg);
+    },
+  });
+  const messagingStores = createMessagingStores(redis);
+  const subscriptionDrainScheduler = new SubscriptionDrainScheduler((error, threadId) => {
+    app.log.error({ error, threadId }, '[messaging] subscriber delivery drain failed');
+  });
+  const messageStore = createPublishingMessageStore(rawMessageStore, {
+    events: messagingStores.events,
+    onPublished: subscriptionDrainScheduler.schedule,
+    onPublishFailure: (error, stored) => {
+      app.log.error(
+        { error, messageId: stored.id, threadId: stored.threadId },
+        '[messaging] publish failed; subscribers will not see this message',
+      );
     },
   });
   const runtimeInteractionRuntime = await createRuntimeInteractionRuntime({
@@ -4954,6 +4971,8 @@ async function main(): Promise<void> {
     routes: signalRouteStore,
     intakes: meetingIntakeStore,
     messageStore,
+    messagingStores,
+    onMessagePublished: subscriptionDrainScheduler.schedule,
     taskStore,
     ...(redis ? { redis } : {}),
     // F202 C1 gap B: the Host collaborators an authenticated connector ingress needs, in the
@@ -4998,6 +5017,7 @@ async function main(): Promise<void> {
         }),
     },
   });
+  subscriptionDrainScheduler.attach(pluginRuntime.subscriptionDelivery);
   const { CollectiveCurrentContext } = await import('./domains/plugin/builtin-runtime/collective-current-context.js');
   collectiveContext = new CollectiveCurrentContext({
     connector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),

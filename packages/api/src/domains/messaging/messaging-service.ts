@@ -30,6 +30,7 @@ export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
    * agree by key while silently disagreeing anywhere else.
    */
   readonly stores?: MessagingStores;
+  readonly onPublished?: (threadId: string) => void;
   /** Event log retention per thread (events beyond this are trimmed; stale+snapshot covers the gap). */
   readonly retentionCount?: number;
 }
@@ -67,6 +68,7 @@ export class MessagingService {
       events: stores.events,
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
       ...(ingressWake === undefined ? {} : { ingressWake }),
+      ...(deps.onPublished === undefined ? {} : { onPublished: deps.onPublished }),
     });
     this.appendService = new AppendService({
       messageStore: deps.messageStore,

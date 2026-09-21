@@ -160,6 +160,7 @@ async function deliverPublishedEvent(
 export class SubscriptionDelivery {
   private readonly deps: SubscriptionDeliveryDeps;
   private readonly byThread = new Map<string, Registration[]>();
+  private readonly drainTails = new Map<string, Promise<void>>();
 
   constructor(deps: SubscriptionDeliveryDeps) {
     this.deps = deps;
@@ -181,12 +182,29 @@ export class SubscriptionDelivery {
     this.byThread.set(declaration.threadId, existing);
   }
 
+  unregister(subscriberId: string, threadId: string): void {
+    const remaining = (this.byThread.get(threadId) ?? []).filter((entry) => entry.subscriberId !== subscriberId);
+    if (remaining.length === 0) this.byThread.delete(threadId);
+    else this.byThread.set(threadId, remaining);
+  }
+
   /**
    * Deliver everything outstanding on this thread. Subscribers are independent: one sink being
    * down must not starve the others, so each is attempted and the first failure is surfaced only
    * after all of them have had their turn.
    */
   async drain(threadId: string): Promise<void> {
+    const previous = this.drainTails.get(threadId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(() => this.drainSerial(threadId));
+    this.drainTails.set(threadId, current);
+    try {
+      await current;
+    } finally {
+      if (this.drainTails.get(threadId) === current) this.drainTails.delete(threadId);
+    }
+  }
+
+  private async drainSerial(threadId: string): Promise<void> {
     const registrations = this.byThread.get(threadId) ?? [];
     let failure: unknown;
     for (const registration of registrations) {

@@ -12,8 +12,7 @@ import {
   type MessagingDomainDeps,
   type MessagingService,
 } from '../messaging/messaging-service.js';
-import { createPublishingMessageStore } from '../messaging/publishing-message-store.js';
-import { createMessagingStores } from '../messaging/stores/factory.js';
+import type { MessagingStores } from '../messaging/stores/ports.js';
 import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
 import type { SignalRouteStore } from '../signal-intake/SignalRouteStore.js';
@@ -87,12 +86,9 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly messageStore: IMessageStore;
   readonly taskStore?: ITaskStore;
   readonly redis?: RedisClient;
-  /**
-   * Where a failed publish goes. The store stays the truth and the stream is derived from it, so
-   * a publish failure must not fail the append — but a message no subscriber will ever receive is
-   * not something to discard quietly, so absent a handler it still reaches stderr.
-   */
-  readonly onMessagePublishFailure?: (error: unknown, messageId: string, threadId: string) => void;
+  /** The Host-wide messaging stores shared with the one publishing MessageStore wrapper. */
+  readonly messagingStores?: MessagingStores;
+  readonly onMessagePublished?: (threadId: string) => void;
   readonly processes?: ExternalPluginProcessAdapter;
   readonly packages?: VerifiedPluginPackageLocator;
   readonly contract?: PackageAdmissionContractRuntime;
@@ -199,28 +195,10 @@ export function createDormantPluginRuntimeComposition(
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
   });
-  // One store set, shared. The publishing wrapper has to write to the very event log the domain
-  // reads, and against Redis two independently built sets would agree by key while hiding the
-  // coupling — then disagree silently anywhere else.
-  const messagingStores = createMessagingStores(options.redis);
-  const publishingMessageStore = createPublishingMessageStore(options.messageStore, {
-    events: messagingStores.events,
-    onPublishFailure: (error, stored) => {
-      if (options.onMessagePublishFailure) {
-        options.onMessagePublishFailure(error, stored.id, stored.threadId);
-        return;
-      }
-      console.error('[messaging] publish failed; subscribers will not see this message', {
-        messageId: stored.id,
-        threadId: stored.threadId,
-        error,
-      });
-    },
-  });
-
   const messaging = createMessagingDomain({
-    messageStore: publishingMessageStore,
-    stores: messagingStores,
+    messageStore: options.messageStore,
+    ...(options.messagingStores === undefined ? {} : { stores: options.messagingStores }),
+    ...(options.onMessagePublished === undefined ? {} : { onPublished: options.onMessagePublished }),
     ...(options.redis === undefined ? {} : { redis: options.redis }),
     ...(options.invokeTrigger === undefined ? {} : { invokeTrigger: options.invokeTrigger }),
     ...(options.socketManager === undefined ? {} : { socketManager: options.socketManager }),
