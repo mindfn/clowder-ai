@@ -6,6 +6,36 @@
  * create rows, and because the enqueue script owns the `private_input` admission receipt — the
  * durable winner a retired private row leaves behind.
  */
+
+/**
+ * The single rule that decides whether a queue identity is already settled.
+ *
+ * Two scripts admit rows: this file's ledger-only enqueue, and the combined message+Queue append
+ * that publishes a visible notice in the same transition. Both must reach the same verdict about
+ * what counts as a replay, so they share this function verbatim rather than each carrying a copy
+ * that can drift.
+ *
+ * A live row settles its identity by itself. A `private_input` row is retired on purpose once its
+ * last target reaches processing, so its receipt is the only survivor — comparing the fingerprint
+ * there gives a retired identity exactly the verdict a live row would have reached.
+ */
+export const QUEUE_ADMISSION_VERDICT_LUA = `
+local function queueAdmissionVerdict(rowsKey, privateAdmissionsKey, row, fingerprint)
+  local existing = redis.call('HGET', rowsKey, row.id)
+  if existing ~= false and existing ~= nil then return 'settled' end
+  -- No receipt store means this caller admits bound rows, whose durable winner is the message
+  -- index rather than a receipt. Asking for one there would read a key the caller never declared.
+  if privateAdmissionsKey and row.kind == 'private_input' then
+    local receipt = redis.call('HGET', privateAdmissionsKey, row.id)
+    if receipt ~= false and receipt ~= nil then
+      if receipt ~= fingerprint then return 'conflict' end
+      return 'settled'
+    end
+  end
+  return 'fresh'
+end
+`;
+
 export const MIGRATE_QUEUE_LEDGER_V2_LUA = `
 local currentSchema = redis.call('GET', KEYS[4])
 if currentSchema == '2' then return 2 end
@@ -71,7 +101,7 @@ redis.call('SET', KEYS[4], '2')
 return 1
 `;
 
-export const ENQUEUE_QUEUE_ROWS_LUA = `
+export const ENQUEUE_QUEUE_ROWS_LUA = `${QUEUE_ADMISSION_VERDICT_LUA}
 local rowsKey = KEYS[1]
 local orderKey = KEYS[2]
 local privateAdmissionsKey = KEYS[4]
@@ -94,23 +124,14 @@ for i = 1, count do
   if not fingerprint or fingerprint == '' then
     return redis.error_reply('QUEUE_ENQUEUE_MISSING_FINGERPRINT')
   end
-  local existing = redis.call('HGET', rowsKey, row.id)
   -- A private input owns no History message, so its admission receipt is the durable winner.
   -- The row itself is retired on purpose once its last target reaches processing; without the
   -- receipt a stable producer key would be admitted — and executed — a second time.
-  local settled = existing ~= false and existing ~= nil
-  if not settled and row.kind == 'private_input' then
-    local receipt = redis.call('HGET', privateAdmissionsKey, row.id)
-    if receipt ~= false and receipt ~= nil then
-      settled = true
-      -- Same key, different envelope: the retired identity must refuse it exactly as a live row
-      -- would, instead of reporting a changed payload as successfully admitted.
-      if receipt ~= fingerprint then return -1 end
-    end
-  end
-  if settled then
-    settledCount = settledCount + 1
-  end
+  local verdict = queueAdmissionVerdict(rowsKey, privateAdmissionsKey, row, fingerprint)
+  -- Same key, different envelope: the retired identity refuses it exactly as a live row would,
+  -- instead of reporting a changed payload as successfully admitted.
+  if verdict == 'conflict' then return -1 end
+  if verdict == 'settled' then settledCount = settledCount + 1 end
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
   incoming[i] = { id = row.id, raw = raw, row = row, fingerprint = fingerprint }
 end

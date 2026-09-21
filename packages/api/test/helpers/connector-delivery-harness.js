@@ -12,11 +12,19 @@ const { PersistedQueueDelivery } = await import(
 const { MessageStore } = await import('../../dist/domains/cats/services/stores/ports/MessageStore.js');
 
 /**
- * @param {{ progress?: 'started' | 'owned_deferred_busy', messageStore?: unknown }} [options]
+ * `messageStore`/`ledgerStore` exist so the same wiring — and the same assertions — can be run
+ * against either backend. A private admission receipt lives in the ledger store, so a Redis
+ * regression has to replace both halves together or it would observe an in-memory verdict.
+ *
+ * @param {{
+ *   progress?: 'started' | 'owned_deferred_busy',
+ *   messageStore?: unknown,
+ *   ledgerStore?: unknown,
+ * }} [options]
  */
 export function connectorDeliveryHarness(options = {}) {
   const messageStore = options.messageStore ?? new MessageStore();
-  const queue = new InvocationQueue();
+  const queue = options.ledgerStore ? new InvocationQueue(options.ledgerStore) : new InvocationQueue();
   const progressed = [];
   /** Queue drain owes the owner wake, so an admitted entry reaching progress IS the wake. */
   const wakes = [];

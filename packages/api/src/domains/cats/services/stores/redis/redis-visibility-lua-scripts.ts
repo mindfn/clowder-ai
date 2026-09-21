@@ -14,6 +14,8 @@
  *   ENSURE_VISIBILITY_MIGRATED_LUA — read-side migration guard (§8.2 rev 6)
  */
 
+import { QUEUE_ADMISSION_VERDICT_LUA } from '../../agents/invocation/queue-ledger/queue-ledger-redis-admission-scripts.js';
+
 /**
  * Maximum number of members the one-shot backfill will process.
  * Threads larger than this ABORT with a distinct error (fail-visible ops event).
@@ -37,6 +39,7 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  * KEYS[2] = ADR-043 Queue row hash (combined admission only)
  * KEYS[3] = ADR-043 Queue order list (combined admission only)
  * KEYS[4] = ADR-043 Queue message-to-row index (combined admission only)
+ * KEYS[5] = ADR-043 private_input admission receipts (private admission only)
  *
  * ARGV layout (1-indexed):
  *   [1]  keyPrefix
@@ -51,13 +54,24 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  *   [10 .. 9+N]  mention catIds (N = mentionCount)
  *   [10+N]  hashFieldPairCount (string number, M pairs = 2*M values)
  *   [11+N .. 11+N+2*M-1]  hash fields as key1, val1, key2, val2, ...
- *   [tail] queueMaxUserSources, queueRowCount, ...serializedQueueRows
+ *   [tail] queueMaxUserSources, queueRowCount, ...serializedQueueRows,
+ *          admissionMode ('bound' | 'private'), ...rowFingerprints (private only)
+ *
+ * Two admission modes, because two different things can be admitted beside a message:
+ *   - 'bound'   — every row carries this message's identity; the message-to-row index binds them.
+ *   - 'private' — the rows are `private_input` work the message merely *announces*. A private row
+ *                 may never reference a History member, so it binds nothing and its replay verdict
+ *                 comes from the admission receipt instead of the message index.
  *
  * Returns:
  *   - string (existing msgId) → idempotency replay, concurrent winner
  *   - number (visibilitySeq) → new message, allocated seq (0 for queued)
+ *   - {1, seq} → message written, rows admitted
+ *   - {2, msgId} → message idempotency replay
+ *   - {3, seq} → message written, rows were already settled (private replay)
+ *   - {0, ''} → Queue full · {-1, ''} → admission identity conflict
  */
-export const APPEND_WITH_VISIBILITY_LUA = `
+export const APPEND_WITH_VISIBILITY_LUA = `${QUEUE_ADMISSION_VERDICT_LUA}
 local hash = KEYS[1]
 local kp = ARGV[1]
 local msgId = ARGV[2]
@@ -94,6 +108,16 @@ for i = 1, queueRowCount do
   queueRows[i] = { id = row.id, raw = raw, row = row }
   queueEntryIds[i] = row.id
 end
+-- Fingerprints travel beside the rows so Lua and TypeScript can never disagree about envelope
+-- identity through a serialization difference; both compare the exact string TypeScript computed.
+local admissionTailIdx = queueMaxIdx + 1 + queueRowCount
+local privateAdmission = ARGV[admissionTailIdx + 1] == 'private'
+if privateAdmission then
+  for i = 1, queueRowCount do
+    queueRows[i].fingerprint = ARGV[admissionTailIdx + 1 + i]
+  end
+end
+local settledRows = 0
 
 -- #1210 idempotency: if key points to a live hash, replay (return winner ID).
 -- If key exists but hash vanished, fall through to reclaim atomically.
@@ -114,22 +138,44 @@ if queueRowCount > 0 then
   if #KEYS < 4 or not KEYS[2] or not KEYS[3] or not KEYS[4] then
     return redis.error_reply('QUEUE_ADMISSION_KEYS_MISSING')
   end
+  if privateAdmission and (#KEYS < 5 or not KEYS[5]) then
+    return redis.error_reply('QUEUE_ADMISSION_KEYS_MISSING')
+  end
   local incomingIds = {}
   local incomingUserSources = {}
   for i = 1, queueRowCount do
     local item = queueRows[i]
     local row = item.row
     if not row.id or not row.threadId or row.threadId ~= threadId or row.status ~= 'queued' or
-       not row.payload or row.payload.sourceRecordId ~= msgId or row.payload.messageId ~= msgId then
+       not row.payload then
+      return redis.error_reply('QUEUE_ENQUEUE_INVALID_ROW')
+    end
+    if privateAdmission then
+      -- This message only announces the work. A private row owns no History member, so binding it
+      -- to the notice would be the one thing a private_input row may never do.
+      if row.kind ~= 'private_input' or row.payload.messageId ~= nil then
+        return redis.error_reply('QUEUE_ENQUEUE_INVALID_ROW')
+      end
+      if not item.fingerprint or item.fingerprint == '' then
+        return redis.error_reply('QUEUE_ENQUEUE_MISSING_FINGERPRINT')
+      end
+    elseif row.payload.sourceRecordId ~= msgId or row.payload.messageId ~= msgId then
       return redis.error_reply('QUEUE_ENQUEUE_INVALID_ROW')
     end
     if incomingIds[row.id] then return redis.error_reply('QUEUE_ENQUEUE_DUPLICATE_ID') end
     incomingIds[row.id] = true
-    if redis.call('HEXISTS', KEYS[2], row.id) == 1 then return {-1, ''} end
+    local verdict = queueAdmissionVerdict(KEYS[2], KEYS[5], row, item.fingerprint)
+    if verdict == 'conflict' then return {-1, ''} end
+    if verdict == 'settled' then settledRows = settledRows + 1 end
     if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
   end
-  if redis.call('HEXISTS', KEYS[4], msgId) == 1 then return {-1, ''} end
-  if queueMaxUserSources and queueMaxUserSources >= 0 then
+  -- A bound row that already exists is a reused id, never a replay. A private admission replays
+  -- only when every identity is settled; a partial match cannot be told from a reused id.
+  if settledRows > 0 and (not privateAdmission or settledRows ~= queueRowCount) then return {-1, ''} end
+  if not privateAdmission and redis.call('HEXISTS', KEYS[4], msgId) == 1 then return {-1, ''} end
+  -- A settled identity is already admitted work, so capacity cannot refuse it after the fact;
+  -- both the in-memory store and the ledger-only script answer replay ahead of the full check.
+  if settledRows == 0 and queueMaxUserSources and queueMaxUserSources >= 0 then
     local queuedUserSources = {}
     local activeIds = redis.call('LRANGE', KEYS[3], 0, -1)
     for i = 1, #activeIds do
@@ -214,12 +260,19 @@ if idemKey then
 end
 
 -- 7. Queue fan-out commits at the same linearization point as Message.
-for i = 1, queueRowCount do
-  redis.call('HSET', KEYS[2], queueRows[i].id, queueRows[i].raw)
-  redis.call('RPUSH', KEYS[3], queueRows[i].id)
-end
-if queueRowCount > 0 then
-  redis.call('HSET', KEYS[4], msgId, cjson.encode(queueEntryIds))
+if queueRowCount > 0 and settledRows == 0 then
+  for i = 1, queueRowCount do
+    redis.call('HSET', KEYS[2], queueRows[i].id, queueRows[i].raw)
+    redis.call('RPUSH', KEYS[3], queueRows[i].id)
+    if privateAdmission then
+      -- The receipt outlives the row it was written beside, which is the only reason a retired
+      -- private identity can still refuse a different envelope reusing its key.
+      redis.call('HSET', KEYS[5], queueRows[i].id, queueRows[i].fingerprint)
+    end
+  end
+  if not privateAdmission then
+    redis.call('HSET', KEYS[4], msgId, cjson.encode(queueEntryIds))
+  end
 end
 
 -- 8. TTL management (does NOT apply to visibility index, meta, or Queue)
@@ -247,7 +300,10 @@ if ttlSec > 0 then
   end
 end
 
-if queueRowCount > 0 then return {1, tostring(seq)} end
+if queueRowCount > 0 then
+  if settledRows > 0 then return {3, tostring(seq)} end
+  return {1, tostring(seq)}
+end
 return seq
 `;
 

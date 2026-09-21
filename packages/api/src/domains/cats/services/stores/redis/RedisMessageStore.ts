@@ -21,9 +21,11 @@ import {
   assertQueueLedgerEntry,
   type QueueLedgerEntry,
   type QueueLedgerStore,
+  queueLedgerAdmissionFingerprint,
   queueLedgerAdmissionsMatch,
 } from '../../agents/invocation/queue-ledger/QueueLedger.js';
 import { QueueLedgerKeys } from '../../agents/invocation/queue-ledger/queue-ledger-keys.js';
+import { verifyRedisQueueLedgerReplay } from '../../agents/invocation/queue-ledger/RedisQueueLedgerReader.js';
 import {
   hydrateQueueLedgerEntry,
   RedisQueueLedgerStore,
@@ -212,12 +214,18 @@ function hydratePawFeelSourceProjection(fields: readonly (string | null)[]): Paw
 }
 
 type ReservedAppendResult =
-  | { outcome: 'stored'; message: StoredMessage; replayed: boolean }
+  | { outcome: 'stored'; message: StoredMessage; replayed: boolean; queueDeduped?: boolean }
   | { outcome: 'queue_full' | 'queue_conflict' };
 
 interface QueueAppendOptions {
   entries: readonly QueueLedgerEntry[];
   maxQueuedUserEntries?: number;
+  /**
+   * `bound` (default) binds every row to this message's identity through the message-to-row index.
+   * `private` admits `private_input` work the message only announces: the rows bind nothing, and
+   * their replay verdict comes from the durable admission receipt instead.
+   */
+  admissionMode?: 'bound' | 'private';
 }
 
 const ENQUEUE_EXISTING_MESSAGE_WITH_LEDGER_LUA = `
@@ -1261,16 +1269,33 @@ export class RedisMessageStore {
       throw new Error('Redis message admission requires the matching Redis Queue ledger');
     }
     assertPrivateNoticeQueueAdmission(entries);
-    // Same single atomic append+admit path the bound variant uses; the rows simply stay unbound,
-    // which is the only reason this needs its own entry point. One transition, so there is no
-    // window where a crash can publish the notice without the work or admit work without the notice.
-    const result = await this.appendWithReservedId(notice, undefined, { entries });
+    const first = entries[0];
+    if (!first) throw new Error('visible-notice admission requires at least one private row');
+    // The same single atomic append+admit transition the bound variant uses, in its private mode:
+    // the rows stay unbound and their replay verdict comes from the admission receipt. One
+    // transition, so there is no window where a crash can publish the notice without the work, or
+    // admit work whose producer was handed an error.
+    const result = await this.appendWithReservedId(notice, undefined, { entries, admissionMode: 'private' });
     if (result.outcome === 'queue_full') return { outcome: 'full' };
     if (result.outcome === 'queue_conflict') {
       throw new Error('Queue admission identity conflict for a visible-notice private input');
     }
     if (result.outcome !== 'stored') throw new Error('unreachable Queue admission outcome');
-    return { outcome: 'enqueued', message: result.message, entries: [...entries], deduped: result.replayed };
+    // `replayed` is the notice replaying on its own idempotency key; `queueDeduped` is the work
+    // behind it already being settled. Either one means this call admitted nothing new, and the
+    // settled rows must be reported as the ledger sees them — a retired identity hands back no
+    // entry at all, so the caller cannot mistake finished work for something to start.
+    const deduped = result.replayed || result.queueDeduped === true;
+    const settled = deduped ? await verifyRedisQueueLedgerReplay(this.redis, first.threadId, entries) : null;
+    if (settled?.outcome === 'conflict') {
+      throw new Error('Queue admission identity conflict for a visible-notice private input');
+    }
+    return {
+      outcome: 'enqueued',
+      message: result.message,
+      entries: settled ? settled.entries : [...entries],
+      deduped,
+    };
   }
 
   async enqueueExistingMessageWithQueueLedgerAdmission(
@@ -1557,6 +1582,10 @@ export class RedisMessageStore {
       queue?.maxQueuedUserEntries === undefined ? '-1' : String(queue.maxQueuedUserEntries),
       String(queue?.entries.length ?? 0),
       ...(queue?.entries.map((entry) => JSON.stringify(entry)) ?? []),
+      ...(queue ? [queue.admissionMode ?? 'bound'] : []),
+      // Computed here, never in Lua: the receipt comparison must use the exact same bytes the
+      // in-memory store compares, or the two backends could disagree about what a replay is.
+      ...(queue?.admissionMode === 'private' ? queue.entries.map(queueLedgerAdmissionFingerprint) : []),
     ];
 
     // #1200/#1269: ensure visibility migration is complete BEFORE the append.
@@ -1571,16 +1600,29 @@ export class RedisMessageStore {
     // - string (existing msgId) → idempotency replay, return existing message
     // - number (visibilitySeq) → new message created, seq > 0 for non-queued
     const queueKeys = queue
-      ? [QueueLedgerKeys.entries(threadId), QueueLedgerKeys.order(threadId), QueueLedgerKeys.messageIndex(threadId)]
+      ? [
+          QueueLedgerKeys.entries(threadId),
+          QueueLedgerKeys.order(threadId),
+          QueueLedgerKeys.messageIndex(threadId),
+          // The receipt hash only participates in a private admission, but ioredis needs the key
+          // declared up front for cluster slot routing, so it is always passed alongside the rest.
+          ...(queue.admissionMode === 'private' ? [QueueLedgerKeys.privateAdmissions(threadId)] : []),
+        ]
       : [];
-    const result = await this.redis.eval(APPEND_WITH_VISIBILITY_LUA, queue ? 4 : 1, hashKey, ...queueKeys, ...argv);
+    const result = await this.redis.eval(
+      APPEND_WITH_VISIBILITY_LUA,
+      queue ? queueKeys.length + 1 : 1,
+      hashKey,
+      ...queueKeys,
+      ...argv,
+    );
 
     if (queue) {
       if (!Array.isArray(result)) throw new Error('invalid combined message/Queue admission reply');
       const outcome = Number(result[0]);
       if (outcome === 0) return { outcome: 'queue_full' };
       if (outcome === -1) return { outcome: 'queue_conflict' };
-      if ((outcome !== 1 && outcome !== 2) || typeof result[1] !== 'string') {
+      if ((outcome !== 1 && outcome !== 2 && outcome !== 3) || typeof result[1] !== 'string') {
         throw new Error('invalid combined message/Queue admission outcome');
       }
       if (outcome === 2) {
@@ -1621,7 +1663,10 @@ export class RedisMessageStore {
       }
     }
 
-    return { outcome: 'stored', message: stored, replayed: false };
+    // Outcome 3: the notice is new, but every private identity behind it was already settled — the
+    // work must not be admitted twice, and the caller needs to know it was not.
+    const queueDeduped = queue && Array.isArray(result) && Number(result[0]) === 3;
+    return { outcome: 'stored', message: stored, replayed: false, ...(queueDeduped ? { queueDeduped } : {}) };
   }
 
   async getLatestThreadMessageIdIncludingQueued(threadId: string): Promise<string | null> {
