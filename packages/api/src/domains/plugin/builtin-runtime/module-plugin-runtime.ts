@@ -12,6 +12,11 @@ import {
   type PluginRuntimeConfigurationPort,
   resolveManifestConfiguration,
 } from '../manifest-configuration-projection.js';
+import {
+  createPluginStorageHost,
+  type PluginPrivateStoragePort,
+  type PluginStorageHost,
+} from '../plugin-private-storage.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 import { createModuleHostInvocation } from './module-host-invocation.js';
 
@@ -32,6 +37,7 @@ export type ModulePluginLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface ModulePluginHostShape {
   readonly config: { get(key: string): Promise<unknown> };
   readonly secrets: { get(key: string): Promise<string | undefined> };
+  readonly storage: PluginStorageHost;
   readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -47,6 +53,7 @@ export interface PluginModuleDefinitionShape {
 export interface ModulePluginRuntimeOptions {
   readonly packages: VerifiedPluginPackageLocator;
   readonly configuration: PluginRuntimeConfigurationPort;
+  readonly storage?: PluginPrivateStoragePort;
   readonly log: ModulePluginHostShape['log'];
 }
 
@@ -127,9 +134,15 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       const secrets = new Map(
         resolved.filter((field) => field.kind === 'secret').map((field) => [field.key, field.value]),
       );
+      const storage = createPluginStorageHost({
+        pluginId: packageRecord.pluginId,
+        effectiveGrants,
+        ...(this.options.storage === undefined ? {} : { storage: this.options.storage }),
+      });
       const candidate = await plugin.start({
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
+        storage,
         log: (level, message, fields) =>
           this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });

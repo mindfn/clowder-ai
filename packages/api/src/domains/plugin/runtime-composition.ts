@@ -69,6 +69,7 @@ import {
   PluginManagerServiceError,
   type PluginManagerStateProjectionPort,
 } from './plugin-manager-service.js';
+import { RedisPluginPrivateStorage } from './plugin-private-storage.js';
 import { PluginRuntimeCarrierRouter } from './runtime-carrier.js';
 
 export interface PluginRuntimePersistencePaths {
@@ -295,6 +296,7 @@ export function createDormantPluginRuntimeComposition(
   const moduleRuntime = new ModulePluginRuntime({
     packages,
     configuration,
+    ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
     log: (level, message, fields) => {
       if (fields === undefined) moduleLogger[level](message);
       else moduleLogger[level](fields, message);
