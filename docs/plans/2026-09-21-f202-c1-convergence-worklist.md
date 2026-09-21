@@ -47,9 +47,11 @@ host.messaging.deliver
 
 `builtin-runtime/module-host-invocation.ts` 保留为**进程内载体的实现**，但其对外形状要对齐上面这个签名，不要另立一套参数。
 
-> **分层别搞混**：`host.messaging.deliver` 是**传输层**方法（`plane:'host-to-plugin-delivery'`、
-> `operation:'deliverOnMessage'`）；插件在 `message-subscription` 里声明的 `action.method`
-> 是**应用层**方法名（无枚举约束），由前者的参数携带。换掉自造 port ≠ 丢掉插件声明的方法名。
+> **分层别搞混，且别往 payload 里加字段**：`host.messaging.deliver` 的入参是**闭合**的
+> （`deliveryId` / `threadHandle` / `envelope`，`additionalProperties:false`）。
+> 插件声明的 `action.method` **不随线传输**——Host 调固定投递入口，
+> **接收侧按自己已注册的 `message-subscription` 自行分发**。
+> （我原文写"由参数携带"是错的，sol 在实现时查出并纠正。）
 **验收**：`f202-c1-end-to-end-journey.test.js` 全绿且不再出现自造签名。
 
 ### C-2　把已声明但调不到的能力接上线
@@ -112,10 +114,23 @@ im-connector-loader 224 · im-connectors/ 8,180（7 provider）
 
 - `host.messaging.deliver` 是**传输层 wire 方法**：`plane:'host-to-plugin-delivery'`、
   `operation:'deliverOnMessage'`（`contract.generated.d.ts:848,875,1066,1072`）
-- 插件声明的 `action.method` 是**应用层方法名**，`{type:'string', minLength:1}`，**无枚举约束**，
-  由前者的参数携带去分发
+- 插件声明的 `action.method` 是**应用层方法名**，`{type:'string', minLength:1}`，**无枚举约束**
 
-**所以"用标准 wire 方法"和"插件实现自己的方法"说的是两件事，同时成立。**
+> **更正（2026-09-21，sol 在 C-1 开工时查出，已一手复核）**：我此前写「`action.method`
+> 由 `host.messaging.deliver` 的参数携带」——**错的，而且按它实现会撞死在校验上**。
+> `M0CDeliverInput` 是**闭合**的：
+> ```
+> /$defs/M0CDeliverInput
+>   properties : ['deliveryId', 'envelope', 'threadHandle']
+>   required   : ['deliveryId', 'threadHandle', 'envelope']
+>   additionalProperties: False        ← 塞不进第四个字段
+> ```
+> **`action.method` 不上线传输。** Host 只发这三个标准字段；
+> **接收侧（SDK / 模块适配器）依据自己已注册的 `message-subscription` 自行分发**——
+> 它本来就知道自己订阅了什么，不需要 Host 告诉它调哪个方法。
+
+**所以"用标准 wire 方法"和"插件实现自己的方法"是两层、同时成立**，
+但衔接点不是"多带一个字段"，而是**接收侧自己路由**。
 
 ## 4. 顺序（跨仓）
 
