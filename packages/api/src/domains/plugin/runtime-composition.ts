@@ -43,6 +43,7 @@ import {
   BuiltinPluginContributionSupervisor,
   type BuiltinPluginContributionSupervisorOptions,
 } from './manager/builtin-contribution-supervisor.js';
+import { GitPluginPackageAdmission } from './manager/git-package-admission.js';
 import { LocalPluginPackageAdmission } from './manager/local-package-admission.js';
 import { CompositePluginManagerCompatibilityPort } from './manager/plugin-manager-compatibility.js';
 import { HostPluginConfigurationService } from './manager/plugin-manager-configuration.js';
@@ -620,11 +621,18 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
                       packageName: provenance.packageName,
                       trust: 'official' as const,
                     }
-                  : {
-                      kind: provenance.kind,
-                      packageName: provenance.packageName ?? null,
-                      trust: 'local-trusted' as const,
-                    },
+                  : provenance.kind === 'git'
+                    ? {
+                        kind: 'git' as const,
+                        url: provenance.url,
+                        packageName: provenance.packageName ?? null,
+                        trust: 'local-trusted' as const,
+                      }
+                    : {
+                        kind: provenance.kind,
+                        packageName: provenance.packageName ?? null,
+                        trust: 'local-trusted' as const,
+                      },
             capabilities: projected.capabilitySummary.map((capability) => ({ ...capability })),
             contributions: pluginManagerContributionsFromManifest(packageRecord.manifest).map((contribution) => ({
               ...contribution,
@@ -693,6 +701,8 @@ export interface PluginManagerRuntimeCompositionOptions {
   readonly builtinContributions?: Omit<BuiltinPluginContributionSupervisorOptions, 'inventory'>;
   readonly compatibility?: PluginManagerCompatibilityPort;
   readonly now?: () => number;
+  readonly gitBin?: string;
+  readonly gitCloneTimeoutMs?: number;
 }
 
 export interface PluginManagerRuntimeComposition {
@@ -700,6 +710,7 @@ export interface PluginManagerRuntimeComposition {
   readonly officialInstaller: OfficialPluginPackageInstaller;
   readonly officialRouteInstaller: OfficialPluginPackageInstaller;
   readonly localAdmission: LocalPluginPackageAdmission;
+  readonly gitAdmission: GitPluginPackageAdmission;
   readonly assets: PluginManagerPackageAssetService;
   readonly quarantines: FilePluginPackageQuarantineStore;
   readonly builtinSupervisor?: BuiltinPluginContributionSupervisor;
@@ -755,6 +766,12 @@ export function createPluginManagerRuntimeComposition(
     ...(options.runtime.contract === undefined ? {} : { validateManifest: options.runtime.contract.validateManifest }),
     quarantine: quarantines,
   });
+  const gitAdmission = new GitPluginPackageAdmission({
+    localAdmission,
+    cloneRoot: resolve(options.runtime.projectRoot, '.cat-cafe', 'plugin-host'),
+    ...(options.gitBin === undefined ? {} : { gitBin: options.gitBin }),
+    ...(options.gitCloneTimeoutMs === undefined ? {} : { timeoutMs: options.gitCloneTimeoutMs }),
+  });
   const assets = new PluginManagerPackageAssetService({
     inventory: options.runtime.inventoryStore,
     packages: options.runtime.packages,
@@ -806,7 +823,10 @@ export function createPluginManagerRuntimeComposition(
           });
           return { pluginId: candidate.pluginId, pluginInstanceId: installed.pluginInstanceId };
         }
-        const installed = await localAdmission.install(request.source);
+        const installed =
+          request.source.kind === 'git'
+            ? await gitAdmission.install(request.source)
+            : await localAdmission.install(request.source);
         return { pluginId: installed.pluginId, pluginInstanceId: installed.pluginInstanceId };
       },
     },
@@ -833,6 +853,7 @@ export function createPluginManagerRuntimeComposition(
     officialInstaller,
     officialRouteInstaller,
     localAdmission,
+    gitAdmission,
     assets,
     quarantines,
     ...(builtinSupervisor === undefined ? {} : { builtinSupervisor }),

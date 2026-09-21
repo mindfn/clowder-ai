@@ -15,7 +15,8 @@ export type PluginPackageProvenance =
       /** Immutable admission metadata; absent legacy records fail closed while discovery is offline. */
       readonly ownerAuthRequired?: boolean;
     }
-  | { readonly kind: 'local-directory' | 'local-archive'; readonly packageName?: string };
+  | { readonly kind: 'local-directory' | 'local-archive'; readonly packageName?: string }
+  | { readonly kind: 'git'; readonly url: string; readonly packageName?: string };
 export type PluginRuntimeErrorCode =
   | 'AUTH_EXPIRED'
   | 'EVENT_BUS_CONFLICT'

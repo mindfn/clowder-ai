@@ -157,6 +157,12 @@ export type PluginManagerPackageSource =
       trust: 'local-trusted';
     }
   | {
+      kind: 'git';
+      url: string;
+      packageName: string | null;
+      trust: 'local-trusted';
+    }
+  | {
       kind: 'bundled';
       packageName: string;
       trust: 'first-party';
@@ -326,6 +332,9 @@ export type PluginManagerInstallRequest =
     }
   | {
       source: { kind: 'local-directory' | 'local-archive'; path: string };
+    }
+  | {
+      source: { kind: 'git'; url: string };
     };
 
 export interface PluginManagerSetEnabledRequest {

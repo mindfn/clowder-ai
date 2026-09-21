@@ -6,11 +6,25 @@ import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
+import { PluginGitInstallButton } from './PluginGitInstallButton';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
 import { PluginListRow, PluginListSection } from './PluginManagerList';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const DEFAULT_RECOMMENDATION_LIMIT = 3;
+
+function PluginManagerToolbar({ onGitInstall }: { onGitInstall?: (url: string) => Promise<void> }) {
+  return (
+    <div data-plugin-manager-toolbar className="flex flex-wrap justify-end gap-2">
+      {onGitInstall && <PluginGitInstallButton onInstall={onGitInstall} />}
+      <ConnectorPluginInstallButton
+        endpoint="/api/plugin-manager/plugins/install/upload"
+        label="离线安装"
+        docsHref={false}
+      />
+    </div>
+  );
+}
 
 function PluginManagerError({ message }: { message: string | null | undefined }) {
   if (!message) return null;
@@ -69,6 +83,7 @@ export function PluginManagerContent({
   onPluginSelect,
   onSearchChange,
   onInstall,
+  onGitInstall,
   onSetEnabled,
   onUninstall,
   onConfigure,
@@ -85,6 +100,7 @@ export function PluginManagerContent({
   onPluginSelect?: (pluginId: string | null) => void;
   onSearchChange?: (query: string) => void;
   onInstall?: (pluginId: string) => void;
+  onGitInstall?: (url: string) => Promise<void>;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
@@ -131,13 +147,7 @@ export function PluginManagerContent({
 
   return (
     <section data-testid="plugin-manager" className="flex h-full min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
-      <div data-plugin-manager-toolbar className="flex justify-end">
-        <ConnectorPluginInstallButton
-          endpoint="/api/plugin-manager/plugins/install/upload"
-          label="离线安装"
-          docsHref={false}
-        />
-      </div>
+      <PluginManagerToolbar onGitInstall={onGitInstall} />
 
       {catalogStatus !== 'fresh' && (
         <div className="flex items-start gap-2 rounded-xl bg-conn-amber-bg px-3 py-2.5">

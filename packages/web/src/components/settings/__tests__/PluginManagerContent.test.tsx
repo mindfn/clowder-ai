@@ -360,6 +360,77 @@ describe('F202 live Plugin Manager Console wiring', () => {
     });
   });
 
+  it('installs a plugin from a git URL through the canonical Manager endpoint', async () => {
+    const gitUrl = 'https://github.example.test/clowder/example-plugin.git';
+    let listReads = 0;
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/plugin-manager/plugins') {
+        listReads += 1;
+        return json(response());
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      if (url === '/api/plugin-manager/plugins/install' && init?.method === 'POST') {
+        return json({ pluginId: 'dev.clowder.example', pluginInstanceId: 'pi_example' }, 201);
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    const open = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '从 Git 安装',
+    );
+    await act(async () => open?.click());
+    const input = document.querySelector('input[aria-label="Git 仓库地址"]') as HTMLInputElement | null;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(input, gitUrl);
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const install = Array.from(document.querySelectorAll('button')).find((button) => button.textContent === '安装插件');
+    await act(async () => install?.click());
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/install', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: { kind: 'git', url: gitUrl } }),
+    });
+    expect(listReads).toBeGreaterThanOrEqual(2);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('keeps the git install dialog open and shows a server rejection', async () => {
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/plugin-manager/plugins') return json(response());
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
+      if (url === '/api/plugin-manager/plugins/install' && init?.method === 'POST') {
+        return json({ error: '不允许的 Git 地址' }, 400);
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const open = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '从 Git 安装',
+    );
+    await act(async () => open?.click());
+    const input = document.querySelector('input[aria-label="Git 仓库地址"]') as HTMLInputElement | null;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(input, 'ext::sh -c evil');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const install = Array.from(document.querySelectorAll('button')).find((button) => button.textContent === '安装插件');
+    await act(async () => install?.click());
+    await flushEffects();
+
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('不允许的 Git 地址');
+  });
+
   it('preserves server matches whose query is visible only in plugin identity or publisher metadata', async () => {
     mockApiFetch.mockImplementation(async (url) => {
       if (url === '/api/plugin-manager/plugins') return json(response());

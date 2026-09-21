@@ -37,6 +37,7 @@ describe('F202 terminal Plugin Manager contract', () => {
     expectTypeOf<PluginManagerInstallRequest>().toMatchTypeOf<
       | { source: { kind: 'catalog'; catalogId: string }; expectedVersion: string; expectedDigest: string }
       | { source: { kind: 'local-directory' | 'local-archive'; path: string } }
+      | { source: { kind: 'git'; url: string } }
     >();
     expectTypeOf<PluginManagerSetEnabledRequest>().toEqualTypeOf<{
       enabled: boolean;

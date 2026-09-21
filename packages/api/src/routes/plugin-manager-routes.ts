@@ -95,7 +95,17 @@ const localInstallSchema = z
       .strict(),
   })
   .strict();
-const installSchema = z.union([catalogInstallSchema, localInstallSchema]);
+const gitInstallSchema = z
+  .object({
+    source: z
+      .object({
+        kind: z.literal('git'),
+        url: z.string().trim().min(1).max(4_096),
+      })
+      .strict(),
+  })
+  .strict();
+const installSchema = z.union([catalogInstallSchema, localInstallSchema, gitInstallSchema]);
 const setEnabledSchema = z.object({ enabled: z.boolean(), expectedRevision: lifecycleRevisionSchema }).strict();
 const uninstallSchema = z.object({ expectedRevision: lifecycleRevisionSchema }).strict();
 const configureSchema = z
@@ -290,7 +300,7 @@ async function appendMutationAudit(
     readonly operator: string;
     readonly operation: 'install' | 'set-enabled' | 'uninstall';
     readonly pluginId?: string;
-    readonly sourceKind?: 'catalog' | 'local-directory' | 'local-archive';
+    readonly sourceKind?: 'catalog' | 'git' | 'local-directory' | 'local-archive';
     readonly expectedRevision?: number;
   },
 ): Promise<void> {

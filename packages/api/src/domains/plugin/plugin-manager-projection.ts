@@ -222,6 +222,14 @@ function candidateSource(
       trust: 'local-trusted',
     };
   }
+  if (provenance?.kind === 'git') {
+    return {
+      kind: 'git',
+      url: provenance.url,
+      packageName: provenance.packageName ?? null,
+      trust: 'local-trusted',
+    };
+  }
   return {
     kind: 'catalog',
     catalogId: candidate.catalogId,

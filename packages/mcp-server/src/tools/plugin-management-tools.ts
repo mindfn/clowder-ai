@@ -88,8 +88,23 @@ const localInstallSchema = z
       .strict(),
   })
   .strict();
+const gitInstallSchema = z
+  .object({
+    source: z
+      .object({
+        kind: z.literal('git'),
+        url: z
+          .string()
+          .trim()
+          .min(1)
+          .max(4_096)
+          .describe('Absolute https, ssh, git, or file repository URL selected by the user.'),
+      })
+      .strict(),
+  })
+  .strict();
 const pluginInstallRequestSchema = z
-  .union([catalogInstallSchema, localInstallSchema])
+  .union([catalogInstallSchema, localInstallSchema, gitInstallSchema])
   .describe('Closed Host Manager install request. Catalog installs are version/digest fenced.');
 
 export const pluginListInputSchema = {};
@@ -352,7 +367,7 @@ export const pluginManagementTools = [
   defineTool({
     name: 'plugin_install',
     description:
-      'Install a catalog candidate or local directory/archive through Host package admission and inventory. Use only when the user explicitly asks to install/add that plugin. NOT for: arbitrary npm search, enable, update, repair, or bypassing package verification. Output/side effect: admits an immutable verified package and disabled instance, returning its ids; catalog requests require the exact observed version/digest, and local code is never imported into the API process.',
+      'Install a catalog candidate, git repository, or local directory/archive through Host package admission and inventory. Use only when the user explicitly asks to install/add that plugin. NOT for: arbitrary npm search, enable, update, repair, or bypassing package verification. Output/side effect: admits an immutable verified package and disabled instance, returning its ids; catalog requests require the exact observed version/digest, git clones are bounded and non-interactive, and local code is never imported into the API process.',
     inputSchema: pluginInstallInputSchema,
     handler: handlers.install,
     governance: {

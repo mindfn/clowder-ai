@@ -24,6 +24,10 @@ export type LocalPluginPackageSource =
   | { readonly kind: 'local-directory'; readonly path: string }
   | { readonly kind: 'local-archive'; readonly path: string };
 
+export type LocalPluginPackageProvenance =
+  | { readonly kind: 'local-directory' | 'local-archive' }
+  | { readonly kind: 'git'; readonly url: string };
+
 export interface LocalPluginPackageAdmissionOptions {
   readonly inventory: HostInventoryControlPlane;
   readonly packagesRoot: string;
@@ -196,7 +200,11 @@ export class LocalPluginPackageAdmission {
     this.tarBin = options.tarBin?.trim() || 'tar';
   }
 
-  async install(source: LocalPluginPackageSource, fence: LocalPluginAdmissionFence = {}) {
+  async install(
+    source: LocalPluginPackageSource,
+    fence: LocalPluginAdmissionFence = {},
+    provenance: LocalPluginPackageProvenance = { kind: source.kind },
+  ) {
     const bytes =
       source.kind === 'local-directory'
         ? await archiveLocalDirectory(source.path, this.packagesRoot, this.tarBin)
@@ -248,7 +256,7 @@ export class LocalPluginPackageAdmission {
           packagePluginId: located.manifest.pluginId,
           effectiveGrants,
           signalSchemas,
-          provenance: { kind: source.kind },
+          provenance,
         });
         return { pluginId: located.manifest.pluginId, ...installed };
       } catch (error) {
@@ -266,7 +274,7 @@ export class LocalPluginPackageAdmission {
           : error.code === 'INVENTORY_REJECTED'
             ? quarantineFailureCodeFromInventoryError(error.cause)
             : undefined;
-        if (failureCode) await this.recordQuarantine(source, digest, failureCode);
+        if (failureCode) await this.recordQuarantine(provenance, digest, failureCode);
       }
       throw error;
     } finally {
@@ -275,7 +283,7 @@ export class LocalPluginPackageAdmission {
   }
 
   private async recordQuarantine(
-    source: LocalPluginPackageSource,
+    source: LocalPluginPackageProvenance,
     packageDigest: string,
     failureCode: PluginPackageQuarantineFailureCode,
   ): Promise<void> {
@@ -283,7 +291,7 @@ export class LocalPluginPackageAdmission {
     try {
       await this.options.quarantine.record({
         packageDigest,
-        source: { kind: source.kind },
+        source,
         failureCode,
       });
     } catch (error) {
