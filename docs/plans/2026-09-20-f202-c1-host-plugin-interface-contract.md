@@ -326,3 +326,62 @@ plugin-sdk 的 thread 面 = 零命中
 激活时地址签发 → plugins 侧切到 `message-subscription` → **然后才删** `ConnectorRouter` 等。
 否则删完之后 IM 里 @ 猫不再唤醒任何猫。
 
+## 12. 完整方案审计（operator 要求，2026-09-21）——接口面本身有系统性缺陷
+
+operator 的判断：
+
+> 我提的都不是什么新鲜的；都是基于已有的思路；而且是我没看代码的情况下都能发现的；
+> 如果你们之前有疑问；那我理解你们开放给 sdk 的接口是不是就是有问题的
+
+**成立。** 通读之后三条系统性缺陷：
+
+### 12.1 我说"契约里没有 Host→插件方向"——**错的，已撤回**
+
+我只读了 `PluginToHostMethod`（6 项），那只是子集。真实的 broker 命名空间
+`WIRE_METHOD_NAMES` 有 16 项，其中**四项就是 Host→插件**：
+
+```
+host.messaging.deliver      host.grants.changed
+host.lifecycle.drain        host.lifecycle.ping
+```
+
+而且 `host.messaging.deliver` **已发布、已定形状、stdio 传输层已实现**：
+
+```
+M0CDeliverInput  = { deliveryId, threadHandle: ThreadHandleAddress, envelope: MessageEnvelope }
+M0CDeliverResult = { deliveryId }
+Host 侧: stdio-broker-transport.ts:44 已声明调用；control-plane.ts:376 已读其 grant
+```
+
+**这正是订阅投递需要的形状。** 所以出站**不需要新增任何公共面**——用它即可。
+
+### 12.2 同一件事有三份实现
+
+| 实现 | 出处 |
+|---|---|
+| `host.messaging.deliver` | **已发布契约 + stdio 已实现**（标准） |
+| `ConnectorContribution.outboundMethod` | 连接器专属，Host 从未消费 |
+| `HostInvocationPort`（我造的） | 本车道新增，**重复发明了标准方法** |
+
+后两个都该让位给第一个。这是 operator 所说"不是新鲜的、都基于已有思路"的直接印证：
+**我们反复在已有机制旁边另造一个，因为没有人通读过整张方法表。**
+
+### 12.3 17 个能力可声明，其中 7 个根本调不到
+
+`Capability` 有 17 项，但既无 wire 方法、也无 `FeatureContext` 字段的有 **7 项**：
+
+```
+thread.listMetadata   thread.readContent
+memory.query          memory.append        memory.retrieve
+whisper.extend        （events.publish 有 wire 方法，但无作者面）
+```
+
+**声明得出来、授得了权、永远调不到。** 这解释了为什么"插件要取 thread"会卡住——
+能力清单与可调用面**从未对齐过**，缺口不是一个方法，是两张表没对过账。
+
+### 12.4 由此修正本车道的做法
+
+1. 出站改用 `host.messaging.deliver`，**撤掉自造的 `HostInvocationPort` 形状**
+2. `ConnectorContribution` 的 inbound/outbound 仍然作废（结论不变，理由更强：标准方法早就有）
+3. 能力表 ↔ 可调用面的对账缺口单独记录，**不在 C1 内扩面**，但必须让下一位不要再各造一个
+
