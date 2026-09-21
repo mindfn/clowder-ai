@@ -218,31 +218,42 @@ operator 问它具体是什么：`ConnectorRouter.ts:32-47` 广播
 **次序**：G5 必须早于删除 `OutboundDeliveryHook` 的 connector 分支——
 否则猫的回复会在两条路都断的窗口里静默消失。
 
-## 9. 接口全集里最后一个未定的洞：插件怎么拿到"新外部会话"的地址
+## 9. ~~接口全集里最后一个未定的洞~~ —— **已取消**（operator 2026-09-21 裁定）
 
-**G3 与 G4 其实是同一个洞。** 按裁定的形状，插件收到飞书消息后调 `messaging.send`。
-但 `send` 的地址是**预先签发的 handle**，而一个**第一次出现**的外部会话既没有 thread、也没有 handle。
+原文主张：插件要为第一次出现的外部会话取得地址，只能给已发布的 `PluginToHostMethod` 加一项。
+**operator 否掉了这个前提，而且是对的：**
 
-今天 Core 侧的 `ConnectorIngress` 在 Host 内部做了这件事（建 thread + binding + 签 handle），
-但它是 **Host 自己调的**，插件够不着。要让插件够得着，只有两条路：
+> 插件如果当前没注册和绑定到任何 thread；那就是基于插件的标识 id 的一个固定线程啊；
+> 这个是插件或者 sdk 自己就能闭环的不需要在 host 这边考虑吧
 
-| | 形态 | 代价 |
-|---|---|---|
-| **A** | 新增一个通用能力：`给我这个外部会话的地址`（插件→Host） | 新增已发布公共面一项——正是 operator 强调"发布后再演进要背兼容"的东西 |
-| **B** | Host 在激活时替插件把已知绑定的 handle 全签好 | 覆盖不了**新**会话（第一次有人在新群里 @ 猫），这正是最常见的入口 |
+**为什么闭合**（一手核过）：
 
-**B 覆盖不了新会话，所以只剩 A。** 但必须写成**通用**的，不能带 connector 味道：
-它表达的是"我这个订阅者，要为我负责的某个外部会话取得一个地址"——
-前台猫接待一位新访客时需要的是同一件事。
+| 插件需要的 | 已有的东西 |
+|---|---|
+| 建 thread | `POST /api/threads` —— **已经是 HTTP API** |
+| 列 thread | `GET /api/threads` |
+| 记"哪个群对应哪个 thread" | `plugin.state.get/set` —— **已有 capability** |
+| 没绑定时的落点 | 按插件标识固定的 thread，Host 在**激活时**签发 handle 即可 |
 
-**与第 1 条原则的关系**：这不是定制专属接口，它是把 `ConnectorIngress` 今天在 Host 内做的事
-变成任何订阅者都能用的一项能力。名字与形状不应出现 `connector` / `im` 字样。
+`/new` = `threadStore.create` + `bindingStore.bind`；`/use` = `bindingStore.bind`。
+其中 `bindingStore` 是 Host 的 connector binding store——**但插件根本不需要它**，
+映射放自己的 plugin state 里就行。**因此不新增任何 `PluginToHostMethod`。**
 
-**次序**：它是插件真正跑通入站的前置，必须早于删除 `ConnectorRouter`——
-否则删完之后第一次进新群的消息无处落地。
+### 9.1 由此产生的后果：`ConnectorIngress` 被取代，但有一半必须留下
 
-**待 operator 在验收时确认的一点**：这会给已发布的 `PluginToHostMethod` 增加一项。
-按"Host 先定接口、SDK 后发"的裁定，现在加是最便宜的时机；但它确实是新公共面。
+`domains/messaging/connector-ingress.ts`（commit `6b4a361b5`）是在"Host 替插件做准入"的
+旧假设下写的：它建 thread、建 binding、签 handle、再代插件调 `send`。
+按本节裁定，**建 thread / 建 binding / 代发这三件事全部归插件**，所以这部分是死代码，
+且其文件名就违反"host 里不留 connector 代码"。装配引用数已验证为 **0**。
+
+**但不能整个删掉，因为有一半不是寻址问题而是授权问题**：
+插件用 `thread_handle` 以自己的声音说话时，其文本**永远不产生唤醒**（F288 v0 冻结的安全属性）。
+飞书里人 @猫 要能唤醒，靠的是 `connector_binding` 这个**已认证外部入站**地址种类。
+这半边今天仍然没有任何生产调用点去签发。
+
+**收口方式**：把"签发已认证外部入站 handle"移到**激活时**由 Host 完成
+（Host 权限、Host 动作、无新插件可调能力），然后删掉 `connector-ingress.ts` 的其余部分。
+**次序**：先补签发、再删——否则删完之后 IM 里 @ 猫不再唤醒任何猫。
 
 ## 10. 回声抑制默认反转（2026-09-20，跨线 review 促成）
 
