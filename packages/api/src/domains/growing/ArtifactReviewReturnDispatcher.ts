@@ -53,6 +53,9 @@ export class ArtifactReviewReturnDispatcher {
       targetCatId: intent.targetCatId,
       idempotencyKey,
       content: reviewReturnEnvelope(intent),
+      // The owner's own authenticated review continuation states `strict` explicitly rather than
+      // inheriting it, so the port's fail-closed default can stay fail-closed for every other producer.
+      ownerAuthProvenance: 'strict',
       source: {
         connector: 'content-review',
         label: '产物审阅',

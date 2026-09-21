@@ -1493,9 +1493,22 @@ async function main(): Promise<void> {
   const packTemplateStore = new PackTemplateStore(schedulerDb);
 
   // Phase 4: delivery + content fetch for template execution
-  const { createDeliverFn, createLifecycleToastFn } = await import('./infrastructure/scheduler/delivery.js');
+  const { createDeliverFn, createDeliverPrivateFn, createLifecycleToastFn } = await import(
+    './infrastructure/scheduler/delivery.js'
+  );
   const { createFetchContentFn } = await import('./infrastructure/scheduler/content-fetcher.js');
-  const schedulerDeliver = createDeliverFn({ messageStore, socketManager });
+  // RFC §5.1: one component owns atomic Message + Queue admission for every producer. `progress` is
+  // late-bound: queueProcessor is constructed further down in boot, and no delivery runs before then.
+  const { PersistedQueueDelivery } = await import(
+    './domains/cats/services/agents/invocation/PersistedQueueDelivery.js'
+  );
+  const persistedQueueDelivery = new PersistedQueueDelivery({
+    messages: messageStore,
+    queue: invocationQueue,
+    progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
+  });
+  const schedulerDeliver = createDeliverFn({ messageStore, socketManager, persistedQueueDelivery });
+  const schedulerDeliverPrivate = createDeliverPrivateFn({ persistedQueueDelivery });
   const schedulerLifecycleToast = createLifecycleToastFn({ socketManager });
   const schedulerFetchContent = createFetchContentFn();
 
@@ -1506,6 +1519,7 @@ async function main(): Promise<void> {
     globalControlStore,
     emissionStore,
     deliver: schedulerDeliver,
+    deliverPrivate: schedulerDeliverPrivate,
     cancelQueuedDelivery: async (messageId) => {
       const source = await messageStore.getById(messageId);
       if (source?.threadId) {
@@ -3254,8 +3268,12 @@ async function main(): Promise<void> {
   // resolves the live trigger at request time via this holder, so the provider
   // returns null until index.ts wires it after invokeTrigger construction.
   const invokeTriggerHolder: {
-    current: ConnectorInvokeTrigger | null;
-    get(): ConnectorInvokeTrigger | null;
+    current:
+      | import('./domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort
+      | null;
+    get():
+      | import('./domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort
+      | null;
   } = {
     current: null,
     get() {
@@ -3694,7 +3712,6 @@ async function main(): Promise<void> {
     threadStore,
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
-    messageStore,
     gitPublisher: harnessGitPublisher,
     verdictGenerators,
     // 砚砚 R4 P1 + cloud R4 P1: register CallbackAuthRegistry for MCP route auth.
@@ -5387,9 +5404,6 @@ async function main(): Promise<void> {
   const { createArtifactReviewIntegration } = await import('./domains/growing/artifact-review-composition.js');
   const { registerArtifactReviewRoutes } = await import('./routes/artifact-review-routes.js');
   const { registerCallbackArtifactReviewRoutes } = await import('./routes/callback-artifact-review-routes.js');
-  const { PersistedQueueDelivery } = await import(
-    './domains/cats/services/agents/invocation/PersistedQueueDelivery.js'
-  );
   const artifactReview = createArtifactReviewIntegration({
     dataDir: process.env.CAT_CAFE_DATA_DIR ?? join(resolveActiveProjectRoot(), '.cat-cafe'),
     uploadDir: getDefaultUploadDir(process.env.UPLOAD_DIR),
@@ -5398,11 +5412,7 @@ async function main(): Promise<void> {
     tasks: taskStore,
     threads: threadStore,
     messages: messageStore,
-    delivery: new PersistedQueueDelivery({
-      messages: messageStore,
-      queue: invocationQueue,
-      progress: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
-    }),
+    delivery: persistedQueueDelivery,
     emit: (userId, event, data) => socketManager?.emitToUser(userId, event, data),
     onError: (error) => app.log.warn({ err: error }, '[artifact-review] recovery remains pending'),
   });
@@ -7089,7 +7099,7 @@ async function main(): Promise<void> {
   // the holder pattern lets `POST /api/eval-domains/:domainId/trigger-now`
   // resolve the live trigger at request time. Without this bind, the route
   // returns 503 instead of waking the eval cat.
-  invokeTriggerHolder.current = invokeTrigger;
+  invokeTriggerHolder.current = persistedQueueDelivery;
 
   // F167 Phase M: late-bind busy checker for pre-fire defer (hold_ball activation).
   // Same thread-busy signal as delivery-batch-done (messages.ts:1822 /
@@ -7102,7 +7112,8 @@ async function main(): Promise<void> {
   // Router/service creation stays here — same deps available as before.
   // Task registration moved to plugin framework via rehydrateGitHubSchedules closure.
   {
-    const deliveryDeps = { messageStore, socketManager };
+    // RFC §5.1: a GitHub notification is a producer envelope, not its own delivery mechanism.
+    const deliveryDeps = { delivery: persistedQueueDelivery };
     const [{ GitHubWaitLifecycleService }, waitEventLogModule] = await Promise.all([
       import('./domains/github-signals/GitHubWaitLifecycleService.js'),
       import('./domains/ball-custody/WaitLifecycleEventLog.js'),
@@ -7115,24 +7126,9 @@ async function main(): Promise<void> {
       deliveryDeps,
       eventLog: waitEventLog,
       log: app.log,
-      // #1392 AC-1: a message flushed from the delivery outbox is one whose own generation never got
-      // it out, so nothing else will start its owner for it. The collector whose poll happened to
-      // flush it must not: that message is not its poll's result.
-      wakeOwner: async ({ task, outcome, content, messageId }) => {
-        await invokeTrigger.trigger(
-          task.threadId,
-          (task.ownerCatId ?? '') as CatId,
-          task.userId ?? '',
-          content,
-          messageId,
-          undefined,
-          {
-            priority: 'normal',
-            reason: 'github_wait_satisfied',
-            coalesceKey: `${outcome.subjectRef}:wait:${task.ownerCatId ?? 'unassigned'}`,
-          },
-        );
-      },
+      // #1392 AC-1 is structural now: publishPending admits the flushed outcome to the Queue in the
+      // same transaction that persists it, so the flush IS the owner's wake. There is no second
+      // trigger that a collector could mistake for its own poll's result.
     });
     waitLifecycleHolder.current = waitLifecycle;
     const [{ PrWaitMigrationService }, { IssueWaitMigrationService }, { WaitLifecycleRecoverySweep }] =
@@ -8023,6 +8019,7 @@ async function main(): Promise<void> {
 
   // F088: Start connector gateway (best-effort, after listen)
   const gatewayDeps = {
+    persistedQueueDelivery,
     messageStore: {
       async append(input: Parameters<typeof messageStore.append>[0]) {
         const result = await messageStore.append(input);

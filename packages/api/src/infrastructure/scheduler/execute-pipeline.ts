@@ -36,6 +36,7 @@ export interface PipelineContext {
   schedule?: ScheduleRunTiming;
   /** Phase 4 (AC-H1): deliver message to a thread */
   deliver?: (opts: DeliverOpts) => Promise<string>;
+  deliverPrivate?: (opts: import('./types.js').PrivateDeliverOpts) => Promise<void>;
   /** Cancel a scheduler-owned queued message that failed before Queue admission. */
   cancelQueuedDelivery?: (messageId: string) => Promise<boolean>;
   /** Phase 4 (AC-H2): fetch web content with browser-automation routing */
@@ -113,6 +114,7 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
     isManualTrigger,
     schedule,
     deliver,
+    deliverPrivate,
     cancelQueuedDelivery,
     fetchContent,
     invokeTrigger,
@@ -292,6 +294,7 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
             context: task.context,
             schedule,
             deliver: cancellationAwareDeliver,
+            ...(deliverPrivate ? { deliverPrivate } : {}),
             cancelQueuedDelivery: cancellationAwareCancelQueuedDelivery,
             fetchContent: cancellationAwareFetch,
             invokeTrigger: cancellationAwareInvokeTrigger,

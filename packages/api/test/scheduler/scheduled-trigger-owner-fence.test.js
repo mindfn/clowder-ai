@@ -2,7 +2,7 @@
 /**
  * F117 R4 combo test (sol adjudication): scheduled trigger message must pass the
  * canonical ingress fence end-to-end — real reminder template + real createDeliverFn
- * + real ConnectorInvokeTrigger + real Queue ledger. Nails "source owner == queue
+ * + real PersistedQueueDelivery + real Queue ledger. Nails "source owner == queue
  * owner and enqueue succeeds", which the Phase 4 mock-based tests cannot detect
  * (the R4 reminder merge regression delivered userId 'scheduler' while triggering
  * with triggerUserId, and would have been rejected by the fence in production).
@@ -12,9 +12,9 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Database from 'better-sqlite3';
 import { InvocationQueue } from '../../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { PersistedQueueDelivery } from '../../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
 import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { applyMigrations } from '../../dist/domains/memory/schema.js';
-import { ConnectorInvokeTrigger } from '../../dist/infrastructure/email/ConnectorInvokeTrigger.js';
 import { DynamicTaskStore } from '../../dist/infrastructure/scheduler/DynamicTaskStore.js';
 import { createDeliverFn } from '../../dist/infrastructure/scheduler/delivery.js';
 import { GlobalControlStore } from '../../dist/infrastructure/scheduler/GlobalControlStore.js';
@@ -66,28 +66,25 @@ describe('scheduled trigger message passes the canonical ingress fence end-to-en
     queue = new InvocationQueue();
     drains = [];
     const sockets = socketHarness();
-    const deliver = createDeliverFn({ messageStore, socketManager: sockets.manager });
-    const trigger = new ConnectorInvokeTrigger({
-      socketManager: sockets.manager,
-      invocationQueue: queue,
-      queueProcessor: /** @type {any} */ ({
-        async requestDrain(threadId) {
-          drains.push(threadId);
-        },
-      }),
-      messageStore,
-      log: noopLog(),
+    // RFC §5.1: the scheduler hands its envelope to the one durable-admission component.
+    const persistedQueueDelivery = new PersistedQueueDelivery({
+      messages: messageStore,
+      queue,
+      progress: async (entry) => {
+        drains.push(entry.threadId);
+        return 'started';
+      },
     });
+    const deliver = createDeliverFn({ messageStore, socketManager: sockets.manager, persistedQueueDelivery });
     runner = new TaskRunnerV2({
       logger: { info: () => {}, error: () => {} },
       ledger,
       globalControlStore,
       deliver,
-      invokeTrigger: trigger,
     });
   });
 
-  test('reminder template → createDeliverFn → ConnectorInvokeTrigger enqueues under the trigger owner', async () => {
+  test('reminder template → createDeliverFn admits under the trigger owner in one transaction', async () => {
     store.insert(
       {
         id: 'remind-owner-fence',

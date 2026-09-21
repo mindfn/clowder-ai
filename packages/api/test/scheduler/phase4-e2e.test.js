@@ -39,9 +39,17 @@ describe('F139 Phase 4 E2E', () => {
       broadcastToRoom: mock.fn(),
       emitToUser: mock.fn(),
     };
+    // RFC §5.1: a scheduled wake crosses the durable-admission seam, not a bare append.
+    const mockPersistedQueueDelivery = {
+      async deliver(input) {
+        const id = `msg-${Date.now()}`;
+        return { state: 'started', entryId: `entry-${id}`, message: { id, ...input } };
+      },
+    };
     deliverMock = createDeliverFn({
       messageStore: mockMessageStore,
       socketManager: mockSocketManager,
+      persistedQueueDelivery: mockPersistedQueueDelivery,
     });
 
     // Wrap to capture calls
@@ -139,15 +147,12 @@ describe('F139 Phase 4 E2E', () => {
     // verified trigger owner (triggerUserId), not the author 'scheduler'. Scheduler
     // authorship is expressed via from: system:scheduler in createDeliverFn instead.
     assert.equal(deliverCalls[0].userId, 'default-user'); // === triggerUserId
-    assert.equal(deliverCalls[0].extra?.scheduler?.hiddenTrigger, true);
-
-    // 2. invokeTrigger was called with the REAL messageId from deliver
-    assert.equal(triggerCalls.length, 1);
-    assert.equal(triggerCalls[0][0], 'thread-news-123'); // threadId
-    assert.equal(triggerCalls[0][1], 'opus'); // catId (default, no actor resolver)
-    assert.equal(triggerCalls[0][2], 'default-user'); // userId (from triggerUserId param, not hardcoded 'scheduler')
-    assert.ok(triggerCalls[0][3].includes('搜三天内 Anthropic 新闻')); // message contains reminder
-    assert.ok(triggerCalls[0][4].startsWith('msg-'), 'messageId should be real stored ID');
+    // RFC §5.2: the envelope names its member and admission is the wake — one seam, not two.
+    assert.equal(deliverCalls.length, 1, 'one envelope, one admission');
+    assert.equal(deliverCalls[0].threadId, 'thread-news-123');
+    assert.equal(deliverCalls[0].targetCatId, 'opus'); // default, no actor resolver
+    assert.equal(deliverCalls[0].sourceCategory, 'scheduled');
+    assert.ok(deliverCalls[0].idempotencyKey, 'a scheduled wake carries a stable admission identity');
 
     // Ledger still records RUN_DELIVERED
     const runs = ledger.query('remind-cat-wake', 1);
@@ -192,13 +197,13 @@ describe('F139 Phase 4 E2E', () => {
 
     await runnerWithTrigger.triggerNow('hold-ball-timer-1', { manual: true });
 
+    // One envelope carries the hold's identity, urgency and member; admission is the wake.
     assert.equal(deliverCalls.length, 1);
-    assert.equal(deliverCalls[0].deliveryStatus, 'queued');
     assert.equal(deliverCalls[0].source.connector, 'hold-ball');
     assert.equal(deliverCalls[0].source.meta.phase, 'wake');
-    assert.equal(triggerCalls.length, 1);
-    assert.equal(triggerCalls[0][6].priority, 'urgent');
-    assert.equal(triggerCalls[0][6].sourceCategory, 'scheduled');
+    assert.equal(deliverCalls[0].targetCatId, 'codex-sol');
+    assert.equal(deliverCalls[0].priority, 'urgent');
+    assert.equal(deliverCalls[0].sourceCategory, 'scheduled');
   });
 
   test('AC-H4: builtin task pause via override → trigger skipped', async () => {
@@ -362,13 +367,10 @@ describe('F139 Phase 4 E2E', () => {
     assert.ok(deliverCalls[0].content.includes('https://x.com/anthropic'));
     assert.ok(deliverCalls[0].content.includes('今天 AI 新闻'));
 
-    assert.equal(triggerCalls.length, 1);
-    assert.equal(triggerCalls[0][0], 'thread-browser');
-    assert.equal(triggerCalls[0][1], 'gpt52');
-    assert.equal(triggerCalls[0][2], 'default-user'); // userId (from triggerUserId param)
-    assert.ok(triggerCalls[0][3].includes('browser-automation'));
-    assert.ok(triggerCalls[0][4].startsWith('msg-'));
-    assert.equal(triggerCalls[0][6]?.suggestedSkill, 'browser-automation');
+    // The skill hint travels in the envelope the admission persists, not in a second wake call.
+    assert.equal(deliverCalls[0].targetCatId, 'gpt52');
+    assert.equal(deliverCalls[0].suggestedSkill, 'browser-automation');
+    assert.equal(deliverCalls[0].sourceCategory, 'scheduled');
 
     const runs = ledger.query('digest-browser', 1);
     assert.equal(runs[0].outcome, 'RUN_DELIVERED');
