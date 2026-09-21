@@ -89,6 +89,38 @@ factory」改成「插件声明要跑什么」，limb 同理，7 个 github fact
 - **schedule / limb**（要执行插件代码）→ 必须有双向通道，这正是两个白名单的由来：
   插件不能提供 handler，所以 handler 只能写在 Host 里。
 
+### 实物证据：main 的声明面比此前记录的宽得多，耦合只剩「可执行件的指针」
+
+operator 补充「静态的比如插件的配置、im connector 那边的 action、还有 test
+这些通用能力其实都是基于 yaml 来声明的」。读实物，属实且更彻底。
+
+**`plugins/github/plugin.yaml` 全文 = 元数据 + i18n + `config` 三字段 + 7 条
+`{type: schedule, name, factoryId}`。** 整个 github 插件在 main 模型里就这些。
+
+**`plugins/weixin-mp/plugin.yaml`** = 元数据 + i18n + `config` 两字段 +
+`{type: limb, path}` + `{type: skill, path}` + `healthCheck: { limbCommand: … }`（即 test）。
+
+**`plugins/weixin-mp/limbs/weixin-mp.yml`（292 行）** 顶部原话：
+「通用 PluginLimbAdapter 从此文件驱动 HTTP 调用和 invoke handler」。
+它声明了 `auth`（client_credentials，模板变量 `${WEIXIN_MP_APP_ID}` 引用插件 config）、
+`error` 解析路径、`capabilities → commands`（即 operator 说的 action，带 authLevel）。
+
+**所以 main 的声明面已覆盖：** 元数据 / i18n / 配置字段（含 sensitive、required）/
+setupSteps / docsUrl / healthCheck(test) / limb 的 auth+error+actions / skill 与 mcp 的资源路径。
+
+**两个插件的耦合形状完全一样，各只剩一根指向 Host 源码的指针：**
+
+| 插件 | 声明（已解耦） | 指针（未解耦） |
+|---|---|---|
+| github | 全部 yaml | `factoryId: github.cicd-check` … 7 条 → Host 源码里的 factory |
+| weixin-mp | 全部 yaml（含 292 行 limb 声明） | `limbAdapterRegistry.set('weixin-mp', …)` 里的 `handlers: weixinMpHandlers` |
+
+> **所以 §0.02 缺口 ② 不是「两个白名单」两件事，是一件事：
+> 插件需要一条通道，把「可执行件」从自己的包里交给 Host，而不是让 Host 源码持有它。**
+
+这也解释了 operator 那句「已有的插件只是很早就在帮我们补齐相关的能力；但是没有解耦而已」——
+声明层当年就是按可拆分设计的（通用 PluginLimbAdapter 就是证据），差的只有这根指针。
+
 ### 收敛方向：C1 往 main 收敛，不是反过来
 
 > operator：「c1 往我们当前的 main 的那套收敛本来就是合理的；
