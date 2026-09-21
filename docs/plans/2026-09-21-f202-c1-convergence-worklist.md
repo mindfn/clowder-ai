@@ -10,6 +10,43 @@ architecture-cell: plugin
 
 > 设计依据在 `2026-09-20-f202-c1-host-plugin-interface-contract.md`。本文只讲**改什么、什么顺序**。
 
+## 0.0　更正（2026-09-21，operator 两问逼出来的）：卡点不在插件仓，在 Host 自己的两个白名单
+
+operator 问了两句，两句都推翻了本文先前的结论：
+
+> 「为什么不 feishu 这个不发版本就迁移不出去这个逻辑；host 为什么要造适配器 造什么适配器」
+
+**答一：不该造适配器。** Host 今天有**两套互不相干的插件系统**，且零共享代码路径
+（`PluginResourceActivator` 在 `runtime-composition.ts` 里被引用 **0 次**）：
+
+| | 传统系统（F202 Phase 2） | C1 系统 |
+|---|---|---|
+| 入口 | `PluginResourceActivator.enablePlugin(manifest)` | carrier + `FeatureContext` + `FeatureHostAdapter` |
+| 装配 | `index.ts:4294-4543` | `runtime-composition.ts` |
+| 类型 | `@cat-cafe/shared` `PluginResourceDef`（4 类） | `plugin-contract` `StaticContribution`（12 类） |
+| **实际能激活东西吗** | **能，今天就在跑** | **不能，从未激活过任何东西** |
+
+`FeatureHostAdapter` / `FeatureContext` / module 载体**只为第二套服务**。传统系统注册
+skill/mcp/limb/schedule 全程**没有适配器、没有 FeatureContext、没有 per-feature activate**。
+所以「Host 要实现 6 个方法的适配器」是**给过度设计补零件**，不是 operator 要的收敛。
+
+**答二：「不发版就迁不出去」不成立。** 本地文件夹安装早就有
+（`LocalPluginPackageAdmission`，装配在 `runtime-composition.ts:692`）；出站发消息也早就有
+（wire 表第 3 行 `messaging.send`）。
+
+**真正卡住 github 代码出不去的，是 Host 自己写死的两个白名单**（逐条核过）：
+
+| 白名单 | 位置 | 后果 |
+|---|---|---|
+| schedule 必须引用 Host 注册的 factory | `PluginResourceActivator.ts:504` 强制 `factoryId`；`:509` `getForPlugin(factoryId, manifest.id)`；查不到抛 `Unknown schedule factory`。全仓唯一注册者 = `index.ts:4350 registerGitHubScheduleFactories` | **任何 Host 源码外的插件都不可能拥有定时任务** |
+| limb 必须有 Host 注册的 adapter 工厂 | `index.ts:4356` `set('weixin-mp', …)`、`:4360` `registerWeChatVisibleReaderLimbFactory(…)`；miss 即 throw | **只有这 2 个写死的 pluginId 能有 limb** |
+
+skill 与 mcp **没有**白名单——所以这两类插件今天就能从外部完整工作。
+
+**据此改写结论**：这不是跨仓总闸，是 Host 单方的小改造。把 schedule 从「引用 Host 写好的
+factory」改成「插件声明要跑什么」，limb 同理，7 个 github factory 才可能出去。
+§4 顺序图里「先迁类型 / 先发版」那一格**作废**。
+
 ## 0. 目标形态（operator 裁定，一句话）
 
 ```
