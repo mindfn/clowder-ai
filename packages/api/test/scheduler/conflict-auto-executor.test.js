@@ -143,6 +143,7 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
   it('passes the scheduler cancellation signal to the git/gh auto-executor chain', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const controller = new AbortController();
+    const wakes = [];
     let receivedSignal;
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore([
@@ -151,6 +152,8 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // The admission inside `route` IS the wake; there is no second trigger to observe.
+          wakes.push('wake');
           return {
             kind: 'notified',
             threadId: 't1',
@@ -177,11 +180,13 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     assert.equal(receivedSignal, controller.signal);
   });
 
-  it('auto-resolved conflict does NOT trigger cat (Phase C AC-C1)', async () => {
+  it('auto-resolved conflict is still delivered to its owner (supersedes Phase C AC-C1)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
+    const repairs = [];
     const autoExecutor = {
       async resolve() {
+        repairs.push('resolve');
         return { kind: 'resolved', method: 'clean-rebase', branch: 'feat/test' };
       },
     };
@@ -191,6 +196,8 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // The admission inside `route` IS the wake; there is no second trigger to observe.
+          wakes.push('wake');
           return {
             kind: 'notified',
             threadId: 't1',
@@ -201,24 +208,24 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
           };
         },
       },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
-        },
-      },
       autoExecutor,
       log: noopLog,
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     assert.equal(gateResult.run, true);
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 0, 'cat should NOT be triggered when auto-resolve succeeds');
+    // Phase C AC-C1 used to suppress the wake when auto-resolution succeeded. It cannot any more,
+    // and that is a consequence of #1392 R5 rather than an oversight: only a `matched` outcome may
+    // authorise a repository write, and that outcome is produced by the admission itself — so the
+    // repair can only run after the owner's wait has already been delivered. The owner asked to be
+    // told their PR conflicted; they are told, and the successful repair is reported afterwards.
+    assert.equal(wakes.length, 1, 'the matched wait outcome is delivered before any repair runs');
+    assert.equal(repairs.length, 1, 'the repair still runs; it is reported, not suppressed');
   });
 
-  it('escalated conflict DOES trigger cat (Phase C AC-C2)', async () => {
+  it('escalated conflict wakes its owner exactly once (Phase C AC-C2)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
     const autoExecutor = {
       async resolve() {
         return { kind: 'escalated', files: ['src/index.ts', 'docs/README.md'], branch: 'feat/test' };
@@ -230,6 +237,8 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // The admission inside `route` IS the wake; there is no second trigger to observe.
+          wakes.push('wake');
           return {
             kind: 'notified',
             threadId: 't1',
@@ -240,23 +249,17 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
           };
         },
       },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
-        },
-      },
       autoExecutor,
       log: noopLog,
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 1, 'cat SHOULD be triggered when auto-resolve escalates');
+    assert.equal(wakes.length, 1, 'one admission wakes the owner; escalation adds no second wake');
   });
 
   it('cloud-P1: mergeState uses mergeable vocabulary (CONFLICTING not DIRTY)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
     const autoExecutor = {
       async resolve() {
         return { kind: 'resolved', method: 'clean-rebase', branch: 'feat/test' };
@@ -269,6 +272,8 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // The admission inside `route` IS the wake; there is no second trigger to observe.
+          wakes.push('wake');
           return {
             kind: 'notified',
             threadId: 't1',
@@ -277,12 +282,6 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
             content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
-        },
-      },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
         },
       },
       autoExecutor,
@@ -295,17 +294,20 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     const signal = gateResult.workItems[0].signal;
     assert.equal(signal.signal.mergeState, 'CONFLICTING', 'mergeState must use mergeable vocabulary');
     await spec.run.execute(signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 0, 'auto-resolved conflict should not trigger cat');
+    assert.equal(wakes.length, 1, 'the matched wait outcome is delivered before any repair runs');
   });
 
   it('P1-3 regression: checkMergeable returning object provides mergeState to workItems', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
+    const wakes = [];
     const tasks = [mockTask({ repoFullName: 'a/b', prNumber: 1, threadId: 't1', catId: 'opus', userId: 'u1' })];
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore(tasks),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'abc123' }),
       conflictRouter: {
         async route() {
+          // The admission inside `route` IS the wake; there is no second trigger to observe.
+          wakes.push('wake');
           return {
             kind: 'notified',
             threadId: 't1',
@@ -316,7 +318,6 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
           };
         },
       },
-      invokeTrigger: { trigger: () => Promise.resolve() },
       log: noopLog,
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
@@ -326,15 +327,17 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     assert.equal(signal.signal.headSha, 'abc123', 'headSha must not be undefined (P1-3)');
   });
 
-  it('no autoExecutor → always triggers cat (backward compat)', async () => {
+  it('no autoExecutor → the admission is still the wake (backward compat)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
     const tasks = [mockTask({ repoFullName: 'a/b', prNumber: 1, threadId: 't1', catId: 'opus', userId: 'u1' })];
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore(tasks),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // The admission inside `route` IS the wake; there is no second trigger to observe.
+          wakes.push('wake');
           return {
             kind: 'notified',
             threadId: 't1',
@@ -345,17 +348,11 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
           };
         },
       },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
-        },
-      },
       // no autoExecutor
       log: noopLog,
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 1, 'without autoExecutor, cat should always be triggered');
+    assert.equal(wakes.length, 1, 'without an auto-executor the admission is still the only wake');
   });
 });

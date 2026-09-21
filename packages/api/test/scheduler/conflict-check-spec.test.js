@@ -7,6 +7,12 @@ const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/
 /*
  * #1392 R5: a delivery carries the outcome it delivered, and only a matched conflict may drive the
  * auto-resolver. These cases model exactly that delivery, so they still exercise the F140 path.
+ *
+ * F117 Phase I: these cases used to observe an injected `invokeTrigger` — a seam no GitHub factory
+ * ever wired (`github-schedule-factories.ts` passes taskStore/checkMergeable/conflictRouter/
+ * autoExecutor/log and nothing else). So they described a configuration production never ran, while
+ * the call that actually wakes the owner went unobserved. They now observe the real seam:
+ * `conflictRouter.route` admits Message + Queue in one transaction, and THAT admission is the wake.
  */
 const conflictMatchedOutcome = {
   v: 1,
@@ -18,6 +24,11 @@ const conflictMatchedOutcome = {
   at: 1000,
   delivery: 'delivered',
   matched: [{ kind: 'pr_became_conflicting', delta: 'mergeState MERGEABLE → CONFLICTING' }],
+};
+
+const CONFLICT_WORK_ITEM = {
+  signal: { repoFullName: 'owner/repo', prNumber: 7, headSha: 'aaa', mergeState: 'CONFLICTING' },
+  task: { userId: 'user_1' },
 };
 
 describe('conflict scheduler F280 adapter', () => {
@@ -44,34 +55,38 @@ describe('conflict scheduler F280 adapter', () => {
     assert.equal(gate.workItems[0].signal.signal.mergeState, 'MERGEABLE');
   });
 
-  test('does not invoke when typed wait remains state-only', async () => {
-    const calls = [];
-    const spec = createConflictCheckTaskSpec({
-      taskStore: new TaskStore(),
-      checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'aaa' }),
-      conflictRouter: { route: async () => ({ kind: 'skipped', reason: 'predicates_not_matched' }) },
-      invokeTrigger: { trigger: async (...args) => calls.push(args) },
-      log: { info() {}, warn() {}, error() {} },
-    });
-    await spec.run.execute(
-      {
-        signal: { repoFullName: 'owner/repo', prNumber: 7, headSha: 'aaa', mergeState: 'CONFLICTING' },
-        task: { userId: 'user_1' },
-      },
-      'pr:owner/repo#7',
-      {},
-    );
-    assert.equal(calls.length, 0);
-  });
-
-  test('finishes the wake when timeout aborts after the typed wait message is durable', async () => {
-    const controller = new AbortController();
-    const calls = [];
+  test('attempts no remediation when the typed wait remains state-only', async () => {
+    const wakes = [];
+    const resolves = [];
     const spec = createConflictCheckTaskSpec({
       taskStore: new TaskStore(),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'aaa' }),
       conflictRouter: {
-        route: async () => {
+        route: async (signal) => {
+          wakes.push(signal);
+          return { kind: 'skipped', reason: 'predicates_not_matched' };
+        },
+      },
+      autoExecutor: { resolve: async () => resolves.push('resolve') },
+      log: { info() {}, warn() {}, error() {} },
+    });
+    await spec.run.execute(CONFLICT_WORK_ITEM, 'pr:owner/repo#7', {});
+
+    // A skipped route admitted nothing, so there is no wake and nothing may touch the repository.
+    assert.equal(wakes.length, 1, 'route is consulted exactly once');
+    assert.equal(resolves.length, 0, 'an unmatched wait grants no repository mandate');
+  });
+
+  test('a durable conflict admission survives a timeout that aborts right after it', async () => {
+    const controller = new AbortController();
+    const wakes = [];
+    const resolves = [];
+    const spec = createConflictCheckTaskSpec({
+      taskStore: new TaskStore(),
+      checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'aaa' }),
+      conflictRouter: {
+        route: async (signal) => {
+          wakes.push(signal);
           controller.abort(new DOMException('scheduler timeout', 'AbortError'));
           return {
             kind: 'notified',
@@ -83,61 +98,55 @@ describe('conflict scheduler F280 adapter', () => {
           };
         },
       },
-      invokeTrigger: { trigger: async (...args) => calls.push(args) },
+      autoExecutor: { resolve: async () => resolves.push('resolve') },
       log: { info() {}, warn() {}, error() {} },
     });
 
     await assert.doesNotReject(() =>
-      spec.run.execute(
-        {
-          signal: { repoFullName: 'owner/repo', prNumber: 7, headSha: 'aaa', mergeState: 'CONFLICTING' },
-          task: { userId: 'user_1' },
-        },
-        'pr:owner/repo#7',
-        { signal: controller.signal },
-      ),
+      spec.run.execute(CONFLICT_WORK_ITEM, 'pr:owner/repo#7', { signal: controller.signal }),
     );
 
-    assert.equal(calls.length, 1, 'a durable conflict message must finish its bound wake');
+    // The wake already committed inside `route`. A late abort must not turn that durable admission
+    // into a thrown run — the owner is awake and the scheduler has nothing left to undo.
+    assert.equal(wakes.length, 1, 'a durable conflict admission happens exactly once');
+    assert.equal(resolves.length, 0, 'an aborted run must not start optional repository work');
   });
 
-  test('falls back to waking the cat when cancellation interrupts optional auto-resolution', async () => {
+  test('cancelled optional remediation does not retract the already-admitted wake', async () => {
     const controller = new AbortController();
-    const calls = [];
+    const wakes = [];
+    const resolves = [];
     const spec = createConflictCheckTaskSpec({
       taskStore: new TaskStore(),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'aaa' }),
       conflictRouter: {
-        route: async () => ({
-          kind: 'notified',
-          threadId: 'thread_1',
-          catId: 'codex-sol',
-          messageId: 'msg-conflict-2',
-          content: 'conflict detected',
-          outcome: conflictMatchedOutcome,
-        }),
+        route: async (signal) => {
+          wakes.push(signal);
+          return {
+            kind: 'notified',
+            threadId: 'thread_1',
+            catId: 'codex-sol',
+            messageId: 'msg-conflict-2',
+            content: 'conflict detected',
+            outcome: conflictMatchedOutcome,
+          };
+        },
       },
       autoExecutor: {
         resolve: async () => {
+          resolves.push('resolve');
           controller.abort(new DOMException('scheduler timeout', 'AbortError'));
           throw controller.signal.reason;
         },
       },
-      invokeTrigger: { trigger: async (...args) => calls.push(args) },
       log: { info() {}, warn() {}, error() {} },
     });
 
     await assert.doesNotReject(() =>
-      spec.run.execute(
-        {
-          signal: { repoFullName: 'owner/repo', prNumber: 7, headSha: 'aaa', mergeState: 'CONFLICTING' },
-          task: { userId: 'user_1' },
-        },
-        'pr:owner/repo#7',
-        { signal: controller.signal },
-      ),
+      spec.run.execute(CONFLICT_WORK_ITEM, 'pr:owner/repo#7', { signal: controller.signal }),
     );
 
-    assert.equal(calls.length, 1, 'cancelled optional remediation must not suppress the already-routed wake');
+    assert.equal(wakes.length, 1, 'the wake stands on its own admission');
+    assert.equal(resolves.length, 1, 'remediation was attempted once and then cancelled');
   });
 });

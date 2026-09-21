@@ -706,6 +706,21 @@ matched 含 `pr_became_conflicting` ⇒ urgent + `conflict`）。这是唯一同
 ——一个生产从未接线的接缝，于是断言描述的是一个从未运行过的配置，而真正唤醒 owner 的 admission
 无人观察。现已改为观察 harness 的 Queue 入队与 drain（「admitted entry reaching progress IS the wake」）。
 
+同一批测试还有第二处、更贵的同类：`conflict-auto-executor.test.js` 与 `conflict-check-spec.test.js`
+一共 7 处断言都在观察它们自己注入的 `invokeTrigger`——而 `github-schedule-factories.ts` 的
+`conflictCheckFactory` 只传 `taskStore/checkMergeable/conflictRouter/autoExecutor/log`，从不传它。
+删掉那条分支后，其中 4 处直接变红，另外 3 处**变成了假绿**：它们断言 `triggered.length === 0`，而
+现在永远是 0，于是继续「通过」地描述一个已经不存在的行为。只修红的那 4 处正是补锅匠做法——7 处
+同源，必须一起重锚到生产真实拥有的接缝（`conflictRouter.route` 的 admission 即唤醒）。
+
+重锚之后暴露出一个**真实语义变更，必须显式记账**：Phase C 的 AC-C1「auto-resolve 成功就不要吵醒 owner」
+已经不成立了。原因不是疏忽，而是 #1392 R5 的授权模型：只有 `matched` outcome 才授权写仓库，而这个
+outcome 正是 admission 产出的——所以修复只能发生在「owner 的 wait 已经投递」之后。现在的语义是：
+owner 注册了 wait、wait matched，他就会被告知；自动修复成功与否作为后续结果汇报，而不是把一次已经
+matched 的 wait 悄悄吞掉。我认为这比 AC-C1 更正确（注册过的 wait 不该静默不响），但这是产品语义变更，
+不是纯重构，需要 reviewer 明确放行。`tryAutoResolveBeforeWake` 也已改名 `tryAutoResolveAfterWake`——
+它跑在唤醒之后，旧名字在说谎。
+
 关于 #2 的 auto-resolve 排序：`tryAutoResolveBeforeWake` 确实跑在 admission 之后，但这是 **#1392 R5
 授权模型强制的**，不是疏忽——auto-resolve 只允许在 `matched` outcome 上写仓库，而该 outcome 正是
 `route()` 那一次调用产出的。把它提到 admission 之前，等于放弃这条授权检查。此处不改，改需先改授权模型。
@@ -737,6 +752,7 @@ preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装
 |---|---|---|
 | `1392-registration-atomicity.test.js` 的 redis 变体 `concurrent registrations publish exactly one coherent owner…` 失败，抛 `TASK_MANAGED_WORK_BINDING_CONFLICT` | 栈全程在 `RedisTaskStore.replaceAutomationStateIfGeneration` → `buildTaskWaitReplacement` → `assertTrackingRegistration`；memory 变体同用例通过 | Redis/memory 在并发注册上的行为分叉，与投递无关；本轮改动文件不在该栈内 |
 | `audit-cc-system-prompt`、`capability-evolution-exploration-record-failures` 等 redis 轮失败 | 域与消息投递无交集 | 既存 |
+| `tmux-early-receipt-cancellation.test.js` 的 `fresh` 变体偶发失败（期望 `AbortError`，实得 `Error`） | 本分支从未改动任何 tmux 代码（`git log` 对 tmux 路径为空）；本地首跑失败后连续 3 次通过；该用例用真实 tmux、真实进程与 barrier 轮询，对时序敏感 | 既存 flake，非本轮回归 |
 
 这些之所以长期无人发现，是同一个结构性原因：**CI 没有 Redis job**，`config/public-test-exclusions.json`
 把 `redis-*` 归为 `source_only`。Redis 是生产实际运行的后端，却是唯一不被门禁执行的后端。

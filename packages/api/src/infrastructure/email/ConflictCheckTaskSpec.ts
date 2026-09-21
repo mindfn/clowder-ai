@@ -57,7 +57,7 @@ function conflictWasMatched(outcome: WaitOutcomeV1 | undefined): boolean {
   return outcome.matched?.some((delta) => delta.kind === 'pr_became_conflicting') === true;
 }
 
-async function tryAutoResolveBeforeWake(
+async function tryAutoResolveAfterWake(
   opts: ConflictCheckTaskSpecOptions,
   workItem: ConflictWorkItem,
   outcome: WaitOutcomeV1 | undefined,
@@ -70,7 +70,10 @@ async function tryAutoResolveBeforeWake(
     return await opts.autoExecutor.resolve(workItem.signal.repoFullName, workItem.signal.prNumber, signal);
   } catch (error) {
     if (!signal?.aborted) throw error;
-    opts.log.warn({ error }, '[conflict-check] cancellation interrupted optional auto-resolution; waking owner');
+    opts.log.warn(
+      { error },
+      '[conflict-check] cancellation interrupted optional auto-resolution; the owner is already awake',
+    );
     return null;
   }
 }
@@ -134,7 +137,7 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
         // forced, not incidental: #1392 R5 says auto-resolution may only touch the repository on a
         // matched outcome, and the matched outcome is what `route` produces. Auto-resolve cannot be
         // hoisted above the admission without also dropping the authority check it depends on.
-        const result = await tryAutoResolveBeforeWake(opts, workItem, routeResult.outcome, ctx.signal);
+        const result = await tryAutoResolveAfterWake(opts, workItem, routeResult.outcome, ctx.signal);
         if (result?.kind === 'resolved') {
           opts.log.info(`[conflict-check] Auto-resolved conflict for ${result.branch} (${result.method})`);
           return;
