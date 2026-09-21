@@ -248,6 +248,33 @@ thread 绑定、媒体、**slash 命令注册面**）；
 ② **合并 R-1…R-7 七组重复入口**；
 ③ **删掉 Z-4 的 11 项空头 Capability**（或补 wire 行，二选一，不能继续挂着）。
 
+### b) 的真正卡点：Host 单方做不完，缺一个 entrypoint 激活入口
+
+读 `module-plugin-runtime.ts:63-96` 的实际代码：`start()` 只做到
+`plugin = entry.create(packageRecord.manifest)`（`:89`），然后存进 `#loaded`。**到此为止。**
+
+要继续激活，Host 必须拿 `DefinedPlugin.activate[featureId]` 并喂它一个 `FeatureContext`。
+而构造 `FeatureContext` 的 `createFeatureContextSession` **住在 `plugin-sdk` 里**。于是二选一：
+
+- **(A) Host import SDK 去构造 context** —— 违反 §0 铁律「Host 永不 import SDK」，**否决**
+- **(B) 插件 entrypoint 增加一个激活入口**，签名形如
+  `activateFeature(featureId, hostAdapter, binding)`；插件侧（本来就依赖 SDK）自己调
+  `createFeatureContextSession`。**Host 只传一个 6 方法的纯对象，不需要任何 SDK 类型。**
+
+**(B) 正是 operator 定的方向**——「Host 提供双向接口 → **SDK 包装这些接口** → 插件实现接口 →
+Host 加载插件」：包装动作发生在插件侧，不在 Host 侧。
+
+所以插件仓的第一件事不是「迁类型」，而是 **给 entrypoint shape 加激活入口**
+（`FeatureHostAdapter` 类型随之归 contract，是同一件事的一部分）。
+这就是 operator 说的「发现接口签名有问题，就和 host 沟通再同步调整」的具体那一项。
+
+**Host 侧不被它阻塞、可以立刻开工的部分**：
+`readConfig`/`readSecret`（已有 `readPluginConfig`/`resolvePluginEnv` 可接）·
+`readState`/`writeState`（缺存储，要建）·
+`registerContribution`/`disposeContribution`（把 builtin 专用的
+`registerBuiltinContributions` + `builtin-contribution-supervisor` 泛化）·
+接线两个零调用者（Z-1 地址签发、Z-2 订阅注册）· 补 slash 命令注册面。
+
 ## 1. 已完成（不要重做）
 
 | commit | 内容 |
