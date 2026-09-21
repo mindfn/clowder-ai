@@ -70,6 +70,51 @@ factory」改成「插件声明要跑什么」，limb 同理，7 个 github fact
 据此，Host 侧的活一句话：**让能力注册由「已安装的包」驱动，而不是由「源码目录」驱动。**
 做完这一条，github 目录才能从 `packages/api/src/plugins` 变成一个可安装包。
 
+## 0.02　接头形状：命令式（Fable 独立 review 定案，2026-09-21）
+
+§0.01 只说了「要接上」，没说**怎么接**。两种接法，选命令式：
+
+| 接法 | 做法 | 后果 |
+|---|---|---|
+| 声明式 | Host 读 `manifest.contributions` 自己激活 | **否决**——会在 Host 里长出 12 类 contribution 解释器，那张矩阵又回来了 |
+| **命令式（选定）** | 插件在 lifecycle 钩子里调 Host 的注册动词 | operator 原话：「插件在自己的 lifecycle 中比如 enable 的时候去调用 sdk 的 skill/mcp 的注册接口」 |
+
+**决定性证据：SDK 已经实现了命令式，而且是全的。**
+`plugin-sdk` `feature-context.d.ts:40-66` 的 `FeatureContext` 上已有
+`skills` / `scheduler` / `mcp` / `limbs` / `webhooks` / `messaging.subscribe` /
+`services` / `connectors` / `ui` / `contentEditors` / `identity` / `tools`
+十二个 `ContributionRegistrar`，外加 `state.get/set`。
+**插件作者的代码一行都不用变。**
+
+### 「造适配器」错在方向，不是错在存在
+
+`FeatureHostAdapter` 由 SDK 定义、却要 Host 去实现——依赖方向反了，这才是 operator 问的那个"造什么适配器"。
+正确形状：**Host 只定义 wire 动词；SDK 内部把 `FeatureHostAdapter` 实现成 wire 客户端；Host 永远看不见它。**
+
+### Host 侧实际缺的三处（全是接线，无新机制）
+
+1. **加 wire 动词**：skill / mcp / schedule / limb 各一对 register / unregister。
+   handler 薄包**已有原语**：`addSkill` / `removeSkill`、
+   `taskRunner.registerPostStart` / `unregister`、`limbRegistry.register` / `deregister`。
+   **不要直接调 `PluginResourceActivator`**——它假定插件住在 `pluginsDir`
+   （`assertPluginResourceInsideRoot` 走 `join(pluginsDir, manifest.id)`），
+   已安装包不在那儿；要接在它下面一层。
+2. **加两个 Host→插件回调**：schedule 触发、limb 调用，形状照 `host.messaging.deliver`。
+   **加上之后两个白名单自然消失**——factory 和 adapter 就是插件自己的 handler，不用专门拆。
+3. **module 载体补两件**：今天只调 `create(manifest)`（`module-plugin-runtime.ts:90`）；
+   需要给插件实例一个回环连接（`openBuiltinConnection` 已存在，`control-plane.ts:164`，
+   目前只有 content-editor 在用），并在 enable/disable 时调它的钩子。
+
+禁用/卸载时 Host 还要按 `pluginId` 清一遍该插件注册过的能力，防止插件崩溃后残留。
+
+### 跨仓事实（排第一项，不是总闸）
+
+wire 方法名是已发布 contract 里的**封闭枚举**：`control-plane.ts:315-317`
+`WIRE_METHOD_REGISTRY[method]` + `ready` + 方向检查，无逃生口；
+`openBuiltinConnection` 走同一个 control plane，**module 插件不绕过此闸**。
+所以新动词要先在 contract 加行——插件仓一个小 PR，作为第一项排期，**不需要 operator 放行**。
+「迁 3 个类型」方案继续作废。
+
 ## 0. 目标形态（operator 裁定，一句话）
 
 ```
