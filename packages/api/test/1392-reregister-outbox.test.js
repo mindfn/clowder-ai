@@ -109,10 +109,11 @@ describe('#1392 explicit registration preserves delivery already owed to the own
         );
         const before = await taskStore.get(taskId);
         const pending = structuredClone(before.automationState.waitOutcome);
-        // The publish claim is taken BEFORE the send, so a delivery that throws leaves the outcome
-        // claimed rather than untouched. `publishing` is still an undelivered state and is still
-        // drained by the outbox — which is exactly what the recovery below goes on to prove.
-        assert.equal(pending.delivery, 'publishing');
+        // The claim is taken before the send, so a delivery that throws leaves the outcome claimed.
+        // `delivery` deliberately stays `pending` so an older binary would still deliver it; the
+        // claim rides on its own field. The recovery below is what proves it is still drainable.
+        assert.equal(pending.delivery, 'pending');
+        assert.equal(typeof pending.publishClaimedAt, 'number', 'and it carries the publish claim');
         assert.equal(pending.reason, mode === 'expired' ? 'expired' : 'matched');
         const renewed = mode !== 'single-fire' && mode !== 'expired';
         assert.equal(before.automationState.await?.generation, renewed ? 2 : undefined);

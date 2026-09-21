@@ -7,7 +7,7 @@ import type {
   WaitTerminationActor,
   WaitTerminationEventV1,
 } from '@cat-cafe/shared';
-import { createWaitContinuationCarrier, isUndeliveredWaitOutcome, parseWaitOwnerFence } from '@cat-cafe/shared';
+import { createWaitContinuationCarrier, parseWaitOwnerFence } from '@cat-cafe/shared';
 import type {
   ConnectorDeliveryDeps,
   ConnectorDeliveryInput,
@@ -170,9 +170,9 @@ function lifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): WaitTermination
 
 function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   const outcome = task.automationState?.waitOutcome;
-  // `publishing` is included so a claim whose process died is picked up again. Re-publishing is
-  // keyed on outcomeId, so the resumed attempt converges on the same row rather than waking twice.
-  return outcome && isUndeliveredWaitOutcome(outcome.delivery) ? outcome : null;
+  // A claimed-but-unsent outcome is still `pending`, so a claim whose process died is picked up
+  // again here. Re-publishing is keyed on outcomeId and converges on the same row, never a second wake.
+  return outcome?.delivery === 'pending' ? outcome : null;
 }
 
 function isGitHubWaitTask(task: TaskItem | null | undefined): task is TaskItem {
@@ -394,7 +394,7 @@ export class GitHubWaitLifecycleService {
     if (!outcome || outcome.outcomeId !== outcomeId) {
       return { kind: 'deduped', reason: 'outcome_replaced' };
     }
-    if (!isUndeliveredWaitOutcome(outcome.delivery)) {
+    if (outcome.delivery !== 'pending') {
       return { kind: 'deduped', reason: outcome.delivery === 'suppressed' ? 'suppressed' : 'already_delivered' };
     }
     return this.publishPending(task, outcome, deliveryExtra, deliveryPriority);
@@ -450,8 +450,7 @@ export class GitHubWaitLifecycleService {
     const outcome = task.automationState?.waitOutcome;
     if (!outcome) return { kind: 'state_only', reason: 'nothing_to_recover' };
     await this.appendLifecycleEvent(task, outcome);
-    // A claim that never finished sending is exactly what recovery exists for.
-    if (!isUndeliveredWaitOutcome(outcome.delivery)) return { kind: 'state_only', reason: outcome.reason };
+    if (outcome.delivery !== 'pending') return { kind: 'state_only', reason: outcome.reason };
     // The same outbox: a message the crash left undelivered has no other path to its owner.
     const flushed = await this.publishPending(task, outcome);
     await this.wakeForFlushedOutcome(flushed);

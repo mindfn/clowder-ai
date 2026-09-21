@@ -208,8 +208,7 @@ describe('F280 GitHub wait lifecycle integration', () => {
 
     await assert.rejects(poll(101), /queue admission unavailable/);
     const stranded = (await taskStore.get(task.id)).automationState;
-    // `publishing` is the claim a failed send leaves behind: still undelivered, still drained.
-    assert.equal(stranded.waitOutcome.delivery, 'publishing', 'N is installed but undelivered');
+    assert.equal(stranded.waitOutcome.delivery, 'pending', 'N is installed but undelivered');
     assert.equal(stranded.await.generation, 4, 'and N+1 is already live beside it');
 
     // The collector cursor already passed #101, so this poll carries only #102.

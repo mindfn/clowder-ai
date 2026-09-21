@@ -93,8 +93,29 @@ async function setup() {
   assert.equal(routed.kind, 'matched_pending', 'the outcome is terminalized and unannounced');
   assert.equal(harness.deliveries('thread_1').length, 0);
 
-  const delivery = async () => (await taskStore.get(task.id)).automationState.waitOutcome.delivery;
-  return { router, harness, routed, delivery, openGate, holdDeliveries: (n) => (holdNextDeliveries = n) };
+  let failOnce = false;
+  const rawOutcome = async () => (await taskStore.get(task.id)).automationState.waitOutcome;
+  const delivery = async () => (await rawOutcome()).delivery;
+  const chained = harness.delivery.deliver;
+  harness.delivery.deliver = async (input) => {
+    if (failOnce) {
+      failOnce = false;
+      return { state: 'unavailable', reason: 'queue admission unavailable' };
+    }
+    return chained(input);
+  };
+  return {
+    router,
+    harness,
+    routed,
+    delivery,
+    rawOutcome,
+    openGate,
+    holdDeliveries: (n) => (holdNextDeliveries = n),
+    failNextDelivery: () => {
+      failOnce = true;
+    },
+  };
 }
 
 describe('#1398 wait outbox publish/suppress linearization', () => {
@@ -149,6 +170,53 @@ describe('#1398 wait outbox publish/suppress linearization', () => {
     assert.equal(await router.settleWithoutWake(routed.taskId, routed.outcome, 'auto-resolved:rebase'), false);
     assert.equal(await delivery(), 'delivered');
     assert.equal(harness.deliveries('thread_1').length, 1, 'and no second wake appears');
+  });
+
+  /**
+   * Rollback / mixed-version safety for what the claim persists.
+   *
+   * Every reader that predates this change asks exactly one question: `delivery === 'pending'`.
+   * So the claim must not be expressible as a `delivery` value — an older binary reading an unknown
+   * one would conclude the outcome is terminal and never deliver it, stranding the owner's wake
+   * forever. That is not a theoretical schema worry: it is precisely the crash window (claimed, not
+   * yet sent) that the claim was introduced to make recoverable.
+   *
+   * `oldReaderSeesDeliverable` is that older reader, spelled out literally.
+   */
+  const oldReaderSeesDeliverable = (outcome) => outcome?.delivery === 'pending';
+
+  test('a claimed outcome still looks deliverable to a reader that only knows `pending`', async () => {
+    const { router, harness, routed, rawOutcome, failNextDelivery } = await setup();
+
+    // Claim, then die before the send — the exact state a rollback could land on.
+    failNextDelivery();
+    const attempt = await router.publish(routed.taskId, routed.outcome);
+    assert.notEqual(attempt.kind, 'notified', 'the send did not happen');
+
+    const persisted = await rawOutcome();
+    assert.equal(typeof persisted.publishClaimedAt, 'number', 'the claim is persisted');
+    assert.ok(
+      oldReaderSeesDeliverable(persisted),
+      'an older binary must still drain this outcome — encoding the claim in `delivery` would strand it',
+    );
+    assert.equal(harness.deliveries('thread_1').length, 0);
+
+    // And the new reader recovers it too, converging on one wake rather than a second.
+    const resumed = await router.publish(routed.taskId, routed.outcome);
+    assert.equal(resumed.kind, 'notified');
+    assert.equal(harness.deliveries('thread_1').length, 1, 'exactly one wake after recovery');
+  });
+
+  test('a suppressed outcome is never re-woken by a reader that only knows `pending`', async () => {
+    const { router, routed, rawOutcome } = await setup();
+
+    assert.equal(await router.settleWithoutWake(routed.taskId, routed.outcome, 'auto-resolved:rebase'), true);
+
+    const persisted = await rawOutcome();
+    assert.equal(persisted.delivery, 'suppressed');
+    // An older binary reads an unknown value, decides it is not pending, and declines to deliver —
+    // which is exactly what suppressed means. Nothing is owed, so nothing can be stranded.
+    assert.equal(oldReaderSeesDeliverable(persisted), false, 'a downgrade must not resurrect a suppressed wake');
   });
 
   test('a claim whose process died is resumed, and still wakes exactly once', async () => {

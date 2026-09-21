@@ -523,27 +523,15 @@ export interface GitHubWaitMatchedDelta {
 /**
  * Where an outcome is in the delivery outbox.
  *
- * `publishing` is the claim: exactly one caller may move `pending → publishing`, and only that
- * caller may then send. Without it the compare-and-set only guarded the final state write, so a
- * publisher that had already read `pending` could still send after a suppressor had won — two
- * successful side effects from one outcome.
- *
  * `suppressed` says the wait ended and deliberately woke nobody, because whoever deferred it
  * resolved the condition itself. It is distinct from `delivered` on purpose: recording a wake that
- * never happened as `delivered` makes the audit trail lie about what the owner was told.
+ * never happened as `delivered` makes the audit trail lie about what the owner was told. An older
+ * reader sees an unknown value here, concludes the outcome is not pending, and simply declines to
+ * deliver it — which is exactly what `suppressed` means, so a downgrade is safe.
+ *
+ * The publish CLAIM is deliberately NOT a value in this union — see `publishClaimedAt`.
  */
-export type WaitOutcomeDelivery =
-  | 'pending'
-  | 'publishing'
-  | 'delivered'
-  | 'suppressed'
-  | 'not_applicable'
-  | 'legacy_unfenced';
-
-/** Still owed to its owner: either unclaimed, or claimed by a publisher that has not finished. */
-export function isUndeliveredWaitOutcome(delivery: WaitOutcomeDelivery): boolean {
-  return delivery === 'pending' || delivery === 'publishing';
-}
+export type WaitOutcomeDelivery = 'pending' | 'delivered' | 'suppressed' | 'not_applicable' | 'legacy_unfenced';
 
 export interface WaitOutcomeV1 {
   readonly v: 1;
@@ -555,6 +543,20 @@ export interface WaitOutcomeV1 {
   readonly reason: WaitTerminationReason;
   readonly at: number;
   readonly delivery: WaitOutcomeDelivery;
+  /**
+   * When a publisher claimed the exclusive right to send this outcome, if one has.
+   *
+   * This is a separate field rather than a `delivery` value, and that is a rollback requirement
+   * rather than a style choice. A claim taken by a new binary must still look DELIVERABLE to an
+   * older one: every pre-existing reader asks `delivery === 'pending'`, so encoding the claim in
+   * that union would make a downgrade treat a claimed-but-unsent outcome as terminal and strand
+   * the owner's wake forever — precisely the crash window the claim exists to make recoverable.
+   *
+   * Leaving `delivery: 'pending'` means an old reader drains and delivers it instead. Delivery is
+   * keyed on `outcomeId`, so that converges on the same Queue row rather than a second wake, and
+   * the worst a mixed-version window can produce is the owner being told — the safe direction.
+   */
+  readonly publishClaimedAt?: number;
   readonly matched?: readonly GitHubWaitMatchedDelta[];
   readonly nextStep?: string;
   readonly terminalSubjectState?: 'merged' | 'closed';

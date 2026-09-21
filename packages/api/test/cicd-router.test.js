@@ -310,10 +310,9 @@ describe('CiCdRouter F280 typed waits', () => {
     const terminalPoll = poll({ prState: 'merged', aggregateBucket: 'pending' });
 
     await assert.rejects(() => new CiCdRouter(options()).route(terminalPoll), /queue admission unavailable/);
-    // The publish claim is taken before the send, so a failed send leaves the outcome `publishing`
-    // rather than `pending`. Both are undelivered and both are drained; the recovery below is what
-    // proves it, and it still converges on exactly one delivered effect.
-    assert.equal((await taskStore.get(task.id)).automationState.waitOutcome.delivery, 'publishing');
+    // A failed send leaves the outcome claimed but still `pending`, so every reader — including an
+    // older binary that only knows `pending` — keeps treating it as deliverable.
+    assert.equal((await taskStore.get(task.id)).automationState.waitOutcome.delivery, 'pending');
 
     await new CiCdRouter(options()).route(terminalPoll);
     await new CiCdRouter(options()).route(terminalPoll);

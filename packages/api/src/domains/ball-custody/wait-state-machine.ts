@@ -5,7 +5,7 @@ import type {
   WaitTerminationActor,
   WaitTerminationReason,
 } from '@cat-cafe/shared';
-import { isUndeliveredWaitOutcome, parseWaitOwnerFence } from '@cat-cafe/shared';
+import { parseWaitOwnerFence } from '@cat-cafe/shared';
 
 export interface WaitRuntimeState {
   readonly await?: AwaitStateV1;
@@ -221,38 +221,42 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
  * Claim the exclusive right to publish this outcome.
  *
  * This is the linearization point the publish/suppress race is decided at, and it has to happen
- * before the send rather than after it. `pending → publishing` can be won once; a suppressor
- * arriving afterwards finds `publishing` and loses, and a publisher arriving after a suppressor
- * finds `suppressed` and never sends at all.
+ * before the send rather than after it. The claim is stamped on `publishClaimedAt` while `delivery`
+ * stays `pending`, so an older binary still recognises the outcome as deliverable and a downgrade
+ * cannot strand it.
  *
- * Re-claiming from `publishing` is allowed on purpose: a process that dies between the claim and
- * the send would otherwise strand the outcome forever. Re-publishing is safe because admission is
- * keyed on `outcomeId`, so a resumed claim converges on the same Queue row instead of a second wake.
+ * Re-claiming an already-claimed outcome is allowed on purpose: a process that dies between the
+ * claim and the send would otherwise leave it unsendable. Re-publishing is safe because admission
+ * is keyed on `outcomeId`, so a resumed claim converges on the same Queue row, never a second wake.
  */
 export function claimWaitOutcomeForPublish(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState | null {
   const outcome = current.waitOutcome;
-  if (outcome?.outcomeId !== outcomeId || !isUndeliveredWaitOutcome(outcome.delivery)) return null;
-  if (outcome.delivery === 'publishing') return current;
-  return { ...current, waitOutcome: { ...outcome, delivery: 'publishing' } };
+  if (outcome?.outcomeId !== outcomeId || outcome.delivery !== 'pending') return null;
+  if (outcome.publishClaimedAt !== undefined) return current;
+  return { ...current, waitOutcome: { ...outcome, publishClaimedAt: Date.now() } };
 }
 
 /** Close an outcome without a wake, because the caller that deferred it resolved the condition. */
 export function markWaitOutcomeSuppressed(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState | null {
   const outcome = current.waitOutcome;
-  // Only from `pending`. A claimed publisher may already be sending, and this write must not be
-  // able to describe that send as something that never happened.
-  if (outcome?.outcomeId !== outcomeId || outcome.delivery !== 'pending') return null;
-  return { ...current, waitOutcome: { ...outcome, delivery: 'suppressed' } };
+  // Only an unclaimed pending outcome may be suppressed. A claimed publisher may already be
+  // sending, and this write must not be able to describe that send as something that never happened.
+  if (outcome?.outcomeId !== outcomeId || outcome.delivery !== 'pending' || outcome.publishClaimedAt !== undefined) {
+    return null;
+  }
+  const { publishClaimedAt: _unclaimed, ...settled } = outcome;
+  return { ...current, waitOutcome: { ...settled, delivery: 'suppressed' } };
 }
 
 export function markWaitOutcomeDelivered(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {
-  if (current.waitOutcome?.outcomeId !== outcomeId || !isUndeliveredWaitOutcome(current.waitOutcome.delivery)) {
+  if (current.waitOutcome?.outcomeId !== outcomeId || current.waitOutcome.delivery !== 'pending') {
     return current;
   }
+  const { publishClaimedAt: _settled, ...delivered } = current.waitOutcome;
   return {
     ...current,
     waitOutcome: {
-      ...current.waitOutcome,
+      ...delivered,
       delivery: 'delivered',
     },
   };
