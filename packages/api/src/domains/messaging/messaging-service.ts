@@ -130,6 +130,10 @@ export class MessagingService {
     return this.stream.subscribe(ctx, handleId);
   }
 
+  withdrawSubscription(ctx: PluginCallContext, handleId: string): Promise<void> {
+    return this.stream.withdraw(ctx, handleId);
+  }
+
   read(ctx: PluginCallContext, subscriptionId: string, options: { limit?: number }): Promise<ReadResult> {
     return this.stream.read(ctx, subscriptionId, options);
   }

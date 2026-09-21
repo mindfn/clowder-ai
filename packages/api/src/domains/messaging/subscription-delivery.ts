@@ -2,7 +2,9 @@
  * F202 Train C1 — Host-driven outbound to subscribing plugins.
  *
  * THE SHAPE. A subscriber declares which thread it wants; when that thread publishes a complete
- * message envelope the Host sends the frozen `host.messaging.deliver` row to its runtime.
+ * message envelope the Host invokes the package action registered for it. External runtimes
+ * that still speak the frozen protocol keep using `host.messaging.deliver`; in-process modules
+ * receive the same envelope through their own declared action name without seeing a handle.
  *
  * THIS MODULE HAS NO NOTION OF A PLUGIN. It knows only that N sinks implement the standard
  * delivery row and which of them are owed this thread's messages. A package relaying to an IM platform, a
@@ -26,7 +28,7 @@
 import { createHash } from 'node:crypto';
 
 import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
-import type { HostMessagingDeliveryPort } from '../plugin/host-invocation.js';
+import type { HostMessagingDeliveryPort, HostPluginInvocationPort } from '../plugin/host-invocation.js';
 
 /**
  * The messaging domain identifies a subscriber by `pluginInstanceId`; that field is its name for
@@ -53,7 +55,7 @@ export interface SubscriptionDeliveryMessaging {
 export interface SubscriptionDeliveryDeps {
   readonly messaging: SubscriptionDeliveryMessaging;
   /** The already-published `host.messaging.deliver` direction. */
-  readonly delivery: HostMessagingDeliveryPort;
+  readonly delivery: HostMessagingDeliveryPort & Partial<Pick<HostPluginInvocationPort, 'invoke'>>;
   /** Events per read page. */
   readonly readLimit?: number;
   /**
@@ -92,6 +94,8 @@ export interface SubscriptionDeclaration {
   readonly subscriberId: string;
   readonly threadId: string;
   readonly handleId: string;
+  /** In-process packages expose their own action name; external runtimes keep the frozen row. */
+  readonly method?: string;
   readonly filter?: SubscriptionFilter;
 }
 
@@ -99,6 +103,7 @@ interface Registration {
   readonly subscriberId: string;
   readonly subscriptionId: string;
   readonly handleId: string;
+  readonly method?: string;
   readonly filter?: SubscriptionFilter;
 }
 
@@ -137,7 +142,7 @@ function deliveryIdFor(registration: Registration, event: MessageOutputEvent): s
 }
 
 async function deliverPublishedEvent(
-  delivery: HostMessagingDeliveryPort,
+  delivery: SubscriptionDeliveryDeps['delivery'],
   registration: Registration,
   event: MessageOutputEvent,
 ): Promise<void> {
@@ -146,8 +151,18 @@ async function deliverPublishedEvent(
   // through explicit stream reads and must not be disguised as a different wire shape.
   if (event.type !== 'message.publish') return;
 
+  const deliveryId = deliveryIdFor(registration, event);
+  if (registration.method !== undefined) {
+    if (!delivery.invoke) throw new Error('subscription delivery invocation port is unavailable');
+    await delivery.invoke(registration.subscriberId, registration.method, {
+      deliveryId,
+      threadId: event.envelope.threadId,
+      envelope: event.envelope,
+    });
+    return;
+  }
   const input = {
-    deliveryId: deliveryIdFor(registration, event),
+    deliveryId,
     threadHandle: { kind: 'thread_handle' as const, handle: registration.handleId },
     envelope: event.envelope,
   };
@@ -172,13 +187,16 @@ export class SubscriptionDelivery {
     const { subscriptionId } = await this.deps.messaging.subscribe(ctx, declaration.handleId);
 
     const existing = this.byThread.get(declaration.threadId) ?? [];
-    if (existing.some((entry) => entry.subscriptionId === subscriptionId)) return;
-    existing.push({
+    const replacement: Registration = {
       subscriberId: declaration.subscriberId,
       subscriptionId,
       handleId: declaration.handleId,
+      ...(declaration.method === undefined ? {} : { method: declaration.method }),
       ...(declaration.filter === undefined ? {} : { filter: declaration.filter }),
-    });
+    };
+    const index = existing.findIndex((entry) => entry.subscriberId === declaration.subscriberId);
+    if (index === -1) existing.push(replacement);
+    else existing[index] = replacement;
     this.byThread.set(declaration.threadId, existing);
   }
 

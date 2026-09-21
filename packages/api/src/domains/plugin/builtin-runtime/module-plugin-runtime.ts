@@ -5,6 +5,7 @@ import type { IConnectorThreadBindingStore } from '../../../infrastructure/conne
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
+import type { SubscriptionDelivery } from '../../messaging/subscription-delivery.js';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -21,6 +22,11 @@ import {
   createUnavailablePluginMessagingHost,
   type PluginMessagingHost,
 } from '../plugin-messaging-host.js';
+import {
+  createPluginMessagingSubscriptionSession,
+  createUnavailablePluginMessagingSubscriptionHost,
+  type PluginMessagingSubscriptionSession,
+} from '../plugin-messaging-subscription-host.js';
 import {
   createPluginStorageHost,
   type PluginPrivateStoragePort,
@@ -80,6 +86,7 @@ export interface ModulePluginRuntimeOptions {
   };
   readonly messaging?: {
     readonly service: MessagingService;
+    readonly delivery: Pick<SubscriptionDelivery, 'register' | 'unregister'>;
     readonly threadStore: IThreadStore;
     readonly bindingStore: IConnectorThreadBindingStore;
     readonly ownerUserId: string;
@@ -90,6 +97,7 @@ export interface ModulePluginRuntimeOptions {
 interface LoadedModule {
   readonly located: VerifiedPluginPackage;
   readonly activation: PluginModuleActivationShape;
+  readonly subscriptions: PluginMessagingSubscriptionSession;
 }
 
 /**
@@ -127,6 +135,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     const located = await this.options.packages.resolveInstalledPackage(packageRecord.packageDigest);
     let plugin: PluginModuleDefinitionShape;
     let activation: PluginModuleActivationShape | undefined;
+    let subscriptions: PluginMessagingSubscriptionSession | undefined;
     try {
       const { entrypoint } = await verifyPackageEntrypoint(packageRecord, located);
       // This carrier's integrity instant: the bytes are re-snapshotted immediately before
@@ -180,6 +189,17 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             bindingStore: this.options.threads.bindingStore,
           })
         : createUnavailablePluginThreadHost();
+      subscriptions = this.options.messaging
+        ? createPluginMessagingSubscriptionSession({
+            pluginId: packageRecord.pluginId,
+            pluginInstanceId,
+            ownerUserId: this.options.messaging.ownerUserId,
+            effectiveGrants,
+            threadStore: this.options.messaging.threadStore,
+            messaging: this.options.messaging.service,
+            delivery: this.options.messaging.delivery,
+          })
+        : createUnavailablePluginMessagingSubscriptionHost();
       const messaging = this.options.messaging
         ? createPluginMessagingHost({
             pluginId: packageRecord.pluginId,
@@ -190,6 +210,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             threadStore: this.options.messaging.threadStore,
             bindingStore: this.options.messaging.bindingStore,
             messaging: this.options.messaging.service,
+            subscriptions: subscriptions.host,
           })
         : createUnavailablePluginMessagingHost();
       const candidate = await plugin.start({
@@ -219,9 +240,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         );
       }
       activation = candidate;
-      this.#loaded.set(pluginInstanceId, { located, activation });
+      this.#loaded.set(pluginInstanceId, { located, activation, subscriptions });
     } catch (error) {
-      await rollbackModuleStart(error, activation, located);
+      await rollbackModuleStart(error, activation, subscriptions, located);
     }
   }
 
@@ -229,15 +250,24 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
    * The single disposal seam releases the staged package; the next start calls `create()`
    * again instead of reusing the previous runtime instance.
    */
-  async stop(pluginInstanceId: string, _reason: string): Promise<void> {
+  async stop(pluginInstanceId: string, reason: string): Promise<void> {
     const loaded = this.#loaded.get(pluginInstanceId);
     if (!loaded) return;
     this.#loaded.delete(pluginInstanceId);
-    try {
-      await loaded.activation.stop();
-    } finally {
-      await loaded.located.release();
+    const failures: unknown[] = [];
+    for (const operation of [
+      () => loaded.subscriptions.stop(reason),
+      () => loaded.activation.stop(),
+      // Package bytes stay present until package cleanup has finished.
+      () => loaded.located.release(),
+    ]) {
+      try {
+        await operation();
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    if (failures.length > 0) throw new AggregateError(failures, 'module stop failed');
   }
 
   invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
@@ -252,9 +282,13 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 async function rollbackModuleStart(
   startError: unknown,
   activation: PluginModuleActivationShape | undefined,
+  subscriptions: PluginMessagingSubscriptionSession | undefined,
   located: VerifiedPluginPackage,
 ): Promise<never> {
-  const stopResults = activation ? await Promise.allSettled([activation.stop()]) : [];
+  const stopResults = await Promise.allSettled([
+    ...(subscriptions ? [subscriptions.stop('start_failed')] : []),
+    ...(activation ? [activation.stop()] : []),
+  ]);
   const releaseResults = await Promise.allSettled([located.release()]);
   const failures = [...stopResults, ...releaseResults]
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')

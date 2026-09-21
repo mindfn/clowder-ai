@@ -5,6 +5,10 @@ import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js'
 import { MessagingError } from '../messaging/contract/host-types.js';
 import { validateDraft } from '../messaging/contract/validate.js';
 import type { MessagingService } from '../messaging/messaging-service.js';
+import {
+  createUnavailablePluginMessagingSubscriptionHost,
+  type PluginMessagingSubscriptionHost,
+} from './plugin-messaging-subscription-host.js';
 
 const SEND_KEYS = new Set([
   'threadId',
@@ -25,7 +29,7 @@ export type PluginMessagingSendInput = Omit<MessageDraft, 'address'> & {
   readonly contentBlocks?: readonly MessageContent[];
 };
 
-export interface PluginMessagingHost {
+export interface PluginMessagingHost extends PluginMessagingSubscriptionHost {
   send(input: PluginMessagingSendInput): Promise<{ readonly messageId: string; readonly threadId: string }>;
 }
 
@@ -38,10 +42,13 @@ export interface PluginMessagingHostDeps {
   readonly threadStore: IThreadStore;
   readonly bindingStore: IConnectorThreadBindingStore;
   readonly messaging: MessagingService;
+  readonly subscriptions?: PluginMessagingSubscriptionHost;
 }
 
 export function createUnavailablePluginMessagingHost(): PluginMessagingHost {
+  const subscriptions = createUnavailablePluginMessagingSubscriptionHost().host;
   return {
+    ...subscriptions,
     async send() {
       throw new MessagingError('PERMISSION', 'Host messaging services are unavailable');
     },
@@ -140,6 +147,7 @@ function recordOf(input: PluginMessagingSendInput): Record<string, unknown> {
 
 export function createPluginMessagingHost(input: PluginMessagingHostDeps): PluginMessagingHost {
   return {
+    ...(input.subscriptions ?? createUnavailablePluginMessagingSubscriptionHost().host),
     async send(value) {
       if (!input.effectiveGrants.includes('messaging.send')) {
         throw new MessagingError('PERMISSION', `${input.pluginId} lacks messaging.send`);

@@ -238,7 +238,11 @@ test('production composition constructs and recovers K-2D but exposes no startup
   const managerCompositionIndex = source.indexOf('createPluginManagerRuntimeComposition({');
 
   assert.match(source, /createDormantPluginRuntimeComposition/);
-  assert.match(source, /messageStore,\s*taskStore,\s*\.\.\.\(redis \? \{ redis \} : \{\}\)/);
+  assert.match(
+    source,
+    /messageStore,\s*messagingStores,\s*onMessagePublished: subscriptionDrainScheduler\.schedule,\s*taskStore,\s*\.\.\.\(redis \? \{ redis \} : \{\}\)/,
+    'production must share the publishing event stores and schedule the one subscription drain seam',
+  );
   assert.match(source, /routes: signalRouteStore,\s*ownerId: privateUserId/);
   assert.ok(routeBootstrapIndex >= 0, 'production must provision official Host signal routes');
   assert.ok(

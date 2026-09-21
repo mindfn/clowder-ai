@@ -240,6 +240,20 @@ export function createDormantPluginRuntimeComposition(
     readConfig: readStoredConfigurationValue,
     readSecret: readStoredConfigurationValue,
   };
+  const deliveryTarget: { current?: PluginRuntimeCarrierRouter } = {};
+  const subscriptionDelivery = createSubscriptionDelivery({
+    messaging,
+    delivery: {
+      deliver: (pluginInstanceId, input) => {
+        if (!deliveryTarget.current) throw new Error('plugin runtime supervisor is unavailable');
+        return deliveryTarget.current.deliver(pluginInstanceId, input);
+      },
+      invoke: (pluginInstanceId, method, params) => {
+        if (!deliveryTarget.current) throw new Error('plugin runtime supervisor is unavailable');
+        return deliveryTarget.current.invoke(pluginInstanceId, method, params);
+      },
+    },
+  });
   const externalSupervisor = new ExternalPluginRuntimeSupervisor({
     inventory: inventoryStore,
     broker,
@@ -300,6 +314,7 @@ export function createDormantPluginRuntimeComposition(
       : {
           messaging: {
             service: messaging,
+            delivery: subscriptionDelivery,
             threadStore: options.threadStore,
             bindingStore: options.threadBindingStore,
             ownerUserId: options.threadOwnerUserId,
@@ -327,6 +342,7 @@ export function createDormantPluginRuntimeComposition(
       ...(options.redis === undefined ? {} : { redis: options.redis }),
     },
   );
+  deliveryTarget.current = supervisor;
   supervisor.register(
     new BundledPluginRuntimeCarrier({
       inventory: inventoryStore,
@@ -341,7 +357,6 @@ export function createDormantPluginRuntimeComposition(
     }),
   );
   supervisor.register(externalSupervisor);
-  const subscriptionDelivery = createSubscriptionDelivery({ messaging, delivery: supervisor });
   let builtinContributions: BuiltinPluginContributionSupervisor | undefined;
   const lifecycle = new ExternalPluginLifecycleService({
     store: inventoryStore,

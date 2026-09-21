@@ -167,6 +167,39 @@ export default {
 };
 `;
 
+const subscriptionHostModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return {
+      async start(host) {
+        const thread = await host.threads.ensureSystemThread();
+        await host.messaging.subscribe({ threadId: thread.id, method: 'fixture.outbound' });
+        log.push({ call: 'subscribed', threadId: thread.id });
+        return {
+          actions: { 'fixture.outbound': async () => undefined },
+          stop: async () => log.push({ call: 'stop' }),
+        };
+      },
+    };
+  },
+};
+`;
+
+const failingSubscriptionHostModule = `
+export default {
+  create() {
+    return {
+      async start(host) {
+        const thread = await host.threads.ensureSystemThread();
+        await host.messaging.subscribe({ threadId: thread.id, method: 'fixture.outbound' });
+        throw new Error('start failed after subscribe');
+      },
+    };
+  },
+};
+`;
+
 const invalidStartResultModule = `
 const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
 export default {
@@ -398,6 +431,54 @@ test('start receives the caller-bound Host messaging surface', async () => {
   const stored = await messageStore.getById(entry.receipt.messageId);
   assert.equal(stored.content, 'module hello');
   assert.equal(stored.source.label, 'Fixture');
+});
+
+test('module stop unregisters every Host messaging subscription', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(subscriptionHostModule);
+  const threadStore = new ThreadStore();
+  const bindingStore = new MemoryConnectorThreadBindingStore();
+  const messaging = createMessagingDomain({ messageStore: new MessageStore() });
+  const registrations = [];
+  const removals = [];
+  const delivery = {
+    register: async (declaration) => registrations.push(declaration),
+    unregister: (subscriberId, threadId) => removals.push({ subscriberId, threadId }),
+  };
+  const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
+  const host = hostOf([{ manifest: manifest(), rootDir, effectiveGrants: ['message.event.subscribe'] }], {
+    threads: shared,
+    messaging: { ...shared, service: messaging, delivery },
+  });
+
+  await host.router.start('instance-0');
+  assert.equal(registrations.length, 1);
+  await host.router.stop('instance-0', 'host_shutdown');
+
+  assert.deepEqual(removals, [{ subscriberId: 'instance-0', threadId: registrations[0].threadId }]);
+});
+
+test('a module start failure unregisters subscriptions before rollback completes', async () => {
+  const rootDir = await writePackage(failingSubscriptionHostModule);
+  const threadStore = new ThreadStore();
+  const bindingStore = new MemoryConnectorThreadBindingStore();
+  const messaging = createMessagingDomain({ messageStore: new MessageStore() });
+  const registrations = [];
+  const removals = [];
+  const delivery = {
+    register: async (declaration) => registrations.push(declaration),
+    unregister: (subscriberId, threadId) => removals.push({ subscriberId, threadId }),
+  };
+  const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
+  const host = hostOf([{ manifest: manifest(), rootDir, effectiveGrants: ['message.event.subscribe'] }], {
+    threads: shared,
+    messaging: { ...shared, service: messaging, delivery },
+  });
+
+  await assert.rejects(() => host.router.start('instance-0'), /start failed after subscribe/);
+
+  assert.equal(registrations.length, 1);
+  assert.deepEqual(removals, [{ subscriberId: 'instance-0', threadId: registrations[0].threadId }]);
 });
 
 test('an invalid start result is stopped and leaves no active module behind', async () => {

@@ -137,6 +137,15 @@ export class EventStreamService {
     return { subscriptionId: winner.subscriptionId };
   }
 
+  /**
+   * Host lifecycle control: end the durable cursor without revoking its stable address.
+   * A later subscribe on the same deterministic handle starts at the then-current head.
+   */
+  async withdraw(ctx: PluginCallContext, handleId: string): Promise<void> {
+    await this.deps.handles.resolveForSubscribe(ctx.pluginInstanceId, handleId);
+    await this.deps.cursors.revokeByHandle(handleId, Date.now());
+  }
+
   /** Common gate: existence (instance-scoped lookup) → liveness. */
   private async requireLiveSubscription(ctx: PluginCallContext, subscriptionId: string): Promise<SubscriptionRecord> {
     const sub = await this.deps.cursors.get(ctx.pluginInstanceId, subscriptionId);
