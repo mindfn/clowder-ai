@@ -63,16 +63,13 @@ import { F306ApprovalAdapter } from './domains/approval-hub/adapters/F306Approva
 import { createDispatchProposalStore } from './domains/approval-hub/stores/factories/DispatchProposalStoreFactory.js';
 import { createEntityProposalStore } from './domains/approval-hub/stores/factories/EntityProposalStoreFactory.js';
 import { classifyApprovedActionCarrier } from './domains/ball-custody/ActionSuccessorRecoverySweep.js';
+import { createLegacyManagedWakeAdoption } from './domains/ball-custody/legacy-managed-wake-adoption.js';
 import type { ManagedCommandWakeRecoverySweep } from './domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
-import {
-  hasManagedCommandWakeActionLeaseRef,
-  resolveManagedCommandWakeActionLeaseAdmission,
-} from './domains/ball-custody/managed-command-wake-action-lease-admission.js';
 import { createManagedCommandWakeCarrierAdapter } from './domains/ball-custody/managed-command-wake-carrier-adapter.js';
 import type { ManagedCommandWakeRecoveryDeps } from './domains/ball-custody/managed-command-wake-lifecycle.js';
+import { createManagedWakeAdmittedNotifier } from './domains/ball-custody/managed-wake-admitted-notifier.js';
 import { RedisWaitTerminationStore } from './domains/ball-custody/RedisWaitTerminationStore.js';
 import { WaitTerminationService } from './domains/ball-custody/WaitTerminationService.js';
-import { waitContinuationCarrierFromStoredMessage } from './domains/ball-custody/wait-continuation-carrier.js';
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
 // F297 Phase B: Sidebar C10 production source — domain-owned composition shared by
 // queue / active-execution / Sidebar 三个 consumer（PR #3748 R3 P2-1）。
@@ -6968,34 +6965,30 @@ async function main(): Promise<void> {
 
   // holdBallDeps is built before composition finishes, and the route reads these at request time
   // through the object reference, so late binding is safe.
-  /**
-   * Best-effort, and that is load-bearing rather than lazy.
-   *
-   * By the time this runs the Message and its Queue row are already durable. If a socket broadcast
-   * or a drain request threw and that escaped, the producer would be handed an error, release its
-   * claim and record "nothing was written" — about work that is committed and about to run. Queue
-   * commit is the durable boundary (INV-I2); nothing after it may reverse the verdict.
-   */
-  const notifyManagedWakeAdmitted = async (threadId: string, userId: string): Promise<void> => {
-    try {
-      if (socketManager) {
-        await emitQueueUpdated(
-          socketManager,
-          userId,
-          threadId,
-          invocationQueue.list(threadId, userId),
-          messageStore,
-          'enqueued',
-        );
-      }
-      queueProcessor.requestDrain?.(threadId);
-    } catch (error) {
-      app.log.warn(
-        { error, threadId, userId },
-        'managed wake admitted durably; post-commit notification failed and is not retried here',
-      );
-    }
-  };
+  // Post-commit notification for an already-durable wake. Both effects are best-effort and
+  // independent; see managed-wake-admitted-notifier.ts for why the drain must not be sequenced
+  // behind the broadcast.
+  const wakeQueueEmitter = socketManager;
+  const notifyManagedWakeAdmitted = createManagedWakeAdmittedNotifier({
+    ...(wakeQueueEmitter
+      ? {
+          broadcastQueueUpdate: (threadId: string, userId: string) =>
+            emitQueueUpdated(
+              wakeQueueEmitter,
+              userId,
+              threadId,
+              invocationQueue.list(threadId, userId),
+              messageStore,
+              'enqueued',
+            ),
+        }
+      : {}),
+    ...(queueProcessor.requestDrain
+      ? { requestDrain: (threadId: string) => queueProcessor.requestDrain?.(threadId) }
+      : {}),
+    log: { warn: (context, message) => app.log.warn(context, message) },
+  });
+
   const admitManagedWake: ManagedCommandWakeRecoveryDeps['admitWake'] = async (input) => {
     // INV-I1: Message and Queue row in one transaction. The lease was already verified against
     // this exact envelope, so nothing admitted here can belong to a generation that has moved on.
@@ -7018,43 +7011,13 @@ async function main(): Promise<void> {
     await notifyManagedWakeAdmitted(input.threadId, input.userId);
     return { messageId: admitted.message.id };
   };
-  const adoptLegacyManagedWake: NonNullable<ManagedCommandWakeRecoveryDeps['adoptLegacyWake']> = async (input) => {
-    // Pre-atomic tasks only: a durable message with no Queue row behind it.
-    //
-    // These messages were written by the two-phase path, which verified the action lease inside the
-    // trigger — i.e. at exactly this step. Adopting them without that check would admit a generation
-    // that has since moved on, and it would do so on the one path where stale carriers actually
-    // live. So the lease is re-verified against the stored message, and its fence rides the row.
-    // A stale generation throws, and the engine's existing cancel/retire path handles it.
-    const sourceMessage = await messageStore.getById(input.messageId);
-    const leaseAdmission = hasManagedCommandWakeActionLeaseRef(sourceMessage)
-      ? await resolveManagedCommandWakeActionLeaseAdmission(
-          sourceMessage,
-          { threadId: input.threadId, catId: input.catId, tenantScope: input.userId },
-          actionSuccessorLeaseStore,
-        )
-      : undefined;
-    const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
-    const adopted = await invocationQueue.enqueueExistingMessageDurable(messageStore, input.messageId, {
-      threadId: input.threadId,
-      userId: input.userId,
-      sourceId: input.messageId,
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'unknown',
-      content: input.content,
-      messageId: input.messageId,
-      from: { kind: 'system', service: 'managed-command-wake' },
-      targetCats: [input.catId],
-      intent: 'execute',
-      priority: 'urgent',
-      sourceCategory: 'scheduled',
-      ...(leaseAdmission?.actionSuccessorFence ? { actionSuccessorFence: leaseAdmission.actionSuccessorFence } : {}),
-      ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
-    });
-    if (adopted.outcome === 'full') return { adopted: false };
-    await notifyManagedWakeAdmitted(input.threadId, input.userId);
-    return { adopted: true };
-  };
+  const adoptLegacyManagedWake = createLegacyManagedWakeAdoption({
+    messageStore,
+    invocationQueue,
+    messageStoreForQueue: messageStore,
+    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
+    notifyAdmitted: notifyManagedWakeAdmitted,
+  });
   if (callbackOpts.holdBallDeps) {
     const holdBallDeps = callbackOpts.holdBallDeps as unknown as Record<string, unknown>;
     // The route has no Queue handle of its own; composition hands it the one admission port.

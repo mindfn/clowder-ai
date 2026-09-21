@@ -380,36 +380,51 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.deepEqual(await sweep.runOnce(), { scanned: 0, recovered: 0, pending: 0 });
   });
 
-  test('a post-commit notification failure does not un-admit a durable wake', async () => {
-    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
-    const h = makeHarness();
-    // Composition commits Message + Queue row, then asks the drain to look. That second step is
-    // best-effort by design: the row is already durable, so letting its failure escape would hand
-    // the producer an error about work that is committed and about to run — the producer would
-    // release its claim and record "nothing was written". Queue commit is the durable boundary.
-    const admit = h.deps.admitWake;
-    h.deps.admitWake = async (input) => {
-      const admitted = await admit(input);
-      try {
-        throw new Error('socket fan-out unavailable after commit');
-      } catch {
-        // swallowed exactly as composition swallows it
-      }
-      return admitted;
-    };
-    const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+  /**
+   * The historical states this migration exists for, driven end to end through the recovery engine.
+   *
+   * A task persisted as `message_written` (or `dispatch_pending`) by the pre-atomic producer has a
+   * durable Message and no Queue row. An active generation must be adopted; a superseded one must
+   * be refused and the carrier retired — the engine's cancel/retire branch is what the adoption's
+   * `ManagedCommandWakeActionLeaseAdmissionError` is raised for.
+   */
+  for (const legacyState of ['message_written', 'dispatch_pending']) {
+    test(`a stale legacy ${legacyState} carrier is canceled and retired, with nothing enqueued`, async () => {
+      const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+      const { ManagedCommandWakeActionLeaseAdmissionError } = await import(
+        '../dist/domains/ball-custody/managed-command-wake-action-lease-admission.js'
+      );
+      const task = makeTask();
+      task.params.holdLifecycle.managedCommand = {
+        state: legacyState,
+        command: 'pnpm gate',
+        startedAt: 1_000,
+        conditionMetAt: 2_000,
+        wakeContent: 'gate finished',
+        messageId: 'legacy-message-1',
+        messageWrittenAt: 2_500,
+      };
+      const h = makeHarness({
+        task,
+        messages: [{ id: 'legacy-message-1', threadId: 'thread-1', deliveryStatus: 'queued' }],
+      });
+      const adoptions = [];
+      h.deps.adoptLegacyWake = async (input) => {
+        adoptions.push(input);
+        throw new ManagedCommandWakeActionLeaseAdmissionError('generation no longer matches canonical truth');
+      };
+      const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
 
-    await sweep.recordCompletion({
-      taskId: 'hold-ball-task-1',
-      wakeContent: 'gate finished',
-      result: { exitCode: 0, timedOut: false, durationMs: 9_000 },
+      assert.equal(await sweep.recoverTask(h.task?.id ?? 'hold-ball-task-1'), 'recovered');
+
+      assert.equal(adoptions.length, 1, 'the legacy carrier is offered for adoption exactly once');
+      assert.equal(adoptions[0].messageId, 'legacy-message-1');
+      const command = h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand;
+      assert.equal(command.state, 'consumed', 'a superseded generation retires rather than retrying forever');
+      assert.equal(command.carrierTerminalReason, 'canceled');
+      assert.equal(h.appended.length, 0, 'no new message is written for a refused adoption');
     });
-
-    const command = h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand;
-    assert.equal(command.state, 'enqueued', 'a durable admission must not be reported as unwritten');
-    assert.equal(h.appended.length, 1, 'exactly one message');
-    assert.equal(command.messageId, h.appended[0].id);
-  });
+  }
 
   test('a refused admission writes nothing, and the retry is the first thing that persists', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
