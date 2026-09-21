@@ -113,7 +113,31 @@ SubscriptionDelivery.register  → 零生产调用点    （插件声明的 mess
 （哪个 pluginInstance 拥有这个 thread）。**一换一，不是新增。**
 地址由归属推导 → 不需要逐 thread 授予。
 
-### C-5　删除（C-2/C-4 取消后，这是 Host 侧仅剩的一项）
+### C-5　删除 —— 判据由 operator 给定（2026-09-21 修正，范围比原估大）
+
+**判据（operator 原话，取代我此前按目录划的线）：**
+
+> host 这边没有插件代码是指**没有任何和具体的插件相关的业务代码**；
+> VSCode、IDEA，你看看他们的 host 会有某个插件特有的代码的么
+
+**所以不是「删 `infrastructure/connectors/`、留 `domains/plugin/`」**——
+我原先那条按目录划的线是错的，它会把下面这些原封不动留在 Host 里：
+
+| 位置 | 行数 | 内容 | 判定 |
+|---|---|---|---|
+| `infrastructure/connectors/` 全部 | 16,121 | Router / CommandLayer / gateway / 7 provider / Outbound hooks | ❌ 删 |
+| `domains/plugin/official-plugin-meeting-intake.ts` | 216 | `createFeishuMeetingCatchUpService`、`createLarkCliFeishuPollingGateway` | ❌ **飞书会议业务** |
+| `domains/plugin/official-plugin-history-import.ts` | 153 | `FeishuArtifactLocator`、飞书制品解析 | ❌ **飞书特有** |
+| `domains/plugin/official-plugin-auth.ts` | 295 | 硬编码 `accounts.feishu.cn` / `accounts.larksuite.com` | ❌ **飞书特有** |
+| `domains/plugin/official-catalog.ts` | 181 | 硬编码 `pluginId: 'official.feishu-meeting-intake'` 等 | ⚠️ 按判据也该走，但它是**安装目录**，需替代方案（目录由插件仓/远端提供），**不可裸删** |
+| `domains/plugin/runtime-composition.ts` | 781 | 仅一行注释提到飞书超时 | ✅ 通用，保留 |
+
+**已知删除面 ≈ 16,785 行**（不含 catalog 的替代工程）。
+
+> **这份清单不完整。** 我只扫了 `domains/plugin/`；`routes/`、`index.ts`、`infrastructure/` 其余子树未扫。
+> **实施前必须用同一把尺子全仓重扫**——我今晚四次栽在"用推理代替清点"，这份范围同样不应被采信。
+
+**次序**：C-6 接线 → C-5 删除。
 ```
 ConnectorRouter 664 · ConnectorCommandLayer 621 · connector-gateway-bootstrap 1,195
 OutboundDeliveryHook 397 · StreamingOutboundHook 383 · ConnectorThreadBindingStore 71
