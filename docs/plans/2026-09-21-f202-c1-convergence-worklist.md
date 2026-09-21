@@ -18,6 +18,236 @@ Host 提供双向接口  →  SDK 包装这些接口  →  插件实现接口  �
 
 单向依赖：`插件 → SDK → contract ← Host`。**Host 永不 import SDK。**
 
+## 0.5　编号改用 operator 的 a/b/c/d（2026-09-21 复核；C-1…C-6 作废）
+
+operator 原话：「c1/c2 呢 又是什么」「明明是很清晰的开发思路；为什么搞的乱七八糟的」。
+C-1…C-6 是我自造的内部编号，只制造了理解成本。**从此只用 operator 的分步语言。**
+
+| Host 侧 | operator 原文 | 旧编号 | 复核后状态 |
+|---|---|---|---|
+| **a)** | 整理我们应该暴露的能力，基于插件和 im connector 需要的来评估；收敛整合，不一味新增 | C-1/2/3/4/6 | **未闭合** |
+| **b)** | 确保我们的插件是真的能加载的，不是一个插件一个子进程 | **旧清单根本没有这一项** | **未开工，是最大的洞** |
+| **c)** | 整理好暴露的能力后清理所有插件代码；跨成员 review 和提交 PR | C-5 | 未开工（判据已落盘，范围待全仓重扫） |
+| **d)** | 等插件仓发布后基于插件安装包完整验收 | 末尾 | 未开工 |
+
+### a) 的答案不用发明——契约里已经写好了
+
+Host 该暴露的通用能力面是**两张已发布的表**，不是新设计：
+
+| 面 | 定义处 | 规模 | Host 侧实现 |
+|---|---|---:|---|
+| Wire 方法表（跨进程插件走 stdio broker） | `plugin-contract` `dist/wire/registry.d.ts` | **13 行**（含 `broker.hello`/`broker.ready` 两行协议握手） | messaging 数行已装配 |
+| `FeatureHostAdapter`（进程内 module 插件） | `plugin-sdk` `dist/feature-context.d.ts:79` | **6 个方法** | **0 处实现** |
+| `Capability` 授权表 | `plugin-contract` `dist/generated/contract.generated.d.ts:22` | **17 项** | 与上两张表从未对账 |
+
+`FeatureHostAdapter` 全文只有六个方法，本身已是收敛形态：
+
+```
+readConfig / readSecret / readState / writeState
+registerContribution / disposeContribution
+```
+
+`registerContribution` 收一个 `StaticContribution`，**一个方法覆盖全部 12 种 contribution 类型**
+（identity / schedule / tool / mcp / skill / limb / webhook / message-subscription / service /
+connector / ui / content-editor-provider）。这正是 operator 要的「收敛和整合」，而且契约已经做完了。
+
+### 决定性事实：Host 一个都没实现（0 处，可直接清点）
+
+```
+grep -rn "FeatureHostAdapter|registerContribution|disposeContribution" packages/api/src  →  0 命中
+```
+
+Host 只有 **builtin 专用**注册路径（`runtime-composition.ts:146,326,671` 的
+`registerBuiltinContributions`、`manager/builtin-contribution-supervisor.ts`），
+没有契约定义的通用适配器。
+
+**这一条把 a) 和 b) 解释成同一件事**：`builtin-runtime/module-plugin-runtime.ts:44`
+原文写着 "Loading is done here; activation is not."。activate 需要 `FeatureContext`，
+构造 `FeatureContext` 需要 Host 提供 `FeatureHostAdapter`——Host 没有，
+所以插件**装得上、载得进，但永远激活不了**。
+
+因此 **a) + b) 的核心工作量 = 实现这 6 个方法并把 activate 接起来**，
+不是「补齐 17 项能力」。范围比旧清单小一个数量级。
+
+### 依赖方向违规：一处，且根因可一句话封死
+
+`packages/api/package.json:63` 依赖 `@clowder-ai/plugin-sdk@0.1.0-beta.10`；
+非测试源码 import **1 处**：`external-runtime/stdio-broker-transport.ts:26`，
+取 `createStdioChannel` / `classifyFrame` / `StdioFrame` 等 stdio 帧原语。
+
+这与 `FeatureHostAdapter` 住在 SDK 是**同一个病**。判据：
+
+> **`plugin-contract` = 双方都依赖的契约；`plugin-sdk` = 只有插件依赖。
+> 凡 Host 必须实现或必须调用的类型与原语，必须住在 contract。**
+
+按此判据需迁 contract 的有两处：`FeatureHostAdapter`（Host 必须实现）、
+stdio 帧原语（Host 必须调用）。**这是插件仓侧的第一件事**，
+也正是 operator 说的「如果发现接口签名有问题，就和 host 沟通再同步调整」。
+
+### b) 的现状：确实是「一个插件一个子进程」，但共享进程的载体已经造好了
+
+全仓清点运行时隔离点（`spawn` / `createServer` / `import()`，无 `worker_threads`/`vm`/`isolated-vm` 命中）：
+
+| 载体 | 隔离单位 | 证据 |
+|---|---|---|
+| 外部 stdio 插件 | **每 pluginInstance 一个 Node 子进程** | `external-runtime/node-process-adapter.ts:64` `spawn`；`supervisor.ts:44` `Map<instanceId, RuntimeExecution>`、`:181` 每次 `startOwned` 一次 spawn |
+| builtin contribution（MCP） | **每插件的每个 contribution 一个 MCP 子进程** | `manager/builtin-contribution-supervisor.ts:148,299-303,536` |
+| content editor | **每 instance 的每个 feature 一个 HTTP server** | `content-editor-runtime/surface-server.ts:64,107`；`runtime.ts:152-175` |
+| **module（进程内）** | **共享 host 进程，0 子进程** | `builtin-runtime/module-plugin-runtime.ts:78-90` `import()` + `create(manifest)` |
+| IM connector（系统 C） | 共享 API 进程，0 子进程 | `im-connector-loader.ts:114-115` `await import()` |
+
+一个 stdio 插件激活实际创建：**1 子进程 + 1 broker 连接 + 1 stdio transport + 1 心跳定时器**
+（`supervisor.ts:155-224` 逐行可数）。
+
+**共享进程的路径不需要新建——已经造好且已接线**：`ModulePluginRuntime` 已注册进
+`BundledPluginRuntimeCarrier`（`runtime-composition.ts:285,287-299`）。
+carrier 认领条件是 `runtime.transport === 'builtin' && typeof runtime.entrypoint === 'string'`
+（`module-plugin-runtime.ts:58-61`）。
+
+**没有任何真实包走这条路**，原因可直接清点：catalog 三个条目里
+（`official-catalog.ts:117-176`）feishu-meeting-intake = stdio、
+collective-connector = builtin **但没有 entrypoint**（`:116`）、genoffice-docx = content-editor。
+没有 entrypoint → `claims()` 返回 false → 被 `CollectiveConnectorBuiltinRuntime` 抢先认领。
+唯一走通 module carrier 的是测试 fixture（`test/f202-c1-module-carrier.test.js:33`）。
+
+**所以 b) 拆成两件小事，不是重写运行时**：
+1. **插件仓侧**：manifest 声明 `runtime: { transport:'builtin', entrypoint:'dist/plugin.js' }`
+2. **Host 侧**：实现 `FeatureHostAdapter` 6 方法 → 构造 `FeatureContext` → 调 `activate`
+   （现在卡在这里：`module-plugin-runtime.ts:44` "Loading is done here; activation is not."，
+   所以插件的 identity / schedule / tools / mcp / skills / limbs / webhooks 贡献一个都注册不上）
+
+### 顺带钉住的三个事实（复核确认，不是推测）
+
+- **仓里同时跑着三套「插件」机制**，互不共享：F202 Plugin Host（新）、
+  `plugin.yaml` repository plugin（旧，5 个：github / video-analysis / video-gen /
+  wechat-visible-reader / weixin-mp，`index.ts:4322` `new PluginRegistry`）、
+  IM connector（`im-connector-loader.ts`）。**c) 的删除面必须覆盖三套，不能只看 connectors 树。**
+- **零调用者确认**：`createRelayAddressProvisioner`（`relay-address-provisioning.ts:98`）与
+  `SubscriptionDelivery.register`（`subscription-delivery.ts:169`）生产侧均零调用——
+  `index.ts` 从未读取 `pluginRuntime.subscriptionDelivery`。
+  **今天即使插件装上跑起来：入站没有地址可发，出站没有订阅可投。**
+- **测试覆盖的真实边界**：唯一完整产品级 e2e 是 content-editor 路径
+  （`packages/web/test/browser/f309-genoffice-published-journey.test.mjs`，真安装真启用真编辑）。
+  stdio 路径的真 spawn 真握手在 `plugin-m0d-joint-acceptance.test.js`（18 behavior case 全过），
+  但用**测试自造 fixture 包**，且 `pre-merge-check.sh` 与 CI workflow 里**没有调用点**。
+  唯一真实已发布的 stdio 插件 `official.feishu-meeting-intake`
+  **没有任何测试覆盖它的安装→启用→收发**。
+
+### c) 的删除面：全仓重扫后是 32,858 行，不是 16,785 行（旧数字作废）
+
+2026-09-21 全仓普查（`wc -l` 实数，非估算）。核心两目录 160 files / 34,477 行分类：
+
+| 分类 | files | lines |
+|---|---:|---:|
+| vendor-specific（必须迁出） | 55 | 13,434 |
+| 通用机制（Host 保留） | 95 | 16,472 |
+| mixed（同文件混装） | 10 | 4,571 |
+
+**扩到全仓：vendor-specific 合计 32,858 行 / 通用插件机制合计 18,717 行。**
+
+vendor 32,858 的构成：
+
+```
+im-connectors/                8,473    src/plugins/（整目录 100% vendor）  8,429
+infrastructure/email/（实为 GitHub PR/CI/Issue）  6,068
+domains/plugin vendor         3,219    github-repo-event/          1,496
+vendor 专用路由               1,623    infrastructure/enterprise/  1,129
+github-signals                  885    infrastructure/github/        596
+LarkCliFeishuSourceResolver     322    web vendor 组件               309
+connectors 顶层 3 文件          246    guides vendor flow             63
+```
+
+**另有 vendor 测试 30 files / 14,044 行**（`weixin-adapter.test.js` 2,270、
+`wecom-bot-adapter.test.js` 1,450、`telegram-adapter.test.js` 1,340 …），
+加 `test/infrastructure/` 下 lark/wecom 测试 1,433 行。
+
+`src/plugins/` 整目录（55 files / 8,429 行）是**具体插件业务代码直接住在 host 仓里**：
+`cloud-cat-personal-host` 4,421 · `wechat-visible-reader` 2,592 · `weixin-mp` 960 ·
+`video-gen` 293 · `video-analysis` 108 · `github` 55。
+
+`domains/plugin/` 里的 vendor（3,219）：`builtin-runtime/` 中 collective-connector
+一个插件的运行时 9 files / 1,559 · `github-schedule-factories.ts` 722 ·
+`official-plugin-auth.ts` 295（硬编码 `accounts.feishu.cn`，L127）·
+`official-plugin-meeting-intake.ts` 216（L1-8 直接 import `@clowder-ai/feishu-meeting-intake`）·
+`official-plugin-auth-command.ts` 191 · `official-plugin-history-import.ts` 153 ·
+`official-plugin-meeting-intake-port.ts` 83。
+
+**mixed 文件（不能整删，要切）**，vendor 行号已定位：
+`connector-gateway-bootstrap.ts` 1,195 行含 210 行 vendor（逐厂商 env/凭据/生命周期）·
+`ConnectorCommandLayer.ts` L452-457 逐厂商硬编码超时表 ·
+`StreamingOutboundHook.ts` L151-156 `connectorId === 'feishu'` 分支 ·
+`im-connector-loader.ts` L23-29 七家厂商 `import()` 硬编码清单 ·
+`official-catalog.ts` L88-117 + L123-181 · `runtime-composition.ts` L258-259 等 ·
+`machine-catalog-provider.ts` L10-11 写死 `raw.githubusercontent.com/zts212653/clowder-ai-plugins`。
+
+**主入口 `packages/api/src/index.ts`（8,188 行）有 37 行 vendor**——host 启动路径直接
+`new` 具体插件对象：`:4304` import weixin-mp · `:4344-4346` `new WeChatVisibleReaderArmStore()` ·
+`:4350` `registerGitHubScheduleFactories` · `:5016` import `@clowder-ai/feishu-meeting-intake` ·
+`:8002-8010` `weixinAdapter / startWeixinPolling / startWeComBotStream`。
+
+**前端 host 里也有具体插件 UI**：`OfficialPluginOwnerAuth.tsx` 157 行整文件飞书扫码 ·
+`WeChatVisibleReaderArmControl.tsx` 152 行整文件微信读屏 ·
+`PluginConfigPanel.tsx:37` `if (plugin.id !== 'wechat-visible-reader') return null` ·
+`shared/src/types/connector.ts:253-300` 七家厂商 displayName/品牌色/png 静态表。
+
+### a) 的真实输入：7 个 connector 实际消费 11 组能力，契约只覆盖了 2 组
+
+按 operator 的方法（「基于我们哪些插件和 im connector 需要的来评估」）从**现有 connector 的真实调用**
+清点，不是从半成品迁移包反推：
+
+| # | 能力组 | 谁在用 | 现在走哪条路 | 已发布契约覆盖 |
+|---|---|---|---|---|
+| 1 | 消息出站（含富文本/媒体/流式 placeholder/edit/delete/reaction） | 7/7 | `IOutboundAdapter` — **host 内部实现文件的类型**（`OutboundDeliveryHook.ts:12-68`） | ❌ 契约只有单形状 `host.messaging.deliver` |
+| 2 | 消息入站（长连 `startInbound` / webhook） | 7/7 | `IMConnectorPlugin.startInbound`（`im-connector-plugin.ts:141`） | ❌ `messaging.send` 零调用 |
+| 3 | thread 归属（externalChatId ↔ threadId 绑定） | 7/7（由 Router 代持） | `IConnectorThreadBindingStore` + `IThreadStore` 上直接刻 `ConnectorHubStateV1` | ❌ `thread.listMetadata`/`readContent` **0 命中** |
+| 4 | 身份与地址签发 | **0/7** | connector 走 `handleAction` 扫码登录回填凭据 | ⚠️ 已建未用（Z-1） |
+| 5 | 存储 | 3/7 直接拿裸 `ctx.redis` 自拼 key | `im-connector-plugin.ts:28` | ❌ `plugin.state.get/set` **0 命中** |
+| 6 | 配置与凭据 | 7/7 | `ctx.env` 注入 + 三层解析（存储值 > env > YAML） | ✅ **唯一落地的两项**：`plugin.config.read` / `secret.read` |
+| 7 | 定时调度 | 0/7（github 插件走 C 体系白名单） | `ScheduleFactoryRegistry` | ❌ `schedule.register` **0 命中** |
+| 8 | **slash 命令** | 7/7（Router 内拦截，connector 无感知） | `CommandRegistry` 只认 core + skill 两种来源 | ❌ **插件侧根本没有注册面** |
+| 9 | 媒体下载 | 5/7 | `createMediaDownloader` → `ConnectorMediaService` | ❌ 契约无 media 行；`whisper.extend` **0 命中** |
+| 10 | webhook 入口 | 2/7 | `POST /api/connectors/:id/webhook` | ✅ A 体系内唯一真正通用化的入口 |
+| 11 | 日志 | 7/7 | 直接暴露 `FastifyBaseLogger` | ❌ 契约无 |
+
+**operator 说插件诉求「主要是 slash 命令」——而第 8 行是最硬的缺口：
+`CommandRegistry.registerSkillCommands`（`infrastructure/commands/CommandRegistry.ts:22`）
+只接受 core 与 skill 两类来源，插件/connector 无法贡献命令。**
+
+### 重复入口（operator 原话「两个入口之后应该汇聚到一起」）—— 实测 7 组
+
+| | 重复的是什么 | 几条路 | 证据 |
+|---|---|---|---|
+| R-1 | 出站消息 | **3** | `OutboundDeliveryHook.deliver`（在跑）· `SubscriptionDelivery.drainOne`→`host.messaging.deliver`（契约，零生产调用）· `deliverConnectorMessage`（在跑，`infrastructure/email/deliver-connector-message.ts:29`） |
+| R-2 | 入站唤醒推导 | 2 | `ConnectorRouter.ts:448-479` vs `ingress-wake.ts:56-70`（注释自陈是复制） |
+| R-3 | 入站消息落库 | 3 | `ConnectorRouter.ts:459` · `deliver-connector-message.ts:34` · `collective-ingress-dispatcher.ts:162,202` |
+| R-4 | 凭据/配置写入 | 2 | `im-connector-config-store.ts` vs `plugin-config-store.ts` |
+| R-5 | **插件清单格式** | **3 套互不兼容** | `connector.yaml` · `plugin.yaml` · `plugin-contract` PluginManifest |
+| R-6 | 插件安装目录 | 2 | `.cat-cafe/plugins/<id>/` vs `.cat-cafe/plugin-host/packages` |
+| R-7 | webhook/HTTP 入口 | 4 | 通用 webhook · connector actions · 插件自带路由硬编码进 host · 插件专属 REST 硬编码进 host |
+
+`connector_message` 这一个 socket 事件有**三份 payload 构造代码**
+（`ConnectorRouter.ts:37` / `deliver-connector-message.ts:45` / `collective-ingress-dispatcher.ts:296`）。
+
+### 零调用面（建好没人用）
+
+- **Z-1** `createRelayAddressProvisioner` — 生产零调用；连带 `MessagingService.issueConnectorBindingHandle` 唯一调用者就是它
+- **Z-2** `SubscriptionDelivery.register/drain` — `src/index.ts` 里 `subscriptionDelivery` **0 行**命中。
+  `host.messaging.deliver` 整条出站链路唯一生产入口是 `subscription-delivery.ts:154`，而它的调用者无人调用
+- **Z-3** `MessagingService.issueThreadHandle/revokeHandle` — 零调用，导致 `messaging.send` 的
+  `thread_handle` 分支（`send-service.ts:56-66`）生产中不可达
+- **Z-4** 11 项 Capability 在 `src/` **0 命中**：`thread.listMetadata` `thread.readContent`
+  `memory.query` `memory.append` `memory.retrieve` `windows.create` `whisper.extend`
+  `schedule.register` `plugin.state.get` `plugin.state.set` `message.event.subscribe`
+- **Z-5** `collective-connector` 的 `capabilities: []`（`official-catalog.ts:99`）——
+  它绕过 broker 直接 import host 内部（`collective-ingress-dispatcher.ts:15-18` 拿 `InvocationQueue`/`QueueProcessor`）
+- **Z-6** `IMConnectorPlugin.setup?` 钩子 7 个 connector 无一实现
+
+**所以 a) 不是「新增接口」，是三件事**：
+① 把 11 组真实需求对照 13 wire + 6 adapter 方法，**补 5 个缺口**（出站富语义、入站注册、
+thread 绑定、媒体、**slash 命令注册面**）；
+② **合并 R-1…R-7 七组重复入口**；
+③ **删掉 Z-4 的 11 项空头 Capability**（或补 wire 行，二选一，不能继续挂着）。
+
 ## 1. 已完成（不要重做）
 
 | commit | 内容 |
@@ -251,16 +481,20 @@ im-connector-loader 224 · im-connectors/ 8,180（7 provider）
 **所以"用标准 wire 方法"和"插件实现自己的方法"是两层、同时成立**，
 但衔接点不是"多带一个字段"，而是**接收侧自己路由**。
 
-## 4. 顺序（跨仓）
+## 4. 顺序（跨仓，用 operator 的 a/b/c/d）
 
 ```
-C-1 C-2 C-3 C-4（Core 接口就位）
-      ↓
-P-1…P-6（Plugins 按新接口切，一次性不分批）
-      ↓
-C-5（Core 删除 16,121 行）
-      ↓
-发布 SDK  →  worktree 独立安装  →  operator 验收
+Host a)  三张表对账（wire 13 / adapter 6 / capability 17）
+         + 把 FeatureHostAdapter 与 stdio 帧原语迁进 contract ← 插件仓改
+             ↓
+Host b)  实现 FeatureHostAdapter 6 方法 + 接通 module activate
+         + 接线地址签发与订阅注册（两个零调用者）      ← 当前最大的洞
+             ↓
+插件仓 a) 封装/调整 SDK  →  插件仓 b) 插件核心逻辑迁移 + manifest 声明 entrypoint
+             ↓
+Host c)  删除三套机制里全部具体插件业务代码 + 跨成员 review + PR
+             ↓
+插件仓 c) 发布  →  Host d) worktree 独立安装 / 启停 / 卸载完整验收
 ```
 
 ## 5. 根因（写在这里防止下一位重犯）
