@@ -81,10 +81,6 @@ export interface QueueEnqueueInput {
   sourceCategory?: QueueLedgerEntry['sourceCategory'];
   continuationKey?: string;
   a2aParentInvocationId?: string;
-  freshnessClosureId?: string;
-  freshnessSupplementId?: string;
-  freshnessSupplementLineageId?: string;
-  freshnessSupplementSeq?: 1 | 2;
   readOnlyToolPolicy?: ToolExecutionPolicy;
   actionSuccessorFence?: ActionSuccessorFence;
   waitContinuationCarrier?: WaitContinuationCarrierV1;
@@ -242,13 +238,7 @@ export class InvocationQueue {
   }
 
   private static persistentSourceId(input: QueueEnqueueInput): string {
-    const sourceId =
-      input.sourceId ??
-      input.messageId ??
-      input.idempotencyKey ??
-      input.continuationKey ??
-      input.freshnessSupplementId ??
-      input.freshnessClosureId;
+    const sourceId = input.sourceId ?? input.messageId ?? input.idempotencyKey ?? input.continuationKey;
     if (!sourceId) throw new Error('durable Queue admission requires a persistent producer identity');
     return sourceId;
   }
@@ -338,10 +328,6 @@ export class InvocationQueue {
       priority: input.priority,
       sourceCategory: input.sourceCategory,
       a2aParentInvocationId: input.a2aParentInvocationId,
-      freshnessClosureId: input.freshnessClosureId,
-      freshnessSupplementId: input.freshnessSupplementId,
-      freshnessSupplementLineageId: input.freshnessSupplementLineageId,
-      freshnessSupplementSeq: input.freshnessSupplementSeq,
       readOnlyToolPolicy: input.readOnlyToolPolicy,
       actionSuccessorFence: input.actionSuccessorFence,
       waitContinuationCarrier: input.waitContinuationCarrier,

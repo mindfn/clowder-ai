@@ -54,10 +54,7 @@ import {
   buildStaticIdentityPackOnly,
   type InvocationContext,
 } from '../../context/SystemPromptBuilder.js';
-import { checkStreamOutputFreshness } from '../../freshness/checkStreamOutputFreshness.js';
 import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
-import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
-import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
@@ -224,8 +221,7 @@ export async function* routeParallel(
   }
   const ownerAuthProvenance = options.ownerAuthProvenance ?? 'unknown';
   const thinkingMode = options.thinkingMode ?? 'play';
-  const isFreshnessSupplement = Boolean(options.freshnessSupplementId);
-  const turnExecutionKind = isFreshnessSupplement ? 'freshness_supplement' : 'ordinary';
+  const turnExecutionKind = 'ordinary';
   const exactA2ACallerCatId = options.a2aTriggerMessageId ? options.a2aCallerCatId : undefined;
   const bridgeMentioningCatId =
     options.cloudDispatchProvenance?.calledByCatId ?? (options.a2aTriggerMessageId ? exactA2ACallerCatId : userId);
@@ -236,105 +232,6 @@ export async function* routeParallel(
   const incrementalMode = Boolean(currentUserMessageId && deps.deliveryCursorStore);
   const parallelBatchId = options.parallelBatchId ?? crypto.randomUUID();
   const exactPromptMessageIdsByCat = new Map<string, string[]>();
-
-  const evaluateParallelFreshness = async (
-    catId: CatId,
-    invocationId: string,
-    priorFrontierMessageId: string | null,
-  ): Promise<FreshnessEvaluation> => {
-    const freshness = await checkStreamOutputFreshness({
-      userId,
-      catId,
-      threadId,
-      currentTriggerMessageId: currentUserMessageId,
-      parallelBatchId,
-      coveredMessageIds: exactPromptMessageIdsByCat.get(catId as string) ?? [],
-      throughMessageId: priorFrontierMessageId,
-      cursorStore: deps.deliveryCursorStore!,
-      messageStore: deps.messageStore,
-      messageFilter: (raw: Record<string, unknown>) => {
-        if (
-          messageFrom(raw as unknown as Parameters<typeof messageFrom>[0]).kind === 'system' ||
-          raw.origin === 'briefing'
-        )
-          return false;
-        const viewer =
-          thinkingMode === 'play' ? ({ type: 'cat' as const, catId } as const) : ({ type: 'user' as const } as const);
-        if (
-          !canViewMessage(
-            raw as unknown as Parameters<typeof canViewMessage>[0],
-            viewer as Parameters<typeof canViewMessage>[1],
-          )
-        )
-          return false;
-        return true;
-      },
-      queueChecker: getQueuedFreshnessMessagesForCat
-        ? {
-            getQueuedForThread: (tid, uid, targetCatId) =>
-              getQueuedFreshnessMessagesForCat(tid, uid, targetCatId, options.parentInvocationId),
-          }
-        : undefined,
-      onEvent: deps.freshnessEventLog
-        ? (event) => {
-            deps.freshnessEventLog!.append({ ...event, invocationId, catId }, { ownerUserId: userId }).catch(() => {});
-          }
-        : undefined,
-    });
-    return { freshness, rawFrontierMessageId: priorFrontierMessageId };
-  };
-
-  const enqueueParallelSupplement = async (
-    decision: Extract<OutputCommitDecision, { kind: 'published_with_unseen' }>,
-    catId: string,
-  ): Promise<void> => {
-    if (!deps.freshnessOutputCommitCoordinator) return;
-    const supplement = await deps.freshnessOutputCommitCoordinator.getSupplement(decision.offeredSupplementId);
-    if (!supplement || supplement.status !== 'pending') return;
-    if (!options.freshnessReinvokeEnqueue) {
-      await deps.freshnessOutputCommitCoordinator.failSupplement(supplement.id, 'scheduler_unavailable');
-      return;
-    }
-    try {
-      const enqueueResult = await options.freshnessReinvokeEnqueue({
-        threadId,
-        userId,
-        ownerAuthProvenance,
-        content: `[Freshness Supplement ${supplement.id}]`,
-        from: { kind: 'agent', catId },
-        sourceCategory: 'freshness',
-        targetCats: [catId],
-        autoExecute: true,
-        priority: 'normal',
-        intent: 'execute',
-        idempotencyKey: supplement.id,
-        freshnessSupplementId: supplement.id,
-        freshnessSupplementLineageId: supplement.lineageId,
-        freshnessSupplementSeq: supplement.seq,
-        readOnlyToolPolicy: {
-          mode: 'read_only',
-          replayDeniedToolNames: supplement.replayUnsafeToolNames,
-        },
-        freshnessContext: {
-          sourceNoticeIds: [],
-          senders: [],
-          reason: 'parallel_published_with_unseen',
-        },
-      });
-      if (enqueueResult?.outcome === 'full') {
-        await deps.freshnessOutputCommitCoordinator.failSupplement(supplement.id, 'queue_full');
-      }
-    } catch (err) {
-      try {
-        await deps.freshnessOutputCommitCoordinator.failSupplement(supplement.id, 'scheduler_unavailable');
-      } catch (terminalErr) {
-        log.error(
-          { err, terminalErr, supplementId: supplement.id },
-          '[F254] parallel supplement enqueue and terminal persistence both failed',
-        );
-      }
-    }
-  };
 
   const degradationMsgs: AgentMessage[] = [];
   const boundaryByCat = new Map<CatId, string | undefined>();
@@ -968,8 +865,6 @@ export async function* routeParallel(
           exactPromptMessageIds = collectExactPromptMessageIds(
             incrementallyExposedMessageIds,
             explicitlyExposedMessageIds,
-            options.freshnessSupplementRequiredMessageIds ?? [],
-            options.freshnessClosureRequiredMessageIds ?? [],
           );
           exactPromptMessageIdsByCat.set(catId as string, exactPromptMessageIds);
           return {
@@ -1066,12 +961,10 @@ export async function* routeParallel(
           : undefined;
 
       if (!incrementalMode) {
-        exactPromptMessageIds = collectExactPromptMessageIds(
-          options.persistedPromptMessageIds ?? [],
-          [currentUserMessageId, options.a2aTriggerMessageId],
-          options.freshnessSupplementRequiredMessageIds ?? [],
-          options.freshnessClosureRequiredMessageIds ?? [],
-        );
+        exactPromptMessageIds = collectExactPromptMessageIds(options.persistedPromptMessageIds ?? [], [
+          currentUserMessageId,
+          options.a2aTriggerMessageId,
+        ]);
         exactPromptMessageIdsByCat.set(catId as string, exactPromptMessageIds);
       }
 
@@ -1132,7 +1025,6 @@ export async function* routeParallel(
         executionKind: turnExecutionKind,
         executionCausal: {
           ...(bridgeTriggerMessageId ? { triggerMessageId: bridgeTriggerMessageId } : {}),
-          ...(options.freshnessSupplementId ? { freshnessSupplementId: options.freshnessSupplementId } : {}),
         },
         promptMessageIds: exactPromptMessageIds,
         ...(options.onPromptMessagesExposed ? { onPromptMessagesExposed: options.onPromptMessagesExposed } : {}),
@@ -1828,15 +1720,11 @@ export async function* routeParallel(
         const meta = catMeta.get(msg.catId);
         const sanitized = sanitizeInjectedContent(text);
         // F22: Extract cc_rich blocks from text + merge with buffered
-        let { cleanText: storedContent, blocks: textBlocks } = isFreshnessSupplement
-          ? { cleanText: sanitized, blocks: [] }
-          : extractRichFromText(sanitized);
-        let allRichBlocks = isFreshnessSupplement
-          ? []
-          : [...bufferedBlocks, ...textBlocks, ...(catStreamRichBlocks.get(msg.catId) ?? [])];
+        let { cleanText: storedContent, blocks: textBlocks } = extractRichFromText(sanitized);
+        let allRichBlocks = [...bufferedBlocks, ...textBlocks, ...(catStreamRichBlocks.get(msg.catId) ?? [])];
         // F34-b: synthesize text-only audio blocks (voice messages)
         // F111: skip synthesis in voiceMode — frontend streams via /api/tts/stream
-        if (!isFreshnessSupplement && !voiceMode) {
+        if (!voiceMode) {
           const voiceSynth = getVoiceBlockSynthesizer();
           if (voiceSynth && allRichBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
             try {
@@ -1848,7 +1736,6 @@ export async function* routeParallel(
         }
         const catTools = catToolEvents.get(msg.catId);
         const conciergeActionSourceContent =
-          !isFreshnessSupplement &&
           'conciergeConfig' in conciergeCtx &&
           conciergeContextForCat(conciergeCtx, msg.catId as string)?.conciergeConfig &&
           storedContent
@@ -1870,7 +1757,7 @@ export async function* routeParallel(
         // F079 Phase 2: Vote interception for parallel routing.
         // @all / multi-cat requests route here, so [VOTE:xxx] must be handled too.
         const votedOption = extractVoteFromText(storedContent);
-        if (!isFreshnessSupplement && votedOption && deps.invocationDeps.threadStore) {
+        if (votedOption && deps.invocationDeps.threadStore) {
           try {
             const voteState = await deps.invocationDeps.threadStore.getVotingState(threadId);
             if (voteState && voteState.status === 'active' && voteState.options.includes(votedOption)) {
@@ -2048,7 +1935,7 @@ export async function* routeParallel(
             },
           };
           let storedMsg = null;
-          if (deps.freshnessOutputCommitCoordinator && deps.deliveryCursorStore && ownInvId) {
+          if (deps.freshnessOutputCommitCoordinator && ownInvId) {
             outputCommitDecision = await deps.freshnessOutputCommitCoordinator.commit({
               userId,
               threadId,
@@ -2056,15 +1943,9 @@ export async function* routeParallel(
               invocationId: options.parentInvocationId ?? ownInvId,
               turnInvocationId: ownInvId,
               originTriggerMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
-              freshnessClosureId: options.freshnessClosureId,
-              freshnessSupplementId: options.freshnessSupplementId,
               message: streamMessageInput,
               ...(lifecycleResponse ? { lifecycleResponse } : {}),
               ...(failedA2AReportCommit ? { commitLifecycleResponse: failedA2AReportCommit } : {}),
-              replayUnsafeToolNames: findReplayUnsafeToolNames(catToolNames.get(msg.catId) ?? []),
-              commitRecheckLimit: 10 + targetCats.length,
-              evaluateFreshness: (priorFrontierMessageId) =>
-                evaluateParallelFreshness(msg.catId as CatId, ownInvId, priorFrontierMessageId),
             });
             if (options.persistenceContext) {
               options.persistenceContext.outputCommitDecisions = {
@@ -2072,13 +1953,7 @@ export async function* routeParallel(
                 [msg.catId]: outputCommitDecision,
               };
             }
-            if (
-              outputCommitDecision.kind === 'committed_fresh' ||
-              outputCommitDecision.kind === 'committed_degraded_unknown' ||
-              outputCommitDecision.kind === 'published_with_unseen'
-            ) {
-              storedMsg = await deps.messageStore.getById(outputCommitDecision.messageId);
-            }
+            storedMsg = await deps.messageStore.getById(outputCommitDecision.messageId);
           } else if (lifecycleResponse && ownInvId) {
             storedMsg = failedA2AReportCommit
               ? await failedA2AReportCommit(streamMessageInput)
@@ -2094,10 +1969,6 @@ export async function* routeParallel(
           }
 
           turnStoredMessageId = storedMsg?.id;
-
-          if (outputCommitDecision?.kind === 'published_with_unseen') {
-            await enqueueParallelSupplement(outputCommitDecision, msg.catId);
-          }
 
           const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
           if (storedMsg && triagePlanStore && triagePlanIdsToLink.length > 0) {
@@ -2164,9 +2035,7 @@ export async function* routeParallel(
           hasRichBlocks ||
           (catTools?.length ?? 0) > 0 ||
           Boolean(thinking && renderThinkingChunks(thinking).trim().length > 0);
-        const isFreshnessClosureSuccessor = Boolean(options.freshnessClosureRequiredMessageIds?.length);
-        const shouldEmitSilentCompletion =
-          (catTools?.length ?? 0) > 0 && !hasRichBlocks && !sawUserFacingSystemInfo && !isFreshnessClosureSuccessor;
+        const shouldEmitSilentCompletion = (catTools?.length ?? 0) > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
 
         // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
         // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
@@ -2230,16 +2099,9 @@ export async function* routeParallel(
             };
             const answerBearingNoText =
               hasRichBlocks || Boolean(thinking && renderThinkingChunks(thinking).trim().length > 0);
-            const replayUnsafeToolNames = findReplayUnsafeToolNames(catToolNames.get(msg.catId) ?? []);
-            const requiresFreshnessGate = answerBearingNoText || replayUnsafeToolNames.length > 0;
             let storedNoText = null;
             let noTextOutputCommitDecision: OutputCommitDecision | undefined;
-            if (
-              requiresFreshnessGate &&
-              deps.freshnessOutputCommitCoordinator &&
-              deps.deliveryCursorStore &&
-              ownInvId
-            ) {
+            if (answerBearingNoText && deps.freshnessOutputCommitCoordinator && ownInvId) {
               const decision = await deps.freshnessOutputCommitCoordinator.commit({
                 userId,
                 threadId,
@@ -2247,15 +2109,9 @@ export async function* routeParallel(
                 invocationId: options.parentInvocationId ?? ownInvId,
                 turnInvocationId: ownInvId,
                 originTriggerMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
-                freshnessClosureId: options.freshnessClosureId,
-                freshnessSupplementId: options.freshnessSupplementId,
                 message: noTextMessageInput,
                 ...(lifecycleResponse ? { lifecycleResponse } : {}),
                 ...(failedA2AReportCommit ? { commitLifecycleResponse: failedA2AReportCommit } : {}),
-                replayUnsafeToolNames,
-                commitRecheckLimit: 10 + targetCats.length,
-                evaluateFreshness: (priorFrontierMessageId) =>
-                  evaluateParallelFreshness(msg.catId as CatId, ownInvId, priorFrontierMessageId),
               });
               noTextOutputCommitDecision = decision;
               if (options.persistenceContext) {
@@ -2264,16 +2120,7 @@ export async function* routeParallel(
                   [msg.catId]: decision,
                 };
               }
-              if (
-                decision.kind === 'committed_fresh' ||
-                decision.kind === 'committed_degraded_unknown' ||
-                decision.kind === 'published_with_unseen'
-              ) {
-                storedNoText = await deps.messageStore.getById(decision.messageId);
-                if (decision.kind === 'published_with_unseen') {
-                  await enqueueParallelSupplement(decision, msg.catId);
-                }
-              }
+              storedNoText = await deps.messageStore.getById(decision.messageId);
             } else if (lifecycleResponse && ownInvId) {
               storedNoText = failedA2AReportCommit
                 ? await failedA2AReportCommit(noTextMessageInput)
@@ -2331,7 +2178,7 @@ export async function* routeParallel(
               });
             }
           }
-        } else if (!sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
+        } else if (!sawUserFacingSystemInfo) {
           yield {
             type: 'system_info' as AgentMessageType,
             catId: msg.catId,

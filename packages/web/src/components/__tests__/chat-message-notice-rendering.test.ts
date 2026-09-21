@@ -385,49 +385,6 @@ describe('ChatMessage notice rendering', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('renders the durable supplement lifecycle on the published original bubble', () => {
-    act(() => {
-      root.render(
-        React.createElement(ChatMessage, {
-          getCatById: (() => undefined) as never,
-          message: {
-            id: 'msg-original',
-            type: 'assistant',
-            catId: 'opus',
-            content: 'published answer',
-            timestamp: Date.now(),
-            extra: {
-              freshness: {
-                kind: 'published_with_unseen',
-                priorFrontierMessageId: 'msg-late',
-                generatedWithUnseen: ['msg-late'],
-                lineageId: 'msg-original',
-              },
-              freshnessSupplement: {
-                type: 'freshness_supplement',
-                supplementId: 'f254-supplement:msg-original:1',
-                lineageId: 'msg-original',
-                originalMessageId: 'msg-original',
-                threadId: 'thread-1',
-                catId: 'opus',
-                seq: 1,
-                status: 'declined',
-                requiredCount: 1,
-                terminalReason: 'checked_no_supplement_needed',
-                updatedAt: Date.now(),
-              },
-            },
-          },
-        }),
-      );
-    });
-
-    expect(container.querySelector('[data-testid="freshness-supplement-status"]')?.textContent).toContain(
-      '已核对，无需补充',
-    );
-    expect(container.textContent).toContain('published answer');
-  });
-
   it('does not surface boundary-check work while the response is still settling', () => {
     act(() => {
       root.render(
@@ -440,10 +397,7 @@ describe('ChatMessage notice rendering', () => {
             content: 'published answer',
             timestamp: Date.now(),
             extra: {
-              freshness: {
-                kind: 'scan_pending',
-                priorFrontierMessageId: 'msg-before',
-              },
+              freshness: { priorFrontierMessageId: 'msg-before' },
             },
           },
         }),
@@ -452,44 +406,6 @@ describe('ChatMessage notice rendering', () => {
 
     expect(container.querySelector('[data-testid="freshness-supplement-status"]')).toBeFalsy();
     expect(container.textContent).not.toContain('正在核对生成期间的消息边界');
-  });
-
-  it('keeps a typed stream-origin supplement readable without an internal execution badge', () => {
-    act(() => {
-      root.render(
-        React.createElement(ChatMessage, {
-          getCatById: (() => undefined) as never,
-          message: {
-            id: 'msg-supplement',
-            type: 'assistant',
-            catId: 'opus',
-            content: 'additive supplement',
-            origin: 'stream',
-            timestamp: Date.now(),
-            replyTo: 'msg-original',
-            extra: {
-              turnExecution: {
-                invocationId: 'child-supplement-1',
-                parentInvocationId: 'parent-1',
-                executionKind: 'freshness_supplement',
-              },
-              supplement: {
-                lineageId: 'msg-original',
-                supplementId: 'f254-supplement:msg-original:1',
-                seq: 1,
-                originalMessageId: 'msg-original',
-              },
-            },
-          },
-        }),
-      );
-    });
-
-    expect(container.textContent).not.toContain('后到消息补充');
-    expect(container.querySelector('[data-turn-execution-kind="freshness_supplement"]')).toBeFalsy();
-    expect(container.textContent).toContain('additive supplement');
-    expect(container.querySelector('[data-testid="cli-output-body"]')).toBeFalsy();
-    expect(container.querySelector('[data-testid="freshness-supplement-status"]')).toBeFalsy();
   });
 
   it('hides an otherwise empty routing-guard execution', () => {
@@ -587,36 +503,5 @@ describe('ChatMessage notice rendering', () => {
 
     expect(container.querySelector('[data-auxiliary-turn-execution="child-ordinary-bodyless"]')).toBeFalsy();
     expect(container.textContent).not.toContain('普通执行（无正文）');
-  });
-
-  it('shows a terminal explanation when supplement responsibility could not be stored', () => {
-    act(() => {
-      root.render(
-        React.createElement(ChatMessage, {
-          getCatById: (() => undefined) as never,
-          message: {
-            id: 'msg-offer-failed',
-            type: 'assistant',
-            catId: 'opus',
-            content: 'published despite infrastructure failure',
-            timestamp: Date.now(),
-            extra: {
-              freshness: {
-                kind: 'published_with_unseen',
-                priorFrontierMessageId: 'msg-late',
-                generatedWithUnseen: ['msg-late'],
-                lineageId: 'msg-offer-failed',
-                supplementFailureReason: 'infrastructure',
-              },
-            },
-          },
-        }),
-      );
-    });
-
-    expect(container.querySelector('[data-testid="freshness-supplement-status"]')?.textContent).toContain(
-      '补充检查未能安排',
-    );
-    expect(container.textContent).toContain('published despite infrastructure failure');
   });
 });

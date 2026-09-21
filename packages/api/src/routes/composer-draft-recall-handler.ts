@@ -25,10 +25,7 @@ export interface RecallMessageRouteOptions {
   threadStore: Pick<IThreadStore, 'get' | 'compareAndSetTitle'>;
   socketManager: SocketManager;
   invocationQueue: InvocationQueue;
-  queueProcessor?: Pick<
-    QueueProcessor,
-    'unregisterEntryCompleteHook' | 'finalizeRemovedEntry' | 'registerCallerDispatchQueueWithdrawal'
-  >;
+  queueProcessor?: Pick<QueueProcessor, 'unregisterEntryCompleteHook' | 'registerCallerDispatchQueueWithdrawal'>;
   indexBuilder: Pick<
     IIndexBuilder,
     'suppressMessagePassage' | 'releaseMessagePassageSuppression' | 'finalizeMessagePassageSuppression'
@@ -246,14 +243,6 @@ async function projectRecallFailure(
 async function finalizeCarrier(context: RecallContext, carrier: CarrierContext): Promise<void> {
   for (const entry of carrier.entries) {
     context.opts.queueProcessor?.unregisterEntryCompleteHook(entry.id);
-    try {
-      await context.opts.queueProcessor?.finalizeRemovedEntry(entry, 'user_cancel');
-    } catch (error) {
-      context.request.log.error(
-        { error, entryId: entry.id },
-        'true recall committed; Queue record finalization deferred to recovery',
-      );
-    }
   }
 }
 

@@ -1,4 +1,3 @@
-import { InMemoryFreshnessClosureStore } from '../../dist/domains/cats/services/freshness/closure/FreshnessClosureStore.js';
 import { FreshnessOutputCommitCoordinator } from '../../dist/domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { DeliveryCursorStore } from '../../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
@@ -43,10 +42,7 @@ export async function cursorHarness(services, messageStore = new MessageStore())
       threadStore: new ThreadStore(),
       apiUrl: 'http://127.0.0.1:3102',
     },
-    freshnessOutputCommitCoordinator: new FreshnessOutputCommitCoordinator({
-      messageStore: canonicalMessageStore,
-      closureStore: new InMemoryFreshnessClosureStore(),
-    }),
+    freshnessOutputCommitCoordinator: new FreshnessOutputCommitCoordinator({ messageStore: canonicalMessageStore }),
     socketManager: { broadcastToRoom() {} },
   };
   const options = {

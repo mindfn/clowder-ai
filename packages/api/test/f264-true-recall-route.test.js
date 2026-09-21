@@ -49,7 +49,6 @@ function createHarness(overrides = {}) {
   const ledgerStore = overrides.ledgerStore ?? new InMemoryQueueLedgerStore();
   const invocationQueue = new InvocationQueue(ledgerStore);
   const socketEvents = [];
-  const finalizedEntries = [];
   const unregisteredEntries = [];
   const suppressedPassages = [];
   const releasedPassages = [];
@@ -71,9 +70,6 @@ function createHarness(overrides = {}) {
     },
     unregisterEntryCompleteHook(entryId) {
       unregisteredEntries.push(entryId);
-    },
-    async finalizeRemovedEntry(entry) {
-      finalizedEntries.push(entry?.id);
     },
     ...overrides.queueProcessor,
   };
@@ -117,7 +113,6 @@ function createHarness(overrides = {}) {
     invocationQueue,
     ledgerStore,
     socketEvents,
-    finalizedEntries,
     unregisteredEntries,
     suppressedPassages,
     releasedPassages,
@@ -192,10 +187,6 @@ describe('F264 Gap F true recall API', () => {
     assert.deepEqual(harness.releasedPassages, []);
     assert.deepEqual(
       harness.unregisteredEntries,
-      entries.map((entry) => entry.id),
-    );
-    assert.deepEqual(
-      harness.finalizedEntries,
       entries.map((entry) => entry.id),
     );
     assert.deepEqual(
@@ -379,30 +370,6 @@ describe('F264 Gap F true recall API', () => {
     assert.deepEqual(harness.releasedPassages, []);
   });
 
-  it('returns the authoritative committed ACK even when Queue record cleanup needs startup recovery', async () => {
-    const harness = createHarness({
-      queueProcessor: {
-        async finalizeRemovedEntry() {
-          throw new Error('record store unavailable');
-        },
-      },
-    });
-    apps.push(harness.app);
-    const { message } = await appendQueued(harness, '仍应回填');
-
-    const response = await harness.app.inject({
-      method: 'POST',
-      url: `/api/messages/${message.id}/recall`,
-      headers: AUTH_HEADERS,
-      payload: { threadId: THREAD_ID, expectedDraftRevision: 0, merge: 'replace' },
-    });
-
-    assert.equal(response.statusCode, 200, response.body);
-    assert.equal(response.json().draft.text, '仍应回填');
-    assert.equal(harness.messageStore.getById(message.id).content, '');
-    assert.equal(harness.invocationQueue.list(THREAD_ID, OWNER_ID).length, 0);
-  });
-
   it('removes an interrupted recall claim from the recalled message on startup', async () => {
     const harness = createHarness();
     apps.push(harness.app);
@@ -453,10 +420,6 @@ describe('F264 Gap F true recall API', () => {
       remaining.every(
         (entry) => entry.payload.messageId === second.message.id && entry.payload.content === '第二条保留',
       ),
-    );
-    assert.deepEqual(
-      harness.finalizedEntries,
-      first.entries.map((entry) => entry.id),
     );
   });
 

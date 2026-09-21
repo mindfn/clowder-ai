@@ -140,11 +140,7 @@ import {
   buildStaticIdentityPackOnly,
   type InvocationContext,
 } from '../../context/SystemPromptBuilder.js';
-import { checkStreamOutputFreshness, type StreamFreshnessResult } from '../../freshness/checkStreamOutputFreshness.js';
-import { buildFreshnessReinvokePrompt } from '../../freshness/createFreshnessReinvokeCheck.js';
 import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
-import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
-import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
@@ -510,7 +506,6 @@ export async function* routeSerial(
     getQueuedFreshnessMessagesForCat,
     commitCompletedA2AWake,
     commitFailedA2AReport,
-    freshnessReinvokeEnqueue,
   } = options;
   const ownerAuthProvenance = options.ownerAuthProvenance ?? 'unknown';
   const previousResponses: { catId: CatId; content: string }[] = [];
@@ -519,59 +514,6 @@ export async function* routeSerial(
   // P2-3 fix: also consider default MCP server path (ClaudeAgentService has fallback resolution)
   const mcpServerPath = process.env.CAT_CAFE_MCP_SERVER_PATH || resolveDefaultClaudeMcpServerPath();
   const incrementalMode = Boolean(currentUserMessageId && deps.deliveryCursorStore);
-  const isFreshnessSupplement = Boolean(options.freshnessSupplementId);
-
-  const enqueueFreshnessSupplement = async (
-    decision: Extract<OutputCommitDecision, { kind: 'published_with_unseen' }>,
-    catId: string,
-  ): Promise<void> => {
-    if (!deps.freshnessOutputCommitCoordinator) return;
-    const supplement = await deps.freshnessOutputCommitCoordinator.getSupplement(decision.offeredSupplementId);
-    if (!supplement || supplement.status !== 'pending') return;
-    if (!freshnessReinvokeEnqueue) {
-      await deps.freshnessOutputCommitCoordinator.failSupplement(supplement.id, 'scheduler_unavailable');
-      return;
-    }
-    try {
-      const enqueueResult = await freshnessReinvokeEnqueue({
-        threadId,
-        userId,
-        ownerAuthProvenance,
-        content: `[Freshness Supplement ${supplement.id}]`,
-        from: { kind: 'agent', catId },
-        sourceCategory: 'freshness',
-        targetCats: [catId],
-        autoExecute: true,
-        priority: 'normal',
-        intent: 'execute',
-        idempotencyKey: supplement.id,
-        freshnessSupplementId: supplement.id,
-        freshnessSupplementLineageId: supplement.lineageId,
-        freshnessSupplementSeq: supplement.seq,
-        readOnlyToolPolicy: {
-          mode: 'read_only',
-          replayDeniedToolNames: supplement.replayUnsafeToolNames,
-        },
-        freshnessContext: {
-          sourceNoticeIds: [],
-          senders: [],
-          reason: 'published_with_unseen',
-        },
-      });
-      if (enqueueResult?.outcome === 'full') {
-        await deps.freshnessOutputCommitCoordinator.failSupplement(supplement.id, 'queue_full');
-      }
-    } catch (err) {
-      try {
-        await deps.freshnessOutputCommitCoordinator.failSupplement(supplement.id, 'scheduler_unavailable');
-      } catch (terminalErr) {
-        log.error(
-          { err, terminalErr, supplementId: supplement.id },
-          '[F254] supplement enqueue and terminal persistence both failed',
-        );
-      }
-    }
-  };
 
   // The route worklist contains only this admitted batch. Downstream A2A work is
   // published through the durable message_wake path after the response completes.
@@ -1458,8 +1400,6 @@ export async function* routeSerial(
           exactPromptMessageIds = collectExactPromptMessageIds(
             incrementallyExposedMessageIds,
             explicitlyExposedMessageIds,
-            options.freshnessSupplementRequiredMessageIds ?? [],
-            options.freshnessClosureRequiredMessageIds ?? [],
           );
           return {
             prompt: projectedPrompt,
@@ -1559,12 +1499,11 @@ export async function* routeSerial(
           : undefined;
 
       if (!incrementalMode) {
-        exactPromptMessageIds = collectExactPromptMessageIds(
-          options.persistedPromptMessageIds ?? [],
-          [currentUserMessageId, a2aTriggerMessageId, streamReplyTo],
-          options.freshnessSupplementRequiredMessageIds ?? [],
-          options.freshnessClosureRequiredMessageIds ?? [],
-        );
+        exactPromptMessageIds = collectExactPromptMessageIds(options.persistedPromptMessageIds ?? [], [
+          currentUserMessageId,
+          a2aTriggerMessageId,
+          streamReplyTo,
+        ]);
       }
 
       let textContent = '';
@@ -1618,7 +1557,7 @@ export async function* routeSerial(
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
       // F22 R2 P1-1: Capture own invocationId from stream (not getLatestId)
       let ownInvocationId: string | undefined;
-      const initialExecutionKind: TurnExecutionKind = isFreshnessSupplement ? 'freshness_supplement' : 'ordinary';
+      const initialExecutionKind: TurnExecutionKind = 'ordinary';
       const turnExecutionProjectionByInvocation = new Map<string, TurnExecutionMessageProjection>();
       const rememberTurnExecutionProjection = (invocationId: string, executionKind: TurnExecutionKind): void => {
         if (!deps.invocationDeps.turnExecutionStore) return;
@@ -1797,7 +1736,6 @@ export async function* routeSerial(
       const KEEPALIVE_INTERVAL_MS = 60_000;
       let lastBallCustodyHeartbeatAt: number | null = null;
       const emitThrottledBallInvocationHeartbeat = (draftUpdatedAt: number): void => {
-        if (isFreshnessSupplement) return;
         if (
           lastBallCustodyHeartbeatAt !== null &&
           draftUpdatedAt - lastBallCustodyHeartbeatAt < BALL_CUSTODY_INVOCATION_HEARTBEAT_MIN_INTERVAL_MS
@@ -1906,7 +1844,6 @@ export async function* routeSerial(
         messageId: string | undefined,
         eventThreadId: string | undefined = threadId,
       ): void => {
-        if (isFreshnessSupplement) return;
         if (!messageId || !eventThreadId) return;
         const eventKey = `${eventThreadId}:${messageId}`;
         if (emittedBallHandedCvoMessageIds.has(eventKey)) return;
@@ -1991,7 +1928,6 @@ export async function* routeSerial(
                   a2aTriggerMessageId,
               }
             : {}),
-          ...(options.freshnessSupplementId ? { freshnessSupplementId: options.freshnessSupplementId } : {}),
         },
         promptMessageIds: exactPromptMessageIds,
         ...(options.onPromptMessagesExposed
@@ -2078,9 +2014,7 @@ export async function* routeSerial(
                   }
                 }
                 rememberTurnExecutionProjection(parsed.invocationId, initialExecutionKind);
-                if (!isFreshnessSupplement) {
-                  emitBallInvocationStarted(deps.ballCustody, threadId, ownInvocationId, catId as string);
-                }
+                emitBallInvocationStarted(deps.ballCustody, threadId, ownInvocationId, catId as string);
                 // F111 Phase B: Start streaming TTS when we have an invocationId.
                 if (voiceMode) {
                   voiceChunker = createVoiceChunker(ownInvocationId!);
@@ -2542,13 +2476,7 @@ export async function* routeSerial(
             'F167 Phase T turn-custody stop-gate verdict',
           );
 
-          if (
-            !newDecision.shouldBlock ||
-            hadError ||
-            !actionOutputCommitAllowed ||
-            isFreshnessSupplement ||
-            stopGateRemedialAttempted
-          ) {
+          if (!newDecision.shouldBlock || hadError || !actionOutputCommitAllowed || stopGateRemedialAttempted) {
             return;
           }
 
@@ -2792,9 +2720,7 @@ export async function* routeSerial(
                 ) {
                   ownInvocationId = parsed.invocationId;
                   rememberTurnExecutionProjection(parsed.invocationId, 'routing_guard');
-                  if (!isFreshnessSupplement) {
-                    emitBallInvocationStarted(deps.ballCustody, threadId, ownInvocationId, catId as string);
-                  }
+                  emitBallInvocationStarted(deps.ballCustody, threadId, ownInvocationId, catId as string);
                   if (voiceMode) {
                     deferredVoiceInvocationId = ownInvocationId;
                   }
@@ -3049,7 +2975,6 @@ export async function* routeSerial(
 
       const noTextLegacyObservedBlock = Boolean(
         actionOutputCommitAllowed &&
-          !isFreshnessSupplement &&
           !textContent &&
           !hadError &&
           observeLegacyRoutingBlock({
@@ -3061,77 +2986,7 @@ export async function* routeSerial(
       );
       if (!textContent) await scheduleTurnCustodyStopGate(noTextLegacyObservedBlock);
 
-      // F254 Phase D: declared at for-loop level so both textContent branch
-      // (stream store) and post-B3 forced re-invoke can access it
-      let streamFreshnessResult: StreamFreshnessResult | undefined;
       let outputCommitDecision: OutputCommitDecision | undefined;
-      const evaluateCurrentStreamFreshness = async (
-        priorFrontierMessageId: string | null,
-      ): Promise<FreshnessEvaluation> => {
-        const freshness = await checkStreamOutputFreshness({
-          userId,
-          catId: catId as string,
-          threadId,
-          currentTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId,
-          parallelBatchId: options.parallelBatchId,
-          coveredMessageIds: exactPromptMessageIds,
-          throughMessageId: priorFrontierMessageId,
-          cursorStore: deps.deliveryCursorStore!,
-          messageStore: deps.messageStore,
-          messageFilter: (msg: Record<string, unknown>) => {
-            if (messageFrom(msg as unknown as Parameters<typeof messageFrom>[0]).kind === 'system') return false;
-            if (msg.origin === 'briefing') return false;
-            const viewer =
-              (thinkingMode ?? 'play') === 'play'
-                ? ({ type: 'cat' as const, catId } as const)
-                : { type: 'user' as const };
-            if (
-              !canViewMessage(
-                msg as unknown as Parameters<typeof canViewMessage>[0],
-                viewer as Parameters<typeof canViewMessage>[1],
-              )
-            )
-              return false;
-            return true;
-          },
-          queueChecker: getQueuedFreshnessMessagesForCat
-            ? {
-                getQueuedForThread: (tid, uid, targetCatId) =>
-                  getQueuedFreshnessMessagesForCat(tid, uid, targetCatId, options.parentInvocationId),
-              }
-            : undefined,
-          onEvent: deps.freshnessEventLog
-            ? (event) => {
-                deps
-                  .freshnessEventLog!.append(
-                    {
-                      ...event,
-                      invocationId: ownInvocationId ?? 'unknown',
-                      catId: catId as string as import('@cat-cafe/shared').CatId,
-                    },
-                    { ownerUserId: userId },
-                  )
-                  .catch(() => {});
-              }
-            : undefined,
-        });
-        streamFreshnessResult = freshness;
-        if (freshness.stale) {
-          log.info(
-            {
-              catId: catId as string,
-              threadId,
-              invocationId: ownInvocationId,
-              unseenCount: freshness.unseenCount,
-              unseenSenders: freshness.unseenSenders,
-              reason: freshness.reason,
-            },
-            '[F254] output published with unseen input; offering an additive supplement check',
-          );
-        }
-        return { freshness, rawFrontierMessageId: priorFrontierMessageId };
-      };
-
       if (!actionOutputCommitAllowed && textContent) await scheduleTurnCustodyStopGate(false);
 
       const terminalFailureContent = lifecycleResponseMessageId && collectedErrorText ? collectedErrorText : undefined;
@@ -3171,18 +3026,16 @@ export async function* routeSerial(
         const sanitized = sanitizeInjectedContent(textContent);
 
         // F22: Extract cc_rich blocks from text (Route B fallback for non-MCP cats)
-        const { cleanText, blocks: textBlocks } = isFreshnessSupplement
-          ? { cleanText: sanitized, blocks: [] }
-          : extractRichFromText(sanitized);
+        const { cleanText, blocks: textBlocks } = extractRichFromText(sanitized);
         let storedContent = cleanText;
-        let allRichBlocks = isFreshnessSupplement ? [] : [...bufferedBlocks, ...textBlocks, ...streamRichBlocks];
+        let allRichBlocks = [...bufferedBlocks, ...textBlocks, ...streamRichBlocks];
 
         // F34-b: Resolve voice blocks (audio with text, no url) — Route B path.
         // Route A blocks were already resolved in the callback handler.
         // F111: When voiceMode is active, skip full synthesis so audio blocks
         // arrive at the frontend with text but no url — the frontend will use
         // /api/tts/stream for chunked streaming playback (<2s first-audio).
-        if (!isFreshnessSupplement && !voiceMode) {
+        if (!voiceMode) {
           const voiceSynth = getVoiceBlockSynthesizer();
           if (voiceSynth && allRichBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
             try {
@@ -3194,7 +3047,6 @@ export async function* routeSerial(
         }
 
         const conciergeActionSourceContent =
-          !isFreshnessSupplement &&
           'conciergeConfig' in conciergeCtx &&
           conciergeContextForCat(conciergeCtx, catId as string)?.conciergeConfig &&
           storedContent
@@ -3212,7 +3064,7 @@ export async function* routeSerial(
 
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
-        a2aMentions = isFreshnessSupplement ? [] : parseA2AMentions(storedContent, catId);
+        a2aMentions = parseA2AMentions(storedContent, catId);
 
         // clowder-ai#489: baseline counter — line-start mentions
         if (a2aMentions.length > 0) {
@@ -3224,8 +3076,7 @@ export async function* routeSerial(
         const localCvoHasCoCreatorLineStartMention = hasLocalCoCreatorLineStartMention(storedContent);
 
         const textLegacyObservedBlock = Boolean(
-          !isFreshnessSupplement &&
-            !hadError &&
+          !hadError &&
             observeLegacyRoutingBlock({
               lineStartMentions: routingExitLineStartMentions,
               toolNames: collectedToolNames,
@@ -3272,7 +3123,7 @@ export async function* routeSerial(
           structuredTargetCats: [...structuredTargetCats],
           rosterHandles: phaseHRosterHandles,
         });
-        const phaseHHit = !isFreshnessSupplement && phaseHResult.kind === 'invalid_route_syntax';
+        const phaseHHit = phaseHResult.kind === 'invalid_route_syntax';
         if (phaseHHit && phaseHResult.kind === 'invalid_route_syntax') {
           routingSyntaxCorrectionDetected.add(1);
           log.info(
@@ -3283,7 +3134,7 @@ export async function* routeSerial(
 
         // #417 / F064 AC-B3: Write-side feedback for inline action-like @mentions
         // clowder-ai#489: counters for detection, shadow, feedback, hint
-        if (!isFreshnessSupplement && deps.invocationDeps.threadStore) {
+        if (deps.invocationDeps.threadStore) {
           const {
             strictHits: inlineHits,
             shadowMisses,
@@ -3413,7 +3264,7 @@ export async function* routeSerial(
 
         // F079 Phase 2: Vote interception — extract [VOTE:xxx] from cat response
         const votedOption = extractVoteFromText(storedContent);
-        if (!isFreshnessSupplement && votedOption && deps.invocationDeps.threadStore) {
+        if (votedOption && deps.invocationDeps.threadStore) {
           try {
             const voteState = await deps.invocationDeps.threadStore.getVotingState(threadId);
             if (voteState && voteState.status === 'active' && voteState.options.includes(votedOption)) {
@@ -3502,9 +3353,9 @@ export async function* routeSerial(
         // F061: Detect local @co-creator mentions for browser/unread notification.
         // Cross-post callbacks can satisfy the guard and emit target-thread operator, but must not
         // create a source-thread unread/user notification.
-        mentionsUser =
-          !isFreshnessSupplement &&
-          Boolean((storedContent ? detectUserMention(storedContent) : false) || localCvoHasCoCreatorLineStartMention);
+        mentionsUser = Boolean(
+          (storedContent ? detectUserMention(storedContent) : false) || localCvoHasCoCreatorLineStartMention,
+        );
 
         // #573/#1332: callback success alone does not prove the final is a duplicate.
         // Suppression is opt-in through streamDisposition="replace_final".
@@ -3574,8 +3425,6 @@ export async function* routeSerial(
               // Fail-open: action extraction failure → no actions, no crash
             }
           }
-
-          const evaluateStreamFreshness = evaluateCurrentStreamFreshness;
 
           if (!callbackAlreadyStored) {
             const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
@@ -3712,7 +3561,7 @@ export async function* routeSerial(
                 : undefined;
             const lifecycleWakeCommit = completedA2AWakeCommit ?? failedA2AReportCommit;
             let storedMsg = null;
-            if (deps.freshnessOutputCommitCoordinator && deps.deliveryCursorStore && ownInvocationId) {
+            if (deps.freshnessOutputCommitCoordinator && ownInvocationId) {
               const decision = await deps.freshnessOutputCommitCoordinator.commit({
                 userId,
                 threadId,
@@ -3720,13 +3569,9 @@ export async function* routeSerial(
                 invocationId: options.parentInvocationId ?? ownInvocationId,
                 turnInvocationId: ownInvocationId,
                 originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
-                freshnessClosureId: options.freshnessClosureId,
-                freshnessSupplementId: options.freshnessSupplementId,
                 message: streamMessageInput,
                 ...(lifecycleResponse ? { lifecycleResponse } : {}),
                 ...(lifecycleWakeCommit ? { commitLifecycleResponse: lifecycleWakeCommit } : {}),
-                replayUnsafeToolNames: findReplayUnsafeToolNames(collectedToolNames),
-                evaluateFreshness: evaluateStreamFreshness,
               });
               outputCommitDecision = decision;
               if (options.persistenceContext) {
@@ -3735,16 +3580,7 @@ export async function* routeSerial(
                   [catId as string]: decision,
                 };
               }
-              if (
-                decision.kind === 'committed_fresh' ||
-                decision.kind === 'committed_degraded_unknown' ||
-                decision.kind === 'published_with_unseen'
-              ) {
-                storedMsg = await deps.messageStore.getById(decision.messageId);
-                if (decision.kind === 'published_with_unseen') {
-                  await enqueueFreshnessSupplement(decision, catId as string);
-                }
-              }
+              storedMsg = await deps.messageStore.getById(decision.messageId);
             } else if (lifecycleResponse && ownInvocationId) {
               storedMsg = lifecycleWakeCommit
                 ? await lifecycleWakeCommit(streamMessageInput)
@@ -3900,9 +3736,7 @@ export async function* routeSerial(
               /* best-effort sample emission */
             }
             // F233 Phase B (B2): 同一虚空传球旁路写 ball.void_pass（storedMsgId 此时已绑定）
-            if (!isFreshnessSupplement) {
-              emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
-            }
+            emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
           }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');
@@ -3926,13 +3760,8 @@ export async function* routeSerial(
           collectedToolEvents.length > 0 ||
           Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
         const shouldPersistNoTextMessage = !callbackAlreadyStored && hasNoTextStreamPayload;
-        const isFreshnessClosureSuccessor = Boolean(options.freshnessClosureRequiredMessageIds?.length);
         const shouldEmitSilentCompletion =
-          !callbackAlreadyStored &&
-          collectedToolEvents.length > 0 &&
-          !hasRichBlocks &&
-          !sawUserFacingSystemInfo &&
-          !isFreshnessClosureSuccessor;
+          !callbackAlreadyStored && collectedToolEvents.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
 
         log.debug(
           {
@@ -3989,7 +3818,7 @@ export async function* routeSerial(
                   callbackFinalReplacement.finalReplacementMessageId,
                   visibleTurnInvocationId,
                   noTextBlocks,
-                  !isFreshnessSupplement && hasLocalCoCreatorLineStartMention(''),
+                  hasLocalCoCreatorLineStartMention(''),
                 );
               }
             } else {
@@ -4071,14 +3900,7 @@ export async function* routeSerial(
                   : undefined;
               const answerBearingNoText =
                 hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
-              const replayUnsafeToolNames = findReplayUnsafeToolNames(collectedToolNames);
-              const requiresFreshnessGate = answerBearingNoText || replayUnsafeToolNames.length > 0;
-              if (
-                requiresFreshnessGate &&
-                deps.freshnessOutputCommitCoordinator &&
-                deps.deliveryCursorStore &&
-                ownInvocationId
-              ) {
+              if (answerBearingNoText && deps.freshnessOutputCommitCoordinator && ownInvocationId) {
                 const decision = await deps.freshnessOutputCommitCoordinator.commit({
                   userId,
                   threadId,
@@ -4086,12 +3908,8 @@ export async function* routeSerial(
                   invocationId: options.parentInvocationId ?? ownInvocationId,
                   turnInvocationId: ownInvocationId,
                   originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
-                  freshnessClosureId: options.freshnessClosureId,
-                  freshnessSupplementId: options.freshnessSupplementId,
                   message: noTextMessageInput,
                   ...(lifecycleResponse ? { lifecycleResponse } : {}),
-                  replayUnsafeToolNames,
-                  evaluateFreshness: evaluateCurrentStreamFreshness,
                 });
                 outputCommitDecision = decision;
                 if (options.persistenceContext) {
@@ -4100,16 +3918,7 @@ export async function* routeSerial(
                     [catId as string]: decision,
                   };
                 }
-                if (
-                  decision.kind === 'committed_fresh' ||
-                  decision.kind === 'committed_degraded_unknown' ||
-                  decision.kind === 'published_with_unseen'
-                ) {
-                  storedNoText = await deps.messageStore.getById(decision.messageId);
-                  if (decision.kind === 'published_with_unseen') {
-                    await enqueueFreshnessSupplement(decision, catId as string);
-                  }
-                }
+                storedNoText = await deps.messageStore.getById(decision.messageId);
               } else if (lifecycleResponse && ownInvocationId) {
                 storedNoText = await commitLifecycleResponseFromAppendInput(
                   deps.messageStore,
@@ -4119,9 +3928,10 @@ export async function* routeSerial(
                   noTextMessageInput,
                 );
               } else {
-                // Reviewed read-only tool-only records are audit output, not answer content.
-                // Unknown or mutating tools still enter the freshness gate above so a stale
-                // turn cannot hide a side effect and then blind-replay it.
+                // A tool-only record is audit output, not answer content: no frontier-annotated
+                // commit, because there is no bubble whose position anyone reads. The replay-unsafe
+                // distinction that used to route mutating tools here belonged to the closure gate,
+                // which is retired — nothing downstream re-runs a turn behind the cat's back.
                 storedNoText = await deps.messageStore.append(noTextMessageInput);
               }
             }
@@ -4173,7 +3983,7 @@ export async function* routeSerial(
         }
 
         if (!shouldPersistNoTextMessage && !callbackAlreadyStored) {
-          if (!catSignal?.aborted && !sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
+          if (!catSignal?.aborted && !sawUserFacingSystemInfo) {
             yield {
               type: 'system_info' as AgentMessageType,
               catId,
@@ -4491,81 +4301,6 @@ export async function* routeSerial(
           guideStore: createGuideStoreBridge(sessionStore),
           threadStore: deps.invocationDeps.threadStore!,
         });
-      }
-
-      // F254 B3/B4: Freshness re-invoke consumption — enqueue re-invoke if the
-      // invocation's terminal hook decided shouldReinvoke=true. Checked AFTER A2A
-      // detection (A2A has priority) and BEFORE done yield (enqueue happens while
-      // the route is still live). Fail-open: errors never block the done signal.
-      if (
-        freshnessReinvokeEnqueue &&
-        doneMsg?.metadata &&
-        !hadError &&
-        !streamFreshnessResult?.stale &&
-        !outputCommitDecision &&
-        !isFreshnessSupplement
-      ) {
-        const reinvokeDecision = (doneMsg.metadata as unknown as Record<string, unknown>).freshnessReinvoke as
-          | {
-              shouldReinvoke: boolean;
-              reason: string;
-              noticeIds: string[];
-              senders: string[];
-              skipReason?: string;
-              reinvokePrompt?: string;
-            }
-          | undefined;
-        if (reinvokeDecision?.shouldReinvoke) {
-          try {
-            // P1-2 fix: use the spec-defined prompt from the factory, NOT empty string.
-            // QueueProcessor strips freshnessContext, so content must carry the prompt.
-            const reinvokeContent =
-              reinvokeDecision.reinvokePrompt ||
-              buildFreshnessReinvokePrompt(threadId, reinvokeDecision.senders, reinvokeDecision.noticeIds.length);
-            await freshnessReinvokeEnqueue({
-              threadId,
-              userId,
-              ownerAuthProvenance,
-              content: reinvokeContent,
-              from: { kind: 'agent', catId: catId as string },
-              sourceCategory: 'freshness',
-              targetCats: [catId as string],
-              autoExecute: true,
-              priority: 'normal',
-              intent: 'execute',
-              freshnessContext: {
-                sourceNoticeIds: reinvokeDecision.noticeIds,
-                senders: reinvokeDecision.senders,
-                reason: reinvokeDecision.reason,
-              },
-            });
-            log.info(
-              {
-                catId: catId as string,
-                threadId,
-                invocationId: ownInvocationId,
-                reason: reinvokeDecision.reason,
-                noticeCount: reinvokeDecision.noticeIds.length,
-              },
-              '[F254-B3] freshness re-invoke enqueued from routing layer',
-            );
-          } catch (err) {
-            log.warn(
-              { catId: catId as string, threadId, err },
-              '[F254-B3] freshness re-invoke enqueue failed, fail-open',
-            );
-          }
-        } else if (reinvokeDecision && !reinvokeDecision.shouldReinvoke) {
-          log.debug(
-            {
-              catId: catId as string,
-              threadId,
-              invocationId: ownInvocationId,
-              skipReason: reinvokeDecision.skipReason ?? reinvokeDecision.reason,
-            },
-            '[F254-B4] freshness re-invoke skipped',
-          );
-        }
       }
 
       // Yield buffered done with correct isFinal (evaluated AFTER worklist may have grown)

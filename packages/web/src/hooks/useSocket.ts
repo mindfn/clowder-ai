@@ -198,40 +198,6 @@ function getLiveQueueHydrateEpoch(threadId: string): number {
   return liveQueueHydrateEpoch.get(threadId) ?? 0;
 }
 
-async function hydrateFreshnessClosureProjections(
-  threadId: string,
-  onMessage: (message: AgentMessage) => void,
-): Promise<void> {
-  try {
-    const response = await apiFetch(`/api/threads/${threadId}/freshness-closures`);
-    if (!response.ok) return;
-    const payload = (await response.json()) as {
-      closures?: Array<{ catId: string; updatedAt: number; [key: string]: unknown }>;
-      supplements?: Array<{ catId: string; updatedAt: number; [key: string]: unknown }>;
-    };
-    for (const projection of payload.closures ?? []) {
-      onMessage({
-        type: 'system_info',
-        catId: projection.catId,
-        threadId,
-        content: JSON.stringify(projection),
-        timestamp: projection.updatedAt,
-      });
-    }
-    for (const projection of payload.supplements ?? []) {
-      onMessage({
-        type: 'system_info',
-        catId: projection.catId,
-        threadId,
-        content: JSON.stringify(projection),
-        timestamp: projection.updatedAt,
-      });
-    }
-  } catch {
-    // Rebuildable projection only; live socket events and the next reconnect retry.
-  }
-}
-
 /**
  * Query /queue for one thread and reconcile local state against server truth.
  * Shared by reconnect reconciliation and the stale-watchdog probe.
@@ -533,7 +499,6 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
       // F101: Recover game state on reconnect
       if (tid) {
         reconnectGame(tid).catch(() => {});
-        void hydrateFreshnessClosureProjections(tid, (message) => callbacksRef.current.onMessage(message));
       }
 
       // Reconnect reconciliation: verify invocation state against server truth.
@@ -1425,7 +1390,6 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
       syncRooms(requestedThreadIds);
     }
     if (threadId) {
-      void hydrateFreshnessClosureProjections(threadId, (message) => callbacksRef.current.onMessage(message));
     }
   }, [foregroundRoomsKey, threadId, joinRoom, syncRooms]);
 

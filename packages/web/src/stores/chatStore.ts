@@ -101,49 +101,6 @@ function mergeCatInvocationInfo(
   };
 }
 
-function insertFreshnessClosureMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  const sourceMessageId = msg.extra?.freshnessClosure?.sourceMessageId;
-  const sourceIndex = sourceMessageId ? messages.findIndex((message) => message.id === sourceMessageId) : -1;
-  if (sourceIndex >= 0) {
-    let insertIndex = sourceIndex + 1;
-    while (
-      insertIndex < messages.length &&
-      messages[insertIndex]?.extra?.systemKind === 'freshness_closure' &&
-      messages[insertIndex]?.extra?.freshnessClosure?.sourceMessageId === sourceMessageId
-    ) {
-      insertIndex += 1;
-    }
-    const next = messages.slice();
-    next.splice(insertIndex, 0, msg);
-    return next;
-  }
-
-  // The paginated history may not contain the legacy source yet. Keep the
-  // projection at its own durable timestamp instead of appending it below
-  // whatever recent page happens to be loaded.
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const current = messages[i];
-    if (current && current.timestamp <= msg.timestamp) {
-      const next = messages.slice();
-      next.splice(i + 1, 0, msg);
-      return next;
-    }
-  }
-  return [msg, ...messages];
-}
-
-/**
- * Insert the freshness-closure projection at its exact source/timeline position.
- * A global timestamp sort would touch the streaming hot path on every chunk, so
- * this remains narrowly marker-gated.
- */
-function insertOrAppendMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  if (msg.extra?.systemKind === 'freshness_closure') {
-    return insertFreshnessClosureMessage(messages, msg);
-  }
-  return [...messages, msg];
-}
-
 function snapshotActive(s: ChatState): ThreadState {
   return {
     messages: s.messages,
@@ -2035,7 +1992,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { messages };
       }
 
-      const messages = insertOrAppendMessage(state.messages, msg);
+      const messages = [...state.messages, msg];
       if (messages.length > MAX_BLOB_MESSAGES) {
         revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
       }
@@ -2757,7 +2714,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           };
         }
 
-        const messages = insertOrAppendMessage(state.messages, msg);
+        const messages = [...state.messages, msg];
         if (messages.length > MAX_BLOB_MESSAGES) {
           revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
         }
@@ -2811,17 +2768,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // F067 Phase 2: Fire macOS notification for @co-creator mention
       if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
 
-      const isHistoricalFreshnessClosure =
-        msg.extra?.systemKind === 'freshness_closure' && msg.extra.freshnessClosure?.legacy === true;
       return {
         threadStates: {
           ...state.threadStates,
           [threadId]: {
             ...existing,
-            messages: insertOrAppendMessage(existing.messages, msg),
-            unreadCount: isHistoricalFreshnessClosure ? existing.unreadCount : existing.unreadCount + 1,
+            messages: [...existing.messages, msg],
+            unreadCount: existing.unreadCount + 1,
             hasUserMention: existing.hasUserMention || !!msg.mentionsUser,
-            lastActivity: isHistoricalFreshnessClosure ? existing.lastActivity : Date.now(),
+            lastActivity: Date.now(),
           },
         },
       };
@@ -2831,7 +2786,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const upsert = (messages: ChatMessage[]): ChatMessage[] => {
         const existingIndex = messages.findIndex((candidate) => candidate.id === msg.id);
-        if (existingIndex === -1) return insertOrAppendMessage(messages, msg);
+        if (existingIndex === -1) return [...messages, msg];
         const existing = messages[existingIndex]!;
         if (
           existing.lifecycle?.kind === 'response' &&

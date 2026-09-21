@@ -66,7 +66,7 @@ describe('F296 B4c Alpha UAT runner child and session guards', () => {
     for (const status of ['running', 'failed']) {
       assert.equal(selectProviderExecution([{ ...ordinary, status }], 'codex'), null);
     }
-    for (const executionKind of ['routing_guard', 'freshness_supplement', 'future_kind']) {
+    for (const executionKind of ['routing_guard', 'retired_kind', 'future_kind']) {
       assert.equal(selectProviderExecution([{ ...ordinary, executionKind }], 'codex'), null);
     }
   });

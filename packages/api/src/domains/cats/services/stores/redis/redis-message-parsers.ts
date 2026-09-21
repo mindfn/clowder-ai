@@ -217,7 +217,7 @@ function parseTurnExecutionProjection(value: unknown): TurnExecutionMessageProje
     candidate.invocationId.length === 0 ||
     typeof candidate.parentInvocationId !== 'string' ||
     candidate.parentInvocationId.length === 0 ||
-    !['ordinary', 'routing_guard', 'freshness_supplement'].includes(String(candidate.executionKind))
+    !['ordinary', 'routing_guard'].includes(String(candidate.executionKind))
   ) {
     return undefined;
   }
@@ -267,7 +267,6 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   writeOpportunityReentries: 'parsed';
   writeOpportunityPresentationRetry: 'parsed';
   freshness: 'parsed';
-  supplement: 'parsed';
   recovery: 'parsed';
   scheduler: 'parsed';
   tracing: 'parsed';
@@ -697,80 +696,13 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     }
 
     if (parsed.freshness && typeof parsed.freshness === 'object') {
+      // Legacy rows also carry a retired scan verdict under `kind`; the frontier is the only
+      // field anything reads, so it is the only field that survives the round trip.
       const freshness = parsed.freshness as Record<string, unknown>;
-      const priorFrontierMessageId =
-        typeof freshness.priorFrontierMessageId === 'string' || freshness.priorFrontierMessageId === null
-          ? freshness.priorFrontierMessageId
-          : undefined;
-      if ((freshness.kind === 'scan_pending' || freshness.kind === 'fresh') && priorFrontierMessageId !== undefined) {
-        result.freshness = { kind: freshness.kind, priorFrontierMessageId };
-        hasField = true;
-      } else if (
-        freshness.kind === 'published_with_unseen' &&
-        priorFrontierMessageId !== undefined &&
-        Array.isArray(freshness.generatedWithUnseen) &&
-        freshness.generatedWithUnseen.every((id) => typeof id === 'string') &&
-        typeof freshness.lineageId === 'string'
-      ) {
-        result.freshness = {
-          kind: 'published_with_unseen',
-          priorFrontierMessageId,
-          generatedWithUnseen: freshness.generatedWithUnseen as string[],
-          lineageId: freshness.lineageId,
-          ...(freshness.supplementFailureReason === 'infrastructure'
-            ? { supplementFailureReason: 'infrastructure' as const }
-            : {}),
-        };
-        hasField = true;
-      } else if (
-        freshness.kind === 'freshness_unknown' &&
-        priorFrontierMessageId !== undefined &&
-        typeof freshness.reason === 'string' &&
-        ['cursor_missing', 'scan_incomplete', 'error_failopen', 'queued_identity_missing'].includes(freshness.reason)
-      ) {
-        result.freshness = {
-          kind: 'freshness_unknown',
-          priorFrontierMessageId,
-          reason: freshness.reason as
-            | 'cursor_missing'
-            | 'scan_incomplete'
-            | 'error_failopen'
-            | 'queued_identity_missing',
-        };
-        hasField = true;
-      } else if (
-        freshness.kind === 'closure_replacement' &&
-        typeof freshness.closureId === 'string' &&
-        typeof freshness.targetCatId === 'string'
-      ) {
-        result.freshness = {
-          kind: 'closure_replacement',
-          closureId: freshness.closureId,
-          targetCatId: freshness.targetCatId,
-          ...(typeof freshness.originTriggerMessageId === 'string' || freshness.originTriggerMessageId === null
-            ? { originTriggerMessageId: freshness.originTriggerMessageId }
-            : {}),
-        };
+      if (typeof freshness.priorFrontierMessageId === 'string' || freshness.priorFrontierMessageId === null) {
+        result.freshness = { priorFrontierMessageId: freshness.priorFrontierMessageId };
         hasField = true;
       }
-    }
-
-    if (
-      parsed.supplement &&
-      typeof parsed.supplement === 'object' &&
-      typeof parsed.supplement.lineageId === 'string' &&
-      typeof parsed.supplement.supplementId === 'string' &&
-      (parsed.supplement.seq === 1 || parsed.supplement.seq === 2) &&
-      typeof parsed.supplement.originalMessageId === 'string' &&
-      parsed.supplement.lineageId === parsed.supplement.originalMessageId
-    ) {
-      result.supplement = {
-        lineageId: parsed.supplement.lineageId,
-        supplementId: parsed.supplement.supplementId,
-        seq: parsed.supplement.seq,
-        originalMessageId: parsed.supplement.originalMessageId,
-      };
-      hasField = true;
     }
 
     const recovery = parseRecoveryMarker(parsed.recovery);

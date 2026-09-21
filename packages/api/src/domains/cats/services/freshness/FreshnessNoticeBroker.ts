@@ -9,7 +9,7 @@ import type {
   ProviderNativeFreshnessToolSurface,
   ProviderProtocolItemObservedEvent,
 } from './FreshnessAttentionEventLog.js';
-import type { UnseenResult } from './FreshnessNoticeService.js';
+import type { UnseenResult } from './ThreadUnseenChecker.js';
 
 export interface ProviderNativeSafeBoundary {
   threadId: string;

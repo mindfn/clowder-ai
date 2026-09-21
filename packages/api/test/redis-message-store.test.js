@@ -785,10 +785,6 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const appenders = [
       ['append', (target, message) => appendFixture(target, message)],
       [
-        'appendIfThreadFrontier',
-        (target, message) => target.appendIfThreadFrontier(withFixtureProvenance(message), null),
-      ],
-      [
         'appendAndObservePriorFrontier',
         (target, message) => target.appendAndObservePriorFrontier(withFixtureProvenance(message)),
       ],

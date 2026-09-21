@@ -101,7 +101,6 @@ describe('MessageStore', () => {
     ];
     const appenders = [
       ['append', (store, message) => store.append(message)],
-      ['appendIfThreadFrontier', (store, message) => store.appendIfThreadFrontier(message, null)],
       ['appendAndObservePriorFrontier', (store, message) => store.appendAndObservePriorFrontier(message)],
     ];
 

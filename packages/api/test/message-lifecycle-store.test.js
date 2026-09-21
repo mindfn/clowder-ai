@@ -330,11 +330,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
       timestamp: 100,
       lifecycle: { ...processingLifecycle, completedAt: 101 },
     };
-    for (const append of [
-      (store) => store.append(invalid),
-      (store) => store.appendIfThreadFrontier(invalid, null),
-      (store) => store.appendAndObservePriorFrontier(invalid),
-    ]) {
+    for (const append of [(store) => store.append(invalid), (store) => store.appendAndObservePriorFrontier(invalid)]) {
       const store = new MessageStore();
       assert.throws(() => append(store), /lifecycle metadata is invalid/);
       assert.equal(store.size, 0);

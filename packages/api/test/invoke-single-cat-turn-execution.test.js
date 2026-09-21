@@ -92,10 +92,10 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
         userId: 'user-1',
         threadId: 'thread-1',
         parentInvocationId: 'parent-1',
-        executionKind: 'freshness_supplement',
+        executionKind: 'routing_guard',
         executionCausal: {
           triggerMessageId: 'msg-trigger',
-          freshnessSupplementId: 'supplement-1',
+          routingGuardReason: 'missing_routing_exit',
         },
         promptMessageIds: ['msg-queued'],
         onLifecycleInvocationStarted: async (input) => {
@@ -136,7 +136,7 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
       type: 'invocation_created',
       invocationId: 'child-success',
       parentInvocationId: 'parent-1',
-      executionKind: 'freshness_supplement',
+      executionKind: 'routing_guard',
       startedAt: createdBody.startedAt,
       freshnessCarrierCapability: {
         provider: 'other',
@@ -174,15 +174,15 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
     assert.deepEqual(created.extra?.turnExecution, {
       invocationId: 'child-success',
       parentInvocationId: 'parent-1',
-      executionKind: 'freshness_supplement',
+      executionKind: 'routing_guard',
     });
 
     const terminal = await store.get('child-success');
     assert.equal(terminal.status, 'succeeded');
-    assert.equal(terminal.executionKind, 'freshness_supplement');
+    assert.equal(terminal.executionKind, 'routing_guard');
     assert.deepEqual(terminal.causal, {
       triggerMessageId: 'msg-trigger',
-      freshnessSupplementId: 'supplement-1',
+      routingGuardReason: 'missing_routing_exit',
       coveredMessageIds: ['msg-queued'],
     });
     assert.equal(terminal.endedAt >= terminal.startedAt, true);

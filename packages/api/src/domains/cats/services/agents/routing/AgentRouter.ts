@@ -591,8 +591,6 @@ export interface AgentRouterOptions {
   cloudInvokeBridge?: import('../../cloud-bridge/types.js').ICloudInvokeBridge;
   /** F247: shared server-custodied source-bound return authorization. */
   cloudReturnGrantStore?: import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore;
-  /** F254 B3: freshnessReinvokeCheck for invoke-single-cat terminal hook */
-  freshnessReinvokeCheck?: import('../invocation/invoke-single-cat.js').InvocationDeps['freshnessReinvokeCheck'];
   /** Durable per-child execution lifecycle; independent from callback-auth registry TTL. */
   turnExecutionStore?: import('../../stores/ports/TurnExecutionStore.js').ITurnExecutionStore;
   /** F254 Phase C: Freshness state store for carrier tier persistence */
@@ -694,8 +692,6 @@ export class AgentRouter {
   /** F247 AC-B1c-3 PR-C */
   private cloudInvokeBridge?: import('../../cloud-bridge/types.js').ICloudInvokeBridge;
   private cloudReturnGrantStore?: import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore;
-  /** F254 B3 */
-  private freshnessReinvokeCheck?: import('../invocation/invoke-single-cat.js').InvocationDeps['freshnessReinvokeCheck'];
   private turnExecutionStore?: import('../../stores/ports/TurnExecutionStore.js').ITurnExecutionStore;
   /** F254 Phase C */
   private freshnessStateStore?: import('../../freshness/FreshnessInvocationStateStore.js').FreshnessInvocationStateStore;
@@ -841,7 +837,6 @@ export class AgentRouter {
     this.conciergeTriagePlanStore = options.conciergeTriagePlanStore;
     this.cloudInvokeBridge = options.cloudInvokeBridge;
     this.cloudReturnGrantStore = options.cloudReturnGrantStore;
-    this.freshnessReinvokeCheck = options.freshnessReinvokeCheck;
     this.turnExecutionStore = options.turnExecutionStore;
     this.freshnessStateStore = options.freshnessStateStore;
     this.providerNativeFreshnessFactory = options.providerNativeFreshnessFactory;
@@ -1561,7 +1556,6 @@ export class AgentRouter {
         ...(this.conciergeTriagePlanStore ? { conciergeTriagePlanStore: this.conciergeTriagePlanStore } : {}),
         ...(this.cloudInvokeBridge ? { cloudInvokeBridge: this.cloudInvokeBridge } : {}),
         ...(this.cloudReturnGrantStore ? { cloudReturnGrantStore: this.cloudReturnGrantStore } : {}),
-        ...(this.freshnessReinvokeCheck ? { freshnessReinvokeCheck: this.freshnessReinvokeCheck } : {}),
         ...(this.freshnessStateStore ? { freshnessStateStore: this.freshnessStateStore } : {}),
         ...(this.providerNativeFreshnessFactory
           ? { providerNativeFreshnessFactory: this.providerNativeFreshnessFactory }

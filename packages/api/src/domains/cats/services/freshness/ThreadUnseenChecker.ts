@@ -8,13 +8,14 @@
  * Content-free: returns only count + sender names + maxMessageId.
  * Does NOT return message content (privacy invariant, AC-B6).
  *
- * This is the bridge between FreshnessNoticeService (domain logic)
+ * This is the bridge between the provider-native notice broker (domain logic)
  * and the actual data stores (DeliveryCursorStore + MessageStore).
  */
 
 import type { CatId } from '@cat-cafe/shared';
 import { cursorFor, parseCursor } from '../stores/cursor.js';
 import type { DeliveryCursorStore } from '../stores/ports/DeliveryCursorStore.js';
+import { isFreshnessSelfSourceMessage, isFreshnessSelfSourceQueueEntry } from './FreshnessSourcePolicy.js';
 import {
   type FreshnessMessageReader,
   getFreshnessSenderLabel,
@@ -22,9 +23,31 @@ import {
   isExpectedA2AReplyForCat,
   isFreshnessRoutableMessage,
   type QueuedMessageChecker,
-} from './checkFreshnessForPostMessage.js';
-import type { UnseenChecker, UnseenResult } from './FreshnessNoticeService.js';
-import { isFreshnessSelfSourceMessage, isFreshnessSelfSourceQueueEntry } from './FreshnessSourcePolicy.js';
+} from './freshness-unseen-source.js';
+
+export interface UnseenResult {
+  count: number;
+  senders: string[];
+  maxMessageId: string;
+  /**
+   * Stable, content-free identity for coalescing repeated notice attempts when
+   * maxMessageId is only a synthetic sortable cursor. Undefined preserves the
+   * legacy ordered-frontier coalescing path. This key is never receipt proof.
+   */
+  noticeDedupKey?: string;
+  /**
+   * Exact durable message identities represented by maxMessageId when the
+   * frontier itself is synthetic (for example, a queued-only fallback).
+   * Undefined preserves the legacy invariant that maxMessageId is exact.
+   * An explicit empty list means correlation identity is unavailable and
+   * receipt projection must fail closed.
+   */
+  correlationMessageIds?: string[];
+}
+
+export interface UnseenChecker {
+  checkUnseen(params: { threadId: string; catId: CatId }): Promise<UnseenResult | null>;
+}
 
 // Raised from 20 to 50 to reduce false-negative edge case where the first
 // batch contains only filtered messages (deleted/briefing/play-hidden).

@@ -127,14 +127,10 @@ import {
 import { clearL0Cache, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { createPostCompactContextProjector } from './domains/cats/services/agents/routing/post-compact-context-projector.js';
-import { reconcileFreshnessClosuresAtStartup } from './domains/cats/services/freshness/closure/FreshnessClosureStartupReconciler.js';
-import { RedisFreshnessClosureStore } from './domains/cats/services/freshness/closure/RedisFreshnessClosureStore.js';
-import { createFreshnessReinvokeCheck } from './domains/cats/services/freshness/createFreshnessReinvokeCheck.js';
 import { createProviderNativeFreshnessFactory } from './domains/cats/services/freshness/createProviderNativeFreshnessFactory.js';
 import { FreshnessAttentionEventLog } from './domains/cats/services/freshness/FreshnessAttentionEventLog.js';
 import { FreshnessInvocationStateStore } from './domains/cats/services/freshness/FreshnessInvocationStateStore.js';
 import { FreshnessOutputCommitCoordinator } from './domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
-import { reconcileFreshnessSupplementsAtStartup } from './domains/cats/services/freshness/glass-box/FreshnessSupplementStartupReconciler.js';
 import {
   AgentRouter,
   AuditEventTypes,
@@ -2351,9 +2347,6 @@ async function main(): Promise<void> {
     logger: bridgeLogger,
   });
 
-  // F254 B3: Create freshness re-invoke check (fail-open: only when Redis available)
-  // P1-1 fix: pass getSeenCursor from DeliveryCursorStore (real per-(user,cat,thread) cursor)
-  // P2-1 fix: lazy ref for hasQueuedOrActiveAgentForCat (InvocationQueue created after AgentRouter)
   let invocationQueueRef: {
     hasActiveOrQueuedAgentForCat(threadId: string, catId: string, opts?: { excludeEntryId?: string }): boolean;
     getQueuedFreshnessMessagesForCat(
@@ -2369,16 +2362,6 @@ async function main(): Promise<void> {
       sourceCategory?: string;
     }>;
   } | null = null;
-  const freshnessReinvokeCheck = redis
-    ? createFreshnessReinvokeCheck({
-        redis,
-        messageStore,
-        getSeenCursor: (userId, catId, threadId) => deliveryCursorStore.getSeenCursor(userId, catId, threadId),
-        hasQueuedOrActiveAgentForCat: (threadId, catId) =>
-          invocationQueueRef?.hasActiveOrQueuedAgentForCat(threadId, catId) ?? false,
-      })
-    : undefined;
-
   // F254 Phase C/D2: keep provider-native freshness bound to the canonical
   // Queue projection after the F117 ledger cutover.
   const freshnessStateStore = redis ? new FreshnessInvocationStateStore(redis) : undefined;
@@ -2403,35 +2386,7 @@ async function main(): Promise<void> {
       app.log.warn({ err }, '[F254] failed to initialize windowed freshness replay coverage');
     }
   }
-  const freshnessClosureStore = redis ? new RedisFreshnessClosureStore(redis) : undefined;
-  const freshnessOutputCommitCoordinator = freshnessClosureStore
-    ? new FreshnessOutputCommitCoordinator({
-        messageStore,
-        closureStore: freshnessClosureStore,
-        onProjection: (projection) => {
-          socketManager?.broadcastAgentMessage(
-            {
-              type: 'system_info',
-              catId: projection.catId as import('@cat-cafe/shared').CatId,
-              content: JSON.stringify(projection),
-              timestamp: projection.updatedAt,
-            },
-            projection.threadId,
-          );
-        },
-        onSupplementProjection: (projection) => {
-          socketManager?.broadcastAgentMessage(
-            {
-              type: 'system_info',
-              catId: projection.catId as import('@cat-cafe/shared').CatId,
-              content: JSON.stringify(projection),
-              timestamp: projection.updatedAt,
-            },
-            projection.threadId,
-          );
-        },
-      })
-    : undefined;
+  const freshnessOutputCommitCoordinator = new FreshnessOutputCommitCoordinator({ messageStore });
 
   // F237 Phase 2: InjectionTraceStore — prompt injection trace persistence
   const { InjectionTraceStore: _ITSEarly } = await import('./domains/prompt-hooks/InjectionTraceStore.js');
@@ -2550,7 +2505,6 @@ async function main(): Promise<void> {
     conciergeTriagePlanStore,
     cloudInvokeBridge,
     cloudReturnGrantStore,
-    ...(freshnessReinvokeCheck ? { freshnessReinvokeCheck } : {}),
     turnExecutionStore,
     ...(freshnessStateStore ? { freshnessStateStore } : {}),
     ...(providerNativeFreshnessFactory ? { providerNativeFreshnessFactory } : {}),
@@ -2611,7 +2565,6 @@ async function main(): Promise<void> {
         threadStore as unknown as import('./domains/cats/services/agents/invocation/QueueProcessor.js').ThreadStoreLike,
       sessionContinuationCoordinator,
       freshnessEventLog,
-      freshnessClosureStore,
       ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
       deliveryCursorStore,
     },
@@ -2942,71 +2895,6 @@ async function main(): Promise<void> {
     log: app.log,
   });
   socketManager.setQueueProcessor(queueProcessor);
-  if (freshnessClosureStore) {
-    try {
-      await reconcileFreshnessClosuresAtStartup({
-        closureStore: freshnessClosureStore,
-        enqueue: (closure) =>
-          invocationQueue.enqueueDurable({
-            from: { kind: 'agent', catId: closure.catId },
-            threadId: closure.threadId,
-            userId: closure.userId,
-            kind: 'private_input',
-            ownerAuthProvenance: 'unknown',
-            content: `[Freshness Catch Closure ${closure.id}] startup recovery`,
-            sourceCategory: 'freshness',
-            targetCats: [closure.catId],
-            autoExecute: true,
-            priority: 'normal',
-            intent: 'execute',
-            sourceId: `freshness-closure:${closure.id}`,
-            freshnessClosureId: closure.id,
-          }),
-        executeThread: (threadId) => queueProcessor.requestDrain(threadId),
-        onProjection: (projection) => {
-          socketManager?.broadcastAgentMessage(
-            {
-              type: 'system_info',
-              catId: projection.catId as import('@cat-cafe/shared').CatId,
-              content: JSON.stringify(projection),
-              timestamp: projection.updatedAt,
-            },
-            projection.threadId,
-          );
-        },
-        log: app.log,
-      });
-    } catch (err) {
-      app.log.error({ err }, '[F254-E] startup closure reconciliation failed');
-    }
-    try {
-      await reconcileFreshnessSupplementsAtStartup({
-        closureStore: freshnessClosureStore,
-        messageStore,
-        enqueue: (supplement) =>
-          invocationQueue.enqueueDurable({
-            ...supplement,
-            sourceId: supplement.idempotencyKey,
-            ownerAuthProvenance: 'unknown',
-          }),
-        executeThread: (threadId) => queueProcessor.requestDrain(threadId),
-        onProjection: (projection) => {
-          socketManager?.broadcastAgentMessage(
-            {
-              type: 'system_info',
-              catId: projection.catId as import('@cat-cafe/shared').CatId,
-              content: JSON.stringify(projection),
-              timestamp: projection.updatedAt,
-            },
-            projection.threadId,
-          );
-        },
-        log: app.log,
-      });
-    } catch (err) {
-      app.log.error({ err }, '[F254] startup supplement reconciliation failed');
-    }
-  }
 
   // F101: Game engine store (created early so messages route can intercept /game commands)
   const { RedisGameStore } = await import('./domains/cats/services/stores/redis/RedisGameStore.js');
@@ -3068,7 +2956,6 @@ async function main(): Promise<void> {
     summaryStore,
     draftStore,
     invocationQueue,
-    ...(freshnessClosureStore ? { freshnessClosureStore } : {}),
     queueProcessor,
     sessionContinuationCoordinator,
     ...(f101GameStore ? { gameStore: f101GameStore } : {}),
@@ -3570,7 +3457,7 @@ async function main(): Promise<void> {
     verdictGenerators['eval:trajectory-inspector'] =
       createTrajectoryInspectorGeneratorAdapter(trajectoryInspectorProvider);
   }
-  if (freshnessClosureStore) {
+  {
     const { createFreshnessGeneratorAdapter } = await import(
       './infrastructure/harness-eval/publish-verdict/freshness-generator-adapter.js'
     );
@@ -3579,7 +3466,6 @@ async function main(): Promise<void> {
     );
     verdictGenerators['eval:freshness'] = createFreshnessGeneratorAdapter(
       new FreshnessReplayProviderImpl({
-        store: freshnessClosureStore,
         fixtureRoot: resolve(repoRoot, 'docs', 'harness-feedback', 'fixtures', 'f254'),
         queueLifecycleSource: invocationQueue,
         ...(freshnessEventLog ? { attentionEventLog: freshnessEventLog } : {}),
@@ -4903,7 +4789,6 @@ async function main(): Promise<void> {
     sessionChainStore,
     transcriptWriter,
     deliveryCursorStore,
-    freshnessClosureStore,
     invocationQueue,
     queueProcessor,
     socketManager,
@@ -7700,9 +7585,7 @@ async function main(): Promise<void> {
   wiredPublishDomains.add('eval:qc');
   wiredPublishDomains.add('eval:design-gate');
   wiredPublishDomains.add('eval:trajectory-inspector');
-  if (freshnessClosureStore) {
-    wiredPublishDomains.add('eval:freshness');
-  }
+  wiredPublishDomains.add('eval:freshness');
   if (toolEventLog && skillLoadEventLog) {
     wiredPublishDomains.add('eval:capability-wakeup');
   }

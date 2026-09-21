@@ -1189,19 +1189,6 @@ export interface InvocationDeps {
   }) => Promise<import('../../freshness/FreshnessNoticeBroker.js').ActiveInvocationFreshnessController | null>;
   /** F306: canonical cross-provider request/response surface. */
   readonly runtimeInteractionPort?: import('../../../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
-  readonly freshnessReinvokeCheck?: (params: {
-    invocationId: string;
-    threadId: string;
-    catId: import('@cat-cafe/shared').CatId;
-    userId: string;
-  }) => Promise<{
-    shouldReinvoke: boolean;
-    reason: string;
-    skipReason?: string;
-    noticeIds: string[];
-    senders: string[];
-    reinvokePrompt?: string;
-  } | null>;
   /** F287: invocation-bound Cue resolver; receives only server-owned typed seeds. */
   readonly memoryCuePromptService?: MemoryCueInvocationPromptResolver;
   /** F312: lane-owned standing predicate for an unconsumed canonical Profile revision. */
@@ -5092,32 +5079,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               spanId: sc.spanId,
               ...(parentSid ? { parentSpanId: parentSid } : {}),
             };
-          }
-          // F254 B3/B4: Check for freshness re-invoke after terminal event.
-          // Fail-open: errors here never block the done signal.
-          if (deps.freshnessReinvokeCheck && !hadError && !signal?.aborted) {
-            try {
-              const decision = await deps.freshnessReinvokeCheck({
-                invocationId,
-                threadId,
-                catId,
-                userId: params.userId,
-              });
-              if (decision) {
-                // Attach decision to done metadata for routing layer.
-                // Initialize metadata if missing (some provider paths emit done without it).
-                if (!out.metadata) {
-                  (out as unknown as Record<string, unknown>).metadata = {};
-                }
-                (out.metadata as unknown as Record<string, unknown>).freshnessReinvoke = decision;
-                log.info(
-                  { catId, threadId, invocationId, shouldReinvoke: decision.shouldReinvoke, reason: decision.reason },
-                  '[F254-B3] freshness re-invoke decision',
-                );
-              }
-            } catch (err) {
-              log.warn({ catId, threadId, invocationId, err }, '[F254-B3] freshness re-invoke check failed, fail-open');
-            }
           }
           // A consumer may stop as soon as it receives the terminal `done`.
           // Record success before yielding that boundary so iterator.return()

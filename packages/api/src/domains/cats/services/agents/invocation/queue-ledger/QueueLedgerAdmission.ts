@@ -23,10 +23,6 @@ export interface QueueLedgerAdmissionInput {
   priority?: QueueLedgerEntry['priority'];
   sourceCategory?: QueueLedgerEntry['sourceCategory'];
   a2aParentInvocationId?: string;
-  freshnessClosureId?: string;
-  freshnessSupplementId?: string;
-  freshnessSupplementLineageId?: string;
-  freshnessSupplementSeq?: 1 | 2;
   readOnlyToolPolicy?: ToolExecutionPolicy;
   actionSuccessorFence?: ActionSuccessorFence;
   waitContinuationCarrier?: WaitContinuationCarrierV1;
@@ -66,12 +62,6 @@ export function createQueueLedgerAdmission(input: QueueLedgerAdmissionInput): Qu
         ownerAuthProvenance: input.ownerAuthProvenance,
         autoExecute: input.autoExecute ?? false,
         ...(input.a2aParentInvocationId ? { a2aParentInvocationId: input.a2aParentInvocationId } : {}),
-        ...(input.freshnessClosureId ? { freshnessClosureId: input.freshnessClosureId } : {}),
-        ...(input.freshnessSupplementId ? { freshnessSupplementId: input.freshnessSupplementId } : {}),
-        ...(input.freshnessSupplementLineageId
-          ? { freshnessSupplementLineageId: input.freshnessSupplementLineageId }
-          : {}),
-        ...(input.freshnessSupplementSeq ? { freshnessSupplementSeq: input.freshnessSupplementSeq } : {}),
         ...(input.readOnlyToolPolicy ? { readOnlyToolPolicy: structuredClone(input.readOnlyToolPolicy) } : {}),
         ...(input.actionSuccessorFence ? { actionSuccessorFence: structuredClone(input.actionSuccessorFence) } : {}),
         ...(input.waitContinuationCarrier

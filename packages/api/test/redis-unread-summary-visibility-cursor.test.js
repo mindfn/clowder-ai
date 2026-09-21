@@ -15,8 +15,6 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
   let RedisMessageStore;
   let RedisThreadReadStateStore;
   let createRedisClient;
-  let createFreshnessClosure;
-  let scanFreshnessClosurePreflight;
   let threadsRoutes;
   let ThreadStore;
   let redis;
@@ -25,23 +23,14 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
 
   before(async () => {
     assertRedisIsolationOrThrow(REDIS_URL, 'Redis unread summary visibility cursor contract');
-    [
-      { RedisMessageStore },
-      { RedisThreadReadStateStore },
-      { createRedisClient },
-      { createFreshnessClosure },
-      { scanFreshnessClosurePreflight },
-      { threadsRoutes },
-      { ThreadStore },
-    ] = await Promise.all([
-      import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js'),
-      import('../dist/domains/cats/services/stores/redis/RedisThreadReadStateStore.js'),
-      import('@cat-cafe/shared/utils'),
-      import('../dist/domains/cats/services/freshness/closure/FreshnessClosureStateMachine.js'),
-      import('../dist/domains/cats/services/freshness/closure/FreshnessClosurePreflight.js'),
-      import('../dist/routes/threads.js'),
-      import('../dist/domains/cats/services/stores/ports/ThreadStore.js'),
-    ]);
+    [{ RedisMessageStore }, { RedisThreadReadStateStore }, { createRedisClient }, { threadsRoutes }, { ThreadStore }] =
+      await Promise.all([
+        import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js'),
+        import('../dist/domains/cats/services/stores/redis/RedisThreadReadStateStore.js'),
+        import('@cat-cafe/shared/utils'),
+        import('../dist/routes/threads.js'),
+        import('../dist/domains/cats/services/stores/ports/ThreadStore.js'),
+      ]);
     redis = createRedisClient({ url: REDIS_URL, keyPrefix: KEY_PREFIX });
     await redis.ping();
   });
@@ -259,42 +248,6 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     assert.deepEqual(await readStateStore.getUnreadSummaries(userId, [threadId], messageStore), [
       { threadId, unreadCount: 1, hasUserMention: false },
     ]);
-  });
-
-  it('includes a late-visible message when the raw closure frontier is unchanged', async () => {
-    const userId = 'user-closure';
-    const threadId = 'thread-closure-visibility-inversion';
-    const origin = await messageStore.append(
-      canonicalTestMessageInput({
-        userId,
-        catId: null,
-        content: 'origin request',
-        mentions: ['codex-sol'],
-        timestamp: Date.now() - 20_000,
-        threadId,
-      }),
-    );
-    const { c, q } = await appendVisibilityInversion(threadId, userId);
-    const closure = createFreshnessClosure({
-      id: 'closure-redis-visibility-inversion',
-      userId,
-      threadId,
-      catId: 'codex-sol',
-      invocationId: 'invocation-redis-visibility-inversion',
-      turnInvocationId: 'invocation-redis-visibility-inversion',
-      originTriggerMessageId: origin.id,
-      draftContent: 'answer before Q became visible',
-      requiredMessageIds: [c.id],
-      requiredFrontierMessageId: c.id,
-      observedRawFrontierMessageId: c.id,
-      now: Date.now(),
-    });
-
-    const result = await scanFreshnessClosurePreflight({ closure, messageStore });
-
-    assert.equal(result.kind, 'ready');
-    assert.deepEqual(result.requiredMessageIds, [q.id, c.id]);
-    assert.equal(result.observedRawFrontierMessageId, c.id);
   });
 
   // #1304 reopened: rollout-gated primary cursors can be pruned, but the

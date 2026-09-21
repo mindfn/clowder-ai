@@ -22,8 +22,6 @@ export function buildChatTimelineProjectionKey(messages: readonly ChatMessage[])
       message.extra?.recall,
       message.extra?.stream?.invocationId,
       message.extra?.stream?.turnInvocationId,
-      message.extra?.supplement?.originalMessageId,
-      message.extra?.supplement?.lineageId,
       message.extra?.turnExecution,
       message.extra?.auxiliaryTurnExecutions,
     ]),

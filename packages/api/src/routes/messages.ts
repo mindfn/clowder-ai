@@ -41,11 +41,6 @@ import {
   type MessageSelectionAdmissionResult,
   MessageSelectionResolver,
 } from '../domains/cats/services/context/MessageSelectionResolver.js';
-import type { FreshnessClosureStore } from '../domains/cats/services/freshness/closure/FreshnessClosureStore.js';
-import {
-  isLeakedSupplementDecline,
-  projectFreshnessSupplementForHistory,
-} from '../domains/cats/services/freshness/glass-box/freshness-supplement-history-projection.js';
 import { createGameDriver } from '../domains/cats/services/game/createGameDriver.js';
 import type { GameDriver } from '../domains/cats/services/game/GameDriver.js';
 import { GameOrchestrator } from '../domains/cats/services/game/GameOrchestrator.js';
@@ -163,8 +158,6 @@ export interface MessagesRoutesOptions {
   invocationQueue?: InvocationQueue;
   /** Single event-driven admission and execution coordinator. */
   queueProcessor?: QueueProcessor;
-  /** ADR-042: canonical supplement truth used to hydrate original-bubble status on F5/history reads. */
-  freshnessClosureStore?: Pick<FreshnessClosureStore, 'listSupplementsByThread'>;
   /** F101: Game store for /game command interception */
   gameStore?: IGameStore;
   /** F101: Injectable auto-player for lifecycle-safe teardown in tests/routes */
@@ -1112,9 +1105,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       // `routing-guard-failure` is a retired producer. Keep this read-boundary
       // exclusion only so rows written by older releases never reappear after
       // upgrade; current runtime code must not append or broadcast new rows.
-      const batchVisible = rawBatch.filter(
-        (m) => m.source?.connector !== 'routing-guard-failure' && !isLeakedSupplementDecline(m),
-      );
+      const batchVisible = rawBatch.filter((m) => m.source?.connector !== 'routing-guard-failure');
 
       // Prepend: each subsequent batch is chronologically older
       allVisible.unshift(...batchVisible);
@@ -1136,30 +1127,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // or if we haven't exhausted the store (more may exist deeper).
     const hasMore = allVisible.length > limit || !storeExhausted;
     const page = allVisible.length > limit ? allVisible.slice(allVisible.length - limit) : allVisible;
-
-    const supplementProjectionByOriginal = new Map<
-      string,
-      Awaited<ReturnType<typeof projectFreshnessSupplementForHistory>>
-    >();
-    if (opts.freshnessClosureStore) {
-      try {
-        const supplements = await opts.freshnessClosureStore.listSupplementsByThread(resolvedThreadId);
-        for (const supplement of supplements) {
-          if (supplement.userId !== userId) continue;
-          const projection = await projectFreshnessSupplementForHistory(supplement, opts.messageStore);
-          const current = supplementProjectionByOriginal.get(supplement.originalMessageId);
-          if (
-            !current ||
-            projection.seq > current.seq ||
-            (projection.seq === current.seq && projection.updatedAt > current.updatedAt)
-          ) {
-            supplementProjectionByOriginal.set(supplement.originalMessageId, projection);
-          }
-        }
-      } catch (err) {
-        log.warn({ err, threadId: resolvedThreadId }, 'F254 supplement history hydration failed');
-      }
-    }
 
     // Map chat messages (union type allows summary items to be pushed later)
     type TimelineItem = {
@@ -1200,11 +1167,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         m.extra?.systemKind ||
         m.extra?.a2aRouting ||
         m.extra?.freshness ||
-        m.extra?.supplement ||
         m.extra?.causal ||
         m.extra?.turnExecution ||
         m.extra?.auxiliaryTurnExecutions ||
-        supplementProjectionByOriginal.has(m.id) ||
         m.recall ||
         m.extra?.recovery
           ? {
@@ -1223,14 +1188,10 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                 ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
                 ...(m.extra?.a2aRouting ? { a2aRouting: m.extra.a2aRouting } : {}),
                 ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
-                ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),
                 ...(m.extra?.causal ? { causal: m.extra.causal } : {}),
                 ...(m.extra?.turnExecution ? { turnExecution: m.extra.turnExecution } : {}),
                 ...(m.extra?.auxiliaryTurnExecutions
                   ? { auxiliaryTurnExecutions: m.extra.auxiliaryTurnExecutions }
-                  : {}),
-                ...(supplementProjectionByOriginal.has(m.id)
-                  ? { freshnessSupplement: supplementProjectionByOriginal.get(m.id) }
                   : {}),
                 ...(m.recall ? { recall: m.recall } : {}),
                 ...(m.extra?.recovery ? { recovery: projectRecoveryForHistory(m.extra.recovery) } : {}),

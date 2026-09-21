@@ -303,7 +303,7 @@ export interface StoredMessage {
     custodyOfferV1?: CustodyOfferV1;
     /** F311: immutable F117-owned preparation body. Generic extra/stream patches cannot mutate it. */
     evolutionPreparationSubmissionV1?: EvolutionPreparationSubmissionV1;
-    /** Durable child execution projection used to distinguish guard/supplement turns after F5. */
+    /** Durable child execution projection used to distinguish guard turns after F5. */
     turnExecution?: TurnExecutionMessageProjection;
     /** Child executions that affected this visible turn without owning/copying its body. */
     auxiliaryTurnExecutions?: TurnExecutionMessageProjection[];
@@ -357,22 +357,7 @@ export interface StoredMessage {
     writeOpportunityReentries?: readonly import('@cat-cafe/shared').WriteOpportunityReentryCarrierV1[];
     /** Server-written same-generation presentation retry; contains refs only. */
     writeOpportunityPresentationRetry?: import('@cat-cafe/shared').WriteOpportunityPresentationRetryCarrierV1;
-    freshness?:
-      | PublishedFreshnessAnnotation
-      | {
-          /** ADR-041 compatibility only; new completed outputs use PublishedFreshnessAnnotation. */
-          kind: 'closure_replacement';
-          closureId: string;
-          targetCatId: string;
-          originTriggerMessageId?: string | null;
-        };
-    /** ADR-042: additive provenance for a supplement reply. */
-    supplement?: {
-      lineageId: string;
-      supplementId: string;
-      seq: 1 | 2;
-      originalMessageId: string;
-    };
+    freshness?: PublishedFreshnessAnnotation;
     /** F254 Glass Box salvage: provenance for a reply restored after the old commit gate withheld it. */
     recovery?: {
       kind: 'f254_withheld_message';
@@ -1572,10 +1557,6 @@ export function assertValidAppendMessageInput(msg: AppendMessageInput): void {
   assertValidPreparationSubmission(msg);
 }
 
-export type ThreadFrontierAppendResult =
-  | { kind: 'committed'; message: StoredMessage }
-  | { kind: 'frontier_advanced'; actualLatestMessageId: string | null };
-
 export interface IdempotentAppendResult {
   message: StoredMessage;
   /** True when another caller already won the durable idempotency key. */
@@ -1742,10 +1723,6 @@ export interface IMessageStore {
     idempotencyKey: string,
   ): StoredMessage | null | Promise<StoredMessage | null>;
   /** Atomically compare raw thread frontier and append, or write nothing. */
-  appendIfThreadFrontier(
-    msg: AppendMessageInput,
-    expectedLatestMessageId: string | null,
-  ): ThreadFrontierAppendResult | Promise<ThreadFrontierAppendResult>;
   /** Atomically append unconditionally and return the raw pre-append frontier. */
   appendAndObservePriorFrontier(
     msg: AppendMessageInput,
@@ -2432,21 +2409,6 @@ export class MessageStore {
     return messageId ? this.getById(messageId) : null;
   }
 
-  appendIfThreadFrontier(msg: AppendMessageInput, expectedLatestMessageId: string | null): ThreadFrontierAppendResult {
-    const normalizedMessage = normalizeJsonUnicode(msg);
-    assertValidAppendMessageInput(normalizedMessage);
-    const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
-    if (normalizedMessage.idempotencyKey) {
-      const existing = this.getByIdempotencyKey(normalizedMessage.userId, threadId, normalizedMessage.idempotencyKey);
-      if (existing) return { kind: 'committed', message: existing };
-    }
-    const actualLatestMessageId = this.getLatestThreadMessageIdIncludingQueued(threadId);
-    if (actualLatestMessageId !== expectedLatestMessageId) {
-      return { kind: 'frontier_advanced', actualLatestMessageId };
-    }
-    return { kind: 'committed', message: this.append(normalizedMessage) };
-  }
-
   appendAndObservePriorFrontier(msg: AppendMessageInput): ThreadObservedAppendResult {
     const normalizedMessage = normalizeJsonUnicode(msg);
     assertValidAppendMessageInput(normalizedMessage);
@@ -2469,7 +2431,7 @@ export class MessageStore {
       ...normalizedMessage,
       extra: {
         ...normalizedMessage.extra,
-        freshness: { kind: 'scan_pending', priorFrontierMessageId },
+        freshness: { priorFrontierMessageId },
       },
     };
     const deferVisibility =

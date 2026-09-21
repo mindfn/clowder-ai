@@ -10,7 +10,6 @@ import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 describe('GET /api/messages', () => {
   let app;
   let messageStore;
-  let freshnessClosureStore;
   let invocationQueue;
   let queueLedgerStore;
 
@@ -20,16 +19,12 @@ describe('GET /api/messages', () => {
       '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
     );
     const { messagesRoutes } = await import('../dist/routes/messages.js');
-    const { InMemoryFreshnessClosureStore } = await import(
-      '../dist/domains/cats/services/freshness/closure/FreshnessClosureStore.js'
-    );
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { InMemoryQueueLedgerStore } = await import(
       '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'
     );
 
     messageStore = new MessageStore();
-    freshnessClosureStore = new InMemoryFreshnessClosureStore();
     queueLedgerStore = new InMemoryQueueLedgerStore();
     invocationQueue = new InvocationQueue(queueLedgerStore);
     app = Fastify();
@@ -37,7 +32,6 @@ describe('GET /api/messages', () => {
       registry: new InvocationRegistry(),
       messageStore,
       socketManager: { broadcastAgentMessage: () => {} },
-      freshnessClosureStore,
       invocationQueue,
     });
     await app.ready();
@@ -411,211 +405,6 @@ describe('GET /api/messages', () => {
     assert.equal(body.messages[0].extra?.queueReceipt, undefined);
     assert.equal(body.messages[0].deliveredAt, 1700);
     assert.equal(body.messages[0].timelineOrderAt, 1700);
-  });
-
-  it('ADR-042 hydrates original freshness and supplement reply provenance', async () => {
-    const original = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'opus',
-        content: 'published original',
-        mentions: [],
-        timestamp: 2000,
-        threadId: 'thread-supplement',
-        extra: {
-          turnExecution: {
-            invocationId: 'child-ordinary-1',
-            parentInvocationId: 'parent-supplement-1',
-            executionKind: 'ordinary',
-          },
-          auxiliaryTurnExecutions: [
-            {
-              invocationId: 'child-routing-guard-1',
-              parentInvocationId: 'parent-supplement-1',
-              executionKind: 'routing_guard',
-            },
-          ],
-          freshness: {
-            kind: 'published_with_unseen',
-            priorFrontierMessageId: 'msg-late',
-            generatedWithUnseen: ['msg-late'],
-            lineageId: 'temporary',
-          },
-        },
-      }),
-    );
-    messageStore.updateExtra(original.id, {
-      freshness: {
-        kind: 'published_with_unseen',
-        priorFrontierMessageId: 'msg-late',
-        generatedWithUnseen: ['msg-late'],
-        lineageId: original.id,
-      },
-    });
-    messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'opus',
-        content: 'additive supplement',
-        mentions: [],
-        timestamp: 3000,
-        threadId: 'thread-supplement',
-        replyTo: original.id,
-        extra: {
-          freshness: { kind: 'fresh', priorFrontierMessageId: original.id },
-          turnExecution: {
-            invocationId: 'child-supplement-1',
-            parentInvocationId: 'parent-supplement-1',
-            executionKind: 'freshness_supplement',
-          },
-          supplement: {
-            lineageId: original.id,
-            supplementId: `f254-supplement:${original.id}:1`,
-            seq: 1,
-            originalMessageId: original.id,
-          },
-        },
-      }),
-    );
-    const offered = await freshnessClosureStore.offerSupplement({
-      lineageId: original.id,
-      originalMessageId: original.id,
-      userId: 'default-user',
-      threadId: 'thread-supplement',
-      catId: 'opus',
-      requiredMessageIds: ['msg-late'],
-      requiredFrontierMessageId: 'msg-late',
-      replayUnsafeToolNames: [],
-      now: 2100,
-    });
-    await freshnessClosureStore.claimSupplement(offered.supplement.id, {
-      invocationId: 'inv-supplement-check',
-      now: 2200,
-    });
-    await freshnessClosureStore.declineSupplement(offered.supplement.id, {
-      invocationId: 'inv-supplement-check',
-      now: 2300,
-    });
-
-    const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-supplement' });
-    const body = JSON.parse(res.body);
-
-    assert.equal(body.messages.length, 2);
-    assert.equal(body.messages[0].extra.freshness.kind, 'published_with_unseen');
-    assert.deepEqual(body.messages[0].extra.turnExecution, {
-      invocationId: 'child-ordinary-1',
-      parentInvocationId: 'parent-supplement-1',
-      executionKind: 'ordinary',
-    });
-    assert.deepEqual(body.messages[0].extra.auxiliaryTurnExecutions, [
-      {
-        invocationId: 'child-routing-guard-1',
-        parentInvocationId: 'parent-supplement-1',
-        executionKind: 'routing_guard',
-      },
-    ]);
-    assert.deepEqual(body.messages[0].extra.freshnessSupplement, {
-      type: 'freshness_supplement',
-      supplementId: offered.supplement.id,
-      lineageId: original.id,
-      originalMessageId: original.id,
-      threadId: 'thread-supplement',
-      catId: 'opus',
-      seq: 1,
-      status: 'declined',
-      requiredCount: 1,
-      terminalReason: 'checked_no_supplement_needed',
-      updatedAt: 2300,
-    });
-    assert.deepEqual(body.messages[1].extra.supplement, {
-      lineageId: original.id,
-      supplementId: `f254-supplement:${original.id}:1`,
-      seq: 1,
-      originalMessageId: original.id,
-    });
-    assert.deepEqual(body.messages[1].extra.turnExecution, {
-      invocationId: 'child-supplement-1',
-      parentInvocationId: 'parent-supplement-1',
-      executionKind: 'freshness_supplement',
-    });
-    assert.equal(body.messages[1].replyTo, original.id);
-    assert.equal(body.messages[1].replyPreview.content, 'published original');
-  });
-
-  it('ADR-042 repairs a historically committed decline control output during hydration', async () => {
-    const original = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'opus',
-        content: 'published original before protocol repair',
-        mentions: [],
-        timestamp: 2000,
-        threadId: 'thread-supplement-control-recovery',
-      }),
-    );
-    const offered = await freshnessClosureStore.offerSupplement({
-      lineageId: original.id,
-      originalMessageId: original.id,
-      userId: 'default-user',
-      threadId: 'thread-supplement-control-recovery',
-      catId: 'opus',
-      requiredMessageIds: ['msg-late'],
-      requiredFrontierMessageId: 'msg-late',
-      replayUnsafeToolNames: [],
-      now: 2100,
-    });
-    const claimed = await freshnessClosureStore.claimSupplement(offered.supplement.id, {
-      invocationId: 'inv-supplement-control-recovery',
-      now: 2200,
-    });
-    const leaked = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'opus',
-        content: '<!-- cat-cafe:supplement-decline -->\n\nStop hook feedback must stay internal.',
-        mentions: [],
-        timestamp: 2300,
-        threadId: 'thread-supplement-control-recovery',
-        replyTo: original.id,
-        extra: {
-          supplement: {
-            lineageId: original.id,
-            supplementId: claimed.id,
-            seq: 1,
-            originalMessageId: original.id,
-          },
-        },
-      }),
-    );
-    await freshnessClosureStore.commitSupplement(claimed.id, {
-      invocationId: 'inv-supplement-control-recovery',
-      messageId: leaked.id,
-      now: 2400,
-    });
-
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/messages?threadId=thread-supplement-control-recovery',
-    });
-    const body = JSON.parse(res.body);
-
-    assert.deepEqual(
-      body.messages.map((message) => message.id),
-      [original.id],
-    );
-    assert.deepEqual(body.messages[0].extra.freshnessSupplement, {
-      type: 'freshness_supplement',
-      supplementId: claimed.id,
-      lineageId: original.id,
-      originalMessageId: original.id,
-      threadId: 'thread-supplement-control-recovery',
-      catId: 'opus',
-      seq: 1,
-      status: 'declined',
-      requiredCount: 1,
-      terminalReason: 'checked_no_supplement_needed',
-      updatedAt: 2400,
-    });
   });
 
   it('projects only browser-safe F254 recovery metadata in history response', async () => {

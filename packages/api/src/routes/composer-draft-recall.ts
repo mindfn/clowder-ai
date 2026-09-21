@@ -14,10 +14,7 @@ export interface ComposerDraftRecallRoutesOptions {
   threadStore?: Pick<IThreadStore, 'get' | 'compareAndSetTitle'>;
   socketManager: SocketManager;
   invocationQueue?: InvocationQueue;
-  queueProcessor?: Pick<
-    QueueProcessor,
-    'unregisterEntryCompleteHook' | 'finalizeRemovedEntry' | 'registerCallerDispatchQueueWithdrawal'
-  >;
+  queueProcessor?: Pick<QueueProcessor, 'unregisterEntryCompleteHook' | 'registerCallerDispatchQueueWithdrawal'>;
   indexBuilder?: Pick<
     IIndexBuilder,
     'suppressMessagePassage' | 'releaseMessagePassageSuppression' | 'finalizeMessagePassageSuppression'

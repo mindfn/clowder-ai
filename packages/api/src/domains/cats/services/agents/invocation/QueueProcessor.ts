@@ -9,7 +9,6 @@
 
 import type {
   CatId,
-  FreshnessSupplementFailureReason,
   LifecycleActiveRun,
   MessageContent,
   MessageFrom,
@@ -45,22 +44,8 @@ import {
   MessageBundlePromptUnavailableError,
   resolveMessageBundlePrompt,
 } from '../../context/MessageBundlePromptResolver.js';
-import { scanFreshnessClosurePreflight } from '../../freshness/closure/FreshnessClosurePreflight.js';
-import type { FreshnessClosureStore } from '../../freshness/closure/FreshnessClosureStore.js';
-import {
-  recordFreshnessClosureStage,
-  recordFreshnessClosureTransition,
-  recordFreshnessSuccessorPreflightCanceled,
-} from '../../freshness/closure/freshness-closure-telemetry.js';
 import type { FreshnessAttentionEventLog } from '../../freshness/FreshnessAttentionEventLog.js';
-import { scanFreshnessSupplementPreflight } from '../../freshness/FreshnessSupplementPreflight.js';
 import { recordQueuedHandledTelemetry, recordQueuedSeenTelemetry } from '../../freshness/freshness-queue-telemetry.js';
-import {
-  freshnessClosureFinalIdempotencyKey,
-  projectFreshnessClosure,
-  projectFreshnessSupplement,
-  SUPPLEMENT_DECLINE_MARKER,
-} from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { shouldMarkDecisionNotification } from '../../push/decision-notification-policy.js';
 import type { PushPayload } from '../../push/PushNotificationService.js';
 import { messageFrom } from '../../stores/message-from.js';
@@ -454,27 +439,6 @@ interface ThreadMetaLike {
   deepLinkUrl?: string;
 }
 
-function isConnectorDeliverable(decision: OutputCommitDecision | undefined): boolean {
-  return (
-    decision === undefined ||
-    decision.kind === 'committed_fresh' ||
-    decision.kind === 'committed_degraded_unknown' ||
-    decision.kind === 'published_with_unseen'
-  );
-}
-
-function supplementFailureReason(error: unknown, status: InvocationFinalStatus): FreshnessSupplementFailureReason {
-  if (
-    error instanceof ToolExecutionPolicyUnavailableError ||
-    (error instanceof Error && error.name === 'ToolExecutionPolicyUnavailableError')
-  ) {
-    return 'read_only_policy_unavailable';
-  }
-  if (status === 'canceled' || status === 'canceled_by_user') return 'user_cancel';
-  if (status === 'failed') return 'provider_failure';
-  return 'infrastructure';
-}
-
 export interface QueueProcessorDeps {
   queue: InvocationQueue;
   invocationTracker: TrackerLike;
@@ -501,7 +465,6 @@ export interface QueueProcessorDeps {
   /** F254: audit stream for exact queued-body adoption and other freshness lifecycle events. */
   freshnessEventLog?: FreshnessAttentionEventLog;
   /** F254 Phase E: typed successor preflight/adoption and crash closure. */
-  freshnessClosureStore?: FreshnessClosureStore;
   /** Durable child lifecycle and causal coverage; auth registry is not historical truth. */
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
@@ -614,124 +577,6 @@ export class QueueProcessor {
   private readonly callerDispatchProcessStart?: {
     processGenerationId: string;
   };
-
-  private broadcastFreshnessClosure(closure: Awaited<ReturnType<FreshnessClosureStore['get']>>): void {
-    if (!closure) return;
-    const projection = projectFreshnessClosure(closure);
-    this.deps.socketManager.broadcastAgentMessage(
-      {
-        type: 'system_info',
-        catId: closure.catId,
-        content: JSON.stringify(projection),
-        timestamp: projection.updatedAt,
-      },
-      closure.threadId,
-    );
-  }
-
-  private broadcastFreshnessSupplement(supplement: Awaited<ReturnType<FreshnessClosureStore['getSupplement']>>): void {
-    if (!supplement) return;
-    const projection = projectFreshnessSupplement(supplement);
-    this.deps.socketManager.broadcastAgentMessage(
-      {
-        type: 'system_info',
-        catId: supplement.catId,
-        content: JSON.stringify(projection),
-        timestamp: projection.updatedAt,
-      },
-      supplement.threadId,
-    );
-  }
-
-  private async recoverDurableSupplementCommit(
-    supplement: Awaited<ReturnType<FreshnessClosureStore['getSupplement']>>,
-    invocationId: string | undefined,
-  ): Promise<{
-    supplement: Awaited<ReturnType<FreshnessClosureStore['getSupplement']>>;
-    durableBodyFound: boolean;
-  }> {
-    const store = this.deps.freshnessClosureStore;
-    if (
-      !store ||
-      !supplement ||
-      supplement.status !== 'running' ||
-      !invocationId ||
-      supplement.runningInvocationId !== invocationId
-    ) {
-      return { supplement, durableBodyFound: false };
-    }
-    const published = await this.deps.messageStore.getByIdempotencyKey(
-      supplement.userId,
-      supplement.threadId,
-      supplement.id,
-    );
-    if (!published) return { supplement, durableBodyFound: false };
-    try {
-      const committed = await store.commitSupplement(supplement.id, {
-        invocationId,
-        messageId: published.id,
-        now: Date.now(),
-      });
-      return { supplement: committed, durableBodyFound: true };
-    } catch (err) {
-      this.deps.log.warn(
-        { err, supplementId: supplement.id, invocationId, messageId: published.id },
-        '[F254] durable supplement body found but aggregate commit recovery failed',
-      );
-      return { supplement, durableBodyFound: true };
-    }
-  }
-
-  /**
-   * Establish the existing supplement lifecycle as the exact terminal owner
-   * before Queue Gate 2 settles its transient carrier row.
-   */
-  private async terminalizeFreshnessSupplementCarrier(
-    entry: QueueEntry,
-    invocationId: string | undefined,
-    finalStatus: InvocationFinalStatus,
-    executionError: unknown,
-  ): Promise<void> {
-    const supplementId = entry.execution.freshnessSupplementId;
-    const store = this.deps.freshnessClosureStore;
-    if (!supplementId || !store) return;
-
-    try {
-      let supplement = await store.getSupplement(supplementId);
-      let durableBodyFound = false;
-      if (supplement?.status === 'running') {
-        const recovered = await this.recoverDurableSupplementCommit(supplement, invocationId);
-        supplement = recovered.supplement;
-        durableBodyFound = recovered.durableBodyFound;
-        if (supplement?.status === 'committed') {
-          this.broadcastFreshnessSupplement(supplement);
-        }
-      }
-      if (supplement?.status === 'running' || (supplement?.status === 'pending' && finalStatus !== 'succeeded')) {
-        if (!durableBodyFound) {
-          const failed = await store.failSupplement(supplement.id, {
-            ...(supplement.status === 'running' && invocationId ? { invocationId } : {}),
-            reason: supplementFailureReason(executionError, finalStatus),
-            now: Date.now(),
-          });
-          supplement = failed;
-          this.broadcastFreshnessSupplement(failed);
-          if (invocationId) {
-            await this.deps.invocationRecordStore.update(invocationId, {
-              freshnessSupplementId: failed.id,
-              freshnessSupplementStatus: failed.status,
-              freshnessSupplementFailureReason: failed.failureReason,
-            });
-          }
-        }
-      }
-    } catch (err) {
-      this.deps.log.error(
-        { err, threadId: entry.threadId, entryId: entry.id, supplementId },
-        '[F254] failed to close unfinished supplement attempt',
-      );
-    }
-  }
 
   constructor(
     deps: QueueProcessorDeps,
@@ -1433,30 +1278,6 @@ export class QueueProcessor {
     }
   }
 
-  /** ADR-042: removing a queued carrier must also close its durable responsibility. */
-  async finalizeRemovedEntry(
-    entry: Pick<QueueEntry, 'execution'> | null | undefined,
-    reason: FreshnessSupplementFailureReason = 'user_cancel',
-  ): Promise<boolean> {
-    if (!entry?.execution.freshnessSupplementId || !this.deps.freshnessClosureStore) return true;
-    try {
-      const supplement = await this.deps.freshnessClosureStore.getSupplement(entry.execution.freshnessSupplementId);
-      if (supplement?.status !== 'pending') return true;
-      const failed = await this.deps.freshnessClosureStore.failSupplement(supplement.id, {
-        reason,
-        now: Date.now(),
-      });
-      this.broadcastFreshnessSupplement(failed);
-      return true;
-    } catch (err) {
-      this.deps.log.error(
-        { err, supplementId: entry.execution.freshnessSupplementId, reason },
-        '[F254] failed to terminalize removed supplement carrier',
-      );
-      return false;
-    }
-  }
-
   private static slotKey(threadId: string, catId: string): string {
     return JSON.stringify([threadId, catId]);
   }
@@ -1620,7 +1441,6 @@ export class QueueProcessor {
   ): Promise<boolean> {
     const retiringEntryIds = new Set(retirements.flatMap((retirement) => retirement.carriers.map((entry) => entry.id)));
     return terminalizePreparedPrestartRetirements(retirements, {
-      finalizeSupplement: (entry) => this.finalizeRemovedEntry(entry, 'user_cancel'),
       messageStore: this.deps.messageStore,
       shouldCancelMessage: (entry, messageId) =>
         !this.deps.queue
@@ -1693,7 +1513,6 @@ export class QueueProcessor {
 
     for (const retirement of retirements) {
       for (const carrier of retirement.carriers) {
-        if (!(await this.finalizeRemovedEntry(carrier, 'infrastructure'))) return 'terminalization_failed';
         if (isPublicQueueEntry(carrier)) {
           const sourceMessageId = carrier.payload.messageId;
           const source = sourceMessageId ? await this.deps.messageStore.getById(sourceMessageId) : null;
@@ -3317,10 +3136,6 @@ export class QueueProcessor {
     let streamStartPromise: Promise<void> | undefined;
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
     let executionError: unknown;
-    let freshnessSupplementOriginalMessageId: string | undefined;
-    let freshnessSupplementRequiredMessageIds: string[] = [];
-    let supplementToolExecutionPolicy = entry.execution.readOnlyToolPolicy;
-    const bufferedSupplementMessages: unknown[] = [];
     let actionFencePreflightRejected = false;
     let actionFenceAggregateSucceeded = false;
     const actionFenceCommittedHolderCatIds = new Set<string>();
@@ -3617,18 +3432,6 @@ export class QueueProcessor {
           })
         ) {
           log.warn({ threadId, entryId: entry.id }, '[QueueProcessor] Duplicate invocation, skipping');
-          if (entry.execution.freshnessSupplementId && this.deps.freshnessClosureStore) {
-            const supplement = await this.deps.freshnessClosureStore.getSupplement(
-              entry.execution.freshnessSupplementId,
-            );
-            if (supplement?.status === 'pending') {
-              const failed = await this.deps.freshnessClosureStore.failSupplement(supplement.id, {
-                reason: 'infrastructure',
-                now: Date.now(),
-              });
-              this.broadcastFreshnessSupplement(failed);
-            }
-          }
           // This attempt did not create, replay, or run the duplicate invocation.
           // Never forward another owner's invocationId into onInvocationComplete:
           // exact queued_seen evidence may belong to that invocation and would be
@@ -3655,430 +3458,6 @@ export class QueueProcessor {
         return cancelPrestartTargetSetConflict(
           '[QueueProcessor] canceled pre-start execution after processing reservation changed',
         );
-      }
-
-      // ADR-042: a supplement queue row is only a carrier projection. Resolve and
-      // claim the exact durable sequence before launching any model.
-      if (entry.execution.freshnessSupplementId) {
-        const supplementStore = this.deps.freshnessClosureStore;
-        if (!supplementStore) {
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: 'freshness supplement store unavailable',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-        if (entry.execution.freshnessClosureId) {
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: 'queue entry cannot carry both freshness closure and supplement identities',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-        const supplement = await supplementStore.getSupplement(entry.execution.freshnessSupplementId);
-        // External replacement retires the exact Queue reservation synchronously, but
-        // `getSupplement()` can still be awaiting durable state when that happens. Fence
-        // immediately after the await, before interpreting or mutating supplement truth;
-        // otherwise this stale coroutine can report a generic carrier cancellation (or
-        // race a claim) instead of closing its own InvocationRecord as superseded.
-        if (
-          processingReservation &&
-          !this.canStartReservedTargetSet(threadId, targetCats, primaryCat, processingReservation, invocationId)
-        ) {
-          return cancelPrestartTargetSetConflict(
-            '[QueueProcessor] canceled supplement preflight after its target-set fence changed',
-          );
-        }
-        if (!supplement || supplement.status !== 'pending') {
-          log.info(
-            {
-              threadId,
-              entryId: entry.id,
-              supplementId: entry.execution.freshnessSupplementId,
-              status: supplement?.status ?? 'missing',
-            },
-            '[F254] supplement carrier canceled at preflight',
-          );
-          await invocationRecordStore.update(invocationId, { status: 'canceled' });
-          finalStatus = 'succeeded';
-          return executionResult('succeeded');
-        }
-        const carrierMismatch =
-          supplement.userId !== userId ||
-          supplement.threadId !== threadId ||
-          supplement.catId !== primaryCat ||
-          targetCats.length !== 1 ||
-          entry.execution.freshnessSupplementLineageId !== supplement.lineageId ||
-          entry.execution.freshnessSupplementSeq !== supplement.seq;
-        if (carrierMismatch) {
-          const failed = await supplementStore.failSupplement(supplement.id, {
-            reason: 'infrastructure',
-            now: Date.now(),
-          });
-          this.broadcastFreshnessSupplement(failed);
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: 'freshness supplement carrier scope mismatch',
-            freshnessSupplementId: supplement.id,
-            freshnessSupplementStatus: 'failed',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-        if (entry.execution.readOnlyToolPolicy?.mode !== 'read_only') {
-          const failed = await supplementStore.failSupplement(supplement.id, {
-            reason: 'read_only_policy_unavailable',
-            now: Date.now(),
-          });
-          this.broadcastFreshnessSupplement(failed);
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: 'freshness supplement read-only policy unavailable',
-            freshnessSupplementId: supplement.id,
-            freshnessSupplementStatus: 'failed',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-
-        const preflight = await scanFreshnessSupplementPreflight({ supplement, messageStore });
-        if (preflight.kind === 'blocked') {
-          const failed = await supplementStore.failSupplement(supplement.id, {
-            reason: 'infrastructure',
-            now: Date.now(),
-          });
-          this.broadcastFreshnessSupplement(failed);
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: `freshness supplement preflight incomplete: ${preflight.evidenceRefs.join(',')}`,
-            freshnessSupplementId: supplement.id,
-            freshnessSupplementStatus: 'failed',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-
-        let refreshed = supplement;
-        if (
-          preflight.requiredFrontierMessageId !== supplement.requiredFrontierMessageId ||
-          preflight.requiredMessageIds.length !== supplement.requiredMessageIds.length
-        ) {
-          const refreshResult = await supplementStore.offerSupplement({
-            lineageId: supplement.lineageId,
-            originalMessageId: supplement.originalMessageId,
-            userId: supplement.userId,
-            threadId: supplement.threadId,
-            catId: supplement.catId,
-            requiredMessageIds: preflight.requiredMessageIds,
-            requiredFrontierMessageId: preflight.requiredFrontierMessageId,
-            replayUnsafeToolNames: supplement.replayUnsafeToolNames,
-            now: Date.now(),
-          });
-          refreshed = refreshResult.supplement;
-          this.broadcastFreshnessSupplement(refreshed);
-        }
-        if (refreshed.id !== supplement.id || refreshed.status !== 'pending') {
-          await invocationRecordStore.update(invocationId, {
-            status: 'canceled',
-            freshnessSupplementId: supplement.id,
-            freshnessSupplementStatus: refreshed.status,
-          });
-          finalStatus = 'succeeded';
-          return executionResult('succeeded');
-        }
-
-        const claimed = await supplementStore.claimSupplement(refreshed.id, {
-          invocationId,
-          now: Date.now(),
-        });
-        this.broadcastFreshnessSupplement(claimed);
-        supplementToolExecutionPolicy = {
-          mode: 'read_only',
-          replayDeniedToolNames: claimed.replayUnsafeToolNames,
-        };
-        freshnessSupplementOriginalMessageId = claimed.originalMessageId;
-        freshnessSupplementRequiredMessageIds = [...claimed.requiredMessageIds];
-        const original = await messageStore.getById(claimed.originalMessageId);
-        const requiredMessages = await Promise.all(
-          claimed.requiredMessageIds.map((requiredId) => messageStore.getById(requiredId)),
-        );
-        const missingIds = [
-          ...(!original ? [claimed.originalMessageId] : []),
-          ...claimed.requiredMessageIds.filter((_id, index) => !requiredMessages[index]),
-        ];
-        if (missingIds.length > 0) {
-          const failed = await supplementStore.failSupplement(claimed.id, {
-            invocationId,
-            reason: 'infrastructure',
-            now: Date.now(),
-          });
-          this.broadcastFreshnessSupplement(failed);
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: `freshness supplement message bodies missing: ${missingIds.join(',')}`,
-            freshnessSupplementId: claimed.id,
-            freshnessSupplementStatus: 'failed',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-        content = [
-          `[Freshness Supplement Check ${claimed.id}]`,
-          '你已经发表了下面这条回复。它不会被替换或删除：',
-          `[Published original ${original!.id}]`,
-          original!.content,
-          '[Relevant updates that arrived before publication]',
-          ...requiredMessages.map((message) => {
-            const sender = message!.catId ?? message!.source?.label ?? 'user';
-            return `- [${message!.id}] ${sender}: ${JSON.stringify(message!.content)}`;
-          }),
-          '只判断这些更新是否需要给读者追加一条简短补充。',
-          `若无需补充，只输出这一行且不要添加其他文字：${SUPPLEMENT_DECLINE_MARKER}`,
-          '若需要补充，只输出将作为新回复发表的补充正文；不要重写原回复，不要路由、传球、发卡片或执行任何副作用。',
-        ].join('\n');
-        await invocationRecordStore.update(invocationId, {
-          freshnessSupplementId: claimed.id,
-          freshnessSupplementLineageId: claimed.lineageId,
-          freshnessSupplementSeq: claimed.seq,
-          freshnessSupplementStatus: claimed.status,
-        });
-        if (this.deps.deliveryCursorStore) {
-          try {
-            await this.deps.deliveryCursorStore.ackSeenCursor(
-              userId,
-              primaryCat as CatId,
-              threadId,
-              claimed.requiredFrontierMessageId,
-            );
-          } catch (err) {
-            log.warn(
-              { threadId, supplementId: claimed.id, invocationId, err },
-              '[F254] supplement seenCursor seed failed; exact output scan will degrade visibly',
-            );
-          }
-        }
-      }
-
-      // F254 Phase E: a queue row is only scheduling coverage. Before model execution,
-      // atomically adopt the persistent closure and rebuild the prompt from current truth.
-      if (entry.execution.freshnessClosureId) {
-        const closureStore = this.deps.freshnessClosureStore;
-        if (!closureStore) {
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: 'freshness closure store unavailable',
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-        const closure = await closureStore.get(entry.execution.freshnessClosureId);
-        if (!closure || closure.status !== 'pending') {
-          recordFreshnessSuccessorPreflightCanceled(closure?.status ?? 'missing');
-          log.info(
-            {
-              threadId,
-              entryId: entry.id,
-              closureId: entry.execution.freshnessClosureId,
-              status: closure?.status ?? 'missing',
-            },
-            '[F254-E] closure successor canceled at preflight',
-          );
-          await invocationRecordStore.update(invocationId, { status: 'canceled' });
-          finalStatus = 'succeeded';
-          return executionResult('succeeded');
-        }
-        const committedMessage = await messageStore.getByIdempotencyKey(
-          userId,
-          threadId,
-          freshnessClosureFinalIdempotencyKey(closure.id),
-        );
-        if (committedMessage) {
-          const claimed = await closureStore.claimAttempt(closure.id, {
-            invocationId,
-            inputFrontierMessageId: closure.observedRawFrontierMessageId ?? closure.requiredFrontierMessageId,
-            observedRawFrontierMessageId: closure.observedRawFrontierMessageId,
-            now: Date.now(),
-          });
-          if (claimed.status === 'blocked') {
-            await this.deps.streamingHook?.onClosureBlocked?.(
-              threadId,
-              primaryCat as CatId,
-              claimed.blockedReason ?? 'attempt_budget_exhausted',
-              invocationId,
-            );
-            await invocationRecordStore.update(invocationId, {
-              status: 'canceled',
-              freshnessClosureId: claimed.id,
-              freshnessClosureStatus: claimed.status,
-            });
-            finalStatus = 'succeeded';
-            return executionResult('succeeded');
-          }
-          const committed = await closureStore.commit(claimed.id, {
-            invocationId,
-            messageId: committedMessage.id,
-            observedRawFrontierMessageId: claimed.observedRawFrontierMessageId,
-            draftContent: committedMessage.content,
-            evidenceRefs: [`message:${committedMessage.id}`, 'recovery:idempotency-hit'],
-            now: Date.now(),
-          });
-          this.broadcastFreshnessClosure(committed);
-          recordFreshnessClosureTransition('committed');
-          await requireInvocationRecordUpdate({
-            store: invocationRecordStore,
-            invocationId,
-            update: {
-              status: 'succeeded',
-              successfulCatIds: [primaryCat as CatId],
-              freshnessClosureId: committed.id,
-              freshnessClosureStatus: committed.status,
-            },
-            writer: 'queue recovery idempotency path',
-          });
-          finalStatus = 'succeeded';
-          return executionResult('succeeded');
-        }
-
-        const preflight = await scanFreshnessClosurePreflight({
-          closure,
-          messageStore,
-          ...(this.deps.turnExecutionStore ? { turnExecutionStore: this.deps.turnExecutionStore } : {}),
-        });
-        if (preflight.kind === 'blocked') {
-          recordFreshnessClosureStage('preflight_blocked');
-          const blocked = await closureStore.blockPreflight(closure.id, {
-            evidenceRefs: preflight.evidenceRefs,
-            now: Date.now(),
-          });
-          this.broadcastFreshnessClosure(blocked);
-          recordFreshnessClosureTransition('blocked');
-          await this.deps.streamingHook?.onClosureBlocked?.(
-            threadId,
-            primaryCat as CatId,
-            blocked.blockedReason ?? 'freshness_preflight_incomplete',
-            invocationId,
-          );
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: `freshness closure preflight incomplete: ${preflight.evidenceRefs.join(',')}`,
-            freshnessClosureId: blocked.id,
-            freshnessClosureStatus: blocked.status,
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-
-        const refreshed = await closureStore.refreshFrontier(closure.id, {
-          requiredMessageIds: preflight.requiredMessageIds,
-          requiredFrontierMessageId: preflight.requiredFrontierMessageId,
-          observedRawFrontierMessageId: preflight.observedRawFrontierMessageId,
-          now: Date.now(),
-        });
-        const claimed = await closureStore.claimAttempt(refreshed.id, {
-          invocationId,
-          inputFrontierMessageId: refreshed.observedRawFrontierMessageId ?? refreshed.requiredFrontierMessageId,
-          observedRawFrontierMessageId: refreshed.observedRawFrontierMessageId,
-          now: Date.now(),
-        });
-        if (claimed.status === 'blocked') {
-          await this.deps.streamingHook?.onClosureBlocked?.(
-            threadId,
-            primaryCat as CatId,
-            claimed.blockedReason ?? 'attempt_budget_exhausted',
-            invocationId,
-          );
-          await invocationRecordStore.update(invocationId, {
-            status: 'canceled',
-            freshnessClosureId: claimed.id,
-            freshnessClosureStatus: claimed.status,
-          });
-          finalStatus = 'succeeded';
-          return executionResult('succeeded');
-        }
-        const originMessage = claimed.originTriggerMessageId
-          ? await messageStore.getById(claimed.originTriggerMessageId)
-          : null;
-        const requiredMessages = await Promise.all(
-          claimed.requiredMessageIds.map((requiredId) => messageStore.getById(requiredId)),
-        );
-        const missingIds = [
-          ...(!originMessage && claimed.originTriggerMessageId ? [claimed.originTriggerMessageId] : []),
-          ...claimed.requiredMessageIds.filter((_id, index) => !requiredMessages[index]),
-        ];
-        if (missingIds.length > 0) {
-          const blocked = await closureStore.blockAttempt(claimed.id, {
-            invocationId,
-            reason: 'infrastructure',
-            evidenceRefs: missingIds.map((id) => `missing-message:${id}`),
-            now: Date.now(),
-          });
-          this.broadcastFreshnessClosure(blocked);
-          recordFreshnessClosureTransition('blocked');
-          await this.deps.streamingHook?.onClosureBlocked?.(
-            threadId,
-            primaryCat as CatId,
-            blocked.blockedReason ?? 'infrastructure',
-            invocationId,
-          );
-          await invocationRecordStore.update(invocationId, {
-            status: 'failed',
-            error: `freshness closure message bodies missing: ${missingIds.join(',')}`,
-          });
-          finalStatus = 'failed';
-          return executionResult('failed');
-        }
-        content = [
-          `[Freshness Catch Closure ${claimed.id}]`,
-          `Current raw frontier: ${claimed.observedRawFrontierMessageId ?? claimed.requiredFrontierMessageId}`,
-          '[Original intent]',
-          `- [${originMessage!.id}] ${originMessage!.catId ?? originMessage!.source?.label ?? 'user'}: ${JSON.stringify(originMessage!.content)}`,
-          '[Latest retained draft]',
-          JSON.stringify(claimed.latestDraft.content),
-          '[Current relevant updates]',
-          ...requiredMessages
-            .filter((message) => message!.id !== claimed.originTriggerMessageId)
-            .map((message) => {
-              const sender = message!.catId ?? message!.source?.label ?? 'user';
-              return `- [${message!.id}] ${sender}: ${JSON.stringify(message!.content)}`;
-            }),
-          ...(claimed.replayUnsafeToolNames?.length
-            ? [
-                `安全边界：上一轮已经尝试过这些不可盲目重放的工具：${claimed.replayUnsafeToolNames.join(', ')}。`,
-                '先核对当前外部状态；不要重复已完成的副作用。只有确认动作尚未发生时才能再次调用。',
-              ]
-            : []),
-          '请以当前 frontier 为准给出一条完整回复；旧草稿只用于保留未提交工作，不是要求照抄或重答过时问题。',
-        ].join('\n');
-        await invocationRecordStore.update(invocationId, {
-          freshnessClosureId: claimed.id,
-          freshnessInputFrontierMessageId: claimed.requiredFrontierMessageId,
-          freshnessClosureStatus: claimed.status,
-        });
-        // F254 Phase E (ADR-041 §5): the injected bodies above count as seen.
-        // The successor entry carries no messageId, so route-serial's incrementalMode
-        // AC-A3 cursor seed never runs for it — without this ack the output freshness
-        // gate re-reads the frozen pre-supersede cursor, judges the exact messages we
-        // just injected as unseen, and supersedes every replacement in a loop
-        // (2026-07-11 thread_mrf4rg9atprwlyzq silent message loss).
-        // Fail-open: ack is a gate seed, not commit truth — on failure the gate simply
-        // re-checks at commit (bounded by closure budgets), never blocks the attempt.
-        if (this.deps.deliveryCursorStore) {
-          try {
-            await this.deps.deliveryCursorStore.ackSeenCursor(
-              userId,
-              primaryCat as CatId,
-              threadId,
-              claimed.observedRawFrontierMessageId ?? claimed.requiredFrontierMessageId,
-            );
-          } catch (err) {
-            log.warn(
-              { threadId, closureId: claimed.id, invocationId, err },
-              '[F254-E] closure successor seenCursor seed failed — freshness gate will re-check at commit (fail-open)',
-            );
-          }
-        }
       }
 
       // F194 R7: freshness/action carrier preflight can await after the reservation
@@ -4345,7 +3724,7 @@ export class QueueProcessor {
         }
       }
       // F088 fix: start streaming placeholder on external platforms
-      if (this.deps.streamingHook && !entry.execution.actionSuccessorFence && !entry.execution.freshnessSupplementId) {
+      if (this.deps.streamingHook && !entry.execution.actionSuccessorFence) {
         streamStartPromise = this.deps.streamingHook
           .onStreamStart(threadId, primaryCat, invocationId, queueEntrySenderMeta(entry))
           .catch((err) => {
@@ -4488,21 +3867,6 @@ export class QueueProcessor {
               input,
             ),
           ...(entry.sourceCategory === 'a2a_failure' ? { a2aFailureReport: true } : {}),
-          // F254 B3: freshness re-invoke enqueue — strips freshnessContext before queueing
-          // (queue only stores standard QueueEntry fields; context is for event-log correlation).
-          freshnessReinvokeEnqueue: (e: any) => {
-            const { freshnessContext: _ctx, ...queueFields } = e;
-            return queue.enqueueDurable({
-              ...queueFields,
-              kind: 'private_input',
-              ownerAuthProvenance: entry.execution.ownerAuthProvenance,
-              sourceId:
-                queueFields.idempotencyKey ??
-                queueFields.freshnessSupplementId ??
-                queueFields.freshnessClosureId ??
-                `freshness-reinvoke:${queueFields.threadId}:${queueFields.from.catId}:${queueFields.freshnessContext?.sourceNoticeIds?.join(',') ?? ''}`,
-            });
-          },
           hasPendingForCat: (tid: string, uid: string, catId: string) =>
             queue.hasPendingForCat(tid, catId, { excludeEntryId: entry.id, userId: uid }),
           cursorBoundaries,
@@ -4743,13 +4107,8 @@ export class QueueProcessor {
             return release;
           },
           onPromptMessagesExposed: (input: PromptMessagesExposedInput) => this.markPromptMessagesSeen(input),
-          ...(freshnessSupplementOriginalMessageId
-            ? { a2aTriggerMessageId: freshnessSupplementOriginalMessageId }
-            : entry.execution.a2aTriggerMessageId
-              ? { a2aTriggerMessageId: entry.execution.a2aTriggerMessageId }
-              : {}),
-          ...((freshnessSupplementOriginalMessageId || entry.execution.a2aTriggerMessageId) &&
-          queueEntryCallerCatId(entry)
+          ...(entry.execution.a2aTriggerMessageId ? { a2aTriggerMessageId: entry.execution.a2aTriggerMessageId } : {}),
+          ...(entry.execution.a2aTriggerMessageId && queueEntryCallerCatId(entry)
             ? { a2aCallerCatId: queueEntryCallerCatId(entry) }
             : {}),
           ...(entry.execution.callerTraceContext ? { callerTraceContext: entry.execution.callerTraceContext } : {}),
@@ -4758,21 +4117,6 @@ export class QueueProcessor {
             : {}),
           ...(entry.execution.requiresExactCloudDispatchProvenance
             ? { requiresExactCloudDispatchProvenance: true }
-            : {}),
-          ...(entry.execution.freshnessClosureId
-            ? {
-                freshnessClosureId: entry.execution.freshnessClosureId,
-                freshnessClosureRequiredMessageIds:
-                  (await this.deps.freshnessClosureStore?.get(entry.execution.freshnessClosureId))
-                    ?.requiredMessageIds ?? [],
-              }
-            : {}),
-          ...(entry.execution.freshnessSupplementId
-            ? {
-                freshnessSupplementId: entry.execution.freshnessSupplementId,
-                freshnessSupplementRequiredMessageIds,
-                toolExecutionPolicy: supplementToolExecutionPolicy,
-              }
             : {}),
           // F222 P1: Only user-originated queue entries trigger frustration detection.
           // Whitelist (not blacklist) — agent + connector sources both suppressed.
@@ -4907,7 +4251,6 @@ export class QueueProcessor {
               if (deliveredTurnIndices.has(i)) continue;
               const turn = outboundTurns[i];
               if (turn.catId !== msg.catId) continue;
-              if (!isConnectorDeliverable(persistenceContext.outputCommitDecisions?.[turn.catId])) continue;
               const turnContent = turn.textParts.join('');
               if (!turnContent && !turn.richBlocks?.length) continue;
               try {
@@ -4947,11 +4290,7 @@ export class QueueProcessor {
             const turn = outboundTurns[outboundTurns.length - 1];
             accumulateTextParts(turn.textParts, textContent, textMode);
           }
-          if (
-            this.deps.streamingHook &&
-            !entry.execution.actionSuccessorFence &&
-            !entry.execution.freshnessSupplementId
-          ) {
+          if (this.deps.streamingHook && !entry.execution.actionSuccessorFence) {
             const accumulated =
               outboundTurns.length > 0 ? flattenTurnTextParts(outboundTurns) : flattenTextParts(collectedTextParts);
             this.deps.streamingHook.onStreamChunk(threadId, accumulated, invocationId).catch((err) => {
@@ -4971,8 +4310,6 @@ export class QueueProcessor {
         };
         if (entry.execution.actionSuccessorFence) {
           bufferedActionMessages.push(visibleMessage);
-        } else if (entry.execution.freshnessSupplementId) {
-          bufferedSupplementMessages.push(visibleMessage);
         } else {
           socketManager.broadcastAgentMessage(visibleMessage, threadId);
         }
@@ -5139,61 +4476,12 @@ export class QueueProcessor {
 
       // 9. Ack cursors + mark succeeded
       await router.ackCollectedCursors(userId, threadId, cursorBoundaries);
-      const adoptedClosureDecision = entry.execution.freshnessClosureId
-        ? persistenceContext.outputCommitDecisions?.[primaryCat]
-        : undefined;
-      const adoptedClosureStatus =
-        adoptedClosureDecision?.kind === 'committed_fresh' &&
-        adoptedClosureDecision.closureId === entry.execution.freshnessClosureId
-          ? 'committed'
-          : adoptedClosureDecision?.kind === 'superseded_positive_stale' &&
-              adoptedClosureDecision.closureId === entry.execution.freshnessClosureId
-            ? 'pending'
-            : adoptedClosureDecision?.kind === 'blocked_known_closure' &&
-                adoptedClosureDecision.closureId === entry.execution.freshnessClosureId
-              ? 'blocked'
-              : undefined;
-      let freshnessSupplementStatus: 'committed' | 'declined' | undefined;
-      if (entry.execution.freshnessSupplementId && this.deps.freshnessClosureStore) {
-        let supplement = await this.deps.freshnessClosureStore.getSupplement(entry.execution.freshnessSupplementId);
-        let durableBodyFound = false;
-        if (supplement?.status === 'running') {
-          const recovered = await this.recoverDurableSupplementCommit(supplement, invocationId);
-          supplement = recovered.supplement;
-          durableBodyFound = recovered.durableBodyFound;
-        }
-        if (supplement?.status === 'committed' || supplement?.status === 'declined') {
-          freshnessSupplementStatus = supplement.status;
-          this.broadcastFreshnessSupplement(supplement);
-        } else {
-          if (durableBodyFound) {
-            for (const bufferedMessage of bufferedSupplementMessages) {
-              this.deps.socketManager.broadcastAgentMessage(bufferedMessage, threadId);
-            }
-          }
-          throw new Error(
-            `freshness supplement route completed without a terminal decision: ${supplement?.status ?? 'missing'}`,
-          );
-        }
-        for (const bufferedMessage of bufferedSupplementMessages) {
-          if (freshnessSupplementStatus === 'committed' || (bufferedMessage as { type?: string }).type !== 'text') {
-            socketManager.broadcastAgentMessage(bufferedMessage, threadId);
-          }
-        }
-      }
       await requireInvocationRecordUpdate({
         store: invocationRecordStore,
         invocationId,
         update: {
           status: 'succeeded',
           successfulCatIds: terminalDispositions.getSuccessfulCatIds() as CatId[],
-          ...(adoptedClosureStatus ? { freshnessClosureStatus: adoptedClosureStatus } : {}),
-          ...(freshnessSupplementStatus
-            ? {
-                freshnessSupplementId: entry.execution.freshnessSupplementId,
-                freshnessSupplementStatus,
-              }
-            : {}),
           // #845 fix: carry token usage same as messages.ts:1152-1158. Without this, queued/connector
           // succeeded invocations never recorded usageByCat → daily stats undercount.
           ...(collectedUsage.size > 0
@@ -5211,20 +4499,10 @@ export class QueueProcessor {
       if (entry.from.kind === 'user') {
         const pushService = this.deps.getPushService?.();
         if (pushService) {
-          const pushTurns = outboundTurns.filter((turn) =>
-            isConnectorDeliverable(persistenceContext.outputCommitDecisions?.[turn.catId]),
-          );
           const assistantText = (
-            outboundTurns.length > 0
-              ? flattenTurnTextParts(pushTurns)
-              : isConnectorDeliverable(persistenceContext.outputCommitDecisions?.[primaryCat])
-                ? flattenTextParts(collectedTextParts)
-                : ''
+            outboundTurns.length > 0 ? flattenTurnTextParts(outboundTurns) : flattenTextParts(collectedTextParts)
           ).trim();
-          const hasKnownUndeliverableOutput = Object.values(persistenceContext.outputCommitDecisions ?? {}).some(
-            (decision) => !isConnectorDeliverable(decision),
-          );
-          if (!hasKnownUndeliverableOutput || assistantText.length > 0) {
+          {
             const needsDecision = assistantText.length > 0 && shouldMarkDecisionNotification(assistantText);
             const catNames = targetCats.join(', ');
             void pushService
@@ -5298,7 +4576,7 @@ export class QueueProcessor {
             error: errMsg,
           });
         }
-        if (exposeFailure && !entry.execution.freshnessSupplementId) {
+        if (exposeFailure) {
           socketManager.broadcastAgentMessage(
             {
               type: 'error',
@@ -5336,19 +4614,12 @@ export class QueueProcessor {
       // cleanupStreamingOnFailure — onStreamEnd moves sessions from active →
       // pendingCleanup; cleanupPlaceholders only acts on pendingCleanup, so
       // calling it alone is a no-op when sessions are still active.
-      if (!entry.execution.freshnessClosureId && !entry.execution.freshnessSupplementId) {
-        await this.cleanupStreamingOnFailure(threadId, invocationId, streamStartPromise, log);
-      }
+      await this.cleanupStreamingOnFailure(threadId, invocationId, streamStartPromise, log);
 
       // R3 P2 fix (#873): Deliver error message to external IM so user sees
       // a reply instead of silence (mirrors the connector delivery error path).
       // R6 fix: timeout prevents adapter hang from pinning queue slot (Cloud P1).
-      if (
-        this.deps.outboundHook &&
-        !entry.execution.freshnessClosureId &&
-        !entry.execution.freshnessSupplementId &&
-        exposeFailure
-      ) {
+      if (this.deps.outboundHook && exposeFailure) {
         const ERROR_DELIVER_TIMEOUT_MS = this.deps.deliverTimeoutMs ?? 10_000;
         try {
           await Promise.race([
@@ -5411,10 +4682,6 @@ export class QueueProcessor {
           invocationTracker.completeByExecutionId?.(threadId, catId, invocationId);
         }
       }
-      // Close the supplement's own lifecycle before terminalizing its Queue row.
-      if (!processingReservationReplaced && !prestartClaimRestored) {
-        await this.terminalizeFreshnessSupplementCarrier(entry, invocationId, finalStatus, executionError);
-      }
       if (!processingReservationReplaced && !prestartClaimRestored) {
         try {
           const preReceiverUserCancel =
@@ -5452,42 +4719,6 @@ export class QueueProcessor {
           { threadId, queueEntryId: entry.id, invocationId },
           '[QueueProcessor] kept the exact Queue entry pending after a pre-start target became busy',
         );
-      }
-      if (entry.execution.freshnessClosureId && invocationId && this.deps.freshnessClosureStore) {
-        try {
-          const closure = await this.deps.freshnessClosureStore.get(entry.execution.freshnessClosureId);
-          if (closure?.status === 'running' && closure.activeAttempt?.invocationId === invocationId) {
-            const reason =
-              finalStatus === 'canceled_by_user' || finalStatus === 'canceled'
-                ? 'user_cancel'
-                : finalStatus === 'failed'
-                  ? 'provider_failure'
-                  : 'infrastructure';
-            const blocked = await this.deps.freshnessClosureStore.blockAttempt(closure.id, {
-              invocationId,
-              reason,
-              evidenceRefs: [`queue-final:${finalStatus}`],
-              now: Date.now(),
-            });
-            this.broadcastFreshnessClosure(blocked);
-            recordFreshnessClosureTransition('blocked');
-            await invocationRecordStore.update(invocationId, {
-              freshnessClosureId: blocked.id,
-              freshnessClosureStatus: blocked.status,
-            });
-            await this.deps.streamingHook?.onClosureBlocked?.(
-              threadId,
-              primaryCat as CatId,
-              blocked.blockedReason ?? reason,
-              invocationId,
-            );
-          }
-        } catch (err) {
-          log.error(
-            { err, threadId, entryId: entry.id, closureId: entry.execution.freshnessClosureId },
-            '[F254-E] failed to close unfinished queue attempt',
-          );
-        }
       }
       // F175 batch members settle through the same per-entry decision as the primary.
       const restorePreReceiverBatch =
@@ -5673,25 +4904,9 @@ export class QueueProcessor {
     deliveredTurnIndices?: Set<number>,
     preResolvedMeta?: ThreadMetaLike | undefined,
   ): Promise<void> {
-    const deliverableTurnEntries = outboundTurns.flatMap((turn, originalIndex) =>
-      isConnectorDeliverable(persistenceContext.outputCommitDecisions?.[turn.catId]) ? [{ turn, originalIndex }] : [],
-    );
+    const deliverableTurnEntries = outboundTurns.map((turn, originalIndex) => ({ turn, originalIndex }));
     const finalContent =
-      outboundTurns.length > 0
-        ? flattenTurnTextParts(deliverableTurnEntries.map(({ turn }) => turn))
-        : isConnectorDeliverable(persistenceContext.outputCommitDecisions?.[primaryCat])
-          ? flattenTextParts(collectedTextParts)
-          : '';
-    const outputDecisionEntries = Object.entries(persistenceContext.outputCommitDecisions ?? {});
-    const supersededOutput = outputDecisionEntries.find(
-      (entry): entry is [string, Extract<OutputCommitDecision, { kind: 'superseded_positive_stale' }>] =>
-        entry[1].kind === 'superseded_positive_stale',
-    );
-    const blockedOutput = outputDecisionEntries.find(
-      (entry): entry is [string, Extract<OutputCommitDecision, { kind: 'blocked_known_closure' }>] =>
-        entry[1].kind === 'blocked_known_closure',
-    );
-    const hasKnownUndeliverableOutput = outputDecisionEntries.some(([, decision]) => !isConnectorDeliverable(decision));
+      outboundTurns.length > 0 ? flattenTurnTextParts(outboundTurns) : flattenTextParts(collectedTextParts);
 
     // Finalize streaming — ensure start completed before ending
     if (this.deps.streamingHook) {
@@ -5702,19 +4917,9 @@ export class QueueProcessor {
           new Promise<void>((resolve) => setTimeout(resolve, STREAM_START_TIMEOUT_MS)),
         ]);
       }
-      if (blockedOutput && this.deps.streamingHook.onClosureBlocked) {
-        await this.deps.streamingHook
-          .onClosureBlocked(threadId, blockedOutput[0] as CatId, blockedOutput[1].reason, invocationId)
-          .catch((err) => log.warn({ err, threadId }, '[QueueProcessor] blocked connector projection failed'));
-      } else if (supersededOutput && this.deps.streamingHook.onClosureCatchingUp) {
-        await this.deps.streamingHook
-          .onClosureCatchingUp(threadId, supersededOutput[0] as CatId, invocationId)
-          .catch((err) => log.warn({ err, threadId }, '[QueueProcessor] catch connector projection failed'));
-      } else {
-        await this.deps.streamingHook.onStreamEnd(threadId, finalContent, invocationId).catch((err) => {
-          log.warn({ err, threadId }, '[QueueProcessor] StreamingHook.onStreamEnd failed');
-        });
-      }
+      await this.deps.streamingHook.onStreamEnd(threadId, finalContent, invocationId).catch((err) => {
+        log.warn({ err, threadId }, '[QueueProcessor] StreamingHook.onStreamEnd failed');
+      });
     }
 
     const hasContent =
@@ -5847,7 +5052,7 @@ export class QueueProcessor {
           }
         });
       }
-    } else if (!hasKnownUndeliverableOutput) {
+    } else {
       // R6+R7 fix: deliver fallback FIRST (with timeout), then cleanup placeholder
       // only on success — preserves "thinking" card if delivery fails (Cloud P2).
       // Timeout prevents adapter hang from pinning queue slot (Cloud P1).

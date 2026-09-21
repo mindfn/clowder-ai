@@ -1,7 +1,7 @@
 'use client';
 
 import { type CapabilityTipContext, isCrossThreadProvenance, type LifecycleActiveRun } from '@cat-cafe/shared';
-import { type CSSProperties, memo, type ReactNode, useState } from 'react';
+import { type CSSProperties, memo, type ReactNode } from 'react';
 import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
@@ -12,7 +12,6 @@ import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
-import { apiFetch } from '@/utils/api-client';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
@@ -112,46 +111,6 @@ function exactReplyPreview(
   return { senderCatId, content: parent.content };
 }
 
-function getFreshnessNotice(message: ChatMessageType): { text: string; title?: string } | null {
-  const projection = message.extra?.freshnessSupplement;
-  const annotation = message.extra?.freshness;
-  if (projection) {
-    let text: string;
-    switch (projection.status) {
-      case 'pending':
-      case 'running':
-        return null;
-      case 'committed':
-        text = '已核对，并在下方追加了补充';
-        break;
-      case 'declined':
-        text = '已核对，无需补充';
-        break;
-      case 'failed':
-        text = '补充检查未完成';
-        break;
-    }
-    if (projection.budgetExhaustedCount) {
-      text += `；另有 ${projection.budgetExhaustedCount} 条更新超出自动检查上限`;
-    }
-    return {
-      text,
-      ...(projection.terminalReason ? { title: `状态原因：${projection.terminalReason}` } : {}),
-    };
-  }
-  if (annotation?.kind === 'published_with_unseen') {
-    const fact = `此回复生成期间有 ${annotation.generatedWithUnseen.length} 条新消息`;
-    return annotation.supplementFailureReason
-      ? { text: `${fact}；补充检查未能安排`, title: '状态原因：基础设施暂不可用' }
-      : { text: fact };
-  }
-  if (annotation?.kind === 'freshness_unknown') {
-    return null;
-  }
-  if (annotation?.kind === 'scan_pending') return null;
-  return null;
-}
-
 interface ChatMessageProps {
   message: ChatMessageType;
   threadId?: string;
@@ -239,7 +198,6 @@ function ChatMessageContent({
   const crossThreadSourceThreadId = isCrossThreadProvenance(candidateSourceThreadId, renderThreadId)
     ? candidateSourceThreadId
     : undefined;
-  const [retryingClosureId, setRetryingClosureId] = useState<string | null>(null);
   const isUser = message.type === 'user' && !message.catId;
   const isSystem = message.type === 'system';
   const isSummary = message.type === 'summary';
@@ -338,7 +296,6 @@ function ChatMessageContent({
       }
       return candidate.id < message.id;
     });
-  const freshnessNotice = getFreshnessNotice(message);
   const subexecutionEvents = message.metadata?.subexecutionEvents ?? [];
   // Fetch optimization only: the API reuses the canonical parser and decides
   // whether this exact message owns a signal. Never use this sentinel as intake.
@@ -363,11 +320,8 @@ function ChatMessageContent({
     ? parseDirection(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }), currentThreadId)
     : null;
 
-  // ADR-042 supplement speech is an ordinary additive reply. It may retain the
-  // provider's stream provenance, but that provenance must not turn its body
-  // into an internal CLI Output card.
   const isFailedLifecycleResponse = message.lifecycle?.kind === 'response' && message.lifecycle.status === 'failed';
-  const isStreamOrigin = message.origin === 'stream' && !message.extra?.supplement && !isFailedLifecycleResponse;
+  const isStreamOrigin = message.origin === 'stream' && !isFailedLifecycleResponse;
   // F194 Phase Z11 follow-up: ordinary post_msg speech is projected as a
   // separate callback bubble, but exact-key callback_final records can still
   // merge into the stream bubble as terminal updates. Projection exposes the
@@ -442,13 +396,6 @@ function ChatMessageContent({
     const canRenderCliDiagnostics = isError || (message.type === 'system' && Boolean(message.extra?.cliDiagnostics));
     const isTool = message.variant === 'tool';
     const isFollowup = message.variant === 'a2a_followup';
-    const freshnessClosure = message.extra?.freshnessClosure;
-    const freshnessClosureRecordedAt =
-      typeof freshnessClosure?.updatedAt === 'number' && Number.isFinite(freshnessClosure.updatedAt)
-        ? freshnessClosure.updatedAt
-        : undefined;
-    const isLegacyFreshnessClosure = freshnessClosure?.legacy === true;
-
     // F212 Phase B routing precedence (砚砚 P1-1 + 云端 codex P2-3, 2026-05-27):
     //   1. Classified CLI error (reasonCode in REASON_PALETTE) → CLI panel
     //   2. Timeout with no recognized classification → timeout panel
@@ -525,31 +472,6 @@ function ChatMessageContent({
               </span>
             )}
             {projectedSystemContent}
-            {freshnessClosureRecordedAt !== undefined && (
-              <span className="ml-2 text-xs opacity-75">
-                {isLegacyFreshnessClosure ? '历史责任 · ' : '记录于 '}
-                <time data-freshness-closure-recorded-at dateTime={new Date(freshnessClosureRecordedAt).toISOString()}>
-                  {formatTime(freshnessClosureRecordedAt)}
-                </time>
-                {isLegacyFreshnessClosure ? ' · 等待迁移核销' : ''}
-              </span>
-            )}
-            {freshnessClosure?.status === 'blocked' && currentThreadId && !isLegacyFreshnessClosure && (
-              <button
-                type="button"
-                disabled={retryingClosureId === freshnessClosure.closureId}
-                className="ml-3 rounded-md border border-default px-2 py-1 text-xs font-semibold text-primary disabled:opacity-50"
-                onClick={() => {
-                  setRetryingClosureId(freshnessClosure.closureId);
-                  void apiFetch(
-                    `/api/threads/${currentThreadId}/freshness-closures/${freshnessClosure.closureId}/retry`,
-                    { method: 'POST' },
-                  ).finally(() => setRetryingClosureId(null));
-                }}
-              >
-                {retryingClosureId === freshnessClosure.closureId ? '重试中…' : '重试'}
-              </button>
-            )}
             {isFollowup && (
               <span className="block mt-1 text-xs text-[var(--color-cocreator-primary)]">
                 输入 @猫名 跟进 来发起 follow-up
@@ -762,7 +684,7 @@ function ChatMessageContent({
 
   /* ── Cat (assistant) header ── */
   const catHeader =
-    catStyle || message.extra?.supplement || subexecutionEvents.length ? (
+    catStyle || subexecutionEvents.length ? (
       <div
         className="mb-1 flex flex-col gap-1 min-w-0"
         data-testid="message-header"
@@ -783,14 +705,6 @@ function ChatMessageContent({
               title="事故恢复：此消息曾被 F254 错误收起，现已按原作者、原时间和原文恢复"
             >
               事故恢复
-            </span>
-          )}
-          {message.extra?.supplement && message.extra?.turnExecution?.executionKind !== 'freshness_supplement' && (
-            <span
-              className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
-              title="这条消息补充上方关联的原回复"
-            >
-              对上条回复的补充
             </span>
           )}
           {subexecutionEvents.length > 0 && (
@@ -984,16 +898,6 @@ function ChatMessageContent({
         />
       )}
       <SubexecutionActivity events={subexecutionEvents} />
-      {freshnessNotice && !message.extra?.supplement && (
-        <div
-          data-testid="freshness-supplement-status"
-          role="status"
-          title={freshnessNotice.title}
-          className="mt-2 rounded-md border border-conn-blue-ring/60 bg-conn-blue-bg/60 px-2 py-1 text-xs text-[var(--semantic-info)]"
-        >
-          {freshnessNotice.text}
-        </div>
-      )}
       {showPawFeelDisposition ? <PawFeelDispositionDock messageId={message.id} /> : null}
       {message.isStreaming && !isStreamOrigin && (
         <span className="inline-block w-1.5 h-4 bg-current animate-pulse ml-0.5 rounded-full opacity-50" />

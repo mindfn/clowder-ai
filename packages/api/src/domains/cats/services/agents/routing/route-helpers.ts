@@ -31,7 +31,6 @@ import type { CloudDispatchProvenance } from '../../cloud-bridge/types.js';
 import { buildMessageMap, formatMessage } from '../../context/ContextAssembler.js';
 import { BRIEFING_TIMEZONE } from '../../duty-briefing/constants.js';
 import { formatPromptTime } from '../../format-time.js';
-import { isSameUserWaveSiblingReply } from '../../freshness/FreshnessRelevancePolicy.js';
 import type { DegradationResult } from '../../orchestration/DegradationPolicy.js';
 import { mapToPresentation } from '../../session/context-presentation.js';
 import {
@@ -79,6 +78,7 @@ import {
 import { legacyBatonHasSucceededReply, recoverableDeliveryBoundary } from './delivery-boundary-recovery.js';
 import type { HumanDispositionInvocationOrigin } from './human-disposition-invocation-origin.js';
 import { extractBatonContext, formatNavigationHeader, summarizeActiveTasks } from './navigation-context.js';
+import { isSameUserWaveSiblingReply } from './same-user-wave-sibling.js';
 import { projectRankedSource, rankArtifactSources, selectDirectiveSources } from './source-ranking.js';
 import { resolveReachableArtifactRefs } from './source-reachability.js';
 
@@ -409,12 +409,6 @@ export interface RouteOptions {
     | undefined;
   /** F254 Phase E stable sibling-exclusion identity for one parallel fan-out. */
   parallelBatchId?: string | undefined;
-  /** F254 Phase E typed queue adoption proof for this route execution. */
-  freshnessClosureId?: string | undefined;
-  freshnessClosureRequiredMessageIds?: readonly string[] | undefined;
-  freshnessSupplementId?: string | undefined;
-  freshnessSupplementRequiredMessageIds?: readonly string[] | undefined;
-  /** ADR-042 provider/callback hard boundary for an automatic supplement. */
   toolExecutionPolicy?: ToolExecutionPolicy | undefined;
   /** F153 Phase E: Root route span — invocation spans become children of this. */
   routeSpan?: import('@opentelemetry/api').Span | undefined;
@@ -429,39 +423,6 @@ export interface RouteOptions {
    *  Separate from frustrationAutoIssueEligible because A2A/multi-mention callbacks
    *  suppress frustration issues but still need verdict-pass handoff guards. */
   verdictPassWarningEnabled?: boolean | undefined;
-  /** F254 B3: Freshness re-invoke enqueue — called when doneMsg.metadata.freshnessReinvoke.shouldReinvoke
-   *  is true. Enqueues a new invocation for the same (cat, thread) to address unseen messages. */
-  freshnessReinvokeEnqueue?:
-    | ((entry: {
-        threadId: string;
-        userId: string;
-        ownerAuthProvenance: OwnerAuthProvenance;
-        content: string;
-        from: { kind: 'agent'; catId: string };
-        sourceCategory: 'freshness';
-        targetCats: string[];
-        autoExecute: true;
-        priority: 'normal';
-        intent: 'execute';
-        idempotencyKey?: string;
-        /** Closure successors must ignore the attempt that is currently processing while still coalescing queued duplicates. */
-        dedupeProcessing?: boolean;
-        freshnessClosureId?: string;
-        freshnessSupplementId?: string;
-        freshnessSupplementLineageId?: string;
-        freshnessSupplementSeq?: 1 | 2;
-        readOnlyToolPolicy?: ToolExecutionPolicy;
-        /** Notice IDs that triggered this re-invoke (for event log correlation) */
-        freshnessContext: {
-          sourceNoticeIds: string[];
-          senders: string[];
-          reason: string;
-        };
-      }) =>
-        | undefined
-        | { outcome?: 'enqueued' | 'full' | string }
-        | Promise<undefined | { outcome?: 'enqueued' | 'full' | string }>)
-    | undefined;
 }
 
 /**

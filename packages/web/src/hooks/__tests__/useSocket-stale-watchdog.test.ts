@@ -183,45 +183,6 @@ describe('useSocket stale-invocation watchdog', () => {
     container.remove();
   });
 
-  it('hydrates active freshness closure projections independently of the stale-invocation watchdog', async () => {
-    const onMessage = vi.fn();
-    mockApiFetch.mockImplementation(async (path: string) => ({
-      ok: true,
-      json: async () =>
-        path.endsWith('/freshness-closures')
-          ? {
-              closures: [
-                {
-                  type: 'freshness_closure',
-                  closureId: 'closure-1',
-                  catId: 'opus-47',
-                  status: 'catching_up',
-                  updatedAt: 123,
-                },
-              ],
-            }
-          : { activeInvocations: [] },
-    }));
-
-    act(() => {
-      root.render(React.createElement(HookWrapper, { callbacks: { onMessage }, threadId: 'thread-1' }));
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/threads/thread-1/freshness-closures');
-    expect(onMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'system_info',
-        catId: 'opus-47',
-        threadId: 'thread-1',
-        timestamp: 123,
-      }),
-    );
-    expect(queueProbeCalls()).toHaveLength(0);
-  });
-
   it('probes /queue and clears stale slots when active thread has been streaming ≥3 minutes', async () => {
     // Server says no active invocations — cats finished, done event was dropped.
     mockApiFetch.mockResolvedValue({

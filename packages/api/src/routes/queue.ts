@@ -1139,7 +1139,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
       // F122B B6 P2: Clean up completion hook to prevent leak when entry removed before execution
       queueProcessor.unregisterEntryCompleteHook?.(entryId);
-      await queueProcessor.finalizeRemovedEntry?.(removed, 'user_cancel');
 
       await emitQueueUpdated(
         socketManager,
@@ -1802,7 +1801,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
 
       queueProcessor.unregisterEntryCompleteHook?.(claimed.id);
-      await queueProcessor.finalizeRemovedEntry?.(claimed, 'user_cancel');
       cleared.push(claimed);
     }
     await emitQueueUpdated(
@@ -1987,7 +1985,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           continue;
         }
         queueProcessor.unregisterEntryCompleteHook?.(claimed.id);
-        await queueProcessor.finalizeRemovedEntry?.(claimed, 'user_cancel');
       }
       await emitQueueUpdated(
         socketManager,

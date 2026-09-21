@@ -45,8 +45,6 @@ export const ACTION_SUCCESSOR_MODE = 'action_successor.mode';
 // --- F174 Phase D1: callback auth failure attributes ---
 export const CALLBACK_TOOL = 'callback.tool';
 export const CALLBACK_REASON = 'callback.reason';
-/** Bounded F254 relevance suppressions; values come from FreshnessRelevanceReason. */
-export const FRESHNESS_RELEVANCE_REASON = 'freshness.relevance_reason';
 
 // --- F236 Track-1: anchor-first telemetry attributes ---
 /**

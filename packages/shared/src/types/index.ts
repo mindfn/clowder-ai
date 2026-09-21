@@ -583,23 +583,8 @@ export type {
   TrajectoryProvenance,
 } from './feat-trajectory.js';
 export { makeGitRefEntryId } from './feat-trajectory.js';
-// F254 Phase E: persistent catch-closure responsibility and output-commit decisions
-export type {
-  ClosureDraftBody,
-  FreshnessClosureAggregate,
-  FreshnessClosureAttempt,
-  FreshnessClosureBlockedReason,
-  FreshnessClosureDisposition,
-  FreshnessClosureProjection,
-  FreshnessClosureStatus,
-  FreshnessSupplementAggregate,
-  FreshnessSupplementFailureReason,
-  FreshnessSupplementProjection,
-  FreshnessSupplementStatus,
-  LegacyClosureMigrationOutcomeCounts,
-  OutputCommitDecision,
-  PublishedFreshnessAnnotation,
-} from './freshness-closure.js';
+// Output-commit truth for an answer turn
+export type { OutputCommitDecision, PublishedFreshnessAnnotation } from './freshness-closure.js';
 // F245: Friction Signal Eval types
 export type {
   ActionableFrictionCandidate,

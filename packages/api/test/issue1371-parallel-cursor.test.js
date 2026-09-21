@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { assembleIncrementalContext } from '../dist/domains/cats/services/agents/routing/route-helpers.js';
 import { routeParallel } from '../dist/domains/cats/services/agents/routing/route-parallel.js';
-import { InMemoryFreshnessClosureStore } from '../dist/domains/cats/services/freshness/closure/FreshnessClosureStore.js';
 import { FreshnessOutputCommitCoordinator } from '../dist/domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
 import { DeliveryCursorStore } from '../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js';
@@ -66,10 +65,7 @@ test('#1371: a completed parallel target commits its delivery boundary before it
     },
     messageStore,
     deliveryCursorStore,
-    freshnessOutputCommitCoordinator: new FreshnessOutputCommitCoordinator({
-      messageStore,
-      closureStore: new InMemoryFreshnessClosureStore(),
-    }),
+    freshnessOutputCommitCoordinator: new FreshnessOutputCommitCoordinator({ messageStore }),
     socketManager: { broadcastToRoom() {} },
   };
   const execution = (async () => {

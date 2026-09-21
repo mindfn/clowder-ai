@@ -33,10 +33,6 @@ export interface QueueLedgerExecution {
   ownerAuthProvenance: OwnerAuthProvenance;
   autoExecute: boolean;
   a2aParentInvocationId?: string;
-  freshnessClosureId?: string;
-  freshnessSupplementId?: string;
-  freshnessSupplementLineageId?: string;
-  freshnessSupplementSeq?: 1 | 2;
   readOnlyToolPolicy?: ToolExecutionPolicy;
   actionSuccessorFence?: ActionSuccessorFence;
   waitContinuationCarrier?: WaitContinuationCarrierV1;

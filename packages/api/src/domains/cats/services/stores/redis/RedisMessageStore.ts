@@ -69,7 +69,6 @@ import type {
   StoredMessage,
   StoredPluginMessage,
   StreamMetadataAugmentInput,
-  ThreadFrontierAppendResult,
   ThreadMessageReadOptions,
   ThreadObservedAppendResult,
   ThreadUnreadMessageProjection,
@@ -111,10 +110,7 @@ import {
 } from '../visibility.js';
 import { appendMessage } from './redis-message-append.js';
 import { CANCEL_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
-import {
-  appendMessageAndObservePriorFrontier,
-  appendMessageIfThreadFrontier,
-} from './redis-message-frontier-append.js';
+import { appendMessageAndObservePriorFrontier } from './redis-message-frontier-append.js';
 import {
   parseConnectorSourceField,
   safeParseContentBlocks,
@@ -1677,23 +1673,6 @@ export class RedisMessageStore {
   async getByIdempotencyKey(userId: string, threadId: string, idempotencyKey: string): Promise<StoredMessage | null> {
     const messageId = await this.redis.get(MessageKeys.idempotency(userId, threadId, idempotencyKey));
     return messageId ? this.getById(messageId) : null;
-  }
-
-  async appendIfThreadFrontier(
-    msg: AppendMessageInput,
-    expectedLatestMessageId: string | null,
-  ): Promise<ThreadFrontierAppendResult> {
-    const canonical = canonicalizeAppendMessageInput(msg);
-    await this.ensureVisibilityMigrated(canonical.threadId ?? DEFAULT_THREAD_ID);
-    const result = await appendMessageIfThreadFrontier({
-      redis: this.redis,
-      message: msg,
-      expectedLatestMessageId,
-      ttlSeconds: this.ttlSeconds,
-      loadById: (messageId) => this.getById(messageId),
-      ...(this.onAppend ? { onAppend: this.onAppend } : {}),
-    });
-    return result;
   }
 
   async appendAndObservePriorFrontier(msg: AppendMessageInput): Promise<ThreadObservedAppendResult> {

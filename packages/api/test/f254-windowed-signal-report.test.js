@@ -31,14 +31,6 @@ function queueRecord(overrides = {}) {
 describe('F254 measurement-valid windowed signal projection', () => {
   it('fails source maturity closed without discarding mandatory structural fixtures', async () => {
     const provider = new FreshnessReplayProviderImpl({
-      store: {
-        async listUpdatedBetween() {
-          return [];
-        },
-        async listAllSupplements() {
-          throw new Error('supplement unavailable');
-        },
-      },
       fixtureRoot,
       queueLifecycleSource: {
         async listOwnerDurableEntries() {
@@ -63,9 +55,7 @@ describe('F254 measurement-valid windowed signal projection', () => {
     );
     assert.equal(replay.samples.length, 8);
     assert.equal(replay.measurementMaturity.status, 'blocked');
-    assert.deepEqual(replay.measurementMaturity.sources.legacy_closures, { status: 'complete' });
     assert.equal(replay.measurementMaturity.sources.queue_custody.status, 'unavailable');
-    assert.equal(replay.measurementMaturity.sources.freshness_supplements.status, 'unavailable');
     assert.equal(replay.measurementMaturity.sources.attention_events.status, 'unavailable');
   });
 
@@ -73,7 +63,6 @@ describe('F254 measurement-valid windowed signal projection', () => {
     const signals = buildFreshnessWindowedSignals({
       window,
       queueRecords: [queueRecord({ lastUpdatedAt: 1_600, firstSeenAt: 1_500, handledAt: 1_600, terminalState: true })],
-      supplements: [],
       attentionEvents: [],
     });
     assert.equal(signals.queue.seenCount, 1);
@@ -88,58 +77,14 @@ describe('F254 measurement-valid windowed signal projection', () => {
     const signals = buildFreshnessWindowedSignals({
       window,
       queueRecords: [queueRecord({ createdAt: 100, lastUpdatedAt: 900, handledAt: 900, terminalState: true })],
-      supplements: [
-        {
-          id: 'supplement-legacy-old',
-          lineageId: 'lineage-old',
-          sequence: 1,
-          originalMessageId: 'message-old',
-          userId: 'user-1',
-          threadId: 'thread-1',
-          catId: 'codex-sol',
-          status: 'committed',
-          requiredMessageIds: [],
-          requiredFrontierMessageId: 'message-old',
-          replayUnsafeToolNames: [],
-          revision: 2,
-          createdAt: 100,
-          updatedAt: 900,
-        },
-      ],
       attentionEvents: [],
     });
     assert.equal(signals.queue.entryTargetCount, 0);
     assert.equal(signals.queue.legacyUntimedCount, 0);
-    assert.equal(signals.supplements.lifecycles.length, 0);
-    assert.equal(signals.supplements.legacyUntimedCount, 0);
   });
 
-  it('blocks publication when untimed History dispatch and Supplement activity overlap the window', async () => {
-    const supplement = {
-      id: 'supplement-legacy-current',
-      lineageId: 'lineage-current',
-      sequence: 1,
-      originalMessageId: 'message-current',
-      userId: 'user-1',
-      threadId: 'thread-1',
-      catId: 'codex-sol',
-      status: 'running',
-      requiredMessageIds: ['message-update'],
-      requiredFrontierMessageId: 'message-update',
-      replayUnsafeToolNames: [],
-      revision: 2,
-      createdAt: 900,
-      updatedAt: 1_500,
-    };
+  it('blocks publication when an untimed History dispatch overlaps the window', async () => {
     const provider = new FreshnessReplayProviderImpl({
-      store: {
-        async listUpdatedBetween() {
-          return [];
-        },
-        async listAllSupplements() {
-          return [supplement];
-        },
-      },
       fixtureRoot,
       queueLifecycleSource: {
         async listOwnerDurableEntries() {
@@ -174,9 +119,6 @@ describe('F254 measurement-valid windowed signal projection', () => {
       { ownerUserId: 'user-1' },
     );
     assert.equal(replay.measurementMaturity.status, 'blocked');
-    assert.deepEqual(replay.measurementMaturity.reasons, [
-      'queue_custody:legacy_untimed_lifecycles=1',
-      'freshness_supplements:legacy_untimed_lifecycles=1',
-    ]);
+    assert.deepEqual(replay.measurementMaturity.reasons, ['queue_custody:legacy_untimed_lifecycles=1']);
   });
 });

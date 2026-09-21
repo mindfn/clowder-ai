@@ -25,7 +25,7 @@ export interface EmptyResponseLifecycleNotice {
 function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderContext = {}): boolean {
   const hasTextContent = message.content.trim().length > 0;
   const hasBlocks = Boolean(message.contentBlocks?.length);
-  const isStreamOrigin = message.origin === 'stream' && !message.extra?.supplement;
+  const isStreamOrigin = message.origin === 'stream';
   const mergedCliStdout = message.extra?.stream?.cliStdout;
   const mergedSpeechContent = message.extra?.stream?.speechContent;
   const cachedSpeechStdout =
@@ -91,7 +91,6 @@ export function doesAssistantMessageRenderBubble(
       message.metadata?.subexecutionEvents?.length ||
       hasCrossThreadSource ||
       message.extra?.freshness ||
-      message.extra?.freshnessSupplement ||
       message.extra?.turnExecution ||
       message.extra?.auxiliaryTurnExecutions?.length,
   );

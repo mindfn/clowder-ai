@@ -25,7 +25,7 @@ function message(content, timestamp, overrides = {}) {
   };
 }
 
-describe('RedisMessageStore F254 conditional append', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
+describe('RedisMessageStore unconditional publish boundary', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
   let redis;
   let store;
   let MessageKeys;
@@ -75,7 +75,6 @@ describe('RedisMessageStore F254 conditional append', { skip: redisIsolationSkip
     assert.equal(result.priorFrontierMessageId, queued.id);
     assert.equal(result.idempotent, false);
     assert.deepEqual(result.message.extra?.freshness, {
-      kind: 'scan_pending',
       priorFrontierMessageId: queued.id,
     });
     assert.equal((await store.getById(result.message.id)).content, 'published answer');
@@ -187,55 +186,7 @@ describe('RedisMessageStore F254 conditional append', { skip: redisIsolationSkip
     );
   });
 
-  it('linearizes compare, idempotency claim, hash, and indexes in one operation', async () => {
-    const trigger = await store.append(message('question', 100));
-    const racing = await store.append(message('new information', 150));
-    const candidate = message('answer', 200, {
-      catId: 'codex-sol',
-      origin: 'stream',
-      idempotencyKey: 'freshness-closure:closure-1:final',
-    });
-
-    const lost = await store.appendIfThreadFrontier(candidate, trigger.id);
-    assert.deepEqual(lost, { kind: 'frontier_advanced', actualLatestMessageId: racing.id });
-    assert.equal(await store.getByIdempotencyKey('user-1', 'thread-1', candidate.idempotencyKey), null);
-
-    const won = await store.appendIfThreadFrontier(candidate, racing.id);
-    assert.equal(won.kind, 'committed');
-    const retry = await store.appendIfThreadFrontier({ ...candidate, content: 'duplicate' }, trigger.id);
-    assert.equal(retry.kind, 'committed');
-    assert.equal(retry.message.id, won.message.id);
-    assert.deepEqual(
-      (await store.getByThreadAfter('thread-1', trigger.id, 10, 'user-1')).map((entry) => entry.id),
-      [racing.id, won.message.id],
-    );
-    assert.equal((await store.getByThread('thread-1')).filter((item) => item.catId === 'codex-sol').length, 1);
-  });
-
-  it('lets only one of two different finals commit against the same frontier', async () => {
-    const trigger = await store.append(message('question', 100));
-    const [left, right] = await Promise.all([
-      store.appendIfThreadFrontier(
-        message('left', 200, {
-          catId: 'codex-sol',
-          origin: 'stream',
-          idempotencyKey: 'closure-left',
-        }),
-        trigger.id,
-      ),
-      store.appendIfThreadFrontier(
-        message('right', 200, {
-          catId: 'opus48',
-          origin: 'stream',
-          idempotencyKey: 'closure-right',
-        }),
-        trigger.id,
-      ),
-    ]);
-    assert.deepEqual([left.kind, right.kind].sort(), ['committed', 'frontier_advanced']);
-  });
-
-  it('validates the visibility allocator before conditional append side effects', async () => {
+  it('validates the visibility allocator before any publish side effects', async () => {
     const trigger = await store.append(message('question', 100));
     const candidate = message('must not publish', 200, {
       catId: 'codex-sol',

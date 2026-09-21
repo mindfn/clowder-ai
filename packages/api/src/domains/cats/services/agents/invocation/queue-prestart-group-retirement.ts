@@ -6,7 +6,6 @@ interface RetirementLogger {
 }
 
 export interface PrestartGroupRetirementDeps {
-  finalizeSupplement(entry: QueueEntry): Promise<boolean>;
   messageStore?: Pick<IMessageStore, 'markCanceled'>;
   shouldCancelMessage(entry: QueueEntry, messageId: string): boolean;
   commitCarrier(entry: QueueEntry): Promise<boolean>;
@@ -70,7 +69,6 @@ export async function terminalizePrestartProcessingGroup(
 ): Promise<boolean> {
   const terminalizedMessageIds = new Set<string>();
   for (const carrier of carriers) {
-    if (!(await deps.finalizeSupplement(carrier))) return false;
     if (!(await terminalizeMessages(carrier, deps, terminalizedMessageIds))) return false;
     try {
       if (!(await deps.commitCarrier(carrier))) throw new Error('ledger state changed');

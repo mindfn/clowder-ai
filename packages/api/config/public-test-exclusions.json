@@ -18,12 +18,12 @@
         "matchedFilesHash": "613776cced1400d311fd529f4b000a0c76c0306cd7e55fc9061b4115d8435a57"
       },
       "publicAudit": {
-        "reviewedOn": "2026-09-18",
-        "sourceHead": "2cab8ae174f4c6bf72bbe978617e56fc43290b8b",
+        "reviewedOn": "2026-09-22",
+        "sourceHead": "3554d431c235c062dab4b8db7dbb9504268c28dd",
         "publicHead": "94d9d7784ea58d4f21c42204741f545844c835fc",
         "status": "resource_contract",
-        "matchedFileCount": 66,
-        "matchedFilesHash": "d2015b8bcb0fb4568ada3e1e2d7bde20debb50a7d15b79833351eacd50a7a31e"
+        "matchedFileCount": 64,
+        "matchedFilesHash": "9cc493aac821c7596e66c5502232e19c414eaf22f2c2f28680432735ed00b02a"
       }
     },
     {

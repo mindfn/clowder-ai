@@ -4,7 +4,6 @@ import type {
   ContextAttachment,
   CrossThreadCoordination,
   CustodyOfferV1,
-  FreshnessSupplementProjection,
   LifecycleActiveRun,
   LifecycleAppendAction,
   LifecycleStoredMessageMetadata,
@@ -357,30 +356,9 @@ export interface ChatMessage {
       invocationId?: string;
     };
     /** F254 Phase E: identity-bound catch projection, rebuilt from closure truth. */
-    freshnessClosure?: {
-      closureId: string;
-      status: 'catching_up' | 'blocked';
-      sourceInvocationId?: string;
-      sourceMessageId?: string;
-      turnInvocationId?: string;
-      originTriggerMessageId?: string | null;
-      blockedReason?: string;
-      replayUnsafeToolNames?: string[];
-      updatedAt?: number;
-      /** Shared schema guarantees null origin only for pre-lineage legacy data. */
-      legacy?: boolean;
-    };
     /** ADR-042 exact-boundary fact attached to every glass-box-published answer. */
     freshness?: PublishedFreshnessAnnotation;
     /** ADR-042 additive reply provenance; separate from recovery provenance. */
-    supplement?: {
-      lineageId: string;
-      supplementId: string;
-      seq: 1 | 2;
-      originalMessageId: string;
-    };
-    /** Durable supplement lifecycle projected onto the published original. */
-    freshnessSupplement?: FreshnessSupplementProjection;
     /** Fresh source created by an owner-authorized cloud delivery retry. */
     cloudBridgeRetry?: import('@cat-cafe/shared').CloudBridgeRetryV1;
     /** F264 Gap F: content-free message recall truth projected for the owner timeline. */
@@ -406,7 +384,7 @@ export interface ChatMessage {
      * pipeline race; without marker it ends up visually after the bubble it
      * should precede.
      */
-    systemKind?: 'a2a_routing' | 'context_briefing' | 'freshness_closure';
+    systemKind?: 'a2a_routing' | 'context_briefing';
     /** Machine-readable A2A route metadata. The visible pill text is human-readable; this survives F5. */
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string; routing?: A2ARoutingProjection };
     /** F254 incident salvage: durable provenance for a message restored at its original time. */

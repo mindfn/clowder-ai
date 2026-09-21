@@ -318,10 +318,7 @@ function mergeMessageExtra(
     // F212 Phase B: diagnostics outlive one live event and must survive hydration.
     cliDiagnostics: pick('cliDiagnostics'),
     governanceBlocked: pick('governanceBlocked'),
-    freshnessClosure: pick('freshnessClosure'),
     freshness: pick('freshness'),
-    supplement: pick('supplement'),
-    freshnessSupplement: pick('freshnessSupplement'),
     cloudBridgeRetry: pick('cloudBridgeRetry'),
     recall: pick('recall'),
     coordination: pick('coordination'),
@@ -1179,8 +1176,6 @@ export function useChatHistory(threadId: string) {
                 cliDiagnostics?: CliDiagnostics;
                 recovery?: NonNullable<ChatMessageData['extra']>['recovery'];
                 freshness?: NonNullable<ChatMessageData['extra']>['freshness'];
-                supplement?: NonNullable<ChatMessageData['extra']>['supplement'];
-                freshnessSupplement?: NonNullable<ChatMessageData['extra']>['freshnessSupplement'];
                 messageBundle?: NonNullable<ChatMessageData['extra']>['messageBundle'];
                 semanticEvent?: ProviderSemanticEvent;
               };
@@ -1252,8 +1247,6 @@ export function useChatHistory(threadId: string) {
                     m.extra?.targetCats ||
                     m.extra?.recovery ||
                     m.extra?.freshness ||
-                    m.extra?.supplement ||
-                    m.extra?.freshnessSupplement ||
                     m.extra?.messageBundle ||
                     m.extra?.semanticEvent ||
                     cliDiag;
@@ -1274,8 +1267,6 @@ export function useChatHistory(threadId: string) {
                       ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
                       ...(m.extra?.recovery ? { recovery: m.extra.recovery } : {}),
                       ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
-                      ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),
-                      ...(m.extra?.freshnessSupplement ? { freshnessSupplement: m.extra.freshnessSupplement } : {}),
                       ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),
                       ...(m.extra?.semanticEvent ? { semanticEvent: m.extra.semanticEvent } : {}),
                       ...(cliDiag ? { cliDiagnostics: cliDiag } : {}),

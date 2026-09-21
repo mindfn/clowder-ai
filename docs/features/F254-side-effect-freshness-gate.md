@@ -5,13 +5,39 @@ related_decisions: [040, 041, 042]
 topics: [freshness, glass-box, supplement, inbox-notice, runtime-descriptor, side-effect-gate, codex-app-server, lifecycle, liveness, ax]
 doc_kind: spec
 created: 2026-06-27
-updated: 2026-09-20
+updated: 2026-09-22
 tips_exempt: F254's automatic freshness runtime and eval-measurement correctness surfaces add no user action, setting, or discoverable capability.
 ---
 
 # F254: Side-Effect Freshness Gate — 副作用出口 freshness 拦截
 
-> **Status**: partially superseded — **Phase A HELD + Phase B1 MCP piggyback + Phase B2 hold reminder + D1.2 Queue seen/handled ownership are retired by F117/#1398**; exact output-commit closure, glass-box supplements, provider-native freshness evaluation and honest carrier precision remain independently owned here. Live delivery capability follows each member's canonical `carrier`; `activeInvocationGuidance` is a separate adapter capability and must not be inferred from freshness precision. | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
+> **Status**: partially superseded — **Phase A HELD + Phase B1 MCP piggyback + Phase B2 hold reminder + D1.2 Queue seen/handled ownership + ADR-042 glass-box supplements + Phase E output-commit closure + B3/B4 freshness re-invoke + Phase D output-commit scan are retired by F117/#1398**; the atomic publish path (one original, one exact-boundary frontier annotation), provider-native freshness evaluation and honest carrier precision remain independently owned here. Live delivery capability follows each member's canonical `carrier`; `activeInvocationGuidance` is a separate adapter capability and must not be inferred from freshness precision. | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
+
+> ⚠️ **Supplement retirement (2026-09-21, #1398)**：ADR-042 的 glass-box **supplement 复查已退役**，本文中关于 offer / claim / decline / `已核对，无需补充` 标记的段落是历史交付记录，不再描述 live contract。
+>
+> **为什么**：supplement 的职责是"让猫看到它作答期间到达的消息"。它建立在三个已经不存在的前提上——Phase A 的 HELD gate、Phase B1 的 MCP 拦截、以及推给 provider 主动读取——三者都已被 #1398 退休。而 F117 之后，忙碌目标的队列条目是 `owned_deferred_busy`（**deferred，不是丢弃**），槽位空出即由 drain 拾起，所以期间到达的消息本来就会被下一轮读到。再开一个补充载体只是重复队列已有的保证。
+>
+> **它还带来一个真实缺陷**：supplement 是一次完整的猫轮次，因而会被预先分配一个 `status:'processing'` 的 response 气泡；decline 时那个气泡无内容可填，于是同一个"无需补充"的结论被表达两次——一次是标记，一次是空气泡。
+>
+> 退役范围：不再 offer、不再入队复查 invocation；遗留标注降级为普通 committed 决策，不会留下永远 pending 的载体。**freshness 标注本身保留**（它描述的是"这条回复发布时世界是什么样"，与补充无关）。当时同批保留的 output-commit closure 载体已在同一 PR 的后续提交中退役，理由见下一条 banner。
+
+> ⚠️ **Closure carrier + B3/B4 re-invoke retirement (2026-09-21, #1398)**：Phase E 的 **output-commit closure 载体**与 **B3/B4 freshness re-invoke** 已退役。本文中关于 closure 开启 / 认领 / 阻塞 / 启动恢复 / legacy 迁移，以及"未读消息触发再叫一轮"的段落是历史交付记录，不再描述 live contract。
+>
+> **为什么（证据，不是判断）**：`openOrAdvance` —— 开启 closure 的唯一入口 —— 在生产代码里**零调用者**（只剩测试）。也就是说 closure 的生产端在 supplement 与 HELD gate 退役时就已经随之消失，留下的 1,700 行只在"恢复、对账、迁移一个永远不会被创建的载体"。B3/B4 同形：决策仍在每轮结束时计算并写入 `metadata.freshnessReinvoke`，但它的**读者在路由层被删除后为零**。
+>
+> **遗留数据**：运行实例（11 万条消息）与验收实例的只读扫描各返回 **0 个 `freshness:closure:*` 键**，因此 legacy 迁移工具随载体一同退役——它没有可迁移的对象。
+>
+> **保留的部分**：发布路径本身（`appendAndObservePriorFrontier` 原子落库 + `extra.freshness` 精确边界标注）不变。该标注的 `priorFrontierMessageId` 由落库操作自己写入，web 的 bubble-projection 依赖它排序；而扫描只决定标注的 `kind`，且 `committed_fresh` 与 `committed_degraded_unknown` 在全部 5 处消费点被同等对待——**没有任何分支读它**。
+
+> ⚠️ **Output-commit scan retirement (2026-09-22, #1398)**：Phase D 的**出口 freshness 扫描**已退役。本文中关于 `fresh` / `freshness_unknown` 判定、`committed_degraded_unknown` 降级决策、以及 `checkStreamOutputFreshness` / `checkFreshnessForPostMessage` / `FreshnessGateService` / `FreshnessNoticeService` 的段落是历史交付记录，不再描述 live contract。
+>
+> **为什么（证据，不是判断）**：扫描每轮跑一次，唯一净产出是把 `extra.freshness.kind` 改写成 `fresh` 或 `freshness_unknown`。而 (1) API 侧 `committed_fresh` 与 `committed_degraded_unknown` 在全部 5 处消费点是 `A || B` 同等对待，没有一处分支区分；(2) web 时间线只读 `priorFrontierMessageId`，那个字段由 `appendAndObservePriorFrontier` 在原子落库那一刻写入，**根本不经过扫描**。也就是说：一次 Redis 走查换来一个没有读者的标签。
+>
+> **它原本要解决的问题现在由谁负责**：未读输入只有一个持久 owner —— InvocationQueue。忙碌目标的条目是 deferred 而不是丢弃，下一轮 drain 自然读到。扫描诞生于这个保证还不存在的时代。
+>
+> **随之退役的**：不可能再产生的决策变体（`superseded_positive_stale` / `blocked_known_closure` / `committed_degraded_unknown`）、compare-and-append 提交路径（`appendIfThreadFrontier`，closure 专用）、connector 可投递性分支（现在每个 commit 都可投递）、web 里仍在请求已删除端点的 closure 水合，以及 gate / notice / re-invoke 的遥测计数器（生产者为零）。
+>
+> **保留的部分**：`extra.freshness` 退化为单一事实 —— `{ priorFrontierMessageId }`，由落库操作原子写入，供 bubble-projection 排序；解析层不再解析任何退役的 `kind`，遗留行按同一规则只取 frontier。**provider-native freshness 保留**：它不是死代码，而是在 codex app-server 这类支持 safe boundary 的载体上真正把"有 N 条未读"投递进正在进行的一轮。它的读取面从 604 行的 post-message gate 中抽出，落在 `freshness-unseen-source.ts`。
 
 > ⚠️ **Current ownership boundary (2026-09-20)**：本文中 `queued_seen` / `queued_handled` / per-target `TargetStatus`、`post_message` 强迫读取与 HELD escape hatch、以及 Queue receipt/reminder 的已勾选段落是历史交付记录，不再描述 live contract。Queue 当前只拥有 pending `targets[]`、顺序、author intent 与短 claim；完整 same-target read 是一次 actual dispatch adoption；普通 callback send 没有 freshness side-effect gate。当前投递真相源见 [F117 Phase D/F](F117-message-delivery-lifecycle.md) 与 [ADR-043](../decisions/043-queue-durable-single-ledger.md)。
 

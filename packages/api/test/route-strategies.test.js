@@ -916,12 +916,11 @@ describe('incremental current-message fallback integration', () => {
     }
   });
 
-  it('binds caller-folded Queue bodies and freshness-required bodies to the exact child', async () => {
+  it('binds caller-folded Queue bodies to the exact child', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const currentUserMessageId = '0000000000000020-000001-current0';
     const callerFolded = ['0000000000000018-000001-merged00', '0000000000000019-000001-batched0'];
-    const freshnessRequired = ['0000000000000021-000001-suppreq0', '0000000000000022-000001-closereq'];
 
     for (const [routeName, route] of [
       ['serial', routeSerial],
@@ -934,8 +933,6 @@ describe('incremental current-message fallback integration', () => {
         currentUserMessageId,
         parentInvocationId: 'inv-parent',
         persistedPromptMessageIds: callerFolded,
-        freshnessSupplementRequiredMessageIds: [freshnessRequired[0]],
-        freshnessClosureRequiredMessageIds: [freshnessRequired[1]],
         onPromptMessagesExposed: async (input) => {
           exposed.push(input);
         },
@@ -945,7 +942,7 @@ describe('incremental current-message fallback integration', () => {
       assert.equal(exposed.length, 1, routeName);
       assert.deepEqual(
         new Set(exposed[0].messageIds),
-        new Set([currentUserMessageId, ...callerFolded, ...freshnessRequired]),
+        new Set([currentUserMessageId, ...callerFolded]),
         `${routeName}: every persisted body folded into the prompt must share the exact child identity`,
       );
     }

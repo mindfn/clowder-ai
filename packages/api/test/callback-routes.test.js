@@ -5046,9 +5046,6 @@ describe('Callback Routes', () => {
 
   test('F254/F264: full queued read adopts only this target into the existing response', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const { checkFreshnessForPostMessage, createQueueChecker } = await import(
-      '../dist/domains/cats/services/freshness/checkFreshnessForPostMessage.js'
-    );
     const { InMemoryTurnExecutionStore } = await import(
       '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
     );
@@ -5085,18 +5082,6 @@ describe('Callback Routes', () => {
       invocationId,
     });
     const app = await createApp({ turnExecutionStore, queueProcessor: processor });
-    const freshnessDecision = await checkFreshnessForPostMessage({
-      userId: 'user-1',
-      catId: 'opus',
-      threadId: 'thread-queued-d12a',
-      invocationId,
-      toolName: 'provider_native_safe_boundary',
-      cursorStore: { getSeenCursor: async () => 'seen-cursor' },
-      messageStore: { getByThreadAfter: async () => [] },
-      queueChecker: createQueueChecker(invocationQueue, { parentInvocationId: invocationId }),
-    });
-    assert.equal(freshnessDecision.decision, 'held', 'queued current work must first surface as freshness');
-    assert.equal(freshnessDecision.reason, 'queued_messages_pending');
     const changedRunResponse = await app.inject({
       method: 'GET',
       url: '/api/callbacks/thread-context?responseMode=full',

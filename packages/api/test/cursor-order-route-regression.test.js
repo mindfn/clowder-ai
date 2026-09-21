@@ -957,21 +957,17 @@ describe('#1269 route: PATCH /read OFF→ON→OFF activation lifecycle', () => {
 });
 
 // ============================================================================
-// Sentinel notice lifecycle: real ThreadUnseenChecker → FreshnessNoticeService
+// Sentinel production: real ThreadUnseenChecker queue fallback
 // ============================================================================
 
-describe('#1200 R14: sentinel production lifecycle (checker → service → resolved)', () => {
-  it('queue fallback sentinel from real ThreadUnseenChecker resolves via checkHoldBallReminder', async () => {
+describe('#1200 R14: sentinel production (queue fallback → ordered cursor)', () => {
+  it('queue fallback sentinel from the real ThreadUnseenChecker sorts above the seen cursor', async () => {
     const { ThreadUnseenChecker } = await import('../dist/domains/cats/services/freshness/ThreadUnseenChecker.js');
-    const { FreshnessNoticeService } = await import(
-      '../dist/domains/cats/services/freshness/FreshnessNoticeService.js'
-    );
     const { cursorFor, parseCursor } = await import('../dist/domains/cats/services/stores/cursor.js');
 
     const threadId = 't-sentinel-lifecycle';
     const catId = 'opus';
     const userId = 'u-sentinel';
-    const invocationId = 'inv-sentinel-test';
 
     // Simulate: seen cursor at seq 5000 (allocator HWM ahead of clock)
     const seenSeq = Date.now() + 5000;
@@ -1000,81 +996,5 @@ describe('#1200 R14: sentinel production lifecycle (checker → service → reso
     const sentinelParsed = parseCursor(unseen.maxMessageId);
     assert.equal(sentinelParsed.id, '0', 'Production sentinel must use ID "0"');
     assert.ok(sentinelParsed.seq > seenSeq, 'Sentinel seq must exceed seen seq');
-
-    // --- Step 2: FreshnessNoticeService records the sentinel as notice_attached ---
-    const events = [];
-    const eventLog = {
-      append: async (e) => events.push(e),
-      getUnresolvedNotices: async () => events.filter((e) => e.kind === 'notice_attached'),
-    };
-    const stateStore = {
-      get: async () => null,
-      incrementToolCallCount: async () => 1,
-      recordNoticeDelivered: async () => {},
-    };
-
-    const service = new FreshnessNoticeService(stateStore, eventLog, checker);
-
-    const notice = await service.checkAndMaybeNotice({
-      invocationId,
-      threadId,
-      catId,
-      toolName: 'list_recent',
-      isReadOnly: true,
-    });
-    assert.ok(notice, 'Service must emit notice from queue fallback');
-    assert.equal(events.length, 1, 'Must record one notice_attached event');
-    assert.ok(events[0].maxCursor, 'Event must have maxCursor (v2)');
-
-    // --- Step 3: Simulate real delivery at same seq with a real message ID ---
-    // A real message queued earlier has a lower-timestamp ID (e.g. created 10s ago).
-    // After delivery, its visibilitySeq = sentinelParsed.seq (same allocator).
-    const realMsgId = `${String(Date.now() - 10000).padStart(16, '0')}-000001-abcdef12`;
-    const deliveryCursor = cursorFor({ id: realMsgId, visibilitySeq: sentinelParsed.seq });
-
-    // --- Step 4: checkHoldBallReminder with delivery cursor as seenCursor ---
-    const reminder = await service.checkHoldBallReminder({
-      invocationId,
-      threadId,
-      catId,
-      currentSeenCursor: deliveryCursor,
-    });
-
-    // The sentinel cursor must sort BELOW the delivery cursor (same seq, '0' < realMsgId)
-    // → notice is resolved → no reminder
-    assert.equal(
-      reminder,
-      null,
-      'Sentinel notice must resolve when seen cursor is at real delivery (same seq, real ID > "0")',
-    );
-
-    // Verify no notice_deferred was recorded (resolved = no deferred event)
-    const deferred = events.filter((e) => e.kind === 'notice_deferred');
-    assert.equal(deferred.length, 0, 'No notice_deferred when sentinel is resolved');
-  });
-
-  it('would FAIL if sentinel used generateSortableId (sorts above real delivery)', async () => {
-    // This test proves the fix is necessary by showing the OLD behavior.
-    // generateSortableId(syntheticSeq) produces an ID with syntheticSeq as timestamp,
-    // which sorts ABOVE a real message ID created at an earlier timestamp.
-    const { cursorFor, compareCursors } = await import('../dist/domains/cats/services/stores/cursor.js');
-    const { generateSortableId } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-
-    const syntheticSeq = Date.now() + 5001; // seenSeq + 1 (same as production)
-    const oldSentinelId = generateSortableId(syntheticSeq);
-    const oldSentinelCursor = cursorFor({ id: oldSentinelId, visibilitySeq: syntheticSeq });
-
-    // Real message created 10s ago (typical queue scenario)
-    const realMsgId = `${String(Date.now() - 10000).padStart(16, '0')}-000001-abcdef12`;
-    const deliveryCursor = cursorFor({ id: realMsgId, visibilitySeq: syntheticSeq });
-
-    // OLD behavior: sentinel with generateSortableId sorts ABOVE real delivery
-    const oldCmp = compareCursors(oldSentinelCursor, deliveryCursor);
-    assert.ok(oldCmp > 0, 'OLD sentinel (generateSortableId) sorts ABOVE real delivery — BUG');
-
-    // NEW behavior: sentinel with '0' sorts BELOW real delivery
-    const newSentinelCursor = cursorFor({ id: '0', visibilitySeq: syntheticSeq });
-    const newCmp = compareCursors(newSentinelCursor, deliveryCursor);
-    assert.ok(newCmp < 0, 'NEW sentinel ("0") sorts BELOW real delivery — FIXED');
   });
 });

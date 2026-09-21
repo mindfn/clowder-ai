@@ -1,9 +1,7 @@
-import type { FreshnessSupplementAggregate } from '@cat-cafe/shared';
 import type { FreshnessAttentionEvent } from '../../../domains/cats/services/freshness/FreshnessAttentionEventLog.js';
 import type {
   FreshnessAttentionSignalReport,
   FreshnessQueueLifecycleReport,
-  FreshnessSupplementLifecycleReport,
   FreshnessWindowedSignals,
 } from './freshness-replay-types.js';
 
@@ -83,59 +81,10 @@ function queueLifecycleReport(
   };
 }
 
-function supplementLifecycleReport(
-  supplements: readonly FreshnessSupplementAggregate[],
-  window: Window,
-): FreshnessSupplementLifecycleReport {
-  const lifecycles = supplements
-    .filter((item) => {
-      const terminal = item.status === 'committed' || item.status === 'declined' || item.status === 'failed';
-      const endedAt = item.terminalAt ?? (terminal ? item.updatedAt : undefined);
-      return item.createdAt < window.endMs && (endedAt ?? Infinity) >= window.startMs;
-    })
-    .map((item) => ({
-      supplementId: item.id,
-      threadId: item.threadId,
-      catId: item.catId,
-      createdAt: item.createdAt,
-      lastUpdatedAt: item.updatedAt,
-      ...(item.claimedAt === undefined ? {} : { claimedAt: item.claimedAt }),
-      ...(item.terminalAt === undefined ? {} : { terminalAt: item.terminalAt }),
-      status: item.status,
-      legacyUntimed:
-        item.updatedAt >= window.startMs &&
-        (((item.status === 'running' || item.status === 'committed' || item.status === 'declined') &&
-          item.claimedAt === undefined) ||
-          (item.status === 'failed' && item.createdAt < window.startMs && item.claimedAt === undefined) ||
-          ((item.status === 'committed' || item.status === 'declined' || item.status === 'failed') &&
-            item.terminalAt === undefined)),
-    }))
-    .sort((left, right) => left.createdAt - right.createdAt || left.supplementId.localeCompare(right.supplementId));
-  return {
-    offeredCount: lifecycles.filter((item) => inWindow(item.createdAt, window)).length,
-    claimedCount: lifecycles.filter((item) => inWindow(item.claimedAt, window)).length,
-    terminalCount: lifecycles.filter((item) => inWindow(item.terminalAt, window)).length,
-    committedCount: lifecycles.filter((item) => item.status === 'committed' && inWindow(item.terminalAt, window))
-      .length,
-    declinedCount: lifecycles.filter((item) => item.status === 'declined' && inWindow(item.terminalAt, window)).length,
-    failedCount: lifecycles.filter((item) => item.status === 'failed' && inWindow(item.terminalAt, window)).length,
-    unresolvedAtWindowEndCount: lifecycles.filter((item) => {
-      const terminal = item.status === 'committed' || item.status === 'declined' || item.status === 'failed';
-      const endedAt = item.terminalAt ?? (terminal ? item.lastUpdatedAt : undefined);
-      return item.createdAt < window.endMs && (endedAt ?? Infinity) >= window.endMs;
-    }).length,
-    budgetExhaustedCount: supplements.filter((item) => inWindow(item.budgetExhausted?.observedAt, window)).length,
-    legacyUntimedCount: lifecycles.filter((item) => item.legacyUntimed).length,
-    lifecycles,
-  };
-}
-
 function attentionSignalReport(events: readonly FreshnessAttentionEvent[]): FreshnessAttentionSignalReport {
   const counts: FreshnessAttentionSignalReport['counts'] = {};
   for (const event of events) {
-    const units =
-      event.kind === 'notice_implicit_acked' || event.kind === 'notice_deferred' ? event.noticeIds.length : 1;
-    counts[event.kind] = (counts[event.kind] ?? 0) + units;
+    counts[event.kind] = (counts[event.kind] ?? 0) + 1;
   }
   return { eventCount: events.length, counts };
 }
@@ -143,16 +92,13 @@ function attentionSignalReport(events: readonly FreshnessAttentionEvent[]): Fres
 export function buildFreshnessWindowedSignals(input: {
   window: Window;
   queueRecords: readonly FreshnessQueueLifecycleRecord[];
-  supplements: readonly FreshnessSupplementAggregate[];
   attentionEvents: readonly FreshnessAttentionEvent[];
 }): FreshnessWindowedSignals {
   const queue = queueLifecycleReport(input.queueRecords, input.window);
-  const supplements = supplementLifecycleReport(input.supplements, input.window);
   const attention = attentionSignalReport(input.attentionEvents);
   return {
     window: { ...input.window },
     queue,
-    supplements,
     attention,
     observedActivityCount:
       queue.admittedCount +
@@ -160,10 +106,6 @@ export function buildFreshnessWindowedSignals(input: {
       queue.handledCount +
       queue.withdrawnCount +
       queue.failedCount +
-      supplements.offeredCount +
-      supplements.claimedCount +
-      supplements.terminalCount +
-      supplements.budgetExhaustedCount +
       attention.eventCount,
   };
 }

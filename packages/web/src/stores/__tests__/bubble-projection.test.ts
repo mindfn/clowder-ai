@@ -145,7 +145,7 @@ describe('F194 Phase Z8 — projectCanonicalBubbles (AC-Z20)', () => {
       origin: 'stream',
       extra: {
         stream: { turnInvocationId: 'attempt-1' },
-        freshness: { kind: 'scan_pending', priorFrontierMessageId: source.id },
+        freshness: { priorFrontierMessageId: source.id },
       },
       lifecycle: {
         kind: 'response',
@@ -170,7 +170,7 @@ describe('F194 Phase Z8 — projectCanonicalBubbles (AC-Z20)', () => {
       origin: 'stream',
       extra: {
         stream: { turnInvocationId: 'attempt-2' },
-        freshness: { kind: 'scan_pending', priorFrontierMessageId: auxiliaryFailure.id },
+        freshness: { priorFrontierMessageId: auxiliaryFailure.id },
       },
       lifecycle: {
         kind: 'response',
