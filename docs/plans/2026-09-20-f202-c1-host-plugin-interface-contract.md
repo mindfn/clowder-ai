@@ -287,3 +287,42 @@ case 2「什么都不声明也不会收到自己的消息」、
 case 4「显式 opt-in 确实能拿回回声」（证明抑制是默认而非写死）、
 case 5 三例「拼错 / 字符串 / 显式 false 全部降级为静默」。
 
+## 11. 更正：「Host 有这条 HTTP 路由」≠「插件能调它」（2026-09-21，跨线 review 纠正）
+
+§9 里我写过「建 thread = `POST /api/threads`，已存在 ✅」。**这条是错的，撤回。**
+
+插件只能走 broker 的 `PluginToHostMethod`，够不到 Host 的 HTTP 路由。一手复核：
+
+```
+PluginToHostMethod  = messaging.send | appendElements | subscribe | read | ack | snapshot
+thread.* capability = thread.listMetadata, thread.readContent        ← 只读，无创建类
+plugin-sdk 的 thread 面 = 零命中
+```
+
+所以 operator 5 步流程里的第 2 步（取 thread）与第 3 步（建系统 thread），
+**用今天已发布的契约 + SDK 执行不了**。
+
+### 11.1 但这两步的存在前提被前提本身推翻了
+
+它们存在，是因为插件必须自己 bootstrap 自己的 thread。而 operator 给的前提是
+
+> 因为是固定的 thread 所以有固定的基于插件名的系统 id
+
+**固定 + 由插件标识推导 ⇒ Host 在激活时即可算出、确保存在、并把地址交给插件。**
+插件侧因此塌成"拿着激活时给的地址直接发"，第 2、3 步从流程里消失。
+
+**代价：零新增 `PluginToHostMethod`、零新 capability、零 README 披露。**
+且它与 §9.1 结尾那件"激活时签发已认证外部入站 handle"**是同一个动作**——
+确保身份 thread 存在 + 签发带转述人类授权的地址，一次做完，不是两套机制。
+
+### 11.2 仍然缺面的那一块（升 operator）
+
+`/new` 这类**显式创建任意 thread** 的命令，固定地址覆盖不了。
+支持它需要新增一个创建类方法 + capability，并会触发 plugins 仓的同意面披露闸。
+**这是往已发布公共面加东西，按 operator 自己定的规矩不自决；在他裁定前 plugins 侧不动 SDK 面。**
+
+### 11.3 次序（不可换）
+
+激活时地址签发 → plugins 侧切到 `message-subscription` → **然后才删** `ConnectorRouter` 等。
+否则删完之后 IM 里 @ 猫不再唤醒任何猫。
+
