@@ -305,6 +305,7 @@ export function createDormantPluginRuntimeComposition(
             threadStore: options.threadStore,
             bindingStore: options.threadBindingStore,
             ownerUserId: options.threadOwnerUserId,
+            projectPath: resolve(options.projectRoot),
           },
         }),
     ...(options.threadStore === undefined ||

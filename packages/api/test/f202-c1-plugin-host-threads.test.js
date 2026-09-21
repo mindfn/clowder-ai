@@ -6,6 +6,7 @@ let ThreadStore;
 let MemoryConnectorThreadBindingStore;
 
 const OWNER = 'owner-1';
+const PROJECT_ROOT = '/workspace/clowder-ai';
 
 beforeEach(async () => {
   ({ createPluginThreadHost } = await import('../dist/domains/plugin/plugin-thread-host.js'));
@@ -22,6 +23,7 @@ function hostOf(options = {}) {
     pluginId: options.pluginId ?? 'dev.clowder.fixture',
     pluginInstanceId: options.pluginInstanceId ?? 'instance-1',
     ownerUserId: OWNER,
+    projectPath: options.projectPath ?? PROJECT_ROOT,
     effectiveGrants: options.effectiveGrants ?? ['thread.listMetadata', 'thread.readContent'],
     threadStore,
     bindingStore,
@@ -78,6 +80,47 @@ describe('F202 C1 — plugin Host thread surface', () => {
       v: 1,
       pluginInstanceId: 'instance-1',
     });
+  });
+
+  test('a reinstalled plugin recovers its bound and system threads and can update them', async () => {
+    const threadStore = new ThreadStore();
+    const bindingStore = new MemoryConnectorThreadBindingStore();
+    const bound = await threadStore.ensureThread('legacy-bound-thread', 'Before reinstall');
+    const system = await threadStore.ensureThread('legacy-system-thread', 'Legacy system');
+    await threadStore.updatePluginOwnership(bound.id, { v: 1, pluginInstanceId: 'instance-before-reinstall' });
+    await threadStore.updatePluginOwnership(system.id, { v: 1, pluginInstanceId: 'instance-before-reinstall' });
+    await bindingStore.bind('dev.clowder.fixture', 'group-42', bound.id, OWNER);
+    await bindingStore.bind('dev.clowder.fixture', '__plugin_system_thread__', system.id, OWNER);
+
+    const reinstalled = hostOf({ pluginInstanceId: 'instance-after-reinstall', threadStore, bindingStore });
+
+    assert.equal((await reinstalled.host.findByKey('group-42'))?.id, bound.id);
+    assert.equal((await reinstalled.host.ensureByKey('group-42', { title: 'Ignored' })).id, bound.id);
+    assert.equal((await reinstalled.host.ensureSystemThread()).id, system.id);
+    assert.equal((await reinstalled.host.update(bound.id, { title: 'After reinstall' })).title, 'After reinstall');
+  });
+
+  test('unbind followed by ensure creates a fresh owner thread in the Host project', async () => {
+    const { host, threadStore } = hostOf();
+    const first = await host.ensureByKey('group-42', { title: 'First binding' });
+
+    assert.equal(await host.unbind('group-42'), true);
+    const second = await host.ensureByKey('group-42', { title: 'Second binding' });
+
+    assert.notEqual(second.id, first.id);
+    const stored = await threadStore.get(second.id);
+    assert.equal(stored?.createdBy, OWNER);
+    assert.equal(stored?.projectPath, PROJECT_ROOT);
+  });
+
+  test('create stores the owner and Host project path instead of default placeholders', async () => {
+    const { host, threadStore } = hostOf();
+
+    const created = await host.create({ title: 'Owned by operator' });
+    const stored = await threadStore.get(created.id);
+
+    assert.equal(stored?.createdBy, OWNER);
+    assert.equal(stored?.projectPath, PROJECT_ROOT);
   });
 
   test('reads are grant-gated and one plugin cannot mutate another plugin-owned thread', async () => {

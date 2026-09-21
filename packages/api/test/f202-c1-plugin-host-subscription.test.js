@@ -7,6 +7,7 @@ let createSubscriptionDelivery;
 let createMessagingStores;
 let MessageStore;
 let ThreadStore;
+let MemoryConnectorThreadBindingStore;
 
 const PLUGIN_ID = 'dev.clowder.subscription-fixture';
 const INSTANCE_ID = 'instance-subscription-1';
@@ -21,11 +22,15 @@ beforeEach(async () => {
   ({ createMessagingStores } = await import('../dist/domains/messaging/stores/factory.js'));
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
   ({ ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js'));
+  ({ MemoryConnectorThreadBindingStore } = await import(
+    '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js'
+  ));
 });
 
 function createFixture() {
   const messages = new MessageStore();
   const threads = new ThreadStore();
+  const bindings = new MemoryConnectorThreadBindingStore();
   const stores = createMessagingStores();
   const calls = [];
   let messaging;
@@ -52,6 +57,7 @@ function createFixture() {
       ownerUserId: OWNER,
       effectiveGrants,
       threadStore: threads,
+      bindingStore: bindings,
       messaging,
       delivery,
     });
@@ -65,6 +71,7 @@ function createFixture() {
       return messaging;
     },
     restart,
+    bindings,
     threads,
   };
 }
@@ -186,5 +193,20 @@ describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
           .host.subscribe({ threadId: ownThread.id, method: 'fixture.outbound', includeOwnMessages: 'true' }),
       (error) => error?.code === 'VALIDATION',
     );
+  });
+
+  test('a reinstalled plugin can subscribe to a legacy system-owned thread through its durable binding', async () => {
+    const h = createFixture();
+    const thread = await h.threads.ensureThread('legacy-plugin-thread', 'Legacy');
+    await h.threads.updatePluginOwnership(thread.id, { v: 1, pluginInstanceId: 'instance-before-reinstall' });
+    await h.bindings.bind(PLUGIN_ID, 'group-42', thread.id, OWNER);
+    const session = h.createSession();
+
+    await session.host.subscribe({ threadId: thread.id, method: 'fixture.outbound' });
+    await publish(h.messaging, thread.id, 'after reinstall');
+    await h.delivery.drain(thread.id);
+
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].params.threadId, thread.id);
   });
 });

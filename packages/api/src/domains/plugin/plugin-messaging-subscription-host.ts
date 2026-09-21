@@ -1,3 +1,4 @@
+import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
 import { MessagingError } from '../messaging/contract/host-types.js';
 import type { MessagingService } from '../messaging/messaging-service.js';
@@ -28,6 +29,7 @@ export interface PluginMessagingSubscriptionSessionDeps {
   readonly ownerUserId: string;
   readonly effectiveGrants: readonly string[];
   readonly threadStore: IThreadStore;
+  readonly bindingStore: IConnectorThreadBindingStore;
   readonly messaging: MessagingService;
   readonly delivery: Pick<SubscriptionDelivery, 'register' | 'unregister'>;
 }
@@ -79,7 +81,15 @@ export function createPluginMessagingSubscriptionSession(
   async function requireOwnedThread(threadId: string) {
     const thread = await deps.threadStore.get(threadId);
     if (!thread) throw new MessagingError('NOT_FOUND', `thread ${threadId} does not exist`);
-    if (thread.createdBy !== deps.ownerUserId && thread.pluginOwnership?.pluginInstanceId !== deps.pluginInstanceId) {
+    const bindings = await deps.bindingStore.getByThread(threadId);
+    const hasPluginBinding = bindings.some(
+      (binding) => binding.connectorId === deps.pluginId && binding.userId === deps.ownerUserId,
+    );
+    if (
+      thread.createdBy !== deps.ownerUserId &&
+      thread.pluginOwnership?.pluginInstanceId !== deps.pluginInstanceId &&
+      !hasPluginBinding
+    ) {
       throw new MessagingError('PERMISSION', `${deps.pluginId} cannot subscribe to thread ${threadId}`);
     }
     return thread;

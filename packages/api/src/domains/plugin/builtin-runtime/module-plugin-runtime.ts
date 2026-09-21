@@ -83,6 +83,7 @@ export interface ModulePluginRuntimeOptions {
     readonly threadStore: IThreadStore;
     readonly bindingStore: IConnectorThreadBindingStore;
     readonly ownerUserId: string;
+    readonly projectPath: string;
   };
   readonly messaging?: {
     readonly service: MessagingService;
@@ -183,6 +184,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             pluginId: packageRecord.pluginId,
             pluginInstanceId,
             ownerUserId: this.options.threads.ownerUserId,
+            projectPath: this.options.threads.projectPath,
             effectiveGrants,
             systemThreadTitle: packageRecord.manifest.name,
             threadStore: this.options.threads.threadStore,
@@ -196,6 +198,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             ownerUserId: this.options.messaging.ownerUserId,
             effectiveGrants,
             threadStore: this.options.messaging.threadStore,
+            bindingStore: this.options.messaging.bindingStore,
             messaging: this.options.messaging.service,
             delivery: this.options.messaging.delivery,
           })

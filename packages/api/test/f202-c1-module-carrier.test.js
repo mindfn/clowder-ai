@@ -381,7 +381,7 @@ test('start receives the caller-bound Host thread surface', async () => {
   const threadStore = new ThreadStore();
   const bindingStore = new MemoryConnectorThreadBindingStore();
   const host = hostOf([{ manifest: manifest(), rootDir }], {
-    threads: { threadStore, bindingStore, ownerUserId: 'owner-1' },
+    threads: { threadStore, bindingStore, ownerUserId: 'owner-1', projectPath: '/workspace/clowder-ai' },
   });
 
   await host.router.start('instance-0');
@@ -397,6 +397,8 @@ test('start receives the caller-bound Host thread surface', async () => {
     v: 1,
     pluginInstanceId: 'instance-0',
   });
+  assert.equal((await threadStore.get(entry.systemThreadId)).createdBy, 'owner-1');
+  assert.equal((await threadStore.get(entry.systemThreadId)).projectPath, '/workspace/clowder-ai');
 });
 
 test('start receives the caller-bound Host messaging surface', async () => {

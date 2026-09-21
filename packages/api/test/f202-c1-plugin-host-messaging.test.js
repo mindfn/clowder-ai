@@ -21,7 +21,8 @@ beforeEach(async () => {
   ));
 });
 
-function manifest() {
+function manifest(options = {}) {
+  const extraIdentities = options.extraIdentities ?? [];
   return {
     pluginId: PLUGIN_ID,
     version: '1.0.0',
@@ -29,6 +30,7 @@ function manifest() {
     name: 'Messaging fixture',
     contributions: [
       { type: 'identity', id: 'fixture-identity', displayName: 'Fixture IM', icon: 'fixture-icon' },
+      ...extraIdentities,
       {
         type: 'connector',
         id: 'fixture-im',
@@ -67,6 +69,9 @@ function draft(threadId, overrides = {}) {
     ...(overrides.wake === undefined ? {} : { wake: overrides.wake }),
     ...(overrides.sender === undefined ? {} : { sender: overrides.sender }),
     ...(overrides.contentBlocks === undefined ? {} : { contentBlocks: overrides.contentBlocks }),
+    ...(overrides.identity === undefined ? {} : { identity: overrides.identity }),
+    ...(overrides.url === undefined ? {} : { url: overrides.url }),
+    ...(overrides.meta === undefined ? {} : { meta: overrides.meta }),
   };
 }
 
@@ -99,12 +104,12 @@ async function fixture(options = {}) {
     pluginInstanceId: INSTANCE_ID,
     ownerUserId: OWNER,
     effectiveGrants: ['messaging.send'],
-    manifest: manifest(),
+    manifest: options.manifest ?? manifest(),
     threadStore: threads,
     bindingStore: bindings,
     messaging,
   });
-  return { host, messages, threads, bindings, wakes, broadcasts };
+  return { host, messages, threads, bindings, messaging, wakes, broadcasts };
 }
 
 describe('F202 C1 — plugin Host messaging.send', () => {
@@ -208,5 +213,83 @@ describe('F202 C1 — plugin Host messaging.send', () => {
       (error) => error?.code === 'PERMISSION' && /not bound to thread/.test(error.message),
     );
     assert.equal(messages.messages.length, 0);
+  });
+
+  test('a reinstalled plugin can send to a legacy system-owned thread through its durable binding', async () => {
+    const { messages, threads, bindings, messaging } = await fixture();
+    const thread = await threads.ensureThread('legacy-plugin-thread', 'Legacy');
+    await threads.updatePluginOwnership(thread.id, { v: 1, pluginInstanceId: 'instance-before-reinstall' });
+    await bindings.bind(PLUGIN_ID, 'group-42', thread.id, OWNER);
+    const reinstalled = createPluginMessagingHost({
+      pluginId: PLUGIN_ID,
+      pluginInstanceId: 'instance-after-reinstall',
+      ownerUserId: OWNER,
+      effectiveGrants: ['messaging.send'],
+      manifest: manifest(),
+      threadStore: threads,
+      bindingStore: bindings,
+      messaging,
+    });
+
+    const receipt = await reinstalled.send(draft(thread.id, { idempotencyKey: 'after-reinstall' }));
+
+    assert.equal(receipt.threadId, thread.id);
+    assert.equal((await messages.getById(receipt.messageId))?.threadId, thread.id);
+  });
+
+  test('selects one declared identity and preserves bounded url and metadata', async () => {
+    const secondIdentity = {
+      type: 'identity',
+      id: 'release-bot',
+      displayName: 'Release Bot',
+      icon: 'release-icon',
+    };
+    const { host, messages, threads } = await fixture({ manifest: manifest({ extraIdentities: [secondIdentity] }) });
+    const thread = await threads.create(OWNER, 'Target');
+
+    await assert.rejects(
+      () => host.send(draft(thread.id, { idempotencyKey: 'missing-identity' })),
+      (error) => error?.code === 'VALIDATION' && /identity/.test(error.message),
+    );
+    const receipt = await host.send(
+      draft(thread.id, {
+        idempotencyKey: 'selected-identity',
+        identity: 'release-bot',
+        url: 'https://example.test/pull/42',
+        meta: { conversationLabel: 'Release room', nested: { ok: true } },
+      }),
+    );
+
+    assert.deepEqual((await messages.getById(receipt.messageId))?.source, {
+      connector: 'release-bot',
+      label: 'Release Bot',
+      icon: 'release-icon',
+      url: 'https://example.test/pull/42',
+      meta: { conversationLabel: 'Release room', nested: { ok: true } },
+    });
+  });
+
+  test('rejects unsafe source urls, non-JSON metadata, and Host-owned metadata keys', async () => {
+    const { host, threads } = await fixture();
+    const thread = await threads.create(OWNER, 'Target');
+    const cyclic = {};
+    cyclic.self = cyclic;
+
+    await assert.rejects(
+      () => host.send(draft(thread.id, { idempotencyKey: 'bad-url', url: 'file:///tmp/secret' })),
+      (error) => error?.code === 'VALIDATION' && /url/.test(error.message),
+    );
+    await assert.rejects(
+      () => host.send(draft(thread.id, { idempotencyKey: 'cyclic-meta', meta: cyclic })),
+      (error) => error?.code === 'VALIDATION' && /meta/.test(error.message),
+    );
+    await assert.rejects(
+      () => host.send(draft(thread.id, { idempotencyKey: 'reserved-meta', meta: { externalChatId: 'forged' } })),
+      (error) => error?.code === 'VALIDATION' && /externalChatId/.test(error.message),
+    );
+    await assert.rejects(
+      () => host.send(draft(thread.id, { idempotencyKey: 'oversized-meta', meta: { text: 'x'.repeat(17_000) } })),
+      (error) => error?.code === 'VALIDATION' && /at most/.test(error.message),
+    );
   });
 });

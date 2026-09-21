@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IThreadStore, Thread } from '../cats/services/stores/ports/ThreadStore.js';
 import { ExternalPluginRuntimeError } from './external-runtime/types.js';
@@ -37,6 +36,7 @@ export interface PluginThreadHostDeps {
   readonly pluginId: string;
   readonly pluginInstanceId: string;
   readonly ownerUserId: string;
+  readonly projectPath: string;
   readonly effectiveGrants: readonly string[];
   readonly systemThreadTitle: string;
   readonly threadStore: IThreadStore;
@@ -90,11 +90,6 @@ function summary(thread: Thread): PluginThreadSummary {
   };
 }
 
-function deterministicThreadId(pluginId: string, key: string): string {
-  const digest = createHash('sha256').update(pluginId).update('\0').update(key).digest('hex');
-  return `thread_plugin_${digest}`;
-}
-
 function bindingSummary(binding: {
   readonly externalChatId: string;
   readonly threadId: string;
@@ -105,6 +100,7 @@ function bindingSummary(binding: {
 
 /** Thin, caller-bound projection of the Host's existing thread and binding stores. */
 export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThreadHost {
+  const ensureTails = new Map<string, Promise<void>>();
   const requireGrant = (capability: 'thread.listMetadata' | 'thread.readContent') => {
     if (!input.effectiveGrants.includes(capability)) {
       throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`);
@@ -112,19 +108,25 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
   };
 
   const readThread = async (id: string): Promise<Thread | null> => input.threadStore.get(threadId(id));
-  const canAccess = (thread: Thread): boolean =>
-    thread.createdBy === input.ownerUserId || thread.pluginOwnership?.pluginInstanceId === input.pluginInstanceId;
+  const hasPluginBinding = async (id: string): Promise<boolean> => {
+    const bindings = await input.bindingStore.getByThread(id);
+    return bindings.some((binding) => binding.connectorId === input.pluginId && binding.userId === input.ownerUserId);
+  };
+  const canAccess = async (thread: Thread): Promise<boolean> =>
+    thread.createdBy === input.ownerUserId ||
+    thread.pluginOwnership?.pluginInstanceId === input.pluginInstanceId ||
+    (await hasPluginBinding(thread.id));
   const requireAccessible = async (id: string): Promise<Thread> => {
     const thread = await readThread(id);
     if (!thread) throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `thread ${id} does not exist`);
-    if (!canAccess(thread)) {
+    if (!(await canAccess(thread))) {
       throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} cannot access thread ${id}`);
     }
     return thread;
   };
   const requireOwned = async (id: string): Promise<Thread> => {
     const thread = await requireAccessible(id);
-    if (thread.pluginOwnership?.pluginInstanceId !== input.pluginInstanceId) {
+    if (thread.pluginOwnership?.pluginInstanceId !== input.pluginInstanceId && !(await hasPluginBinding(thread.id))) {
       throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} does not own thread ${id}`);
     }
     return thread;
@@ -133,40 +135,51 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
   const findBound = async (key: string): Promise<Thread | null> => {
     const binding = await input.bindingStore.getByExternal(input.pluginId, key);
     if (!binding || binding.userId !== input.ownerUserId) return null;
-    const thread = await input.threadStore.get(binding.threadId);
-    return thread && canAccess(thread) ? thread : null;
+    return input.threadStore.get(binding.threadId);
   };
 
   const ensure = async (key: string, requestedTitle: string): Promise<PluginThreadSummary> => {
-    const existing = await findBound(key);
-    if (existing) return summary(existing);
+    const previous = ensureTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    ensureTails.set(key, current);
+    await previous.catch(() => undefined);
+    try {
+      const existing = await findBound(key);
+      if (existing) {
+        await input.threadStore.updatePluginOwnership(existing.id, {
+          v: 1,
+          pluginInstanceId: input.pluginInstanceId,
+        });
+        return summary(existing);
+      }
 
-    // A deterministic id makes concurrent and crash-interrupted ensure calls converge without a
-    // second lock or binding truth source. Repeating any suffix of this sequence is idempotent.
-    const id = deterministicThreadId(input.pluginId, key);
-    const thread = await input.threadStore.ensureThread(id, requestedTitle);
-    const ownership = thread.pluginOwnership;
-    if (ownership && ownership.pluginInstanceId !== input.pluginInstanceId) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `thread ${id} belongs to another plugin instance`);
+      const thread = await input.threadStore.create(input.ownerUserId, requestedTitle, input.projectPath);
+      await input.threadStore.updatePluginOwnership(thread.id, { v: 1, pluginInstanceId: input.pluginInstanceId });
+      await input.bindingStore.bind(input.pluginId, key, thread.id, input.ownerUserId);
+      const stored = await input.threadStore.get(thread.id);
+      if (!stored) {
+        throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `thread ${thread.id} disappeared during ensure`);
+      }
+      return summary(stored);
+    } finally {
+      release();
+      if (ensureTails.get(key) === current) ensureTails.delete(key);
     }
-    await input.threadStore.updatePluginOwnership(id, { v: 1, pluginInstanceId: input.pluginInstanceId });
-    await input.threadStore.indexForUser(id, input.ownerUserId);
-    await input.bindingStore.bind(input.pluginId, key, id, input.ownerUserId);
-    const stored = await input.threadStore.get(id);
-    if (!stored) throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `thread ${id} disappeared during ensure`);
-    return summary(stored);
   };
 
   return {
     async get(id) {
       requireGrant('thread.readContent');
       const thread = await readThread(id);
-      return thread && canAccess(thread) ? summary(thread) : null;
+      return thread && (await canAccess(thread)) ? summary(thread) : null;
     },
     async create(value) {
       if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new TypeError('thread input must be an object');
-      const thread = await input.threadStore.create(input.ownerUserId, title(value.title));
+      const thread = await input.threadStore.create(input.ownerUserId, title(value.title), input.projectPath);
       await input.threadStore.updatePluginOwnership(thread.id, { v: 1, pluginInstanceId: input.pluginInstanceId });
       const stored = await input.threadStore.get(thread.id);
       if (!stored) throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'created thread disappeared');
