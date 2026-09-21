@@ -18,6 +18,7 @@ import {
 import {
   BuiltinPluginContributionError,
   type BuiltinPluginContributionSupervisor,
+  ExternalPluginRuntimeError,
   LocalPluginPackageAdmissionError,
   PluginManagerPackageAssetError,
   type PluginManagerPackageAssetPort,
@@ -210,6 +211,10 @@ function sendContributionError(reply: FastifyReply, error: unknown) {
   if (error instanceof BuiltinPluginContributionError) {
     const status =
       error.code === 'CONTRIBUTION_NOT_ACTIVE' ? 409 : error.code === 'UNSUPPORTED_CONTRIBUTION' ? 422 : 503;
+    return reply.status(status).send({ error: error.message, code: error.code });
+  }
+  if (error instanceof ExternalPluginRuntimeError) {
+    const status = error.code === 'DELIVERY_REJECTED' ? 409 : error.code === 'PROTOCOL_VIOLATION' ? 422 : 503;
     return reply.status(status).send({ error: error.message, code: error.code });
   }
   return reply.status(500).send({ error: 'Plugin contribution operation failed', code: 'CONTRIBUTION_FAILED' });

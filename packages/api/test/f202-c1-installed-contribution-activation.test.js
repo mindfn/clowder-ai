@@ -224,6 +224,51 @@ test('an installed package schedules its declared action and unregisters on disa
   assert.equal(taskRunner.tasks.size, 0);
 });
 
+test('an installed package exposes declared cat tools through the shared contribution entrypoint', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-tool-project-');
+  const tool = {
+    type: 'tool',
+    id: 'fixture-toolset',
+    name: 'fixture_echo',
+    description: 'Echo through the installed package action table',
+    inputSchema: {
+      type: 'object',
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    },
+    action: { method: 'fixture.tool' },
+  };
+  const packageRoot = await writeFixturePackage({
+    pluginId: 'dev.clowder.tool-fixture',
+    contribution: tool,
+    actions: "{ 'fixture.tool': async (params) => ({ echoed: params.value }) }",
+  });
+  const { runtime } = createRuntime(projectRoot);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot);
+
+  assert.deepEqual(await runtime.supervisor.listPluginTools(installed.pluginId), [
+    {
+      contributionId: 'fixture-toolset',
+      name: 'fixture_echo',
+      description: 'Echo through the installed package action table',
+      inputSchema: tool.inputSchema,
+    },
+  ]);
+  assert.deepEqual(
+    await runtime.supervisor.callPluginTool(installed.pluginId, 'fixture-toolset', 'fixture_echo', {
+      value: 'hello',
+    }),
+    { echoed: 'hello' },
+  );
+
+  await disable(composition, installed.pluginId);
+  await assert.rejects(runtime.supervisor.listPluginTools(installed.pluginId), /is not active/);
+  await assert.rejects(
+    runtime.supervisor.callPluginTool(installed.pluginId, 'fixture-toolset', 'fixture_echo', { value: 'late' }),
+    /is not active/,
+  );
+});
+
 test('a runtime-contribution startup failure rolls back static and live registrations', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-contribution-rollback-project-');
   const mcp = {
@@ -239,10 +284,17 @@ test('a runtime-contribution startup failure rolls back static and live registra
     action: { method: 'fixture.tick' },
     policy: { overlap: 'skip', timeoutMs: 5_000 },
   };
+  const tool = {
+    type: 'tool',
+    id: 'rollback-toolset',
+    name: 'rollback_tool',
+    inputSchema: { type: 'object' },
+    action: { method: 'fixture.tool' },
+  };
   const packageRoot = await writeFixturePackage({
     pluginId: 'dev.clowder.contribution-rollback-fixture',
     contribution: mcp,
-    contributions: [mcp, limb, schedule],
+    contributions: [mcp, limb, tool, schedule],
     files: {
       'dist/mcp.js': 'process.exit(0);\n',
       'limbs/rollback.yml': [
@@ -262,7 +314,8 @@ test('a runtime-contribution startup failure rolls back static and live registra
         '',
       ].join('\n'),
     },
-    actions: "{ 'fixture.echo': async () => ({ success: true }), 'fixture.tick': async () => ({ ok: true }) }",
+    actions:
+      "{ 'fixture.echo': async () => ({ success: true }), 'fixture.tool': async () => ({ ok: true }), 'fixture.tick': async () => ({ ok: true }) }",
   });
   const limbRegistry = new LimbRegistry();
   const taskRunner = {
@@ -299,6 +352,7 @@ test('a runtime-contribution startup failure rolls back static and live registra
     ),
     false,
   );
+  await assert.rejects(runtime.supervisor.listPluginTools(installed.pluginId), /is not active/);
 });
 
 test('Host shutdown removes live registrations but preserves declared MCP state', async () => {
@@ -316,10 +370,17 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
     action: { method: 'fixture.tick' },
     policy: { overlap: 'skip', timeoutMs: 5_000 },
   };
+  const tool = {
+    type: 'tool',
+    id: 'shutdown-toolset',
+    name: 'shutdown_tool',
+    inputSchema: { type: 'object' },
+    action: { method: 'fixture.tool' },
+  };
   const packageRoot = await writeFixturePackage({
     pluginId: 'dev.clowder.contribution-shutdown-fixture',
     contribution: mcp,
-    contributions: [mcp, limb, schedule],
+    contributions: [mcp, limb, tool, schedule],
     files: {
       'dist/mcp.js': 'process.exit(0);\n',
       'limbs/shutdown.yml': [
@@ -339,7 +400,8 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
         '',
       ].join('\n'),
     },
-    actions: "{ 'fixture.echo': async () => ({ success: true }), 'fixture.tick': async () => ({ ok: true }) }",
+    actions:
+      "{ 'fixture.echo': async () => ({ success: true }), 'fixture.tool': async () => ({ ok: true }), 'fixture.tick': async () => ({ ok: true }) }",
   });
   const limbRegistry = new LimbRegistry();
   const taskRunner = fakeTaskRunner();
@@ -350,11 +412,13 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
   );
   const entrypoint = beforeShutdown?.mcpServer?.args?.[0];
   assert.ok(entrypoint, 'the declared MCP must exist before shutdown');
+  assert.equal((await runtime.supervisor.listPluginTools(installed.pluginId)).length, 1);
 
   await runtime.shutdown('host_shutdown');
 
   assert.equal(limbRegistry.getNode('shutdown-node'), undefined);
   assert.equal(taskRunner.tasks.size, 0);
+  await assert.rejects(runtime.supervisor.listPluginTools(installed.pluginId), /is not active/);
   const afterShutdown = (await readCapabilitiesConfig(projectRoot))?.capabilities.find(
     (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
   );
@@ -364,6 +428,7 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
   await runtime.supervisor.start(installed.pluginInstanceId);
   assert.ok(limbRegistry.getNode('shutdown-node'));
   assert.equal(taskRunner.tasks.size, 1);
+  assert.equal((await runtime.supervisor.listPluginTools(installed.pluginId)).length, 1);
   const afterRestart = (await readCapabilitiesConfig(projectRoot))?.capabilities.find(
     (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
   );

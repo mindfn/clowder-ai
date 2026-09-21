@@ -522,11 +522,29 @@ describe('F202 Plugin Manager runtime composition', () => {
         },
       },
     ]);
+    assert.deepEqual(await runtime.supervisor.listPluginTools(entry.pluginId), [
+      {
+        contributionId: 'fixture-tools',
+        name: 'fixture_tool',
+        description: 'Run the fixture capability.',
+        inputSchema: {
+          type: 'object',
+          properties: { value: { type: 'string' } },
+          required: ['value'],
+        },
+      },
+    ]);
     assert.deepEqual(
       await composition.builtinSupervisor.callPluginTool(entry.pluginId, 'fixture-tools', 'fixture_tool', {
         value: 'real-call',
       }),
       { ok: true, name: 'fixture_tool', args: { value: 'real-call' } },
+    );
+    assert.deepEqual(
+      await runtime.supervisor.callPluginTool(entry.pluginId, 'fixture-tools', 'fixture_tool', {
+        value: 'router-call',
+      }),
+      { ok: true, name: 'fixture_tool', args: { value: 'router-call' } },
     );
 
     catalogOffline = true;
@@ -544,6 +562,7 @@ describe('F202 Plugin Manager runtime composition', () => {
       { id: 'events.publish', kind: 'events', name: 'Source', active: false },
     ]);
     await assert.rejects(composition.builtinSupervisor.listPluginTools(entry.pluginId), /is not active/);
+    await assert.rejects(runtime.supervisor.listPluginTools(entry.pluginId), /is not active/);
   });
 
   it('surfaces a typed diagnostic when a builtin contribution cannot start', async () => {

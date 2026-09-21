@@ -238,7 +238,7 @@ test('production composition constructs and recovers K-2D but exposes no startup
   const managerCompositionIndex = source.indexOf('createPluginManagerRuntimeComposition({');
 
   assert.match(source, /createDormantPluginRuntimeComposition/);
-  assert.match(source, /messageStore,\s*\.\.\.\(redis \? \{ redis \} : \{\}\)/);
+  assert.match(source, /messageStore,\s*taskStore,\s*\.\.\.\(redis \? \{ redis \} : \{\}\)/);
   assert.match(source, /routes: signalRouteStore,\s*ownerId: privateUserId/);
   assert.ok(routeBootstrapIndex >= 0, 'production must provision official Host signal routes');
   assert.ok(
@@ -278,7 +278,7 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(managerComposition, /pluginRuntime\.inventoryStore\.snapshot\(\)/);
   assert.match(managerComposition, /instance\.lifecycleState === 'installed'/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
-  assert.match(source, /contributions: pluginManagerRuntime\.builtinSupervisor/);
+  assert.match(source, /contributions: pluginRuntime\.supervisor/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
   assert.match(source, /officialRouteCatalogProvider:\s*officialPluginCatalog/);
   assert.match(source, /installer: pluginManagerRuntime\.officialRouteInstaller/);

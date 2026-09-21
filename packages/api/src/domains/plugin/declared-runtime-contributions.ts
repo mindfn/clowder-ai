@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { LimbContribution, ScheduleContribution } from '@clowder-ai/plugin-contract';
+import type { DirectToolContribution, LimbContribution, ScheduleContribution } from '@clowder-ai/plugin-contract';
 import type { TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
 import { LimbRegistry } from '../limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../limb/limb-yaml-loader.js';
@@ -25,11 +25,29 @@ export interface DeclaredRuntimeContributionHost {
 }
 
 interface ActiveRuntimeContributions {
+  readonly pluginId: string;
+  readonly pluginInstanceId: string;
   readonly limbNodeIds: readonly string[];
   readonly scheduleTaskIds: readonly string[];
+  readonly tools: readonly DirectToolContribution[];
+  readonly invoke: InvokePluginAction;
 }
 
 type InvokePluginAction = (pluginInstanceId: string, method: string, params: unknown) => Promise<unknown>;
+
+export interface DeclaredPluginTool {
+  readonly contributionId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly inputSchema: {
+    readonly type: 'object';
+    readonly properties?: Readonly<Record<string, object>>;
+    readonly required?: readonly string[];
+    readonly $schema?: string;
+  };
+}
+
+export type DeclaredPluginToolCall = { readonly handled: false } | { readonly handled: true; readonly value: unknown };
 
 /**
  * Runtime-only declarations live exactly as long as the package activation. Static resources
@@ -51,7 +69,8 @@ export class DeclaredRuntimeContributions {
     const contributions = admission.packageRecord.manifest.contributions ?? [];
     const limbs = contributions.filter((value): value is LimbContribution => value.type === 'limb');
     const schedules = contributions.filter((value): value is ScheduleContribution => value.type === 'schedule');
-    if (limbs.length === 0 && schedules.length === 0) return;
+    const tools = contributions.filter((value): value is DirectToolContribution => value.type === 'tool');
+    if (limbs.length === 0 && schedules.length === 0 && tools.length === 0) return;
     if (limbs.length > 0 && !this.host.limbRegistry) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host limb registry is unavailable');
     }
@@ -62,6 +81,7 @@ export class DeclaredRuntimeContributions {
     const limbNodeIds: string[] = [];
     const scheduleTaskIds: string[] = [];
     try {
+      for (const tool of tools) directToolSchema(tool);
       if (limbs.length > 0) {
         await this.#activateLimbs(admission, limbs, limbNodeIds, invoke);
       }
@@ -70,7 +90,14 @@ export class DeclaredRuntimeContributions {
         this.host.taskRunner?.registerPostStart(task);
         scheduleTaskIds.push(task.id);
       }
-      this.#active.set(pluginInstanceId, { limbNodeIds, scheduleTaskIds });
+      this.#active.set(pluginInstanceId, {
+        pluginId: admission.packageRecord.pluginId,
+        pluginInstanceId,
+        limbNodeIds,
+        scheduleTaskIds,
+        tools,
+        invoke,
+      });
     } catch (error) {
       this.#remove({ limbNodeIds, scheduleTaskIds });
       throw error;
@@ -86,6 +113,48 @@ export class DeclaredRuntimeContributions {
 
   deactivateAll(): void {
     for (const pluginInstanceId of [...this.#active.keys()]) this.deactivate(pluginInstanceId);
+  }
+
+  listPluginTools(pluginId: string): readonly DeclaredPluginTool[] | undefined {
+    const active = this.#activeForPlugin(pluginId);
+    if (!active || active.tools.length === 0) return undefined;
+    return active.tools.map((tool) => ({
+      contributionId: tool.id,
+      name: tool.name,
+      ...(tool.description === undefined ? {} : { description: tool.description }),
+      inputSchema: structuredClone(directToolSchema(tool)),
+    }));
+  }
+
+  async callPluginTool(
+    pluginId: string,
+    contributionId: string,
+    toolName: string,
+    args: Readonly<Record<string, unknown>>,
+  ): Promise<DeclaredPluginToolCall> {
+    const active = this.#activeForPlugin(pluginId);
+    if (!active || active.tools.length === 0) return { handled: false };
+    const tool = active.tools.find((candidate) => candidate.id === contributionId && candidate.name === toolName);
+    if (!tool) {
+      throw new ExternalPluginRuntimeError(
+        'DELIVERY_REJECTED',
+        `${pluginId}/${contributionId}/${toolName} is not active`,
+      );
+    }
+    return {
+      handled: true,
+      value: await active.invoke(active.pluginInstanceId, tool.action.method, {
+        ...(tool.action.params ?? {}),
+        ...args,
+      }),
+    };
+  }
+
+  #activeForPlugin(pluginId: string): ActiveRuntimeContributions | undefined {
+    for (const active of this.#active.values()) {
+      if (active.pluginId === pluginId) return active;
+    }
+    return undefined;
   }
 
   async #activateLimbs(
@@ -131,10 +200,21 @@ export class DeclaredRuntimeContributions {
     }
   }
 
-  #remove(active: ActiveRuntimeContributions): void {
+  #remove(active: Pick<ActiveRuntimeContributions, 'limbNodeIds' | 'scheduleTaskIds'>): void {
     for (const taskId of [...active.scheduleTaskIds].reverse()) this.host.taskRunner?.unregister(taskId);
     for (const nodeId of [...active.limbNodeIds].reverse()) this.host.limbRegistry?.deregister(nodeId);
   }
+}
+
+function directToolSchema(tool: DirectToolContribution): DeclaredPluginTool['inputSchema'] {
+  const schema = tool.inputSchema;
+  if (schema.type !== 'object') {
+    throw new ExternalPluginRuntimeError(
+      'PROTOCOL_VIOLATION',
+      `Tool contribution ${tool.id} must declare an object input schema`,
+    );
+  }
+  return schema as DeclaredPluginTool['inputSchema'];
 }
 
 async function configurationSnapshot(

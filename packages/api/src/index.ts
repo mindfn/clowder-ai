@@ -5102,9 +5102,7 @@ async function main(): Promise<void> {
   await app.register(async (managerApp) => {
     registerPluginManagerRoutes(managerApp, {
       manager: pluginManagerRuntime.manager,
-      ...(pluginManagerRuntime.builtinSupervisor === undefined
-        ? {}
-        : { contributions: pluginManagerRuntime.builtinSupervisor }),
+      contributions: pluginRuntime.supervisor,
       asset: pluginManagerRuntime.assets,
       documentation: pluginManagerRuntime.assets,
       callbackRegistry: registry,
