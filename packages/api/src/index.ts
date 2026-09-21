@@ -6962,10 +6962,13 @@ async function main(): Promise<void> {
   });
 
   const { LimbTranscriptCatDelivery } = await import('./domains/limb/LimbTranscriptCatDelivery.js');
+  const { deliverConnectorMessage: deliverLimbTranscript } = await import(
+    './infrastructure/email/deliver-connector-message.js'
+  );
   limbTranscriptDelivery = new LimbTranscriptCatDelivery({
     isKnownCat: (catId) => catRegistry.tryGet(catId) !== undefined,
-    messageStore,
-    invokeTriggerProvider: { get: () => invokeTrigger },
+    deliverFn: deliverLimbTranscript,
+    deliveryDeps: { delivery: persistedQueueDelivery },
   });
   const { LimbOutboundDeliveryHook } = await import('./domains/limb/LimbOutboundDeliveryHook.js');
   const limbOutboundDelivery = new LimbOutboundDeliveryHook({

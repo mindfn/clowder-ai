@@ -31,6 +31,13 @@ export interface PersistedQueueDeliveryInput {
   sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
   /** Structured payload parts (IM media, cards) that belong to the same input as its text. */
   contentBlocks?: StoredMessage['contentBlocks'];
+  /**
+   * When the event happened, for producers that observe the world rather than originate in it — a
+   * physical limb captures an utterance at one instant and may be admitted seconds later. Same
+   * principle as `priority`: the envelope states its own facts instead of letting admission infer
+   * them. Defaults to admission time, which is correct for producers with no distinct event time.
+   */
+  timestamp?: number;
 }
 
 /**
@@ -118,7 +125,7 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         from,
         content: input.content,
         mentions: [targetCat],
-        timestamp: Date.now(),
+        timestamp: input.timestamp ?? Date.now(),
         deliveryStatus: 'queued',
         source: input.source,
         extra: { ...(input.extra ?? {}), targetCats: [targetCat] },
