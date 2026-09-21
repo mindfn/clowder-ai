@@ -4,24 +4,22 @@
  * #320: Reads from unified TaskStore (kind=pr_tracking) instead of PrTrackingStore.
  *
  * Gate: list pr_tracking tasks → checkMergeable per PR → build ConflictSignals.
- * Execute: ConflictRouter handles dedup/delivery → ConnectorInvokeTrigger wakes cat.
+ * Execute: ConflictRouter admits the outcome (atomic Message + Queue) — that admission IS the wake.
  *
  * KD-9: Gate passes ALL mergeState results (including MERGEABLE) so ConflictRouter
  *       can clear fingerprints for re-conflict detection.
  */
-import type { CatId, TaskItem, WaitOutcomeV1 } from '@cat-cafe/shared';
+import type { TaskItem, WaitOutcomeV1 } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { AutoResolveResult, ConflictAutoExecutor } from './ConflictAutoExecutor.js';
 import type { ConflictRouter, ConflictSignal } from './ConflictRouter.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
 
 export interface ConflictCheckTaskSpecOptions {
   readonly taskStore: ITaskStore;
   readonly checkMergeable: (repoFullName: string, prNumber: number) => Promise<{ mergeState: string; headSha: string }>;
   readonly conflictRouter: ConflictRouter;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
   readonly autoExecutor?: ConflictAutoExecutor;
   readonly log: {
     info: (...args: unknown[]) => void;
@@ -125,11 +123,17 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
       timeoutMs: 30_000,
       async execute(workItem: ConflictWorkItem, _subjectKey: string, ctx: ExecuteContext) {
         ctx.signal?.throwIfAborted();
+        // `route` admits the outcome atomically (Message + Queue in one transaction), so the owner is
+        // already awake by the time it returns `notified`. There is no second wake to issue here, and
+        // the trigger that used to issue one has been removed: it re-enqueued the same messageId and
+        // produced a duplicate Queue row.
         const routeResult = await opts.conflictRouter.route(workItem.signal);
         if (routeResult.kind !== 'notified') return;
-        const conflictDelivery = conflictWasMatched(routeResult.outcome);
 
-        // F140 Phase C: try auto-resolve before waking cat — only for a conflict the wait matched.
+        // F140 Phase C. This runs after the wake rather than instead of it, and that ordering is
+        // forced, not incidental: #1392 R5 says auto-resolution may only touch the repository on a
+        // matched outcome, and the matched outcome is what `route` produces. Auto-resolve cannot be
+        // hoisted above the admission without also dropping the authority check it depends on.
         const result = await tryAutoResolveBeforeWake(opts, workItem, routeResult.outcome, ctx.signal);
         if (result?.kind === 'resolved') {
           opts.log.info(`[conflict-check] Auto-resolved conflict for ${result.branch} (${result.method})`);
@@ -137,29 +141,6 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
         }
         if (result?.kind === 'escalated') {
           opts.log.info(`[conflict-check] Escalating: ${result.files.length} conflict file(s) in ${result.branch}`);
-        }
-
-        if (opts.invokeTrigger) {
-          /*
-           * #1392 R5: this poller delivers whatever the wait produced, so only a matched conflict may
-           * be labelled and prioritised as one. Anything else — an expiry above all — is an ordinary
-           * wait delivery, and calling it a conflict would misfile it for the owner reading the wake.
-           */
-          const policy: ConnectorTriggerPolicy = conflictDelivery
-            ? { priority: 'urgent', reason: 'github_pr_conflict', sourceCategory: 'conflict' }
-            : { priority: 'normal', reason: 'github_wait_satisfied', sourceCategory: 'scheduled' };
-          await opts.invokeTrigger
-            .trigger(
-              routeResult.threadId,
-              routeResult.catId as CatId,
-              workItem.task.userId ?? '',
-              routeResult.content,
-              routeResult.messageId,
-              undefined,
-              policy,
-            )
-            .catch((err) => opts.log.warn({ err }, '[conflict-check] trigger failed (best-effort)'));
-          opts.log.info(`[conflict-check] Triggered ${routeResult.catId} for ${policy.reason}`);
         }
       },
     },
