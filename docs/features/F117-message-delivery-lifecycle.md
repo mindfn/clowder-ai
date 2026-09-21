@@ -757,15 +757,26 @@ preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装
 | 旧入口（append） | `managed-command-wake-message-fence.ts:137` `messageStore.append({deliveryStatus:'queued'})` |
 | 旧入口（enqueue） | `ManagedCommandWakeRecoveryEngine.ts:218` `trigger.trigger(...)` → `ConnectorInvokeTrigger.ts:97` `enqueueExistingMessageDurable` |
 | 两者之间 | `Engine:80→218`：一次 return、一次 re-parse、`getEventCarrier` 异步回读、`findInvocationCarrier` 两次 store 查询、**15s `lastDispatchAt` 宽限窗**、`dispatch_pending` CAS、`getInvokeTrigger()` 可能为 undefined |
-| 新入口 | `PersistedQueueDeliveryPort.deliver`（一次事务 Message + Queue row，`progress()` 即 drain） |
+| 新入口 | `InvocationQueue.appendAndEnqueueDurable`（一次事务 Message + Queue row） |
 
 **幂等键**：旧的两半用不同的键——Message 是 `hold-ball-completion:${taskId}`（按 task），Queue 侧
 `ConnectorInvokeTrigger.ts:88` 用 `action-successor:${leaseId}:${generation}:${catId}`（按 lease 代）或
 **完全没有键**。新入口统一为 `hold-ball-completion:${taskId}`，Message/Queue `sourceId`/`idempotencyKey` 同值。
 
-**端口缺口**：`PersistedQueueDeliveryInput` 目前不带 `actionSuccessorFence` 与
-`waitContinuationCarrier`，而 managed wake 两者都要。这两个字段需要补进端口——这是所有生产者共用的
-那一道缝，是正确的落点，不是为 managed wake 开的后门。
+**登记自纠（实现前发现，这正是先登记的用处）**：上一版登记把新入口写成
+`PersistedQueueDeliveryPort.deliver`，并据此认为要给端口补 `actionSuccessorFence` /
+`waitContinuationCarrier` 两个字段。动手前核对发现这条是错的——
+
+`PersistedQueueDelivery.deliver` 把 `mentions: [targetCat]` 和 `extra.targetCats` 写死
+（`PersistedQueueDelivery.ts:126`、`:131`），而且 `matchesPersistedEnvelope`（`:293`）**要求**这条
+mention 存在，否则判 conflict。managed wake 的信封是 `mentions: []`（`message-fence.ts:141`）。
+所以走这道端口，等于给每一条 `[定时任务]` 唤醒消息都加上一个 @提及——一个用户可见的改动，而且是
+为了迁就 API 形状去改产品表现。今天已经因为同一类错误（AC-C1）被打回一次，不再犯第二次。
+
+正确入口是 `InvocationQueue.appendAndEnqueueDurable`：同样一次事务、同样满足 INV-I1，但生产者保留
+自己**逐字节不变**的信封。F266 carrier 的 `appendA2ASourceWithLedgerAdmission` 已经是这个先例。
+端口不需要加字段——`QueueEnqueueInput` 本来就有 `actionSuccessorFence` 与 `waitContinuationCarrier`
+（`InvocationQueue.ts:89`、`:91`），缺的只是一条把它们带进去的直连调用。
 
 **lease 校验必须前移**：`resolveManagedCommandWakeActionLeaseAdmission` 现在跑在
 `ConnectorInvokeTrigger.ts:79`，即 Message **已经持久化之后**。它只读 `message.threadId` 与
