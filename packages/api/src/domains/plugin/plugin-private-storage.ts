@@ -3,6 +3,7 @@ import { ExternalPluginRuntimeError } from './external-runtime/types.js';
 
 const MAX_STORAGE_KEY_LENGTH = 256;
 const MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
+const REVISION_COUNTER_FIELD = '';
 
 const WRITE_LUA = `
 -- plugin-private-storage:write-v1
@@ -10,14 +11,14 @@ local raw = redis.call('HGET', KEYS[1], ARGV[1])
 local currentRevision = nil
 if raw then
   local revision, kind = string.match(raw, '^(%d+):([vd]):')
-  if not revision or not kind then return redis.error_reply('malformed plugin storage record') end
+  if not revision or kind ~= 'v' then return redis.error_reply('malformed plugin storage record') end
   currentRevision = tonumber(revision)
 end
 if ARGV[2] ~= '*' then
   local expectedRevision = ARGV[2] == '' and nil or tonumber(ARGV[2])
   if currentRevision ~= expectedRevision then return 0 end
 end
-local nextRevision = (currentRevision or 0) + 1
+local nextRevision = redis.call('HINCRBY', KEYS[1], '', 1)
 redis.call('HSET', KEYS[1], ARGV[1], tostring(nextRevision) .. ':v:' .. ARGV[3])
 return nextRevision
 `;
@@ -27,16 +28,16 @@ const DELETE_LUA = `
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return 0 end
 local revision, kind = string.match(raw, '^(%d+):([vd]):')
-if not revision or not kind then return redis.error_reply('malformed plugin storage record') end
-if kind == 'd' then return 0 end
+if not revision or kind ~= 'v' then return redis.error_reply('malformed plugin storage record') end
 local currentRevision = tonumber(revision)
 if ARGV[2] ~= '*' and currentRevision ~= tonumber(ARGV[2]) then return 0 end
-local nextRevision = currentRevision + 1
-redis.call('HSET', KEYS[1], ARGV[1], tostring(nextRevision) .. ':d:')
+local nextRevision = redis.call('HINCRBY', KEYS[1], '', 1)
+redis.call('HDEL', KEYS[1], ARGV[1])
 return nextRevision
 `;
 
 export interface PluginStorageEntry {
+  /** Opaque monotonic fence. Later writes to the same key are greater; values need not start at 1 or be consecutive. */
   readonly revision: number;
   readonly value: unknown;
 }
@@ -124,22 +125,14 @@ function encodeValue(value: unknown): string {
   return encoded;
 }
 
-type DecodedStorageRecord =
-  | { readonly kind: 'value'; readonly entry: PluginStorageEntry }
-  | { readonly kind: 'deleted'; readonly revision: number };
-
-function decodeRecord(raw: string): DecodedStorageRecord {
-  const match = /^(\d+):([vd]):([\s\S]*)$/.exec(raw);
+function decodeRecord(raw: string): PluginStorageEntry {
+  const match = /^(\d+):v:([\s\S]*)$/.exec(raw);
   const revision = match ? Number(match[1]) : Number.NaN;
   if (!match || !Number.isSafeInteger(revision) || revision < 1) {
     throw new TypeError('plugin storage record is malformed');
   }
-  if (match[2] === 'd') {
-    if (match[3] !== '') throw new TypeError('plugin storage tombstone is malformed');
-    return { kind: 'deleted', revision };
-  }
   try {
-    return { kind: 'value', entry: { revision, value: JSON.parse(match[3]) } };
+    return { revision, value: JSON.parse(match[2]) };
   } catch (error) {
     throw new TypeError('plugin storage record is malformed', { cause: error });
   }
@@ -153,17 +146,15 @@ export class RedisPluginPrivateStorage implements PluginPrivateStoragePort {
     assertStorageKey(key);
     const raw = await this.redis.hget(storageHashKey(pluginId), key);
     if (raw === null) return undefined;
-    const record = decodeRecord(raw);
-    return record.kind === 'value' ? record.entry : undefined;
+    return decodeRecord(raw);
   }
 
   async list(pluginId: string): Promise<Readonly<Record<string, PluginStorageEntry>>> {
     const raw = await this.redis.hgetall(storageHashKey(pluginId));
     return Object.fromEntries(
-      Object.entries(raw).flatMap(([key, value]) => {
-        const record = decodeRecord(value);
-        return record.kind === 'value' ? [[key, record.entry]] : [];
-      }),
+      Object.entries(raw)
+        .filter(([key]) => key !== REVISION_COUNTER_FIELD)
+        .map(([key, value]) => [key, decodeRecord(value)]),
     );
   }
 

@@ -47,17 +47,19 @@ class FakeStorageRedis {
       const expected = expectedRevision === '' ? null : Number(expectedRevision);
       if (currentRevision !== expected) return 0;
     }
-    const revision = (currentRevision ?? 0) + 1;
+    const revision = Number(hash.get('') ?? 0) + 1;
+    hash.set('', String(revision));
     hash.set(field, `${revision}:v:${value}`);
     this.hashes.set(key, hash);
     return revision;
   }
 
   applyDelete(hash, key, field, currentRevision, currentKind, expectedRevision) {
-    if (currentRevision === null || currentKind === 'd') return 0;
+    if (currentRevision === null || currentKind !== 'v') return 0;
     if (expectedRevision !== '*' && currentRevision !== Number(expectedRevision)) return 0;
-    const revision = currentRevision + 1;
-    hash.set(field, `${revision}:d:`);
+    const revision = Number(hash.get('') ?? 0) + 1;
+    hash.set('', String(revision));
+    hash.delete(field);
     this.hashes.set(key, hash);
     return revision;
   }
@@ -189,20 +191,49 @@ test('module plugins receive isolated persistent storage with revision-fenced co
   assert.deepEqual(await invoke(first.pluginInstanceId, { operation: 'list' }), {
     cursor: { revision: 2, value: { page: 2 } },
   });
-  assert.deepEqual(await invoke(first.pluginInstanceId, { operation: 'set', key: 'dedupe', value: 'seen' }), {
-    revision: 1,
+  const initialDedupe = await invoke(first.pluginInstanceId, { operation: 'set', key: 'dedupe', value: 'seen' });
+  assert.ok(initialDedupe.revision > 2);
+  const deletedDedupe = await invoke(first.pluginInstanceId, {
+    operation: 'delete',
+    key: 'dedupe',
+    expectedRevision: initialDedupe.revision,
   });
-  assert.deepEqual(await invoke(first.pluginInstanceId, { operation: 'delete', key: 'dedupe', expectedRevision: 1 }), {
-    deleted: true,
-    revision: 2,
-  });
+  assert.equal(deletedDedupe.deleted, true);
+  assert.ok(deletedDedupe.revision > initialDedupe.revision);
   assert.equal(await invoke(first.pluginInstanceId, { operation: 'get', key: 'dedupe' }), undefined);
-  assert.deepEqual(await invoke(first.pluginInstanceId, { operation: 'delete', key: 'dedupe', expectedRevision: 1 }), {
-    deleted: false,
+  assert.deepEqual(
+    await invoke(first.pluginInstanceId, {
+      operation: 'delete',
+      key: 'dedupe',
+      expectedRevision: initialDedupe.revision,
+    }),
+    { deleted: false },
+  );
+  const recreated = await invoke(first.pluginInstanceId, {
+    operation: 'compareAndSet',
+    key: 'dedupe',
+    expectedRevision: null,
+    value: 'again',
   });
-  assert.deepEqual(await invoke(first.pluginInstanceId, { operation: 'set', key: 'dedupe', value: 'again' }), {
-    revision: 3,
-  });
+  assert.equal(recreated.applied, true, 'a deleted key must once again satisfy the absent-key CAS');
+  assert.ok(recreated.revision > deletedDedupe.revision, 'recreating a key must not reuse a pre-delete revision');
+  assert.deepEqual(
+    await invoke(first.pluginInstanceId, {
+      operation: 'compareAndSet',
+      key: 'dedupe',
+      expectedRevision: initialDedupe.revision,
+      value: 'stale overwrite',
+    }),
+    { applied: false },
+  );
+  assert.deepEqual(
+    await invoke(first.pluginInstanceId, {
+      operation: 'delete',
+      key: 'dedupe',
+      expectedRevision: initialDedupe.revision,
+    }),
+    { deleted: false },
+  );
   assert.deepEqual(redis.ttlCommands, [], 'plugin state is persistent by default and must never gain an implicit TTL');
 });
 
@@ -231,20 +262,47 @@ test(
         snowflake: { snowflake: 1234567890123456 },
         floating: { x: 0.30000000000000004 },
       };
+      const revisions = {};
+      let previousRevision = 0;
       for (const [key, value] of Object.entries(values)) {
         const encoded = JSON.stringify(value);
-        assert.deepEqual(await storage.set('dev.clowder.redis-fixture', key, value), { revision: 1 });
-        assert.deepEqual(await storage.get('dev.clowder.redis-fixture', key), { revision: 1, value });
+        const written = await storage.set('dev.clowder.redis-fixture', key, value);
+        assert.ok(written.revision > previousRevision);
+        previousRevision = written.revision;
+        revisions[key] = written.revision;
+        assert.deepEqual(await storage.get('dev.clowder.redis-fixture', key), { revision: written.revision, value });
         const raw = await redis.hget('plugin-private-state:v1:dev.clowder.redis-fixture', key);
-        assert.equal(raw, `1:v:${encoded}`, `${key} must remain byte-identical after Lua execution`);
+        assert.equal(raw, `${written.revision}:v:${encoded}`, `${key} must remain byte-identical after Lua execution`);
       }
-      assert.deepEqual(await storage.delete('dev.clowder.redis-fixture', 'nested', 1), {
-        deleted: true,
-        revision: 2,
-      });
+      const deleted = await storage.delete('dev.clowder.redis-fixture', 'nested', revisions.nested);
+      assert.equal(deleted.deleted, true);
+      assert.ok(deleted.revision > 1);
+      assert.deepEqual(deleted, { deleted: true, revision: deleted.revision });
       assert.equal(await storage.get('dev.clowder.redis-fixture', 'nested'), undefined);
       assert.equal('nested' in (await storage.list('dev.clowder.redis-fixture')), false);
-      assert.deepEqual(await storage.set('dev.clowder.redis-fixture', 'nested', values.nested), { revision: 3 });
+      const recreated = await storage.compareAndSet('dev.clowder.redis-fixture', 'nested', null, values.nested);
+      assert.equal(recreated.applied, true, 'a deleted key must once again satisfy the absent-key CAS');
+      assert.ok(recreated.revision > deleted.revision, 'recreating a key must use a fresh revision');
+      assert.deepEqual(
+        await storage.compareAndSet('dev.clowder.redis-fixture', 'nested', revisions.nested, { stale: true }),
+        { applied: false },
+      );
+      assert.deepEqual(await storage.delete('dev.clowder.redis-fixture', 'nested', revisions.nested), {
+        deleted: false,
+      });
+
+      const physicalHash = 'plugin-private-state:v1:dev.clowder.redis-fixture';
+      for (let index = 0; index < 200; index += 1) {
+        const key = `deleted-${index}`;
+        const write = await storage.compareAndSet('dev.clowder.redis-fixture', key, null, { index });
+        assert.equal(write.applied, true);
+        assert.equal((await storage.delete('dev.clowder.redis-fixture', key, write.revision)).deleted, true);
+      }
+      assert.equal(
+        await redis.hlen(physicalHash),
+        Object.keys(values).length + 1,
+        'deleted fields must be physically released; only live values and one revision counter remain',
+      );
     } finally {
       await cleanupClientKeyspace(redis);
       await redis.quit();
