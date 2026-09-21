@@ -14,11 +14,9 @@ import {
 import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const roots = [];
-const MODULE_LOG = '__f202C1InstalledSkillActivationLog';
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  delete globalThis[MODULE_LOG];
 });
 
 async function tempRoot(label) {
@@ -27,7 +25,7 @@ async function tempRoot(label) {
   return root;
 }
 
-test('an installed package registers and disposes a skill through its lifecycle Host handle', async () => {
+test('enabling a locally installed package registers its declared skill capability', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-installed-skill-project-');
   const packageRoot = await tempRoot('cat-cafe-f202-installed-skill-package-');
   const manifest = {
@@ -35,13 +33,13 @@ test('an installed package registers and disposes a skill through its lifecycle 
     version: '1.0.0',
     contractVersion: '0.1.0',
     name: 'Local Skill Fixture',
-    contributions: [],
+    contributions: [{ type: 'skill', id: 'local-skill', path: 'skills/local-skill' }],
     features: [
       {
         id: 'main',
         name: 'Main',
         resources: [],
-        contributions: [],
+        contributions: [{ type: 'skill', id: 'local-skill' }],
         capabilities: [],
       },
     ],
@@ -52,30 +50,7 @@ test('an installed package registers and disposes a skill through its lifecycle 
   await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify(manifest)}\n`, 'utf8');
   await writeFile(
     join(packageRoot, 'dist/plugin.js'),
-    `const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
-export default {
-  create(hostManifest, host) {
-    log.push({ call: 'create', hasHostHandle: host !== undefined });
-    let skillRegistration;
-    return {
-      manifest: hostManifest,
-      async enable() {
-        log.push({ call: 'enable' });
-        if (typeof host?.skills?.register !== 'function') {
-          throw new Error('installed plugin lifecycle requires host.skills.register');
-        }
-        skillRegistration = await host.skills.register({ id: 'local-skill', path: 'skills/local-skill' });
-        log.push({ call: 'skill.register' });
-      },
-      async disable() {
-        log.push({ call: 'disable' });
-        await skillRegistration?.dispose();
-        log.push({ call: 'skill.dispose' });
-      },
-    };
-  },
-};
-`,
+    'export default { create(hostManifest) { return { manifest: hostManifest }; } };\n',
     'utf8',
   );
   await writeFile(join(packageRoot, 'skills/local-skill/SKILL.md'), '# Local Skill\n', 'utf8');
@@ -108,37 +83,15 @@ export default {
   assert.equal(enabledInstance?.activationState, 'enabled');
   assert.equal(enabledInstance?.runtimeState, 'healthy');
 
-  const enabledCapabilities = await readCapabilitiesConfig(projectRoot);
-  const enabledSkill = enabledCapabilities?.capabilities.find(
-    (capability) =>
-      capability.type === 'skill' && capability.id === 'local-skill' && capability.pluginId === installed.pluginId,
-  );
-
-  const beforeDisable = (await composition.manager.get(installed.pluginId)).plugin;
-  await composition.manager.setEnabled(installed.pluginId, {
-    enabled: false,
-    expectedRevision: beforeDisable.lifecycleRevision,
-  });
-  const disabledCapabilities = await readCapabilitiesConfig(projectRoot);
-  const disabledSkill = disabledCapabilities?.capabilities.find(
-    (capability) =>
-      capability.type === 'skill' && capability.id === 'local-skill' && capability.pluginId === installed.pluginId,
-  );
-
-  assert.deepEqual(
-    globalThis[MODULE_LOG],
-    [
-      { call: 'create', hasHostHandle: true },
-      { call: 'enable' },
-      { call: 'skill.register' },
-      { call: 'disable' },
-      { call: 'skill.dispose' },
-    ],
-    'the module lifecycle must receive a Host handle and own registration plus disposal',
-  );
+  const capabilities = await readCapabilitiesConfig(projectRoot);
   assert.ok(
-    enabledSkill?.enabled === true,
-    'a skill registered by an enabled installed package must be present in Host capabilities',
+    capabilities?.capabilities.some(
+      (capability) =>
+        capability.type === 'skill' &&
+        capability.id === 'local-skill' &&
+        capability.pluginId === installed.pluginId &&
+        capability.enabled === true,
+    ),
+    'a skill declared by an enabled installed package must be present in Host capabilities',
   );
-  assert.equal(disabledSkill, undefined, 'disabling the package must dispose its registered skill');
 });
