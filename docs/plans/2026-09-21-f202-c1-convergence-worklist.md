@@ -135,6 +135,9 @@ collective-connector = builtin **但没有 entrypoint**（`:116`）、genoffice-
 
 ### c) 的删除面：全仓重扫后是 32,858 行，不是 16,785 行（旧数字作废）
 
+> 这 32,858 **不含** `domains/signal-intake/` 里的厂商职责——那块按混合制逐职责切，
+> 见下文「A/B scope 问题作废」一节。该节同时撤回了我抛给 operator 的 A/B 裁定请求。
+
 2026-09-21 全仓普查（`wc -l` 实数，非估算）。核心两目录 160 files / 34,477 行分类：
 
 | 分类 | files | lines |
@@ -189,6 +192,48 @@ connectors 顶层 3 文件          246    guides vendor flow             63
 `WeChatVisibleReaderArmControl.tsx` 152 行整文件微信读屏 ·
 `PluginConfigPanel.tsx:37` `if (plugin.id !== 'wechat-visible-reader') return null` ·
 `shared/src/types/connector.ts:253-300` 七家厂商 displayName/品牌色/png 静态表。
+
+### A/B scope 问题作废：这批厂商代码的归属，operator 目标 #5 早就判完了
+
+2026-09-21 我把四块厂商代码当成「不是 IM connector、也不在当前插件清单里」escalate 给
+operator 做 A/B 裁定（A=35,899 / B=22,684）。**这个前提是错的，escalation 撤回。**
+
+错因：我只比对了 F202 `official-catalog.ts` 的 3 条，**漏了 `plugin.yaml` 体系的 5 个插件
+和 7 个 connector 清单**——而这三套清单正是本文 §「三个事实」里我自己钉过的。
+
+operator 目标 #5 原文：「im connector 和当前的插件都是我们的 scope，因为这些本身就是
+基于插件的思路一起做的」。按这条尺子逐块量：
+
+| 区块 | 行数 | 归属证据（可直接复核） | 判定 |
+|---|---:|---|---|
+| `infrastructure/email/`（实为 GitHub PR/CI/Issue） | 6,068 | `plugins/github/plugin.yaml` 声明 7 个 `factoryId: github.*`；实现体 `domains/plugin/github-schedule-factories.ts` 逐个 import 本目录（L21-37） | **github 插件的实现体** → 在 scope |
+| `domains/github-signals/` | 885 | `GitHubWaitLifecycleService.ts:14` import `infrastructure/email/deliver-connector-message` | 同上 → 在 scope |
+| `domains/plugin/github-schedule-factories.ts` | 722 | plugin.yaml 与实现体的装配点 | 同上 → 在 scope |
+| `infrastructure/enterprise/` | 1,129 | `Lark*` 只被 `routes/callback-lark-action-routes.ts` 消费（服务 feishu connector + feishu-meeting-intake 插件）；`WeCom*` 只被 `routes/callback-wecom-action-routes.ts` 消费（服务 wecom-agent / wecom-bot connector） | **纯厂商代码** → 在 scope |
+| `domains/signal-intake/` | 3,041 | **混合**（见下） | 按混合制规则逐职责切，不整块进出 |
+
+`plugins/github/plugin.yaml` 由 `PluginRegistry`（`index.ts:4322`）实际扫描加载——
+github 是**货真价实的「当前的插件」**，不是 host 一等功能。
+
+`domains/signal-intake/` 的混合形状（operator 已给过这类文件的规则：
+「分离厂商行，不要删机制」）：
+
+- **厂商侧（跟插件走）**：`LarkCliFeishuSourceResolver` · `MeetingIntakeService/Store/Codec` ·
+  `MeetingArtifactResourceService` · `MeetingIntakeActionService` · `ThreadMeetingArtifactDispatcher`
+  —— 这就是 `official.feishu-meeting-intake` 那个插件的业务
+- **通用侧（Host 保留）**：`SignalAdmissionService` · `SignalRouteStore` · `DestinationAuthority` ·
+  `SourceAccessLeaseService` · `IngressTrace` —— 是 **plugin host 的通用入站机制**，
+  消费者是 `domains/plugin/runtime-composition.ts` / `host-broker/events-publish-handler.ts` /
+  `official-signal-routes.ts`。删了插件入站就没了。
+- 注意 `domains/signals/` 是**另一个目录**（Signals 一等产品功能），与本块无关，不在删除面。
+
+**唯一需要 operator 知情的后果（不是决策题，是提醒）**：`register_pr_tracking` 这个
+猫在用的 MCP 工具，实现依赖 `infrastructure/email/PrTrackingStore`（`routes/callbacks.ts`）。
+GitHub 迁成插件后，该工具将由插件以 `tool` / `mcp` contribution 提供——
+这正是 contribution 表的设计用途，形状上自洽，但**未装 github 插件的实例会没有这个工具**。
+
+**结论**：c) 的删除面按目标 #5 就是 A 的范围，**不需要新裁定**；
+`signal-intake` 那 3,041 行里只有厂商职责跟着走，通用入站机制留在 Host。
 
 ### a) 的真实输入：7 个 connector 实际消费 11 组能力，契约只覆盖了 2 组
 
