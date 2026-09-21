@@ -1,26 +1,30 @@
 /**
- * F202 Train C1 — the whole journey, with no connector-specific code anywhere in it.
+ * F202 Train C1 — the whole journey, driven the way a real package drives it.
  *
- * An external message arrives and is admitted through the one canonical path; a cat is woken;
- * the cat's reply enters the same stream every author writes to; and the package that subscribed
- * gets its own declared method called with that reply. A front-desk package subscribing to the
- * same thread is the identical path — nothing here branches on what kind of subscriber it is.
+ * The package owns its own addressing: it keeps its chat-to-thread mapping in plugin state,
+ * creates threads through the thread API, and falls back to a thread derived from its own
+ * identity when it is bound to nothing. None of that is the Host's business, so none of it is
+ * simulated here by Host code — the package simply sends.
  *
- * THE ECHO IS THE DANGEROUS CASE. The package that relayed the inbound message is also subscribed
- * to the thread it was relayed into. If the Host hands that message back, the package relays it
- * outward again, and a user's single "hi" becomes an endless conversation with itself on a real
- * platform. So a subscriber must not be delivered what it authored — declared through the filter
- * the subscription contribution already carries, so the rule stays generic rather than being a
- * connector special case.
+ * WHAT THE HOST DOES OWN, AND WHY IT CANNOT MOVE INTO THE SDK:
+ *  - the address it issues at activation carries relayed-human authority. A package speaking in
+ *    its own voice never gains wake power from its text (frozen v0 security property), so a
+ *    human mentioning a cat from Feishu can only wake it through an address the Host verified.
+ *    An SDK cannot grant itself that;
+ *  - deciding which subscribers are owed a thread's messages, because a package can only see its
+ *    own subscription, and filtering after delivery is not filtering;
+ *  - putting a cat's reply on the stream at all: cats write through the Host's own store, and no
+ *    SDK can make those messages appear.
+ *
+ * THE ECHO IS THE DANGEROUS CASE. The package that relayed a message inward is also subscribed
+ * to the thread it landed in, so handing it back would have it relay it outward again — one
+ * inbound "hi" becoming an endless conversation on somebody's real platform.
  */
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 
-let mods;
-let stores;
-let messageStore;
 let messaging;
-let ingress;
+let messageStore;
 let delivery;
 let loadedModules;
 let wakes;
@@ -29,30 +33,28 @@ let publishFailures;
 
 const CONNECTOR = 'feishu';
 const CONVERSATION = 'oc_group_1';
+/** The thread a package falls back to when bound to nothing — derived from its own identity. */
+const FIXED_THREAD = 'thread-feishu-system';
 const RELAY_PACKAGE = 'connector:feishu';
 const FRONT_DESK = 'inst-front-desk';
 const DEFAULT_CAT = 'opus';
 
 beforeEach(async () => {
-  const [messagingService, factory, publishing, connectorIngress, subscriptionDelivery, moduleInvocation, storePort] =
-    await Promise.all([
-      import('../dist/domains/messaging/messaging-service.js'),
-      import('../dist/domains/messaging/stores/factory.js'),
-      import('../dist/domains/messaging/publishing-message-store.js'),
-      import('../dist/domains/messaging/connector-ingress.js'),
-      import('../dist/domains/messaging/subscription-delivery.js'),
-      import('../dist/domains/plugin/builtin-runtime/module-host-invocation.js'),
-      import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
-    ]);
-  mods = { messagingService, factory, publishing, connectorIngress, subscriptionDelivery, moduleInvocation };
+  const [messagingService, factory, publishing, subscriptionDelivery, moduleInvocation, storePort] = await Promise.all([
+    import('../dist/domains/messaging/messaging-service.js'),
+    import('../dist/domains/messaging/stores/factory.js'),
+    import('../dist/domains/messaging/publishing-message-store.js'),
+    import('../dist/domains/messaging/subscription-delivery.js'),
+    import('../dist/domains/plugin/builtin-runtime/module-host-invocation.js'),
+    import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
+  ]);
 
   wakes = [];
   outboundCalls = [];
   publishFailures = [];
   loadedModules = new Map();
-  stores = factory.createMessagingStores();
+  const stores = factory.createMessagingStores();
 
-  // Every author's message lands on the stream subscribers read.
   messageStore = publishing.createPublishingMessageStore(new storePort.MessageStore(), {
     events: stores.events,
     onPublishFailure: (error, stored) => publishFailures.push({ error, stored }),
@@ -76,29 +78,6 @@ beforeEach(async () => {
     getMentionPatterns: () => new Map([[DEFAULT_CAT, ['@opus']]]),
   });
 
-  const byExternal = new Map();
-  let threadSeq = 0;
-  ingress = connectorIngress.createConnectorIngress({
-    messaging,
-    bindings: {
-      async getByExternal(connectorId, externalChatId) {
-        return byExternal.get(`${connectorId}:${externalChatId}`) ?? null;
-      },
-      async bind(connectorId, externalChatId, threadId, userId) {
-        const record = { connectorId, externalChatId, threadId, userId };
-        byExternal.set(`${connectorId}:${externalChatId}`, record);
-        return record;
-      },
-    },
-    threads: {
-      async create(userId, title) {
-        threadSeq += 1;
-        return { id: `thread-${threadSeq}`, userId, title };
-      },
-    },
-    defaultUserId: 'user-1',
-  });
-
   delivery = subscriptionDelivery.createSubscriptionDelivery({
     messaging,
     invocation: moduleInvocation.createModuleHostInvocation({
@@ -115,144 +94,127 @@ function loadPackage(instanceId, methodName) {
   });
 }
 
-async function subscribe(instanceId, threadId, method, filter) {
+/** What activation hands a relaying package: an address carrying relayed-human authority. */
+async function relayAddress() {
+  const { handleId } = await messaging.issueConnectorBindingHandle({
+    pluginInstanceId: RELAY_PACKAGE,
+    threadId: FIXED_THREAD,
+    userId: 'user-1',
+    scope: { canSend: true, canSubscribe: false },
+    connectorId: CONNECTOR,
+    externalChatId: CONVERSATION,
+  });
+  return handleId;
+}
+
+/** The package relaying one external message inward — an ordinary send, nothing Host-side. */
+async function relayInbound(text, providerMessageId = 'om_1') {
+  const handle = await relayAddress();
+  return messaging.send(
+    { pluginInstanceId: RELAY_PACKAGE },
+    {
+      address: { kind: 'connector_binding', handle },
+      idempotencyKey: providerMessageId,
+      payload: {
+        provenance: {
+          epistemicStatus: 'user_intent',
+          origin: {
+            kind: 'external',
+            connectorId: CONNECTOR,
+            sourceAddress: { connectorId: CONNECTOR, chatId: CONVERSATION, messageId: providerMessageId },
+          },
+        },
+        elements: [{ elementId: 'el-1', kind: 'text', payload: { text } }],
+      },
+    },
+  );
+}
+
+async function subscribe(instanceId, method, filter) {
   const { handleId } = await messaging.issueThreadHandle({
     pluginInstanceId: instanceId,
-    threadId,
+    threadId: FIXED_THREAD,
     userId: 'user-1',
     scope: { canSend: false, canSubscribe: true },
   });
   await delivery.register({
     subscriberId: instanceId,
-    threadId,
+    threadId: FIXED_THREAD,
     handleId,
     method,
     ...(filter === undefined ? {} : { filter }),
   });
 }
 
-async function catReplies(threadId, text) {
-  await messageStore.append({ threadId, userId: 'user-1', catId: DEFAULT_CAT, content: text, timestamp: Date.now() });
+async function catReplies(text) {
+  await messageStore.append({
+    threadId: FIXED_THREAD,
+    userId: 'user-1',
+    catId: DEFAULT_CAT,
+    content: text,
+    timestamp: Date.now(),
+  });
 }
 
-describe('F202 C1 — external message in, cat reply out, nothing connector-specific', () => {
-  test('case 1: the relayed message wakes a cat and the reply reaches the package', async () => {
-    const admitted = await ingress.admit({
-      connectorId: CONNECTOR,
-      externalConversationId: CONVERSATION,
-      providerMessageId: 'om_1',
-      text: '@opus 看一下',
-      conversation: { type: 'group', title: '产品群' },
-    });
+describe('F202 C1 — a package relays inward, a cat replies outward', () => {
+  test('case 1: a relayed human mention wakes a cat and the reply reaches the package', async () => {
+    await relayInbound('@opus 看一下');
 
-    assert.equal(wakes.length, 1, 'an authenticated external message must wake a cat');
+    assert.equal(wakes.length, 1, 'a relayed human mention must wake a cat');
     assert.equal(wakes[0].catId, DEFAULT_CAT);
+    assert.equal(wakes[0].threadId, FIXED_THREAD);
 
     loadPackage(RELAY_PACKAGE, 'outbound');
-    await subscribe(RELAY_PACKAGE, admitted.threadId, 'outbound');
+    await subscribe(RELAY_PACKAGE, 'outbound');
 
-    await catReplies(admitted.threadId, '看完了');
-    await delivery.drain(admitted.threadId);
+    await catReplies('看完了');
+    await delivery.drain(FIXED_THREAD);
 
     assert.equal(outboundCalls.length, 1, "the cat's reply must reach the relaying package");
-    assert.equal(outboundCalls[0].method, 'outbound');
     assert.equal(outboundCalls[0].envelope.payload.elements[0].payload.text, '看完了');
     assert.deepEqual(publishFailures, []);
   });
 
   test('case 2: a package declaring nothing is still not handed back its own message', async () => {
-    // Two things are load-bearing here. Subscribing BEFORE the inbound arrives, because a
-    // subscription starts at the current head and registering afterwards would skip the message
-    // for the wrong reason. And declaring no filter at all, because `filter` is an untyped
-    // pocket that validates anything — so safety that depends on every package remembering an
-    // unchecked key is not safety.
+    // Subscribing BEFORE the inbound arrives is load-bearing: a subscription starts at the
+    // current head, so registering afterwards would skip it for the wrong reason.
     loadPackage(RELAY_PACKAGE, 'outbound');
-    const { handleId } = await messaging.issueThreadHandle({
-      pluginInstanceId: RELAY_PACKAGE,
-      threadId: 'thread-1',
-      userId: 'user-1',
-      scope: { canSend: false, canSubscribe: true },
-    });
-    await delivery.register({
-      subscriberId: RELAY_PACKAGE,
-      threadId: 'thread-1',
-      handleId,
-      method: 'outbound',
-      // Deliberately no filter: safety must not depend on anyone remembering to ask for it.
-    });
+    await subscribe(RELAY_PACKAGE, 'outbound');
 
-    const admitted = await ingress.admit({
-      connectorId: CONNECTOR,
-      externalConversationId: CONVERSATION,
-      providerMessageId: 'om_1',
-      text: 'hi',
-    });
-    assert.equal(admitted.threadId, 'thread-1', 'guard: the subscription must cover the created thread');
+    await relayInbound('hi');
+    await delivery.drain(FIXED_THREAD);
 
-    await delivery.drain(admitted.threadId);
-    assert.deepEqual(
-      outboundCalls,
-      [],
-      'echoing the relayed message back would make one "hi" an endless loop on a real platform',
-    );
+    assert.deepEqual(outboundCalls, [], 'echoing it back would loop on a real platform');
 
-    // And the filter must not swallow everything: the reply it exists to carry still arrives.
-    await catReplies(admitted.threadId, '好的');
-    await delivery.drain(admitted.threadId);
-    assert.equal(outboundCalls.length, 1, 'excluding your own echo must not exclude the cat reply');
-    assert.equal(outboundCalls[0].envelope.payload.elements[0].payload.text, '好的');
+    await catReplies('好的');
+    await delivery.drain(FIXED_THREAD);
+    assert.equal(outboundCalls.length, 1, 'suppressing the echo must not suppress the reply');
   });
 
   test('case 3: a second, unrelated subscriber gets the same reply', async () => {
-    const admitted = await ingress.admit({
-      connectorId: CONNECTOR,
-      externalConversationId: CONVERSATION,
-      providerMessageId: 'om_1',
-      text: 'hi',
-    });
-
+    await relayInbound('hi');
     loadPackage(FRONT_DESK, 'deliver');
-    await subscribe(FRONT_DESK, admitted.threadId, 'deliver');
+    await subscribe(FRONT_DESK, 'deliver');
 
-    await catReplies(admitted.threadId, '好的');
-    await delivery.drain(admitted.threadId);
+    await catReplies('好的');
+    await delivery.drain(FIXED_THREAD);
 
-    const forFrontDesk = outboundCalls.filter((c) => c.instanceId === FRONT_DESK);
+    const forFrontDesk = outboundCalls.filter((call) => call.instanceId === FRONT_DESK);
     assert.equal(forFrontDesk.length, 1, 'a front-desk package is the identical path');
     assert.equal(forFrontDesk[0].method, 'deliver');
   });
 
   test('case 4: a subscriber that deliberately asks for its own echo receives it', async () => {
-    // Proves the suppression is a default and not a hard rule — a live view confirming an
-    // optimistic update is the case that wants it.
     loadPackage(RELAY_PACKAGE, 'outbound');
-    const { handleId } = await messaging.issueThreadHandle({
-      pluginInstanceId: RELAY_PACKAGE,
-      threadId: 'thread-1',
-      userId: 'user-1',
-      scope: { canSend: false, canSubscribe: true },
-    });
-    await delivery.register({
-      subscriberId: RELAY_PACKAGE,
-      threadId: 'thread-1',
-      handleId,
-      method: 'outbound',
-      filter: { includeOwnMessages: true },
-    });
+    await subscribe(RELAY_PACKAGE, 'outbound', { includeOwnMessages: true });
 
-    const admitted = await ingress.admit({
-      connectorId: CONNECTOR,
-      externalConversationId: CONVERSATION,
-      providerMessageId: 'om_1',
-      text: 'hi',
-    });
-    await delivery.drain(admitted.threadId);
+    await relayInbound('hi');
+    await delivery.drain(FIXED_THREAD);
 
     assert.equal(outboundCalls.length, 1, 'opting in must actually deliver the echo');
   });
 
-  // `filter` is an untyped pocket — `additionalProperties: true`, and absent from `required` —
-  // so every one of these validates against the contract. Inverted, each degrades to silence.
+  // `filter` is an untyped pocket that validates anything, so each of these reaches the Host.
   for (const [label, filter] of [
     ['a misspelled opt-in key', { includeOwnMessage: true }],
     ['a string where a boolean was meant', { includeOwnMessages: 'true' }],
@@ -260,30 +222,12 @@ describe('F202 C1 — external message in, cat reply out, nothing connector-spec
   ]) {
     test(`case 5: ${label} falls back to suppression`, async () => {
       loadPackage(RELAY_PACKAGE, 'outbound');
-      const { handleId } = await messaging.issueThreadHandle({
-        pluginInstanceId: RELAY_PACKAGE,
-        threadId: 'thread-1',
-        userId: 'user-1',
-        scope: { canSend: false, canSubscribe: true },
-      });
-      await delivery.register({
-        subscriberId: RELAY_PACKAGE,
-        threadId: 'thread-1',
-        handleId,
-        method: 'outbound',
-        filter,
-      });
+      await subscribe(RELAY_PACKAGE, 'outbound', filter);
 
-      const admitted = await ingress.admit({
-        connectorId: CONNECTOR,
-        externalConversationId: CONVERSATION,
-        providerMessageId: 'om_1',
-        text: 'hi',
-      });
-      assert.equal(admitted.threadId, 'thread-1', 'guard: the subscription must cover the created thread');
+      await relayInbound('hi');
+      await delivery.drain(FIXED_THREAD);
 
-      await delivery.drain(admitted.threadId);
-      assert.deepEqual(outboundCalls, [], 'an unchecked key must degrade to silence, not to a flood');
+      assert.deepEqual(outboundCalls, [], 'an unchecked key must degrade to silence, not a flood');
     });
   }
 });
