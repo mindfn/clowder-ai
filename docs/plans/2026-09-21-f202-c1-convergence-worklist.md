@@ -249,7 +249,7 @@ GitHub 迁成插件后，该工具将由插件以 `tool` / `mcp` contribution �
 | 5 | 存储 | 3/7 直接拿裸 `ctx.redis` 自拼 key | `im-connector-plugin.ts:28` | ❌ `plugin.state.get/set` **0 命中** |
 | 6 | 配置与凭据 | 7/7 | `ctx.env` 注入 + 三层解析（存储值 > env > YAML） | ✅ **唯一落地的两项**：`plugin.config.read` / `secret.read` |
 | 7 | 定时调度 | 0/7（github 插件走 C 体系白名单） | `ScheduleFactoryRegistry` | ❌ `schedule.register` **0 命中** |
-| 8 | **slash 命令** | 7/7（Router 内拦截，connector 无感知） | `CommandRegistry` 只认 core + skill 两种来源 | ❌ **插件侧根本没有注册面** |
+| 8 | **slash 命令** | 7/7（Router 内拦截，connector 无感知） | `CommandRegistry` 启动时一次性构建（`index.ts:6381`） | ⚠️ **本行原判「没有注册面」已作废**——注册面有两条（skill resource / `UiCommandContribution`），缺的是动态刷新，见下文更正节 |
 | 9 | 媒体下载 | 5/7 | `createMediaDownloader` → `ConnectorMediaService` | ❌ 契约无 media 行；`whisper.extend` **0 命中** |
 | 10 | webhook 入口 | 2/7 | `POST /api/connectors/:id/webhook` | ✅ A 体系内唯一真正通用化的入口 |
 | 11 | 日志 | 7/7 | 直接暴露 `FastifyBaseLogger` | ❌ 契约无 |
@@ -257,6 +257,50 @@ GitHub 迁成插件后，该工具将由插件以 `tool` / `mcp` contribution �
 **operator 说插件诉求「主要是 slash 命令」——而第 8 行是最硬的缺口：
 `CommandRegistry.registerSkillCommands`（`infrastructure/commands/CommandRegistry.ts:22`）
 只接受 core 与 skill 两类来源，插件/connector 无法贡献命令。**
+
+### ⚠️ 更正：a) 不是「补缺口」，是「收敛已有的三套」——slash 注册面一说作废
+
+2026-09-21 operator 打断我开工：「slash 命令注册面是什么意思；我们 host 这边不知道
+也不需要这个的；这个不是插件 sdk 那边处理的么」「我们当前的那个插件不就已经支持了
+skill mcp 这些的安装和卸载么；你们不会又要发明一套吧」。
+
+**我当时正准备给 `CommandRegistry` 加 `registerPluginCommands` / `unregisterPluginCommands`
+——那是本文 §5 根因里写的那个病的第四次发作（"发现要的东西不在，就在旁边另造一个"）。
+测试已删，未入库。**
+
+清点后 operator 的两条都成立：
+
+**① Host 早就有对称的装/卸机制，而且不止一套**
+
+| 机制 | 覆盖类型 | 对称面 | 位置 |
+|---|---|---|---|
+| `PluginResourceActivator` | **skill · limb · mcp · schedule** | `activateResource` / `deactivateResource` | `PluginResourceActivator.ts:264-300` |
+| `BuiltinPluginContributionSupervisor` | mcp | `start` / `stop` / `stopAll` | `builtin-contribution-supervisor.ts:277,351,366` |
+| 契约 `FeatureHostAdapter` | 12 类（单方法覆盖） | `registerContribution` / `disposeContribution` | sdk `feature-context.d.ts`，Host **0 实现** |
+
+**这三套是同一件事的三种拼法。** a) 的正解是把前两套收敛进第三套的单一入口，
+**不是新增任何类型专用的注册 API**。Host 不该有 command 专用公开面——
+它只该有一个 `registerContribution`，内部按 `StaticContribution['type']` 路由。
+
+**② slash 命令的注册面本来就存在，缺的是「刷新」不是「注册」**
+
+- 契约已有 `UiCommandContribution`（`type:'ui', kind:'command'`，
+  `contract.generated.d.ts:218-224`）——Host 消费 **0 处**
+- 插件装 skill 这条路已通：`plugin.yaml` `resources:[{type:skill}]` →
+  `PluginResourceActivator.activateSkill` → `addSkill` 落盘
+- **真正的缺口**：`CommandRegistry` 在 `index.ts:6381` **只在启动时构建一次**
+  （`parseManifestSlashCommands(cat-cafe-skills)` 扫一遍就封存）。
+  插件运行时装了带命令的 skill，盘上有了，注册表不知道，**要重启才生效**。
+
+> **所以本文 §「a) 的真实输入」表中第 8 行「插件侧根本没有注册面」是错的，作废。**
+> 正确表述：注册面有两条，缺的是 `CommandRegistry` 的动态刷新——
+> 而这是 Host 内部的生命周期问题（startup-static vs runtime-dynamic），
+> 不是需要对插件新暴露的接口。
+
+**这一条同时修正了 a) 的工作性质**：operator 原话是「整理我们应该暴露的能力……
+**不应该一味的新增；应该是收敛和整合的**」。我之前把 a) 读成「补 5 个缺口」，
+方向反了。a) 的交付物是**一张收敛后的接口表 + 把现有多套实现并进去**，
+新增只在「真的一条路都没有」时才发生。
 
 ### 重复入口（operator 原话「两个入口之后应该汇聚到一起」）—— 实测 7 组
 
@@ -288,8 +332,9 @@ GitHub 迁成插件后，该工具将由插件以 `tool` / `mcp` contribution �
 - **Z-6** `IMConnectorPlugin.setup?` 钩子 7 个 connector 无一实现
 
 **所以 a) 不是「新增接口」，是三件事**：
-① 把 11 组真实需求对照 13 wire + 6 adapter 方法，**补 5 个缺口**（出站富语义、入站注册、
-thread 绑定、媒体、**slash 命令注册面**）；
+① 把 11 组真实需求对照 13 wire + 6 adapter 方法，**先查"已有哪条路"再决定是否新增**——
+逐组的结论见下文「a) 不是补缺口，是收敛已有的三套」更正节；slash 命令那一项经查
+已有两条注册面，缺的只是动态刷新，**不新增接口**；
 ② **合并 R-1…R-7 七组重复入口**；
 ③ **Z-4 的 11 项按消费者重新分档**——其中 `schedule.register` / `plugin.state.get` /
 `plugin.state.set` / `message.event.subscribe` 是 github 插件与 7 个 connector 的承重面，
