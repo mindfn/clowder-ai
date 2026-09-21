@@ -129,10 +129,24 @@ SubscriptionDelivery.register  → 零生产调用点    （插件声明的 mess
 | `domains/plugin/official-plugin-meeting-intake.ts` | 216 | `createFeishuMeetingCatchUpService`、`createLarkCliFeishuPollingGateway` | ❌ **飞书会议业务** |
 | `domains/plugin/official-plugin-history-import.ts` | 153 | `FeishuArtifactLocator`、飞书制品解析 | ❌ **飞书特有** |
 | `domains/plugin/official-plugin-auth.ts` | 295 | 硬编码 `accounts.feishu.cn` / `accounts.larksuite.com` | ❌ **飞书特有** |
-| `domains/plugin/official-catalog.ts` | 181 | 硬编码 `pluginId: 'official.feishu-meeting-intake'` 等 | ⚠️ 按判据也该走，但它是**安装目录**，需替代方案（目录由插件仓/远端提供），**不可裸删** |
+| `domains/plugin/official-catalog.ts` | 181 | **硬编码的官方插件货架**：3 条（`feishu-meeting-intake` / `collective-connector` / `genoffice-docx`），各带 packageName / version / archiveUrl / packageDigest / effectiveGrants / ownerAuth / presentation | ⚠️ **不是整文件删**，见下 |
+| `domains/plugin/official-catalog-provider.ts` | 335 | 从 `https://registry.npmjs.org` 拉取并校验 URL 形状与 digest | ✅ **通用机制，保留** |
 | `domains/plugin/runtime-composition.ts` | 781 | 仅一行注释提到飞书超时 | ✅ 通用，保留 |
 
 **已知删除面 ≈ 16,785 行**（不含 catalog 的替代工程）。
+
+#### official-catalog 的正解：把货架变成数据，不是删文件
+
+取数据的机制**已经是通用的**（`official-catalog-provider.ts` 从 npm registry 拉取、校验 URL 与 digest）。
+**硬编码的只是「哪 3 个包」**，所以：
+
+- **3 条目 → 变成数据**（配置 / 远端清单 / 插件仓提供）—— 这才是"具体插件相关"的部分
+- `OfficialPluginCatalogEntry` 等类型定义 → 通用，保留
+- **但类型里有一处带厂商味**：`ownerAuth.kind: 'lark-cli-device'` 是字面量类型，
+  把飞书 CLI 登录方式写进了通用定义 —— 按判据应一般化
+
+> 我第一次把它描述成"安装目录、需替代方案、不可裸删"，是**只看了 grep 命中的 4 行**就下的判断。
+> 读完文件后成本判断完全不同：机制已通用，要动的只是数据。**又一次推理代替清点。**
 
 > **这份清单不完整。** 我只扫了 `domains/plugin/`；`routes/`、`index.ts`、`infrastructure/` 其余子树未扫。
 > **实施前必须用同一把尺子全仓重扫**——我今晚四次栽在"用推理代替清点"，这份范围同样不应被采信。
