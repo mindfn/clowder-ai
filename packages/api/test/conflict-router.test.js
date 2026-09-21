@@ -52,17 +52,46 @@ async function setup(when) {
 }
 
 describe('ConflictRouter F280 typed waits', () => {
-  test('conflict wakes only a waiter that declared the conflict predicate', async () => {
-    const { router, harness } = await setup([{ kind: 'pr_became_conflicting' }]);
+  test('conflict terminalizes for a declared waiter, and announces only when asked', async () => {
+    const { router, harness, task } = await setup([{ kind: 'pr_became_conflicting' }]);
     const result = await router.route({
       repoFullName: 'owner/repo',
       prNumber: 7,
       headSha: 'aaa1111',
       mergeState: 'CONFLICTING',
     });
-    assert.equal(result.kind, 'notified');
-    assert.match(result.content, /mergeable → conflicting/);
-    assert.equal(harness.deliveries('thread_1').length, 1);
+
+    // Phase C AC-C1 needs the authorization without the announcement: the outcome is durable here,
+    // so an auto-resolver may act on it, and nothing has been said to the owner yet.
+    assert.equal(result.kind, 'matched_pending');
+    assert.equal(result.taskId, task.id);
+    assert.equal(result.outcome.reason, 'matched');
+    assert.equal(harness.deliveries('thread_1').length, 0, 'nothing is announced before it is asked for');
+
+    const published = await router.publish(result.taskId, result.outcome);
+    assert.equal(published.kind, 'notified');
+    assert.match(published.content, /mergeable → conflicting/);
+    assert.equal(harness.deliveries('thread_1').length, 1, 'and then exactly once');
+  });
+
+  test('a repaired conflict is settled without ever announcing it', async () => {
+    const { router, harness, task } = await setup([{ kind: 'pr_became_conflicting' }]);
+    const result = await router.route({
+      repoFullName: 'owner/repo',
+      prNumber: 7,
+      headSha: 'aaa1111',
+      mergeState: 'CONFLICTING',
+    });
+    assert.equal(result.kind, 'matched_pending');
+
+    assert.equal(await router.settleWithoutWake(result.taskId, result.outcome, 'auto-resolved:rebase'), true);
+    assert.equal(harness.deliveries('thread_1').length, 0, 'a repaired conflict never reaches the owner');
+
+    // The outbox is settled, so a later flush cannot resurrect it as a late wake.
+    const late = await router.publish(result.taskId, result.outcome);
+    assert.notEqual(late.kind, 'notified');
+    assert.equal(harness.deliveries('thread_1').length, 0, 'and it stays settled');
+    assert.ok(task.id);
   });
 
   test('conflict remains state-only for a new-HEAD waiter', async () => {

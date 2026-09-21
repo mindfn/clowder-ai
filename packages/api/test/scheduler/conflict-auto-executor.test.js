@@ -38,7 +38,7 @@ const conflictMatchedOutcome = {
   ownerFence: { kind: 'containing_task', generation: 1 },
   reason: 'matched',
   at: 1000,
-  delivery: 'delivered',
+  delivery: 'pending',
   matched: [{ kind: 'pr_became_conflicting', delta: 'mergeState MERGEABLE → CONFLICTING' }],
 };
 
@@ -144,6 +144,7 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const controller = new AbortController();
     const wakes = [];
+    const settled = [];
     let receivedSignal;
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore([
@@ -152,16 +153,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
-          // The admission inside `route` IS the wake; there is no second trigger to observe.
-          wakes.push('wake');
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
+        },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor: {
@@ -180,9 +188,10 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     assert.equal(receivedSignal, controller.signal);
   });
 
-  it('auto-resolved conflict is still delivered to its owner (supersedes Phase C AC-C1)', async () => {
+  it('auto-resolved conflict does NOT wake its owner (Phase C AC-C1)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const wakes = [];
+    const settled = [];
     const repairs = [];
     const autoExecutor = {
       async resolve() {
@@ -196,16 +205,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
-          // The admission inside `route` IS the wake; there is no second trigger to observe.
-          wakes.push('wake');
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
+        },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor,
@@ -214,18 +230,15 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     assert.equal(gateResult.run, true);
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    // Phase C AC-C1 used to suppress the wake when auto-resolution succeeded. It cannot any more,
-    // and that is a consequence of #1392 R5 rather than an oversight: only a `matched` outcome may
-    // authorise a repository write, and that outcome is produced by the admission itself — so the
-    // repair can only run after the owner's wait has already been delivered. The owner asked to be
-    // told their PR conflicted; they are told, and the successful repair is reported afterwards.
-    assert.equal(wakes.length, 1, 'the matched wait outcome is delivered before any repair runs');
-    assert.equal(repairs.length, 1, 'the repair still runs; it is reported, not suppressed');
+    assert.equal(wakes.length, 0, 'a conflict that was repaired must not disturb the owner');
+    assert.equal(repairs.length, 1, 'the repair ran under the matched outcome that authorised it');
+    assert.equal(settled.length, 1, 'and the wait is closed exactly once, quietly');
   });
 
   it('escalated conflict wakes its owner exactly once (Phase C AC-C2)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const wakes = [];
+    const settled = [];
     const autoExecutor = {
       async resolve() {
         return { kind: 'escalated', files: ['src/index.ts', 'docs/README.md'], branch: 'feat/test' };
@@ -237,16 +250,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
-          // The admission inside `route` IS the wake; there is no second trigger to observe.
-          wakes.push('wake');
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
+        },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor,
@@ -254,12 +274,14 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(wakes.length, 1, 'one admission wakes the owner; escalation adds no second wake');
+    assert.equal(wakes.length, 1, 'an escalated conflict wakes its owner exactly once');
+    assert.equal(settled.length, 0, 'and is never closed quietly');
   });
 
   it('cloud-P1: mergeState uses mergeable vocabulary (CONFLICTING not DIRTY)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const wakes = [];
+    const settled = [];
     const autoExecutor = {
       async resolve() {
         return { kind: 'resolved', method: 'clean-rebase', branch: 'feat/test' };
@@ -272,16 +294,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
-          // The admission inside `route` IS the wake; there is no second trigger to observe.
-          wakes.push('wake');
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
+        },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor,
@@ -294,28 +323,36 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     const signal = gateResult.workItems[0].signal;
     assert.equal(signal.signal.mergeState, 'CONFLICTING', 'mergeState must use mergeable vocabulary');
     await spec.run.execute(signal, 'pr:a/b#1', {});
-    assert.equal(wakes.length, 1, 'the matched wait outcome is delivered before any repair runs');
+    assert.equal(wakes.length, 0, 'a repaired conflict is closed quietly, not announced');
   });
 
   it('P1-3 regression: checkMergeable returning object provides mergeState to workItems', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const wakes = [];
+    const settled = [];
     const tasks = [mockTask({ repoFullName: 'a/b', prNumber: 1, threadId: 't1', catId: 'opus', userId: 'u1' })];
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore(tasks),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'abc123' }),
       conflictRouter: {
         async route() {
-          // The admission inside `route` IS the wake; there is no second trigger to observe.
-          wakes.push('wake');
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
+        },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       log: noopLog,
@@ -330,22 +367,30 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
   it('no autoExecutor → the admission is still the wake (backward compat)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const wakes = [];
+    const settled = [];
     const tasks = [mockTask({ repoFullName: 'a/b', prNumber: 1, threadId: 't1', catId: 'opus', userId: 'u1' })];
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore(tasks),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
-          // The admission inside `route` IS the wake; there is no second trigger to observe.
-          wakes.push('wake');
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
+        },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       // no autoExecutor
@@ -353,6 +398,6 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(wakes.length, 1, 'without an auto-executor the admission is still the only wake');
+    assert.equal(wakes.length, 1, 'with nothing able to repair it, the conflict reaches its owner');
   });
 });

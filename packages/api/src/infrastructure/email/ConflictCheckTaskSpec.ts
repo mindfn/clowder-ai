@@ -4,7 +4,8 @@
  * #320: Reads from unified TaskStore (kind=pr_tracking) instead of PrTrackingStore.
  *
  * Gate: list pr_tracking tasks → checkMergeable per PR → build ConflictSignals.
- * Execute: ConflictRouter admits the outcome (atomic Message + Queue) — that admission IS the wake.
+ * Execute: the router terminalizes the matched outcome but holds its announcement, the executor
+ * gets its chance to repair, and only an unrepaired conflict is published — one admission, one wake.
  *
  * KD-9: Gate passes ALL mergeState results (including MERGEABLE) so ConflictRouter
  *       can clear fingerprints for re-conflict detection.
@@ -57,7 +58,7 @@ function conflictWasMatched(outcome: WaitOutcomeV1 | undefined): boolean {
   return outcome.matched?.some((delta) => delta.kind === 'pr_became_conflicting') === true;
 }
 
-async function tryAutoResolveAfterWake(
+async function tryAutoResolve(
   opts: ConflictCheckTaskSpecOptions,
   workItem: ConflictWorkItem,
   outcome: WaitOutcomeV1 | undefined,
@@ -70,10 +71,7 @@ async function tryAutoResolveAfterWake(
     return await opts.autoExecutor.resolve(workItem.signal.repoFullName, workItem.signal.prNumber, signal);
   } catch (error) {
     if (!signal?.aborted) throw error;
-    opts.log.warn(
-      { error },
-      '[conflict-check] cancellation interrupted optional auto-resolution; the owner is already awake',
-    );
+    opts.log.warn({ error }, '[conflict-check] cancellation interrupted optional auto-resolution');
     return null;
   }
 }
@@ -126,25 +124,36 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
       timeoutMs: 30_000,
       async execute(workItem: ConflictWorkItem, _subjectKey: string, ctx: ExecuteContext) {
         ctx.signal?.throwIfAborted();
-        // `route` admits the outcome atomically (Message + Queue in one transaction), so the owner is
-        // already awake by the time it returns `notified`. There is no second wake to issue here, and
-        // the trigger that used to issue one has been removed: it re-enqueued the same messageId and
-        // produced a duplicate Queue row.
         const routeResult = await opts.conflictRouter.route(workItem.signal);
-        if (routeResult.kind !== 'notified') return;
+        // An outcome that was already announced, or that never matched, is not ours to decide about.
+        if (routeResult.kind !== 'matched_pending') return;
 
-        // F140 Phase C. This runs after the wake rather than instead of it, and that ordering is
-        // forced, not incidental: #1392 R5 says auto-resolution may only touch the repository on a
-        // matched outcome, and the matched outcome is what `route` produces. Auto-resolve cannot be
-        // hoisted above the admission without also dropping the authority check it depends on.
-        const result = await tryAutoResolveAfterWake(opts, workItem, routeResult.outcome, ctx.signal);
+        // Phase C AC-C1. The owner asked to be told their PR conflicts; they should not be told
+        // about a conflict that no longer exists by the time anyone could read it. #1392 R5 is what
+        // makes the ordering legal: the authorization to touch the repository is the terminalized
+        // matched outcome, which is durable here even though nothing has been announced. Repair
+        // first, then decide whether there is anything left to say.
+        const result = await tryAutoResolve(opts, workItem, routeResult.outcome, ctx.signal);
         if (result?.kind === 'resolved') {
-          opts.log.info(`[conflict-check] Auto-resolved conflict for ${result.branch} (${result.method})`);
+          const settled = await opts.conflictRouter.settleWithoutWake(
+            routeResult.taskId,
+            routeResult.outcome,
+            `auto-resolved:${result.method}`,
+          );
+          opts.log.info(
+            `[conflict-check] Auto-resolved conflict for ${result.branch} (${result.method})${
+              settled ? '' : ' — the outbox had already flushed, so the owner was told anyway'
+            }`,
+          );
           return;
         }
         if (result?.kind === 'escalated') {
           opts.log.info(`[conflict-check] Escalating: ${result.files.length} conflict file(s) in ${result.branch}`);
         }
+        // Everything that is not a completed repair reaches the owner: escalations, refusals,
+        // executor absence, and a cancelled attempt alike. Publishing is compare-and-set on this
+        // exact outcome, so a concurrent outbox flush cannot turn into a second wake.
+        await opts.conflictRouter.publish(routeResult.taskId, routeResult.outcome);
       },
     },
     state: { runLedger: 'sqlite' },

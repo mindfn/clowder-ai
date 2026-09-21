@@ -4,10 +4,11 @@ import { before, describe, it } from 'node:test';
 /**
  * #1398 — conflict-check admits once.
  *
- * `ConflictRouter.route` admits the wait outcome atomically (Message + Queue in one transaction via
- * `GitHubWaitLifecycleService.publishPending`), so a `notified` result means the owner is already
- * awake. The spec used to follow that with `invokeTrigger.trigger(..., routeResult.messageId, ...)`,
- * which re-enqueued the *same* message with no coalesce key — a second Queue row for one event.
+ * `ConflictRouter.route` terminalizes the wait outcome durably and returns `matched_pending`
+ * without announcing it; the spec then owes exactly one of `publish` or `settleWithoutWake`, and
+ * either way the owner is woken at most once. The spec used to follow a `notified` route with
+ * `invokeTrigger.trigger(..., routeResult.messageId, ...)`, which re-enqueued the *same* message
+ * with no coalesce key — a second Queue row for one event.
  *
  * It never fired in production, and only by accident: `github-schedule-factories.ts` never passed
  * `invokeTrigger` into the spec, so the branch was unreachable. That is not a safety property, it is
@@ -33,8 +34,18 @@ describe('#1398 conflict-check admits exactly once', () => {
 
   const silentLog = { info: () => {}, warn: () => {}, error: () => {} };
 
+  const pending = (outcome) => ({
+    kind: 'matched_pending',
+    taskId: 'task-1',
+    threadId: 'thread-1',
+    catId: 'c',
+    outcome,
+  });
+
   function build({ routeResult, autoExecutor }) {
     const routeCalls = [];
+    const published = [];
+    const settled = [];
     const spec = createConflictCheckTaskSpec({
       taskStore: { listByKind: async () => [] },
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
@@ -43,23 +54,24 @@ describe('#1398 conflict-check admits exactly once', () => {
           routeCalls.push(signal);
           return routeResult;
         },
+        publish: async (taskId, outcome) => {
+          published.push({ taskId, outcomeId: outcome.outcomeId });
+          return { kind: 'notified' };
+        },
+        settleWithoutWake: async (taskId, outcome, reason) => {
+          settled.push({ taskId, outcomeId: outcome.outcomeId, reason });
+          return true;
+        },
       },
       ...(autoExecutor ? { autoExecutor } : {}),
       log: silentLog,
     });
-    return { spec, routeCalls };
+    return { spec, routeCalls, published, settled };
   }
 
   it('does not accept an invokeTrigger dep any more — the second admission seam is gone', () => {
     const { spec } = build({
-      routeResult: {
-        kind: 'notified',
-        threadId: 't',
-        catId: 'c',
-        messageId: 'm',
-        content: 'x',
-        outcome: matchedOutcome,
-      },
+      routeResult: pending(matchedOutcome),
       autoExecutor: { resolve: async () => ({ kind: 'escalated', branch: 'b', files: [] }) },
     });
 
@@ -71,17 +83,10 @@ describe('#1398 conflict-check admits exactly once', () => {
     assert.ok(spec.run.execute, 'spec still exposes execute');
   });
 
-  it('routes once and issues no second wake for a matched conflict', async () => {
+  it('routes once and wakes once for a conflict it could not repair', async () => {
     const resolveCalls = [];
-    const { spec, routeCalls } = build({
-      routeResult: {
-        kind: 'notified',
-        threadId: 't',
-        catId: 'c',
-        messageId: 'm',
-        content: 'x',
-        outcome: matchedOutcome,
-      },
+    const { spec, routeCalls, published, settled } = build({
+      routeResult: pending(matchedOutcome),
       autoExecutor: {
         resolve: async (repo, pr) => {
           resolveCalls.push({ repo, pr });
@@ -92,24 +97,35 @@ describe('#1398 conflict-check admits exactly once', () => {
 
     await spec.run.execute(workItem(), 'pr:acme/app#7', { signal: undefined });
 
-    // One admission — the route call itself — and nothing after it.
-    assert.equal(routeCalls.length, 1);
+    assert.equal(routeCalls.length, 1, 'one terminalization');
     // Auto-resolve still runs, and still only on the matched outcome that authorises a repo write.
     assert.deepEqual(resolveCalls, [{ repo: 'acme/app', pr: 7 }]);
+    assert.equal(published.length, 1, 'and the unrepaired conflict is announced exactly once');
+    assert.equal(settled.length, 0);
+  });
+
+  it('routes once and never wakes for a conflict it repaired (Phase C AC-C1)', async () => {
+    const { spec, routeCalls, published, settled } = build({
+      routeResult: pending(matchedOutcome),
+      autoExecutor: { resolve: async () => ({ kind: 'resolved', branch: 'feature', method: 'clean-rebase' }) },
+    });
+
+    await spec.run.execute(workItem(), 'pr:acme/app#7', { signal: undefined });
+
+    assert.equal(routeCalls.length, 1);
+    assert.equal(published.length, 0, 'the owner is not told about a conflict that no longer exists');
+    assert.deepEqual(
+      settled.map((entry) => entry.outcomeId),
+      ['outcome-1'],
+      'the wait is still closed — exactly once, and quietly',
+    );
   });
 
   it('does not auto-resolve on an unmatched outcome, and still admits only once', async () => {
     const resolveCalls = [];
-    const { spec, routeCalls } = build({
-      routeResult: {
-        kind: 'notified',
-        threadId: 't',
-        catId: 'c',
-        messageId: 'm',
-        content: 'x',
-        // An expiry is a delivery, not a mandate: #1392 R5 forbids acting on it.
-        outcome: { reason: 'expired', outcomeId: 'outcome-2', matched: [] },
-      },
+    const { spec, routeCalls, published } = build({
+      // An expiry is a delivery, not a mandate: #1392 R5 forbids acting on it.
+      routeResult: pending({ reason: 'expired', outcomeId: 'outcome-2', matched: [] }),
       autoExecutor: {
         resolve: async () => {
           resolveCalls.push(1);
@@ -122,6 +138,7 @@ describe('#1398 conflict-check admits exactly once', () => {
 
     assert.equal(routeCalls.length, 1);
     assert.equal(resolveCalls.length, 0, 'an expired wait must not authorise a repository write');
+    assert.equal(published.length, 1, 'but the owner still hears the outcome their wait produced');
   });
 
   it('performs no admission at all when the router deduped or skipped', async () => {
