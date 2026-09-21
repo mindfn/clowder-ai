@@ -4,6 +4,7 @@ import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
+import type { MessagingService } from '../../messaging/messaging-service.js';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -15,6 +16,11 @@ import {
   type PluginRuntimeConfigurationPort,
   resolveManifestConfiguration,
 } from '../manifest-configuration-projection.js';
+import {
+  createPluginMessagingHost,
+  createUnavailablePluginMessagingHost,
+  type PluginMessagingHost,
+} from '../plugin-messaging-host.js';
 import {
   createPluginStorageHost,
   type PluginPrivateStoragePort,
@@ -49,6 +55,7 @@ export interface ModulePluginHostShape {
   readonly storage: PluginStorageHost;
   readonly tasks: PluginTaskHost;
   readonly threads: PluginThreadHost;
+  readonly messaging: PluginMessagingHost;
   readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -67,6 +74,12 @@ export interface ModulePluginRuntimeOptions {
   readonly storage?: PluginPrivateStoragePort;
   readonly taskStore?: ITaskStore;
   readonly threads?: {
+    readonly threadStore: IThreadStore;
+    readonly bindingStore: IConnectorThreadBindingStore;
+    readonly ownerUserId: string;
+  };
+  readonly messaging?: {
+    readonly service: MessagingService;
     readonly threadStore: IThreadStore;
     readonly bindingStore: IConnectorThreadBindingStore;
     readonly ownerUserId: string;
@@ -167,12 +180,25 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             bindingStore: this.options.threads.bindingStore,
           })
         : createUnavailablePluginThreadHost();
+      const messaging = this.options.messaging
+        ? createPluginMessagingHost({
+            pluginId: packageRecord.pluginId,
+            pluginInstanceId,
+            ownerUserId: this.options.messaging.ownerUserId,
+            effectiveGrants,
+            manifest: packageRecord.manifest,
+            threadStore: this.options.messaging.threadStore,
+            bindingStore: this.options.messaging.bindingStore,
+            messaging: this.options.messaging.service,
+          })
+        : createUnavailablePluginMessagingHost();
       const candidate = await plugin.start({
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
         tasks: createPluginTaskHost(this.options.taskStore),
         threads,
+        messaging,
         log: (level, message, fields) =>
           this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });

@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
+import { createMessagingDomain } from '../dist/domains/messaging/index.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
 import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/module-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/runtime-carrier.js';
@@ -142,6 +144,29 @@ export default {
 };
 `;
 
+const messagingHostModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return {
+      async start(host) {
+        const thread = await host.threads.ensureSystemThread();
+        const receipt = await host.messaging.send({
+          threadId: thread.id,
+          idempotencyKey: 'module-send-1',
+          payload: {
+            provenance: { epistemicStatus: 'observation' },
+            elements: [{ elementId: 'text-1', kind: 'text', payload: { text: 'module hello' } }],
+          },
+        });
+        log.push({ call: 'messaging', receipt });
+        return { actions: {}, stop() {} };
+      },
+    };
+  },
+};
+`;
+
 const invalidStartResultModule = `
 const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
 export default {
@@ -243,6 +268,7 @@ function hostOf(records, options = {}) {
       readSecret: async () => undefined,
     },
     ...(options.threads === undefined ? {} : { threads: options.threads }),
+    ...(options.messaging === undefined ? {} : { messaging: options.messaging }),
     log: options.log ?? (() => {}),
   });
   const router = new PluginRuntimeCarrierRouter(inventory);
@@ -338,6 +364,40 @@ test('start receives the caller-bound Host thread surface', async () => {
     v: 1,
     pluginInstanceId: 'instance-0',
   });
+});
+
+test('start receives the caller-bound Host messaging surface', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(messagingHostModule);
+  const threadStore = new ThreadStore();
+  const bindingStore = new MemoryConnectorThreadBindingStore();
+  const messageStore = new MessageStore();
+  const messaging = createMessagingDomain({ messageStore });
+  const pluginManifest = manifest({
+    contributions: [{ type: 'identity', id: 'fixture', displayName: 'Fixture' }],
+    features: [
+      {
+        id: 'main',
+        name: 'Main',
+        resources: [],
+        contributions: [{ type: 'identity', id: 'fixture' }],
+        capabilities: ['messaging.send'],
+      },
+    ],
+  });
+  const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
+  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: ['messaging.send'] }], {
+    threads: shared,
+    messaging: { ...shared, service: messaging },
+  });
+
+  await host.router.start('instance-0');
+
+  const entry = moduleLog()[0];
+  assert.equal(entry.call, 'messaging');
+  const stored = await messageStore.getById(entry.receipt.messageId);
+  assert.equal(stored.content, 'module hello');
+  assert.equal(stored.source.label, 'Fixture');
 });
 
 test('an invalid start result is stopped and leaves no active module behind', async () => {

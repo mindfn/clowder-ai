@@ -75,6 +75,8 @@ export type HandleRecord = AddressHandleRecord | MessageHandleRecord;
 export interface HandleStore {
   put(record: HandleRecord): Promise<void>;
   get(handleId: string): Promise<HandleRecord | null>;
+  /** Atomic create-if-absent for deterministic Host-internal address handles. */
+  getOrCreateAddressHandle(record: AddressHandleRecord): Promise<{ record: AddressHandleRecord; created: boolean }>;
   /**
    * Atomic get-or-create for message handles. Returns the existing handle if
    * one is already minted for `record.messageId`; otherwise persists `record`

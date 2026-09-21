@@ -18,7 +18,7 @@
  * fail-closed against leaking restricted content to subscribers.
  */
 
-import { type CatId, catRegistry } from '@cat-cafe/shared';
+import { type CatId, type ConnectorSource, catRegistry, type MessageContent } from '@cat-cafe/shared';
 import type { CanonicalAudience, MessageDraft, MessageProvenance, SendReceipt } from '@clowder-ai/plugin-contract';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import { resolveVisibleReplyParent } from '../cats/services/stores/visibility.js';
@@ -32,6 +32,7 @@ import {
   deriveIngressTarget,
   type MessagingIngressWakeDeps,
   type ResolvedIngress,
+  sourceForConnectorIngress,
 } from './ingress-wake.js';
 
 import type { MessagingLedger } from './ledger.js';
@@ -51,6 +52,13 @@ export interface SendServiceDeps {
   readonly ingressWake?: MessagingIngressWakeDeps;
   /** Fire-and-forget subscriber delivery after a durable public event is appended. */
   readonly onPublished?: (threadId: string) => void;
+}
+
+export interface HostSendOptions {
+  readonly source: ConnectorSource;
+  readonly contentBlocks?: readonly MessageContent[];
+  readonly sender?: { readonly id: string; readonly name?: string };
+  readonly wake?: 'auto' | { readonly catId: string };
 }
 
 /** D-4: validate the declared origin against handle-derived truth; return the stamped provenance. */
@@ -126,7 +134,7 @@ export class SendService {
     this.isKnownCatId = deps.isKnownCatId ?? ((catId) => catRegistry.has(catId));
   }
 
-  async send(ctx: PluginCallContext, input: unknown): Promise<SendReceipt> {
+  async send(ctx: PluginCallContext, input: unknown, hostOptions?: HostSendOptions): Promise<SendReceipt> {
     const draft = validateDraft(input);
 
     // Claim FIRST: settled work must return its receipt regardless of later
@@ -145,16 +153,33 @@ export class SendService {
       // F202 C1 gap A: authenticated external ingress carries the wake authority a
       // `thread_handle` deliberately does not (F288 v0). Whisper ingress is excluded — an
       // audience-restricted message must not be broadcast to the thread room.
-      const ingress =
+      const wake =
+        hostOptions === undefined &&
         handle.kind === 'connector_binding' &&
         handle.connectorBinding &&
-        this.deps.ingressWake &&
-        audience.kind !== 'whisper'
-          ? {
-              deps: this.deps.ingressWake,
-              binding: handle.connectorBinding,
-              catId: await deriveIngressTarget(this.deps.ingressWake, handle.threadId, content),
-            }
+        this.deps.ingressWake
+          ? 'auto'
+          : hostOptions?.wake;
+      if (wake !== undefined && !this.deps.ingressWake) {
+        throw new MessagingError('VALIDATION', 'Host wake services are unavailable');
+      }
+      let wakeCatId: CatId | undefined;
+      if (wake === 'auto' && this.deps.ingressWake) {
+        wakeCatId = await deriveIngressTarget(this.deps.ingressWake, handle.threadId, content);
+      } else if (typeof wake === 'object') {
+        if (!this.isKnownCatId(wake.catId)) {
+          throw new MessagingError('VALIDATION', `unknown cat ${wake.catId}`);
+        }
+        wakeCatId = wake.catId as CatId;
+      }
+      const source =
+        hostOptions?.source ??
+        (handle.kind === 'connector_binding' && handle.connectorBinding
+          ? sourceForConnectorIngress(handle.connectorBinding.connectorId, handle.connectorBinding.externalChatId)
+          : undefined);
+      const ingress: ResolvedIngress | undefined =
+        source && this.deps.ingressWake && audience.kind !== 'whisper'
+          ? { deps: this.deps.ingressWake, source, ...(wakeCatId === undefined ? {} : { catId: wakeCatId }) }
           : undefined;
 
       if (draft.replyTo !== undefined) {
@@ -182,8 +207,10 @@ export class SendService {
         // v0: plugin sends never trigger @-routing (wake power is K-3a scope). Authenticated
         // connector ingress is the one exception, and its target is Host-derived — never read
         // from the package's own text claim.
-        mentions: ingress ? [ingress.catId] : [],
+        mentions: wakeCatId === undefined ? [] : [wakeCatId],
         timestamp,
+        ...(source === undefined ? {} : { source }),
+        ...(hostOptions?.contentBlocks === undefined ? {} : { contentBlocks: hostOptions.contentBlocks }),
         ...(audience.kind === 'whisper'
           ? { visibility: 'whisper' as const, whisperTo: audience.targets as readonly CatId[] }
           : {}),
@@ -265,6 +292,8 @@ export class SendService {
           userId: handle.userId,
           messageId: stored.id,
           content,
+          ...(hostOptions?.contentBlocks === undefined ? {} : { contentBlocks: hostOptions.contentBlocks }),
+          ...(hostOptions?.sender === undefined ? {} : { sender: hostOptions.sender }),
           timestamp,
           ingress,
         });

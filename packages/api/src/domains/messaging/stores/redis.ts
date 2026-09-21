@@ -17,6 +17,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
 import type { MessageOutputEventInput } from '../contract/host-types.js';
 import type {
+  AddressHandleRecord,
   AppendLease,
   EventLogAppendResult,
   EventLogStore,
@@ -137,6 +138,13 @@ redis.call('SET', KEYS[1], ARGV[1])
 return {ARGV[2], '1'}
 `;
 
+const ADDRESS_HANDLE_GET_OR_CREATE_LUA = `
+local existing = redis.call('GET', KEYS[1])
+if existing then return {existing, '0'} end
+redis.call('SET', KEYS[1], ARGV[1])
+return {ARGV[1], '1'}
+`;
+
 export class RedisHandleStore implements HandleStore {
   private readonly redis: RedisClient;
 
@@ -151,6 +159,19 @@ export class RedisHandleStore implements HandleStore {
   async get(handleId: string): Promise<HandleRecord | null> {
     const raw = await this.redis.get(MessagingKeys.handle(handleId));
     return raw ? (JSON.parse(raw) as HandleRecord) : null;
+  }
+
+  async getOrCreateAddressHandle(
+    record: AddressHandleRecord,
+  ): Promise<{ record: AddressHandleRecord; created: boolean }> {
+    const encoded = JSON.stringify(record);
+    const result = (await this.redis.eval(
+      ADDRESS_HANDLE_GET_OR_CREATE_LUA,
+      1,
+      MessagingKeys.handle(record.handleId),
+      encoded,
+    )) as [string, string];
+    return { record: JSON.parse(result[0]) as AddressHandleRecord, created: result[1] === '1' };
   }
 
   async getOrCreateMessageHandle(

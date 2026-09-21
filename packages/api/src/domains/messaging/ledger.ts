@@ -32,7 +32,8 @@ export type IngressEffect = 'broadcast' | 'wake';
 /** What an ingress fence records: which message the Host already delivered this effect for. */
 export interface IngressDeliveryReceipt {
   readonly messageId: string;
-  readonly catId: string;
+  /** Broadcast-only plugin speech has no wake target. */
+  readonly catId?: string;
 }
 
 export const LEDGER_CLAIM_TTL_MS = 60_000;

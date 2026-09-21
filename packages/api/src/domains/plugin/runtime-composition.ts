@@ -293,6 +293,18 @@ export function createDormantPluginRuntimeComposition(
             ownerUserId: options.threadOwnerUserId,
           },
         }),
+    ...(options.threadStore === undefined ||
+    options.threadBindingStore === undefined ||
+    options.threadOwnerUserId === undefined
+      ? {}
+      : {
+          messaging: {
+            service: messaging,
+            threadStore: options.threadStore,
+            bindingStore: options.threadBindingStore,
+            ownerUserId: options.threadOwnerUserId,
+          },
+        }),
     log: (level, message, fields) => {
       if (fields === undefined) moduleLogger[level](message);
       else moduleLogger[level](fields, message);

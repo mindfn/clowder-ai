@@ -16,7 +16,7 @@ import { EventStreamService } from './event-stream.js';
 import { HandleService, type IssueConnectorBindingHandleInput, type IssueThreadHandleInput } from './handles.js';
 import type { MessagingIngressWakeDeps } from './ingress-wake.js';
 import { MessagingLedger } from './ledger.js';
-import { SendService } from './send-service.js';
+import { type HostSendOptions, SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
 import type { MessagingStores } from './stores/ports.js';
 
@@ -31,6 +31,7 @@ export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
    */
   readonly stores?: MessagingStores;
   readonly onPublished?: (threadId: string) => void;
+  readonly isKnownCatId?: (catId: string) => boolean;
   /** Event log retention per thread (events beyond this are trimmed; stale+snapshot covers the gap). */
   readonly retentionCount?: number;
 }
@@ -69,6 +70,7 @@ export class MessagingService {
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
       ...(ingressWake === undefined ? {} : { ingressWake }),
       ...(deps.onPublished === undefined ? {} : { onPublished: deps.onPublished }),
+      ...(deps.isKnownCatId === undefined ? {} : { isKnownCatId: deps.isKnownCatId }),
     });
     this.appendService = new AppendService({
       messageStore: deps.messageStore,
@@ -96,6 +98,14 @@ export class MessagingService {
     return this.handles.issueConnectorBindingHandle(input);
   }
 
+  ensureThreadHandle(input: IssueThreadHandleInput): Promise<{ handleId: string }> {
+    return this.handles.ensureThreadHandle(input);
+  }
+
+  ensureConnectorBindingHandle(input: IssueConnectorBindingHandleInput): Promise<{ handleId: string }> {
+    return this.handles.ensureConnectorBindingHandle(input);
+  }
+
   revokeHandle(handleId: string): Promise<void> {
     return this.handles.revoke(handleId);
   }
@@ -104,6 +114,10 @@ export class MessagingService {
 
   send(ctx: PluginCallContext, draft: unknown): Promise<SendReceipt> {
     return this.sendService.send(ctx, draft);
+  }
+
+  sendFromHost(ctx: PluginCallContext, draft: unknown, options: HostSendOptions): Promise<SendReceipt> {
+    return this.sendService.send(ctx, draft, options);
   }
 
   appendElements(ctx: PluginCallContext, input: unknown): Promise<AppendReceipt> {

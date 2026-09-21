@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
 import type { HandleScope, MessageOutputEventInput } from '../contract/host-types.js';
 import type {
+  AddressHandleRecord,
   AppendLease,
   AppendLock,
   EventLogAppendResult,
@@ -85,6 +86,16 @@ export class MemoryHandleStore implements HandleStore {
 
   async get(handleId: string): Promise<HandleRecord | null> {
     return this.records.get(handleId) ?? null;
+  }
+
+  async getOrCreateAddressHandle(
+    record: AddressHandleRecord,
+  ): Promise<{ record: AddressHandleRecord; created: boolean }> {
+    const existing = this.records.get(record.handleId);
+    if (existing) return { record: existing as AddressHandleRecord, created: false };
+    const stored = { ...record, scope: cloneScope(record.scope) };
+    this.records.set(record.handleId, stored);
+    return { record: stored, created: true };
   }
 
   /**

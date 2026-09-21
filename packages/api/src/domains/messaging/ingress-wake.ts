@@ -17,7 +17,7 @@
  * two paths cannot drift while both exist during the cutover.
  */
 
-import { type CatId, type ConnectorSource, getConnectorDefinition } from '@cat-cafe/shared';
+import { type CatId, type ConnectorSource, getConnectorDefinition, type MessageContent } from '@cat-cafe/shared';
 import { parseMentions } from '../../infrastructure/connectors/mention-parser.js';
 import { MessagingError } from './contract/host-types.js';
 import type { MessagingLedger } from './ledger.js';
@@ -34,7 +34,16 @@ export interface IngressThreadActivity {
  */
 export interface MessagingIngressWakeDeps {
   readonly invokeTrigger: {
-    trigger(threadId: string, catId: CatId, userId: string, message: string, messageId: string): Promise<unknown>;
+    trigger(
+      threadId: string,
+      catId: CatId,
+      userId: string,
+      message: string,
+      messageId: string,
+      contentBlocks?: readonly MessageContent[],
+      policy?: unknown,
+      sender?: { readonly id: string; readonly name?: string },
+    ): Promise<'dispatched' | 'enqueued' | 'full'>;
   };
   readonly socketManager?: { broadcastToRoom(room: string, event: string, data: unknown): void };
   readonly threadStore?: {
@@ -77,7 +86,7 @@ function ingressIcon(definition: ReturnType<typeof getConnectorDefinition>): str
   return definition.icon.type === 'png' ? definition.icon.src : definition.icon.iconId;
 }
 
-function ingressSource(connectorId: string, externalChatId: string): ConnectorSource {
+export function sourceForConnectorIngress(connectorId: string, externalChatId: string): ConnectorSource {
   const definition = getConnectorDefinition(connectorId);
   return {
     connector: connectorId,
@@ -98,8 +107,7 @@ export function broadcastIngress(
     readonly threadId: string;
     readonly messageId: string;
     readonly content: string;
-    readonly connectorId: string;
-    readonly externalChatId: string;
+    readonly source: ConnectorSource;
     readonly timestamp: number;
   },
 ): void {
@@ -109,7 +117,7 @@ export function broadcastIngress(
       id: input.messageId,
       type: 'connector' as const,
       content: input.content,
-      source: ingressSource(input.connectorId, input.externalChatId),
+      source: input.source,
       timestamp: input.timestamp,
     },
   });
@@ -122,8 +130,8 @@ export function broadcastIngress(
  */
 export interface ResolvedIngress {
   readonly deps: MessagingIngressWakeDeps;
-  readonly binding: { readonly connectorId: string; readonly externalChatId: string };
-  readonly catId: CatId;
+  readonly source: ConnectorSource;
+  readonly catId?: CatId;
 }
 
 /**
@@ -142,12 +150,14 @@ export async function deliverIngressEffectsOnce(
     userId: string;
     messageId: string;
     content: string;
+    contentBlocks?: readonly MessageContent[];
+    sender?: { readonly id: string; readonly name?: string };
     timestamp: number;
     ingress: ResolvedIngress;
   },
 ): Promise<void> {
   const { ingress } = input;
-  const receipt = { messageId: input.messageId, catId: ingress.catId };
+  const receipt = { messageId: input.messageId, ...(ingress.catId === undefined ? {} : { catId: ingress.catId }) };
   const { instanceId, idempotencyKey } = input;
 
   // Broadcast: at-most-once, settled first. Anything other than a fresh settlement means some
@@ -160,12 +170,13 @@ export async function deliverIngressEffectsOnce(
         threadId: input.threadId,
         messageId: input.messageId,
         content: input.content,
-        connectorId: ingress.binding.connectorId,
-        externalChatId: ingress.binding.externalChatId,
+        source: ingress.source,
         timestamp: input.timestamp,
       });
     }
   }
+
+  if (ingress.catId === undefined) return;
 
   // Wake: 'settled' is the only status that proves a cat was admitted. 'inflight' is a
   // concurrent attempt owning it — not evidence it landed — so this send must not report
@@ -176,13 +187,19 @@ export async function deliverIngressEffectsOnce(
     throw new MessagingError('RETRYABLE_INFLIGHT', 'ingress wake is owned by a concurrent attempt — retry');
 
   try {
-    await ingress.deps.invokeTrigger.trigger(
+    const outcome = await ingress.deps.invokeTrigger.trigger(
       input.threadId,
       ingress.catId,
       input.userId,
       input.content,
       input.messageId,
+      input.contentBlocks,
+      undefined,
+      input.sender,
     );
+    if (outcome === 'full') {
+      throw new MessagingError('RETRYABLE_INFLIGHT', 'target cat invocation queue is full — retry');
+    }
   } catch (err) {
     // Hand the wake back so the next attempt re-runs it. The trigger's own durable admission
     // key is what keeps that retry from spending a second agent turn.
