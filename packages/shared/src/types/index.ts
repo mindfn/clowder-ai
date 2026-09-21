@@ -695,6 +695,7 @@ export {
   type GitHubWaitPredicateKind,
   type GitHubWaitSubjectRef,
   issueCommentAudience,
+  isUndeliveredWaitOutcome,
   parseWaitContinuationCarrier,
   parseWaitOwnerFence,
   resolveGitHubIssueNotificationPerspective,

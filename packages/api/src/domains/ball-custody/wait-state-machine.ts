@@ -5,7 +5,7 @@ import type {
   WaitTerminationActor,
   WaitTerminationReason,
 } from '@cat-cafe/shared';
-import { parseWaitOwnerFence } from '@cat-cafe/shared';
+import { isUndeliveredWaitOutcome, parseWaitOwnerFence } from '@cat-cafe/shared';
 
 export interface WaitRuntimeState {
   readonly await?: AwaitStateV1;
@@ -217,8 +217,36 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
   }
 }
 
+/**
+ * Claim the exclusive right to publish this outcome.
+ *
+ * This is the linearization point the publish/suppress race is decided at, and it has to happen
+ * before the send rather than after it. `pending → publishing` can be won once; a suppressor
+ * arriving afterwards finds `publishing` and loses, and a publisher arriving after a suppressor
+ * finds `suppressed` and never sends at all.
+ *
+ * Re-claiming from `publishing` is allowed on purpose: a process that dies between the claim and
+ * the send would otherwise strand the outcome forever. Re-publishing is safe because admission is
+ * keyed on `outcomeId`, so a resumed claim converges on the same Queue row instead of a second wake.
+ */
+export function claimWaitOutcomeForPublish(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState | null {
+  const outcome = current.waitOutcome;
+  if (outcome?.outcomeId !== outcomeId || !isUndeliveredWaitOutcome(outcome.delivery)) return null;
+  if (outcome.delivery === 'publishing') return current;
+  return { ...current, waitOutcome: { ...outcome, delivery: 'publishing' } };
+}
+
+/** Close an outcome without a wake, because the caller that deferred it resolved the condition. */
+export function markWaitOutcomeSuppressed(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState | null {
+  const outcome = current.waitOutcome;
+  // Only from `pending`. A claimed publisher may already be sending, and this write must not be
+  // able to describe that send as something that never happened.
+  if (outcome?.outcomeId !== outcomeId || outcome.delivery !== 'pending') return null;
+  return { ...current, waitOutcome: { ...outcome, delivery: 'suppressed' } };
+}
+
 export function markWaitOutcomeDelivered(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {
-  if (current.waitOutcome?.outcomeId !== outcomeId || current.waitOutcome.delivery !== 'pending') {
+  if (current.waitOutcome?.outcomeId !== outcomeId || !isUndeliveredWaitOutcome(current.waitOutcome.delivery)) {
     return current;
   }
   return {

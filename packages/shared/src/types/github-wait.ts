@@ -520,7 +520,30 @@ export interface GitHubWaitMatchedDelta {
   readonly identityUnknown?: true;
 }
 
-export type WaitOutcomeDelivery = 'pending' | 'delivered' | 'not_applicable' | 'legacy_unfenced';
+/**
+ * Where an outcome is in the delivery outbox.
+ *
+ * `publishing` is the claim: exactly one caller may move `pending → publishing`, and only that
+ * caller may then send. Without it the compare-and-set only guarded the final state write, so a
+ * publisher that had already read `pending` could still send after a suppressor had won — two
+ * successful side effects from one outcome.
+ *
+ * `suppressed` says the wait ended and deliberately woke nobody, because whoever deferred it
+ * resolved the condition itself. It is distinct from `delivered` on purpose: recording a wake that
+ * never happened as `delivered` makes the audit trail lie about what the owner was told.
+ */
+export type WaitOutcomeDelivery =
+  | 'pending'
+  | 'publishing'
+  | 'delivered'
+  | 'suppressed'
+  | 'not_applicable'
+  | 'legacy_unfenced';
+
+/** Still owed to its owner: either unclaimed, or claimed by a publisher that has not finished. */
+export function isUndeliveredWaitOutcome(delivery: WaitOutcomeDelivery): boolean {
+  return delivery === 'pending' || delivery === 'publishing';
+}
 
 export interface WaitOutcomeV1 {
   readonly v: 1;

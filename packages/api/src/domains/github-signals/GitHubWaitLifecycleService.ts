@@ -7,7 +7,7 @@ import type {
   WaitTerminationActor,
   WaitTerminationEventV1,
 } from '@cat-cafe/shared';
-import { createWaitContinuationCarrier, parseWaitOwnerFence } from '@cat-cafe/shared';
+import { createWaitContinuationCarrier, isUndeliveredWaitOutcome, parseWaitOwnerFence } from '@cat-cafe/shared';
 import type {
   ConnectorDeliveryDeps,
   ConnectorDeliveryInput,
@@ -15,10 +15,13 @@ import type {
 import { deliverConnectorMessage } from '../../infrastructure/email/deliver-connector-message.js';
 import type { IWaitLifecycleEventLog } from '../ball-custody/WaitLifecycleEventLog.js';
 import {
+  claimWaitOutcomeForPublish,
   isAwaitExpired,
   markWaitOutcomeDelivered,
   markWaitOutcomeLegacyUnfenced,
+  markWaitOutcomeSuppressed,
   transitionWaitState,
+  type WaitRuntimeState,
   type WaitTransitionEvent,
 } from '../ball-custody/wait-state-machine.js';
 import { automationGeneration } from '../cats/services/stores/ports/TaskAutomationState.js';
@@ -167,7 +170,9 @@ function lifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): WaitTermination
 
 function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   const outcome = task.automationState?.waitOutcome;
-  return outcome?.delivery === 'pending' ? outcome : null;
+  // `publishing` is included so a claim whose process died is picked up again. Re-publishing is
+  // keyed on outcomeId, so the resumed attempt converges on the same row rather than waking twice.
+  return outcome && isUndeliveredWaitOutcome(outcome.delivery) ? outcome : null;
 }
 
 function isGitHubWaitTask(task: TaskItem | null | undefined): task is TaskItem {
@@ -389,7 +394,9 @@ export class GitHubWaitLifecycleService {
     if (!outcome || outcome.outcomeId !== outcomeId) {
       return { kind: 'deduped', reason: 'outcome_replaced' };
     }
-    if (outcome.delivery !== 'pending') return { kind: 'deduped', reason: 'already_delivered' };
+    if (!isUndeliveredWaitOutcome(outcome.delivery)) {
+      return { kind: 'deduped', reason: outcome.delivery === 'suppressed' ? 'suppressed' : 'already_delivered' };
+    }
     return this.publishPending(task, outcome, deliveryExtra, deliveryPriority);
   }
 
@@ -405,11 +412,13 @@ export class GitHubWaitLifecycleService {
   async settleDeferredWithoutWake(taskId: string, outcomeId: string, reason: string): Promise<boolean> {
     const task = await this.opts.taskStore.get(taskId);
     if (!isGitHubWaitTask(task)) return false;
-    const outcome = task.automationState?.waitOutcome;
-    if (!outcome || outcome.outcomeId !== outcomeId || outcome.delivery !== 'pending') return false;
-    const settled = await this.settleOutboxAsDelivered(task, outcomeId);
+    // `pending → suppressed`, and only from `pending`: losing to a publisher's claim means a send is
+    // already under way, and this must not be able to record that send as something that never was.
+    const settled = await this.transitionOutbox(task, outcomeId, (state) =>
+      markWaitOutcomeSuppressed(state, outcomeId),
+    );
     if (settled) {
-      this.opts.log.info({ taskId, outcomeId, reason }, '[F280] wait outcome settled without waking the owner');
+      this.opts.log.info({ taskId, outcomeId, reason }, '[F280] wait outcome suppressed; the owner was not woken');
     }
     return settled;
   }
@@ -441,7 +450,8 @@ export class GitHubWaitLifecycleService {
     const outcome = task.automationState?.waitOutcome;
     if (!outcome) return { kind: 'state_only', reason: 'nothing_to_recover' };
     await this.appendLifecycleEvent(task, outcome);
-    if (outcome.delivery !== 'pending') return { kind: 'state_only', reason: outcome.reason };
+    // A claim that never finished sending is exactly what recovery exists for.
+    if (!isUndeliveredWaitOutcome(outcome.delivery)) return { kind: 'state_only', reason: outcome.reason };
     // The same outbox: a message the crash left undelivered has no other path to its owner.
     const flushed = await this.publishPending(task, outcome);
     await this.wakeForFlushedOutcome(flushed);
@@ -498,6 +508,16 @@ export class GitHubWaitLifecycleService {
     if (!parseWaitOwnerFence(outcome.ownerFence)) {
       return this.quarantineLegacyUnfencedOutcome(task, outcome);
     }
+    // Win the right to send BEFORE sending. This is the whole linearization point: a publisher that
+    // had merely read `pending` could otherwise still deliver after a suppressor had already won,
+    // and one outcome would produce two successful side effects. Losing here means somebody else
+    // decided this outcome's fate — either it was suppressed, or it is already delivered.
+    const claimed = await this.transitionOutbox(task, outcome.outcomeId, (state) =>
+      claimWaitOutcomeForPublish(state, outcome.outcomeId),
+    );
+    if (!claimed) {
+      return { kind: 'deduped', reason: 'outcome_claimed_elsewhere' };
+    }
     const content = renderGitHubWaitOutcome(outcome);
     const waitContinuationCarrier = createWaitContinuationCarrier(task.id, outcome);
     const result = await deliverConnectorMessage(this.opts.deliveryDeps, {
@@ -526,14 +546,16 @@ export class GitHubWaitLifecycleService {
     // envelope is durably in the Queue. Settling on a bare append would strand the wake: the source
     // would be neither a History member nor queued work, while no poll would ever re-deliver it.
     if (!result.admitted) {
+      // The claim stays on the outcome. `publishing` is still drained by `pendingOutcome`, so the
+      // next observation retries this exact identity instead of leaving it stranded.
       this.opts.log.warn(
         { taskId: task.id, outcomeId: outcome.outcomeId },
-        '[F280] wait outcome stays pending: Queue admission did not happen',
+        '[F280] wait outcome stays undelivered: Queue admission did not happen',
       );
       return { kind: 'unrecorded', reason: 'queue_admission_unavailable' };
     }
 
-    await this.settleOutboxAsDelivered(task, outcome.outcomeId, outcome.generation);
+    await this.transitionOutbox(task, outcome.outcomeId, (state) => markWaitOutcomeDelivered(state, outcome.outcomeId));
     this.opts.log.info(
       { taskId: task.id, outcomeId: outcome.outcomeId },
       '[F280] delivered compact GitHub wait outcome',
@@ -550,18 +572,28 @@ export class GitHubWaitLifecycleService {
    * outcome. Shared by the publish path and the suppress path so the two can never disagree about
    * what settling means.
    */
-  private async settleOutboxAsDelivered(
+  /**
+   * One compare-and-set for every outbox transition, re-reading first so the decision is made
+   * against current truth and the write is fenced on the store's CURRENT generation.
+   *
+   * After a renewal the store is already at N+1 while this outcome is N. Fencing on the outcome's
+   * own generation would fail every time and leave it undelivered forever; the outcomeId equality
+   * inside each transition is what ties the write to this outcome. `transition` returns null when
+   * the move is not legal from the state it actually found, which is how a race reports its loser.
+   */
+  private async transitionOutbox(
     task: TaskItem,
     outcomeId: string,
-    fallbackGeneration?: number,
+    transition: (state: WaitRuntimeState) => WaitRuntimeState | null,
   ): Promise<boolean> {
     const current = await this.opts.taskStore.get(task.id);
     if (current?.automationState?.waitOutcome?.outcomeId !== outcomeId) return false;
-    const marked = markWaitOutcomeDelivered(current.automationState ?? {}, outcomeId);
+    const next = transition((current.automationState ?? {}) as WaitRuntimeState);
+    if (!next) return false;
     const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
-      expectedGeneration: automationGeneration(current.automationState) ?? fallbackGeneration ?? 0,
+      expectedGeneration: automationGeneration(current.automationState) ?? 0,
       expectedUpdatedAt: current.updatedAt,
-      automationState: marked as AutomationState,
+      automationState: next as AutomationState,
       status: current.automationState?.await ? 'doing' : 'done',
     });
     return Boolean(installed);

@@ -31,6 +31,7 @@ import {
   expandGitHubIssueTracking,
   expandGitHubPrTrackingGoal,
   isTrackingKind,
+  isUndeliveredWaitOutcome,
   isValidAcceptedSource,
   isValidReviewSubjectRef,
   localReviewVerdictSchema,
@@ -5689,8 +5690,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         superseded?.applied === true ? (superseded.state as PrAutomationState).waitOutcome : undefined;
       // A new wait does not revoke a result already owed to its owner. Preserve the outbox
       // in the same CAS, including after a single-fire wait has consumed its active generation.
-      const pendingOutcome = previousState?.waitOutcome?.delivery === 'pending' ? previousState.waitOutcome : undefined;
-      if (pendingOutcome && supersededOutcome?.delivery === 'pending') {
+      const pendingOutcome =
+        previousState?.waitOutcome && isUndeliveredWaitOutcome(previousState.waitOutcome.delivery)
+          ? previousState.waitOutcome
+          : undefined;
+      if (pendingOutcome && supersededOutcome && isUndeliveredWaitOutcome(supersededOutcome.delivery)) {
         // A passed deadline produced a second deliverable result; one slot cannot retain both.
         reply.status(409);
         return { error: 'PR wait has a pending delivery — retry registration after recovery' };
@@ -5959,8 +5963,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const supersededOutcome =
         superseded?.applied === true ? (superseded.state as IssueWaitAutomationState).waitOutcome : undefined;
       // Match the PR path: explicit registration must not erase the previous delivery outbox.
-      const pendingOutcome = previousState?.waitOutcome?.delivery === 'pending' ? previousState.waitOutcome : undefined;
-      if (pendingOutcome && supersededOutcome?.delivery === 'pending') {
+      const pendingOutcome =
+        previousState?.waitOutcome && isUndeliveredWaitOutcome(previousState.waitOutcome.delivery)
+          ? previousState.waitOutcome
+          : undefined;
+      if (pendingOutcome && supersededOutcome && isUndeliveredWaitOutcome(supersededOutcome.delivery)) {
         reply.status(409);
         return { error: 'Issue wait has a pending delivery — retry registration after recovery' };
       }

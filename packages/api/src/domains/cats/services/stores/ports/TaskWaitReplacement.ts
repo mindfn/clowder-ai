@@ -1,5 +1,5 @@
 import type { ManagedWorkBinding, TaskItem } from '@cat-cafe/shared';
-import { isTrackingKind } from '@cat-cafe/shared';
+import { isTrackingKind, isUndeliveredWaitOutcome } from '@cat-cafe/shared';
 import { createManagedWorkBindingConflict } from './TaskManagedWorkBinding.js';
 import type { ReplaceAutomationStateIfGenerationInput } from './TaskStoreContract.js';
 import { assertSubjectUpdateOwnership } from './TaskSubjectOwnership.js';
@@ -22,8 +22,10 @@ function assertTrackingRegistration(
     }
     assertSubjectUpdateOwnership(existing.subjectKey, existing, registration);
     if (
-      (existing.automationState?.waitOutcome?.delivery === 'pending' ||
-        input.automationState?.waitOutcome?.delivery === 'pending') &&
+      // `publishing` is still owed to the current owner — a claim is not a delivery, so handing the
+      // wait to someone else mid-claim would strand it exactly as `pending` would.
+      (isUndeliveredWaitOutcome(existing.automationState?.waitOutcome?.delivery ?? 'not_applicable') ||
+        isUndeliveredWaitOutcome(input.automationState?.waitOutcome?.delivery ?? 'not_applicable')) &&
       (registration.threadId !== existing.threadId ||
         (registration.ownerCatId ?? existing.ownerCatId) !== existing.ownerCatId)
     ) {
