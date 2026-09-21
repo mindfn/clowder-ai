@@ -78,11 +78,14 @@ beforeEach(async () => {
     getMentionPatterns: () => new Map([[DEFAULT_CAT, ['@opus']]]),
   });
 
+  const invocation = moduleInvocation.createModuleHostInvocation({
+    runtime: { actions: (id) => loadedModules.get(id) },
+  });
   delivery = subscriptionDelivery.createSubscriptionDelivery({
     messaging,
-    delivery: moduleInvocation.createModuleHostInvocation({
-      runtime: { actions: (id) => loadedModules.get(id) },
-    }),
+    delivery: {
+      deliver: (targetId, input) => invocation.invoke(targetId, 'host.messaging.deliver', input),
+    },
   });
 });
 

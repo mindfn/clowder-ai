@@ -83,6 +83,25 @@ export default {
 };
 `;
 
+const invalidDeliveryReceiptModule = `
+export default {
+  create() {
+    return {
+      async start() {
+        return {
+          actions: {
+            async 'host.messaging.deliver'() {
+              return { deliveryId: 'wrong-delivery-id' };
+            },
+          },
+          stop() {},
+        };
+      },
+    };
+  },
+};
+`;
+
 const hostSurfaceModule = `
 const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
 export default {
@@ -234,12 +253,10 @@ test('takes the default export of runtime.entrypoint and runs it in the Host pro
     'the Host must create and start the module default export',
   );
   assert.equal(host.inventory.live.get('instance-0').runtimeState, 'healthy');
-  // The Host holds the instance create() returned — the thing per-feature activation
-  // will consume once the SDK publishes it (§8.8 step 3).
-  assert.equal(host.moduleRuntime.definedPlugin('instance-0').manifest.pluginId, 'dev.clowder.module-fixture');
+  assert.deepEqual(host.moduleRuntime.actions('instance-0'), {});
 
   await host.router.stop('instance-0', 'host_stop');
-  assert.equal(host.moduleRuntime.definedPlugin('instance-0'), undefined, 'teardown must let the instance go');
+  assert.equal(host.moduleRuntime.actions('instance-0'), undefined, 'teardown must let the instance go');
   assert.deepEqual(
     moduleLog().map((entry) => entry.call),
     ['create', 'start', 'stop'],
@@ -276,7 +293,9 @@ test('start receives only the admitted config, secrets and log Host surface', as
   await host.router.start('instance-0');
 
   assert.deepEqual(moduleLog(), [{ call: 'start', apiBase: 'https://example.test', botToken: 'secret-token' }]);
-  assert.deepEqual(logs, [['info', 'module started', { pluginId: 'dev.clowder.module-fixture' }]]);
+  assert.deepEqual(logs, [
+    ['info', 'module started', { pluginId: 'dev.clowder.module-fixture', pluginInstanceId: 'instance-0' }],
+  ]);
 });
 
 test('an invalid start result is stopped and leaves no active module behind', async () => {
@@ -287,7 +306,7 @@ test('an invalid start result is stopped and leaves no active module behind', as
   await assert.rejects(host.router.start('instance-0'), (error) => error.code === 'INVALID_ENTRYPOINT');
 
   assert.deepEqual(moduleLog(), [{ call: 'stop-after-invalid-start' }]);
-  assert.equal(host.moduleRuntime.definedPlugin('instance-0'), undefined);
+  assert.equal(host.moduleRuntime.actions('instance-0'), undefined);
   assert.equal(host.released.length, 1, 'failed start must release the staged package');
 });
 
@@ -347,6 +366,36 @@ test('module delivery fails closed when the instance lacks the published onMessa
     moduleLog(),
     [{ call: 'start' }],
     'delivery authority denial must stop before the package action runs',
+  );
+});
+
+test('the production carrier router rejects an invalid module delivery receipt', async () => {
+  const rootDir = await writePackage(invalidDeliveryReceiptModule);
+  const host = hostOf([{ manifest: manifest(), rootDir, effectiveGrants: ['onMessage'] }]);
+  const input = {
+    deliveryId: 'delivery-invalid-receipt',
+    threadHandle: { kind: 'thread_handle', handle: 'thread-handle-1' },
+    envelope: {
+      messageId: 'message-invalid-receipt',
+      revision: 1,
+      threadId: 'thread-1',
+      actor: { kind: 'cat', id: 'opus' },
+      audience: { kind: 'public' },
+      occurredAt: '2026-09-21T00:00:00.000Z',
+      payload: {
+        provenance: { epistemicStatus: 'inference', origin: { kind: 'host' } },
+        elements: [{ elementId: 'e1', kind: 'text', payload: { text: 'hello' } }],
+      },
+    },
+  };
+
+  await host.router.start('instance-0');
+  await assert.rejects(
+    () => host.router.deliver('instance-0', input),
+    (error) => {
+      assert.equal(error.code, 'PROTOCOL_VIOLATION');
+      return true;
+    },
   );
 });
 

@@ -7,10 +7,8 @@
  * outbound delivery is one caller, a schedule firing would be another.
  *
  * REJECTION IS LOAD-BEARING, WHICH IS WHY THE NEGATIVE CASES MATTER MORE THAN THE HAPPY ONE.
- * Callers read a resolved promise as "the package accepted this work" — the delivery driver
- * advances its cursor on exactly that. So a method the package never implemented must reject
- * rather than quietly do nothing, or a message would be marked delivered while nobody ever
- * received it.
+ * So a method the package never implemented must reject rather than quietly do nothing.
+ * Protocol-specific callers validate their own input and result at the carrier boundary.
  *
  * DECLARED NAMES ARE NOT TRUSTED NAMES. The method name arrives from a package manifest, so it
  * is attacker-influenced input reaching a property lookup. `toString`, `constructor` and
@@ -64,7 +62,7 @@ const INPUT = {
   },
 };
 
-describe('F202 C1 — standard Host delivery over the module carrier', () => {
+describe('F202 C1 — generic Host invocation over the module carrier', () => {
   test('case 0: invokes any package-declared action by its exact name', async () => {
     load(INSTANCE, {
       async 'fixture.echo'(input) {
@@ -79,7 +77,7 @@ describe('F202 C1 — standard Host delivery over the module carrier', () => {
     assert.deepEqual(calls, [{ value: 7 }]);
   });
 
-  test('case 1: calls only host.messaging.deliver with the frozen input and receipt', async () => {
+  test('case 1: calls host.messaging.deliver as an ordinary declared action', async () => {
     load(INSTANCE, {
       async 'host.messaging.deliver'(input) {
         calls.push(input);
@@ -87,17 +85,17 @@ describe('F202 C1 — standard Host delivery over the module carrier', () => {
       },
     });
 
-    const result = await invocation.deliver(INSTANCE, INPUT);
+    const result = await invocation.invoke(INSTANCE, 'host.messaging.deliver', INPUT);
 
     assert.deepEqual(calls, [INPUT]);
     assert.deepEqual(result, { deliveryId: INPUT.deliveryId });
   });
 
-  test('case 2: a module without the standard delivery method rejects', async () => {
+  test('case 2: a module without the requested action rejects', async () => {
     load(INSTANCE, { outbound: async () => {} });
 
     await assert.rejects(
-      () => invocation.deliver(INSTANCE, INPUT),
+      () => invocation.invoke(INSTANCE, 'host.messaging.deliver', INPUT),
       (err) => err.code === 'PROTOCOL_VIOLATION',
       'silently succeeding would mark a message delivered that nobody received',
     );
@@ -112,47 +110,19 @@ describe('F202 C1 — standard Host delivery over the module carrier', () => {
     });
 
     await assert.rejects(
-      () => invocation.deliver(INSTANCE, INPUT),
+      () => invocation.invoke(INSTANCE, 'host.messaging.deliver', INPUT),
       (err) => err === boom,
     );
   });
 
   test('case 4: calling an instance the Host is not holding rejects', async () => {
     await assert.rejects(
-      () => invocation.deliver('inst-never-started', INPUT),
+      () => invocation.invoke('inst-never-started', 'host.messaging.deliver', INPUT),
       (err) => err.code === 'INSTANCE_NOT_RUNNABLE',
     );
   });
 
-  test('case 5: a mismatched delivery receipt rejects', async () => {
-    load(INSTANCE, {
-      async 'host.messaging.deliver'() {
-        return { deliveryId: 'another-delivery' };
-      },
-    });
-
-    await assert.rejects(
-      () => invocation.deliver(INSTANCE, INPUT),
-      (err) => err.code === 'PROTOCOL_VIOLATION',
-    );
-  });
-
-  test('case 6: the module boundary rejects input outside the closed published schema', async () => {
-    load(INSTANCE, {
-      async 'host.messaging.deliver'(input) {
-        calls.push(input);
-        return { deliveryId: input.deliveryId };
-      },
-    });
-
-    await assert.rejects(
-      () => invocation.deliver(INSTANCE, { ...INPUT, method: 'outbound' }),
-      (err) => err.code === 'PROTOCOL_VIOLATION',
-    );
-    assert.deepEqual(calls, [], 'invalid wire input must be rejected before package code runs');
-  });
-
-  test('case 7: inherited object methods are never treated as declared actions', async () => {
+  test('case 5: inherited object methods are never treated as declared actions', async () => {
     load(INSTANCE, Object.create({ constructor: async () => 'not package code' }));
 
     await assert.rejects(

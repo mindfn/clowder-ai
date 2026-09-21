@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { readCapabilitiesConfig } from '../dist/config/capabilities/capability-orchestrator.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
 import { CollectiveConnectorBuiltinRuntime } from '../dist/domains/plugin/builtin-runtime/collective-connector-runtime.js';
 import { COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST } from '../dist/domains/plugin/official-catalog.js';
@@ -111,6 +115,56 @@ test('routes every instance through one selection point, resolved from its own m
     'external:claims:dev.clowder.external',
     'external:stop:instance-1:host_stop',
   ]);
+});
+
+test('declared skills activate independently of the selected runtime carrier', async (t) => {
+  const projectRoot = await mkdtemp(join(tmpdir(), 'f202-c1-carrier-skill-project-'));
+  const packageRoot = await mkdtemp(join(tmpdir(), 'f202-c1-carrier-skill-package-'));
+  t.after(() => Promise.all([projectRoot, packageRoot].map((root) => rm(root, { recursive: true, force: true }))));
+  await mkdir(join(packageRoot, 'skills/portable-skill'), { recursive: true });
+  await writeFile(join(packageRoot, 'skills/portable-skill/SKILL.md'), '# Portable Skill\n', 'utf8');
+  const portableManifest = manifest({
+    pluginId: 'dev.clowder.external-skill',
+    runtime: { transport: 'stdio', entrypoint: 'dist/main.js' },
+    contributions: [{ type: 'skill', id: 'portable-skill', path: 'skills/portable-skill' }],
+    features: [
+      {
+        id: 'main',
+        name: 'Main',
+        resources: [],
+        contributions: [{ type: 'skill', id: 'portable-skill' }],
+        capabilities: [],
+      },
+    ],
+  });
+  const inventory = inventoryOf(portableManifest);
+  const packages = {
+    resolveInstalledPackage: async () => ({
+      rootDir: packageRoot,
+      manifest: portableManifest,
+      verifyIntegrity: async () => {},
+      release: async () => {},
+    }),
+  };
+  const router = new PluginRuntimeCarrierRouter(inventory, { projectRoot, packages });
+  router.register(recordingCarrier('external', () => true, []));
+
+  await router.start('instance-0');
+  const active = await readCapabilitiesConfig(projectRoot);
+  assert.ok(
+    active?.capabilities.some(
+      (capability) => capability.type === 'skill' && capability.pluginId === portableManifest.pluginId,
+    ),
+  );
+
+  await router.stop('instance-0', 'owner_disabled');
+  const stopped = await readCapabilitiesConfig(projectRoot);
+  assert.equal(
+    stopped?.capabilities.some(
+      (capability) => capability.type === 'skill' && capability.pluginId === portableManifest.pluginId,
+    ),
+    false,
+  );
 });
 
 test('refuses an unclaimed package with one typed runtime error, not a bare host Error', async () => {

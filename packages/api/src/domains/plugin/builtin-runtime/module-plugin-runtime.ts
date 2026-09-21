@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-import type { M0CDeliverInput, M0CDeliverResult, PluginManifest } from '@clowder-ai/plugin-contract';
+import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -52,22 +52,14 @@ export interface ModulePluginRuntimeOptions {
 
 interface LoadedModule {
   readonly located: VerifiedPluginPackage;
-  readonly plugin: PluginModuleDefinitionShape;
   readonly activation: PluginModuleActivationShape;
 }
 
 /**
  * Runs a package's own code as a module inside the Host process.
  *
- * This is the other half of `builtin`: the Host-shipped runtimes beside it implement a
- * package the Host itself carries, while this one loads the package's module. Both are
- * in-process, so both live under the same carrier and inherit its authority fence,
- * lifecycle state machine and failure isolation — a second copy of that machinery is
- * exactly the carrier-shaped duplication clause 1 exists to remove.
- *
- * Loading is done here; activation is not. The standard Host delivery adapter can call an
- * already-exposed delivery handler, while per-feature activation remains the step that will
- * produce that handler from the package's declared actions.
+ * Host-shipped runtimes and package modules share one in-process carrier, authority fence,
+ * lifecycle and failure isolation. Static resources activate above that carrier boundary.
  */
 export class ModulePluginRuntime implements BundledPluginRuntime {
   readonly #loaded = new Map<string, LoadedModule>();
@@ -138,7 +130,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       const candidate = await plugin.start({
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
-        log: this.options.log,
+        log: (level, message, fields) =>
+          this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });
       const stop = (candidate as Partial<PluginModuleActivationShape> | undefined)?.stop;
       const actions = (candidate as Partial<PluginModuleActivationShape> | undefined)?.actions;
@@ -157,23 +150,15 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         );
       }
       activation = candidate;
+      this.#loaded.set(pluginInstanceId, { located, activation });
     } catch (error) {
-      if (activation) await Promise.resolve(activation.stop()).catch(() => undefined);
-      await located.release().catch(() => undefined);
-      throw error;
+      await rollbackModuleStart(error, activation, located);
     }
-    this.#loaded.set(pluginInstanceId, { located, plugin, activation });
   }
 
   /**
-   * The Host's single disposal seam for a loaded module. Stop, owner disable, uninstall
-   * and start-failure rollback all arrive here through the carrier, so the staged package
-   * is released and the next start calls `create()` again rather than reusing whatever the
-   * previous run left behind.
-   *
-   * Node keeps the module namespace itself cached per URL, which is why the SDK's shape is
-   * a `create()` factory rather than module-level state: the instance is per-start even
-   * though the module is loaded once.
+   * The single disposal seam releases the staged package; the next start calls `create()`
+   * again instead of reusing the previous runtime instance.
    */
   async stop(pluginInstanceId: string, _reason: string): Promise<void> {
     const loaded = this.#loaded.get(pluginInstanceId);
@@ -186,10 +171,6 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     }
   }
 
-  deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
-    return createModuleHostInvocation({ runtime: this }).deliver(pluginInstanceId, input);
-  }
-
   invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
     return createModuleHostInvocation({ runtime: this }).invoke(pluginInstanceId, method, params);
   }
@@ -197,14 +178,18 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
   actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {
     return this.#loaded.get(pluginInstanceId)?.activation.actions;
   }
+}
 
-  /**
-   * What `create()` returned, while the instance is loaded — the package's live in-Host
-   * instance. This is what the Host→plugin direction calls into: a method the package
-   * declared is resolved against this object, which is why the carrier exposes it rather
-   * than keeping it private.
-   */
-  definedPlugin(pluginInstanceId: string): unknown {
-    return this.#loaded.get(pluginInstanceId)?.plugin;
-  }
+async function rollbackModuleStart(
+  startError: unknown,
+  activation: PluginModuleActivationShape | undefined,
+  located: VerifiedPluginPackage,
+): Promise<never> {
+  const stopResults = activation ? await Promise.allSettled([activation.stop()]) : [];
+  const releaseResults = await Promise.allSettled([located.release()]);
+  const failures = [...stopResults, ...releaseResults]
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failures.length > 0) throw new AggregateError([startError, ...failures], 'module startup rollback failed');
+  throw startError;
 }
