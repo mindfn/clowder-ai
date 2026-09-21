@@ -196,7 +196,7 @@ describe('F167 Phase T queue wake provenance', () => {
     );
   });
 
-  it('classifies machine-proven FYI, coordinate, and terminal coordination wakes as obligation-free', async () => {
+  it('classifies machine-proven FYI, coordinate, investigate, and terminal coordination wakes as obligation-free', async () => {
     const cases = [
       {
         extra: {
@@ -215,6 +215,15 @@ describe('F167 Phase T queue wake provenance', () => {
           },
         },
         expectedSource: 'cross_thread_coordinate',
+      },
+      {
+        extra: {
+          crossPost: {
+            sourceThreadId: 'thread-source-investigate',
+            effectClass: 'investigate',
+          },
+        },
+        expectedSource: 'cross_thread_investigate',
       },
       {
         extra: {
@@ -243,24 +252,22 @@ describe('F167 Phase T queue wake provenance', () => {
     }
   });
 
-  it('keeps investigate and assign_work A2A wakes on the structured dispatch carrier', async () => {
-    for (const effectClass of ['investigate', 'assign_work']) {
-      const wake = await resolveQueueTurnCustodyWake(entry({ source: 'agent', sourceCategory: 'a2a' }), {
-        getById: async () => ({
-          id: 'message-1',
-          threadId: 'thread-1',
-          catId: 'codex-terra',
-          extra: {
-            crossPost: {
-              sourceThreadId: 'thread-source',
-              effectClass,
-            },
+  it('keeps assign_work A2A wakes on the structured dispatch carrier', async () => {
+    const wake = await resolveQueueTurnCustodyWake(entry({ source: 'agent', sourceCategory: 'a2a' }), {
+      getById: async () => ({
+        id: 'message-1',
+        threadId: 'thread-1',
+        catId: 'codex-terra',
+        extra: {
+          crossPost: {
+            sourceThreadId: 'thread-source',
+            effectClass: 'assign_work',
           },
-        }),
-      });
-      assert.equal(wake.kind, 'structured');
-      assert.equal(wake.protocol, 'dispatch');
-    }
+        },
+      }),
+    });
+    assert.equal(wake.kind, 'structured');
+    assert.equal(wake.protocol, 'dispatch');
   });
 
   it('fails closed when retargeting a dispatch carrier outside the thread namespace', () => {
