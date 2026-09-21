@@ -30,6 +30,80 @@ C-1…C-6 是我自造的内部编号，只制造了理解成本。**从此只�
 | **c)** | 整理好暴露的能力后清理所有插件代码；跨成员 review 和提交 PR | C-5 | 未开工（判据已落盘，范围待全仓重扫） |
 | **d)** | 等插件仓发布后基于插件安装包完整验收 | 末尾 | 未开工 |
 
+## 0.6　a) 的交付物：按 operator 模型的能力对照表（2026-09-21 全仓清点）
+
+> operator 2026-09-21 原话（这是终态模型，不是需求变更）：
+>
+> 「sdk 提供一个标准的基于 lifecycle 的接口；然后插件实现这些接口；比如
+> init/start/enable/disable/pre_destory/destroy 之类的……然后 sdk 还提供一个双向的
+> 能力接口；就是前面说的注册注销 mcp/skill/scheduler/limb 工具/增删改查 thread/
+> 收发消息之类的……host 这边提供统一的接口的；然后接口提供好后；然后就可以删代码」
+>
+> **清点结论：这个模型和代码现状高度吻合，而且它解释了为什么代码一直删不掉。**
+
+### 先钉一个此前没人写下来的事实：Host 里有两套 manifest 体系
+
+| 体系 | 类型定义处 | 类型集合 | 谁在用 |
+|---|---|---|---|
+| **旧 plugin.yaml**（`PluginResourceDef`） | `packages/shared/src/types/plugin.ts:64` | **4 类**：skill · mcp · limb · schedule | `PluginResourceActivator` **全部走这套** |
+| **契约**（`StaticContribution`） | `@clowder-ai/plugin-contract` | **12 类** | 只有 `McpContribution` 与 `ContentEditorProviderContribution` 被真正消费，其余 10 类**零引用** |
+
+`PluginResourceActivator.ts:5-13` 从 `@cat-cafe/shared` 导入，**不是** contract。
+`plugin-manifest.ts:29` `SUPPORTED_RESOURCE_TYPES = {skill, mcp, limb, schedule}`。
+
+**这才是 R-5「清单格式互不兼容」的实际内容**：不是三份 YAML 长得不一样，
+而是**能跑的那套（旧 yaml）和契约那套是两个类型系统**。
+
+### 12 类 contribution 的 Host 现状（每格都有 file:line）
+
+| 类型 | Host 注册入口 | 卸载入口 | 通用性 | 判定依据 |
+|---|---|---|---|---|
+| **skill** | `PluginResourceActivator.ts:302` `activateSkill`→`:336` `addSkill` | `:368` `deactivateSkill`→`:383` `removeSkill` | ✅ **真通用** | 全程只用 `manifest.id` 作归属，无白名单、无 transport 判定 |
+| **mcp** | ①旧 yaml `:437` `activateMcp`→`:462`　②契约 `builtin-contribution-supervisor.ts:277` `start` | ①`:488`+`:496`　②`:351` `stop`/`:366` `stopAll` | ①✅通用　②❌builtin 专用 | ②`:273-275` `claims()` 只认 `transport==='builtin'`；`:231-235` 非 mcp 直接抛 `UNSUPPORTED_CONTRIBUTION` |
+| **schedule** | `PluginResourceActivator.ts:503`→`:535` `registerPostStart` | `:552`+`:564` `unregister` | ❌ **假通用** | `:509` 只接受 `getForPlugin(factoryId, manifest.id)`；`ScheduleFactoryRegistry.ts:53-58` 要求 `factory.pluginId === pluginId`；**全仓唯一注册者是 Host 内硬编码的 7 个 github factory**（`github-schedule-factories.ts:404-410`，由 `index.ts:4351` 装入）；非 github 插件声明 schedule 一律在 `:517` 抛 `Unknown schedule factory` |
+| **limb** | `:397` `activateLimb`→`:414` `limbRegistry.register` | `:425`+`:433` `deregister` | ❌ **假通用** | adapter 工厂表只被填了两条硬编码：`index.ts:4356 set('weixin-mp',…)`、`wechat-visible-reader/factory.ts:47`；另 `index.ts:4526` 直接写死 `pluginId === 'wechat-visible-reader'` |
+| **content-editor-provider** | `content-editor-runtime/runtime.ts:79` `start`→`:160` | `:87` `stop`→`:232` `close` | ❌ builtin 专用 | `admission.ts:9-26` 六重闸门：`transport==='builtin'`、`entrypoint===undefined`、configuration/data 必须为空、**所有** contribution 必须是本类型、feature 零 capability 零 resource |
+| **connector** | 无（类型零引用）；最接近的是整包 runtime `collective-connector-runtime.ts:43` | `:60` `stop` | ❌ 硬编码单一 pluginId | `:39-41` `claims()` 判 `manifest.pluginId === COLLECTIVE_CONNECTOR…pluginId` |
+| **identity** | **无** | 无 | — | 仅 `plugin-manager-projection.ts:100` 只读投影给 UI |
+| **tool** | **无** | 无 | — | `DirectToolContribution` 无人读；唯一「tool」运行面是从 mcp 子进程 `tools/list` 派生（`builtin-contribution-supervisor.ts:408`），不是声明的 tool |
+| **webhook** | **无** | 无 | — | `routes/connector-webhooks.ts:31` 用自己的 `Map`，由 connector-hub 填，从不读 manifest |
+| **message-subscription** | **无** | 无 | — | `SubscriptionDelivery` 的订阅来源是调用方传入的 `SubscriptionDeclaration`（`subscription-delivery.ts:89-95`），不是 contribution |
+| **service** | **无** | 无 | — | 类型零引用；`healthMethod` 全仓零命中 |
+| **ui** | **无** | 无 | — | 三个子类型（含 `UiCommandContribution`）在所有 `packages/*/src` 零引用 |
+
+**12 类里：真通用 1 类（skill）· 假通用 2 类（schedule/limb）· builtin 专用 3 类 · 完全没有 6 类。**
+
+### 这张表回答了「为什么代码一直删不掉」
+
+**schedule 那一行是钥匙。** 当前 schedule 的注册面是
+**「插件引用一个 Host 里已经写好的 factory」**，而不是**「插件提供实现」**。
+`ScheduleFactoryRegistry` 强制 `factory.pluginId === pluginId`，而 factory 只能由
+Host 源码在启动时 `register` 进去——所以 github 插件的 7 个 factory
+**必须住在 Host 里**（`github-schedule-factories.ts` 722 行 + 它 import 的
+`infrastructure/email/` 6,068 行）。
+
+> **不是「先删代码再改接口」，是「接口形状不改，代码就出不去」。**
+> operator 的顺序（先整理收敛接口 → 再删代码）在因果上是唯一可行的顺序。
+> limb 同理（adapter 工厂写死两个 pluginId），connector 同理（写死单一 pluginId）。
+
+### 据此 Host 的活（按 operator 的两类接口重新表述）
+
+**① lifecycle 接口**（`init/start/enable/disable/pre_destroy/destroy`）：
+Host 今天的对称面散在 `PluginResourceActivator.activateResource/deactivateResource`
+与各 runtime 的 `start/stop`，**语义不统一、状态存两处**（mcp 一个 inventory、
+一个 `capabilities.json`）。活 = 归一到一条生命周期。
+
+**② 双向能力接口**（注册注销 mcp/skill/scheduler/limb + thread 增删改查 + 收发消息）：
+- skill：✅ 已达标，可直接作为其余各类的**范式样板**
+- scheduler / limb / connector：把「引用 Host 内实现」改成「插件提供实现」——
+  这是 c) 能删代码的**前置条件**，不是并行项
+- mcp：两套合一
+- thread 增删改查 / 收发消息：契约有 `thread.listMetadata` / `thread.readContent` /
+  `host.messaging.deliver`，Host 侧分别是 0 命中与 R-1 三条路，需接线与合并
+
+**③ 其余 6 类（identity/tool/webhook/message-subscription/service/ui）**：
+先不动——按 operator「不应该一味的新增」，等插件仓 a) 报出真实诉求再补。
+
 ### a) 的答案不用发明——契约里已经写好了
 
 Host 该暴露的通用能力面是**两张已发布的表**，不是新设计：
@@ -583,6 +657,24 @@ im-connector-loader 224 · im-connectors/ 8,180（7 provider）
 
 > `connector-binding:*` 等 Redis 旧数据：删代码后无人读，但**不得由猫清理**——
 > 那是 operator 的运行实例数据，清不清由他定。
+
+##### operator 2026-09-21 给的具体做法（落盘，别再自己发明）
+
+> 「我们当前默认让用户提供基于 http 协议的 git 地址；默认是全开放只读的；
+> 然后默认用户本地是有 git 的；然后元数据直接根据 http 地址来读取；
+> 或者 git clone 到我们的数据目录可能在 `.cat-cafe` 下然后就再来读取的」
+
+四条默认假设把这一层压到很薄——**它们是设计约束，不是待确认项**：
+
+1. 地址形态：**http(s) git URL**，用户提供
+2. 访问模型：**全开放只读**（不做私有仓凭据层）
+3. 运行环境：**假定本机有 git**（不自带 git 实现、不引新依赖）
+4. 物化位置：**`.cat-cafe/` 下的数据目录**
+
+两种读法都可，实现二选一即可：直接按 http 地址取清单文件；或 `git clone`
+到 `.cat-cafe/` 再本地读。**clone 之后就落回已有的本地安装路径**
+（`LocalPluginPackageAdmission.install(source)`，`runtime-composition.ts:750`），
+所以「从 git 仓装插件」= 一个 clone/fetch 步骤 + 已有的本地安装，不是新子系统。
 
 ## 3. Plugins 侧待办（该线自行排期，此处只列事实）
 
