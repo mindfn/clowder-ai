@@ -743,8 +743,56 @@ preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装
 
 | # | 生产者 | 位置 | 为什么更重 |
 |---|---|---|---|
-| 4 | Managed hold wake | `managed-command-wake-message-fence.ts:137`（append queued）+ `ManagedCommandWakeRecoveryEngine.ts:218`（trigger）；入口 `callback-hold-ball-routes.ts:440` | 自带补偿机器：`dispatchAttemptCount`、`persistDispatchOutcome`、SLA breach、retire-on-lease-error——它们存在的理由正是两阶段会分叉。迁移必须同时判定这些状态还剩什么职责 |
+| 4 | Managed hold wake | 见下方 I.3a 完整登记 | 它不是漏接一行，而是一整套围绕「两次写会分叉」长出来的补偿状态机；且现有测试把两阶段**写成了契约** |
 | 6 | 死 `invokeTrigger` 管线 | `execute-pipeline.ts:273`、`TaskRunnerV2.setInvokeTrigger`、`scheduler/types.ts:155`、`index.ts` deps 包 | 全链路穿过 composition 但**从不调用 `.trigger()`**；`main-health.ts:213` 只做非空断言。必须等 #4/#5 迁完才能连同 `ConnectorInvokeTrigger` 一起删 |
+
+#### I.3a #4 Managed hold wake — 实现前登记（按「旧入口 → 新入口 → 幂等键 → red/green」）
+
+> 冻结流程要求登记先于实现。这一条比 #1–#3 都重，所以先把账算完再动手。
+
+**两半与中间的洞**
+
+| | 位置 |
+|---|---|
+| 旧入口（append） | `managed-command-wake-message-fence.ts:137` `messageStore.append({deliveryStatus:'queued'})` |
+| 旧入口（enqueue） | `ManagedCommandWakeRecoveryEngine.ts:218` `trigger.trigger(...)` → `ConnectorInvokeTrigger.ts:97` `enqueueExistingMessageDurable` |
+| 两者之间 | `Engine:80→218`：一次 return、一次 re-parse、`getEventCarrier` 异步回读、`findInvocationCarrier` 两次 store 查询、**15s `lastDispatchAt` 宽限窗**、`dispatch_pending` CAS、`getInvokeTrigger()` 可能为 undefined |
+| 新入口 | `PersistedQueueDeliveryPort.deliver`（一次事务 Message + Queue row，`progress()` 即 drain） |
+
+**幂等键**：旧的两半用不同的键——Message 是 `hold-ball-completion:${taskId}`（按 task），Queue 侧
+`ConnectorInvokeTrigger.ts:88` 用 `action-successor:${leaseId}:${generation}:${catId}`（按 lease 代）或
+**完全没有键**。新入口统一为 `hold-ball-completion:${taskId}`，Message/Queue `sourceId`/`idempotencyKey` 同值。
+
+**端口缺口**：`PersistedQueueDeliveryInput` 目前不带 `actionSuccessorFence` 与
+`waitContinuationCarrier`，而 managed wake 两者都要。这两个字段需要补进端口——这是所有生产者共用的
+那一道缝，是正确的落点，不是为 managed wake 开的后门。
+
+**lease 校验必须前移**：`resolveManagedCommandWakeActionLeaseAdmission` 现在跑在
+`ConnectorInvokeTrigger.ts:79`，即 Message **已经持久化之后**。它只读 `message.threadId` 与
+`message.source`——而这两者正是 fence 自己构造的，所以可以在落盘前拿待发信封直接校验，函数本身不用改。
+
+**补偿状态裁决**（每一条都必须给出「迁移后还剩什么职责」）
+
+| 状态 | 现在的读者 | 原子化之后 |
+|---|---|---|
+| `dispatchAttemptCount` | 只有它自己 `+1` 和 `managedCommandDispatchRetryTotal` 计数器；全仓无其它读者 | 作为可靠性状态**无职责**。`recovery-sweep.test.js:548` 已经认定「durable Queue `attemptSequence` 才是权威」 |
+| `lastDispatchOutcome` | **无任何读者**（只有 `state` 跟着一起写） | 无职责。但它捎带的 `state:'dispatch_pending'` 仍然在 `isDispatchableManagedCommandWakeState` 里当闸门，需要替代而不是直接删字段 |
+| `lastDispatchAt` 15s 宽限 | `Engine:113` | 无职责。它存在的唯一理由是「易失 enqueue 还没变成持久 carrier」——原子化之后不存在这个窗口 |
+| SLA breach | 自身幂等守卫 + 计数器，无分支依赖 | 仍有诊断职责（它量的是 `conditionMetAt → consumed`，比投递缺口更宽），但它本来要抓的「条件满足 60s 还没派发」经由此缺口不再可达 |
+| retire-on-lease-error（`markCanceled` + `retireTask`） | `Engine:233` | **无职责**。它唯一的工作是撤销「lease 校验之前就已经 append 的消息」；校验前移后交易整体被拒，没有东西要撤销。`messageStore.markCanceled` 也因此可以退出 `ManagedCommandWakeRecoveryDeps` |
+| 消息内容 claim（`messageClaimGeneration` / `messageClaimedAt` / 30s stale） | `message-fence.ts:41–119` | 无职责。它是围绕「append 与 `message_written` 回执是两次写」手搓的租约；原子 admission 下同键并发直接收敛为 deduped |
+
+**契约变更（需要 reviewer 明确放行）**：现有测试把两阶段写成了**规格**，不是实现细节——
+`callback-hold-ball-wakewhen.test.js:1151` 断言 `_appendedMessages.length >= 2`
+（「completion message should be durable before dispatch」）、
+`recovery-sweep.test.js:372`「restart after volatile enqueue re-dispatches the same wake until a
+durable carrier exists」直接把分叉当成期望行为、`exactly-once.test.js:124` 的「stale 代被 cancel 恰好
+一次」只在「消息可以先于被拒绝的 admission 存在」时才成立。所以 #4 不是机械迁移，而是**重定义
+managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`。约 2700 行测试要按新契约重写。
+
+**red/green 计划**：先写一条生产形状的红测——在 append 与 enqueue 之间注入崩溃，断言不存在
+「queued Message 但无 Queue row」的中间态；当前实现必然红。再迁移到 `deliver`，该测试转绿，
+并补一条「lease 代已过期 ⇒ 什么都没写」的用例替代 retire-on-lease-error。
 
 #### I.3b 本轮发现、但**不在**冻结范围的既存缺口（记录，不顺手修）
 
