@@ -70,7 +70,6 @@ async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoR
     now: () => now,
   });
   const resolves = [];
-  const wakes = [];
   const spec = createConflictCheckTaskSpec({
     taskStore,
     checkMergeable: async () => ({ mergeState, headSha: HEAD }),
@@ -90,7 +89,6 @@ async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoR
           },
         }
       : {}),
-    invokeTrigger: { trigger: async (...args) => wakes.push({ reason: args[6].reason, content: args[3] }) },
     log,
   });
   const poll = async () => {
@@ -100,7 +98,21 @@ async function tracked({ when, expiresAt, now, mergeState = 'CONFLICTING', autoR
     }
   };
   const contents = () => harness.contents('thread_1');
-  return { taskStore, task, poll, resolves, wakes, contents };
+  /*
+   * The wake is observed where production produces it: an envelope admitted to the Queue and reaching
+   * drain IS the owner's wake. This file used to watch a `ConnectorInvokeTrigger` handed in by the
+   * test itself — a seam `github-schedule-factories` never wires, so the assertions described a
+   * configuration production has never run, while the admission that really wakes the owner went
+   * unobserved.
+   */
+  const wakes = harness.wakes;
+  /** How each admitted wake is filed for the owner reading it. */
+  const filed = () =>
+    harness.admitted('thread_1').map((entry) => ({
+      priority: entry.priority,
+      sourceCategory: entry.sourceCategory,
+    }));
+  return { taskStore, task, poll, resolves, wakes, contents, filed };
 }
 
 describe('#1392 R5 — a delivery is not a verdict', () => {
@@ -151,7 +163,7 @@ describe('#1392 R5 — a delivery is not a verdict', () => {
    * with it, so a conflict observed only after the deadline may be told, never acted on.
    */
   it('an expired wait that saw the conflict reports the fact and still does not act on it', async () => {
-    const { poll, resolves, wakes, contents } = await tracked({
+    const { poll, resolves, wakes, contents, filed } = await tracked({
       when: [{ kind: 'pr_became_conflicting' }],
       expiresAt: DEADLINE,
       now: DEADLINE + 1,
@@ -161,10 +173,11 @@ describe('#1392 R5 — a delivery is not a verdict', () => {
     await poll();
 
     assert.deepEqual(resolves, [], 'an ended wait does not authorise a rebase, whatever its last poll saw');
+    assert.equal(wakes.length, 1, 'the owner still hears the expiry');
     assert.deepEqual(
-      wakes.map((wake) => wake.reason),
-      ['github_wait_satisfied'],
-      'the owner hears the expiry, and it is not filed as a conflict wake',
+      filed(),
+      [{ priority: 'normal', sourceCategory: undefined }],
+      'an expiry is an ordinary wait delivery — normal, and filing it as a conflict would misfile it',
     );
     const message = contents().join('\n');
     assert.match(message, /conflicting/i, 'the fact the wait ended on is still delivered, not deleted');
@@ -172,7 +185,7 @@ describe('#1392 R5 — a delivery is not a verdict', () => {
   });
 
   it('a conflict the caller armed still wakes its owner when auto-resolution escalates', async () => {
-    const { poll, resolves, wakes } = await tracked({
+    const { poll, resolves, wakes, filed } = await tracked({
       when: [{ kind: 'pr_became_conflicting' }],
       now: 1_000,
       autoResolve: { kind: 'escalated', branch: 'feature', files: ['a.ts'] },
@@ -181,10 +194,12 @@ describe('#1392 R5 — a delivery is not a verdict', () => {
     await poll();
 
     assert.deepEqual(resolves, ['owner/repo#7']);
+    assert.equal(wakes.length, 1, 'an escalated conflict still wakes its owner');
     assert.deepEqual(
-      wakes.map((wake) => wake.reason),
-      ['github_pr_conflict'],
-      'an escalated conflict is still a conflict wake',
+      filed(),
+      [{ priority: 'urgent', sourceCategory: 'conflict' }],
+      'and it is filed as the conflict it is — derived from the matched outcome, not from a policy ' +
+        'object on a trigger that production never wires',
     );
   });
 });

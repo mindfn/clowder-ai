@@ -161,6 +161,24 @@ interface OutboxLog {
   readonly ids: Set<string>;
 }
 
+/**
+ * #1392 R5 labelling, applied where the admission happens.
+ *
+ * A matched `pr_became_conflicting` is the one wait outcome that is urgent and files as a conflict;
+ * everything else — an expiry above all — is an ordinary wait delivery, and calling it a conflict
+ * would misfile it for the owner reading the wake. Both facts live on the outcome, so the label is
+ * derived here rather than guessed by a producer that cannot yet know what matched: `route` learns
+ * the outcome only after this call has already delivered it.
+ */
+function conflictDeliveryLabel(outcome: WaitOutcomeV1): {
+  priority?: 'urgent';
+  sourceCategory?: 'conflict';
+} {
+  if (outcome.reason !== 'matched') return {};
+  if (!outcome.matched?.some((delta) => delta.kind === 'pr_became_conflicting')) return {};
+  return { priority: 'urgent', sourceCategory: 'conflict' };
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -429,6 +447,9 @@ export class GitHubWaitLifecycleService {
       },
       ...(deliveryExtra ? { extra: deliveryExtra } : {}),
       ...(deliveryPriority ? { priority: deliveryPriority } : {}),
+      // Derived last so a matched conflict is urgent even when the producer stated nothing, and
+      // filed as `conflict` on the Queue row rather than inheriting the generic scheduled category.
+      ...conflictDeliveryLabel(outcome),
     });
 
     // RFC §5.2: "Queue commit 自身就是外部输入的持久边界." The outbox may only be settled once the

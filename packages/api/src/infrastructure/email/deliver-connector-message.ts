@@ -26,6 +26,8 @@ export interface ConnectorDeliveryInput {
   readonly priority?: 'urgent' | 'normal';
   /** When the event happened, when that differs from when it is admitted. Defaults to admission. */
   readonly timestamp?: number;
+  /** How the Queue row should be filed. Stated by the producer; never inferred from the payload. */
+  readonly sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
 }
 
 export interface ConnectorDeliveryResult {
@@ -62,6 +64,7 @@ export async function deliverConnectorMessage(
     ...(input.contentBlocks ? { contentBlocks: input.contentBlocks } : {}),
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.timestamp !== undefined ? { timestamp: input.timestamp } : {}),
+    ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
   });
 
   // `conflict` and `unavailable` mean the envelope never reached the Queue. Every other state is a

@@ -685,9 +685,25 @@ normative 的：新增任何唤醒猫的入口，必须先在这里登记，再�
 | 2 | Conflict check 第二次 admission | `ConflictCheckTaskSpec` 在 `route()` 已 admit 后再 `invokeTrigger.trigger(messageId)` | 删除该分支；`route()` 的 admission 即唤醒 | `outcome.outcomeId`（route 内） | `1398-conflict-check-single-admission.test.js` |
 | 3 | Limb transcript | `append(deliveryStatus:'queued')` + `trigger.trigger` | `deliverConnectorMessage` 原子 admission | `limb:${nodeId}:${observationId}` | `limb-transcript-cat-delivery.test.js` |
 
-关于 #2 的诚实修正：该双唤醒分支**从未在生产触发**——`github-schedule-factories.ts` 根本没把
-`invokeTrigger` 传进这个 spec（零个 github factory 读它）。它不是「正在重复唤醒」，而是「离重复
-唤醒只差一行接线」。删除属零行为变更。
+关于 #2 的诚实修正（两层，第二层推翻了第一层的一半）：
+
+其一，该双唤醒分支**从未在生产触发**——`github-schedule-factories.ts` 根本没把 `invokeTrigger`
+传进这个 spec（零个 github factory 读它）。它不是「正在重复唤醒」，而是「离重复唤醒只差一行接线」。
+
+其二，我最初据此判定「删除属零行为变更」，**这是错的**，`1392-expiry-consumer.test.js` 当场红给我看。
+那段代码不只是第二次入队，它还**独占携带 conflict 的 priority 与 sourceCategory**
+（`urgent` + `'conflict'` vs `normal` + `'scheduled'`）。结论比删除本身更重要：既然 trigger 从未接线，
+**R5 要求的 conflict 标记在生产里本来就没生效**——一条 matched conflict 与一条普通到期通知，对 owner
+是同样的优先级和分类。删除只是让这个长期缺口第一次可见。
+
+正确收敛不是恢复两阶段 trigger，而是把标签放到真正发生 admission 的地方：
+`GitHubWaitLifecycleService.publishPending` 现在从 outcome 自身推导（`reason === 'matched'` 且
+matched 含 `pr_became_conflicting` ⇒ urgent + `conflict`）。这是唯一同时知道「是否 matched」与
+「matched 了什么」的位置——`route()` 拿到 outcome 时投递已经发生，生产者无从预先判断。符合 INV-I4。
+
+同一根因还波及测试：`1392-expiry-consumer.test.js` 原本观察测试自己注入的 `ConnectorInvokeTrigger`
+——一个生产从未接线的接缝，于是断言描述的是一个从未运行过的配置，而真正唤醒 owner 的 admission
+无人观察。现已改为观察 harness 的 Queue 入队与 drain（「admitted entry reaching progress IS the wake」）。
 
 关于 #2 的 auto-resolve 排序：`tryAutoResolveBeforeWake` 确实跑在 admission 之后，但这是 **#1392 R5
 授权模型强制的**，不是疏忽——auto-resolve 只允许在 `matched` outcome 上写仓库，而该 outcome 正是
@@ -700,6 +716,16 @@ normative 的：新增任何唤醒猫的入口，必须先在这里登记，再�
 | 4 | Managed hold wake | `managed-command-wake-message-fence.ts:137`（append queued）+ `ManagedCommandWakeRecoveryEngine.ts:218`（trigger）；入口 `callback-hold-ball-routes.ts:440` | 自带补偿机器：`dispatchAttemptCount`、`persistDispatchOutcome`、SLA breach、retire-on-lease-error——它们存在的理由正是两阶段会分叉。迁移必须同时判定这些状态还剩什么职责 |
 | 5 | Re-eval carrier | `reeval-case-task-dispatch.ts:145`（append queued）+ `:182`（deliver） | 两半用**不同的键**：Message 用 `f266-task-carrier:${taskId}:${gen}`，Queue row 用 `action:${leaseId}:${gen}`。三个 `blocked` reasonCode（`carrier_persist_failed` / `carrier_delivery_failed` / `carrier_not_enqueued`）就是给半提交态取的名字 |
 | 6 | 死 `invokeTrigger` 管线 | `execute-pipeline.ts:273`、`TaskRunnerV2.setInvokeTrigger`、`scheduler/types.ts:155`、`index.ts` deps 包 | 全链路穿过 composition 但**从不调用 `.trigger()`**；`main-health.ts:213` 只做非空断言。必须等 #4/#5 迁完才能连同 `ConnectorInvokeTrigger` 一起删 |
+
+#### I.3b 本轮发现、但**不在**冻结范围的既存缺口（记录，不顺手修）
+
+| 现象 | 证据 | 归因 |
+|---|---|---|
+| `1392-registration-atomicity.test.js` 的 redis 变体 `concurrent registrations publish exactly one coherent owner…` 失败，抛 `TASK_MANAGED_WORK_BINDING_CONFLICT` | 栈全程在 `RedisTaskStore.replaceAutomationStateIfGeneration` → `buildTaskWaitReplacement` → `assertTrackingRegistration`；memory 变体同用例通过 | Redis/memory 在并发注册上的行为分叉，与投递无关；本轮改动文件不在该栈内 |
+| `audit-cc-system-prompt`、`capability-evolution-exploration-record-failures` 等 redis 轮失败 | 域与消息投递无交集 | 既存 |
+
+这些之所以长期无人发现，是同一个结构性原因：**CI 没有 Redis job**，`config/public-test-exclusions.json`
+把 `redis-*` 归为 `source_only`。Redis 是生产实际运行的后端，却是唯一不被门禁执行的后端。
 
 #### I.4 不变量
 
