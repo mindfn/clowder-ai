@@ -5,6 +5,7 @@ import {
   isMessageFrom,
   type MessageFrom,
   type ProviderSemanticEvent,
+  timelineMessageKind,
 } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
@@ -1027,6 +1028,9 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           replyTo?: string;
           replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
           mentionsUser?: boolean;
+          // Connector framing must survive the delivery hop: this envelope may be a connector
+          // notice that was admitted as queued work, and delivery is its first live appearance.
+          source?: import('../stores/chat-types').ConnectorSourceData;
         }>;
       }) => {
         void invalidateSidebarProjection();
@@ -1049,6 +1053,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           extra?: Record<string, unknown>;
           origin?: 'stream' | 'callback' | 'briefing';
           replyTo?: string;
+          source?: import('../stores/chat-types').ConnectorSourceData;
         };
       }) => {
         if (!isLifecycleStoredMessageMetadata(data.message.lifecycle)) return;
@@ -1073,18 +1078,10 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           id: data.message.id,
           type: isDeliveryFailure
             ? 'system'
-            : data.message.from?.kind === 'agent'
-              ? 'assistant'
-              : data.message.from?.kind === 'external' || data.message.from?.kind === 'plugin'
-                ? 'connector'
-                : data.message.from?.kind === 'system'
-                  ? 'system'
-                  : data.message.from?.kind === 'user'
-                    ? 'user'
-                    : data.message.catId
-                      ? 'assistant'
-                      : 'user',
+            : (timelineMessageKind(data.message.from, Boolean(data.message.source)) ??
+              (data.message.catId ? 'assistant' : 'user')),
           ...(data.message.from ? { from: data.message.from } : {}),
+          ...(data.message.source ? { source: data.message.source } : {}),
           ...(isDeliveryFailure ? { variant: 'error' as const } : {}),
           ...(data.message.catId && !isDeliveryFailure ? { catId: data.message.catId } : {}),
           content: data.message.content,

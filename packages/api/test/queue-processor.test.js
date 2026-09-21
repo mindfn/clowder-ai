@@ -309,6 +309,63 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     );
   });
 
+  // A connector notice admitted as queued work reaches the timeline through this delivery, so the
+  // delivered projection is the only place a live client can learn it is a connector at all.
+  // #1398 routed hold-ball wakes through this path while the projection still carried no `source`,
+  // and the client then classified the envelope by `from.kind` alone — `system` — so the hold-ball
+  // card degraded to a plain text block. Asserting `markDelivered`'s return value (as the existing
+  // F117 case does) cannot see this: the store was always right, the broadcast was not.
+  it('carries connector source on the delivered projection', async () => {
+    const harness = createHarness();
+    const from = { kind: 'system', service: 'managed-command-wake' };
+    const source = {
+      connector: 'hold-ball',
+      label: '持球通知',
+      icon: '🏓',
+      meta: { managedHold: true, phase: 'wake', taskId: 'hold-ball-test-1', wakeWhen: true },
+    };
+    const queueInput = canonicalTestQueueInput({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      sourceId: 'queue-processor-connector-source',
+      content: '[定时任务] 持球唤醒（命令完成）',
+      from,
+      targetCats: ['opus'],
+      intent: 'execute',
+    });
+    const admitted = await harness.queue.appendAndEnqueueDurable(
+      harness.messageStore,
+      canonicalTestMessageInput({
+        threadId: queueInput.threadId,
+        userId: queueInput.userId,
+        catId: null,
+        from,
+        content: queueInput.content,
+        mentions: queueInput.targetCats,
+        timestamp: Date.now(),
+        deliveryStatus: 'queued',
+        source,
+      }),
+      queueInput,
+    );
+    assert.equal(admitted.outcome, 'enqueued');
+
+    const started = await harness.processor.processNext('thread-1', 'user-1');
+    assert.equal(started.started, true);
+    await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
+
+    const delivered = harness.socketManager.emitToUser.mock.calls.find(
+      (call) => call.arguments[1] === 'messages_delivered',
+    );
+    assert.ok(delivered, `delivery must publish messages_delivered: ${JSON.stringify(errorLog(harness))}`);
+    const projected = delivered.arguments[2].messages.find((message) => message.id === admitted.message.id);
+    assert.ok(projected, 'the delivered connector notice must be in the projection');
+    assert.equal(projected.source?.connector, 'hold-ball');
+    assert.equal(projected.source?.meta?.taskId, 'hold-ball-test-1');
+  });
+
   it('starts every idle target of one source before either target completes', async () => {
     let releaseInvocations;
     const release = new Promise((resolve) => {

@@ -2360,6 +2360,9 @@ export class QueueProcessor {
       replyTo?: string;
       replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
       mentionsUser?: boolean;
+      // A connector notice admitted as queued work reaches the timeline through this delivery, so
+      // this is the only place the client can learn it is a connector at all.
+      source?: StoredMessage['source'];
     }> = [];
 
     for (const messageId of messageIds) {
@@ -2402,6 +2405,7 @@ export class QueueProcessor {
           ...(result.replyTo ? { replyTo: result.replyTo } : {}),
           ...(preview ? { replyPreview: preview } : {}),
           ...(result.mentionsUser ? { mentionsUser: true } : {}),
+          ...(result.source ? { source: result.source } : {}),
         });
       } catch {
         failedIds.push(messageId);
@@ -2436,6 +2440,7 @@ export class QueueProcessor {
         ...(message.extra ? { extra: message.extra } : {}),
         ...(message.origin ? { origin: message.origin } : {}),
         ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        ...(message.source ? { source: message.source } : {}),
       },
     });
   }
