@@ -280,7 +280,7 @@ GitHub 迁成插件后，该工具将由插件以 `tool` / `mcp` contribution �
   `host.messaging.deliver` 整条出站链路唯一生产入口是 `subscription-delivery.ts:154`，而它的调用者无人调用
 - **Z-3** `MessagingService.issueThreadHandle/revokeHandle` — 零调用，导致 `messaging.send` 的
   `thread_handle` 分支（`send-service.ts:56-66`）生产中不可达
-- **Z-4** 11 项 Capability 在 `src/` **0 命中**：`thread.listMetadata` `thread.readContent`
+- **Z-4** 11 项 Capability 在 `src/` **0 命中**（⚠️ 其中 4 项是承重面，见「github 插件的完整形状」一节，不可删）：`thread.listMetadata` `thread.readContent`
   `memory.query` `memory.append` `memory.retrieve` `windows.create` `whisper.extend`
   `schedule.register` `plugin.state.get` `plugin.state.set` `message.event.subscribe`
 - **Z-5** `collective-connector` 的 `capabilities: []`（`official-catalog.ts:99`）——
@@ -291,7 +291,59 @@ GitHub 迁成插件后，该工具将由插件以 `tool` / `mcp` contribution �
 ① 把 11 组真实需求对照 13 wire + 6 adapter 方法，**补 5 个缺口**（出站富语义、入站注册、
 thread 绑定、媒体、**slash 命令注册面**）；
 ② **合并 R-1…R-7 七组重复入口**；
-③ **删掉 Z-4 的 11 项空头 Capability**（或补 wire 行，二选一，不能继续挂着）。
+③ **Z-4 的 11 项按消费者重新分档**——其中 `schedule.register` / `plugin.state.get` /
+`plugin.state.set` / `message.event.subscribe` 是 github 插件与 7 个 connector 的承重面，
+**必须接线不能删**；其余 7 项需先找到消费者再决定。详见下文「github 插件的完整形状」一节。
+
+### github 插件的完整形状 = 3 个能力面（operator 口述，代码逐条证实）
+
+operator 2026-09-21 原话：「github 那个插件核心不就是注册定时任务然后处理完了；
+根据注册的路由信息；调用 sdk 的 send 接口来发送通知么」。**逐条核完，完全成立**：
+
+| operator 的话 | 代码证据 | 对应契约面 |
+|---|---|---|
+| 注册定时任务 | `registerGitHubScheduleFactories(registry: ScheduleFactoryRegistry)`（`github-schedule-factories.ts:403-410`）注册 7 个 factory，`plugin.yaml` 逐个声明 `factoryId: github.*` | `schedule.register` |
+| 根据注册的路由信息 | `PrTrackingStore` 文件头自述：「Maps (repoFullName + prNumber) → { catId, threadId, userId } … to **route notifications** to the correct cat/thread」 | `plugin.state.get` / `plugin.state.set` |
+| 调 send 接口发通知 | `ReviewFeedbackTaskSpec:945` `reviewFeedbackRouter.route(...)` → `routeResult.kind === 'notified'` → 用 `routeResult.threadId / catId / content` 投递；底层走 `deliver-connector-message.ts` | 出站消息（R-1 三条路之一） |
+
+**这一条把 Z-4 的处置建议推翻了。** 我原文写「删掉 Z-4 的 11 项空头 Capability
+（或补 wire 行，二选一）」——但其中 **`schedule.register` · `plugin.state.get` ·
+`plugin.state.set` 三项正是 github 插件迁出后赖以存活的面**。它们不是空头，
+是**未接线的承重面**。删了 github 插件就没法迁。
+
+Z-4 十一项按「有没有已知消费者」重新分档：
+
+- **承重（必须接线，不能删）**：`schedule.register` · `plugin.state.get` · `plugin.state.set`
+  （github 插件）· `message.event.subscribe`（7 个 connector 的入站）
+- **待定（需先找到消费者再决定）**：`thread.listMetadata` · `thread.readContent` ·
+  `memory.query` · `memory.append` · `memory.retrieve` · `windows.create` · `whisper.extend`
+
+**并且 github 给 R-1 合并提供了硬需求**：它现在的出站是 `deliverConnectorMessage`——
+R-1 三条路里的第三条。迁成插件后它只能走收敛后的 `host.messaging.deliver`，
+所以 R-1 不是「代码整洁」问题，是 **github 插件能不能发出通知**的问题。
+
+**推论：github 是最干净的端到端首发插件。** 它只需要 3 个能力面，
+而任一 IM connector 需要 11 组。用它跑通「manifest → 装载 → activate →
+注册 schedule contribution → 读写自己的 state → 调 send」整条链，
+比抽象地「补 5 个缺口」更能证明 a)+b) 真的通了。
+
+### plugin.yaml 与 SDK 不冲突——R-5 说的是同一层的三种拼法，不是要废掉 manifest
+
+operator 原话：「plugin.yaml 和 sdk 包那个不冲突啊；plugin.yaml 是声明插件的一些
+元信息 提供的能力 还有配置等等的」。**成立，且本文 R-5 不应被读成相反意思。**
+
+manifest 是**声明层**，SDK 是**代码层**，两层各司其职，本来就该同时存在：
+
+| plugin.yaml 现有字段 | contract `PluginManifest` 对应 |
+|---|---|
+| `id` / `name` / `version` / `description` / `icon` | manifest 元信息（`contract.generated.d.ts:286`） |
+| `resources: [{type: schedule, factoryId}]` | `contributions?: readonly StaticContribution[]`（`:294`） |
+| `config: [{envName, label, sensitive, required}]` | 配置声明 + `capabilities: readonly Capability[]`（`:272-273`） |
+
+**字段一一对得上——plugin.yaml 不是要删的旧东西，是要「改拼写」的同一份声明。**
+R-5「插件清单格式 3 套互不兼容」指的是 `connector.yaml` / `plugin.yaml` /
+contract `PluginManifest` 这**三种拼法要收敛成一种**，
+不是「manifest 这个概念要让位给 SDK」。迁移动作是**格式转换 + 跟着插件走**，不是删除。
 
 ### b) 的真正卡点：Host 单方做不完，缺一个 entrypoint 激活入口
 
