@@ -103,7 +103,7 @@ export interface QueueRoutesOptions {
    *  chain liveness and cat-slot reuse zombies. Optional for backward compat;
    *  fall-back to single-namespace classification when absent. */
   invocationRegistry?: InvocationRegistryPort;
-  /** Existing managed-wake receipt owner; late-bound after ConnectorInvokeTrigger composition. */
+  /** Existing managed-wake receipt owner; late-bound after delivery composition. */
   getManagedCommandWakeRecovery?: () => ManagedCommandWakeRecoveryLike | undefined;
   /** F295: existing durable task truth used only to project active managed commands. */
   dynamicTaskStore?: Pick<DynamicTaskStore, 'getAll'>;

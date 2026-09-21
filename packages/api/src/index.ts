@@ -63,8 +63,11 @@ import { F306ApprovalAdapter } from './domains/approval-hub/adapters/F306Approva
 import { createDispatchProposalStore } from './domains/approval-hub/stores/factories/DispatchProposalStoreFactory.js';
 import { createEntityProposalStore } from './domains/approval-hub/stores/factories/EntityProposalStoreFactory.js';
 import { classifyApprovedActionCarrier } from './domains/ball-custody/ActionSuccessorRecoverySweep.js';
+import { createLegacyManagedWakeAdoption } from './domains/ball-custody/legacy-managed-wake-adoption.js';
 import type { ManagedCommandWakeRecoverySweep } from './domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
 import { createManagedCommandWakeCarrierAdapter } from './domains/ball-custody/managed-command-wake-carrier-adapter.js';
+import type { ManagedCommandWakeRecoveryDeps } from './domains/ball-custody/managed-command-wake-lifecycle.js';
+import { createManagedWakeAdmittedNotifier } from './domains/ball-custody/managed-wake-admitted-notifier.js';
 import { RedisWaitTerminationStore } from './domains/ball-custody/RedisWaitTerminationStore.js';
 import { WaitTerminationService } from './domains/ball-custody/WaitTerminationService.js';
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
@@ -291,13 +294,7 @@ import { restartConnectorGateway } from './infrastructure/connectors/connector-g
 import { createConnectorReloadSubscriber } from './infrastructure/connectors/connector-reload-subscriber.js';
 import type { RepoIssueComment } from './infrastructure/connectors/github-repo-event/RepoCommentPollTaskSpec.js';
 import { IssueCommentRouter } from './infrastructure/email/IssueCommentRouter.js';
-import {
-  CiCdRouter,
-  ConflictRouter,
-  ConnectorInvokeTrigger,
-  fetchPrCiStatus,
-  ReviewFeedbackRouter,
-} from './infrastructure/email/index.js';
+import { CiCdRouter, ConflictRouter, fetchPrCiStatus, ReviewFeedbackRouter } from './infrastructure/email/index.js';
 import type { ReviewFeedbackPrMetadata } from './infrastructure/email/ReviewFeedbackTaskSpec.js';
 import { fetchLatestIssueCommentCursor } from './infrastructure/github/comment-cursors.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
@@ -3265,7 +3262,7 @@ async function main(): Promise<void> {
     groundingSampleStore: getGroundingSampleStore(),
   });
   // F192 Phase E-hub: harness eval verdict lifecycle surface.
-  // F192 OQ-21: late-bound holder for ConnectorInvokeTrigger — eval-hub routes
+  // F192 OQ-21: late-bound holder for the persisted Queue delivery port — eval-hub routes
   // register before invokeTrigger is created (line ~2600). Manual trigger route
   // resolves the live trigger at request time via this holder, so the provider
   // returns null until index.ts wires it after invokeTrigger construction.
@@ -6951,16 +6948,6 @@ async function main(): Promise<void> {
 
   // F140 Phase 3b: connector invoke trigger (auto-invoke cat after review feedback delivery via polling)
   const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
-  const invokeTrigger = new ConnectorInvokeTrigger({
-    socketManager,
-    invocationQueue,
-    queueProcessor,
-    messageStore,
-    waitTaskStore: taskStore,
-    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
-    log: app.log,
-  });
-
   const { LimbTranscriptCatDelivery } = await import('./domains/limb/LimbTranscriptCatDelivery.js');
   const { deliverConnectorMessage: deliverLimbTranscript } = await import(
     './infrastructure/email/deliver-connector-message.js'
@@ -6976,11 +6963,66 @@ async function main(): Promise<void> {
     limbRegistry,
   });
 
-  // F167 Phase P: late-bind invokeTrigger into holdBallDeps for wakeWhen command completion.
-  // holdBallDeps is defined before invokeTrigger exists, but the route handler reads
-  // deps.invokeTrigger at request time (closure over object reference), so late binding is safe.
+  // holdBallDeps is built before composition finishes, and the route reads these at request time
+  // through the object reference, so late binding is safe.
+  // Post-commit notification for an already-durable wake. Both effects are best-effort and
+  // independent; see managed-wake-admitted-notifier.ts for why the drain must not be sequenced
+  // behind the broadcast.
+  const wakeQueueEmitter = socketManager;
+  const notifyManagedWakeAdmitted = createManagedWakeAdmittedNotifier({
+    ...(wakeQueueEmitter
+      ? {
+          broadcastQueueUpdate: (threadId: string, userId: string) =>
+            emitQueueUpdated(
+              wakeQueueEmitter,
+              userId,
+              threadId,
+              invocationQueue.list(threadId, userId),
+              messageStore,
+              'enqueued',
+            ),
+        }
+      : {}),
+    ...(queueProcessor.requestDrain
+      ? { requestDrain: (threadId: string) => queueProcessor.requestDrain?.(threadId) }
+      : {}),
+    log: { warn: (context, message) => app.log.warn(context, message) },
+  });
+
+  const admitManagedWake: ManagedCommandWakeRecoveryDeps['admitWake'] = async (input) => {
+    // INV-I1: Message and Queue row in one transaction. The lease was already verified against
+    // this exact envelope, so nothing admitted here can belong to a generation that has moved on.
+    const admitted = await invocationQueue.appendAndEnqueueDurable(messageStore, input.message, {
+      threadId: input.threadId,
+      userId: input.userId,
+      sourceId: input.message.idempotencyKey,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      idempotencyKey: input.message.idempotencyKey,
+      content: input.content,
+      from: input.message.from,
+      targetCats: [input.catId],
+      intent: 'execute',
+      priority: input.priority,
+      sourceCategory: input.sourceCategory,
+      ...(input.actionSuccessorFence ? { actionSuccessorFence: input.actionSuccessorFence } : {}),
+    });
+    if (admitted.outcome === 'full') return {};
+    await notifyManagedWakeAdmitted(input.threadId, input.userId);
+    return { messageId: admitted.message.id };
+  };
+  const adoptLegacyManagedWake = createLegacyManagedWakeAdoption({
+    messageStore,
+    invocationQueue,
+    messageStoreForQueue: messageStore,
+    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
+    notifyAdmitted: notifyManagedWakeAdmitted,
+  });
   if (callbackOpts.holdBallDeps) {
-    (callbackOpts.holdBallDeps as unknown as Record<string, unknown>).invokeTrigger = invokeTrigger;
+    const holdBallDeps = callbackOpts.holdBallDeps as unknown as Record<string, unknown>;
+    // The route has no Queue handle of its own; composition hands it the one admission port.
+    holdBallDeps.admitManagedWake = admitManagedWake;
+    holdBallDeps.adoptLegacyManagedWake = adoptLegacyManagedWake;
     const { ManagedCommandWakeRecoverySweep } = await import(
       './domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
     );
@@ -6990,7 +7032,9 @@ async function main(): Promise<void> {
       socketManager,
       taskRunner: taskRunnerV2,
       invocationRecordStore,
-      getInvokeTrigger: () => invokeTrigger,
+      actionSuccessorLeaseStore,
+      admitWake: admitManagedWake,
+      adoptLegacyWake: adoptLegacyManagedWake,
       isCommandRunnerActive: isManagedWakeRunnerActive,
       ...createManagedCommandWakeCarrierAdapter({
         messageStore,
@@ -7097,7 +7141,6 @@ async function main(): Promise<void> {
   // Polling (ReviewFeedbackTaskSpec) is the sole truth source for review feedback.
 
   // F139 Phase 4b: late-bind invokeTrigger so templates can wake cats
-  taskRunnerV2.setInvokeTrigger(invokeTrigger);
 
   // F192 OQ-21: late-bind invokeTrigger for manual eval trigger endpoint.
   // eval-hub routes registered at line ~1543 (before invokeTrigger existed);
@@ -7108,7 +7151,6 @@ async function main(): Promise<void> {
 
   // F167 Phase M: late-bind busy checker for pre-fire defer (hold_ball activation).
   // Same thread-busy signal as delivery-batch-done (messages.ts:1822 /
-  // ConnectorInvokeTrigger.ts:692): active invocation OR queued/processing slot.
   // When a hold wake fires while the cat is mid-work, the scheduler re-arms the
   // once-task instead of delivering a stale wake ("history replay").
   taskRunnerV2.setBusyChecker((threadId) => invocationTracker.has(threadId) || queueProcessor.isThreadBusy(threadId));
@@ -7505,7 +7547,6 @@ async function main(): Promise<void> {
         cicdRouter,
         conflictRouter,
         reviewFeedbackRouter,
-        invokeTrigger,
         checkMergeable,
         autoExecutor,
         fetchPrMetadata,
@@ -7736,7 +7777,6 @@ async function main(): Promise<void> {
         programId: context.programId,
         store: evalDomainTriggerStore,
         deliver: schedulerDeliver,
-        invokeTrigger,
         defaultUserId: evalScheduleOpts.defaultUserId,
         wiredPublishDomains,
       });
@@ -7746,7 +7786,6 @@ async function main(): Promise<void> {
         ...input,
         store: evalDomainTriggerStore,
         deliver: schedulerDeliver,
-        invokeTrigger,
         defaultUserId: evalScheduleOpts.defaultUserId,
         wiredPublishDomains,
       });
@@ -7764,7 +7803,6 @@ async function main(): Promise<void> {
             domain: designGateDomain,
             store: evalDomainTriggerStore,
             deliver: schedulerDeliver,
-            invokeTrigger,
             defaultUserId: evalScheduleOpts.defaultUserId,
             wiredPublishDomains,
             threadStore,
@@ -8031,7 +8069,6 @@ async function main(): Promise<void> {
       wakeSender: new SchedulerBallCustodyWakeSender({
         deliver: schedulerDeliver,
         readPersistedContent: async (messageId) => (await messageStore.getById(messageId))?.content ?? null,
-        invokeTrigger,
         defaultUserId: getOwnerUserId(),
         logger: { warn: app.log.warn.bind(app.log) },
       }),
@@ -8096,7 +8133,6 @@ async function main(): Promise<void> {
       },
     },
     threadStore,
-    invokeTrigger,
     socketManager,
     defaultUserId: 'default-user' as const,
     // clowder-ai#910 + cloud P1: pass a getter (not a value) so runtime

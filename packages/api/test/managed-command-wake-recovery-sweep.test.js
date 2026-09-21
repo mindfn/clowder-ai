@@ -117,12 +117,29 @@ function makeHarness(options = {}) {
         return invocationRecords.get(key) ?? null;
       },
     },
-    getInvokeTrigger: () => ({
-      async trigger(...args) {
-        triggerCalls.push(args);
-        return triggerOutcomes.shift() ?? 'full';
-      },
-    }),
+    // F117 Phase I: the wake commits Message and Queue row in one transaction, so the harness
+    // observes that admission instead of a second trigger call. `triggerOutcomes` keeps its old
+    // vocabulary — 'enqueued' admits, anything else refuses without writing.
+    async admitWake(input) {
+      triggerCalls.push(input);
+      const outcome = triggerOutcomes.shift() ?? 'full';
+      if (outcome instanceof Error) throw outcome;
+      if (outcome !== 'enqueued' && outcome !== 'dispatched') return {};
+      if (appendError) throw appendError;
+      const existing = messages.get(input.message.idempotencyKey);
+      if (existing) return { messageId: existing.id };
+      const stored = { ...input.message, id: `message-${messages.size + 1}` };
+      messages.set(input.message.idempotencyKey, stored);
+      messagesById.set(stored.id, stored);
+      appended.push(stored);
+      return { messageId: stored.id };
+    },
+    async adoptLegacyWake(input) {
+      triggerCalls.push(input);
+      const outcome = triggerOutcomes.shift() ?? 'full';
+      if (outcome instanceof Error) throw outcome;
+      return { adopted: outcome === 'enqueued' || outcome === 'dispatched' };
+    },
     ...(options.eventCarrier ? { getEventCarrier: () => eventCarrier } : {}),
     ...(options.retryEventCarrierOutcomes
       ? {
@@ -174,10 +191,8 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     });
 
     assert.equal(h.triggerCalls.length, 1);
-    assert.deepEqual(h.triggerCalls[0][6], {
-      sourceCategory: 'scheduled',
-      priority: 'urgent',
-    });
+    assert.equal(h.triggerCalls[0].sourceCategory, 'scheduled');
+    assert.equal(h.triggerCalls[0].priority, 'urgent');
   });
 
   test('dispatches legacy holds through the same canonical urgent Queue ingress', async () => {
@@ -192,10 +207,8 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     });
 
     assert.equal(h.triggerCalls.length, 1);
-    assert.deepEqual(h.triggerCalls[0][6], {
-      sourceCategory: 'scheduled',
-      priority: 'urgent',
-    });
+    assert.equal(h.triggerCalls[0].sourceCategory, 'scheduled');
+    assert.equal(h.triggerCalls[0].priority, 'urgent');
   });
 
   test('does not copy compatibility owner provenance into Queue ingress options', async () => {
@@ -210,10 +223,8 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     });
 
     assert.equal(h.triggerCalls.length, 1);
-    assert.deepEqual(h.triggerCalls[0][6], {
-      sourceCategory: 'scheduled',
-      priority: 'urgent',
-    });
+    assert.equal(h.triggerCalls[0].sourceCategory, 'scheduled');
+    assert.equal(h.triggerCalls[0].priority, 'urgent');
   });
 
   test('persists the terminal result before attempting thread delivery', async () => {
@@ -369,7 +380,53 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.deepEqual(await sweep.runOnce(), { scanned: 0, recovered: 0, pending: 0 });
   });
 
-  test('restart after volatile enqueue re-dispatches the same wake until a durable carrier exists', async () => {
+  /**
+   * The historical states this migration exists for, driven end to end through the recovery engine.
+   *
+   * A task persisted as `message_written` (or `dispatch_pending`) by the pre-atomic producer has a
+   * durable Message and no Queue row. An active generation must be adopted; a superseded one must
+   * be refused and the carrier retired — the engine's cancel/retire branch is what the adoption's
+   * `ManagedCommandWakeActionLeaseAdmissionError` is raised for.
+   */
+  for (const legacyState of ['message_written', 'dispatch_pending']) {
+    test(`a stale legacy ${legacyState} carrier is canceled and retired, with nothing enqueued`, async () => {
+      const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+      const { ManagedCommandWakeActionLeaseAdmissionError } = await import(
+        '../dist/domains/ball-custody/managed-command-wake-action-lease-admission.js'
+      );
+      const task = makeTask();
+      task.params.holdLifecycle.managedCommand = {
+        state: legacyState,
+        command: 'pnpm gate',
+        startedAt: 1_000,
+        conditionMetAt: 2_000,
+        wakeContent: 'gate finished',
+        messageId: 'legacy-message-1',
+        messageWrittenAt: 2_500,
+      };
+      const h = makeHarness({
+        task,
+        messages: [{ id: 'legacy-message-1', threadId: 'thread-1', deliveryStatus: 'queued' }],
+      });
+      const adoptions = [];
+      h.deps.adoptLegacyWake = async (input) => {
+        adoptions.push(input);
+        throw new ManagedCommandWakeActionLeaseAdmissionError('generation no longer matches canonical truth');
+      };
+      const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+
+      assert.equal(await sweep.recoverTask(h.task?.id ?? 'hold-ball-task-1'), 'recovered');
+
+      assert.equal(adoptions.length, 1, 'the legacy carrier is offered for adoption exactly once');
+      assert.equal(adoptions[0].messageId, 'legacy-message-1');
+      const command = h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand;
+      assert.equal(command.state, 'consumed', 'a superseded generation retires rather than retrying forever');
+      assert.equal(command.carrierTerminalReason, 'canceled');
+      assert.equal(h.appended.length, 0, 'no new message is written for a refused adoption');
+    });
+  }
+
+  test('a refused admission writes nothing, and the retry is the first thing that persists', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const h = makeHarness({ triggerOutcomes: ['full', 'enqueued', 'enqueued'] });
     const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
@@ -382,68 +439,23 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
       }),
       'pending',
     );
-    assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.state, 'dispatch_pending');
-    assert.equal(h.appended.length, 1);
+
+    // This case used to assert the opposite: a queued Message persisted with no Queue row behind
+    // it, and a re-dispatch loop that existed to close that gap. One transaction removes the gap,
+    // so a refused admission leaves the task exactly where it was, with nothing to reconcile.
+    assert.equal(h.appended.length, 0, 'a refused admission must not leave a queued message behind');
+    assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.state, 'condition_met');
+    assert.equal(h.triggerCalls[0].sourceCategory, 'scheduled');
+    assert.equal(h.triggerCalls[0].priority, 'urgent');
+
+    // The next sweep retries the same wake, and that attempt is the one that becomes durable.
+    const retried = await sweep.runOnce();
+    assert.deepEqual(retried, { scanned: 1, recovered: 0, pending: 1 });
+    const task = h.tasks.get('hold-ball-task-1');
+    assert.equal(task.params.holdLifecycle.managedCommand.state, 'enqueued', 'admitted in one step');
+    assert.equal(h.appended.length, 1, 'exactly one message, and it has its Queue row');
     assert.equal(h.appended[0].deliveryStatus, 'queued', 'managed wake stays under F264 receipt custody');
-    assert.deepEqual(
-      h.triggerCalls[0][6],
-      { sourceCategory: 'scheduled', priority: 'urgent' },
-      'managed event uses urgent canonical Queue ingress for its same-member continuation',
-    );
-
-    const graceAttempt = await sweep.runOnce();
-    assert.deepEqual(graceAttempt, { scanned: 1, recovered: 0, pending: 1 });
-    let task = h.tasks.get('hold-ball-task-1');
-    assert.equal(task.enabled, true, 'an in-memory queue entry cannot retire the durable fallback');
-    assert.equal(task.params.holdLifecycle.managedCommand.state, 'dispatch_pending');
-    assert.equal(h.triggerCalls.length, 1, 'a recent attempt must wait for its durable carrier');
-
-    h.setNow(12_000);
-    const volatileAttempt = await sweep.runOnce();
-    assert.deepEqual(volatileAttempt, { scanned: 1, recovered: 0, pending: 1 });
-    assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.state, 'enqueued');
-
-    h.setNow(14_000);
-    const restartedAttempt = await sweep.runOnce();
-    assert.deepEqual(restartedAttempt, { scanned: 1, recovered: 0, pending: 1 });
-    task = h.tasks.get('hold-ball-task-1');
-    assert.equal(task.enabled, true);
-    assert.equal(h.appended.length, 1, 'completion visibility must be idempotent');
-    assert.equal(h.triggerCalls[0][4], h.triggerCalls[1][4], 'retry must reuse the exact source message');
-    assert.equal(h.triggerCalls[1][4], h.triggerCalls[2][4], 'restart recovery must preserve wake identity');
-
-    const messageId = task.params.holdLifecycle.managedCommand.messageId;
-    const invocation = {
-      id: 'invocation-after-restart',
-      userMessageId: messageId,
-      status: 'queued',
-    };
-    h.invocationRecords.set(`connector-${messageId}:codex-sol`, invocation);
-    h.invocationRecords.set(`connector-${messageId}`, {
-      id: 'legacy-source-wide-invocation',
-      userMessageId: messageId,
-      status: 'succeeded',
-    });
-    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
-    assert.equal(
-      h.tasks.get('hold-ball-task-1').enabled,
-      true,
-      'target-scoped queued metadata must win over an obsolete source-wide success record',
-    );
-
-    invocation.status = 'failed';
-    h.setNow(16_000);
-    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
-    assert.equal(h.tasks.get('hold-ball-task-1').enabled, true, 'failed execution must retain fallback custody');
-
-    invocation.status = 'succeeded';
-    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 1, pending: 0 });
-    task = h.tasks.get('hold-ball-task-1');
-    assert.equal(task.enabled, false);
-    assert.equal(task.params.holdLifecycle.status, 'fired');
-    assert.equal(task.params.holdLifecycle.managedCommand.state, 'consumed');
-    assert.equal(task.params.holdLifecycle.managedCommand.invocationId, 'invocation-after-restart');
-    assert.deepEqual(h.unregistered, ['hold-ball-task-1']);
+    assert.equal(task.params.holdLifecycle.managedCommand.messageId, h.appended[0].id);
   });
 
   test('does not retire an enqueued wake until its InvocationRecord completed successfully', async () => {

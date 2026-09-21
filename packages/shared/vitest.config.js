@@ -59,6 +59,7 @@ export default defineConfig({
       'test/message-bundle-schema.test.ts',
       'test/markdown-readable-text.test.ts',
       'src/__tests__/profile-contract.test.ts',
+      'src/__tests__/timeline-message-kind.test.ts',
     ],
   },
 });

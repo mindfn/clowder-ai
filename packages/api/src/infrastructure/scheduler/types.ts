@@ -149,21 +149,6 @@ export interface ScheduleLifecycleNotice {
 
 export type ScheduleLifecycleNotifier = (notice: ScheduleLifecycleNotice) => void;
 
-export type ScheduleInvokeTriggerOutcome = 'enqueued' | 'full';
-
-/** Async cat invocation trigger — callers may detach it, but resolution means durable wake acceptance. */
-export interface ScheduleInvokeTrigger {
-  trigger(
-    threadId: string,
-    catId: string,
-    userId: string,
-    message: string,
-    messageId: string,
-    contentBlocks?: readonly unknown[],
-    policy?: ScheduleTriggerPolicy,
-  ): Promise<ScheduleInvokeTriggerOutcome>;
-}
-
 /** Phase 1b+2: context passed to execute — carries actor resolution + context spec */
 export interface ExecuteContext {
   /** Aborted when this work item's scheduler timeout fires. */
@@ -186,7 +171,6 @@ export interface ExecuteContext {
   /** Phase 4: fetch web content with browser-automation routing */
   fetchContent?: (url: string) => Promise<FetchResult>;
   /** Phase 4b: invoke a cat to handle a scheduled task (fire-and-forget) */
-  invokeTrigger?: ScheduleInvokeTrigger;
   /** F233 PR3: optional ball-custody event sink for scheduler-originated events. */
   ballCustody?: IBallCustodyIngest;
   /** F167: hand a due managed-command fallback to its durable recovery receipt. */

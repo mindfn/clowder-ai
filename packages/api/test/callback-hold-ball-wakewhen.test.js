@@ -137,6 +137,13 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
           return { id: `invocation-${key}`, userMessageId: key.slice('connector-'.length), status: 'running' };
         },
       },
+      // F117 Phase I: the route owns no Queue, so composition injects the admission that commits
+      // the wake Message and its Queue row together. The default one here admits successfully.
+      async admitManagedWake(input) {
+        const stored = { id: `test-msg-${appendedMessages.length}`, ...input.message };
+        appendedMessages.push(stored);
+        return { messageId: stored.id };
+      },
       _insertedTasks: insertedTasks,
       _registeredDynamic: registeredDynamic,
       _unregisteredIds: unregisteredIds,
@@ -458,11 +465,11 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
   test('T8-terminal: unrelated user mention cannot retire or wake an older managed hold', async () => {
     let triggerCount = 0;
     const deps = makeStubDeps({
-      invokeTrigger: {
-        async trigger() {
-          triggerCount += 1;
-          return 'dispatched';
-        },
+      async admitManagedWake(input) {
+        triggerCount += 1;
+        const stored = { id: `wake-${triggerCount}`, ...input.message };
+        deps._appendedMessages.push(stored);
+        return { messageId: stored.id };
       },
       invocationRecordStore: {
         getByIdempotencyKey() {
@@ -1150,10 +1157,9 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
   test('T12: queue-full trigger keeps fallback reminder alive after completion message is written', async () => {
     const deps = makeStubDeps({
-      invokeTrigger: {
-        async trigger() {
-          return 'full';
-        },
+      // Queue capacity refused the row. One transaction means nothing is written at all.
+      async admitManagedWake() {
+        return {};
       },
     });
     const app = await createApp(deps);
@@ -1175,7 +1181,13 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    assert.equal(deps._appendedMessages.length >= 2, true, 'completion message should be durable before dispatch');
+    // This used to assert the completion message was durable BEFORE dispatch. One transaction
+    // removes that ordering: a refused admission leaves no wake message behind to reconcile.
+    assert.equal(
+      deps._appendedMessages.some((m) => m.source?.meta?.phase === 'wake'),
+      false,
+      'a refused admission must not leave a queued wake message behind',
+    );
     assert.equal(
       deps._removedIds.includes(taskId),
       false,
@@ -1185,10 +1197,8 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
   test('T13: trigger throw keeps fallback reminder alive after completion message is written', async () => {
     const deps = makeStubDeps({
-      invokeTrigger: {
-        async trigger() {
-          throw new Error('simulated execution-plane failure');
-        },
+      async admitManagedWake() {
+        throw new Error('simulated execution-plane failure');
       },
     });
     const app = await createApp(deps);
@@ -1210,7 +1220,13 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    assert.equal(deps._appendedMessages.length >= 2, true, 'completion message should survive trigger failure');
+    // An admission that throws committed neither half, so no wake receipt may survive it — the
+    // fallback reminder below is what keeps the wake recoverable, not a stranded message.
+    assert.equal(
+      deps._appendedMessages.some((m) => m.source?.meta?.phase === 'wake'),
+      false,
+      'a failed admission must leave no wake message behind',
+    );
     assert.equal(
       deps._removedIds.includes(taskId),
       false,
@@ -1220,11 +1236,6 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
   test('T14: dispatched trigger retires fallback only after its durable carrier succeeds', async () => {
     const deps = makeStubDeps({
-      invokeTrigger: {
-        async trigger() {
-          return 'dispatched';
-        },
-      },
       invocationRecordStore: {
         getByIdempotencyKey(_threadId, _userId, key) {
           return { id: `invocation-${key}`, userMessageId: key.slice('connector-'.length), status: 'succeeded' };

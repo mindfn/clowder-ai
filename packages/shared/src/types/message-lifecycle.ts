@@ -173,6 +173,33 @@ export function isMessageFrom(value: unknown): value is MessageFrom {
   }
 }
 
+/** How a timeline renders one envelope. `null` = the envelope does not say; the caller decides. */
+export type TimelineMessageKind = 'assistant' | 'connector' | 'system' | 'user';
+
+/**
+ * The one rule for what a stored envelope looks like on a timeline.
+ *
+ * This lived as four independent copies — the server timeline projection plus three client
+ * hydration paths — and they drifted. #1398 started writing an explicit
+ * `from: {kind:'system', service}` on connector notices that previously stored no `from` at all
+ * (the server then synthesized `{kind:'external', connectorId}` from `source`, so every copy
+ * derived `connector` without knowing why). Only the server copy learned the new shape, so a
+ * hold-ball notice reached the client as `system`, lost its connector framing, and rendered as a
+ * plain text block instead of a card. A predicate with N copies has N-1 chances to be wrong;
+ * consumers keep their own fallback for an absent `from`, but never their own rule.
+ *
+ * `hasSource` is the presence of a connector `source` on the same envelope, not its contents.
+ */
+export function timelineMessageKind(from: MessageFrom | undefined, hasSource: boolean): TimelineMessageKind | null {
+  if (!from) return null;
+  if (from.kind === 'agent') return 'assistant';
+  if (from.kind === 'external' || from.kind === 'plugin') return 'connector';
+  // A system service that carries a connector source is speaking *as* that connector.
+  if (from.kind === 'system') return hasSource ? 'connector' : 'system';
+  if (from.kind === 'user') return 'user';
+  return null;
+}
+
 function isDispatchRef(value: unknown): value is LifecycleDispatchRef {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;

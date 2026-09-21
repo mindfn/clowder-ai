@@ -30,6 +30,7 @@ import {
   ManagedCommandWakeRecoverySweep,
   type RecordManagedCommandCompletionInput,
 } from '../domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
+import type { ManagedCommandWakeRecoveryDeps } from '../domains/ball-custody/managed-command-wake-lifecycle.js';
 import type {
   InvocationRecord as CallbackInvocationRecord,
   InvocationRegistry,
@@ -356,21 +357,16 @@ export interface HoldBallRouteDeps {
   managedCommandWakeRecovery?: Pick<ManagedCommandWakeRecoverySweep, 'recordCompletion' | 'recordLost'> &
     Partial<Pick<ManagedCommandWakeRecoverySweep, 'recordCancelledCompletion' | 'recordRetiredCompletion'>>;
   /**
-   * F167 Phase P: invocation trigger for wakeWhen command completion.
-   * When provided, wakeWhen command results are delivered via invokeTrigger.
-   * When absent, wakeWhen falls back to message-only delivery (no cat auto-invocation).
+   * F117 Phase I: atomic Message + Queue admission for a wakeWhen completion.
+   *
+   * This route owns no Queue handle of its own, so the one component that can commit both halves
+   * in a single transaction is injected. When it is absent — an isolated host with no Queue — the
+   * wake is not written at all, which is the honest outcome: a wake that cannot be admitted must
+   * not be recorded as written either.
    */
-  invokeTrigger?: {
-    trigger(
-      threadId: string,
-      catId: string,
-      userId: string,
-      message: string,
-      messageId: string,
-      contentBlocks?: undefined,
-      policy?: { sourceCategory?: string; forceQueue?: boolean },
-    ): Promise<'dispatched' | 'enqueued' | 'full'>;
-  };
+  admitManagedWake?: ManagedCommandWakeRecoveryDeps['admitWake'];
+  /** Adopt a wake persisted by the pre-atomic two-phase path. Migration only; never used by new wakes. */
+  adoptLegacyManagedWake?: ManagedCommandWakeRecoveryDeps['adoptLegacyWake'];
 }
 
 export async function resolveHoldWaitOwnerFence(
@@ -424,7 +420,6 @@ function launchWakeWhenRunner(opts: {
   const { wakeWhen, reason, nextStep, threadId, catId, taskId, deps, prepared, durableJob } = opts;
   const { registryKey, entry: activeEntry } = prepared;
   const { runner } = activeEntry;
-  const invokeTrigger = deps.invokeTrigger;
   const recovery =
     deps.managedCommandWakeRecovery ??
     new ManagedCommandWakeRecoverySweep({
@@ -433,15 +428,10 @@ function launchWakeWhenRunner(opts: {
       socketManager: deps.socketManager,
       taskRunner: deps.taskRunner,
       invocationRecordStore: deps.invocationRecordStore,
-      getInvokeTrigger: () =>
-        invokeTrigger
-          ? {
-              trigger: async (...args) => {
-                const outcome = await invokeTrigger.trigger(...args);
-                return outcome === 'dispatched' ? 'enqueued' : outcome;
-              },
-            }
-          : undefined,
+      // Composition owns admission; this route only forwards it. Without one the fence fails
+      // closed rather than writing a message no Queue row will ever follow.
+      admitWake: deps.admitManagedWake ?? (async () => ({})),
+      ...(deps.adoptLegacyManagedWake ? { adoptLegacyWake: deps.adoptLegacyManagedWake } : {}),
     });
 
   let resolveExternalAdmission!: (result: import('../infrastructure/managed-runner.js').SpawnAdmission) => void;

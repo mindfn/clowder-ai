@@ -361,7 +361,7 @@ describe('TaskRunnerV2', () => {
     assert.match(rows[0].error_summary, /timed out after 20ms/);
   });
 
-  it('lets completed side effects return and finishes the trigger bound to a delivered message after timeout', async () => {
+  it('lets completed side effects return after a timeout', async () => {
     const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
     const completed = [];
     const settleAfterTimeout = async (value) => {
@@ -372,9 +372,6 @@ describe('TaskRunnerV2', () => {
       logger: silentLogger,
       ledger,
       deliver: async ({ content }) => settleAfterTimeout(`msg:${content}`),
-      invokeTrigger: {
-        trigger: async () => settleAfterTimeout('enqueued'),
-      },
     });
     runner.setManagedCommandWakeRecovery(async () => settleAfterTimeout('recovered'));
     runner.register({
@@ -384,10 +381,7 @@ describe('TaskRunnerV2', () => {
       admission: {
         gate: async () => ({
           run: true,
-          workItems: ['deliver', 'trigger', 'wake', 'chain', 'unbound', 'detached'].map((subjectKey) => ({
-            signal: subjectKey,
-            subjectKey,
-          })),
+          workItems: ['deliver', 'wake', 'chain'].map((subjectKey) => ({ signal: subjectKey, subjectKey })),
         }),
       },
       run: {
@@ -398,36 +392,11 @@ describe('TaskRunnerV2', () => {
             completed.push(await ctx.deliver({ threadId: 'thread-1', content: subjectKey, userId: 'scheduler' }));
             return;
           }
-          if (subjectKey === 'trigger') {
-            completed.push(await ctx.invokeTrigger.trigger('thread-1', 'codex', 'user-1', 'wake', 'msg-existing'));
-            return;
-          }
           if (subjectKey === 'wake') {
             completed.push(await ctx.managedCommandWakeRecovery('managed-task-1'));
             return;
           }
-          if (subjectKey === 'detached') {
-            void ctx.invokeTrigger
-              .trigger('thread-1', 'codex', 'user-1', 'wake', 'msg-existing')
-              .then((outcome) => completed.push(`detached:${outcome}`))
-              .catch(() => {});
-            return;
-          }
-          const messageId = await ctx.deliver({
-            threadId: 'thread-1',
-            content: subjectKey,
-            userId: 'scheduler',
-          });
-          if (subjectKey === 'unbound') {
-            await assert.rejects(
-              () => ctx.invokeTrigger.trigger('thread-1', 'codex', 'user-1', 'wake', 'msg-from-another-item'),
-              /timed out/,
-            );
-            completed.push('unbound-trigger-blocked');
-            return;
-          }
-          const triggerOutcome = await ctx.invokeTrigger.trigger('thread-1', 'codex', 'user-1', 'wake', messageId);
-          completed.push(`${messageId}:${triggerOutcome}`);
+          completed.push(await ctx.deliver({ threadId: 'thread-1', content: subjectKey, userId: 'scheduler' }));
         },
       },
       state: { runLedger: 'sqlite' },
@@ -437,17 +406,12 @@ describe('TaskRunnerV2', () => {
 
     await runner.triggerNow('completed-effect-timeout-test');
 
-    assert.deepEqual(completed, [
-      'msg:deliver',
-      'enqueued',
-      'recovered',
-      'msg:chain:enqueued',
-      'unbound-trigger-blocked',
-      'detached:enqueued',
-    ]);
+    // The invoke-trigger cases this used to carry are gone with the seam itself: a wake is now one
+    // atomic admission, so there is no second bound call for a timeout to race.
+    assert.deepEqual(completed, ['msg:deliver', 'recovered', 'msg:chain']);
     assert.equal(
       ledger.query('completed-effect-timeout-test', 10).filter((row) => row.outcome === 'RUN_FAILED').length,
-      6,
+      3,
       'timeout remains terminal truth even when the completed effect returns normally',
     );
   });

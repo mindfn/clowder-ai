@@ -6,7 +6,7 @@
  * KD-10: Cursor commits only after delivery success; trigger is best-effort.
  *
  * Gate: list pr_tracking tasks → fetch comments + reviews → filter by cursor → workItems.
- * Execute: ReviewFeedbackRouter → commitCursor (only once the observation is recorded) → ConnectorInvokeTrigger.
+ * Execute: ReviewFeedbackRouter → commitCursor (only once the observation is recorded). The router admits atomically; there is no second dispatch.
  */
 import type { CatId, CommunityEvent, GitHubReviewThreadBaseline, TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';

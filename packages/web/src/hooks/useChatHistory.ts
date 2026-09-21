@@ -1,6 +1,12 @@
 'use client';
 
-import type { CliDiagnostics, ProviderSemanticEvent, ReplyPreview, SchedulerMessageExtra } from '@cat-cafe/shared';
+import {
+  type CliDiagnostics,
+  type ProviderSemanticEvent,
+  type ReplyPreview,
+  type SchedulerMessageExtra,
+  timelineMessageKind,
+} from '@cat-cafe/shared';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadChatRuntimeProvider';
@@ -1199,23 +1205,18 @@ export function useChatHistory(threadId: string) {
             }) =>
               ({
                 id: m.id,
-                type: (m.from?.kind === 'agent'
-                  ? 'assistant'
-                  : m.from?.kind === 'external' || m.from?.kind === 'plugin'
-                    ? 'connector'
-                    : m.from?.kind === 'system'
-                      ? 'system'
-                      : m.from?.kind === 'user'
-                        ? 'user'
-                        : m.type === 'system'
-                          ? 'system'
-                          : m.summary
-                            ? 'summary'
-                            : m.source
-                              ? 'connector'
-                              : m.catId
-                                ? 'assistant'
-                                : 'user') as 'user' | 'assistant' | 'system' | 'summary' | 'connector',
+                // Shared rule when the envelope names its sender; the chain below only covers an
+                // absent `from` (legacy rows and summaries), which the shared rule leaves undecided.
+                type: (timelineMessageKind(m.from, Boolean(m.source)) ??
+                  (m.type === 'system'
+                    ? 'system'
+                    : m.summary
+                      ? 'summary'
+                      : m.source
+                        ? 'connector'
+                        : m.catId
+                          ? 'assistant'
+                          : 'user')) as 'user' | 'assistant' | 'system' | 'summary' | 'connector',
                 ...(m.from ? { from: m.from } : {}),
                 catId: m.catId,
                 content: (() => {

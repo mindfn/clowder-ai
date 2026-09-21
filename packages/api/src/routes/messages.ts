@@ -21,6 +21,7 @@ import {
   isCrossThreadProvenance,
   type MessageContent,
   type MessageWorkDisposition,
+  timelineMessageKind,
 } from '@cat-cafe/shared';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
@@ -1172,14 +1173,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     };
     const chatItems: TimelineItem[] = page.map((m) => {
       const from = messageFrom(m);
-      const type: TimelineItem['type'] =
-        from.kind === 'agent'
-          ? 'assistant'
-          : from.kind === 'external' || from.kind === 'plugin' || (from.kind === 'system' && Boolean(m.source))
-            ? 'connector'
-            : from.kind === 'system'
-              ? 'system'
-              : 'user';
+      // Same shared rule the client hydration paths use; `messageFrom` always names a sender here.
+      const type: TimelineItem['type'] = timelineMessageKind(from, Boolean(m.source)) ?? 'user';
       return {
         id: m.id,
         type,

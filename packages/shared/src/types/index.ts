@@ -1056,11 +1056,13 @@ export type {
   MessageFrom,
   ReorderVisibleLifecycleEntriesCommand,
   StructuredOwnerAdmissionBinding,
+  TimelineMessageKind,
 } from './message-lifecycle.js';
 export {
   hasExactLifecycleProcessingDispatch,
   isLifecycleStoredMessageMetadata,
   isMessageFrom,
+  timelineMessageKind,
 } from './message-lifecycle.js';
 // Mount Rules types (F228 Skill 挂载规则解耦)
 export type {

@@ -1,3 +1,4 @@
+import { timelineMessageKind } from '@cat-cafe/shared';
 import { create } from 'zustand';
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import { isBubbleInvariantStrictModeOn, recordBubbleInvariantViolation } from '@/debug/bubbleInvariantDiagnostics';
@@ -1172,6 +1173,9 @@ export interface ChatState {
       replyTo?: string;
       replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
       mentionsUser?: boolean;
+      // Connector framing travels with the delivered envelope. Without it the client cannot tell a
+      // connector notice from an ordinary system line, and the card degrades to plain text.
+      source?: ChatMessage['source'];
     }>,
   ) => void;
 
@@ -1395,6 +1399,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ? {
                   content: serverMessage.content,
                   ...(serverMessage.from ? { from: serverMessage.from } : {}),
+                  ...(serverMessage.source ? { source: serverMessage.source } : {}),
                   ...(serverMessage.lifecycle ? { lifecycle: serverMessage.lifecycle } : {}),
                   timestamp: serverMessage.timestamp,
                   ...(serverMessage.contentBlocks
@@ -1429,19 +1434,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (existingIds.has(sm.id)) continue;
             const incoming: ChatMessage = {
               id: sm.id,
-              type:
-                sm.from?.kind === 'agent'
-                  ? 'assistant'
-                  : sm.from?.kind === 'external' || sm.from?.kind === 'plugin'
-                    ? 'connector'
-                    : sm.from?.kind === 'system'
-                      ? 'system'
-                      : sm.from?.kind === 'user'
-                        ? 'user'
-                        : sm.catId
-                          ? 'assistant'
-                          : 'user',
+              // One shared rule, so a connector notice delivered through the Queue keeps the same
+              // framing the server timeline gives it. The fallback covers an absent `from` only.
+              type: timelineMessageKind(sm.from, Boolean(sm.source)) ?? (sm.catId ? 'assistant' : 'user'),
               ...(sm.from ? { from: sm.from } : {}),
+              ...(sm.source ? { source: sm.source } : {}),
               content: sm.content,
               ...(sm.lifecycle ? { lifecycle: sm.lifecycle } : {}),
               timestamp: sm.timestamp,
