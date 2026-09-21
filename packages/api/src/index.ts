@@ -65,6 +65,7 @@ import { createEntityProposalStore } from './domains/approval-hub/stores/factori
 import { classifyApprovedActionCarrier } from './domains/ball-custody/ActionSuccessorRecoverySweep.js';
 import type { ManagedCommandWakeRecoverySweep } from './domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
 import { createManagedCommandWakeCarrierAdapter } from './domains/ball-custody/managed-command-wake-carrier-adapter.js';
+import type { ManagedCommandWakeRecoveryDeps } from './domains/ball-custody/managed-command-wake-lifecycle.js';
 import { RedisWaitTerminationStore } from './domains/ball-custody/RedisWaitTerminationStore.js';
 import { WaitTerminationService } from './domains/ball-custody/WaitTerminationService.js';
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
@@ -6979,8 +6980,68 @@ async function main(): Promise<void> {
   // F167 Phase P: late-bind invokeTrigger into holdBallDeps for wakeWhen command completion.
   // holdBallDeps is defined before invokeTrigger exists, but the route handler reads
   // deps.invokeTrigger at request time (closure over object reference), so late binding is safe.
+  const notifyManagedWakeAdmitted = async (threadId: string, userId: string): Promise<void> => {
+    // The row is durable; this only asks the drain to look now instead of at the next tick.
+    if (socketManager) {
+      await emitQueueUpdated(
+        socketManager,
+        userId,
+        threadId,
+        invocationQueue.list(threadId, userId),
+        messageStore,
+        'enqueued',
+      );
+    }
+    queueProcessor.requestDrain?.(threadId);
+  };
+  const admitManagedWake: ManagedCommandWakeRecoveryDeps['admitWake'] = async (input) => {
+    // INV-I1: Message and Queue row in one transaction. The lease was already verified against
+    // this exact envelope, so nothing admitted here can belong to a generation that has moved on.
+    const admitted = await invocationQueue.appendAndEnqueueDurable(messageStore, input.message, {
+      threadId: input.threadId,
+      userId: input.userId,
+      sourceId: input.message.idempotencyKey,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      idempotencyKey: input.message.idempotencyKey,
+      content: input.content,
+      from: input.message.from,
+      targetCats: [input.catId],
+      intent: 'execute',
+      priority: input.priority,
+      sourceCategory: input.sourceCategory,
+      ...(input.actionSuccessorFence ? { actionSuccessorFence: input.actionSuccessorFence } : {}),
+    });
+    if (admitted.outcome === 'full') return {};
+    await notifyManagedWakeAdmitted(input.threadId, input.userId);
+    return { messageId: admitted.message.id };
+  };
+  const adoptLegacyManagedWake: NonNullable<ManagedCommandWakeRecoveryDeps['adoptLegacyWake']> = async (input) => {
+    // Pre-atomic tasks only: a durable message with no Queue row behind it.
+    const adopted = await invocationQueue.enqueueExistingMessageDurable(messageStore, input.messageId, {
+      threadId: input.threadId,
+      userId: input.userId,
+      sourceId: input.messageId,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      content: input.content,
+      messageId: input.messageId,
+      from: { kind: 'system', service: 'managed-command-wake' },
+      targetCats: [input.catId],
+      intent: 'execute',
+      priority: 'urgent',
+      sourceCategory: 'scheduled',
+    });
+    if (adopted.outcome === 'full') return { adopted: false };
+    await notifyManagedWakeAdmitted(input.threadId, input.userId);
+    return { adopted: true };
+  };
   if (callbackOpts.holdBallDeps) {
-    (callbackOpts.holdBallDeps as unknown as Record<string, unknown>).invokeTrigger = invokeTrigger;
+    const holdBallDeps = callbackOpts.holdBallDeps as unknown as Record<string, unknown>;
+    holdBallDeps.invokeTrigger = invokeTrigger;
+    // The route has no Queue handle of its own; composition hands it the one admission port.
+    holdBallDeps.admitManagedWake = admitManagedWake;
+    holdBallDeps.adoptLegacyManagedWake = adoptLegacyManagedWake;
     const { ManagedCommandWakeRecoverySweep } = await import(
       './domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
     );
@@ -6990,7 +7051,9 @@ async function main(): Promise<void> {
       socketManager,
       taskRunner: taskRunnerV2,
       invocationRecordStore,
-      getInvokeTrigger: () => invokeTrigger,
+      actionSuccessorLeaseStore,
+      admitWake: admitManagedWake,
+      adoptLegacyWake: adoptLegacyManagedWake,
       isCommandRunnerActive: isManagedWakeRunnerActive,
       ...createManagedCommandWakeCarrierAdapter({
         messageStore,

@@ -1,6 +1,8 @@
 import type { DynamicTaskDef } from '../../infrastructure/scheduler/DynamicTaskStore.js';
 import type { InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
-import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
+import type { AppendMessageInput, IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
+import type { ActionSuccessorFence } from './ActionSuccessorAdmissionContract.js';
+import type { ActionSuccessorLeaseStore } from './ActionSuccessorLeaseStore.js';
 import {
   isPlainRecord,
   type ManagedCommandTerminalResult,
@@ -112,6 +114,26 @@ export function resolveManagedCommandWakeEventCarrier(
   };
 }
 
+export interface ManagedCommandWakeAdmissionInput {
+  readonly message: AppendMessageInput;
+  readonly threadId: string;
+  readonly userId: string;
+  readonly catId: string;
+  readonly content: string;
+  /** INV-I4: the envelope states its own urgency and filing; admission never infers them. */
+  readonly priority: 'urgent' | 'normal';
+  readonly sourceCategory: 'scheduled';
+  readonly actionSuccessorFence?: ActionSuccessorFence;
+}
+
+export interface ManagedCommandWakeLegacyAdoption {
+  readonly messageId: string;
+  readonly threadId: string;
+  readonly userId: string;
+  readonly catId: string;
+  readonly content: string;
+}
+
 export interface ManagedCommandWakeTrigger {
   trigger(
     threadId: string,
@@ -144,7 +166,24 @@ export interface ManagedCommandWakeRecoveryDeps {
       key: string,
     ): InvocationRecord | null | Promise<InvocationRecord | null>;
   };
-  readonly getInvokeTrigger: () => ManagedCommandWakeTrigger | undefined;
+  /**
+   * Commit the wake Message and its Queue row in one transaction, and return the message id.
+   *
+   * The producer hands over an envelope it has not persisted. There is no second call to make
+   * afterwards, which is what removes the window a crash used to turn into a queued message with no
+   * Queue row behind it.
+   */
+  readonly admitWake: (input: ManagedCommandWakeAdmissionInput) => Promise<{ messageId?: string }>;
+  /** Canonical lease truth, consulted BEFORE the envelope is written. */
+  readonly actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'get'>;
+  /**
+   * Adopt a message persisted by the pre-atomic two-phase path into the Queue.
+   *
+   * Only reachable for tasks that were already `message_written` / `dispatch_pending` when this
+   * deployment started. New wakes never take this path, but the old persisted states have to keep
+   * recovering or those owners are never woken at all.
+   */
+  readonly adoptLegacyWake?: (input: ManagedCommandWakeLegacyAdoption) => Promise<{ adopted: boolean }>;
   /** F167×F254: current Queue/F264 carrier truth for event wakes. */
   readonly getEventCarrier?: (input: {
     threadId: string;

@@ -78,7 +78,16 @@ export class ManagedCommandWakeRecoveryEngine {
     if (parsed.command.state === 'lost') return this.persistLostCommandStatus(parsed);
     if (parsed.command.state === 'condition_met') {
       const published = await publishManagedCommandWakeMessage(this.deps, parsed, this.now);
-      if (!published) return 'pending';
+      if (published === 'lease_rejected') {
+        // The generation this wake belonged to is gone for good. Nothing was written, so there is
+        // no message to cancel — the task is simply retired instead of retried forever.
+        if (this.retireTask(parsed.task.id, 'canceled')) {
+          log.info({ taskId: parsed.task.id }, 'stale managed-command wake retired before any write');
+          return 'recovered';
+        }
+        return 'pending';
+      }
+      if (published !== 'published') return 'pending';
       parsed = parseWakeTask(this.deps.dynamicTaskStore.getById(taskId));
       if (!parsed) return 'missing';
     }
@@ -181,10 +190,22 @@ export class ManagedCommandWakeRecoveryEngine {
     });
   }
 
+  /**
+   * Adopt a wake that a previous deployment left half-committed.
+   *
+   * New wakes never reach here: the fence commits Message and Queue row together and lands on
+   * `enqueued` directly. But tasks persisted as `message_written` / `dispatch_pending` before that
+   * change have a durable message and no Queue row, and dropping them would mean those owners are
+   * never woken. So this is a migration path, not a production one — the two-phase producer is gone.
+   */
   private async dispatch(parsed: ParsedManagedCommandWakeTask): Promise<ManagedCommandWakeRecoveryResult> {
     const messageId = parsed.command.messageId;
     const wakeContent = parsed.command.wakeContent;
     if (!messageId || !wakeContent) return 'pending';
+    if (parsed.command.state === 'enqueued') return 'pending';
+
+    const adopt = this.deps.adoptLegacyWake;
+    if (!adopt) return 'pending';
 
     const attemptCount = (parsed.command.dispatchAttemptCount ?? 0) + 1;
     if (attemptCount > 1) managedCommandDispatchRetryTotal.add(1);
@@ -199,35 +220,19 @@ export class ManagedCommandWakeRecoveryEngine {
       return 'pending';
     }
 
-    const trigger = this.deps.getInvokeTrigger();
-    if (!trigger) {
-      this.persistDispatchOutcome(parsed.task.id, 'unavailable');
-      return 'pending';
-    }
-    return this.invokeDispatchTrigger(parsed, trigger, messageId, wakeContent);
-  }
-
-  private async invokeDispatchTrigger(
-    parsed: ParsedManagedCommandWakeTask,
-    trigger: NonNullable<ReturnType<ManagedCommandWakeRecoveryDeps['getInvokeTrigger']>>,
-    messageId: string,
-    wakeContent: string,
-  ): Promise<ManagedCommandWakeRecoveryResult> {
-    let outcome: ManagedCommandWakeTriggerOutcome;
+    let adopted: { adopted: boolean };
     try {
-      outcome = await trigger.trigger(
-        parsed.threadId,
-        parsed.catId,
-        parsed.userId,
-        `[定时任务] ${wakeContent}`,
+      adopted = await adopt({
         messageId,
-        undefined,
-        { sourceCategory: 'scheduled', priority: 'urgent' },
-      );
+        threadId: parsed.threadId,
+        userId: parsed.userId,
+        catId: parsed.catId,
+        content: `[定时任务] ${wakeContent}`,
+      });
     } catch (err) {
       return this.handleDispatchError(parsed, messageId, err);
     }
-    return this.commitDispatchOutcome(parsed, outcome);
+    return this.commitDispatchOutcome(parsed, adopted.adopted ? 'enqueued' : 'full');
   }
 
   private async handleDispatchError(
