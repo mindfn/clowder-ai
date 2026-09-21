@@ -15,14 +15,22 @@
  * what counts as a replay, so they share this function verbatim rather than each carrying a copy
  * that can drift.
  *
- * A live row settles its identity by itself. A `private_input` row is retired on purpose once its
- * last target reaches processing, so its receipt is the only survivor — comparing the fingerprint
- * there gives a retired identity exactly the verdict a live row would have reached.
+ * For a `private_input` the receipt is the identity of record, and it is written in the same
+ * transition as the row — so it exists while the row is live and survives after the row is retired
+ * at the processing boundary. It is therefore compared FIRST, whatever state the row is in.
+ *
+ * Checking the row's mere existence first was a hole. A live row answered `settled` without ever
+ * looking at the envelope, so a different payload reusing a live key got past this preflight; the
+ * caller then published the visible notice and only afterwards compared fingerprints in
+ * TypeScript and raised. By then the thread already showed a "triggered" line for work that was
+ * refused — the exact half-commit the single transition exists to make impossible. A retired key
+ * refused the same envelope correctly, which is what made the gap easy to miss.
+ *
+ * A bound row has no receipt: its durable winner is the message index, so it keeps answering from
+ * the row itself.
  */
 export const QUEUE_ADMISSION_VERDICT_LUA = `
 local function queueAdmissionVerdict(rowsKey, privateAdmissionsKey, row, fingerprint)
-  local existing = redis.call('HGET', rowsKey, row.id)
-  if existing ~= false and existing ~= nil then return 'settled' end
   -- No receipt store means this caller admits bound rows, whose durable winner is the message
   -- index rather than a receipt. Asking for one there would read a key the caller never declared.
   if privateAdmissionsKey and row.kind == 'private_input' then
@@ -32,6 +40,8 @@ local function queueAdmissionVerdict(rowsKey, privateAdmissionsKey, row, fingerp
       return 'settled'
     end
   end
+  local existing = redis.call('HGET', rowsKey, row.id)
+  if existing ~= false and existing ~= nil then return 'settled' end
   return 'fresh'
 end
 `;

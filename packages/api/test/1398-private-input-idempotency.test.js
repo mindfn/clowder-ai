@@ -246,7 +246,7 @@ describe('#1398 visible notice and private admission commit together', () => {
     source: { connector: 'scheduler', label: 'Scheduler' },
   });
 
-  const deliverVisible = (connector, threadId) =>
+  const deliverVisible = (connector, threadId, overrides = {}) =>
     connector.delivery.deliverVisibleWithPrivateInput({
       ownerUserId: 'user-1',
       threadId,
@@ -256,6 +256,7 @@ describe('#1398 visible notice and private admission commit together', () => {
       from: { kind: 'system', service: 'scheduler' },
       sourceCategory: 'scheduled',
       notice: noticeFor(threadId),
+      ...overrides,
     });
 
   it('admits the work and publishes the notice in one transition', async () => {
@@ -300,5 +301,41 @@ describe('#1398 visible notice and private admission commit together', () => {
     assert.equal(retry.admitted, true, 'the same key must still be usable after a rolled-back attempt');
     assert.ok(retry.notice, 'and the retry publishes its notice');
     assert.equal(connector.progressed.length, 1, 'the work runs exactly once across both attempts');
+  });
+
+  /**
+   * The contract a live row must honour, stated here so the Redis suite has something to match.
+   *
+   * A row that is still live settles its own identity, but settling is not the same as accepting
+   * any envelope that reuses the key. The refusal has to happen before the notice is written —
+   * otherwise the thread shows a "triggered" line for work that was refused. The Redis backend
+   * reached this verdict only after publishing, because its Lua answered `settled` on the row's
+   * existence alone and compared fingerprints afterwards in TypeScript.
+   */
+  it('publishes no notice when a live row is reused by a different envelope', async () => {
+    const threadStore = new ThreadStore();
+    const thread = await threadStore.create('user-1', 'live row reuse');
+    const connector = connectorDeliveryHarness();
+
+    const first = await deliverVisible(connector, thread.id);
+    assert.equal(first.admitted, true);
+    assert.ok(
+      await connector.queue.getDurableEntry(thread.id, first.entryId),
+      'the row must still be live — this case is about the live branch, not the receipt',
+    );
+    const afterFirst = (await connector.messageStore.getByThreadIncludingQueued(thread.id)).map((m) => m.id);
+
+    await assert.rejects(
+      () => deliverVisible(connector, thread.id, { content: 'delete the production index' }),
+      /identity conflict/i,
+      'a live row must refuse a different envelope on its key',
+    );
+
+    assert.deepEqual(
+      (await connector.messageStore.getByThreadIncludingQueued(thread.id)).map((m) => m.id),
+      afterFirst,
+      'the refusal must happen before any Message write, so no notice may appear',
+    );
+    assert.equal(connector.progressed.length, 1, 'and the conflicting envelope never starts work');
   });
 });

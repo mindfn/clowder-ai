@@ -645,6 +645,185 @@ Why: 持久真相边界不变；view 只让成员在自己的后续自然 turn �
 | KD-19 | 内部协议诊断只进入 telemetry/private evidence，不先写 History 再由 API/Web 隐藏 | 展示层屏蔽不能修复错误的生产边界；新代码停止生成 `routing-guard-failure`，API 读取过滤只保留为旧版本存量兼容 | 2026-09-20 |
 | KD-20 | terminal 后的任何显式路由凭据永远开启新 active hop；只有无行首 `@`、无 structured `targetCats` 的礼貌文本可 quiet ACK | 文本与结构化目标都是明确路由指令，生命周期投影不能静默吞掉；新的 generation 与统一 loop-streak 足以防止 ACK 乒乓 | 2026-09-20 |
 
+### Phase I（producer 统一登记表，2026-09-21）— 收口进行中
+
+Phase I 之前的迁移是「搜到一个改一个」：两次宣称"所有 producer 已迁移、旧 trigger 已空"，随后又
+不断发现活路径。根因不是哪一处改错，而是**没有先把生产者数完**。这张表就是那份清单——它是
+normative 的：新增任何唤醒猫的入口，必须先在这里登记，再写实现。
+
+#### I.1 两条接缝
+
+| | 旧 seam | 新 seam |
+|---|---|---|
+| 入口 | `ConnectorInvokeTrigger.trigger(…, messageId, …)` | `deliverConnectorMessage({ delivery }, …)` → `PersistedQueueDeliveryPort` |
+| 形状 | 调用方**先** `messageStore.append({deliveryStatus:'queued'})`，**再**入队 | 一次事务内同时写 Message + Queue row |
+| 失败模式 | 两次写之间崩溃 ⇒ 半提交：消息已持久化、无 Queue row、无人重投 | 无中间态：要么都成立，要么都不成立 |
+| 幂等身份 | `coalesceKey`（常缺省）→ 回退 `messageId` | `idempotencyKey` 必填 |
+
+#### I.2 登记表：旧入口 → 新入口 → 幂等键 → red/green
+
+**已在新 seam（无需迁移，勿重复发现）**
+
+| 生产者 | 幂等键 |
+|---|---|
+| `ConnectorRouter.route` / `/thread` / `/ask`（IM 入站主路径） | `im:${connectorId}:${chatId}:${messageId}[:thread\|:ask]` |
+| `GitHubWaitLifecycleService.publishPending`（所有 GitHub wait outcome） | `outcome.outcomeId` |
+| `IssueCommentRouter.route` | `issue-comment:${repo}#${n}:${frontier}` |
+| `GitHubRepoWebhookHandler`（webhook 入站） | `github-repo-event:${deliveryId}` |
+| `RepoScanTaskSpec`（对账扫描） | `github-repo-event:${signal.deliveryId}` |
+| scheduler `createDeliverFn` / `createDeliverPrivateFn` 全体消费者 | 调用方提供（强制必填） |
+| 手动 eval 触发 / artifact review return / paw-feel duty / ball-custody wake / main-health / eval domain trigger | 各自 dedupe key |
+
+> `CiCdRouter`、`ConflictRouter`、`ReviewFeedbackRouter` 不自行 admit——它们经
+> `GitHubWaitLifecycleService.observe` → `publishPending`，已计入上表。
+
+**本轮收口（Phase I 已完成）**
+
+| # | 生产者 | 旧入口 | 新入口 | 幂等键 | red/green |
+|---|---|---|---|---|---|
+| 1 | Repo Scan 生产装配 | `index.ts` 传 `deliveryDeps:{messageStore}`，类型被 `Record<string,unknown>` 擦除 | `{ delivery: persistedQueueDelivery }`；`rehydrateGitHubSchedules`/`repoScanDeps` 改 `Partial<GitHubScheduleDeps>` | `github-repo-event:${deliveryId}` | `1398-connector-delivery-composition.test.js`（red 复现生产 `TypeError: …reading 'deliver'`） |
+| 2 | Conflict check 第二次 admission | `ConflictCheckTaskSpec` 在 `route()` 已 admit 后再 `invokeTrigger.trigger(messageId)` | 删除该分支；`route()` 的 admission 即唤醒 | `outcome.outcomeId`（route 内） | `1398-conflict-check-single-admission.test.js` |
+| 3 | Limb transcript | `append(deliveryStatus:'queued')` + `trigger.trigger` | `deliverConnectorMessage` 原子 admission | `limb:${nodeId}:${observationId}` | `limb-transcript-cat-delivery.test.js` |
+| 5 | Re-eval carrier（F266 stable-case） | `reeval-case-task-dispatch.ts` 先 `append(deliveryStatus:'queued')`（键 `f266-task-carrier:…`）再 `deliver` 入队（键 `action:${leaseId}:${gen}`） | dispatcher 只造信封不落盘；`appendA2ASourceWithLedgerAdmission` 一次事务提交 Message + Queue row | `f266-task-carrier:${taskId}:${generation}`（两半合一） | `1398-reeval-carrier-atomic-admission.test.js` |
+
+关于 #2 的诚实修正（两层，第二层推翻了第一层的一半）：
+
+其一，该双唤醒分支**从未在生产触发**——`github-schedule-factories.ts` 根本没把 `invokeTrigger`
+传进这个 spec（零个 github factory 读它）。它不是「正在重复唤醒」，而是「离重复唤醒只差一行接线」。
+
+其二，我最初据此判定「删除属零行为变更」，**这是错的**，`1392-expiry-consumer.test.js` 当场红给我看。
+那段代码不只是第二次入队，它还**独占携带 conflict 的 priority 与 sourceCategory**
+（`urgent` + `'conflict'` vs `normal` + `'scheduled'`）。结论比删除本身更重要：既然 trigger 从未接线，
+**R5 要求的 conflict 标记在生产里本来就没生效**——一条 matched conflict 与一条普通到期通知，对 owner
+是同样的优先级和分类。删除只是让这个长期缺口第一次可见。
+
+正确收敛不是恢复两阶段 trigger，而是把标签放到真正发生 admission 的地方：
+`GitHubWaitLifecycleService.publishPending` 现在从 outcome 自身推导（`reason === 'matched'` 且
+matched 含 `pr_became_conflicting` ⇒ urgent + `conflict`）。这是唯一同时知道「是否 matched」与
+「matched 了什么」的位置——`route()` 拿到 outcome 时投递已经发生，生产者无从预先判断。符合 INV-I4。
+
+同一根因还波及测试：`1392-expiry-consumer.test.js` 原本观察测试自己注入的 `ConnectorInvokeTrigger`
+——一个生产从未接线的接缝，于是断言描述的是一个从未运行过的配置，而真正唤醒 owner 的 admission
+无人观察。现已改为观察 harness 的 Queue 入队与 drain（「admitted entry reaching progress IS the wake」）。
+
+同一批测试还有第二处、更贵的同类：`conflict-auto-executor.test.js` 与 `conflict-check-spec.test.js`
+一共 7 处断言都在观察它们自己注入的 `invokeTrigger`——而 `github-schedule-factories.ts` 的
+`conflictCheckFactory` 只传 `taskStore/checkMergeable/conflictRouter/autoExecutor/log`，从不传它。
+删掉那条分支后，其中 4 处直接变红，另外 3 处**变成了假绿**：它们断言 `triggered.length === 0`，而
+现在永远是 0，于是继续「通过」地描述一个已经不存在的行为。只修红的那 4 处正是补锅匠做法——7 处
+同源，必须一起重锚到生产真实拥有的接缝（`conflictRouter.route` 的 admission 即唤醒）。
+
+重锚之后暴露出一个**真实语义变更，必须显式记账**：Phase C 的 AC-C1「auto-resolve 成功就不要吵醒 owner」
+已经不成立了。原因不是疏忽，而是 #1392 R5 的授权模型：只有 `matched` outcome 才授权写仓库，而这个
+outcome 正是 admission 产出的——所以修复只能发生在「owner 的 wait 已经投递」之后。现在的语义是：
+owner 注册了 wait、wait matched，他就会被告知；自动修复成功与否作为后续结果汇报，而不是把一次已经
+matched 的 wait 悄悄吞掉。我认为这比 AC-C1 更正确（注册过的 wait 不该静默不响），但这是产品语义变更，
+不是纯重构，需要 reviewer 明确放行。`tryAutoResolveBeforeWake` 也已改名 `tryAutoResolveAfterWake`——
+它跑在唤醒之后，旧名字在说谎。
+
+关于 #2 的 auto-resolve 排序：`tryAutoResolveBeforeWake` 确实跑在 admission 之后，但这是 **#1392 R5
+授权模型强制的**，不是疏忽——auto-resolve 只允许在 `matched` outcome 上写仓库，而该 outcome 正是
+`route()` 那一次调用产出的。把它提到 admission 之前，等于放弃这条授权检查。此处不改，改需先改授权模型。
+
+关于 #5 的两点结论：
+
+其一，**三个 `blocked` reasonCode 塌缩成一个**。`carrier_delivery_failed` / `carrier_not_enqueued` 命名的是
+「Message 已落盘、Queue row 没跟上」的两种半提交态；原子 admission 之后这两种态不存在了。现在唯一可能的
+blocked 是「什么都没写」，而 `reeval-case.ts` 的 `custody_dispatch_blocked` 不变量本来就规定：只有
+`carrier_persist_failed` 允许不带 `carrierMessageId`。所以不需要新增枚举值——正确的那个早就在那里。
+两个旧码保留在 `reeval-closure-schema.ts` 里**只为历史事件可重放**（closure event log 是 append-only），
+不再有任何生产者产出它们。
+
+其二，**路由拒绝必须发生在落盘之前**。carrier 是纯粹为了携带工作而存在的消息；如果 owner 被 routing
+preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装配先 preflight + plan，空 plan 直接返回
+`not_admitted`，一个字节都不写。另外 publication（`enqueueA2ATargets` 的 socket/drain 侧效应）失败不再
+翻转成 blocked——Queue commit 才是持久边界，行已经在了就不能反悔说没投递（INV-I2）。
+
+#### I.3 仍未收口（下一步，坐标已定位）
+
+| # | 生产者 | 位置 | 为什么更重 |
+|---|---|---|---|
+| 4 | Managed hold wake | 见下方 I.3a 完整登记 | 它不是漏接一行，而是一整套围绕「两次写会分叉」长出来的补偿状态机；且现有测试把两阶段**写成了契约** |
+| 6 | 死 `invokeTrigger` 管线 | `execute-pipeline.ts:273`、`TaskRunnerV2.setInvokeTrigger`、`scheduler/types.ts:155`、`index.ts` deps 包 | 全链路穿过 composition 但**从不调用 `.trigger()`**；`main-health.ts:213` 只做非空断言。必须等 #4/#5 迁完才能连同 `ConnectorInvokeTrigger` 一起删 |
+
+#### I.3a #4 Managed hold wake — 实现前登记（按「旧入口 → 新入口 → 幂等键 → red/green」）
+
+> 冻结流程要求登记先于实现。这一条比 #1–#3 都重，所以先把账算完再动手。
+
+**两半与中间的洞**
+
+| | 位置 |
+|---|---|
+| 旧入口（append） | `managed-command-wake-message-fence.ts:137` `messageStore.append({deliveryStatus:'queued'})` |
+| 旧入口（enqueue） | `ManagedCommandWakeRecoveryEngine.ts:218` `trigger.trigger(...)` → `ConnectorInvokeTrigger.ts:97` `enqueueExistingMessageDurable` |
+| 两者之间 | `Engine:80→218`：一次 return、一次 re-parse、`getEventCarrier` 异步回读、`findInvocationCarrier` 两次 store 查询、**15s `lastDispatchAt` 宽限窗**、`dispatch_pending` CAS、`getInvokeTrigger()` 可能为 undefined |
+| 新入口 | `InvocationQueue.appendAndEnqueueDurable`（一次事务 Message + Queue row） |
+
+**幂等键**：旧的两半用不同的键——Message 是 `hold-ball-completion:${taskId}`（按 task），Queue 侧
+`ConnectorInvokeTrigger.ts:88` 用 `action-successor:${leaseId}:${generation}:${catId}`（按 lease 代）或
+**完全没有键**。新入口统一为 `hold-ball-completion:${taskId}`，Message/Queue `sourceId`/`idempotencyKey` 同值。
+
+**登记自纠（实现前发现，这正是先登记的用处）**：上一版登记把新入口写成
+`PersistedQueueDeliveryPort.deliver`，并据此认为要给端口补 `actionSuccessorFence` /
+`waitContinuationCarrier` 两个字段。动手前核对发现这条是错的——
+
+`PersistedQueueDelivery.deliver` 把 `mentions: [targetCat]` 和 `extra.targetCats` 写死
+（`PersistedQueueDelivery.ts:126`、`:131`），而且 `matchesPersistedEnvelope`（`:293`）**要求**这条
+mention 存在，否则判 conflict。managed wake 的信封是 `mentions: []`（`message-fence.ts:141`）。
+所以走这道端口，等于给每一条 `[定时任务]` 唤醒消息都加上一个 @提及——一个用户可见的改动，而且是
+为了迁就 API 形状去改产品表现。今天已经因为同一类错误（AC-C1）被打回一次，不再犯第二次。
+
+正确入口是 `InvocationQueue.appendAndEnqueueDurable`：同样一次事务、同样满足 INV-I1，但生产者保留
+自己**逐字节不变**的信封。F266 carrier 的 `appendA2ASourceWithLedgerAdmission` 已经是这个先例。
+端口不需要加字段——`QueueEnqueueInput` 本来就有 `actionSuccessorFence` 与 `waitContinuationCarrier`
+（`InvocationQueue.ts:89`、`:91`），缺的只是一条把它们带进去的直连调用。
+
+**lease 校验必须前移**：`resolveManagedCommandWakeActionLeaseAdmission` 现在跑在
+`ConnectorInvokeTrigger.ts:79`，即 Message **已经持久化之后**。它只读 `message.threadId` 与
+`message.source`——而这两者正是 fence 自己构造的，所以可以在落盘前拿待发信封直接校验，函数本身不用改。
+
+**补偿状态裁决**（每一条都必须给出「迁移后还剩什么职责」）
+
+| 状态 | 现在的读者 | 原子化之后 |
+|---|---|---|
+| `dispatchAttemptCount` | 只有它自己 `+1` 和 `managedCommandDispatchRetryTotal` 计数器；全仓无其它读者 | 作为可靠性状态**无职责**。`recovery-sweep.test.js:548` 已经认定「durable Queue `attemptSequence` 才是权威」 |
+| `lastDispatchOutcome` | **无任何读者**（只有 `state` 跟着一起写） | 无职责。但它捎带的 `state:'dispatch_pending'` 仍然在 `isDispatchableManagedCommandWakeState` 里当闸门，需要替代而不是直接删字段 |
+| `lastDispatchAt` 15s 宽限 | `Engine:113` | 无职责。它存在的唯一理由是「易失 enqueue 还没变成持久 carrier」——原子化之后不存在这个窗口 |
+| SLA breach | 自身幂等守卫 + 计数器，无分支依赖 | 仍有诊断职责（它量的是 `conditionMetAt → consumed`，比投递缺口更宽），但它本来要抓的「条件满足 60s 还没派发」经由此缺口不再可达 |
+| retire-on-lease-error（`markCanceled` + `retireTask`） | `Engine:233` | **无职责**。它唯一的工作是撤销「lease 校验之前就已经 append 的消息」；校验前移后交易整体被拒，没有东西要撤销。`messageStore.markCanceled` 也因此可以退出 `ManagedCommandWakeRecoveryDeps` |
+| 消息内容 claim（`messageClaimGeneration` / `messageClaimedAt` / 30s stale） | `message-fence.ts:41–119` | 无职责。它是围绕「append 与 `message_written` 回执是两次写」手搓的租约；原子 admission 下同键并发直接收敛为 deduped |
+
+**契约变更（需要 reviewer 明确放行）**：现有测试把两阶段写成了**规格**，不是实现细节——
+`callback-hold-ball-wakewhen.test.js:1151` 断言 `_appendedMessages.length >= 2`
+（「completion message should be durable before dispatch」）、
+`recovery-sweep.test.js:372`「restart after volatile enqueue re-dispatches the same wake until a
+durable carrier exists」直接把分叉当成期望行为、`exactly-once.test.js:124` 的「stale 代被 cancel 恰好
+一次」只在「消息可以先于被拒绝的 admission 存在」时才成立。所以 #4 不是机械迁移，而是**重定义
+managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`。约 2700 行测试要按新契约重写。
+
+**red/green 计划**：先写一条生产形状的红测——在 append 与 enqueue 之间注入崩溃，断言不存在
+「queued Message 但无 Queue row」的中间态；当前实现必然红。再迁移到 `deliver`，该测试转绿，
+并补一条「lease 代已过期 ⇒ 什么都没写」的用例替代 retire-on-lease-error。
+
+#### I.3b 本轮发现、但**不在**冻结范围的既存缺口（记录，不顺手修）
+
+| 现象 | 证据 | 归因 |
+|---|---|---|
+| `1392-registration-atomicity.test.js` 的 redis 变体 `concurrent registrations publish exactly one coherent owner…` 失败，抛 `TASK_MANAGED_WORK_BINDING_CONFLICT` | 栈全程在 `RedisTaskStore.replaceAutomationStateIfGeneration` → `buildTaskWaitReplacement` → `assertTrackingRegistration`；memory 变体同用例通过 | Redis/memory 在并发注册上的行为分叉，与投递无关；本轮改动文件不在该栈内 |
+| `audit-cc-system-prompt`、`capability-evolution-exploration-record-failures` 等 redis 轮失败 | 域与消息投递无交集 | 既存 |
+| `tmux-early-receipt-cancellation.test.js` 的 `fresh` 变体偶发失败（期望 `AbortError`，实得 `Error`） | 本分支从未改动任何 tmux 代码（`git log` 对 tmux 路径为空）；本地首跑失败后连续 3 次通过；该用例用真实 tmux、真实进程与 barrier 轮询，对时序敏感 | 既存 flake，非本轮回归 |
+
+这些之所以长期无人发现，是同一个结构性原因：**CI 没有 Redis job**，`config/public-test-exclusions.json`
+把 `redis-*` 归为 `source_only`。Redis 是生产实际运行的后端，却是唯一不被门禁执行的后端。
+
+#### I.4 不变量
+
+- **INV-I1** 任何唤醒猫的输入只经过一次原子 Message + Queue admission；不存在「先 append 再入队」。
+- **INV-I2** 生产者不得自带 outbox 或半提交补偿状态；Queue commit 就是持久边界。
+- **INV-I3** `ConnectorDeliveryDeps` 不得以 `Record<string, unknown>`、可选字段或 `as` 断言传递——
+  装配错误必须在编译期或装配期暴露，不能推迟到投递时。
+- **INV-I4** 信封自述事实（priority、timestamp、provenance）；admission 不得从载荷推断。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in
@@ -660,4 +839,6 @@ evidence that main composition roots survived.
 - Phase E: Fable 做 exact-HEAD delta 复审，硬门为 AC-E1、AC-E3 的「typed custody 行存在时仍 200」与 AC-E7 的 `reconciled` / pre-start TTL 收窄；
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase G: 跨族 reviewer 核验等待可见性、queued-before-admission、唯一 response 终局、MCP/route/Ball writer 全链 absence；co-creator 验证 AC-G6 后才进入 fork soak
+- Phase I: 登记表（I.2）必须先于实现更新；跨族 reviewer 核验 INV-I1..I4 与 I.3 三项剩余收口，
+  co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase H: 「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」实现与跨族复审已完成；co-creator 的完整 worktree UAT 仍覆盖初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart
