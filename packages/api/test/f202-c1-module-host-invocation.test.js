@@ -36,7 +36,7 @@ beforeEach(async () => {
   loaded = new Map();
   invocation = createModuleHostInvocation({
     runtime: {
-      definedPlugin(pluginInstanceId) {
+      actions(pluginInstanceId) {
         return loaded.get(pluginInstanceId);
       },
     },
@@ -65,6 +65,20 @@ const INPUT = {
 };
 
 describe('F202 C1 — standard Host delivery over the module carrier', () => {
+  test('case 0: invokes any package-declared action by its exact name', async () => {
+    load(INSTANCE, {
+      async 'fixture.echo'(input) {
+        calls.push(input);
+        return { echoed: input };
+      },
+    });
+
+    assert.deepEqual(await invocation.invoke(INSTANCE, 'fixture.echo', { value: 7 }), {
+      echoed: { value: 7 },
+    });
+    assert.deepEqual(calls, [{ value: 7 }]);
+  });
+
   test('case 1: calls only host.messaging.deliver with the frozen input and receipt', async () => {
     load(INSTANCE, {
       async 'host.messaging.deliver'(input) {
@@ -136,5 +150,14 @@ describe('F202 C1 — standard Host delivery over the module carrier', () => {
       (err) => err.code === 'PROTOCOL_VIOLATION',
     );
     assert.deepEqual(calls, [], 'invalid wire input must be rejected before package code runs');
+  });
+
+  test('case 7: inherited object methods are never treated as declared actions', async () => {
+    load(INSTANCE, Object.create({ constructor: async () => 'not package code' }));
+
+    await assert.rejects(
+      () => invocation.invoke(INSTANCE, 'constructor', {}),
+      (err) => err.code === 'PROTOCOL_VIOLATION',
+    );
   });
 });

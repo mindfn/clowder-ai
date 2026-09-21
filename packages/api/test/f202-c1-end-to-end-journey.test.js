@@ -81,7 +81,7 @@ beforeEach(async () => {
   delivery = subscriptionDelivery.createSubscriptionDelivery({
     messaging,
     delivery: moduleInvocation.createModuleHostInvocation({
-      runtime: { definedPlugin: (id) => loadedModules.get(id) },
+      runtime: { actions: (id) => loadedModules.get(id) },
     }),
   });
 });

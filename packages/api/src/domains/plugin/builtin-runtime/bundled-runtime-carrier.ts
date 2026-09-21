@@ -1,4 +1,4 @@
-import { type M0CDeliverInput, type M0CDeliverResult, WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
+import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import type {
@@ -27,7 +27,7 @@ export interface BundledPluginRuntime {
     effectiveGrants: readonly string[],
   ): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
-  deliver?(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult>;
+  invoke?(pluginInstanceId: string, method: string, params: unknown): Promise<unknown>;
 }
 
 export interface BundledPluginRuntimeCarrierOptions {
@@ -132,16 +132,19 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     await Promise.all([...this.#active.keys()].map((pluginInstanceId) => this.stop(pluginInstanceId, reason)));
   }
 
-  async deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
+  async invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
     const authority = await this.authority(pluginInstanceId);
-    if (!authority.effectiveGrants.includes(WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant)) {
+    if (
+      method === 'host.messaging.deliver' &&
+      !authority.effectiveGrants.includes(WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant)
+    ) {
       throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} lacks Host delivery authority`);
     }
     const active = this.#active.get(pluginInstanceId);
-    if (!active?.runtime.deliver) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host delivery surface`);
+    if (!active?.runtime.invoke) {
+      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host invocation surface`);
     }
-    return active.runtime.deliver(pluginInstanceId, input);
+    return active.runtime.invoke(pluginInstanceId, method, params);
   }
 
   /** In-process runtimes never survive the restart they are recovering from. */

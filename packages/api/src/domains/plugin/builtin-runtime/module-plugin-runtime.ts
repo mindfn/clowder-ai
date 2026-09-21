@@ -190,6 +190,14 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     return createModuleHostInvocation({ runtime: this }).deliver(pluginInstanceId, input);
   }
 
+  invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
+    return createModuleHostInvocation({ runtime: this }).invoke(pluginInstanceId, method, params);
+  }
+
+  actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {
+    return this.#loaded.get(pluginInstanceId)?.activation.actions;
+  }
+
   /**
    * What `create()` returned, while the instance is loaded — the package's live in-Host
    * instance. This is what the Host→plugin direction calls into: a method the package

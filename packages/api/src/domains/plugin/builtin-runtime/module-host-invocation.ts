@@ -21,11 +21,11 @@ import {
   validateMessagingRowResult,
 } from '@clowder-ai/plugin-contract';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import type { HostMessagingDeliveryPort } from '../host-invocation.js';
+import type { HostPluginInvocationPort } from '../host-invocation.js';
 
 export interface ModuleHostInvocationDeps {
-  /** The carrier holding loaded instances; `definedPlugin` returns what `create()` returned. */
-  readonly runtime: { definedPlugin(pluginInstanceId: string): unknown };
+  /** The carrier holding the action table returned by an active module's start(). */
+  readonly runtime: { actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined };
 }
 
 const DELIVERY_METHOD = 'host.messaging.deliver';
@@ -34,40 +34,30 @@ const DELIVERY_METHOD = 'host.messaging.deliver';
  * Resolve a method the package itself defines — on the instance or on its own classes — and
  * nothing that merely exists because every JavaScript object inherits it.
  */
-function resolvePackageMethod(instance: object, method: string): unknown {
-  for (
-    let current: object | null = instance;
-    current !== null && current !== Object.prototype && current !== Function.prototype;
-    current = Object.getPrototypeOf(current) as object | null
-  ) {
-    if (Object.hasOwn(current, method)) return (current as Record<string, unknown>)[method];
-  }
-  return undefined;
+function resolvePackageAction(actions: Readonly<Record<string, unknown>>, method: string): unknown {
+  return Object.hasOwn(actions, method) ? actions[method] : undefined;
 }
 
-export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): HostMessagingDeliveryPort {
+export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): HostPluginInvocationPort {
   return {
-    async deliver(targetId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
-      const instance = deps.runtime.definedPlugin(targetId);
-      if (instance === undefined || instance === null) {
+    async invoke(targetId: string, method: string, params: unknown): Promise<unknown> {
+      const actions = deps.runtime.actions(targetId);
+      if (!actions) {
         throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', `${targetId} has no module loaded in this Host`);
       }
-      if (typeof instance !== 'object' && typeof instance !== 'function') {
-        throw new ExternalPluginRuntimeError(
-          'PROTOCOL_VIOLATION',
-          `${targetId} did not produce an instance that can carry methods`,
-        );
-      }
-      const candidate = resolvePackageMethod(instance as object, DELIVERY_METHOD);
+      const candidate = resolvePackageAction(actions, method);
       if (typeof candidate !== 'function') {
-        throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} does not implement ${DELIVERY_METHOD}`);
+        throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} does not expose action ${method}`);
       }
+      return candidate.call(actions, params);
+    },
 
+    async deliver(targetId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
       const validatedInput = validateMessagingRowInput(DELIVERY_METHOD, input);
       if (!validatedInput.valid) {
         throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} received invalid Host delivery input`);
       }
-      const result = await (candidate as (value: M0CDeliverInput) => unknown).call(instance, validatedInput.value);
+      const result = await this.invoke(targetId, DELIVERY_METHOD, validatedInput.value);
       const validatedResult = validateMessagingRowResult(DELIVERY_METHOD, result);
       if (!validatedResult.valid || validatedResult.value.deliveryId !== validatedInput.value.deliveryId) {
         throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `${targetId} returned an invalid delivery receipt`);

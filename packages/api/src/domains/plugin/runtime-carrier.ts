@@ -28,8 +28,8 @@ export interface PluginRuntimeCarrier {
   stopAll(reason: string): Promise<void>;
   /** Carriers that survive a Host restart report how many sessions they recovered. */
   recoverAfterRestart?(): Promise<number>;
-  /** Only carriers with a Host→package delivery surface implement this. */
-  deliver?(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult>;
+  /** Only carriers with a Host→package invocation surface implement this. */
+  invoke?(pluginInstanceId: string, method: string, params: unknown): Promise<unknown>;
 }
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
@@ -72,11 +72,15 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
+    return this.invoke(pluginInstanceId, 'host.messaging.deliver', input) as Promise<M0CDeliverResult>;
+  }
+
+  async invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
     const carrier = await this.#select(pluginInstanceId);
-    if (!carrier.deliver) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host delivery surface`);
+    if (!carrier.invoke) {
+      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host invocation surface`);
     }
-    return carrier.deliver(pluginInstanceId, input);
+    return carrier.invoke(pluginInstanceId, method, params);
   }
 
   async #select(pluginInstanceId: string): Promise<PluginRuntimeCarrier> {

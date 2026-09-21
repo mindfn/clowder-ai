@@ -142,6 +142,18 @@ export class ExternalPluginRuntimeSupervisor {
     return execution.transport.call('host.messaging.deliver', input);
   }
 
+  invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
+    if (method !== 'host.messaging.deliver') {
+      return Promise.reject(
+        new ExternalPluginRuntimeError(
+          'DELIVERY_REJECTED',
+          `${pluginInstanceId} stdio runtime does not expose Host action ${method}`,
+        ),
+      );
+    }
+    return this.deliver(pluginInstanceId, params as M0CDeliverInput);
+  }
+
   async recoverAfterRestart(): Promise<number> {
     if (this.active.size > 0) {
       throw new ExternalPluginRuntimeError(

@@ -68,11 +68,15 @@ export default {
       manifest: hostManifest,
       async start() {
         log.push({ call: 'start' });
-        return { actions: {}, stop: async () => log.push({ call: 'stop' }) };
-      },
-      async 'host.messaging.deliver'(input) {
-        log.push({ call: 'deliver', input });
-        return { deliveryId: input.deliveryId };
+        return {
+          actions: {
+            async 'host.messaging.deliver'(input) {
+              log.push({ call: 'deliver', input });
+              return { deliveryId: input.deliveryId };
+            },
+          },
+          stop: async () => log.push({ call: 'stop' }),
+        };
       },
     };
   },
