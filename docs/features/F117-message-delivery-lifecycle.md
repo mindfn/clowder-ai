@@ -684,6 +684,7 @@ normative 的：新增任何唤醒猫的入口，必须先在这里登记，再�
 | 1 | Repo Scan 生产装配 | `index.ts` 传 `deliveryDeps:{messageStore}`，类型被 `Record<string,unknown>` 擦除 | `{ delivery: persistedQueueDelivery }`；`rehydrateGitHubSchedules`/`repoScanDeps` 改 `Partial<GitHubScheduleDeps>` | `github-repo-event:${deliveryId}` | `1398-connector-delivery-composition.test.js`（red 复现生产 `TypeError: …reading 'deliver'`） |
 | 2 | Conflict check 第二次 admission | `ConflictCheckTaskSpec` 在 `route()` 已 admit 后再 `invokeTrigger.trigger(messageId)` | 删除该分支；`route()` 的 admission 即唤醒 | `outcome.outcomeId`（route 内） | `1398-conflict-check-single-admission.test.js` |
 | 3 | Limb transcript | `append(deliveryStatus:'queued')` + `trigger.trigger` | `deliverConnectorMessage` 原子 admission | `limb:${nodeId}:${observationId}` | `limb-transcript-cat-delivery.test.js` |
+| 5 | Re-eval carrier（F266 stable-case） | `reeval-case-task-dispatch.ts` 先 `append(deliveryStatus:'queued')`（键 `f266-task-carrier:…`）再 `deliver` 入队（键 `action:${leaseId}:${gen}`） | dispatcher 只造信封不落盘；`appendA2ASourceWithLedgerAdmission` 一次事务提交 Message + Queue row | `f266-task-carrier:${taskId}:${generation}`（两半合一） | `1398-reeval-carrier-atomic-admission.test.js` |
 
 关于 #2 的诚实修正（两层，第二层推翻了第一层的一半）：
 
@@ -709,12 +710,25 @@ matched 含 `pr_became_conflicting` ⇒ urgent + `conflict`）。这是唯一同
 授权模型强制的**，不是疏忽——auto-resolve 只允许在 `matched` outcome 上写仓库，而该 outcome 正是
 `route()` 那一次调用产出的。把它提到 admission 之前，等于放弃这条授权检查。此处不改，改需先改授权模型。
 
+关于 #5 的两点结论：
+
+其一，**三个 `blocked` reasonCode 塌缩成一个**。`carrier_delivery_failed` / `carrier_not_enqueued` 命名的是
+「Message 已落盘、Queue row 没跟上」的两种半提交态；原子 admission 之后这两种态不存在了。现在唯一可能的
+blocked 是「什么都没写」，而 `reeval-case.ts` 的 `custody_dispatch_blocked` 不变量本来就规定：只有
+`carrier_persist_failed` 允许不带 `carrierMessageId`。所以不需要新增枚举值——正确的那个早就在那里。
+两个旧码保留在 `reeval-closure-schema.ts` 里**只为历史事件可重放**（closure event log 是 append-only），
+不再有任何生产者产出它们。
+
+其二，**路由拒绝必须发生在落盘之前**。carrier 是纯粹为了携带工作而存在的消息；如果 owner 被 routing
+preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装配先 preflight + plan，空 plan 直接返回
+`not_admitted`，一个字节都不写。另外 publication（`enqueueA2ATargets` 的 socket/drain 侧效应）失败不再
+翻转成 blocked——Queue commit 才是持久边界，行已经在了就不能反悔说没投递（INV-I2）。
+
 #### I.3 仍未收口（下一步，坐标已定位）
 
 | # | 生产者 | 位置 | 为什么更重 |
 |---|---|---|---|
 | 4 | Managed hold wake | `managed-command-wake-message-fence.ts:137`（append queued）+ `ManagedCommandWakeRecoveryEngine.ts:218`（trigger）；入口 `callback-hold-ball-routes.ts:440` | 自带补偿机器：`dispatchAttemptCount`、`persistDispatchOutcome`、SLA breach、retire-on-lease-error——它们存在的理由正是两阶段会分叉。迁移必须同时判定这些状态还剩什么职责 |
-| 5 | Re-eval carrier | `reeval-case-task-dispatch.ts:145`（append queued）+ `:182`（deliver） | 两半用**不同的键**：Message 用 `f266-task-carrier:${taskId}:${gen}`，Queue row 用 `action:${leaseId}:${gen}`。三个 `blocked` reasonCode（`carrier_persist_failed` / `carrier_delivery_failed` / `carrier_not_enqueued`）就是给半提交态取的名字 |
 | 6 | 死 `invokeTrigger` 管线 | `execute-pipeline.ts:273`、`TaskRunnerV2.setInvokeTrigger`、`scheduler/types.ts:155`、`index.ts` deps 包 | 全链路穿过 composition 但**从不调用 `.trigger()`**；`main-health.ts:213` 只做非空断言。必须等 #4/#5 迁完才能连同 `ConnectorInvokeTrigger` 一起删 |
 
 #### I.3b 本轮发现、但**不在**冻结范围的既存缺口（记录，不顺手修）

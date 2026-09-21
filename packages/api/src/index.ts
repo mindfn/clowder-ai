@@ -7788,7 +7788,7 @@ async function main(): Promise<void> {
       { getEvalCatOverride },
       { ReevalCaseResponsibilityService },
       { ReevalCaseReevaluationService },
-      { createReevalCaseTaskQueueDelivery, ReevalCaseTaskDispatcher },
+      { createReevalCaseTaskQueueAdmission, ReevalCaseTaskDispatcher },
       { resolveUniqueFeatureThreadId },
     ] = await Promise.all([
       import('./infrastructure/harness-eval/reeval-closure-task-spec.js'),
@@ -7801,34 +7801,89 @@ async function main(): Promise<void> {
     const f266AdmissionService = actionSuccessorAdmissionService;
     const taskDispatcher = f266AdmissionService
       ? new ReevalCaseTaskDispatcher({
-          messageStore,
           log: { warn: app.log.warn.bind(app.log) },
-          deliver: createReevalCaseTaskQueueDelivery(async (input) => {
-            if (!socketManager) return { accepted: false };
-            const result = await enqueueA2ATargets(
+          admit: createReevalCaseTaskQueueAdmission(async (request) => {
+            if (!socketManager) return { outcome: 'not_admitted' };
+            const a2aDeps = {
+              socketManager,
+              messageStore,
+              ...(invocationTracker ? { invocationTracker } : {}),
+              ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
+              queueProcessor,
+              invocationQueue,
+              ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
+              log: app.log,
+            };
+            // Routing and fan-out are decided before anything is written. A carrier exists only to
+            // carry work, so a refused owner must leave no queued Message behind to be re-found.
+            const routingPreflight = await preflightA2ATargets(a2aDeps, {
+              targetCats: [request.targetCatId],
+              content: request.message.content,
+              userId: request.userId,
+            });
+            if (!routingPreflight.acceptedTargetCats.includes(request.targetCatId)) {
+              return { outcome: 'not_admitted' };
+            }
+            const plan = planA2AFanoutAdmission(
+              { invocationQueue },
               {
-                socketManager,
-                messageStore,
-                ...(invocationTracker ? { invocationTracker } : {}),
-                ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
-                queueProcessor,
-                invocationQueue,
-                ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
-                log: app.log,
-              },
-              {
-                targetCats: [input.targetCatId],
-                content: input.content,
-                userId: input.userId,
+                targetCats: [request.targetCatId],
+                content: request.message.content,
+                userId: request.userId,
                 ownerAuthProvenance: 'unknown',
-                threadId: input.threadId,
-                triggerMessage: input.triggerMessage,
-                callerCatId: input.callerCatId,
-                actionSuccessorFence: input.actionSuccessorFence,
+                threadId: request.threadId,
+                createdAt: request.message.timestamp ?? Date.now(),
+                callerCatId: request.callerCatId,
+                actionSuccessorFence: request.actionSuccessorFence,
               },
             );
-            const accepted = [...result.enqueued, ...(result.coalesced ?? [])];
-            return { accepted: accepted.includes(input.targetCatId) };
+            if (!plan.acceptedTargetCats.includes(request.targetCatId)) {
+              return { outcome: 'not_admitted' };
+            }
+            // INV-I1: one transaction for the carrier Message and its Queue row.
+            const admission = await appendA2ASourceWithLedgerAdmission(
+              { messageStore, invocationQueue },
+              request.message,
+              {
+                plan,
+                ownerAuthProvenance: 'unknown',
+                actionSuccessorFence: request.actionSuccessorFence,
+              },
+            );
+            // Queue commit is the durable boundary (INV-I2). Publication only wakes a drain the
+            // admitted row already entitles, so its failure must not un-admit the carrier — the
+            // old code reported `carrier_delivery_failed` here while the work really was durable.
+            try {
+              await enqueueA2ATargets(a2aDeps, {
+                targetCats: [request.targetCatId],
+                content: request.message.content,
+                userId: request.userId,
+                ownerAuthProvenance: 'unknown',
+                threadId: request.threadId,
+                triggerMessage: admission.message,
+                callerCatId: request.callerCatId,
+                actionSuccessorFence: request.actionSuccessorFence,
+                preplannedAdmission: plan,
+                ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
+                ...(admission.preAdmittedEntries
+                  ? {
+                      preAdmittedEntries: admission.preAdmittedEntries,
+                      preAdmittedReplayed: admission.preAdmittedReplayed,
+                    }
+                  : {}),
+              });
+            } catch (error) {
+              app.log.warn(
+                {
+                  err: error,
+                  messageId: admission.message.id,
+                  leaseId: request.actionSuccessorFence.leaseId,
+                  leaseGeneration: request.actionSuccessorFence.generation,
+                },
+                'F266 stable-case carrier publication failed after durable admission; the Queue row stands',
+              );
+            }
+            return { outcome: 'admitted', messageId: admission.message.id };
           }),
         })
       : undefined;
