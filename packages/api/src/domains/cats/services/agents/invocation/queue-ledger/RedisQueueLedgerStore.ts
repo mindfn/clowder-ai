@@ -108,10 +108,11 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     const raw = Number(
       await this.redis.eval(
         ENQUEUE_QUEUE_ROWS_LUA,
-        3,
+        4,
         QueueLedgerKeys.entries(threadId),
         QueueLedgerKeys.order(threadId),
         QueueLedgerKeys.messageIndex(threadId),
+        QueueLedgerKeys.privateAdmissions(threadId),
         maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
         String(entries.length),
         ...serialized,

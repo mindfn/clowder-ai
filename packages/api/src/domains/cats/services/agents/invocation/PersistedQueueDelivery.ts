@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { createCatId } from '@cat-cafe/shared';
 import type { OwnerAuthProvenance } from '../../owner-auth-provenance.js';
-import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
+import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { InvocationQueue, QueueEntry } from './InvocationQueue.js';
 import type { OwnedQueueProgress, PersistedCarrierResult } from './PersistedQueueCarrier.js';
 import { queueEntryId } from './queue-ledger/QueueLedger.js';
@@ -50,10 +50,22 @@ export interface PrivateQueueDeliveryInput {
   ownerAuthProvenance?: OwnerAuthProvenance;
 }
 
+export interface VisibleWithPrivateQueueDeliveryInput extends PrivateQueueDeliveryInput {
+  /** The line the thread shows. It is History-only and never becomes executable work. */
+  notice: AppendMessageInput;
+}
+
 export interface PersistedQueueDeliveryPort {
   deliver(input: PersistedQueueDeliveryInput): Promise<PersistedCarrierResult & { message?: StoredMessage }>;
   /** Admit a target-only payload: same Queue, same drain, no public History member. */
   deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }>;
+  /**
+   * Admit a target-only payload and publish the line the thread shows. Durable Queue admission
+   * always happens first, so a visible "triggered" notice can never outlive the work it claims.
+   */
+  deliverVisibleWithPrivateInput(
+    input: VisibleWithPrivateQueueDeliveryInput,
+  ): Promise<{ admitted: boolean; entryId?: string; notice?: StoredMessage }>;
 }
 
 type PersistedQueueDeliveryResult = PersistedCarrierResult & { message?: StoredMessage };
@@ -141,6 +153,17 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
   }
 
   async deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }> {
+    const row = await this.admitPrivateRow(input);
+    if (!row.admitted) return { admitted: false };
+    if (!row.entry) return { admitted: true };
+    if (row.entry.status !== 'claimed' && row.entry.status !== 'processing') {
+      await this.deps.progress(row.entry, input.targetCatId);
+    }
+    return { admitted: true, entryId: row.entry.id };
+  }
+
+  /** Durable Queue admission for a target-only payload, without starting the work. */
+  private async admitPrivateRow(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entry?: QueueEntry }> {
     const targetCat = createCatId(input.targetCatId);
     const admitted = await this.deps.queue.enqueueDurable({
       threadId: input.threadId,
@@ -158,11 +181,31 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     });
     if (admitted.outcome === 'full') return { admitted: false };
     const entry = admitted.entry;
-    if (!entry) return { admitted: false };
-    if (entry.status !== 'claimed' && entry.status !== 'processing') {
-      await this.deps.progress(entry, input.targetCatId);
+    if (!entry) {
+      // A replayed stable key whose row already retired at the processing boundary. The durable
+      // admission receipt is the winner, so this identity is admitted and must not run again.
+      // Reporting a refusal here would push a receipt-completion retry into an endless loop.
+      return admitted.deduped ? { admitted: true } : { admitted: false };
     }
-    return { admitted: true, entryId: entry.id };
+    return { admitted: true, entry };
+  }
+
+  async deliverVisibleWithPrivateInput(
+    input: VisibleWithPrivateQueueDeliveryInput,
+  ): Promise<{ admitted: boolean; entryId?: string; notice?: StoredMessage }> {
+    // Every atomic Message+Queue primitive in this store requires its rows to bind the exact
+    // message identity, and a `private_input` row is forbidden from referencing a public History
+    // message. A single transaction across the two is therefore structurally excluded. Ordering
+    // gives the guarantee that actually matters: the work is durable before anything claims it
+    // happened, so a refusal or a crash can leave work without decoration, never a notice without
+    // work. The notice carries the producer's idempotency key, so a replay republishes at most once.
+    const row = await this.admitPrivateRow(input);
+    if (!row.admitted) return { admitted: false };
+    const notice = await this.deps.messages.append(input.notice);
+    if (row.entry && row.entry.status !== 'claimed' && row.entry.status !== 'processing') {
+      await this.deps.progress(row.entry, input.targetCatId);
+    }
+    return { admitted: true, ...(row.entry ? { entryId: row.entry.id } : {}), notice };
   }
 
   private async progressExistingMessage(

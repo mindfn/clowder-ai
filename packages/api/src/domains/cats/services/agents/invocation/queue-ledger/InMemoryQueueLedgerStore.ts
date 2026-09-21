@@ -42,6 +42,17 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     if (threadIndex.size === 0) this.messageRows.delete(threadId);
   }
 
+  /**
+   * Durable admission receipts for `private_input` rows. A public input's winner is its History
+   * message; a private input has none, and its row is retired on purpose at the processing
+   * boundary, so this receipt is the only thing that can refuse a replayed stable key.
+   */
+  private readonly privateAdmissions = new Map<string, Set<string>>();
+
+  private hasPrivateAdmission(threadId: string, entryId: string): boolean {
+    return this.privateAdmissions.get(threadId)?.has(entryId) === true;
+  }
+
   enqueueNow(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): QueueLedgerEnqueueResult {
     if (entries.length === 0) throw new Error('queue ledger enqueue requires at least one row');
     for (const entry of entries) assertQueueLedgerEntry(entry);
@@ -62,6 +73,17 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
         ? { outcome: 'replayed', entries: existingEntries.map(cloneQueueLedgerEntry) }
         : { outcome: 'conflict', entries: [] };
     }
+    // Settled means "this identity already won admission": a live row, or a retired private row
+    // whose receipt outlived it. A replay of either must never become a second execution.
+    const settled = entries.map(
+      (entry, index) =>
+        existing[index] !== undefined ||
+        (entry.kind === 'private_input' && this.hasPrivateAdmission(threadId, entry.id)),
+    );
+    if (settled.every(Boolean)) {
+      return { outcome: 'replayed', entries: existingEntries.map(cloneQueueLedgerEntry) };
+    }
+    if (settled.some(Boolean)) return { outcome: 'conflict', entries: [] };
     if (existing.some(Boolean)) return { outcome: 'conflict', entries: [] };
     if (maxQueuedUserEntries !== undefined) {
       const queuedUserSources = new Set(
@@ -80,6 +102,12 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     current.push(...inserted);
     this.rows.set(threadId, current);
     this.indexEntries(threadId, inserted);
+    for (const entry of inserted) {
+      if (entry.kind !== 'private_input') continue;
+      const receipts = this.privateAdmissions.get(threadId) ?? new Set<string>();
+      receipts.add(entry.id);
+      this.privateAdmissions.set(threadId, receipts);
+    }
     return { outcome: 'enqueued', entries: inserted.map(cloneQueueLedgerEntry) };
   }
 

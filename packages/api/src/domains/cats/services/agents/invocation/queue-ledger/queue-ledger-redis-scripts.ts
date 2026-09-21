@@ -108,12 +108,13 @@ return 1
 export const ENQUEUE_QUEUE_ROWS_LUA = `
 local rowsKey = KEYS[1]
 local orderKey = KEYS[2]
+local privateAdmissionsKey = KEYS[4]
 local maxQueuedUsers = tonumber(ARGV[1])
 local count = tonumber(ARGV[2])
 if not count or count < 1 then return redis.error_reply('QUEUE_ENQUEUE_EMPTY') end
 
 local incoming = {}
-local existingCount = 0
+local settledCount = 0
 local incomingUserSources = {}
 for i = 1, count do
   local raw = ARGV[2 + i]
@@ -122,14 +123,21 @@ for i = 1, count do
     return redis.error_reply('QUEUE_ENQUEUE_INVALID_ROW')
   end
   local existing = redis.call('HGET', rowsKey, row.id)
-  if existing then
-    existingCount = existingCount + 1
+  -- A private input owns no History message, so its admission receipt is the durable winner.
+  -- The row itself is retired on purpose once its last target reaches processing; without the
+  -- receipt a stable producer key would be admitted — and executed — a second time.
+  local settled = existing ~= false and existing ~= nil
+  if not settled and row.kind == 'private_input' then
+    settled = redis.call('HEXISTS', privateAdmissionsKey, row.id) == 1
+  end
+  if settled then
+    settledCount = settledCount + 1
   end
   if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceRecordId] = true end
   incoming[i] = { id = row.id, raw = raw, row = row }
 end
-if existingCount == count then return 2 end
-if existingCount ~= 0 then return -1 end
+if settledCount == count then return 2 end
+if settledCount ~= 0 then return -1 end
 
 local messageIndexUpdates = {}
 for i = 1, count do
@@ -182,6 +190,9 @@ end
 for i = 1, count do
   redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
   redis.call('RPUSH', orderKey, incoming[i].id)
+  if incoming[i].row.kind == 'private_input' then
+    redis.call('HSET', privateAdmissionsKey, incoming[i].id, tostring(incoming[i].row.enqueuedAt))
+  end
 end
 for messageId, update in pairs(messageIndexUpdates) do
   redis.call('HSET', KEYS[3], messageId, cjson.encode(update.ids))
