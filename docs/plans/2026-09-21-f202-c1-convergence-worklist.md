@@ -107,6 +107,11 @@ im-connector-loader 224 · im-connectors/ 8,180（7 provider）
 
 **必须从 schema 生成，不能手工补 export**——手工补只是把手抄从 SDK 挪进契约，下一个人还会在别处再抄一遍。
 
+> **P-1+2 不是清理技术债，它是 LL-104 的唯一执行形式。** 同一天里两条独立车道
+> （Core 与 Plugins）各自断言"插件声明的方法名由 deliver 参数携带"，而 schema 早就
+> `additionalProperties:false`——两条不同的推理路径撞进同一个坑。**靠记住无效；
+> 只有让 schema 的闭合约束生成进代码，违反才会在校验期就红。**
+
 > 顺带：契约已有 `ALL_ERROR_CODES` / `APPLICATION_ERROR_CODES`，而 mirror 里也有 `MESSAGING_ERROR_CODES`。
 > **那 25 组里可能有一部分已经有对应物——生成前先对一遍，别生成已经存在的。**
 
