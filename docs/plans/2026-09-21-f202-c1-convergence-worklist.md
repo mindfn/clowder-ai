@@ -87,7 +87,25 @@ operator 第四次指出方向：
 > **这是今晚第四个同形状的错**：用推理代替对被描述物的清点。前三次是类型 vs schema、
 > 子集 vs 全集、文件位置 vs 定义归属。这次是**假想流程 vs 实际调用**。
 
-**结论：Host 侧接口面已经完整，迁移不缺任何东西。剩下的只有 C-5 删代码。**
+**结论修正：Host 侧接口**面**已完整（不缺任何方法），但**接线**还差一段。**
+
+### C-6　激活接线（清点时发现，此前清单漏编号）
+
+零件都造好了，但**没有任何生产调用点**：
+
+```
+createRelayAddressProvisioner  → 零调用者        （88f7f8c4c 建的，插件激活后拿不到地址）
+SubscriptionDelivery.register  → 零生产调用点    （插件声明的 message-subscription 从未变成活订阅）
+```
+
+`module-plugin-runtime.ts` 自己也写着：加载做完了、激活没做。所以今天即使插件装上、跑起来：
+**入站没有地址可发，出站没有订阅可投。**
+
+**C-6 = 激活时做两件事**：① 为该 pluginInstance 签发地址（已有 provisioner）；
+② 把它 manifest 里声明的 `message-subscription` 注册进投递驱动（已有 register）。
+**不是新接口，是把已有零件接上。**
+
+**次序**：C-6 → C-5（删除）。删在前面，等于删掉唯一在工作的那条路而新路还没通电。
 
 ### C-3　thread 归属 metadata（通用版）
 `ThreadStore` 已有 `updateSystemKind` / `updateConnectorHubState`。
