@@ -88,6 +88,62 @@ Core 对侧 PR `#1487`，其 plan 就是本仓的 `docs/plans/2026-09-19-f202-tr
 契约里都有对应条目。**动手前先读 `migration/f202-train-c1-inventory.json` 与
 `docs/plans/2026-09-19-f202-train-c1-migration-plan.md`。**
 
+## 0.05　唯一接口表（冻结候选 · 2026-09-21）
+
+> 本节取代 §0.0–§0.04 中所有零散的"缺什么"判断。**接口表冻结前不写任何 Host adapter。**
+> 三分类：**已有**（可直接复用）· **重复**（同一件事多套实现，需收敛）· **缺失**（要新增）
+
+### 层 1 · 静态声明
+
+| 声明内容 | 现在在哪（file / 行数） | 判定 |
+|---|---|---|
+| 元数据 id/name/version/icon/docsUrl/setupSteps | main `plugin-manifest.ts`(351) · IM `im-connector-manifest.ts` · C1 `package-staging.ts`(234) | **重复 ×3** |
+| 配置字段 | 同上三处，且形状分叉：main / IM 用 `envName,label,sensitive,required`；contract 用 `key,label,kind,required` | **重复 ×3 + 形状分叉** |
+| skill / mcp 声明 | main `resources[{type,path}]` · contract `contributions[{type,id,path}]` | **重复 ×2** |
+| schedule 声明 | main `resources[{type,name,factoryId}]`（指向 Host factory） · contract `contributions[{schedule,action,policy}]`（指向插件 action） | **重复 ×2 且语义相反** |
+| limb 声明（auth / error / capabilities→commands） | `limb-yaml-loader.ts`(112) + `limbs/*.yml` | **已有**（通用适配器驱动，形状可复用） |
+| test / healthCheck | main `healthCheck.limbCommand` | **已有**（仅 main 有，contract 侧无对应） |
+
+**收敛目标**：一份包清单承载以上全部；`connector.yaml` 与 main `plugin.yaml` 高度同形，应先合这两套。
+
+### 层 2 · 生命周期
+
+| 能力 | 证据 | 判定 |
+|---|---|---|
+| install / prepare / enable / disable / repair / uninstall（带 revision fence + 按实例互斥） | `external-plugin-lifecycle.ts`(370) | **已有** |
+| runtime start / stop / stopAll / restart recovery + 状态机 + 权限栅栏 | `bundled-runtime-carrier.ts` | **已有** |
+| carrier 路由（按 manifest 选载体，不认 pluginId） | `runtime-carrier.ts`(113) | **已有** |
+| 包加载 `create(manifest)` | `module-plugin-runtime.ts:90` | **已有** |
+| **enable → `activate(featureId, context)` → 保存 `{actions, dispose}`** | 无 | **缺失** |
+| **disable / uninstall / 启动失败 → 确定性 `dispose()`，失败时零 partial actions** | 无 | **缺失** |
+
+> **整层只缺这两行。** 上一个 PR 的 Plugin Manager 是完整的，缺的是它与包内回调之间的最后一段接线。
+
+### 层 3 · 动态交互（Host 能力端口 ↔ 冻结 FeatureContext）
+
+| FeatureContext 需要 | Host 侧现状 | 判定 |
+|---|---|---|
+| `config.get` / `secrets.get` | `manifest-configuration-projection.ts`(164)，grant-checked、fail-closed | **已有** |
+| `state.get/set` | 全仓无 plugin state store（grep 零命中） | **缺失** |
+| `skills.register/dispose` | `addSkill` / `removeSkill` | **已有**（需薄包，勿走假定源码目录的 `PluginResourceActivator`） |
+| `mcp.register/dispose` | `installMcpCapability` / `removeMcpCapability` | **已有**（需薄包） |
+| `limbs.register/dispose` | `limbRegistry.register/deregister` | **已有，但被 pluginId 白名单挡住**（`index.ts:4356,4360`） |
+| `scheduler.register/dispose` | `taskRunner.registerPostStart/unregister` | **已有，但要求 Host 源码内的 factory**（`PluginResourceActivator.ts:504,509`） |
+| 出站发消息 | wire `messaging.send` | **已有** |
+| Host→插件回调 | `module-host-invocation.ts:31` 把方法名写死成 `host.messaging.deliver` 并当实例属性查 | **形状错，需改为查 `activate` 返回的 actions 表** |
+| `messaging.subscribe` | `SubscriptionDelivery`（`runtime-composition.ts:301` 已装配，`.register()` 无生产调用点） | **半接线** |
+| thread 归属 | `ThreadStore.updateConnectorHubState(ConnectorHubStateV1)` | **形状过窄**（连接器专属，非通用 pluginInstance 归属） |
+| 入站地址签发 | `createRelayAddressProvisioner`（`relay-address-provisioning.ts:98`，零生产调用者） | **半接线** |
+
+### 冻结后的最小实现片（次序）
+
+1. 层 2 两行（activate / dispose 接线）+ 层 3 的 `skills` 薄包 → 让已恢复的声明式 RED（`0f7c62983`）转绿
+2. 改 `module-host-invocation` 的方法解析（写死常量 → actions 表）
+3. 层 1 先合 `connector.yaml` 与 main `plugin.yaml` 两套同形声明
+4. limb / scheduler 白名单随层 3 的回调接通自然消失
+
+**在本表被 operator 认可冻结前，不写 Host adapter。**
+
 ## 0.0　更正（2026-09-21，operator 两问逼出来的）：卡点不在插件仓，在 Host 自己的两个白名单
 
 operator 问了两句，两句都推翻了本文先前的结论：
