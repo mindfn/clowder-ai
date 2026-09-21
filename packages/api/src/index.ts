@@ -4945,6 +4945,11 @@ async function main(): Promise<void> {
   });
   const pluginRuntime = createDormantPluginRuntimeComposition({
     projectRoot: pluginProjectRoot,
+    limbRegistry,
+    taskRunner: {
+      registerPostStart: (task) => taskRunnerV2.registerPostStart(task),
+      unregister: (taskId) => taskRunnerV2.unregister(taskId),
+    },
     editorParentOrigin: new URL(resolveFrontendBaseUrl(process.env, app.log)).origin,
     routes: signalRouteStore,
     intakes: meetingIntakeStore,

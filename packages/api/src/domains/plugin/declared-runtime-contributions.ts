@@ -1,0 +1,201 @@
+import { isDeepStrictEqual } from 'node:util';
+import type { RedisClient } from '@cat-cafe/shared/utils';
+import type { LimbContribution, ScheduleContribution } from '@clowder-ai/plugin-contract';
+import type { TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
+import { LimbRegistry } from '../limb/LimbRegistry.js';
+import { loadLimbDeclaration } from '../limb/limb-yaml-loader.js';
+import { PluginLimbAdapter } from '../limb/PluginLimbAdapter.js';
+import { resolvePackageFile } from './declared-resource-paths.js';
+import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from './external-runtime/types.js';
+import { effectivePluginConfigurationValue } from './manager/plugin-configuration-values.js';
+import type { PluginRuntimeConfigurationPort } from './manifest-configuration-projection.js';
+import type { PluginRuntimeAdmission } from './runtime-carrier.js';
+
+export interface DeclaredScheduleTaskRunner {
+  registerPostStart(task: TaskSpec_P1): void;
+  unregister(taskId: string): boolean;
+}
+
+export interface DeclaredRuntimeContributionHost {
+  readonly packages: VerifiedPluginPackageLocator;
+  readonly limbRegistry?: LimbRegistry;
+  readonly taskRunner?: DeclaredScheduleTaskRunner;
+  readonly configuration: PluginRuntimeConfigurationPort;
+  readonly redis?: RedisClient;
+}
+
+interface ActiveRuntimeContributions {
+  readonly limbNodeIds: readonly string[];
+  readonly scheduleTaskIds: readonly string[];
+}
+
+type InvokePluginAction = (pluginInstanceId: string, method: string, params: unknown) => Promise<unknown>;
+
+/**
+ * Runtime-only declarations live exactly as long as the package activation. Static resources
+ * (skill/MCP) deliberately live outside this registry because Host shutdown must not remove them.
+ */
+export class DeclaredRuntimeContributions {
+  readonly #active = new Map<string, ActiveRuntimeContributions>();
+
+  constructor(private readonly host: DeclaredRuntimeContributionHost) {}
+
+  async activate(admission: PluginRuntimeAdmission, invoke: InvokePluginAction): Promise<void> {
+    const pluginInstanceId = admission.instance.pluginInstanceId;
+    if (this.#active.has(pluginInstanceId)) {
+      throw new ExternalPluginRuntimeError(
+        'RUNTIME_ALREADY_ACTIVE',
+        `${pluginInstanceId} already has declared runtime contributions`,
+      );
+    }
+    const contributions = admission.packageRecord.manifest.contributions ?? [];
+    const limbs = contributions.filter((value): value is LimbContribution => value.type === 'limb');
+    const schedules = contributions.filter((value): value is ScheduleContribution => value.type === 'schedule');
+    if (limbs.length === 0 && schedules.length === 0) return;
+    if (limbs.length > 0 && !this.host.limbRegistry) {
+      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host limb registry is unavailable');
+    }
+    if (schedules.length > 0 && !this.host.taskRunner) {
+      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task runner is unavailable');
+    }
+
+    const limbNodeIds: string[] = [];
+    const scheduleTaskIds: string[] = [];
+    try {
+      if (limbs.length > 0) {
+        await this.#activateLimbs(admission, limbs, limbNodeIds, invoke);
+      }
+      for (const contribution of schedules) {
+        const task = scheduleTask(admission, contribution, invoke);
+        this.host.taskRunner?.registerPostStart(task);
+        scheduleTaskIds.push(task.id);
+      }
+      this.#active.set(pluginInstanceId, { limbNodeIds, scheduleTaskIds });
+    } catch (error) {
+      this.#remove({ limbNodeIds, scheduleTaskIds });
+      throw error;
+    }
+  }
+
+  deactivate(pluginInstanceId: string): void {
+    const active = this.#active.get(pluginInstanceId);
+    if (!active) return;
+    this.#active.delete(pluginInstanceId);
+    this.#remove(active);
+  }
+
+  deactivateAll(): void {
+    for (const pluginInstanceId of [...this.#active.keys()]) this.deactivate(pluginInstanceId);
+  }
+
+  async #activateLimbs(
+    admission: PluginRuntimeAdmission,
+    limbs: readonly LimbContribution[],
+    registered: string[],
+    invoke: InvokePluginAction,
+  ): Promise<void> {
+    const located = await this.host.packages.resolveInstalledPackage(admission.packageRecord.packageDigest);
+    try {
+      if (!isDeepStrictEqual(located.manifest, admission.packageRecord.manifest)) {
+        throw new ExternalPluginRuntimeError(
+          'PACKAGE_AUTHORITY_MISMATCH',
+          'located package manifest differs from the admitted package record',
+        );
+      }
+      await located.verifyIntegrity();
+      const pluginConfig = await configurationSnapshot(admission, this.host.configuration);
+      for (const contribution of limbs) {
+        const manifestPath = await resolvePackageFile(located.rootDir, contribution.manifestPath, 'Limb manifest');
+        const declaration = loadLimbDeclaration(manifestPath);
+        const handlers = Object.fromEntries(
+          Object.values(declaration.commands)
+            .map((command) => command.handler)
+            .filter((handler): handler is string => Boolean(handler) && handler !== 'builtin:health_check')
+            .map((handler) => [
+              handler,
+              async (params: Record<string, unknown>) =>
+                limbResult(await invoke(admission.instance.pluginInstanceId, handler, params), handler),
+            ]),
+        );
+        const node = new PluginLimbAdapter({
+          declaration,
+          pluginConfig,
+          handlers,
+          ...(this.host.redis === undefined ? {} : { redis: this.host.redis }),
+        });
+        await this.host.limbRegistry?.register(node);
+        registered.push(node.nodeId);
+      }
+    } finally {
+      await located.release();
+    }
+  }
+
+  #remove(active: ActiveRuntimeContributions): void {
+    for (const taskId of [...active.scheduleTaskIds].reverse()) this.host.taskRunner?.unregister(taskId);
+    for (const nodeId of [...active.limbNodeIds].reverse()) this.host.limbRegistry?.deregister(nodeId);
+  }
+}
+
+async function configurationSnapshot(
+  admission: PluginRuntimeAdmission,
+  configuration: PluginRuntimeConfigurationPort,
+): Promise<Record<string, string>> {
+  const values: Record<string, string> = {};
+  for (const field of admission.packageRecord.manifest.configuration ?? []) {
+    const grant = field.kind === 'secret' ? 'secret.read' : 'plugin.config.read';
+    if (!admission.effectiveGrants.includes(grant)) continue;
+    const raw =
+      field.kind === 'secret'
+        ? await configuration.readSecret(admission.instance.pluginInstanceId, field.key)
+        : await configuration.readConfig(admission.instance.pluginInstanceId, field.key);
+    const value = effectivePluginConfigurationValue(field, raw);
+    if (value !== undefined) values[field.key] = value;
+  }
+  return values;
+}
+
+function limbResult(value: unknown, method: string) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    typeof (value as { success?: unknown }).success !== 'boolean'
+  ) {
+    throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `Limb action ${method} returned an invalid result`);
+  }
+  return value as { success: boolean; data?: unknown; error?: string; artifactUri?: string };
+}
+
+function scheduleTask(
+  admission: PluginRuntimeAdmission,
+  contribution: ScheduleContribution,
+  invoke: InvokePluginAction,
+): TaskSpec_P1 {
+  const taskId = `plugin:${admission.packageRecord.pluginId}:schedule:${contribution.id}`;
+  const params = contribution.action.params ?? {};
+  return {
+    id: taskId,
+    profile: 'poller',
+    trigger:
+      contribution.schedule.kind === 'interval'
+        ? { type: 'interval', ms: contribution.schedule.everyMs }
+        : { type: 'cron', expression: contribution.schedule.expression },
+    admission: {
+      gate: async () => ({
+        run: true,
+        workItems: [{ signal: structuredClone(params), subjectKey: contribution.id }],
+      }),
+    },
+    run: {
+      overlap: contribution.policy.overlap,
+      timeoutMs: contribution.policy.timeoutMs,
+      execute: async (signal) => {
+        await invoke(admission.instance.pluginInstanceId, contribution.action.method, signal);
+      },
+    },
+    state: { runLedger: 'sqlite' },
+    outcome: { whenNoSignal: 'drop' },
+    enabled: () => true,
+  };
+}

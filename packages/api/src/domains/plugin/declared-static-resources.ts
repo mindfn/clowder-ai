@@ -1,19 +1,23 @@
-import { createHash } from 'node:crypto';
 import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-
+import type { McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
 import { readCapabilitiesConfig, withCapabilityLock } from '../../config/capabilities/capability-orchestrator.js';
 import { readMountRules } from '../../config/mount/mount-rules-store.js';
 import { addSkill, removeSkill } from '../../skills/skill-manage.js';
+import { activateDeclaredMcp, removeDeclaredMcp } from './declared-mcp-resources.js';
+import { pluginResourceRoot } from './declared-resource-paths.js';
 import { packageDirectoryName } from './external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from './external-runtime/types.js';
+import type { PluginRuntimeConfigurationPort } from './manifest-configuration-projection.js';
 import type { PluginRuntimeAdmission } from './runtime-carrier.js';
 
-interface DeclaredStaticResourceHost {
+export interface DeclaredStaticResourceHost {
   readonly projectRoot: string;
   readonly packages: VerifiedPluginPackageLocator;
   readonly resourcesRoot?: string;
+  readonly configuration: PluginRuntimeConfigurationPort;
+  readonly mcpConfigIO?: McpConfigIO;
 }
 
 interface MaterializedSkills {
@@ -22,6 +26,32 @@ interface MaterializedSkills {
 }
 
 const MARKER = '.clowder-resource.json';
+
+export async function activateDeclaredStaticResources(
+  admission: PluginRuntimeAdmission,
+  host: DeclaredStaticResourceHost | undefined,
+): Promise<void> {
+  await activateDeclaredSkills(admission, host);
+  try {
+    await activateDeclaredMcp(admission, host);
+  } catch (error) {
+    await removeDeclaredSkills(admission.packageRecord.pluginId, host).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function removeDeclaredStaticResources(
+  pluginId: string,
+  host: DeclaredStaticResourceHost | undefined,
+): Promise<void> {
+  if (!host) return;
+  const results = await Promise.allSettled([removeDeclaredSkills(pluginId, host), removeDeclaredMcp(pluginId, host)]);
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failures.length > 0) throw new AggregateError(failures, `Failed to remove static resources for ${pluginId}`);
+  await rm(pluginResourceRoot(host, pluginId), { recursive: true, force: true });
+}
 
 export async function activateDeclaredSkills(
   admission: PluginRuntimeAdmission,
@@ -95,7 +125,6 @@ export async function removeDeclaredSkills(pluginId: string, host: DeclaredStati
       throw new AggregateError(failures, `Failed to remove all persisted skills for ${pluginId}`);
     }
   });
-  await rm(pluginResourceRoot(host, pluginId), { recursive: true, force: true });
 }
 
 async function materializeSkills(
@@ -135,11 +164,6 @@ async function materializeSkills(
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
-}
-
-function pluginResourceRoot(host: DeclaredStaticResourceHost, pluginId: string): string {
-  const root = host.resourcesRoot ?? resolve(host.projectRoot, '.cat-cafe', 'plugin-host', 'resources');
-  return resolve(root, createHash('sha256').update(pluginId, 'utf8').digest('hex'));
 }
 
 async function validMaterialization(

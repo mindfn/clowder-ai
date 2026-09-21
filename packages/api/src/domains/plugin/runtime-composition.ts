@@ -2,8 +2,10 @@ import { dirname, resolve } from 'node:path';
 import type { PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
+import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import {
   createMessagingDomain,
   type MessagingDomainDeps,
@@ -22,6 +24,7 @@ import {
 import { ModulePluginRuntime } from './builtin-runtime/module-plugin-runtime.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
+import type { DeclaredScheduleTaskRunner } from './declared-runtime-contributions.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeSupervisor } from './external-runtime/supervisor.js';
@@ -99,6 +102,11 @@ export interface DormantPluginRuntimeCompositionOptions {
    * through the real authority is projectable without extra wiring.
    */
   readonly configuration?: PluginRuntimeConfigurationPort;
+  /** Live Host registries consumed by package-declared runtime contributions. */
+  readonly limbRegistry?: LimbRegistry;
+  readonly taskRunner?: DeclaredScheduleTaskRunner;
+  /** Injectable so isolated tests never regenerate a user's CLI configuration. */
+  readonly mcpConfigIO?: McpConfigIO;
   /**
    * F202 C1 gap B: the Host collaborators an authenticated connector ingress needs. The wake
    * itself lives in the messaging domain (gap A); what was missing is that the composition which
@@ -292,11 +300,23 @@ export function createDormantPluginRuntimeComposition(
       else moduleLogger[level](fields, message);
     },
   });
-  const supervisor = new PluginRuntimeCarrierRouter(inventoryStore, {
-    projectRoot: options.projectRoot,
-    packages,
-    resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), 'resources'),
-  });
+  const supervisor = new PluginRuntimeCarrierRouter(
+    inventoryStore,
+    {
+      projectRoot: options.projectRoot,
+      packages,
+      resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), 'resources'),
+      configuration,
+      mcpConfigIO: options.mcpConfigIO ?? fileBasedMcpIO(options.projectRoot),
+    },
+    {
+      packages,
+      configuration,
+      ...(options.limbRegistry === undefined ? {} : { limbRegistry: options.limbRegistry }),
+      ...(options.taskRunner === undefined ? {} : { taskRunner: options.taskRunner }),
+      ...(options.redis === undefined ? {} : { redis: options.redis }),
+    },
+  );
   supervisor.register(
     new BundledPluginRuntimeCarrier({
       inventory: inventoryStore,

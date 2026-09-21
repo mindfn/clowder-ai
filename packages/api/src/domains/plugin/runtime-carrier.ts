@@ -4,9 +4,16 @@ import {
   validateMessagingRowInput,
   validateMessagingRowResult,
 } from '@clowder-ai/plugin-contract';
-
-import { activateDeclaredSkills, removeDeclaredSkills } from './declared-static-resources.js';
-import type { PluginRuntimeLifecyclePort } from './external-plugin-lifecycle-types.js';
+import {
+  type DeclaredRuntimeContributionHost,
+  DeclaredRuntimeContributions,
+} from './declared-runtime-contributions.js';
+import {
+  activateDeclaredStaticResources,
+  type DeclaredStaticResourceHost,
+  removeDeclaredStaticResources,
+} from './declared-static-resources.js';
+import { type PluginRuntimeLifecyclePort, removesPluginOwnedResources } from './external-plugin-lifecycle-types.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from './external-runtime/types.js';
 import type { PluginInventoryStore } from './host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from './host-inventory/types.js';
@@ -24,6 +31,7 @@ import type { PluginInstanceRecord, PluginPackageRecord } from './host-inventory
 export interface PluginRuntimeAdmission {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
+  readonly effectiveGrants: readonly string[];
 }
 
 export interface PluginRuntimeCarrier {
@@ -40,15 +48,20 @@ export interface PluginRuntimeCarrier {
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   readonly #carriers: PluginRuntimeCarrier[] = [];
+  readonly #runtimeContributions: DeclaredRuntimeContributions;
 
   constructor(
     private readonly inventory: Pick<PluginInventoryStore, 'snapshot'>,
-    private readonly resources?: {
-      readonly projectRoot: string;
-      readonly packages: VerifiedPluginPackageLocator;
-      readonly resourcesRoot?: string;
-    },
-  ) {}
+    private readonly resources?: DeclaredStaticResourceHost,
+    runtimeContributions?: DeclaredRuntimeContributionHost,
+  ) {
+    this.#runtimeContributions = new DeclaredRuntimeContributions(
+      runtimeContributions ?? {
+        packages: resources?.packages ?? unsupportedPackageLocator,
+        configuration: resources?.configuration ?? unsupportedConfiguration,
+      },
+    );
+  }
 
   /**
    * Registration order is selection order — the first claim wins, so a carrier that
@@ -65,7 +78,10 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const carrier = this.#selectAdmission(admission);
     const result = await carrier.start(pluginInstanceId);
     try {
-      await activateDeclaredSkills(admission, this.resources);
+      await activateDeclaredStaticResources(admission, this.resources);
+      await this.#runtimeContributions.activate(admission, (instanceId, method, params) =>
+        this.invoke(instanceId, method, params),
+      );
       return result;
     } catch (error) {
       await this.#rollbackStartedRuntime(error, carrier, admission);
@@ -75,13 +91,15 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
+    this.#runtimeContributions.deactivate(pluginInstanceId);
     await carrier.stop(pluginInstanceId, reason);
-    if (reason === 'owner_disabled' || reason === 'owner_uninstalled') {
-      await removeDeclaredSkills(admission.packageRecord.pluginId, this.resources);
+    if (removesPluginOwnedResources(reason)) {
+      await removeDeclaredStaticResources(admission.packageRecord.pluginId, this.resources);
     }
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {
+    this.#runtimeContributions.deactivateAll();
     const carrierResults = await Promise.allSettled(this.#carriers.map((carrier) => carrier.stopAll(reason)));
     const carrierFailure = carrierResults.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
@@ -153,7 +171,8 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       rollbackErrors.push(error);
     }
     try {
-      await removeDeclaredSkills(admission.packageRecord.pluginId, this.resources);
+      this.#runtimeContributions.deactivate(admission.instance.pluginInstanceId);
+      await removeDeclaredStaticResources(admission.packageRecord.pluginId, this.resources);
     } catch (error) {
       rollbackErrors.push(error);
     }
@@ -177,12 +196,26 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const packageRecord = instance
       ? snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest)
       : undefined;
+    const grants = instance
+      ? snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId)
+      : undefined;
     if (!instance || !packageRecord) {
       throw new ExternalPluginRuntimeError(
         'INSTANCE_NOT_RUNNABLE',
         `${pluginInstanceId} is not a runnable plugin instance`,
       );
     }
-    return { instance, packageRecord };
+    return { instance, packageRecord, effectiveGrants: grants?.effectiveGrants ?? [] };
   }
 }
+
+const unsupportedPackageLocator: VerifiedPluginPackageLocator = {
+  resolveInstalledPackage: async () => {
+    throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host package locator is unavailable');
+  },
+};
+
+const unsupportedConfiguration = {
+  readConfig: async () => undefined,
+  readSecret: async () => undefined,
+};
