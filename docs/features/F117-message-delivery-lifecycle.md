@@ -645,6 +645,70 @@ Why: 持久真相边界不变；view 只让成员在自己的后续自然 turn �
 | KD-19 | 内部协议诊断只进入 telemetry/private evidence，不先写 History 再由 API/Web 隐藏 | 展示层屏蔽不能修复错误的生产边界；新代码停止生成 `routing-guard-failure`，API 读取过滤只保留为旧版本存量兼容 | 2026-09-20 |
 | KD-20 | terminal 后的任何显式路由凭据永远开启新 active hop；只有无行首 `@`、无 structured `targetCats` 的礼貌文本可 quiet ACK | 文本与结构化目标都是明确路由指令，生命周期投影不能静默吞掉；新的 generation 与统一 loop-streak 足以防止 ACK 乒乓 | 2026-09-20 |
 
+### Phase I（producer 统一登记表，2026-09-21）— 收口进行中
+
+Phase I 之前的迁移是「搜到一个改一个」：两次宣称"所有 producer 已迁移、旧 trigger 已空"，随后又
+不断发现活路径。根因不是哪一处改错，而是**没有先把生产者数完**。这张表就是那份清单——它是
+normative 的：新增任何唤醒猫的入口，必须先在这里登记，再写实现。
+
+#### I.1 两条接缝
+
+| | 旧 seam | 新 seam |
+|---|---|---|
+| 入口 | `ConnectorInvokeTrigger.trigger(…, messageId, …)` | `deliverConnectorMessage({ delivery }, …)` → `PersistedQueueDeliveryPort` |
+| 形状 | 调用方**先** `messageStore.append({deliveryStatus:'queued'})`，**再**入队 | 一次事务内同时写 Message + Queue row |
+| 失败模式 | 两次写之间崩溃 ⇒ 半提交：消息已持久化、无 Queue row、无人重投 | 无中间态：要么都成立，要么都不成立 |
+| 幂等身份 | `coalesceKey`（常缺省）→ 回退 `messageId` | `idempotencyKey` 必填 |
+
+#### I.2 登记表：旧入口 → 新入口 → 幂等键 → red/green
+
+**已在新 seam（无需迁移，勿重复发现）**
+
+| 生产者 | 幂等键 |
+|---|---|
+| `ConnectorRouter.route` / `/thread` / `/ask`（IM 入站主路径） | `im:${connectorId}:${chatId}:${messageId}[:thread\|:ask]` |
+| `GitHubWaitLifecycleService.publishPending`（所有 GitHub wait outcome） | `outcome.outcomeId` |
+| `IssueCommentRouter.route` | `issue-comment:${repo}#${n}:${frontier}` |
+| `GitHubRepoWebhookHandler`（webhook 入站） | `github-repo-event:${deliveryId}` |
+| `RepoScanTaskSpec`（对账扫描） | `github-repo-event:${signal.deliveryId}` |
+| scheduler `createDeliverFn` / `createDeliverPrivateFn` 全体消费者 | 调用方提供（强制必填） |
+| 手动 eval 触发 / artifact review return / paw-feel duty / ball-custody wake / main-health / eval domain trigger | 各自 dedupe key |
+
+> `CiCdRouter`、`ConflictRouter`、`ReviewFeedbackRouter` 不自行 admit——它们经
+> `GitHubWaitLifecycleService.observe` → `publishPending`，已计入上表。
+
+**本轮收口（Phase I 已完成）**
+
+| # | 生产者 | 旧入口 | 新入口 | 幂等键 | red/green |
+|---|---|---|---|---|---|
+| 1 | Repo Scan 生产装配 | `index.ts` 传 `deliveryDeps:{messageStore}`，类型被 `Record<string,unknown>` 擦除 | `{ delivery: persistedQueueDelivery }`；`rehydrateGitHubSchedules`/`repoScanDeps` 改 `Partial<GitHubScheduleDeps>` | `github-repo-event:${deliveryId}` | `1398-connector-delivery-composition.test.js`（red 复现生产 `TypeError: …reading 'deliver'`） |
+| 2 | Conflict check 第二次 admission | `ConflictCheckTaskSpec` 在 `route()` 已 admit 后再 `invokeTrigger.trigger(messageId)` | 删除该分支；`route()` 的 admission 即唤醒 | `outcome.outcomeId`（route 内） | `1398-conflict-check-single-admission.test.js` |
+| 3 | Limb transcript | `append(deliveryStatus:'queued')` + `trigger.trigger` | `deliverConnectorMessage` 原子 admission | `limb:${nodeId}:${observationId}` | `limb-transcript-cat-delivery.test.js` |
+
+关于 #2 的诚实修正：该双唤醒分支**从未在生产触发**——`github-schedule-factories.ts` 根本没把
+`invokeTrigger` 传进这个 spec（零个 github factory 读它）。它不是「正在重复唤醒」，而是「离重复
+唤醒只差一行接线」。删除属零行为变更。
+
+关于 #2 的 auto-resolve 排序：`tryAutoResolveBeforeWake` 确实跑在 admission 之后，但这是 **#1392 R5
+授权模型强制的**，不是疏忽——auto-resolve 只允许在 `matched` outcome 上写仓库，而该 outcome 正是
+`route()` 那一次调用产出的。把它提到 admission 之前，等于放弃这条授权检查。此处不改，改需先改授权模型。
+
+#### I.3 仍未收口（下一步，坐标已定位）
+
+| # | 生产者 | 位置 | 为什么更重 |
+|---|---|---|---|
+| 4 | Managed hold wake | `managed-command-wake-message-fence.ts:137`（append queued）+ `ManagedCommandWakeRecoveryEngine.ts:218`（trigger）；入口 `callback-hold-ball-routes.ts:440` | 自带补偿机器：`dispatchAttemptCount`、`persistDispatchOutcome`、SLA breach、retire-on-lease-error——它们存在的理由正是两阶段会分叉。迁移必须同时判定这些状态还剩什么职责 |
+| 5 | Re-eval carrier | `reeval-case-task-dispatch.ts:145`（append queued）+ `:182`（deliver） | 两半用**不同的键**：Message 用 `f266-task-carrier:${taskId}:${gen}`，Queue row 用 `action:${leaseId}:${gen}`。三个 `blocked` reasonCode（`carrier_persist_failed` / `carrier_delivery_failed` / `carrier_not_enqueued`）就是给半提交态取的名字 |
+| 6 | 死 `invokeTrigger` 管线 | `execute-pipeline.ts:273`、`TaskRunnerV2.setInvokeTrigger`、`scheduler/types.ts:155`、`index.ts` deps 包 | 全链路穿过 composition 但**从不调用 `.trigger()`**；`main-health.ts:213` 只做非空断言。必须等 #4/#5 迁完才能连同 `ConnectorInvokeTrigger` 一起删 |
+
+#### I.4 不变量
+
+- **INV-I1** 任何唤醒猫的输入只经过一次原子 Message + Queue admission；不存在「先 append 再入队」。
+- **INV-I2** 生产者不得自带 outbox 或半提交补偿状态；Queue commit 就是持久边界。
+- **INV-I3** `ConnectorDeliveryDeps` 不得以 `Record<string, unknown>`、可选字段或 `as` 断言传递——
+  装配错误必须在编译期或装配期暴露，不能推迟到投递时。
+- **INV-I4** 信封自述事实（priority、timestamp、provenance）；admission 不得从载荷推断。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in
@@ -660,4 +724,6 @@ evidence that main composition roots survived.
 - Phase E: Fable 做 exact-HEAD delta 复审，硬门为 AC-E1、AC-E3 的「typed custody 行存在时仍 200」与 AC-E7 的 `reconciled` / pre-start TTL 收窄；
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase G: 跨族 reviewer 核验等待可见性、queued-before-admission、唯一 response 终局、MCP/route/Ball writer 全链 absence；co-creator 验证 AC-G6 后才进入 fork soak
+- Phase I: 登记表（I.2）必须先于实现更新；跨族 reviewer 核验 INV-I1..I4 与 I.3 三项剩余收口，
+  co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase H: 「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」实现与跨族复审已完成；co-creator 的完整 worktree UAT 仍覆盖初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart
