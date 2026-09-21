@@ -1988,3 +1988,16 @@ created: 2026-02-26
 - 附带（个人向，同源）：**在自己那块里找答案，会把子集当全集。** 我查的是"我这块用到的那张表"，结论是"这个方向不存在"；operator 没看代码却先指出"你们开放给 sdk 的接口本身有问题"——因为他问的是**整体形状**，我找的是**局部证据**。凡是要下"X 不存在"这种全称判断，必须先确认自己读的是全集。
 
 - 关联：`@clowder-ai/plugin-contract` `Capability` / `PluginToHostMethod` / `wire/registry` `WIRE_METHOD_NAMES` | `packages/api/src/domains/plugin/external-runtime/stdio-broker-transport.ts:26,44` | `packages/api/src/domains/plugin/host-broker/control-plane.ts:376` | `docs/plans/2026-09-20-f202-c1-host-plugin-interface-contract.md` §12
+
+### LL-105: 共享检出目录不区分"谁在用"——入口闸挡得住手，挡不住流向
+
+- 状态：validated
+- 更新时间：2026-09-21
+
+- 坑：F202 C1 两条车道并行的一夜里，**同一形状出现四次**：① 我在 sol 正在编辑的 worktree 里 `git add -A`，把他 8 个未完成文件全暂存进我的文档 commit（`MM` 状态说明他当时还在写）；② Plugins 线的主仓库被 checkout 到特性分支——主仓库是上游镜像，在其上改代码会污染镜像；③ ②修复之后（分支回 `main`、特性分支转为正规 worktree），**P-1 的 107 行 codegen 工作仍留在主仓库工作区未提交**；④ 双方都只能靠"我保持只读"这类自觉纪律来避让对方未提交的改动。
+- 止损与影响：① 被 pre-commit 的 whitespace/biome 门禁挡下，退暂存后复核对方 10 个文件内容未被触碰；② 被开工自检挡下，工作区干净故零风险修复；③ **无任何机器挡住**，是我在核证对方第②条说法时顺手撞见的，当时未提交、无 stash、无分支引用——而 fork SOP 的 main 同步常规动作正是 `git reset --hard upstream/main`，一次同步即静默抹除。
+- 根因：目录是共享的，但 git 的工作区模型假设单一使用者。更要紧的是**「谁能改」与「改动流向哪里」是两件不同的事**：前三个现场都是入口被挡住，第③个是**入口已经修好、水仍从旁边漫过去**——分支挪走了、worktree 建好了，肌肉记忆还在往主仓库里写。
+- 修复：共享 worktree 内一律**显式路径 add**，不用 `-A`；特性分支一律开 worktree，主仓库只读；并把"下一次 main 同步前先核工作区是否干净"当作同步动作的前置，而不是同步后的补救。
+- 原理（Plugins 线在同一夜给出，本条据此定性）：**闸的价值不在它抓到多少错，而在于把"发现错误的时间"从"下一个人踩到"提前到"写下来的那一刻"。** 本夜四个现场里两个被机器挡下、一个靠交叉核验偶然撞见——而交叉核验成立的前提是"恰好两条线同时在看同一批东西"，**这个条件不可复制，闸才可复制**。
+
+- 关联：LL-104 | `scripts/` pre-commit biome/whitespace guard | SessionStart 开工自检 | fork SOP `git reset --hard upstream/main`
