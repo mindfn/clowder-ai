@@ -3,7 +3,9 @@
  * Templates call deliver() to post messages to threads without going through MCP callbacks.
  */
 import { randomUUID } from 'node:crypto';
+import type { CatId } from '@cat-cafe/shared';
 import { normalizeOwnerAuthProvenance } from '../../domains/cats/services/owner-auth-provenance.js';
+import type { StoredMessage } from '../../domains/cats/services/stores/ports/MessageStore.js';
 import type { DeliverOpts, ScheduleLifecycleNotice } from './types.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,19 +47,20 @@ export function createDeliverPrivateFn(
 
 export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Promise<string> {
   /** A message the thread should show and no member must act on: History only, never a Queue row. */
-  const publishVisible = async (opts: DeliverOpts, source: DeliverOpts['source'] & object): Promise<string> => {
-    const stored = await deps.messageStore.append({
-      from: { kind: 'system', service: source.connector },
-      userId: opts.userId,
-      content: opts.content,
-      mentions: [],
-      origin: 'callback',
-      timestamp: Date.now(),
-      threadId: opts.threadId,
-      source,
-      ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-      ...(opts.extra ? { extra: opts.extra } : {}),
-    });
+  const visibleNotice = (opts: DeliverOpts, source: DeliverOpts['source'] & object) => ({
+    from: { kind: 'system' as const, service: source.connector },
+    userId: opts.userId,
+    content: opts.content,
+    mentions: [] as readonly CatId[],
+    origin: 'callback' as const,
+    timestamp: Date.now(),
+    threadId: opts.threadId,
+    source,
+    ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+    ...(opts.extra ? { extra: opts.extra } : {}),
+  });
+
+  const broadcastVisible = (opts: DeliverOpts, source: DeliverOpts['source'] & object, stored: StoredMessage): void => {
     const schedulerExtra = stored.extra?.scheduler ?? opts.extra?.scheduler;
     deps.socketManager.broadcastToRoom(`thread:${opts.threadId}`, 'connector_message', {
       threadId: opts.threadId,
@@ -70,7 +73,6 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
         timestamp: stored.timestamp,
       },
     });
-    return stored.id;
   };
 
   return async (opts: DeliverOpts): Promise<string> => {
@@ -87,20 +89,26 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
       // an ordinary History-only message and the payload is a `private_input` Queue entry. Both are
       // still one Queue, one drain — the split is in visibility, never in the reliability path.
       if (opts.privateContent !== undefined) {
-        const publicId = await publishVisible(opts, source);
-        const privateAdmission = await deps.persistedQueueDelivery.deliverPrivate({
+        // One transaction persists the visible line and admits the target's payload. Publishing
+        // first and admitting afterwards would leave a visible "triggered" notice with no work
+        // behind it whenever the Queue refuses or the process dies between the two writes.
+        const admission = await deps.persistedQueueDelivery.deliverVisibleWithPrivateInput({
           ownerUserId: opts.userId,
           threadId: opts.threadId,
           targetCatId: opts.targetCatId,
           idempotencyKey: `${opts.idempotencyKey}:private`,
           content: opts.privateContent,
           from: { kind: 'system', service: source.connector },
+          notice: visibleNotice(opts, source),
           ...(opts.priority ? { priority: opts.priority } : {}),
           ...(opts.sourceCategory ? { sourceCategory: opts.sourceCategory } : {}),
           ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
         });
-        if (!privateAdmission.admitted) throw new Error('scheduler private Queue admission did not happen');
-        return publicId;
+        if (!admission.admitted) throw new Error('scheduler private Queue admission did not happen');
+        const stored = admission.notice;
+        if (!stored) throw new Error('scheduler visible notice did not persist with its private input');
+        broadcastVisible(opts, source, stored);
+        return stored.id;
       }
 
       const admitted = await deps.persistedQueueDelivery.deliver({
@@ -126,31 +134,11 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
     }
 
     const stored = await deps.messageStore.append({
-      from: { kind: 'system', service: source.connector },
-      userId: opts.userId,
-      content: opts.content,
-      mentions: [],
-      origin: 'callback',
-      timestamp: Date.now(),
-      threadId: opts.threadId,
-      source,
+      ...visibleNotice(opts, source),
       ...(opts.deliveryStatus ? { deliveryStatus: opts.deliveryStatus } : {}),
-      ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-      ...(opts.extra ? { extra: opts.extra } : {}),
     });
     if (opts.deliveryStatus === 'queued') return stored.id;
-    const schedulerExtra = stored.extra?.scheduler ?? opts.extra?.scheduler;
-    deps.socketManager.broadcastToRoom(`thread:${opts.threadId}`, 'connector_message', {
-      threadId: opts.threadId,
-      message: {
-        id: stored.id,
-        type: 'connector',
-        content: typeof stored.content === 'string' ? stored.content : opts.content,
-        source,
-        ...(schedulerExtra ? { extra: { scheduler: schedulerExtra } } : {}),
-        timestamp: stored.timestamp,
-      },
-    });
+    broadcastVisible(opts, source, stored);
     return stored.id;
   };
 }

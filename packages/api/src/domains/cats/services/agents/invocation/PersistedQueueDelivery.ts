@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { createCatId } from '@cat-cafe/shared';
 import type { OwnerAuthProvenance } from '../../owner-auth-provenance.js';
-import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
+import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { InvocationQueue, QueueEntry } from './InvocationQueue.js';
 import type { OwnedQueueProgress, PersistedCarrierResult } from './PersistedQueueCarrier.js';
 import { queueEntryId } from './queue-ledger/QueueLedger.js';
@@ -19,7 +19,8 @@ export interface PersistedQueueDeliveryInput {
   priority?: 'urgent' | 'normal';
   /**
    * RFC §5.1 lists user, external connector, plugin AND system producers under the same envelope.
-   * The producer declares who it is; defaults to the external-connector shape from `source`.
+   * The producer declares who it is; defaults to the external-connector shape from `source.sender`.
+   * `source.label` names the ROOM and is never an actor — see the derivation below.
    */
   from?: StoredMessage['from'];
   /** Verified owner provenance for producers that carry an explicit authorization. */
@@ -50,10 +51,22 @@ export interface PrivateQueueDeliveryInput {
   ownerAuthProvenance?: OwnerAuthProvenance;
 }
 
+export interface VisibleWithPrivateQueueDeliveryInput extends PrivateQueueDeliveryInput {
+  /** The line the thread shows. It is History-only and never becomes executable work. */
+  notice: AppendMessageInput;
+}
+
 export interface PersistedQueueDeliveryPort {
   deliver(input: PersistedQueueDeliveryInput): Promise<PersistedCarrierResult & { message?: StoredMessage }>;
   /** Admit a target-only payload: same Queue, same drain, no public History member. */
   deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }>;
+  /**
+   * Admit a target-only payload and publish the line the thread shows. Durable Queue admission
+   * always happens first, so a visible "triggered" notice can never outlive the work it claims.
+   */
+  deliverVisibleWithPrivateInput(
+    input: VisibleWithPrivateQueueDeliveryInput,
+  ): Promise<{ admitted: boolean; entryId?: string; notice?: StoredMessage }>;
 }
 
 type PersistedQueueDeliveryResult = PersistedCarrierResult & { message?: StoredMessage };
@@ -65,7 +78,11 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
       messages: IMessageStore;
       queue: Pick<
         InvocationQueue,
-        'appendAndEnqueueDurable' | 'enqueueDurable' | 'findAdmittedEntriesForMessages' | 'getDurableEntry'
+        | 'appendAndEnqueueDurable'
+        | 'enqueueDurable'
+        | 'enqueueDurableWithVisibleNotice'
+        | 'findAdmittedEntriesForMessages'
+        | 'getDurableEntry'
       >;
       progress: (entry: QueueEntry, targetCatId: string) => Promise<OwnedQueueProgress>;
     },
@@ -73,12 +90,17 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
 
   async deliver(input: PersistedQueueDeliveryInput) {
     const targetCat = createCatId(input.targetCatId);
+    // `from.sender` is the canonical ACTOR identity: bundle author grouping keys on it, the
+    // envelope maps it to `{kind:'user', id}`, and receipts address it. `source.sender` is the
+    // person; `source.label` is the room's display name. Defaulting to the label would give every
+    // member of a group chat the same fabricated identity named after the room, so a producer that
+    // knows no person leaves it absent — consumers already fall back to connectorId/label to show.
     const from =
       input.from ??
       ({
         kind: 'external' as const,
         connectorId: input.source.connector,
-        ...(input.source.label ? { sender: { id: input.source.label, name: input.source.label } } : {}),
+        ...(input.source.sender ? { sender: input.source.sender } : {}),
       } as NonNullable<StoredMessage['from']>);
     const existing = await this.deps.messages.getByIdempotencyKey(
       input.ownerUserId,
@@ -141,28 +163,73 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
   }
 
   async deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }> {
-    const targetCat = createCatId(input.targetCatId);
-    const admitted = await this.deps.queue.enqueueDurable({
+    const row = await this.admitPrivateRow(input);
+    if (!row.admitted) return { admitted: false };
+    if (!row.entry) return { admitted: true };
+    if (row.entry.status !== 'claimed' && row.entry.status !== 'processing') {
+      await this.deps.progress(row.entry, input.targetCatId);
+    }
+    return { admitted: true, entryId: row.entry.id };
+  }
+
+  /**
+   * The one envelope shape for private work, shared by the bare and notice-carrying paths.
+   *
+   * Both must produce byte-identical rows: the admission receipt is keyed on this envelope's
+   * fingerprint, so any divergence would make the same logical input look like a conflicting one.
+   */
+  private privateEnqueueInput(input: PrivateQueueDeliveryInput) {
+    return {
       threadId: input.threadId,
       userId: input.ownerUserId,
       sourceId: input.idempotencyKey,
-      kind: 'private_input',
-      ownerAuthProvenance: input.ownerAuthProvenance ?? 'unknown',
+      kind: 'private_input' as const,
+      ownerAuthProvenance: input.ownerAuthProvenance ?? ('unknown' as const),
       idempotencyKey: input.idempotencyKey,
       content: input.content,
       from: input.from,
-      targetCats: [targetCat],
-      intent: 'execute',
+      targetCats: [createCatId(input.targetCatId)],
+      intent: 'execute' as const,
       ...(input.priority ? { priority: input.priority } : {}),
       ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
-    });
+    };
+  }
+
+  /** Durable Queue admission for a target-only payload, without starting the work. */
+  private async admitPrivateRow(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entry?: QueueEntry }> {
+    const admitted = await this.deps.queue.enqueueDurable(this.privateEnqueueInput(input));
     if (admitted.outcome === 'full') return { admitted: false };
     const entry = admitted.entry;
-    if (!entry) return { admitted: false };
-    if (entry.status !== 'claimed' && entry.status !== 'processing') {
+    if (!entry) {
+      // A replayed stable key whose row already retired at the processing boundary. The durable
+      // admission receipt is the winner, so this identity is admitted and must not run again.
+      // Reporting a refusal here would push a receipt-completion retry into an endless loop.
+      return admitted.deduped ? { admitted: true } : { admitted: false };
+    }
+    return { admitted: true, entry };
+  }
+
+  async deliverVisibleWithPrivateInput(
+    input: VisibleWithPrivateQueueDeliveryInput,
+  ): Promise<{ admitted: boolean; entryId?: string; notice?: StoredMessage }> {
+    // One transition for both halves. Ordering two writes is not enough: whichever runs second can
+    // fail, leaving either a visible "triggered" notice with no admitted work, or durable work whose
+    // producer was handed an error and will report `trigger_failed` while the work still runs.
+    const admitted = await this.deps.queue.enqueueDurableWithVisibleNotice(
+      this.privateEnqueueInput(input),
+      input.notice,
+      this.deps.messages,
+    );
+    if (admitted.outcome === 'full') return { admitted: false };
+    const entry = admitted.entry;
+    if (entry && entry.status !== 'claimed' && entry.status !== 'processing') {
       await this.deps.progress(entry, input.targetCatId);
     }
-    return { admitted: true, entryId: entry.id };
+    return {
+      admitted: true,
+      ...(entry ? { entryId: entry.id } : {}),
+      ...(admitted.notice ? { notice: admitted.notice } : {}),
+    };
   }
 
   private async progressExistingMessage(

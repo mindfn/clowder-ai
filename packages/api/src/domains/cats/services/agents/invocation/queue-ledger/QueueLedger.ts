@@ -221,4 +221,45 @@ export function queueLedgerAdmissionsMatch(existing: QueueLedgerEntry, incoming:
   );
 }
 
+/** Key-ordered serialization so two structurally equal envelopes always hash identically. */
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`).join(',')}}`;
+}
+
+/**
+ * Durable fingerprint of the admission envelope behind one ledger identity.
+ *
+ * A live row can be compared field by field with `queueLedgerAdmissionsMatch`. A retired
+ * `private_input` row cannot — the row is gone and only its receipt remains — so the receipt has to
+ * carry enough of the envelope to still tell a genuine replay from a different payload reusing the
+ * same stable key. This covers exactly the fields that function compares, so the two verdicts can
+ * never disagree about what counts as the same admission.
+ */
+export function queueLedgerAdmissionFingerprint(entry: QueueLedgerEntry): string {
+  const { callerTraceContext: _trace, ...execution } = entry.execution;
+  return createHash('sha256')
+    .update(
+      stableSerialize({
+        version: entry.version,
+        id: entry.id,
+        threadId: entry.threadId,
+        owner: entry.owner,
+        kind: entry.kind,
+        from: entry.from,
+        targets: entry.targets,
+        payload: entry.payload,
+        execution,
+        authorIntentByTarget: entry.delivery.authorIntentByTarget,
+        priority: entry.priority,
+        sourceCategory: entry.sourceCategory,
+      }),
+    )
+    .digest('hex');
+}
+
 export { assertQueueLedgerEntry } from './QueueLedgerValidation.js';

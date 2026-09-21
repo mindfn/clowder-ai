@@ -1,5 +1,10 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { QueueLedgerEntry } from './QueueLedger.js';
+import {
+  type QueueLedgerEnqueueResult,
+  type QueueLedgerEntry,
+  queueLedgerAdmissionFingerprint,
+  queueLedgerAdmissionsMatch,
+} from './QueueLedger.js';
 import { QueueLedgerKeys } from './queue-ledger-keys.js';
 import { GET_QUEUE_ROWS_BY_MESSAGE_IDS_LUA, LIST_QUEUE_ROWS_LUA } from './queue-ledger-redis-scripts.js';
 import { hydrateQueueLedgerEntry } from './RedisQueueLedgerCodec.js';
@@ -91,4 +96,41 @@ export async function getRedisQueueLedgerEntry(
 ): Promise<QueueLedgerEntry | null> {
   const raw = await redis.hget(QueueLedgerKeys.entries(threadId), entryId);
   return raw ? hydrateQueueLedgerEntry(raw) : null;
+}
+
+/**
+ * Confirm what an atomic enqueue already decided was a replay.
+ *
+ * The Lua script answers "every identity was already settled" without shipping the stored rows
+ * back, so the verdict still has to be checked against the rows on disk: same envelope is a
+ * replay, a different one reusing the ids is a conflict. A missing row here means the atomic
+ * preflight and the follow-up read disagree, which is corruption rather than a normal outcome.
+ */
+export async function verifyRedisQueueLedgerReplay(
+  redis: RedisClient,
+  threadId: string,
+  entries: readonly QueueLedgerEntry[],
+): Promise<QueueLedgerEnqueueResult> {
+  const raws = await redis.hmget(QueueLedgerKeys.entries(threadId), ...entries.map((entry) => entry.id));
+  // A retired `private_input` row is the reason receipts exist: the row is removed on purpose once
+  // its last target reaches processing, so a missing row here is only corruption when no receipt
+  // settled the identity either. Where a receipt did, it carries the verdict the row would have.
+  const receipts = await redis.hmget(QueueLedgerKeys.privateAdmissions(threadId), ...entries.map((entry) => entry.id));
+  const verified = entries.map((input, index) => {
+    const raw = raws[index];
+    if (typeof raw === 'string') {
+      const stored = hydrateQueueLedgerEntry(raw);
+      return { matches: queueLedgerAdmissionsMatch(stored, input), live: stored };
+    }
+    const receipt = receipts[index];
+    if (input.kind !== 'private_input' || typeof receipt !== 'string') {
+      throw new Error('Queue replay identity vanished after atomic preflight');
+    }
+    // The row is gone on purpose, so this identity has no entry left to hand back. Returning the
+    // incoming envelope instead would read as freshly queued work and start a second execution —
+    // the exact duplicate the receipt exists to prevent.
+    return { matches: receipt === queueLedgerAdmissionFingerprint(input), live: undefined };
+  });
+  if (!verified.every((result) => result.matches)) return { outcome: 'conflict', entries: [] };
+  return { outcome: 'replayed', entries: verified.flatMap((result) => (result.live ? [result.live] : [])) };
 }

@@ -37,6 +37,18 @@ export async function deliverConnectorMessage(
   deps: ConnectorDeliveryDeps,
   input: ConnectorDeliveryInput,
 ): Promise<ConnectorDeliveryResult> {
+  // A producer that was wired with the wrong deps (e.g. the pre-unification `{ messageStore }`)
+  // used to fail as `Cannot read properties of undefined (reading 'deliver')` deep inside a
+  // scheduled task, where it reads as a connector outage rather than a composition bug. Name the
+  // real defect at the seam so a mis-wired producer is diagnosable from one line of the log.
+  if (typeof deps?.delivery?.deliver !== 'function') {
+    throw new Error(
+      `Connector delivery is mis-wired for source "${input.source}": ConnectorDeliveryDeps.delivery ` +
+        'must be a PersistedQueueDeliveryPort. Producers must not pass a MessageStore — atomic ' +
+        'Message + Queue admission is the only admission path.',
+    );
+  }
+
   const result = await deps.delivery.deliver({
     ownerUserId: input.userId,
     threadId: input.threadId,

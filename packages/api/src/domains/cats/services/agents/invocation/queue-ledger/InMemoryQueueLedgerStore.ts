@@ -1,4 +1,6 @@
 import { commitInMemoryQueueLedgerEntry } from './InMemoryQueueLedgerCommit.js';
+import { InMemoryQueueLedgerMessageIndex } from './InMemoryQueueLedgerMessageIndex.js';
+import { InMemoryQueueLedgerPrivateAdmissions } from './InMemoryQueueLedgerPrivateAdmissions.js';
 import {
   assertQueueLedgerEntry,
   cloneQueueLedgerEntry,
@@ -15,32 +17,9 @@ import {
 
 export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   private readonly rows = new Map<string, QueueLedgerEntry[]>();
-  private readonly messageRows = new Map<string, Map<string, Set<string>>>();
+  private readonly messageIndex = new InMemoryQueueLedgerMessageIndex();
 
-  private indexEntries(threadId: string, entries: readonly QueueLedgerEntry[]): void {
-    const threadIndex = this.messageRows.get(threadId) ?? new Map<string, Set<string>>();
-    for (const entry of entries) {
-      const messageId = entry.payload.messageId;
-      if (!messageId) continue;
-      const entryIds = threadIndex.get(messageId) ?? new Set<string>();
-      entryIds.add(entry.id);
-      threadIndex.set(messageId, entryIds);
-    }
-    if (threadIndex.size > 0) this.messageRows.set(threadId, threadIndex);
-  }
-
-  private unindexEntries(threadId: string, entries: readonly QueueLedgerEntry[]): void {
-    const threadIndex = this.messageRows.get(threadId);
-    if (!threadIndex) return;
-    for (const entry of entries) {
-      const messageId = entry.payload.messageId;
-      if (!messageId) continue;
-      const entryIds = threadIndex.get(messageId);
-      entryIds?.delete(entry.id);
-      if (entryIds?.size === 0) threadIndex.delete(messageId);
-    }
-    if (threadIndex.size === 0) this.messageRows.delete(threadId);
-  }
+  private readonly privateAdmissions = new InMemoryQueueLedgerPrivateAdmissions();
 
   enqueueNow(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): QueueLedgerEnqueueResult {
     if (entries.length === 0) throw new Error('queue ledger enqueue requires at least one row');
@@ -62,6 +41,18 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
         ? { outcome: 'replayed', entries: existingEntries.map(cloneQueueLedgerEntry) }
         : { outcome: 'conflict', entries: [] };
     }
+    // Settled means "this identity already won admission": a live row, or a retired private row
+    // whose receipt outlived it. A replay of either must never become a second execution — but a
+    // different envelope reusing a settled key is a conflict, never a silent admission.
+    const verdicts = entries.map((entry, index) =>
+      existing[index] !== undefined ? 'replay' : this.privateAdmissions.verdict(threadId, entry),
+    );
+    if (verdicts.includes('conflict')) return { outcome: 'conflict', entries: [] };
+    const settled = verdicts.map((verdict) => verdict !== 'unseen');
+    if (settled.every(Boolean)) {
+      return { outcome: 'replayed', entries: existingEntries.map(cloneQueueLedgerEntry) };
+    }
+    if (settled.some(Boolean)) return { outcome: 'conflict', entries: [] };
     if (existing.some(Boolean)) return { outcome: 'conflict', entries: [] };
     if (maxQueuedUserEntries !== undefined) {
       const queuedUserSources = new Set(
@@ -79,7 +70,8 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     const inserted = entries.map(cloneQueueLedgerEntry);
     current.push(...inserted);
     this.rows.set(threadId, current);
-    this.indexEntries(threadId, inserted);
+    this.messageIndex.index(threadId, inserted);
+    this.privateAdmissions.remember(threadId, inserted);
     return { outcome: 'enqueued', entries: inserted.map(cloneQueueLedgerEntry) };
   }
 
@@ -175,7 +167,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
 
     if (nextTargets.length === 0) {
       current.splice(index, 1);
-      this.unindexEntries(threadId, [row]);
+      this.messageIndex.unindex(threadId, [row]);
       if (current.length === 0) this.rows.delete(threadId);
       return { outcome: 'updated', entry: null };
     }
@@ -196,7 +188,11 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     const removed = current.filter((entry) => ids.has(entry.id));
     if (remaining.length === 0) this.rows.delete(threadId);
     else this.rows.set(threadId, remaining);
-    this.unindexEntries(threadId, removed);
+    this.messageIndex.unindex(threadId, removed);
+    // Rolling back an admission must also retract its receipt. A receipt left behind would keep
+    // refusing the identity forever, turning a compensated write into a permanent tombstone that
+    // silently swallows every later retry of the same producer key.
+    this.privateAdmissions.forget(threadId, removed);
   }
 
   async list(threadId: string): Promise<QueueLedgerEntry[]> {
@@ -209,10 +205,9 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
 
   async getByMessageIds(threadId: string, messageIds: readonly string[]): Promise<Map<string, QueueLedgerEntry[]>> {
     const grouped = new Map<string, QueueLedgerEntry[]>();
-    const threadIndex = this.messageRows.get(threadId);
-    if (!threadIndex) return grouped;
+    if (!this.messageIndex.has(threadId)) return grouped;
     for (const messageId of new Set(messageIds)) {
-      const entryIds = threadIndex.get(messageId);
+      const entryIds = this.messageIndex.entryIds(threadId, messageId);
       if (!entryIds) continue;
       const entries: QueueLedgerEntry[] = [];
       for (const entryId of entryIds) {
@@ -297,7 +292,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   ): Promise<QueueLedgerTransitionResult> {
     return commitInMemoryQueueLedgerEntry({
       rows: this.rows,
-      unindexEntries: (currentThreadId, entries) => this.unindexEntries(currentThreadId, entries),
+      unindexEntries: (currentThreadId, entries) => this.messageIndex.unindex(currentThreadId, entries),
       threadId,
       entryId,
       claimId,

@@ -41,8 +41,14 @@ function mockMessageStore(opts = {}) {
         userId: input.ownerUserId,
         mentions: [input.targetCatId],
         deliveryStatus: 'queued',
-        // Mirrors PersistedQueueDelivery: `from` is derived from the envelope's source.
-        from: { kind: 'external', connectorId: input.source.connector },
+        // Mirrors PersistedQueueDelivery: `from` is derived from the envelope's source — including
+        // the actor. Dropping `source.sender` here made this mock blind to a canonical-identity
+        // regression (#1398 P1); it now carries the same person production does.
+        from: {
+          kind: 'external',
+          connectorId: input.source.connector,
+          ...(input.source.sender ? { sender: input.source.sender } : {}),
+        },
       };
       messages.push(msg);
       const state = opts.admitState ?? 'started';
