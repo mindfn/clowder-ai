@@ -47,6 +47,29 @@ skill 与 mcp **没有**白名单——所以这两类插件今天就能从外�
 factory」改成「插件声明要跑什么」，limb 同理，7 个 github factory 才可能出去。
 §4 顺序图里「先迁类型 / 先发版」那一格**作废**。
 
+## 0.01　再更正（同日，比 §0.0 更靠根）：两套系统各占闭环一半，谁都不能删
+
+§0.0 提出的「删掉 C1、回到传统系统拆白名单」**是错的**。逐条核完：
+
+| | 传统系统 | C1 系统 |
+|---|---|---|
+| 插件从哪来 | `pluginsDir = packages/api/src/plugins`，`PluginRegistry.scan()` = `readdirSync`（`PluginRegistry.ts:36,46`） | `LocalPluginPackageAdmission.install()`（`local-package-admission.ts:199`），有 inventory / 完整性 / 生命周期 |
+| 有安装 / 卸载吗 | **没有**。`plugin-routes.ts` 只有 list/get/enable/disable/config/test | **有** |
+| 能注册能力吗 | **能**：skill/mcp/limb/schedule | **不能**：从未激活过任何东西 |
+
+**传统系统里「插件」的定义就是「Host 源码树里的一个目录」。**
+这才是 github 代码出不去的根因——它不是"Host 里混进了插件代码"，
+它是**传统系统定义下的一个合法插件**。§0.0 说的两个白名单
+（schedule factory / limb adapter）是这个定义的**结果**，不是原因：
+插件既然是源码，factory 当然可以在 Host 源码里 `register`。
+
+**闭环 = 把 C1 的安装/卸载/生命周期，接上传统系统的能力注册面。**
+既不删 C1，也不删传统；收敛点是两者之间那条今天不存在的连线
+（`PluginResourceActivator` 在 `runtime-composition.ts` 里 0 引用）。
+
+据此，Host 侧的活一句话：**让能力注册由「已安装的包」驱动，而不是由「源码目录」驱动。**
+做完这一条，github 目录才能从 `packages/api/src/plugins` 变成一个可安装包。
+
 ## 0. 目标形态（operator 裁定，一句话）
 
 ```
