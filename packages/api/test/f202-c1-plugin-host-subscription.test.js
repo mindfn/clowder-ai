@@ -4,6 +4,7 @@ import { beforeEach, describe, test } from 'node:test';
 let createMessagingDomain;
 let createPluginMessagingSubscriptionSession;
 let createSubscriptionDelivery;
+let createMessagingStores;
 let MessageStore;
 let ThreadStore;
 
@@ -17,6 +18,7 @@ beforeEach(async () => {
     '../dist/domains/plugin/plugin-messaging-subscription-host.js'
   ));
   ({ createSubscriptionDelivery } = await import('../dist/domains/messaging/subscription-delivery.js'));
+  ({ createMessagingStores } = await import('../dist/domains/messaging/stores/factory.js'));
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
   ({ ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js'));
 });
@@ -24,19 +26,25 @@ beforeEach(async () => {
 function createFixture() {
   const messages = new MessageStore();
   const threads = new ThreadStore();
-  const messaging = createMessagingDomain({ messageStore: messages });
+  const stores = createMessagingStores();
   const calls = [];
-  const delivery = createSubscriptionDelivery({
-    messaging,
-    delivery: {
-      async deliver() {
-        throw new Error('module subscriptions must use their declared action, not the frozen delivery row');
+  let messaging;
+  let delivery;
+  const restart = () => {
+    messaging = createMessagingDomain({ messageStore: messages, stores });
+    delivery = createSubscriptionDelivery({
+      messaging,
+      delivery: {
+        async deliver() {
+          throw new Error('module subscriptions must use their declared action, not the frozen delivery row');
+        },
+        async invoke(instanceId, method, params) {
+          calls.push({ instanceId, method, params });
+        },
       },
-      async invoke(instanceId, method, params) {
-        calls.push({ instanceId, method, params });
-      },
-    },
-  });
+    });
+  };
+  restart();
   const createSession = (effectiveGrants = ['message.event.subscribe']) =>
     createPluginMessagingSubscriptionSession({
       pluginId: PLUGIN_ID,
@@ -47,7 +55,18 @@ function createFixture() {
       messaging,
       delivery,
     });
-  return { calls, createSession, delivery, messaging, threads };
+  return {
+    calls,
+    createSession,
+    get delivery() {
+      return delivery;
+    },
+    get messaging() {
+      return messaging;
+    },
+    restart,
+    threads,
+  };
 }
 
 async function publish(messaging, threadId, text, producer = 'producer-1') {
@@ -98,6 +117,7 @@ describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
     await h.delivery.drain(thread.id);
     await first.stop('host_shutdown');
 
+    h.restart();
     await publish(h.messaging, thread.id, 'while-host-down');
     const restarted = h.createSession();
     await restarted.host.subscribe({ threadId: thread.id, method: 'fixture.outbound' });
