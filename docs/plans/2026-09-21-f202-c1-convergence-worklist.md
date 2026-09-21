@@ -54,10 +54,40 @@ host.messaging.deliver
 > （我原文写"由参数携带"是错的，sol 在实现时查出并纠正。）
 **验收**：`f202-c1-end-to-end-journey.test.js` 全绿且不再出现自造签名。
 
-### C-2　把已声明但调不到的能力接上线
-`thread.listMetadata` / `thread.readContent` 在已发布 `Capability` 里，但**既无 wire 方法也无作者面**。
-接线（不是扩面）。同批可核对的还有 `memory.query|append|retrieve`、`whisper.extend`——
-**C1 只接 `thread.*` 两个**，其余登记不做。
+### C-2　~~把已声明但调不到的能力接上线~~ —— **取消（2026-09-21 从实际诉求收敛得出）**
+
+### C-4 也一并取消。理由见下，这是从 7 个 connector 的**真实调用**数出来的，不是推测。
+
+operator 第四次指出方向：
+
+> 基于 sdk 来推导 host 的接口有且只有一种场景：sdk 已有能力不满足，且是**开发新插件**时。
+> 我们现在做的是**插件迁移**——应该整理收敛这些插件需要调用/实现的接口，在 Host 收敛做完，然后清理代码。
+
+照此把 7 个 connector 包实际用到的 Host 面全部数出来（`grep context.*` on `connector-*/src`）：
+
+| 实际调用 | 次数 | 对应 Host 能力 | 状态 |
+|---|---|---|---|
+| `context.config.get` | 13 | `plugin.config.read` | ✅ 已发布可用 |
+| `context.secrets.get` | 10 | `secret.read` | ✅ |
+| `context.state.set/get` | 3 | `plugin.state.set/get` | ✅ |
+| `context.messaging.send` | 2 | `messaging.send` | ✅ |
+| `context.messaging.subscribe` | 2 | `message.event.subscribe` | ✅ |
+| `context.connectors.deliver` | 5 | 由 `host.messaging.deliver` 取代 | ✅ C-1 已接通 |
+| `context.logger` | 7 | SDK 本地日志函数表，不在 `Capability` / `WIRE_METHOD_NAMES` | 无需 Host 面 |
+| ~~`context.open`~~ | 2 | **误报**：实为 `context.open_chat_type` / `open_chat_id`，飞书 webhook 载荷字段 | 非 Host 面 |
+
+**七个包里没有任何 `thread.*` 调用。** 它们不列 thread、不读 thread、不建 thread——
+会话落点靠激活时签发的地址（`relay-address-provisioning.ts`，`88f7f8c4c`），
+群↔thread 映射靠 `plugin.state`（已有）。
+
+**所以 C-2 / C-4 服务的是一个假想需求。** 我此前从 operator 的 5 步流程**推导**出"插件要取/建 thread"，
+但那 5 步描述的是**未来插件可能的做法**，不是这 7 个包**现在的做法**。迁移的验收标准是这 7 个包能跑，
+不是把所有可想象的能力补全。
+
+> **这是今晚第四个同形状的错**：用推理代替对被描述物的清点。前三次是类型 vs schema、
+> 子集 vs 全集、文件位置 vs 定义归属。这次是**假想流程 vs 实际调用**。
+
+**结论：Host 侧接口面已经完整，迁移不缺任何东西。剩下的只有 C-5 删代码。**
 
 ### C-3　thread 归属 metadata（通用版）
 `ThreadStore` 已有 `updateSystemKind` / `updateConnectorHubState`。
@@ -65,11 +95,7 @@ host.messaging.deliver
 （哪个 pluginInstance 拥有这个 thread）。**一换一，不是新增。**
 地址由归属推导 → 不需要逐 thread 授予。
 
-### C-4　"创建一个归属自己的 thread"（唯一真新增）
-能力表里没有创建类，这是本轮唯一新增公共面。**必须写成通用形状**，
-名字与参数中不出现 `connector` / `im`（前台猫按访客分线用同一个方法）。
-
-### C-5　删除（必须排在 C-1…C-4 之后）
+### C-5　删除（C-2/C-4 取消后，这是 Host 侧仅剩的一项）
 ```
 ConnectorRouter 664 · ConnectorCommandLayer 621 · connector-gateway-bootstrap 1,195
 OutboundDeliveryHook 397 · StreamingOutboundHook 383 · ConnectorThreadBindingStore 71
