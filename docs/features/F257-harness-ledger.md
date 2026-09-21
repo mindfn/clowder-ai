@@ -4,6 +4,7 @@ related_features: [F192, F245, F237, F254, F177, F233, F153, F244, F218]
 topics: [harness, self-evolution, eval, governance, observability]
 doc_kind: spec
 created: 2026-07-06
+tips_exempt: "2026-09-16 evaluator-only cycle introspection is an internal harness control surface, not an end-user discovery journey."
 ---
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
@@ -24,6 +25,15 @@ created: 2026-07-06
 6. **旧派生数据不迁移**：旧 Objective id、`SegmentJudgment`、时间窗分摊与违规率不参与新评估；但不删除 raw tracing、message、thread 等原始持久数据。
 
 新 Console 的 Eval 卡只展示“归属 Objective / Evaluation Model / Metric 结果 / 评估时间 / 评估窗口”；Tracing 卡展示真实 episode 回放，不再把 ID 列表冒充回放剧场。
+
+### 2026-09-16 evaluator cycle-status 读面
+
+Objective 评估 thread 可通过 `cat_cafe_read_cycle_status(objectiveId)` 读取当前 CycleRecord 的 typed lifecycle，以及与 trigger checker 同口径的 N/M/D 进度。该读面是纯派生投影，不初始化 cycle、不触发 assignment，也不新增持久化 lifecycle state：
+
+- `evalStatus=idle` + `assignmentDelivery=not_requested` 表示 N/M/D 尚未触发，当前没有 assignment；assignment 由 scheduler event-driven 投递，评估猫不得据此轮询或 `hold_ball`。
+- `evalStatus=requested` + `assignmentDelivery=pending` 才表示 cycle 已触发、assignment 尚未完成落库，可把问题精确归因到 delivery 链路；已带 `assignmentMessageId` 的 requested/retriggered cycle 则为 `delivered`。
+- N 是当前原生窗口的 owner trace 数；M 是按 trigger coordinate 去重的高置信 wake event 数（structured annotation 按 `incidentKey`，MCP marker 跨 metric 按 invocation），不是语义 root-cause 数；D 只有在窗口内至少有一条 trace 时才 eligible。
+- requested/retriggered cycle 的进度固定在 `cycleEnd`，避免查询时间改变已冻结的触发证据。
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
