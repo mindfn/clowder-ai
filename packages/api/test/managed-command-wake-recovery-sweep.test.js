@@ -380,6 +380,37 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.deepEqual(await sweep.runOnce(), { scanned: 0, recovered: 0, pending: 0 });
   });
 
+  test('a post-commit notification failure does not un-admit a durable wake', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const h = makeHarness();
+    // Composition commits Message + Queue row, then asks the drain to look. That second step is
+    // best-effort by design: the row is already durable, so letting its failure escape would hand
+    // the producer an error about work that is committed and about to run — the producer would
+    // release its claim and record "nothing was written". Queue commit is the durable boundary.
+    const admit = h.deps.admitWake;
+    h.deps.admitWake = async (input) => {
+      const admitted = await admit(input);
+      try {
+        throw new Error('socket fan-out unavailable after commit');
+      } catch {
+        // swallowed exactly as composition swallows it
+      }
+      return admitted;
+    };
+    const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+
+    await sweep.recordCompletion({
+      taskId: 'hold-ball-task-1',
+      wakeContent: 'gate finished',
+      result: { exitCode: 0, timedOut: false, durationMs: 9_000 },
+    });
+
+    const command = h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand;
+    assert.equal(command.state, 'enqueued', 'a durable admission must not be reported as unwritten');
+    assert.equal(h.appended.length, 1, 'exactly one message');
+    assert.equal(command.messageId, h.appended[0].id);
+  });
+
   test('a refused admission writes nothing, and the retry is the first thing that persists', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const h = makeHarness({ triggerOutcomes: ['full', 'enqueued', 'enqueued'] });

@@ -741,6 +741,23 @@ preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装
 `not_admitted`，一个字节都不写。另外 publication（`enqueueA2ATargets` 的 socket/drain 侧效应）失败不再
 翻转成 blocked——Queue commit 才是持久边界，行已经在了就不能反悔说没投递（INV-I2）。
 
+#### I.5 `publishClaimedAt` 的混合版本边界（迁移/soak 必须照此描述）
+
+claim 走独立字段、`delivery` 保持 `pending`，这解决的是**回滚**：旧 binary 只认识
+`delivery === 'pending'`，把 claim 编码进枚举会让降级后的旧节点判定为终态，从而永久搁浅
+owner wake——而那正是 claim 本身要拯救的崩溃窗口。
+
+但要说清楚它**没有**解决什么。**新旧 writer 同时在跑**时，旧 writer 不认识 claim，仍可能在新
+writer 已经 suppress 之后发出通知；结果是持久状态写着 `suppressed`、owner 却收到了消息。
+
+所以准确的说法是：
+
+- **单活跃 writer（升级、回滚、崩溃恢复）**：AC-C1 严格成立——修好的冲突不打扰 owner。
+- **混合版本窗口**：降级为「不丢工作，但审计不精确」。不得描述成严格 AC-C1。
+
+方向是安全的（失败方向是 owner 被告知，不是工作丢失），但 soak 与迁移证据必须写明这条边界，
+而不是笼统地声称 AC-C1 成立。
+
 #### I.3 仍未收口 —— **已清空（2026-09-21）**
 
 Phase I 登记表上的六个生产者全部收口。`src/` 下 `ConnectorInvokeTrigger` 零引用，两阶段

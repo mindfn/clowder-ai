@@ -6,7 +6,7 @@ import { resolveManagedCommandWakeEventCarrier } from '../dist/domains/ball-cust
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
-import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
+import { emitQueueUpdated } from '../dist/utils/queue-enrichment.js';
 import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 // ─── Shared Mocks ───────────────────────────────────────────────
@@ -388,19 +388,31 @@ describe('Queue Integration (E2E scenarios)', () => {
     // 1. Simulate active invocation
     trackerMock.setActive('thread-1');
 
-    // 2. ConnectorInvokeTrigger fires
-    const trigger = new ConnectorInvokeTrigger({
-      router: routerMock.router,
-      socketManager: socketMock.manager,
-      invocationRecordStore: recordMock.store,
-      invocationTracker: trackerMock.tracker,
-      invocationQueue: queue,
-      queueProcessor: localProcessor,
-      messageStore,
-      log: noopLog(),
+    // 2. The connector input is adopted through the canonical admission. This used to go through
+    // ConnectorInvokeTrigger, which appended first and enqueued afterwards; the seam is gone, so
+    // the test drives the same durable admission composition now uses, plus the queue_updated
+    // notification composition sends after the row commits.
+    await queue.enqueueExistingMessageDurable(messageStore, sourceMessage.id, {
+      threadId: 'thread-1',
+      userId: 'user-1',
+      sourceId: sourceMessage.id,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      content: sourceMessage.content,
+      messageId: sourceMessage.id,
+      from: sourceMessage.from,
+      targetCats: ['opus'],
+      intent: 'execute',
     });
-
-    trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', sourceMessage.content, sourceMessage.id);
+    await emitQueueUpdated(
+      socketMock.manager,
+      'user-1',
+      'thread-1',
+      queue.list('thread-1', 'user-1'),
+      messageStore,
+      'enqueued',
+    );
+    localProcessor.requestDrain?.('thread-1');
     await settle();
 
     // 3. Verify it was queued (NOT directly executed)
@@ -500,27 +512,26 @@ describe('Queue Integration (E2E scenarios)', () => {
       messageStore,
       log: noopLog(),
     });
-    const trigger = new ConnectorInvokeTrigger({
-      socketManager: socketMock.manager,
-      invocationQueue: queue,
-      queueProcessor: localProcessor,
-      messageStore,
-      log: noopLog(),
-    });
-
     trackerMock.setActive('thread-1');
-    assert.equal(
-      await trigger.trigger(
-        'thread-1',
-        /** @type {any} */ ('opus'),
-        'user-1',
-        wakeMessage.content,
-        wakeMessage.id,
-        undefined,
-        { priority: 'urgent', sourceCategory: 'scheduled' },
-      ),
-      'enqueued',
-    );
+    // The managed wake is admitted through the canonical durable seam, urgent and filed as
+    // scheduled exactly as the producer states it.
+    const wakeAdmission = await queue.enqueueExistingMessageDurable(messageStore, wakeMessage.id, {
+      threadId: 'thread-1',
+      userId: 'user-1',
+      sourceId: wakeMessage.id,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      content: wakeMessage.content,
+      messageId: wakeMessage.id,
+      from: wakeMessage.from,
+      targetCats: ['opus'],
+      intent: 'execute',
+      priority: 'urgent',
+      sourceCategory: 'scheduled',
+    });
+    assert.equal(wakeAdmission.outcome, 'enqueued');
+    localProcessor.requestDrain?.('thread-1');
+    await settle();
 
     assert.equal(routeCalls.length, 0, 'the wake must not join or preempt the active provider turn');
     assert.equal(queue.findEntryWithMessageId('thread-1', wakeMessage.id)?.status, 'queued');
@@ -573,18 +584,19 @@ describe('Queue Integration (E2E scenarios)', () => {
       log: noopLog(),
     });
     localProcessor.suppressAutoResume('thread-1', 'opus', ['cancelled-invocation']);
-    const trigger = new ConnectorInvokeTrigger({
-      router: routerMock.router,
-      socketManager: socketMock.manager,
-      invocationRecordStore: recordMock.store,
-      invocationTracker: trackerMock.tracker,
-      invocationQueue: queue,
-      queueProcessor: localProcessor,
-      messageStore,
-      log: noopLog(),
+    await queue.enqueueExistingMessageDurable(messageStore, sourceMessage.id, {
+      threadId: 'thread-1',
+      userId: 'user-1',
+      sourceId: sourceMessage.id,
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      content: sourceMessage.content,
+      messageId: sourceMessage.id,
+      from: sourceMessage.from,
+      targetCats: ['opus'],
+      intent: 'execute',
     });
-
-    await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', sourceMessage.content, sourceMessage.id);
+    localProcessor.requestDrain?.('thread-1');
     await settle();
 
     assert.equal(routerMock.calls.length, 0, 'a late connector wake must not bypass the reset owner');
