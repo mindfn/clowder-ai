@@ -210,7 +210,6 @@ async function executeMainHealth(
   deps: MainHealthExecutionDeps,
 ): Promise<void> {
   if (!ctx.deliver) throw new Error('deliver not available');
-  if (!ctx.invokeTrigger) throw new Error('invokeTrigger not available');
   const observed = await readReceipt(input, deps.inspectReceipt, ctx.signal);
   const verified = await runCheckOnReceiptTree(input, observed.receipt, deps, ctx.signal);
   const project = await readProjectQuarantine(input, deps.readQuarantine, deps.now);

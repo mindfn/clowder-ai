@@ -134,18 +134,6 @@ export interface ManagedCommandWakeLegacyAdoption {
   readonly content: string;
 }
 
-export interface ManagedCommandWakeTrigger {
-  trigger(
-    threadId: string,
-    catId: string,
-    userId: string,
-    message: string,
-    messageId: string,
-    contentBlocks?: undefined,
-    policy?: { sourceCategory?: string; priority?: 'urgent' | 'normal' },
-  ): Promise<ManagedCommandWakeTriggerOutcome>;
-}
-
 export interface ManagedCommandWakeDynamicTaskStore {
   getAll(): DynamicTaskDef[];
   getById(id: string): DynamicTaskDef | null;

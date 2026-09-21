@@ -187,16 +187,6 @@ export interface ConnectorGatewayDeps {
       userId?: string,
     ): { tags: readonly string[] } | null | Promise<{ tags: readonly string[] } | null>;
   };
-  readonly invokeTrigger: {
-    trigger(
-      threadId: string,
-      catId: CatId,
-      userId: string,
-      message: string,
-      messageId: string,
-      ...args: unknown[]
-    ): Promise<'enqueued' | 'full'>;
-  };
   readonly socketManager?:
     | {
         broadcastToRoom(room: string, event: string, data: unknown): void;

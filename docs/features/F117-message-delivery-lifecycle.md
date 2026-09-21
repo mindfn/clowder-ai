@@ -645,7 +645,7 @@ Why: 持久真相边界不变；view 只让成员在自己的后续自然 turn �
 | KD-19 | 内部协议诊断只进入 telemetry/private evidence，不先写 History 再由 API/Web 隐藏 | 展示层屏蔽不能修复错误的生产边界；新代码停止生成 `routing-guard-failure`，API 读取过滤只保留为旧版本存量兼容 | 2026-09-20 |
 | KD-20 | terminal 后的任何显式路由凭据永远开启新 active hop；只有无行首 `@`、无 structured `targetCats` 的礼貌文本可 quiet ACK | 文本与结构化目标都是明确路由指令，生命周期投影不能静默吞掉；新的 generation 与统一 loop-streak 足以防止 ACK 乒乓 | 2026-09-20 |
 
-### Phase I（producer 统一登记表，2026-09-21）— 收口进行中
+### Phase I（producer 统一登记表，2026-09-21）— 已收口
 
 Phase I 之前的迁移是「搜到一个改一个」：两次宣称"所有 producer 已迁移、旧 trigger 已空"，随后又
 不断发现活路径。根因不是哪一处改错，而是**没有先把生产者数完**。这张表就是那份清单——它是
@@ -685,6 +685,8 @@ normative 的：新增任何唤醒猫的入口，必须先在这里登记，再�
 | 2 | Conflict check 第二次 admission | `ConflictCheckTaskSpec` 在 `route()` 已 admit 后再 `invokeTrigger.trigger(messageId)` | 删除该分支；`route()` 的 admission 即唤醒 | `outcome.outcomeId`（route 内） | `1398-conflict-check-single-admission.test.js` |
 | 3 | Limb transcript | `append(deliveryStatus:'queued')` + `trigger.trigger` | `deliverConnectorMessage` 原子 admission | `limb:${nodeId}:${observationId}` | `limb-transcript-cat-delivery.test.js` |
 | 5 | Re-eval carrier（F266 stable-case） | `reeval-case-task-dispatch.ts` 先 `append(deliveryStatus:'queued')`（键 `f266-task-carrier:…`）再 `deliver` 入队（键 `action:${leaseId}:${gen}`） | dispatcher 只造信封不落盘；`appendA2ASourceWithLedgerAdmission` 一次事务提交 Message + Queue row | `f266-task-carrier:${taskId}:${generation}`（两半合一） | `1398-reeval-carrier-atomic-admission.test.js` |
+| 4 | Managed hold wake | `message-fence.ts:137` append queued + `RecoveryEngine.ts:218` trigger（中间隔一次 return、re-parse、两次 store 查询、15s 宽限、一次 CAS） | fence 先验 lease，再 `InvocationQueue.appendAndEnqueueDurable` 一次事务；`condition_met` 直落 `enqueued`，信封逐字节不变 | `hold-ball-completion:${taskId}`（Message/Queue 同值） | `managed-command-wake-recovery-sweep` / `-exactly-once` / `callback-hold-ball-wakewhen` 三份按新契约重写 |
+| 6 | `ConnectorInvokeTrigger` 整条旧链 | 类本身 + `ScheduleInvokeTrigger` 类型 + `TaskRunnerV2.setInvokeTrigger` + `execute-pipeline` 取消感知包装 + 6 处 composition 透传 | 全部删除——`src/` 下 `ConnectorInvokeTrigger` 零引用 | — | `connector-invoke-trigger.test.js` 随类删除；`task-runner-v2` 相应用例收窄到仍存在的副作用 |
 
 关于 #2 的诚实修正（两层，第二层推翻了第一层的一半）：
 
@@ -739,12 +741,10 @@ preflight 拒绝，旧路径会留下一条 queued Message 当作垃圾。新装
 `not_admitted`，一个字节都不写。另外 publication（`enqueueA2ATargets` 的 socket/drain 侧效应）失败不再
 翻转成 blocked——Queue commit 才是持久边界，行已经在了就不能反悔说没投递（INV-I2）。
 
-#### I.3 仍未收口（下一步，坐标已定位）
+#### I.3 仍未收口 —— **已清空（2026-09-21）**
 
-| # | 生产者 | 位置 | 为什么更重 |
-|---|---|---|---|
-| 4 | Managed hold wake | 见下方 I.3a 完整登记 | 它不是漏接一行，而是一整套围绕「两次写会分叉」长出来的补偿状态机；且现有测试把两阶段**写成了契约** |
-| 6 | 死 `invokeTrigger` 管线 | `execute-pipeline.ts:273`、`TaskRunnerV2.setInvokeTrigger`、`scheduler/types.ts:155`、`index.ts` deps 包 | 全链路穿过 composition 但**从不调用 `.trigger()`**；`main-health.ts:213` 只做非空断言。必须等 #4/#5 迁完才能连同 `ConnectorInvokeTrigger` 一起删 |
+Phase I 登记表上的六个生产者全部收口。`src/` 下 `ConnectorInvokeTrigger` 零引用，两阶段
+「先 append 再入队」在生产路径上不再存在。
 
 #### I.3a #4 Managed hold wake — 实现前登记（按「旧入口 → 新入口 → 幂等键 → red/green」）
 

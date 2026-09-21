@@ -27,7 +27,7 @@ const STACKCHAN_SOURCE: ConnectorSource = {
  * A spoken transcript from a physical limb is an ordinary external input, so it takes the ordinary
  * path: one atomic Message + Queue admission keyed by the observation.
  *
- * It used to append a `deliveryStatus:'queued'` message and then call `ConnectorInvokeTrigger` to
+ * It used to append a `deliveryStatus:'queued'` message and then call a separate invoke trigger to
  * enqueue it. Those are two writes, and the window between them is not theoretical for this
  * producer: `LimbObservationRouter` releases the ingress claim only when `deliverTranscript`
  * *throws*, so a crash after the append left a queued message that no Queue row referenced and no

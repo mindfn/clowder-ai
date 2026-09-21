@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ExecuteContext, ScheduleInvokeTrigger } from '../../scheduler/types.js';
+import type { ExecuteContext } from '../../scheduler/types.js';
 import type { EvalCatInvocationPacket } from '../eval-cat-invocation.js';
 import type { EvalDomainRegistryEntry } from './eval-domain-registry.js';
 import type {
@@ -55,7 +55,6 @@ interface DispatchInput {
   triggerReason: string;
   store?: IEvalDomainTriggerStore;
   deliver?: ExecuteContext['deliver'];
-  invokeTrigger?: ScheduleInvokeTrigger;
   defaultUserId?: string;
   nowMs?: number;
   tokenFactory?: () => string;

@@ -492,7 +492,7 @@ export interface QueueProcessorDeps {
   streamingHook?: StreamingOutboundHookLike;
   /** F088 fix: optional thread metadata lookup for outbound delivery. */
   threadMetaLookup?: (threadId: string) => ThreadMetaLike | undefined | Promise<ThreadMetaLike | undefined>;
-  /** Outbound delivery timeout in ms (default 10_000). Mirrors ConnectorInvokeTrigger. */
+  /** Outbound delivery timeout in ms (default 10_000). Mirrors the connector delivery path. */
   deliverTimeoutMs?: number;
   /** #813: Thread store for passive continuation (write/consume pending continuation). */
   threadStore?: ThreadStoreLike;
@@ -4251,7 +4251,7 @@ export class QueueProcessor {
       const persistenceContext: PersistenceContext = { failed: false, errors: [] };
       const collectedTextParts: string[] = [];
       const bufferedActionMessages: unknown[] = [];
-      // #845 fix: per-cat token usage from done events (same pattern as messages.ts / ConnectorInvokeTrigger).
+      // #845 fix: per-cat token usage from done events (same pattern as messages.ts).
       // Without this, queued/connector invocations succeed without writing usageByCat, leaving 159+ orphans
       // in the daily usage report.
       const collectedUsage = new Map<string, TokenUsage>();
@@ -4259,7 +4259,7 @@ export class QueueProcessor {
       // QueueProcessor must honor that terminal signal instead of falling through to succeeded.
       let governanceErrorCode: string | undefined;
 
-      // F088 fix: Track per-turn content for outbound delivery (same pattern as ConnectorInvokeTrigger)
+      // F088 fix: Track per-turn content for outbound delivery (same pattern as the connector delivery path)
       const outboundTurns: Array<{
         catId: string;
         textParts: string[];
@@ -4348,7 +4348,7 @@ export class QueueProcessor {
           });
       }
 
-      // F151: Mid-loop delivery to preserve ordering (same fix as ConnectorInvokeTrigger)
+      // F151: Mid-loop delivery to preserve ordering (same fix as the connector delivery path)
       const deliveredTurnIndices = new Set<number>();
       const DELIVER_TIMEOUT_MS = this.deps.deliverTimeoutMs ?? 10_000;
       let threadMeta: ThreadMetaLike | undefined;
@@ -4867,7 +4867,7 @@ export class QueueProcessor {
         const errorCode = (msg as { errorCode?: unknown }).errorCode;
 
         // #845 fix: accumulate per-cat token usage on done events. Mirrors messages.ts:992-994
-        // and ConnectorInvokeTrigger.ts:386-387. Without this, queue-* and connector-* invocations
+        // and the connector delivery path. Without this, queue-* and connector-* invocations
         // succeed but never write usageByCat, dropping ~159/164 records from the daily report.
         // RouterLike.routeExecution yields an opaque record type, so narrow metadata via local cast.
         if (msg.type === 'done' && msg.catId) {
@@ -4892,7 +4892,7 @@ export class QueueProcessor {
             persistenceContext.richBlocks = undefined;
           }
           currentTurnCatId = undefined;
-          // F151: Deliver completed cat's turns immediately (same fix as ConnectorInvokeTrigger)
+          // F151: Deliver completed cat's turns immediately (same fix as the connector delivery path)
           if (this.deps.outboundHook && !entry.execution.actionSuccessorFence) {
             if (threadMetaPromise) {
               threadMeta = await threadMetaPromise;
@@ -5336,7 +5336,7 @@ export class QueueProcessor {
       }
 
       // R3 P2 fix (#873): Deliver error message to external IM so user sees
-      // a reply instead of silence (mirrors ConnectorInvokeTrigger error path).
+      // a reply instead of silence (mirrors the connector delivery error path).
       // R6 fix: timeout prevents adapter hang from pinning queue slot (Cloud P1).
       if (
         this.deps.outboundHook &&
@@ -5649,7 +5649,7 @@ export class QueueProcessor {
 
   /**
    * F088 fix: Deliver collected outbound turns to bound external chats.
-   * Mirrors ConnectorInvokeTrigger ⑥ logic: per-turn delivery, streaming cleanup, late-success fallback.
+   * Mirrors the connector delivery ⑥ logic: per-turn delivery, streaming cleanup, late-success fallback.
    */
   private async deliverOutbound(
     threadId: string,

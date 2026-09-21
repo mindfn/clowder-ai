@@ -1,12 +1,11 @@
 import { SCHEDULER_TRIGGER_PREFIX } from '@cat-cafe/shared';
-import type { DeliverOpts, ScheduleInvokeTrigger } from '../../infrastructure/scheduler/types.js';
+import type { DeliverOpts } from '../../infrastructure/scheduler/types.js';
 import type { BallCustodyWakeAdmissionReceipt, BallCustodyWakeSender } from './BallCustodyProbeScheduler.js';
 
 export interface SchedulerBallCustodyWakeSenderOptions {
   readonly deliver: (opts: DeliverOpts) => Promise<string>;
   /** Reads History back so retries dispatch the exact body accepted by idempotent persistence. */
   readonly readPersistedContent: (messageId: string) => Promise<string | null>;
-  readonly invokeTrigger?: ScheduleInvokeTrigger;
   readonly defaultUserId?: string;
   readonly logger?: {
     warn?: (obj: unknown, msg?: string) => void;

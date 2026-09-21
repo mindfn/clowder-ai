@@ -10,7 +10,6 @@ import type {
   GateCtx,
   RunLedgerRow,
   RunOutcome,
-  ScheduleInvokeTrigger,
   ScheduleRunTiming,
   TaskSpec_P1,
 } from './types.js';
@@ -42,7 +41,6 @@ export interface PipelineContext {
   /** Phase 4 (AC-H2): fetch web content with browser-automation routing */
   fetchContent?: (url: string, signal?: AbortSignal) => Promise<FetchResult>;
   /** Phase 4b: invoke a cat to handle a scheduled task (fire-and-forget) */
-  invokeTrigger?: ScheduleInvokeTrigger;
   /** F233 PR3: optional ball-custody event sink for scheduler-originated events. */
   ballCustody?: IBallCustodyIngest;
   managedCommandWakeRecovery?: (taskId: string) => Promise<'missing' | 'pending' | 'recovered'>;
@@ -117,7 +115,6 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
     deliverPrivate,
     cancelQueuedDelivery,
     fetchContent,
-    invokeTrigger,
     ballCustody,
     managedCommandWakeRecovery,
     onItemOutcome,
@@ -260,24 +257,6 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
             return cancelQueuedDelivery(messageId);
           }
         : undefined;
-      const cancellationAwareInvokeTrigger: ScheduleInvokeTrigger | undefined = invokeTrigger
-        ? {
-            trigger(...args: Parameters<ScheduleInvokeTrigger['trigger']>) {
-              // A trigger carrying a message persisted by this same work item is
-              // the bounded completion of that delivery, even if timeout fired
-              // while the message write was settling. Unrelated new triggers
-              // remain fail-fast after cancellation.
-              const effect = Promise.resolve()
-                .then(() => {
-                  if (!deliveredMessageIds.has(args[4])) executeController.signal.throwIfAborted();
-                  return invokeTrigger.trigger(...args);
-                })
-                .finally(() => pendingTriggerEffects.delete(effect));
-              pendingTriggerEffects.add(effect);
-              return effect;
-            },
-          }
-        : undefined;
       const cancellationAwareWakeRecovery = managedCommandWakeRecovery
         ? async (taskId: string): Promise<'missing' | 'pending' | 'recovered'> => {
             executeController.signal.throwIfAborted();
@@ -297,7 +276,6 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
             ...(deliverPrivate ? { deliverPrivate } : {}),
             cancelQueuedDelivery: cancellationAwareCancelQueuedDelivery,
             fetchContent: cancellationAwareFetch,
-            invokeTrigger: cancellationAwareInvokeTrigger,
             ballCustody,
             managedCommandWakeRecovery: cancellationAwareWakeRecovery,
           });

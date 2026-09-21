@@ -13,7 +13,6 @@ import type {
   DeliverOpts,
   FetchResult,
   RunLedgerRow,
-  ScheduleInvokeTrigger,
   ScheduleLifecycleNotifier,
   ScheduleRunTiming,
   ScheduleTaskSummary,
@@ -40,7 +39,6 @@ export interface TaskRunnerV2Options {
   /** Phase 4 (AC-H2): fetch web content with browser-automation routing */
   fetchContent?: (url: string, signal?: AbortSignal) => Promise<FetchResult>;
   /** Phase 4b: invoke a cat to handle a scheduled task (fire-and-forget) */
-  invokeTrigger?: ScheduleInvokeTrigger;
   /** F233 PR3: optional ball-custody event sink for scheduler-originated events. */
   ballCustody?: IBallCustodyIngest;
   /** Ephemeral lifecycle notifications (toast-only, not persisted in thread history) */
@@ -179,7 +177,6 @@ export class TaskRunnerV2 {
   private deliverPrivate: TaskRunnerV2Options['deliverPrivate'];
   private cancelQueuedDelivery: TaskRunnerV2Options['cancelQueuedDelivery'];
   private fetchContent: TaskRunnerV2Options['fetchContent'];
-  private invokeTrigger: TaskRunnerV2Options['invokeTrigger'];
   private ballCustody: TaskRunnerV2Options['ballCustody'];
   private notifyLifecycle: TaskRunnerV2Options['notifyLifecycle'];
   private dynamicTaskStore: TaskRunnerV2Options['dynamicTaskStore'];
@@ -208,17 +205,11 @@ export class TaskRunnerV2 {
     this.deliverPrivate = opts.deliverPrivate;
     this.cancelQueuedDelivery = opts.cancelQueuedDelivery;
     this.fetchContent = opts.fetchContent;
-    this.invokeTrigger = opts.invokeTrigger;
     this.ballCustody = opts.ballCustody;
     this.notifyLifecycle = opts.notifyLifecycle;
     this.dynamicTaskStore = opts.dynamicTaskStore;
     this.isThreadBusy = opts.isThreadBusy;
     this.retryableHoldFailureDelayMs = opts.retryableHoldFailureDelayMs ?? 30_000;
-  }
-
-  /** Late-bind invokeTrigger (constructed after TaskRunnerV2 in boot sequence) */
-  setInvokeTrigger(trigger: ScheduleInvokeTrigger): void {
-    this.invokeTrigger = trigger;
   }
 
   /** F167 Phase M: late-bind busy checker (invocationTracker/queueProcessor built after runner in boot) */
@@ -796,7 +787,6 @@ export class TaskRunnerV2 {
       deliverPrivate: this.deliverPrivate,
       cancelQueuedDelivery: this.cancelQueuedDelivery,
       fetchContent: this.fetchContent,
-      invokeTrigger: this.invokeTrigger,
       ballCustody: this.ballCustody,
       managedCommandWakeRecovery: this.managedCommandWakeRecovery,
       onItemOutcome: (_taskId, _subjectKey, outcome, errorSummary) => {
