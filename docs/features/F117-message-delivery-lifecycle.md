@@ -801,6 +801,27 @@ durable carrier exists」直接把分叉当成期望行为、`exactly-once.test.
 一次」只在「消息可以先于被拒绝的 admission 存在」时才成立。所以 #4 不是机械迁移，而是**重定义
 managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`。约 2700 行测试要按新契约重写。
 
+**实现试做后的两条新发现（2026-09-21，已做过一遍、未合入）**
+
+试做证明入口选择是对的：fence 先验 lease、再用 `appendAndEnqueueDurable` 一次提交 Message + Queue row，
+`condition_met` 直接落到 `enqueued`，全仓 typecheck 通过，生产装配（index.ts）也接好了。但收尾还差两块，
+都不是"再改一行"的量级：
+
+1. **hold-ball 路由没有 Queue 句柄**。`callback-hold-ball-routes.ts` 的 `HoldBallRouteDeps` 里没有
+   `invocationQueue`，而 `deps.managedCommandWakeRecovery ?? new ManagedCommandWakeRecoverySweep({...})`
+   这条 fallback 正是测试走的那条。所以 admission port 必须**作为依赖注入**进路由（像其它生产者一样），
+   否则 fallback sweep 永远 admit 不了——试做时我用空实现占位，直接导致一条用例 90s 超时挂死。
+
+2. **约 20 条测试仍写着两阶段契约**，分布在
+   `managed-command-wake-recovery-sweep.test.js`(1055) / `managed-command-wake-exactly-once.test.js`(477) /
+   `callback-hold-ball-wakewhen.test.js`(1260)。它们不是断言值要换，而是**建模了两阶段机器本身**：
+   偷走过期 message-content claim、in-flight append 与 receipt 不得分叉、并发 sweep 不得重复 dispatch、
+   `_appendedMessages.length >= 2`（"completion message 必须先于 dispatch 持久"）。每一条都要按原子契约
+   重新表达意图，属于逐条理解后重写，不是机械替换。
+
+试做代码已 `git stash` 保留（`wip/F117-#4-managed-hold-atomic-admission`），不是丢弃重来；
+下一轮从"路由注入 admission port"开始，再逐个重写上面三份测试。
+
 **red/green 计划**：先写一条生产形状的红测——在 append 与 enqueue 之间注入崩溃，断言不存在
 「queued Message 但无 Queue row」的中间态；当前实现必然红。再迁移到 `deliver`，该测试转绿，
 并补一条「lease 代已过期 ⇒ 什么都没写」的用例替代 retire-on-lease-error。
