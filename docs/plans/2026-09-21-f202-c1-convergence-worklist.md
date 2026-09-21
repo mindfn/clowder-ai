@@ -10,6 +10,56 @@ architecture-cell: plugin
 
 > 设计依据在 `2026-09-20-f202-c1-host-plugin-interface-contract.md`。本文只讲**改什么、什么顺序**。
 
+## 0.03　根因更正：这份清单的大部分内容，两仓早就在迁移契约里写死了（我从没读过）
+
+operator 问「你们问我的那些问题，插件仓最初就已经明确和声明过了，理论上早该做完了」。
+去读插件仓，属实。**本文 §0.0–§0.02 的多数推导都是在重新发明一份已存在的契约。**
+
+真相源：`clowder-ai-plugins` 分支 `feat/f202-train-c1-plugins-migration`
+（HEAD `81aeb95`，ahead 30），文件 **`migration/f202-train-c1-inventory.json`**。
+关联：`acceptedCoreIssue = zts212653/clowder-ai#1478`；
+Core 对侧 PR `#1487`，其 plan 就是本仓的 `docs/plans/2026-09-19-f202-train-c1-migration-plan.md`。
+
+### 被这份契约推翻的四条（全部作废）
+
+| 我写过的 | 契约原文 |
+|---|---|
+| 「Host 不该造适配器」 | `reusedSurfaces`：**Host-owned** FeatureContext config, secret, state, connector ingress, logging, and **contribution adapters** —— 适配器是已达成的复用面，不是要发明的东西 |
+| 「新动词要在 contract 加 wire 行」 | `machineTruth`：**frozen 13-row wire** + SDK **0.1.0-beta.12** module/lifecycle/action boundary；插件侧 requiredBehavior：*without adding provider-specific wire methods* |
+| 「往 main 的 4 类 resource 收敛」 | 插件仓 `plugin.yaml` 用的就是 contract 形状（`contributions` + `features`）。收敛指**复用 main 的能力实现**，不是复用 main 的 manifest 格式 |
+| 「插件仓是总闸 / 要迁 3 个类型」 | `github-operations/plugin.yaml` 已把 7 条 `factoryId` 换成 `action: {method}` + `schedule` + `policy`，包有 `src/` `dist/`。**插件仓那一半早就做完了** |
+
+### Host 侧要做什么：契约里三句话（`trustBoundary.coreImplementationLane.requiredBehavior`）
+
+1. map existing Host-owned configuration, secrets, bindings, state, schedules,
+   webhooks, and delivery authority **into the frozen plugin surfaces**
+2. prove no double-run, switch the production defaults, and **delete provider-specific
+   Core implementations**
+3. preserve secret redaction, durable state, rollback, and wake authority
+   **without business-specific Host branches**
+
+**第 1 条就是「适配器」的真实含义：把已有能力映射进冻结的面。是映射作业，不是设计作业。**
+
+`hostKernelRetained` 明确留在 Host 的 7 项，含 **generic webhook and schedule activation**。
+
+### 跨仓依赖顺序（`terminalAcceptanceContract.dependencyOrder`）
+
+```
+1. Plugins exact Linux-packed artifact
+2. Core exact-artifact integration journey     ← Host 在这一步
+3. Plugins merge and registry publication
+4. Core registry pin, final journey, and merge
+```
+
+`followupPolicy: no C1 cleanup follow-up PR`——不留尾巴。
+
+### 根因（写在这里防止下一位重犯）
+
+**我从 Host 源码反推了一整轮，而答案写在两仓已达成的迁移契约里，我一次都没打开过它。**
+布偶猫家族病「我能猜出来」的教科书案例：读 Host 代码得到的每个"发现"，
+契约里都有对应条目。**动手前先读 `migration/f202-train-c1-inventory.json` 与
+`docs/plans/2026-09-19-f202-train-c1-migration-plan.md`。**
+
 ## 0.0　更正（2026-09-21，operator 两问逼出来的）：卡点不在插件仓，在 Host 自己的两个白名单
 
 operator 问了两句，两句都推翻了本文先前的结论：
