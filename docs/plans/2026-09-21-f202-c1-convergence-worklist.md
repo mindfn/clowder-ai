@@ -10,6 +10,34 @@ architecture-cell: plugin
 
 > 设计依据在 `2026-09-20-f202-c1-host-plugin-interface-contract.md`。本文只讲**改什么、什么顺序**。
 
+## 0.04　实际状态（读实物，2026-09-21）：两边都停在「声明完成、实现体未开始」
+
+§0.03 里我写「插件仓那一半早就做完了」——**错的，只有声明做完了。**
+
+**插件仓**（operator 已手动暂停该线）：14 个 manager-installable 包，
+13 个 contract/sdk/yaml/runtime/catalog/freshConsumer 六项齐全。
+唯一未闭合的是 `github-operations`，它自己的 closure 字段原文：
+
+- `sdkClosure`: *beta.12 module dependency and **seven schedule action handlers required** before terminal*
+- `runtimeClosure`: *carrier-neutral module and **operation bodies pending C1 implementation***
+- `catalogClosure` / `freshConsumerClosure`: *required; pending …*
+
+实物佐证：`packages/github-operations/src` 共 **89 行**
+（`schedules.ts` 42 + test 45 + index 2），`runGitHubSchedule` 只做入参校验后
+`await port.run(input)`，而 `GitHubOperationPort` **没有实现体**。
+7 条 schedule 的真实逻辑仍在 Host 的 `github-schedule-factories.ts` 一侧。
+
+**Host**：SDK pin `0.1.0-beta.10`，契约 `machineTruth` 要 `0.1.0-beta.12`，
+插件仓当前已到 `0.2.0-beta.1`；contract pin `beta.15` vs 插件仓 `beta.17`。
+`coreImplementationLane.requiredBehavior` 三条一条未做。
+
+> **所以「感觉像从 0 开始」不是错觉，也不是回退：这一阶段两边本来就停在
+> 声明/契约/计划完成、实现体未动的位置。** 本轮没有推进它——
+> 时间花在了重新推导一份已存在的契约上（根因见 §0.03）。
+
+**依赖顺序第 1 步是 Plugins 的打包产物**，而该线被 operator 手动暂停；
+Host 可并行推进的是 requiredBehavior 第 1 条（把已有能力映射进冻结面）与 SDK pin 对齐。
+
 ## 0.03　根因更正：这份清单的大部分内容，两仓早就在迁移契约里写死了（我从没读过）
 
 operator 问「你们问我的那些问题，插件仓最初就已经明确和声明过了，理论上早该做完了」。
