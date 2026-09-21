@@ -3,9 +3,11 @@ import type { PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
+import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
+import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import {
   createMessagingDomain,
@@ -114,7 +116,9 @@ export interface DormantPluginRuntimeCompositionOptions {
    */
   readonly invokeTrigger?: MessagingDomainDeps['invokeTrigger'];
   readonly socketManager?: MessagingDomainDeps['socketManager'];
-  readonly threadStore?: MessagingDomainDeps['threadStore'];
+  readonly threadStore?: IThreadStore;
+  readonly threadBindingStore?: IConnectorThreadBindingStore;
+  readonly threadOwnerUserId?: string;
   readonly getDefaultCatId?: MessagingDomainDeps['getDefaultCatId'];
   readonly getMentionPatterns?: MessagingDomainDeps['getMentionPatterns'];
   readonly collectiveConnector?: Omit<CollectiveConnectorBuiltinRuntimeOptions, 'dataDirectory'> & {
@@ -278,6 +282,17 @@ export function createDormantPluginRuntimeComposition(
     configuration,
     ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
     ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
+    ...(options.threadStore === undefined ||
+    options.threadBindingStore === undefined ||
+    options.threadOwnerUserId === undefined
+      ? {}
+      : {
+          threads: {
+            threadStore: options.threadStore,
+            bindingStore: options.threadBindingStore,
+            ownerUserId: options.threadOwnerUserId,
+          },
+        }),
     log: (level, message, fields) => {
       if (fields === undefined) moduleLogger[level](message);
       else moduleLogger[level](fields, message);

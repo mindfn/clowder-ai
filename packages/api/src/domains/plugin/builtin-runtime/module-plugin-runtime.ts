@@ -1,7 +1,9 @@
 import { pathToFileURL } from 'node:url';
 
 import type { PluginManifest } from '@clowder-ai/plugin-contract';
+import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
+import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -19,6 +21,11 @@ import {
   type PluginStorageHost,
 } from '../plugin-private-storage.js';
 import { createPluginTaskHost, type PluginTaskHost } from '../plugin-task-host.js';
+import {
+  createPluginThreadHost,
+  createUnavailablePluginThreadHost,
+  type PluginThreadHost,
+} from '../plugin-thread-host.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 import { createModuleHostInvocation } from './module-host-invocation.js';
 
@@ -41,6 +48,7 @@ export interface ModulePluginHostShape {
   readonly secrets: { get(key: string): Promise<string | undefined> };
   readonly storage: PluginStorageHost;
   readonly tasks: PluginTaskHost;
+  readonly threads: PluginThreadHost;
   readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -58,6 +66,11 @@ export interface ModulePluginRuntimeOptions {
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly storage?: PluginPrivateStoragePort;
   readonly taskStore?: ITaskStore;
+  readonly threads?: {
+    readonly threadStore: IThreadStore;
+    readonly bindingStore: IConnectorThreadBindingStore;
+    readonly ownerUserId: string;
+  };
   readonly log: ModulePluginHostShape['log'];
 }
 
@@ -143,11 +156,23 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         effectiveGrants,
         ...(this.options.storage === undefined ? {} : { storage: this.options.storage }),
       });
+      const threads = this.options.threads
+        ? createPluginThreadHost({
+            pluginId: packageRecord.pluginId,
+            pluginInstanceId,
+            ownerUserId: this.options.threads.ownerUserId,
+            effectiveGrants,
+            systemThreadTitle: packageRecord.manifest.name,
+            threadStore: this.options.threads.threadStore,
+            bindingStore: this.options.threads.bindingStore,
+          })
+        : createUnavailablePluginThreadHost();
       const candidate = await plugin.start({
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
         tasks: createPluginTaskHost(this.options.taskStore),
+        threads,
         log: (level, message, fields) =>
           this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });

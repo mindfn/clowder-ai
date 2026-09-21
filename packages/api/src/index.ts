@@ -4928,6 +4928,17 @@ async function main(): Promise<void> {
     `[api] official plugin Host routes ready ` +
       `(created=${officialSignalRouteBootstrap.created}, preserved=${officialSignalRouteBootstrap.preserved})`,
   );
+  // Shared generic binding index: plugin thread lookup, thread cats and the legacy connector path
+  // must observe one truth while the legacy path still exists during cutover.
+  const { RedisConnectorThreadBindingStore } = await import(
+    './infrastructure/connectors/RedisConnectorThreadBindingStore.js'
+  );
+  const { MemoryConnectorThreadBindingStore } = await import(
+    './infrastructure/connectors/ConnectorThreadBindingStore.js'
+  );
+  const connectorBindingStore = redisClient
+    ? new RedisConnectorThreadBindingStore(redisClient)
+    : new MemoryConnectorThreadBindingStore();
   const { createDormantPluginRuntimeComposition, createPluginManagerRuntimeComposition } = await import(
     './domains/plugin/runtime-composition.js'
   );
@@ -4988,6 +4999,8 @@ async function main(): Promise<void> {
     },
     socketManager: { broadcastToRoom: (room, event, data) => socketManager?.broadcastToRoom(room, event, data) },
     threadStore,
+    threadBindingStore: connectorBindingStore,
+    threadOwnerUserId: privateUserId,
     getDefaultCatId,
     getMentionPatterns: catRegistryMentionPatterns,
     collectiveConnector: {
@@ -5666,16 +5679,7 @@ async function main(): Promise<void> {
     });
   }
 
-  // F142: shared connector binding store — reused by threadCatsRoutes AND connector gateway
-  const { RedisConnectorThreadBindingStore } = await import(
-    './infrastructure/connectors/RedisConnectorThreadBindingStore.js'
-  );
-  const { MemoryConnectorThreadBindingStore } = await import(
-    './infrastructure/connectors/ConnectorThreadBindingStore.js'
-  );
-  const connectorBindingStore = redisClient
-    ? new RedisConnectorThreadBindingStore(redisClient)
-    : new MemoryConnectorThreadBindingStore();
+  // F142: the shared binding store above is reused by threadCatsRoutes AND connector gateway.
   {
     const allCatConfigs = catRegistry.getAllConfigs();
     await app.register(threadCatsRoutes, {

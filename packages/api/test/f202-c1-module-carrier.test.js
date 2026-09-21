@@ -3,10 +3,11 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
-
+import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
 import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/module-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/runtime-carrier.js';
+import { MemoryConnectorThreadBindingStore } from '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';
 
 /**
  * F202 Train C1 — §8.6 steps 1 / 2 / 5 of the carrier-neutral adapter
@@ -125,6 +126,22 @@ export default {
 };
 `;
 
+const threadHostModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return {
+      async start(host) {
+        const system = await host.threads.ensureSystemThread();
+        const external = await host.threads.ensureByKey('group-42', { title: 'Group 42' });
+        log.push({ call: 'threads', systemThreadId: system.id, externalThreadId: external.id });
+        return { actions: {}, stop() {} };
+      },
+    };
+  },
+};
+`;
+
 const invalidStartResultModule = `
 const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
 export default {
@@ -225,6 +242,7 @@ function hostOf(records, options = {}) {
       readConfig: async () => undefined,
       readSecret: async () => undefined,
     },
+    ...(options.threads === undefined ? {} : { threads: options.threads }),
     log: options.log ?? (() => {}),
   });
   const router = new PluginRuntimeCarrierRouter(inventory);
@@ -296,6 +314,30 @@ test('start receives only the admitted config, secrets and log Host surface', as
   assert.deepEqual(logs, [
     ['info', 'module started', { pluginId: 'dev.clowder.module-fixture', pluginInstanceId: 'instance-0' }],
   ]);
+});
+
+test('start receives the caller-bound Host thread surface', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(threadHostModule);
+  const threadStore = new ThreadStore();
+  const bindingStore = new MemoryConnectorThreadBindingStore();
+  const host = hostOf([{ manifest: manifest(), rootDir }], {
+    threads: { threadStore, bindingStore, ownerUserId: 'owner-1' },
+  });
+
+  await host.router.start('instance-0');
+
+  const entry = moduleLog()[0];
+  assert.equal(entry.call, 'threads');
+  assert.notEqual(entry.systemThreadId, entry.externalThreadId);
+  assert.equal(
+    (await bindingStore.getByExternal('dev.clowder.module-fixture', 'group-42')).threadId,
+    entry.externalThreadId,
+  );
+  assert.deepEqual((await threadStore.get(entry.systemThreadId)).pluginOwnership, {
+    v: 1,
+    pluginInstanceId: 'instance-0',
+  });
 });
 
 test('an invalid start result is stopped and leaves no active module behind', async () => {
