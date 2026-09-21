@@ -116,6 +116,9 @@ import {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isManagedWorkBindingConflictError } from '../domains/cats/services/stores/ports/TaskManagedWorkBinding.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
+import { TASK_SUBJECT_ALREADY_EXISTS } from '../domains/cats/services/stores/ports/TaskStoreContract.js';
+import { assertSubjectUpdateOwnership } from '../domains/cats/services/stores/ports/TaskSubjectOwnership.js';
+import { isTrackingRegistrationConflict } from '../domains/cats/services/stores/ports/TaskWaitReplacement.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
   type ITurnExecutionStore,
@@ -5653,9 +5656,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         createdBy: catId,
         userId: record.userId,
       } as const;
-      const task = record.managedWorkBinding
-        ? await taskStore.upsertBySubjectWithManagedWorkBinding(taskInput, record.managedWorkBinding)
-        : await taskStore.upsertBySubject(taskInput);
+      // Existing registrations are read-only until the generation/metadata CAS succeeds.
+      const task = (await taskStore.getBySubject(subjectKey)) ?? (await taskStore.create(taskInput));
+      assertSubjectUpdateOwnership(subjectKey, task, taskInput);
       const previousState = task.automationState as PrAutomationState | undefined;
       const previousGeneration = previousState?.await?.generation ?? previousState?.waitOutcome?.generation ?? 0;
       const generation = previousGeneration + 1;
@@ -5684,13 +5687,22 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         : undefined;
       const supersededOutcome =
         superseded?.applied === true ? (superseded.state as PrAutomationState).waitOutcome : undefined;
+      // A new wait does not revoke a result already owed to its owner. Preserve the outbox
+      // in the same CAS, including after a single-fire wait has consumed its active generation.
+      const pendingOutcome = previousState?.waitOutcome?.delivery === 'pending' ? previousState.waitOutcome : undefined;
+      if (pendingOutcome && supersededOutcome?.delivery === 'pending') {
+        // A passed deadline produced a second deliverable result; one slot cannot retain both.
+        reply.status(409);
+        return { error: 'PR wait has a pending delivery — retry registration after recovery' };
+      }
+      const retainedOutcome = pendingOutcome ?? supersededOutcome;
       const replacement: PrAutomationState = {
         ...(previousState?.review ? { review: previousState.review } : {}),
         ...(previousState?.ci ? { ci: previousState.ci } : {}),
         ...(previousState?.conflict ? { conflict: previousState.conflict } : {}),
         ...snapshot.collectorState,
         await: awaitState,
-        ...(supersededOutcome ? { waitOutcome: supersededOutcome } : {}),
+        ...(retainedOutcome ? { waitOutcome: retainedOutcome } : {}),
       };
       const waitSource = await waitSourcePromise;
       if (!(await registry.isLatest(record.invocationId))) {
@@ -5699,7 +5711,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
       const waitRegistration = waitSource
         ? createTypedWaitRegistration({
-            task,
+            task: { ...task, ...taskInput, status: task.status === 'done' ? 'todo' : task.status },
             active: awaitState,
             invocationId: record.invocationId,
             source: waitSource,
@@ -5709,6 +5721,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         expectedGeneration: previousGeneration === 0 ? null : previousGeneration,
         expectedUpdatedAt: task.updatedAt,
         automationState: replacement,
+        trackingRegistration: {
+          ...taskInput,
+          ...(record.managedWorkBinding ? { managedWorkBinding: record.managedWorkBinding } : {}),
+        },
         ...(waitRegistration ? { waitRegistration } : {}),
       });
       if (!installed) {
@@ -5728,6 +5744,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         notification: describeGitHubNotificationCoverage(perspective, when),
       };
     } catch (error) {
+      if (
+        isTrackingRegistrationConflict(error) ||
+        (error instanceof Error && 'code' in error && error.code === TASK_SUBJECT_ALREADY_EXISTS)
+      ) {
+        reply.status(409);
+        return { error: error.message };
+      }
       if (isSubjectOwnershipConflictError(error)) {
         reply.status(409);
         return { error: `PR ${repoFullName}#${prNumber} already registered by another user` };
@@ -5905,9 +5928,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         createdBy: catId,
         userId: record.userId,
       } as const;
-      const task = record.managedWorkBinding
-        ? await taskStore.upsertBySubjectWithManagedWorkBinding(taskInput, record.managedWorkBinding)
-        : await taskStore.upsertBySubject(taskInput);
+      const task = (await taskStore.getBySubject(subjectKey)) ?? (await taskStore.create(taskInput));
+      assertSubjectUpdateOwnership(subjectKey, task, taskInput);
       const previousState = task.automationState as IssueWaitAutomationState | undefined;
       const previousGeneration = previousState?.await?.generation ?? previousState?.waitOutcome?.generation ?? 0;
       const generation = previousGeneration + 1;
@@ -5936,10 +5958,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         : undefined;
       const supersededOutcome =
         superseded?.applied === true ? (superseded.state as IssueWaitAutomationState).waitOutcome : undefined;
+      // Match the PR path: explicit registration must not erase the previous delivery outbox.
+      const pendingOutcome = previousState?.waitOutcome?.delivery === 'pending' ? previousState.waitOutcome : undefined;
+      if (pendingOutcome && supersededOutcome?.delivery === 'pending') {
+        reply.status(409);
+        return { error: 'Issue wait has a pending delivery — retry registration after recovery' };
+      }
+      const retainedOutcome = pendingOutcome ?? supersededOutcome;
       const replacement: IssueWaitAutomationState = {
         ...snapshot.collectorState,
         await: awaitState,
-        ...(supersededOutcome ? { waitOutcome: supersededOutcome } : {}),
+        ...(retainedOutcome ? { waitOutcome: retainedOutcome } : {}),
       };
       const waitSource = await waitSourcePromise;
       if (!(await registry.isLatest(record.invocationId))) {
@@ -5948,7 +5977,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
       const waitRegistration = waitSource
         ? createTypedWaitRegistration({
-            task,
+            task: { ...task, ...taskInput, status: task.status === 'done' ? 'todo' : task.status },
             active: awaitState,
             invocationId: record.invocationId,
             source: waitSource,
@@ -5958,6 +5987,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         expectedGeneration: previousGeneration === 0 ? null : previousGeneration,
         expectedUpdatedAt: task.updatedAt,
         automationState: replacement,
+        trackingRegistration: {
+          ...taskInput,
+          ...(record.managedWorkBinding ? { managedWorkBinding: record.managedWorkBinding } : {}),
+        },
         ...(waitRegistration ? { waitRegistration } : {}),
       });
       if (!installed) {
@@ -5977,6 +6010,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         notification: describeGitHubNotificationCoverage(issuePerspective, when),
       };
     } catch (error) {
+      if (
+        isTrackingRegistrationConflict(error) ||
+        (error instanceof Error && 'code' in error && error.code === TASK_SUBJECT_ALREADY_EXISTS)
+      ) {
+        reply.status(409);
+        return { error: error.message };
+      }
       if (isSubjectOwnershipConflictError(error)) {
         reply.status(409);
         return { error: `Issue ${repoFullName}#${issueNumber} already registered by another user` };

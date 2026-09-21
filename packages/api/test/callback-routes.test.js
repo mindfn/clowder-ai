@@ -6797,7 +6797,7 @@ describe('Callback Routes', () => {
       getBySubject() {
         return null;
       },
-      async upsertBySubject(input) {
+      async create(input) {
         if (input.userId === 'user-A') {
           return {
             id: 'task-user-a',
