@@ -140,6 +140,19 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+/**
+ * Literal membership WITHOUT coercion.
+ *
+ * `[...].includes(String(value))` reads as a fail-closed check but is not one: `String(['done'])`
+ * is `'done'`, and any object with a `toString` returning a literal passes too. This guard is the
+ * boundary for metadata recovered from Redis rows and websocket frames, so a smuggled non-string
+ * lands in a field whose contract is a string literal and downstream matching silently stops
+ * working. Compare the raw value; never its string rendering.
+ */
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+
 export function isMessageFrom(value: unknown): value is MessageFrom {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
@@ -235,7 +248,7 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
       Array.isArray(candidate.requestedTargets) &&
       candidate.requestedTargets.every(isNonEmptyString) &&
       new Set(candidate.requestedTargets).size === candidate.requestedTargets.length &&
-      [
+      isOneOf(candidate.reason, [
         'no_available_target',
         'invalid_explicit_target',
         'control_carrier_missing',
@@ -243,7 +256,7 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
         'control_plane_unavailable',
         'execution_owner_lost',
         'prestart_timeout',
-      ].includes(String(candidate.reason)) &&
+      ] as const) &&
       isFiniteTimestamp(candidate.createdAt)
     );
   }
@@ -255,7 +268,7 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
     !candidate.inputEntryIds.every(isNonEmptyString) ||
     !Array.isArray(candidate.inputMessageIds) ||
     !candidate.inputMessageIds.every(isNonEmptyString) ||
-    !['processing', 'completed', 'failed', 'canceled', 'interrupted'].includes(String(candidate.status)) ||
+    !isOneOf(candidate.status, ['processing', 'completed', 'failed', 'canceled', 'interrupted'] as const) ||
     !isFiniteTimestamp(candidate.startedAt)
   ) {
     return false;

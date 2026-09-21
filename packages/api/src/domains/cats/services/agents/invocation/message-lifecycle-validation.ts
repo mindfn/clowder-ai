@@ -110,8 +110,11 @@ function invalidQueueEntryReason(value: Record<string, unknown>, path: PropertyK
     case 'payload':
       return isRecord(value.payload) ? `invalid_${String(value.kind)}` : 'invalid_payload';
     default:
-      return ['conversation_input', 'message_wake', 'private_input'].includes(String(value.kind))
-        ? `invalid_${String(value.kind)}`
+      // Raw comparison, so a non-string kind is reported as `invalid_kind` rather than being
+      // coerced into a label that claims the discriminant was recognised.
+      return typeof value.kind === 'string' &&
+        ['conversation_input', 'message_wake', 'private_input'].includes(value.kind)
+        ? `invalid_${value.kind}`
         : 'invalid_kind';
   }
 }

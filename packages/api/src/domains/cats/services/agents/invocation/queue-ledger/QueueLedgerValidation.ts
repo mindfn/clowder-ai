@@ -74,7 +74,13 @@ function assertQueuePayload(value: unknown): asserts value is QueueLedgerPayload
 function assertQueueExecution(value: unknown): asserts value is QueueLedgerExecution {
   if (!isRecord(value)) throw new Error('queue ledger execution is invalid');
   if (typeof value.intent !== 'string' || !value.intent) throw new Error('queue ledger execution intent is invalid');
-  if (!['strict', 'compatibility_fallback', 'unknown'].includes(String(value.ownerAuthProvenance))) {
+  // Compare the raw value: `String(['strict'])` is `'strict'`, so coercing here would accept an
+  // array (or any object with a matching `toString`) as proven owner authorization.
+  const ownerAuthProvenance = value.ownerAuthProvenance;
+  if (
+    typeof ownerAuthProvenance !== 'string' ||
+    !['strict', 'compatibility_fallback', 'unknown'].includes(ownerAuthProvenance)
+  ) {
     throw new Error('queue ledger owner auth provenance is invalid');
   }
   if (typeof value.autoExecute !== 'boolean') throw new Error('queue ledger autoExecute is invalid');

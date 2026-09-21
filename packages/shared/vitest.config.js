@@ -60,6 +60,7 @@ export default defineConfig({
       'test/markdown-readable-text.test.ts',
       'src/__tests__/profile-contract.test.ts',
       'src/__tests__/timeline-message-kind.test.ts',
+      'src/__tests__/lifecycle-metadata-coercion.test.ts',
     ],
   },
 });
