@@ -135,6 +135,32 @@ SubscriptionDelivery.register  → 零生产调用点    （插件声明的 mess
 
 **已知删除面 ≈ 16,785 行**（不含 catalog 的替代工程）。
 
+#### ⚠️ 重大更正：`domains/plugin/` 那几个文件是**混合制**，要拆不要删
+
+operator 一眼看出：
+
+> 这个听着不是像是我们插件的通用的管理机制的？但是又是混合制的既有通用的又有插件定制的？
+
+量出来比预想极端得多：
+
+| 文件 | 总行 | 厂商相关行 | 占比 |
+|---|---|---|---|
+| `official-plugin-auth.ts` | 295 | 7 | **2.4%** |
+| `official-plugin-meeting-intake.ts` | 216 | 18 | **8.3%** |
+| `official-plugin-history-import.ts` | 153 | 8 | **5.2%** |
+| `official-catalog.ts` | 181 | 9 | **5.0%** |
+| **合计** | **845** | **42** | **5%** |
+
+`official-plugin-auth.ts` 导出的全是通用面（`OfficialPluginAuthStatus` / `AuthPort` /
+`AuthService`），厂商味只有一处 hostname 校验。**我此前把这 4 个文件整体标成"删"，
+那会砍掉约 800 行通用插件管理机制，只为清掉 42 行飞书代码。**
+
+**正确动作是「拆」不是「删」**：抽走那 ~42 行厂商特有部分（随插件走），保留 95% 的通用机制。
+`infrastructure/connectors/` 那 16,121 行是另一回事——那是整棵 connector 业务树，删。
+
+> **这是我今晚第六次同形状的错**：看到文件名/少量命中就整体归类，没有量它的构成。
+> 判据是 operator 的"具体插件相关"，但**判据要作用在代码行上，不是文件名上**。
+
 #### official-catalog 的正解：把货架变成数据，不是删文件
 
 取数据的机制**已经是通用的**（`official-catalog-provider.ts` 从 npm registry 拉取、校验 URL 与 digest）。
