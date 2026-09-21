@@ -48,7 +48,14 @@ const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
 export default {
   create(hostManifest) {
     log.push({ call: 'create', pluginId: hostManifest?.pluginId, version: hostManifest?.version });
-    return { manifest: hostManifest, features: [] };
+    return {
+      manifest: hostManifest,
+      features: [],
+      async start() {
+        log.push({ call: 'start' });
+        return { actions: {}, stop: async () => log.push({ call: 'stop' }) };
+      },
+    };
   },
 };
 `;
@@ -59,9 +66,52 @@ export default {
   create(hostManifest) {
     return {
       manifest: hostManifest,
+      async start() {
+        log.push({ call: 'start' });
+        return { actions: {}, stop: async () => log.push({ call: 'stop' }) };
+      },
       async 'host.messaging.deliver'(input) {
         log.push({ call: 'deliver', input });
         return { deliveryId: input.deliveryId };
+      },
+    };
+  },
+};
+`;
+
+const hostSurfaceModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create(hostManifest) {
+    return {
+      manifest: hostManifest,
+      async start(host) {
+        log.push({
+          call: 'start',
+          apiBase: await host.config.get('API_BASE'),
+          botToken: await host.secrets.get('BOT_TOKEN'),
+        });
+        host.log('info', 'module started', { pluginId: hostManifest.pluginId });
+        return {
+          actions: {},
+          stop: async () => log.push({ call: 'stop' }),
+        };
+      },
+    };
+  },
+};
+`;
+
+const invalidStartResultModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return {
+      async start() {
+        return {
+          actions: [],
+          stop: async () => log.push({ call: 'stop-after-invalid-start' }),
+        };
       },
     };
   },
@@ -128,7 +178,7 @@ function inventoryOf(records) {
 /**
  * @param {ReadonlyArray<{manifest: object, rootDir: string, locatedManifest?: object}>} records
  */
-function hostOf(records) {
+function hostOf(records, options = {}) {
   const inventory = inventoryOf(records);
   const released = [];
   const packages = {
@@ -146,7 +196,14 @@ function hostOf(records) {
       };
     },
   };
-  const moduleRuntime = new ModulePluginRuntime({ packages });
+  const moduleRuntime = new ModulePluginRuntime({
+    packages,
+    configuration: options.configuration ?? {
+      readConfig: async () => undefined,
+      readSecret: async () => undefined,
+    },
+    log: options.log ?? (() => {}),
+  });
   const router = new PluginRuntimeCarrierRouter(inventory);
   router.register(new BundledPluginRuntimeCarrier({ inventory, runtimes: [moduleRuntime], now: () => 5_000 }));
   return { inventory, router, released, moduleRuntime };
@@ -169,8 +226,8 @@ test('takes the default export of runtime.entrypoint and runs it in the Host pro
 
   assert.deepEqual(
     moduleLog().map((entry) => entry.call),
-    ['create'],
-    'the Host must call create() on the module default export',
+    ['create', 'start'],
+    'the Host must create and start the module default export',
   );
   assert.equal(host.inventory.live.get('instance-0').runtimeState, 'healthy');
   // The Host holds the instance create() returned — the thing per-feature activation
@@ -179,6 +236,55 @@ test('takes the default export of runtime.entrypoint and runs it in the Host pro
 
   await host.router.stop('instance-0', 'host_stop');
   assert.equal(host.moduleRuntime.definedPlugin('instance-0'), undefined, 'teardown must let the instance go');
+  assert.deepEqual(
+    moduleLog().map((entry) => entry.call),
+    ['create', 'start', 'stop'],
+    'teardown must call the stop handle returned by start()',
+  );
+});
+
+test('start receives only the admitted config, secrets and log Host surface', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(hostSurfaceModule);
+  const logs = [];
+  const host = hostOf(
+    [
+      {
+        manifest: manifest({
+          configuration: [
+            { key: 'API_BASE', label: 'API base', kind: 'string', required: true },
+            { key: 'BOT_TOKEN', label: 'Bot token', kind: 'secret', required: true },
+          ],
+        }),
+        rootDir,
+        effectiveGrants: ['plugin.config.read', 'secret.read'],
+      },
+    ],
+    {
+      configuration: {
+        readConfig: async (_instanceId, key) => (key === 'API_BASE' ? 'https://example.test' : undefined),
+        readSecret: async (_instanceId, key) => (key === 'BOT_TOKEN' ? 'secret-token' : undefined),
+      },
+      log: (...args) => logs.push(args),
+    },
+  );
+
+  await host.router.start('instance-0');
+
+  assert.deepEqual(moduleLog(), [{ call: 'start', apiBase: 'https://example.test', botToken: 'secret-token' }]);
+  assert.deepEqual(logs, [['info', 'module started', { pluginId: 'dev.clowder.module-fixture' }]]);
+});
+
+test('an invalid start result is stopped and leaves no active module behind', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(invalidStartResultModule);
+  const host = hostOf([{ manifest: manifest(), rootDir }]);
+
+  await assert.rejects(host.router.start('instance-0'), (error) => error.code === 'INVALID_ENTRYPOINT');
+
+  assert.deepEqual(moduleLog(), [{ call: 'stop-after-invalid-start' }]);
+  assert.equal(host.moduleRuntime.definedPlugin('instance-0'), undefined);
+  assert.equal(host.released.length, 1, 'failed start must release the staged package');
 });
 
 test('routes the frozen Host delivery row through the selected module carrier', async () => {
@@ -204,7 +310,7 @@ test('routes the frozen Host delivery row through the selected module carrier', 
 
   await host.router.start('instance-0');
   assert.deepEqual(await host.router.deliver('instance-0', input), { deliveryId: input.deliveryId });
-  assert.deepEqual(moduleLog(), [{ call: 'deliver', input }]);
+  assert.deepEqual(moduleLog(), [{ call: 'start' }, { call: 'deliver', input }]);
 });
 
 test('module delivery fails closed when the instance lacks the published onMessage grant', async () => {
@@ -233,7 +339,11 @@ test('module delivery fails closed when the instance lacks the published onMessa
       }),
     (error) => error.code === 'DELIVERY_REJECTED',
   );
-  assert.deepEqual(moduleLog(), [], 'the module must not run after delivery authority was denied');
+  assert.deepEqual(
+    moduleLog(),
+    [{ call: 'start' }],
+    'delivery authority denial must stop before the package action runs',
+  );
 });
 
 // What this pins: the Host actually hands its admitted record to `create()`. The other

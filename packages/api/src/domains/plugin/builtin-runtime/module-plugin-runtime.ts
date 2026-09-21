@@ -8,6 +8,10 @@ import {
   type VerifiedPluginPackageLocator,
 } from '../external-runtime/types.js';
 import type { PluginPackageRecord } from '../host-inventory/types.js';
+import {
+  type PluginRuntimeConfigurationPort,
+  resolveManifestConfiguration,
+} from '../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 import { createModuleHostInvocation } from './module-host-invocation.js';
 
@@ -20,16 +24,36 @@ import { createModuleHostInvocation } from './module-host-invocation.js';
  * Pinning it structurally keeps the dependency one-way with a single place to check.
  */
 export interface PluginModuleEntrypointShape {
-  create(manifest: PluginManifest): unknown;
+  create(manifest: PluginManifest): PluginModuleDefinitionShape;
+}
+
+export type ModulePluginLogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface ModulePluginHostShape {
+  readonly config: { get(key: string): Promise<unknown> };
+  readonly secrets: { get(key: string): Promise<string | undefined> };
+  readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
+}
+
+export interface PluginModuleActivationShape {
+  readonly actions: Readonly<Record<string, unknown>>;
+  stop(): void | Promise<void>;
+}
+
+export interface PluginModuleDefinitionShape {
+  start(host: ModulePluginHostShape): PluginModuleActivationShape | Promise<PluginModuleActivationShape>;
 }
 
 export interface ModulePluginRuntimeOptions {
   readonly packages: VerifiedPluginPackageLocator;
+  readonly configuration: PluginRuntimeConfigurationPort;
+  readonly log: ModulePluginHostShape['log'];
 }
 
 interface LoadedModule {
   readonly located: VerifiedPluginPackage;
-  readonly plugin: unknown;
+  readonly plugin: PluginModuleDefinitionShape;
+  readonly activation: PluginModuleActivationShape;
 }
 
 /**
@@ -60,7 +84,11 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     return runtime.transport === 'builtin' && typeof runtime.entrypoint === 'string';
   }
 
-  async start(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<void> {
+  async start(
+    pluginInstanceId: string,
+    packageRecord: PluginPackageRecord,
+    effectiveGrants: readonly string[],
+  ): Promise<void> {
     if (this.#loaded.has(pluginInstanceId)) {
       throw new ExternalPluginRuntimeError(
         'RUNTIME_ALREADY_ACTIVE',
@@ -68,7 +96,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       );
     }
     const located = await this.options.packages.resolveInstalledPackage(packageRecord.packageDigest);
-    let plugin: unknown;
+    let plugin: PluginModuleDefinitionShape;
+    let activation: PluginModuleActivationShape | undefined;
     try {
       const { entrypoint } = await verifyPackageEntrypoint(packageRecord, located);
       // This carrier's integrity instant: the bytes are re-snapshotted immediately before
@@ -88,11 +117,52 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       // package cannot smuggle a second truth in; what this adds is that whatever the
       // module reads about itself at runtime is not what the Host acts on.
       plugin = (entry as PluginModuleEntrypointShape).create(packageRecord.manifest);
+      if ((typeof plugin !== 'object' && typeof plugin !== 'function') || typeof plugin?.start !== 'function') {
+        throw new ExternalPluginRuntimeError(
+          'INVALID_ENTRYPOINT',
+          `${packageRecord.pluginId} create() must return a module with start()`,
+        );
+      }
+      const resolved = await resolveManifestConfiguration({
+        pluginInstanceId,
+        manifest: packageRecord.manifest,
+        effectiveGrants,
+        configuration: this.options.configuration,
+      });
+      const config = new Map(
+        resolved.filter((field) => field.kind !== 'secret').map((field) => [field.key, field.value]),
+      );
+      const secrets = new Map(
+        resolved.filter((field) => field.kind === 'secret').map((field) => [field.key, field.value]),
+      );
+      const candidate = await plugin.start({
+        config: { get: async (key) => config.get(key) },
+        secrets: { get: async (key) => secrets.get(key) },
+        log: this.options.log,
+      });
+      const stop = (candidate as Partial<PluginModuleActivationShape> | undefined)?.stop;
+      const actions = (candidate as Partial<PluginModuleActivationShape> | undefined)?.actions;
+      if (
+        !candidate ||
+        (typeof candidate !== 'object' && typeof candidate !== 'function') ||
+        !actions ||
+        typeof actions !== 'object' ||
+        Array.isArray(actions) ||
+        typeof stop !== 'function'
+      ) {
+        if (typeof stop === 'function') await stop.call(candidate);
+        throw new ExternalPluginRuntimeError(
+          'INVALID_ENTRYPOINT',
+          `${packageRecord.pluginId} start() must return an actions table and stop()`,
+        );
+      }
+      activation = candidate;
     } catch (error) {
+      if (activation) await Promise.resolve(activation.stop()).catch(() => undefined);
       await located.release().catch(() => undefined);
       throw error;
     }
-    this.#loaded.set(pluginInstanceId, { located, plugin });
+    this.#loaded.set(pluginInstanceId, { located, plugin, activation });
   }
 
   /**
@@ -109,7 +179,11 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     const loaded = this.#loaded.get(pluginInstanceId);
     if (!loaded) return;
     this.#loaded.delete(pluginInstanceId);
-    await loaded.located.release();
+    try {
+      await loaded.activation.stop();
+    } finally {
+      await loaded.located.release();
+    }
   }
 
   deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {

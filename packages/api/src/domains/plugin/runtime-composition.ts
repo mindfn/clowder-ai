@@ -2,6 +2,7 @@ import { dirname, resolve } from 'node:path';
 import type { PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
+import { createModuleLogger } from '../../infrastructure/logger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import {
   createMessagingDomain,
@@ -282,7 +283,15 @@ export function createDormantPluginRuntimeComposition(
     contentMaterializers = new ContentMaterializerPluginRuntime({ editors: contentEditors, packages });
   // Every admitted instance takes this one path; the carrier is selected from the
   // package's own manifest, most specific claim first (F202 C1 clauses 1/2/6).
-  const moduleRuntime = new ModulePluginRuntime({ packages });
+  const moduleLogger = createModuleLogger('plugin/module-runtime');
+  const moduleRuntime = new ModulePluginRuntime({
+    packages,
+    configuration,
+    log: (level, message, fields) => {
+      if (fields === undefined) moduleLogger[level](message);
+      else moduleLogger[level](fields, message);
+    },
+  });
   const supervisor = new PluginRuntimeCarrierRouter(inventoryStore);
   supervisor.register(
     new BundledPluginRuntimeCarrier({

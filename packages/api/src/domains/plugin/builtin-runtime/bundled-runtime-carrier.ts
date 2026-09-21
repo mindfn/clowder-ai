@@ -21,7 +21,11 @@ export interface BundledPluginRuntime {
    * manifest reads the Host's admitted truth instead of re-deriving one that could have
    * drifted since the fence was taken.
    */
-  start(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<void>;
+  start(
+    pluginInstanceId: string,
+    packageRecord: PluginPackageRecord,
+    effectiveGrants: readonly string[],
+  ): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
   deliver?(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult>;
 }
@@ -85,7 +89,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     try {
       await this.setBundledRuntimeState(authority, 'starting');
       try {
-        await runtime.start(pluginInstanceId, authority.packageRecord);
+        await runtime.start(pluginInstanceId, authority.packageRecord, authority.effectiveGrants);
       } catch (error) {
         packageFailed = true;
         throw error;
