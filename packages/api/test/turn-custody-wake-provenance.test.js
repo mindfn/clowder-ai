@@ -252,6 +252,30 @@ describe('F167 Phase T queue wake provenance', () => {
     }
   });
 
+  it('keeps active coordination investigate wakes obligation-free', async () => {
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(entry({ source: 'agent', sourceCategory: 'a2a' }), {
+        getById: async () => ({
+          id: 'message-1',
+          threadId: 'thread-1',
+          catId: 'codex-terra',
+          extra: {
+            crossPost: {
+              sourceThreadId: 'thread-source-investigate-active',
+              effectClass: 'investigate',
+            },
+            coordination: {
+              id: 'coord-investigate-active',
+              phase: 'active',
+              hop: 1,
+            },
+          },
+        }),
+      }),
+      { kind: 'non_obligation', source: 'cross_thread_investigate' },
+    );
+  });
+
   it('keeps assign_work A2A wakes on the structured dispatch carrier', async () => {
     const wake = await resolveQueueTurnCustodyWake(entry({ source: 'agent', sourceCategory: 'a2a' }), {
       getById: async () => ({
