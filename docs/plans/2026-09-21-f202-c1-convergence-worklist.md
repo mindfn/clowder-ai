@@ -24,7 +24,7 @@ operator 问了两句，两句都推翻了本文先前的结论：
 | 入口 | `PluginResourceActivator.enablePlugin(manifest)` | carrier + `FeatureContext` + `FeatureHostAdapter` |
 | 装配 | `index.ts:4294-4543` | `runtime-composition.ts` |
 | 类型 | `@cat-cafe/shared` `PluginResourceDef`（4 类） | `plugin-contract` `StaticContribution`（12 类） |
-| **实际能激活东西吗** | **能，今天就在跑** | **不能，从未激活过任何东西** |
+| **实际能激活东西吗** | **能，今天就在跑** | **能跑插件**（feishu intake / content-editor / builtin MCP），但**从未向 capabilities / limbRegistry / taskRunner 注册过任何东西** |
 
 `FeatureHostAdapter` / `FeatureContext` / module 载体**只为第二套服务**。传统系统注册
 skill/mcp/limb/schedule 全程**没有适配器、没有 FeatureContext、没有 per-feature activate**。
@@ -55,7 +55,7 @@ factory」改成「插件声明要跑什么」，limb 同理，7 个 github fact
 |---|---|---|
 | 插件从哪来 | `pluginsDir = packages/api/src/plugins`，`PluginRegistry.scan()` = `readdirSync`（`PluginRegistry.ts:36,46`） | `LocalPluginPackageAdmission.install()`（`local-package-admission.ts:199`），有 inventory / 完整性 / 生命周期 |
 | 有安装 / 卸载吗 | **没有**。`plugin-routes.ts` 只有 list/get/enable/disable/config/test | **有** |
-| 能注册能力吗 | **能**：skill/mcp/limb/schedule | **不能**：从未激活过任何东西 |
+| 能注册能力吗 | **能**：skill/mcp/limb/schedule | **不能**：插件跑得起来，但注册不进 Host 的能力面 |
 
 **传统系统里「插件」的定义就是「Host 源码树里的一个目录」。**
 这才是 github 代码出不去的根因——它不是"Host 里混进了插件代码"，
