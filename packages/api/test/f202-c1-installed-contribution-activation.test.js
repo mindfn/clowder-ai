@@ -233,15 +233,15 @@ test('an installed package exposes declared cat tools through the shared contrib
     description: 'Echo through the installed package action table',
     inputSchema: {
       type: 'object',
-      properties: { value: { type: 'string' } },
+      properties: { value: { type: 'string' }, channel: { type: 'string' } },
       required: ['value'],
     },
-    action: { method: 'fixture.tool' },
+    action: { method: 'fixture.tool', params: { channel: 'manifest' } },
   };
   const packageRoot = await writeFixturePackage({
     pluginId: 'dev.clowder.tool-fixture',
     contribution: tool,
-    actions: "{ 'fixture.tool': async (params) => ({ echoed: params.value }) }",
+    actions: "{ 'fixture.tool': async (params) => ({ echoed: params.value, channel: params.channel }) }",
   });
   const { runtime } = createRuntime(projectRoot);
   const { composition, installed } = await installAndEnable(runtime, packageRoot);
@@ -257,8 +257,9 @@ test('an installed package exposes declared cat tools through the shared contrib
   assert.deepEqual(
     await runtime.supervisor.callPluginTool(installed.pluginId, 'fixture-toolset', 'fixture_echo', {
       value: 'hello',
+      channel: 'caller',
     }),
-    { echoed: 'hello' },
+    { echoed: 'hello', channel: 'manifest' },
   );
 
   await disable(composition, installed.pluginId);

@@ -144,8 +144,8 @@ export class DeclaredRuntimeContributions {
     return {
       handled: true,
       value: await active.invoke(active.pluginInstanceId, tool.action.method, {
-        ...(tool.action.params ?? {}),
         ...args,
+        ...(tool.action.params ?? {}),
       }),
     };
   }
