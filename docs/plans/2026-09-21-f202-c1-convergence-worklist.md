@@ -105,15 +105,26 @@ im-connector-loader 224 · im-connectors/ 8,180（7 provider）
 它们**全都在 schema 里**（`messaging.schema.json` 有 42 处 `additionalProperties:false` + `properties`），
 只是生成器没吐出来。
 
-**必须从 schema 生成，不能手工补 export**——手工补只是把手抄从 SDK 挪进契约，下一个人还会在别处再抄一遍。
+**~~必须从 schema 生成~~ —— 该句于 2026-09-21 由 Plugins 线更正，对少数成立、对多数不成立。**
+逐个匹配 9 个 schema 文件后，25 组 mirror 常量分两类：
+
+| 类 | 组数 | 真相源 | 正确做法 |
+|---|---|---|---|
+| **(a)** | 3（`SUBSCRIBE_INPUT_KEYS` / `ACK_INPUT_KEYS` / `DELIVER_RESULT_KEYS`）+ enum | schema | **从 schema 生成** |
+| **(b)** | 13+（`REQUEST_ALLOWED_KEYS` / `RESPONSE_SUCCESS_KEYS` / `META_ALLOWED_KEYS` / `PING_INPUT_KEYS` / `CANDIDATE_HELLO_KEYS` …） | **契约包自己的 TS 接口**：`plugin-contract/src/wire/envelope.ts`（`CallMeta:43` `WireRequest:66` `WireSuccessResponse:108` `WireErrorResponse:329`）、`row-shapes.ts`（`PingInput:159` `DrainInput:202`） | **在接口旁导出运行时键集，用编译期断言与接口键集绑死**——不等则编译红 |
+
+**不要为 (b) 去扩 schema**：那是更大的工程，而编译期绑定同样满足 LL-104「不是手写断言」的要求。
+照原句做的实现者会发现 13 组无源可生，**大概率退回手抄——正好落回我们在治的病**。
+
+> **同时撤回我提的"可能有重复"**：契约 `APPLICATION_ERROR_CODES` 是 JSON-RPC 数字码
+> （`HANDSHAKE_REJECTED_CODE` / `DELIVERY_REJECTED_CODE` / …），mirror `MESSAGING_ERROR_CODES`
+> 是语义分类（`VALIDATION` / `PERMISSION` / `NOT_FOUND` / …）。**不同的东西，不要合并。**
 
 > **P-1+2 不是清理技术债，它是 LL-104 的唯一执行形式。** 同一天里两条独立车道
 > （Core 与 Plugins）各自断言"插件声明的方法名由 deliver 参数携带"，而 schema 早就
 > `additionalProperties:false`——两条不同的推理路径撞进同一个坑。**靠记住无效；
 > 只有让 schema 的闭合约束生成进代码，违反才会在校验期就红。**
 
-> 顺带：契约已有 `ALL_ERROR_CODES` / `APPLICATION_ERROR_CODES`，而 mirror 里也有 `MESSAGING_ERROR_CODES`。
-> **那 25 组里可能有一部分已经有对应物——生成前先对一遍，别生成已经存在的。**
 
 ### 3.2 P-3 与 P-6 不冲突（分属两层，文档并排会让人卡住）
 
