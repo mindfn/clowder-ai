@@ -1,0 +1,43 @@
+# Fork-only patch guard.
+#
+# Every other workflow in this repo triggers on `main`. But fork-only patches
+# are lost on `develop_base` - that is the branch rebuilt onto upstream main,
+# and the branch every fork PR targets. Without this workflow the guard would
+# only ever run when a human remembered to run `pnpm check`, which is the same
+# failure mode it was built to remove.
+#
+# Deliberately NOT gated by paths-ignore: a rebuild can drop a patch regardless
+# of which paths its own diff appears to touch.
+#
+# This file is itself a registered fork-only patch (see
+# scripts/fork-only-patches.json), so a rebuild that drops the guard's CI
+# trigger is caught by the local `pnpm check` run.
+name: Fork-only patches
+
+on:
+  push:
+    branches: [develop_base]
+  pull_request:
+    branches: [develop_base]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-only-patches-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Fork-only patch guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The rebuild-survival check compares against the previous develop_base
+      # tip, which actions/checkout does not fetch by default.
+      - run: git fetch --no-tags --depth=1 origin develop_base:refs/remotes/origin/develop_base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # No dependency install: the guard uses node builtins only, so it stays
+      # runnable even when the tree is mid-rebuild and deps are inconsistent.
+      - run: node --test scripts/check-fork-only-patches.test.mjs
+      - run: node scripts/check-fork-only-patches.mjs

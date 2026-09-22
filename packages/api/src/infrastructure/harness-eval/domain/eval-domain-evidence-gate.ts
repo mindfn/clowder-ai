@@ -38,6 +38,33 @@ export type EvidencePrereqProbe = (domain: EvidenceGateDomain) => EvidencePrereq
  */
 const TELEMETRY_BACKED_ADAPTERS: ReadonlySet<string> = new Set(['f167-runtime-eval']);
 
+/**
+ * Why there is no "is the evidence source co-located?" check here.
+ *
+ * Upstream review of zts212653/clowder-ai#1352 raised a real-sounding concern:
+ * `otelEnabled` observes the telemetry handle of the process running the CRON,
+ * so if evidence came from a DIFFERENT runtime the local handle would prove
+ * nothing about it, in both directions.
+ *
+ * A first fix attempt asserted co-location by parsing `EVAL_BASE_URL`. Review of
+ * THIS fork's PR (#185) showed that gate was wired to unrelated configuration:
+ * `EVAL_BASE_URL` is read only by the manual CLI `scripts/run-f168-external-case-eval.mjs`
+ * and is never consulted on the scheduled path. It also mis-compared ports and
+ * could never match `::1` (Node's URL keeps the brackets: `"[::1]"`), so it fell
+ * closed on exactly the local topology it was meant to admit.
+ *
+ * The scheduled path has no remote evidence target to check. `f167-runtime-eval`
+ * evidence is a snapshot+attribution PAIR ON DISK under the harness-feedback root
+ * (see publish-verdict/a2a-generator-adapter.ts), written by this process's own
+ * OTel pipeline. Source resolution is filesystem-relative, not HTTP. The local
+ * handle is authoritative because the producer IS this process - structurally,
+ * not accidentally.
+ *
+ * If a telemetry-backed adapter ever fetches evidence over the network, the
+ * decision belongs at THIS boundary: add it to the set above only together with
+ * a probe that can observe that source. Do not re-derive co-location from env.
+ */
+
 export function isTelemetryBackedAdapter(sourceAdapter: string): boolean {
   return TELEMETRY_BACKED_ADAPTERS.has(sourceAdapter);
 }
@@ -52,34 +79,9 @@ export function createTelemetryEvidencePrereqProbe(opts: {
   otelEnabled: () => boolean;
   /** Override the reason text; defaults to the health route's disabledReason derivation. */
   disabledReason?: () => string;
-  /**
-   * Upstream review finding (zts212653/clowder-ai#1352, comment by 砚砚):
-   * `otelEnabled` observes the telemetry handle of the process running the CRON,
-   * but eval evidence is fetched from the adapter target (`EVAL_BASE_URL`,
-   * default `localhost:<API_SERVER_PORT>`). When those are different runtimes the
-   * local handle says nothing about the remote source: a telemetry-disabled
-   * scheduler would skip a healthy remote source, and a telemetry-enabled
-   * scheduler would admit an unavailable one.
-   *
-   * This fork runs scheduler and evidence source in ONE process, so the local
-   * handle is authoritative here. Rather than leave that accidental, the caller
-   * asserts it. Returning `false` fails the gate closed with an explicit reason
-   * instead of letting the local handle silently speak for a remote target.
-   *
-   * Omit → assumes co-located (this fork's single-process deployment).
-   */
-  evidenceTargetIsLocal?: () => boolean;
 }): EvidencePrereqProbe {
   return (domain) => {
     if (!isTelemetryBackedAdapter(domain.sourceAdapter)) return { ok: true };
-    if (opts.evidenceTargetIsLocal && !opts.evidenceTargetIsLocal()) {
-      return {
-        ok: false,
-        reason:
-          'evidence source is a remote runtime (EVAL_BASE_URL points off-process); ' +
-          'the scheduler-local OTel handle cannot prove remote evidence availability',
-      };
-    }
     if (opts.otelEnabled()) return { ok: true };
     const reason =
       opts.disabledReason?.() ??
