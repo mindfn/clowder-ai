@@ -6,7 +6,7 @@ import {
 } from '@clowder-ai/plugin-contract';
 
 /** Exact npm package consumed by this Host build. */
-export const PLUGIN_CONTRACT_PACKAGE_VERSION = '0.1.0-beta.15' as const;
+export const PLUGIN_CONTRACT_PACKAGE_VERSION = '0.1.0-beta.18' as const;
 /** Manifest compatibility line declared by admitted plugins. */
 export const PLUGIN_CONTRACT_VERSION = '0.1.0' as const;
 /** Published Train B packages still declare this beta manifest line. */
