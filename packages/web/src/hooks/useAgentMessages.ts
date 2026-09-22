@@ -29,6 +29,7 @@ import type {
   ToolEvent,
 } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import { isMessageTimelineActive } from '@/stores/message-timeline';
 import { useToastStore } from '@/stores/toastStore';
 import { extractRecallMetaDetail, toolResultDetail } from '@/utils/toolPreview';
 import {
@@ -663,6 +664,20 @@ export interface HandleBackgroundMessageOptions {
   deferPendingCallback?: (pending: PendingCallbackMessage, threadId: string | undefined) => void;
   /** Central pending-callback deletion hook; clears paired fallback timers. */
   deletePendingCallback?: (threadId: string | undefined, catId: string, invocationId: string) => void;
+}
+
+function touchStreamActivity(
+  store: Pick<BackgroundStoreLike, 'getThreadState' | 'patchThreadMessage'>,
+  threadId: string,
+  messageId: string,
+  activityAt = Date.now(),
+): void {
+  const message = store.getThreadState(threadId).messages.find((candidate) => candidate.id === messageId);
+  if (!message || !isMessageTimelineActive(message)) return;
+  store.patchThreadMessage(threadId, messageId, {
+    timestamp: activityAt,
+    timelineOrderAt: activityAt,
+  });
 }
 
 function resolveBackgroundCatName(options: HandleBackgroundMessageOptions, catId: string): string {
@@ -1393,6 +1408,7 @@ export function consumeBackgroundSystemInfo(
         label: `${msg.catId} → web_search${count > 1 ? ` x${count}` : ''}`,
         timestamp: msg.timestamp,
       });
+      touchStreamActivity(options.store, msg.threadId, targetId);
       consumed = true;
     } else if (parsed?.type === 'rich_block') {
       // F22: Append rich block — mirror foreground path (useAgentMessages.ts)
@@ -1491,6 +1507,7 @@ export function consumeBackgroundSystemInfo(
 
       if (parsed.block) {
         options.store.appendRichBlockToThread(msg.threadId, targetId, parsed.block);
+        touchStreamActivity(options.store, msg.threadId, targetId);
       }
       consumed = true;
     } else if (parsed?.type === 'app_server_lifecycle') {
@@ -1675,6 +1692,7 @@ export function consumeBackgroundSystemInfo(
           });
         }
         options.store.setThreadMessageThinking(msg.threadId, targetId, thinkingText);
+        touchStreamActivity(options.store, msg.threadId, targetId);
       }
       consumed = true;
     }
@@ -2572,6 +2590,7 @@ export function handleBackgroundAgentMessage(
         finalMsgId = cbId;
       }
     } else {
+      const streamActivityAt = Date.now();
       // F183 Phase B1.8 — bg stream chunk wire-up via reducer (single-writer)。
       // canonical invocationId 走 reducer 的 reduceStreamChunk — existing bubble
       // append/replace content；no existing 时 makePlaceholder 创建新 bubble (origin=
@@ -2658,6 +2677,7 @@ export function handleBackgroundAgentMessage(
         if (Object.keys(sidePatch).length > 0) {
           options.store.patchThreadMessage(msg.threadId, messageId, sidePatch);
         }
+        touchStreamActivity(options.store, msg.threadId, messageId, streamActivityAt);
         if (msg.isFinal) {
           options.store.setThreadMessageStreaming(msg.threadId, messageId, false);
         }
@@ -2675,10 +2695,20 @@ export function handleBackgroundAgentMessage(
         }
         if (messageId) {
           if (msg.textMode === 'replace') {
+            const currentMessage = options.store
+              .getThreadState(msg.threadId)
+              .messages.find((candidate) => candidate.id === messageId);
+            const advanceTimeline = currentMessage ? isMessageTimelineActive(currentMessage) : false;
             options.store.patchThreadMessage(msg.threadId, messageId, {
               content: msg.content,
               ...(msg.metadata ? { metadata: msg.metadata } : {}),
-              isStreaming: !msg.isFinal,
+              ...(advanceTimeline
+                ? {
+                    timestamp: streamActivityAt,
+                    timelineOrderAt: streamActivityAt,
+                    isStreaming: !msg.isFinal,
+                  }
+                : {}),
             });
             options.store.updateThreadCatStatus(msg.threadId, msg.catId, msg.isFinal ? 'done' : 'streaming');
           } else {
@@ -2742,7 +2772,8 @@ export function handleBackgroundAgentMessage(
               : {}),
             ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
             ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
-            timestamp: msg.timestamp,
+            timestamp: streamActivityAt,
+            timelineOrderAt: streamActivityAt,
             isStreaming: !msg.isFinal,
             origin: 'stream',
           });
@@ -2971,6 +3002,7 @@ export function handleBackgroundAgentMessage(
     if (!bgToolUseHandled) {
       options.store.appendToolEventToThread(msg.threadId, messageId, toolUseEventData);
     }
+    touchStreamActivity(options.store, msg.threadId, messageId);
     options.store.setThreadMessageStreaming(msg.threadId, messageId, true);
     options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'streaming');
     return;
@@ -3025,6 +3057,7 @@ export function handleBackgroundAgentMessage(
     if (!bgToolResultHandled) {
       options.store.appendToolEventToThread(msg.threadId, messageId, toolResultEventData);
     }
+    touchStreamActivity(options.store, msg.threadId, messageId);
     options.store.setThreadMessageStreaming(msg.threadId, messageId, true);
     options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'streaming');
     return;
@@ -4789,8 +4822,11 @@ export function useAgentMessages() {
             }
             // Active speech follows the live conversation edge. This is presentation
             // ordering only; the durable lifecycle identity and startedAt remain unchanged.
-            const streamActivityAt = Date.now();
-            patchMessage(messageId, { timestamp: streamActivityAt, timelineOrderAt: streamActivityAt });
+            touchStreamActivity(
+              useChatStore.getState(),
+              msg.threadId ?? useChatStore.getState().currentThreadId,
+              messageId,
+            );
             if (msg.replyTo || msg.replyPreview) {
               patchMessage(messageId, {
                 ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
@@ -4966,6 +5002,11 @@ export function useAgentMessages() {
         if (!toolUseReducerHandled) {
           appendToolEvent(messageId, toolUseEventData);
         }
+        touchStreamActivity(
+          useChatStore.getState(),
+          msg.threadId ?? useChatStore.getState().currentThreadId,
+          messageId,
+        );
 
         if (isFileChange) {
           console.info('[agent_message] file_change tool_use appended', {
@@ -5046,6 +5087,11 @@ export function useAgentMessages() {
         if (!toolResultReducerHandled) {
           appendToolEvent(messageId, toolResultEventData);
         }
+        touchStreamActivity(
+          useChatStore.getState(),
+          msg.threadId ?? useChatStore.getState().currentThreadId,
+          messageId,
+        );
       } else if (msg.type === 'done') {
         // Stale-terminal guard (Bug-G, shared with `error` via isStaleTerminalEvent):
         // A stale done must NOT touch cat-level or bubble-level state — doing so
@@ -5716,6 +5762,11 @@ export function useAgentMessages() {
                 label: `${msg.catId} → web_search${count > 1 ? ` x${count}` : ''}`,
                 timestamp: Date.now(),
               });
+              touchStreamActivity(
+                useChatStore.getState(),
+                msg.threadId ?? useChatStore.getState().currentThreadId,
+                messageId,
+              );
             }
             consumed = true;
           } else if (parsed?.type === 'thinking') {
@@ -5735,6 +5786,11 @@ export function useAgentMessages() {
                 currentEventSeq: msg.seq,
               });
               setMessageThinking(messageId, thinkingText);
+              touchStreamActivity(
+                useChatStore.getState(),
+                msg.threadId ?? useChatStore.getState().currentThreadId,
+                messageId,
+              );
             }
             consumed = true;
           } else if (parsed?.type === 'app_server_lifecycle') {
@@ -5928,6 +5984,11 @@ export function useAgentMessages() {
 
             if (targetId && parsed.block) {
               appendRichBlock(targetId, parsed.block);
+              touchStreamActivity(
+                useChatStore.getState(),
+                msg.threadId ?? useChatStore.getState().currentThreadId,
+                targetId,
+              );
             }
             consumed = true;
           } else if (parsed?.type === 'session_seal_requested') {

@@ -297,4 +297,62 @@ describe('ChatMessage render isolation', () => {
     expect(container.querySelector('[data-response-lifecycle-notice]')).toBeNull();
     expect(container.querySelector('[data-testid="message-bubble"]')?.parentElement?.className).not.toContain('w-fit');
   });
+
+  it('shows a terminal response completion time instead of its original start time', () => {
+    const startedAt = new Date(2026, 8, 22, 17, 6).getTime();
+    const completedAt = new Date(2026, 8, 22, 17, 49).getTime();
+    const message: ChatMessageData = {
+      id: 'completed-response-time',
+      type: 'assistant',
+      catId: 'cat-1',
+      content: 'done',
+      timestamp: startedAt,
+      timelineOrderAt: startedAt,
+      lifecycle: {
+        kind: 'response',
+        orderKey: `${startedAt}:completed-response-time`,
+        invocationId: 'invocation-time',
+        targetId: 'cat-1',
+        inputEntryIds: ['entry-time'],
+        inputMessageIds: ['message-time'],
+        status: 'completed',
+        startedAt,
+        completedAt,
+      },
+    };
+
+    act(() => {
+      root.render(
+        <ChatMessage
+          message={message}
+          threadId="thread-render"
+          getCatById={() =>
+            ({
+              id: 'cat-1',
+              displayName: '测试猫',
+              avatar: '',
+              breedId: 'maine-coon',
+              color: { primary: '#334455', secondary: '#ddeeff' },
+            }) as never
+          }
+        />,
+      );
+    });
+
+    const expected = new Date(completedAt).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const started = new Date(startedAt).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const header = container.querySelector('[data-testid="message-header"]');
+    expect(header?.textContent).toContain(expected);
+    expect(header?.textContent).not.toContain(started);
+  });
 });

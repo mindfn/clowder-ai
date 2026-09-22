@@ -42,7 +42,7 @@ import type {
 } from './chat-types';
 import { DEFAULT_THREAD_STATE } from './chat-types';
 import { projectTerminalActiveInvocationSlots } from './invocation-liveness';
-import { getMessageTimelineOrderTime } from './message-timeline';
+import { getMessageTimelineOrderTime, isMessageTimelineActive } from './message-timeline';
 import { crossesUserTurnBoundary } from './turn-boundary';
 
 // Re-export types so existing consumers keep working with `import { ... } from '@/stores/chatStore'`
@@ -594,14 +594,36 @@ function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatM
   };
 }
 
+function restoreTimelineOrderAt(messages: ChatMessage[], index: number): ChatMessage[] {
+  const current = messages[index];
+  if (!current) return messages;
+  const currentOrder = getMessageTimelineOrderTime(current);
+  const previous = messages[index - 1];
+  const next = messages[index + 1];
+  const followsPrevious = !previous || getMessageTimelineOrderTime(previous) <= currentOrder;
+  const precedesNext = !next || currentOrder <= getMessageTimelineOrderTime(next);
+  return followsPrevious && precedesNext
+    ? messages
+    : messages.toSorted((a, b) => getMessageTimelineOrderTime(a) - getMessageTimelineOrderTime(b));
+}
+
+function patchChangesTimelineOrder(patch: ChatMessagePatch): boolean {
+  return (
+    patch.timestamp !== undefined ||
+    patch.deliveredAt !== undefined ||
+    patch.timelineOrderAt !== undefined ||
+    patch.lifecycle !== undefined
+  );
+}
+
 function patchMessageInList(messages: ChatMessage[], id: string, patch: ChatMessagePatch): ChatMessage[] {
-  let changed = false;
-  const nextMessages = messages.map((msg) => {
-    if (msg.id !== id) return msg;
-    changed = true;
-    return applyMessagePatch(msg, patch);
-  });
-  return changed ? nextMessages : messages;
+  const index = messages.findIndex((message) => message.id === id);
+  if (index < 0) return messages;
+  const existing = messages[index];
+  if (!existing) return messages;
+  const nextMessages = [...messages];
+  nextMessages[index] = applyMessagePatch(existing, patch);
+  return patchChangesTimelineOrder(patch) ? restoreTimelineOrderAt(nextMessages, index) : nextMessages;
 }
 
 /** F067 Phase 2: Fire macOS notification when a cat @mentions the co-creator */
@@ -763,11 +785,18 @@ function updateThreadMessage(
   threadId: string,
   messageId: string,
   updater: (message: ChatMessage) => ChatMessage,
+  resort = false,
 ): ChatState | Partial<ChatState> {
   if (threadId === state.currentThreadId) {
     // F173 KD-2 (PR-C Task 10): mirror message edits to threadStates[active]
     // so reconcile / streaming-flag flips stay in lockstep with flat.
-    const messages = state.messages.map((m) => (m.id === messageId ? updater(m) : m));
+    const index = state.messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return state;
+    const existing = state.messages[index];
+    if (!existing) return state;
+    const updated = [...state.messages];
+    updated[index] = updater(existing);
+    const messages = resort ? restoreTimelineOrderAt(updated, index) : updated;
     return {
       messages,
       ...mirrorActiveFlat(state, { messages }),
@@ -776,12 +805,19 @@ function updateThreadMessage(
 
   const existing = state.threadStates[threadId];
   if (!existing) return state;
+  const index = existing.messages.findIndex((message) => message.id === messageId);
+  if (index < 0) return state;
+  const existingMessage = existing.messages[index];
+  if (!existingMessage) return state;
+  const updated = [...existing.messages];
+  updated[index] = updater(existingMessage);
+  const messages = resort ? restoreTimelineOrderAt(updated, index) : updated;
   return {
     threadStates: {
       ...state.threadStates,
       [threadId]: {
         ...existing,
-        messages: existing.messages.map((m) => (m.id === messageId ? updater(m) : m)),
+        messages,
         lastActivity: Date.now(),
       },
     },
@@ -2786,7 +2822,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const upsert = (messages: ChatMessage[]): ChatMessage[] => {
         const existingIndex = messages.findIndex((candidate) => candidate.id === msg.id);
-        if (existingIndex === -1) return [...messages, msg];
+        if (existingIndex === -1) {
+          const next = [...messages, msg];
+          return restoreTimelineOrderAt(next, next.length - 1);
+        }
         const existing = messages[existingIndex]!;
         if (
           existing.lifecycle?.kind === 'response' &&
@@ -2807,7 +2846,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
         const next = [...messages];
         next[existingIndex] = merged;
-        return next;
+        return restoreTimelineOrderAt(next, existingIndex);
       };
 
       if (threadId === state.currentThreadId) {
@@ -2882,7 +2921,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   patchThreadMessage: (threadId, messageId, patch) =>
-    set((state) => updateThreadMessage(state, threadId, messageId, (m) => applyMessagePatch(m, patch))),
+    set((state) =>
+      updateThreadMessage(
+        state,
+        threadId,
+        messageId,
+        (m) => applyMessagePatch(m, patch),
+        patchChangesTimelineOrder(patch),
+      ),
+    ),
 
   /** Append chunk content to a specific message in a specific thread. */
   appendToThreadMessage: (threadId, messageId, content) =>
@@ -3448,19 +3495,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   batchStreamChunkUpdate: ({ threadId, messageId, catId, content, metadata, streaming, catStatus }) =>
     set((state) => {
+      const activityAt = Date.now();
       const applyMessageUpdate = (m: ChatMessage): ChatMessage => {
         if (m.id !== messageId) return m;
+        const advanceTimeline = isMessageTimelineActive(m);
         return {
           ...m,
           content: m.content + content,
           ...(metadata ? { metadata: m.metadata ? { ...m.metadata, ...metadata } : metadata } : {}),
-          isStreaming: streaming,
+          ...(advanceTimeline ? { timestamp: activityAt, timelineOrderAt: activityAt } : {}),
+          isStreaming: advanceTimeline ? streaming : m.isStreaming,
         };
       };
 
       if (threadId === state.currentThreadId) {
         const statusChanged = state.catStatuses[catId] !== catStatus;
-        const messages = state.messages.map(applyMessageUpdate);
+        const messageIndex = state.messages.findIndex((message) => message.id === messageId);
+        const advancesTimeline = messageIndex >= 0 && isMessageTimelineActive(state.messages[messageIndex]!);
+        const updatedMessages = state.messages.map(applyMessageUpdate);
+        const messages = advancesTimeline ? restoreTimelineOrderAt(updatedMessages, messageIndex) : updatedMessages;
         const newCatStatuses = statusChanged ? { ...state.catStatuses, [catId]: catStatus } : state.catStatuses;
         return {
           messages,
@@ -3475,12 +3528,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const existing = state.threadStates[threadId];
       if (!existing) return state;
       const statusChanged = existing.catStatuses[catId] !== catStatus;
+      const messageIndex = existing.messages.findIndex((message) => message.id === messageId);
+      const advancesTimeline = messageIndex >= 0 && isMessageTimelineActive(existing.messages[messageIndex]!);
+      const updatedMessages = existing.messages.map(applyMessageUpdate);
+      const messages = advancesTimeline ? restoreTimelineOrderAt(updatedMessages, messageIndex) : updatedMessages;
       return {
         threadStates: {
           ...state.threadStates,
           [threadId]: {
             ...existing,
-            messages: existing.messages.map(applyMessageUpdate),
+            messages,
             ...(statusChanged ? { catStatuses: { ...existing.catStatuses, [catId]: catStatus } } : {}),
             lastActivity: Date.now(),
           },

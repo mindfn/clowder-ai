@@ -9,7 +9,7 @@ describe('getMessageTimelineOrderTime', () => {
         catId: 'codex-sol',
         timestamp: 1_000,
         timelineOrderAt: 1_800,
-        lifecycle: { status: 'processing' },
+        lifecycle: { kind: 'response', status: 'processing' },
       }),
     ).toBe(1_800);
   });
@@ -21,7 +21,20 @@ describe('getMessageTimelineOrderTime', () => {
         catId: 'codex-sol',
         timestamp: 1_000,
         timelineOrderAt: 1_800,
-        lifecycle: { status: 'completed', completedAt: 2_000 },
+        lifecycle: { kind: 'response', status: 'completed', completedAt: 2_000 },
+      }),
+    ).toBe(2_000);
+  });
+
+  it('lets a terminal lifecycle override a stale streaming flag', () => {
+    expect(
+      getMessageTimelineOrderTime({
+        type: 'assistant',
+        catId: 'codex-sol',
+        isStreaming: true,
+        timestamp: 1_000,
+        timelineOrderAt: 1_800,
+        lifecycle: { kind: 'response', status: 'completed', completedAt: 2_000 },
       }),
     ).toBe(2_000);
   });
@@ -32,7 +45,7 @@ describe('getMessageTimelineOrderTime', () => {
       catId: 'codex-sol',
       timestamp: 1_000,
       timelineOrderAt: 1_800,
-      lifecycle: { status: 'completed', completedAt: 2_000 },
+      lifecycle: { kind: 'response', status: 'completed', completedAt: 2_000 },
     };
 
     expect(getMessageTimelineOrderTime(message)).toBe(2_000);

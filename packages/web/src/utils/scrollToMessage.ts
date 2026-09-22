@@ -2,6 +2,8 @@ import { revealFoldedSourceAnchor } from './folded-source-navigation';
 
 export const MOUNT_DEFERRED_MESSAGE_EVENT = 'cat-cafe:mount-deferred-message';
 export const MESSAGE_VIEWPORT_MOUNTED_EVENT = 'cat-cafe:message-viewport-mounted';
+const MESSAGE_JUMP_FOCUS_DURATION_MS = 3200;
+const messageJumpFocusTimers = new WeakMap<HTMLElement, number>();
 
 export interface MessageScrollAnchor {
   messageId: string;
@@ -78,6 +80,19 @@ export function restoreMessageScrollAnchor(container: HTMLElement, anchor: Messa
   return true;
 }
 
+/** Give every message-navigation path the same temporary, presentation-only target marker. */
+export function markMessageJumpTarget(node: HTMLElement): void {
+  const existingTimer = messageJumpFocusTimers.get(node);
+  if (existingTimer !== undefined) window.clearTimeout(existingTimer);
+
+  node.dataset.messageJumpFocus = 'true';
+  const timer = window.setTimeout(() => {
+    delete node.dataset.messageJumpFocus;
+    messageJumpFocusTimers.delete(node);
+  }, MESSAGE_JUMP_FOCUS_DURATION_MS);
+  messageJumpFocusTimers.set(node, timer);
+}
+
 /**
  * Scroll to a message by ID with smooth animation and temporary highlight.
  * Returns true when the target element was found (so callers can retry on a
@@ -90,10 +105,6 @@ export function scrollToMessage(messageId: string): boolean {
   revealFoldedSourceAnchor(el);
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-  // Temporary blue ring highlight
-  el.classList.add('ring-2', 'ring-blue-400', 'transition-all');
-  setTimeout(() => {
-    el.classList.remove('ring-2', 'ring-blue-400');
-  }, 1500);
+  markMessageJumpTarget(el);
   return true;
 }

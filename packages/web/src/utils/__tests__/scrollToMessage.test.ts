@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { captureMessageScrollAnchor, restoreMessageScrollAnchor, scrollToMessage } from '@/utils/scrollToMessage';
 
 // jsdom doesn't provide CSS.escape — polyfill for tests
@@ -70,7 +73,7 @@ describe('scrollToMessage', () => {
     });
   });
 
-  it('adds highlight classes then removes after timeout', () => {
+  it('uses the shared message-jump marker and removes it after timeout', () => {
     vi.useFakeTimers();
     const el = document.createElement('div');
     el.setAttribute('data-message-id', 'msg-456');
@@ -79,15 +82,38 @@ describe('scrollToMessage', () => {
 
     scrollToMessage('msg-456');
 
-    expect(el.classList.contains('ring-2')).toBe(true);
-    expect(el.classList.contains('ring-blue-400')).toBe(true);
-
-    vi.advanceTimersByTime(1500);
-
-    expect(el.classList.contains('ring-2')).toBe(false);
+    expect(el.dataset.messageJumpFocus).toBe('true');
     expect(el.classList.contains('ring-blue-400')).toBe(false);
 
+    vi.advanceTimersByTime(3200);
+
+    expect(el.dataset.messageJumpFocus).toBeUndefined();
+
     vi.useRealTimers();
+  });
+
+  it('uses the same marker for lineage jumps', () => {
+    vi.useFakeTimers();
+    const el = document.createElement('div');
+    el.setAttribute('data-message-id', 'lineage-msg');
+    el.scrollIntoView = vi.fn();
+    document.body.appendChild(el);
+
+    expect(focusLineageMessage('lineage-msg')).toBe(true);
+    expect(el.dataset.messageJumpFocus).toBe('true');
+
+    vi.advanceTimersByTime(3200);
+    expect(el.dataset.messageJumpFocus).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('renders the shared marker as an orange open-left bracket rather than a full outline', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/app/globals.css'), 'utf8');
+    const markerRule = css.match(/\[data-message-jump-focus="true"\]::after\s*\{([^}]*)\}/)?.[1] ?? '';
+
+    expect(markerRule).toContain('border: 2px solid var(--color-cocreator-primary)');
+    expect(markerRule).toContain('border-left: 0');
+    expect(markerRule).not.toContain('outline:');
   });
 
   it('does nothing when element is not found', () => {

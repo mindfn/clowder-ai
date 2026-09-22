@@ -12,6 +12,7 @@ import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection, parseImplicitStructuredTargets } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
+import { getMessageTimelineOrderTime } from '@/stores/message-timeline';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
@@ -348,6 +349,8 @@ function ChatMessageContent({
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
   const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
+  const assistantPresentationTime =
+    message.lifecycle?.kind === 'response' ? getMessageTimelineOrderTime(message) : message.timestamp;
   const cliStatus = message.isStreaming
     ? ('streaming' as const)
     : message.variant === 'error'
@@ -655,7 +658,7 @@ function ChatMessageContent({
               <span className="font-semibold" style={{ color: catStyle?.textColor }}>
                 {catStyle?.label ?? message.catId}
               </span>
-              <span className="text-cafe-muted">{formatTime(message.timestamp)}</span>
+              <span className="text-cafe-muted">{formatTime(assistantPresentationTime)}</span>
             </div>
             {showCapabilityTip && capabilityTipContexts ? (
               <CapabilityTipStrip
@@ -702,7 +705,7 @@ function ChatMessageContent({
           >
             {catStyle?.label ?? message.catId}
           </span>
-          <span className="text-xs text-cafe-muted shrink-0">{formatTime(message.timestamp)}</span>
+          <span className="text-xs text-cafe-muted shrink-0">{formatTime(assistantPresentationTime)}</span>
           {message.extra?.recovery?.kind === 'f254_withheld_message' && (
             <span
               className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
