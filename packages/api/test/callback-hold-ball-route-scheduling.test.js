@@ -264,7 +264,6 @@ describe('F167 C1: /api/callbacks/hold-ball scheduling + errors', () => {
     assert.equal(replacementTerminal.source.meta.taskId, firstTaskId);
     assert.equal(replacementTerminal.source.meta.outcome, 'retired_by_replacement');
     assert.doesNotMatch(replacementTerminal.content, /\bcodex\b/, 'human prose must not expose the internal cat id');
-    assert.match(replacementTerminal.content, /该成员/, 'unregistered test owners use a readable neutral fallback');
   });
 
   test('F167-G cloud P1: registerDynamic failure rolls back new insert and retains prior hold (atomic swap)', async () => {

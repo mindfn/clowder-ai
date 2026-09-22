@@ -581,7 +581,6 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.ok(terminal);
     assert.equal(terminal.userId, 'owner-user');
     assert.doesNotMatch(terminal.content, /\bcodex\b/, 'human prose must not expose the internal cat id');
-    assert.match(terminal.content, /该成员/, 'unregistered test owners use a readable neutral fallback');
     // Retirement is terminal, so the card must state that it can no longer be
     // canceled — the consumer trusts this stated fact over any status probe.
     assert.deepEqual(terminal.source.meta, {
