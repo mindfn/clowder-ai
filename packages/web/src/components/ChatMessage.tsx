@@ -10,7 +10,7 @@ import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
-import { parseDirection } from '@/lib/parse-direction';
+import { parseDirection, parseImplicitStructuredTargets } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
@@ -319,6 +319,9 @@ function ChatMessageContent({
   const direction = catData
     ? parseDirection(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }), currentThreadId)
     : null;
+  const implicitStructuredTargets = message.extra?.isExplicitPost
+    ? parseImplicitStructuredTargets(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }))
+    : [];
 
   const isFailedLifecycleResponse = message.lifecycle?.kind === 'response' && message.lifecycle.status === 'failed';
   const isStreamOrigin = message.origin === 'stream' && !isFailedLifecycleResponse;
@@ -344,6 +347,7 @@ function ChatMessageContent({
     cachedR21SpeechStdout ?? projectedCliStdout ?? (isStreamOrigin ? message.content : undefined);
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
+  const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
   const cliStatus = message.isStreaming
     ? ('streaming' as const)
     : message.variant === 'error'
@@ -641,7 +645,7 @@ function ChatMessageContent({
     hasCrossThreadSource: Boolean(crossThreadSourceThreadId),
   };
   if (!doesAssistantMessageRenderBubble(message, assistantRenderContext)) {
-    const notice = projectEmptyResponseLifecycleNotice(message, assistantRenderContext);
+    const notice = emptyResponseNotice;
     if (notice?.tone === 'processing') {
       return (
         <div data-message-id={message.id} data-testid="response-lifecycle-tip" className="mb-4 flex items-start gap-2">
@@ -732,7 +736,9 @@ function ChatMessageContent({
                   }`}
             </span>
           )}
-          {!isWhisper && direction && <DirectionPill direction={direction} getCatById={getCatById} />}
+          {!isWhisper && !message.extra?.isExplicitPost && direction && (
+            <DirectionPill direction={direction} getCatById={getCatById} />
+          )}
           {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
             <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
           )}
@@ -811,9 +817,6 @@ function ChatMessageContent({
       }
       bubbleRadius={catStyle ? catStyle.radius : 'rounded-2xl'}
       bubbleClassName={catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'}
-      maxWidth={
-        projectEmptyResponseLifecycleNotice(message, { hasCliBlock }) ? 'w-fit max-w-[85%] md:max-w-[75%]' : undefined
-      }
       bubbleStyle={
         catStyle
           ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
@@ -834,28 +837,13 @@ function ChatMessageContent({
         </>
       }
     >
-      {(() => {
-        const notice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
-        if (!notice) return null;
-        const toneClass =
-          notice.tone === 'failed'
-            ? 'text-conn-red-text'
-            : notice.tone === 'canceled'
-              ? 'text-conn-amber-text'
-              : 'text-cafe-muted';
-        return (
-          <output
-            data-response-lifecycle-notice={notice.tone}
-            className={`inline-flex items-center gap-2 text-sm ${toneClass}`}
-          >
-            {notice.tone === 'processing' ? (
-              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" aria-hidden="true" />
-            ) : null}
-            <span>{notice.label}</span>
-          </output>
-        );
-      })()}
-      {hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
+      {emptyResponseNotice && emptyResponseNotice.tone !== 'processing' ? (
+        <CollapsibleMarkdown
+          content={emptyResponseNotice.label}
+          className={catStyle?.font}
+          disclosureKey={bodyDisclosureKey}
+        />
+      ) : hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
         <ContentBlocks blocks={message.contentBlocks!} />
       ) : !isStreamOrigin && hasTextContent ? (
         <CollapsibleMarkdown
@@ -863,6 +851,21 @@ function ChatMessageContent({
           className={catStyle?.font}
           disclosureKey={bodyDisclosureKey}
         />
+      ) : null}
+      {implicitStructuredTargets.length > 0 ? (
+        <div
+          data-testid="implicit-structured-targets"
+          className="mt-3 border-t border-current/10 pt-2 text-sm opacity-75"
+        >
+          {implicitStructuredTargets.map((catId) => {
+            const cat = getCatById(catId);
+            return (
+              <div key={catId} data-target-cat-id={catId}>
+                → @{cat ? formatCatName(cat) : '该成员'}
+              </div>
+            );
+          })}
+        </div>
       ) : null}
       {message.thinking && (
         <ThinkingContent

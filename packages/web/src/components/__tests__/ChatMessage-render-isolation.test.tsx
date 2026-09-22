@@ -154,4 +154,71 @@ describe('ChatMessage render isolation', () => {
     expect(receipts?.textContent).toContain('09-01 22:14:08');
     expect(receipts?.textContent).not.toContain('@狸花猫 开始');
   });
+
+  it('renders only otherwise-invisible post_message targets at the end of the ordinary body', () => {
+    const message: ChatMessageData = {
+      id: 'explicit-post-with-structured-target',
+      type: 'assistant',
+      catId: 'cat-author',
+      origin: 'callback',
+      content: '正文',
+      timestamp: 1,
+      extra: {
+        isExplicitPost: true,
+        targetCats: ['cat-opus', 'cat-sol'],
+      },
+    };
+    const getCatById = (catId: string) => {
+      if (catId === 'cat-author') {
+        return { id: catId, displayName: '作者猫', avatar: '', color: { primary: '#000', secondary: '#000' } } as never;
+      }
+      if (catId === 'cat-opus') {
+        return { id: catId, displayName: '布偶猫', avatar: '', color: { primary: '#000', secondary: '#000' } } as never;
+      }
+      if (catId === 'cat-sol') {
+        return { id: catId, displayName: '缅因猫', avatar: '', color: { primary: '#000', secondary: '#000' } } as never;
+      }
+      return undefined;
+    };
+
+    act(() => {
+      root.render(<ChatMessage message={message} threadId="thread-render" getCatById={getCatById} />);
+    });
+
+    const targets = container.querySelector('[data-testid="implicit-structured-targets"]');
+    expect(targets?.children).toHaveLength(2);
+    expect(targets?.textContent).toContain('→ @布偶猫');
+    expect(targets?.textContent).toContain('→ @缅因猫');
+    expect(container.querySelector('[data-testid="message-header"]')?.textContent).not.toContain('→');
+  });
+
+  it('renders an empty canceled response through the ordinary body without a width override', () => {
+    const message: ChatMessageData = {
+      id: 'canceled-response',
+      type: 'assistant',
+      catId: 'cat-1',
+      origin: 'stream',
+      content: '',
+      timestamp: 1,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '1:canceled-response',
+        invocationId: 'invocation-1',
+        targetId: 'cat-1',
+        inputEntryIds: ['entry-1'],
+        inputMessageIds: ['message-1'],
+        status: 'canceled',
+        startedAt: 1,
+        completedAt: 2,
+      },
+    };
+
+    act(() => {
+      root.render(<ChatMessage message={message} threadId="thread-render" getCatById={() => undefined} />);
+    });
+
+    expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain('已停止回复。');
+    expect(container.querySelector('[data-response-lifecycle-notice]')).toBeNull();
+    expect(container.querySelector('[data-testid="message-bubble"]')?.parentElement?.className).not.toContain('w-fit');
+  });
 });
