@@ -53,7 +53,7 @@ test('production composition delivers concurrent cat replies exactly once to an 
         name: 'Main',
         resources: [],
         contributions: [],
-        capabilities: ['message.event.subscribe'],
+        capabilities: ['message.event.subscribe', 'thread.write'],
       },
     ],
     runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js' },
@@ -115,7 +115,7 @@ test('production composition delivers concurrent cat replies exactly once to an 
     const grant = transaction.grants.get(installed.pluginInstanceId);
     transaction.grants.put({
       ...grant,
-      effectiveGrants: ['message.event.subscribe'],
+      effectiveGrants: ['message.event.subscribe', 'thread.write'],
       grantRevision: grant.grantRevision + 1,
       updatedAt: Date.now(),
     });

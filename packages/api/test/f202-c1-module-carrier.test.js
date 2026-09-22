@@ -380,7 +380,10 @@ test('start receives the caller-bound Host thread surface', async () => {
   const rootDir = await writePackage(threadHostModule);
   const threadStore = new ThreadStore();
   const bindingStore = new MemoryConnectorThreadBindingStore();
-  const host = hostOf([{ manifest: manifest(), rootDir }], {
+  const pluginManifest = manifest({
+    features: [{ id: 'main', name: 'Main', resources: [], capabilities: ['thread.write'] }],
+  });
+  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: ['thread.write'] }], {
     threads: { threadStore, bindingStore, ownerUserId: 'owner-1', projectPath: '/workspace/clowder-ai' },
   });
 
@@ -416,12 +419,12 @@ test('start receives the caller-bound Host messaging surface', async () => {
         name: 'Main',
         resources: [],
         contributions: [{ type: 'identity', id: 'fixture' }],
-        capabilities: ['messaging.send'],
+        capabilities: ['messaging.send', 'thread.write'],
       },
     ],
   });
   const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
-  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: ['messaging.send'] }], {
+  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: ['messaging.send', 'thread.write'] }], {
     threads: shared,
     messaging: { ...shared, service: messaging },
   });
@@ -448,10 +451,16 @@ test('module stop unregisters every Host messaging subscription', async () => {
     unregister: (subscriberId, threadId) => removals.push({ subscriberId, threadId }),
   };
   const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
-  const host = hostOf([{ manifest: manifest(), rootDir, effectiveGrants: ['message.event.subscribe'] }], {
-    threads: shared,
-    messaging: { ...shared, service: messaging, delivery },
+  const pluginManifest = manifest({
+    features: [{ id: 'main', name: 'Main', resources: [], capabilities: ['message.event.subscribe', 'thread.write'] }],
   });
+  const host = hostOf(
+    [{ manifest: pluginManifest, rootDir, effectiveGrants: ['message.event.subscribe', 'thread.write'] }],
+    {
+      threads: shared,
+      messaging: { ...shared, service: messaging, delivery },
+    },
+  );
 
   await host.router.start('instance-0');
   assert.equal(registrations.length, 1);
@@ -472,10 +481,16 @@ test('a module start failure unregisters subscriptions before rollback completes
     unregister: (subscriberId, threadId) => removals.push({ subscriberId, threadId }),
   };
   const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
-  const host = hostOf([{ manifest: manifest(), rootDir, effectiveGrants: ['message.event.subscribe'] }], {
-    threads: shared,
-    messaging: { ...shared, service: messaging, delivery },
+  const pluginManifest = manifest({
+    features: [{ id: 'main', name: 'Main', resources: [], capabilities: ['message.event.subscribe', 'thread.write'] }],
   });
+  const host = hostOf(
+    [{ manifest: pluginManifest, rootDir, effectiveGrants: ['message.event.subscribe', 'thread.write'] }],
+    {
+      threads: shared,
+      messaging: { ...shared, service: messaging, delivery },
+    },
+  );
 
   await assert.rejects(() => host.router.start('instance-0'), /start failed after subscribe/);
 

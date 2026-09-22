@@ -84,13 +84,18 @@ export class DeclaredRuntimeContributions {
     if (limbs.length > 0 && !this.host.limbRegistry) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host limb registry is unavailable');
     }
-    if (schedules.length > 0 && !this.host.taskRunner) {
-      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task runner is unavailable');
-    }
-
     const limbNodeIds: string[] = [];
     const scheduleTaskIds: string[] = [];
     try {
+      if (schedules.length > 0 && !admission.effectiveGrants.includes('schedule.register')) {
+        throw new ExternalPluginRuntimeError(
+          'DELIVERY_REJECTED',
+          `${admission.packageRecord.pluginId} lacks schedule.register`,
+        );
+      }
+      if (schedules.length > 0 && !this.host.taskRunner) {
+        throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task runner is unavailable');
+      }
       for (const tool of tools) directToolSchema(tool);
       validateDeclaredWebhooks(webhooks);
       if (limbs.length > 0) {

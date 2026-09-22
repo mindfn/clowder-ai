@@ -120,11 +120,12 @@ async function writeFixturePackage({
   return packageRoot;
 }
 
-async function installAndEnable(runtime, packageRoot) {
+async function installAndEnable(runtime, packageRoot, localGrantPolicy = () => []) {
   const composition = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
+    localGrantPolicy,
   });
   const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
   const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
@@ -299,11 +300,12 @@ test('an installed package schedules its declared action and unregisters on disa
       action: { method: 'fixture.tick', params: { source: 'schedule' } },
       policy: { overlap: 'skip', timeoutMs: 5_000 },
     },
+    capabilities: ['schedule.register'],
     actions: `{ 'fixture.tick': async (params) => { globalThis['${marker}'] = params; return { ok: true }; } }`,
   });
   const taskRunner = fakeTaskRunner();
   const { runtime } = createRuntime(projectRoot, { taskRunner });
-  const { composition, installed } = await installAndEnable(runtime, packageRoot);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot, () => ['schedule.register']);
 
   const [task] = [...taskRunner.tasks.values()];
   assert.ok(task, 'the declared schedule must be registered with TaskRunnerV2');
@@ -318,6 +320,54 @@ test('an installed package schedules its declared action and unregisters on disa
 
   await disable(composition, installed.pluginId);
   assert.equal(taskRunner.tasks.size, 0);
+});
+
+test('a declared schedule without schedule.register fails activation and rolls back static resources', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-schedule-grant-project-');
+  const mcp = {
+    type: 'mcp',
+    id: 'schedule-grant-mcp',
+    runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+  };
+  const schedule = {
+    type: 'schedule',
+    id: 'schedule-grant-denied',
+    schedule: { kind: 'interval', everyMs: 60_000 },
+    action: { method: 'fixture.tick' },
+    policy: { overlap: 'skip', timeoutMs: 5_000 },
+  };
+  const packageRoot = await writeFixturePackage({
+    pluginId: 'dev.clowder.schedule-grant-fixture',
+    contribution: schedule,
+    contributions: [mcp, schedule],
+    capabilities: ['schedule.register'],
+    files: { 'dist/mcp.js': 'process.exit(0);\n' },
+    actions: "{ 'fixture.tick': async () => ({ ok: true }) }",
+  });
+  const taskRunner = fakeTaskRunner();
+  const { runtime } = createRuntime(projectRoot, { taskRunner });
+  const composition = createPluginManagerRuntimeComposition({
+    runtime,
+    catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
+    catalogManifests: [],
+  });
+  const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
+  const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
+
+  await assert.rejects(
+    composition.manager.setEnabled(installed.pluginId, {
+      enabled: true,
+      expectedRevision: beforeEnable.lifecycleRevision,
+    }),
+    /runtime failed to start/,
+  );
+  assert.equal(taskRunner.tasks.size, 0);
+  assert.equal(
+    (await readCapabilitiesConfig(projectRoot))?.capabilities.some(
+      (candidate) => candidate.pluginId === installed.pluginId,
+    ),
+    false,
+  );
 });
 
 test('an installed package exposes declared cat tools through the shared contribution entrypoint', async () => {
@@ -392,6 +442,7 @@ test('a runtime-contribution startup failure rolls back static and live registra
     pluginId: 'dev.clowder.contribution-rollback-fixture',
     contribution: mcp,
     contributions: [mcp, limb, tool, schedule],
+    capabilities: ['schedule.register'],
     files: {
       'dist/mcp.js': 'process.exit(0);\n',
       'limbs/rollback.yml': [
@@ -429,6 +480,7 @@ test('a runtime-contribution startup failure rolls back static and live registra
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
+    localGrantPolicy: () => ['schedule.register'],
   });
   const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
   const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
@@ -478,6 +530,7 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
     pluginId: 'dev.clowder.contribution-shutdown-fixture',
     contribution: mcp,
     contributions: [mcp, limb, tool, schedule],
+    capabilities: ['schedule.register'],
     files: {
       'dist/mcp.js': 'process.exit(0);\n',
       'limbs/shutdown.yml': [
@@ -503,7 +556,7 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
   const limbRegistry = new LimbRegistry();
   const taskRunner = fakeTaskRunner();
   const { runtime } = createRuntime(projectRoot, { limbRegistry, taskRunner });
-  const { composition, installed } = await installAndEnable(runtime, packageRoot);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot, () => ['schedule.register']);
   const beforeShutdown = (await readCapabilitiesConfig(projectRoot))?.capabilities.find(
     (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
   );
