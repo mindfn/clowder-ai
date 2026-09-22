@@ -400,7 +400,7 @@ test('verified Agent principal can read and mutate through the same owner/loopba
   }
 });
 
-test('verified Agent principal discovers and invokes only active Host-supervised plugin tools', async () => {
+test('verified Agent principal discovers and invokes only active plugin-declared direct tools', async () => {
   const contributionCalls = [];
   const inputSchema = {
     type: 'object',

@@ -38,6 +38,10 @@ describe('F202 Agent plugin management surface', () => {
         `${tool.name} must state its output and side effects`,
       );
     }
+    const byName = new Map(pluginManagementTools.map((tool) => [tool.name, tool]));
+    assert.match(byName.get('plugin_list_tools')?.description ?? '', /plugin-declared direct tool schemas/);
+    assert.match(byName.get('plugin_call')?.description ?? '', /plugin-declared direct tool/);
+    assert.doesNotMatch(byName.get('plugin_call')?.description ?? '', /Host-supervised|plugin MCP result/);
   });
 
   it('derives read/write/destructive annotations and profile exposure from governance', () => {

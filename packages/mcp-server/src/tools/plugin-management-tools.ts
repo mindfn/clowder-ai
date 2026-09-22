@@ -329,7 +329,7 @@ export const pluginManagementTools = [
   defineTool({
     name: 'plugin_list_tools',
     description:
-      'List callable tool schemas from one currently active Host-supervised plugin. Use when the user asks to use an installed plugin capability and after plugin_get confirms it is enabled/running. NOT for: catalog discovery, lifecycle changes, or guessing a tool schema. Output: active contribution ids, exact dynamic tool names, descriptions, and input schemas; no plugin process or authority is created.',
+      'List plugin-declared direct tool schemas from one currently active plugin. Use when the user asks to use an installed plugin capability and after plugin_get confirms it is enabled/running. NOT for: catalog discovery, lifecycle changes, MCP declarations, or guessing a tool schema. Output: active contribution ids, exact direct tool names, descriptions, and input schemas; no plugin process or authority is created.',
     inputSchema: pluginListToolsInputSchema,
     handler: handlers.listTools,
     governance: {
@@ -348,7 +348,7 @@ export const pluginManagementTools = [
   defineTool({
     name: 'plugin_call',
     description:
-      "Invoke one exact tool on a currently active Host-supervised plugin contribution. Use only when the user asks to perform that plugin capability after reading its schema with plugin_list_tools. NOT for: install, configuration, lifecycle changes, direct MCP process launch, or guessed arguments. Output/side effect: returns the plugin MCP result and may cause the dynamic tool's declared external effects; Host rechecks live instance and grant authority before every call, and secrets remain inside Host supervision.",
+      'Invoke one exact plugin-declared direct tool on a currently active plugin. Use only when the user asks to perform that plugin capability after reading its schema with plugin_list_tools. NOT for: install, configuration, lifecycle changes, MCP tools, or guessed arguments. Output/side effect: returns the direct tool result and may cause its declared external effects; Host rechecks live instance and grant authority before every call.',
     inputSchema: pluginCallInputSchema,
     handler: handlers.call,
     governance: {
