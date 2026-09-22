@@ -792,6 +792,11 @@ function ChatMessageContent({
           <CatAvatar
             catId={message.catId!}
             size={32}
+            status={
+              message.lifecycle?.kind === 'response' && message.lifecycle.status === 'processing'
+                ? 'streaming'
+                : undefined
+            }
             onClick={onEditCat && message.catId ? () => onEditCat(message.catId!) : undefined}
           />
         ) : null
@@ -806,6 +811,9 @@ function ChatMessageContent({
       }
       bubbleRadius={catStyle ? catStyle.radius : 'rounded-2xl'}
       bubbleClassName={catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'}
+      maxWidth={
+        projectEmptyResponseLifecycleNotice(message, { hasCliBlock }) ? 'w-fit max-w-[85%] md:max-w-[75%]' : undefined
+      }
       bubbleStyle={
         catStyle
           ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }

@@ -1319,7 +1319,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     );
   });
 
-  it('installs a Host connector bubble before projecting its spawn indicator', () => {
+  it('keeps a queued Host connector out of History until messages_delivered', () => {
     mockStoreCurrentThreadId = 'thread-B';
     const callbacks: SocketCallbacks = { onMessage: vi.fn() };
     const source = { connector: 'feishu', label: '飞书会议入站 / 录音豆', icon: 'feishu' };
@@ -1349,16 +1349,8 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
       });
     });
 
-    expect(mockAddMessageToThread).toHaveBeenCalledWith('thread-B', {
-      id: 'meeting-source',
-      type: 'connector',
-      content: 'Host-authored meeting intake',
-      source,
-      timestamp: 1234,
-    });
-    expect(mockAddMessageToThread.mock.invocationCallOrder[0]).toBeLessThan(
-      mockSetCatStatus.mock.invocationCallOrder[0]!,
-    );
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
+    expect(mockSetCatStatus).toHaveBeenCalled();
   });
 
   it('queue_updated processing hydrates current-thread slot truth when intent_mode is missing', async () => {

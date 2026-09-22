@@ -30,7 +30,20 @@ function setActive(catId: string, status: CatStatusType) {
     activeInvocations: { 'inv-a': { catId, mode: 'execute', startedAt: 1000 } },
     hasActiveInvocation: true,
     catStatuses: { [catId]: status },
-    catInvocations: {},
+    catInvocations: {
+      [catId]: {
+        activeRun: {
+          threadId: 'thread-a',
+          targetId: catId,
+          invocationId: 'inv-a',
+          responseMessageId: 'response-inv-a',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: 1000,
+        },
+      },
+    },
     threadStates: {},
   });
 }

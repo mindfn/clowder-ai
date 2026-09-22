@@ -36,6 +36,9 @@ const MAX_BASE64_LENGTH = 5 * 1024 * 1024;
  */
 export interface CodexStreamState {
   hadPriorTextTurn: boolean;
+  streamedAgentMessageItemIds?: Set<string>;
+  agentMessageItemOrder?: string[];
+  agentMessageTextByItemId?: Map<string, string>;
   /** Preferred cat identity used for the runtime-canonical signature. */
   signatureIdentity?: string;
   /** Other configured identities that the provider may use for the same cat. */
@@ -310,7 +313,8 @@ export function transformCodexEvent(
       e.type === 'turn.started' ||
       e.type === 'item.started' ||
       e.type === 'item.updated' ||
-      e.type === 'item.completed'
+      e.type === 'item.completed' ||
+      e.type === 'item.agent_message.delta'
     ) {
       delete state.lastTurnTerminal;
     }
@@ -515,6 +519,28 @@ export function transformCodexEvent(
     return null;
   }
 
+  if (e.type === 'item.agent_message.delta') {
+    if (typeof e.item_id !== 'string' || typeof e.delta !== 'string' || e.delta.length === 0) return null;
+    const firstChunk = !state?.streamedAgentMessageItemIds?.has(e.item_id);
+    const hadPriorTextTurn = state?.hadPriorTextTurn === true;
+    if (state) {
+      state.streamedAgentMessageItemIds ??= new Set();
+      state.agentMessageItemOrder ??= [];
+      state.agentMessageTextByItemId ??= new Map();
+      if (!state.agentMessageTextByItemId.has(e.item_id)) state.agentMessageItemOrder.push(e.item_id);
+      state.agentMessageTextByItemId.set(e.item_id, `${state.agentMessageTextByItemId.get(e.item_id) ?? ''}${e.delta}`);
+      state.streamedAgentMessageItemIds.add(e.item_id);
+      state.hadPriorTextTurn = true;
+    }
+    return {
+      type: 'text',
+      catId,
+      content: `${firstChunk && hadPriorTextTurn ? '\n\n' : ''}${e.delta}`,
+      textMode: 'append',
+      timestamp: Date.now(),
+    };
+  }
+
   if (e.type !== 'item.completed') return null;
 
   const item = e.item as Record<string, unknown> | undefined;
@@ -555,6 +581,25 @@ export function transformCodexEvent(
       catId,
     );
     if (state && stripped.signature) state.observedSignature = stripped.signature;
+    const itemId = typeof item.id === 'string' ? item.id : undefined;
+    if (state && itemId) {
+      state.agentMessageItemOrder ??= [];
+      state.agentMessageTextByItemId ??= new Map();
+      if (!state.agentMessageTextByItemId.has(itemId)) state.agentMessageItemOrder.push(itemId);
+      state.agentMessageTextByItemId.set(itemId, stripped.content);
+      if (state.streamedAgentMessageItemIds?.has(itemId)) {
+        return {
+          type: 'text',
+          catId,
+          content: state.agentMessageItemOrder
+            .map((candidateId) => state.agentMessageTextByItemId?.get(candidateId) ?? '')
+            .filter(Boolean)
+            .join('\n\n'),
+          textMode: 'replace',
+          timestamp: Date.now(),
+        };
+      }
+    }
     if (stripped.content.trim().length === 0) return null;
     const prefix = state?.hadPriorTextTurn ? '\n\n' : '';
     if (state) state.hadPriorTextTurn = true;
