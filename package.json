@@ -64,7 +64,7 @@
     "check:provider-request-recorder": "node --test scripts/check-provider-request-recorder.test.mjs && node scripts/check-provider-request-recorder.mjs",
     "check:no-codex-provider-exit-suppression": "node --test --test-concurrency=1 scripts/check-no-codex-provider-exit-suppression-literal.test.mjs scripts/check-no-codex-provider-exit-suppression-ast.test.mjs scripts/check-no-codex-provider-exit-suppression-isolation.test.mjs scripts/check-no-codex-provider-exit-suppression-structural.test.mjs scripts/check-no-provider-canary-residue.test.mjs && node scripts/check-no-codex-provider-exit-suppression.mjs && node scripts/check-no-provider-canary-residue.mjs",
     "check:no-provider-canary-residue": "node scripts/check-no-provider-canary-residue.mjs",
-    "check:fork-only-patches": "node scripts/check-fork-only-patches.mjs",
+    "check:fork-only-patches": "node --test scripts/check-fork-only-patches.test.mjs && node scripts/check-fork-only-patches.mjs",
     "check:paw-feel-disposition-boundaries": "node --test scripts/check-paw-feel-disposition-boundaries.test.mjs && node scripts/check-paw-feel-disposition-boundaries.mjs",
     "check:paw-feel-disposition-capacity": "pnpm --filter @cat-cafe/shared build && pnpm --filter @cat-cafe/api build && node --test packages/api/test/harness-eval/paw-feel-disposition-capacity.test.js",
     "check:f212-reconciliation-eval": "node --test scripts/eval-f212-reconciliation/reconciliation-baseline.test.mjs scripts/eval-f212-reconciliation/reconciliation-window.test.mjs scripts/eval-f212-reconciliation/reconciliation-matcher.test.mjs scripts/eval-f212-reconciliation/reconciliation-sequence.test.mjs scripts/eval-f212-reconciliation/reconciliation-malformed.test.mjs",

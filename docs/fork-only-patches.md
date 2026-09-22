@@ -53,16 +53,82 @@ fork version rather than carried forward blindly:
    the detected cause was an intentional `OTEL_SDK_DISABLED=true`. The next-step
    text is now derived from the detected cause.
 
-## Rebuild SOP
+## Why a tree-only check is not enough
 
-After any `develop_base` rebuild onto upstream main:
+A develop_base rebuild is, quoting commit `70d79a2f2`'s own body:
+
+> The develop_base rebuild (b739c279c) reset to origin/main + fork/optimizations
+> but dropped all develop_base-only merges - 33 first-parent commits [...]
+> 443 files modified by BOTH main and fork: **NOT restored**
+
+Two things follow.
+
+First, the shared-file edits (the `requiredAnchors` below) fall exactly in that
+"modified by BOTH / not restored" bucket. The file survives, the fork's edit
+inside it does not - so an existence check reads clean while the patch is gone.
+
+Second, and worse: a check that reads its registry **from the tree** cannot
+report on a rebuild that replaces the tree. The reset takes the registry and
+this script along with the patches, and a guard that is not there does not go
+red. That is how three losses stayed silent.
+
+`fork/optimizations` does not solve this either. It is an orphan snapshot - 7
+commits, no merge-base with upstream main, a July full-tree copy - so
+"is the patch in the carrier" is not a survival predicate, and asking for
+current code to be committed onto a stale unrelated history is incoherent.
+
+## What actually survives: the remote-tracking ref
+
+`git reset --hard upstream/main` replaces the working tree. It does **not** move
+`origin/develop_base`. The previous tree's registry is therefore still readable
+straight out of git after the rebuild has erased it from disk:
+
+```bash
+git show origin/develop_base:scripts/fork-only-patches.json
+```
+
+So the guard compares what the previous tree **claimed to protect** against what
+the new tree **actually has**. It stays runnable even when the rebuild deleted
+it, because it can be read from the same ref:
+
+```bash
+git show origin/develop_base:scripts/check-fork-only-patches.mjs > /tmp/guard.mjs
+node /tmp/guard.mjs
+```
+
+## Two checks, both required
 
 ```bash
 pnpm check:fork-only-patches
 ```
 
-Red output names the exact missing files and anchors. Re-apply them, then
-re-run. Do not merge a rebuild while this check is red.
+1. **Tree check** - is each registered patch here right now? Answers
+   "is production broken".
+2. **Rebuild-survival check** - is everything `baselineRef` claimed still
+   present? Answers "did this rebuild drop something", **before** the result is
+   pushed or deployed.
+
+Both fail closed: a missing registry, an unreachable baseline, a hollow patch
+entry, or an anchor that moved after the step it must precede are all red. A
+guard that cannot see its input must not report clean. The one deliberate
+exception is a baseline that carried no registry at all - an absent prior claim
+is not an unverifiable one.
+
+## Rebuild SOP
+
+Run the guard as the **last step of a rebuild, before pushing**:
+
+```bash
+git fetch origin develop_base            # baseline must be present
+pnpm check:fork-only-patches
+```
+
+Red output names each dropped file and anchor. Re-apply them, then re-run. Do
+not push or deploy a rebuild while this check is red.
+
+CI runs the same guard on every push and PR to `develop_base`
+(`.github/workflows/fork-only-patches.yml`) - every other workflow in this repo
+triggers on `main` only, which is why losses on develop_base went unseen.
 
 ## Adding a patch to the registry
 
@@ -74,3 +140,7 @@ Add an entry to `scripts/fork-only-patches.json` with:
 - `requiredAnchors` — files that must still *contain* given symbols, for patches
   that modify shared files rather than adding new ones (these are the ones a
   rebuild silently reverts, since the file still exists)
+- `order` - call-site strings that must appear in sequence, for patches whose
+  meaning is positional. Bare substrings are satisfied by an import, an
+  interface field or a comment; anchor on the call site instead, so a gate
+  moved after the step it must precede is caught.

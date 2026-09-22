@@ -7629,21 +7629,13 @@ async function main(): Promise<void> {
   };
   // F192 evidence-source prerequisite gate. OTel init state is fixed for the
   // process lifetime (salt is read at boot), so a boolean thunk is a complete input.
-  // `evidenceTargetIsLocal` asserts the single-process assumption the local handle
-  // relies on: EVAL_BASE_URL unset (or pointing at our own port) => co-located.
+  // No co-location check: f167-runtime-eval evidence is a snapshot+attribution pair
+  // on disk under harnessFeedbackRoot (below), written by THIS process's OTel
+  // pipeline. The producer is this process by construction, so the local handle is
+  // authoritative. See eval-domain-evidence-gate.ts for why the earlier
+  // EVAL_BASE_URL-derived assertion was removed rather than repaired.
   const evidencePrereqProbe = createTelemetryEvidencePrereqProbe({
     otelEnabled: () => telemetryHandle.getMetricsText !== null,
-    evidenceTargetIsLocal: () => {
-      const target = process.env.EVAL_BASE_URL;
-      if (!target) return true; // default target is this process
-      try {
-        const { port, hostname } = new URL(target);
-        const localHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-        return localHost && port === String(process.env.API_SERVER_PORT ?? '');
-      } catch {
-        return false; // unparseable target => cannot prove co-location => fail closed
-      }
-    },
   });
 
   const evalScheduleOpts = {

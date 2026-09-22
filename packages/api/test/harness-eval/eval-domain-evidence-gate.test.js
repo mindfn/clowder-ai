@@ -89,46 +89,63 @@ describe('eval-domain evidence-source prereq gate (fork-only; mindfn PR #91/#137
   });
 
   /**
-   * Upstream review finding (zts212653/clowder-ai#1352): `otelEnabled` observes the
-   * CRON process's telemetry handle, but evidence is fetched from the adapter target
-   * (EVAL_BASE_URL). When those differ the local handle proves nothing about the
-   * remote source, in BOTH directions. The gate must fail closed rather than let a
-   * local handle speak for a remote target.
+   * PR #185 review (砚砚): the previous "co-location" assertion was wired to
+   * `EVAL_BASE_URL`, which the scheduled path never reads (only the manual CLI
+   * scripts/run-f168-external-case-eval.mjs does). It also compared the URL port
+   * against `API_SERVER_PORT` and tested `hostname === '::1'`, which Node reports
+   * as `'[::1]'` - so it fell CLOSED on the very local topology it meant to admit.
+   *
+   * It was removed, not repaired: f167-runtime-eval evidence is a snapshot pair on
+   * disk under the harness-feedback root, produced by this process. These tests pin
+   * that decision so the env-derived check is not reintroduced.
    */
-  describe('evidence target co-location assertion', () => {
-    it('remote evidence target -> fail closed even when local OTel is healthy', () => {
-      const probe = createTelemetryEvidencePrereqProbe({
-        otelEnabled: () => true,
-        evidenceTargetIsLocal: () => false,
-      });
-      const result = probe({ domainId: 'eval:a2a', sourceAdapter: 'f167-runtime-eval' });
-      assert.equal(result.ok, false, 'a healthy LOCAL handle must not admit an unproven REMOTE source');
-      assert.ok(result.reason.includes('remote runtime'), `got: ${result.reason}`);
-    });
+  describe('evidence-source topology contract', () => {
+    const A2A = { domainId: 'eval:a2a', sourceAdapter: 'f167-runtime-eval' };
 
-    it('co-located evidence target + healthy OTel -> ok', () => {
-      const probe = createTelemetryEvidencePrereqProbe({
-        otelEnabled: () => true,
-        evidenceTargetIsLocal: () => true,
-      });
-      assert.equal(probe({ domainId: 'eval:a2a', sourceAdapter: 'f167-runtime-eval' }).ok, true);
-    });
+    function withEnv(key, value, fn) {
+      const prev = process.env[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+      try {
+        return fn();
+      } finally {
+        if (prev === undefined) delete process.env[key];
+        else process.env[key] = prev;
+      }
+    }
 
-    it('omitted assertion stays backward-compatible (assumes co-located)', () => {
+    it('a remote-looking EVAL_BASE_URL does not change the verdict', () => {
+      // Regression: the gate must not re-derive evidence topology from env. The
+      // scheduled evidence path is filesystem-local regardless of this variable.
       const probe = createTelemetryEvidencePrereqProbe({ otelEnabled: () => true });
-      assert.equal(probe({ domainId: 'eval:a2a', sourceAdapter: 'f167-runtime-eval' }).ok, true);
+      withEnv('EVAL_BASE_URL', 'http://evidence.example.com:9999', () => {
+        assert.equal(probe(A2A).ok, true, 'env must not gate the filesystem-local evidence path');
+      });
     });
 
-    it('co-location is checked before the telemetry handle, not after', () => {
-      const probe = createTelemetryEvidencePrereqProbe({
-        otelEnabled: () => false,
-        evidenceTargetIsLocal: () => false,
-      });
-      const result = probe({ domainId: 'eval:a2a', sourceAdapter: 'f167-runtime-eval' });
-      assert.ok(
-        result.reason.includes('remote runtime'),
-        `remote-target cause must win over the local salt cause (got: ${result.reason})`,
+    it('local topology is admitted on the documented default port with no env overrides', () => {
+      // The removed check failed exactly here: "3004" === String(undefined ?? '')
+      // is false, so a healthy co-located runtime was skipped.
+      const probe = createTelemetryEvidencePrereqProbe({ otelEnabled: () => true });
+      withEnv('EVAL_BASE_URL', 'http://localhost:3004', () =>
+        withEnv('API_SERVER_PORT', undefined, () => {
+          assert.equal(probe(A2A).ok, true, 'default local target must not fail closed');
+        }),
       );
+    });
+
+    it('IPv6 loopback is admitted (Node reports hostname as "[::1]", not "::1")', () => {
+      const probe = createTelemetryEvidencePrereqProbe({ otelEnabled: () => true });
+      withEnv('EVAL_BASE_URL', 'http://[::1]:3002', () => {
+        assert.equal(probe(A2A).ok, true);
+      });
+    });
+
+    it('OTel state remains the only gate input for a telemetry-backed adapter', () => {
+      const disabled = createTelemetryEvidencePrereqProbe({ otelEnabled: () => false });
+      withEnv('EVAL_BASE_URL', 'http://localhost:3002', () => {
+        assert.equal(disabled(A2A).ok, false, 'disabled OTel must still fail closed');
+      });
     });
   });
 
