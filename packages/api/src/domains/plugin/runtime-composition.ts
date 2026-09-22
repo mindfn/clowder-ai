@@ -636,6 +636,10 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
         contributions: pluginManagerContributionsFromManifest(packageRecord.manifest).map((contribution) => ({
           ...contribution,
         })),
+        ...(packageRecord.manifest.steps === undefined
+          ? {}
+          : { steps: packageRecord.manifest.steps.map((step) => step.text) }),
+        testable: packageRecord.manifest.test !== undefined,
         configFields: [],
       });
     }
@@ -706,6 +710,7 @@ export interface PluginManagerRuntimeCompositionOptions {
 
 export interface PluginManagerRuntimeComposition {
   readonly manager: PluginManagerService;
+  readonly configuration: HostPluginConfigurationService;
   readonly officialInstaller: OfficialPluginPackageInstaller;
   readonly officialRouteInstaller: OfficialPluginPackageInstaller;
   readonly localAdmission: LocalPluginPackageAdmission;
@@ -845,6 +850,7 @@ export function createPluginManagerRuntimeComposition(
   });
   return {
     manager,
+    configuration,
     officialInstaller,
     officialRouteInstaller,
     localAdmission,

@@ -4307,6 +4307,11 @@ async function main(): Promise<void> {
   };
 
   let loadRepositoryPluginInfo: (() => Promise<readonly import('@cat-cafe/shared').PluginInfo[]>) | undefined;
+  let runInstalledPluginTest:
+    | ((
+        pluginId: string,
+      ) => Promise<import('./domains/plugin/operations/plugin-operation-routes.js').InstalledPluginOperationResult>)
+    | undefined;
 
   // F202: Plugin framework — discovery + config + resource activation
   {
@@ -4557,6 +4562,10 @@ async function main(): Promise<void> {
       beforePluginDisable: (pluginId) => {
         if (pluginId === 'wechat-visible-reader') weChatVisibleReaderArmStore.disarm();
       },
+      runInstalledTest: async (pluginId) =>
+        runInstalledPluginTest
+          ? runInstalledPluginTest(pluginId)
+          : { matched: false, status: 404, body: { error: `Plugin '${pluginId}' is not installed` } },
     });
   }
   // F174 D2b-1 — single notifier instance shared between callback auth preHandler
@@ -5106,6 +5115,16 @@ async function main(): Promise<void> {
     compatibility: repositoryPluginManagerCompatibility,
     auth: officialPluginAuth,
   });
+  const { InstalledPluginOperations, pluginOperationRoutes } = await import(
+    './domains/plugin/operations/plugin-operation-routes.js'
+  );
+  const installedPluginOperations = new InstalledPluginOperations({
+    inventory: pluginRuntime.inventoryStore,
+    configuration: pluginManagerRuntime.configuration,
+    invocation: pluginRuntime.supervisor,
+  });
+  runInstalledPluginTest = (pluginId) => installedPluginOperations.runTest(pluginId);
+  await app.register(pluginOperationRoutes, { operations: installedPluginOperations });
   const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
   app.log.info(
     `[api] K-2 plugin runtime recovered ` +

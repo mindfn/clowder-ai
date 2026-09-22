@@ -11,6 +11,7 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
+import { InstalledPluginOperations } from '../dist/domains/plugin/operations/plugin-operation-routes.js';
 import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 import { registerOfficialPluginRoutes } from '../dist/routes/plugin-official-routes.js';
 import { catalogEntry, manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
@@ -32,9 +33,10 @@ async function harness({
   offline = () => false,
   contract,
   machinePresentation = false,
+  extraFiles = {},
 } = {}) {
   const projectRoot = await root('cat-cafe-f202-manager-composition-');
-  const archive = await packageArchive({ packageManifest });
+  const archive = await packageArchive({ packageManifest, extraFiles });
   const entry = catalogEntry(archive.integrity, {
     pluginId: packageManifest.pluginId,
     version: packageManifest.version,
@@ -306,6 +308,150 @@ describe('F202 Plugin Manager runtime composition', () => {
         { key: 'stream', currentValue: 'false' },
       ],
     );
+  });
+
+  it('projects declared operations, persisted operation state, setup steps, and testability', async () => {
+    const packageManifest = manifest({
+      configuration: [
+        { key: 'provider', label: 'Provider', kind: 'string', required: false },
+        {
+          key: 'login',
+          label: 'Log in',
+          kind: 'operation',
+          required: false,
+          target: ['provider'],
+          actions: [
+            {
+              id: 'begin',
+              label: 'Begin',
+              render: 'button',
+              action: { method: 'login.begin', params: { private: true } },
+              next: 'status',
+            },
+            { id: 'status', label: 'Status', render: 'polling', action: { method: 'login.status' } },
+          ],
+        },
+      ],
+      test: { action: { method: 'self.test' } },
+      steps: [{ text: 'Open the login page.' }, { text: 'Approve access.' }],
+    });
+    const { composition, entry } = await harness({
+      packageManifest,
+      contract: contributionContractRuntime(),
+    });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    await composition.configuration.writeOperationState(entry.pluginId, 'login', {
+      currentAction: 'status',
+      updatedAt: 12,
+      lastResult: { render: 'polling', data: { waiting: true } },
+    });
+
+    const plugin = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.deepEqual(plugin.steps, ['Open the login page.', 'Approve access.']);
+    assert.equal(plugin.testable, true);
+    const operation = plugin.configFields.find((field) => field.key === 'login');
+    assert.deepEqual(operation, {
+      key: 'login',
+      label: 'Log in',
+      kind: 'operation',
+      required: false,
+      currentValue: null,
+      sensitive: false,
+      target: ['provider'],
+      actions: [
+        { id: 'begin', label: 'Begin', render: 'button', next: 'status' },
+        { id: 'status', label: 'Status', render: 'polling' },
+      ],
+      operationState: {
+        currentAction: 'status',
+        updatedAt: 12,
+        lastResult: { render: 'polling', data: { waiting: true } },
+      },
+    });
+    assert.equal(JSON.stringify(operation).includes('login.begin'), false);
+    assert.equal(JSON.stringify(operation).includes('private'), false);
+  });
+
+  it('invokes operation and test handlers through an installed and enabled builtin fixture package', async () => {
+    const packageManifest = manifest({
+      runtime: { transport: 'builtin', entrypoint: 'dist/entrypoint.js' },
+      configuration: [
+        { key: 'token', label: 'Token', kind: 'secret', required: false },
+        {
+          key: 'login',
+          label: 'Log in',
+          kind: 'operation',
+          required: false,
+          target: ['token'],
+          actions: [{ id: 'begin', label: 'Begin', render: 'button', action: { method: 'login.begin' } }],
+        },
+      ],
+      test: { action: { method: 'self.test' } },
+    });
+    const entrypoint = `
+export default {
+  create() {
+    return {
+      async start() {
+        return {
+          actions: {
+            async 'login.begin'() {
+              return { render: 'img', data: { url: 'fixture://qr' }, targetValues: { token: 'fixture-secret' } };
+            },
+            async 'self.test'() { return { ok: true }; },
+          },
+          stop() {},
+        };
+      },
+    };
+  },
+};
+`;
+    const { composition, entry, runtime } = await harness({
+      packageManifest,
+      contract: contributionContractRuntime(),
+      extraFiles: { 'dist/entrypoint.js': entrypoint },
+    });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    const installed = (await composition.manager.get(entry.pluginId)).plugin;
+    await composition.manager.setEnabled(entry.pluginId, {
+      enabled: true,
+      expectedRevision: installed.lifecycleRevision,
+    });
+    const operations = new InstalledPluginOperations({
+      inventory: runtime.inventoryStore,
+      configuration: composition.configuration,
+      invocation: runtime.supervisor,
+    });
+
+    const action = await operations.runAction(entry.pluginId, 'login', 'begin', {});
+    assert.equal(action.status, 200);
+    assert.deepEqual(action.body.data, { url: 'fixture://qr' });
+    assert.deepEqual(await operations.runTest(entry.pluginId), {
+      matched: true,
+      status: 200,
+      body: { ok: true },
+    });
+    assert.equal(
+      (await composition.configuration.fields(entry.pluginId)).find((field) => field.key === 'token').currentValue,
+      '••••••',
+    );
+
+    const running = (await composition.manager.get(entry.pluginId)).plugin;
+    await composition.manager.setEnabled(entry.pluginId, {
+      enabled: false,
+      expectedRevision: running.lifecycleRevision,
+    });
+    const disabled = (await composition.manager.get(entry.pluginId)).plugin;
+    await composition.manager.uninstall(entry.pluginId, { expectedRevision: disabled.lifecycleRevision });
   });
 
   it('keeps an installed catalog plugin manageable while discovery is offline and fences uninstall', async () => {

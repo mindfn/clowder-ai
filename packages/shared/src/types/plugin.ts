@@ -247,7 +247,15 @@ export interface PluginManagerActions {
   blockingReasons: string[];
 }
 
-export type PluginManagerConfigFieldKind = 'string' | 'secret' | 'select' | 'boolean' | 'number' | 'url' | 'list';
+export type PluginManagerConfigFieldKind =
+  | 'string'
+  | 'secret'
+  | 'select'
+  | 'boolean'
+  | 'number'
+  | 'url'
+  | 'list'
+  | 'operation';
 
 export interface PluginManagerConfigOption {
   value: string;
@@ -268,6 +276,22 @@ export interface PluginManagerConfigField {
   /** Secret fields expose only the fixed mask or null, never the stored value. */
   currentValue: string | null;
   sensitive: boolean;
+  /** Operation-only projection. Callback method names stay Host-private. */
+  target?: string[];
+  actions?: Array<{
+    id: string;
+    label: string;
+    render: 'button' | 'polling' | 'status';
+    resultRender?: string;
+    next?: string;
+    rollback?: string;
+    timeout?: number;
+  }>;
+  operationState?: {
+    currentAction: string;
+    lastResult?: { render: string; data: unknown; label?: string };
+    updatedAt?: number;
+  };
 }
 
 /** Compact list/search projection. All lifecycle axes remain independent. */
@@ -300,6 +324,9 @@ export interface PluginManagerDetail extends PluginManagerListItem {
   contributions?: PluginManagerContribution[];
   docsUrl?: string;
   setupSteps?: string[];
+  /** Package-contract setup guidance. Kept distinct from legacy repository setupSteps. */
+  steps?: string[];
+  testable?: boolean;
   configFields: PluginManagerConfigField[];
 }
 
