@@ -477,16 +477,27 @@ test('an installed package wires declared limb handlers to its action table and 
         '',
       ].join('\n'),
     },
-    actions: "{ 'fixture.echo': async (params) => ({ success: true, data: { echoed: params.value } }) }",
+    actions: "{ 'fixture.echo': async (payload) => ({ success: true, data: payload }) }",
   });
   const limbRegistry = new LimbRegistry();
   const { runtime } = createRuntime(projectRoot, { limbRegistry });
   const { composition, installed } = await installAndEnable(runtime, packageRoot);
 
   assert.ok(limbRegistry.getNode('fixture-node'));
-  assert.deepEqual(await limbRegistry.invoke('fixture-node', 'echo', { value: 'hello' }), {
+  const invocation = {
+    catId: 'cat-fixture',
+    invocationId: 'inv-fixture',
+    userId: 'user-fixture',
+    threadId: 'thread-fixture',
+    userMessageId: 'message-fixture',
+  };
+  assert.deepEqual(await limbRegistry.invoke('fixture-node', 'echo', { value: 'hello' }, invocation), {
     success: true,
-    data: { echoed: 'hello' },
+    data: { params: { value: 'hello' }, invocation },
+  });
+  assert.deepEqual(await limbRegistry.invoke('fixture-node', 'echo', { value: 'without-invocation' }), {
+    success: true,
+    data: { params: { value: 'without-invocation' } },
   });
 
   await disable(composition, installed.pluginId);

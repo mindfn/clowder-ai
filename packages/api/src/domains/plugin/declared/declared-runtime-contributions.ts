@@ -9,7 +9,7 @@ import type {
 import type { TaskSpec_P1 } from '../../../infrastructure/scheduler/types.js';
 import { LimbRegistry } from '../../limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../../limb/limb-yaml-loader.js';
-import { PluginLimbAdapter } from '../../limb/PluginLimbAdapter.js';
+import { type InvokeContext, PluginLimbAdapter } from '../../limb/PluginLimbAdapter.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
@@ -229,8 +229,14 @@ export class DeclaredRuntimeContributions {
             .filter((handler): handler is string => Boolean(handler) && handler !== 'builtin:health_check')
             .map((handler) => [
               handler,
-              async (params: Record<string, unknown>) =>
-                limbResult(await invoke(admission.instance.pluginInstanceId, handler, params), handler),
+              async (params: Record<string, unknown>, ctx: InvokeContext) =>
+                limbResult(
+                  await invoke(admission.instance.pluginInstanceId, handler, {
+                    params,
+                    ...(ctx.invocation === undefined ? {} : { invocation: ctx.invocation }),
+                  }),
+                  handler,
+                ),
             ]),
         );
         const node = new PluginLimbAdapter({
