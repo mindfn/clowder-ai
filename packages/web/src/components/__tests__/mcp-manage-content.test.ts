@@ -39,10 +39,10 @@ const MOCK_ITEMS = [
     layer: 'L1' as const,
   },
   {
-    id: 'plugin:video-gen:protocol-server',
+    id: 'plugin:fixture-media:protocol-server',
     type: 'mcp' as const,
     source: 'plugin' as const,
-    pluginId: 'video-gen',
+    pluginId: 'fixture-media',
     enabled: true,
     cats: {},
     description: 'Video generation MCP',
@@ -203,7 +203,7 @@ describe('McpManageContent', () => {
 
     // Plugin-owned MCP has pluginId — opens in readOnly mode
     await act(async () => {
-      buttonByText('plugin:video-gen:protocol-server').click();
+      buttonByText('plugin:fixture-media:protocol-server').click();
     });
 
     expect(document.body.querySelector('[data-testid="mcp-config-modal"]')).toBeTruthy();
@@ -218,7 +218,7 @@ describe('McpManageContent', () => {
     await renderContent();
 
     await act(async () => {
-      buttonByText('plugin:video-gen:protocol-server').click();
+      buttonByText('plugin:fixture-media:protocol-server').click();
     });
 
     mockFetch.mockClear();
@@ -253,7 +253,7 @@ describe('McpManageContent', () => {
     await flushEffects();
 
     await act(async () => {
-      buttonByText('plugin:video-gen:protocol-server').click();
+      buttonByText('plugin:fixture-media:protocol-server').click();
     });
 
     expect(document.body.textContent).toContain('只读预览');
@@ -279,7 +279,7 @@ describe('McpManageContent', () => {
     await renderContent();
 
     // Plugin-owned MCP should show the badge but NOT the delete button
-    expect(container.textContent).toContain('由插件 video-gen 管理');
+    expect(container.textContent).toContain('由插件 fixture-media 管理');
     const trashButtons = Array.from(container.querySelectorAll('button[title="卸载此 MCP"]'));
     // Only 'custom-mcp' (external, no pluginId) should have trash button
     expect(trashButtons.length).toBe(1);

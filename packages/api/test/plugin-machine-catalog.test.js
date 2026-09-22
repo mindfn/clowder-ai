@@ -6,6 +6,7 @@ import {
   MachineOfficialPluginCatalog,
   OfficialPluginManagerCatalogAdapter,
   RepositoryPluginManagerCompatibilityProvider,
+  resolveLocalPluginEffectiveGrants,
   resolveRepositoryReplacementPluginIds,
 } from '../dist/domains/plugin/index.js';
 
@@ -111,6 +112,27 @@ test('projects canonical machine catalog release truth while Host policy remains
     ownerAuthRequired: false,
     capabilities: [],
   });
+});
+
+test('uses the same Host-owned grants for local development archives as catalog releases', () => {
+  const policies = [
+    {
+      pluginId: 'dev.clowder.video-generation',
+      replacesRepositoryPluginId: 'video-gen',
+      effectiveGrants: ['plugin.config.read', 'secret.read'],
+    },
+  ];
+
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(policies, {
+      pluginId: 'dev.clowder.video-generation',
+    }),
+    ['plugin.config.read', 'secret.read'],
+  );
+  assert.deepEqual(resolveLocalPluginEffectiveGrants(policies, { pluginId: 'untrusted.local' }), []);
+  assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['dev.clowder.video-generation']), [
+    'video-gen',
+  ]);
 });
 
 test('selects the newest validated release independently of catalog array order', async () => {

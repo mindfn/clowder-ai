@@ -98,7 +98,7 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
 
     expect(container.querySelectorAll('[data-plugin-id]')).toHaveLength(2);
     expect(container.textContent).toContain('视频分析');
-    expect(container.textContent).toContain('本地视频生成');
+    expect(container.textContent).toContain('Video Generation');
   });
 
   it('expresses installed state only through toggle and uninstall actions', async () => {

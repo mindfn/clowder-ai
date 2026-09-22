@@ -370,6 +370,53 @@ export default {
   assert.equal(released, 1);
 });
 
+test('loads local archive modules through package metadata and the verified builtin materializer', async () => {
+  resetModuleLog();
+  const rootDir = await mkdtemp(join(tmpdir(), 'f202-c1-local-module-'));
+  await mkdir(join(rootDir, 'dist'), { recursive: true });
+  await writeFile(
+    join(rootDir, 'dist/plugin.js'),
+    `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return { start() { log.push({ call: 'local-materialized' }); return { actions: {}, stop() {} }; } };
+  },
+};
+`,
+  );
+  const admitted = manifest();
+  let materializerCalls = 0;
+  const host = hostOf(
+    [
+      {
+        manifest: admitted,
+        rootDir,
+        provenance: { kind: 'local-archive', packageName: '@clowder-ai/module-fixture' },
+      },
+    ],
+    {
+      materializer: {
+        async resolve(input) {
+          materializerCalls += 1;
+          assert.equal(input.packageName, '@clowder-ai/module-fixture');
+          return {
+            rootDir,
+            manifest: admitted,
+            verifyIntegrity: async () => {},
+            release: async () => {},
+          };
+        },
+      },
+    },
+  );
+
+  await host.router.start('instance-0');
+  assert.equal(materializerCalls, 1);
+  assert.deepEqual(moduleLog(), [{ call: 'local-materialized' }]);
+  await host.router.stop('instance-0', 'host_stop');
+});
+
 function moduleLog() {
   return globalThis[MODULE_LOG] ?? [];
 }

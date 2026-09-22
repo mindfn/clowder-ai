@@ -522,11 +522,14 @@ export default {
     const listed = await composition.manager.get(packageManifest.pluginId);
 
     assert.equal(installed.pluginId, packageManifest.pluginId);
-    assert.deepEqual(snapshot.packages[0].provenance, { kind: 'local-archive' });
+    assert.deepEqual(snapshot.packages[0].provenance, {
+      kind: 'local-archive',
+      packageName: '@clowder-ai/official-test-source',
+    });
     assert.deepEqual(snapshot.grants[0].effectiveGrants, []);
     assert.deepEqual(listed.plugin.source, {
       kind: 'local-archive',
-      packageName: null,
+      packageName: '@clowder-ai/official-test-source',
       trust: 'local-trusted',
     });
     assert.equal(JSON.stringify(snapshot).includes(archivePath), false);

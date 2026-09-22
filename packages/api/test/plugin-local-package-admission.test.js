@@ -110,6 +110,10 @@ test('admits a local npm-style archive into immutable Host inventory without exe
   const snapshot = await store.snapshot();
   assert.deepEqual(snapshot.grants[0].effectiveGrants, ['events.publish']);
   assert.equal(snapshot.packages[0].packageState, 'installed');
+  assert.deepEqual(snapshot.packages[0].provenance, {
+    kind: 'local-archive',
+    packageName: '@clowder-ai/official-test-source',
+  });
 });
 
 test('copies a local directory into an immutable canonical archive before inventory admission', async () => {

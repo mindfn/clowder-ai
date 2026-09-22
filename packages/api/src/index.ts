@@ -5070,9 +5070,15 @@ async function main(): Promise<void> {
     MachineOfficialPluginCatalog,
     OFFICIAL_PLUGIN_CATALOG_URL,
     loadMachinePluginCatalog,
+    resolveLocalPluginEffectiveGrants,
     resolveRepositoryReplacementPluginIds,
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const pluginManagerHostPolicies = [
+    {
+      pluginId: 'dev.clowder.video-generation',
+      replacesRepositoryPluginId: 'video-gen',
+      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
+    },
     {
       pluginId: 'dev.clowder.video-analysis',
       replacesRepositoryPluginId: 'video-analysis',
@@ -5114,6 +5120,7 @@ async function main(): Promise<void> {
     catalogManifests: [],
     compatibility: repositoryPluginManagerCompatibility,
     auth: officialPluginAuth,
+    localGrantPolicy: (manifest) => resolveLocalPluginEffectiveGrants(pluginManagerHostPolicies, manifest),
   });
   const { InstalledPluginOperations, pluginOperationRoutes } = await import(
     './domains/plugin/operations/plugin-operation-routes.js'

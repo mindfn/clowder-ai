@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { type FileHandle, lstat, mkdir, mkdtemp, open, readdir, rm, writeFile } from 'node:fs/promises';
+import { type FileHandle, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { Capability, PluginManifest, SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
@@ -25,8 +25,8 @@ export type LocalPluginPackageSource =
   | { readonly kind: 'local-archive'; readonly path: string };
 
 export type LocalPluginPackageProvenance =
-  | { readonly kind: 'local-directory' | 'local-archive' }
-  | { readonly kind: 'git'; readonly url: string };
+  | { readonly kind: 'local-directory' | 'local-archive'; readonly packageName?: string }
+  | { readonly kind: 'git'; readonly url: string; readonly packageName?: string };
 
 export interface LocalPluginPackageAdmissionOptions {
   readonly inventory: HostInventoryControlPlane;
@@ -191,6 +191,31 @@ function packageDigest(bytes: Uint8Array): string {
   return `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
 }
 
+async function readPackageName(rootDir: string): Promise<string | undefined> {
+  const path = resolve(rootDir, 'package.json');
+  let value: unknown;
+  try {
+    const file = await lstat(path);
+    if (!file.isFile() || file.isSymbolicLink()) throw new Error('package.json is not a regular file');
+    value = JSON.parse(await readFile(path, 'utf8'));
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw new LocalPluginPackageAdmissionError('INVALID_PACKAGE_SCHEMA', 'local plugin package.json is invalid', {
+      cause: error,
+    });
+  }
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    typeof (value as Record<string, unknown>).name !== 'string' ||
+    (value as Record<string, unknown>).name === ''
+  ) {
+    throw new LocalPluginPackageAdmissionError('INVALID_PACKAGE_SCHEMA', 'local plugin package.json is invalid');
+  }
+  return (value as { readonly name: string }).name;
+}
+
 export class LocalPluginPackageAdmission {
   private readonly packagesRoot: string;
   private readonly tarBin: string;
@@ -250,6 +275,8 @@ export class LocalPluginPackageAdmission {
       }
       const signalSchemas = await readSignalSchemas(located.rootDir, located.manifest);
       const effectiveGrants = await this.options.grantPolicy(located.manifest);
+      const packageName = await readPackageName(located.rootDir);
+      const admittedProvenance = packageName === undefined ? provenance : { ...provenance, packageName };
       await publishPluginPackageArchive(this.packagesRoot, digest, bytes);
       try {
         const installed = await this.options.inventory.installPackage({
@@ -259,7 +286,7 @@ export class LocalPluginPackageAdmission {
           packagePluginId: located.manifest.pluginId,
           effectiveGrants,
           signalSchemas,
-          provenance,
+          provenance: admittedProvenance,
         });
         return { pluginId: located.manifest.pluginId, ...installed };
       } catch (error) {
