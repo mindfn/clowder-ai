@@ -79,9 +79,11 @@ async function writeFixturePackage({
   pluginId,
   contribution,
   contributions,
+  capabilities = [],
   files = {},
   actions = '{}',
   runtime = { transport: 'builtin', entrypoint: 'dist/plugin.js' },
+  omitRuntime = false,
 }) {
   const packageRoot = await tempRoot(`cat-cafe-f202-${contribution.type}-package-`);
   const declared = contributions ?? [contribution];
@@ -97,14 +99,14 @@ async function writeFixturePackage({
         name: 'Main',
         resources: [],
         contributions: declared.map((item) => ({ type: item.type, id: item.id })),
-        capabilities: [],
+        capabilities,
       },
     ],
-    runtime,
+    ...(omitRuntime ? {} : { runtime }),
   };
   await mkdir(join(packageRoot, 'dist'), { recursive: true });
   await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify(manifest)}\n`, 'utf8');
-  if (runtime.entrypoint !== undefined) {
+  if (!omitRuntime && runtime.entrypoint !== undefined) {
     await writeFile(
       join(packageRoot, runtime.entrypoint),
       `export default { create() { return { start() { return { actions: ${actions}, stop() {} }; } }; } };\n`,
@@ -171,21 +173,25 @@ test('an installed package activates and removes its declared MCP capability', a
   );
 });
 
-test('a runtime-less builtin package uses the standard MCP capability pipeline', async () => {
+test('a package without runtime uses the standard static skill and MCP lifecycle', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-static-mcp-project-');
-  const contributions = ['alpha', 'beta'].map((id) => ({
+  const mcpContributions = ['alpha', 'beta'].map((id) => ({
     type: 'mcp',
     id,
     runtime: { transport: 'stdio', entrypoint: `dist/${id}.js` },
   }));
+  const skill = { type: 'skill', id: 'guide', path: 'skills/guide' };
+  const contributions = [...mcpContributions, skill];
   const packageRoot = await writeFixturePackage({
     pluginId: 'dev.clowder.static-mcp-fixture',
     contribution: contributions[0],
     contributions,
-    runtime: { transport: 'builtin' },
+    capabilities: ['thread.write', 'task.read', 'task.write'],
+    omitRuntime: true,
     files: {
       'dist/alpha.js': 'process.exit(0);\n',
       'dist/beta.js': 'process.exit(0);\n',
+      'skills/guide/SKILL.md': '# Static fixture guide\n',
     },
   });
   const { runtime } = createRuntime(projectRoot);
@@ -196,13 +202,19 @@ test('a runtime-less builtin package uses the standard MCP capability pipeline',
   );
   assert.deepEqual(
     installedCapabilities?.map((candidate) => candidate.id).sort(),
-    contributions.map((contribution) => `plugin:${installed.pluginId}:${contribution.id}`).sort(),
+    mcpContributions.map((contribution) => `plugin:${installed.pluginId}:${contribution.id}`).sort(),
   );
   for (const capability of installedCapabilities ?? []) {
     assert.match(capability.mcpServer?.args?.[0] ?? '', /plugin-host\/resources/);
   }
   const cliConfig = JSON.parse(await readFile(join(projectRoot, '.test-cli', 'gemini.json'), 'utf8'));
   assert.equal(Object.keys(cliConfig.mcpServers ?? {}).length, 2);
+  assert.equal(
+    (await readCapabilitiesConfig(projectRoot))?.capabilities.some(
+      (candidate) => candidate.type === 'skill' && candidate.pluginId === installed.pluginId,
+    ),
+    true,
+  );
 
   await runtime.shutdown('host_shutdown');
   assert.equal(

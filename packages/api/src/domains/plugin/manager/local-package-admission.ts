@@ -239,7 +239,10 @@ export class LocalPluginPackageAdmission {
       throw failure;
     }
     try {
-      if (!['stdio', 'builtin'].includes(located.manifest.runtime.transport)) {
+      if (
+        located.manifest.runtime !== undefined &&
+        !['stdio', 'builtin'].includes(located.manifest.runtime.transport)
+      ) {
         throw new LocalPluginPackageAdmissionError(
           'UNSUPPORTED_TRANSPORT',
           'local plugin package does not declare a Host-supported runtime',

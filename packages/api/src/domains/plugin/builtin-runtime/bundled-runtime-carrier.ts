@@ -59,7 +59,8 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
   }
 
   claims({ packageRecord }: PluginRuntimeAdmission): boolean {
-    return packageRecord.manifest.runtime.transport === 'builtin' && this.#runtimeFor(packageRecord) !== undefined;
+    const { runtime } = packageRecord.manifest;
+    return (runtime === undefined || runtime.transport === 'builtin') && this.#runtimeFor(packageRecord) !== undefined;
   }
 
   async start(pluginInstanceId: string): Promise<unknown> {

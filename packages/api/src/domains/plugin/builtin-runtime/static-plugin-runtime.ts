@@ -8,7 +8,10 @@ import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
  */
 export class StaticPluginRuntime implements BundledPluginRuntime {
   claims({ manifest }: Pick<PluginPackageRecord, 'manifest'>): boolean {
-    return manifest.runtime.transport === 'builtin' && manifest.runtime.entrypoint === undefined;
+    return (
+      manifest.runtime === undefined ||
+      (manifest.runtime.transport === 'builtin' && manifest.runtime.entrypoint === undefined)
+    );
   }
 
   async start(): Promise<void> {}

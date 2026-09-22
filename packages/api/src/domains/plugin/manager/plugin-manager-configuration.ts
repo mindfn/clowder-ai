@@ -9,7 +9,7 @@ import { effectivePluginConfigurationValue } from './plugin-configuration-values
 const SECRET_MASK = '••••••';
 const CONFIGURATION_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;
 
-type ContractConfigurationField = ConfigurationField;
+type ContractConfigurationField = Exclude<ConfigurationField, { readonly kind: 'operation' }>;
 
 export interface HostPluginConfigurationServiceOptions {
   readonly projectRoot: string;
@@ -22,7 +22,9 @@ function configError(message: string): PluginManagerServiceError {
 }
 
 function manifestConfiguration(record: PluginPackageRecord): readonly ContractConfigurationField[] {
-  return record.manifest.configuration ?? [];
+  return (record.manifest.configuration ?? []).filter(
+    (field): field is ContractConfigurationField => field.kind !== 'operation',
+  );
 }
 
 function currentPackage(

@@ -37,7 +37,10 @@ export class CollectiveConnectorBuiltinRuntime implements BundledPluginRuntime {
   /** This runtime implements exactly one bundled package — the one whose manifest the
    * Host ships. The id lives in that manifest, never in the carrier that selects us. */
   claims(packageRecord: Pick<PluginPackageRecord, 'manifest'>): boolean {
-    return packageRecord.manifest.pluginId === COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST.pluginId;
+    return (
+      packageRecord.manifest.pluginId === COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST.pluginId &&
+      packageRecord.manifest.runtime?.transport === 'builtin'
+    );
   }
 
   async start(pluginInstanceId: string): Promise<void> {

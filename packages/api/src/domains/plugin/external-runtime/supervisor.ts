@@ -72,7 +72,7 @@ export class ExternalPluginRuntimeSupervisor {
   /** The child-process carrier. Every transport other than the Host's own in-process
    * one is a package that runs beside the Host, so it is carried here. */
   claims({ packageRecord }: PluginRuntimeAdmission): boolean {
-    return packageRecord.manifest.runtime.transport !== 'builtin';
+    return packageRecord.manifest.runtime !== undefined && packageRecord.manifest.runtime.transport !== 'builtin';
   }
 
   start(pluginInstanceId: string): Promise<ExternalPluginRuntimeHandle> {
@@ -167,10 +167,11 @@ export class ExternalPluginRuntimeSupervisor {
   private async startOwned(execution: RuntimeExecution): Promise<ExternalPluginRuntimeHandle> {
     const authority = await resolveRunnableAuthority(this.options, execution.pluginInstanceId);
     execution.packageDigest = authority.instance.packageDigest;
-    if (authority.packageRecord.manifest.runtime.transport !== 'stdio') {
+    const { runtime } = authority.packageRecord.manifest;
+    if (runtime?.transport !== 'stdio') {
       throw new ExternalPluginRuntimeError(
         'UNSUPPORTED_TRANSPORT',
-        `runtime transport ${authority.packageRecord.manifest.runtime.transport} is not executable by this Host`,
+        `runtime transport ${runtime?.transport ?? 'none'} is not executable by this Host`,
       );
     }
     const located = await this.options.packages.resolveInstalledPackage(authority.instance.packageDigest);

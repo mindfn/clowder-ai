@@ -54,7 +54,7 @@ export async function verifyPackageEntrypoint(
       'located package manifest differs from the admitted package record',
     );
   }
-  const declared = packageRecord.manifest.runtime.entrypoint;
+  const declared = packageRecord.manifest.runtime?.entrypoint;
   if (declared === undefined) {
     throw new ExternalPluginRuntimeError(
       'INVALID_ENTRYPOINT',

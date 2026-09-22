@@ -128,6 +128,24 @@ describe('F202 terminal Plugin Manager projection', () => {
           bridgeVersion: '1.0.0',
           operations: ['load', 'settle', 'comment', 'tracked-change'],
         },
+        {
+          type: 'desktop-window',
+          id: 'companion-window',
+          role: 'companion',
+          surface: {
+            entrypoint: 'dist/window.html',
+            integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          },
+          bridgeVersion: '1.0.0',
+          presentation: {
+            width: 420,
+            height: 720,
+            transparent: true,
+            frame: false,
+            alwaysOnTop: true,
+            skipTaskbar: true,
+          },
+        },
       ],
     };
 
@@ -142,6 +160,7 @@ describe('F202 terminal Plugin Manager projection', () => {
       { id: 'daily-video-summary', kind: 'schedule', name: 'daily-video-summary' },
       { id: 'video-analysis-guide', kind: 'skill', name: 'video-analysis-guide' },
       { id: 'docx-editor', kind: 'content-editor-provider', name: 'docx-editor' },
+      { id: 'companion-window', kind: 'ui', name: 'companion-window' },
     ]);
   });
 

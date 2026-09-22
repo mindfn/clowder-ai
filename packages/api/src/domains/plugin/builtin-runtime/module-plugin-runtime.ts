@@ -119,7 +119,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
    */
   claims(packageRecord: Pick<PluginPackageRecord, 'manifest'>): boolean {
     const { runtime } = packageRecord.manifest;
-    return runtime.transport === 'builtin' && typeof runtime.entrypoint === 'string';
+    return runtime?.transport === 'builtin' && typeof runtime.entrypoint === 'string';
   }
 
   async start(
