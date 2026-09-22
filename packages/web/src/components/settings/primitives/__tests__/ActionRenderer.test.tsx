@@ -75,7 +75,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'weixin',
+          target: { kind: 'connector', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -127,7 +127,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'weixin',
+          target: { kind: 'connector', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -161,7 +161,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'custom-im',
+          target: { kind: 'connector', id: 'custom-im' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -192,7 +192,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'wecom-bot',
+          target: { kind: 'connector', id: 'wecom-bot' },
           pendingConfigValues: {
             WECOM_BOT_ID: 'bot-id-from-form',
             WECOM_BOT_SECRET: 'secret-from-form',
@@ -239,7 +239,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'feishu',
+          target: { kind: 'connector', id: 'feishu' },
           configured: true,
           operation,
         }),
@@ -252,7 +252,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'feishu',
+          target: { kind: 'connector', id: 'feishu' },
           configured: false,
           operation: { ...operation, currentAction: 'start' },
         }),
@@ -268,7 +268,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'feishu',
+          target: { kind: 'connector', id: 'feishu' },
           configured: false,
           operation: {
             name: 'connect',
@@ -294,7 +294,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'custom-im',
+          target: { kind: 'connector', id: 'custom-im' },
           operation: {
             name: 'setup',
             label: 'Setup',
@@ -332,7 +332,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'feishu',
+          target: { kind: 'connector', id: 'feishu' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -387,7 +387,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'weixin',
+          target: { kind: 'connector', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -444,7 +444,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'weixin',
+          target: { kind: 'connector', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -521,7 +521,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'weixin',
+          target: { kind: 'connector', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -593,7 +593,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'weixin',
+          target: { kind: 'connector', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -647,7 +647,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          connectorId: 'feishu',
+          target: { kind: 'connector', id: 'feishu' },
           configured: true,
           operation: {
             name: 'connect',
