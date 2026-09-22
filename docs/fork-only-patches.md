@@ -77,48 +77,73 @@ commits, no merge-base with upstream main, a July full-tree copy - so
 "is the patch in the carrier" is not a survival predicate, and asking for
 current code to be committed onto a stale unrelated history is incoherent.
 
-## What actually survives: the remote-tracking ref
+## What actually survives: an immutable pre-reset commit
 
-`git reset --hard upstream/main` replaces the working tree. It does **not** move
-`origin/develop_base`. The previous tree's registry is therefore still readable
-straight out of git after the rebuild has erased it from disk:
+`git reset --hard upstream/main` replaces the working tree, so the baseline has
+to come from outside it. Two sources qualify, and one that looks like it does
+**not**:
+
+| Source | Immutable? | Notes |
+|---|---|---|
+| `github.event.before` (push) | yes | previous branch tip, supplied by the platform; survives force-push |
+| `github.event.pull_request.base.sha` | yes | the PR base |
+| local `origin/develop_base` **before** pushing | yes, briefly | still names the prior tip during a manual pre-push run |
+| `origin/develop_base` fetched **after** the push | **NO** | it is the tree being validated |
+
+That last row was a real bug in this workflow's first version: CI fetched
+`origin/develop_base` after the push, so the baseline *was* the accused. The
+checker now refuses to compare a commit with itself and says so, instead of
+reporting a cheerful green.
+
+### The registry is a shared file too
+
+A rebuild can **revert** `scripts/fork-only-patches.json` rather than delete it.
+Both trees then look internally consistent, and a guard that only checks the
+patches its *current* registry lists will confirm its own amnesia as healthy.
+So the survival check compares the **claim sets**: every patch id the baseline
+registered must still be registered. A claim that quietly disappeared from the
+registry is a loss, not a smaller honest claim.
+
+### Running it
 
 ```bash
-git show origin/develop_base:scripts/fork-only-patches.json
+# Rebuild pipeline: capture the tip BEFORE the destructive reset.
+PRE=$(git rev-parse origin/develop_base)
+git fetch upstream && git reset --hard upstream/main   # ... rebuild ...
+node scripts/check-fork-only-patches.mjs --baseline-ref "$PRE"
 ```
 
-So the guard compares what the previous tree **claimed to protect** against what
-the new tree **actually has**. It stays runnable even when the rebuild deleted
-it, because it can be read from the same ref:
+`--no-baseline` skips the survival half and says so in the output. It exists for
+the one honest case with no prior tree (branch creation) and must never be used
+as a fallback when a baseline lookup failed - a guard that quietly downgrades
+itself is the disease, not the cure.
 
-```bash
-cd <repo>                      # the guard asks git where the repo is, from CWD
-git show origin/develop_base:scripts/check-fork-only-patches.mjs > /tmp/guard.mjs
-node /tmp/guard.mjs            # or: node /tmp/guard.mjs --repo-root <repo>
-```
+## What this in-tree workflow does NOT close
 
-The rescued copy resolves the repo from the working directory, not from where
-the file happens to sit, and it detects direct invocation by **real** path -
-running it from a symlinked location (macOS `/tmp`) must not make it exit 0
-having checked nothing.
+`.github/workflows/fork-only-patches.yml` cannot survive its own deletion. If a
+rebuild drops workflow + guard + registry together, GitHub runs the workflow
+**from the pushed commit**, where it no longer exists, so nothing runs and
+nothing goes red.
 
-## Two checks, both required
+So, honestly scoped:
 
-```bash
-pnpm check:fork-only-patches
-```
+- **Closed by the workflow**: any rebuild that preserves it - the baseline is the
+  immutable pre-push SHA, so dropped files, reverted anchors and dropped registry
+  claims are all named before the result is deployed.
+- **NOT closed by the workflow**: a rebuild that deletes the workflow itself.
 
-1. **Tree check** - is each registered patch here right now? Answers
-   "is production broken".
-2. **Rebuild-survival check** - is everything `baselineRef` claimed still
-   present? Answers "did this rebuild drop something", **before** the result is
-   pushed or deployed.
+The authoritative enforcement for that case lives **outside the repository**, in
+branch protection, and is not configured by this PR:
 
-Both fail closed: a missing registry, an unreachable baseline, a hollow patch
-entry, or an anchor that moved after the step it must precede are all red. A
-guard that cannot see its input must not report clean. The one deliberate
-exception is a baseline that carried no registry at all - an absent prior claim
-is not an unverifiable one.
+> Settings -> Branches -> branch protection rule for `develop_base`
+> -> **Require status checks to pass before merging**
+> -> required check: **`Fork-only patch guard`**
+
+A required check that never reports **blocks** rather than passes, which is
+exactly the fail-closed behaviour the in-tree file cannot provide for its own
+absence. This requires repository-admin rights; until it is configured, treat
+the workflow as covering the common case only, and do not claim the full-wipe
+case is mechanically prevented.
 
 ## Rebuild SOP
 

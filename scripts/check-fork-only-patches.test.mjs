@@ -207,6 +207,11 @@ function rebuiltRepo(t, { rebuild }) {
   git(root, 'update-ref', BASELINE, gitCapture(root, 'rev-parse', 'HEAD').trim());
 
   rebuild(root);
+  // A real rebuild produces a commit, so HEAD must advance past the baseline.
+  // Leaving it uncommitted would make the baseline and the tree under test the
+  // same commit, which the guard now (correctly) refuses to compare.
+  git(root, 'add', '-A');
+  git(root, 'commit', '--allow-empty', '-m', 'rebuild onto upstream main');
   return root;
 }
 
@@ -255,14 +260,21 @@ test('an unreachable baseline fails closed with an actionable recovery', (t) => 
 });
 
 test('a baseline that never carried a registry makes no claim to lose', (t) => {
+  // First adoption: the prior tip predates the guard. Absence of a prior claim
+  // is not an unverifiable claim, so it must not be dressed up as a violation.
   const root = rebuiltRepo(t, { rebuild: () => {} });
-  // Point at a commit with no registry: absence of a prior claim is not an
-  // unverifiable claim, so it must not be dressed up as a violation.
-  git(root, 'update-ref', 'refs/remotes/origin/empty', gitCapture(root, 'rev-parse', 'HEAD').trim());
+  const registry = readFileSync(join(root, 'scripts/fork-only-patches.json'), 'utf8');
+
   rmSync(join(root, 'scripts/fork-only-patches.json'));
   git(root, 'add', '-A');
-  git(root, 'commit', '-m', 'drop registry');
+  git(root, 'commit', '-m', 'pre-adoption tip: no registry');
   git(root, 'update-ref', 'refs/remotes/origin/empty', gitCapture(root, 'rev-parse', 'HEAD').trim());
+
+  // HEAD then advances past that baseline and adopts the registry.
+  writeFileSync(join(root, 'scripts/fork-only-patches.json'), registry);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-m', 'adopt the guard');
+
   const { violations, comparedPatches } = checkRebuildSurvival(root, {
     baselineRef: 'refs/remotes/origin/empty',
   });
@@ -386,4 +398,109 @@ test('an explicit tree with no resolvable baseline still fails closed', (t) => {
   const { code, out } = runGuard([GUARD, '--repo-root', root], tmpdir());
   assert.equal(code, 1);
   assert.match(out, /rebuild loss cannot be detected/);
+});
+
+// ---------------------------------------------------------------------------
+// Post-push lifecycle (PR #185 review round 2, 砚砚 P1).
+//
+// CI fetched `origin/develop_base` AFTER the push, so the "baseline" was the
+// very tree being validated. Worse, the registry is itself a shared file: a
+// rebuild can REVERT it rather than delete it, and then both trees look
+// internally consistent and the guard confirms its own amnesia as healthy.
+// ---------------------------------------------------------------------------
+
+function pushedRepo(t, { baselinePatches, afterPatches, files }) {
+  const root = mkdtempSync(join(tmpdir(), 'guard-postpush-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirp(join(root, 'scripts'));
+  mkdirp(join(root, 'src'));
+  git(root, 'init', '--initial-branch=develop_base');
+  git(root, 'config', 'user.email', 'guard@test.local');
+  git(root, 'config', 'user.name', 'guard');
+
+  const writeRegistry = (patches) =>
+    writeFileSync(
+      join(root, 'scripts/fork-only-patches.json'),
+      JSON.stringify({ baselineRef: BASELINE, patches }, null, 2),
+    );
+
+  writeRegistry(baselinePatches);
+  writeFileSync(join(root, 'src/kept.ts'), 'export const kept = 1;\n');
+  writeFileSync(join(root, 'src/dropped.ts'), 'export const dropped = 1;\n');
+  git(root, 'add', '-A');
+  git(root, 'commit', '-m', 'pre-rebuild');
+  const preResetSha = gitCapture(root, 'rev-parse', 'HEAD').trim();
+  git(root, 'update-ref', BASELINE, preResetSha);
+
+  writeRegistry(afterPatches);
+  for (const [rel, content] of Object.entries(files ?? {})) {
+    if (content === null) rmSync(join(root, rel));
+    else writeFileSync(join(root, rel), content);
+  }
+  git(root, 'add', '-A');
+  git(root, 'commit', '--allow-empty', '-m', 'rebuild onto upstream main');
+  // The push: the remote-tracking ref advances to the tree under validation.
+  git(root, 'update-ref', BASELINE, gitCapture(root, 'rev-parse', 'HEAD').trim());
+  return { root, preResetSha };
+}
+
+const KEPT = { id: 'kept-patch', requiredFiles: ['src/kept.ts'] };
+const DROPPED = { id: 'f192-gate', requiredFiles: ['src/dropped.ts'] };
+
+test('a baseline that advanced to the validated tree fails closed, never green', (t) => {
+  const { root } = pushedRepo(t, {
+    baselinePatches: [KEPT, DROPPED],
+    afterPatches: [KEPT],
+    files: { 'src/dropped.ts': null },
+  });
+  // This is exactly what CI did: fetch origin/develop_base after the push.
+  const { violations } = checkRebuildSurvival(root, { baselineRef: BASELINE });
+  assert.ok(violations.length > 0, 'a witness that is the accused must not return green');
+  assert.match(violations[0], /resolves to HEAD/);
+  assert.match(violations[0], /--baseline-ref/);
+});
+
+test('a reverted registry is a loss, not a smaller honest claim', (t) => {
+  const { root, preResetSha } = pushedRepo(t, {
+    baselinePatches: [KEPT, DROPPED],
+    afterPatches: [KEPT],
+    files: { 'src/dropped.ts': null },
+  });
+  const { violations } = checkRebuildSurvival(root, { baselineRef: preResetSha });
+  assert.ok(
+    violations.some((v) => v.includes('f192-gate') && v.includes('registry was reverted')),
+    `the dropped CLAIM must be named, not just the file: ${violations.join(' | ')}`,
+  );
+  assert.ok(
+    violations.some((v) => v.includes('src/dropped.ts')),
+    'the dropped file must still be named too',
+  );
+});
+
+test('the CLI honours --baseline-ref instead of the registry default', (t) => {
+  const { root, preResetSha } = pushedRepo(t, {
+    baselinePatches: [KEPT, DROPPED],
+    afterPatches: [KEPT],
+    files: { 'src/dropped.ts': null },
+  });
+  copyFileSync(GUARD, join(root, 'scripts/check-fork-only-patches.mjs'));
+
+  const withBaseline = runGuard(
+    [join(root, 'scripts/check-fork-only-patches.mjs'), '--baseline-ref', preResetSha],
+    root,
+  );
+  assert.equal(withBaseline.code, 1, withBaseline.out);
+  assert.match(withBaseline.out, /registry was reverted/);
+
+  const withoutBaseline = runGuard([join(root, 'scripts/check-fork-only-patches.mjs')], root);
+  assert.equal(withoutBaseline.code, 1, 'the advanced default must fail closed too');
+  assert.match(withoutBaseline.out, /resolves to HEAD/);
+});
+
+test('--no-baseline states the skip instead of hiding it', (t) => {
+  const { root } = pushedRepo(t, { baselinePatches: [KEPT], afterPatches: [KEPT] });
+  copyFileSync(GUARD, join(root, 'scripts/check-fork-only-patches.mjs'));
+  const { code, out } = runGuard([join(root, 'scripts/check-fork-only-patches.mjs'), '--no-baseline'], root);
+  assert.equal(code, 0, out);
+  assert.match(out, /rebuild-survival SKIPPED/);
 });
