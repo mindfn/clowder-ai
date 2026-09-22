@@ -5239,6 +5239,8 @@ async function main(): Promise<void> {
   registerPersonalChromePluginRoutes(app, {
     port: personalChromeInstallModule.createPersonalChromePluginPort({ projectRoot: resolveActiveProjectRoot() }),
   });
+  const { pluginWebhookForwardingRoutes } = await import('./routes/plugin/plugin-webhook-forwarding-routes.js');
+  await app.register(pluginWebhookForwardingRoutes, { webhooks: pluginRuntime.supervisor });
 
   // F246/F313: one registry and one renderer projection. The F266 writer stays
   // fenced until an owner-backed resolver/dispatcher and a v1_active epoch are

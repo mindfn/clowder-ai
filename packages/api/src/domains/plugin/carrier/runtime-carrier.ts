@@ -6,6 +6,7 @@ import {
 } from '@clowder-ai/plugin-contract';
 import {
   type DeclaredPluginTool,
+  type DeclaredPluginWebhook,
   type DeclaredRuntimeContributionHost,
   DeclaredRuntimeContributions,
 } from '../declared/declared-runtime-contributions.js';
@@ -171,6 +172,18 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const provider = this.#carriers.find((carrier) => carrier.callPluginTool !== undefined);
     if (provider?.callPluginTool) return provider.callPluginTool(pluginId, contributionId, toolName, args);
     throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginId} is not active`);
+  }
+
+  resolvePluginWebhook(pluginId: string, path: string): DeclaredPluginWebhook | undefined {
+    return this.#runtimeContributions.resolvePluginWebhook(pluginId, path);
+  }
+
+  async callPluginWebhook(
+    pluginId: string,
+    contributionId: string,
+    request: Readonly<Record<string, unknown>>,
+  ): Promise<unknown> {
+    return this.#runtimeContributions.callPluginWebhook(pluginId, contributionId, request);
   }
 
   async #select(pluginInstanceId: string): Promise<PluginRuntimeCarrier> {

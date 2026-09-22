@@ -1,6 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { DirectToolContribution, LimbContribution, ScheduleContribution } from '@clowder-ai/plugin-contract';
+import type {
+  DirectToolContribution,
+  LimbContribution,
+  ScheduleContribution,
+  WebhookContribution,
+} from '@clowder-ai/plugin-contract';
 import type { TaskSpec_P1 } from '../../../infrastructure/scheduler/types.js';
 import { LimbRegistry } from '../../limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../../limb/limb-yaml-loader.js';
@@ -10,6 +15,9 @@ import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '.
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
 import { resolvePackageFile } from './declared-resource-paths.js';
+import { type DeclaredPluginWebhook, validateDeclaredWebhooks } from './declared-webhooks.js';
+
+export type { DeclaredPluginWebhook } from './declared-webhooks.js';
 
 export interface DeclaredScheduleTaskRunner {
   registerPostStart(task: TaskSpec_P1): void;
@@ -30,6 +38,7 @@ interface ActiveRuntimeContributions {
   readonly limbNodeIds: readonly string[];
   readonly scheduleTaskIds: readonly string[];
   readonly tools: readonly DirectToolContribution[];
+  readonly webhooks: readonly WebhookContribution[];
   readonly invoke: InvokePluginAction;
 }
 
@@ -70,7 +79,8 @@ export class DeclaredRuntimeContributions {
     const limbs = contributions.filter((value): value is LimbContribution => value.type === 'limb');
     const schedules = contributions.filter((value): value is ScheduleContribution => value.type === 'schedule');
     const tools = contributions.filter((value): value is DirectToolContribution => value.type === 'tool');
-    if (limbs.length === 0 && schedules.length === 0 && tools.length === 0) return;
+    const webhooks = contributions.filter((value): value is WebhookContribution => value.type === 'webhook');
+    if (limbs.length === 0 && schedules.length === 0 && tools.length === 0 && webhooks.length === 0) return;
     if (limbs.length > 0 && !this.host.limbRegistry) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host limb registry is unavailable');
     }
@@ -82,6 +92,7 @@ export class DeclaredRuntimeContributions {
     const scheduleTaskIds: string[] = [];
     try {
       for (const tool of tools) directToolSchema(tool);
+      validateDeclaredWebhooks(webhooks);
       if (limbs.length > 0) {
         await this.#activateLimbs(admission, limbs, limbNodeIds, invoke);
       }
@@ -96,6 +107,7 @@ export class DeclaredRuntimeContributions {
         limbNodeIds,
         scheduleTaskIds,
         tools,
+        webhooks,
         invoke,
       });
     } catch (error) {
@@ -148,6 +160,36 @@ export class DeclaredRuntimeContributions {
         ...(tool.action.params ?? {}),
       }),
     };
+  }
+
+  resolvePluginWebhook(pluginId: string, path: string): DeclaredPluginWebhook | undefined {
+    const contribution = this.#activeForPlugin(pluginId)?.webhooks.find((candidate) => candidate.path === path);
+    if (!contribution) return undefined;
+    return {
+      contributionId: contribution.id,
+      path: contribution.path,
+      methods: contribution.methods,
+      anonymous: contribution.verificationSecretRef !== undefined,
+    };
+  }
+
+  async callPluginWebhook(
+    pluginId: string,
+    contributionId: string,
+    request: Readonly<Record<string, unknown>>,
+  ): Promise<unknown> {
+    const active = this.#activeForPlugin(pluginId);
+    const contribution = active?.webhooks.find((candidate) => candidate.id === contributionId);
+    if (!active || !contribution) {
+      throw new ExternalPluginRuntimeError(
+        'DELIVERY_REJECTED',
+        `${pluginId}/${contributionId} is not an active webhook`,
+      );
+    }
+    return active.invoke(active.pluginInstanceId, contribution.action.method, {
+      ...(contribution.action.params ?? {}),
+      request,
+    });
   }
 
   #activeForPlugin(pluginId: string): ActiveRuntimeContributions | undefined {
