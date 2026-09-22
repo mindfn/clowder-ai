@@ -31,13 +31,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The rebuild-survival check compares against the previous develop_base
-      # tip, which actions/checkout does not fetch by default.
-      - run: git fetch --no-tags --depth=1 origin develop_base:refs/remotes/origin/develop_base
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      # The baseline must be the IMMUTABLE PRE-push commit. Fetching
+      # `origin/develop_base` here would name the tree we are validating - a
+      # witness that is the accused - and the old code did exactly that.
+      # GitHub supplies the previous tip out of band, which the pushed tree
+      # cannot forge: github.event.before for a push (survives force-push),
+      # pull_request.base.sha for a PR.
+      - id: baseline
+        run: |
+          case "${{ github.event_name }}" in
+            push) sha='${{ github.event.before }}' ;;
+            pull_request) sha='${{ github.event.pull_request.base.sha }}' ;;
+            *) sha='' ;;
+          esac
+          # All-zeros means the branch did not exist before: no prior claim.
+          if [ -z "$sha" ] || [ "$sha" = "0000000000000000000000000000000000000000" ]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          else
+            # A force-pushed rebuild leaves the old tip unreachable from any ref.
+            git fetch --no-tags origin "$sha" 2>/dev/null || true
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
+
       # No dependency install: the guard uses node builtins only, so it stays
       # runnable even when the tree is mid-rebuild and deps are inconsistent.
       - run: node --test scripts/check-fork-only-patches.test.mjs
-      - run: node scripts/check-fork-only-patches.mjs
+      - name: Fork-only patch guard
+        run: |
+          # No `||` fallback on purpose: if the baseline was supposed to exist
+          # and cannot be resolved, the guard must go red, not quietly retry
+          # with a weaker check.
+          if [ -n "${{ steps.baseline.outputs.sha }}" ]; then
+            node scripts/check-fork-only-patches.mjs --baseline-ref "${{ steps.baseline.outputs.sha }}"
+          else
+            node scripts/check-fork-only-patches.mjs --no-baseline
+          fi

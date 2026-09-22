@@ -208,6 +208,26 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
     return { violations, baselineRef: null, comparedPatches: 0 };
   }
 
+  // PR #185 review (砚砚 P1): CI fetched `origin/develop_base` AFTER the push, so
+  // the "baseline" was the very tree being validated. A witness that is the
+  // accused cannot testify - and it fails silently, which is the whole disease.
+  // The baseline must be an immutable PRE-reset commit, so refuse to compare a
+  // commit with itself.
+  try {
+    const head = gitOut(repoRoot, ['rev-parse', 'HEAD^{commit}']).trim();
+    const base = gitOut(repoRoot, ['rev-parse', `${baselineRef}^{commit}`]).trim();
+    if (head === base) {
+      violations.push(
+        `baseline "${baselineRef}" resolves to HEAD (${head.slice(0, 9)}), the same tree being checked, ` +
+          `so it cannot witness a loss. Pass the pre-reset commit explicitly: --baseline-ref <sha>`,
+      );
+      return { violations, baselineRef, comparedPatches: 0 };
+    }
+  } catch {
+    violations.push(`cannot resolve HEAD or "${baselineRef}" to a commit; rebuild loss cannot be detected`);
+    return { violations, baselineRef, comparedPatches: 0 };
+  }
+
   let baselineRaw;
   try {
     baselineRaw = gitOut(repoRoot, ['show', `${baselineRef}:${REGISTRY_REL}`]);
@@ -228,6 +248,20 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
   if (!baseline || !Array.isArray(baseline.patches)) {
     violations.push(`baseline registry at ${baselineRef} has no "patches" array`);
     return { violations, baselineRef, comparedPatches: 0 };
+  }
+
+  // The registry is itself a shared file, so a rebuild can REVERT it instead of
+  // deleting it. Both trees then look internally consistent and the guard
+  // confirms its own amnesia as healthy. Compare the claim SETS, not just files.
+  const treeIds = new Set((treeRegistry?.patches ?? []).map((p) => p?.id).filter(Boolean));
+  for (const patch of baseline.patches) {
+    const id = patch?.id;
+    if (typeof id === 'string' && id.length > 0 && treeRegistry && !treeIds.has(id)) {
+      violations.push(
+        `REBUILD LOSS vs ${baselineRef} - patch "${id}" was registered in the baseline but is no longer in ` +
+          `${REGISTRY_REL}; the registry was reverted, not just the patch`,
+      );
+    }
   }
 
   const dropped = [];
@@ -279,10 +313,26 @@ function resolveRepoRoot(argv) {
   }
 }
 
+function readFlag(argv, name) {
+  const at = argv.indexOf(name);
+  return at !== -1 && argv[at + 1] ? argv[at + 1] : undefined;
+}
+
 function main() {
-  const repoRoot = resolveRepoRoot(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const repoRoot = resolveRepoRoot(argv);
   const tree = checkForkOnlyPatches(repoRoot);
-  const survival = checkRebuildSurvival(repoRoot);
+  // --baseline-ref names the immutable PRE-reset commit. CI must pass it
+  // (github.event.before / pull_request.base.sha); the registry default is only
+  // good enough for a manual pre-push run, where the local ref still names the
+  // prior tip.
+  // --no-baseline is for the one honest case with no prior tree at all (branch
+  // creation). It is explicit on purpose: skipping the survival half must be a
+  // stated intent, never a silent fallback when a baseline lookup failed.
+  const skipBaseline = argv.includes('--no-baseline');
+  const survival = skipBaseline
+    ? { violations: [], baselineRef: null, comparedPatches: 0 }
+    : checkRebuildSurvival(repoRoot, { baselineRef: readFlag(argv, '--baseline-ref') });
   const seen = new Set();
   const violations = [...tree.violations, ...survival.violations].filter((v) => {
     if (seen.has(v)) return false;
@@ -301,9 +351,11 @@ function main() {
     process.exit(1);
   }
 
-  const baseline = survival.baselineRef
-    ? `; ${survival.comparedPatches} claimed by ${survival.baselineRef} still present`
-    : '';
+  const baseline = skipBaseline
+    ? '; rebuild-survival SKIPPED (--no-baseline: no prior tree)'
+    : survival.baselineRef
+      ? `; ${survival.comparedPatches} claimed by ${survival.baselineRef} still present`
+      : '';
   console.log(`[check-fork-only-patches] OK - ${patchIds.length} fork-only patch(es) present${baseline}`);
 }
 
