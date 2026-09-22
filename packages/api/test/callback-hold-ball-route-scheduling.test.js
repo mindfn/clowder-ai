@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
+import { formatHoldOwnerName } from '../dist/routes/hold-ball-terminal-visibility.js';
 
 /**
  * PR-O3: all wakeAfterMs payloads now require waitSourceRef.
@@ -98,6 +99,14 @@ describe('F167 C1: /api/callbacks/hold-ball scheduling + errors', () => {
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
     registry = new InvocationRegistry();
     threadStore = new ThreadStore();
+  });
+
+  test('hold owner prose uses the readable runtime member identity, never its internal id', () => {
+    assert.equal(
+      formatHoldOwnerName('cat-8zfu14fb', { displayName: '布偶猫', variantLabel: 'Fable' }),
+      '布偶猫（Fable）',
+    );
+    assert.equal(formatHoldOwnerName('cat-missing', undefined), '该成员');
   });
 
   async function createApp(holdBallDeps) {
@@ -254,6 +263,7 @@ describe('F167 C1: /api/callbacks/hold-ball scheduling + errors', () => {
     assert.equal(replacementTerminal.userId, 'user-hb-replace');
     assert.equal(replacementTerminal.source.meta.taskId, firstTaskId);
     assert.equal(replacementTerminal.source.meta.outcome, 'retired_by_replacement');
+    assert.doesNotMatch(replacementTerminal.content, /\bcodex\b/, 'human prose must not expose the internal cat id');
   });
 
   test('F167-G cloud P1: registerDynamic failure rolls back new insert and retains prior hold (atomic swap)', async () => {

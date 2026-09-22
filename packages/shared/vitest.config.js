@@ -8,6 +8,7 @@ export default defineConfig({
       'test/concierge-config.test.js',
       'test/pet-skin-projection.test.js',
       'src/__tests__/capability-tips.test.ts',
+      'src/__tests__/cat-display-name.test.ts',
       'src/__tests__/capability-evolution.test.ts',
       'src/__tests__/capability-evolution-name.test.ts',
       'src/__tests__/capability-evolution-diagnosis.test.ts',

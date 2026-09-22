@@ -29,6 +29,11 @@ import type {
   ToolEvent,
 } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import {
+  findLatestMessageByTimeline,
+  getOrderedMessageTimeline,
+  isMessageTimelineActive,
+} from '@/stores/message-timeline';
 import { useToastStore } from '@/stores/toastStore';
 import { extractRecallMetaDetail, toolResultDetail } from '@/utils/toolPreview';
 import {
@@ -665,6 +670,20 @@ export interface HandleBackgroundMessageOptions {
   deletePendingCallback?: (threadId: string | undefined, catId: string, invocationId: string) => void;
 }
 
+function touchStreamActivity(
+  store: Pick<BackgroundStoreLike, 'getThreadState' | 'patchThreadMessage'>,
+  threadId: string,
+  messageId: string,
+  activityAt = Date.now(),
+): void {
+  const message = store.getThreadState(threadId).messages.find((candidate) => candidate.id === messageId);
+  if (!message || !isMessageTimelineActive(message)) return;
+  store.patchThreadMessage(threadId, messageId, {
+    timestamp: activityAt,
+    timelineOrderAt: activityAt,
+  });
+}
+
 function resolveBackgroundCatName(options: HandleBackgroundMessageOptions, catId: string): string {
   return options.resolveCatName?.(catId) ?? catId;
 }
@@ -710,7 +729,7 @@ function recoverBackgroundStreamingMessage(
 ): string | undefined {
   const streamKey = `${msg.threadId}::${msg.catId}`;
   const activeRef = options.bgStreamRefs.get(streamKey);
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
   for (let i = threadMessages.length - 1; i >= 0; i--) {
     const message = threadMessages[i];
     if (message.type === 'assistant' && message.catId === msg.catId && message.isStreaming) {
@@ -1033,7 +1052,7 @@ function findBackgroundInvocationCreatedTarget(
   options: HandleBackgroundMessageOptions,
 ): string | undefined {
   const streamKey = `${msg.threadId}::${targetCatId}`;
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
   const isEligible = (message: ChatMessage | undefined): message is ChatMessage => {
     if (!message || !isBackgroundStreamingAssistant(message, targetCatId)) return false;
     const stableKey = getStreamStableInvocationKey(message);
@@ -1393,6 +1412,7 @@ export function consumeBackgroundSystemInfo(
         label: `${msg.catId} → web_search${count > 1 ? ` x${count}` : ''}`,
         timestamp: msg.timestamp,
       });
+      touchStreamActivity(options.store, msg.threadId, targetId);
       consumed = true;
     } else if (parsed?.type === 'rich_block') {
       // F22: Append rich block — mirror foreground path (useAgentMessages.ts)
@@ -1415,7 +1435,7 @@ export function consumeBackgroundSystemInfo(
       // post_message callbacks became independent by default, routing those blocks to
       // the preceding callback duplicates the card until history hydration repairs it.
       if (!targetId && !richBlockHasExplicitInvocation) {
-        const threadMessages = options.store.getThreadState(msg.threadId).messages;
+        const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
         for (let i = threadMessages.length - 1; i >= 0; i--) {
           const m = threadMessages[i];
           if (m.type !== 'assistant' || m.catId !== msg.catId) continue;
@@ -1491,6 +1511,7 @@ export function consumeBackgroundSystemInfo(
 
       if (parsed.block) {
         options.store.appendRichBlockToThread(msg.threadId, targetId, parsed.block);
+        touchStreamActivity(options.store, msg.threadId, targetId);
       }
       consumed = true;
     } else if (parsed?.type === 'app_server_lifecycle') {
@@ -1582,7 +1603,7 @@ export function consumeBackgroundSystemInfo(
       const projectPath = typeof parsed.projectPath === 'string' ? parsed.projectPath : '';
       const reasonKind = (parsed.reasonKind as string) ?? 'needs_bootstrap';
       const invId = typeof parsed.invocationId === 'string' ? parsed.invocationId : undefined;
-      const threadMessages = options.store.getThreadState(msg.threadId).messages;
+      const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
       const existing = threadMessages.find(
         (m: { variant?: string; extra?: { governanceBlocked?: { projectPath?: string } } }) =>
           m.variant === 'governance_blocked' && m.extra?.governanceBlocked?.projectPath === projectPath,
@@ -1675,6 +1696,7 @@ export function consumeBackgroundSystemInfo(
           });
         }
         options.store.setThreadMessageThinking(msg.threadId, targetId, thinkingText);
+        touchStreamActivity(options.store, msg.threadId, targetId);
       }
       consumed = true;
     }
@@ -1984,7 +2006,7 @@ function recoverStreamingMessage(
   streamKey: string,
   options: HandleBackgroundMessageOptions,
 ): string | undefined {
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
   const activeRef = options.bgStreamRefs.get(streamKey);
   for (let i = threadMessages.length - 1; i >= 0; i--) {
     const m = threadMessages[i];
@@ -2022,7 +2044,7 @@ function findBackgroundCallbackReplacementTarget(
   // so same-parent multi-turn callback doesn't bind to wrong turn's stream bubble.
   const incomingStableKey = msg.turnInvocationId ?? invocationId;
 
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
 
   // Try invocationId-based match first (using turn-priority stable key)
   if (incomingStableKey) {
@@ -2572,6 +2594,7 @@ export function handleBackgroundAgentMessage(
         finalMsgId = cbId;
       }
     } else {
+      const streamActivityAt = Date.now();
       // F183 Phase B1.8 — bg stream chunk wire-up via reducer (single-writer)。
       // canonical invocationId 走 reducer 的 reduceStreamChunk — existing bubble
       // append/replace content；no existing 时 makePlaceholder 创建新 bubble (origin=
@@ -2658,6 +2681,7 @@ export function handleBackgroundAgentMessage(
         if (Object.keys(sidePatch).length > 0) {
           options.store.patchThreadMessage(msg.threadId, messageId, sidePatch);
         }
+        touchStreamActivity(options.store, msg.threadId, messageId, streamActivityAt);
         if (msg.isFinal) {
           options.store.setThreadMessageStreaming(msg.threadId, messageId, false);
         }
@@ -2675,10 +2699,20 @@ export function handleBackgroundAgentMessage(
         }
         if (messageId) {
           if (msg.textMode === 'replace') {
+            const currentMessage = options.store
+              .getThreadState(msg.threadId)
+              .messages.find((candidate) => candidate.id === messageId);
+            const advanceTimeline = currentMessage ? isMessageTimelineActive(currentMessage) : false;
             options.store.patchThreadMessage(msg.threadId, messageId, {
               content: msg.content,
               ...(msg.metadata ? { metadata: msg.metadata } : {}),
-              isStreaming: !msg.isFinal,
+              ...(advanceTimeline
+                ? {
+                    timestamp: streamActivityAt,
+                    timelineOrderAt: streamActivityAt,
+                    isStreaming: !msg.isFinal,
+                  }
+                : {}),
             });
             options.store.updateThreadCatStatus(msg.threadId, msg.catId, msg.isFinal ? 'done' : 'streaming');
           } else {
@@ -2742,7 +2776,8 @@ export function handleBackgroundAgentMessage(
               : {}),
             ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
             ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
-            timestamp: msg.timestamp,
+            timestamp: streamActivityAt,
+            timelineOrderAt: streamActivityAt,
             isStreaming: !msg.isFinal,
             origin: 'stream',
           });
@@ -2971,6 +3006,7 @@ export function handleBackgroundAgentMessage(
     if (!bgToolUseHandled) {
       options.store.appendToolEventToThread(msg.threadId, messageId, toolUseEventData);
     }
+    touchStreamActivity(options.store, msg.threadId, messageId);
     options.store.setThreadMessageStreaming(msg.threadId, messageId, true);
     options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'streaming');
     return;
@@ -3025,6 +3061,7 @@ export function handleBackgroundAgentMessage(
     if (!bgToolResultHandled) {
       options.store.appendToolEventToThread(msg.threadId, messageId, toolResultEventData);
     }
+    touchStreamActivity(options.store, msg.threadId, messageId);
     options.store.setThreadMessageStreaming(msg.threadId, messageId, true);
     options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'streaming');
     return;
@@ -3491,15 +3528,15 @@ export function useAgentMessages() {
         return directState.invocationId !== msgInvocationId;
       }
 
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        const m = state.messages[i];
-        if (m.type !== 'assistant' || m.catId !== catId) continue;
-        if (!m.isStreaming) continue;
-        const bound = m.extra?.stream?.invocationId;
+      const latestStreaming = findLatestMessageByTimeline(
+        state.messages,
+        (message) => message.type === 'assistant' && message.catId === catId && message.isStreaming === true,
+      );
+      if (latestStreaming) {
+        const bound = latestStreaming.extra?.stream?.invocationId;
         if (bound !== undefined) {
           return bound !== msgInvocationId;
         }
-        break;
       }
 
       return false;
@@ -3596,7 +3633,7 @@ export function useAgentMessages() {
       //      isStreaming=true, NO stream.invocationId). Bound-to-old-invocation
       //      bubbles are NEVER adopted — they must be finalized by invocation_created's
       //      rebind step, not silently mutated by a newer invocation's stream chunk.
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const invocationId = explicitInvocationId ?? getCurrentInvocationIdForCat(catId);
       let stableLookupId = invocationId;
       const currentTurnInvocationId = resolveEffectiveTurnInvocationIdForCat(catId, invocationId);
@@ -3674,7 +3711,7 @@ export function useAgentMessages() {
   );
 
   const findCallbackReplacementTarget = useCallback((catId: string, invocationId: string): { id: string } | null => {
-    const currentMessages = useChatStore.getState().messages;
+    const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
     // Strict match only: exact invocationId. Do NOT adopt unbound placeholders —
     // per clowder-ai#305 absorb (2026-04-01) the placeholder may belong to a newer
     // invocation, and silently merging callback into it risks content mixing.
@@ -3695,7 +3732,7 @@ export function useAgentMessages() {
 
   const findInvocationlessStreamPlaceholder = useCallback(
     (catId: string): { id: string } | null => {
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const activeId = getActive(catId)?.id;
 
       if (activeId) {
@@ -3755,7 +3792,7 @@ export function useAgentMessages() {
    */
   const findInvocationlessRichPlaceholder = useCallback(
     (catId: string): { id: string } | null => {
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const isRichOrToolOnlyPlaceholder = (
         msg: (typeof currentMessages)[number] | undefined,
       ): msg is NonNullable<typeof msg> =>
@@ -4115,7 +4152,7 @@ export function useAgentMessages() {
         currentEventSeq?: number;
       },
     ): string | null => {
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const existing = getActive(catId);
       const effectiveTurnInvocationId = resolveEffectiveTurnInvocationIdForCat(
         catId,
@@ -4789,8 +4826,11 @@ export function useAgentMessages() {
             }
             // Active speech follows the live conversation edge. This is presentation
             // ordering only; the durable lifecycle identity and startedAt remain unchanged.
-            const streamActivityAt = Date.now();
-            patchMessage(messageId, { timestamp: streamActivityAt, timelineOrderAt: streamActivityAt });
+            touchStreamActivity(
+              useChatStore.getState(),
+              msg.threadId ?? useChatStore.getState().currentThreadId,
+              messageId,
+            );
             if (msg.replyTo || msg.replyPreview) {
               patchMessage(messageId, {
                 ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
@@ -4966,6 +5006,11 @@ export function useAgentMessages() {
         if (!toolUseReducerHandled) {
           appendToolEvent(messageId, toolUseEventData);
         }
+        touchStreamActivity(
+          useChatStore.getState(),
+          msg.threadId ?? useChatStore.getState().currentThreadId,
+          messageId,
+        );
 
         if (isFileChange) {
           console.info('[agent_message] file_change tool_use appended', {
@@ -5046,6 +5091,11 @@ export function useAgentMessages() {
         if (!toolResultReducerHandled) {
           appendToolEvent(messageId, toolResultEventData);
         }
+        touchStreamActivity(
+          useChatStore.getState(),
+          msg.threadId ?? useChatStore.getState().currentThreadId,
+          messageId,
+        );
       } else if (msg.type === 'done') {
         // Stale-terminal guard (Bug-G, shared with `error` via isStaleTerminalEvent):
         // A stale done must NOT touch cat-level or bubble-level state — doing so
@@ -5112,7 +5162,7 @@ export function useAgentMessages() {
               }
               return false;
             })();
-            const permissive = useChatStore.getState().messages.findLast((m) => {
+            const permissive = findLatestMessageByTimeline(useChatStore.getState().messages, (m) => {
               if (m.type !== 'assistant' || m.catId !== msg.catId || !m.isStreaming) return false;
               if (slotFreshConfirmed) return true;
               // F194 Phase Z3 R8 P1-3 (砚砚): turn-only matching for dual-id bubbles. Reject newer
@@ -5456,7 +5506,7 @@ export function useAgentMessages() {
               //     on PR#1352 — the old oldest-to-newest loop would bind a stale historical
               //     bubble when reconnect/hydration left multiple unbound ones, leaving the
               //     live bubble unbound and reintroducing ghost/split behavior.
-              const messagesSnapshot = useChatStore.getState().messages;
+              const messagesSnapshot = getOrderedMessageTimeline(useChatStore.getState().messages);
               const exactLifecycleResponseId =
                 msg.lifecycleResponseMessageId &&
                 messagesSnapshot.some((candidate) => candidate.id === msg.lifecycleResponseMessageId)
@@ -5716,6 +5766,11 @@ export function useAgentMessages() {
                 label: `${msg.catId} → web_search${count > 1 ? ` x${count}` : ''}`,
                 timestamp: Date.now(),
               });
+              touchStreamActivity(
+                useChatStore.getState(),
+                msg.threadId ?? useChatStore.getState().currentThreadId,
+                messageId,
+              );
             }
             consumed = true;
           } else if (parsed?.type === 'thinking') {
@@ -5735,6 +5790,11 @@ export function useAgentMessages() {
                 currentEventSeq: msg.seq,
               });
               setMessageThinking(messageId, thinkingText);
+              touchStreamActivity(
+                useChatStore.getState(),
+                msg.threadId ?? useChatStore.getState().currentThreadId,
+                messageId,
+              );
             }
             consumed = true;
           } else if (parsed?.type === 'app_server_lifecycle') {
@@ -5889,7 +5949,7 @@ export function useAgentMessages() {
             // post_message callbacks became independent by default, routing those blocks to
             // the preceding callback duplicates the card until history hydration repairs it.
             if (!targetId && !richBlockHasExplicitInvocation) {
-              const currentMessages = useChatStore.getState().messages;
+              const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
               for (let i = currentMessages.length - 1; i >= 0; i--) {
                 const m = currentMessages[i];
                 if (m.type !== 'assistant' || m.catId !== msg.catId) continue;
@@ -5928,6 +5988,11 @@ export function useAgentMessages() {
 
             if (targetId && parsed.block) {
               appendRichBlock(targetId, parsed.block);
+              touchStreamActivity(
+                useChatStore.getState(),
+                msg.threadId ?? useChatStore.getState().currentThreadId,
+                targetId,
+              );
             }
             consumed = true;
           } else if (parsed?.type === 'session_seal_requested') {
@@ -6039,7 +6104,7 @@ export function useAgentMessages() {
                 }
                 return false;
               })();
-              const permissive = useChatStore.getState().messages.findLast((m) => {
+              const permissive = findLatestMessageByTimeline(useChatStore.getState().messages, (m) => {
                 if (m.type !== 'assistant' || m.catId !== msg.catId || !m.isStreaming) return false;
                 if (slotFreshConfirmed) return true;
                 // F194 Phase Z3 R8 P1-3 (砚砚): mirror done path turn-only matching.

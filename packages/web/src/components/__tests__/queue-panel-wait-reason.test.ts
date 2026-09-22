@@ -176,7 +176,7 @@ describe('QueuePanel wait-reason render', () => {
     });
     expect(container.textContent).not.toContain('等待 布偶猫（Fable） 当前回合');
     expect(container.textContent).not.toContain('已运行');
-    expect(container.textContent).toContain('待处理');
+    expect(container.textContent).toContain('排队等待中');
   });
 
   it('shows an idle explicit target as waiting for dispatch, not a current turn', () => {
@@ -204,7 +204,7 @@ describe('QueuePanel wait-reason render', () => {
     expect(html).not.toContain('当前回合');
     expect((container.textContent?.match(/布偶猫（Fable）/g) ?? []).length).toBe(1);
     expect(html).not.toContain('缅因猫（sol）');
-    expect(html).toContain('待处理');
+    expect(html).toContain('排队等待中');
   });
 
   it('never says a Sol-targeted entry is waiting for an unrelated active GPT-5.5 turn', () => {

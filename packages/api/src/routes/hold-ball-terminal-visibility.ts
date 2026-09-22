@@ -1,3 +1,4 @@
+import { type CatConfig, catRegistry, formatCatDisplayName } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { HOLD_BALL_SOURCE } from './hold-ball-source.js';
@@ -10,6 +11,21 @@ export interface HoldTerminalVisibilityInput {
   readonly outcome: string;
   readonly content: string;
   readonly idempotencySuffix?: string;
+}
+
+/**
+ * Hold notifications are part of the human timeline, so internal cat ids must
+ * stay in structured metadata instead of leaking into prose. Variant labels
+ * distinguish parallel members that share a family display name.
+ */
+type HoldOwnerDisplayConfig = Pick<CatConfig, 'displayName' | 'variantLabel'>;
+
+export function formatHoldOwnerName(
+  catId: string,
+  config: HoldOwnerDisplayConfig | undefined = catRegistry.tryGet(catId)?.config,
+): string {
+  if (!config) return '该成员';
+  return formatCatDisplayName(config);
 }
 
 /**

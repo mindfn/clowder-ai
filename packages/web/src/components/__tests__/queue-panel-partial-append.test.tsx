@@ -10,6 +10,7 @@ vi.mock('@/hooks/useCatNameResolver', () => ({ useCatNameResolver: () => (id: st
 vi.mock('@/hooks/useCoCreatorConfig', () => ({ useCoCreatorConfig: () => ({ name: 'owner' }) }));
 vi.mock('@/hooks/useThreadScopedSelectors', () => ({
   useThreadLiveness: () => ({ activeInvocations: {}, catInvocations: {} }),
+  useThreadMessages: () => [],
 }));
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
 

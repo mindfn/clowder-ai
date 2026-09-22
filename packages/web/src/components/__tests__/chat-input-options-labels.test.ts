@@ -21,7 +21,8 @@ const MIXED_CATS: CatData[] = [
   ...FAKE_CATS,
   {
     id: 'opus-fast',
-    displayName: '布偶猫(快)',
+    displayName: '布偶猫',
+    variantLabel: '快',
     color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
     mentionPatterns: [],
     clientId: 'anthropic',
@@ -100,7 +101,7 @@ describe('buildCatOptions vs buildWhisperOptions split', () => {
     expect(options).toHaveLength(2);
     const fast = options.find((o) => o.id === 'opus-fast');
     expect(fast).toBeDefined();
-    expect(fast?.label).toBe('@布偶猫(快)');
+    expect(fast?.label).toBe('@布偶猫（快）');
     expect(fast?.insert).toBe(''); // no mentionPatterns → empty insert
     expect(options.map((option) => option.id)).not.toContain('spark');
   });

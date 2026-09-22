@@ -394,7 +394,31 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     ]);
     assert.deepEqual(store.getById(opus.id).lifecycle.inputEntryIds, ['entry-old', 'entry-append']);
     assert.deepEqual(store.getById(codex.id).lifecycle.inputMessageIds, ['message-old', input.id]);
+    assert.equal(store.getById(opus.id).lifecycle.latestInputTimelineOrderAt, 101);
+    assert.equal(store.getById(codex.id).lifecycle.latestInputTimelineOrderAt, 102);
     assert.equal(store.commitLifecycleAppendAdmission(admission).kind, 'replayed');
+
+    const laterInput = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: null,
+        content: 'later input',
+        mentions: ['opus'],
+        timestamp: 150,
+        deliveryStatus: 'queued',
+      }),
+    );
+    store.markDelivered(laterInput.id, 300);
+    const laterAdmission = {
+      threadId: 'thread-1',
+      entryId: 'entry-later',
+      inputMessageIds: [laterInput.id],
+      runs: [{ targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id, dispatchedAt: 160 }],
+    };
+    assert.equal(store.commitLifecycleAppendAdmission(laterAdmission).kind, 'applied');
+    assert.equal(store.getById(opus.id).lifecycle.latestInputTimelineOrderAt, 300);
+    assert.equal(store.commitLifecycleAppendAdmission(laterAdmission).kind, 'replayed');
 
     const wrongRun = store.commitLifecycleAppendAdmission({
       ...admission,

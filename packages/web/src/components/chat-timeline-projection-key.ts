@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@/stores/chat-types';
+import { isMessageTimelineActive } from '@/stores/message-timeline';
 
 /**
  * Cross-message projections depend on execution topology, not on every
@@ -11,7 +12,9 @@ export function buildChatTimelineProjectionKey(messages: readonly ChatMessage[])
       message.id,
       message.type,
       message.catId,
-      message.timestamp,
+      // Streaming activity changes the row's own clock/content, not the
+      // cross-row reply/execution topology. Keep historical rows memoized.
+      message.type === 'assistant' && isMessageTimelineActive(message) ? undefined : message.timestamp,
       message.isStreaming === true,
       message.replyTo,
       message.replyPreview?.senderCatId,

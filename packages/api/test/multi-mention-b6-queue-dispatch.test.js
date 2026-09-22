@@ -289,6 +289,7 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.ok(dispatchSource, 'Queue sourceRecordId must resolve to the public multi-mention source');
     assert.equal(dispatchSource.replyTo, callerResponse.id);
     assert.equal(dispatchSource.extra?.causal?.triggerMessageId, callerResponse.id);
+    assert.deepEqual(dispatchSource.extra?.targetCats, ['codex', 'gpt-pro']);
     assert.equal(
       dispatchSource.content,
       '[Multi-Mention from opus]\n\nReview the exact source\n\n---\n\nPreserve this original context',

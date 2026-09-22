@@ -7,11 +7,12 @@ import {
   type SchedulerMessageExtra,
   timelineMessageKind,
 } from '@cat-cafe/shared';
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadChatRuntimeProvider';
 import { getBubbleInvocationId, shouldForceReplaceHydrationForCachedMessages } from '@/debug/bubbleIdentity';
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
+import { selectThreadMessagesRaw } from '@/hooks/useThreadScopedSelectors';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import type { QueueEntry, TaskProgressItem } from '@/stores/chat-types';
@@ -22,7 +23,11 @@ import {
   hydrateThreadWorkspaceState,
   useChatStore,
 } from '@/stores/chatStore';
-import { getMessageTimelineOrderTime } from '@/stores/message-timeline';
+import {
+  findEarliestMessageByCursor,
+  getMessageTimelineCursorTime,
+  getMessageTimelineOrderTime,
+} from '@/stores/message-timeline';
 import type { TaskItem } from '@/stores/taskStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { crossesUserTurnBoundary } from '@/stores/turn-boundary';
@@ -42,11 +47,14 @@ import {
 } from '@/utils/offline-store';
 import {
   captureMessageScrollAnchor,
+  captureMessageScrollAnchorForElement,
   captureMessageScrollAnchorForMessage,
   MESSAGE_VIEWPORT_MOUNTED_EVENT,
   type MessageScrollAnchor,
   restoreMessageScrollAnchor,
+  restoreTimelineScrollAnchor,
   scrollToMessage,
+  type TimelineScrollAnchor,
 } from '@/utils/scrollToMessage';
 import {
   peekPendingTeleport,
@@ -56,6 +64,7 @@ import {
 } from '@/utils/teleport';
 import { resumeInvocationReconciliationAfterHydration } from './invocation-timeout-reconciliation';
 import { hydrateQueueActiveInvocationSlots, type QueueActiveInvocationSlot } from './queue-active-invocation-hydration';
+import { useViewportMessageTimeline } from './useViewportMessageTimeline';
 
 type SavedScrollState =
   | { top: number; anchor: 'bottom' }
@@ -674,13 +683,6 @@ export function mergeReplaceHydrationMessages(
   currentMsgs: ChatMessageData[],
   currentCatInvocations: Record<string, CatInvocationInfo>,
 ): ReplaceHydrationMergeResult {
-  if (currentMsgs.length === 0) {
-    return {
-      messages: historyMsgs,
-      stats: { preservedLocalCount: 0, reconciledToHistoryCount: 0, replacedHistoryCount: 0 },
-    };
-  }
-
   // 单一索引: id ∪ (catId:invocationId) streamKey 都进同一个 Map。
   // matchKind 区分 lookup 命中是 id 还是 streamKey（决定 merge action）。
   // 当一个 invocation 在 history 里有多条 bubble（如 stream + 后续 callback），
@@ -829,12 +831,7 @@ export function mergeReplaceHydrationMessages(
   }
 
   return {
-    messages: mergedMsgs.sort((a, b) => {
-      const ta = getMessageTimelineOrderTime(a);
-      const tb = getMessageTimelineOrderTime(b);
-      if (ta !== tb) return ta - tb;
-      return a.id.localeCompare(b.id);
-    }),
+    messages: mergedMsgs,
     stats: {
       preservedLocalCount,
       reconciledToHistoryCount,
@@ -855,7 +852,8 @@ export function useChatHistory(threadId: string) {
   historyConsumerIdRef.current ??= Symbol('thread-chat-history-consumer');
   const historyConsumerId = historyConsumerIdRef.current;
   const {
-    messages,
+    messages: rawMessages,
+    currentThreadId: storeCurrentThreadId,
     isLoadingHistory,
     hasMore,
     replaceThreadMessages,
@@ -868,7 +866,8 @@ export function useChatHistory(threadId: string) {
     isOfflineSnapshot,
   } = useChatStore(
     useShallow((s) => ({
-      messages: s.messages,
+      messages: selectThreadMessagesRaw(s, threadId),
+      currentThreadId: s.currentThreadId,
       isLoadingHistory: s.isLoadingHistory,
       hasMore: s.hasMore,
       replaceThreadMessages: s.replaceThreadMessages,
@@ -885,6 +884,17 @@ export function useChatHistory(threadId: string) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messages = useViewportMessageTimeline(threadId, rawMessages, () => {
+    if (useChatStore.getState().currentThreadId !== threadId) return;
+    const el = scrollContainerRef.current;
+    const saved = scrollPositionsByThread.get(threadId);
+    if (!el || saved?.anchor !== 'offset' || saved.messageAnchor) return;
+    scrollPositionsByThread.set(threadId, {
+      ...saved,
+      top: el.scrollTop,
+      messageAnchor: captureMessageScrollAnchor(el) ?? saved.messageAnchor,
+    });
+  });
 
   // Scroll state for prepend handling
   const prevFirstIdRef = useRef<string | null>(null);
@@ -894,6 +904,8 @@ export function useChatHistory(threadId: string) {
   const restoreFrameKindRef = useRef<RestoreFrameKind | null>(null);
   const userScrollUpRef = useRef(false);
   const userScrollIntentRef = useRef(false);
+  const previousTimelineIdsRef = useRef<string[]>([]);
+  const previousTimelineThreadRef = useRef(threadId);
 
   // Track loading guard per-thread to prevent double-fetch
   const loadingRef = useRef(false);
@@ -1912,7 +1924,40 @@ export function useChatHistory(threadId: string) {
     }
   }, [isLoadingHistory]);
 
+  const timelineMessageIds = useMemo(() => messages.map((message) => message.id), [messages]);
+
+  // The same messages can change presentation order or rendered height while
+  // streaming. Reapply the user's saved anchor before paint; browser-native
+  // anchoring is disabled on the container so these two systems cannot fight.
+  useLayoutEffect(() => {
+    if (previousTimelineThreadRef.current !== threadId) {
+      previousTimelineThreadRef.current = threadId;
+      previousTimelineIdsRef.current = timelineMessageIds;
+      return;
+    }
+    const previousIds = previousTimelineIdsRef.current;
+    previousTimelineIdsRef.current = timelineMessageIds;
+    if (previousIds.length === 0) return;
+
+    const el = scrollContainerRef.current;
+    const saved = scrollPositionsByThread.get(threadId);
+    if (!el || !saved || useChatStore.getState().currentThreadId !== threadId) return;
+
+    const anchor: TimelineScrollAnchor | undefined =
+      saved.anchor === 'bottom'
+        ? { kind: 'bottom' }
+        : saved.messageAnchor
+          ? { kind: 'message', messageAnchor: saved.messageAnchor }
+          : undefined;
+    if (!anchor || !restoreTimelineScrollAnchor(el, anchor)) return;
+    // Admission, prepend, and reorder all use this one correction. Do not
+    // apply the older height-delta prepend correction on top of it.
+    scrollSnapshotRef.current = null;
+    scrollPositionsByThread.set(threadId, { ...saved, top: el.scrollTop });
+  }, [threadId, timelineMessageIds]);
+
   // Scroll adjustment after messages change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: store sync must retry initial restore even when the scoped message reference is unchanged.
   useEffect(() => {
     const el = scrollContainerRef.current;
 
@@ -1967,7 +2012,7 @@ export function useChatHistory(threadId: string) {
         }
       }
     }
-  }, [messages, scheduleRestore, threadId]);
+  }, [messages, scheduleRestore, storeCurrentThreadId, threadId]);
 
   // F052 + 砚砚 R1 P1: resolve a pending cross-post scroll across BOTH the tentative IDB-snapshot
   // phase and the authoritative fresh-API phase. Kept independent of the scroll-restore effect
@@ -2013,8 +2058,8 @@ export function useChatHistory(threadId: string) {
         isLoading: isLoadingHistory,
       })
     ) {
-      const oldest = messages.find((m) => !m.id.startsWith('draft-'));
-      if (oldest) void fetchHistory(`${getMessageTimelineOrderTime(oldest)}:${oldest.id}`);
+      const oldest = findEarliestMessageByCursor(messages.filter((message) => !message.id.startsWith('draft-')));
+      if (oldest) void fetchHistory(`${getMessageTimelineCursorTime(oldest)}:${oldest.id}`);
     }
   }, [messages, threadId, isOfflineSnapshot, hasMore, isLoadingHistory, scheduleScrollToMessage, fetchHistory]);
 
@@ -2158,15 +2203,33 @@ export function useChatHistory(threadId: string) {
     if (!hasMore || isLoadingHistory) return;
     if (el.scrollTop < 80 && messages.length > 0) {
       // #80 cloud R8 P2: skip draft rows — their synthetic IDs break cursor semantics
-      const oldest = messages.find((m) => !m.id.startsWith('draft-'));
+      const oldest = findEarliestMessageByCursor(messages.filter((message) => !message.id.startsWith('draft-')));
       if (oldest) {
-        void fetchHistory(`${getMessageTimelineOrderTime(oldest)}:${oldest.id}`);
+        void fetchHistory(`${getMessageTimelineCursorTime(oldest)}:${oldest.id}`);
       }
     }
   }, [hasMore, isLoadingHistory, messages, fetchHistory]);
 
+  const handleReadingIntent = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const disclosure = target.closest<HTMLElement>('[data-reading-disclosure]');
+      const el = scrollContainerRef.current;
+      if (!disclosure || !el || !el.contains(disclosure)) return;
+      if (useChatStore.getState().currentThreadId !== threadIdRef.current) return;
+      const messageAnchor = captureMessageScrollAnchorForElement(el, disclosure);
+      if (!messageAnchor) return;
+      cancelPendingRestore();
+      scrollPositionsByThread.set(threadIdRef.current, { top: el.scrollTop, anchor: 'offset', messageAnchor });
+    },
+    [cancelPendingRestore],
+  );
+
   return {
+    messages,
     handleScroll,
+    handleReadingIntent,
     jumpToLatest,
     scrollContainerRef,
     messagesEndRef,

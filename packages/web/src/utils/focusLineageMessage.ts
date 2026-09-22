@@ -1,5 +1,5 @@
 import { revealFoldedSourceAnchor } from './folded-source-navigation';
-import { resolveMessageElements } from './scrollToMessage';
+import { markMessageJumpTarget, resolveMessageElements } from './scrollToMessage';
 
 /** Focus one exact lineage endpoint with the same temporary visual anchor. */
 export function focusLineageMessage(messageId: string): boolean {
@@ -14,9 +14,8 @@ export function focusLineageMessage(messageId: string): boolean {
     revealFoldedSourceAnchor(node);
     const enclosingDetails = node.closest('details');
     if (enclosingDetails) enclosingDetails.open = true;
-    node.dataset.lineageFocus = 'true';
+    markMessageJumpTarget(node);
     node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    window.setTimeout(() => delete node.dataset.lineageFocus, 3200);
     return true;
   };
   return focus(0);

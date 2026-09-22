@@ -10,8 +10,9 @@ import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
-import { parseDirection } from '@/lib/parse-direction';
+import { parseDirection, parseImplicitStructuredTargets } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
+import { getMessageTimelineOrderTime, getOrderedMessageTimeline } from '@/stores/message-timeline';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
@@ -191,7 +192,9 @@ function ChatMessageContent({
     return s.threads.find((thread) => thread.id === sourceId)?.title;
   });
   const threadMessages = useChatStore(
-    (s) => timelineMessages ?? (needsTimelineProjection(message) ? s.messages : EMPTY_TIMELINE_MESSAGES),
+    (s) =>
+      timelineMessages ??
+      (needsTimelineProjection(message) ? getOrderedMessageTimeline(s.messages) : EMPTY_TIMELINE_MESSAGES),
   );
   const globalBubbleDefaults = useChatStore((s) => s.globalBubbleDefaults);
   const candidateSourceThreadId = message.extra?.crossPost?.sourceThreadId;
@@ -319,6 +322,9 @@ function ChatMessageContent({
   const direction = catData
     ? parseDirection(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }), currentThreadId)
     : null;
+  const implicitStructuredTargets = message.extra?.targetCats?.length
+    ? parseImplicitStructuredTargets(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }))
+    : [];
 
   const isFailedLifecycleResponse = message.lifecycle?.kind === 'response' && message.lifecycle.status === 'failed';
   const isStreamOrigin = message.origin === 'stream' && !isFailedLifecycleResponse;
@@ -344,6 +350,9 @@ function ChatMessageContent({
     cachedR21SpeechStdout ?? projectedCliStdout ?? (isStreamOrigin ? message.content : undefined);
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
+  const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
+  const assistantPresentationTime =
+    message.lifecycle?.kind === 'response' ? getMessageTimelineOrderTime(message) : message.timestamp;
   const cliStatus = message.isStreaming
     ? ('streaming' as const)
     : message.variant === 'error'
@@ -641,7 +650,7 @@ function ChatMessageContent({
     hasCrossThreadSource: Boolean(crossThreadSourceThreadId),
   };
   if (!doesAssistantMessageRenderBubble(message, assistantRenderContext)) {
-    const notice = projectEmptyResponseLifecycleNotice(message, assistantRenderContext);
+    const notice = emptyResponseNotice;
     if (notice?.tone === 'processing') {
       return (
         <div data-message-id={message.id} data-testid="response-lifecycle-tip" className="mb-4 flex items-start gap-2">
@@ -651,7 +660,7 @@ function ChatMessageContent({
               <span className="font-semibold" style={{ color: catStyle?.textColor }}>
                 {catStyle?.label ?? message.catId}
               </span>
-              <span className="text-cafe-muted">{formatTime(message.timestamp)}</span>
+              <span className="text-cafe-muted">{formatTime(assistantPresentationTime)}</span>
             </div>
             {showCapabilityTip && capabilityTipContexts ? (
               <CapabilityTipStrip
@@ -698,7 +707,7 @@ function ChatMessageContent({
           >
             {catStyle?.label ?? message.catId}
           </span>
-          <span className="text-xs text-cafe-muted shrink-0">{formatTime(message.timestamp)}</span>
+          <span className="text-xs text-cafe-muted shrink-0">{formatTime(assistantPresentationTime)}</span>
           {message.extra?.recovery?.kind === 'f254_withheld_message' && (
             <span
               className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
@@ -732,7 +741,9 @@ function ChatMessageContent({
                   }`}
             </span>
           )}
-          {!isWhisper && direction && <DirectionPill direction={direction} getCatById={getCatById} />}
+          {!isWhisper && !message.extra?.targetCats?.length && direction && (
+            <DirectionPill direction={direction} getCatById={getCatById} />
+          )}
           {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
             <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
           )}
@@ -810,10 +821,7 @@ function ChatMessageContent({
         catStyle ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties) : undefined
       }
       bubbleRadius={catStyle ? catStyle.radius : 'rounded-2xl'}
-      bubbleClassName={catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'}
-      maxWidth={
-        projectEmptyResponseLifecycleNotice(message, { hasCliBlock }) ? 'w-fit max-w-[85%] md:max-w-[75%]' : undefined
-      }
+      bubbleClassName={`${catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'} ${emptyResponseNotice ? 'w-fit' : ''}`.trim()}
       bubbleStyle={
         catStyle
           ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
@@ -821,6 +829,7 @@ function ChatMessageContent({
       }
       footer={
         <>
+          {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
           <AppendedInputReceipts
             response={message}
             timelineMessages={threadMessages}
@@ -830,32 +839,16 @@ function ChatMessageContent({
               return cat ? formatCatName(cat) : catId;
             }}
           />
-          {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
         </>
       }
     >
-      {(() => {
-        const notice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
-        if (!notice) return null;
-        const toneClass =
-          notice.tone === 'failed'
-            ? 'text-conn-red-text'
-            : notice.tone === 'canceled'
-              ? 'text-conn-amber-text'
-              : 'text-cafe-muted';
-        return (
-          <output
-            data-response-lifecycle-notice={notice.tone}
-            className={`inline-flex items-center gap-2 text-sm ${toneClass}`}
-          >
-            {notice.tone === 'processing' ? (
-              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" aria-hidden="true" />
-            ) : null}
-            <span>{notice.label}</span>
-          </output>
-        );
-      })()}
-      {hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
+      {emptyResponseNotice && emptyResponseNotice.tone !== 'processing' ? (
+        <CollapsibleMarkdown
+          content={emptyResponseNotice.label}
+          className={catStyle?.font}
+          disclosureKey={bodyDisclosureKey}
+        />
+      ) : hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
         <ContentBlocks blocks={message.contentBlocks!} />
       ) : !isStreamOrigin && hasTextContent ? (
         <CollapsibleMarkdown
@@ -863,6 +856,21 @@ function ChatMessageContent({
           className={catStyle?.font}
           disclosureKey={bodyDisclosureKey}
         />
+      ) : null}
+      {implicitStructuredTargets.length > 0 ? (
+        <div
+          data-testid="implicit-structured-targets"
+          className="mt-3 border-t border-current/10 pt-2 text-sm opacity-75"
+        >
+          {implicitStructuredTargets.map((catId) => {
+            const cat = getCatById(catId);
+            return (
+              <div key={catId} data-target-cat-id={catId}>
+                → @{cat ? formatCatName(cat) : '该成员'}
+              </div>
+            );
+          })}
+        </div>
       ) : null}
       {message.thinking && (
         <ThinkingContent
@@ -918,7 +926,9 @@ export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
   const lifecycleTimeline = useChatStore(
     (state) =>
       props.timelineMessages ??
-      (props.message.lifecycle?.dispatchRefs?.length ? state.messages : EMPTY_TIMELINE_MESSAGES),
+      (props.message.lifecycle?.dispatchRefs?.length
+        ? getOrderedMessageTimeline(state.messages)
+        : EMPTY_TIMELINE_MESSAGES),
   );
   // Phase C compatibility boundary: legacy routing projections remain readable in
   // History storage, but are not a user-facing message surface anymore.

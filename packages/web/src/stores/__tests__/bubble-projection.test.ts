@@ -4,6 +4,52 @@ import { projectCanonicalBubbles } from '../bubble-projection';
 import type { ChatMessage } from '../chat-types';
 
 describe('F194 Phase Z8 — projectCanonicalBubbles (AC-Z20)', () => {
+  it('keeps terminal response bubbles on the shared presentation timeline after projection', () => {
+    const records: ChatMessage[] = [
+      {
+        id: 'response-started-first-completed-last',
+        type: 'assistant',
+        catId: 'sol',
+        content: 'long-running response',
+        origin: 'stream',
+        timestamp: 1_000,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '1000:invocation-sol',
+          invocationId: 'invocation-sol',
+          targetId: 'sol',
+          inputEntryIds: ['entry-initial', 'entry-supplement'],
+          inputMessageIds: ['user-initial', 'user-supplement'],
+          status: 'completed',
+          startedAt: 1_000,
+          completedAt: 4_000,
+        },
+      },
+      {
+        id: 'user-supplement',
+        type: 'user',
+        content: 'supplement',
+        timestamp: 2_000,
+        deliveredAt: 2_000,
+        timelineOrderAt: 2_000,
+      },
+      {
+        id: 'callback-input',
+        type: 'assistant',
+        catId: 'opus',
+        content: 'review callback',
+        origin: 'callback',
+        timestamp: 3_000,
+      },
+    ];
+
+    expect(projectCanonicalBubbles({ records }).messages.map((message) => message.id)).toEqual([
+      'user-supplement',
+      'callback-input',
+      'response-started-first-completed-last',
+    ]);
+  });
+
   it('AC-Z20/Z11 alpha replay: stream records merge, callback post_message remains its own bubble', () => {
     // Source: thread_moyfjyjc0662weit opus invocation 2fe279aa
     // 2 stream + 1 callback, 3 distinct content segments, all sharing invocationId.

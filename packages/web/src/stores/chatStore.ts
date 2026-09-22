@@ -42,7 +42,12 @@ import type {
 } from './chat-types';
 import { DEFAULT_THREAD_STATE } from './chat-types';
 import { projectTerminalActiveInvocationSlots } from './invocation-liveness';
-import { getMessageTimelineOrderTime } from './message-timeline';
+import {
+  findLatestMessageByTimeline,
+  findLatestMessageIndexByTimeline,
+  getMessageTimelineOrderTime,
+  isMessageTimelineActive,
+} from './message-timeline';
 import { crossesUserTurnBoundary } from './turn-boundary';
 
 // Re-export types so existing consumers keep working with `import { ... } from '@/stores/chatStore'`
@@ -102,6 +107,7 @@ function mergeCatInvocationInfo(
 }
 
 function snapshotActive(s: ChatState): ThreadState {
+  const latestMessage = findLatestMessageByTimeline(s.messages);
   return {
     messages: s.messages,
     isLoading: s.isLoading,
@@ -124,7 +130,7 @@ function snapshotActive(s: ChatState): ThreadState {
       ? Date.now()
       : Math.max(
           s.threadStates[s.currentThreadId]?.lastActivity ?? 0,
-          s.messages.length > 0 ? getMessageTimelineOrderTime(s.messages[s.messages.length - 1]) : 0,
+          latestMessage ? getMessageTimelineOrderTime(latestMessage) : 0,
         ),
     queue: s.queue,
     queueFull: s.queueFull,
@@ -595,13 +601,23 @@ function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatM
 }
 
 function patchMessageInList(messages: ChatMessage[], id: string, patch: ChatMessagePatch): ChatMessage[] {
-  let changed = false;
-  const nextMessages = messages.map((msg) => {
-    if (msg.id !== id) return msg;
-    changed = true;
-    return applyMessagePatch(msg, patch);
-  });
-  return changed ? nextMessages : messages;
+  const index = messages.findIndex((message) => message.id === id);
+  if (index < 0) return messages;
+  const nextMessages = [...messages];
+  nextMessages[index] = applyMessagePatch(messages[index]!, patch);
+  return nextMessages;
+}
+
+function updateMessageInList(
+  messages: ChatMessage[],
+  messageId: string,
+  updater: (message: ChatMessage) => ChatMessage,
+): ChatMessage[] | undefined {
+  const index = messages.findIndex((message) => message.id === messageId);
+  if (index < 0) return undefined;
+  const updated = [...messages];
+  updated[index] = updater(messages[index]!);
+  return updated;
 }
 
 /** F067 Phase 2: Fire macOS notification when a cat @mentions the co-creator */
@@ -655,20 +671,17 @@ function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage):
   // Phase 1: Hard rule — scan ALL same-cat assistants for exact invocationId match.
   // Must run first because bridge/soft rules on a newer message would mis-associate.
   if (incomingInvId) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const existing = messages[i]!;
-      if (existing.type !== 'assistant' || existing.catId !== incoming.catId) continue;
+    const exactIndex = findLatestMessageIndexByTimeline(messages, (existing) => {
+      if (existing.type !== 'assistant' || existing.catId !== incoming.catId) return false;
       // #814: explicit post_message is standalone — never match as merge target,
       // even though it carries stream.invocationId for #573 correlation.
       // Without this guard, a stream chunk arriving after F5/hydration would
       // match the hydrated explicit post by invocationId and overwrite it.
-      if (existing.extra?.isExplicitPost) continue;
-      const existingInvId = getBubbleInvocationId(existing);
-      if (existingInvId === incomingInvId) {
-        if (existing.id !== incoming.id && crossesUserTurnBoundary(messages, existing, incoming)) continue;
-        return i;
-      }
-    }
+      if (existing.extra?.isExplicitPost) return false;
+      if (getBubbleInvocationId(existing) !== incomingInvId) return false;
+      return existing.id === incoming.id || !crossesUserTurnBoundary(messages, existing, incoming);
+    });
+    if (exactIndex >= 0) return exactIndex;
   }
 
   // Phase 2: Soft rule — check only the MOST RECENT same-cat assistant.
@@ -679,29 +692,20 @@ function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage):
   if (incoming.origin !== 'callback') return -1;
   if (incomingInvId) return -1;
 
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const existing = messages[i]!;
-    if (existing.type !== 'assistant' || existing.catId !== incoming.catId) continue;
+  const latestStreamIndex = findLatestMessageIndexByTimeline(
+    messages,
+    (existing) => existing.type === 'assistant' && existing.catId === incoming.catId && existing.origin === 'stream',
+  );
+  if (latestStreamIndex < 0) return -1;
 
-    // Skip non-stream messages — bridge/soft only targets stream placeholders.
-    // Cloud review P1: breaking on the first same-cat assistant (which may be
-    // a callback) prevents reaching an older stream placeholder.
-    if (existing.origin !== 'stream') continue;
-
-    const existingInvId = getBubbleInvocationId(existing);
-    if (
-      !existingInvId &&
-      Math.abs((incoming.timestamp ?? 0) - (existing.timestamp ?? 0)) < 8_000 &&
-      incoming.replyTo === existing.replyTo &&
-      (incoming.visibility ?? 'public') === (existing.visibility ?? 'public')
-    ) {
-      return i;
-    }
-    // Checked the most recent same-cat stream — stop scanning
-    break;
-  }
-
-  return -1;
+  const existing = messages[latestStreamIndex]!;
+  const existingInvId = getBubbleInvocationId(existing);
+  return !existingInvId &&
+    Math.abs((incoming.timestamp ?? 0) - (existing.timestamp ?? 0)) < 8_000 &&
+    incoming.replyTo === existing.replyTo &&
+    (incoming.visibility ?? 'public') === (existing.visibility ?? 'public')
+    ? latestStreamIndex
+    : -1;
 }
 
 function mergeRichBlocks(existingBlocks: RichBlock[] = [], incomingBlocks: RichBlock[] = []): RichBlock[] | undefined {
@@ -767,7 +771,8 @@ function updateThreadMessage(
   if (threadId === state.currentThreadId) {
     // F173 KD-2 (PR-C Task 10): mirror message edits to threadStates[active]
     // so reconcile / streaming-flag flips stay in lockstep with flat.
-    const messages = state.messages.map((m) => (m.id === messageId ? updater(m) : m));
+    const messages = updateMessageInList(state.messages, messageId, updater);
+    if (!messages) return state;
     return {
       messages,
       ...mirrorActiveFlat(state, { messages }),
@@ -776,12 +781,14 @@ function updateThreadMessage(
 
   const existing = state.threadStates[threadId];
   if (!existing) return state;
+  const messages = updateMessageInList(existing.messages, messageId, updater);
+  if (!messages) return state;
   return {
     threadStates: {
       ...state.threadStates,
       [threadId]: {
         ...existing,
-        messages: existing.messages.map((m) => (m.id === messageId ? updater(m) : m)),
+        messages,
         lastActivity: Date.now(),
       },
     },
@@ -1430,9 +1437,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
               }
             }
           }
-          // Re-sort by durable publication time. Queued user work and cat
-          // speech already visible in the timeline keep authoring-time order.
-          updated.sort((a, b) => getMessageTimelineOrderTime(a) - getMessageTimelineOrderTime(b));
         }
         return { messages: updated, insertedIds, mentionMessages };
       };
@@ -1964,44 +1968,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Active-thread actions ──
 
-  addMessage: (msg) =>
-    set((state) => {
-      if (state.messages.some((m) => m.id === msg.id)) return state;
-
-      // TD112: Store-level dedup — merge if semantic duplicate exists
-      const dupIdx = findAssistantDuplicate(state.messages, msg);
-      if (dupIdx >= 0) {
-        const merged = mergeAssistantBubble(state.messages[dupIdx]!, msg);
-        const messages = [...state.messages];
-        messages[dupIdx] = merged;
-        recordDebugEvent({
-          event: 'bubble_lifecycle',
-          threadId: state.currentThreadId,
-          timestamp: Date.now(),
-          action: 'merge',
-          reason: 'td112_store_dedup',
-          catId: msg.catId,
-          messageId: state.messages[dupIdx]!.id,
-          invocationId: getBubbleInvocationId(msg),
-          origin: msg.origin,
-        });
-        // P2 fix: propagate mention notification even on merge
-        if (msg.mentionsUser && typeof document !== 'undefined' && !document.hasFocus()) {
-          fireOwnerMentionNotification(msg, state.currentThreadId);
-        }
-        return { messages };
-      }
-
-      const messages = [...state.messages, msg];
-      if (messages.length > MAX_BLOB_MESSAGES) {
-        revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
-      }
-      // F067: Notify on active thread when user is not focused
-      if (msg.mentionsUser && typeof document !== 'undefined' && !document.hasFocus()) {
-        fireOwnerMentionNotification(msg, state.currentThreadId);
-      }
-      return { messages };
-    }),
+  // Compatibility alias: all message insertion/merge semantics live in the
+  // thread-scoped writer so active and background projections cannot diverge.
+  addMessage: (msg) => get().addMessageToThread(get().currentThreadId, msg),
 
   removeMessage: (id) =>
     set((state) => ({
@@ -2122,9 +2091,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   appendToLastMessage: (content) =>
     set((state) => {
       const messages = [...state.messages];
-      const last = messages[messages.length - 1];
+      const lastIndex = findLatestMessageIndexByTimeline(messages, (message) => message.type === 'assistant');
+      const last = messages[lastIndex];
       if (last && last.type === 'assistant') {
-        messages[messages.length - 1] = { ...last, content: last.content + content };
+        messages[lastIndex] = { ...last, content: last.content + content };
       }
       return { messages };
     }),
@@ -2691,8 +2661,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const dupIdx = findAssistantDuplicate(state.messages, msg);
         if (dupIdx >= 0) {
           const merged = mergeAssistantBubble(state.messages[dupIdx]!, msg);
-          const messages = [...state.messages];
-          messages[dupIdx] = merged;
+          const updated = [...state.messages];
+          updated[dupIdx] = merged;
+          const messages = updated;
           recordDebugEvent({
             event: 'bubble_lifecycle',
             threadId,
@@ -2738,8 +2709,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const bgDupIdx = findAssistantDuplicate(existing.messages, msg);
       if (bgDupIdx >= 0) {
         const merged = mergeAssistantBubble(existing.messages[bgDupIdx]!, msg);
-        const updatedMessages = [...existing.messages];
-        updatedMessages[bgDupIdx] = merged;
+        const updated = [...existing.messages];
+        updated[bgDupIdx] = merged;
+        const updatedMessages = updated;
         recordDebugEvent({
           event: 'bubble_lifecycle',
           threadId,
@@ -2768,12 +2740,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // F067 Phase 2: Fire macOS notification for @co-creator mention
       if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
 
+      const updatedMessages = [...existing.messages, msg];
       return {
         threadStates: {
           ...state.threadStates,
           [threadId]: {
             ...existing,
-            messages: [...existing.messages, msg],
+            messages: updatedMessages,
             unreadCount: existing.unreadCount + 1,
             hasUserMention: existing.hasUserMention || !!msg.mentionsUser,
             lastActivity: Date.now(),
@@ -2786,7 +2759,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const upsert = (messages: ChatMessage[]): ChatMessage[] => {
         const existingIndex = messages.findIndex((candidate) => candidate.id === msg.id);
-        if (existingIndex === -1) return [...messages, msg];
+        if (existingIndex === -1) {
+          return [...messages, msg];
+        }
         const existing = messages[existingIndex]!;
         if (
           existing.lifecycle?.kind === 'response' &&
@@ -3448,19 +3423,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   batchStreamChunkUpdate: ({ threadId, messageId, catId, content, metadata, streaming, catStatus }) =>
     set((state) => {
-      const applyMessageUpdate = (m: ChatMessage): ChatMessage => {
-        if (m.id !== messageId) return m;
-        return {
-          ...m,
-          content: m.content + content,
-          ...(metadata ? { metadata: m.metadata ? { ...m.metadata, ...metadata } : metadata } : {}),
-          isStreaming: streaming,
+      const activityAt = Date.now();
+      const applyMessageUpdate = (messages: ChatMessage[]): ChatMessage[] => {
+        const index = messages.findIndex((message) => message.id === messageId);
+        if (index < 0) return messages;
+        const existing = messages[index]!;
+        const advanceTimeline = isMessageTimelineActive(existing);
+        const updated = [...messages];
+        updated[index] = {
+          ...existing,
+          content: existing.content + content,
+          ...(metadata ? { metadata: existing.metadata ? { ...existing.metadata, ...metadata } : metadata } : {}),
+          ...(advanceTimeline ? { timestamp: activityAt, timelineOrderAt: activityAt } : {}),
+          isStreaming: advanceTimeline ? streaming : existing.isStreaming,
         };
+        return updated;
       };
 
       if (threadId === state.currentThreadId) {
         const statusChanged = state.catStatuses[catId] !== catStatus;
-        const messages = state.messages.map(applyMessageUpdate);
+        const messages = applyMessageUpdate(state.messages);
         const newCatStatuses = statusChanged ? { ...state.catStatuses, [catId]: catStatus } : state.catStatuses;
         return {
           messages,
@@ -3475,12 +3457,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const existing = state.threadStates[threadId];
       if (!existing) return state;
       const statusChanged = existing.catStatuses[catId] !== catStatus;
+      const messages = applyMessageUpdate(existing.messages);
       return {
         threadStates: {
           ...state.threadStates,
           [threadId]: {
             ...existing,
-            messages: existing.messages.map(applyMessageUpdate),
+            messages,
             ...(statusChanged ? { catStatuses: { ...existing.catStatuses, [catId]: catStatus } } : {}),
             lastActivity: Date.now(),
           },

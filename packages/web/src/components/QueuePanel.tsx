@@ -7,8 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
-import type { ChatMessage } from '@/stores/chat-types';
+import { useThreadLiveness, useThreadMessages } from '@/hooks/useThreadScopedSelectors';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
@@ -25,7 +24,6 @@ import {
 import { useQueueActionConvergence } from './useQueueActionConvergence';
 
 const COLLAPSE_THRESHOLD = 4;
-const EMPTY_MESSAGES: readonly ChatMessage[] = [];
 const EMPTY_TARGET_IDS: readonly string[] = [];
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, normal: 1 };
@@ -113,9 +111,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const catAvatarById = useMemo(() => new Map(cats.map((cat) => [cat.id, cat.avatar])), [cats]);
   const rawQueue = useChatStore((s) => s.queue);
   const queue = useMemo(() => rawQueue ?? [], [rawQueue]);
-  const timelineMessages = useChatStore((s) =>
-    s.currentThreadId === threadId ? s.messages : (s.threadStates[threadId]?.messages ?? EMPTY_MESSAGES),
-  );
+  const timelineMessages = useThreadMessages(threadId);
   const setQueue = useChatStore((s) => s.setQueue);
   const { activeInvocations } = useThreadLiveness(threadId);
   const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);
@@ -490,7 +486,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           <svg aria-hidden="true" className="w-4 h-4 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
             <path d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
           </svg>
-          <span className="text-xs font-medium text-cafe-secondary">待处理</span>
+          <span className="text-xs font-medium text-cafe-secondary">排队等待中</span>
           <span
             className="text-xs px-1.5 py-0.5 rounded-full font-medium text-[var(--color-cocreator-primary)]"
             style={{ backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)' }}

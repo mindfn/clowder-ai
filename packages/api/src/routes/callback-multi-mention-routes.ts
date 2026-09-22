@@ -438,6 +438,7 @@ async function dispatchViaQueue(
     idempotencyKey: `multi-mention-source:${requestId}`,
     extra: {
       isExplicitPost: true,
+      targetCats: [...targetCatIds],
       causal: { kind: 'invocation_reply', triggerMessageId: sourceMessage.id },
     },
   };
