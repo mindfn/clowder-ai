@@ -148,11 +148,78 @@ describe('ChatMessage render isolation', () => {
     });
 
     const receipts = container.querySelector('[data-testid="appended-input-receipts"]');
+    const appendedRow = container.querySelector('[data-appended-input-id="source-appended"]');
     expect(receipts?.textContent).toContain('补充消息');
     expect(receipts?.textContent).toContain('@狸花猫 测试下追加消息的');
-    expect(receipts?.textContent).toContain('查看消息');
-    expect(receipts?.textContent).toContain('09-01 22:14:08');
+    expect(receipts?.textContent).toContain('查看原文');
+    expect(receipts?.textContent).not.toContain('09/01 22:14:08');
+    expect(appendedRow?.getAttribute('title')).toContain('09/01 22:14:08');
+    expect(appendedRow?.getAttribute('title')).toContain('@狸花猫 测试下追加消息的');
     expect(receipts?.textContent).not.toContain('@狸花猫 开始');
+  });
+
+  it('shows newest appended inputs first and expands the default three-and-a-half-row viewport', () => {
+    const initial: ChatMessageData = {
+      id: 'source-initial-many',
+      from: { kind: 'user', userId: 'co-creator' },
+      type: 'user',
+      content: '开始',
+      timestamp: 100,
+    };
+    const appended = Array.from(
+      { length: 5 },
+      (_, index): ChatMessageData => ({
+        id: `source-appended-${index + 1}`,
+        from: { kind: 'user', userId: 'co-creator' },
+        type: 'user',
+        content: `追加消息 ${index + 1}`,
+        timestamp: 101 + index,
+      }),
+    );
+    const response: ChatMessageData = {
+      id: 'response-with-many-appends',
+      from: { kind: 'agent', catId: 'cat-1' },
+      type: 'assistant',
+      catId: 'cat-1',
+      content: '收到',
+      timestamp: 100,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '100:response-with-many-appends',
+        invocationId: 'invocation-many',
+        targetId: 'cat-1',
+        inputEntryIds: ['entry-initial', ...appended.map((_, index) => `entry-appended-${index + 1}`)],
+        inputMessageIds: [initial.id, ...appended.map((message) => message.id)],
+        status: 'processing',
+        startedAt: 100,
+      },
+    };
+    useChatStore.setState({ messages: [initial, ...appended, response] });
+
+    act(() => {
+      root.render(<ChatMessage message={response} threadId="thread-render" getCatById={() => undefined} />);
+    });
+
+    const list = container.querySelector('[data-testid="appended-input-list"]') as HTMLOListElement | null;
+    const rows = [...container.querySelectorAll('[data-appended-input-id]')];
+    expect(rows.map((row) => row.getAttribute('data-appended-input-id'))).toEqual([
+      'source-appended-5',
+      'source-appended-4',
+      'source-appended-3',
+      'source-appended-2',
+      'source-appended-1',
+    ]);
+    expect(list?.dataset.collapsed).toBe('true');
+    expect(list?.style.maxHeight).toBe('98px');
+    expect(list?.style.maskImage).toContain('transparent 98px');
+
+    const expand = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement | null;
+    expect(expand?.textContent).toBe('展开全部（5）');
+    act(() => expand?.click());
+
+    expect(list?.dataset.collapsed).toBe('false');
+    expect(list?.style.maxHeight).toBe('');
+    expect(container.querySelector('button[aria-expanded="true"]')?.textContent).toBe('收起');
   });
 
   it('renders only otherwise-invisible post_message targets at the end of the ordinary body', () => {
