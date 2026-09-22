@@ -18,6 +18,11 @@ import type { TaskSpec_P1 } from '../../scheduler/types.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
+import {
+  buildEvidencePrereqSkippedMessage,
+  type EvidencePrereqProbe,
+  evaluateEvidencePrereq,
+} from './eval-domain-evidence-gate.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
 import {
   type EvalDomainRegistryEntry,
@@ -67,6 +72,20 @@ export interface EvalDomainScheduleOpts {
    * checks for a known-post-fix symbol (e.g. `isA2aSourceRefs` for `eval:a2a`).
    */
   publishPrereqProbe?: (domainId: EvalDomainRegistryEntry['domainId']) => boolean | Promise<boolean>;
+  /**
+   * F192 evidence-source prerequisite gate.
+   *
+   * Upstream of `publishPrereqProbe` — answers "can the domain's evidence source
+   * PRODUCE evidence at all?" before the eval cat is invoked. When OTel is
+   * disabled, `f167-runtime-eval`-backed domains cannot generate fresh
+   * snapshots, so invoking the eval cat burns an LLM session to re-conclude a
+   * gap that is already visible.
+   *
+   * Runs PER DOMAIN, PER CRON FIRE, BEFORE publishPrereqProbe. Fail-closed:
+   * probe throws -> treated as "evidence unavailable" -> skip notice posted.
+   * Omit/undefined -> backward-compat (no skip).
+   */
+  evidencePrereqProbe?: EvidencePrereqProbe;
 }
 
 /** @deprecated Use EvalDomainScheduleOpts — kept for backward compat. */
@@ -207,6 +226,23 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
         // (LLM) is the only path through which the cross_post_message prompt instruction
         // can fire — eliminating the invocation eliminates the leak class entirely.
         // Probe omitted → backward-compat (no skip). Probe throws → fail-closed.
+        // F192 evidence-source prereq gate. Runs BEFORE publishPrereqProbe so an
+        // OTel-disabled runtime skips at zero LLM cost instead of invoking the cat
+        // to re-discover a gap it cannot act on.
+        if (config.evidencePrereqProbe) {
+          const evidenceResult = await evaluateEvidencePrereq(config.evidencePrereqProbe, domain);
+          if (!evidenceResult.ok) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildEvidencePrereqSkippedMessage(domain, evidenceResult.reason),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
+        }
+
         if (config.publishPrereqProbe) {
           const prereqOk = await evaluatePublishPrereq(config.publishPrereqProbe, domain.domainId);
           if (!prereqOk) {

@@ -7556,6 +7556,10 @@ async function main(): Promise<void> {
   );
   // N-day factory is in its own module (split from eval-domain-daily for file-size limit)
   const { createEvalDomainNDaySpec } = await import('./infrastructure/harness-eval/domain/eval-domain-nday.js');
+  // F192 evidence-source prerequisite gate (fork-only; see docs/fork-only-patches.md).
+  const { createTelemetryEvidencePrereqProbe } = await import(
+    './infrastructure/harness-eval/domain/eval-domain-evidence-gate.js'
+  );
   const { getOwnerUserId } = await import('./config/cat-config-loader.js');
   // cloud R6 P2 (PR-2) + memory wire-up: mirror the same wired set the
   // eval-hub.ts route computes (Object.keys(verdictGenerators)). Bootstrap-time
@@ -7623,6 +7627,25 @@ async function main(): Promise<void> {
     publishPrereqCache.set(domainId, ok);
     return ok;
   };
+  // F192 evidence-source prerequisite gate. OTel init state is fixed for the
+  // process lifetime (salt is read at boot), so a boolean thunk is a complete input.
+  // `evidenceTargetIsLocal` asserts the single-process assumption the local handle
+  // relies on: EVAL_BASE_URL unset (or pointing at our own port) => co-located.
+  const evidencePrereqProbe = createTelemetryEvidencePrereqProbe({
+    otelEnabled: () => telemetryHandle.getMetricsText !== null,
+    evidenceTargetIsLocal: () => {
+      const target = process.env.EVAL_BASE_URL;
+      if (!target) return true; // default target is this process
+      try {
+        const { port, hostname } = new URL(target);
+        const localHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+        return localHost && port === String(process.env.API_SERVER_PORT ?? '');
+      } catch {
+        return false; // unparseable target => cannot prove co-location => fail closed
+      }
+    },
+  });
+
   const evalScheduleOpts = {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
     threadStore,
@@ -7631,6 +7654,7 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    evidencePrereqProbe,
     triggerStore: redisClient
       ? new (
           await import('./infrastructure/harness-eval/domain/eval-domain-trigger-store.js')
