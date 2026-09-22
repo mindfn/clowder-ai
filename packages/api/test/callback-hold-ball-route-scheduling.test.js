@@ -104,7 +104,7 @@ describe('F167 C1: /api/callbacks/hold-ball scheduling + errors', () => {
   test('hold owner prose uses the readable runtime member identity, never its internal id', () => {
     assert.equal(
       formatHoldOwnerName('cat-8zfu14fb', { displayName: '布偶猫', variantLabel: 'Fable' }),
-      '布偶猫(Fable)',
+      '布偶猫（Fable）',
     );
     assert.equal(formatHoldOwnerName('cat-missing', undefined), '该成员');
   });

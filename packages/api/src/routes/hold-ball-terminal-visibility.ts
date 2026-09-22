@@ -1,4 +1,4 @@
-import { type CatConfig, catRegistry } from '@cat-cafe/shared';
+import { type CatConfig, catRegistry, formatCatDisplayName } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { HOLD_BALL_SOURCE } from './hold-ball-source.js';
@@ -25,10 +25,7 @@ export function formatHoldOwnerName(
   config: HoldOwnerDisplayConfig | undefined = catRegistry.tryGet(catId)?.config,
 ): string {
   if (!config) return '该成员';
-  const displayName = config.displayName.trim();
-  const variantLabel = config.variantLabel?.trim();
-  if (!variantLabel || displayName.toLowerCase().includes(variantLabel.toLowerCase())) return displayName;
-  return `${displayName}(${variantLabel})`;
+  return formatCatDisplayName(config);
 }
 
 /**
