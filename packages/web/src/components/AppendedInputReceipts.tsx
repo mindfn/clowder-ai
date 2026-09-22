@@ -7,6 +7,7 @@ import { focusLineageMessage } from '@/utils/focusLineageMessage';
 
 const RECEIPT_ROW_HEIGHT_PX = 28;
 const COLLAPSED_VISIBLE_ROWS = 3.5;
+const COLLAPSED_FULL_ROWS = Math.floor(COLLAPSED_VISIBLE_ROWS);
 
 export function projectAppendedInputReceipts(
   response: ChatMessage,
@@ -67,7 +68,8 @@ export function AppendedInputReceipts({
   const appendedInputs = projectAppendedInputReceipts(response, timelineMessages);
   if (appendedInputs.length === 0) return null;
   const renderedInputs = [...appendedInputs].reverse();
-  const canExpand = renderedInputs.length > Math.floor(COLLAPSED_VISIBLE_ROWS);
+  const canExpand = renderedInputs.length > COLLAPSED_FULL_ROWS;
+  const remainingCount = renderedInputs.length - COLLAPSED_FULL_ROWS;
   const collapsed = canExpand && !expanded;
   const collapsedHeight = RECEIPT_ROW_HEIGHT_PX * COLLAPSED_VISIBLE_ROWS;
   const fadeStart = RECEIPT_ROW_HEIGHT_PX * Math.floor(COLLAPSED_VISIBLE_ROWS);
@@ -119,14 +121,17 @@ export function AppendedInputReceipts({
         <button
           type="button"
           aria-expanded={expanded}
-          aria-label={expanded ? '收起补充消息' : `展开全部 ${renderedInputs.length} 条补充消息`}
+          aria-label={expanded ? '收起补充消息' : `展开剩余 ${remainingCount} 条补充消息`}
           className="mt-1 flex w-full items-center justify-center gap-1 font-medium text-cafe-muted hover:text-cafe-secondary"
           onClick={() => setExpanded((open) => !open)}
         >
-          <span aria-hidden="true" className="inline-flex">
-            <ChevronIcon expanded={!expanded} className={`h-4 w-4 ${expanded ? '-rotate-90' : ''}`} />
-          </span>
-          {!expanded ? <span aria-hidden="true">{renderedInputs.length}</span> : null}
+          {expanded ? (
+            <span aria-hidden="true" className="inline-flex rotate-180">
+              <ChevronIcon expanded className="h-4 w-4" />
+            </span>
+          ) : (
+            `展开剩余 ${remainingCount} 条`
+          )}
         </button>
       )}
     </section>

@@ -217,9 +217,9 @@ describe('ChatMessage render isolation', () => {
     expect(list?.style.maskImage).toContain('transparent 98px');
 
     const expand = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement | null;
-    expect(expand?.getAttribute('aria-label')).toBe('展开全部 5 条补充消息');
-    expect(expand?.textContent).toBe('5');
-    expect(expand?.querySelector('svg')?.classList.contains('rotate-90')).toBe(true);
+    expect(expand?.getAttribute('aria-label')).toBe('展开剩余 2 条补充消息');
+    expect(expand?.textContent).toBe('展开剩余 2 条');
+    expect(expand?.querySelector('svg')).toBeNull();
 
     act(() => expand?.click());
 
@@ -228,7 +228,8 @@ describe('ChatMessage render isolation', () => {
     const collapse = container.querySelector('button[aria-expanded="true"]');
     expect(collapse?.getAttribute('aria-label')).toBe('收起补充消息');
     expect(collapse?.textContent).toBe('');
-    expect(collapse?.querySelector('svg')?.classList.contains('-rotate-90')).toBe(true);
+    expect(collapse?.querySelector('span')?.classList.contains('rotate-180')).toBe(true);
+    expect(collapse?.querySelector('svg')?.classList.contains('rotate-90')).toBe(true);
   });
 
   it('renders only otherwise-invisible post_message targets at the end of the ordinary body', () => {
