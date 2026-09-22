@@ -122,6 +122,11 @@ test('forwards an anonymous declared webhook with raw bytes and strips Host cred
       .statusCode,
     404,
   );
+  assert.equal(
+    (await app.inject({ method: 'POST', url: '/api/plugins/dev.clowder.webhook-fixture/events/%70rovider' }))
+      .statusCode,
+    404,
+  );
 
   webhooks.deactivate('pi_webhook');
   assert.equal(

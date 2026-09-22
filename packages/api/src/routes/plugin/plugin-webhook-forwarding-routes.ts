@@ -6,7 +6,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BODY_BYTES = 1024 * 1024;
 const MAX_RESPONSE_HEADERS = 32;
 const MAX_RESPONSE_HEADER_VALUE_BYTES = 8 * 1024;
-const FORBIDDEN_ENCODED_PATH = /%(?:2e|2f)/i;
+const FORBIDDEN_ENCODED_PATH = /%/;
 const STRIPPED_REQUEST_HEADERS = new Set([
   'authorization',
   'cookie',
