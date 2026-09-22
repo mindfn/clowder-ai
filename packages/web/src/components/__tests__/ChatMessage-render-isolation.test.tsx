@@ -269,7 +269,7 @@ describe('ChatMessage render isolation', () => {
     expect(container.querySelector('[data-testid="message-header"]')?.textContent).not.toContain('→');
   });
 
-  it('renders an empty canceled response through the ordinary body without a width override', () => {
+  it('keeps an empty canceled response body compact without shrinking its shared header column', () => {
     const message: ChatMessageData = {
       id: 'canceled-response',
       type: 'assistant',
@@ -294,9 +294,11 @@ describe('ChatMessage render isolation', () => {
       root.render(<ChatMessage message={message} threadId="thread-render" getCatById={() => undefined} />);
     });
 
-    expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain('已停止回复。');
+    const bubble = container.querySelector('[data-testid="message-bubble"]');
+    expect(bubble?.textContent).toContain('已停止回复。');
     expect(container.querySelector('[data-response-lifecycle-notice]')).toBeNull();
-    expect(container.querySelector('[data-testid="message-bubble"]')?.parentElement?.className).not.toContain('w-fit');
+    expect(bubble?.className).toContain('w-fit');
+    expect(bubble?.parentElement?.className).not.toContain('w-fit');
   });
 
   it('shows a terminal response completion time instead of its original start time', () => {

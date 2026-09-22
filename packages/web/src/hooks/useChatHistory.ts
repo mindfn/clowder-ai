@@ -674,13 +674,6 @@ export function mergeReplaceHydrationMessages(
   currentMsgs: ChatMessageData[],
   currentCatInvocations: Record<string, CatInvocationInfo>,
 ): ReplaceHydrationMergeResult {
-  if (currentMsgs.length === 0) {
-    return {
-      messages: historyMsgs,
-      stats: { preservedLocalCount: 0, reconciledToHistoryCount: 0, replacedHistoryCount: 0 },
-    };
-  }
-
   // 单一索引: id ∪ (catId:invocationId) streamKey 都进同一个 Map。
   // matchKind 区分 lookup 命中是 id 还是 streamKey（决定 merge action）。
   // 当一个 invocation 在 history 里有多条 bubble（如 stream + 后续 callback），

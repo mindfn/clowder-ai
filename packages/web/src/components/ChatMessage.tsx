@@ -819,7 +819,7 @@ function ChatMessageContent({
         catStyle ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties) : undefined
       }
       bubbleRadius={catStyle ? catStyle.radius : 'rounded-2xl'}
-      bubbleClassName={catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'}
+      bubbleClassName={`${catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'} ${emptyResponseNotice ? 'w-fit' : ''}`.trim()}
       bubbleStyle={
         catStyle
           ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
