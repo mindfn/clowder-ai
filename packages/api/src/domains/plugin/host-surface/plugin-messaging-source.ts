@@ -1,6 +1,7 @@
 import type { ConnectorSource } from '@cat-cafe/shared';
 import type { IdentityContribution, MessageDraft, PluginManifest } from '@clowder-ai/plugin-contract';
 import { MessagingError } from '../../messaging/contract/host-types.js';
+import { externalPluginIdentity } from './plugin-external-identity.js';
 
 const MAX_SOURCE_URL_LENGTH = 2_048;
 const MAX_SOURCE_META_BYTES = 16_384;
@@ -114,29 +115,6 @@ function sourceMetaOf(value: unknown): Readonly<Record<string, unknown>> | undef
   return cloned;
 }
 
-function externalIdentity(
-  manifest: PluginManifest,
-  declared: ReadonlyMap<string, IdentityContribution>,
-  origin: Extract<NonNullable<MessageDraft['payload']['provenance']['origin']>, { kind: 'external' }>,
-  requestedIdentityId: string | undefined,
-): { readonly connector: string; readonly identity: IdentityContribution } {
-  const contribution = (manifest.contributions ?? []).find(
-    (candidate) => candidate.type === 'connector' && candidate.id === origin.connectorId,
-  );
-  if (!contribution || contribution.type !== 'connector') {
-    throw new MessagingError('PERMISSION', `connector ${origin.connectorId} is not declared by this plugin`);
-  }
-  const identity = declared.get(contribution.identityRef);
-  if (!identity) throw new MessagingError('VALIDATION', 'connector identity declaration is missing');
-  if (requestedIdentityId !== undefined && identity.id !== requestedIdentityId) {
-    throw new MessagingError(
-      'VALIDATION',
-      `connector ${origin.connectorId} does not use identity ${requestedIdentityId}`,
-    );
-  }
-  return { connector: contribution.id, identity };
-}
-
 function authoredIdentity(
   declared: ReadonlyMap<string, IdentityContribution>,
   requestedIdentityId: string | undefined,
@@ -174,7 +152,7 @@ export function pluginMessageSourceOf(
   const declared = identities(manifest);
   const selected =
     origin?.kind === 'external'
-      ? externalIdentity(manifest, declared, origin, requestedIdentityId)
+      ? externalPluginIdentity(manifest, declared, origin, requestedIdentityId)
       : authoredIdentity(declared, requestedIdentityId);
   const sourceMeta = {
     ...(meta ?? {}),

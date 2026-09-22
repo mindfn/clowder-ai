@@ -23,6 +23,23 @@ beforeEach(async () => {
 
 function manifest(options = {}) {
   const extraIdentities = options.extraIdentities ?? [];
+  const externalContribution =
+    options.externalKind === 'message-subscription'
+      ? {
+          type: 'message-subscription',
+          id: 'fixture-im',
+          binding: 'fixture-identity',
+          action: { method: 'fixture.outbound' },
+        }
+      : options.externalKind === 'none'
+        ? undefined
+        : {
+            type: 'connector',
+            id: 'fixture-im',
+            identityRef: 'fixture-identity',
+            inboundMethod: 'fixture.inbound',
+            outboundMethod: 'fixture.outbound',
+          };
   return {
     pluginId: PLUGIN_ID,
     version: '1.0.0',
@@ -31,13 +48,7 @@ function manifest(options = {}) {
     contributions: [
       { type: 'identity', id: 'fixture-identity', displayName: 'Fixture IM', icon: 'fixture-icon' },
       ...extraIdentities,
-      {
-        type: 'connector',
-        id: 'fixture-im',
-        identityRef: 'fixture-identity',
-        inboundMethod: 'fixture.inbound',
-        outboundMethod: 'fixture.outbound',
-      },
+      ...(externalContribution === undefined ? [] : [externalContribution]),
     ],
     features: [
       {
@@ -46,7 +57,7 @@ function manifest(options = {}) {
         resources: [],
         contributions: [
           { type: 'identity', id: 'fixture-identity' },
-          { type: 'connector', id: 'fixture-im' },
+          ...(externalContribution === undefined ? [] : [{ type: externalContribution.type, id: 'fixture-im' }]),
         ],
         capabilities: ['messaging.send'],
       },
@@ -139,8 +150,10 @@ describe('F202 C1 — plugin Host messaging.send', () => {
     assert.equal(broadcasts.length, 1);
   });
 
-  test('external auto wake validates the declared connector binding and reaches the shared trigger', async () => {
-    const { host, messages, threads, bindings, wakes } = await fixture();
+  test('external auto wake resolves the declared message-subscription binding and reaches the shared trigger', async () => {
+    const { host, messages, threads, bindings, wakes } = await fixture({
+      manifest: manifest({ externalKind: 'message-subscription' }),
+    });
     const thread = await threads.create(OWNER, 'External');
     await bindings.bind(PLUGIN_ID, 'group-42', thread.id, OWNER);
 
@@ -175,6 +188,61 @@ describe('F202 C1 — plugin Host messaging.send', () => {
         { id: 'person-9', name: 'Ada' },
       ],
     ]);
+    await assert.rejects(
+      () =>
+        host.send(
+          draft(thread.id, {
+            idempotencyKey: 'external-wrong-identity',
+            identity: 'other-identity',
+            origin: {
+              kind: 'external',
+              connectorId: 'fixture-im',
+              sourceAddress: { connectorId: 'fixture-im', chatId: 'group-42' },
+            },
+          }),
+        ),
+      (error) => error?.code === 'VALIDATION' && /does not use identity other-identity/.test(error.message),
+    );
+  });
+
+  test('legacy connector declarations remain valid during cutover', async () => {
+    const { host, messages, threads, bindings } = await fixture();
+    const thread = await threads.create(OWNER, 'Legacy external');
+    await bindings.bind(PLUGIN_ID, 'legacy-group', thread.id, OWNER);
+
+    const receipt = await host.send(
+      draft(thread.id, {
+        idempotencyKey: 'legacy-external',
+        origin: {
+          kind: 'external',
+          connectorId: 'fixture-im',
+          sourceAddress: { connectorId: 'fixture-im', chatId: 'legacy-group' },
+        },
+      }),
+    );
+
+    assert.equal((await messages.getById(receipt.messageId))?.source.connector, 'fixture-im');
+  });
+
+  test('external provenance rejects an undeclared subscription or connector', async () => {
+    const { host, threads, bindings } = await fixture({ manifest: manifest({ externalKind: 'none' }) });
+    const thread = await threads.create(OWNER, 'Undeclared external');
+    await bindings.bind(PLUGIN_ID, 'missing-group', thread.id, OWNER);
+
+    await assert.rejects(
+      () =>
+        host.send(
+          draft(thread.id, {
+            idempotencyKey: 'undeclared-external',
+            origin: {
+              kind: 'external',
+              connectorId: 'fixture-im',
+              sourceAddress: { connectorId: 'fixture-im', chatId: 'missing-group' },
+            },
+          }),
+        ),
+      (error) => error?.code === 'PERMISSION' && /not declared by this plugin/.test(error.message),
+    );
   });
 
   test('an explicit wake target is Host-validated and queue full is surfaced as retryable', async () => {
