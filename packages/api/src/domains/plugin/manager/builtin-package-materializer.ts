@@ -2,12 +2,16 @@ import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual, promisify } from 'node:util';
+import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
 import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
 import { stageVerifiedPackageArchive } from '../external-runtime/package-staging.js';
 
 export interface MaterializedBuiltinPluginPackage {
   readonly rootDir: string;
+  /** Installed dependency tree visible to the staged package through Node's ancestor lookup. */
+  readonly dependencyRoot?: string;
+  readonly manifest: PluginManifest;
   verifyIntegrity(): Promise<void>;
   release(): Promise<void>;
 }
@@ -360,6 +364,8 @@ export class FilesystemBuiltinPluginPackageMaterializer implements BuiltinPlugin
       let released = false;
       return {
         rootDir: located.rootDir,
+        ...(dependencyCount === 0 ? {} : { dependencyRoot: resolve(root, 'node_modules') }),
+        manifest: located.manifest,
         verifyIntegrity: located.verifyIntegrity,
         release: async () => {
           if (released) return;

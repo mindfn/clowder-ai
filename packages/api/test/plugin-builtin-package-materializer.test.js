@@ -122,6 +122,8 @@ test('materializes a verified builtin package with a closed, script-free npm dep
     zod: '4.4.3',
   });
   assert.equal((await stat(join(materialized.rootDir, 'dist/mcp-entrypoint.js'))).isFile(), true);
+  assert.equal(materialized.dependencyRoot, join(installs[0].cwd, 'node_modules'));
+  assert.equal((await stat(join(materialized.dependencyRoot, 'zod', 'package.json'))).isFile(), true);
   await materialized.verifyIntegrity();
 
   const rootDir = materialized.rootDir;

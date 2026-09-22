@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
+import { promisify } from 'node:util';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
 
 import {
@@ -12,6 +14,7 @@ import {
 } from '../dist/config/capabilities/capability-orchestrator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
+import { activateDeclaredMcp } from '../dist/domains/plugin/declared/declared-mcp-resources.js';
 import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
@@ -19,6 +22,7 @@ import {
 import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const roots = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -172,6 +176,119 @@ test('an installed package activates and removes its declared MCP capability', a
     ),
     false,
   );
+});
+
+test('declared MCP materialization preserves the verified runtime dependency closure', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-mcp-dependency-project-');
+  const closureRoot = await tempRoot('cat-cafe-f202-mcp-dependency-closure-');
+  const packageRoot = join(closureRoot, 'package');
+  await mkdir(join(packageRoot, 'dist'), { recursive: true });
+  await mkdir(join(closureRoot, 'node_modules', 'fixture-dependency'), { recursive: true });
+  await writeFile(
+    join(closureRoot, 'node_modules', 'fixture-dependency', 'package.json'),
+    '{"name":"fixture-dependency","type":"module","exports":"./index.js"}\n',
+  );
+  await writeFile(
+    join(closureRoot, 'node_modules', 'fixture-dependency', 'index.js'),
+    'export const dependencyValue = "dependency-loaded";\n',
+  );
+  await writeFile(
+    join(packageRoot, 'dist/mcp.js'),
+    "import { dependencyValue } from 'fixture-dependency'; process.stdout.write(dependencyValue + '\\n');\n",
+  );
+  const manifest = {
+    pluginId: 'dev.clowder.mcp-dependency-fixture',
+    version: '1.0.0',
+    contractVersion: '0.1.0',
+    name: 'Dependency fixture',
+    contributions: [
+      {
+        type: 'mcp',
+        id: 'fixture-mcp',
+        runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+      },
+    ],
+    features: [
+      {
+        id: 'main',
+        name: 'Main',
+        resources: [],
+        contributions: [{ type: 'mcp', id: 'fixture-mcp' }],
+        capabilities: [],
+      },
+    ],
+  };
+  let config = { version: 1, capabilities: [] };
+  let released = 0;
+  const mcpConfigIO = {
+    readConfig: async () => config,
+    writeAndRegenCli: async (next) => {
+      config = structuredClone(next);
+    },
+    withLock: async (operation) => operation(),
+  };
+  await activateDeclaredMcp(
+    {
+      packageRecord: {
+        packageDigest: `sha512-${Buffer.alloc(64, 7).toString('base64')}`,
+        pluginId: manifest.pluginId,
+        version: manifest.version,
+        contractVersion: manifest.contractVersion,
+        manifest,
+        signalSchemas: {},
+        provenance: {
+          kind: 'catalog',
+          catalogId: 'mcp-dependency-fixture',
+          packageName: '@clowder-ai/mcp-dependency-fixture',
+        },
+        packageState: 'installed',
+        verifiedAt: 1,
+        updatedAt: 1,
+      },
+      instance: {
+        pluginInstanceId: 'pi_mcp_dependency_fixture',
+        pluginId: manifest.pluginId,
+        packageDigest: `sha512-${Buffer.alloc(64, 7).toString('base64')}`,
+        lifecycleState: 'installed',
+        configReadiness: 'ready',
+        activationState: 'enabled',
+        runtimeState: 'stopped',
+        lifecycleRevision: 1,
+        installedAt: 1,
+        updatedAt: 1,
+      },
+      effectiveGrants: [],
+    },
+    {
+      projectRoot,
+      packages: { resolveInstalledPackage: async () => assert.fail('catalog MCP must use the materializer') },
+      mcpPackages: {
+        async resolve(input) {
+          assert.equal(input.packageName, '@clowder-ai/mcp-dependency-fixture');
+          return {
+            rootDir: packageRoot,
+            dependencyRoot: join(closureRoot, 'node_modules'),
+            manifest,
+            verifyIntegrity: async () => {},
+            release: async () => {
+              released += 1;
+            },
+          };
+        },
+      },
+      configuration: { readConfig: async () => undefined, readSecret: async () => undefined },
+      mcpConfigIO,
+    },
+  );
+
+  const capability = config.capabilities.find((candidate) => candidate.id.endsWith(':fixture-mcp'));
+  assert.ok(capability?.mcpServer);
+  const result = await execFileAsync(capability.mcpServer.command, capability.mcpServer.args, {
+    cwd: capability.mcpServer.workingDir,
+    env: capability.mcpServer.env,
+  });
+  assert.equal(result.stdout, 'dependency-loaded\n');
+  assert.equal(released, 1);
 });
 
 test('a package without runtime uses the standard static skill and MCP lifecycle', async () => {

@@ -235,6 +235,7 @@ function inventoryOf(records) {
     version: record.manifest.version,
     contractVersion: record.manifest.contractVersion,
     manifest: record.manifest,
+    ...(record.provenance === undefined ? {} : { provenance: record.provenance }),
     signalSchemas: {},
     packageState: 'installed',
     verifiedAt: 0,
@@ -296,6 +297,7 @@ function hostOf(records, options = {}) {
   };
   const moduleRuntime = new ModulePluginRuntime({
     packages,
+    ...(options.materializer === undefined ? {} : { materializer: options.materializer }),
     configuration: options.configuration ?? {
       readConfig: async () => undefined,
       readSecret: async () => undefined,
@@ -308,6 +310,65 @@ function hostOf(records, options = {}) {
   router.register(new BundledPluginRuntimeCarrier({ inventory, runtimes: [moduleRuntime], now: () => 5_000 }));
   return { inventory, router, released, moduleRuntime };
 }
+
+test('loads dependency-bearing catalog modules through the verified builtin materializer', async () => {
+  resetModuleLog();
+  const closureRoot = await mkdtemp(join(tmpdir(), 'f202-c1-module-closure-'));
+  const rootDir = join(closureRoot, 'package');
+  await mkdir(join(rootDir, 'dist'), { recursive: true });
+  await mkdir(join(closureRoot, 'node_modules', 'fixture-dependency'), { recursive: true });
+  await writeFile(
+    join(closureRoot, 'node_modules', 'fixture-dependency', 'package.json'),
+    '{"name":"fixture-dependency","type":"module","exports":"./index.js"}\n',
+  );
+  await writeFile(
+    join(closureRoot, 'node_modules', 'fixture-dependency', 'index.js'),
+    'export const dependencyValue = "materialized";\n',
+  );
+  await writeFile(
+    join(rootDir, 'dist/plugin.js'),
+    `
+import { dependencyValue } from 'fixture-dependency';
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return { start() { log.push({ call: 'dependency', value: dependencyValue }); return { actions: {}, stop() {} }; } };
+  },
+};
+`,
+  );
+  const admitted = manifest();
+  let released = 0;
+  const host = hostOf(
+    [
+      {
+        manifest: admitted,
+        rootDir,
+        provenance: { kind: 'catalog', catalogId: 'module-fixture', packageName: '@clowder-ai/module-fixture' },
+      },
+    ],
+    {
+      materializer: {
+        async resolve(input) {
+          assert.equal(input.packageName, '@clowder-ai/module-fixture');
+          return {
+            rootDir,
+            manifest: admitted,
+            verifyIntegrity: async () => {},
+            release: async () => {
+              released += 1;
+            },
+          };
+        },
+      },
+    },
+  );
+
+  await host.router.start('instance-0');
+  assert.deepEqual(moduleLog(), [{ call: 'dependency', value: 'materialized' }]);
+  await host.router.stop('instance-0', 'host_stop');
+  assert.equal(released, 1);
+});
 
 function moduleLog() {
   return globalThis[MODULE_LOG] ?? [];

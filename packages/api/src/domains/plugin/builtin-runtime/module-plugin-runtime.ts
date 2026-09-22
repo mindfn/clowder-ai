@@ -34,6 +34,7 @@ import {
   createUnavailablePluginThreadHost,
   type PluginThreadHost,
 } from '../host-surface/plugin-thread-host.js';
+import type { BuiltinPluginPackageMaterializer } from '../manager/builtin-package-materializer.js';
 import {
   type PluginRuntimeConfigurationPort,
   resolveManifestConfiguration,
@@ -76,6 +77,7 @@ export interface PluginModuleDefinitionShape {
 
 export interface ModulePluginRuntimeOptions {
   readonly packages: VerifiedPluginPackageLocator;
+  readonly materializer?: BuiltinPluginPackageMaterializer;
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly storage?: PluginPrivateStoragePort;
   readonly taskStore?: ITaskStore;
@@ -122,6 +124,19 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     return runtime?.transport === 'builtin' && typeof runtime.entrypoint === 'string';
   }
 
+  async #resolvePackage(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<VerifiedPluginPackage> {
+    const packageName = packageRecord.provenance?.packageName;
+    if (packageName === undefined || this.options.materializer === undefined) {
+      return await this.options.packages.resolveInstalledPackage(packageRecord.packageDigest);
+    }
+    return await this.options.materializer.resolve({
+      pluginInstanceId,
+      pluginId: packageRecord.pluginId,
+      packageDigest: packageRecord.packageDigest,
+      packageName,
+    });
+  }
+
   async start(
     pluginInstanceId: string,
     packageRecord: PluginPackageRecord,
@@ -133,7 +148,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         `${pluginInstanceId} already has a module loaded in this Host`,
       );
     }
-    const located = await this.options.packages.resolveInstalledPackage(packageRecord.packageDigest);
+    const located = await this.#resolvePackage(pluginInstanceId, packageRecord);
     let plugin: PluginModuleDefinitionShape;
     let activation: PluginModuleActivationShape | undefined;
     let subscriptions: PluginMessagingSubscriptionSession | undefined;

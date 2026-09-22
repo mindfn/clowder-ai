@@ -42,6 +42,10 @@ import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
+import {
+  type BuiltinPluginPackageMaterializer,
+  FilesystemBuiltinPluginPackageMaterializer,
+} from './manager/builtin-package-materializer.js';
 import { GitPluginPackageAdmission } from './manager/git-package-admission.js';
 import { LocalPluginPackageAdmission } from './manager/local-package-admission.js';
 import { CompositePluginManagerCompatibilityPort } from './manager/plugin-manager-compatibility.js';
@@ -91,6 +95,8 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly onMessagePublished?: (threadId: string) => void;
   readonly processes?: ExternalPluginProcessAdapter;
   readonly packages?: VerifiedPluginPackageLocator;
+  /** Injectable so dependency-bearing builtin packages can be tested without network installs. */
+  readonly builtinPackages?: BuiltinPluginPackageMaterializer;
   readonly contract?: PackageAdmissionContractRuntime;
   readonly now?: () => number;
   readonly editorParentOrigin?: string;
@@ -288,8 +294,17 @@ export function createDormantPluginRuntimeComposition(
   // package's own manifest, most specific claim first (F202 C1 clauses 1/2/6).
   const moduleLogger = createModuleLogger('plugin/module-runtime');
   const mcpConfigIO = options.mcpConfigIO ?? fileBasedMcpIO(options.projectRoot);
+  const builtinPackages =
+    options.builtinPackages ??
+    new FilesystemBuiltinPluginPackageMaterializer({
+      packagesRoot: paths.packagesRoot,
+      ...(options.contract?.validateManifest === undefined
+        ? {}
+        : { validateManifest: options.contract.validateManifest }),
+    });
   const moduleRuntime = new ModulePluginRuntime({
     packages,
+    materializer: builtinPackages,
     configuration,
     ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
     ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
@@ -328,6 +343,7 @@ export function createDormantPluginRuntimeComposition(
     {
       projectRoot: options.projectRoot,
       packages,
+      mcpPackages: builtinPackages,
       resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), 'resources'),
       configuration,
       mcpConfigIO,

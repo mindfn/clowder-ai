@@ -13,6 +13,7 @@ import { pluginResourceRoot, resolvePackageFile } from './declared-resource-path
 import type { DeclaredStaticResourceHost } from './declared-static-resources.js';
 
 const MCP_MARKER = '.clowder-mcp-resource.json';
+const MCP_MATERIALIZATION_VERSION = 3;
 
 export async function activateDeclaredMcp(
   admission: PluginRuntimeAdmission,
@@ -74,6 +75,29 @@ async function stablePackageRoot(
   host: DeclaredStaticResourceHost,
   contributions: readonly McpContribution[],
 ): Promise<string> {
+  const packageName = admission.packageRecord.provenance?.packageName;
+  if (packageName !== undefined && host.mcpPackages !== undefined) {
+    const materialized = await host.mcpPackages.resolve({
+      pluginInstanceId: admission.instance.pluginInstanceId,
+      pluginId: admission.packageRecord.pluginId,
+      packageDigest: admission.packageRecord.packageDigest,
+      packageName,
+    });
+    try {
+      if (!isDeepStrictEqual(materialized.manifest, admission.packageRecord.manifest)) {
+        throw new ExternalPluginRuntimeError(
+          'PACKAGE_AUTHORITY_MISMATCH',
+          'materialized package manifest differs from the admitted package record',
+        );
+      }
+      await materialized.verifyIntegrity();
+      return await materializeMcpPackage(host, admission, materialized.rootDir, contributions, {
+        ...(materialized.dependencyRoot === undefined ? {} : { dependencyRoot: materialized.dependencyRoot }),
+      });
+    } finally {
+      await materialized.release();
+    }
+  }
   const located = await host.packages.resolveInstalledPackage(admission.packageRecord.packageDigest);
   try {
     if (!isDeepStrictEqual(located.manifest, admission.packageRecord.manifest)) {
@@ -117,10 +141,11 @@ async function materializeMcpPackage(
   admission: PluginRuntimeAdmission,
   packageRoot: string,
   contributions: readonly McpContribution[],
+  options: { readonly dependencyRoot?: string } = {},
 ): Promise<string> {
   const pluginRoot = pluginResourceRoot(host, admission.packageRecord.pluginId);
   const digestRoot = resolve(pluginRoot, packageDirectoryName(admission.packageRecord.packageDigest));
-  const stableRoot = resolve(digestRoot, 'mcp-package');
+  const stableRoot = resolve(digestRoot, `mcp-package-v${MCP_MATERIALIZATION_VERSION}`);
   if (await validMcpMaterialization(stableRoot, admission, contributions)) return stableRoot;
 
   await mkdir(digestRoot, { recursive: true, mode: 0o700 });
@@ -128,9 +153,20 @@ async function materializeMcpPackage(
   try {
     const target = resolve(temporary, 'package');
     await cp(packageRoot, target, { recursive: true, force: false, errorOnExist: true });
+    if (options.dependencyRoot !== undefined && (await directoryExists(options.dependencyRoot))) {
+      await cp(options.dependencyRoot, resolve(target, 'node_modules'), {
+        recursive: true,
+        force: false,
+        errorOnExist: true,
+      });
+    }
     await writeFile(
       resolve(target, MCP_MARKER),
-      `${JSON.stringify({ pluginId: admission.packageRecord.pluginId, packageDigest: admission.packageRecord.packageDigest })}\n`,
+      `${JSON.stringify({
+        pluginId: admission.packageRecord.pluginId,
+        packageDigest: admission.packageRecord.packageDigest,
+        materializationVersion: MCP_MATERIALIZATION_VERSION,
+      })}\n`,
       { encoding: 'utf8', flag: 'wx', mode: 0o600 },
     );
     for (const contribution of contributions) {
@@ -171,8 +207,19 @@ function validMarker(marker: Record<string, unknown>, admission: PluginRuntimeAd
   return (
     marker.pluginId === admission.packageRecord.pluginId &&
     marker.packageDigest === admission.packageRecord.packageDigest &&
-    Object.keys(marker).length === 2
+    marker.materializationVersion === MCP_MATERIALIZATION_VERSION &&
+    Object.keys(marker).length === 3
   );
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    const value = await lstat(path);
+    return value.isDirectory() && !value.isSymbolicLink();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 async function mcpEnvironment(
