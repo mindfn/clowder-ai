@@ -8,6 +8,7 @@ import {
   StdioClientTransport,
   type StdioServerParameters,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type {
   PluginGrantRecord,
@@ -15,7 +16,6 @@ import type {
   PluginPackageRecord,
   RuntimeState,
 } from '../host-inventory/types.js';
-import type { PluginRuntimeAdmission } from '../runtime-carrier.js';
 import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
 
 const DEFAULT_START_TIMEOUT_MS = 10_000;

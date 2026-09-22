@@ -16,7 +16,7 @@ const OWNER = 'owner-1';
 beforeEach(async () => {
   ({ createMessagingDomain } = await import('../dist/domains/messaging/index.js'));
   ({ createPluginMessagingSubscriptionSession } = await import(
-    '../dist/domains/plugin/plugin-messaging-subscription-host.js'
+    '../dist/domains/plugin/host-surface/plugin-messaging-subscription-host.js'
   ));
   ({ createSubscriptionDelivery } = await import('../dist/domains/messaging/subscription-delivery.js'));
   ({ createMessagingStores } = await import('../dist/domains/messaging/stores/factory.js'));

@@ -28,7 +28,7 @@
 import { createHash } from 'node:crypto';
 
 import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
-import type { HostMessagingDeliveryPort, HostPluginInvocationPort } from '../plugin/host-invocation.js';
+import type { HostMessagingDeliveryPort, HostPluginInvocationPort } from '../plugin/carrier/host-invocation.js';
 
 /**
  * The messaging domain identifies a subscriber by `pluginInstanceId`; that field is its name for

@@ -1,6 +1,6 @@
-import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
-import type { IThreadStore, Thread } from '../cats/services/stores/ports/ThreadStore.js';
-import { ExternalPluginRuntimeError } from './external-runtime/types.js';
+import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import type { IThreadStore, Thread } from '../../cats/services/stores/ports/ThreadStore.js';
+import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 
 const MAX_THREAD_KEY_LENGTH = 500;
 const MAX_THREAD_ID_LENGTH = 500;

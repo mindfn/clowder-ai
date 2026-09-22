@@ -246,7 +246,7 @@ test(
     assertRedisIsolationOrThrow(REDIS_URL, 'F202PluginPrivateStorage');
     const [{ createRedisClient }, { RedisPluginPrivateStorage }] = await Promise.all([
       import('@cat-cafe/shared/utils'),
-      import('../dist/domains/plugin/plugin-private-storage.js'),
+      import('../dist/domains/plugin/host-surface/plugin-private-storage.js'),
     ]);
     const redis = createRedisClient({
       url: REDIS_URL,

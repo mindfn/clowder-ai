@@ -3,9 +3,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-
+import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeSupervisor } from '../dist/domains/plugin/external-runtime/index.js';
-import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/runtime-carrier.js';
 import {
   completeExternalHandshake,
   createExternalRuntimeHarness,

@@ -1,6 +1,6 @@
 import type { ConnectorSource } from '@cat-cafe/shared';
 import type { IdentityContribution, MessageDraft, PluginManifest } from '@clowder-ai/plugin-contract';
-import { MessagingError } from '../messaging/contract/host-types.js';
+import { MessagingError } from '../../messaging/contract/host-types.js';
 
 const MAX_SOURCE_URL_LENGTH = 2_048;
 const MAX_SOURCE_META_BYTES = 16_384;

@@ -8,16 +8,16 @@ import {
   type DeclaredPluginTool,
   type DeclaredRuntimeContributionHost,
   DeclaredRuntimeContributions,
-} from './declared-runtime-contributions.js';
+} from '../declared/declared-runtime-contributions.js';
 import {
   activateDeclaredStaticResources,
   type DeclaredStaticResourceHost,
   removeDeclaredStaticResources,
-} from './declared-static-resources.js';
-import { type PluginRuntimeLifecyclePort, removesPluginOwnedResources } from './external-plugin-lifecycle-types.js';
-import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from './external-runtime/types.js';
-import type { PluginInventoryStore } from './host-inventory/ports.js';
-import type { PluginInstanceRecord, PluginPackageRecord } from './host-inventory/types.js';
+} from '../declared/declared-static-resources.js';
+import { type PluginRuntimeLifecyclePort, removesPluginOwnedResources } from '../external-plugin-lifecycle-types.js';
+import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
+import type { PluginInventoryStore } from '../host-inventory/ports.js';
+import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 
 /**
  * F202 Train C1 — the Host's single runtime-carrier boundary.

@@ -8,7 +8,7 @@ import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadSt
 import { createMessagingDomain } from '../dist/domains/messaging/index.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
 import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/module-plugin-runtime.js';
-import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/runtime-carrier.js';
+import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
 import { MemoryConnectorThreadBindingStore } from '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';
 
 /**

@@ -1,16 +1,16 @@
 import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
-import { readCapabilitiesConfig, withCapabilityLock } from '../../config/capabilities/capability-orchestrator.js';
-import { readMountRules } from '../../config/mount/mount-rules-store.js';
-import { addSkill, removeSkill } from '../../skills/skill-manage.js';
+import type { McpConfigIO } from '../../../config/capabilities/capability-mcp-service.js';
+import { readCapabilitiesConfig, withCapabilityLock } from '../../../config/capabilities/capability-orchestrator.js';
+import { readMountRules } from '../../../config/mount/mount-rules-store.js';
+import { addSkill, removeSkill } from '../../../skills/skill-manage.js';
+import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
+import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
+import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
+import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
 import { activateDeclaredMcp, removeDeclaredMcp } from './declared-mcp-resources.js';
 import { pluginResourceRoot } from './declared-resource-paths.js';
-import { packageDirectoryName } from './external-runtime/filesystem-package-locator.js';
-import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from './external-runtime/types.js';
-import type { PluginRuntimeConfigurationPort } from './manifest-configuration-projection.js';
-import type { PluginRuntimeAdmission } from './runtime-carrier.js';
 
 export interface DeclaredStaticResourceHost {
   readonly projectRoot: string;

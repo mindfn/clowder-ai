@@ -1,6 +1,6 @@
 import type { CatId, CreateTaskInput, TaskItem, TaskKind, TaskStatus, UpdateTaskInput } from '@cat-cafe/shared';
-import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
-import { ExternalPluginRuntimeError } from './external-runtime/types.js';
+import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
+import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 
 const TASK_KINDS = new Set<TaskKind>(['work', 'pr_tracking', 'issue_tracking']);
 const TASK_STATUSES = new Set<TaskStatus>(['todo', 'doing', 'blocked', 'done']);

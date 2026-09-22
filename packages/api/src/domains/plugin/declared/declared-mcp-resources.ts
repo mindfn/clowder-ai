@@ -4,13 +4,13 @@ import process from 'node:process';
 import { isDeepStrictEqual } from 'node:util';
 import type { CapabilityEntry } from '@cat-cafe/shared';
 import type { ConfigurationField, McpContribution } from '@clowder-ai/plugin-contract';
-import { installMcpCapability, removeMcpCapability } from '../../config/capabilities/capability-mcp-service.js';
+import { installMcpCapability, removeMcpCapability } from '../../../config/capabilities/capability-mcp-service.js';
+import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
+import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
+import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import { pluginResourceRoot, resolvePackageFile } from './declared-resource-paths.js';
 import type { DeclaredStaticResourceHost } from './declared-static-resources.js';
-import { packageDirectoryName } from './external-runtime/filesystem-package-locator.js';
-import { ExternalPluginRuntimeError } from './external-runtime/types.js';
-import { effectivePluginConfigurationValue } from './manager/plugin-configuration-values.js';
-import type { PluginRuntimeAdmission } from './runtime-carrier.js';
 
 const MCP_MARKER = '.clowder-mcp-resource.json';
 

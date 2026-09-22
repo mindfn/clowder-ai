@@ -1,5 +1,5 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { ExternalPluginRuntimeError } from './external-runtime/types.js';
+import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 
 const MAX_STORAGE_KEY_LENGTH = 256;
 const MAX_STORAGE_VALUE_BYTES = 1024 * 1024;

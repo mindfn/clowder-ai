@@ -13,7 +13,7 @@ const OWNER = 'owner-1';
 
 beforeEach(async () => {
   ({ createMessagingDomain } = await import('../dist/domains/messaging/index.js'));
-  ({ createPluginMessagingHost } = await import('../dist/domains/plugin/plugin-messaging-host.js'));
+  ({ createPluginMessagingHost } = await import('../dist/domains/plugin/host-surface/plugin-messaging-host.js'));
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
   ({ ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js'));
   ({ MemoryConnectorThreadBindingStore } = await import(

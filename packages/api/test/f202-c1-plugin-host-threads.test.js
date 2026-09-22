@@ -9,7 +9,7 @@ const OWNER = 'owner-1';
 const PROJECT_ROOT = '/workspace/clowder-ai';
 
 beforeEach(async () => {
-  ({ createPluginThreadHost } = await import('../dist/domains/plugin/plugin-thread-host.js'));
+  ({ createPluginThreadHost } = await import('../dist/domains/plugin/host-surface/plugin-thread-host.js'));
   ({ ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js'));
   ({ MemoryConnectorThreadBindingStore } = await import(
     '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js'

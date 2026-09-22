@@ -14,8 +14,8 @@
  * for an implemented Host callback.
  */
 
+import type { HostPluginInvocationPort } from '../carrier/host-invocation.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import type { HostPluginInvocationPort } from '../host-invocation.js';
 
 export interface ModuleHostInvocationDeps {
   /** The carrier holding the action table returned by an active module's start(). */

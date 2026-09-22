@@ -14,30 +14,30 @@ import {
 } from '../external-runtime/types.js';
 import type { PluginPackageRecord } from '../host-inventory/types.js';
 import {
-  type PluginRuntimeConfigurationPort,
-  resolveManifestConfiguration,
-} from '../manifest-configuration-projection.js';
-import {
   createPluginMessagingHost,
   createUnavailablePluginMessagingHost,
   type PluginMessagingHost,
-} from '../plugin-messaging-host.js';
+} from '../host-surface/plugin-messaging-host.js';
 import {
   createPluginMessagingSubscriptionSession,
   createUnavailablePluginMessagingSubscriptionHost,
   type PluginMessagingSubscriptionSession,
-} from '../plugin-messaging-subscription-host.js';
+} from '../host-surface/plugin-messaging-subscription-host.js';
 import {
   createPluginStorageHost,
   type PluginPrivateStoragePort,
   type PluginStorageHost,
-} from '../plugin-private-storage.js';
-import { createPluginTaskHost, type PluginTaskHost } from '../plugin-task-host.js';
+} from '../host-surface/plugin-private-storage.js';
+import { createPluginTaskHost, type PluginTaskHost } from '../host-surface/plugin-task-host.js';
 import {
   createPluginThreadHost,
   createUnavailablePluginThreadHost,
   type PluginThreadHost,
-} from '../plugin-thread-host.js';
+} from '../host-surface/plugin-thread-host.js';
+import {
+  type PluginRuntimeConfigurationPort,
+  resolveManifestConfiguration,
+} from '../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 import { createModuleHostInvocation } from './module-host-invocation.js';
 

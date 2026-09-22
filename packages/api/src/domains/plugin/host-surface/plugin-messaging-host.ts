@@ -1,10 +1,10 @@
 import { type MessageContent, MessageContentsSchema } from '@cat-cafe/shared';
 import type { MessageDraft, PluginManifest } from '@clowder-ai/plugin-contract';
-import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
-import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
-import { MessagingError } from '../messaging/contract/host-types.js';
-import { validateDraft } from '../messaging/contract/validate.js';
-import type { MessagingService } from '../messaging/messaging-service.js';
+import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
+import { MessagingError } from '../../messaging/contract/host-types.js';
+import { validateDraft } from '../../messaging/contract/validate.js';
+import type { MessagingService } from '../../messaging/messaging-service.js';
 import { pluginMessageSourceOf } from './plugin-messaging-source.js';
 import {
   createUnavailablePluginMessagingSubscriptionHost,

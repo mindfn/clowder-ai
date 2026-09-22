@@ -5,11 +5,11 @@ import {
   WIRE_METHOD_REGISTRY,
   WIRE_VERSION,
 } from '@clowder-ai/plugin-contract';
+import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import type { BrokerConnection } from '../host-broker/builtin-loopback.js';
 import { HostBrokerError } from '../host-broker/types.js';
 import type { PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { RuntimeState } from '../host-inventory/types.js';
-import type { PluginRuntimeAdmission } from '../runtime-carrier.js';
 import { NodeExternalPluginProcessAdapter } from './node-process-adapter.js';
 import { verifyPackageEntrypoint } from './package-entrypoint-authority.js';
 import { deferred, type RuntimeExecution } from './runtime-execution.js';

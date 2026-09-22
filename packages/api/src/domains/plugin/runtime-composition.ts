@@ -24,9 +24,10 @@ import {
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
 import { ModulePluginRuntime } from './builtin-runtime/module-plugin-runtime.js';
+import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
-import type { DeclaredScheduleTaskRunner } from './declared-runtime-contributions.js';
+import type { DeclaredScheduleTaskRunner } from './declared/declared-runtime-contributions.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeSupervisor } from './external-runtime/supervisor.js';
@@ -39,6 +40,7 @@ import { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-verifier.js';
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
+import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import {
   BuiltinPluginContributionSupervisor,
   type BuiltinPluginContributionSupervisorOptions,
@@ -72,8 +74,6 @@ import {
   PluginManagerServiceError,
   type PluginManagerStateProjectionPort,
 } from './plugin-manager-service.js';
-import { RedisPluginPrivateStorage } from './plugin-private-storage.js';
-import { PluginRuntimeCarrierRouter } from './runtime-carrier.js';
 
 export interface PluginRuntimePersistencePaths {
   readonly inventorySnapshotPath: string;

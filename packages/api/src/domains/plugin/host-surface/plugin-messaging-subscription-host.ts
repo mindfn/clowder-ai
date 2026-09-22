@@ -1,9 +1,9 @@
-import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
-import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
-import { MessagingError } from '../messaging/contract/host-types.js';
-import type { MessagingService } from '../messaging/messaging-service.js';
-import type { SubscriptionDelivery } from '../messaging/subscription-delivery.js';
-import { removesPluginOwnedResources } from './external-plugin-lifecycle-types.js';
+import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
+import { MessagingError } from '../../messaging/contract/host-types.js';
+import type { MessagingService } from '../../messaging/messaging-service.js';
+import type { SubscriptionDelivery } from '../../messaging/subscription-delivery.js';
+import { removesPluginOwnedResources } from '../external-plugin-lifecycle-types.js';
 
 const SUBSCRIBE_KEYS = new Set(['threadId', 'method', 'includeOwnMessages']);
 

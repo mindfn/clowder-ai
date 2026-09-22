@@ -1,4 +1,5 @@
 import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
+import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import type {
@@ -7,7 +8,6 @@ import type {
   PluginRuntimeErrorRecord,
   RuntimeState,
 } from '../host-inventory/types.js';
-import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../runtime-carrier.js';
 
 /**
  * A runtime that ships inside the Host and implements one admitted package. It declares
