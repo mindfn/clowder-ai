@@ -319,7 +319,7 @@ function ChatMessageContent({
   const direction = catData
     ? parseDirection(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }), currentThreadId)
     : null;
-  const implicitStructuredTargets = message.extra?.isExplicitPost
+  const implicitStructuredTargets = message.extra?.targetCats?.length
     ? parseImplicitStructuredTargets(message, () => ({ toCat: getMentionToCat(), re: getMentionRe() }))
     : [];
 
@@ -736,7 +736,7 @@ function ChatMessageContent({
                   }`}
             </span>
           )}
-          {!isWhisper && !message.extra?.isExplicitPost && direction && (
+          {!isWhisper && !message.extra?.targetCats?.length && direction && (
             <DirectionPill direction={direction} getCatById={getCatById} />
           )}
           {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (

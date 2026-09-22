@@ -187,12 +187,12 @@ describe('post_message structured target projection', () => {
     expect(parseImplicitStructuredTargets(msg, getMocks)).toEqual(['new-cat']);
   });
 
-  it('does not project targetCats for non-post_message records', () => {
+  it('projects structured targets even when callback settlement omits the standalone-post marker', () => {
     const msg = {
       origin: 'callback' as const,
       content: 'ordinary callback',
       extra: { targetCats: ['opus'] },
     };
-    expect(parseImplicitStructuredTargets(msg, getMocks)).toEqual([]);
+    expect(parseImplicitStructuredTargets(msg, getMocks)).toEqual(['opus']);
   });
 });

@@ -53,7 +53,7 @@ export function parseContentDirectionTargets(content: string, getMentionData: ()
  * body mentions already explain themselves and must not be duplicated.
  */
 export function parseImplicitStructuredTargets(message: MessageLike, getMentionData: () => MentionData): string[] {
-  if (!message.extra?.isExplicitPost || !message.extra.targetCats?.length) return [];
+  if (!message.extra?.targetCats?.length) return [];
   const visibleTargets = new Set(parseContentDirectionTargets(message.content, getMentionData));
   return [...new Set(message.extra.targetCats)].filter((catId) => !visibleTargets.has(catId));
 }
