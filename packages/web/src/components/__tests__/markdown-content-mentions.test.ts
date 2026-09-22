@@ -50,6 +50,31 @@ describe('MarkdownContent mention highlighting', () => {
         roleDescription: '',
         personality: '',
       },
+      {
+        id: 'gpt52',
+        displayName: '金渐层',
+        color: { primary: '#C89B3C', secondary: '#F8E7B0' },
+        mentionPatterns: ['@金哥'],
+        clientId: 'openai',
+        carrier: 'cli',
+        defaultModel: 'gpt-5.2',
+        avatar: '',
+        roleDescription: '',
+        personality: '',
+      },
+      {
+        id: 'cat-b5ddoo9l',
+        displayName: '狸花猫',
+        variantLabel: 'kimi',
+        color: { primary: '#D4A76A', secondary: '#F5EBD7' },
+        mentionPatterns: ['@kimi'],
+        clientId: 'kimi',
+        carrier: 'cli',
+        defaultModel: 'k3',
+        avatar: '',
+        roleDescription: '',
+        personality: '',
+      },
     ]);
   });
 
@@ -59,5 +84,15 @@ describe('MarkdownContent mention highlighting', () => {
     expect(html).toContain('color:#5B8C5A'); // codex
     expect(html).toContain('color:#9B7EBD'); // opus
     expect(html).toContain('color:#5B9BD5'); // gemini
+  });
+
+  it('renders a canonical catId mention as the member display name', () => {
+    const html = render('@cat-b5ddoo9l and @gpt52 and @codex');
+    expect(html).toContain('@狸花猫（kimi）');
+    expect(html).toContain('@金渐层');
+    expect(html).not.toContain('>@cat-b5ddoo9l<');
+    expect(html).not.toContain('>@gpt52<');
+    expect(html).toContain('>@codex<');
+    expect(html).toContain('color:#D4A76A');
   });
 });
