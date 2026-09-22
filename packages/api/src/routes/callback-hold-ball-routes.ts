@@ -61,7 +61,7 @@ import {
   readHoldLifecycle,
 } from './hold-ball-cancel.js';
 import { HOLD_BALL_SOURCE } from './hold-ball-source.js';
-import { persistHoldTerminalVisibility } from './hold-ball-terminal-visibility.js';
+import { formatHoldOwnerName, persistHoldTerminalVisibility } from './hold-ball-terminal-visibility.js';
 import { resolveManagedHoldTriggerUserId } from './managed-hold-trigger-user.js';
 
 const log = createModuleLogger('routes/callback-hold-ball');
@@ -1020,6 +1020,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         const priorCatId = prior.createdBy.startsWith('hold-ball:')
           ? prior.createdBy.slice('hold-ball:'.length)
           : catIdStr;
+        const priorCatName = formatHoldOwnerName(priorCatId);
         const priorUserId = typeof prior.params.triggerUserId === 'string' ? prior.params.triggerUserId : triggerUserId;
         if (priorCommand) {
           const retiredParams = {
@@ -1044,7 +1045,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
               userId: priorUserId,
               catId: priorCatId,
               outcome: 'retired_by_replacement',
-              content: `🏓 ${priorCatId} 的旧持球已由新持球替换；已启动的命令仍会独立记录终态`,
+              content: `🏓 ${priorCatName} 的旧持球已由新持球替换；已启动的命令仍会独立记录终态`,
             },
           );
         } else {
@@ -1056,7 +1057,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
               userId: priorUserId,
               catId: priorCatId,
               outcome: 'retired_by_replacement',
-              content: `🏓 ${priorCatId} 的旧持球已由新持球替换`,
+              content: `🏓 ${priorCatName} 的旧持球已由新持球替换`,
             },
           );
           taskRunner.unregister(prior.id);

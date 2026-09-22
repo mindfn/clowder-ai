@@ -85,7 +85,7 @@ import { resolveStrictUserId, resolveUserId } from '../utils/request-identity.js
 import { buildGameSeats, parseGameCommand, sanitizeCatIds } from './game-command-interceptor.js';
 import type { HoldBallCancelDeps } from './hold-ball-cancel.js';
 import { cancelPendingHoldsForThread } from './hold-ball-cancel.js';
-import { persistHoldTerminalVisibility } from './hold-ball-terminal-visibility.js';
+import { formatHoldOwnerName, persistHoldTerminalVisibility } from './hold-ball-terminal-visibility.js';
 import {
   resolveFreshnessCarrierCapabilityOrUndeclared,
   resolveMessageDispositionForAdmission,
@@ -249,7 +249,7 @@ export async function tryAutoCancelPendingHolds(
             userId,
             catId,
             outcome: 'retired_by_user_message',
-            content: `🏓 ${catId} 持球已因新的用户消息结束`,
+            content: `🏓 ${formatHoldOwnerName(catId)} 持球已因新的用户消息结束`,
           },
         );
       }
