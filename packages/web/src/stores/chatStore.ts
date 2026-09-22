@@ -1,4 +1,4 @@
-import type { QueueMessageReceiptProjection } from '@cat-cafe/shared';
+import { timelineMessageKind } from '@cat-cafe/shared';
 import { create } from 'zustand';
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import { isBubbleInvariantStrictModeOn, recordBubbleInvariantViolation } from '@/debug/bubbleInvariantDiagnostics';
@@ -101,114 +101,6 @@ function mergeCatInvocationInfo(
   };
 }
 
-function projectQueueReceiptsOntoMessages(
-  messages: ChatMessage[],
-  queue: QueueEntry[],
-  messageReceipts: readonly QueueMessageReceiptProjection[],
-): ChatMessage[] {
-  const receiptByMessageId = new Map<string, NonNullable<QueueEntry['queueReceipt']>>();
-  for (const entry of queue) {
-    if (!entry.queueReceipt) continue;
-    for (const messageId of [entry.messageId, ...entry.mergedMessageIds]) {
-      if (messageId) receiptByMessageId.set(messageId, entry.queueReceipt);
-    }
-  }
-  for (const projection of messageReceipts) {
-    receiptByMessageId.set(projection.messageId, projection.queueReceipt);
-  }
-  if (receiptByMessageId.size === 0) return messages;
-
-  let changed = false;
-  const projected = messages.map((message) => {
-    const receipt = receiptByMessageId.get(message.id);
-    if (!receipt || message.extra?.queueReceipt === receipt) return message;
-    changed = true;
-    return { ...message, extra: { ...message.extra, queueReceipt: receipt } };
-  });
-  return changed ? projected : messages;
-}
-
-function insertFreshnessClosureMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  const sourceMessageId = msg.extra?.freshnessClosure?.sourceMessageId;
-  const sourceIndex = sourceMessageId ? messages.findIndex((message) => message.id === sourceMessageId) : -1;
-  if (sourceIndex >= 0) {
-    let insertIndex = sourceIndex + 1;
-    while (
-      insertIndex < messages.length &&
-      messages[insertIndex]?.extra?.systemKind === 'freshness_closure' &&
-      messages[insertIndex]?.extra?.freshnessClosure?.sourceMessageId === sourceMessageId
-    ) {
-      insertIndex += 1;
-    }
-    const next = messages.slice();
-    next.splice(insertIndex, 0, msg);
-    return next;
-  }
-
-  // The paginated history may not contain the legacy source yet. Keep the
-  // projection at its own durable timestamp instead of appending it below
-  // whatever recent page happens to be loaded.
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const current = messages[i];
-    if (current && current.timestamp <= msg.timestamp) {
-      const next = messages.slice();
-      next.splice(i + 1, 0, msg);
-      return next;
-    }
-  }
-  return [msg, ...messages];
-}
-
-/**
- * Insert the two system projections whose semantic time/lineage may precede
- * their WebSocket arrival:
- * - F173 `a2a_routing`: timestamp ordered so the route precedes its target bubble.
- * - F254 `freshness_closure`: exact-source anchored when possible, otherwise
- *   timestamp ordered so an old durable liability never masquerades as current work.
- *
- * Why narrow scope: addMessage is the streaming hot path (chunks every few ms,
- * dedup logic above). A global timestamp sort would touch F173 streaming/dedup
- * invariants and add O(n) per insert. Marker-gated insert avoids both.
- *
- * Why needed: a2a_handoff routing pill ("X → Y") emitted by route-serial.ts
- * arrives over WebSocket, can race against the next cat's stream bubble. If
- * the bubble arrives first (already appended), the handoff appended later
- * shows up visually after the bubble it was supposed to precede.
- */
-function insertOrAppendMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  if (msg.extra?.systemKind === 'freshness_closure') {
-    return insertFreshnessClosureMessage(messages, msg);
-  }
-
-  if (msg.extra?.systemKind !== 'a2a_routing') {
-    return [...messages, msg];
-  }
-  // Linear scan from the end. Tie-break rules for a2a_routing:
-  // - Strictly older (cur.ts < msg.ts): insert right after — handoff lands here.
-  // - Same ts AND cur is also a2a_routing: insert AFTER cur to preserve
-  //   arrival/server-emit order (multi-target handoffs from same backend yield).
-  //   Without this, two same-ms handoffs would reverse order.
-  //   砚砚 R2 P2.
-  // - Same ts but cur is non-routing (bubble): skip — handoff biases EARLIER
-  //   so routing semantically precedes the bubble. Cloud Codex R2 P2-1.
-  // - Newer (cur.ts > msg.ts): skip.
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const cur = messages[i]!;
-    if (cur.timestamp < msg.timestamp) {
-      const next = messages.slice();
-      next.splice(i + 1, 0, msg);
-      return next;
-    }
-    if (cur.timestamp === msg.timestamp && cur.extra?.systemKind === 'a2a_routing') {
-      const next = messages.slice();
-      next.splice(i + 1, 0, msg);
-      return next;
-    }
-  }
-  // All existing messages are newer (or are equal-ts non-routing bubbles) — insert at front
-  return [msg, ...messages];
-}
-
 function snapshotActive(s: ChatState): ThreadState {
   return {
     messages: s.messages,
@@ -235,8 +127,6 @@ function snapshotActive(s: ChatState): ThreadState {
           s.messages.length > 0 ? getMessageTimelineOrderTime(s.messages[s.messages.length - 1]) : 0,
         ),
     queue: s.queue,
-    queuePaused: s.queuePaused,
-    queuePauseReason: s.queuePauseReason,
     queueFull: s.queueFull,
     queueFullSource: s.queueFullSource,
     workspaceWorktreeId: s.workspaceWorktreeId,
@@ -295,27 +185,15 @@ function mirrorActiveFlat(
   return mirrorActiveToThreadStates(state, state.currentThreadId, patch);
 }
 
-function buildQueueStoreUpdate(
-  state: ChatState,
-  threadId: string,
-  queue: QueueEntry[],
-  messageReceipts: readonly QueueMessageReceiptProjection[],
-): Partial<ChatState> {
+function buildQueueStoreUpdate(state: ChatState, threadId: string, queue: QueueEntry[]): Partial<ChatState> {
   const activeThread = threadId === state.currentThreadId;
   const existing = activeThread ? undefined : (state.threadStates[threadId] ?? { ...DEFAULT_THREAD_STATE });
   const wasFull = activeThread ? state.queueFull : existing?.queueFull;
   const isShrinking = wasFull && queue.length < 5;
-  const messages = projectQueueReceiptsOntoMessages(
-    activeThread ? state.messages : (existing?.messages ?? []),
-    queue,
-    messageReceipts,
-  );
 
   if (activeThread) {
     const patch: Partial<ThreadState> = {
       queue,
-      messages,
-      queuePaused: queue.length === 0 ? false : state.queuePaused,
       ...(isShrinking ? { queueFull: false, queueFullSource: undefined } : {}),
     };
     return { ...patch, ...mirrorActiveToThreadStates(state, threadId, patch) };
@@ -328,8 +206,6 @@ function buildQueueStoreUpdate(
       [threadId]: {
         ...nextThread,
         queue,
-        messages,
-        queuePaused: queue.length === 0 ? false : nextThread.queuePaused,
         ...(isShrinking ? { queueFull: false, queueFullSource: undefined } : {}),
         lastActivity: Date.now(),
       },
@@ -372,8 +248,6 @@ function flattenThread(ts: ThreadState): Partial<ChatState> {
     catInvocations: ts.catInvocations,
     currentGame: ts.currentGame,
     queue: ts.queue,
-    queuePaused: ts.queuePaused,
-    queuePauseReason: ts.queuePauseReason,
     queueFull: ts.queueFull,
     queueFullSource: ts.queueFullSource,
     workspaceOpenTabs: ts.workspaceOpenTabs,
@@ -937,10 +811,6 @@ export interface ChatState {
   currentGame: GameState | null;
   /** F39: Message queue entries */
   queue: QueueEntry[];
-  /** F39: Whether the queue is paused */
-  queuePaused: boolean;
-  /** F39: Pause reason */
-  queuePauseReason?: 'canceled' | 'failed';
   /** F39: Queue full flag */
   queueFull: boolean;
   /** F39: Who triggered the full warning */
@@ -1163,6 +1033,8 @@ export interface ChatState {
 
   // ── Multi-thread actions (new) ──
   addMessageToThread: (threadId: string, msg: ChatMessage) => void;
+  /** Upsert a same-id durable lifecycle snapshot without manufacturing unread work. */
+  upsertLifecycleMessage: (threadId: string, msg: ChatMessage) => void;
   removeThreadMessage: (threadId: string, messageId: string) => void;
   replaceThreadMessageId: (threadId: string, fromId: string, toId: string) => void;
   patchThreadMessage: (threadId: string, messageId: string, patch: ChatMessagePatch) => void;
@@ -1237,8 +1109,7 @@ export interface ChatState {
   resetThreadInvocationState: (threadId: string) => void;
 
   // ── F39: Queue actions ──
-  setQueue: (threadId: string, queue: QueueEntry[], messageReceipts?: readonly QueueMessageReceiptProjection[]) => void;
-  setQueuePaused: (threadId: string, paused: boolean, reason?: 'canceled' | 'failed') => void;
+  setQueue: (threadId: string, queue: QueueEntry[]) => void;
   setQueueFull: (threadId: string, source: 'user' | 'connector') => void;
   /** Mark queued messages delivered, terminalize existing bubbles, and recover any missed live insert. */
   markMessagesDelivered: (
@@ -1247,7 +1118,9 @@ export interface ChatState {
     deliveredAt: number,
     messages?: Array<{
       id: string;
+      from?: import('@cat-cafe/shared').MessageFrom;
       content: string;
+      lifecycle?: import('@cat-cafe/shared').LifecycleStoredMessageMetadata;
       catId: string | null;
       timestamp: number;
       timelineOrderAt?: number;
@@ -1257,6 +1130,9 @@ export interface ChatState {
       replyTo?: string;
       replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
       mentionsUser?: boolean;
+      // Connector framing travels with the delivered envelope. Without it the client cannot tell a
+      // connector notice from an ordinary system line, and the card degrades to plain text.
+      source?: ChatMessage['source'];
     }>,
   ) => void;
 
@@ -1382,7 +1258,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   catInvocations: {},
   currentGame: null,
   queue: [],
-  queuePaused: false,
   queueFull: false,
 
   threadStates: {},
@@ -1444,27 +1319,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── F39: Queue actions ──
 
-  setQueue: (threadId, queue, messageReceipts = []) =>
-    set((state) => buildQueueStoreUpdate(state, threadId, queue, messageReceipts)),
-
-  setQueuePaused: (threadId, paused, reason) =>
-    set((state) => {
-      if (threadId === state.currentThreadId) {
-        return { queuePaused: paused, queuePauseReason: paused ? reason : undefined };
-      }
-      const existing = state.threadStates[threadId] ?? { ...DEFAULT_THREAD_STATE };
-      return {
-        threadStates: {
-          ...state.threadStates,
-          [threadId]: {
-            ...existing,
-            queuePaused: paused,
-            queuePauseReason: paused ? reason : undefined,
-            lastActivity: Date.now(),
-          },
-        },
-      };
-    }),
+  setQueue: (threadId, queue) => set((state) => buildQueueStoreUpdate(state, threadId, queue)),
 
   setQueueFull: (threadId, source) =>
     set((state) => {
@@ -1490,9 +1345,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const idSet = new Set(messageIds);
       const serverMessageById = new Map(serverMessages?.map((message) => [message.id, message]));
       const updateMsgs = (msgs: ChatMessage[]) => {
-        // Terminalize existing timeline bubbles in place. The server projection
-        // carries the final per-target receipt; dropping it would leave an
-        // already-visible queued bubble permanently stuck at "queued".
+        // Publish the exact History message on first delivery, or refresh an
+        // already-visible source in place. Queue state never becomes message metadata.
         const updated = msgs.map((message) => {
           if (!idSet.has(message.id)) return message;
           const serverMessage = serverMessageById.get(message.id);
@@ -1501,6 +1355,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(serverMessage
               ? {
                   content: serverMessage.content,
+                  ...(serverMessage.from ? { from: serverMessage.from } : {}),
+                  ...(serverMessage.source ? { source: serverMessage.source } : {}),
+                  ...(serverMessage.lifecycle ? { lifecycle: serverMessage.lifecycle } : {}),
                   timestamp: serverMessage.timestamp,
                   ...(serverMessage.contentBlocks
                     ? { contentBlocks: serverMessage.contentBlocks as ChatMessage['contentBlocks'] }
@@ -1534,9 +1391,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (existingIds.has(sm.id)) continue;
             const incoming: ChatMessage = {
               id: sm.id,
-              // #607: cat-originated messages (A2A triggers) have catId set
-              type: sm.catId ? 'assistant' : 'user',
+              // One shared rule, so a connector notice delivered through the Queue keeps the same
+              // framing the server timeline gives it. The fallback covers an absent `from` only.
+              type: timelineMessageKind(sm.from, Boolean(sm.source)) ?? (sm.catId ? 'assistant' : 'user'),
+              ...(sm.from ? { from: sm.from } : {}),
+              ...(sm.source ? { source: sm.source } : {}),
               content: sm.content,
+              ...(sm.lifecycle ? { lifecycle: sm.lifecycle } : {}),
               timestamp: sm.timestamp,
               deliveredAt,
               ...(sm.timelineOrderAt !== undefined ? { timelineOrderAt: sm.timelineOrderAt } : {}),
@@ -2131,7 +1992,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { messages };
       }
 
-      const messages = insertOrAppendMessage(state.messages, msg);
+      const messages = [...state.messages, msg];
       if (messages.length > MAX_BLOB_MESSAGES) {
         revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
       }
@@ -2853,7 +2714,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           };
         }
 
-        const messages = insertOrAppendMessage(state.messages, msg);
+        const messages = [...state.messages, msg];
         if (messages.length > MAX_BLOB_MESSAGES) {
           revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
         }
@@ -2907,18 +2768,60 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // F067 Phase 2: Fire macOS notification for @co-creator mention
       if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
 
-      const isHistoricalFreshnessClosure =
-        msg.extra?.systemKind === 'freshness_closure' && msg.extra.freshnessClosure?.legacy === true;
       return {
         threadStates: {
           ...state.threadStates,
           [threadId]: {
             ...existing,
-            messages: insertOrAppendMessage(existing.messages, msg),
-            unreadCount: isHistoricalFreshnessClosure ? existing.unreadCount : existing.unreadCount + 1,
+            messages: [...existing.messages, msg],
+            unreadCount: existing.unreadCount + 1,
             hasUserMention: existing.hasUserMention || !!msg.mentionsUser,
-            lastActivity: isHistoricalFreshnessClosure ? existing.lastActivity : Date.now(),
+            lastActivity: Date.now(),
           },
+        },
+      };
+    }),
+
+  upsertLifecycleMessage: (threadId, msg) =>
+    set((state) => {
+      const upsert = (messages: ChatMessage[]): ChatMessage[] => {
+        const existingIndex = messages.findIndex((candidate) => candidate.id === msg.id);
+        if (existingIndex === -1) return [...messages, msg];
+        const existing = messages[existingIndex]!;
+        if (
+          existing.lifecycle?.kind === 'response' &&
+          existing.lifecycle.status !== 'processing' &&
+          msg.lifecycle?.kind === 'response' &&
+          msg.lifecycle.status === 'processing'
+        ) {
+          return messages;
+        }
+        const merged: ChatMessage = {
+          ...existing,
+          ...msg,
+          content:
+            msg.lifecycle?.kind === 'response' && msg.lifecycle.status === 'processing' && existing.content
+              ? existing.content
+              : msg.content,
+          extra: existing.extra || msg.extra ? { ...existing.extra, ...msg.extra } : undefined,
+        };
+        const next = [...messages];
+        next[existingIndex] = merged;
+        return next;
+      };
+
+      if (threadId === state.currentThreadId) {
+        const messages = upsert(state.messages);
+        if (messages === state.messages) return state;
+        return { messages, ...mirrorActiveToThreadStates(state, threadId, { messages }) };
+      }
+      const existing = state.threadStates[threadId] ?? { ...DEFAULT_THREAD_STATE };
+      const messages = upsert(existing.messages);
+      if (messages === existing.messages) return state;
+      return {
+        threadStates: {
+          ...state.threadStates,
+          [threadId]: { ...existing, messages },
         },
       };
     }),
