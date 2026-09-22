@@ -4787,6 +4787,10 @@ export function useAgentMessages() {
             } else {
               appendToMessage(messageId, msg.content);
             }
+            // Active speech follows the live conversation edge. This is presentation
+            // ordering only; the durable lifecycle identity and startedAt remain unchanged.
+            const streamActivityAt = Date.now();
+            patchMessage(messageId, { timestamp: streamActivityAt, timelineOrderAt: streamActivityAt });
             if (msg.replyTo || msg.replyPreview) {
               patchMessage(messageId, {
                 ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),

@@ -119,6 +119,16 @@ describe('Invocation stall cancel invariant', () => {
     storeState.catStatuses = { codex: 'alive_but_silent' };
     storeState.catInvocations = {
       codex: {
+        activeRun: {
+          threadId: 'thread-1',
+          targetId: 'codex',
+          invocationId: 'inv-1',
+          responseMessageId: 'response-inv-1',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: Date.now() - 300_000,
+        },
         livenessWarning: {
           level: 'alive_but_silent',
           state: 'busy-silent',
@@ -147,6 +157,16 @@ describe('Invocation stall cancel invariant', () => {
     storeState.catStatuses = { codex: 'alive_but_silent' };
     storeState.catInvocations = {
       codex: {
+        activeRun: {
+          threadId: 'thread-1',
+          targetId: 'codex',
+          invocationId: 'inv-1',
+          responseMessageId: 'response-inv-1',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: Date.now() - 300_000,
+        },
         livenessWarning: {
           level: 'alive_but_silent',
           state: 'busy-silent',

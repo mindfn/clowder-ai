@@ -924,9 +924,9 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         });
       }
     });
-    // F264: a cross-thread Queue carrier is visible as soon as durable admission
-    // accepts it. This does not mark the message delivered; it only installs the
-    // source bubble before exact execution liveness is projected.
+    // Queue is not History. Actual admission is projected only by
+    // `messages_delivered`; rendering this event creates a split-brain bubble
+    // that disappears on the next canonical History hydration.
     socket.on(
       'messages_queued',
       (data: {
@@ -947,27 +947,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         }>;
       }) => {
         void invalidateSidebarProjection();
-        const store = useChatStore.getState();
-        for (const message of data.messages) {
-          store.addMessageToThread(data.threadId, {
-            id: message.id,
-            type: message.source ? 'connector' : message.catId ? 'assistant' : 'user',
-            content: message.content,
-            timestamp: message.timestamp,
-            ...(message.catId ? { catId: message.catId } : {}),
-            ...(message.source ? { source: message.source } : {}),
-            ...(message.contentBlocks
-              ? { contentBlocks: message.contentBlocks as import('../stores/chat-types').ChatMessage['contentBlocks'] }
-              : {}),
-            ...(message.extra ? { extra: message.extra as import('../stores/chat-types').ChatMessage['extra'] } : {}),
-            ...(message.origin ? { origin: message.origin } : {}),
-            ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-            ...(message.replyPreview
-              ? { replyPreview: message.replyPreview as import('../stores/chat-types').ChatMessage['replyPreview'] }
-              : {}),
-            ...(message.mentionsUser ? { mentionsUser: true } : {}),
-          });
-        }
+        void data;
       },
     );
     // F098-D + F117: Messages delivered — update deliveredAt + insert user bubbles for queue sends

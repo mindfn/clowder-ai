@@ -34,6 +34,67 @@ test('item.completed agent_message → text', () => {
   assert.equal(msg?.content, 'Hello');
 });
 
+test('app-server agentMessage deltas stream into the response and completed item is not duplicated', () => {
+  const state = { hadPriorTextTurn: false };
+  const first = mapCodexAppServerNotification({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'th-1', turnId: 'turn-1', itemId: 'item-1', delta: 'Hel' },
+  });
+  const second = mapCodexAppServerNotification({
+    method: 'item/agentMessage/delta',
+    params: { threadId: 'th-1', turnId: 'turn-1', itemId: 'item-1', delta: 'lo' },
+  });
+  assert.deepEqual(first, {
+    type: 'item.agent_message.delta',
+    item_id: 'item-1',
+    delta: 'Hel',
+    thread_id: 'th-1',
+    turn_id: 'turn-1',
+  });
+  assert.equal(transformCodexEvent(first, CAT, state)?.content, 'Hel');
+  assert.equal(transformCodexEvent(second, CAT, state)?.content, 'lo');
+  const completed = transformCodexEvent(
+    { type: 'item.completed', item: { id: 'item-1', type: 'agent_message', text: 'Hello' } },
+    CAT,
+    state,
+  );
+  assert.equal(completed?.type, 'text');
+  assert.equal(completed?.content, 'Hello');
+  assert.equal(completed?.textMode, 'replace');
+});
+
+test('one invocation keeps multi-turn streamed text inside one response replacement boundary', () => {
+  const state = { hadPriorTextTurn: false };
+
+  assert.equal(
+    transformCodexEvent({ type: 'item.agent_message.delta', item_id: 'item-1', delta: 'turn one' }, CAT, state)
+      ?.content,
+    'turn one',
+  );
+  const firstCompleted = transformCodexEvent(
+    { type: 'item.completed', item: { id: 'item-1', type: 'agent_message', text: 'turn one done' } },
+    CAT,
+    state,
+  );
+  assert.equal(firstCompleted?.content, 'turn one done');
+  assert.equal(firstCompleted?.textMode, 'replace');
+  transformCodexEvent({ type: 'turn.completed', usage: {} }, CAT, state);
+
+  const secondDelta = transformCodexEvent(
+    { type: 'item.agent_message.delta', item_id: 'item-2', delta: 'turn two' },
+    CAT,
+    state,
+  );
+  assert.equal(secondDelta?.content, '\n\nturn two');
+  const secondCompleted = transformCodexEvent(
+    { type: 'item.completed', item: { id: 'item-2', type: 'agent_message', text: 'turn two done' } },
+    CAT,
+    state,
+  );
+  assert.equal(secondCompleted?.content, 'turn one done\n\nturn two done');
+  assert.equal(secondCompleted?.textMode, 'replace');
+});
+
 test('item.started command_execution → tool_use', () => {
   const msg = transformCodexEvent(
     { type: 'item.started', item: { type: 'command_execution', command: 'ls -la' } },

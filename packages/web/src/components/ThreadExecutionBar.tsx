@@ -6,30 +6,8 @@ import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { catColorVar } from '@/lib/cat-slug';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
-import type { AppServerLifecycleSnapshot, AppServerLifecycleStage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { isSilentActiveTurn } from './capability-tip-placement';
 import { ExecutionCancelButton } from './ExecutionCancelButton';
-import { managedCommandActivityLabel } from './managed-command-activity-label';
-
-const APP_SERVER_STAGE_LABELS: Record<AppServerLifecycleStage, string> = {
-  child_spawned: '启动子进程',
-  initialized: '初始化 app-server',
-  thread_ready: '会话已就绪',
-  turn_accepted: '回合已接受',
-  active: '运行回合',
-  completed: '回合完成',
-  interrupted: '回合已中断',
-  failed: '回合失败',
-  closing: '清理进程',
-  closed: '进程已关闭',
-};
-
-function formatActivityAge(lastActivityAt: number, now = Date.now()): string {
-  const seconds = Math.max(0, Math.floor((now - lastActivityAt) / 1000));
-  if (seconds < 60) return `${seconds} 秒前`;
-  return `${Math.floor(seconds / 60)} 分钟前`;
-}
 
 interface ThreadExecutionBarProps {
   threadId?: string;
@@ -50,9 +28,13 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const activeExecutions = useMemo(
     () =>
       Object.values(executionsByKey)
-        .filter((execution) => execution.threadId === effectiveThreadId)
+        .filter(
+          (execution) =>
+            execution.threadId === effectiveThreadId &&
+            (execution.kind === 'managed_command' || Boolean(catInvocations[execution.catId]?.activeRun)),
+        )
         .sort((left, right) => left.startedAt - right.startedAt || left.executionId.localeCompare(right.executionId)),
-    [effectiveThreadId, executionsByKey],
+    [catInvocations, effectiveThreadId, executionsByKey],
   );
 
   // Build display info from cat-config (dynamic, not hardcoded)
@@ -105,9 +87,6 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
               execution={execution}
               label={info.label}
               color={info.color}
-              lifecycle={
-                execution.kind === 'live_invocation' ? catInvocations[execution.catId]?.appServerLifecycle : undefined
-              }
             />
           );
         })}
@@ -120,36 +99,19 @@ function CatStatusChip({
   execution,
   label,
   color,
-  lifecycle,
 }: {
   execution: ActiveExecutionProjection;
   label: string;
   color: string;
-  lifecycle?: AppServerLifecycleSnapshot;
 }) {
   const elapsed = Math.floor((Date.now() - execution.startedAt) / 1000);
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
   const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  const appServerStalled = isSilentActiveTurn(lifecycle);
-
   return (
-    <span
-      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cafe-surface/50"
-      data-app-server-stalled={appServerStalled ? 'true' : undefined}
-    >
+    <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cafe-surface/50">
       <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />
       <span className="text-cafe-secondary font-medium">{label}</span>
-      <span className="text-cafe-muted">
-        {execution.kind === 'managed_command' ? managedCommandActivityLabel(execution.activity) : '实时回合'} ·{' '}
-        {execution.threadTitle ?? execution.threadId}
-      </span>
-      {lifecycle && (
-        <span className={appServerStalled ? 'text-conn-amber-text' : 'text-cafe-muted'}>
-          {APP_SERVER_STAGE_LABELS[lifecycle.stage]} ·{' '}
-          {appServerStalled ? '可能在等待模型' : `活动 ${formatActivityAge(lifecycle.lastActivityAt)}`}
-        </span>
-      )}
       <span className="text-cafe-muted tabular-nums">{timeStr}</span>
       <ExecutionCancelButton execution={execution} label="×" />
     </span>

@@ -2045,20 +2045,22 @@ export class QueueProcessor {
     this.continuationWindows.set(key, recent);
   }
 
-  /** Publish the durable source before constructing its response receiver. */
+  /** Admit durable sources without publishing a half-completed cutover. */
   private async admitQueueEntriesForProvider(entries: readonly QueueEntry[]): Promise<void> {
     const primary = entries[0];
     if (!primary) throw new Error('Queue admission requires at least one claimed row');
     const admittedAt = Math.max(Date.now(), ...entries.map((entry) => entry.enqueuedAt));
     const allMessageIds = [...new Set(entries.flatMap((entry) => queueEntryMessageIds(entry)))];
-    const newlyPublished = await this.markDeliveredAndEmit(
-      queueEntryOwnerId(primary),
-      primary.threadId,
-      allMessageIds,
-      admittedAt,
-    );
-    if (newlyPublished.failedIds.length > 0) {
-      throw new Error(`Queue admission failed to publish History sources: ${newlyPublished.failedIds.join(',')}`);
+    const failedIds: string[] = [];
+    for (const messageId of allMessageIds) {
+      try {
+        if (!(await this.deps.messageStore.markDelivered(messageId, admittedAt))) failedIds.push(messageId);
+      } catch {
+        failedIds.push(messageId);
+      }
+    }
+    if (failedIds.length > 0) {
+      throw new Error(`Queue admission failed to publish History sources: ${failedIds.join(',')}`);
     }
     for (const messageId of allMessageIds) {
       const message = await this.deps.messageStore.getById(messageId);
@@ -3794,9 +3796,9 @@ export class QueueProcessor {
         }
         return current;
       });
+      // From here failures restore the exact claimed targets. History publication
+      // remains deferred until the provider accepts and the receiver exists.
       lifecycleTransferStarted = true;
-      await this.admitQueueEntriesForProvider(admissionEntries);
-
       const HEARTBEAT_INTERVAL_MS = 30_000;
       heartbeatInterval = setInterval(() => {
         socketManager.broadcastToRoom(`thread:${threadId}`, 'heartbeat', {
@@ -3890,7 +3892,7 @@ export class QueueProcessor {
               ).filter((message): message is StoredMessage =>
                 Boolean(
                   message &&
-                    isTimelinePublished(message) &&
+                    (isTimelinePublished(message) || message.deliveryStatus === 'queued') &&
                     message.visibility !== 'whisper' &&
                     !message.recall &&
                     !message._tombstone,
@@ -3957,6 +3959,7 @@ export class QueueProcessor {
                 await settleLifecycleResponseInputs(messageStore, terminal.message, observed.message.id);
                 lifecycleResponseInterrupted = true;
               };
+              await this.admitQueueEntriesForProvider(admissionEntries);
               const lifecycleInputSnapshots: StoredMessage[] = [];
               for (const inputMessage of lifecycleInputMessages) {
                 const transition = await messageStore.advanceLifecycleInputDispatch(inputMessage.id, {
@@ -4035,6 +4038,16 @@ export class QueueProcessor {
                 ],
                 awakenedAt: input.startedAt,
               });
+              const delivery = await this.markDeliveredAndEmit(
+                input.userId,
+                input.threadId,
+                messageIds,
+                input.startedAt,
+                new Set(messageIds),
+              );
+              if (delivery.failedIds.length > 0) {
+                throw new Error(`Lifecycle cutover failed to publish History sources: ${delivery.failedIds.join(',')}`);
+              }
               for (const inputSnapshot of lifecycleInputSnapshots) {
                 this.emitLifecycleMessageUpdated(input.userId, inputSnapshot);
               }

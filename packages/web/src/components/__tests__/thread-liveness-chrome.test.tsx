@@ -117,6 +117,20 @@ describe('thread-scoped liveness chrome', () => {
           activeInvocations: { 'inv-b': { catId: 'opus', mode: 'execute', startedAt: 1000 } },
           targetCats: ['opus'],
           catStatuses: { opus: 'streaming' },
+          catInvocations: {
+            opus: {
+              activeRun: {
+                threadId: 'thread-b',
+                targetId: 'opus',
+                invocationId: 'inv-b',
+                responseMessageId: 'response-inv-b',
+                inputEntryIds: [],
+                inputMessageIds: [],
+                privateInputEntryIds: [],
+                startedAt: 1000,
+              },
+            },
+          },
         },
       },
     });
@@ -141,6 +155,20 @@ describe('thread-scoped liveness chrome', () => {
           activeInvocations: { 'inv-b': { catId: 'opus', mode: 'execute', startedAt: 1000 } },
           targetCats: ['opus'],
           catStatuses: { opus: 'streaming' },
+          catInvocations: {
+            opus: {
+              activeRun: {
+                threadId: 'thread-b',
+                targetId: 'opus',
+                invocationId: 'inv-b',
+                responseMessageId: 'response-inv-b',
+                inputEntryIds: [],
+                inputMessageIds: [],
+                privateInputEntryIds: [],
+                startedAt: 1000,
+              },
+            },
+          },
         },
       },
     });
