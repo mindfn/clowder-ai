@@ -22,7 +22,7 @@ import {
   hydrateThreadWorkspaceState,
   useChatStore,
 } from '@/stores/chatStore';
-import { getMessageTimelineOrderTime } from '@/stores/message-timeline';
+import { getMessageTimelineCursorTime, getMessageTimelineOrderTime } from '@/stores/message-timeline';
 import type { TaskItem } from '@/stores/taskStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { crossesUserTurnBoundary } from '@/stores/turn-boundary';
@@ -2014,7 +2014,7 @@ export function useChatHistory(threadId: string) {
       })
     ) {
       const oldest = messages.find((m) => !m.id.startsWith('draft-'));
-      if (oldest) void fetchHistory(`${getMessageTimelineOrderTime(oldest)}:${oldest.id}`);
+      if (oldest) void fetchHistory(`${getMessageTimelineCursorTime(oldest)}:${oldest.id}`);
     }
   }, [messages, threadId, isOfflineSnapshot, hasMore, isLoadingHistory, scheduleScrollToMessage, fetchHistory]);
 
@@ -2160,7 +2160,7 @@ export function useChatHistory(threadId: string) {
       // #80 cloud R8 P2: skip draft rows — their synthetic IDs break cursor semantics
       const oldest = messages.find((m) => !m.id.startsWith('draft-'));
       if (oldest) {
-        void fetchHistory(`${getMessageTimelineOrderTime(oldest)}:${oldest.id}`);
+        void fetchHistory(`${getMessageTimelineCursorTime(oldest)}:${oldest.id}`);
       }
     }
   }, [hasMore, isLoadingHistory, messages, fetchHistory]);

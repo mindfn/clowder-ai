@@ -1,7 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { getMessageTimelineOrderTime } from '../message-timeline';
+import { getMessageTimelineCursorTime, getMessageTimelineOrderTime } from '../message-timeline';
 
 describe('getMessageTimelineOrderTime', () => {
+  it('keeps a processing response on its latest streaming activity time', () => {
+    expect(
+      getMessageTimelineOrderTime({
+        type: 'assistant',
+        catId: 'codex-sol',
+        timestamp: 1_000,
+        timelineOrderAt: 1_800,
+        lifecycle: { status: 'processing' },
+      }),
+    ).toBe(1_800);
+  });
+
+  it('freezes a terminal response at its completion time', () => {
+    expect(
+      getMessageTimelineOrderTime({
+        type: 'assistant',
+        catId: 'codex-sol',
+        timestamp: 1_000,
+        timelineOrderAt: 1_800,
+        lifecycle: { status: 'completed', completedAt: 2_000 },
+      }),
+    ).toBe(2_000);
+  });
+
+  it('keeps pagination cursors on the storage score after presentation freezes at completion', () => {
+    const message = {
+      type: 'assistant',
+      catId: 'codex-sol',
+      timestamp: 1_000,
+      timelineOrderAt: 1_800,
+      lifecycle: { status: 'completed', completedAt: 2_000 },
+    };
+
+    expect(getMessageTimelineOrderTime(message)).toBe(2_000);
+    expect(getMessageTimelineCursorTime(message)).toBe(1_800);
+  });
+
   it('keeps real-cat speech at authoring time after execution delivery', () => {
     expect(
       getMessageTimelineOrderTime({

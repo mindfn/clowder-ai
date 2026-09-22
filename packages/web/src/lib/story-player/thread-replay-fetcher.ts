@@ -8,7 +8,7 @@
  */
 
 import type { ChatMessage } from '@/stores/chat-types';
-import { getMessageTimelineOrderTime } from '@/stores/message-timeline';
+import { getMessageTimelineCursorTime } from '@/stores/message-timeline';
 import { apiFetch } from '@/utils/api-client';
 import { mergeSessionEvents } from './merge-session-events';
 import { mergeHubMessagesWithTranscriptSupplements } from './thread-message-events';
@@ -94,7 +94,7 @@ async function fetchThreadMessages(threadId: string): Promise<ChatMessage[]> {
     if (!data.hasMore || messages.length === 0) break;
 
     const oldest = messages[0];
-    const nextBefore = `${getMessageTimelineOrderTime(oldest)}:${oldest.id}`;
+    const nextBefore = `${getMessageTimelineCursorTime(oldest)}:${oldest.id}`;
     if (seenCursors.has(nextBefore)) break;
     seenCursors.add(nextBefore);
     before = nextBefore;
