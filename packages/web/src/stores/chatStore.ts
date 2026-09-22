@@ -2000,44 +2000,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Active-thread actions ──
 
-  addMessage: (msg) =>
-    set((state) => {
-      if (state.messages.some((m) => m.id === msg.id)) return state;
-
-      // TD112: Store-level dedup — merge if semantic duplicate exists
-      const dupIdx = findAssistantDuplicate(state.messages, msg);
-      if (dupIdx >= 0) {
-        const merged = mergeAssistantBubble(state.messages[dupIdx]!, msg);
-        const messages = [...state.messages];
-        messages[dupIdx] = merged;
-        recordDebugEvent({
-          event: 'bubble_lifecycle',
-          threadId: state.currentThreadId,
-          timestamp: Date.now(),
-          action: 'merge',
-          reason: 'td112_store_dedup',
-          catId: msg.catId,
-          messageId: state.messages[dupIdx]!.id,
-          invocationId: getBubbleInvocationId(msg),
-          origin: msg.origin,
-        });
-        // P2 fix: propagate mention notification even on merge
-        if (msg.mentionsUser && typeof document !== 'undefined' && !document.hasFocus()) {
-          fireOwnerMentionNotification(msg, state.currentThreadId);
-        }
-        return { messages };
-      }
-
-      const messages = [...state.messages, msg];
-      if (messages.length > MAX_BLOB_MESSAGES) {
-        revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
-      }
-      // F067: Notify on active thread when user is not focused
-      if (msg.mentionsUser && typeof document !== 'undefined' && !document.hasFocus()) {
-        fireOwnerMentionNotification(msg, state.currentThreadId);
-      }
-      return { messages };
-    }),
+  // Compatibility alias: all message insertion/merge semantics live in the
+  // thread-scoped writer so active and background projections cannot diverge.
+  addMessage: (msg) => get().addMessageToThread(get().currentThreadId, msg),
 
   removeMessage: (id) =>
     set((state) => ({
@@ -2727,8 +2692,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const dupIdx = findAssistantDuplicate(state.messages, msg);
         if (dupIdx >= 0) {
           const merged = mergeAssistantBubble(state.messages[dupIdx]!, msg);
-          const messages = [...state.messages];
-          messages[dupIdx] = merged;
+          const updated = [...state.messages];
+          updated[dupIdx] = merged;
+          const messages = restoreTimelineOrderAt(updated, dupIdx);
           recordDebugEvent({
             event: 'bubble_lifecycle',
             threadId,
@@ -2750,7 +2716,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           };
         }
 
-        const messages = [...state.messages, msg];
+        const messages = restoreTimelineOrderAt([...state.messages, msg], state.messages.length);
         if (messages.length > MAX_BLOB_MESSAGES) {
           revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
         }
@@ -2774,8 +2740,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const bgDupIdx = findAssistantDuplicate(existing.messages, msg);
       if (bgDupIdx >= 0) {
         const merged = mergeAssistantBubble(existing.messages[bgDupIdx]!, msg);
-        const updatedMessages = [...existing.messages];
-        updatedMessages[bgDupIdx] = merged;
+        const updated = [...existing.messages];
+        updated[bgDupIdx] = merged;
+        const updatedMessages = restoreTimelineOrderAt(updated, bgDupIdx);
         recordDebugEvent({
           event: 'bubble_lifecycle',
           threadId,
@@ -2804,12 +2771,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // F067 Phase 2: Fire macOS notification for @co-creator mention
       if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
 
+      const updatedMessages = restoreTimelineOrderAt([...existing.messages, msg], existing.messages.length);
       return {
         threadStates: {
           ...state.threadStates,
           [threadId]: {
             ...existing,
-            messages: [...existing.messages, msg],
+            messages: updatedMessages,
             unreadCount: existing.unreadCount + 1,
             hasUserMention: existing.hasUserMention || !!msg.mentionsUser,
             lastActivity: Date.now(),

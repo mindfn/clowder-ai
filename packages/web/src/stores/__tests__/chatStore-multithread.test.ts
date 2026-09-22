@@ -1,10 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearDebugEvents, configureDebug, dumpBubbleTimeline } from '@/debug/invocationEventDebug';
 import type { ChatMessage } from '../chat-types';
-import { useChatStore } from '../chatStore';
+import { DEFAULT_THREAD_STATE, useChatStore } from '../chatStore';
 
 function makeMsg(id: string, content = 'hello'): ChatMessage {
   return { id, type: 'user', content, timestamp: Date.now() };
+}
+
+type MessageWriter = 'addMessage' | 'active addMessageToThread' | 'background addMessageToThread';
+
+function writeMessage(writer: MessageWriter, existing: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
+  const background = writer === 'background addMessageToThread';
+  useChatStore.setState({
+    messages: background ? [] : existing,
+    threadStates: background ? { 'thread-b': { ...DEFAULT_THREAD_STATE, messages: existing } } : {},
+  });
+
+  if (writer === 'addMessage') {
+    useChatStore.getState().addMessage(incoming);
+  } else {
+    useChatStore.getState().addMessageToThread(background ? 'thread-b' : 'thread-a', incoming);
+  }
+
+  return background
+    ? (useChatStore.getState().threadStates['thread-b']?.messages ?? [])
+    : useChatStore.getState().messages;
 }
 
 describe('chatStore multi-thread state', () => {
@@ -153,6 +173,70 @@ describe('chatStore multi-thread state', () => {
       const ts = useChatStore.getState().threadStates['thread-b'];
       expect(ts?.messages).toHaveLength(1);
     });
+
+    it.each<MessageWriter>([
+      'addMessage',
+      'active addMessageToThread',
+      'background addMessageToThread',
+    ])('orders a newly appended message from %s on the shared presentation timeline', (writer) => {
+      const existing: ChatMessage[] = [
+        { id: 'first', type: 'user', content: 'first', timestamp: 1_000, timelineOrderAt: 1_000 },
+        { id: 'third', type: 'user', content: 'third', timestamp: 3_000, timelineOrderAt: 3_000 },
+      ];
+      const messages = writeMessage(writer, existing, {
+        id: 'second',
+        type: 'assistant',
+        catId: 'sol',
+        content: 'second',
+        timestamp: 500,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '500:inv-second',
+          invocationId: 'inv-second',
+          targetId: 'sol',
+          inputEntryIds: ['entry-second'],
+          inputMessageIds: ['input-second'],
+          status: 'completed',
+          startedAt: 500,
+          completedAt: 2_000,
+        },
+      });
+
+      expect(messages.map((message) => message.id)).toEqual(['first', 'second', 'third']);
+    });
+
+    it.each<MessageWriter>([
+      'addMessage',
+      'active addMessageToThread',
+      'background addMessageToThread',
+    ])('reorders a dedup-merged message from %s when its presentation time changes', (writer) => {
+      const existing: ChatMessage[] = [
+        { id: 'first', type: 'assistant', catId: 'opus', content: 'first', timestamp: 1_000 },
+        { id: 'third', type: 'assistant', catId: 'fable', content: 'third', timestamp: 3_000 },
+        {
+          id: 'stream-response',
+          type: 'assistant',
+          catId: 'sol',
+          content: 'streaming',
+          origin: 'stream',
+          timestamp: 500,
+          timelineOrderAt: 4_000,
+          extra: { stream: { invocationId: 'inv-merge' } },
+        },
+      ];
+      const messages = writeMessage(writer, existing, {
+        id: 'callback-response',
+        type: 'assistant',
+        catId: 'sol',
+        content: 'completed',
+        origin: 'callback',
+        timestamp: 4_500,
+        timelineOrderAt: 2_000,
+        extra: { stream: { invocationId: 'inv-merge' } },
+      });
+
+      expect(messages.map((message) => message.id)).toEqual(['first', 'stream-response', 'third']);
+    });
   });
 
   describe('appendToThreadMessage', () => {
@@ -240,7 +324,7 @@ describe('chatStore multi-thread state', () => {
           event: 'bubble_lifecycle',
           threadId: 'thread-a',
           action: 'merge',
-          reason: 'td112_store_dedup',
+          reason: 'td112_store_dedup_active',
           catId: 'opus',
         }),
       ]);

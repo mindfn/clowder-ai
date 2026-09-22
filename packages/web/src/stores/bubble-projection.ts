@@ -47,6 +47,7 @@
 
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage } from './chat-types';
+import { getMessageTimelineOrderTime } from './message-timeline';
 
 interface ProjectionInput {
   /** Raw assistant records to project. May include system/user msgs which
@@ -55,7 +56,7 @@ interface ProjectionInput {
 }
 
 interface ProjectionOutput {
-  /** Canonical bubbles ordered by earliest timestamp asc. */
+  /** Canonical bubbles ordered by the shared presentation timeline. */
   messages: ChatMessage[];
 }
 
@@ -387,9 +388,11 @@ function projectGroup(records: ChatMessage[], preferredBase?: ChatMessage): Chat
 /**
  * Apply Z8 unified canonical projection to raw records.
  *
- * Records without a (catId, invocationId) namespace pass through unchanged
- * and keep their original position (sorted by timestamp asc among themselves).
+ * Records without a (catId, invocationId) namespace pass through unchanged.
  * Records with a key are grouped and each group becomes one canonical bubble.
+ * The final list uses the shared presentation clock. Raw timestamps remain
+ * limited to causal reconstruction: dividing all records into user turns and
+ * ordering fragments within one canonical group.
  */
 export function projectCanonicalBubbles({ records }: ProjectionInput): ProjectionOutput {
   const groupedKeys = new Map<string, ChatMessage[]>();
@@ -421,6 +424,6 @@ export function projectCanonicalBubbles({ records }: ProjectionInput): Projectio
     projected.push(p as ChatMessage);
   }
 
-  projected.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0) || (a.id ?? '').localeCompare(b.id ?? ''));
+  projected.sort((a, b) => getMessageTimelineOrderTime(a) - getMessageTimelineOrderTime(b) || a.id.localeCompare(b.id));
   return { messages: projected };
 }
