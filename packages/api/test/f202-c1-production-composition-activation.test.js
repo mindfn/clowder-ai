@@ -142,8 +142,8 @@ describe('F202 C1 Core cutover gate — production-composition activation prereq
       ['FEISHU_APP_SECRET'],
       'C1 blocker: external-runtime/supervisor.ts:191-201 spawns a verified stdio package with only ' +
         'the four CLOWDER_* protocol variables, so a migrated IM provider receives none of its ' +
-        'manifest-declared config/secrets. The builtin path already performs exactly this ' +
-        'grant-checked projection (builtin-contribution-supervisor.ts:558-585); the stdio path — the ' +
+        'manifest-declared config/secrets. The in-process module path already performs exactly this ' +
+        'grant-checked projection; the stdio path — the ' +
         'one every migrated npm package uses — has no equivalent.',
     );
     assert.equal(

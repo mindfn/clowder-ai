@@ -9,8 +9,7 @@
  *    a manifest key becomes an environment variable, a package declaring `CLOWDER_PLUGIN_ID` as
  *    configuration would restate its own Host-issued identity on spawn.
  *  - a declared field whose grant the instance does not hold must never be projected, even with a
- *    value in the store — the same rule the builtin path enforces at
- *    builtin-contribution-supervisor.ts:564-572.
+ *    value in the store — the same rule the in-process module path enforces.
  *  - a required field with no stored value must refuse to start rather than hand a provider a
  *    runtime it cannot authenticate from.
  *

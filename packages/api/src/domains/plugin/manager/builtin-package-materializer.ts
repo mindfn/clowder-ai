@@ -5,10 +5,21 @@ import { isDeepStrictEqual, promisify } from 'node:util';
 import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
 import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
 import { stageVerifiedPackageArchive } from '../external-runtime/package-staging.js';
-import type {
-  BuiltinPluginPackageMaterializer,
-  MaterializedBuiltinPluginPackage,
-} from './builtin-contribution-supervisor.js';
+
+export interface MaterializedBuiltinPluginPackage {
+  readonly rootDir: string;
+  verifyIntegrity(): Promise<void>;
+  release(): Promise<void>;
+}
+
+export interface BuiltinPluginPackageMaterializer {
+  resolve(input: {
+    readonly pluginInstanceId: string;
+    readonly pluginId: string;
+    readonly packageDigest: string;
+    readonly packageName?: string;
+  }): Promise<MaterializedBuiltinPluginPackage>;
+}
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_INSTALL_TIMEOUT_MS = 5 * 60_000;

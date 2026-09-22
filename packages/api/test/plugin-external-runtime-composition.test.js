@@ -254,11 +254,9 @@ test('production composition constructs and recovers K-2D but exposes no startup
   const runtimeName = runtimeBinding[1];
   const recoveryIndex = source.indexOf(`await ${runtimeName}.recoverAfterRestart()`);
   assert.match(source, new RegExp(`await ${runtimeName}\\.recoverAfterRestart\\(\\)`));
-  assert.match(source, /new FilesystemBuiltinPluginPackageMaterializer\(\{/);
-  assert.match(source, /builtinContributions:\s*\{/);
   assert.ok(
     managerCompositionIndex >= 0 && managerCompositionIndex < recoveryIndex,
-    'builtin contribution routing must be registered before durable instances resume',
+    'Plugin Manager state projection must be composed before durable instances resume',
   );
   assert.match(source, new RegExp(`await ${runtimeName}\\.shutdown\\('api_shutdown'\\)`));
   assert.match(source, /OfficialPluginHistoryImportService/);

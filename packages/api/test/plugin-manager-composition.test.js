@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -55,12 +55,20 @@ async function harness({
       return { entries: [entry], status: 'fresh', checkedAt: 8_000 };
     },
   };
+  let mcpConfig = null;
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
     routes: new MemorySignalRouteStore(),
     intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     now: () => 9_000,
+    mcpConfigIO: {
+      readConfig: async () => structuredClone(mcpConfig),
+      writeAndRegenCli: async (config) => {
+        mcpConfig = structuredClone(config);
+      },
+      withLock: async (fn) => fn(),
+    },
     ...(contract === undefined ? {} : { contract }),
   });
   const composition = createPluginManagerRuntimeComposition({
@@ -420,11 +428,11 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.equal(snapshot.grants.length, 1);
   });
 
-  it('routes builtin contribution packages through the Host-owned materializer and supervisor', async () => {
+  it('projects runtime-less declared MCP capabilities from the canonical capability state', async () => {
     let catalogOffline = false;
     const packageManifest = manifest({
       runtime: { transport: 'builtin' },
-      description: 'Runs the fixture capability through a Host-supervised contribution.',
+      description: 'Installs the fixture capability through the canonical MCP pipeline.',
       icon: 'github',
       contributions: [
         {
@@ -450,10 +458,6 @@ describe('F202 Plugin Manager runtime composition', () => {
       offline: () => catalogOffline,
       machinePresentation: true,
     });
-    const materializedRoot = await root('cat-cafe-f202-builtin-materialized-');
-    await mkdir(join(materializedRoot, 'dist'), { recursive: true });
-    await writeFile(join(materializedRoot, 'dist/entrypoint.js'), '// builtin fixture\n', 'utf8');
-    const launches = [];
     const composition = createPluginManagerRuntimeComposition({
       runtime,
       catalogProvider: provider,
@@ -461,39 +465,6 @@ describe('F202 Plugin Manager runtime composition', () => {
       // becomes authoritative after inventory admission.
       catalogManifests: [],
       fetchOfficialArchive: async () => archive.bytes,
-      builtinContributions: {
-        materializer: {
-          resolve: async () => ({
-            rootDir: materializedRoot,
-            verifyIntegrity: async () => {},
-            release: async () => {},
-          }),
-        },
-        configuration: {
-          readConfig: async () => undefined,
-          readSecret: async () => undefined,
-        },
-        runtime: {
-          start: async (spec) => {
-            launches.push(structuredClone(spec));
-            return {
-              tools: [
-                {
-                  name: 'fixture_tool',
-                  description: 'Run the fixture capability.',
-                  inputSchema: {
-                    type: 'object',
-                    properties: { value: { type: 'string' } },
-                    required: ['value'],
-                  },
-                },
-              ],
-              callTool: async (name, args) => ({ ok: true, name, args }),
-              close: async () => {},
-            };
-          },
-        },
-      },
     });
     await composition.manager.install({
       source: { kind: 'catalog', catalogId: entry.catalogId },
@@ -502,49 +473,16 @@ describe('F202 Plugin Manager runtime composition', () => {
     });
     await composition.manager.setEnabled(entry.pluginId, { enabled: true, expectedRevision: 2 });
 
-    assert.equal(launches.length, 1);
-    assert.equal(launches[0].contributionId, 'fixture-tools');
-    assert.equal(launches[0].cwd, await realpath(materializedRoot));
     const running = (await composition.manager.get(entry.pluginId)).plugin;
     assert.equal(running.live, 'running');
     assert.deepEqual(running.capabilitySummary, [
       { id: 'events.publish', kind: 'events', name: 'Source', active: true },
     ]);
-    assert.deepEqual(await composition.builtinSupervisor.listPluginTools(entry.pluginId), [
-      {
-        contributionId: 'fixture-tools',
-        name: 'fixture_tool',
-        description: 'Run the fixture capability.',
-        inputSchema: {
-          type: 'object',
-          properties: { value: { type: 'string' } },
-          required: ['value'],
-        },
-      },
-    ]);
-    assert.deepEqual(await runtime.supervisor.listPluginTools(entry.pluginId), [
-      {
-        contributionId: 'fixture-tools',
-        name: 'fixture_tool',
-        description: 'Run the fixture capability.',
-        inputSchema: {
-          type: 'object',
-          properties: { value: { type: 'string' } },
-          required: ['value'],
-        },
-      },
-    ]);
-    assert.deepEqual(
-      await composition.builtinSupervisor.callPluginTool(entry.pluginId, 'fixture-tools', 'fixture_tool', {
-        value: 'real-call',
-      }),
-      { ok: true, name: 'fixture_tool', args: { value: 'real-call' } },
-    );
-    assert.deepEqual(
-      await runtime.supervisor.callPluginTool(entry.pluginId, 'fixture-tools', 'fixture_tool', {
-        value: 'router-call',
-      }),
-      { ok: true, name: 'fixture_tool', args: { value: 'router-call' } },
+    assert.equal(
+      (await runtime.mcpConfigIO.readConfig()).capabilities.find(
+        (capability) => capability.id === `plugin:${entry.pluginId}:fixture-tools`,
+      )?.enabled,
+      true,
     );
 
     catalogOffline = true;
@@ -561,78 +499,5 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.deepEqual(stopped.capabilitySummary, [
       { id: 'events.publish', kind: 'events', name: 'Source', active: false },
     ]);
-    await assert.rejects(composition.builtinSupervisor.listPluginTools(entry.pluginId), /is not active/);
-    await assert.rejects(runtime.supervisor.listPluginTools(entry.pluginId), /is not active/);
-  });
-
-  it('surfaces a typed diagnostic when a builtin contribution cannot start', async () => {
-    const packageManifest = manifest({
-      runtime: { transport: 'builtin' },
-      description: 'Runs the fixture capability through a Host-supervised contribution.',
-      icon: 'github',
-      contributions: [
-        {
-          type: 'mcp',
-          id: 'fixture-tools',
-          runtime: { transport: 'stdio', entrypoint: 'dist/entrypoint.js' },
-        },
-      ],
-      features: [
-        {
-          id: 'source',
-          name: 'Source',
-          resources: [],
-          contributions: [{ type: 'mcp', id: 'fixture-tools' }],
-          capabilities: ['events.publish'],
-        },
-      ],
-    });
-    const contract = contributionContractRuntime();
-    const { archive, entry, provider, runtime } = await harness({
-      packageManifest,
-      contract,
-      machinePresentation: true,
-    });
-    const materializedRoot = await root('cat-cafe-f202-builtin-start-failure-');
-    await mkdir(join(materializedRoot, 'dist'), { recursive: true });
-    await writeFile(join(materializedRoot, 'dist/entrypoint.js'), '// builtin fixture\n', 'utf8');
-    const composition = createPluginManagerRuntimeComposition({
-      runtime,
-      catalogProvider: provider,
-      catalogManifests: [],
-      fetchOfficialArchive: async () => archive.bytes,
-      builtinContributions: {
-        materializer: {
-          resolve: async () => ({
-            rootDir: materializedRoot,
-            verifyIntegrity: async () => {},
-            release: async () => {},
-          }),
-        },
-        configuration: {
-          readConfig: async () => undefined,
-          readSecret: async () => undefined,
-        },
-        runtime: {
-          start: async () => {
-            throw new Error('secret-bearing child failure');
-          },
-        },
-      },
-    });
-    await composition.manager.install({
-      source: { kind: 'catalog', catalogId: entry.catalogId },
-      expectedVersion: entry.version,
-      expectedDigest: entry.packageDigest,
-    });
-
-    await assert.rejects(
-      () => composition.manager.setEnabled(entry.pluginId, { enabled: true, expectedRevision: 2 }),
-      (error) => error?.code === 'RUNTIME_START_FAILED',
-    );
-    const failed = (await composition.manager.get(entry.pluginId)).plugin;
-    assert.equal(failed.live, 'stopped');
-    assert.equal(failed.diagnostic?.code, 'UNEXPECTED_RUNTIME_FAILURE');
-    assert.equal(failed.diagnostic?.revision, 5);
   });
 });

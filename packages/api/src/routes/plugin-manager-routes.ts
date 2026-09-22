@@ -15,9 +15,8 @@ import {
   type EventAuditLog,
   getEventAuditLog,
 } from '../domains/cats/services/orchestration/EventAuditLog.js';
+import type { PluginRuntimeCarrierRouter } from '../domains/plugin/carrier/runtime-carrier.js';
 import {
-  BuiltinPluginContributionError,
-  type BuiltinPluginContributionSupervisor,
   ExternalPluginRuntimeError,
   LocalPluginPackageAdmissionError,
   PluginManagerPackageAssetError,
@@ -44,7 +43,7 @@ type PluginManagerRouteService = Pick<
 
 export interface PluginManagerRouteOptions {
   readonly manager: PluginManagerRouteService;
-  readonly contributions?: Pick<BuiltinPluginContributionSupervisor, 'listPluginTools' | 'callPluginTool'>;
+  readonly contributions?: Pick<PluginRuntimeCarrierRouter, 'listPluginTools' | 'callPluginTool'>;
   readonly asset?: PluginManagerPackageAssetPort;
   readonly documentation?: PluginManagerPackageDocumentationPort;
   readonly auditLog?: Pick<EventAuditLog, 'append'>;
@@ -218,11 +217,6 @@ function sendManagerError(reply: FastifyReply, error: unknown) {
 }
 
 function sendContributionError(reply: FastifyReply, error: unknown) {
-  if (error instanceof BuiltinPluginContributionError) {
-    const status =
-      error.code === 'CONTRIBUTION_NOT_ACTIVE' ? 409 : error.code === 'UNSUPPORTED_CONTRIBUTION' ? 422 : 503;
-    return reply.status(status).send({ error: error.message, code: error.code });
-  }
   if (error instanceof ExternalPluginRuntimeError) {
     const status = error.code === 'DELIVERY_REJECTED' ? 409 : error.code === 'PROTOCOL_VIOLATION' ? 422 : 503;
     return reply.status(status).send({ error: error.message, code: error.code });

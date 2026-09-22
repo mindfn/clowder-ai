@@ -14,8 +14,8 @@
  * Rule 1 below stays a *manifest-level* refusal rather than an env-only one for the same reason:
  * carrier-dependent admission would itself leak the carrier into the domain (clause 1).
  *
- * The builtin MCP path already performs exactly this grant-checked projection
- * (manager/builtin-contribution-supervisor.ts:558-585) from a contribution's explicit
+ * The declared MCP path performs exactly this grant-checked projection
+ * (`declared/declared-mcp-resources.ts`) from a contribution's explicit
  * `environment` bindings. A migrated npm package has no such contribution: it declares plain
  * `configuration` fields and reads them as environment variables, which is why the stdio spawn
  * path needs its own projection rather than a reuse of the contribution one.

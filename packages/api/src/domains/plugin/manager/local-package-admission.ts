@@ -242,7 +242,7 @@ export class LocalPluginPackageAdmission {
       if (!['stdio', 'builtin'].includes(located.manifest.runtime.transport)) {
         throw new LocalPluginPackageAdmissionError(
           'UNSUPPORTED_TRANSPORT',
-          'local plugin package does not declare a Host-supervised runtime',
+          'local plugin package does not declare a Host-supported runtime',
         );
       }
       const signalSchemas = await readSignalSchemas(located.rootDir, located.manifest);

@@ -187,8 +187,8 @@ export class ExternalPluginRuntimeSupervisor {
     // The authority above was read before package resolution, integrity verification and the
     // configuration read. A revoke landing in that window is legal for this instance, so the
     // values resolved from the old snapshot must not reach a child without revalidation
-    // (sixth-round review P1) — same fence the builtin contribution supervisor applies at
-    // manager/builtin-contribution-supervisor.ts:595-616.
+    // (sixth-round review P1) — the same authority fence every carrier must apply before
+    // handing a package any Host-owned value.
     await assertAuthorityUnchanged(this.options, authority, 'starting');
     execution.process = await this.processes.spawn({
       command: process.execPath,

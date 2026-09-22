@@ -5075,15 +5075,6 @@ async function main(): Promise<void> {
     validateCatalog: validatePluginCatalog,
     hostPolicies: pluginManagerHostPolicies,
   });
-  const { FilesystemBuiltinPluginPackageMaterializer } = await import(
-    './domains/plugin/manager/builtin-package-materializer.js'
-  );
-  const { readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
-  const readBuiltinPluginValue = async (pluginInstanceId: string, key: string) => {
-    const snapshot = await pluginRuntime.inventoryStore.snapshot();
-    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    return instance ? readPluginConfig(pluginProjectRoot, instance.pluginId)[key] : undefined;
-  };
   if (loadRepositoryPluginInfo === undefined) {
     throw new Error('Repository plugin discovery must be ready before Plugin Manager composition');
   }
@@ -5114,15 +5105,6 @@ async function main(): Promise<void> {
     catalogManifests: [],
     compatibility: repositoryPluginManagerCompatibility,
     auth: officialPluginAuth,
-    builtinContributions: {
-      materializer: new FilesystemBuiltinPluginPackageMaterializer({
-        packagesRoot: pluginRuntime.paths.packagesRoot,
-      }),
-      configuration: {
-        readConfig: readBuiltinPluginValue,
-        readSecret: readBuiltinPluginValue,
-      },
-    },
   });
   const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
   app.log.info(

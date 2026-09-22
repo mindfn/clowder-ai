@@ -46,14 +46,6 @@ export interface PluginRuntimeCarrier {
   recoverAfterRestart?(): Promise<number>;
   /** Only carriers with a Host→package invocation surface implement this. */
   invoke?(pluginInstanceId: string, method: string, params: unknown): Promise<unknown>;
-  /** Runtime-less contribution carriers may expose their own dynamic tool surface. */
-  listPluginTools?(pluginId: string): Promise<readonly DeclaredPluginTool[]>;
-  callPluginTool?(
-    pluginId: string,
-    contributionId: string,
-    toolName: string,
-    args: Readonly<Record<string, unknown>>,
-  ): Promise<unknown>;
 }
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
@@ -156,8 +148,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   async listPluginTools(pluginId: string): Promise<readonly DeclaredPluginTool[]> {
     const directTools = this.#runtimeContributions.listPluginTools(pluginId);
     if (directTools !== undefined) return directTools;
-    const provider = this.#carriers.find((carrier) => carrier.listPluginTools !== undefined);
-    if (provider?.listPluginTools) return provider.listPluginTools(pluginId);
     throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginId} is not active`);
   }
 
@@ -169,8 +159,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   ): Promise<unknown> {
     const direct = await this.#runtimeContributions.callPluginTool(pluginId, contributionId, toolName, args);
     if (direct.handled) return direct.value;
-    const provider = this.#carriers.find((carrier) => carrier.callPluginTool !== undefined);
-    if (provider?.callPluginTool) return provider.callPluginTool(pluginId, contributionId, toolName, args);
     throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginId} is not active`);
   }
 
