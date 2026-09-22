@@ -185,3 +185,19 @@ test('rejects option-like and command-transport git addresses before launching g
   }
   assert.deepEqual(await cloneStages(projectRoot), []);
 });
+
+test('explains the supported ssh URL form when a pasted scp-style address is rejected', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-git-scp-help-');
+  const { manager } = await composition(projectRoot);
+  const admission = new GitPluginPackageAdmission({
+    localAdmission: manager.localAdmission,
+    cloneRoot: resolve(projectRoot, '.cat-cafe/plugin-host'),
+  });
+
+  await assert.rejects(
+    admission.install({ kind: 'git', url: 'git@example.invalid:team/plugin.git' }),
+    (error) =>
+      error?.code === 'INVALID_LOCAL_SOURCE' && error.message.includes('ssh://git@example.invalid/team/plugin.git'),
+  );
+  assert.deepEqual(await cloneStages(projectRoot), []);
+});

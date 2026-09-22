@@ -382,6 +382,8 @@ describe('F202 live Plugin Manager Console wiring', () => {
       (button) => button.textContent === '从 Git 安装',
     );
     await act(async () => open?.click());
+    expect(document.body.textContent).toContain('https://、ssh://、git:// 或 file://');
+    expect(document.body.textContent).toContain('不支持 git@host:org/repo.git');
     const input = document.querySelector('input[aria-label="Git 仓库地址"]') as HTMLInputElement | null;
     await act(async () => {
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;

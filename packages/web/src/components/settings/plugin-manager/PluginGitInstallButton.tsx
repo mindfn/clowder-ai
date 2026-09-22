@@ -66,7 +66,9 @@ export function PluginGitInstallButton({ onInstall }: { onInstall: (url: string)
                       从 Git 安装插件
                     </h2>
                     <p className="mt-1 text-sm text-cafe-secondary">
-                      输入只读 Git 地址。Host 会浅克隆仓库，并走与本地目录相同的包校验和准入流程。
+                      输入只读 Git 地址。Host 会浅克隆仓库，并走与本地目录相同的包校验和准入流程。 支持
+                      https://、ssh://、git:// 或 file://。不支持 git@host:org/repo.git；请改用
+                      ssh://git@host/org/repo.git。
                     </p>
                   </div>
                   <button

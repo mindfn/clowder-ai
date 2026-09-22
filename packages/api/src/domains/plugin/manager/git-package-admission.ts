@@ -36,6 +36,12 @@ function gitUrl(value: unknown): string {
   ) {
     throw invalidGitSource('git plugin URL is invalid');
   }
+  const scpStyle = /^([^@\s]+)@([^/:\s]+):(.+)$/.exec(value);
+  if (scpStyle) {
+    throw invalidGitSource(
+      `git plugin URL must use ssh://${scpStyle[1]}@${scpStyle[2]}/${scpStyle[3]} instead of scp syntax`,
+    );
+  }
   let parsed: URL;
   try {
     parsed = new URL(value);
