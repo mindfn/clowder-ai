@@ -624,6 +624,67 @@ describe('useChatHistory scroll memory (#27)', () => {
     expect(scrollTop.get()).toBe(500);
   });
 
+  it('re-pins the bottom when an existing processing message moves in presentation order', async () => {
+    const threadId = 'thread-reorder-bottom';
+    const messages = [makeMsg('early', 1_000), makeMsg('moving', 3_000)];
+    useChatStore.setState({
+      currentThreadId: threadId,
+      messages,
+      hasMore: false,
+      isLoadingHistory: false,
+      threadStates: { [threadId]: makeThreadState(messages) },
+    });
+    await act(async () => root.render(React.createElement(HookHost, { threadId })));
+
+    const scrollEl = capturedHook!.scrollContainerRef.current!;
+    const scrollTop = defineMutableNumberProp(scrollEl, 'scrollTop', 400);
+    defineMutableNumberProp(scrollEl, 'clientHeight', 600);
+    const scrollHeight = defineMutableNumberProp(scrollEl, 'scrollHeight', 1_000);
+    cancelInitialRestoreWithWheel(scrollEl, 1);
+    act(() => capturedHook?.handleScroll());
+
+    scrollHeight.set(1_200);
+    act(() => {
+      useChatStore.getState().patchMessage('moving', { timelineOrderAt: 500 });
+    });
+
+    expect(scrollTop.get()).toBe(600);
+  });
+
+  it('keeps the viewed message at the same viewport offset when presentation order changes', async () => {
+    const threadId = 'thread-reorder-message-anchor';
+    const messages = [makeMsg('viewed', 1_000), makeMsg('other', 2_000)];
+    useChatStore.setState({
+      currentThreadId: threadId,
+      messages,
+      hasMore: false,
+      isLoadingHistory: false,
+      threadStates: { [threadId]: makeThreadState(messages) },
+    });
+    await act(async () => root.render(React.createElement(HookHost, { threadId })));
+
+    const scrollEl = capturedHook!.scrollContainerRef.current!;
+    const scrollTop = defineMutableNumberProp(scrollEl, 'scrollTop', 200);
+    defineMutableNumberProp(scrollEl, 'clientHeight', 600);
+    defineMutableNumberProp(scrollEl, 'scrollHeight', 1_200);
+    scrollEl.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    let viewedContentTop = 250;
+    appendMessageBoundary(scrollEl, 'viewed', () => ({
+      top: 100 + viewedContentTop - scrollTop.get(),
+      bottom: 280 + viewedContentTop - scrollTop.get(),
+    }));
+    cancelInitialRestoreWithWheel(scrollEl, -1);
+    act(() => capturedHook?.handleScroll());
+
+    viewedContentTop = 450;
+    act(() => {
+      useChatStore.getState().patchMessage('viewed', { timelineOrderAt: 3_000 });
+    });
+
+    expect(scrollTop.get()).toBe(400);
+    expect(100 + viewedContentTop - scrollTop.get()).toBe(150);
+  });
+
   it('leaves bottom follow after repeated small user scroll-up inputs', async () => {
     const threadId = 'thread-small-user-scrolls';
     const messages = [makeMsg('m1', 1), makeMsg('m2', 2)];

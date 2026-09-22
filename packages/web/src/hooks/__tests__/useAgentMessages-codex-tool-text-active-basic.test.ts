@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { deriveBubbleId } from '@/debug/bubbleIdentity';
 import { getActiveBubble } from '@/hooks/thread-runtime-ledger';
 import { getThreadRuntimeLedger } from '@/hooks/thread-runtime-singleton';
+import { selectThreadMessages } from '@/hooks/useThreadScopedSelectors';
 import { useChatStore } from '@/stores/chatStore';
 import { flatCodexStreamBubbles, installActiveHarness } from './useAgentMessages-codex-tool-text-convergence.helpers';
 
@@ -182,12 +183,12 @@ describe('Codex active path — tool work-log + text converge', () => {
         content: 'new context',
         timestamp: 2_000,
       });
-      expect(useChatStore.getState().messages.at(-1)?.id).toBe('user-after-first-tool');
+      expect(selectThreadMessages(useChatStore.getState(), THREAD).at(-1)?.id).toBe('user-after-first-tool');
 
       vi.setSystemTime(3_000);
       harness.send(tool(parent, 3_000, turn));
 
-      expect(useChatStore.getState().messages.at(-1)).toMatchObject({
+      expect(selectThreadMessages(useChatStore.getState(), THREAD).at(-1)).toMatchObject({
         id: bubbleId,
         timestamp: 3_000,
         timelineOrderAt: 3_000,

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearDebugEvents, configureDebug, dumpBubbleTimeline } from '@/debug/invocationEventDebug';
+import { selectThreadMessages } from '@/hooks/useThreadScopedSelectors';
 import type { ChatMessage } from '../chat-types';
 import { DEFAULT_THREAD_STATE, useChatStore } from '../chatStore';
 
@@ -22,9 +23,7 @@ function writeMessage(writer: MessageWriter, existing: ChatMessage[], incoming: 
     useChatStore.getState().addMessageToThread(background ? 'thread-b' : 'thread-a', incoming);
   }
 
-  return background
-    ? (useChatStore.getState().threadStates['thread-b']?.messages ?? [])
-    : useChatStore.getState().messages;
+  return selectThreadMessages(useChatStore.getState(), background ? 'thread-b' : 'thread-a');
 }
 
 describe('chatStore multi-thread state', () => {
@@ -363,6 +362,45 @@ describe('chatStore multi-thread state', () => {
       );
     });
 
+    it('TD112 soft bridge chooses the latest presentation-time stream when insertion order is opposite', () => {
+      useChatStore.getState().addMessage({
+        id: 'stream-latest',
+        type: 'assistant',
+        catId: 'opus',
+        content: 'latest display turn',
+        origin: 'stream',
+        timestamp: 7_000,
+      });
+      useChatStore.getState().addMessage({
+        id: 'stream-inserted-last',
+        type: 'assistant',
+        catId: 'opus',
+        content: 'older display turn',
+        origin: 'stream',
+        timestamp: 1_000,
+      });
+
+      useChatStore.getState().addMessage({
+        id: 'callback',
+        type: 'assistant',
+        catId: 'opus',
+        content: 'canonical callback',
+        origin: 'callback',
+        timestamp: 7_500,
+      });
+
+      const messages = useChatStore.getState().messages;
+      expect(messages).toHaveLength(2);
+      expect(messages.find((message) => message.id === 'stream-latest')).toMatchObject({
+        content: 'canonical callback',
+        origin: 'callback',
+      });
+      expect(messages.find((message) => message.id === 'stream-inserted-last')).toMatchObject({
+        content: 'older display turn',
+        origin: 'stream',
+      });
+    });
+
     it('replaces an optimistic background-thread message id in place', () => {
       useChatStore.getState().addMessageToThread('thread-b', makeMsg('temp-user-2', 'background'));
 
@@ -453,7 +491,12 @@ describe('chatStore multi-thread state', () => {
 
       useChatStore.getState().patchMessage('response-live', { timestamp: 3_000, timelineOrderAt: 3_000 });
 
-      expect(useChatStore.getState().messages.map((message) => message.id)).toEqual(['user-later', 'response-live']);
+      const state = useChatStore.getState();
+      expect(state.messages.map((message) => message.id)).toEqual(['response-live', 'user-later']);
+      expect(selectThreadMessages(state, 'thread-a').map((message) => message.id)).toEqual([
+        'user-later',
+        'response-live',
+      ]);
     });
 
     it('does not sort every stream token once the processing response is already at the live edge', () => {
@@ -517,7 +560,12 @@ describe('chatStore multi-thread state', () => {
         },
       });
 
-      expect(useChatStore.getState().messages.map((message) => message.id)).toEqual(['user-later', 'response-live']);
+      const state = useChatStore.getState();
+      expect(state.messages.map((message) => message.id)).toEqual(['response-live', 'user-later']);
+      expect(selectThreadMessages(state, 'thread-a').map((message) => message.id)).toEqual([
+        'user-later',
+        'response-live',
+      ]);
     });
 
     it('appends a late legacy chunk without moving a terminal response back to the live edge', () => {

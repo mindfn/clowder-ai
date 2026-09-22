@@ -12,7 +12,7 @@ import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection, parseImplicitStructuredTargets } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
-import { getMessageTimelineOrderTime } from '@/stores/message-timeline';
+import { getMessageTimelineOrderTime, getOrderedMessageTimeline } from '@/stores/message-timeline';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
@@ -192,7 +192,9 @@ function ChatMessageContent({
     return s.threads.find((thread) => thread.id === sourceId)?.title;
   });
   const threadMessages = useChatStore(
-    (s) => timelineMessages ?? (needsTimelineProjection(message) ? s.messages : EMPTY_TIMELINE_MESSAGES),
+    (s) =>
+      timelineMessages ??
+      (needsTimelineProjection(message) ? getOrderedMessageTimeline(s.messages) : EMPTY_TIMELINE_MESSAGES),
   );
   const globalBubbleDefaults = useChatStore((s) => s.globalBubbleDefaults);
   const candidateSourceThreadId = message.extra?.crossPost?.sourceThreadId;
@@ -924,7 +926,9 @@ export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
   const lifecycleTimeline = useChatStore(
     (state) =>
       props.timelineMessages ??
-      (props.message.lifecycle?.dispatchRefs?.length ? state.messages : EMPTY_TIMELINE_MESSAGES),
+      (props.message.lifecycle?.dispatchRefs?.length
+        ? getOrderedMessageTimeline(state.messages)
+        : EMPTY_TIMELINE_MESSAGES),
   );
   // Phase C compatibility boundary: legacy routing projections remain readable in
   // History storage, but are not a user-facing message surface anymore.

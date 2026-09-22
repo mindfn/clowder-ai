@@ -7,8 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
-import type { ChatMessage } from '@/stores/chat-types';
+import { useThreadLiveness, useThreadMessages } from '@/hooks/useThreadScopedSelectors';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
@@ -25,7 +24,6 @@ import {
 import { useQueueActionConvergence } from './useQueueActionConvergence';
 
 const COLLAPSE_THRESHOLD = 4;
-const EMPTY_MESSAGES: readonly ChatMessage[] = [];
 const EMPTY_TARGET_IDS: readonly string[] = [];
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, normal: 1 };
@@ -113,9 +111,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const catAvatarById = useMemo(() => new Map(cats.map((cat) => [cat.id, cat.avatar])), [cats]);
   const rawQueue = useChatStore((s) => s.queue);
   const queue = useMemo(() => rawQueue ?? [], [rawQueue]);
-  const timelineMessages = useChatStore((s) =>
-    s.currentThreadId === threadId ? s.messages : (s.threadStates[threadId]?.messages ?? EMPTY_MESSAGES),
-  );
+  const timelineMessages = useThreadMessages(threadId);
   const setQueue = useChatStore((s) => s.setQueue);
   const { activeInvocations } = useThreadLiveness(threadId);
   const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);

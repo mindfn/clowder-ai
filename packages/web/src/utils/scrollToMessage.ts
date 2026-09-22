@@ -10,6 +10,8 @@ export interface MessageScrollAnchor {
   viewportOffsetPx: number;
 }
 
+export type TimelineScrollAnchor = { kind: 'bottom' } | { kind: 'message'; messageAnchor: MessageScrollAnchor };
+
 function messageBoundaries(root: ParentNode): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>('[data-message-viewport-id]')];
 }
@@ -78,6 +80,15 @@ export function restoreMessageScrollAnchor(container: HTMLElement, anchor: Messa
   const currentOffset = boundary.getBoundingClientRect().top - container.getBoundingClientRect().top;
   container.scrollTop = Math.max(0, container.scrollTop + currentOffset - anchor.viewportOffsetPx);
   return true;
+}
+
+/** Restore the user's viewing intent after the same messages change timeline order. */
+export function restoreTimelineScrollAnchor(container: HTMLElement, anchor: TimelineScrollAnchor): boolean {
+  if (anchor.kind === 'bottom') {
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    return true;
+  }
+  return restoreMessageScrollAnchor(container, anchor.messageAnchor);
 }
 
 /** Give every message-navigation path the same temporary, presentation-only target marker. */

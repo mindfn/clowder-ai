@@ -20,6 +20,7 @@ import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry
 import { useBrakeStore } from '@/stores/brakeStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useGuideStore } from '@/stores/guideStore';
+import { findLatestMessageByTimeline } from '@/stores/message-timeline';
 import { useSidebarProjectionStore } from '@/stores/sidebarProjectionStore';
 import { useToastStore } from '@/stores/toastStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
@@ -331,7 +332,7 @@ function checkForStaleActiveInvocations(): void {
       // is a user message. A completed assistant round-trip means there's
       // nothing to reconcile, and keying off "any recent activity" probes
       // healthy threads for 5 minutes after normal completion.
-      const lastMsg = state.messages?.[state.messages.length - 1];
+      const lastMsg = findLatestMessageByTimeline(state.messages);
       if (hasStaleActiveThreadPresentation(state, currentThreadId)) {
         toProbe.add(currentThreadId);
       } else if (lastMsg?.type === 'user') {

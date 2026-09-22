@@ -22,7 +22,12 @@ import {
   hydrateThreadWorkspaceState,
   useChatStore,
 } from '@/stores/chatStore';
-import { getMessageTimelineCursorTime, getMessageTimelineOrderTime } from '@/stores/message-timeline';
+import {
+  findEarliestMessageByCursor,
+  getMessageTimelineCursorTime,
+  getMessageTimelineOrderTime,
+  getOrderedMessageTimeline,
+} from '@/stores/message-timeline';
 import type { TaskItem } from '@/stores/taskStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { crossesUserTurnBoundary } from '@/stores/turn-boundary';
@@ -46,7 +51,9 @@ import {
   MESSAGE_VIEWPORT_MOUNTED_EVENT,
   type MessageScrollAnchor,
   restoreMessageScrollAnchor,
+  restoreTimelineScrollAnchor,
   scrollToMessage,
+  type TimelineScrollAnchor,
 } from '@/utils/scrollToMessage';
 import {
   peekPendingTeleport,
@@ -71,6 +78,12 @@ type NavigationSettleResult =
   | { kind: 'retry' }
   | { kind: 'settled'; sample: NavigationSettleSample }
   | { kind: 'expired' };
+
+function hasSameMessageMembership(previousIds: readonly string[], currentIds: readonly string[]): boolean {
+  if (previousIds.length !== currentIds.length) return false;
+  const previous = new Set(previousIds);
+  return previous.size === currentIds.length && currentIds.every((id) => previous.has(id));
+}
 
 // clowder-ai#27: route navigation remounts the page, so scroll memory must live
 // outside React refs to survive /thread/A → /thread/B → /thread/A.
@@ -822,12 +835,7 @@ export function mergeReplaceHydrationMessages(
   }
 
   return {
-    messages: mergedMsgs.sort((a, b) => {
-      const ta = getMessageTimelineOrderTime(a);
-      const tb = getMessageTimelineOrderTime(b);
-      if (ta !== tb) return ta - tb;
-      return a.id.localeCompare(b.id);
-    }),
+    messages: mergedMsgs,
     stats: {
       preservedLocalCount,
       reconciledToHistoryCount,
@@ -861,7 +869,7 @@ export function useChatHistory(threadId: string) {
     isOfflineSnapshot,
   } = useChatStore(
     useShallow((s) => ({
-      messages: s.messages,
+      messages: getOrderedMessageTimeline(s.messages),
       isLoadingHistory: s.isLoadingHistory,
       hasMore: s.hasMore,
       replaceThreadMessages: s.replaceThreadMessages,
@@ -887,6 +895,8 @@ export function useChatHistory(threadId: string) {
   const restoreFrameKindRef = useRef<RestoreFrameKind | null>(null);
   const userScrollUpRef = useRef(false);
   const userScrollIntentRef = useRef(false);
+  const previousTimelineIdsRef = useRef<string[]>([]);
+  const previousTimelineThreadRef = useRef(threadId);
 
   // Track loading guard per-thread to prevent double-fetch
   const loadingRef = useRef(false);
@@ -1905,6 +1915,35 @@ export function useChatHistory(threadId: string) {
     }
   }, [isLoadingHistory]);
 
+  const timelineMessageIds = messages.map((message) => message.id);
+
+  // The same messages can change presentation order or rendered height while
+  // streaming. Reapply the user's saved anchor before paint; browser-native
+  // anchoring is disabled on the container so these two systems cannot fight.
+  useLayoutEffect(() => {
+    if (previousTimelineThreadRef.current !== threadId) {
+      previousTimelineThreadRef.current = threadId;
+      previousTimelineIdsRef.current = timelineMessageIds;
+      return;
+    }
+    const previousIds = previousTimelineIdsRef.current;
+    previousTimelineIdsRef.current = timelineMessageIds;
+    if (!hasSameMessageMembership(previousIds, timelineMessageIds)) return;
+
+    const el = scrollContainerRef.current;
+    const saved = scrollPositionsByThread.get(threadId);
+    if (!el || !saved || useChatStore.getState().currentThreadId !== threadId) return;
+
+    const anchor: TimelineScrollAnchor | undefined =
+      saved.anchor === 'bottom'
+        ? { kind: 'bottom' }
+        : saved.messageAnchor
+          ? { kind: 'message', messageAnchor: saved.messageAnchor }
+          : undefined;
+    if (!anchor || !restoreTimelineScrollAnchor(el, anchor)) return;
+    scrollPositionsByThread.set(threadId, { ...saved, top: el.scrollTop });
+  }, [threadId, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Scroll adjustment after messages change
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -2006,7 +2045,7 @@ export function useChatHistory(threadId: string) {
         isLoading: isLoadingHistory,
       })
     ) {
-      const oldest = messages.find((m) => !m.id.startsWith('draft-'));
+      const oldest = findEarliestMessageByCursor(messages.filter((message) => !message.id.startsWith('draft-')));
       if (oldest) void fetchHistory(`${getMessageTimelineCursorTime(oldest)}:${oldest.id}`);
     }
   }, [messages, threadId, isOfflineSnapshot, hasMore, isLoadingHistory, scheduleScrollToMessage, fetchHistory]);
@@ -2151,7 +2190,7 @@ export function useChatHistory(threadId: string) {
     if (!hasMore || isLoadingHistory) return;
     if (el.scrollTop < 80 && messages.length > 0) {
       // #80 cloud R8 P2: skip draft rows — their synthetic IDs break cursor semantics
-      const oldest = messages.find((m) => !m.id.startsWith('draft-'));
+      const oldest = findEarliestMessageByCursor(messages.filter((message) => !message.id.startsWith('draft-')));
       if (oldest) {
         void fetchHistory(`${getMessageTimelineCursorTime(oldest)}:${oldest.id}`);
       }

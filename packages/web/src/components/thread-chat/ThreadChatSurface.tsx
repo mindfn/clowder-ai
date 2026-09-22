@@ -153,7 +153,11 @@ export function ThreadChatSurface({
         <main
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className={compact ? 'h-full overflow-y-auto px-3 py-3' : 'h-full overflow-y-auto p-4'}
+          className={
+            compact
+              ? 'h-full overflow-y-auto px-3 py-3 [overflow-anchor:none]'
+              : 'h-full overflow-y-auto p-4 [overflow-anchor:none]'
+          }
           aria-label="对话内容"
           data-guide-id="bootcamp.preview-result"
           data-bootcamp-host="chat-messages"

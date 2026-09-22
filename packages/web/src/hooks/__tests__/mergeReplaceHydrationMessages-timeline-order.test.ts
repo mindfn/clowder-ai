@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../../stores/chat-types';
+import { getOrderedMessageTimeline } from '../../stores/message-timeline';
 import { mergeReplaceHydrationMessages } from '../useChatHistory';
 
 function makeMessage(overrides: Partial<ChatMessage>): ChatMessage {
@@ -50,7 +51,7 @@ describe('mergeReplaceHydrationMessages — presentation timeline order', () => 
     // the presentation clock even when there is no pre-existing local state.
     const result = mergeReplaceHydrationMessages([completedResponse, userSupplement, callbackInput], [], {});
 
-    expect(result.messages.map((message) => message.id)).toEqual([
+    expect(getOrderedMessageTimeline(result.messages).map((message) => message.id)).toEqual([
       'user-supplement',
       'callback-input',
       'response-started-first-completed-last',

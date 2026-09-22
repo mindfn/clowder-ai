@@ -29,7 +29,11 @@ import type {
   ToolEvent,
 } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { isMessageTimelineActive } from '@/stores/message-timeline';
+import {
+  findLatestMessageByTimeline,
+  getOrderedMessageTimeline,
+  isMessageTimelineActive,
+} from '@/stores/message-timeline';
 import { useToastStore } from '@/stores/toastStore';
 import { extractRecallMetaDetail, toolResultDetail } from '@/utils/toolPreview';
 import {
@@ -725,7 +729,7 @@ function recoverBackgroundStreamingMessage(
 ): string | undefined {
   const streamKey = `${msg.threadId}::${msg.catId}`;
   const activeRef = options.bgStreamRefs.get(streamKey);
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
   for (let i = threadMessages.length - 1; i >= 0; i--) {
     const message = threadMessages[i];
     if (message.type === 'assistant' && message.catId === msg.catId && message.isStreaming) {
@@ -1048,7 +1052,7 @@ function findBackgroundInvocationCreatedTarget(
   options: HandleBackgroundMessageOptions,
 ): string | undefined {
   const streamKey = `${msg.threadId}::${targetCatId}`;
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
   const isEligible = (message: ChatMessage | undefined): message is ChatMessage => {
     if (!message || !isBackgroundStreamingAssistant(message, targetCatId)) return false;
     const stableKey = getStreamStableInvocationKey(message);
@@ -1431,7 +1435,7 @@ export function consumeBackgroundSystemInfo(
       // post_message callbacks became independent by default, routing those blocks to
       // the preceding callback duplicates the card until history hydration repairs it.
       if (!targetId && !richBlockHasExplicitInvocation) {
-        const threadMessages = options.store.getThreadState(msg.threadId).messages;
+        const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
         for (let i = threadMessages.length - 1; i >= 0; i--) {
           const m = threadMessages[i];
           if (m.type !== 'assistant' || m.catId !== msg.catId) continue;
@@ -1599,7 +1603,7 @@ export function consumeBackgroundSystemInfo(
       const projectPath = typeof parsed.projectPath === 'string' ? parsed.projectPath : '';
       const reasonKind = (parsed.reasonKind as string) ?? 'needs_bootstrap';
       const invId = typeof parsed.invocationId === 'string' ? parsed.invocationId : undefined;
-      const threadMessages = options.store.getThreadState(msg.threadId).messages;
+      const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
       const existing = threadMessages.find(
         (m: { variant?: string; extra?: { governanceBlocked?: { projectPath?: string } } }) =>
           m.variant === 'governance_blocked' && m.extra?.governanceBlocked?.projectPath === projectPath,
@@ -2002,7 +2006,7 @@ function recoverStreamingMessage(
   streamKey: string,
   options: HandleBackgroundMessageOptions,
 ): string | undefined {
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
   const activeRef = options.bgStreamRefs.get(streamKey);
   for (let i = threadMessages.length - 1; i >= 0; i--) {
     const m = threadMessages[i];
@@ -2040,7 +2044,7 @@ function findBackgroundCallbackReplacementTarget(
   // so same-parent multi-turn callback doesn't bind to wrong turn's stream bubble.
   const incomingStableKey = msg.turnInvocationId ?? invocationId;
 
-  const threadMessages = options.store.getThreadState(msg.threadId).messages;
+  const threadMessages = getOrderedMessageTimeline(options.store.getThreadState(msg.threadId).messages);
 
   // Try invocationId-based match first (using turn-priority stable key)
   if (incomingStableKey) {
@@ -3524,15 +3528,15 @@ export function useAgentMessages() {
         return directState.invocationId !== msgInvocationId;
       }
 
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        const m = state.messages[i];
-        if (m.type !== 'assistant' || m.catId !== catId) continue;
-        if (!m.isStreaming) continue;
-        const bound = m.extra?.stream?.invocationId;
+      const latestStreaming = findLatestMessageByTimeline(
+        state.messages,
+        (message) => message.type === 'assistant' && message.catId === catId && message.isStreaming === true,
+      );
+      if (latestStreaming) {
+        const bound = latestStreaming.extra?.stream?.invocationId;
         if (bound !== undefined) {
           return bound !== msgInvocationId;
         }
-        break;
       }
 
       return false;
@@ -3629,7 +3633,7 @@ export function useAgentMessages() {
       //      isStreaming=true, NO stream.invocationId). Bound-to-old-invocation
       //      bubbles are NEVER adopted — they must be finalized by invocation_created's
       //      rebind step, not silently mutated by a newer invocation's stream chunk.
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const invocationId = explicitInvocationId ?? getCurrentInvocationIdForCat(catId);
       let stableLookupId = invocationId;
       const currentTurnInvocationId = resolveEffectiveTurnInvocationIdForCat(catId, invocationId);
@@ -3707,7 +3711,7 @@ export function useAgentMessages() {
   );
 
   const findCallbackReplacementTarget = useCallback((catId: string, invocationId: string): { id: string } | null => {
-    const currentMessages = useChatStore.getState().messages;
+    const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
     // Strict match only: exact invocationId. Do NOT adopt unbound placeholders —
     // per clowder-ai#305 absorb (2026-04-01) the placeholder may belong to a newer
     // invocation, and silently merging callback into it risks content mixing.
@@ -3728,7 +3732,7 @@ export function useAgentMessages() {
 
   const findInvocationlessStreamPlaceholder = useCallback(
     (catId: string): { id: string } | null => {
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const activeId = getActive(catId)?.id;
 
       if (activeId) {
@@ -3788,7 +3792,7 @@ export function useAgentMessages() {
    */
   const findInvocationlessRichPlaceholder = useCallback(
     (catId: string): { id: string } | null => {
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const isRichOrToolOnlyPlaceholder = (
         msg: (typeof currentMessages)[number] | undefined,
       ): msg is NonNullable<typeof msg> =>
@@ -4148,7 +4152,7 @@ export function useAgentMessages() {
         currentEventSeq?: number;
       },
     ): string | null => {
-      const currentMessages = useChatStore.getState().messages;
+      const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
       const existing = getActive(catId);
       const effectiveTurnInvocationId = resolveEffectiveTurnInvocationIdForCat(
         catId,
@@ -5158,7 +5162,7 @@ export function useAgentMessages() {
               }
               return false;
             })();
-            const permissive = useChatStore.getState().messages.findLast((m) => {
+            const permissive = findLatestMessageByTimeline(useChatStore.getState().messages, (m) => {
               if (m.type !== 'assistant' || m.catId !== msg.catId || !m.isStreaming) return false;
               if (slotFreshConfirmed) return true;
               // F194 Phase Z3 R8 P1-3 (砚砚): turn-only matching for dual-id bubbles. Reject newer
@@ -5502,7 +5506,7 @@ export function useAgentMessages() {
               //     on PR#1352 — the old oldest-to-newest loop would bind a stale historical
               //     bubble when reconnect/hydration left multiple unbound ones, leaving the
               //     live bubble unbound and reintroducing ghost/split behavior.
-              const messagesSnapshot = useChatStore.getState().messages;
+              const messagesSnapshot = getOrderedMessageTimeline(useChatStore.getState().messages);
               const exactLifecycleResponseId =
                 msg.lifecycleResponseMessageId &&
                 messagesSnapshot.some((candidate) => candidate.id === msg.lifecycleResponseMessageId)
@@ -5945,7 +5949,7 @@ export function useAgentMessages() {
             // post_message callbacks became independent by default, routing those blocks to
             // the preceding callback duplicates the card until history hydration repairs it.
             if (!targetId && !richBlockHasExplicitInvocation) {
-              const currentMessages = useChatStore.getState().messages;
+              const currentMessages = getOrderedMessageTimeline(useChatStore.getState().messages);
               for (let i = currentMessages.length - 1; i >= 0; i--) {
                 const m = currentMessages[i];
                 if (m.type !== 'assistant' || m.catId !== msg.catId) continue;
@@ -6100,7 +6104,7 @@ export function useAgentMessages() {
                 }
                 return false;
               })();
-              const permissive = useChatStore.getState().messages.findLast((m) => {
+              const permissive = findLatestMessageByTimeline(useChatStore.getState().messages, (m) => {
                 if (m.type !== 'assistant' || m.catId !== msg.catId || !m.isStreaming) return false;
                 if (slotFreshConfirmed) return true;
                 // F194 Phase Z3 R8 P1-3 (砚砚): mirror done path turn-only matching.

@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
-import { captureMessageScrollAnchor, restoreMessageScrollAnchor, scrollToMessage } from '@/utils/scrollToMessage';
+import {
+  captureMessageScrollAnchor,
+  restoreMessageScrollAnchor,
+  restoreTimelineScrollAnchor,
+  scrollToMessage,
+} from '@/utils/scrollToMessage';
 
 // jsdom doesn't provide CSS.escape — polyfill for tests
 beforeAll(() => {
@@ -57,6 +62,40 @@ describe('scrollToMessage', () => {
       }),
     ).toBe(true);
     expect(container.scrollTop).toBe(560);
+  });
+
+  it('keeps a user at the bottom after an earlier message reorders', () => {
+    const container = document.createElement('div');
+    Object.defineProperties(container, {
+      scrollHeight: { configurable: true, value: 1_200 },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    container.scrollTop = 640;
+
+    expect(restoreTimelineScrollAnchor(container, { kind: 'bottom' })).toBe(true);
+    expect(container.scrollTop).toBe(900);
+  });
+
+  it('keeps the viewed message at the same viewport offset after sibling order changes', () => {
+    const container = document.createElement('div');
+    container.scrollTop = 400;
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const targetBoundary = document.createElement('div');
+    targetBoundary.dataset.messageViewportId = 'viewed';
+    targetBoundary.getBoundingClientRect = () => ({ top: 340, bottom: 520 }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'viewed';
+    targetBoundary.appendChild(target);
+    container.appendChild(targetBoundary);
+    document.body.appendChild(container);
+
+    expect(
+      restoreTimelineScrollAnchor(container, {
+        kind: 'message',
+        messageAnchor: { messageId: 'viewed', viewportOffsetPx: 40 },
+      }),
+    ).toBe(true);
+    expect(container.scrollTop).toBe(600);
   });
 
   it('scrolls to the element with matching data-message-id', () => {

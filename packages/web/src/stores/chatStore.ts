@@ -42,7 +42,12 @@ import type {
 } from './chat-types';
 import { DEFAULT_THREAD_STATE } from './chat-types';
 import { projectTerminalActiveInvocationSlots } from './invocation-liveness';
-import { getMessageTimelineOrderTime, isMessageTimelineActive } from './message-timeline';
+import {
+  findLatestMessageByTimeline,
+  findLatestMessageIndexByTimeline,
+  getMessageTimelineOrderTime,
+  isMessageTimelineActive,
+} from './message-timeline';
 import { crossesUserTurnBoundary } from './turn-boundary';
 
 // Re-export types so existing consumers keep working with `import { ... } from '@/stores/chatStore'`
@@ -102,6 +107,7 @@ function mergeCatInvocationInfo(
 }
 
 function snapshotActive(s: ChatState): ThreadState {
+  const latestMessage = findLatestMessageByTimeline(s.messages);
   return {
     messages: s.messages,
     isLoading: s.isLoading,
@@ -124,7 +130,7 @@ function snapshotActive(s: ChatState): ThreadState {
       ? Date.now()
       : Math.max(
           s.threadStates[s.currentThreadId]?.lastActivity ?? 0,
-          s.messages.length > 0 ? getMessageTimelineOrderTime(s.messages[s.messages.length - 1]) : 0,
+          latestMessage ? getMessageTimelineOrderTime(latestMessage) : 0,
         ),
     queue: s.queue,
     queueFull: s.queueFull,
@@ -594,47 +600,24 @@ function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatM
   };
 }
 
-function restoreTimelineOrderAt(messages: ChatMessage[], index: number): ChatMessage[] {
-  const current = messages[index];
-  if (!current) return messages;
-  const currentOrder = getMessageTimelineOrderTime(current);
-  const previous = messages[index - 1];
-  const next = messages[index + 1];
-  const followsPrevious = !previous || getMessageTimelineOrderTime(previous) <= currentOrder;
-  const precedesNext = !next || currentOrder <= getMessageTimelineOrderTime(next);
-  return followsPrevious && precedesNext
-    ? messages
-    : messages.toSorted((a, b) => getMessageTimelineOrderTime(a) - getMessageTimelineOrderTime(b));
-}
-
-function patchChangesTimelineOrder(patch: ChatMessagePatch): boolean {
-  return (
-    patch.timestamp !== undefined ||
-    patch.deliveredAt !== undefined ||
-    patch.timelineOrderAt !== undefined ||
-    patch.lifecycle !== undefined
-  );
-}
-
 function patchMessageInList(messages: ChatMessage[], id: string, patch: ChatMessagePatch): ChatMessage[] {
   const index = messages.findIndex((message) => message.id === id);
   if (index < 0) return messages;
   const nextMessages = [...messages];
   nextMessages[index] = applyMessagePatch(messages[index]!, patch);
-  return patchChangesTimelineOrder(patch) ? restoreTimelineOrderAt(nextMessages, index) : nextMessages;
+  return nextMessages;
 }
 
 function updateMessageInList(
   messages: ChatMessage[],
   messageId: string,
   updater: (message: ChatMessage) => ChatMessage,
-  resort: boolean,
 ): ChatMessage[] | undefined {
   const index = messages.findIndex((message) => message.id === messageId);
   if (index < 0) return undefined;
   const updated = [...messages];
   updated[index] = updater(messages[index]!);
-  return resort ? restoreTimelineOrderAt(updated, index) : updated;
+  return updated;
 }
 
 /** F067 Phase 2: Fire macOS notification when a cat @mentions the co-creator */
@@ -688,20 +671,17 @@ function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage):
   // Phase 1: Hard rule — scan ALL same-cat assistants for exact invocationId match.
   // Must run first because bridge/soft rules on a newer message would mis-associate.
   if (incomingInvId) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const existing = messages[i]!;
-      if (existing.type !== 'assistant' || existing.catId !== incoming.catId) continue;
+    const exactIndex = findLatestMessageIndexByTimeline(messages, (existing) => {
+      if (existing.type !== 'assistant' || existing.catId !== incoming.catId) return false;
       // #814: explicit post_message is standalone — never match as merge target,
       // even though it carries stream.invocationId for #573 correlation.
       // Without this guard, a stream chunk arriving after F5/hydration would
       // match the hydrated explicit post by invocationId and overwrite it.
-      if (existing.extra?.isExplicitPost) continue;
-      const existingInvId = getBubbleInvocationId(existing);
-      if (existingInvId === incomingInvId) {
-        if (existing.id !== incoming.id && crossesUserTurnBoundary(messages, existing, incoming)) continue;
-        return i;
-      }
-    }
+      if (existing.extra?.isExplicitPost) return false;
+      if (getBubbleInvocationId(existing) !== incomingInvId) return false;
+      return existing.id === incoming.id || !crossesUserTurnBoundary(messages, existing, incoming);
+    });
+    if (exactIndex >= 0) return exactIndex;
   }
 
   // Phase 2: Soft rule — check only the MOST RECENT same-cat assistant.
@@ -712,29 +692,20 @@ function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage):
   if (incoming.origin !== 'callback') return -1;
   if (incomingInvId) return -1;
 
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const existing = messages[i]!;
-    if (existing.type !== 'assistant' || existing.catId !== incoming.catId) continue;
+  const latestStreamIndex = findLatestMessageIndexByTimeline(
+    messages,
+    (existing) => existing.type === 'assistant' && existing.catId === incoming.catId && existing.origin === 'stream',
+  );
+  if (latestStreamIndex < 0) return -1;
 
-    // Skip non-stream messages — bridge/soft only targets stream placeholders.
-    // Cloud review P1: breaking on the first same-cat assistant (which may be
-    // a callback) prevents reaching an older stream placeholder.
-    if (existing.origin !== 'stream') continue;
-
-    const existingInvId = getBubbleInvocationId(existing);
-    if (
-      !existingInvId &&
-      Math.abs((incoming.timestamp ?? 0) - (existing.timestamp ?? 0)) < 8_000 &&
-      incoming.replyTo === existing.replyTo &&
-      (incoming.visibility ?? 'public') === (existing.visibility ?? 'public')
-    ) {
-      return i;
-    }
-    // Checked the most recent same-cat stream — stop scanning
-    break;
-  }
-
-  return -1;
+  const existing = messages[latestStreamIndex]!;
+  const existingInvId = getBubbleInvocationId(existing);
+  return !existingInvId &&
+    Math.abs((incoming.timestamp ?? 0) - (existing.timestamp ?? 0)) < 8_000 &&
+    incoming.replyTo === existing.replyTo &&
+    (incoming.visibility ?? 'public') === (existing.visibility ?? 'public')
+    ? latestStreamIndex
+    : -1;
 }
 
 function mergeRichBlocks(existingBlocks: RichBlock[] = [], incomingBlocks: RichBlock[] = []): RichBlock[] | undefined {
@@ -796,12 +767,11 @@ function updateThreadMessage(
   threadId: string,
   messageId: string,
   updater: (message: ChatMessage) => ChatMessage,
-  resort = false,
 ): ChatState | Partial<ChatState> {
   if (threadId === state.currentThreadId) {
     // F173 KD-2 (PR-C Task 10): mirror message edits to threadStates[active]
     // so reconcile / streaming-flag flips stay in lockstep with flat.
-    const messages = updateMessageInList(state.messages, messageId, updater, resort);
+    const messages = updateMessageInList(state.messages, messageId, updater);
     if (!messages) return state;
     return {
       messages,
@@ -811,7 +781,7 @@ function updateThreadMessage(
 
   const existing = state.threadStates[threadId];
   if (!existing) return state;
-  const messages = updateMessageInList(existing.messages, messageId, updater, resort);
+  const messages = updateMessageInList(existing.messages, messageId, updater);
   if (!messages) return state;
   return {
     threadStates: {
@@ -1467,9 +1437,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
               }
             }
           }
-          // Re-sort by durable publication time. Queued user work and cat
-          // speech already visible in the timeline keep authoring-time order.
-          updated.sort((a, b) => getMessageTimelineOrderTime(a) - getMessageTimelineOrderTime(b));
         }
         return { messages: updated, insertedIds, mentionMessages };
       };
@@ -2124,9 +2091,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   appendToLastMessage: (content) =>
     set((state) => {
       const messages = [...state.messages];
-      const last = messages[messages.length - 1];
+      const lastIndex = findLatestMessageIndexByTimeline(messages, (message) => message.type === 'assistant');
+      const last = messages[lastIndex];
       if (last && last.type === 'assistant') {
-        messages[messages.length - 1] = { ...last, content: last.content + content };
+        messages[lastIndex] = { ...last, content: last.content + content };
       }
       return { messages };
     }),
@@ -2695,7 +2663,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const merged = mergeAssistantBubble(state.messages[dupIdx]!, msg);
           const updated = [...state.messages];
           updated[dupIdx] = merged;
-          const messages = restoreTimelineOrderAt(updated, dupIdx);
+          const messages = updated;
           recordDebugEvent({
             event: 'bubble_lifecycle',
             threadId,
@@ -2717,7 +2685,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           };
         }
 
-        const messages = restoreTimelineOrderAt([...state.messages, msg], state.messages.length);
+        const messages = [...state.messages, msg];
         if (messages.length > MAX_BLOB_MESSAGES) {
           revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
         }
@@ -2743,7 +2711,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const merged = mergeAssistantBubble(existing.messages[bgDupIdx]!, msg);
         const updated = [...existing.messages];
         updated[bgDupIdx] = merged;
-        const updatedMessages = restoreTimelineOrderAt(updated, bgDupIdx);
+        const updatedMessages = updated;
         recordDebugEvent({
           event: 'bubble_lifecycle',
           threadId,
@@ -2772,7 +2740,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // F067 Phase 2: Fire macOS notification for @co-creator mention
       if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
 
-      const updatedMessages = restoreTimelineOrderAt([...existing.messages, msg], existing.messages.length);
+      const updatedMessages = [...existing.messages, msg];
       return {
         threadStates: {
           ...state.threadStates,
@@ -2792,8 +2760,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const upsert = (messages: ChatMessage[]): ChatMessage[] => {
         const existingIndex = messages.findIndex((candidate) => candidate.id === msg.id);
         if (existingIndex === -1) {
-          const next = [...messages, msg];
-          return restoreTimelineOrderAt(next, next.length - 1);
+          return [...messages, msg];
         }
         const existing = messages[existingIndex]!;
         if (
@@ -2815,7 +2782,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
         const next = [...messages];
         next[existingIndex] = merged;
-        return restoreTimelineOrderAt(next, existingIndex);
+        return next;
       };
 
       if (threadId === state.currentThreadId) {
@@ -2890,15 +2857,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   patchThreadMessage: (threadId, messageId, patch) =>
-    set((state) =>
-      updateThreadMessage(
-        state,
-        threadId,
-        messageId,
-        (m) => applyMessagePatch(m, patch),
-        patchChangesTimelineOrder(patch),
-      ),
-    ),
+    set((state) => updateThreadMessage(state, threadId, messageId, (m) => applyMessagePatch(m, patch))),
 
   /** Append chunk content to a specific message in a specific thread. */
   appendToThreadMessage: (threadId, messageId, content) =>
@@ -3478,7 +3437,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...(advanceTimeline ? { timestamp: activityAt, timelineOrderAt: activityAt } : {}),
           isStreaming: advanceTimeline ? streaming : existing.isStreaming,
         };
-        return advanceTimeline ? restoreTimelineOrderAt(updated, index) : updated;
+        return updated;
       };
 
       if (threadId === state.currentThreadId) {

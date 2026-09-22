@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { getMessageTimelineCursorTime, getMessageTimelineOrderTime } from '../message-timeline';
+import {
+  findEarliestMessageByCursor,
+  getMessageTimelineCursorTime,
+  getMessageTimelineOrderTime,
+  getOrderedMessageTimeline,
+} from '../message-timeline';
 
 describe('getMessageTimelineOrderTime', () => {
   it('keeps a processing response on its latest streaming activity time', () => {
@@ -85,5 +90,46 @@ describe('getMessageTimelineOrderTime', () => {
         deliveredAt: 1_500,
       }),
     ).toBe(1_500);
+  });
+});
+
+describe('presentation timeline view', () => {
+  it('sorts by the presentation clock with a stable id tie-break and memoizes by input reference', () => {
+    const messages = [
+      { id: 'response', timestamp: 1_000, lifecycle: { kind: 'response', status: 'completed', completedAt: 4_000 } },
+      { id: 'user-z', timestamp: 2_000 },
+      { id: 'user-a', timestamp: 2_000 },
+    ];
+
+    const first = getOrderedMessageTimeline(messages);
+    const second = getOrderedMessageTimeline(messages);
+
+    expect(first.map((message) => message.id)).toEqual(['user-a', 'user-z', 'response']);
+    expect(second).toBe(first);
+    expect(messages.map((message) => message.id)).toEqual(['response', 'user-z', 'user-a']);
+  });
+
+  it('returns the original reference when input is already ordered', () => {
+    const messages = [
+      { id: 'a', timestamp: 1_000 },
+      { id: 'b', timestamp: 2_000 },
+    ];
+
+    expect(getOrderedMessageTimeline(messages)).toBe(messages);
+  });
+
+  it('finds the storage-cursor minimum independently from presentation and insertion order', () => {
+    const messages = [
+      {
+        id: 'inserted-first',
+        timestamp: 3_000,
+        timelineOrderAt: 3_000,
+        lifecycle: { kind: 'response', status: 'completed', completedAt: 1_000 },
+      },
+      { id: 'storage-oldest', timestamp: 2_000, timelineOrderAt: 2_000 },
+    ];
+
+    expect(getOrderedMessageTimeline(messages)[0]?.id).toBe('inserted-first');
+    expect(findEarliestMessageByCursor(messages)?.id).toBe('storage-oldest');
   });
 });

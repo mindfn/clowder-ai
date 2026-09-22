@@ -8,7 +8,7 @@
  */
 
 import type { ChatMessage } from '@/stores/chat-types';
-import { getMessageTimelineCursorTime } from '@/stores/message-timeline';
+import { findEarliestMessageByCursor, getMessageTimelineCursorTime } from '@/stores/message-timeline';
 import { apiFetch } from '@/utils/api-client';
 import { mergeSessionEvents } from './merge-session-events';
 import { mergeHubMessagesWithTranscriptSupplements } from './thread-message-events';
@@ -93,7 +93,8 @@ async function fetchThreadMessages(threadId: string): Promise<ChatMessage[]> {
     if (messages.length > 0) pages.unshift(messages);
     if (!data.hasMore || messages.length === 0) break;
 
-    const oldest = messages[0];
+    const oldest = findEarliestMessageByCursor(messages);
+    if (!oldest) break;
     const nextBefore = `${getMessageTimelineCursorTime(oldest)}:${oldest.id}`;
     if (seenCursors.has(nextBefore)) break;
     seenCursors.add(nextBefore);

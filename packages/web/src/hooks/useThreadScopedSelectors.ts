@@ -20,6 +20,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { CatInvocationInfo, CatStatusType, ChatMessage } from '@/stores/chat-types';
 import { type ChatState, useChatStore } from '@/stores/chatStore';
 import { projectTerminalActiveInvocationSlots } from '@/stores/invocation-liveness';
+import { getOrderedMessageTimeline } from '@/stores/message-timeline';
 
 /** Inert defaults returned when threadId is null or has no entry. Frozen so
  *  callers can't accidentally mutate a shared singleton. */
@@ -77,15 +78,15 @@ function projectTerminalLiveness(liveness: ThreadLiveness): ThreadLiveness {
   };
 }
 
-/** Pure selector — returns the messages array for a thread, preferring the
- *  flat slice when threadId is current (to keep reference equality with the
- *  source-of-truth and avoid cross-thread dup). */
+/** Pure selector — derives the one canonical presentation-ordered view for a
+ *  thread. Active and background sources share the same memoized projection;
+ *  writers keep storage/insertion shape and never own display order. */
 export function selectThreadMessages(state: ChatState, threadId: string | null): ChatMessage[] {
   if (!threadId) return EMPTY_MESSAGES as ChatMessage[];
   if (threadId === state.currentThreadId || !state.currentThreadId) {
-    return state.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
+    return getOrderedMessageTimeline(state.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
   }
-  return state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
+  return getOrderedMessageTimeline(state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
 }
 
 /** Pure selector — returns liveness fields for a thread. Defensively
