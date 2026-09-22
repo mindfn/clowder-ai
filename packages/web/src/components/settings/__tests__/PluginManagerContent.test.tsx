@@ -670,7 +670,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
           tools: [
             {
               contributionId: 'video-analysis-toolset',
-              name: 'video_analysis',
+              name: 'video_analysis_execute',
               description: 'Analyze an explicitly selected video.',
               inputSchema: { type: 'object' },
             },
@@ -686,7 +686,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch).toHaveBeenCalledWith(
       '/api/plugin-manager/plugins/dev.clowder.video-analysis/contributions/tools',
     );
-    expect(container.textContent).toContain('video_analysis');
+    expect(container.textContent).toContain('video_analysis_execute');
     expect(container.textContent).toContain('Analyze an explicitly selected video.');
   });
 

@@ -121,6 +121,10 @@ test('uses the same Host-owned grants for local development archives as catalog 
       replacesRepositoryPluginId: 'video-gen',
       effectiveGrants: ['plugin.config.read', 'secret.read'],
     },
+    {
+      pluginId: 'dev.clowder.video-analysis',
+      effectiveGrants: ['plugin.config.read', 'secret.read'],
+    },
   ];
 
   assert.deepEqual(
@@ -130,9 +134,14 @@ test('uses the same Host-owned grants for local development archives as catalog 
     ['plugin.config.read', 'secret.read'],
   );
   assert.deepEqual(resolveLocalPluginEffectiveGrants(policies, { pluginId: 'untrusted.local' }), []);
+  assert.deepEqual(resolveLocalPluginEffectiveGrants(policies, { pluginId: 'dev.clowder.video-analysis' }), [
+    'plugin.config.read',
+    'secret.read',
+  ]);
   assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['dev.clowder.video-generation']), [
     'video-gen',
   ]);
+  assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['dev.clowder.video-analysis']), []);
 });
 
 test('selects the newest validated release independently of catalog array order', async () => {

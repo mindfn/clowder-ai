@@ -5081,7 +5081,6 @@ async function main(): Promise<void> {
     },
     {
       pluginId: 'dev.clowder.video-analysis',
-      replacesRepositoryPluginId: 'video-analysis',
       effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
     },
   ];

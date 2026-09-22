@@ -180,7 +180,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     packageName: '@clowder-ai/video-analysis',
     source: 'catalog',
     trust: 'official',
-    availableVersion: '0.1.0-alpha.0',
+    availableVersion: '0.1.0-alpha.2',
     installedVersion: null,
     artifact: 'absent',
     config: 'incomplete',

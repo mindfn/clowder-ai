@@ -268,7 +268,8 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
   assert.match(source, /pluginId:\s*'dev\.clowder\.video-generation'/);
   assert.match(source, /replacesRepositoryPluginId:\s*'video-gen'/);
-  assert.match(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
+  assert.match(source, /pluginId:\s*'dev\.clowder\.video-analysis'/);
+  assert.doesNotMatch(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
   assert.match(
     source,
     /localGrantPolicy:\s*\(manifest\)\s*=>\s*resolveLocalPluginEffectiveGrants\(pluginManagerHostPolicies, manifest\)/,

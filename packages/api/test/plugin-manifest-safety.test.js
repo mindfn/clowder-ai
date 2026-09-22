@@ -342,19 +342,6 @@ describe('parsePluginManifest security', () => {
     assert.equal(registry.deriveStatus(manifest, capabilities, {}), 'partial');
   });
 
-  it('requires the bundled video-analysis API key before reporting configured', () => {
-    const registry = new PluginRegistry('/tmp/nonexistent-plugins');
-    const manifest = parsePluginManifest(
-      fileURLToPath(new URL('../src/plugins/video-analysis/plugin.yaml', import.meta.url)),
-    );
-    const env = {
-      VIDEO_ANALYSIS_PROVIDER: 'gemini',
-      VIDEO_ANALYSIS_AUTH_TYPE: 'query-param',
-    };
-
-    assert.equal(registry.deriveStatus(manifest, null, env), 'not_configured');
-  });
-
   it('does not treat stale plugin capability entries as declared resources', () => {
     const registry = new PluginRegistry('/tmp/nonexistent-plugins');
     const manifest = {
