@@ -33,8 +33,17 @@ function contributions() {
   });
 }
 
-async function appFor(webhooks, timeoutMs = 50) {
-  const app = Fastify();
+async function appFor(webhooks, timeoutMs = 50, logRecords) {
+  const app = Fastify(
+    logRecords
+      ? {
+          logger: {
+            level: 'warn',
+            stream: { write: (line) => logRecords.push(JSON.parse(line)) },
+          },
+        }
+      : {},
+  );
   apps.push(app);
   app.decorateRequest('sessionUserId', undefined);
   app.addHook('onRequest', async (request) => {
@@ -228,7 +237,8 @@ test('reserved declarations fail activation and invalid or slow plugin responses
       return new Promise(() => undefined);
     },
   );
-  const app = await appFor(webhooks, 10);
+  const logs = [];
+  const app = await appFor(webhooks, 10, logs);
 
   assert.equal(
     (await app.inject({ method: 'POST', url: '/api/plugins/dev.clowder.webhook-fixture/failure/invalid' })).statusCode,
@@ -242,4 +252,18 @@ test('reserved declarations fail activation and invalid or slow plugin responses
     (await app.inject({ method: 'POST', url: '/api/plugins/dev.clowder.webhook-fixture/failure/location' })).statusCode,
     502,
   );
+
+  const warnings = logs.filter((entry) => entry.level === 40 && entry.pluginId === 'dev.clowder.webhook-fixture');
+  assert.equal(warnings.length, 3);
+  assert.deepEqual(
+    warnings.map((entry) => entry.contributionId),
+    ['invalid', 'slow', 'cross-origin-location'],
+  );
+  assert.equal(warnings[0].validationError, 'response header set-cookie is not allowed');
+  assert.equal(warnings[1].msg, 'Plugin webhook timed out');
+  assert.equal(warnings[2].validationError, 'response location must be same-origin and relative');
+  for (const warning of warnings) {
+    assert.equal(Object.hasOwn(warning, 'headers'), false);
+    assert.equal(Object.hasOwn(warning, 'body'), false);
+  }
 });

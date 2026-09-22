@@ -74,6 +74,7 @@ async function forwardPluginWebhook(
   const principal = authorizeRequest(request, reply, target.declared, target.method);
   if (principal === false) return undefined;
 
+  let failurePhase: 'invocation' | 'validation' = 'invocation';
   try {
     const value = await withTimeout(
       options.webhooks.callPluginWebhook(request.params.pluginId, target.declared.contributionId, {
@@ -87,10 +88,36 @@ async function forwardPluginWebhook(
       }),
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     );
+    failurePhase = 'validation';
     return sendPluginResponse(reply, validatePluginResponse(value));
   } catch (error) {
     if (error instanceof PluginWebhookTimeoutError) {
+      request.log.warn(
+        {
+          pluginId: request.params.pluginId,
+          contributionId: target.declared.contributionId,
+        },
+        'Plugin webhook timed out',
+      );
       return reply.status(504).send({ error: 'Plugin webhook timed out' });
+    }
+    if (failurePhase === 'validation') {
+      request.log.warn(
+        {
+          pluginId: request.params.pluginId,
+          contributionId: target.declared.contributionId,
+          validationError: validationErrorMessage(error),
+        },
+        'Plugin webhook returned an invalid response',
+      );
+    } else {
+      request.log.warn(
+        {
+          pluginId: request.params.pluginId,
+          contributionId: target.declared.contributionId,
+        },
+        'Plugin webhook invocation failed',
+      );
     }
     return reply.status(502).send({ error: 'Plugin webhook returned an invalid response' });
   }
@@ -274,6 +301,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function validationErrorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : 'unknown validation failure').slice(0, 512);
 }
 
 class PluginWebhookTimeoutError extends Error {}
