@@ -120,7 +120,6 @@ test('git admission closes protocols, disables prompts, and fences options', asy
     localAdmission: manager.localAdmission,
     cloneRoot: resolve(projectRoot, '.cat-cafe/plugin-host'),
     gitBin: fakeGit,
-    timeoutMs: 1_000,
   });
 
   await assert.rejects(
