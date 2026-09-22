@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type PlatformFieldStatus, StepBadge } from '../../HubConfigIcons';
 import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
-import { SettingsStatusStrip } from '../primitives/SettingsStatusStrip';
 import { SettingsText } from '../primitives/SettingsText';
+import { PluginManagerConfigurationActions } from './PluginManagerConfigurationActions';
 import { PluginManagerOperationField } from './PluginManagerOperationField';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
@@ -38,18 +38,19 @@ function configurationUpdates(
   fields: readonly ConfigurationField[],
   drafts: Readonly<Record<string, string>>,
 ): readonly { key: string; value: string | null }[] {
-  return fields.flatMap((field) => {
-    if (field.kind === 'operation') return [];
-    const draft = drafts[field.key];
-    if (draft !== undefined) return [{ key: field.key, value: draft.length === 0 ? null : draft }];
-    if (field.currentValue === null && field.default === undefined) {
-      if (field.kind === 'select' && field.options?.[0]) {
-        return [{ key: field.key, value: field.options[0].value }];
+  return fields
+    .filter((field) => field.kind !== 'operation')
+    .flatMap((field) => {
+      const draft = drafts[field.key];
+      if (draft !== undefined) return [{ key: field.key, value: draft.length === 0 ? null : draft }];
+      if (field.currentValue === null && field.default === undefined) {
+        if (field.kind === 'select' && field.options?.[0]) {
+          return [{ key: field.key, value: field.options[0].value }];
+        }
+        if (field.kind === 'boolean') return [{ key: field.key, value: 'false' }];
       }
-      if (field.kind === 'boolean') return [{ key: field.key, value: 'false' }];
-    }
-    return [];
-  });
+      return [];
+    });
 }
 
 function renderField(field: ConfigurationField): PlatformFieldStatus {
@@ -93,6 +94,7 @@ export function PluginManagerConfigurationSection({
   const handledValidationRequest = useRef(0);
   const fields = plugin.configFields ?? EMPTY_CONFIGURATION_FIELDS;
   const configurableFields = fields.filter((field) => field.kind !== 'operation');
+  const steps = plugin.steps ?? plugin.setupSteps ?? [];
   const updates = configurationUpdates(fields, fieldValues);
 
   const validateConfiguration = useCallback(() => {
@@ -131,7 +133,7 @@ export function PluginManagerConfigurationSection({
       </SettingsText>
       {installed ? (
         <>
-          {plugin.setupSteps?.map((step, index) => (
+          {steps.map((step, index) => (
             <div key={step} className="flex items-center gap-1.5">
               <StepBadge num={index + 1} />
               <SettingsText as="span" variant="sm" tone="default" className="font-medium">
@@ -143,7 +145,7 @@ export function PluginManagerConfigurationSection({
           {plugin.configFields && plugin.configFields.length > 0 && (
             <div className="space-y-2.5">
               <div className="flex items-center gap-1.5">
-                <StepBadge num={(plugin.setupSteps?.length ?? 0) + 1} />
+                <StepBadge num={steps.length + 1} />
                 <SettingsText as="span" variant="sm" tone="default" className="font-medium">
                   填写插件配置
                 </SettingsText>
@@ -182,7 +184,7 @@ export function PluginManagerConfigurationSection({
               </div>
             </div>
           )}
-          {!plugin.configFields?.length && !plugin.setupSteps?.length && (
+          {!plugin.configFields?.length && steps.length === 0 && !plugin.testable && (
             <SettingsText as="p" variant="sm" tone="muted">
               此插件无需额外配置。
             </SettingsText>
@@ -194,23 +196,19 @@ export function PluginManagerConfigurationSection({
         </SettingsText>
       )}
 
-      {installed && plugin.configFields && plugin.configFields.length > 0 && onSaveConfig && (
-        <div className="space-y-2">
-          {showSaved && <SettingsStatusStrip tone="success">配置已保存</SettingsStatusStrip>}
-          <div className="flex justify-end">
-            <button
-              type="button"
-              className="console-button-primary disabled:opacity-50"
-              disabled={busy || (updates.length === 0 && plugin.config === 'ready')}
-              onClick={() => {
-                if (!validateConfiguration() || updates.length === 0) return;
-                onSaveConfig(updates);
-              }}
-            >
-              {busy ? '保存中...' : '保存配置'}
-            </button>
-          </div>
-        </div>
+      {installed && (plugin.testable === true || (configurableFields.length > 0 && onSaveConfig)) && (
+        <PluginManagerConfigurationActions
+          pluginId={plugin.id}
+          busy={busy}
+          saved={showSaved}
+          showSave={configurableFields.length > 0 && onSaveConfig !== undefined}
+          saveDisabled={updates.length === 0 && plugin.config === 'ready'}
+          testable={plugin.testable === true}
+          onSave={() => {
+            if (!onSaveConfig || !validateConfiguration() || updates.length === 0) return;
+            onSaveConfig(updates);
+          }}
+        />
       )}
     </section>
   );

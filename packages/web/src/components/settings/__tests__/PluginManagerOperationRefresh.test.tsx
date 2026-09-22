@@ -75,6 +75,8 @@ describe('Plugin Manager operation refresh', () => {
           plugin: {
             ...plugin,
             capabilities: [],
+            steps: ['Package step'],
+            testable: true,
             configFields: [
               {
                 kind: 'operation',
@@ -101,6 +103,8 @@ describe('Plugin Manager operation refresh', () => {
 
     await act(async () => root.render(<PluginManagerLiveContent />));
     await flushEffects();
+    expect(container.textContent).toContain('Package step');
+    expect(container.textContent).toContain('测试连接');
     const action = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Start');
     expect(action).toBeDefined();
     await act(async () => action?.click());

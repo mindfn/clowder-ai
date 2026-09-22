@@ -41,6 +41,8 @@ export interface PluginManagerDesignFixture {
   tools?: Array<Pick<PluginManagerContributionTool, 'contributionId' | 'name' | 'description'>>;
   readme: PluginManagerReadmeState;
   setupSteps?: string[];
+  steps?: string[];
+  testable?: boolean;
   docsUrl?: string;
   configFields?: PluginManagerDetail['configFields'];
   diagnostic?: string;
@@ -69,6 +71,8 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     intent: 'enabled',
     live: 'running',
     readme: { state: 'absent' },
+    steps: ['使用 GitHub CLI 登录', '保存可选凭据后测试连接'],
+    testable: true,
     setupSteps: [
       '在运行 Clowder AI 的机器上使用 GitHub CLI 登录',
       '可选：仅为显式消费凭据的插件子进程配置 token',
