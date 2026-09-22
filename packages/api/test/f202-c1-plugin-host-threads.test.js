@@ -24,7 +24,7 @@ function hostOf(options = {}) {
     pluginInstanceId: options.pluginInstanceId ?? 'instance-1',
     ownerUserId: OWNER,
     projectPath: options.projectPath ?? PROJECT_ROOT,
-    effectiveGrants: options.effectiveGrants ?? ['thread.listMetadata', 'thread.readContent'],
+    effectiveGrants: options.effectiveGrants ?? ['thread.listMetadata', 'thread.readContent', 'thread.write'],
     threadStore,
     bindingStore,
     systemThreadTitle: options.systemThreadTitle ?? 'Fixture',
@@ -33,6 +33,18 @@ function hostOf(options = {}) {
 }
 
 describe('F202 C1 — plugin Host thread surface', () => {
+  test('all thread mutations require the thread.write grant', async () => {
+    const { host, threadStore } = hostOf({ effectiveGrants: ['thread.listMetadata', 'thread.readContent'] });
+    const existing = await threadStore.create(OWNER, 'Existing');
+
+    await assert.rejects(() => host.create({ title: 'Denied' }), /lacks thread\.write/);
+    await assert.rejects(() => host.update(existing.id, { title: 'Denied' }), /lacks thread\.write/);
+    await assert.rejects(() => host.ensureByKey('denied', { title: 'Denied' }), /lacks thread\.write/);
+    await assert.rejects(() => host.bind('denied', existing.id), /lacks thread\.write/);
+    await assert.rejects(() => host.unbind('denied'), /lacks thread\.write/);
+    await assert.rejects(() => host.ensureSystemThread(), /lacks thread\.write/);
+  });
+
   test('concurrent ensureByKey converges on one persistent plugin-owned thread', async () => {
     const { host, threadStore } = hostOf();
 

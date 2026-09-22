@@ -101,7 +101,7 @@ function bindingSummary(binding: {
 /** Thin, caller-bound projection of the Host's existing thread and binding stores. */
 export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThreadHost {
   const ensureTails = new Map<string, Promise<void>>();
-  const requireGrant = (capability: 'thread.listMetadata' | 'thread.readContent') => {
+  const requireGrant = (capability: 'thread.listMetadata' | 'thread.readContent' | 'thread.write') => {
     if (!input.effectiveGrants.includes(capability)) {
       throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`);
     }
@@ -177,6 +177,7 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
       return thread && (await canAccess(thread)) ? summary(thread) : null;
     },
     async create(value) {
+      requireGrant('thread.write');
       if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new TypeError('thread input must be an object');
       const thread = await input.threadStore.create(input.ownerUserId, title(value.title), input.projectPath);
@@ -186,6 +187,7 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
       return summary(stored);
     },
     async update(id, patch) {
+      requireGrant('thread.write');
       if (!patch || typeof patch !== 'object' || Array.isArray(patch))
         throw new TypeError('thread patch must be an object');
       const owned = await requireOwned(threadId(id));
@@ -200,27 +202,31 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
       const thread = await findBound(bindingKey(value));
       return thread ? summary(thread) : null;
     },
-    ensureByKey(value, request) {
+    async ensureByKey(value, request) {
+      requireGrant('thread.write');
       if (!request || typeof request !== 'object' || Array.isArray(request)) {
-        return Promise.reject(new TypeError('thread ensure input must be an object'));
+        throw new TypeError('thread ensure input must be an object');
       }
       return ensure(bindingKey(value), title(request.title));
     },
     async bind(value, id) {
+      requireGrant('thread.write');
       const key = bindingKey(value);
       const thread = await requireAccessible(threadId(id));
       const binding = await input.bindingStore.bind(input.pluginId, key, thread.id, input.ownerUserId);
       return bindingSummary(binding);
     },
-    unbind(value) {
-      return Promise.resolve(input.bindingStore.remove(input.pluginId, bindingKey(value)));
+    async unbind(value) {
+      requireGrant('thread.write');
+      return input.bindingStore.remove(input.pluginId, bindingKey(value));
     },
     async listBindings() {
       requireGrant('thread.listMetadata');
       const bindings = await input.bindingStore.listByUser(input.pluginId, input.ownerUserId);
       return bindings.map(bindingSummary);
     },
-    ensureSystemThread() {
+    async ensureSystemThread() {
+      requireGrant('thread.write');
       return ensure(SYSTEM_BINDING_KEY, title(input.systemThreadTitle));
     },
   };
