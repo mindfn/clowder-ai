@@ -32,7 +32,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -254,8 +254,33 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
   return { violations, baselineRef, comparedPatches: baseline.patches.length };
 }
 
+/**
+ * Where is the repo?
+ *
+ * Not "next to this script". The documented recovery for a rebuild that deleted
+ * the guard is to read it back out of the surviving ref and run it:
+ *
+ *     git show origin/develop_base:scripts/check-fork-only-patches.mjs > /tmp/guard.mjs
+ *     node /tmp/guard.mjs
+ *
+ * A script-relative root resolves to `/` there and checks nothing. Ask git from
+ * the working directory first, so the guard works from wherever it was rescued to.
+ */
+function resolveRepoRoot(argv) {
+  const flag = argv.indexOf('--repo-root');
+  if (flag !== -1 && argv[flag + 1]) return resolve(argv[flag + 1]);
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return join(dirname(fileURLToPath(import.meta.url)), '..');
+  }
+}
+
 function main() {
-  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const repoRoot = resolveRepoRoot(process.argv.slice(2));
   const tree = checkForkOnlyPatches(repoRoot);
   const survival = checkRebuildSurvival(repoRoot);
   const seen = new Set();
@@ -282,6 +307,27 @@ function main() {
   console.log(`[check-fork-only-patches] OK - ${patchIds.length} fork-only patch(es) present${baseline}`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+/**
+ * Symlink-safe entrypoint detection.
+ *
+ * `fileURLToPath(import.meta.url)` is the REAL path; `process.argv[1]` is the
+ * path as typed. On macOS `/tmp` is a symlink to `/private/tmp`, so comparing
+ * them with resolve() alone returns false and main() never runs - the guard
+ * exits 0 having checked nothing. A guard that can silently no-op is the exact
+ * failure mode this file exists to remove, so compare real paths.
+ */
+function isDirectInvocation() {
+  if (!process.argv[1]) return false;
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return real(process.argv[1]) === real(fileURLToPath(import.meta.url));
+}
+
+if (isDirectInvocation()) {
   main();
 }

@@ -92,9 +92,15 @@ the new tree **actually has**. It stays runnable even when the rebuild deleted
 it, because it can be read from the same ref:
 
 ```bash
+cd <repo>                      # the guard asks git where the repo is, from CWD
 git show origin/develop_base:scripts/check-fork-only-patches.mjs > /tmp/guard.mjs
-node /tmp/guard.mjs
+node /tmp/guard.mjs            # or: node /tmp/guard.mjs --repo-root <repo>
 ```
+
+The rescued copy resolves the repo from the working directory, not from where
+the file happens to sit, and it detects direct invocation by **real** path -
+running it from a symlinked location (macOS `/tmp`) must not make it exit 0
+having checked nothing.
 
 ## Two checks, both required
 

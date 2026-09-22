@@ -17,7 +17,16 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync as mkdirp,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -314,4 +323,67 @@ test('ordering anchor passes when the gate runs first', (t) => {
     files: { 'src/shared.ts': 'gateRuns();\nthenPublishes();\n' },
   });
   assert.deepEqual(checkForkOnlyPatches(root).violations, []);
+});
+
+// ---------------------------------------------------------------------------
+// The guard must never silently no-op.
+//
+// Found while testing the documented recovery from docs/fork-only-patches.md:
+// `node /tmp/guard.mjs` printed nothing and exited 0. `import.meta.url` gives
+// the REAL path (/private/tmp/...) while `process.argv[1]` gives the path as
+// typed (/tmp/...), so the entrypoint comparison was false and main() never
+// ran. A guard that exits 0 having checked nothing is the precise failure this
+// file exists to remove, so it is pinned here.
+// ---------------------------------------------------------------------------
+
+const GUARD = join(REPO_ROOT, 'scripts/check-fork-only-patches.mjs');
+
+function runGuard(args, cwd) {
+  try {
+    const stdout = execFileSync('node', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { code: 0, out: stdout };
+  } catch (err) {
+    return { code: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+  }
+}
+
+test('runs when invoked through a symlinked path instead of exiting 0 in silence', (t) => {
+  const box = mkdtempSync(join(tmpdir(), 'guard-symlink-'));
+  t.after(() => rmSync(box, { recursive: true, force: true }));
+  mkdirp(join(box, 'real'));
+  copyFileSync(GUARD, join(box, 'real/guard.mjs'));
+  symlinkSync(join(box, 'real'), join(box, 'link'));
+
+  const { out } = runGuard([join(box, 'link/guard.mjs')], REPO_ROOT);
+  assert.match(out, /\[check-fork-only-patches\]/, 'guard produced no verdict at all');
+});
+
+test('rescued out of the repo, it still checks the repo it is run from', (t) => {
+  // The documented rebuild recovery: the tree lost the guard, so it is read
+  // back out of the surviving ref into /tmp and run from the repo.
+  const box = mkdtempSync(join(tmpdir(), 'guard-rescue-'));
+  t.after(() => rmSync(box, { recursive: true, force: true }));
+  const rescued = join(box, 'guard.mjs');
+  copyFileSync(GUARD, rescued);
+
+  const { code, out } = runGuard([rescued], REPO_ROOT);
+  assert.equal(code, 0, out);
+  assert.match(out, /fork-only patch\(es\) present/);
+  // A script-relative root would have resolved to "/" and found no registry.
+  assert.doesNotMatch(out, /registry unreadable/);
+});
+
+test('--repo-root targets an explicit tree', (t) => {
+  const root = rebuiltRepo(t, { rebuild: () => {} });
+  const { code, out } = runGuard([GUARD, '--repo-root', root], tmpdir());
+  assert.equal(code, 0, out);
+  assert.match(out, /1 fork-only patch\(es\) present/);
+});
+
+test('an explicit tree with no resolvable baseline still fails closed', (t) => {
+  // --repo-root must not become a way to opt out of the survival half.
+  const root = fixture(t, { registry: { baselineRef: BASELINE, patches: REGISTRY.patches } });
+  const { code, out } = runGuard([GUARD, '--repo-root', root], tmpdir());
+  assert.equal(code, 1);
+  assert.match(out, /rebuild loss cannot be detected/);
 });
