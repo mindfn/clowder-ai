@@ -7,6 +7,7 @@ import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-co
 
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
+import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
 import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
@@ -25,14 +26,14 @@ async function tempRoot(label) {
   return root;
 }
 
-async function writeTaskFixture() {
+async function writeTaskFixture(capabilities = ['task.read', 'task.write']) {
   const root = await tempRoot('cat-cafe-f202-task-package-');
   const manifest = {
     pluginId: 'dev.clowder.task-fixture',
     version: '1.0.0',
     contractVersion: '0.1.0',
     name: 'Task fixture',
-    features: [{ id: 'main', name: 'Main', resources: [], capabilities: [] }],
+    features: [{ id: 'main', name: 'Main', resources: [], capabilities }],
     runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js' },
   };
   await mkdir(join(root, 'dist'), { recursive: true });
@@ -70,6 +71,59 @@ async function writeTaskFixture() {
   return root;
 }
 
+test('module plugin task reads and writes require their respective grants', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-task-grants-project-');
+  const runtime = createDormantPluginRuntimeComposition({
+    projectRoot,
+    routes: new MemorySignalRouteStore(),
+    intakes: new MemoryMeetingIntakeStore(),
+    messageStore: new MessageStore(),
+    taskStore: new TaskStore(),
+    contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
+  });
+  const composition = createPluginManagerRuntimeComposition({
+    runtime,
+    catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
+    catalogManifests: [],
+  });
+  const installed = await composition.manager.install({
+    source: { kind: 'local-directory', path: await writeTaskFixture([]) },
+  });
+  const detail = (await composition.manager.get(installed.pluginId)).plugin;
+  await composition.manager.setEnabled(installed.pluginId, {
+    enabled: true,
+    expectedRevision: detail.lifecycleRevision,
+  });
+
+  await assert.rejects(
+    runtime.supervisor.invoke(installed.pluginInstanceId, 'fixture.tasks', {
+      operation: 'get',
+      taskId: 'task-denied',
+    }),
+    /lacks task\.read/,
+  );
+  await assert.rejects(
+    runtime.supervisor.invoke(installed.pluginInstanceId, 'fixture.tasks', {
+      operation: 'create',
+      threadId: 'thread-denied',
+      title: 'Denied',
+    }),
+    /lacks task\.write/,
+  );
+});
+
+test('task grants are checked before Host task-store availability', async () => {
+  const denied = createPluginTaskHost({ pluginId: 'dev.clowder.denied', effectiveGrants: [], taskStore: undefined });
+  await assert.rejects(() => denied.get('task-1'), /lacks task\.read/);
+
+  const unavailable = createPluginTaskHost({
+    pluginId: 'dev.clowder.authorized',
+    effectiveGrants: ['task.read'],
+    taskStore: undefined,
+  });
+  await assert.rejects(() => unavailable.get('task-1'), /Host task store is unavailable/);
+});
+
 test('module plugins create, read, and update ordinary tasks through the Host task store', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-task-project-');
   const taskStore = new TaskStore();
@@ -85,6 +139,7 @@ test('module plugins create, read, and update ordinary tasks through the Host ta
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
+    localGrantPolicy: () => ['task.read', 'task.write'],
   });
   const installed = await composition.manager.install({
     source: { kind: 'local-directory', path: await writeTaskFixture() },

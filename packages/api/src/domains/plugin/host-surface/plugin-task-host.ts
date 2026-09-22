@@ -33,6 +33,12 @@ export interface PluginTaskHost {
   updateIfThreadId(taskId: string, expectedThreadId: string, input: PluginTaskUpdateInput): Promise<TaskItem | null>;
 }
 
+export interface PluginTaskHostDeps {
+  readonly pluginId: string;
+  readonly effectiveGrants: readonly string[];
+  readonly taskStore: ITaskStore | undefined;
+}
+
 function boundedString(value: unknown, field: string, maximum: number, allowEmpty = false): string {
   if (typeof value !== 'string' || (!allowEmpty && value.length === 0) || value.length > maximum) {
     throw new TypeError(`${field} must be a string between ${allowEmpty ? 0 : 1} and ${maximum} characters`);
@@ -90,21 +96,28 @@ function subjectUpsertInput(value: PluginTaskCreateInput): CreateTaskInput {
   return input;
 }
 
-export function createPluginTaskHost(taskStore?: ITaskStore): PluginTaskHost {
-  const store = () => {
-    if (!taskStore) throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task store is unavailable');
-    return taskStore;
+export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost {
+  const requireGrant = (capability: 'task.read' | 'task.write') => {
+    if (!input.effectiveGrants.includes(capability)) {
+      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`);
+    }
+    if (!input.taskStore) {
+      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task store is unavailable');
+    }
+    return input.taskStore;
   };
   return {
-    get: async (taskId) => store().get(boundedString(taskId, 'taskId', 500)),
-    listByThread: async (threadId) => store().listByThread(boundedString(threadId, 'threadId', 500)),
-    listByKind: async (kind) => store().listByKind(taskKind(kind)),
-    getBySubject: async (subjectKey) => store().getBySubject(boundedString(subjectKey, 'subjectKey', 500)),
-    create: async (input) => store().create(createInput(input)),
-    upsertBySubject: async (input) => store().upsertBySubject(subjectUpsertInput(input)),
-    update: async (taskId, input) => store().update(boundedString(taskId, 'taskId', 500), updateInput(input)),
+    get: async (taskId) => requireGrant('task.read').get(boundedString(taskId, 'taskId', 500)),
+    listByThread: async (threadId) => requireGrant('task.read').listByThread(boundedString(threadId, 'threadId', 500)),
+    listByKind: async (kind) => requireGrant('task.read').listByKind(taskKind(kind)),
+    getBySubject: async (subjectKey) =>
+      requireGrant('task.read').getBySubject(boundedString(subjectKey, 'subjectKey', 500)),
+    create: async (value) => requireGrant('task.write').create(createInput(value)),
+    upsertBySubject: async (value) => requireGrant('task.write').upsertBySubject(subjectUpsertInput(value)),
+    update: async (taskId, value) =>
+      requireGrant('task.write').update(boundedString(taskId, 'taskId', 500), updateInput(value)),
     updateIfThreadId: async (taskId, expectedThreadId, input) =>
-      store().updateIfThreadId(
+      requireGrant('task.write').updateIfThreadId(
         boundedString(taskId, 'taskId', 500),
         boundedString(expectedThreadId, 'expectedThreadId', 500),
         updateInput(input),

@@ -220,7 +220,11 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
-        tasks: createPluginTaskHost(this.options.taskStore),
+        tasks: createPluginTaskHost({
+          pluginId: packageRecord.pluginId,
+          effectiveGrants,
+          taskStore: this.options.taskStore,
+        }),
         threads,
         messaging,
         log: (level, message, fields) =>
