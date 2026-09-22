@@ -87,6 +87,7 @@ export function PluginManagerContent({
   onSetEnabled,
   onUninstall,
   onConfigure,
+  onOperationChange,
   configurationSavedPluginId = null,
   locale = 'zh-CN',
 }: {
@@ -104,6 +105,7 @@ export function PluginManagerContent({
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
+  onOperationChange?: (pluginId: string) => void;
   configurationSavedPluginId?: string | null;
   locale?: string;
 }) {
@@ -247,6 +249,7 @@ export function PluginManagerContent({
                 onSaveConfig={
                   selected.configFields?.length ? (updates) => onConfigure?.(selected.id, updates) : undefined
                 }
+                onOperationChange={() => onOperationChange?.(selected.id)}
               />
             ) : loading ? (
               <div className={`${settingsResourceCardClass} min-h-48 animate-pulse`} />

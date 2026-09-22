@@ -100,6 +100,19 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
         currentValue: null,
         sensitive: true,
       },
+      {
+        kind: 'operation',
+        key: 'github_login',
+        label: '连接 GitHub',
+        required: false,
+        currentValue: null,
+        sensitive: false,
+        actions: [
+          { id: 'authorize', label: '开始授权', render: 'button', next: 'check' },
+          { id: 'check', label: '等待授权', render: 'polling', next: 'disconnect', rollback: 'authorize' },
+          { id: 'disconnect', label: '断开连接', render: 'status', next: 'authorize' },
+        ],
+      },
     ],
     capabilities: [
       { name: 'cicd-check', description: '检查 CI/CD 状态' },

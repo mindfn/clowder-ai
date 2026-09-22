@@ -5,6 +5,7 @@ import { type PlatformFieldStatus, StepBadge } from '../../HubConfigIcons';
 import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
 import { SettingsStatusStrip } from '../primitives/SettingsStatusStrip';
 import { SettingsText } from '../primitives/SettingsText';
+import { PluginManagerOperationField } from './PluginManagerOperationField';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 type ConfigurationField = NonNullable<PluginManagerDesignFixture['configFields']>[number];
@@ -38,6 +39,7 @@ function configurationUpdates(
   drafts: Readonly<Record<string, string>>,
 ): readonly { key: string; value: string | null }[] {
   return fields.flatMap((field) => {
+    if (field.kind === 'operation') return [];
     const draft = drafts[field.key];
     if (draft !== undefined) return [{ key: field.key, value: draft.length === 0 ? null : draft }];
     if (field.currentValue === null && field.default === undefined) {
@@ -73,12 +75,14 @@ export function PluginManagerConfigurationSection({
   plugin,
   busy,
   onSaveConfig,
+  onOperationChange,
   validationRequest,
   saved,
 }: {
   plugin: PluginManagerDesignFixture;
   busy: boolean;
   onSaveConfig?: (updates: readonly { key: string; value: string | null }[]) => void;
+  onOperationChange?: () => void;
   validationRequest: number;
   saved: boolean;
 }) {
@@ -88,22 +92,23 @@ export function PluginManagerConfigurationSection({
   const [showSaved, setShowSaved] = useState(false);
   const handledValidationRequest = useRef(0);
   const fields = plugin.configFields ?? EMPTY_CONFIGURATION_FIELDS;
+  const configurableFields = fields.filter((field) => field.kind !== 'operation');
   const updates = configurationUpdates(fields, fieldValues);
 
   const validateConfiguration = useCallback(() => {
     const errors = Object.fromEntries(
-      fields
+      configurableFields
         .filter((field) => field.required && effectiveFieldValue(field, fieldValues).trim().length === 0)
         .map((field) => [field.key, `请填写 ${field.label}`]),
     );
     setFieldErrors(errors);
-    const firstInvalid = fields.find((field) => errors[field.key] !== undefined);
+    const firstInvalid = configurableFields.find((field) => errors[field.key] !== undefined);
     if (!firstInvalid) return true;
     const input = document.getElementById(`plugin-manager-${plugin.id}-${firstInvalid.key}`);
     input?.focus();
     input?.scrollIntoView?.({ block: 'center' });
     return false;
-  }, [fieldValues, fields, plugin.id]);
+  }, [configurableFields, fieldValues, plugin.id]);
 
   useEffect(() => {
     if (validationRequest <= handledValidationRequest.current) return;
@@ -144,26 +149,36 @@ export function PluginManagerConfigurationSection({
                 </SettingsText>
               </div>
               <div className="ml-[26px] space-y-2.5">
-                {plugin.configFields.map((field) => (
-                  <ConfigFieldRenderer
-                    key={field.key}
-                    field={renderField(field)}
-                    value={renderedFieldValue(field, fieldValues)}
-                    required={field.required}
-                    error={fieldErrors[field.key]}
-                    onChange={(key, value) => {
-                      setShowSaved(false);
-                      setFieldValues((current) => ({ ...current, [key]: value }));
-                      setFieldErrors((current) => {
-                        if (current[key] === undefined) return current;
-                        const next = { ...current };
-                        delete next[key];
-                        return next;
-                      });
-                    }}
-                    idPrefix={`plugin-manager-${plugin.id}`}
-                  />
-                ))}
+                {plugin.configFields.map((field) =>
+                  field.kind === 'operation' ? (
+                    <PluginManagerOperationField
+                      key={field.key}
+                      pluginId={plugin.id}
+                      field={field}
+                      pendingConfigValues={fieldValues}
+                      onStatusChange={onOperationChange}
+                    />
+                  ) : (
+                    <ConfigFieldRenderer
+                      key={field.key}
+                      field={renderField(field)}
+                      value={renderedFieldValue(field, fieldValues)}
+                      required={field.required}
+                      error={fieldErrors[field.key]}
+                      onChange={(key, value) => {
+                        setShowSaved(false);
+                        setFieldValues((current) => ({ ...current, [key]: value }));
+                        setFieldErrors((current) => {
+                          if (current[key] === undefined) return current;
+                          const next = { ...current };
+                          delete next[key];
+                          return next;
+                        });
+                      }}
+                      idPrefix={`plugin-manager-${plugin.id}`}
+                    />
+                  ),
+                )}
               </div>
             </div>
           )}

@@ -243,6 +243,7 @@ export function PluginManagerLiveContent() {
         })();
       }}
       onConfigure={(pluginId, updates) => void configure(pluginId, updates)}
+      onOperationChange={(pluginId) => void loadDetail(pluginId, true)}
     />
   );
 }

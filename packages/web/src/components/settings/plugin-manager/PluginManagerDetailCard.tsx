@@ -152,6 +152,7 @@ export function PluginManagerDetailCard({
   locale,
   busy = false,
   onSaveConfig,
+  onOperationChange,
   configurationValidationRequest = 0,
   configurationSaved = false,
 }: {
@@ -159,6 +160,7 @@ export function PluginManagerDetailCard({
   locale: string;
   busy?: boolean;
   onSaveConfig?: (updates: readonly { key: string; value: string | null }[]) => void;
+  onOperationChange?: () => void;
   configurationValidationRequest?: number;
   configurationSaved?: boolean;
 }) {
@@ -205,6 +207,7 @@ export function PluginManagerDetailCard({
           plugin={plugin}
           busy={busy}
           onSaveConfig={onSaveConfig}
+          onOperationChange={onOperationChange}
           validationRequest={configurationValidationRequest}
           saved={configurationSaved}
         />
