@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -58,14 +58,31 @@ function createRuntime(projectRoot, { limbRegistry = new LimbRegistry(), taskRun
       taskRunner,
       mcpConfigIO: {
         readConfig: () => readCapabilitiesConfig(projectRoot),
-        writeAndRegenCli: (config) => writeCapabilitiesConfig(projectRoot, config),
+        writeAndRegenCli: async (config) => {
+          await writeCapabilitiesConfig(projectRoot, config);
+          const path = join(projectRoot, '.test-cli', 'gemini.json');
+          await mkdir(join(path, '..'), { recursive: true });
+          const mcpServers = Object.fromEntries(
+            config.capabilities
+              .filter((capability) => capability.type === 'mcp' && capability.enabled && capability.mcpServer)
+              .map((capability) => [capability.id.replaceAll(':', '__'), capability.mcpServer]),
+          );
+          await writeFile(path, `${JSON.stringify({ mcpServers })}\n`, 'utf8');
+        },
         withLock: (fn) => withCapabilityLock(projectRoot, fn),
       },
     }),
   };
 }
 
-async function writeFixturePackage({ pluginId, contribution, contributions, files = {}, actions = '{}' }) {
+async function writeFixturePackage({
+  pluginId,
+  contribution,
+  contributions,
+  files = {},
+  actions = '{}',
+  runtime = { transport: 'builtin', entrypoint: 'dist/plugin.js' },
+}) {
   const packageRoot = await tempRoot(`cat-cafe-f202-${contribution.type}-package-`);
   const declared = contributions ?? [contribution];
   const manifest = {
@@ -83,15 +100,17 @@ async function writeFixturePackage({ pluginId, contribution, contributions, file
         capabilities: [],
       },
     ],
-    runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js' },
+    runtime,
   };
   await mkdir(join(packageRoot, 'dist'), { recursive: true });
   await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify(manifest)}\n`, 'utf8');
-  await writeFile(
-    join(packageRoot, 'dist/plugin.js'),
-    `export default { create() { return { start() { return { actions: ${actions}, stop() {} }; } }; } };\n`,
-    'utf8',
-  );
+  if (runtime.entrypoint !== undefined) {
+    await writeFile(
+      join(packageRoot, runtime.entrypoint),
+      `export default { create() { return { start() { return { actions: ${actions}, stop() {} }; } }; } };\n`,
+      'utf8',
+    );
+  }
   for (const [path, contents] of Object.entries(files)) {
     await mkdir(join(packageRoot, path, '..'), { recursive: true });
     await writeFile(join(packageRoot, path), contents, 'utf8');
@@ -144,6 +163,71 @@ test('an installed package activates and removes its declared MCP capability', a
   assert.match(capability.mcpServer.args?.[0] ?? '', /plugin-host\/resources/);
 
   await disable(composition, installed.pluginId);
+  assert.equal(
+    (await readCapabilitiesConfig(projectRoot))?.capabilities.some(
+      (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
+    ),
+    false,
+  );
+});
+
+test('a runtime-less builtin package uses the standard MCP capability pipeline', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-static-mcp-project-');
+  const contributions = ['alpha', 'beta'].map((id) => ({
+    type: 'mcp',
+    id,
+    runtime: { transport: 'stdio', entrypoint: `dist/${id}.js` },
+  }));
+  const packageRoot = await writeFixturePackage({
+    pluginId: 'dev.clowder.static-mcp-fixture',
+    contribution: contributions[0],
+    contributions,
+    runtime: { transport: 'builtin' },
+    files: {
+      'dist/alpha.js': 'process.exit(0);\n',
+      'dist/beta.js': 'process.exit(0);\n',
+    },
+  });
+  const { runtime } = createRuntime(projectRoot);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot);
+
+  const installedCapabilities = (await readCapabilitiesConfig(projectRoot))?.capabilities.filter(
+    (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
+  );
+  assert.deepEqual(
+    installedCapabilities?.map((candidate) => candidate.id).sort(),
+    contributions.map((contribution) => `plugin:${installed.pluginId}:${contribution.id}`).sort(),
+  );
+  for (const capability of installedCapabilities ?? []) {
+    assert.match(capability.mcpServer?.args?.[0] ?? '', /plugin-host\/resources/);
+  }
+  const cliConfig = JSON.parse(await readFile(join(projectRoot, '.test-cli', 'gemini.json'), 'utf8'));
+  assert.equal(Object.keys(cliConfig.mcpServers ?? {}).length, 2);
+
+  await runtime.shutdown('host_shutdown');
+  assert.equal(
+    (await readCapabilitiesConfig(projectRoot))?.capabilities.filter(
+      (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
+    ).length,
+    2,
+  );
+  await runtime.supervisor.start(installed.pluginInstanceId);
+
+  await disable(composition, installed.pluginId);
+  assert.equal(
+    (await readCapabilitiesConfig(projectRoot))?.capabilities.some(
+      (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
+    ),
+    false,
+  );
+
+  const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
+  await composition.manager.setEnabled(installed.pluginId, {
+    enabled: true,
+    expectedRevision: beforeEnable.lifecycleRevision,
+  });
+  const beforeUninstall = (await composition.manager.get(installed.pluginId)).plugin;
+  await composition.manager.uninstall(installed.pluginId, { expectedRevision: beforeUninstall.lifecycleRevision });
   assert.equal(
     (await readCapabilitiesConfig(projectRoot))?.capabilities.some(
       (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,

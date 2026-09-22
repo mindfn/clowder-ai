@@ -1,6 +1,7 @@
 export * from './builtin-runtime/bundled-runtime-carrier.js';
 export * from './builtin-runtime/collective-agent-verifier.js';
 export * from './builtin-runtime/collective-connector-runtime.js';
+export * from './builtin-runtime/static-plugin-runtime.js';
 export * from './carrier/runtime-carrier.js';
 export * from './external-plugin-lifecycle.js';
 export * from './external-runtime/index.js';

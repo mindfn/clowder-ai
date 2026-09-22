@@ -24,6 +24,7 @@ import {
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
 import { ModulePluginRuntime } from './builtin-runtime/module-plugin-runtime.js';
+import { StaticPluginRuntime } from './builtin-runtime/static-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
@@ -354,6 +355,9 @@ export function createDormantPluginRuntimeComposition(
         // Last: the runtimes above implement one package the Host itself carries, so
         // their narrower claims win. This one claims whatever declares a module to load.
         moduleRuntime,
+        // Static-only packages still need the carrier's lifecycle fence before their
+        // declared Host resources activate, but have no package code to execute.
+        new StaticPluginRuntime(),
       ],
       ...(options.now === undefined ? {} : { now: options.now }),
     }),

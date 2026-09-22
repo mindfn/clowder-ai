@@ -22,12 +22,6 @@ export async function activateDeclaredMcp(
     (contribution): contribution is McpContribution => contribution.type === 'mcp',
   );
   if (contributions.length === 0) return;
-  // Runtime-less builtin contribution packages are themselves carried by the existing
-  // BuiltinPluginContributionSupervisor. A module package may additionally declare MCP
-  // resources for the Host capability graph; activating both paths would launch/register
-  // the same declaration twice.
-  const packageRuntime = admission.packageRecord.manifest.runtime;
-  if (packageRuntime.transport === 'builtin' && packageRuntime.entrypoint === undefined) return;
   if (!host) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host static-resource activation is unavailable');
   }
