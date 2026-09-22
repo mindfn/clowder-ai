@@ -3636,7 +3636,6 @@ export class QueueProcessor {
       // 7. Route execution
       const persistenceContext: PersistenceContext = { failed: false, errors: [] };
       const collectedTextParts: string[] = [];
-      const bufferedActionMessages: unknown[] = [];
       // #845 fix: per-cat token usage from done events (same pattern as messages.ts).
       // Without this, queued/connector invocations succeed without writing usageByCat, leaving 159+ orphans
       // in the daily usage report.
@@ -4159,7 +4158,7 @@ export class QueueProcessor {
           });
         }
         // #768: Broadcast intent_mode on first CLI event — proves CLI is alive.
-        if (!intentModeBroadcast && !entry.execution.actionSuccessorFence) {
+        if (!intentModeBroadcast) {
           socketManager.broadcastToRoom(`thread:${threadId}`, 'intent_mode', {
             threadId,
             mode: intent,
@@ -4321,11 +4320,10 @@ export class QueueProcessor {
           ...msg,
           ...(invocationId ? stampVisibleTurn(invocationId, msgInvocationId) : {}),
         };
-        if (entry.execution.actionSuccessorFence) {
-          bufferedActionMessages.push(visibleMessage);
-        } else {
-          socketManager.broadcastAgentMessage(visibleMessage, threadId);
-        }
+        // History owns one response lifecycle for every admitted dispatch.
+        // Action-successor custody may still accept/reject the terminal commit,
+        // but it must not create a second, terminal-only presentation protocol.
+        socketManager.broadcastAgentMessage(visibleMessage, threadId);
       }
 
       // 8. Check abort before marking succeeded (F122B B6 P1: abort→succeeded bug fix)
@@ -4481,9 +4479,6 @@ export class QueueProcessor {
             invocationId,
           });
           intentModeBroadcast = true;
-        }
-        for (const bufferedMessage of bufferedActionMessages) {
-          socketManager.broadcastAgentMessage(bufferedMessage, threadId);
         }
       }
 

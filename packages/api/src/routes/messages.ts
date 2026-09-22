@@ -1248,6 +1248,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       const draftStore = opts.draftStore;
       const drafts = await draftStore.getByThread(userId, resolvedThreadId);
       let activeDrafts = drafts;
+      const processingResponseByInvocationId = new Map<string, StoredMessage>();
+      const ambiguousProcessingParentInvocationIds = new Set<string>();
       // #80 fix-B diagnostic: trace draft merge for F5 recovery verification
       if (drafts.length > 0) {
         request.log.info(
@@ -1265,8 +1267,31 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           const turnInv = m.extra?.stream?.turnInvocationId;
           if (parentInv) formalInvocationIds.add(parentInv);
           if (turnInv) formalInvocationIds.add(turnInv);
+          if (m.lifecycle?.kind === 'response' && m.lifecycle.status === 'processing') {
+            // DraftStore is keyed by the child turn. Only fall back to the
+            // legacy parent id when no child identity exists; one parent can
+            // own several concurrent target responses.
+            if (turnInv) {
+              processingResponseByInvocationId.set(turnInv, m);
+            } else if (parentInv && !ambiguousProcessingParentInvocationIds.has(parentInv)) {
+              if (processingResponseByInvocationId.has(parentInv)) {
+                // A parent can fan out to several target responses. A legacy
+                // parent-keyed draft cannot identify which child owns it, so
+                // fail closed instead of placing one cat's text in another's bubble.
+                processingResponseByInvocationId.delete(parentInv);
+                ambiguousProcessingParentInvocationIds.add(parentInv);
+              } else {
+                processingResponseByInvocationId.set(parentInv, m);
+              }
+            }
+          }
         }
-        activeDrafts = drafts.filter((d) => !formalInvocationIds.has(d.invocationId));
+        // A lifecycle response is created before provider output. Its matching
+        // DraftStore row is not a duplicate while that response is processing:
+        // it is the recoverable body for the exact canonical bubble.
+        activeDrafts = drafts.filter(
+          (d) => !formalInvocationIds.has(d.invocationId) || processingResponseByInvocationId.has(d.invocationId),
+        );
         // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
         // formal messages pushed off the first page (race window: TTL > page depth).
         // Cloud R5 P2: wider window must always exceed page limit (limit max=200 → worst case 800).
@@ -1279,7 +1304,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             if (parentInv) formalInvocationIds.add(parentInv);
             if (turnInv) formalInvocationIds.add(turnInv);
           }
-          activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId));
+          activeDrafts = activeDrafts.filter(
+            (d) => !formalInvocationIds.has(d.invocationId) || processingResponseByInvocationId.has(d.invocationId),
+          );
         }
       }
 
@@ -1399,6 +1426,21 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       for (const d of activeDrafts) {
         const turnExecution = draftTurnExecutions.get(d.invocationId);
+        const lifecycleResponse = processingResponseByInvocationId.get(d.invocationId);
+        if (lifecycleResponse) {
+          const responseIndex = chatItems.findIndex((item) => item.id === lifecycleResponse.id);
+          if (responseIndex >= 0) {
+            const responseItem = chatItems[responseIndex]!;
+            chatItems[responseIndex] = {
+              ...responseItem,
+              content: d.content,
+              isDraft: true,
+              ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
+              ...(d.thinking ? { thinking: d.thinking } : {}),
+            };
+          }
+          continue;
+        }
         chatItems.push({
           id: `draft-${d.invocationId}`,
           type: 'assistant',

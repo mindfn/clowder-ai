@@ -357,6 +357,116 @@ describe('GET /api/messages — draft merge (#80)', () => {
     assert(formal, 'Formal message should be present');
   });
 
+  it('hydrates a live draft into its exact processing lifecycle response', async () => {
+    const ts = Date.now();
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: 'opus',
+        content: '',
+        mentions: [],
+        timestamp: ts,
+        threadId: 'thread-1',
+        origin: 'stream',
+        extra: {
+          stream: { invocationId: 'parent-live', turnInvocationId: 'turn-live' },
+        },
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${ts}:turn-live`,
+          invocationId: 'turn-live',
+          targetId: 'opus',
+          inputEntryIds: ['entry-live'],
+          inputMessageIds: ['source-live'],
+          status: 'processing',
+          startedAt: ts,
+        },
+      }),
+    );
+    draftStore.upsert({
+      userId: 'user-1',
+      threadId: 'thread-1',
+      invocationId: 'turn-live',
+      catId: 'opus',
+      content: 'Visible partial output',
+      thinking: 'Visible thought',
+      updatedAt: ts + 100,
+    });
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/messages?threadId=thread-1',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const matches = res
+      .json()
+      .messages.filter((message) => message.id === response.id || message.id === 'draft-turn-live');
+    assert.equal(matches.length, 1, 'live content must reuse the canonical lifecycle response bubble');
+    assert.equal(matches[0].id, response.id);
+    assert.equal(matches[0].content, 'Visible partial output');
+    assert.equal(matches[0].thinking, 'Visible thought');
+    assert.equal(matches[0].isDraft, true);
+    assert.equal(matches[0].lifecycle.status, 'processing');
+  });
+
+  it('does not bind a legacy parent-keyed draft to an ambiguous fan-out response', async () => {
+    const ts = Date.now();
+    for (const [catId, offset] of [
+      ['opus', 0],
+      ['codex', 1],
+    ]) {
+      messageStore.append(
+        canonicalTestMessageInput({
+          userId: 'user-1',
+          catId,
+          content: '',
+          mentions: [],
+          timestamp: ts + offset,
+          threadId: 'thread-1',
+          origin: 'stream',
+          extra: { stream: { invocationId: 'parent-fanout' } },
+          lifecycle: {
+            kind: 'response',
+            orderKey: `${ts + offset}:turn-${catId}`,
+            invocationId: `turn-${catId}`,
+            targetId: catId,
+            inputEntryIds: [`entry-${catId}`],
+            inputMessageIds: ['source-fanout'],
+            status: 'processing',
+            startedAt: ts + offset,
+          },
+        }),
+      );
+    }
+    draftStore.upsert({
+      userId: 'user-1',
+      threadId: 'thread-1',
+      invocationId: 'parent-fanout',
+      catId: 'opus',
+      content: 'Must not be assigned by iteration order',
+      updatedAt: ts + 100,
+    });
+
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/messages?threadId=thread-1',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const messages = res.json().messages;
+    assert.equal(
+      messages.some((message) => message.content === 'Must not be assigned by iteration order'),
+      false,
+      'ambiguous parent draft must degrade to missing content rather than identity misbinding',
+    );
+    assert.equal(messages.filter((message) => message.lifecycle?.status === 'processing').length, 2);
+  });
+
   it('keeps draft when invocation record is still running (F173 hotfix3)', async () => {
     const ts = Date.now();
     draftStore.upsert({

@@ -283,7 +283,7 @@ describe('QueueProcessor action successor generation fence', () => {
     assert.equal(hook.mock.calls[0].arguments[1], 'canceled');
   });
 
-  it('suppresses a late response when terminal truth appears during execution', async () => {
+  it('rejects a stale terminal commit without inventing a second response streaming protocol', async () => {
     const store = {
       preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
       preflightOutput: mock.fn(async () => ({ ok: false, reason: 'subject_terminal' })),
@@ -318,7 +318,11 @@ describe('QueueProcessor action successor generation fence', () => {
     assert.equal(store.preflight.mock.calls.length, 1);
     assert.equal(store.preflightOutput.mock.calls.length, 1);
     assert.equal(store.commitOutcome.mock.calls.length, 0);
-    assert.equal(deps.socketManager.broadcastAgentMessage.mock.calls.length, 0);
+    assert.equal(
+      deps.socketManager.broadcastAgentMessage.mock.calls.length,
+      2,
+      'the admitted processing response streams normally; the fence only rejects its terminal commit',
+    );
     assert.equal(deps.streamingHook.onStreamStart.mock.calls.length, 0);
     assert.equal(deps.streamingHook.onStreamChunk.mock.calls.length, 0);
     assert.equal(deps.outboundHook.deliver.mock.calls.length, 0);
@@ -362,6 +366,38 @@ describe('QueueProcessor action successor generation fence', () => {
     });
     assert.equal(deps.socketManager.broadcastAgentMessage.mock.calls.length, 1);
     assert.equal(hook.mock.calls[0].arguments[1], 'succeeded');
+  });
+
+  it('streams an admitted action successor through the canonical response before terminal commit', async () => {
+    const order = [];
+    const store = {
+      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
+      preflightOutput: mock.fn(async () => {
+        order.push('output-preflight');
+        return { ok: true, reason: 'active' };
+      }),
+      commitOutcome: mock.fn(),
+    };
+    const deps = depsWithStore(store, {
+      routeExecution: mock.fn(async function* (...args) {
+        const options = args[6];
+        yield { type: 'text', catId: 'opus', content: 'live review progress', timestamp: Date.now() };
+        order.push('route-resumed');
+        assert.equal(await options.beforeOutputCommit('opus'), true);
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      }),
+      ackCollectedCursors: mock.fn(async () => {}),
+    });
+    deps.socketManager.broadcastAgentMessage = mock.fn(() => order.push('broadcast'));
+    const processor = new QueueProcessor(deps);
+    const entry = await enqueueActionEntry(deps);
+
+    const result = await processor.executeEntry(entry);
+
+    assert.equal(result.status, 'succeeded');
+    assert.deepEqual(order.slice(0, 3), ['broadcast', 'route-resumed', 'output-preflight']);
+    assert.equal(store.preflightOutput.mock.calls.length, 1, 'the fence remains a terminal commit barrier');
+    assert.equal(deps.socketManager.broadcastAgentMessage.mock.calls.length, 2, 'text and done stream live');
   });
 
   it('commits legacy predicate-free carrier success at the output barrier', async () => {
@@ -467,7 +503,7 @@ describe('QueueProcessor action successor generation fence', () => {
     assert.equal(store.commitOutcome.mock.calls.length, 0);
   });
 
-  it('suppresses output when outcome recording loses the active-lease race', async () => {
+  it('cancels the terminal commit without erasing an admitted response when the lease race is lost', async () => {
     const store = {
       preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
       preflightOutput: mock.fn(async () => ({ ok: false, reason: 'lease_not_active' })),
@@ -499,7 +535,7 @@ describe('QueueProcessor action successor generation fence', () => {
     assert.equal(store.preflight.mock.calls.length, 1);
     assert.equal(store.preflightOutput.mock.calls.length, 1);
     assert.equal(store.commitOutcome.mock.calls.length, 0);
-    assert.equal(deps.socketManager.broadcastAgentMessage.mock.calls.length, 0);
+    assert.equal(deps.socketManager.broadcastAgentMessage.mock.calls.length, 2);
     assert.equal(deps.streamingHook.onStreamStart.mock.calls.length, 0);
     assert.equal(deps.outboundHook.deliver.mock.calls.length, 0);
     assert.deepEqual(
