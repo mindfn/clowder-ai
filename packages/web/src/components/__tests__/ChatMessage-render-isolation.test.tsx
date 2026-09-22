@@ -129,6 +129,7 @@ describe('ChatMessage render isolation', () => {
       catId: 'cat-1',
       content: '收到',
       timestamp: 100,
+      metadata: { model: 'gpt-test', provider: 'test-provider' },
       lifecycle: {
         kind: 'response',
         orderKey: '100:response-with-append',
@@ -148,7 +149,9 @@ describe('ChatMessage render isolation', () => {
     });
 
     const receipts = container.querySelector('[data-testid="appended-input-receipts"]');
+    const metadata = container.querySelector('[data-testid="message-metadata"]');
     const appendedRow = container.querySelector('[data-appended-input-id="source-appended"]');
+    expect(metadata?.compareDocumentPosition(receipts!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(receipts?.textContent).toContain('补充消息');
     expect(receipts?.textContent).toContain('@狸花猫 测试下追加消息的');
     expect(receipts?.textContent).toContain('查看原文');
@@ -214,12 +217,18 @@ describe('ChatMessage render isolation', () => {
     expect(list?.style.maskImage).toContain('transparent 98px');
 
     const expand = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement | null;
-    expect(expand?.textContent).toBe('展开全部（5）');
+    expect(expand?.getAttribute('aria-label')).toBe('展开全部 5 条补充消息');
+    expect(expand?.textContent).toBe('5');
+    expect(expand?.querySelector('svg')?.classList.contains('rotate-90')).toBe(true);
+
     act(() => expand?.click());
 
     expect(list?.dataset.collapsed).toBe('false');
     expect(list?.style.maxHeight).toBe('');
-    expect(container.querySelector('button[aria-expanded="true"]')?.textContent).toBe('收起');
+    const collapse = container.querySelector('button[aria-expanded="true"]');
+    expect(collapse?.getAttribute('aria-label')).toBe('收起补充消息');
+    expect(collapse?.textContent).toBe('');
+    expect(collapse?.querySelector('svg')?.classList.contains('-rotate-90')).toBe(true);
   });
 
   it('renders only otherwise-invisible post_message targets at the end of the ordinary body', () => {

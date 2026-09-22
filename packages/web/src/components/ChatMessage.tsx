@@ -824,6 +824,7 @@ function ChatMessageContent({
       }
       footer={
         <>
+          {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
           <AppendedInputReceipts
             response={message}
             timelineMessages={threadMessages}
@@ -833,7 +834,6 @@ function ChatMessageContent({
               return cat ? formatCatName(cat) : catId;
             }}
           />
-          {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
         </>
       }
     >

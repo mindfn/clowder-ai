@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ChevronIcon } from '@/components/hub-icons';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 
@@ -118,10 +119,14 @@ export function AppendedInputReceipts({
         <button
           type="button"
           aria-expanded={expanded}
-          className="mt-1 block w-full text-center font-medium text-cafe-muted hover:text-cafe-secondary"
+          aria-label={expanded ? '收起补充消息' : `展开全部 ${renderedInputs.length} 条补充消息`}
+          className="mt-1 flex w-full items-center justify-center gap-1 font-medium text-cafe-muted hover:text-cafe-secondary"
           onClick={() => setExpanded((open) => !open)}
         >
-          {expanded ? '收起' : `展开全部（${renderedInputs.length}）`}
+          <span aria-hidden="true" className="inline-flex">
+            <ChevronIcon expanded={!expanded} className={`h-4 w-4 ${expanded ? '-rotate-90' : ''}`} />
+          </span>
+          {!expanded ? <span aria-hidden="true">{renderedInputs.length}</span> : null}
         </button>
       )}
     </section>
