@@ -6,9 +6,12 @@ import { test } from 'node:test';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { createMessagingDomain } from '../dist/domains/messaging/index.js';
+import { MediaEntitlementLedger, MemoryMediaEntitlementPort } from '../dist/domains/messaging/media-entitlements.js';
+import { FileMessagingMediaLedger } from '../dist/domains/messaging/media-ledger.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
 import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/module-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
+import { PluginMediaReadService } from '../dist/domains/plugin/host-surface/plugin-media-host.js';
 import { MemoryConnectorThreadBindingStore } from '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';
 
 /**
@@ -317,6 +320,7 @@ function hostOf(records, options = {}) {
     },
     ...(options.threads === undefined ? {} : { threads: options.threads }),
     ...(options.messaging === undefined ? {} : { messaging: options.messaging }),
+    ...(options.media === undefined ? {} : { media: options.media }),
     log: options.log ?? (() => {}),
   });
   const router = new PluginRuntimeCarrierRouter(inventory);
@@ -509,6 +513,65 @@ test('start receives only the admitted config, secrets and log Host surface', as
   assert.deepEqual(logs, [
     ['info', 'module started', { pluginId: 'dev.clowder.module-fixture', pluginInstanceId: 'instance-0' }],
   ]);
+});
+
+test('module start receives caller-bound media.read and cannot read after revocation', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(`
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return {
+      async start(host) {
+        log.push({ call: 'media', first: await host.media.read({ reference: globalThis.__f202MediaRef, offset: 0, limit: 2 }) });
+        return { actions: {}, stop() {} };
+      },
+    };
+  },
+};
+`);
+  const ledger = new FileMessagingMediaLedger(join(rootDir, 'private-media'));
+  const entitlements = new MediaEntitlementLedger(new MemoryMediaEntitlementPort());
+  const reference = await ledger.register(Buffer.from('abc'), { ownerInstanceId: 'instance-0' });
+  globalThis.__f202MediaRef = reference;
+  const grant = await entitlements.grant({
+    instanceId: 'instance-0',
+    scope: { kind: 'delivery', deliveryId: 'delivery-1' },
+    elementId: 'media-1',
+    hmrId: reference,
+  });
+  const media = new PluginMediaReadService({ ledger, entitlements });
+  const admitted = manifest({ features: [{ id: 'main', name: 'Main', resources: [], capabilities: ['media.read'] }] });
+  const host = hostOf([{ manifest: admitted, rootDir, effectiveGrants: ['media.read'] }], { media });
+  try {
+    await host.router.start('instance-0');
+    assert.deepEqual(moduleLog(), [
+      {
+        call: 'media',
+        first: {
+          offset: 0,
+          dataBase64: 'YWI=',
+          nextOffset: 2,
+          done: false,
+        },
+      },
+    ]);
+    await entitlements.revoke({ grantId: grant.grantId }, 'delivery_settled');
+    await assert.rejects(
+      media.read(
+        { pluginInstanceId: 'instance-0', effectiveGrants: ['media.read'] },
+        {
+          reference,
+          offset: 0,
+          limit: 2,
+        },
+      ),
+      (error) => error?.code === 'MEDIA_ACCESS_DENIED',
+    );
+  } finally {
+    await host.router.stop('instance-0', 'host_stop');
+    delete globalThis.__f202MediaRef;
+  }
 });
 
 test('start receives the caller-bound Host thread surface', async () => {

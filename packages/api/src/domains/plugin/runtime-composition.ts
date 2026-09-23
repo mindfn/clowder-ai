@@ -9,6 +9,8 @@ import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.j
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
+import { FileMediaEntitlementPort, MediaEntitlementLedger } from '../messaging/media-entitlements.js';
+import { FileMessagingMediaLedger } from '../messaging/media-ledger.js';
 import {
   createMessagingDomain,
   type MessagingDomainDeps,
@@ -41,6 +43,7 @@ import { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-verifier.js';
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
+import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import {
   type BuiltinPluginPackageMaterializer,
@@ -151,6 +154,8 @@ export interface DormantPluginRuntimeComposition {
   readonly contentEditors?: ContentEditorPluginRuntime;
   readonly contentMaterializers?: ContentMaterializerPluginRuntime;
   readonly messaging: MessagingService;
+  readonly mediaLedger: FileMessagingMediaLedger;
+  readonly mediaEntitlements: MediaEntitlementLedger;
   /**
    * Drives thread activity out to whichever subscribers declared they want it. Exposed so the
    * Host can drain a thread after it produces a message; it knows nothing about connectors.
@@ -212,6 +217,16 @@ export function createDormantPluginRuntimeComposition(
     ...(options.getDefaultCatId === undefined ? {} : { getDefaultCatId: options.getDefaultCatId }),
     ...(options.getMentionPatterns === undefined ? {} : { getMentionPatterns: options.getMentionPatterns }),
   });
+  const mediaLedger = new FileMessagingMediaLedger(resolve(dirname(paths.inventorySnapshotPath), 'media'));
+  const mediaEntitlements = new MediaEntitlementLedger(
+    new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), 'media-entitlements.json')),
+    { now: options.now ?? Date.now },
+  );
+  const mediaRead = new PluginMediaReadService({
+    ledger: mediaLedger,
+    entitlements: mediaEntitlements,
+    onRejected: (reason) => moduleLogger.warn({ reason }, 'media.read rejected'),
+  });
   const broker = new HostBrokerControlPlane({
     inventory: inventoryStore,
     store: brokerStore,
@@ -223,7 +238,7 @@ export function createDormantPluginRuntimeComposition(
         intakes: options.intakes,
         ...(options.now === undefined ? {} : { now: options.now }),
       }),
-      ...createMessagingBrokerHandlers({ messaging }),
+      ...createMessagingBrokerHandlers({ messaging, media: mediaRead }),
     ],
     preActiveTimeoutMs: EXTERNAL_PLUGIN_PRE_ACTIVE_TIMEOUT_MS,
     ...(options.now === undefined ? {} : { now: options.now }),
@@ -306,6 +321,7 @@ export function createDormantPluginRuntimeComposition(
     packages,
     materializer: builtinPackages,
     configuration,
+    media: mediaRead,
     ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
     ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
     ...(options.threadStore === undefined ||
@@ -393,6 +409,8 @@ export function createDormantPluginRuntimeComposition(
     ...(contentEditors === undefined ? {} : { contentEditors }),
     ...(contentMaterializers === undefined ? {} : { contentMaterializers }),
     messaging,
+    mediaLedger,
+    mediaEntitlements,
     subscriptionDelivery,
     lifecycle,
     packages,

@@ -14,6 +14,12 @@ import {
 } from '../external-runtime/types.js';
 import type { PluginPackageRecord } from '../host-inventory/types.js';
 import {
+  createPluginMediaHost,
+  createUnavailablePluginMediaHost,
+  type PluginMediaHost,
+  type PluginMediaReadService,
+} from '../host-surface/plugin-media-host.js';
+import {
   createPluginMessagingHost,
   createUnavailablePluginMessagingHost,
   type PluginMessagingHost,
@@ -63,6 +69,7 @@ export interface ModulePluginHostShape {
   readonly tasks: PluginTaskHost;
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
+  readonly media: PluginMediaHost;
   readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -100,6 +107,7 @@ export interface ModulePluginRuntimeOptions {
     readonly bindingStore: IConnectorThreadBindingStore;
     readonly ownerUserId: string;
   };
+  readonly media?: PluginMediaReadService;
   readonly log: ModulePluginHostShape['log'];
 }
 
@@ -239,6 +247,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             subscriptions: subscriptions.host,
           })
         : createUnavailablePluginMessagingHost();
+      const media = this.options.media
+        ? createPluginMediaHost(this.options.media, { pluginInstanceId, effectiveGrants })
+        : createUnavailablePluginMediaHost(effectiveGrants);
       const candidate = await plugin.start({
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
@@ -250,6 +261,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         }),
         threads,
         messaging,
+        media,
         log: (level, message, fields) =>
           this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });
