@@ -101,6 +101,7 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
   let operationState;
   const targetWrites = [];
   const calls = [];
+  const logRecords = [];
   const configuration = {
     async readActionInput() {
       return { account: 'owner@example.com' };
@@ -125,6 +126,10 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
       if (method === 'qr.generate') {
         if (generate === 'invalid') return { render: 42 };
         if (generate === 'slow') return new Promise(() => undefined);
+        const generatedError = { throws: 'Token rejected\n    at private-stack:42', longthrows: 'x'.repeat(240) }[
+          generate
+        ];
+        if (generatedError) throw new Error(generatedError);
         return {
           render: 'img',
           data: { url: 'data:image/png;base64,abc' },
@@ -143,7 +148,7 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
     timeoutMs,
     now: () => now,
   });
-  const app = Fastify();
+  const app = Fastify({ logger: { level: 'warn', stream: { write: (line) => logRecords.push(JSON.parse(line)) } } });
   apps.push(app);
   app.decorateRequest('sessionUserId', undefined);
   app.addHook('onRequest', async (request) => {
@@ -158,6 +163,7 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
     app,
     calls,
     targetWrites,
+    logRecords,
     get state() {
       return operationState;
     },
@@ -191,6 +197,7 @@ test('installed plugin operation routes invoke declared actions, persist state, 
     render: 'img',
     data: { url: 'data:image/png;base64,abc' },
     currentAction: 'status',
+    advance: true,
     backfilledKeys: ['BOT_TOKEN'],
   });
   assert.deepEqual(h.calls[0], {
@@ -212,6 +219,7 @@ test('installed plugin operation routes invoke declared actions, persist state, 
   });
   assert.equal(polling.statusCode, 200, polling.payload);
   assert.equal(polling.json().currentAction, 'status');
+  assert.equal(polling.json().advance, false);
 
   h.setNow(40_001);
   const expired = await inject(h.app, {
@@ -222,6 +230,7 @@ test('installed plugin operation routes invoke declared actions, persist state, 
   assert.equal(expired.statusCode, 200, expired.payload);
   assert.equal(expired.json().currentAction, 'generate');
   assert.equal(expired.json().transition, 'rollback');
+  assert.equal(expired.json().advance, false);
 
   const reset = await inject(h.app, {
     method: 'POST',
@@ -320,4 +329,31 @@ test('operation routes fail closed for auth, lifecycle, declarations, invalid re
     ).statusCode,
     504,
   );
+
+  const thrown = await harness({ generate: 'throws' });
+  const failure = await inject(thrown.app, {
+    method: 'POST',
+    url: `/api/plugins/${pluginId}/actions/qr_login/generate`,
+    headers: { ...auth, 'x-private-header': 'must-not-log-header' },
+    payload: { privateBody: 'must-not-log' },
+  });
+  assert.equal(failure.statusCode, 502);
+  assert.deepEqual(failure.json(), { error: 'Action failed: Token rejected' });
+  assert.equal(failure.payload.includes('private-stack'), false);
+  assert.equal(
+    thrown.logRecords.some((record) => record.msg === 'Plugin operation action failed'),
+    true,
+  );
+  assert.equal(JSON.stringify(thrown.logRecords).includes('must-not-log'), false);
+  assert.equal(JSON.stringify(thrown.logRecords).includes('must-not-log-header'), false);
+  assert.equal(JSON.stringify(thrown.logRecords).includes('private-stack'), false);
+
+  const longThrown = await harness({ generate: 'longthrows' });
+  const bounded = await inject(longThrown.app, {
+    method: 'POST',
+    url: `/api/plugins/${pluginId}/actions/qr_login/generate`,
+    headers: auth,
+  });
+  assert.equal(bounded.statusCode, 502);
+  assert.equal(bounded.json().error, `Action failed: ${'x'.repeat(200)}`);
 });

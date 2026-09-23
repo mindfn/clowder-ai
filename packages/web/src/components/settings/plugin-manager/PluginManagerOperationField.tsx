@@ -28,6 +28,7 @@ export function PluginManagerOperationField({
     <ActionRenderer
       target={{ kind: 'plugin', id: pluginId }}
       operation={operation}
+      configured={field.configured}
       pendingConfigValues={pendingConfigValues}
       onStatusChange={onStatusChange}
     />

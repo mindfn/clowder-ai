@@ -68,6 +68,50 @@ describe('Plugin Manager operation fields', () => {
     container.remove();
   });
 
+  it('keeps a persisted disconnect action reachable when operation targets are configured', async () => {
+    const operation = {
+      kind: 'operation' as const,
+      key: 'qr_login',
+      label: 'QR login',
+      required: false,
+      currentValue: null,
+      sensitive: false,
+      configured: true,
+      operationState: { currentAction: 'disconnect' },
+      actions: [
+        { id: 'generate', label: 'Generate QR', render: 'button' as const, next: 'disconnect' },
+        { id: 'disconnect', label: 'Disconnect', render: 'button' as const, next: 'generate' },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{ ...plugin, configFields: [operation] }}
+          busy={false}
+          validationRequest={0}
+          saved
+        />,
+      ),
+    );
+    await flushEffects();
+    expect(container.querySelector('[data-testid="dev.clowder.fixture-connected"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="dev.clowder.fixture-disconnect"]')).not.toBeNull();
+
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{ ...plugin, configFields: [{ ...operation, configured: false }] }}
+          busy={false}
+          validationRequest={0}
+          saved
+        />,
+      ),
+    );
+    await flushEffects();
+    expect(container.querySelector('[data-testid="dev.clowder.fixture-connected"]')).toBeNull();
+    expect(container.querySelector('[data-testid="dev.clowder.fixture-action-generate"]')).not.toBeNull();
+  });
+
   it('renders an operation action, sends flat drafts, and refreshes its detail', async () => {
     const onOperationChange = vi.fn();
     mockApiFetch.mockResolvedValue(

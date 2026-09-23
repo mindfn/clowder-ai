@@ -6,6 +6,7 @@ export interface ActionApiResult {
   render?: string;
   data?: unknown;
   label?: string;
+  advance?: boolean;
 }
 
 export type ActionRendererTarget =

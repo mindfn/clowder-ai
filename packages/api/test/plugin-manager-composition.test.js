@@ -399,6 +399,7 @@ describe('F202 Plugin Manager runtime composition', () => {
       currentValue: null,
       sensitive: false,
       target: ['provider'],
+      configured: false,
       actions: [
         { id: 'begin', label: 'Begin', render: 'button', next: 'status' },
         { id: 'status', label: 'Status', render: 'polling' },
@@ -411,6 +412,60 @@ describe('F202 Plugin Manager runtime composition', () => {
     });
     assert.equal(JSON.stringify(operation).includes('login.begin'), false);
     assert.equal(JSON.stringify(operation).includes('private'), false);
+    await composition.manager.configure(entry.pluginId, {
+      expectedRevision: plugin.lifecycleRevision,
+      updates: [{ key: 'provider', value: 'feishu' }],
+    });
+    const configured = (await composition.manager.get(entry.pluginId)).plugin.configFields.find(
+      (field) => field.key === 'login',
+    );
+    assert.equal(configured.configured, true);
+  });
+
+  it('projects operation configured only for declared targets with all effective values', async () => {
+    const packageManifest = manifest({
+      configuration: [
+        { key: 'account', label: 'Account', kind: 'string', required: false, default: 'fixture' },
+        { key: 'token', label: 'Token', kind: 'secret', required: false },
+        { key: 'mode', label: 'Mode', kind: 'string', required: false },
+        {
+          key: 'connect',
+          label: 'Connect',
+          kind: 'operation',
+          required: false,
+          target: ['account', 'token'],
+          actions: [{ id: 'start', label: 'Start', render: 'button', action: { method: 'connect.start' } }],
+        },
+        {
+          key: 'inspect',
+          label: 'Inspect',
+          kind: 'operation',
+          required: false,
+          actions: [{ id: 'check', label: 'Check', render: 'button', action: { method: 'inspect.check' } }],
+        },
+      ],
+    });
+    const { composition, entry } = await harness({ packageManifest, contract: contributionContractRuntime() });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    const before = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(before.configFields.find((field) => field.key === 'connect').configured, false);
+    assert.equal(
+      Object.hasOwn(
+        before.configFields.find((field) => field.key === 'inspect'),
+        'configured',
+      ),
+      false,
+    );
+    await composition.configuration.configureOperationTargets(entry.pluginId, before.pluginInstanceId, 'connect', {
+      token: 'secret',
+    });
+    const after = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(after.configFields.find((field) => field.key === 'connect').configured, true);
+    assert.equal(after.configFields.find((field) => field.key === 'token').currentValue, '••••••');
   });
 
   it('invokes operation and test handlers through an installed and enabled builtin fixture package', async () => {

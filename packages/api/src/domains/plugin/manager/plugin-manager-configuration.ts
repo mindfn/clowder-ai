@@ -90,7 +90,10 @@ function projection(
 function operationProjection(
   field: ContractOperationField,
   state: OperationState | undefined,
+  fields: readonly ContractConfigurationField[],
+  stored: Readonly<Record<string, string>>,
 ): PluginManagerConfigField {
+  const byKey = new Map(fields.map((candidate) => [candidate.key, candidate]));
   return {
     key: field.key,
     label: field.label,
@@ -100,6 +103,14 @@ function operationProjection(
     currentValue: null,
     sensitive: false,
     ...(field.target === undefined ? {} : { target: [...field.target] }),
+    ...(field.target?.length
+      ? {
+          configured: field.target.every((key) => {
+            const target = byKey.get(key);
+            return target !== undefined && effectivePluginConfigurationValue(target, stored[key]) !== undefined;
+          }),
+        }
+      : {}),
     actions: field.actions.map((action) => ({
       id: action.id,
       label: action.label,
@@ -277,7 +288,12 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     const fields = manifestConfiguration(packageRecord);
     return (packageRecord.manifest.configuration ?? []).map((field) =>
       field.kind === 'operation'
-        ? operationProjection(field, readPluginOperationState(this.options.projectRoot, pluginId, field.key))
+        ? operationProjection(
+            field,
+            readPluginOperationState(this.options.projectRoot, pluginId, field.key),
+            fields,
+            stored,
+          )
         : projection(field, fields, stored),
     );
   }

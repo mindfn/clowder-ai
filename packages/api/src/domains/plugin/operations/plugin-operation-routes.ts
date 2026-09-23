@@ -106,6 +106,19 @@ function operation(manifest: PluginManifest, key: string): OperationField | unde
 
 class PluginInvocationTimeoutError extends Error {}
 
+function safeActionErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  const firstLine = message.split(/[\r\n]/, 1)[0] ?? '';
+  const printable = Array.from(firstLine)
+    .filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127;
+    })
+    .join('')
+    .trim();
+  return printable ? Array.from(printable).slice(0, 200).join('') : 'Plugin operation invocation failed';
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -175,7 +188,7 @@ export class InstalledPluginOperations {
       if (error instanceof PluginInvocationTimeoutError) {
         return response(504, { error: 'Plugin operation timed out' });
       }
-      return response(502, { error: 'Plugin operation invocation failed' });
+      return response(502, { error: `Action failed: ${safeActionErrorMessage(error)}` });
     }
     const result = operationResult(rawResult);
     if (!result) return response(502, { error: 'Plugin operation returned an invalid response' });
@@ -205,6 +218,7 @@ export class InstalledPluginOperations {
       data: result.data,
       ...(result.label === undefined ? {} : { label: result.label }),
       currentAction: transition.state.currentAction,
+      advance: transition.decision.kind === 'next',
       ...(transition.decision.kind === 'rollback' ? { transition: 'rollback' } : {}),
       ...(backfilledKeys.length === 0 ? {} : { backfilledKeys: [...backfilledKeys] }),
       ...(result.activate === undefined ? {} : { activate: result.activate }),
@@ -266,6 +280,12 @@ export const pluginOperationRoutes: FastifyPluginAsync<PluginOperationRoutesOpti
         request.params.action,
         request.body,
       );
+      if (result.status === 502) {
+        request.log.warn(
+          { pluginId: request.params.pluginId, operation: request.params.operation, action: request.params.action },
+          'Plugin operation action failed',
+        );
+      }
       return reply.status(result.status).send(result.body);
     },
   );

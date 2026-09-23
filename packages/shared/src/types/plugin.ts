@@ -287,6 +287,8 @@ export interface PluginManagerConfigField {
   sensitive: boolean;
   /** Operation-only projection. Callback method names stay Host-private. */
   target?: string[];
+  /** True when all declared operation target fields have effective values; absent without targets. */
+  configured?: boolean;
   actions?: Array<{
     id: string;
     label: string;

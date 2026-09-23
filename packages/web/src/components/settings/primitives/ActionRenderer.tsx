@@ -62,6 +62,14 @@ export function ActionRenderer(props: ActionRendererProps) {
   return <SequencedActionRenderer {...props} />;
 }
 
+function buttonActionFailure(result: ActionApiResult): string | null {
+  const data = result.data;
+  const failedStatus = data !== null && typeof data === 'object' && 'status' in data && data.status === 'error';
+  if (result.advance !== false && !failedStatus) return null;
+  const message = data !== null && typeof data === 'object' && 'message' in data ? data.message : undefined;
+  return typeof message === 'string' && message.length > 0 ? message : (result.label ?? 'Action failed');
+}
+
 function SequencedActionRenderer({
   target,
   operation,
@@ -253,6 +261,12 @@ function SequencedActionRenderer({
       if (!result || !result.ok) {
         setPhase('error');
         setErrorMsg(result?.label ?? 'Network error');
+        return;
+      }
+      const failure = buttonActionFailure(result);
+      if (failure !== null) {
+        setPhase('error');
+        setErrorMsg(failure);
         return;
       }
       setLastResult(toResultState(result));
