@@ -310,6 +310,43 @@ describe('F202 Plugin Manager runtime composition', () => {
     );
   });
 
+  it('projects hidden and conditional fields and derives readiness from the effective selector', async () => {
+    const packageManifest = manifest({
+      configuration: [
+        { key: 'mode', label: 'Mode', kind: 'string', required: false, default: 'webhook' },
+        { key: 'internalFlag', label: 'Internal', kind: 'boolean', required: false, hidden: true, default: false },
+        {
+          key: 'token',
+          label: 'Token',
+          kind: 'string',
+          required: true,
+          requiredWhen: { key: 'mode', value: ['webhook', 'hybrid'] },
+        },
+      ],
+    });
+    const { composition, entry } = await harness({ packageManifest, contract: contributionContractRuntime() });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    const before = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(before.config, 'incomplete');
+    assert.equal(before.configFields.find((field) => field.key === 'internalFlag').hidden, true);
+    assert.deepEqual(before.configFields.find((field) => field.key === 'token').requiredWhen, {
+      key: 'mode',
+      value: ['webhook', 'hybrid'],
+    });
+    assert.equal(before.configFields.find((field) => field.key === 'token').requiredNow, true);
+    await composition.manager.configure(entry.pluginId, {
+      expectedRevision: before.lifecycleRevision,
+      updates: [{ key: 'mode', value: 'polling' }],
+    });
+    const after = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(after.config, 'ready');
+    assert.equal(after.configFields.find((field) => field.key === 'token').requiredNow, false);
+  });
+
   it('projects declared operations, persisted operation state, setup steps, and testability', async () => {
     const packageManifest = manifest({
       configuration: [

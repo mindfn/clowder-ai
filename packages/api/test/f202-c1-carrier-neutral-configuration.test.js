@@ -137,4 +137,64 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
       (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
     );
   });
+
+  test('conditional requirement uses the referenced effective value, not the unconditional required flag', async () => {
+    const fields = [
+      { key: 'mode', label: 'Mode', kind: 'select', required: false, default: 'webhook' },
+      {
+        key: 'verificationToken',
+        label: 'Token',
+        kind: 'secret',
+        required: true,
+        requiredWhen: { key: 'mode', value: ['webhook', 'hybrid'] },
+      },
+    ];
+    await assert.rejects(
+      resolveManifestConfiguration(
+        input({ configuration: fields, grants: ['plugin.config.read', 'secret.read'], store: {} }),
+      ),
+      (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
+    );
+    await assert.rejects(
+      resolveManifestConfiguration(input({ configuration: fields, grants: ['plugin.config.read'], store: {} })),
+      (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'grant_unavailable',
+    );
+    assert.deepEqual(
+      await resolveManifestConfiguration(
+        input({
+          configuration: fields,
+          grants: ['plugin.config.read'],
+          store: { config: { mode: 'polling' } },
+        }),
+      ),
+      [{ key: 'mode', kind: 'select', value: 'polling' }],
+    );
+  });
+
+  test('boolean conditions compare the serialized effective scalar', async () => {
+    const fields = [
+      { key: 'enabled', label: 'Enabled', kind: 'boolean', required: false, default: false },
+      {
+        key: 'reason',
+        label: 'Reason',
+        kind: 'string',
+        required: false,
+        requiredWhen: { key: 'enabled', value: false },
+      },
+    ];
+    await assert.rejects(
+      resolveManifestConfiguration(input({ configuration: fields, grants: ['plugin.config.read'], store: {} })),
+      (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
+    );
+    assert.deepEqual(
+      await resolveManifestConfiguration(
+        input({
+          configuration: fields,
+          grants: ['plugin.config.read'],
+          store: { config: { enabled: true } },
+        }),
+      ),
+      [{ key: 'enabled', kind: 'boolean', value: 'true' }],
+    );
+  });
 });

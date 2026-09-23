@@ -36,6 +36,7 @@
  * ungranted field is omitted only when it is optional, and refuses when it is required.
  */
 
+import { isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
 import type { ConfigurationField, PluginManifest } from '@clowder-ai/plugin-contract';
 import { effectivePluginConfigurationValue } from './manager/plugin-configuration-values.js';
 
@@ -100,7 +101,8 @@ export interface ResolvedConfigurationField {
 async function resolveDeclaredField(
   field: ConfigurationField,
   grants: ReadonlySet<string>,
-  input: ManifestConfigurationProjectionInput,
+  required: boolean,
+  effectiveValue: () => Promise<string | undefined>,
 ): Promise<ResolvedConfigurationField | undefined> {
   if (field.key.startsWith(HOST_PROTOCOL_ENV_PREFIX)) {
     throw new ManifestConfigurationProjectionError({ reason: 'protocol_namespace', key: field.key });
@@ -109,7 +111,7 @@ async function resolveDeclaredField(
   if (!grants.has(grant)) {
     // Rule 3 outranks rule 2 for a required field: a provider that cannot read its own
     // mandatory authority must refuse, not start without it.
-    if (field.required) {
+    if (required) {
       throw new ManifestConfigurationProjectionError({
         reason: 'grant_unavailable',
         key: field.key,
@@ -120,13 +122,9 @@ async function resolveDeclaredField(
     return undefined;
   }
 
-  const stored =
-    field.kind === 'secret'
-      ? await input.configuration.readSecret(input.pluginInstanceId, field.key)
-      : await input.configuration.readConfig(input.pluginInstanceId, field.key);
-  const value = effectivePluginConfigurationValue(field, stored);
+  const value = await effectiveValue();
   if (value === undefined || value.length === 0) {
-    if (field.required) {
+    if (required) {
       throw new ManifestConfigurationProjectionError({ reason: 'value_unavailable', key: field.key, kind: field.kind });
     }
     return undefined;
@@ -144,8 +142,30 @@ export async function resolveManifestConfiguration(
 ): Promise<readonly ResolvedConfigurationField[]> {
   const grants = new Set(input.effectiveGrants);
   const resolved: ResolvedConfigurationField[] = [];
-  for (const field of input.manifest.configuration ?? []) {
-    const entry = await resolveDeclaredField(field, grants, input);
+  const fields = input.manifest.configuration ?? [];
+  const byKey = new Map(fields.map((field) => [field.key, field]));
+  const values = new Map<string, Promise<string | undefined>>();
+  async function effectiveValue(field: ConfigurationField): Promise<string | undefined> {
+    let pending = values.get(field.key);
+    if (!pending) {
+      pending = (async () => {
+        // The condition may reference a field without its read grant. Never inspect its store.
+        if (!grants.has(requiredGrant(field))) return effectivePluginConfigurationValue(field, undefined);
+        const stored =
+          field.kind === 'secret'
+            ? await input.configuration.readSecret(input.pluginInstanceId, field.key)
+            : await input.configuration.readConfig(input.pluginInstanceId, field.key);
+        return effectivePluginConfigurationValue(field, stored);
+      })();
+      values.set(field.key, pending);
+    }
+    return pending;
+  }
+  for (const field of fields) {
+    const referenced = field.requiredWhen ? byKey.get(field.requiredWhen.key) : undefined;
+    const referencedValue = referenced ? await effectiveValue(referenced) : undefined;
+    const required = isPluginConfigurationFieldRequired(field, () => referencedValue);
+    const entry = await resolveDeclaredField(field, grants, required, () => effectiveValue(field));
     if (entry !== undefined) resolved.push(entry);
   }
   return resolved;

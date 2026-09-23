@@ -1,4 +1,8 @@
-import type { PluginManagerConfigField, PluginManagerConfigureRequest } from '@cat-cafe/shared';
+import {
+  isPluginConfigurationFieldRequired,
+  type PluginManagerConfigField,
+  type PluginManagerConfigureRequest,
+} from '@cat-cafe/shared';
 import type { ConfigurationField } from '@clowder-ai/plugin-contract';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
@@ -56,6 +60,7 @@ function currentPackage(
 
 function projection(
   field: ContractConfigurationField,
+  fields: readonly ContractConfigurationField[],
   stored: Readonly<Record<string, string>>,
 ): PluginManagerConfigField {
   const value = effectivePluginConfigurationValue(field, stored[field.key]);
@@ -64,6 +69,16 @@ function projection(
     label: field.label,
     kind: field.kind,
     required: field.required,
+    ...(field.hidden === undefined ? {} : { hidden: field.hidden }),
+    ...(field.requiredWhen === undefined ? {} : { requiredWhen: { ...field.requiredWhen } }),
+    ...(field.requiredWhen === undefined
+      ? {}
+      : {
+          requiredNow: isPluginConfigurationFieldRequired(field, (key) => {
+            const referenced = fields.find((candidate) => candidate.key === key);
+            return referenced ? effectivePluginConfigurationValue(referenced, stored[key]) : undefined;
+          }),
+        }),
     ...(field.description === undefined ? {} : { description: field.description }),
     ...(field.default === undefined ? {} : { default: field.default }),
     ...(field.options === undefined ? {} : { options: field.options.map((option) => ({ ...option })) }),
@@ -140,7 +155,13 @@ function requiredFieldsReady(
   stored: Readonly<Record<string, string>>,
 ): boolean {
   return fields.every((field) => {
-    if (!field.required) return true;
+    if (
+      !isPluginConfigurationFieldRequired(field, (key) => {
+        const referenced = fields.find((candidate) => candidate.key === key);
+        return referenced ? effectivePluginConfigurationValue(referenced, stored[key]) : undefined;
+      })
+    )
+      return true;
     return effectivePluginConfigurationValue(field, stored[field.key]) !== undefined;
   });
 }
@@ -253,10 +274,11 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
       throw new PluginManagerServiceError('CONFIGURATION_UNAVAILABLE', 'Installed plugin package is unavailable');
     }
     const stored = readPluginConfig(this.options.projectRoot, pluginId);
+    const fields = manifestConfiguration(packageRecord);
     return (packageRecord.manifest.configuration ?? []).map((field) =>
       field.kind === 'operation'
         ? operationProjection(field, readPluginOperationState(this.options.projectRoot, pluginId, field.key))
-        : projection(field, stored),
+        : projection(field, fields, stored),
     );
   }
 

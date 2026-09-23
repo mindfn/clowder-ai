@@ -1,5 +1,6 @@
 'use client';
 
+import { isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type PlatformFieldStatus, StepBadge } from '../../HubConfigIcons';
 import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
@@ -27,6 +28,23 @@ function effectiveFieldValue(field: ConfigurationField, drafts: Readonly<Record<
   return '';
 }
 
+function fieldIsRequired(
+  field: ConfigurationField,
+  fields: readonly ConfigurationField[],
+  drafts: Readonly<Record<string, string>>,
+): boolean {
+  const referenced = field.requiredWhen && fields.find((candidate) => candidate.key === field.requiredWhen?.key);
+  if (referenced?.kind === 'secret' && drafts[referenced.key] === undefined && referenced.currentValue !== null) {
+    // The Host cannot expose the stored secret. Reuse its evaluation of the same predicate.
+    return field.requiredNow ?? false;
+  }
+  return isPluginConfigurationFieldRequired(field, (key) => {
+    const referencedField = fields.find((candidate) => candidate.key === key);
+    const value = referencedField ? effectiveFieldValue(referencedField, drafts) : undefined;
+    return value && value.length > 0 ? value : undefined;
+  });
+}
+
 function renderedFieldValue(field: ConfigurationField, drafts: Readonly<Record<string, string>>): string {
   const draft = drafts[field.key];
   if (draft !== undefined) return draft;
@@ -39,7 +57,7 @@ function configurationUpdates(
   drafts: Readonly<Record<string, string>>,
 ): readonly { key: string; value: string | null }[] {
   return fields
-    .filter((field) => field.kind !== 'operation')
+    .filter((field) => field.kind !== 'operation' && field.hidden !== true)
     .flatMap((field) => {
       const draft = drafts[field.key];
       if (draft !== undefined) return [{ key: field.key, value: draft.length === 0 ? null : draft }];
@@ -93,14 +111,17 @@ export function PluginManagerConfigurationSection({
   const [showSaved, setShowSaved] = useState(false);
   const handledValidationRequest = useRef(0);
   const fields = plugin.configFields ?? EMPTY_CONFIGURATION_FIELDS;
-  const configurableFields = fields.filter((field) => field.kind !== 'operation');
+  const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
   const steps = plugin.steps ?? plugin.setupSteps ?? [];
   const updates = configurationUpdates(fields, fieldValues);
 
   const validateConfiguration = useCallback(() => {
     const errors = Object.fromEntries(
       configurableFields
-        .filter((field) => field.required && effectiveFieldValue(field, fieldValues).trim().length === 0)
+        .filter(
+          (field) =>
+            fieldIsRequired(field, fields, fieldValues) && effectiveFieldValue(field, fieldValues).trim().length === 0,
+        )
         .map((field) => [field.key, `请填写 ${field.label}`]),
     );
     setFieldErrors(errors);
@@ -110,7 +131,7 @@ export function PluginManagerConfigurationSection({
     input?.focus();
     input?.scrollIntoView?.({ block: 'center' });
     return false;
-  }, [configurableFields, fieldValues, plugin.id]);
+  }, [configurableFields, fieldValues, fields, plugin.id]);
 
   useEffect(() => {
     if (validationRequest <= handledValidationRequest.current) return;
@@ -142,7 +163,7 @@ export function PluginManagerConfigurationSection({
             </div>
           ))}
 
-          {plugin.configFields && plugin.configFields.length > 0 && (
+          {fields.some((field) => field.kind === 'operation' || field.hidden !== true) && (
             <div className="space-y-2.5">
               <div className="flex items-center gap-1.5">
                 <StepBadge num={steps.length + 1} />
@@ -151,36 +172,38 @@ export function PluginManagerConfigurationSection({
                 </SettingsText>
               </div>
               <div className="ml-[26px] space-y-2.5">
-                {plugin.configFields.map((field) =>
-                  field.kind === 'operation' ? (
-                    <PluginManagerOperationField
-                      key={field.key}
-                      pluginId={plugin.id}
-                      field={field}
-                      pendingConfigValues={fieldValues}
-                      onStatusChange={onOperationChange}
-                    />
-                  ) : (
-                    <ConfigFieldRenderer
-                      key={field.key}
-                      field={renderField(field)}
-                      value={renderedFieldValue(field, fieldValues)}
-                      required={field.required}
-                      error={fieldErrors[field.key]}
-                      onChange={(key, value) => {
-                        setShowSaved(false);
-                        setFieldValues((current) => ({ ...current, [key]: value }));
-                        setFieldErrors((current) => {
-                          if (current[key] === undefined) return current;
-                          const next = { ...current };
-                          delete next[key];
-                          return next;
-                        });
-                      }}
-                      idPrefix={`plugin-manager-${plugin.id}`}
-                    />
-                  ),
-                )}
+                {fields
+                  .filter((field) => field.kind === 'operation' || field.hidden !== true)
+                  .map((field) =>
+                    field.kind === 'operation' ? (
+                      <PluginManagerOperationField
+                        key={field.key}
+                        pluginId={plugin.id}
+                        field={field}
+                        pendingConfigValues={fieldValues}
+                        onStatusChange={onOperationChange}
+                      />
+                    ) : (
+                      <ConfigFieldRenderer
+                        key={field.key}
+                        field={renderField(field)}
+                        value={renderedFieldValue(field, fieldValues)}
+                        required={fieldIsRequired(field, fields, fieldValues)}
+                        error={fieldErrors[field.key]}
+                        onChange={(key, value) => {
+                          setShowSaved(false);
+                          setFieldValues((current) => ({ ...current, [key]: value }));
+                          setFieldErrors((current) => {
+                            if (current[key] === undefined) return current;
+                            const next = { ...current };
+                            delete next[key];
+                            return next;
+                          });
+                        }}
+                        idPrefix={`plugin-manager-${plugin.id}`}
+                      />
+                    ),
+                  )}
               </div>
             </div>
           )}

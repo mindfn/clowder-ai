@@ -130,4 +130,110 @@ describe('Plugin Manager operation fields', () => {
     expect(container.textContent).not.toContain('请填写 QR login');
     expect(onSaveConfig).toHaveBeenCalledWith([{ key: 'account', value: 'alice' }]);
   });
+
+  it('hides internal fields and validates conditional requirements against unsaved selector values', async () => {
+    const onSaveConfig = vi.fn();
+    const conditionalPlugin = {
+      ...plugin,
+      configFields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'select' as const,
+          required: false,
+          default: 'webhook',
+          options: [
+            { value: 'webhook', label: 'Webhook' },
+            { value: 'polling', label: 'Polling' },
+          ],
+          currentValue: null,
+          sensitive: false,
+        },
+        {
+          key: 'internal',
+          label: 'Internal',
+          kind: 'string' as const,
+          required: false,
+          hidden: true,
+          currentValue: 'preserve-me',
+          sensitive: false,
+        },
+        {
+          key: 'token',
+          label: 'Token',
+          kind: 'string' as const,
+          required: true,
+          requiredWhen: { key: 'mode', value: ['webhook', 'hybrid'] },
+          currentValue: null,
+          sensitive: false,
+        },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={conditionalPlugin}
+          busy={false}
+          validationRequest={0}
+          saved={false}
+          onSaveConfig={onSaveConfig}
+        />,
+      ),
+    );
+    expect(container.querySelector('[data-testid="field-internal"]')).toBeNull();
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '保存配置');
+    await act(async () => save?.click());
+    expect(container.textContent).toContain('请填写 Token');
+    expect(onSaveConfig).not.toHaveBeenCalled();
+
+    const mode = container.querySelector('[data-testid="field-mode"]') as HTMLSelectElement;
+    await act(async () => {
+      mode.value = 'polling';
+      mode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => save?.click());
+    expect(container.textContent).not.toContain('请填写 Token');
+    expect(onSaveConfig).toHaveBeenCalledWith([{ key: 'mode', value: 'polling' }]);
+  });
+
+  it('uses the Host condition result when its selector is a masked stored secret', async () => {
+    const onSaveConfig = vi.fn();
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{
+            ...plugin,
+            configFields: [
+              {
+                key: 'selector',
+                label: 'Selector',
+                kind: 'secret',
+                required: false,
+                currentValue: '••••••',
+                sensitive: true,
+              },
+              {
+                key: 'detail',
+                label: 'Detail',
+                kind: 'string',
+                required: false,
+                requiredWhen: { key: 'selector', value: 'enable' },
+                requiredNow: true,
+                currentValue: null,
+                sensitive: false,
+              },
+            ],
+          }}
+          busy={false}
+          validationRequest={0}
+          saved={false}
+          onSaveConfig={onSaveConfig}
+        />,
+      ),
+    );
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '保存配置');
+    await act(async () => save?.click());
+    expect(container.textContent).toContain('请填写 Detail');
+    expect(onSaveConfig).not.toHaveBeenCalled();
+  });
 });
