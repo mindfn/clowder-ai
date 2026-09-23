@@ -129,6 +129,7 @@ import {
 import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
 import { routingPreflightNotice } from './routing-preflight-notice.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
+import { withTimeoutDiagnostics } from './timeout-diagnostics-metadata.js';
 import { buildVoteTally, checkVoteCompletion, extractVoteFromText, VOTE_RESULT_SOURCE } from './vote-intercept.js';
 
 const log = createModuleLogger('route-parallel');
@@ -1261,6 +1262,9 @@ export async function* routeParallel(
           if (parsed.type === 'invocation_usage' && parsed.usage) {
             routeTotalTokens += (parsed.usage.inputTokens ?? 0) + (parsed.usage.outputTokens ?? 0);
           }
+          // F118 AC-C3 / F117: timeout diagnostics persist with the response they explain.
+          const catMetadata = withTimeoutDiagnostics(catMeta.get(effectiveMsg.catId), parsed);
+          if (catMetadata) catMeta.set(effectiveMsg.catId, catMetadata);
         } catch {
           /* ignore parse errors */
         }

@@ -227,6 +227,7 @@ import {
 import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
 import { routingPreflightNotice } from './routing-preflight-notice.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
+import { withTimeoutDiagnostics } from './timeout-diagnostics-metadata.js';
 import { detectMatchedVerdictKeyword, shouldWarnVerdictWithoutPass } from './verdict-detect.js';
 import { evaluateVoidHold } from './void-hold-detect.js';
 import { buildVoteTally, checkVoteCompletion, extractVoteFromText, VOTE_RESULT_SOURCE } from './vote-intercept.js';
@@ -2017,6 +2018,8 @@ export async function* routeSerial(
               if (parsed.type === 'invocation_usage' && parsed.usage) {
                 routeTotalTokens += (parsed.usage.inputTokens ?? 0) + (parsed.usage.outputTokens ?? 0);
               }
+              // F118 AC-C3 / F117: timeout diagnostics persist with the response they explain.
+              persistedMetadata = withTimeoutDiagnostics(persistedMetadata, parsed);
               // F215 AC-C3: detect 46-接力 relay signal — set flag to push opus-4.6 after loop.
               // This is an internal routing signal; must be consumed here and NOT yielded to the frontend.
               if (parsed.type === 'malformed_toolcall_relay_46') {
@@ -2706,6 +2709,7 @@ export async function* routeSerial(
                 if (parsed.type === 'invocation_usage' && parsed.usage) {
                   routeTotalTokens += (parsed.usage.inputTokens ?? 0) + (parsed.usage.outputTokens ?? 0);
                 }
+                persistedMetadata = withTimeoutDiagnostics(persistedMetadata, parsed);
               } catch {
                 /* ignore parse errors */
               }

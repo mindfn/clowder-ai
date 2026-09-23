@@ -7,7 +7,7 @@
  * renders history by message id only — so a draft is nothing but R's in-flight body.
  *
  * Verifies:
- * 1. First page only: a before cursor never folds a draft
+ * 1. Any page: a draft folds into its response on whichever page holds R (before cursor too)
  * 2. A draft folds into the processing response with the exact lifecycle.invocationId
  * 3. A draft without a processing response on the page is ignored (never a record, never deleted)
  * 4. Terminal responses are never overwritten by a stale draft
@@ -130,21 +130,38 @@ describe('GET /api/messages — draft folds into its processing response (#80 / 
     draftStore.upsert({ userId, threadId: 'thread-1', invocationId: turnId, catId, content, updatedAt, ...body });
   }
 
-  it('folds drafts on the first page only (a before cursor never hydrates)', async () => {
+  it('folds a draft into its response on whichever page holds it (before cursor included)', async () => {
     const ts = Date.now();
     const response = appendResponse({ turnId: 'turn-page', timestamp: ts });
     upsertDraft({ turnId: 'turn-page', content: 'Draft...', updatedAt: ts + 100 });
+    // A long turn: newer messages arrive while R is still processing and push it off page one.
+    for (let i = 1; i <= 3; i += 1) {
+      messageStore.append(
+        canonicalTestMessageInput({
+          userId: 'user-1',
+          catId: null,
+          content: `newer ${i}`,
+          mentions: [],
+          timestamp: ts + i * 1000,
+          threadId: 'thread-1',
+        }),
+      );
+    }
 
     const app = await buildApp();
-    const firstPage = await getMessages(app);
-    assert.equal(firstPage.find((message) => message.id === response.id)?.content, 'Draft...');
+    const firstPage = await getMessages(app, { query: '&limit=3' });
+    assert.equal(
+      firstPage.some((message) => message.id === response.id),
+      false,
+      'R is no longer on the first page',
+    );
 
-    const cursorPage = await getMessages(app, { query: `&before=${ts + 1000}` });
-    const paged = cursorPage.find((message) => message.id === response.id);
-    assert.ok(paged, 'the cursor page still contains the response itself');
-    assert.equal(paged.content, '', 'paginated reads show the stored body only');
-    assert.equal(paged.isDraft, undefined);
-    assertNoStandaloneDraftRecords(cursorPage);
+    const secondPage = await getMessages(app, { query: `&limit=3&before=${ts + 1000}` });
+    const paged = secondPage.find((message) => message.id === response.id);
+    assert.ok(paged, 'the older page holds the processing response');
+    assert.equal(paged.content, 'Draft...', 'R on an older page still reads its streamed body');
+    assert.equal(paged.isDraft, true);
+    assertNoStandaloneDraftRecords(secondPage);
   });
 
   it('never hydrates new pending-message recall tombstones or their body', async () => {

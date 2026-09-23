@@ -13,7 +13,7 @@ import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadCh
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { selectThreadMessagesRaw } from '@/hooks/useThreadScopedSelectors';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
-import type { QueueEntry, TaskProgressItem } from '@/stores/chat-types';
+import type { QueueEntry, TaskProgressItem, TimeoutDiagnostics } from '@/stores/chat-types';
 import {
   type ChatMessage as ChatMessageData,
   captureThreadWorkspaceState,
@@ -801,6 +801,9 @@ export function useChatHistory(threadId: string) {
                 /** F212 Phase B (云端 codex P2 2026-05-27): stored CLI diagnostics on error events;
                  *  copied into extra.cliDiagnostics below so the folded panel survives cold hydration. */
                 cliDiagnostics?: CliDiagnostics;
+                /** F118 AC-C3 / F117: timeout diagnostics persisted with a failed response;
+                 *  copied into extra.timeoutDiagnostics below like cliDiagnostics. */
+                timeoutDiagnostics?: TimeoutDiagnostics;
               };
               origin?: 'stream' | 'callback' | 'briefing';
               thinking?: string;
@@ -881,6 +884,7 @@ export function useChatHistory(threadId: string) {
                 // metadata.cliDiagnostics (api-persisted authoritative copy).
                 ...(() => {
                   const cliDiag = m.extra?.cliDiagnostics ?? m.metadata?.cliDiagnostics;
+                  const timeoutDiag = m.metadata?.timeoutDiagnostics;
                   const hasExtraField =
                     m.extra?.rich ||
                     m.extra?.crossPost ||
@@ -896,7 +900,8 @@ export function useChatHistory(threadId: string) {
                     m.extra?.freshness ||
                     m.extra?.messageBundle ||
                     m.extra?.semanticEvent ||
-                    cliDiag;
+                    cliDiag ||
+                    timeoutDiag;
                   if (!hasExtraField) return {};
                   return {
                     extra: {
@@ -917,6 +922,7 @@ export function useChatHistory(threadId: string) {
                       ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),
                       ...(m.extra?.semanticEvent ? { semanticEvent: m.extra.semanticEvent } : {}),
                       ...(cliDiag ? { cliDiagnostics: cliDiag } : {}),
+                      ...(timeoutDiag ? { timeoutDiagnostics: timeoutDiag } : {}),
                     },
                   };
                 })(),

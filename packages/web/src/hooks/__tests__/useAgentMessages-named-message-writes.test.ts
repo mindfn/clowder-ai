@@ -8,6 +8,7 @@ import type { LifecycleStoredMessageMetadata } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { writeStoredSnapshot } from '@/hooks/named-message-writer';
 import { useAgentMessages } from '@/hooks/useAgentMessages';
 import type { ChatMessage, LivenessWarningSnapshot, RichBlock } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
@@ -84,9 +85,9 @@ function responseLifecycle(status: 'processing' | 'completed'): LifecycleStoredM
   };
 }
 
-/** What useSocket does with `message_lifecycle_updated`: upsert R under its server id. */
+/** What useSocket does with `message_lifecycle_updated`: write R's stored snapshot under its server id. */
 function publishResponse(threadId: string, status: 'processing' | 'completed' = 'processing', content = '') {
-  useChatStore.getState().upsertLifecycleMessage(threadId, {
+  writeStoredSnapshot(threadId, {
     id: R,
     type: 'assistant',
     catId: CAT,
@@ -299,6 +300,27 @@ describe('F117 named-message writes', () => {
       expect(messageIn(threadId, R)).toMatchObject({ content: 'partial', isStreaming: false });
     });
 
+    it('writes timeout diagnostics into the response they name, not into an error row', () => {
+      publishResponse(threadId);
+      send(
+        systemInfo(threadId, {
+          type: 'timeout_diagnostics',
+          silenceDurationMs: 1_800_000,
+          processAlive: true,
+          lastEventType: 'thread.started',
+          invocationId: INV,
+        }),
+      );
+
+      expect(messageIn(threadId, R)?.extra?.timeoutDiagnostics).toMatchObject({
+        silenceDurationMs: 1_800_000,
+        processAlive: true,
+        lastEventType: 'thread.started',
+        invocationId: INV,
+      });
+      expect(systemRows(threadId)).toEqual([]);
+    });
+
     it('adds one error row with its own id for an error without messageId, even when repeated', () => {
       publishResponse(threadId);
       send(event(threadId, { type: 'error', error: 'member unavailable' }));
@@ -332,9 +354,54 @@ describe('F117 named-message writes', () => {
       expect(unread()).toBe(1);
     });
 
+    it('counts one unread when the committed snapshot first gives R a body (no streamed output reached here)', () => {
+      publishResponse(BG);
+      expect(unread()).toBe(0);
+
+      publishResponse(BG, 'completed', 'final answer');
+      expect(unread()).toBe(1);
+
+      send(streamText(BG, 'late chunk'));
+      expect(unread()).toBe(1);
+      expect(messageIn(BG, R)?.content).toBe('final answer');
+    });
+
+    it('counts one unread when the committed snapshot overtakes buffered output and creates R', () => {
+      publishResponse(BG, 'completed', 'final answer');
+      expect(unread()).toBe(1);
+
+      send(streamText(BG, 'buffered chunk'));
+      expect(unread()).toBe(1);
+      expect(messageIn(BG, R)?.content).toBe('final answer');
+    });
+
+    it('never double counts when streamed output gives R its body before the committed snapshot', () => {
+      publishResponse(BG);
+      send(streamText(BG, 'streamed'));
+      expect(unread()).toBe(1);
+
+      publishResponse(BG, 'completed', 'streamed');
+      expect(unread()).toBe(1);
+    });
+
+    it('never double counts when the first streamed event creates R before the committed snapshot', () => {
+      send(streamText(BG, 'streamed'));
+      expect(unread()).toBe(1);
+
+      publishResponse(BG, 'completed', 'streamed');
+      expect(unread()).toBe(1);
+    });
+
+    it('counts nothing for a committed snapshot that has nothing to show', () => {
+      publishResponse(BG);
+      publishResponse(BG, 'completed', '');
+      expect(unread()).toBe(0);
+    });
+
     it('never counts unread for the open thread', () => {
       publishResponse(OPEN);
       send(streamText(OPEN, 'visible now'));
+      publishResponse(OPEN, 'completed', 'visible now');
       expect(useChatStore.getState().getThreadState(OPEN).unreadCount).toBe(0);
     });
   });

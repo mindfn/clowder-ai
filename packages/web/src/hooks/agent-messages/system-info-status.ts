@@ -1,6 +1,9 @@
 import { parseFreshnessCarrierCapability } from '@/components/message-disposition-presentation';
+import { writeTimeoutDiagnostics } from '@/hooks/named-message-writer';
 import type { ContextHealthData, TaskProgressItem } from '@/stores/chat-types';
 import { formatAgyProgressDetail } from '../system-info-visible';
+import { timeoutDiagnosticsFrom } from './error-rows';
+import { namedTarget } from './named-target';
 import type { SystemInfoPort } from './system-info-port';
 import {
   appServerStageStatus,
@@ -164,9 +167,16 @@ const STATUS_PROJECTORS = new Map<string, StatusProjector>([
     },
   ],
   [
-    // F118 AC-C3: the open thread keeps them for the error row; a background thread drops them.
+    // F118 AC-C3 / F117: diagnostics explain the failure of the response the event names, so they
+    // are written into it (the server persists them with its terminal state too). An event that
+    // names no response keeps them, open thread only, for the error row they explain.
     'timeout_diagnostics',
     (parsed, msg, port) => {
+      const target = namedTarget(msg, port.threadId);
+      if (target) {
+        writeTimeoutDiagnostics(target, timeoutDiagnosticsFrom(parsed), port.store);
+        return;
+      }
       if (msg.catId) port.stashTimeoutDiagnostics?.(msg.catId, parsed);
     },
   ],

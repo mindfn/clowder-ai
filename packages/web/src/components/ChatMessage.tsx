@@ -19,6 +19,7 @@ import {
   doesAssistantMessageRenderBubble,
   hasAssistantBody,
   projectEmptyResponseLifecycleNotice,
+  projectFailedResponseLabel,
 } from './assistant-message-renderability';
 import { CapabilityTipStrip } from './CapabilityTipStrip';
 import { CatAvatar } from './CatAvatar';
@@ -352,6 +353,9 @@ function ChatMessageContent({
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
   const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
+  // F118 AC-C3 / F117: a failed response owns its failure, so its timeout diagnostics render under
+  // its bubble — whether it streamed a body or only shows the failure notice.
+  const failedResponseLabel = projectFailedResponseLabel(message);
   const assistantPresentationTime =
     message.lifecycle?.kind === 'response' ? getMessageTimelineOrderTime(message) : message.timestamp;
   const cliStatus = message.isStreaming
@@ -836,6 +840,14 @@ function ChatMessageContent({
       }
       footer={
         <>
+          {failedResponseLabel && message.extra?.timeoutDiagnostics ? (
+            <div className="mt-2">
+              <TimeoutDiagnosticsPanel
+                errorMessage={failedResponseLabel}
+                diagnostics={message.extra.timeoutDiagnostics}
+              />
+            </div>
+          ) : null}
           {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
           <AppendedInputReceipts
             response={message}

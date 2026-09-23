@@ -35,7 +35,7 @@ export function labelledErrorContent(msg: Pick<AgentEventFields, 'error' | 'cont
   }
 }
 
-function timeoutDiagnosticsFrom(diag: Record<string, unknown>): TimeoutDiagnostics {
+export function timeoutDiagnosticsFrom(diag: Record<string, unknown>): TimeoutDiagnostics {
   return {
     silenceDurationMs: diag.silenceDurationMs as number,
     processAlive: diag.processAlive as boolean,

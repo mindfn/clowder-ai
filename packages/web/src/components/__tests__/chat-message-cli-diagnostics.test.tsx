@@ -511,4 +511,74 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     expect(container.querySelector('[data-testid="cli-diagnostics"]')).toBeNull();
     expect(container.querySelector('[data-message-id="dup-msg-unclassified"]')).toBeTruthy();
   });
+
+  describe('F117: a failed response owns its timeout diagnostics', () => {
+    const timeoutDiagnostics = {
+      silenceDurationMs: 1_800_000,
+      processAlive: true,
+      lastEventType: 'thread.started',
+      invocationId: 'turn-timeout',
+    };
+
+    function failedResponse(
+      content: string,
+      status: 'failed' | 'interrupted' | 'completed' = 'failed',
+    ): ChatMessageType {
+      return {
+        id: 'response-timeout',
+        from: { kind: 'agent', catId: 'opus' },
+        type: 'assistant',
+        catId: 'opus',
+        content,
+        origin: 'stream',
+        timestamp: 120,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '100:turn-timeout',
+          invocationId: 'turn-timeout',
+          targetId: 'opus',
+          inputEntryIds: ['entry-1'],
+          inputMessageIds: ['source-1'],
+          status,
+          startedAt: 100,
+          completedAt: 120,
+          ...(status === 'completed' ? {} : { reason: 'provider_error' }),
+        },
+        extra: { timeoutDiagnostics },
+      } as ChatMessageType;
+    }
+
+    it('shows the panel under the failure notice when nothing was streamed', () => {
+      render(failedResponse(''));
+
+      expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain('回复失败。');
+      const panel = container.querySelector('[data-testid="timeout-diagnostics"]');
+      expect(panel).toBeTruthy();
+      expect(panel?.textContent).toContain('回复失败。');
+      expect(container.querySelector('[data-message-id="response-timeout"]')).toBeTruthy();
+    });
+
+    it('keeps the streamed body and shows the panel under it', () => {
+      render(failedResponse('partial answer before the CLI went silent'));
+
+      expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain(
+        'partial answer before the CLI went silent',
+      );
+      const panel = container.querySelector('[data-testid="timeout-diagnostics"]');
+      expect(panel).toBeTruthy();
+      expect(panel?.textContent).toContain('回复失败。');
+    });
+
+    it('labels an interrupted response with a body as interrupted', () => {
+      render(failedResponse('partial answer', 'interrupted'));
+
+      expect(container.querySelector('[data-testid="timeout-diagnostics"]')?.textContent).toContain('回复已中断。');
+    });
+
+    it('never shows timeout diagnostics on a completed response', () => {
+      render(failedResponse('final answer', 'completed'));
+
+      expect(container.querySelector('[data-testid="timeout-diagnostics"]')).toBeNull();
+    });
+  });
 });

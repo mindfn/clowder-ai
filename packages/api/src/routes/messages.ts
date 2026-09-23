@@ -1239,12 +1239,13 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       );
     }
 
-    // #80 / F117: a streaming draft is only the in-flight body of its durable response R
-    // (first page only — no before cursor). R is admitted empty as a processing lifecycle
-    // response whose lifecycle.invocationId is the child turn id that keys DraftStore, so a
-    // draft folds into R by that exact id. A draft without a processing R on this page is
-    // ignored here: it never becomes a standalone record and this read never deletes it.
-    if (!before && opts.draftStore) {
+    // #80 / F117: a streaming draft is only the in-flight body of its durable response R.
+    // R is admitted empty as a processing lifecycle response whose lifecycle.invocationId is
+    // the child turn id that keys DraftStore, so a draft folds into R by that exact id on
+    // whichever page holds R — a long turn pushed to an older page by newer messages still
+    // reads its body. A draft without a processing R on this page is ignored here: it never
+    // becomes a standalone record and this read never deletes it.
+    if (opts.draftStore) {
       const processingResponseIndexByInvocationId = new Map<string, number>();
       for (const [index, item] of chatItems.entries()) {
         if (item.lifecycle?.kind === 'response' && item.lifecycle.status === 'processing') {

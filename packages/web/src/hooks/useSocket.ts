@@ -26,6 +26,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
 import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
 import { getUserId } from '@/utils/userId';
+import { writeStoredSnapshot } from './named-message-writer';
 import {
   deliverPreviewAutoOpenEvent,
   type PreviewAutoOpenEvent,
@@ -1000,6 +1001,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           thinking?: string;
           metadata?: import('../stores/chat-types').ChatMessageMetadata & {
             cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics;
+            timeoutDiagnostics?: import('../stores/chat-types').TimeoutDiagnostics;
           };
           mentionsUser?: boolean;
           extra?: Record<string, unknown>;
@@ -1011,8 +1013,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         if (!isLifecycleStoredMessageMetadata(data.message.lifecycle)) return;
         const lifecycle = data.message.lifecycle;
         const isDeliveryFailure = lifecycle.kind === 'delivery_failure';
-        const store = useChatStore.getState();
-        store.upsertLifecycleMessage(data.threadId, {
+        writeStoredSnapshot(data.threadId, {
           id: data.message.id,
           type: isDeliveryFailure
             ? 'system'
@@ -1036,13 +1037,16 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           ...(data.message.thinking ? { thinking: data.message.thinking } : {}),
           ...(data.message.metadata ? { metadata: data.message.metadata } : {}),
           ...(data.message.mentionsUser ? { mentionsUser: true } : {}),
-          ...(data.message.extra || data.message.metadata?.cliDiagnostics
+          ...(data.message.extra || data.message.metadata?.cliDiagnostics || data.message.metadata?.timeoutDiagnostics
             ? {
                 extra: {
                   ...(data.message.extra as import('../stores/chat-types').ChatMessage['extra']),
-                  // F212: same folding as history hydration, so a failed response keeps its panel.
+                  // F212 / F118: same folding as history hydration, so a failed response keeps its panel.
                   ...(data.message.metadata?.cliDiagnostics
                     ? { cliDiagnostics: data.message.metadata.cliDiagnostics }
+                    : {}),
+                  ...(data.message.metadata?.timeoutDiagnostics
+                    ? { timeoutDiagnostics: data.message.metadata.timeoutDiagnostics }
                     : {}),
                 },
               }
