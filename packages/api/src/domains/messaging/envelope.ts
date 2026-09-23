@@ -323,14 +323,27 @@ function hostRelayedEpistemic(msg: StoredMessage): EpistemicStatus {
 
 const MEDIA_RICH_BLOCK_KINDS = new Set<RichBlock['kind']>(['audio', 'file', 'media_gallery']);
 
-function richBlockFallbackText(block: RichBlock): string {
-  const label =
-    'title' in block && typeof block.title === 'string'
-      ? block.title
-      : block.kind === 'diff'
-        ? block.filePath
-        : block.id;
-  return `[${block.kind}: ${Array.from(label).slice(0, 120).join('')}]`;
+type HostRichBlockDegradationReason = 'bounds_exceeded' | 'invalid_shape';
+
+/** Shared exit for blocks the Host cannot put on the wire, including historical invalid blocks after P1. */
+function degradeHostRichBlock(
+  messageId: string,
+  block: unknown,
+  reason: HostRichBlockDegradationReason,
+): { text: string } {
+  const raw = isRecord(block) ? block : {};
+  const kind = typeof raw.kind === 'string' ? raw.kind : 'unknown';
+  let label = 'unrenderable block';
+  if (typeof raw.id === 'string') label = raw.id;
+  if (typeof raw.filePath === 'string') label = raw.filePath;
+  if (typeof raw.title === 'string') label = raw.title;
+  console.warn('[F202 W2-5a] rich block degraded', {
+    messageId,
+    kind,
+    bytes: payloadBytes(raw),
+    reason,
+  });
+  return { text: `[${kind}: ${Array.from(label).slice(0, 120).join('')}]` };
 }
 
 function boundedHostElementBytes(
@@ -373,7 +386,6 @@ function projectHostElements(msg: StoredMessage): MessageElement[] {
   const nonMedia = blocks.flatMap((block, index) => (MEDIA_RICH_BLOCK_KINDS.has(block.kind) ? [] : [{ block, index }])); // W2-5b owns media references and TTS.
   for (const [position, { block, index }] of nonMedia.entries()) {
     const rawPayload = block as unknown as Record<string, unknown>;
-    const bytes = payloadBytes(rawPayload);
     const reserveOverflow = position < nonMedia.length - 1 || overflowKinds.length > 0;
     const richBytes = boundedHostElementBytes(elements, totalBytes, rawPayload, reserveOverflow);
     if (richBytes !== null) {
@@ -387,12 +399,7 @@ function projectHostElements(msg: StoredMessage): MessageElement[] {
       continue;
     }
 
-    console.warn('[F202 W2-5a] rich block degraded', {
-      messageId: msg.id,
-      kind: block.kind,
-      bytes: bytes === null ? 'unserializable' : bytes,
-    });
-    const fallback = { text: richBlockFallbackText(block) };
+    const fallback = degradeHostRichBlock(msg.id, block, 'bounds_exceeded');
     const fallbackBytes = boundedHostElementBytes(elements, totalBytes, fallback, reserveOverflow);
     if (fallbackBytes !== null) {
       elements.push({

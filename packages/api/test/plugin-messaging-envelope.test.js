@@ -134,6 +134,7 @@ describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
       messageId: 'msg-large',
       kind: 'card',
       bytes: Buffer.byteLength(JSON.stringify(card), 'utf8'),
+      reason: 'bounds_exceeded',
     });
   });
 
