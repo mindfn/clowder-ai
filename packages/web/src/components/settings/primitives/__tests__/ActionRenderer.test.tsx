@@ -327,6 +327,54 @@ describe('ActionRenderer', () => {
     expect(mockApiFetch).not.toHaveBeenCalled();
   });
 
+  it('recognizes a live authorization cycle without reserved action names', async () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    let armed = false;
+    mockApiFetch.mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/authorize')) armed = true;
+      if (path.endsWith('/withdraw')) armed = false;
+      return jsonResponse({
+        ok: true,
+        render: 'status',
+        label: armed ? 'Authorized' : 'Not authorized',
+        data: {
+          armed,
+          remainingMs: armed ? 60000 : 0,
+          ...(armed ? { expiresAt: new Date(Date.now() + 60000).toISOString() } : {}),
+        },
+      });
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          target: { kind: 'plugin', id: 'cycle' },
+          operation: {
+            name: 'consent',
+            label: 'Consent',
+            currentAction: 'withdraw',
+            actions: [
+              { id: 'authorize', label: 'Authorize', render: 'button', next: 'withdraw' },
+              { id: 'inspect', label: 'Inspect', render: 'status' },
+              { id: 'withdraw', label: 'Withdraw', render: 'button', next: 'authorize' },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugins/cycle/actions/consent/inspect', { method: 'POST' });
+    expect(container.textContent).toContain('Not authorized');
+
+    await act(async () => {
+      queryButton(container, 'Authorize').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+    expect(queryButton(container, 'Withdraw')).not.toBeNull();
+  });
+
   it('syncs action phase when refreshed connector status becomes unconfigured', async () => {
     const operation = {
       name: 'connect',

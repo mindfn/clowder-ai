@@ -45,16 +45,11 @@ export interface ActionRendererProps {
 export function ActionRenderer(props: ActionRendererProps) {
   const actions = props.operation.actions;
   const firstAction = actions[0];
-  const revokeAction = actions.find((action) => action.id === 'disarm');
-  const statusAction = actions.find(
-    (action) => action.id === 'status' && (action.render === 'status' || action.render === 'polling'),
+  const revokeAction = actions.find(
+    (action) => action.render === 'button' && action.next === firstAction?.id && firstAction.next === action.id,
   );
-  if (
-    firstAction?.id === 'arm' &&
-    firstAction.render === 'button' &&
-    statusAction &&
-    revokeAction?.next === firstAction.id
-  ) {
+  const statusAction = actions.find((action) => action.render === 'status' || action.render === 'polling');
+  if (firstAction?.render === 'button' && statusAction && revokeAction) {
     return (
       <LiveStatusActionRenderer
         {...props}
