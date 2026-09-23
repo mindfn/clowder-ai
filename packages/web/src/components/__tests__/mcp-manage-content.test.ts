@@ -420,9 +420,9 @@ describe('McpManageContent', () => {
         items: [
           {
             ...MOCK_ITEMS[1],
-            id: 'plugin:weixin-mp:mcp',
+            id: 'plugin:official.fixture:mcp',
             source: 'plugin',
-            pluginId: 'weixin-mp',
+            pluginId: 'official.fixture',
             description: 'Plugin owned MCP',
           },
         ],
@@ -437,7 +437,7 @@ describe('McpManageContent', () => {
     const card = container.querySelector('.settings-resource-card');
     expect(card?.textContent).toContain('Plugin owned MCP');
     // Informational badge still shown
-    expect(card?.textContent).toContain('由插件 weixin-mp 管理');
+    expect(card?.textContent).toContain('由插件 official.fixture 管理');
 
     // Toggle enabled — plugin MCPs are treated like regular MCPs
     const toggle = card?.querySelector('.settings-resource-toggle') as HTMLButtonElement | null;

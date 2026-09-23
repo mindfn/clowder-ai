@@ -4321,9 +4321,6 @@ async function main(): Promise<void> {
       './domains/plugin/PluginResourceActivator.js'
     );
     const { ScheduleFactoryRegistry } = await import('./domains/plugin/ScheduleFactoryRegistry.js');
-    const { PluginLimbAdapter } = await import('./domains/limb/PluginLimbAdapter.js');
-    const { loadLimbDeclaration } = await import('./domains/limb/limb-yaml-loader.js');
-    const { weixinMpHandlers } = await import('./plugins/weixin-mp/index.js');
     const {
       WeChatVisibleReaderArmStore,
       WeChatVisibleReaderMetrics,
@@ -4375,10 +4372,6 @@ async function main(): Promise<void> {
     // F202-2B: Mutable deps ref — starts with just log, populated with full GitHub deps later
     const scheduleFactoryDeps: Record<string, unknown> = { log: app.log };
 
-    limbAdapterRegistry.set('weixin-mp', async (yamlPath, pluginConfig) => {
-      const declaration = loadLimbDeclaration(yamlPath);
-      return new PluginLimbAdapter({ declaration, pluginConfig, redis, handlers: weixinMpHandlers });
-    });
     registerWeChatVisibleReaderLimbFactory(limbAdapterRegistry, {
       armStore: weChatVisibleReaderArmStore,
       metrics: weChatVisibleReaderMetrics,
@@ -5074,6 +5067,11 @@ async function main(): Promise<void> {
     resolveRepositoryReplacementPluginIds,
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const pluginManagerHostPolicies = [
+    {
+      pluginId: 'official.weixin-mp',
+      replacesRepositoryPluginId: 'weixin-mp',
+      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
+    },
     {
       pluginId: 'dev.clowder.video-generation',
       replacesRepositoryPluginId: 'video-gen',

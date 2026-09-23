@@ -117,6 +117,11 @@ test('projects canonical machine catalog release truth while Host policy remains
 test('uses the same Host-owned grants for local development archives as catalog releases', () => {
   const policies = [
     {
+      pluginId: 'official.weixin-mp',
+      replacesRepositoryPluginId: 'weixin-mp',
+      effectiveGrants: ['plugin.config.read', 'secret.read'],
+    },
+    {
       pluginId: 'dev.clowder.video-generation',
       replacesRepositoryPluginId: 'video-gen',
       effectiveGrants: ['plugin.config.read', 'secret.read'],
@@ -127,6 +132,12 @@ test('uses the same Host-owned grants for local development archives as catalog 
     },
   ];
 
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(policies, {
+      pluginId: 'official.weixin-mp',
+    }),
+    ['plugin.config.read', 'secret.read'],
+  );
   assert.deepEqual(
     resolveLocalPluginEffectiveGrants(policies, {
       pluginId: 'dev.clowder.video-generation',
@@ -141,6 +152,7 @@ test('uses the same Host-owned grants for local development archives as catalog 
   assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['dev.clowder.video-generation']), [
     'video-gen',
   ]);
+  assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['official.weixin-mp']), ['weixin-mp']);
   assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['dev.clowder.video-analysis']), []);
 });
 
