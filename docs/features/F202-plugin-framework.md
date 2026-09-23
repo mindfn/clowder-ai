@@ -158,6 +158,36 @@ The accepted Train B direction does not approve the aggregate migration or commi
 - Declarative UI contributions target only Host-owned registered slots and commands. A slot lands together
   with the acceptance that plugin disable/uninstall removes both its button/icon and command handler.
 
+### Train C1 / C2 — where the plan and the status truth live (updated 2026-09-23)
+
+- **Host-side C1 ledger (decision entry; single source of truth for every Host slice, its acceptance and
+  its review record with exact HEADs)**: `docs/plans/2026-09-21-f202-c1-contract.md`, carried on branch
+  `feat/f202-c1-core-cutover` → upstream PR zts212653/clowder-ai#1487. Its §0 quotes the operator rulings,
+  §1 quantifies the demand per plugin, §2 is the generic interface set, the overview tables list what
+  migrates / what stays for C2 / the "delete code" ledger, and the phase tables (phase 1 S1–S10, phase 2
+  W1–W4, closing items) are updated only by the reviewer after each slice passes.
+- **Host-side pre-plan**: `docs/plans/2026-09-19-f202-train-c1-migration-plan.md` — frozen inventory,
+  no-double-run / rollback / persistent-data contract, operator-ruled terminal acceptance (2026-09-20).
+  `2026-09-21-f202-c1-convergence-worklist.md` and `2026-09-21-f202-c1-honest-assessment.md` are derivation
+  archives whose conclusions were partly overturned; `2026-09-20-f202-c1-host-plugin-interface-contract.md`
+  keeps valid operator quotes but its implementation status is stale.
+- **Package-side C1**: repository `clowder-ai-plugins`, branch `feat/f202-train-c1-plugins-migration` →
+  PR zts212653/clowder-ai-plugins#54 (draft until the cutover gate: one connector proving external-origin
+  `messaging.send` on a real Host). Plan: `docs/plans/2026-09-19-train-c1-plugins-aggregate-migration.md`;
+  frozen inventory: `migration/f202-train-c1-inventory.json`.
+- **Status on 2026-09-23**: Host phase 1 (interfaces S1–S8, contract pin A4, S9 trusted limb invocation,
+  S10 dependency closure by admission source) is complete; phase 2 W1 — video-generation, video-analysis,
+  weixin-mp, enterprise-workflow, wechat-visible-reader — is cut over to installed packages with the Host
+  copies deleted; W2 (7 IM connectors + ChatGPT Pro) is in progress; W3 (github cluster) and W4 (collective
+  backend, GenOffice docx) are pending; closing items (first-boot builtin install, the existing-data
+  migration decision, contract / SDK publication before upstream merge) are listed in the ledger.
+- **C2 scope truth**: the Train C2 bullets above plus the ledger's "留到 C2" table and its §5 frontend
+  table. Operator definition (2026-09-21): anything *outside* the Plugin Manager where a plugin must extend
+  our UI with an entry button or frame — GenOffice editor host, the collective page, Feishu meeting cards,
+  the five managed services. Plugin-specific settings / status / actions *inside* the Plugin Manager are
+  not C2; C1 closes them with generic configuration + actions + binding lists. No C2 execution plan exists
+  yet: per the rule above, a hook or UI slot opens only with its first real migrated consumer, after C1.
+
 The detailed state census, invariants, Design Gate and TDD sequence live in
 `feature-specs/2026-09-01-f202-terminal-plugin-manager.md`.
 
