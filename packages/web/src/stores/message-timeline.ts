@@ -11,6 +11,7 @@ export interface MessageTimelinePoint {
     kind?: string;
     status?: string;
     completedAt?: number;
+    latestInputTimelineOrderAt?: number;
   };
 }
 
@@ -20,10 +21,15 @@ export function isMessageTimelineActive(message: MessageTimelinePoint): boolean 
   return message.isStreaming === true;
 }
 
-/** Presentation clock: active streams follow activity; terminal lifecycles freeze at completion. */
+/** Presentation clock: activity/completion time, bounded after every admitted input for response causality. */
 export function getMessageTimelineOrderTime(message: MessageTimelinePoint): number {
   const liveOrDeliveryTime = message.timelineOrderAt ?? message.deliveredAt ?? message.timestamp;
-  return isMessageTimelineActive(message) ? liveOrDeliveryTime : (message.lifecycle?.completedAt ?? liveOrDeliveryTime);
+  const presentationTime = isMessageTimelineActive(message)
+    ? liveOrDeliveryTime
+    : (message.lifecycle?.completedAt ?? liveOrDeliveryTime);
+  const latestInputTime =
+    message.lifecycle?.kind === 'response' ? message.lifecycle.latestInputTimelineOrderAt : undefined;
+  return latestInputTime === undefined ? presentationTime : Math.max(presentationTime, latestInputTime + 1);
 }
 
 /** Storage cursor clock: keep browser pagination on the API/Redis timeline score. */

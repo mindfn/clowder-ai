@@ -317,6 +317,13 @@ describe('QueueProcessor over the source-row pending Queue', () => {
   // F117 case does) cannot see this: the store was always right, the broadcast was not.
   it('carries connector source on the delivered projection', async () => {
     const harness = createHarness();
+    const originalClaim = harness.queue.markProcessingGroupDurable.bind(harness.queue);
+    let claimedAt;
+    harness.queue.markProcessingGroupDurable = mock.fn(async (...args) => {
+      const result = await originalClaim(...args);
+      claimedAt = result?.entry.claimedAt;
+      return result;
+    });
     const from = { kind: 'system', service: 'managed-command-wake' };
     const source = {
       connector: 'hold-ball',
@@ -364,6 +371,8 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.ok(projected, 'the delivered connector notice must be in the projection');
     assert.equal(projected.source?.connector, 'hold-ball');
     assert.equal(projected.source?.meta?.taskId, 'hold-ball-test-1');
+    const stored = await harness.messageStore.getById(admitted.message.id);
+    assert.equal(stored.deliveredAt, claimedAt, 'connector notices share the durable dequeue clock');
   });
 
   it('starts every idle target of one source before either target completes', async () => {
@@ -574,9 +583,64 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     );
     const response = await harness.messageStore.getById(source.lifecycle.dispatchRefs[0].statusMessageId);
     assert.equal(response.lifecycle.kind, 'response');
+    assert.ok(
+      response.lifecycle.latestInputTimelineOrderAt >= source.timelineOrderAt,
+      'the receiver presentation floor must include its triggering input',
+    );
     assert.equal(response.lifecycle.status, 'interrupted');
     assert.equal(response.lifecycle.reason, 'queue_target_retirement_pending');
     assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+  });
+
+  it('publishes queued input at durable dequeue time even when provider start is delayed', async () => {
+    let harness;
+    let claimedAt;
+    harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        const claimed = harness.queue.list(threadId, userId)[0];
+        assert.equal(claimed.status, 'claimed');
+        claimedAt = claimed.claimedAt;
+        assert.ok(Number.isFinite(claimedAt));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId: targetCats[0],
+          invocationId: 'turn-delayed-provider-start',
+          parentInvocationId: options.parentInvocationId,
+          startedAt: Date.now(),
+        });
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    const admitted = await admitMessage(harness);
+
+    assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
+    await waitFor(() => harness.invocationRecordStore.records.get('inv-1')?.status === 'succeeded');
+
+    const source = await harness.messageStore.getById(admitted.message.id);
+    const response = await harness.messageStore.getById(source.lifecycle.dispatchRefs[0].statusMessageId);
+    assert.equal(source.deliveredAt, claimedAt, 'source delivery must reuse the durable dequeue clock');
+    assert.equal(source.timelineOrderAt, claimedAt);
+    assert.ok(response.lifecycle.startedAt > source.timelineOrderAt);
+  });
+
+  it('preserves the enqueue clock floor if the durable Queue clock runs ahead of wall time', async () => {
+    const harness = createHarness();
+    harness.queue.lastEnqueuedAt = Date.now() + 10_000;
+    const admitted = await admitMessage(harness);
+    assert.ok(admitted.entry.enqueuedAt > Date.now());
+
+    assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
+    await waitFor(() => harness.invocationRecordStore.records.get('inv-1')?.status === 'succeeded');
+
+    const source = await harness.messageStore.getById(admitted.message.id);
+    const response = await harness.messageStore.getById(source.lifecycle.dispatchRefs[0].statusMessageId);
+    assert.equal(source.deliveredAt, admitted.entry.enqueuedAt);
+    assert.equal(source.timelineOrderAt, admitted.entry.enqueuedAt);
+    assert.ok(response.lifecycle.startedAt < source.timelineOrderAt);
+    assert.ok(response.lifecycle.latestInputTimelineOrderAt >= source.timelineOrderAt);
   });
 
   it('restores only the target whose parallel admission failed before its dispatchRef committed', async () => {

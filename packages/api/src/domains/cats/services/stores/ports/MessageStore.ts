@@ -1085,6 +1085,7 @@ function appendLifecycleResponseInputsMetadata(
   input: Pick<LifecycleAppendAdmissionInput, 'entryId' | 'inputMessageIds'> & {
     targetId: string;
     invocationId: string;
+    latestInputTimelineOrderAt: number;
   },
 ): { kind: 'applied'; lifecycle: LifecycleStoredMessageMetadata } | { kind: 'replayed' } | { kind: 'conflict' } {
   if (
@@ -1110,6 +1111,7 @@ function appendLifecycleResponseInputsMetadata(
       ...current,
       inputEntryIds: [...current.inputEntryIds, input.entryId],
       inputMessageIds: [...current.inputMessageIds, ...input.inputMessageIds],
+      latestInputTimelineOrderAt: Math.max(current.latestInputTimelineOrderAt ?? 0, input.latestInputTimelineOrderAt),
     },
   };
 }
@@ -1171,6 +1173,10 @@ export function prepareLifecycleAppendAdmission(
       inputMessageIds: input.inputMessageIds,
       targetId: run.targetId,
       invocationId: run.invocationId,
+      latestInputTimelineOrderAt: Math.max(
+        run.dispatchedAt,
+        ...messages.slice(0, input.inputMessageIds.length).map(getTimelineOrderTime),
+      ),
     });
     if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
     if (transition.kind === 'applied') replayed = false;

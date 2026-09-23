@@ -19,7 +19,28 @@ describe('getMessageTimelineOrderTime', () => {
     ).toBe(1_800);
   });
 
-  it('freezes a terminal response at its completion time', () => {
+  it('places an active response after the newest admitted input even before its first chunk', () => {
+    const response = {
+      id: 'response',
+      timestamp: 1_000,
+      lifecycle: { kind: 'response', status: 'processing', latestInputTimelineOrderAt: 2_000 },
+    };
+    const messages = [
+      response,
+      { id: 'first-input', timestamp: 1_000, timelineOrderAt: 1_001 },
+      { id: 'appended-input', timestamp: 1_500, timelineOrderAt: 2_000 },
+    ];
+
+    expect(getOrderedMessageTimeline(messages).map((message) => message.id)).toEqual([
+      'first-input',
+      'appended-input',
+      'response',
+    ]);
+    expect(getMessageTimelineOrderTime(response)).toBe(2_001);
+    expect(getMessageTimelineCursorTime(response)).toBe(1_000);
+  });
+
+  it('freezes a terminal response at completion when no later admitted input requires a floor', () => {
     expect(
       getMessageTimelineOrderTime({
         type: 'assistant',
@@ -29,6 +50,22 @@ describe('getMessageTimelineOrderTime', () => {
         lifecycle: { kind: 'response', status: 'completed', completedAt: 2_000 },
       }),
     ).toBe(2_000);
+  });
+
+  it('keeps a terminal response after an admitted input whose delivery clock overtook completion', () => {
+    const response = {
+      id: 'response',
+      timestamp: 1_000,
+      timelineOrderAt: 1_200,
+      lifecycle: {
+        kind: 'response',
+        status: 'completed',
+        completedAt: 1_500,
+        latestInputTimelineOrderAt: 2_000,
+      },
+    };
+    expect(getMessageTimelineOrderTime(response)).toBe(2_001);
+    expect(getMessageTimelineCursorTime(response)).toBe(1_200);
   });
 
   it('lets a terminal lifecycle override a stale streaming flag', () => {

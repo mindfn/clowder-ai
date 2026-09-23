@@ -119,6 +119,8 @@ export type LifecycleStoredMessageMetadata =
       readonly inputMessageIds: readonly string[];
       readonly status: 'processing' | 'completed' | 'failed' | 'canceled' | 'interrupted';
       readonly startedAt: number;
+      /** Presentation floor for the latest input admitted to this response. */
+      readonly latestInputTimelineOrderAt?: number;
       readonly completedAt?: number;
       readonly reason?: string;
     })
@@ -269,7 +271,8 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
     !Array.isArray(candidate.inputMessageIds) ||
     !candidate.inputMessageIds.every(isNonEmptyString) ||
     !isOneOf(candidate.status, ['processing', 'completed', 'failed', 'canceled', 'interrupted'] as const) ||
-    !isFiniteTimestamp(candidate.startedAt)
+    !isFiniteTimestamp(candidate.startedAt) ||
+    (candidate.latestInputTimelineOrderAt !== undefined && !isFiniteTimestamp(candidate.latestInputTimelineOrderAt))
   ) {
     return false;
   }
@@ -309,6 +312,7 @@ export interface LifecycleResponseBubble {
   readonly status: 'processing' | 'completed' | 'failed' | 'canceled' | 'interrupted';
   readonly dispatchRefs?: readonly LifecycleDispatchRef[];
   readonly startedAt: number;
+  readonly latestInputTimelineOrderAt?: number;
   readonly completedAt?: number;
   readonly reason?: string;
 }

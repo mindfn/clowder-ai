@@ -66,6 +66,7 @@ import {
 } from '../../stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
+import { getTimelineOrderTime, resolveDeliveryTimelineScore } from '../../stores/visibility.js';
 import {
   type AgentClientActiveRunDispatcher,
   type AgentMessage,
@@ -2045,16 +2046,34 @@ export class QueueProcessor {
     this.continuationWindows.set(key, recent);
   }
 
-  /** Admit durable sources without publishing a half-completed cutover. */
-  private async admitQueueEntriesForProvider(entries: readonly QueueEntry[]): Promise<void> {
+  /** Fix each source's delivery clock at its durable Queue claim, not after the receiver is written. */
+  private queueAdmissionDeliveryTimes(entries: readonly QueueEntry[]): Map<string, number> {
     const primary = entries[0];
     if (!primary) throw new Error('Queue admission requires at least one claimed row');
-    const admittedAt = Math.max(Date.now(), ...entries.map((entry) => entry.enqueuedAt));
-    const allMessageIds = [...new Set(entries.flatMap((entry) => queueEntryMessageIds(entry)))];
+    const deliveryTimeByMessageId = new Map<string, number>();
+    for (const entry of entries) {
+      const claimedAt = entry.claimedAt;
+      // The caller already fences status === claimed; keep this boundary fail-closed for future callers.
+      if (entry.status !== 'claimed' || typeof claimedAt !== 'number' || !Number.isFinite(claimedAt)) {
+        throw new Error(`Queue admission requires a durable dequeue clock: ${entry.id}`);
+      }
+      const deliveredAt = Math.max(claimedAt, entry.enqueuedAt);
+      for (const messageId of queueEntryMessageIds(entry)) {
+        deliveryTimeByMessageId.set(messageId, Math.max(deliveryTimeByMessageId.get(messageId) ?? 0, deliveredAt));
+      }
+    }
+    return deliveryTimeByMessageId;
+  }
+
+  /** Admit durable sources without publishing a half-completed cutover. */
+  private async admitQueueEntriesForProvider(deliveryTimeByMessageId: ReadonlyMap<string, number>): Promise<void> {
+    const allMessageIds = [...deliveryTimeByMessageId.keys()];
     const failedIds: string[] = [];
-    for (const messageId of allMessageIds) {
+    for (const [messageId, deliveredAt] of deliveryTimeByMessageId) {
       try {
-        if (!(await this.deps.messageStore.markDelivered(messageId, admittedAt))) failedIds.push(messageId);
+        if (!(await this.deps.messageStore.markDelivered(messageId, deliveredAt))) {
+          failedIds.push(messageId);
+        }
       } catch {
         failedIds.push(messageId);
       }
@@ -3795,6 +3814,7 @@ export class QueueProcessor {
         }
         return current;
       });
+      const deliveryTimeByMessageId = this.queueAdmissionDeliveryTimes(admissionEntries);
       // From here failures restore the exact claimed targets. History publication
       // remains deferred until the provider accepts and the receiver exists.
       lifecycleTransferStarted = true;
@@ -3903,6 +3923,17 @@ export class QueueProcessor {
               )
                 ? lifecycleReplyToCandidate
                 : undefined;
+              const latestInputTimelineOrderAt = Math.max(
+                input.startedAt,
+                ...lifecycleInputMessages.map((message) => {
+                  if (message.deliveryStatus !== 'queued') return getTimelineOrderTime(message);
+                  const deliveredAt = deliveryTimeByMessageId.get(message.id);
+                  if (deliveredAt === undefined) {
+                    throw new Error(`Queue admission missing source delivery clock: ${message.id}`);
+                  }
+                  return resolveDeliveryTimelineScore(message, deliveredAt);
+                }),
+              );
               const observed = await messageStore.appendAndObservePriorFrontier({
                 from: { kind: 'agent', catId: input.catId },
                 userId: input.userId,
@@ -3928,6 +3959,7 @@ export class QueueProcessor {
                   inputMessageIds: lifecycleInputMessages.map((message) => message.id),
                   status: 'processing',
                   startedAt: input.startedAt,
+                  latestInputTimelineOrderAt,
                 },
               });
               if (
@@ -3958,7 +3990,7 @@ export class QueueProcessor {
                 await settleLifecycleResponseInputs(messageStore, terminal.message, observed.message.id);
                 lifecycleResponseInterrupted = true;
               };
-              await this.admitQueueEntriesForProvider(admissionEntries);
+              await this.admitQueueEntriesForProvider(deliveryTimeByMessageId);
               const lifecycleInputSnapshots: StoredMessage[] = [];
               for (const inputMessage of lifecycleInputMessages) {
                 const transition = await messageStore.advanceLifecycleInputDispatch(inputMessage.id, {
