@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
+import Fastify from 'fastify';
+import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import {
   createDormantPluginRuntimeComposition,
@@ -11,6 +13,7 @@ import {
   resolvePluginRuntimePersistencePaths,
 } from '../dist/domains/plugin/index.js';
 import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
+import { callbacksRoutes } from '../dist/routes/callbacks.js';
 import {
   completeExternalHandshake,
   EXTERNAL_PACKAGE_DIGEST,
@@ -274,6 +277,9 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.doesNotMatch(source, /limbAdapterRegistry\.set\('weixin-mp'/);
   assert.match(source, /pluginId:\s*'dev\.clowder\.video-analysis'/);
   assert.doesNotMatch(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
+  assert.match(source, /pluginId:\s*'official\.enterprise-workflow',\s*effectiveGrants:\s*\['plugin\.config\.read'\]/);
+  const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(callbackRoutes, /registerCallback(?:WeCom|Lark)ActionRoutes/);
   assert.match(
     source,
     /localGrantPolicy:\s*\(manifest\)\s*=>\s*resolveLocalPluginEffectiveGrants\(pluginManagerHostPolicies, manifest\)/,
@@ -298,4 +304,27 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.doesNotMatch(source, /new OfficialPluginPackageInstaller\(/);
   assert.match(source, /registerOfficialPluginRoutes\(app/);
   assert.doesNotMatch(source, new RegExp(`${runtimeName}\\.supervisor\\.start\\(`));
+});
+
+test('enterprise actions have no legacy callback route after moving to package tools', async () => {
+  const app = Fastify();
+  try {
+    await app.register(callbacksRoutes, {
+      registry: new InvocationRegistry(),
+      messageStore: new MessageStore(),
+      socketManager: {
+        broadcastAgentMessage() {},
+        getMessages() {
+          return [];
+        },
+      },
+    });
+    for (const provider of ['wecom', 'lark']) {
+      const url = `/api/callbacks/${provider}-action`;
+      assert.equal(app.hasRoute({ method: 'POST', url }), false);
+      assert.equal((await app.inject({ method: 'POST', url, payload: { action: 'create_doc' } })).statusCode, 404);
+    }
+  } finally {
+    await app.close();
+  }
 });

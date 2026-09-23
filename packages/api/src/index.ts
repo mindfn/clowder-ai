@@ -5068,6 +5068,10 @@ async function main(): Promise<void> {
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const pluginManagerHostPolicies = [
     {
+      pluginId: 'official.enterprise-workflow',
+      effectiveGrants: ['plugin.config.read'] as const,
+    },
+    {
       pluginId: 'official.weixin-mp',
       replacesRepositoryPluginId: 'weixin-mp',
       effectiveGrants: ['plugin.config.read', 'secret.read'] as const,

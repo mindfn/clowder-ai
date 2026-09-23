@@ -195,7 +195,6 @@ import { registerCallbackGameRoutes } from './callback-game-routes.js';
 import { resolveGitHubValidation } from './callback-github-validation.js';
 import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { type HoldBallRouteDeps, registerCallbackHoldBallRoutes } from './callback-hold-ball-routes.js';
-import { registerCallbackLarkActionRoutes } from './callback-lark-action-routes.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
 import {
   type MeetingArtifactReaderHolder,
@@ -237,7 +236,6 @@ import {
 import { registerCallbackTaskRoutes } from './callback-task-routes.js';
 import { registerCallbackThreadCatsRoutes } from './callback-thread-cats-routes.js';
 import { captureTypedWaitSource } from './callback-typed-wait-source.js';
-import { registerCallbackWeComActionRoutes } from './callback-wecom-action-routes.js';
 import { registerCallbackWithdrawThreadProposalRoutes } from './callback-withdraw-thread-proposal-routes.js';
 import { registerCallbackWorkflowSopRoutes } from './callback-workflow-sop-routes.js';
 import { resolveCrossThreadCoordination } from './cross-thread-coordination.js';
@@ -6858,12 +6856,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   // F088 Phase J2: Document generation callback routes
   registerCallbackDocumentRoutes(app, { registry, socketManager, threadStore });
-
-  // F162: WeChat Work enterprise action callback routes
-  registerCallbackWeComActionRoutes(app, { registry });
-
-  // F162 Phase B: Lark/Feishu enterprise action callback routes
-  registerCallbackLarkActionRoutes(app, { registry });
 
   // F101: Game action callback for non-Claude cats (OpenCode/Codex/Gemini)
   registerCallbackGameRoutes(app);
