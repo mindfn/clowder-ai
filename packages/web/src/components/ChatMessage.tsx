@@ -17,6 +17,7 @@ import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
   doesAssistantMessageRenderBubble,
+  hasAssistantBody,
   projectEmptyResponseLifecycleNotice,
 } from './assistant-message-renderability';
 import { CapabilityTipStrip } from './CapabilityTipStrip';
@@ -402,7 +403,13 @@ function ChatMessageContent({
 
     const isLegacyError = !message.variant && message.content.trim().startsWith('Error:');
     const isError = message.variant === 'error' || isLegacyError;
-    const canRenderCliDiagnostics = isError || (message.type === 'system' && Boolean(message.extra?.cliDiagnostics));
+    // F212: a failed response with nothing streamed shows its CLI diagnostics in place of the empty notice.
+    const isBodylessFailedResponse =
+      message.lifecycle?.kind === 'response' &&
+      (message.lifecycle.status === 'failed' || message.lifecycle.status === 'interrupted') &&
+      !hasAssistantBody(message);
+    const canRenderCliDiagnostics =
+      isError || ((message.type === 'system' || isBodylessFailedResponse) && Boolean(message.extra?.cliDiagnostics));
     const isTool = message.variant === 'tool';
     const isFollowup = message.variant === 'a2a_followup';
     // F212 Phase B routing precedence (砚砚 P1-1 + 云端 codex P2-3, 2026-05-27):

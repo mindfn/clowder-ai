@@ -2277,6 +2277,11 @@ export class QueueProcessor {
         timestamp: message.timestamp,
         ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
         ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
+        // A committed response is the whole truth of its turn, not just its text.
+        ...(message.toolEvents ? { toolEvents: message.toolEvents } : {}),
+        ...(message.thinking ? { thinking: message.thinking } : {}),
+        ...(message.metadata ? { metadata: message.metadata } : {}),
+        ...(message.mentionsUser ? { mentionsUser: true } : {}),
         ...(message.extra ? { extra: message.extra } : {}),
         ...(message.origin ? { origin: message.origin } : {}),
         ...(message.replyTo ? { replyTo: message.replyTo } : {}),
@@ -3166,6 +3171,9 @@ export class QueueProcessor {
       ...batchedMessageIds,
     ];
     const lifecycleResponseMessageIds = new Set<string>();
+    // The response each target is currently streaming into. Every event a target
+    // streams names this message, so clients write by id instead of guessing.
+    const lifecycleResponseMessageIdByCat = new Map<string, string>();
     let returnedExecutionResult: QueueExecutionResult | undefined;
     const executionResult = (status: InvocationFinalStatus): QueueExecutionResult => {
       // Keep finally cleanup and the caller-visible completion status on one
@@ -3970,6 +3978,7 @@ export class QueueProcessor {
                 throw new Error(`Lifecycle response admission conflict: ${input.invocationId}`);
               }
               lifecycleResponseMessageIds.add(observed.message.id);
+              lifecycleResponseMessageIdByCat.set(input.catId, observed.message.id);
               lifecycleReceiverPersisted = true;
               interruptLifecycleResponse = async (reason: string): Promise<void> => {
                 const terminal = await messageStore.commitLifecycleResponseTerminal(observed.message.id, {
@@ -4348,14 +4357,39 @@ export class QueueProcessor {
 
         // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
         const msgInvocationId = (msg as { invocationId?: string }).invocationId;
+        // An event that already names its own stored message (a persisted system
+        // row, the done of a committed turn) keeps it; every other event of an
+        // admitted target belongs to that target's response.
+        const responseMessageId =
+          typeof msg.catId === 'string' && !msg.messageId ? lifecycleResponseMessageIdByCat.get(msg.catId) : undefined;
         const visibleMessage = {
           ...msg,
           ...(invocationId ? stampVisibleTurn(invocationId, msgInvocationId) : {}),
+          ...(responseMessageId ? { messageId: responseMessageId } : {}),
         };
         // History owns one response lifecycle for every admitted dispatch.
         // Action-successor custody may still accept/reject the terminal commit,
         // but it must not create a second, terminal-only presentation protocol.
         socketManager.broadcastAgentMessage(visibleMessage, threadId);
+        // A target's done follows its response commit: publish that committed truth
+        // now instead of when the whole entry (every sibling target) settles.
+        const doneResponseMessageId =
+          msg.type === 'done' && typeof msg.catId === 'string'
+            ? lifecycleResponseMessageIdByCat.get(msg.catId)
+            : undefined;
+        if (doneResponseMessageId) {
+          try {
+            const committed = await messageStore.getById(doneResponseMessageId);
+            if (committed?.lifecycle?.kind === 'response' && committed.lifecycle.status !== 'processing') {
+              this.emitLifecycleMessageUpdated(userId, committed);
+            }
+          } catch (err) {
+            log.warn(
+              { err, threadId, responseMessageId: doneResponseMessageId },
+              '[QueueProcessor] failed to publish a committed response at its done',
+            );
+          }
+        }
       }
 
       // 8. Check abort before marking succeeded (F122B B6 P1: abort→succeeded bug fix)

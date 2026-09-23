@@ -424,6 +424,137 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     }
   });
 
+  it('names each target response on every event that target streams', async () => {
+    const responseIdByCat = new Map();
+    const harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        for (const catId of targetCats) {
+          const admission = await options.onLifecycleInvocationStarted({
+            threadId,
+            userId,
+            catId,
+            invocationId: `turn-stamp-${catId}`,
+            parentInvocationId: options.parentInvocationId,
+            startedAt: Date.now(),
+          });
+          responseIdByCat.set(catId, admission.responseMessageId);
+        }
+        for (const catId of targetCats) {
+          yield { type: 'text', catId, content: `${catId} speaks`, timestamp: Date.now() };
+          yield { type: 'tool_use', catId, toolName: 'shell', toolInput: { command: 'ls' }, timestamp: Date.now() };
+          yield {
+            type: 'system_info',
+            catId,
+            content: JSON.stringify({ type: 'thinking', text: 'hmm' }),
+            timestamp: Date.now(),
+          };
+        }
+        yield {
+          type: 'system_info',
+          catId: 'opus',
+          messageId: 'stored-system-row',
+          content: JSON.stringify({ type: 'routing_preflight' }),
+          timestamp: Date.now(),
+        };
+        for (const catId of targetCats) {
+          yield { type: 'done', catId, isFinal: catId === 'codex', timestamp: Date.now() };
+        }
+      },
+    });
+    await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.socketManager.broadcastAgentMessage.mock.calls.some(
+        (call) => call.arguments[0].type === 'done' && call.arguments[0].catId === 'codex',
+      ),
+    );
+
+    const broadcasts = harness.socketManager.broadcastAgentMessage.mock.calls.map((call) => call.arguments[0]);
+    for (const catId of ['opus', 'codex']) {
+      const responseId = responseIdByCat.get(catId);
+      assert.ok(responseId, `${catId} must be admitted`);
+      const streamed = broadcasts.filter(
+        (event) => event.catId === catId && event.messageId !== 'stored-system-row' && event.type !== 'error',
+      );
+      assert.deepEqual(
+        streamed.map((event) => event.type),
+        ['text', 'tool_use', 'system_info', 'done'],
+      );
+      assert.deepEqual(
+        streamed.map((event) => event.messageId),
+        streamed.map(() => responseId),
+        `${catId} events must all name its response`,
+      );
+    }
+    assert.notEqual(responseIdByCat.get('opus'), responseIdByCat.get('codex'));
+    assert.ok(
+      broadcasts.some((event) => event.messageId === 'stored-system-row'),
+      'an event that already names its stored message keeps it',
+    );
+  });
+
+  it('publishes a target committed response at its done, before sibling targets settle', async () => {
+    let releaseSibling;
+    const siblingGate = new Promise((resolve) => {
+      releaseSibling = resolve;
+    });
+    const responseIdByCat = new Map();
+    let harness;
+    harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        for (const catId of targetCats) {
+          const invocationId = `turn-committed-${catId}`;
+          const admission = await options.onLifecycleInvocationStarted({
+            threadId,
+            userId,
+            catId,
+            invocationId,
+            parentInvocationId: options.parentInvocationId,
+            startedAt: Date.now(),
+          });
+          responseIdByCat.set(catId, admission.responseMessageId);
+          yield { type: 'text', catId, content: `${catId} answer`, timestamp: Date.now() };
+          const committed = await harness.messageStore.commitLifecycleResponseTerminal(admission.responseMessageId, {
+            invocationId,
+            status: 'completed',
+            completedAt: Date.now(),
+            content: `${catId} answer`,
+            mentions: [],
+            origin: 'stream',
+          });
+          assert.ok(committed.kind === 'applied' || committed.kind === 'replayed');
+          yield { type: 'done', catId, isFinal: catId === targetCats.at(-1), timestamp: Date.now() };
+          if (catId === targetCats[0]) await siblingGate;
+        }
+      },
+    });
+    await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    const committedSnapshots = () =>
+      harness.socketManager.emitToUser.mock.calls
+        .filter((call) => call.arguments[1] === 'message_lifecycle_updated')
+        .map((call) => call.arguments[2].message)
+        .filter((message) => message.lifecycle?.kind === 'response' && message.lifecycle.status === 'completed');
+
+    await harness.processor.requestDrain('thread-1');
+    try {
+      await waitFor(() => committedSnapshots().some((message) => message.id === responseIdByCat.get('opus')));
+      assert.equal(
+        committedSnapshots().some((message) => message.id === responseIdByCat.get('codex')),
+        false,
+        'the sibling has not committed yet',
+      );
+      assert.equal(
+        committedSnapshots().find((message) => message.id === responseIdByCat.get('opus')).content,
+        'opus answer',
+      );
+    } finally {
+      releaseSibling();
+    }
+  });
+
   it('keeps an exact target set queued when one sibling is busy', async () => {
     const harness = createHarness();
     bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });

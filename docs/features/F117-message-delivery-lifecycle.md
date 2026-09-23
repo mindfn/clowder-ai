@@ -191,6 +191,12 @@ operator experience：
   `CapabilityTipStrip`（无 tip 时为最小处理中动效）。它不是另造的 system/provider 状态消息；正文开始
   stream 后原位升级为 response 气泡，terminal 仍更新同一 identity。消息操作 dock 归真实气泡所有；只有
   lifecycle tip、尚无正文气泡时不得在作者行旁悬浮引用/复制按钮。
+- 这一轮流式输出的每条事件（文本、工具调用/结果、思考、富文本块、用量、done、error）都带该 response 的
+  `messageId`，回调生成、挂在本轮回复上的富文本块也一样；前端按 ID 写进这条消息，本地还没有时按这个 ID
+  建。前端不自造气泡 ID、不猜哪个是实时气泡、不改名或合并气泡；历史合并也只认 ID。草稿只是处理中
+  response 的可恢复正文，历史接口把它并进同 `lifecycle.invocationId` 的处理中 response，不另出记录。
+- `post_message` 永远是一次性入库、自带 ID 的独立消息，和本轮 response 是两条输出；不存在"用 post 替代
+  最终回复"的模式（已删除 `streamDisposition=replace_final`）。
 - 成功、失败、取消和中断都必须有一个可关联的 terminal response 气泡；不得另追加 system row、
   provider notice 或第二条状态消息表达同一结果。
 - 结构化 `system_info warning` 默认是 provider/routing 诊断，留在日志/telemetry，不进入对话。只有显式标记

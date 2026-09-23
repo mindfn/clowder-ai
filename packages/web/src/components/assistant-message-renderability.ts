@@ -22,7 +22,8 @@ export interface EmptyResponseLifecycleNotice {
   tone: 'processing' | 'completed' | 'failed' | 'canceled';
 }
 
-function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderContext = {}): boolean {
+/** Whether a message has any streamed body the user can see (text, CLI/tool output, blocks, thinking). */
+export function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderContext = {}): boolean {
   const hasTextContent = message.content.trim().length > 0;
   const hasBlocks = Boolean(message.contentBlocks?.length);
   const isStreamOrigin = message.origin === 'stream';

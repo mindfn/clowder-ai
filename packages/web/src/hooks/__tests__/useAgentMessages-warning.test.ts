@@ -1,7 +1,6 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetThreadRuntimeSingleton } from '@/hooks/thread-runtime-singleton';
 import { useAgentMessages } from '@/hooks/useAgentMessages';
 import type { ChatMessage } from '@/stores/chat-types';
 
@@ -90,9 +89,9 @@ describe('useAgentMessages system_info warning', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     captured = undefined;
-    resetThreadRuntimeSingleton();
     storeState.messages = [];
     mockAddMessage.mockClear();
+    mockAddMessageToThread.mockClear();
     mockRemoveMessage.mockClear();
     mockPatchMessage.mockClear();
   });
@@ -273,6 +272,7 @@ describe('useAgentMessages system_info warning', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('suppresses mcp_server_status telemetry on the active stream path', () => {
@@ -295,6 +295,7 @@ describe('useAgentMessages system_info warning', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('renders a2a_pingpong_terminated JSON as readable system message', () => {
@@ -406,5 +407,6 @@ describe('useAgentMessages system_info warning', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 });

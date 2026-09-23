@@ -341,26 +341,6 @@ describe('F177-H: Cross-post participant check warning', () => {
     assert.equal(notInThread, undefined, 'no warning when target is a participant');
   });
 
-  test('agent-key post rejects replace_final because it has no provider stream', async () => {
-    const app = await createApp();
-    const targetThread = threadStore.create('user-1', 'Target');
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/callbacks/post-message',
-      headers: { 'x-agent-key-secret': 'test-agent-secret' },
-      payload: {
-        threadId: targetThread.id,
-        content: 'There is no provider final to replace',
-        streamDisposition: 'replace_final',
-      },
-    });
-
-    assert.equal(res.statusCode, 400);
-    assert.equal(JSON.parse(res.body).kind, 'replace_final_agent_key_unsupported');
-    assert.equal(messageStore.size, 0);
-  });
-
   test('agent-key reviewer can persist and route a typed local review fact without lease state', async () => {
     const app = await createApp();
     const targetThread = threadStore.create('user-1', 'Target');

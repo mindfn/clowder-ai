@@ -44,7 +44,7 @@ describe('mergeReplaceHydrationMessages metadata ownership boundary', () => {
       },
     };
 
-    const result = mergeReplaceHydrationMessages([history], [current], {});
+    const result = mergeReplaceHydrationMessages([history], [current]);
     const extra = result.messages[0]?.extra;
 
     expect(extra?.turnExecution?.invocationId).toBe('turn-primary');
@@ -68,7 +68,7 @@ describe('mergeReplaceHydrationMessages metadata ownership boundary', () => {
       timestamp: 3_000,
     };
 
-    const result = mergeReplaceHydrationMessages([history], [current], {});
+    const result = mergeReplaceHydrationMessages([history], [current]);
 
     expect(result.messages[0]?.extra).toBeUndefined();
   });

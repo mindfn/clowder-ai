@@ -26,7 +26,6 @@ import {
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { getThreadLiveInvocations } from '../domains/cats/services/agents/invocation/getThreadLiveInvocations.js';
 import {
   type InvocationQueue,
   queueEntryTargetCats,
@@ -53,10 +52,7 @@ import type { IInvocationRecordStore } from '../domains/cats/services/stores/por
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isTimelinePublished } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { deriveAutoThreadTitle, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import {
-  type ITurnExecutionStore,
-  projectTurnExecutionMessage,
-} from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
+import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import {
   getTimelineOrderTime,
   isInternalNonQuotableParent,
@@ -149,7 +145,7 @@ export interface MessagesRoutesOptions {
   uploadDir?: string;
   invocationTracker?: InvocationTracker;
   invocationRecordStore?: IInvocationRecordStore;
-  /** Durable per-child lifecycle truth used to bridge tracker/draft handoff gaps. */
+  /** Not read by these routes; kept so existing callers still type-check. */
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'listByParent'>;
 
   /** #80: Streaming draft store for F5 recovery */
@@ -304,7 +300,6 @@ const MAX_FILES = 5;
 
 export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (app, opts) => {
   const uploadDir = getDefaultUploadDir(opts.uploadDir ?? process.env.UPLOAD_DIR);
-  const turnExecutionStore = opts.turnExecutionStore;
 
   // Register multipart parser for image uploads
   await app.register(multipart, {
@@ -1135,6 +1130,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       catId: string | null;
       content: string;
       timestamp: number;
+      lifecycle?: StoredMessage['lifecycle'];
       summary?: { id: string; topic: string; conclusions: string[]; openQuestions: string[]; createdBy: string };
       [key: string]: unknown;
     };
@@ -1243,227 +1239,31 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       );
     }
 
-    // #80: Merge active streaming drafts (first page only — no before cursor)
+    // #80 / F117: a streaming draft is only the in-flight body of its durable response R
+    // (first page only — no before cursor). R is admitted empty as a processing lifecycle
+    // response whose lifecycle.invocationId is the child turn id that keys DraftStore, so a
+    // draft folds into R by that exact id. A draft without a processing R on this page is
+    // ignored here: it never becomes a standalone record and this read never deletes it.
     if (!before && opts.draftStore) {
-      const draftStore = opts.draftStore;
-      const drafts = await draftStore.getByThread(userId, resolvedThreadId);
-      let activeDrafts = drafts;
-      const processingResponseByInvocationId = new Map<string, StoredMessage>();
-      const ambiguousProcessingParentInvocationIds = new Set<string>();
-      // #80 fix-B diagnostic: trace draft merge for F5 recovery verification
-      if (drafts.length > 0) {
-        request.log.info(
-          { threadId: resolvedThreadId, draftCount: drafts.length, draftIds: drafts.map((d) => d.invocationId) },
-          '#80 draft merge: found active drafts',
-        );
-        // P1-2 dedup: filter out drafts whose invocationId matches a formal message.
-        // F194 Phase Z3 P1-3 (砚砚 R): formal set MUST collect both `invocationId` (parent SoT) and
-        // `turnInvocationId` (Z3 dual id, where draft.invocationId === turnInvocationId for new
-        // formal messages). Without this, append-success-but-draft-not-yet-deleted window double-shows
-        // formal + draft for the same turn.
-        const formalInvocationIds = new Set<string>();
-        for (const m of page) {
-          const parentInv = m.extra?.stream?.invocationId;
-          const turnInv = m.extra?.stream?.turnInvocationId;
-          if (parentInv) formalInvocationIds.add(parentInv);
-          if (turnInv) formalInvocationIds.add(turnInv);
-          if (m.lifecycle?.kind === 'response' && m.lifecycle.status === 'processing') {
-            // DraftStore is keyed by the child turn. Only fall back to the
-            // legacy parent id when no child identity exists; one parent can
-            // own several concurrent target responses.
-            if (turnInv) {
-              processingResponseByInvocationId.set(turnInv, m);
-            } else if (parentInv && !ambiguousProcessingParentInvocationIds.has(parentInv)) {
-              if (processingResponseByInvocationId.has(parentInv)) {
-                // A parent can fan out to several target responses. A legacy
-                // parent-keyed draft cannot identify which child owns it, so
-                // fail closed instead of placing one cat's text in another's bubble.
-                processingResponseByInvocationId.delete(parentInv);
-                ambiguousProcessingParentInvocationIds.add(parentInv);
-              } else {
-                processingResponseByInvocationId.set(parentInv, m);
-              }
-            }
-          }
-        }
-        // A lifecycle response is created before provider output. Its matching
-        // DraftStore row is not a duplicate while that response is processing:
-        // it is the recoverable body for the exact canonical bubble.
-        activeDrafts = drafts.filter(
-          (d) => !formalInvocationIds.has(d.invocationId) || processingResponseByInvocationId.has(d.invocationId),
-        );
-        // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
-        // formal messages pushed off the first page (race window: TTL > page depth).
-        // Cloud R5 P2: wider window must always exceed page limit (limit max=200 → worst case 800).
-        if (activeDrafts.length > 0 && page.length >= limit) {
-          const widerLimit = Math.max(200, limit * 4);
-          const wider = await opts.messageStore.getByThread(resolvedThreadId, widerLimit, userId, browserTimelineRead);
-          for (const m of wider) {
-            const parentInv = m.extra?.stream?.invocationId;
-            const turnInv = m.extra?.stream?.turnInvocationId;
-            if (parentInv) formalInvocationIds.add(parentInv);
-            if (turnInv) formalInvocationIds.add(turnInv);
-          }
-          activeDrafts = activeDrafts.filter(
-            (d) => !formalInvocationIds.has(d.invocationId) || processingResponseByInvocationId.has(d.invocationId),
-          );
+      const processingResponseIndexByInvocationId = new Map<string, number>();
+      for (const [index, item] of chatItems.entries()) {
+        if (item.lifecycle?.kind === 'response' && item.lifecycle.status === 'processing') {
+          processingResponseIndexByInvocationId.set(item.lifecycle.invocationId, index);
         }
       }
-
-      // F194 Phase B step 2b: canonical getThreadLiveInvocations helper.
-      // Cloud R17 P1: helper MUST run even when activeDrafts is empty — zombies
-      // (record running + no fresh draft + age past grace) are exactly the empty-drafts
-      // case. Skipping the helper here means /messages never reconciles them; only /queue
-      // would, and a thread that's read but not queue-checked stays phantom forever.
-      //
-      // AC-B5 preservation (砚砚 R6 P1 fix): gate only requires `invocationRecordStore` —
-      // tracker is OPTIONAL. Embedded modes / legacy tests that wire recordStore but not
-      // tracker still get zombie detection + orphan filtering.
-      if (opts.invocationRecordStore) {
-        const recordStore = opts.invocationRecordStore;
-        const tracker = opts.invocationTracker;
-        const draftsForHelper = activeDrafts; // already deduped against formal messages (or empty)
-        try {
-          const liveness = await getThreadLiveInvocations(resolvedThreadId, userId, {
-            listRunningRecords: (tid, uid) => recordStore.listRunningByThread(tid, uid),
-            getActiveSlots: (tid) => tracker?.getActiveSlots(tid) ?? [],
-            getTrackerUserId: (tid, cid) => tracker?.getUserId(tid, cid) ?? null,
-            getDrafts: () => draftsForHelper,
-            ...(turnExecutionStore
-              ? { listTurnExecutionsByParent: (parentId: string) => turnExecutionStore.listByParent(parentId) }
-              : {}),
-            // F194 Phase Z (KD-22): namespace bridge — child registry id → parent recordStore id.
-            // Wraps existing InvocationRegistry.getRecord (parentInvocationId field) + getLatestId.
-            // Helper uses these to detect parent+child execution chain liveness and cat-slot reuse
-            // zombies (砚砚 R1 P1-1: 结构化 dep, not boolean black-box).
-            getTurnInvocation: async (id) => {
-              const rec = await opts.registry.getRecord(id);
-              if (!rec) return null;
-              return {
-                parentInvocationId: rec.parentInvocationId,
-                threadId: rec.threadId,
-                userId: rec.userId,
-                catId: rec.catId,
-                createdAt: rec.createdAt,
-              };
-            },
-            getLatestTurnInvocationId: (tid, cat) => opts.registry.getLatestId(tid, cat),
-            // F194 AC-B12: route diagnostic events into request log. NB: do NOT spread
-            // `source: 'F194'` — that would clobber LivenessEvent.source (record+draft /
-            // record-only / tracker+draft / null), losing the diagnostic. Use `feature`.
-            onLog: (event) => request.log.info({ ...event, feature: 'F194' }, 'F194 liveness event'),
-          });
-          const liveInvocationIds = new Set(liveness.active.map((s) => s.invocationId));
-          const orphanDrafts = activeDrafts.filter((d) => !liveInvocationIds.has(d.invocationId));
-          activeDrafts = activeDrafts.filter((d) => liveInvocationIds.has(d.invocationId));
-          // Zombie candidates remain diagnostic-only here. Explicit owner reconciliation
-          // is serialized outside the GET path so reads cannot terminate provider work.
-          if (orphanDrafts.length > 0) {
-            request.log.info(
-              {
-                threadId: resolvedThreadId,
-                orphanCount: orphanDrafts.length,
-                draftIds: orphanDrafts.map((d) => d.invocationId),
-                cleanup: 'helper-canonical',
-              },
-              '#80 draft merge: filtered orphan drafts (F194 helper-canonical)',
-            );
-          }
-        } catch (err) {
-          // F194 AC-B13: fail-open + fallback metric — record/tracker error must not 500
-          // the read endpoint, but split-brain protection is bypassed during fallback.
-          request.log.warn(
-            {
-              err,
-              kind: 'liveness_fallback',
-              threadId: resolvedThreadId,
-              userId,
-              feature: 'F194',
-              endpoint: '/messages',
-              draftCount: activeDrafts.length,
-            },
-            '#80 draft merge: F194 helper threw, fall-open keep all drafts',
-          );
+      if (processingResponseIndexByInvocationId.size > 0) {
+        const drafts = await opts.draftStore.getByThread(userId, resolvedThreadId);
+        for (const d of drafts) {
+          const index = processingResponseIndexByInvocationId.get(d.invocationId);
+          if (index === undefined) continue;
+          chatItems[index] = {
+            ...chatItems[index],
+            content: d.content,
+            isDraft: true,
+            ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
+            ...(d.thinking ? { thinking: d.thinking } : {}),
+          };
         }
-      }
-
-      // P2: stable sort by updatedAt for parallel multi-cat drafts
-      activeDrafts.sort((a, b) => a.updatedAt - b.updatedAt);
-      if (activeDrafts.length > 0) {
-        request.log.info(
-          { threadId: resolvedThreadId, mergedCount: activeDrafts.length, cats: activeDrafts.map((d) => d.catId) },
-          '#80 draft merge: merging drafts into response',
-        );
-      }
-      const draftTurnExecutions = new Map<string, Awaited<ReturnType<ITurnExecutionStore['get']>>>();
-      if (turnExecutionStore) {
-        await Promise.all(
-          activeDrafts.map(async (draft) => {
-            try {
-              const execution = await turnExecutionStore.get(draft.invocationId);
-              if (
-                execution &&
-                execution.threadId === resolvedThreadId &&
-                execution.userId === userId &&
-                execution.catId === draft.catId
-              ) {
-                draftTurnExecutions.set(draft.invocationId, execution);
-              }
-            } catch (err) {
-              request.log.warn(
-                {
-                  err,
-                  threadId: resolvedThreadId,
-                  invocationId: draft.invocationId,
-                  feature: 'F194',
-                },
-                '#80 draft merge: turn execution identity lookup failed',
-              );
-            }
-          }),
-        );
-      }
-
-      for (const d of activeDrafts) {
-        const turnExecution = draftTurnExecutions.get(d.invocationId);
-        const lifecycleResponse = processingResponseByInvocationId.get(d.invocationId);
-        if (lifecycleResponse) {
-          const responseIndex = chatItems.findIndex((item) => item.id === lifecycleResponse.id);
-          if (responseIndex >= 0) {
-            const responseItem = chatItems[responseIndex]!;
-            chatItems[responseIndex] = {
-              ...responseItem,
-              content: d.content,
-              isDraft: true,
-              ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
-              ...(d.thinking ? { thinking: d.thinking } : {}),
-            };
-          }
-          continue;
-        }
-        chatItems.push({
-          id: `draft-${d.invocationId}`,
-          type: 'assistant',
-          catId: d.catId as string | null,
-          content: d.content,
-          timestamp: d.updatedAt,
-          isDraft: true,
-          origin: 'stream',
-          // DraftStore is keyed by the child turn id. Preserve the real dual identity
-          // whenever TurnExecutionStore can resolve it: the active slot uses the parent
-          // invocation while the visible bubble uses the child turn. Collapsing both
-          // fields to the child makes the pending-member projection see two unrelated
-          // Kimi invocations and render a duplicate placeholder beside live tool output.
-          extra: {
-            stream: {
-              invocationId: turnExecution?.parentInvocationId ?? d.invocationId,
-              turnInvocationId: d.invocationId,
-            },
-            ...(turnExecution ? { turnExecution: projectTurnExecutionMessage(turnExecution) } : {}),
-          },
-          ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
-          ...(d.thinking ? { thinking: d.thinking } : {}),
-        });
       }
     }
 
