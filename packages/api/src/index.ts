@@ -9,14 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import {
-  type CatConfig,
-  type CatId,
-  CORE_COMMANDS,
-  catRegistry,
-  type EventMemoryRecord,
-  type ILimbNode,
-} from '@cat-cafe/shared';
+import { type CatConfig, type CatId, CORE_COMMANDS, catRegistry, type EventMemoryRecord } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createRedisClient, SessionStore } from '@cat-cafe/shared/utils';
 import fastifyCookie from '@fastify/cookie';
@@ -4317,17 +4310,10 @@ async function main(): Promise<void> {
   {
     const { join } = await import('node:path');
     const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
-    const { PluginResourceActivator, rehydrateEnabledPluginLimbs, rehydrateEnabledPluginSchedules } = await import(
+    const { PluginResourceActivator, rehydrateEnabledPluginSchedules } = await import(
       './domains/plugin/PluginResourceActivator.js'
     );
     const { ScheduleFactoryRegistry } = await import('./domains/plugin/ScheduleFactoryRegistry.js');
-    const {
-      WeChatVisibleReaderArmStore,
-      WeChatVisibleReaderMetrics,
-      createWeChatVisibleReaderNativeRunner,
-      registerWeChatVisibleReaderArmRoutes,
-      registerWeChatVisibleReaderLimbFactory,
-    } = await import('./plugins/wechat-visible-reader/index.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
     const { generateCliConfigs, readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
       './config/capabilities/capability-orchestrator.js'
@@ -4356,14 +4342,6 @@ async function main(): Promise<void> {
       const githubManifest = pluginRegistry.getManifest('github');
       return githubManifest ? resolvePluginEnv([githubManifest]) : {};
     };
-    const limbAdapterRegistry = new Map<
-      string,
-      (yamlPath: string, pluginConfig: Record<string, string>) => Promise<ILimbNode>
-    >();
-    const weChatVisibleReaderArmStore = new WeChatVisibleReaderArmStore();
-    const weChatVisibleReaderMetrics = new WeChatVisibleReaderMetrics();
-    const weChatVisibleReaderRunner = createWeChatVisibleReaderNativeRunner();
-
     // F202 Phase 2: Schedule factory registry + GitHub factories
     const scheduleFactoryRegistry = new ScheduleFactoryRegistry();
     const { registerGitHubScheduleFactories } = await import('./domains/plugin/github-schedule-factories.js');
@@ -4371,12 +4349,6 @@ async function main(): Promise<void> {
 
     // F202-2B: Mutable deps ref — starts with just log, populated with full GitHub deps later
     const scheduleFactoryDeps: Record<string, unknown> = { log: app.log };
-
-    registerWeChatVisibleReaderLimbFactory(limbAdapterRegistry, {
-      armStore: weChatVisibleReaderArmStore,
-      metrics: weChatVisibleReaderMetrics,
-      runner: weChatVisibleReaderRunner,
-    });
 
     const pluginActivator = new PluginResourceActivator({
       resolveProjectRoot: () => resolveActiveProjectRoot(),
@@ -4392,16 +4364,6 @@ async function main(): Promise<void> {
         await generateCliConfigs(config, paths, projectRoot);
       },
       withCapabilityLock: (fn) => withCapabilityLock(resolveActiveProjectRoot(), fn),
-      limbAdapterFactory: async (pluginId, limbYamlPath, pluginConfig) => {
-        const factory = limbAdapterRegistry.get(pluginId);
-        if (!factory) {
-          throw new Error(
-            `No platform-specific limb adapter registered for plugin '${pluginId}'. ` +
-              `Limb resources require a concrete adapter (see Phase 2 for examples).`,
-          );
-        }
-        return factory(limbYamlPath, pluginConfig);
-      },
       // F202 Phase 2: schedule resource activation deps
       scheduleFactoryRegistry,
       taskRunner: {
@@ -4411,16 +4373,6 @@ async function main(): Promise<void> {
       // F202-2B: Mutable deps ref — populated via rehydrateGitHubSchedules after GitHub services created
       scheduleFactoryDeps:
         scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
-    });
-
-    const startupCaps = await readCapabilitiesConfig(resolveActiveProjectRoot());
-    await rehydrateEnabledPluginLimbs({
-      capabilities: startupCaps,
-      pluginRegistry,
-      pluginsDir,
-      limbAdapterRegistry,
-      limbRegistry,
-      log: app.log,
     });
 
     // F202-2B: Schedule rehydration deferred — GitHub factories need deps created later.
@@ -4532,29 +4484,11 @@ async function main(): Promise<void> {
       });
     };
 
-    const isWeChatVisibleReaderEnabled = async (): Promise<boolean> => {
-      if (process.platform !== 'darwin') return false;
-      const capabilities = await readCapabilitiesConfig(resolveActiveProjectRoot());
-      return Boolean(
-        capabilities?.capabilities.some(
-          (capability) =>
-            capability.type === 'limb' && capability.pluginId === 'wechat-visible-reader' && capability.enabled,
-        ),
-      );
-    };
-    registerWeChatVisibleReaderArmRoutes(app, {
-      armStore: weChatVisibleReaderArmStore,
-      metrics: weChatVisibleReaderMetrics,
-      isPluginEnabled: isWeChatVisibleReaderEnabled,
-    });
     registerPluginRoutes(app, {
       pluginRegistry,
       pluginActivator,
       limbRegistry,
       pluginsDir,
-      beforePluginDisable: (pluginId) => {
-        if (pluginId === 'wechat-visible-reader') weChatVisibleReaderArmStore.disarm();
-      },
       runInstalledTest: async (pluginId) =>
         runInstalledPluginTest
           ? runInstalledPluginTest(pluginId)
@@ -5067,6 +5001,10 @@ async function main(): Promise<void> {
     resolveRepositoryReplacementPluginIds,
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const pluginManagerHostPolicies = [
+    {
+      pluginId: 'official.wechat-visible-reader',
+      effectiveGrants: ['plugin.state.get', 'plugin.state.set'] as const,
+    },
     {
       pluginId: 'official.enterprise-workflow',
       effectiveGrants: ['plugin.config.read'] as const,

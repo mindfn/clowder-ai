@@ -24,6 +24,7 @@ import {
   phaseForAction,
   toResultState,
 } from './ActionRendererState';
+import { LiveStatusActionRenderer } from './LiveStatusActionRenderer';
 
 export interface ActionRendererProps {
   target: ActionRendererTarget;
@@ -41,7 +42,32 @@ export interface ActionRendererProps {
 
 // ── Main component ──
 
-export function ActionRenderer({
+export function ActionRenderer(props: ActionRendererProps) {
+  const actions = props.operation.actions;
+  const firstAction = actions[0];
+  const revokeAction = actions.find((action) => action.id === 'disarm');
+  const statusAction = actions.find(
+    (action) => action.id === 'status' && (action.render === 'status' || action.render === 'polling'),
+  );
+  if (
+    firstAction?.id === 'arm' &&
+    firstAction.render === 'button' &&
+    statusAction &&
+    revokeAction?.next === firstAction.id
+  ) {
+    return (
+      <LiveStatusActionRenderer
+        {...props}
+        armAction={firstAction}
+        statusAction={statusAction}
+        revokeAction={revokeAction}
+      />
+    );
+  }
+  return <SequencedActionRenderer {...props} />;
+}
+
+function SequencedActionRenderer({
   target,
   operation,
   configured,

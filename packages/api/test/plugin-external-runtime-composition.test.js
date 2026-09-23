@@ -274,7 +274,11 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /pluginId:\s*'official\.weixin-mp'/);
   assert.match(source, /replacesRepositoryPluginId:\s*'weixin-mp'/);
   assert.doesNotMatch(source, /weixinMpHandlers/);
-  assert.doesNotMatch(source, /limbAdapterRegistry\.set\('weixin-mp'/);
+  assert.doesNotMatch(source, /limbAdapterRegistry/);
+  assert.match(
+    source,
+    /pluginId:\s*'official\.wechat-visible-reader',\s*effectiveGrants:\s*\['plugin\.state\.get', 'plugin\.state\.set'\]/,
+  );
   assert.match(source, /pluginId:\s*'dev\.clowder\.video-analysis'/);
   assert.doesNotMatch(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
   assert.match(source, /pluginId:\s*'official\.enterprise-workflow',\s*effectiveGrants:\s*\['plugin\.config\.read'\]/);

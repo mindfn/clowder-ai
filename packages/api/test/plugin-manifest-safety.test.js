@@ -12,11 +12,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
 import { PluginRegistry, resourceCapId } from '../dist/domains/plugin/PluginRegistry.js';
-import {
-  PluginResourceActivator,
-  rehydrateEnabledPluginLimbs,
-  withPersistedLimbNodeId,
-} from '../dist/domains/plugin/PluginResourceActivator.js';
+import { PluginResourceActivator, withPersistedLimbNodeId } from '../dist/domains/plugin/PluginResourceActivator.js';
 import { resolvePluginEnv, writePluginConfig } from '../dist/domains/plugin/plugin-config-store.js';
 import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
 import { registerPluginRoutes } from '../dist/routes/plugin-routes.js';
@@ -2190,74 +2186,6 @@ describe('PluginResourceActivator limb activation safety', () => {
 });
 
 describe('PluginResourceActivator limb startup safety', () => {
-  it('normalizes Windows-style limb paths during startup rehydration', async () => {
-    const root = mkdtempSync(join(os.tmpdir(), 'plugin-rehydrate-root-'));
-    const pluginsDir = join(root, 'plugins');
-    const expectedYamlPath = join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml');
-    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
-    writeFileSync(expectedYamlPath, 'nodeId: yaml-node\n');
-    const seenYamlPaths = [];
-    const registeredNodes = [];
-
-    await rehydrateEnabledPluginLimbs({
-      capabilities: {
-        version: 1,
-        capabilities: [
-          {
-            id: 'plugin:test-plugin:limbs\\node.yaml',
-            type: 'limb',
-            enabled: true,
-            source: 'cat-cafe',
-            pluginId: 'test-plugin',
-            limbNodeId: 'persisted-node',
-          },
-        ],
-      },
-      pluginRegistry: {
-        getManifest(pluginId) {
-          return pluginId === 'test-plugin'
-            ? {
-                id: 'test-plugin',
-                name: 'Test Plugin',
-                version: '1.0.0',
-                builtin: false,
-                config: [],
-                resources: [{ type: 'limb', path: 'limbs\\node.yaml' }],
-              }
-            : undefined;
-        },
-      },
-      pluginsDir,
-      limbAdapterRegistry: new Map([
-        [
-          'test-plugin',
-          async (yamlPath) => {
-            seenYamlPaths.push(yamlPath);
-            return {
-              nodeId: 'yaml-node',
-              displayName: 'YAML Node',
-              platform: 'test',
-              capabilities: [],
-              register: async () => {},
-              invoke: async () => ({ ok: true }),
-              healthCheck: async () => 'online',
-              deregister: async () => {},
-            };
-          },
-        ],
-      ]),
-      limbRegistry: {
-        async register(node) {
-          registeredNodes.push(node);
-        },
-      },
-      log: { info: () => {}, warn: () => {} },
-    });
-
-    assert.deepEqual(seenYamlPaths, [expectedYamlPath]);
-    assert.equal(registeredNodes[0].nodeId, 'persisted-node');
-  });
-
   it('registers rehydrated limb nodes under the persisted node id without cloning class instances', async () => {
     class ClassBasedLimbNode {
       #status = 'online';

@@ -195,7 +195,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     ],
   },
   {
-    id: 'wechat-visible-reader',
+    id: 'official.wechat-visible-reader',
     displayName: '微信读屏',
     description: {
       default: 'Read the currently visible WeChat window during a bounded user authorization.',
@@ -207,8 +207,8 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     packageName: '@clowder-ai/wechat-visible-reader',
     source: 'local',
     trust: 'local-trusted',
-    availableVersion: '1.0.0',
-    installedVersion: '1.0.0',
+    availableVersion: '0.1.0-alpha.1',
+    installedVersion: '0.1.0-alpha.1',
     artifact: 'installed',
     config: 'invalid',
     auth: 'expired',
@@ -216,6 +216,21 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     live: 'stopped',
     readme: { state: 'absent' },
     capabilities: [{ name: '屏幕观察', description: '在有界授权窗口内采集当前可见内容' }],
+    configFields: [
+      {
+        kind: 'operation',
+        key: 'visibleReadingAuthorization',
+        label: 'Visible WeChat reading authorization',
+        required: false,
+        currentValue: null,
+        sensitive: false,
+        actions: [
+          { id: 'arm', label: 'Authorize for 10 minutes', render: 'button', next: 'disarm' },
+          { id: 'disarm', label: 'Revoke authorization', render: 'button', next: 'arm' },
+          { id: 'status', label: 'Authorization status', render: 'status' },
+        ],
+      },
+    ],
     diagnostic: '短时授权已过期；重新授权前不会采集屏幕。',
   },
   {
