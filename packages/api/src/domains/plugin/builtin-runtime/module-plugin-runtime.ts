@@ -68,8 +68,14 @@ export interface ModulePluginHostShape {
 
 export interface PluginModuleActivationShape {
   readonly actions: Readonly<Record<string, unknown>>;
-  stop(): void | Promise<void>;
+  stop(reason?: string): void | Promise<void>;
 }
+
+// Compile-time compatibility fence: already-installed modules may still implement stop().
+type AssertTrue<T extends true> = T;
+export type LegacyNoArgStopRemainsAssignable = AssertTrue<
+  (() => void) extends PluginModuleActivationShape['stop'] ? true : false
+>;
 
 export interface PluginModuleDefinitionShape {
   start(host: ModulePluginHostShape): PluginModuleActivationShape | Promise<PluginModuleActivationShape>;
@@ -257,7 +263,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         Array.isArray(actions) ||
         typeof stop !== 'function'
       ) {
-        if (typeof stop === 'function') await stop.call(candidate);
+        if (typeof stop === 'function') await stop.call(candidate, 'start_failed');
         throw new ExternalPluginRuntimeError(
           'INVALID_ENTRYPOINT',
           `${packageRecord.pluginId} start() must return an actions table and stop()`,
@@ -281,7 +287,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     const failures: unknown[] = [];
     for (const operation of [
       () => loaded.subscriptions.stop(reason),
-      () => loaded.activation.stop(),
+      () => loaded.activation.stop(reason),
       // Package bytes stay present until package cleanup has finished.
       () => loaded.located.release(),
     ]) {
@@ -311,7 +317,7 @@ async function rollbackModuleStart(
 ): Promise<never> {
   const stopResults = await Promise.allSettled([
     ...(subscriptions ? [subscriptions.stop('start_failed')] : []),
-    ...(activation ? [activation.stop()] : []),
+    ...(activation ? [activation.stop('start_failed')] : []),
   ]);
   const releaseResults = await Promise.allSettled([located.release()]);
   const failures = [...stopResults, ...releaseResults]

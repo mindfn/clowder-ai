@@ -56,7 +56,7 @@ export default {
       features: [],
       async start() {
         log.push({ call: 'start' });
-        return { actions: {}, stop: async () => log.push({ call: 'stop' }) };
+        return { actions: {}, stop: async (reason) => log.push({ call: 'stop', reason }) };
       },
     };
   },
@@ -208,8 +208,21 @@ export default {
       async start() {
         return {
           actions: [],
-          stop: async () => log.push({ call: 'stop-after-invalid-start' }),
+          stop: async (reason) => log.push({ call: 'stop-after-invalid-start', reason }),
         };
+      },
+    };
+  },
+};
+`;
+
+const legacyNoArgStopModule = `
+const log = (globalThis[${JSON.stringify(MODULE_LOG)}] ??= []);
+export default {
+  create() {
+    return {
+      async start() {
+        return { actions: {}, stop() { log.push({ call: 'legacy-stop' }); } };
       },
     };
   },
@@ -449,6 +462,19 @@ test('takes the default export of runtime.entrypoint and runs it in the Host pro
     ['create', 'start', 'stop'],
     'teardown must call the stop handle returned by start()',
   );
+  assert.equal(moduleLog().at(-1).reason, 'host_stop');
+});
+
+test('a legacy module with a no-argument stop still stops successfully', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(legacyNoArgStopModule);
+  const host = hostOf([{ manifest: manifest(), rootDir }]);
+
+  await host.router.start('instance-0');
+  await host.router.stop('instance-0', 'owner_disabled');
+
+  assert.deepEqual(moduleLog(), [{ call: 'legacy-stop' }]);
+  assert.equal(host.released.length, 1);
 });
 
 test('start receives only the admitted config, secrets and log Host surface', async () => {
@@ -615,7 +641,7 @@ test('an invalid start result is stopped and leaves no active module behind', as
 
   await assert.rejects(host.router.start('instance-0'), (error) => error.code === 'INVALID_ENTRYPOINT');
 
-  assert.deepEqual(moduleLog(), [{ call: 'stop-after-invalid-start' }]);
+  assert.deepEqual(moduleLog(), [{ call: 'stop-after-invalid-start', reason: 'start_failed' }]);
   assert.equal(host.moduleRuntime.actions('instance-0'), undefined);
   assert.equal(host.released.length, 1, 'failed start must release the staged package');
 });
@@ -786,14 +812,30 @@ test('reports a module that throws while defining itself as a package failure', 
 
 test('every teardown path releases the module instance so a restart re-creates it', async () => {
   const paths = [
-    { name: 'host stop', activationState: 'enabled', run: (host) => host.router.stop('instance-0', 'host_stop') },
+    {
+      name: 'host stop',
+      activationState: 'enabled',
+      reason: 'host_stop',
+      run: (host) => host.router.stop('instance-0', 'host_stop'),
+    },
     {
       name: 'owner disable',
       activationState: 'disabled',
+      reason: 'owner_disabled',
       run: (host) => host.router.stop('instance-0', 'owner_disabled'),
     },
-    { name: 'uninstall', activationState: 'disabling', run: (host) => host.router.stop('instance-0', 'uninstall') },
-    { name: 'host shutdown', activationState: 'enabled', run: (host) => host.router.stopAll('host_shutdown') },
+    {
+      name: 'uninstall',
+      activationState: 'disabling',
+      reason: 'owner_uninstalled',
+      run: (host) => host.router.stop('instance-0', 'owner_uninstalled'),
+    },
+    {
+      name: 'host shutdown',
+      activationState: 'enabled',
+      reason: 'host_shutdown',
+      run: (host) => host.router.stopAll('host_shutdown'),
+    },
   ];
 
   for (const path of paths) {
@@ -809,6 +851,11 @@ test('every teardown path releases the module instance so a restart re-creates i
 
     await path.run(host);
     assert.equal(host.released.length, 1, `${path.name} must release the located package`);
+    assert.equal(
+      moduleLog().find((entry) => entry.call === 'stop')?.reason,
+      path.reason,
+      `${path.name} must deliver its reason to the module`,
+    );
 
     await host.inventory.transaction((transaction) => {
       const instance = transaction.instances.get('instance-0');
