@@ -17,13 +17,11 @@ import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
 import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
   doesAssistantMessageRenderBubble,
-  hasAssistantBody,
   projectEmptyResponseLifecycleNotice,
   projectFailedResponseLabel,
 } from './assistant-message-renderability';
 import { CapabilityTipStrip } from './CapabilityTipStrip';
 import { CatAvatar } from './CatAvatar';
-import { CliDiagnosticsPanel, isKnownReason } from './CliDiagnosticsPanel';
 import { CloudBindingRecoveryCard } from './CloudBindingRecoveryCard';
 import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { ConnectorBubble } from './ConnectorBubble';
@@ -56,9 +54,9 @@ import { RichBlocks } from './rich/RichBlocks';
 import { SubexecutionActivity } from './SubexecutionActivity';
 import { SummaryCard } from './SummaryCard';
 import { SystemNoticeBar } from './SystemNoticeBar';
+import { selectTerminalDiagnostics, TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
 import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
-import { TimeoutDiagnosticsPanel } from './TimeoutDiagnosticsPanel';
 
 const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
   ragdoll: { radius: 'rounded-2xl rounded-bl-sm' },
@@ -353,9 +351,14 @@ function ChatMessageContent({
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
   const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
-  // F118 AC-C3 / F117: a failed response owns its failure, so its timeout diagnostics render under
-  // its bubble — whether it streamed a body or only shows the failure notice.
+  // F118 AC-C3 / F212 / F117: a failed response owns its failure, so the diagnostics explaining it
+  // render under its bubble with the error row's precedence — whether it streamed a body or only
+  // shows the failure notice.
   const failedResponseLabel = projectFailedResponseLabel(message);
+  const failedResponseDiagnostics = failedResponseLabel ? selectTerminalDiagnostics(message.extra, true) : null;
+  // A duplicate of the CLI panel directly above hides only its panel; the response stays.
+  const visibleFailedResponseDiagnostics =
+    failedResponseDiagnostics?.kind === 'cli' && hideDiagnosticsPanel ? null : failedResponseDiagnostics;
   const assistantPresentationTime =
     message.lifecycle?.kind === 'response' ? getMessageTimelineOrderTime(message) : message.timestamp;
   const cliStatus = message.isStreaming
@@ -407,66 +410,24 @@ function ChatMessageContent({
 
     const isLegacyError = !message.variant && message.content.trim().startsWith('Error:');
     const isError = message.variant === 'error' || isLegacyError;
-    // F212: a failed response with nothing streamed shows its CLI diagnostics in place of the empty notice.
-    const isBodylessFailedResponse =
-      message.lifecycle?.kind === 'response' &&
-      (message.lifecycle.status === 'failed' || message.lifecycle.status === 'interrupted') &&
-      !hasAssistantBody(message);
-    const canRenderCliDiagnostics =
-      isError || ((message.type === 'system' || isBodylessFailedResponse) && Boolean(message.extra?.cliDiagnostics));
     const isTool = message.variant === 'tool';
     const isFollowup = message.variant === 'a2a_followup';
-    // F212 Phase B routing precedence (砚砚 P1-1 + 云端 codex P2-3, 2026-05-27):
-    //   1. Classified CLI error (reasonCode in REASON_PALETTE) → CLI panel
-    //   2. Timeout with no recognized classification → timeout panel
-    //      (preserves F118 silence/processAlive; covers unknown-reason persisted payloads too)
-    //   3. Unclassified CLI error, no timeout → CLI panel unknown-icon fallback
-    // The `isKnownReason` membership check (not truthy) is the key defense against
-    // persisted/newer/malformed reasonCode strings hijacking the timeout view.
-    if (canRenderCliDiagnostics && isKnownReason(message.extra?.cliDiagnostics?.reasonCode)) {
-      // F212 follow-up — UI-layer dedup: if this is a subsequent duplicate of an adjacent
-      // dedup group, hide the panel (group head already rendered it with a ×N badge). We
-      // still render an empty wrapping div with data-message-id so MessageNavigator dots,
-      // ReplyPill jumps, and scrollToMessage queries continue to resolve the anchor —
-      // dropping the wrapper would silently break navigation/audit trail for the hidden
-      // duplicates (codex review PR #1967 P2 catch). h-0 keeps the anchor at zero visual
-      // cost; the group head's panel right above carries all the info via ×N badge.
-      if (hideDiagnosticsPanel) {
+    // F212 Phase B precedence; only an error row may explain itself with the timeout panel.
+    const terminalDiagnostics = selectTerminalDiagnostics(message.extra, isError);
+    if (terminalDiagnostics) {
+      // F212 follow-up — UI-layer dedup: a subsequent duplicate of an adjacent dedup group hides
+      // its CLI panel (the group head already rendered it with a ×N badge). The empty wrapper
+      // keeps data-message-id so MessageNavigator dots, ReplyPill jumps, and scrollToMessage
+      // still resolve the anchor (codex review PR #1967 P2); h-0 keeps it at zero visual cost.
+      if (terminalDiagnostics.kind === 'cli' && hideDiagnosticsPanel) {
         return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
       }
       return renderCenteredTerminalSystemSurface(
-        hideDiagnosticsPanel ? null : (
-          <CliDiagnosticsPanel
-            errorMessage={message.content}
-            diagnostics={message.extra.cliDiagnostics}
-            dedupCount={dedupCount}
-          />
-        ),
-      );
-    }
-
-    // F118 AC-C3: Enhanced timeout diagnostics panel (precedence step 2)
-    if (isError && message.extra?.timeoutDiagnostics) {
-      return renderCenteredTerminalSystemSurface(
-        <TimeoutDiagnosticsPanel errorMessage={message.content} diagnostics={message.extra.timeoutDiagnostics} />,
-      );
-    }
-
-    // F212 Phase B precedence step 3: unclassified cliDiagnostics with no timeout.
-    if (canRenderCliDiagnostics && message.extra?.cliDiagnostics) {
-      // F212 follow-up — UI-layer dedup (mirrors the classified-path branch above):
-      // preserve data-message-id anchor so navigation/scroll targets resolve.
-      if (hideDiagnosticsPanel) {
-        return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
-      }
-      return renderCenteredTerminalSystemSurface(
-        hideDiagnosticsPanel ? null : (
-          <CliDiagnosticsPanel
-            errorMessage={message.content}
-            diagnostics={message.extra.cliDiagnostics}
-            dedupCount={dedupCount}
-          />
-        ),
+        <TerminalDiagnosticsPanel
+          selected={terminalDiagnostics}
+          errorMessage={message.content}
+          dedupCount={dedupCount}
+        />,
       );
     }
 
@@ -840,11 +801,12 @@ function ChatMessageContent({
       }
       footer={
         <>
-          {failedResponseLabel && message.extra?.timeoutDiagnostics ? (
+          {failedResponseLabel && visibleFailedResponseDiagnostics ? (
             <div className="mt-2">
-              <TimeoutDiagnosticsPanel
+              <TerminalDiagnosticsPanel
+                selected={visibleFailedResponseDiagnostics}
                 errorMessage={failedResponseLabel}
-                diagnostics={message.extra.timeoutDiagnostics}
+                dedupCount={dedupCount}
               />
             </div>
           ) : null}
