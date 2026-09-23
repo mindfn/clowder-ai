@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { CatData } from '@/hooks/useCatData';
 import { primeCoCreatorConfigCache, resetCoCreatorConfigCacheForTest } from '@/hooks/useCoCreatorConfig';
 import type { ChatMessage as ChatMessageType } from '@/stores/chatStore';
+import { computeCliDiagnosticsDedup } from '@/utils/cli-diagnostics-dedup';
 
 const chatStoreState = vi.hoisted(() => ({ messages: [] as unknown[] }));
 
@@ -95,6 +96,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
   let ChatMessage: React.FC<{
     message: ChatMessageType;
     getCatById: (id: string) => CatData | undefined;
+    timelineMessages?: readonly ChatMessageType[];
     hideDiagnosticsPanel?: boolean;
     dedupCount?: number;
   }>;
@@ -691,6 +693,94 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       render(failedResponse('final answer', 'completed'));
 
       expect(container.querySelector('[data-testid="timeout-diagnostics"]')).toBeNull();
+    });
+
+    // The list-level duplicate projection and the row must agree on which panel a row shows,
+    // or a hidden duplicate can be the only place a diagnosis appears.
+    describe('adjacent responses rendered through the duplicate projection', () => {
+      function responseRow(
+        id: string,
+        extra: ChatMessageType['extra'],
+        status: 'failed' | 'completed',
+        completedAt: number,
+      ): ChatMessageType {
+        return {
+          ...failedResponse(`answer from ${id}`, status, extra),
+          id,
+          lifecycle: {
+            kind: 'response',
+            orderKey: `100:${id}`,
+            invocationId: id,
+            targetId: 'opus',
+            inputEntryIds: [`entry-${id}`],
+            inputMessageIds: [`source-${id}`],
+            status,
+            startedAt: 100,
+            completedAt,
+            ...(status === 'completed' ? {} : { reason: 'provider_error' }),
+          },
+        } as ChatMessageType;
+      }
+
+      function renderTimeline(rows: ChatMessageType[]): void {
+        const dedup = computeCliDiagnosticsDedup(rows);
+        act(() => {
+          root.render(
+            React.createElement(
+              React.Fragment,
+              null,
+              rows.map((message) =>
+                React.createElement(ChatMessage, {
+                  key: message.id,
+                  message,
+                  timelineMessages: rows,
+                  getCatById: (id: string) => (id === 'opus' ? opusCat() : undefined),
+                  hideDiagnosticsPanel: dedup.get(message.id)?.hideDiagnosticsPanel,
+                  dedupCount: dedup.get(message.id)?.dedupCount,
+                }),
+              ),
+            ),
+          );
+        });
+      }
+
+      const row = (id: string) => container.querySelector(`[data-message-id="${id}"]`);
+      const panelIn = (id: string, kind: 'cli' | 'timeout') =>
+        row(id)?.querySelector(`[data-testid="${kind}-diagnostics"]`) ?? null;
+
+      it('a CLI response after a timeout response keeps its own CLI panel', () => {
+        renderTimeline([
+          responseRow('timeout-r', { cliDiagnostics: unclassifiedCli, timeoutDiagnostics }, 'failed', 120),
+          responseRow('cli-r', { cliDiagnostics: unclassifiedCli }, 'failed', 125),
+        ]);
+
+        expect(panelIn('timeout-r', 'timeout')).toBeTruthy();
+        expect(panelIn('timeout-r', 'cli')).toBeNull();
+        expect(panelIn('cli-r', 'cli')).toBeTruthy();
+        expect(container.textContent).not.toContain('×2');
+      });
+
+      it('a response that shows no panel never heads a group', () => {
+        renderTimeline([
+          responseRow('completed-r', { cliDiagnostics: classifiedCli }, 'completed', 120),
+          responseRow('failed-r', { cliDiagnostics: classifiedCli }, 'failed', 125),
+        ]);
+
+        expect(panelIn('completed-r', 'cli')).toBeNull();
+        expect(panelIn('failed-r', 'cli')?.textContent).toContain('API 认证失败');
+        expect(container.textContent).not.toContain('×2');
+      });
+
+      it('a real duplicate hides only its panel, under a head that counts it', () => {
+        renderTimeline([
+          responseRow('first-r', { cliDiagnostics: classifiedCli }, 'failed', 120),
+          responseRow('second-r', { cliDiagnostics: classifiedCli }, 'failed', 125),
+        ]);
+
+        expect(panelIn('first-r', 'cli')?.textContent).toContain('×2');
+        expect(panelIn('second-r', 'cli')).toBeNull();
+        expect(row('second-r')?.textContent).toContain('answer from second-r');
+      });
     });
   });
 });

@@ -26,6 +26,7 @@ import { CloudBindingRecoveryCard } from './CloudBindingRecoveryCard';
 import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { ConnectorBubble } from './ConnectorBubble';
 import { ContentBlocks } from './ContentBlocks';
+import { isHiddenChatRow, projectFailedResponseDiagnostics, projectSystemRowSurface } from './chat-row-surface';
 import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
 import {
@@ -41,7 +42,7 @@ import { describeMessageInvocationTrajectory, InvocationTrajectoryAnchor } from 
 import { MessageActionSlot } from './MessageActionSlot';
 import { MessageBubble } from './MessageBubble';
 import { MessageBundleCard } from './MessageBundleCard';
-import { isLinkedDeliveryFailureCarrier, MessageDispatchAvatars } from './MessageDispatchAvatars';
+import { MessageDispatchAvatars } from './MessageDispatchAvatars';
 import { MetadataBadge } from './MetadataBadge';
 import { buildMessageDisclosureKey, buildRichHtmlDisclosureKey } from './message-disclosure-state';
 import { PawFeelDispositionDock } from './paw-feel/PawFeelDispositionDock';
@@ -54,7 +55,7 @@ import { RichBlocks } from './rich/RichBlocks';
 import { SubexecutionActivity } from './SubexecutionActivity';
 import { SummaryCard } from './SummaryCard';
 import { SystemNoticeBar } from './SystemNoticeBar';
-import { selectTerminalDiagnostics, TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
+import { TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
 import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 
@@ -90,12 +91,6 @@ function isSchedulerReplyPreview(replyPreview?: ChatMessageType['replyPreview'])
 function isConnectorSystemNotice(message: ChatMessageType): boolean {
   if (message.type !== 'connector' || !message.source?.meta) return false;
   return (message.source.meta as Record<string, unknown>).presentation === 'system_notice';
-}
-
-const INTERNAL_PROTOCOL_DIAGNOSTIC_SERVICES = new Set(['routing-guard', 'a2a-liveness-guard']);
-
-function isInternalProtocolDiagnostic(message: ChatMessageType): boolean {
-  return message.from?.kind === 'system' && INTERNAL_PROTOCOL_DIAGNOSTIC_SERVICES.has(message.from.service);
 }
 
 function exactReplyPreview(
@@ -351,11 +346,10 @@ function ChatMessageContent({
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
   const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
-  // F118 AC-C3 / F212 / F117: a failed response owns its failure, so the diagnostics explaining it
-  // render under its bubble with the error row's precedence — whether it streamed a body or only
-  // shows the failure notice.
+  // The failure's diagnostics render under the response whether it streamed a body or only shows
+  // the failure notice.
   const failedResponseLabel = projectFailedResponseLabel(message);
-  const failedResponseDiagnostics = failedResponseLabel ? selectTerminalDiagnostics(message.extra, true) : null;
+  const failedResponseDiagnostics = projectFailedResponseDiagnostics(message);
   // A duplicate of the CLI panel directly above hides only its panel; the response stays.
   const visibleFailedResponseDiagnostics =
     failedResponseDiagnostics?.kind === 'cli' && hideDiagnosticsPanel ? null : failedResponseDiagnostics;
@@ -381,56 +375,45 @@ function ChatMessageContent({
   }
 
   if (isSystem) {
-    // A failure linked from a cat-authored source is an internal settlement
-    // carrier. An unlinked origin failure is the canonical user-visible row.
-    if (isLinkedDeliveryFailureCarrier(message, threadMessages)) return null;
-
-    // F148 ContextBriefing and F233 duty briefing are user-visible, collapsed cards.
-    // F148 remains distinguishable via extra.systemKind='context_briefing'.
-    if (message.origin === 'briefing' && message.extra?.rich?.blocks?.length) {
-      return (
-        <div data-message-id={message.id} className="flex justify-center mb-3">
-          <div className="max-w-[85%] w-full opacity-80">
-            <BriefingCard block={message.extra.rich.blocks[0]} messageId={message.id} />
+    const surface = projectSystemRowSurface(message, threadMessages);
+    switch (surface.kind) {
+      case 'absorbed':
+        return null;
+      case 'briefing':
+        return (
+          <div data-message-id={message.id} className="flex justify-center mb-3">
+            <div className="max-w-[85%] w-full opacity-80">
+              <BriefingCard block={surface.block} messageId={message.id} />
+            </div>
           </div>
-        </div>
-      );
-    }
-
-    if (message.variant === 'evidence' && message.evidence) {
-      return <EvidencePanel data={message.evidence} />;
-    }
-
-    if (message.variant === 'governance_blocked' && message.extra?.governanceBlocked) {
-      const { projectPath, reasonKind } = message.extra.governanceBlocked;
-      return <GovernanceBlockedCard projectPath={projectPath} reasonKind={reasonKind} />;
+        );
+      case 'evidence':
+        return <EvidencePanel data={surface.evidence} />;
+      case 'governance_blocked':
+        return (
+          <GovernanceBlockedCard projectPath={surface.blocked.projectPath} reasonKind={surface.blocked.reasonKind} />
+        );
+      case 'diagnostics':
+        // F212 follow-up — UI-layer dedup: a subsequent duplicate of an adjacent dedup group hides
+        // its CLI panel (the group head already rendered it with a ×N badge). The empty wrapper
+        // keeps data-message-id so MessageNavigator dots, ReplyPill jumps, and scrollToMessage
+        // still resolve the anchor (codex review PR #1967 P2); h-0 keeps it at zero visual cost.
+        if (surface.selected.kind === 'cli' && hideDiagnosticsPanel) {
+          return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
+        }
+        return renderCenteredTerminalSystemSurface(
+          <TerminalDiagnosticsPanel
+            selected={surface.selected}
+            errorMessage={message.content}
+            dedupCount={dedupCount}
+          />,
+        );
     }
 
     // F045: variant='thinking' is deprecated — thinking is now embedded in assistant bubbles.
-
-    const isLegacyError = !message.variant && message.content.trim().startsWith('Error:');
-    const isError = message.variant === 'error' || isLegacyError;
+    const { isError } = surface;
     const isTool = message.variant === 'tool';
     const isFollowup = message.variant === 'a2a_followup';
-    // F212 Phase B precedence; only an error row may explain itself with the timeout panel.
-    const terminalDiagnostics = selectTerminalDiagnostics(message.extra, isError);
-    if (terminalDiagnostics) {
-      // F212 follow-up — UI-layer dedup: a subsequent duplicate of an adjacent dedup group hides
-      // its CLI panel (the group head already rendered it with a ×N badge). The empty wrapper
-      // keeps data-message-id so MessageNavigator dots, ReplyPill jumps, and scrollToMessage
-      // still resolve the anchor (codex review PR #1967 P2); h-0 keeps it at zero visual cost.
-      if (terminalDiagnostics.kind === 'cli' && hideDiagnosticsPanel) {
-        return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
-      }
-      return renderCenteredTerminalSystemSurface(
-        <TerminalDiagnosticsPanel
-          selected={terminalDiagnostics}
-          errorMessage={message.content}
-          dedupCount={dedupCount}
-        />,
-      );
-    }
-
     const toneClass = isTool
       ? 'text-cafe-muted bg-cafe-surface-elevated/50 font-mono text-xs py-1'
       : isFollowup
@@ -911,13 +894,7 @@ export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
         ? getOrderedMessageTimeline(state.messages)
         : EMPTY_TIMELINE_MESSAGES),
   );
-  // Phase C compatibility boundary: legacy routing projections remain readable in
-  // History storage, but are not a user-facing message surface anymore.
-  if (props.message.extra?.systemKind === 'a2a_routing') return null;
-  // F167 routing/liveness guards are internal protocol diagnostics. History/API
-  // filters remain the primary boundary; this structured producer guard prevents
-  // persisted or stale client caches from flashing them as user-facing notices.
-  if (isInternalProtocolDiagnostic(props.message)) return null;
+  if (isHiddenChatRow(props.message)) return null;
   return (
     <>
       <ChatMessageContent {...props} />

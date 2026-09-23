@@ -77,16 +77,21 @@ export function projectEmptyResponseLifecycleNotice(
   }
 }
 
+/**
+ * Persisted cross-thread/legacy records can retain type=user even though a trusted catId
+ * establishes assistant authorship. Matches ChatMessage's long-standing author-precedence branch
+ * without admitting system records, which render through a separate surface and never own the
+ * cat avatar slot.
+ */
+export function isAssistantAuthored(message: ChatMessage): boolean {
+  return message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
+}
+
 export function doesAssistantMessageRenderBubble(
   message: ChatMessage,
   context: AssistantMessageRenderContext = {},
 ): boolean {
-  // Persisted cross-thread/legacy records can retain type=user even though a
-  // trusted catId establishes assistant authorship. Match ChatMessage's
-  // long-standing author-precedence branch without admitting system records,
-  // which render through a separate surface and never own the cat avatar slot.
-  const isAssistantAuthored = message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
-  if (!isAssistantAuthored) return false;
+  if (!isAssistantAuthored(message)) return false;
   const hasResponseBody = hasAssistantBody(message, context);
   const hasCrossThreadSource =
     context.hasCrossThreadSource ??
