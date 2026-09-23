@@ -125,8 +125,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
   }
 
   async #resolvePackage(pluginInstanceId: string, packageRecord: PluginPackageRecord): Promise<VerifiedPluginPackage> {
-    const packageName = packageRecord.provenance?.packageName;
-    if (packageName === undefined || this.options.materializer === undefined) {
+    const provenance = packageRecord.provenance;
+    const packageName = provenance?.packageName;
+    if (provenance === undefined || packageName === undefined || this.options.materializer === undefined) {
       return await this.options.packages.resolveInstalledPackage(packageRecord.packageDigest);
     }
     return await this.options.materializer.resolve({
@@ -134,6 +135,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       pluginId: packageRecord.pluginId,
       packageDigest: packageRecord.packageDigest,
       packageName,
+      sourceKind: provenance.kind,
     });
   }
 

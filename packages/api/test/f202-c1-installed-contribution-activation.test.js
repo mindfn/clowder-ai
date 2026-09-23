@@ -265,6 +265,7 @@ test('declared MCP materialization preserves the verified runtime dependency clo
       mcpPackages: {
         async resolve(input) {
           assert.equal(input.packageName, '@clowder-ai/mcp-dependency-fixture');
+          assert.equal(input.sourceKind, 'catalog');
           return {
             rootDir: packageRoot,
             dependencyRoot: join(closureRoot, 'node_modules'),
@@ -356,6 +357,7 @@ test('local archive MCP materialization resolves its verified dependency closure
         async resolve(input) {
           materializerCalls += 1;
           assert.equal(input.packageName, '@clowder-ai/local-mcp-dependency-fixture');
+          assert.equal(input.sourceKind, 'local-archive');
           return {
             rootDir: packageRoot,
             manifest,

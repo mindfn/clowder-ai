@@ -118,11 +118,29 @@ function packageProvenance(value: unknown, label: string): PluginPackageRecord['
       kind,
       url: string(raw.url, `${label}.url`),
       ...(raw.packageName === undefined ? {} : { packageName: string(raw.packageName, `${label}.packageName`) }),
+      ...(raw.dependencyClosure === undefined
+        ? {}
+        : {
+            dependencyClosure: enumValue(
+              raw.dependencyClosure,
+              new Set(['shipped', 'materialized'] as const),
+              `${label}.dependencyClosure`,
+            ),
+          }),
     };
   }
   return {
     kind,
     ...(raw.packageName === undefined ? {} : { packageName: string(raw.packageName, `${label}.packageName`) }),
+    ...(raw.dependencyClosure === undefined
+      ? {}
+      : {
+          dependencyClosure: enumValue(
+            raw.dependencyClosure,
+            new Set(['shipped', 'materialized'] as const),
+            `${label}.dependencyClosure`,
+          ),
+        }),
   };
 }
 

@@ -351,6 +351,7 @@ export default {
       materializer: {
         async resolve(input) {
           assert.equal(input.packageName, '@clowder-ai/module-fixture');
+          assert.equal(input.sourceKind, 'catalog');
           return {
             rootDir,
             manifest: admitted,
@@ -400,6 +401,7 @@ export default {
         async resolve(input) {
           materializerCalls += 1;
           assert.equal(input.packageName, '@clowder-ai/module-fixture');
+          assert.equal(input.sourceKind, 'local-archive');
           return {
             rootDir,
             manifest: admitted,

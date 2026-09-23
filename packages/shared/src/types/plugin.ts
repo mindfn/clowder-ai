@@ -155,12 +155,14 @@ export type PluginManagerPackageSource =
       kind: 'local-directory' | 'local-archive';
       packageName: string | null;
       trust: 'local-trusted';
+      dependencyClosure?: 'shipped' | 'materialized';
     }
   | {
       kind: 'git';
       url: string;
       packageName: string | null;
       trust: 'local-trusted';
+      dependencyClosure?: 'shipped' | 'materialized';
     }
   | {
       kind: 'bundled';

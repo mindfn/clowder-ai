@@ -203,6 +203,26 @@ describe('F202 terminal Plugin Manager projection', () => {
     assert.equal(Object.hasOwn(projected.actions, 'repair'), false);
   });
 
+  it('projects owner dependency closure provenance for shipped and materialized packages', () => {
+    for (const dependencyClosure of ['shipped', 'materialized']) {
+      const snapshot = installedSnapshot();
+      snapshot.packages[0].provenance = {
+        kind: 'local-archive',
+        packageName: candidate.packageName,
+        dependencyClosure,
+      };
+
+      const projected = projectPluginManagerCatalogCandidate(candidate, snapshot);
+
+      assert.deepEqual(projected.source, {
+        kind: 'local-archive',
+        packageName: candidate.packageName,
+        trust: 'local-trusted',
+        dependencyClosure,
+      });
+    }
+  });
+
   it('allows disable and uninstall after a crash without inventing repair', () => {
     const projected = projectPluginManagerCatalogCandidate(candidate, installedSnapshot({ runtimeState: 'crashed' }), {
       activeCapabilityIds: [],

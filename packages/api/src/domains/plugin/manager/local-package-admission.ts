@@ -1,7 +1,18 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { type FileHandle, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  type FileHandle,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { Capability, PluginManifest, SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
@@ -9,7 +20,7 @@ import { FilesystemVerifiedPluginPackageLocator } from '../external-runtime/file
 import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
 import type { VerifiedPluginPackage } from '../external-runtime/types.js';
 import type { HostInventoryControlPlane } from '../host-inventory/control-plane.js';
-import { PluginInventoryError } from '../host-inventory/types.js';
+import { type PluginDependencyClosure, PluginInventoryError } from '../host-inventory/types.js';
 import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from '../official-package-archive.js';
 import {
   type PluginPackageQuarantineFailureCode,
@@ -25,8 +36,17 @@ export type LocalPluginPackageSource =
   | { readonly kind: 'local-archive'; readonly path: string };
 
 export type LocalPluginPackageProvenance =
-  | { readonly kind: 'local-directory' | 'local-archive'; readonly packageName?: string }
-  | { readonly kind: 'git'; readonly url: string; readonly packageName?: string };
+  | {
+      readonly kind: 'local-directory' | 'local-archive';
+      readonly packageName?: string;
+      readonly dependencyClosure?: PluginDependencyClosure;
+    }
+  | {
+      readonly kind: 'git';
+      readonly url: string;
+      readonly packageName?: string;
+      readonly dependencyClosure?: PluginDependencyClosure;
+    };
 
 export interface LocalPluginPackageAdmissionOptions {
   readonly inventory: HostInventoryControlPlane;
@@ -116,29 +136,79 @@ async function assertReadableDirectory(path: string): Promise<void> {
   }
 }
 
+interface PendingCopyDirectory {
+  readonly source: string;
+  readonly destination: string;
+  readonly packagePath: string;
+  readonly ancestors: ReadonlySet<string>;
+}
+
+async function resolvePackageMember(
+  source: string,
+  packagePath: string,
+): Promise<{ path: string; stat: Awaited<ReturnType<typeof lstat>> }> {
+  let path = source;
+  let stat = await lstat(source).catch((error) => {
+    throw sourceError(`local package member ${packagePath} is unreadable`, error);
+  });
+  if (!stat.isSymbolicLink()) return { path, stat };
+  if (packagePath !== 'node_modules' && !packagePath.startsWith('node_modules/')) {
+    throw sourceError(`local package contains a symlink at ${packagePath}`);
+  }
+  path = await realpath(source).catch((error) => {
+    throw sourceError(`local dependency symlink ${packagePath} is unreadable`, error);
+  });
+  stat = await lstat(path).catch((error) => {
+    throw sourceError(`local dependency symlink ${packagePath} is unreadable`, error);
+  });
+  return { path, stat };
+}
+
+async function copyPackageMember(
+  current: PendingCopyDirectory,
+  entry: string,
+  budget: CopyBudget,
+  pending: PendingCopyDirectory[],
+): Promise<void> {
+  const source = resolve(current.source, entry);
+  const destination = resolve(current.destination, entry);
+  const packagePath = current.packagePath.length === 0 ? entry : `${current.packagePath}/${entry}`;
+  const member = await resolvePackageMember(source, packagePath);
+  if (member.stat.isDirectory()) {
+    const directory = await realpath(member.path);
+    if (current.ancestors.has(directory)) throw sourceError(`local dependency symlink cycle at ${packagePath}`);
+    pending.push({
+      source: directory,
+      destination,
+      packagePath,
+      ancestors: new Set([...current.ancestors, directory]),
+    });
+    return;
+  }
+  if (!member.stat.isFile()) throw sourceError(`local package contains a non-regular member at ${packagePath}`);
+  const copied = await readRegularFile(member.path, budget);
+  await writeFile(destination, copied.bytes, { mode: copied.mode, flag: 'wx' });
+}
+
 async function copyLocalDirectory(sourceRoot: string, destinationRoot: string): Promise<void> {
   await assertReadableDirectory(sourceRoot);
   const budget: CopyBudget = { files: 0, bytes: 0 };
-  const pending = [{ source: sourceRoot, destination: destinationRoot }];
+  const realSourceRoot = await realpath(sourceRoot);
+  const pending: PendingCopyDirectory[] = [
+    {
+      source: realSourceRoot,
+      destination: destinationRoot,
+      packagePath: '',
+      ancestors: new Set([realSourceRoot]),
+    },
+  ];
   while (pending.length > 0) {
     const current = pending.pop();
     if (!current) break;
     await mkdir(current.destination, { mode: 0o700 });
     const entries = (await readdir(current.source)).sort((left, right) => left.localeCompare(right));
     for (const entry of entries) {
-      const source = resolve(current.source, entry);
-      const destination = resolve(current.destination, entry);
-      const stat = await lstat(source).catch((error) => {
-        throw sourceError(`local package member ${entry} is unreadable`, error);
-      });
-      if (stat.isSymbolicLink()) throw sourceError(`local package contains a symlink at ${entry}`);
-      if (stat.isDirectory()) {
-        pending.push({ source, destination });
-        continue;
-      }
-      if (!stat.isFile()) throw sourceError(`local package contains a non-regular member at ${entry}`);
-      const copied = await readRegularFile(source, budget);
-      await writeFile(destination, copied.bytes, { mode: copied.mode, flag: 'wx' });
+      await copyPackageMember(current, entry, budget, pending);
     }
   }
 }
@@ -191,7 +261,9 @@ function packageDigest(bytes: Uint8Array): string {
   return `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
 }
 
-async function readPackageName(rootDir: string): Promise<string | undefined> {
+async function readPackageMetadata(
+  rootDir: string,
+): Promise<{ packageName?: string; dependencyClosure?: PluginDependencyClosure }> {
   const path = resolve(rootDir, 'package.json');
   let value: unknown;
   try {
@@ -199,7 +271,7 @@ async function readPackageName(rootDir: string): Promise<string | undefined> {
     if (!file.isFile() || file.isSymbolicLink()) throw new Error('package.json is not a regular file');
     value = JSON.parse(await readFile(path, 'utf8'));
   } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return undefined;
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return {};
     throw new LocalPluginPackageAdmissionError('INVALID_PACKAGE_SCHEMA', 'local plugin package.json is invalid', {
       cause: error,
     });
@@ -213,7 +285,21 @@ async function readPackageName(rootDir: string): Promise<string | undefined> {
   ) {
     throw new LocalPluginPackageAdmissionError('INVALID_PACKAGE_SCHEMA', 'local plugin package.json is invalid');
   }
-  return (value as { readonly name: string }).name;
+  const record = value as Record<string, unknown>;
+  const dependencies = [record.dependencies, record.optionalDependencies].flatMap((entry) =>
+    entry && typeof entry === 'object' && !Array.isArray(entry) ? Object.keys(entry) : [],
+  );
+  let dependencyClosure: PluginDependencyClosure | undefined;
+  if (dependencies.length > 0) {
+    const nodeModules = await lstat(resolve(rootDir, 'node_modules')).catch((error) => {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return undefined;
+      throw new LocalPluginPackageAdmissionError('INVALID_PACKAGE_SCHEMA', 'local dependency closure is unreadable', {
+        cause: error,
+      });
+    });
+    dependencyClosure = nodeModules?.isDirectory() && !nodeModules.isSymbolicLink() ? 'shipped' : 'materialized';
+  }
+  return { packageName: record.name as string, ...(dependencyClosure ? { dependencyClosure } : {}) };
 }
 
 export class LocalPluginPackageAdmission {
@@ -275,8 +361,8 @@ export class LocalPluginPackageAdmission {
       }
       const signalSchemas = await readSignalSchemas(located.rootDir, located.manifest);
       const effectiveGrants = await this.options.grantPolicy(located.manifest);
-      const packageName = await readPackageName(located.rootDir);
-      const admittedProvenance = packageName === undefined ? provenance : { ...provenance, packageName };
+      const packageMetadata = await readPackageMetadata(located.rootDir);
+      const admittedProvenance = { ...provenance, ...packageMetadata };
       await publishPluginPackageArchive(this.packagesRoot, digest, bytes);
       try {
         const installed = await this.options.inventory.installPackage({

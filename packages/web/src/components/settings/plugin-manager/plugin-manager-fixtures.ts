@@ -28,6 +28,7 @@ export interface PluginManagerDesignFixture {
   packageName: string;
   source: 'catalog' | 'local';
   trust: 'official' | 'local-trusted';
+  dependencyClosure?: 'shipped' | 'materialized';
   sourceAdapter?: 'repository-local' | 'connector';
   availableVersion: string;
   installedVersion: string | null;

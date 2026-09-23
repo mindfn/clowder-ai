@@ -244,6 +244,39 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins/personal-chrome')).toBe(false);
   });
 
+  it('shows when an owner-provided dependency closure was shipped with the package', async () => {
+    const localPlugin = {
+      ...managerPlugin({ installed: true }),
+      source: {
+        kind: 'local-archive',
+        fileName: 'video-analysis.tgz',
+        packageName: '@clowder-ai/video-analysis',
+        trust: 'local-trusted',
+        dependencyClosure: 'shipped',
+      },
+    } as const;
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(localPlugin));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
+        return json({
+          plugin: {
+            ...localPlugin,
+            capabilities: localPlugin.capabilitySummary,
+            configFields: [],
+          },
+          catalog: { status: 'fresh', refreshedAt: 1_000 },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return json({});
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('本机自带依赖 · 仅限本机开发');
+  });
+
   it('loads detail for the installed plugin selected by visible section ordering', async () => {
     const audio = managerPlugin({
       pluginId: 'dev.clowder.audio-notes',

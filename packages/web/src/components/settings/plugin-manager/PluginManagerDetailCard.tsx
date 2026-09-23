@@ -18,6 +18,12 @@ function SectionHeading({ children }: { children: string }) {
   );
 }
 
+function dependencyClosureLabel(plugin: PluginManagerDesignFixture): string | undefined {
+  if (plugin.dependencyClosure === 'shipped') return '本机自带依赖 · 仅限本机开发';
+  if (plugin.dependencyClosure === 'materialized') return '安装时解析依赖';
+  return undefined;
+}
+
 const contributionKindLabel: Record<string, string> = {
   mcp: 'MCP',
   schedule: 'Scheduler',
@@ -168,6 +174,7 @@ export function PluginManagerDetailCard({
   const description = resolvePluginDescription(plugin.description, locale);
   const capabilityItems = capabilityDocItems(plugin);
   const capabilityGroups = groupCapabilityDocs(capabilityItems);
+  const closureLabel = dependencyClosureLabel(plugin);
 
   return (
     <article data-testid="plugin-manager-detail" className={settingsResourceCardClass}>
@@ -183,6 +190,11 @@ export function PluginManagerDetailCard({
               <SettingsText as="p" variant="xs" tone="muted" className="mt-0.5 break-all">
                 {plugin.installedVersion ?? plugin.availableVersion} · {plugin.packageName} · {plugin.publisher}
               </SettingsText>
+              {closureLabel === undefined ? null : (
+                <SettingsText as="p" variant="xs" tone="muted" className="mt-0.5">
+                  {closureLabel}
+                </SettingsText>
+              )}
             </div>
           </div>
         </section>

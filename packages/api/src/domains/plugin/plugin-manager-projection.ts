@@ -222,6 +222,7 @@ function candidateSource(
       kind: provenance.kind,
       packageName: provenance.packageName ?? null,
       trust: 'local-trusted',
+      ...(provenance.dependencyClosure === undefined ? {} : { dependencyClosure: provenance.dependencyClosure }),
     };
   }
   if (provenance?.kind === 'git') {
@@ -230,6 +231,7 @@ function candidateSource(
       url: provenance.url,
       packageName: provenance.packageName ?? null,
       trust: 'local-trusted',
+      ...(provenance.dependencyClosure === undefined ? {} : { dependencyClosure: provenance.dependencyClosure }),
     };
   }
   return {

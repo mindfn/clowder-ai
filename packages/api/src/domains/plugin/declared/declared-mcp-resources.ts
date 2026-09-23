@@ -77,11 +77,14 @@ async function stablePackageRoot(
 ): Promise<string> {
   const packageName = admission.packageRecord.provenance?.packageName;
   if (packageName !== undefined && host.mcpPackages !== undefined) {
+    const provenance = admission.packageRecord.provenance;
+    if (provenance === undefined) throw new Error('package provenance is required when packageName is present');
     const materialized = await host.mcpPackages.resolve({
       pluginInstanceId: admission.instance.pluginInstanceId,
       pluginId: admission.packageRecord.pluginId,
       packageDigest: admission.packageRecord.packageDigest,
       packageName,
+      sourceKind: provenance.kind,
     });
     try {
       if (!isDeepStrictEqual(materialized.manifest, admission.packageRecord.manifest)) {

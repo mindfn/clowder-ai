@@ -68,6 +68,15 @@ describe('F202 terminal Plugin Manager contract', () => {
     }>();
   });
 
+  it('keeps owner dependency closure provenance visible without changing trust', () => {
+    expectTypeOf<Extract<PluginManagerPackageSource, { kind: 'local-directory' | 'local-archive' }>>().toEqualTypeOf<{
+      kind: 'local-directory' | 'local-archive';
+      packageName: string | null;
+      trust: 'local-trusted';
+      dependencyClosure?: 'shipped' | 'materialized';
+    }>();
+  });
+
   it('keeps compatibility trust coupled to its source adapter', () => {
     expectTypeOf<
       Extract<PluginManagerPackageSource, { kind: 'compatibility'; adapter: 'repository-local' }>

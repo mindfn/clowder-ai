@@ -642,11 +642,17 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
                     url: provenance.url,
                     packageName: provenance.packageName ?? null,
                     trust: 'local-trusted' as const,
+                    ...(provenance.dependencyClosure === undefined
+                      ? {}
+                      : { dependencyClosure: provenance.dependencyClosure }),
                   }
                 : {
                     kind: provenance.kind,
                     packageName: provenance.packageName ?? null,
                     trust: 'local-trusted' as const,
+                    ...(provenance.dependencyClosure === undefined
+                      ? {}
+                      : { dependencyClosure: provenance.dependencyClosure }),
                   },
         capabilities: projected.capabilitySummary.map((capability) => ({ ...capability })),
         contributions: pluginManagerContributionsFromManifest(packageRecord.manifest).map((contribution) => ({
