@@ -9,6 +9,7 @@ import {
 import { tintedLight } from '@/lib/color-utils';
 import { connectorThemeToken } from '@/lib/connector-theme-token';
 import type { ChatMessage as ChatMessageType, MessageContent } from '@/stores/chatStore';
+import { compareMessageTimelineOrder } from '@/stores/message-timeline';
 import { API_URL } from '@/utils/api-client';
 import { HoldBallCancelButton } from './HoldBallCancelButton';
 import {
@@ -110,7 +111,7 @@ function collectHoldCards(
       .map((card) => [card.id, card]),
   );
   byId.set(message.id, message);
-  return [...byId.values()].sort((left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id));
+  return [...byId.values()].sort(compareMessageTimelineOrder);
 }
 
 function getHoldStatusRefreshKey(cards: readonly ChatMessageType[], message: ChatMessageType): string {

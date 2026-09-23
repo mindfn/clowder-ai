@@ -8,6 +8,24 @@ function makeMsg(id: string, content = 'hello'): ChatMessage {
   return { id, type: 'user', content, timestamp: Date.now() };
 }
 
+function responseLifecycle(
+  invocationId: string,
+  status: 'processing' | 'completed',
+  completedAt?: number,
+): NonNullable<ChatMessage['lifecycle']> {
+  return {
+    kind: 'response',
+    orderKey: `1:${invocationId}`,
+    status,
+    targetId: 'codex',
+    invocationId,
+    inputEntryIds: [],
+    inputMessageIds: [],
+    startedAt: 1,
+    ...(completedAt === undefined ? {} : { completedAt }),
+  };
+}
+
 type MessageWriter = 'addMessage' | 'active addMessageToThread' | 'background addMessageToThread';
 
 function writeMessage(writer: MessageWriter, existing: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
@@ -483,9 +501,9 @@ describe('chatStore multi-thread state', () => {
             content: 'working',
             timestamp: 1_000,
             timelineOrderAt: 1_000,
-            lifecycle: { kind: 'response', status: 'processing', targetId: 'codex', invocationId: 'inv-live' },
+            lifecycle: responseLifecycle('inv-live', 'processing'),
           },
-          { id: 'user-later', type: 'user', catId: null, content: 'new context', timestamp: 2_000 },
+          { id: 'user-later', type: 'user', content: 'new context', timestamp: 2_000 },
         ],
       });
 
@@ -502,7 +520,7 @@ describe('chatStore multi-thread state', () => {
     it('does not sort every stream token once the processing response is already at the live edge', () => {
       useChatStore.setState({
         messages: [
-          { id: 'user-earlier', type: 'user', catId: null, content: 'context', timestamp: 1_000 },
+          { id: 'user-earlier', type: 'user', content: 'context', timestamp: 1_000 },
           {
             id: 'response-live',
             type: 'assistant',
@@ -510,7 +528,7 @@ describe('chatStore multi-thread state', () => {
             content: 'working',
             timestamp: 2_000,
             timelineOrderAt: 2_000,
-            lifecycle: { kind: 'response', status: 'processing', targetId: 'codex', invocationId: 'inv-live' },
+            lifecycle: responseLifecycle('inv-live', 'processing'),
           },
         ],
       });
@@ -538,9 +556,9 @@ describe('chatStore multi-thread state', () => {
             content: 'working',
             timestamp: 1_000,
             timelineOrderAt: 1_000,
-            lifecycle: { kind: 'response', status: 'processing', targetId: 'codex', invocationId: 'inv-live' },
+            lifecycle: responseLifecycle('inv-live', 'processing'),
           },
-          { id: 'user-later', type: 'user', catId: null, content: 'new context', timestamp: 2_000 },
+          { id: 'user-later', type: 'user', content: 'new context', timestamp: 2_000 },
         ],
       });
 
@@ -551,13 +569,7 @@ describe('chatStore multi-thread state', () => {
         content: 'done',
         timestamp: 1_000,
         timelineOrderAt: 1_000,
-        lifecycle: {
-          kind: 'response',
-          status: 'completed',
-          targetId: 'codex',
-          invocationId: 'inv-live',
-          completedAt: 3_000,
-        },
+        lifecycle: responseLifecycle('inv-live', 'completed', 3_000),
       });
 
       const state = useChatStore.getState();
@@ -579,15 +591,9 @@ describe('chatStore multi-thread state', () => {
             timestamp: 1_000,
             timelineOrderAt: 1_500,
             isStreaming: false,
-            lifecycle: {
-              kind: 'response',
-              status: 'completed',
-              targetId: 'codex',
-              invocationId: 'inv-terminal',
-              completedAt: 3_000,
-            },
+            lifecycle: responseLifecycle('inv-terminal', 'completed', 3_000),
           },
-          { id: 'user-later', type: 'user', catId: null, content: 'new context', timestamp: 4_000 },
+          { id: 'user-later', type: 'user', content: 'new context', timestamp: 4_000 },
         ],
       });
       const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(5_000);

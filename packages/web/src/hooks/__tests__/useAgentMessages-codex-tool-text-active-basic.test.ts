@@ -179,7 +179,6 @@ describe('Codex active path — tool work-log + text converge', () => {
       useChatStore.getState().addMessage({
         id: 'user-after-first-tool',
         type: 'user',
-        catId: null,
         content: 'new context',
         timestamp: 2_000,
       });
