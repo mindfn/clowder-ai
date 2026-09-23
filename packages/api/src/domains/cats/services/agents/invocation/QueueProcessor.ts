@@ -50,6 +50,7 @@ import { shouldMarkDecisionNotification } from '../../push/decision-notification
 import type { PushPayload } from '../../push/PushNotificationService.js';
 import { messageFrom } from '../../stores/message-from.js';
 import type { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
+import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type {
   InvocationActionLeaseCarrier,
   InvocationRecord,
@@ -138,7 +139,7 @@ import {
   terminalizePreparedPrestartRetirements,
 } from './queue-prestart-group-retirement.js';
 import { requireInvocationRecordUpdate } from './require-invocation-record-update.js';
-import { lifecycleResponseIdempotencyKey } from './response-draft-settlement.js';
+import { lifecycleResponseIdempotencyKey, settleResponseFromDraft } from './response-draft-settlement.js';
 import {
   type CommitInvocationInput,
   type ConsumedContinuationToken,
@@ -449,6 +450,8 @@ export interface QueueProcessorDeps {
   router: RouterLike;
   socketManager: SocketManagerLike;
   messageStore: IMessageStore;
+  /** F117 KD-21: the in-flight bodies of responses an execution that throws leaves processing. */
+  draftStore?: Pick<IDraftStore, 'getByThread' | 'delete'>;
   /** F254: durable owner for ordinary queued-user lifecycle transitions. */
   log: LoggerLike;
   /** User-facing completion/error notifications for canonical queued web ingress. */
@@ -2268,6 +2271,40 @@ export class QueueProcessor {
   /** Publish one exact same-id lifecycle snapshot; clients upsert without inventing state. */
   private emitLifecycleMessageUpdated(userId: string, message: StoredMessage): void {
     emitLifecycleMessageUpdated(this.deps.socketManager, userId, message);
+  }
+
+  /** F117 KD-21: fail the responses a thrown execution left processing, with their draft bodies. */
+  private async settleAbandonedResponses(
+    userId: string,
+    threadId: string,
+    responseIds: ReadonlySet<string>,
+  ): Promise<void> {
+    for (const responseId of responseIds) {
+      try {
+        const response = await this.deps.messageStore.getById(responseId);
+        if (response?.lifecycle?.kind !== 'response' || response.lifecycle.status !== 'processing') continue;
+        await settleResponseFromDraft(
+          {
+            messageStore: this.deps.messageStore,
+            ...(this.deps.draftStore ? { draftStore: this.deps.draftStore } : {}),
+            emit: (recipient, message) => this.emitLifecycleMessageUpdated(recipient, message),
+          },
+          {
+            userId,
+            threadId,
+            invocationId: response.lifecycle.invocationId,
+            status: 'failed',
+            reason: 'execution_error',
+            endedAt: Date.now(),
+          },
+        );
+      } catch (err) {
+        this.deps.log.warn(
+          { err, threadId, responseId },
+          '[QueueProcessor] failed to settle a response its failed execution left processing',
+        );
+      }
+    }
   }
 
   private async cancelMessageIds(messageIds: readonly string[], log: LoggerLike, reason: string): Promise<void> {
@@ -4663,6 +4700,10 @@ export class QueueProcessor {
           '[QueueProcessor] Failed to update invocation record to failed; terminal backstop will retry',
         );
       }
+      // F117 KD-21: the route threw before committing its responses. Each R it left processing fails
+      // now with the body its draft streamed rather than waiting for the next restart; a fenced
+      // action whose failure stays hidden keeps its output uncommitted.
+      if (exposeFailure) await this.settleAbandonedResponses(userId, threadId, lifecycleResponseMessageIds);
 
       // R4 fix (#873): correct failure cleanup sequence per messages.ts
       // cleanupStreamingOnFailure — onStreamEnd moves sessions from active →

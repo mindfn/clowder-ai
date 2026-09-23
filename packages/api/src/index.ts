@@ -2561,6 +2561,7 @@ async function main(): Promise<void> {
       router: router as unknown as RouterLike,
       socketManager,
       messageStore,
+      draftStore,
       turnExecutionStore,
       log: app.log,
       getPushService: getPushNotificationService,

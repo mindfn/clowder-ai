@@ -8,6 +8,7 @@ const { CallerDispatchObservationRegistry } = await import(
   '../dist/domains/cats/services/agents/invocation/CallerDispatchObservationRegistry.js'
 );
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
+const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/DraftStore.js');
 const { MessageStore, settleLifecycleResponseInputs } = await import(
   '../dist/domains/cats/services/stores/ports/MessageStore.js'
 );
@@ -62,6 +63,7 @@ function createHarness({
   tracker = new InvocationTracker(),
   callerDispatchObservationRegistry = new CallerDispatchObservationRegistry(),
   processorOptions,
+  draftStore,
 } = {}) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
@@ -105,6 +107,7 @@ function createHarness({
     messageStore,
     callerDispatchObservationRegistry,
     log: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
+    ...(draftStore ? { draftStore } : {}),
   };
   return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
 }
@@ -553,6 +556,38 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     } finally {
       releaseSibling();
     }
+  });
+
+  it('F117 KD-21: a route that throws fails the response it left processing with its draft body', async () => {
+    const draftStore = new DraftStore();
+    let responseMessageId;
+    const harness = createHarness({
+      draftStore,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats] = args;
+        const admission = await startLifecycle(args, 'turn-thrown');
+        responseMessageId = admission.responseMessageId;
+        draftStore.upsert({
+          userId,
+          threadId,
+          invocationId: 'turn-thrown',
+          catId: targetCats[0],
+          content: '已经写到一半',
+          updatedAt: Date.now(),
+        });
+        yield { type: 'text', catId: targetCats[0], content: '已经写到一半', timestamp: Date.now() };
+        throw new Error('route exploded mid-stream');
+      },
+    });
+    await admitMessage(harness);
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'failed');
+
+    const failed = harness.messageStore.getById(responseMessageId);
+    assert.equal(failed.lifecycle.reason, 'execution_error');
+    assert.equal(failed.content, '已经写到一半');
+    assert.deepEqual(draftStore.getByThread('user-1', 'thread-1'), []);
   });
 
   it('keeps an exact target set queued when one sibling is busy', async () => {
