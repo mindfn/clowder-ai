@@ -7,11 +7,12 @@ import {
   type SchedulerMessageExtra,
   timelineMessageKind,
 } from '@cat-cafe/shared';
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadChatRuntimeProvider';
 import { getBubbleInvocationId, shouldForceReplaceHydrationForCachedMessages } from '@/debug/bubbleIdentity';
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
+import { selectThreadMessagesRaw } from '@/hooks/useThreadScopedSelectors';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import type { QueueEntry, TaskProgressItem } from '@/stores/chat-types';
@@ -26,7 +27,6 @@ import {
   findEarliestMessageByCursor,
   getMessageTimelineCursorTime,
   getMessageTimelineOrderTime,
-  getOrderedMessageTimeline,
 } from '@/stores/message-timeline';
 import type { TaskItem } from '@/stores/taskStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -47,6 +47,7 @@ import {
 } from '@/utils/offline-store';
 import {
   captureMessageScrollAnchor,
+  captureMessageScrollAnchorForElement,
   captureMessageScrollAnchorForMessage,
   MESSAGE_VIEWPORT_MOUNTED_EVENT,
   type MessageScrollAnchor,
@@ -63,6 +64,7 @@ import {
 } from '@/utils/teleport';
 import { resumeInvocationReconciliationAfterHydration } from './invocation-timeout-reconciliation';
 import { hydrateQueueActiveInvocationSlots, type QueueActiveInvocationSlot } from './queue-active-invocation-hydration';
+import { useViewportMessageTimeline } from './useViewportMessageTimeline';
 
 type SavedScrollState =
   | { top: number; anchor: 'bottom' }
@@ -78,12 +80,6 @@ type NavigationSettleResult =
   | { kind: 'retry' }
   | { kind: 'settled'; sample: NavigationSettleSample }
   | { kind: 'expired' };
-
-function hasSameMessageMembership(previousIds: readonly string[], currentIds: readonly string[]): boolean {
-  if (previousIds.length !== currentIds.length) return false;
-  const previous = new Set(previousIds);
-  return previous.size === currentIds.length && currentIds.every((id) => previous.has(id));
-}
 
 // clowder-ai#27: route navigation remounts the page, so scroll memory must live
 // outside React refs to survive /thread/A → /thread/B → /thread/A.
@@ -856,7 +852,8 @@ export function useChatHistory(threadId: string) {
   historyConsumerIdRef.current ??= Symbol('thread-chat-history-consumer');
   const historyConsumerId = historyConsumerIdRef.current;
   const {
-    messages,
+    messages: rawMessages,
+    currentThreadId: storeCurrentThreadId,
     isLoadingHistory,
     hasMore,
     replaceThreadMessages,
@@ -869,7 +866,8 @@ export function useChatHistory(threadId: string) {
     isOfflineSnapshot,
   } = useChatStore(
     useShallow((s) => ({
-      messages: getOrderedMessageTimeline(s.messages),
+      messages: selectThreadMessagesRaw(s, threadId),
+      currentThreadId: s.currentThreadId,
       isLoadingHistory: s.isLoadingHistory,
       hasMore: s.hasMore,
       replaceThreadMessages: s.replaceThreadMessages,
@@ -886,6 +884,17 @@ export function useChatHistory(threadId: string) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messages = useViewportMessageTimeline(threadId, rawMessages, () => {
+    if (useChatStore.getState().currentThreadId !== threadId) return;
+    const el = scrollContainerRef.current;
+    const saved = scrollPositionsByThread.get(threadId);
+    if (!el || saved?.anchor !== 'offset' || saved.messageAnchor) return;
+    scrollPositionsByThread.set(threadId, {
+      ...saved,
+      top: el.scrollTop,
+      messageAnchor: captureMessageScrollAnchor(el) ?? saved.messageAnchor,
+    });
+  });
 
   // Scroll state for prepend handling
   const prevFirstIdRef = useRef<string | null>(null);
@@ -1915,7 +1924,7 @@ export function useChatHistory(threadId: string) {
     }
   }, [isLoadingHistory]);
 
-  const timelineMessageIds = messages.map((message) => message.id);
+  const timelineMessageIds = useMemo(() => messages.map((message) => message.id), [messages]);
 
   // The same messages can change presentation order or rendered height while
   // streaming. Reapply the user's saved anchor before paint; browser-native
@@ -1928,7 +1937,7 @@ export function useChatHistory(threadId: string) {
     }
     const previousIds = previousTimelineIdsRef.current;
     previousTimelineIdsRef.current = timelineMessageIds;
-    if (!hasSameMessageMembership(previousIds, timelineMessageIds)) return;
+    if (previousIds.length === 0) return;
 
     const el = scrollContainerRef.current;
     const saved = scrollPositionsByThread.get(threadId);
@@ -1941,10 +1950,14 @@ export function useChatHistory(threadId: string) {
           ? { kind: 'message', messageAnchor: saved.messageAnchor }
           : undefined;
     if (!anchor || !restoreTimelineScrollAnchor(el, anchor)) return;
+    // Admission, prepend, and reorder all use this one correction. Do not
+    // apply the older height-delta prepend correction on top of it.
+    scrollSnapshotRef.current = null;
     scrollPositionsByThread.set(threadId, { ...saved, top: el.scrollTop });
-  }, [threadId, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId, timelineMessageIds]);
 
   // Scroll adjustment after messages change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: store sync must retry initial restore even when the scoped message reference is unchanged.
   useEffect(() => {
     const el = scrollContainerRef.current;
 
@@ -1999,7 +2012,7 @@ export function useChatHistory(threadId: string) {
         }
       }
     }
-  }, [messages, scheduleRestore, threadId]);
+  }, [messages, scheduleRestore, storeCurrentThreadId, threadId]);
 
   // F052 + 砚砚 R1 P1: resolve a pending cross-post scroll across BOTH the tentative IDB-snapshot
   // phase and the authoritative fresh-API phase. Kept independent of the scroll-restore effect
@@ -2197,8 +2210,26 @@ export function useChatHistory(threadId: string) {
     }
   }, [hasMore, isLoadingHistory, messages, fetchHistory]);
 
+  const handleReadingIntent = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const disclosure = target.closest<HTMLElement>('[data-reading-disclosure]');
+      const el = scrollContainerRef.current;
+      if (!disclosure || !el || !el.contains(disclosure)) return;
+      if (useChatStore.getState().currentThreadId !== threadIdRef.current) return;
+      const messageAnchor = captureMessageScrollAnchorForElement(el, disclosure);
+      if (!messageAnchor) return;
+      cancelPendingRestore();
+      scrollPositionsByThread.set(threadIdRef.current, { top: el.scrollTop, anchor: 'offset', messageAnchor });
+    },
+    [cancelPendingRestore],
+  );
+
   return {
+    messages,
     handleScroll,
+    handleReadingIntent,
     jumpToLatest,
     scrollContainerRef,
     messagesEndRef,

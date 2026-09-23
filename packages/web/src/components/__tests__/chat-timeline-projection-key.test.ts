@@ -28,6 +28,14 @@ describe('buildChatTimelineProjectionKey', () => {
     expect(buildChatTimelineProjectionKey([after])).toBe(buildChatTimelineProjectionKey([before]));
   });
 
+  it('does not invalidate historical rows for a live activity-clock tick, but does for an order round', () => {
+    const first = message();
+    const second = message({ id: 'assistant-2', timestamp: 2 });
+    const tick = { ...first, timestamp: 3, timelineOrderAt: 3, content: 'next chunk' };
+    expect(buildChatTimelineProjectionKey([tick, second])).toBe(buildChatTimelineProjectionKey([first, second]));
+    expect(buildChatTimelineProjectionKey([second, tick])).not.toBe(buildChatTimelineProjectionKey([first, second]));
+  });
+
   it('changes when terminal or delivery topology changes', () => {
     const streaming = message();
     const terminal = message({ isStreaming: false });

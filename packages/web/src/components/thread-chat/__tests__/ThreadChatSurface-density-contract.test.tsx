@@ -24,7 +24,9 @@ vi.mock('@/hooks/useThreadScopedSelectors', () => ({
 
 vi.mock('@/hooks/useChatHistory', () => ({
   useChatHistory: () => ({
+    messages,
     handleScroll: vi.fn(),
+    handleReadingIntent: vi.fn(),
     scrollContainerRef: { current: null },
     messagesEndRef: { current: null },
     isLoadingHistory: false,

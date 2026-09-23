@@ -8,7 +8,7 @@ import { useChatHistory } from '@/hooks/useChatHistory';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useConnectionStatus } from '@/hooks/useConnectionStatus';
 import { useSendMessage } from '@/hooks/useSendMessage';
-import { useThreadLiveness, useThreadMessages } from '@/hooks/useThreadScopedSelectors';
+import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { useChatStore } from '@/stores/chatStore';
 import { computeCliDiagnosticsDedup } from '@/utils/cli-diagnostics-dedup';
 import { computeScrollRecomputeSignal } from '@/utils/scrollRecomputeSignal';
@@ -74,12 +74,19 @@ export function ThreadChatSurface({
   onComposerFocusChange,
   onActivity,
 }: ThreadChatSurfaceProps) {
-  const messages = useThreadMessages(threadId);
   const liveness = useThreadLiveness(threadId);
   const { hasActive: hasActiveInvocation, catStatuses, catInvocations, intentMode } = liveness;
   const { socketConnected } = useThreadChatRuntime([threadId]);
-  const { handleScroll, jumpToLatest, scrollContainerRef, messagesEndRef, isLoadingHistory, hasMore } =
-    useChatHistory(threadId);
+  const {
+    messages,
+    handleScroll,
+    handleReadingIntent,
+    jumpToLatest,
+    scrollContainerRef,
+    messagesEndRef,
+    isLoadingHistory,
+    hasMore,
+  } = useChatHistory(threadId);
   const { handleSend, uploadStatus, uploadError } = useSendMessage(threadId);
   const interactiveSendContext = `thread-chat-surface:${useId()}`;
   const { getCatById, refresh: refreshCats } = useCatData();
@@ -153,6 +160,7 @@ export function ThreadChatSurface({
         <main
           ref={scrollContainerRef}
           onScroll={handleScroll}
+          onClickCapture={handleReadingIntent}
           className={
             compact
               ? 'h-full overflow-y-auto px-3 py-3 [overflow-anchor:none]'

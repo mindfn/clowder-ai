@@ -82,11 +82,16 @@ function projectTerminalLiveness(liveness: ThreadLiveness): ThreadLiveness {
  *  thread. Active and background sources share the same memoized projection;
  *  writers keep storage/insertion shape and never own display order. */
 export function selectThreadMessages(state: ChatState, threadId: string | null): ChatMessage[] {
+  return getOrderedMessageTimeline(selectThreadMessagesRaw(state, threadId));
+}
+
+/** Unsorted immutable store snapshot for a viewport that owns its display-order round. */
+export function selectThreadMessagesRaw(state: ChatState, threadId: string | null): ChatMessage[] {
   if (!threadId) return EMPTY_MESSAGES as ChatMessage[];
   if (threadId === state.currentThreadId || !state.currentThreadId) {
-    return getOrderedMessageTimeline(state.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
+    return state.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
   }
-  return getOrderedMessageTimeline(state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
+  return state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
 }
 
 /** Pure selector — returns liveness fields for a thread. Defensively

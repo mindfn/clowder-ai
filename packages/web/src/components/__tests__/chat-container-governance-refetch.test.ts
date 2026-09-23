@@ -210,6 +210,8 @@ vi.mock('@/hooks/useAgentMessages', () => ({
 
 vi.mock('@/hooks/useChatHistory', () => ({
   useChatHistory: () => ({
+    messages: storeState.messages,
+    handleReadingIntent: vi.fn(),
     handleScroll: vi.fn(),
     scrollContainerRef: { current: null },
     messagesEndRef: { current: document.createElement('div') },

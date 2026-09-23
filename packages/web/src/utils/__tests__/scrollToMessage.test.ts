@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import {
   captureMessageScrollAnchor,
+  captureMessageScrollAnchorForElement,
   restoreMessageScrollAnchor,
   restoreTimelineScrollAnchor,
   scrollToMessage,
@@ -62,6 +63,141 @@ describe('scrollToMessage', () => {
       }),
     ).toBe(true);
     expect(container.scrollTop).toBe(560);
+  });
+
+  it('anchors the visible paragraph inside a taller-than-viewport card', () => {
+    const container = document.createElement('div');
+    container.scrollTop = 500;
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'long';
+    boundary.getBoundingClientRect = () => ({ top: -900, bottom: 950 }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'long';
+    const above = document.createElement('p');
+    above.textContent = 'above';
+    above.getBoundingClientRect = () => ({ top: -300, bottom: 50 }) as DOMRect;
+    const reading = document.createElement('p');
+    reading.textContent = 'reading paragraph';
+    let readingTop = 180;
+    reading.getBoundingClientRect = () => ({ top: readingTop, bottom: readingTop + 150 }) as DOMRect;
+    target.append(above, reading);
+    boundary.append(target);
+    container.append(boundary);
+    document.body.append(container);
+
+    const anchor = captureMessageScrollAnchor(container);
+    expect(anchor).toEqual({
+      messageId: 'long',
+      viewportOffsetPx: -1_000,
+      blockIndex: 1,
+      blockFingerprint: 'p:reading paragraph',
+      blockViewportOffsetPx: 80,
+    });
+    readingTop = 260; // content above the paragraph expanded; card top did not move
+    if (!anchor) throw new Error('expected a visible paragraph anchor');
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(true);
+    expect(container.scrollTop).toBe(580);
+  });
+
+  it('finds the same paragraph when earlier reading blocks are folded away', () => {
+    const container = document.createElement('div');
+    container.scrollTop = 500;
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'long';
+    boundary.getBoundingClientRect = () => ({ top: -900, bottom: 950 }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'long';
+    const paragraphs = ['folded one', 'folded two', 'main one', 'main two', 'main three', 'main four'].map(
+      (content) => {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = content;
+        return paragraph;
+      },
+    );
+    let mainTwoTop = 180;
+    let mainFourTop = 380;
+    paragraphs.forEach((paragraph, index) => {
+      paragraph.getBoundingClientRect = () => {
+        const top = index === 3 ? mainTwoTop : index === 5 ? mainFourTop : -400;
+        return { top, bottom: top + 80 } as DOMRect;
+      };
+    });
+    target.append(...paragraphs);
+    boundary.append(target);
+    container.append(boundary);
+    document.body.append(container);
+
+    const anchor = captureMessageScrollAnchor(container);
+    expect(anchor?.blockIndex).toBe(3);
+    if (!anchor) throw new Error('expected a paragraph anchor');
+    paragraphs[0].remove();
+    paragraphs[1].remove();
+    mainTwoTop = -220;
+    mainFourTop = 180; // Old index 3 now names the wrong paragraph at the old offset.
+
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(true);
+    expect(container.scrollTop).toBe(100);
+  });
+
+  it('falls back to the message boundary when the viewed paragraph disappears', () => {
+    const container = document.createElement('div');
+    container.scrollTop = 500;
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'long';
+    let boundaryTop = -900;
+    boundary.getBoundingClientRect = () => ({ top: boundaryTop, bottom: 950 }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'long';
+    const preceding = document.createElement('p');
+    preceding.textContent = 'preceding';
+    preceding.getBoundingClientRect = () => ({ top: -300, bottom: -220 }) as DOMRect;
+    const viewed = document.createElement('p');
+    viewed.textContent = 'viewed';
+    viewed.getBoundingClientRect = () => ({ top: 180, bottom: 260 }) as DOMRect;
+    const replacement = document.createElement('p');
+    replacement.textContent = 'replacement';
+    replacement.getBoundingClientRect = () => ({ top: 180, bottom: 260 }) as DOMRect;
+    target.append(preceding, viewed, replacement);
+    boundary.append(target);
+    container.append(boundary);
+    document.body.append(container);
+
+    const anchor = captureMessageScrollAnchor(container);
+    expect(anchor?.blockIndex).toBe(1);
+    if (!anchor) throw new Error('expected a paragraph anchor');
+    viewed.remove();
+    boundaryTop = -800;
+
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(true);
+    expect(container.scrollTop).toBe(600); // Preserve the message's original -1000px offset.
+  });
+
+  it('captures a clicked disclosure as offset intent even when the viewport was at bottom', () => {
+    const container = document.createElement('div');
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'expanded';
+    boundary.getBoundingClientRect = () => ({ top: 50, bottom: 800 }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'expanded';
+    const button = document.createElement('button');
+    button.dataset.readingDisclosure = '';
+    button.textContent = 'Expand section';
+    button.getBoundingClientRect = () => ({ top: 380, bottom: 420 }) as DOMRect;
+    target.append(button);
+    boundary.append(target);
+    container.append(boundary);
+    document.body.append(container);
+    expect(captureMessageScrollAnchorForElement(container, button)).toEqual({
+      messageId: 'expanded',
+      viewportOffsetPx: -50,
+      blockIndex: 0,
+      blockFingerprint: 'button:Expand section',
+      blockViewportOffsetPx: 280,
+    });
   });
 
   it('keeps a user at the bottom after an earlier message reorders', () => {
