@@ -60,14 +60,19 @@ function harness() {
 }
 
 describe('K-2A contract-native inventory', () => {
-  it('pins the API and runtime boundary to plugin-contract beta.19', () => {
+  it('pins the API and runtime boundary to the canonical plugin-contract beta.20 archive', () => {
     assert.equal(
       packageJson.dependencies['@clowder-ai/plugin-contract'],
-      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.19.tgz',
+      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.20.tgz',
     );
-    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.19');
+    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.20.tgz', import.meta.url));
+    assert.equal(
+      createHash('sha256').update(archive).digest('hex'),
+      '5ce083a94714483924a628b6b52960e661b604f50a25bb0e34033e904b0acaf7',
+    );
+    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.20');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
-    assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, ['0.1.0', '0.1.0-beta.13', '0.1.0-beta.19']);
+    assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, ['0.1.0', '0.1.0-beta.13', '0.1.0-beta.20']);
   });
 
   it('rejects a traversal entrypoint before admitting any package, instance, or grant', async () => {

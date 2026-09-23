@@ -109,6 +109,7 @@ describe('F202 terminal Plugin Manager contract', () => {
       | 'service'
       | 'ui'
       | 'content-editor-provider'
+      | 'media-source'
     >();
     expectTypeOf<PluginManagerDetail['capabilities'][number]['active']>().toEqualTypeOf<boolean>();
   });

@@ -17,6 +17,7 @@ import type {
   MessageElement,
   MessageEnvelope,
   MessageProvenance,
+  RichBlockElementPayload,
 } from '@clowder-ai/plugin-contract';
 import { isWireUInt53, MESSAGING_BOUNDS, validateMessagingRowResult } from '@clowder-ai/plugin-contract';
 import type { StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
@@ -110,6 +111,45 @@ function payloadBytes(value: Record<string, unknown>): number | null {
   }
 }
 
+function isFrozenRichBlock(value: unknown): value is RichBlockElementPayload {
+  return isRecord(value) && isBoundedString(value.id, 128) && isBoundedString(value.kind, 128) && value.v === 1;
+}
+
+function isMediaUnavailablePayload(value: Record<string, unknown>): boolean {
+  return (
+    hasOnlyKeys(value, ['type', 'fileName', 'reason']) &&
+    (value.type === 'image' || value.type === 'file' || value.type === 'audio' || value.type === 'video') &&
+    isOptionalBoundedString(value.fileName, 512) &&
+    (value.reason === 'source_expired' || value.reason === 'timeout' || value.reason === 'unavailable')
+  );
+}
+
+function isMediaWarningPayload(value: Record<string, unknown>): boolean {
+  return (
+    hasOnlyKeys(value, ['mediaElementId', 'stage', 'reason']) &&
+    isBoundedString(value.mediaElementId, MESSAGING_BOUNDS.maxElementIdLength) &&
+    (value.stage === 'transcription' || value.stage === 'preview') &&
+    (value.reason === 'timeout' || value.reason === 'processing_failed')
+  );
+}
+
+function isElementPayload(kind: unknown, payload: Record<string, unknown>): boolean {
+  switch (kind) {
+    case 'text':
+      return hasOnlyKeys(payload, ['text']) && typeof payload.text === 'string';
+    case 'media_ref':
+      return true;
+    case 'rich_block':
+      return isFrozenRichBlock(payload);
+    case 'media_unavailable':
+      return isMediaUnavailablePayload(payload);
+    case 'media_warning':
+      return isMediaWarningPayload(payload);
+    default:
+      return false;
+  }
+}
+
 function isElement(value: unknown): boolean {
   if (
     !isRecord(value) ||
@@ -118,11 +158,7 @@ function isElement(value: unknown): boolean {
   ) {
     return false;
   }
-  if (value.kind !== 'text' && value.kind !== 'media_ref' && value.kind !== 'rich_block') return false;
-  if (!isRecord(value.payload)) return false;
-  if (value.kind === 'text' && (!hasOnlyKeys(value.payload, ['text']) || typeof value.payload.text !== 'string')) {
-    return false;
-  }
+  if (!isRecord(value.payload) || !isElementPayload(value.kind, value.payload)) return false;
   const bytes = payloadBytes(value.payload);
   if (bytes === null || bytes > MESSAGING_BOUNDS.maxElementPayloadBytes) return false;
   if (value.epistemicStatus !== undefined && !isEpistemicStatus(value.epistemicStatus)) return false;
@@ -187,6 +223,11 @@ function hasValidElements(raw: Record<string, unknown>): raw is Record<string, u
   }
 
   const seenElementIds = new Set<string>();
+  const mediaElementIds = new Set(
+    (raw.elements as Array<Record<string, unknown>>)
+      .filter((element) => element.kind === 'media_ref')
+      .map((element) => element.elementId as string),
+  );
   let totalBytes = 0;
   for (const element of raw.elements as Array<Record<string, unknown>>) {
     const elementId = element.elementId as string;
@@ -194,6 +235,11 @@ function hasValidElements(raw: Record<string, unknown>): raw is Record<string, u
     if (element.derivedFromElementId !== undefined && !seenElementIds.has(element.derivedFromElementId as string)) {
       return false;
     }
+    if (
+      element.kind === 'media_warning' &&
+      !mediaElementIds.has((element.payload as Record<string, unknown>).mediaElementId as string)
+    )
+      return false;
     seenElementIds.add(elementId);
     totalBytes += payloadBytes(element.payload as Record<string, unknown>) ?? Number.POSITIVE_INFINITY;
   }
@@ -375,6 +421,14 @@ function appendHostOverflowSummary(
   }
 }
 
+function isMediaRichBlock(block: unknown): boolean {
+  return isRecord(block) && MEDIA_RICH_BLOCK_KINDS.has(block.kind as RichBlock['kind']);
+}
+
+function hostRichBlockKind(block: unknown): string {
+  return isRecord(block) && typeof block.kind === 'string' ? block.kind : 'unknown';
+}
+
 function projectHostElements(msg: StoredMessage): MessageElement[] {
   const elements: MessageElement[] = [{ elementId: `el_${msg.id}_0`, kind: 'text', payload: { text: msg.content } }];
   const blocks = msg.extra?.rich?.blocks;
@@ -383,23 +437,23 @@ function projectHostElements(msg: StoredMessage): MessageElement[] {
   const status = hostRelayedEpistemic(msg);
   let totalBytes = Buffer.byteLength(JSON.stringify({ text: msg.content }), 'utf8');
   const overflowKinds: string[] = [];
-  const nonMedia = blocks.flatMap((block, index) => (MEDIA_RICH_BLOCK_KINDS.has(block.kind) ? [] : [{ block, index }])); // W2-5b owns media references and TTS.
+  const nonMedia = blocks.flatMap((block, index) => (isMediaRichBlock(block) ? [] : [{ block, index }])); // W2-5b owns media references and TTS.
   for (const [position, { block, index }] of nonMedia.entries()) {
-    const rawPayload = block as unknown as Record<string, unknown>;
     const reserveOverflow = position < nonMedia.length - 1 || overflowKinds.length > 0;
-    const richBytes = boundedHostElementBytes(elements, totalBytes, rawPayload, reserveOverflow);
-    if (richBytes !== null) {
+    const validShape = isFrozenRichBlock(block);
+    const richBytes = validShape ? boundedHostElementBytes(elements, totalBytes, block, reserveOverflow) : null;
+    if (validShape && richBytes !== null) {
       elements.push({
         elementId: `el_${msg.id}_${index + 1}`,
         kind: 'rich_block',
-        payload: rawPayload,
+        payload: block,
         epistemicStatus: status,
       });
       totalBytes += richBytes;
       continue;
     }
 
-    const fallback = degradeHostRichBlock(msg.id, block, 'bounds_exceeded');
+    const fallback = degradeHostRichBlock(msg.id, block, validShape ? 'bounds_exceeded' : 'invalid_shape');
     const fallbackBytes = boundedHostElementBytes(elements, totalBytes, fallback, reserveOverflow);
     if (fallbackBytes !== null) {
       elements.push({
@@ -410,7 +464,7 @@ function projectHostElements(msg: StoredMessage): MessageElement[] {
       });
       totalBytes += fallbackBytes;
     } else {
-      overflowKinds.push(block.kind);
+      overflowKinds.push(hostRichBlockKind(block));
     }
   }
   appendHostOverflowSummary(elements, totalBytes, overflowKinds, msg.id, status);

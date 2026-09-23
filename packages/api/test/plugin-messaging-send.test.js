@@ -152,7 +152,7 @@ describe('SendService — happy path (AC-1/AC-2)', () => {
           provenance: { epistemicStatus: 'inference' },
           elements: [
             { elementId: 'el-1', kind: 'text', payload: { text: 'caption' } },
-            { elementId: 'el-2', kind: 'media_ref', payload: { url: 'file://x.png' } },
+            { elementId: 'el-2', kind: 'media_ref', payload: { type: 'image', reference: 'legacy-platform-key' } },
           ],
         },
       }),

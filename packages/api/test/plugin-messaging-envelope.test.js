@@ -44,6 +44,38 @@ function pluginStoredMessage(overrides = {}) {
 }
 
 describe('projectEnvelope — plugin messages (D-1)', () => {
+  test('accepts frozen typed media elements only when closed payloads and warning references are valid', () => {
+    const base = pluginStoredMessage().extra.pluginMessage;
+    const media = { elementId: 'media-1', kind: 'media_ref', payload: { type: 'image', reference: 'hmr_123' } };
+    const unavailable = {
+      elementId: 'missing-1',
+      kind: 'media_unavailable',
+      payload: { type: 'video', fileName: 'clip.mp4', reason: 'unavailable' },
+    };
+    const warning = {
+      elementId: 'warning-1',
+      kind: 'media_warning',
+      payload: { mediaElementId: 'media-1', stage: 'preview', reason: 'processing_failed' },
+    };
+    const valid = { ...base, revision: 1, elements: [media, unavailable, warning], appendOps: [] };
+    assert.ok(envelope.parsePluginMessageExtra(valid));
+    assert.equal(
+      envelope.renderElementsText(valid.elements),
+      '[media_ref:media-1]\n[media_unavailable:missing-1]\n[media_warning:warning-1]',
+    );
+
+    const invalidPayloads = [
+      { ...unavailable, payload: { ...unavailable.payload, locator: 'secret' } },
+      { ...unavailable, payload: { ...unavailable.payload, type: 'unknown' } },
+      { ...warning, payload: { ...warning.payload, stage: 'unknown' } },
+      { ...warning, payload: { ...warning.payload, mediaElementId: 'absent' } },
+    ];
+    for (const invalid of invalidPayloads) {
+      const elements = invalid.kind === 'media_warning' ? [media, unavailable, invalid] : [media, invalid, warning];
+      assert.equal(envelope.parsePluginMessageExtra({ ...valid, elements }), null, JSON.stringify(invalid));
+    }
+  });
+
   test('projects canonical envelope from stored plugin message', () => {
     const env = envelope.projectEnvelope(pluginStoredMessage());
     assert.ok(env);
@@ -69,6 +101,40 @@ describe('projectEnvelope — plugin messages (D-1)', () => {
 });
 
 describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
+  test('invalid historical rich-block shapes use the shared invalid_shape degradation exit', () => {
+    const blocks = [
+      { id: '', kind: 'card', v: 1, title: 'Missing id' },
+      { id: 'old-kind', kind: '', v: 1, title: 'Missing kind' },
+      { id: 'old-version', kind: 'card', v: 0, title: 'Old version' },
+    ];
+    const warnings = [];
+    const previousWarn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+    let env;
+    try {
+      env = envelope.projectEnvelope({
+        id: 'msg-invalid-rich',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        catId: 'opus',
+        content: 'cat replies',
+        mentions: [],
+        timestamp: 1_800_000_000_002,
+        extra: { rich: { v: 1, blocks } },
+      });
+    } finally {
+      console.warn = previousWarn;
+    }
+    assert.deepEqual(
+      env.payload.elements.map((element) => element.kind),
+      ['text', 'text', 'text', 'text'],
+    );
+    assert.deepEqual(
+      warnings.map(([, detail]) => detail.reason),
+      ['invalid_shape', 'invalid_shape', 'invalid_shape'],
+    );
+  });
+
   test('projects non-media stored rich blocks unchanged after text, omitting media for W2-5b', () => {
     const card = {
       id: 'card-1',
@@ -392,16 +458,20 @@ describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
     }
   });
 
-  test('INV-20: media_ref and rich_block payload objects remain open', () => {
+  test('INV-20: media_ref and rich_block payload objects remain open beyond their frozen minimum', () => {
     const base = pluginStoredMessage().extra.pluginMessage;
     const pluginMessage = {
       ...base,
       elements: [
-        { elementId: 'el-media', kind: 'media_ref', payload: { uri: 'asset://one', custom: { width: 4 } } },
+        {
+          elementId: 'el-media',
+          kind: 'media_ref',
+          payload: { type: 'image', reference: 'hmr_one', custom: { width: 4 } },
+        },
         {
           elementId: 'el-rich',
           kind: 'rich_block',
-          payload: { kind: 'card', v: 1, custom: true },
+          payload: { id: 'card-1', kind: 'card', v: 1, custom: true },
           epistemicStatus: 'inference',
         },
       ],

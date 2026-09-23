@@ -203,7 +203,8 @@ export type PluginManagerCapabilityKind =
   | 'connector'
   | 'service'
   | 'ui'
-  | 'content-editor-provider';
+  | 'content-editor-provider'
+  | 'media-source';
 
 export interface PluginManagerCapability {
   id: string;
