@@ -11,6 +11,7 @@ import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-co
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import {
   createDormantPluginRuntimeComposition,
+  createGitCloneEnvironment,
   createPluginManagerRuntimeComposition,
   GitPluginPackageAdmission,
 } from '../dist/domains/plugin/index.js';
@@ -104,6 +105,12 @@ test('installs, enables, and uninstalls a package from a local git URL without r
 });
 
 test('git admission closes protocols, disables prompts, and fences options', async () => {
+  const productionPolicy = createGitCloneEnvironment();
+  assert.equal(productionPolicy.GIT_ALLOW_PROTOCOL, 'https:ssh:git:file');
+  assert.equal(productionPolicy.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(productionPolicy.GIT_CONFIG_GLOBAL, devNull);
+  assert.equal(productionPolicy.GIT_CONFIG_NOSYSTEM, '1');
+
   const projectRoot = await tempRoot('cat-cafe-f202-git-policy-');
   const logPath = join(projectRoot, 'git-invocation.json');
   const fakeGit = join(projectRoot, 'fake-git');
@@ -138,7 +145,11 @@ test('git admission closes protocols, disables prompts, and fences options', asy
     'https://example.invalid/private.git',
     invocation.argv.at(-1),
   ]);
-  assert.equal(invocation.allow, 'https:ssh:git:file');
+  // The distributable public-test guard deliberately clamps every spawned Git
+  // process to local file:// fixtures after the production policy is built.
+  const observedProtocols =
+    process.env.CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE === 'distributable' ? 'file' : 'https:ssh:git:file';
+  assert.equal(invocation.allow, observedProtocols);
   assert.equal(invocation.prompt, '0');
   assert.equal(invocation.globalConfig, devNull);
   assert.equal(invocation.noSystemConfig, '1');

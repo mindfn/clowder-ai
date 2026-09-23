@@ -62,7 +62,7 @@ function gitUrl(value: unknown): string {
   return value;
 }
 
-function gitEnvironment(): NodeJS.ProcessEnv {
+export function createGitCloneEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
   for (const key of Object.keys(environment)) {
     if (key.startsWith('GIT_')) delete environment[key];
@@ -100,7 +100,7 @@ export class GitPluginPackageAdmission {
         this.gitBin,
         ['clone', '--depth', '1', '--no-tags', '--single-branch', '--no-recurse-submodules', '--', url, repositoryRoot],
         {
-          env: gitEnvironment(),
+          env: createGitCloneEnvironment(),
           timeout: this.timeoutMs,
           killSignal: 'SIGKILL',
           maxBuffer: 1024 * 1024,

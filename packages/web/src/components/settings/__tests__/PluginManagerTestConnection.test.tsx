@@ -95,7 +95,8 @@ describe('Plugin Manager test connection', () => {
   });
 
   it('hides the test action when the manifest does not declare one', async () => {
-    const { testable: _testable, ...withoutTest } = basePlugin;
+    const withoutTest: PluginManagerDesignFixture = { ...basePlugin };
+    delete withoutTest.testable;
     await render(withoutTest);
     expect(testButton()).toBeUndefined();
   });
