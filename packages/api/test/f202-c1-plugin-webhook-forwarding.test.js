@@ -145,6 +145,7 @@ test('forwards an anonymous declared webhook with raw bytes and strips Host cred
 });
 
 test('owner-only webhooks require a local session and fixed Host routes keep priority', async () => {
+  const ownerId = process.env.DEFAULT_OWNER_USER_ID ?? 'owner-1';
   const webhooks = contributions();
   const calls = [];
   await webhooks.activate(
@@ -176,10 +177,10 @@ test('owner-only webhooks require a local session and fixed Host routes keep pri
   const authorized = await app.inject({
     method: 'GET',
     url: '/api/plugins/dev.clowder.webhook-fixture/admin/status',
-    headers: { 'x-cat-cafe-user': 'owner-1' },
+    headers: { 'x-cat-cafe-user': ownerId },
   });
   assert.equal(authorized.statusCode, 200);
-  assert.deepEqual(calls[0].request.principal, { kind: 'owner', id: 'owner-1' });
+  assert.deepEqual(calls[0].request.principal, { kind: 'owner', id: ownerId });
   assert.equal(calls[0].request.headers['x-cat-cafe-user'], undefined);
 });
 
