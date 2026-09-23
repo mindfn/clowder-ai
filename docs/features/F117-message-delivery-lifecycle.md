@@ -650,6 +650,10 @@ Why: 持久真相边界不变；view 只让成员在自己的后续自然 turn �
 | KD-18 | 「能否引导当前 invocation」与「当前可见 provider turn 是否精确读取」是两个独立声明 | `activeInvocationGuidance` 只回答 concrete adapter 能否非中断地追加到当前 invocation；`deliverySemantics` 只回答 provider 何时读取。Claude Agent SDK 显式声明前者 `supported`、后者 `queued_internal_turn`：允许「引导回复」，但绝不冒充当前可见同轮已读取。API admission、catalog 与 Web 只消费前者决定可用性，展示层消费后者说明精度 | 2026-09-20 |
 | KD-19 | 内部协议诊断只进入 telemetry/private evidence，不先写 History 再由 API/Web 隐藏 | 展示层屏蔽不能修复错误的生产边界；新代码停止生成 `routing-guard-failure`，API 读取过滤只保留为旧版本存量兼容 | 2026-09-20 |
 | KD-20 | terminal 后的任何显式路由凭据永远开启新 active hop；只有无行首 `@`、无 structured `targetCats` 的礼貌文本可 quiet ACK | 文本与结构化目标都是明确路由指令，生命周期投影不能静默吞掉；新的 generation 与统一 loop-streak 足以防止 ACK 乒乓 | 2026-09-20 |
+| KD-21 | 流式草稿的生命周期跟随 response R：草稿不设过期时间；R 进入任何终态（完成、失败、停止、中断，含重启收尾与僵死回收）时，先把草稿中已输出的内容写进 R 并提交终态，提交成功后才删除草稿；提交失败则保留草稿供重试 | co-creator：正常的消息一定会进入终态，草稿应随 R 结束，而不是靠计时器过期。此前重启与僵死回收都不收 R，300 秒后草稿过期会丢掉这一轮已输出的内容（铁律 5：用户可见数据默认持久化） | 2026-09-23 |
+| KD-22 | 超时归一：每个 dispatch 成员只有一个超时，即 `CLI_TIMEOUT_MS` 内没有任何实际输出（进程占用 CPU 时有上限地顺延）；触发后走与「停止」相同的路径停掉该成员，R 收成失败、原因为超时并附诊断；只停超时的成员，同一轮其他成员不受影响 | co-creator：超时是 dispatch 执行失败的一种原因，应按正常失败流程处理。此前 CLI 层与 2× 外层各自收尾：CLI 超时的 R 原因记为 `provider_error`；外层超时时路由看不到超时，provider 静默退出时 R 甚至记为已完成，与 TurnExecution 的 `invocation_timeout` 不一致 | 2026-09-23 |
+| KD-23 | 不再按草稿更新时间判定「僵死」：「正在处理」只看 R 是否处理中、当前进程是否持有这一轮；删除按 `draft.updatedAt` 的新鲜度判断、僵死分类与 60 秒心跳定时器 | co-creator：报僵死不会结束这一轮，用户只能干等或手动停止；卡住的一轮由 KD-22 的超时收成终态，服务重启由 KD-21 的启动收尾处理 | 2026-09-23 |
+| KD-24 | `CLI_TIMEOUT_MS` 代码默认值在本 PR 保持 0（F118 KD-7）；「默认 60 分钟没有任何输出即超时」作为推翻 F118 KD-7 的独立提议，在 KD-22 合入后提交上游维护者；`.env.example` 与配置文档里「默认 30 分钟」的旧注释随 KD-22 更正 | co-creator 同意：默认值影响所有未配置的部署，需上游决定。F118 KD-7 当时误杀的是 7 分钟的卡顿保护，正常的长时间静默在分钟量级；KD-22 之后超时是可以重发的普通失败，而卡死的代价是整晚空转 | 2026-09-23 |
 
 ### Phase I（producer 统一登记表，2026-09-21）— 已收口
 
