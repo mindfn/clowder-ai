@@ -59,8 +59,9 @@ export interface CiAutomationState {
   /**
    * Empty statusCheckRollup is ambiguous for a fresh HEAD: it can mean either
    * "this PR has no checks" or "GitHub has not created the check runs yet".
-   * Persist the same-HEAD observation streak so the poller can require one
-   * full stability interval before treating a genuinely empty rollup as pass.
+   * Neither is evidence that CI passed, so an empty rollup stays pending however
+   * long it lasts. The same-HEAD observation streak is still persisted so
+   * diagnostics can tell a fresh gap from a HEAD that never gained any check.
    */
   readonly rollupObservation?: {
     readonly headSha: string;
