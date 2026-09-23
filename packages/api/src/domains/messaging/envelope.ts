@@ -10,6 +10,7 @@
  * user → user_intent, cat → inference, origin always { kind: 'host' }.
  */
 
+import type { RichBlock } from '@cat-cafe/shared';
 import type {
   CanonicalAudience,
   EpistemicStatus,
@@ -320,6 +321,95 @@ function hostRelayedEpistemic(msg: StoredMessage): EpistemicStatus {
   return msg.catId === null ? 'user_intent' : 'inference';
 }
 
+const MEDIA_RICH_BLOCK_KINDS = new Set<RichBlock['kind']>(['audio', 'file', 'media_gallery']);
+
+function richBlockFallbackText(block: RichBlock): string {
+  const label =
+    'title' in block && typeof block.title === 'string'
+      ? block.title
+      : block.kind === 'diff'
+        ? block.filePath
+        : block.id;
+  return `[${block.kind}: ${Array.from(label).slice(0, 120).join('')}]`;
+}
+
+function boundedHostElementBytes(
+  elements: MessageElement[],
+  totalBytes: number,
+  payload: Record<string, unknown>,
+  reserveOverflow: boolean,
+): number | null {
+  const bytes = payloadBytes(payload);
+  if (bytes === null || bytes > MESSAGING_BOUNDS.maxElementPayloadBytes) return null;
+  if (elements.length >= MESSAGING_BOUNDS.maxElementsPerMessage - (reserveOverflow ? 1 : 0)) return null;
+  if (totalBytes + bytes > MESSAGING_BOUNDS.maxTotalPayloadBytes - (reserveOverflow ? 256 : 0)) return null;
+  return bytes;
+}
+
+function appendHostOverflowSummary(
+  elements: MessageElement[],
+  totalBytes: number,
+  overflowKinds: string[],
+  messageId: string,
+  status: EpistemicStatus,
+): void {
+  if (overflowKinds.length === 0) return;
+  const summary = {
+    text: `[rich blocks degraded: ${overflowKinds.length}; kinds: ${[...new Set(overflowKinds)].join(', ')}]`,
+  };
+  if (boundedHostElementBytes(elements, totalBytes, summary, false) !== null) {
+    elements.push({ elementId: `el_${messageId}_overflow`, kind: 'text', payload: summary, epistemicStatus: status });
+  }
+}
+
+function projectHostElements(msg: StoredMessage): MessageElement[] {
+  const elements: MessageElement[] = [{ elementId: `el_${msg.id}_0`, kind: 'text', payload: { text: msg.content } }];
+  const blocks = msg.extra?.rich?.blocks;
+  if (!blocks?.length) return elements;
+
+  const status = hostRelayedEpistemic(msg);
+  let totalBytes = Buffer.byteLength(JSON.stringify({ text: msg.content }), 'utf8');
+  const overflowKinds: string[] = [];
+  const nonMedia = blocks.flatMap((block, index) => (MEDIA_RICH_BLOCK_KINDS.has(block.kind) ? [] : [{ block, index }])); // W2-5b owns media references and TTS.
+  for (const [position, { block, index }] of nonMedia.entries()) {
+    const rawPayload = block as unknown as Record<string, unknown>;
+    const bytes = payloadBytes(rawPayload);
+    const reserveOverflow = position < nonMedia.length - 1 || overflowKinds.length > 0;
+    const richBytes = boundedHostElementBytes(elements, totalBytes, rawPayload, reserveOverflow);
+    if (richBytes !== null) {
+      elements.push({
+        elementId: `el_${msg.id}_${index + 1}`,
+        kind: 'rich_block',
+        payload: rawPayload,
+        epistemicStatus: status,
+      });
+      totalBytes += richBytes;
+      continue;
+    }
+
+    console.warn('[F202 W2-5a] rich block degraded', {
+      messageId: msg.id,
+      kind: block.kind,
+      bytes: bytes === null ? 'unserializable' : bytes,
+    });
+    const fallback = { text: richBlockFallbackText(block) };
+    const fallbackBytes = boundedHostElementBytes(elements, totalBytes, fallback, reserveOverflow);
+    if (fallbackBytes !== null) {
+      elements.push({
+        elementId: `el_${msg.id}_${index + 1}`,
+        kind: 'text',
+        payload: fallback,
+        epistemicStatus: status,
+      });
+      totalBytes += fallbackBytes;
+    } else {
+      overflowKinds.push(block.kind);
+    }
+  }
+  appendHostOverflowSummary(elements, totalBytes, overflowKinds, msg.id, status);
+  return elements;
+}
+
 /**
  * Project a stored message to its canonical envelope.
  * Returns null for deleted/tombstoned messages and for malformed plugin extras.
@@ -364,7 +454,7 @@ export function projectEnvelope(msg: StoredMessage): MessageEnvelope | null {
     actor: msg.catId === null ? { kind: 'user', id: msg.userId } : { kind: 'cat', id: msg.catId },
     payload: {
       provenance: { origin: { kind: 'host' }, epistemicStatus: hostRelayedEpistemic(msg) },
-      elements: [{ elementId: `el_${msg.id}_0`, kind: 'text', payload: { text: msg.content } }],
+      elements: projectHostElements(msg),
     },
   };
 }

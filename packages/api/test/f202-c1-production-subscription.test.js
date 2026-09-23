@@ -152,6 +152,27 @@ test('production composition delivers concurrent cat replies exactly once to an 
   assert.ok(state.calls.every((call) => call.threadId === state.threadId));
   assert.deepEqual(failures, []);
 
+  const card = { id: 'card-1', kind: 'card', v: 1, title: 'Approval', bodyMarkdown: 'Review the proposal' };
+  const checklist = { id: 'checklist-1', kind: 'checklist', v: 1, title: 'Steps', items: [] };
+  const audio = { id: 'audio-1', kind: 'audio', v: 1, url: '/api/tts/audio/private' };
+  await messageStore.append({
+    threadId: state.threadId,
+    userId: 'owner-1',
+    catId: 'opus',
+    content: 'rich reply',
+    timestamp: 3,
+    extra: { rich: { v: 1, blocks: [card, audio, checklist] } },
+  });
+  await waitFor(() => state.calls.length === 3, 'installed package did not receive the rich reply');
+  assert.deepEqual(
+    state.calls[2].envelope.payload.elements.map((element) => element.kind),
+    ['text', 'rich_block', 'rich_block'],
+  );
+  assert.deepEqual(
+    state.calls[2].envelope.payload.elements.slice(1).map((element) => element.payload),
+    [card, checklist],
+  );
+
   const beforeDisable = (await manager.get(pluginId)).plugin;
   await manager.setEnabled(pluginId, { enabled: false, expectedRevision: beforeDisable.lifecycleRevision });
   await messageStore.append({
@@ -162,6 +183,6 @@ test('production composition delivers concurrent cat replies exactly once to an 
     timestamp: 3,
   });
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(state.calls.length, 2, 'disabled packages must be absent from the live delivery set');
+  assert.equal(state.calls.length, 3, 'disabled packages must be absent from the live delivery set');
   delete globalThis[marker];
 });
