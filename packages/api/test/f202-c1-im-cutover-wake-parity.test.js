@@ -140,6 +140,22 @@ async function mentionsOf(messageId) {
 }
 
 describe('F202 C1 Core cutover gate — IM ingress wake parity at the Host boundary', () => {
+  test('Host plugin surface preserves automatic wake when it supplies message source metadata', async () => {
+    const handleId = await issueIngressHandle();
+    const draft = ingressDraft(handleId, 'hello from connector', 'host-surface-1');
+    const hostOptions = {
+      source: { connector: CONNECTOR_ID, label: 'Feishu', icon: 'message', meta: { externalChatId: EXTERNAL_CHAT_ID } },
+    };
+
+    const first = await service.sendFromHost(CTX, draft, hostOptions);
+    const replay = await service.sendFromHost(CTX, draft, hostOptions);
+
+    assert.equal(replay.messageId, first.messageId);
+    assert.deepEqual(await mentionsOf(first.messageId), [DEFAULT_CAT_ID]);
+    assert.equal(wakeAttempts, 1, 'the Host surface must wake once despite adding source metadata');
+    assert.equal(broadcasts.length, 1);
+  });
+
   test('1/RED — explicit mention: authenticated ingress with "@opus" wakes opus exactly once', async () => {
     const handleId = await issueIngressHandle();
 

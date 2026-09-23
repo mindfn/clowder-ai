@@ -5002,6 +5002,28 @@ async function main(): Promise<void> {
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const pluginManagerHostPolicies = [
     {
+      pluginId: 'official.connector.wecom-agent',
+      effectiveGrants: [
+        'plugin.config.read',
+        'message.event.subscribe',
+        'messaging.send',
+        'secret.read',
+        'thread.listMetadata',
+        'thread.write',
+      ] as const,
+    },
+    {
+      pluginId: 'official.connector.feishu',
+      effectiveGrants: [
+        'plugin.config.read',
+        'message.event.subscribe',
+        'messaging.send',
+        'secret.read',
+        'thread.listMetadata',
+        'thread.write',
+      ] as const,
+    },
+    {
       pluginId: 'official.wechat-visible-reader',
       effectiveGrants: ['plugin.state.get', 'plugin.state.set'] as const,
     },

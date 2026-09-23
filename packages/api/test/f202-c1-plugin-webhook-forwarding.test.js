@@ -144,6 +144,84 @@ test('forwards an anonymous declared webhook with raw bytes and strips Host cred
   );
 });
 
+test('connector XML reaches the package under request only and GET challenge stays plain text', async () => {
+  const webhooks = contributions();
+  const calls = [];
+  await webhooks.activate(
+    admission([
+      {
+        type: 'webhook',
+        id: 'wecom-agent',
+        path: 'connectors/wecom-agent',
+        methods: ['GET', 'POST'],
+        action: { method: 'wecom-agent.webhook' },
+        verificationSecretRef: 'CALLBACK_TOKEN',
+      },
+    ]),
+    async (_pluginInstanceId, _method, params) => {
+      calls.push(params);
+      return params.request.method === 'GET'
+        ? { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'challenge-value' }
+        : { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'success' };
+    },
+  );
+  const app = await appFor(webhooks);
+  const challenge = await app.inject({
+    method: 'GET',
+    url: '/api/plugins/dev.clowder.webhook-fixture/connectors/wecom-agent?echostr=encrypted',
+  });
+  assert.equal(challenge.statusCode, 200);
+  assert.equal(challenge.body, 'challenge-value');
+  assert.match(challenge.headers['content-type'], /^text\/plain/);
+
+  const xml = '<xml><MsgId>42</MsgId></xml>';
+  const delivery = await app.inject({
+    method: 'POST',
+    url: '/api/plugins/dev.clowder.webhook-fixture/connectors/wecom-agent?nonce=n1',
+    headers: { 'content-type': 'text/xml' },
+    body: xml,
+  });
+  assert.equal(delivery.statusCode, 200);
+  assert.equal(delivery.body, 'success');
+  assert.deepEqual(Object.keys(calls[0]), ['request']);
+  assert.deepEqual(Object.keys(calls[1]), ['request']);
+  assert.equal(calls[1].request.body, xml);
+  assert.equal(Buffer.from(calls[1].request.rawBody).toString(), xml);
+  assert.deepEqual(calls[1].request.query, { nonce: 'n1' });
+});
+
+test('legacy connector response shape fails visibly with 502 and a sanitized warning', async () => {
+  const webhooks = contributions();
+  await webhooks.activate(
+    admission([
+      {
+        type: 'webhook',
+        id: 'legacy-shape',
+        path: 'connectors/legacy',
+        methods: ['POST'],
+        action: { method: 'legacy.webhook' },
+        verificationSecretRef: 'CALLBACK_TOKEN',
+      },
+    ]),
+    async () => ({ kind: 'processed', body: 'private-provider-body' }),
+  );
+  const logs = [];
+  const app = await appFor(webhooks, 50, logs);
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/plugins/dev.clowder.webhook-fixture/connectors/legacy',
+    headers: { 'content-type': 'text/xml' },
+    body: '<xml>private-request</xml>',
+  });
+  assert.equal(response.statusCode, 502);
+  assert.equal(response.json().error, 'Plugin webhook returned an invalid response');
+  const warning = logs.find((entry) => entry.msg === 'Plugin webhook returned an invalid response');
+  assert.equal(warning?.contributionId, 'legacy-shape');
+  assert.equal(warning?.validationError, 'response contains unknown fields');
+  assert.equal(JSON.stringify(warning).includes('private-provider-body'), false);
+  assert.equal(JSON.stringify(warning).includes('private-request'), false);
+});
+
 test('owner-only webhooks require a local session and fixed Host routes keep priority', async () => {
   const ownerId = process.env.DEFAULT_OWNER_USER_ID ?? 'owner-1';
   const webhooks = contributions();

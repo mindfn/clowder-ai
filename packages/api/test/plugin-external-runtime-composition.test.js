@@ -282,6 +282,24 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /pluginId:\s*'dev\.clowder\.video-analysis'/);
   assert.doesNotMatch(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
   assert.match(source, /pluginId:\s*'official\.enterprise-workflow',\s*effectiveGrants:\s*\['plugin\.config\.read'\]/);
+  for (const pluginId of ['official.connector.wecom-agent', 'official.connector.feishu']) {
+    const policy = source.match(
+      new RegExp(`pluginId:\\s*'${pluginId.replaceAll('.', '\\.')}',\\s*effectiveGrants:\\s*\\[([^\\]]+)\\]`),
+    );
+    assert.ok(policy, `${pluginId} must have a production Host grant policy`);
+    assert.deepEqual(
+      [...policy[1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort(),
+      [
+        'plugin.config.read',
+        'message.event.subscribe',
+        'messaging.send',
+        'secret.read',
+        'thread.listMetadata',
+        'thread.write',
+      ].sort(),
+      `${pluginId} must receive exactly its declared capability set`,
+    );
+  }
   const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(callbackRoutes, /registerCallback(?:WeCom|Lark)ActionRoutes/);
   assert.match(

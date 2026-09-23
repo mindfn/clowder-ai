@@ -152,9 +152,10 @@ export class SendService {
       const content = renderElementsText(draft.payload.elements);
       // F202 C1 gap A: authenticated external ingress carries the wake authority a
       // `thread_handle` deliberately does not (F288 v0). Whisper ingress is excluded — an
-      // audience-restricted message must not be broadcast to the thread room.
+      // audience-restricted message must not be broadcast to the thread room. Host-owned
+      // source metadata does not suppress this wake; only an explicit Host wake overrides it.
       const wake =
-        hostOptions === undefined &&
+        hostOptions?.wake === undefined &&
         handle.kind === 'connector_binding' &&
         handle.connectorBinding &&
         this.deps.ingressWake
