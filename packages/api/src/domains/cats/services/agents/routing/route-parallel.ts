@@ -1718,6 +1718,8 @@ export async function* routeParallel(
               threadId,
             },
           );
+          // F117 KD-21: R is terminal and its output was rejected, so its draft has no reader left.
+          deps.draftStore?.delete(userId, threadId, ownInvId)?.catch?.(noop);
         }
       } else if (text) {
         catProducedOutput = true;

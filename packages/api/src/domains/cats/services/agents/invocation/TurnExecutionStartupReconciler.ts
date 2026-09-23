@@ -1,13 +1,17 @@
-import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
+import type { ITurnExecutionStore, TurnExecutionRecord } from '../../stores/ports/TurnExecutionStore.js';
 
 interface TurnExecutionStartupReconcilerDeps {
   store: ITurnExecutionStore;
   now?: () => number;
+  /** F117 KD-21: ends each interrupted turn's response R with the body its draft streamed. */
+  settleInterruptedResponse?: (turn: TurnExecutionRecord) => Promise<unknown>;
 }
 
 export interface TurnExecutionStartupReconcileResult {
   interruptedCount: number;
   invocationIds: string[];
+  /** Interrupted turns whose response R did not settle; their drafts are kept. */
+  responseSettlementFailures: Array<{ invocationId: string; error: string }>;
   reconciledAt: number;
 }
 
@@ -35,10 +39,12 @@ export async function listenBeforeTurnExecutionRecovery<T>(deps: ListenBeforeTur
 export class TurnExecutionStartupReconciler {
   private readonly store: ITurnExecutionStore;
   private readonly now: () => number;
+  private readonly settleInterruptedResponse: TurnExecutionStartupReconcilerDeps['settleInterruptedResponse'];
 
   constructor(deps: TurnExecutionStartupReconcilerDeps) {
     this.store = deps.store;
     this.now = deps.now ?? Date.now;
+    this.settleInterruptedResponse = deps.settleInterruptedResponse;
   }
 
   async reconcile(input: {
@@ -60,9 +66,19 @@ export class TurnExecutionStartupReconciler {
         ? { excludedInvocationIds: [...new Set(input.protectedInvocationIds)] }
         : {}),
     });
+    // One response that cannot settle must neither strand the others nor fail startup recovery.
+    const responseSettlementFailures: TurnExecutionStartupReconcileResult['responseSettlementFailures'] = [];
+    for (const turn of this.settleInterruptedResponse ? interrupted : []) {
+      try {
+        await this.settleInterruptedResponse?.(turn);
+      } catch (error) {
+        responseSettlementFailures.push({ invocationId: turn.invocationId, error: String(error) });
+      }
+    }
     return {
       interruptedCount: interrupted.length,
       invocationIds: interrupted.map((record) => record.invocationId),
+      responseSettlementFailures,
       reconciledAt,
     };
   }

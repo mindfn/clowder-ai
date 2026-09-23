@@ -48,6 +48,37 @@ describe('TurnExecutionStartupReconciler', () => {
     assert.equal((await store.get('ordinary-live-owner')).status, 'running');
   });
 
+  test('F117 KD-21: settles each interrupted turn response and isolates a failing one', async () => {
+    const store = new InMemoryTurnExecutionStore();
+    await store.createRunning(runningInput('ordinary-a', 10));
+    await store.createRunning(runningInput('ordinary-b', 20));
+    await store.createRunning(runningInput('ordinary-protected', 30));
+    await store.createRunning(runningInput('ordinary-after-start', 150));
+    const settled = [];
+    const reconciler = new TurnExecutionStartupReconciler({
+      store,
+      now: () => 200,
+      settleInterruptedResponse: async (turn) => {
+        settled.push({ invocationId: turn.invocationId, status: turn.status, terminalReason: turn.terminalReason });
+        if (turn.invocationId === 'ordinary-a') throw new Error('commit rejected');
+      },
+    });
+
+    const result = await reconciler.reconcile({
+      processStartedAt: 100,
+      protectedInvocationIds: ['ordinary-protected'],
+    });
+
+    assert.deepEqual(result.invocationIds, ['ordinary-a', 'ordinary-b']);
+    assert.deepEqual(settled, [
+      { invocationId: 'ordinary-a', status: 'interrupted', terminalReason: 'process_restart' },
+      { invocationId: 'ordinary-b', status: 'interrupted', terminalReason: 'process_restart' },
+    ]);
+    assert.deepEqual(result.responseSettlementFailures, [
+      { invocationId: 'ordinary-a', error: 'Error: commit rejected' },
+    ]);
+  });
+
   test('production wiring recovers children after listen and before queue resume', () => {
     const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const listenBoundary = source.indexOf('address = await listenBeforeTurnExecutionRecovery');
@@ -88,6 +119,7 @@ describe('TurnExecutionStartupReconciler', () => {
     assert.deepEqual(result, {
       interruptedCount: 2,
       invocationIds: ['guard-boundary', 'ordinary-exact-process-start'],
+      responseSettlementFailures: [],
       reconciledAt: 200,
     });
     assert.equal((await store.get('ordinary-old')).status, 'succeeded');

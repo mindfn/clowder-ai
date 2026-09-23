@@ -118,6 +118,7 @@ import {
   type ExecutionOwnerMatch,
 } from './InvocationTracker.js';
 import { projectLifecycleAppendAction } from './lifecycle-append-projection.js';
+import { emitLifecycleMessageUpdated } from './lifecycle-message-update.js';
 import { requireOwnerAuthProvenance } from './owner-auth-provenance.js';
 import {
   isTerminalDispositionEvent,
@@ -137,6 +138,7 @@ import {
   terminalizePreparedPrestartRetirements,
 } from './queue-prestart-group-retirement.js';
 import { requireInvocationRecordUpdate } from './require-invocation-record-update.js';
+import { lifecycleResponseIdempotencyKey } from './response-draft-settlement.js';
 import {
   type CommitInvocationInput,
   type ConsumedContinuationToken,
@@ -2265,29 +2267,7 @@ export class QueueProcessor {
 
   /** Publish one exact same-id lifecycle snapshot; clients upsert without inventing state. */
   private emitLifecycleMessageUpdated(userId: string, message: StoredMessage): void {
-    if (!message.lifecycle) return;
-    this.deps.socketManager.emitToUser(userId, 'message_lifecycle_updated', {
-      threadId: message.threadId,
-      message: {
-        id: message.id,
-        ...(message.from ? { from: message.from } : {}),
-        catId: message.catId,
-        content: message.content,
-        lifecycle: message.lifecycle,
-        timestamp: message.timestamp,
-        ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
-        ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
-        // A committed response is the whole truth of its turn, not just its text.
-        ...(message.toolEvents ? { toolEvents: message.toolEvents } : {}),
-        ...(message.thinking ? { thinking: message.thinking } : {}),
-        ...(message.metadata ? { metadata: message.metadata } : {}),
-        ...(message.mentionsUser ? { mentionsUser: true } : {}),
-        ...(message.extra ? { extra: message.extra } : {}),
-        ...(message.origin ? { origin: message.origin } : {}),
-        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-        ...(message.source ? { source: message.source } : {}),
-      },
-    });
+    emitLifecycleMessageUpdated(this.deps.socketManager, userId, message);
   }
 
   private async cancelMessageIds(messageIds: readonly string[], log: LoggerLike, reason: string): Promise<void> {
@@ -3951,7 +3931,7 @@ export class QueueProcessor {
                 timestamp: input.startedAt,
                 threadId: input.threadId,
                 ...(lifecycleReplyTo ? { replyTo: lifecycleReplyTo } : {}),
-                idempotencyKey: `message-lifecycle-response:${input.invocationId}`,
+                idempotencyKey: lifecycleResponseIdempotencyKey(input.invocationId),
                 extra: {
                   stream: {
                     invocationId: input.parentInvocationId,

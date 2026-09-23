@@ -41,15 +41,13 @@ import {
   projectLifecycleAppendAction,
   projectLifecycleAppendCapability,
 } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
+import { emitLifecycleMessageUpdated } from '../domains/cats/services/agents/invocation/lifecycle-message-update.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { queueEntryId } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
+import { settleResponseFromDraft } from '../domains/cats/services/agents/invocation/response-draft-settlement.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
-import {
-  type IMessageStore,
-  type StoredMessage,
-  settleLifecycleResponseInputs,
-} from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore, Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
@@ -137,12 +135,6 @@ function executionFailureExplanation(reason: ExecutionFailureReason): string {
   return reason === 'control_plane_unavailable' ? '执行控制面不可用' : '执行进程归属已丢失';
 }
 
-function completeExecutionFailureContent(response: StoredMessage, reason: ExecutionFailureReason): string {
-  const existing = response.content.trim();
-  const failureMessage = executionFailureExplanation(reason);
-  return [existing, ...(!existing.includes(failureMessage) ? [failureMessage] : [])].filter(Boolean).join('\n\n');
-}
-
 async function waitForControlPlaneRetry(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, CONTROL_PLANE_RETRY_DELAY_MS));
 }
@@ -183,26 +175,6 @@ async function retryProcessOwnerSnapshot(
   }
   processOwnerSnapshotByRequest.set(request, Promise.resolve(latest));
   return latest;
-}
-
-function emitLifecycleMessageUpdated(socketManager: SocketManager, userId: string, message: StoredMessage): void {
-  if (!message.lifecycle) return;
-  socketManager.emitToUser(userId, 'message_lifecycle_updated', {
-    threadId: message.threadId,
-    message: {
-      id: message.id,
-      ...(message.from ? { from: message.from } : {}),
-      catId: message.catId,
-      content: message.content,
-      lifecycle: message.lifecycle,
-      timestamp: message.timestamp,
-      ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
-      ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
-      ...(message.extra ? { extra: message.extra } : {}),
-      ...(message.origin ? { origin: message.origin } : {}),
-      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-    },
-  });
 }
 
 function projectCanonicalLiveCandidate(
@@ -530,42 +502,24 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     ];
     let responseTerminalized = false;
     for (const invocationId of childInvocationIds) {
-      const response = await messageStore.getByIdempotencyKey(
-        input.userId,
-        input.threadId,
-        `message-lifecycle-response:${invocationId}`,
+      // KD-21: the failed R carries what the turn had streamed, then the draft goes.
+      const settlement = await settleResponseFromDraft(
+        {
+          messageStore,
+          ...(opts.draftStore ? { draftStore: opts.draftStore } : {}),
+          emit: (userId, message) => emitLifecycleMessageUpdated(socketManager, userId, message),
+        },
+        {
+          userId: input.userId,
+          threadId: input.threadId,
+          invocationId,
+          status: 'failed',
+          reason: failureReason,
+          endedAt: failedAt,
+          explanation: executionFailureExplanation(failureReason),
+        },
       );
-      if (!response?.lifecycle || response.lifecycle.kind !== 'response') continue;
-      const result = await messageStore.commitLifecycleResponseTerminal(response.id, {
-        invocationId,
-        status: 'failed',
-        completedAt: Math.max(failedAt, response.lifecycle.startedAt),
-        reason: failureReason,
-        content: completeExecutionFailureContent(response, failureReason),
-        ...(response.contentBlocks ? { contentBlocks: response.contentBlocks } : {}),
-        ...(response.toolEvents ? { toolEvents: response.toolEvents } : {}),
-        ...(response.metadata ? { metadata: response.metadata } : {}),
-        ...(response.extra ? { extra: response.extra } : {}),
-        ...(response.thinking ? { thinking: response.thinking } : {}),
-        ...(response.origin ? { origin: response.origin } : {}),
-        mentions: response.mentions,
-        ...(response.mentionsUser ? { mentionsUser: true } : {}),
-        ...(response.replyTo ? { replyTo: response.replyTo } : {}),
-      });
-      if (result.kind !== 'applied' && result.kind !== 'replayed') {
-        const resultLifecycle = result.kind === 'conflict' ? result.message.lifecycle : undefined;
-        if (
-          result.kind !== 'conflict' ||
-          resultLifecycle?.kind !== 'response' ||
-          resultLifecycle.status === 'processing'
-        ) {
-          throw new Error(`control-plane failure response terminalization rejected: ${result.kind}`);
-        }
-      }
-      const terminalMessage = result.message;
-      await settleLifecycleResponseInputs(messageStore, terminalMessage, terminalMessage.id);
-      emitLifecycleMessageUpdated(socketManager, input.userId, terminalMessage);
-      responseTerminalized = true;
+      if (settlement.kind !== 'no_response') responseTerminalized = true;
     }
 
     const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);

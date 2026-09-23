@@ -112,6 +112,8 @@ export interface ReconcileZombieDeps {
 
 export interface ReconciledZombieEvent {
   invocationId: string;
+  /** Owner of the reclaimed parent; scopes its child turns' responses and drafts. */
+  userId: string;
   threadId: string;
   /** Durable parent scope. catId below is detector provenance only. */
   targetCats: CatId[];
@@ -300,6 +302,7 @@ async function processZombie(
       try {
         await deps.onReconciledZombie({
           invocationId: zombie.invocationId,
+          userId: updated.userId,
           threadId: updated.threadId,
           targetCats,
           catId: zombie.catId,

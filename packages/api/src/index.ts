@@ -90,6 +90,7 @@ import {
   selectInvocationBackendKind,
 } from './domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from './domains/cats/services/agents/invocation/InvocationTracker.js';
+import { emitLifecycleMessageUpdated } from './domains/cats/services/agents/invocation/lifecycle-message-update.js';
 import type {
   InvocationRecordStoreLike,
   RouterLike,
@@ -98,6 +99,7 @@ import { QueueProcessor } from './domains/cats/services/agents/invocation/QueueP
 import { InMemoryQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { RedisQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { reconcileZombies } from './domains/cats/services/agents/invocation/reconcileZombies.js';
+import { settleResponseFromDraft } from './domains/cats/services/agents/invocation/response-draft-settlement.js';
 import { SessionContinuationCoordinator } from './domains/cats/services/agents/invocation/SessionContinuationCoordinator.js';
 import { SessionMutex } from './domains/cats/services/agents/invocation/SessionMutex.js';
 import {
@@ -187,7 +189,8 @@ import { createThreadStore } from './domains/cats/services/stores/factories/Thre
 import { createWorkflowSopStore } from './domains/cats/services/stores/factories/WorkflowSopStoreFactory.js';
 import { InMemoryContextEpochStore } from './domains/cats/services/stores/ports/ContextEpochStore.js';
 import { classifyInvocationRecoveryStatus } from './domains/cats/services/stores/ports/invocation-state-machine.js';
-import type { MessageAppendListener } from './domains/cats/services/stores/ports/MessageStore.js';
+import type { MessageAppendListener, StoredMessage } from './domains/cats/services/stores/ports/MessageStore.js';
+import type { TurnExecutionRecord } from './domains/cats/services/stores/ports/TurnExecutionStore.js';
 import { RedisContextEpochStore } from './domains/cats/services/stores/redis/RedisContextEpochStore.js';
 import { RedisInvocationRecordStore } from './domains/cats/services/stores/redis/RedisInvocationRecordStore.js';
 import { RedisMessageStore } from './domains/cats/services/stores/redis/RedisMessageStore.js';
@@ -2851,9 +2854,37 @@ async function main(): Promise<void> {
       clearInterval(actionSuccessorRecoveryTimer);
     });
   }
+  // F117 KD-21: a turn ended by restart or zombie reclaim never reached its route's commit, so its
+  // response R ends interrupted with the body its draft streamed.
+  const lifecycleSocket = socketManager;
+  const settleInterruptedTurnResponse = (turn: TurnExecutionRecord, reason: string) =>
+    settleResponseFromDraft(
+      {
+        messageStore,
+        draftStore,
+        ...(lifecycleSocket
+          ? {
+              emit: (userId: string, message: StoredMessage) =>
+                emitLifecycleMessageUpdated(lifecycleSocket, userId, message),
+            }
+          : {}),
+      },
+      {
+        userId: turn.userId,
+        threadId: turn.threadId,
+        invocationId: turn.invocationId,
+        status: 'interrupted',
+        reason,
+        endedAt: turn.endedAt ?? Date.now(),
+      },
+    );
   const onReconciledZombie = createZombieTerminalRecovery({
     queueProcessor,
     log: app.log,
+    childResponses: {
+      listChildTurns: (executionId) => turnExecutionStore.listByParent(executionId),
+      settle: (turn) => settleInterruptedTurnResponse(turn, 'zombie_record_detected'),
+    },
   });
   const invocationOwnerSocketManager = socketManager;
   if (!invocationOwnerSocketManager) throw new Error('SocketManager unavailable for invocation owner reaper');
@@ -6634,7 +6665,10 @@ async function main(): Promise<void> {
         const authRecovery = await turnExecutionStore.reconcileStartup({ processStartedAt: PROCESS_START_AT });
         const liveExecutionOwners = await cliExecutionOwnerService.listLive();
         const childRecovery = liveExecutionOwners.complete
-          ? await new TurnExecutionStartupReconciler({ store: turnExecutionStore }).reconcile({
+          ? await new TurnExecutionStartupReconciler({
+              store: turnExecutionStore,
+              settleInterruptedResponse: (turn) => settleInterruptedTurnResponse(turn, 'process_restart'),
+            }).reconcile({
               processStartedAt: PROCESS_START_AT,
               protectedInvocationIds: liveExecutionOwners.owners.map((owner) => owner.invocationId),
             })
