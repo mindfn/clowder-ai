@@ -172,9 +172,11 @@ The accepted Train B direction does not approve the aggregate migration or commi
   archives whose conclusions were partly overturned; `2026-09-20-f202-c1-host-plugin-interface-contract.md`
   keeps valid operator quotes but its implementation status is stale.
 - **Package-side C1**: repository `clowder-ai-plugins`, branch `feat/f202-train-c1-plugins-migration` →
-  PR zts212653/clowder-ai-plugins#54 (draft until the cutover gate: one connector proving external-origin
-  `messaging.send` on a real Host). Plan: `docs/plans/2026-09-19-train-c1-plugins-aggregate-migration.md`;
-  frozen inventory: `migration/f202-train-c1-inventory.json`.
+  PR zts212653/clowder-ai-plugins#54 (draft until the cutover gate holds on **both** counts: the Host cutover
+  branch actually running in a Host, and one connector proving external-origin `messaging.send` on it — W1
+  packages installing cleanly does not satisfy it). Plan and current checkpoint (rewritten 2026-09-23 as the
+  package-side "start here"): `docs/plans/2026-09-19-train-c1-plugins-aggregate-migration.md`; frozen
+  inventory: `migration/f202-train-c1-inventory.json`.
 - **Status on 2026-09-23**: Host phase 1 (interfaces S1–S8, contract pin A4, S9 trusted limb invocation,
   S10 dependency closure by admission source) is complete; phase 2 W1 — video-generation, video-analysis,
   weixin-mp, enterprise-workflow, wechat-visible-reader — is cut over to installed packages with the Host
