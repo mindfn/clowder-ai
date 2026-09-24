@@ -31,8 +31,9 @@ export function getDefaultDeniedRoots(platformName = platform()): string[] {
 
 /**
  * F770: preferred source of custom denied roots. Wired once at startup in
- * config.ts to resolveDeniedRoots(projectRoot).deniedRoots (JSON preferences,
- * migrating the legacy env value on first read).
+ * config.ts to an in-memory snapshot of the JSON preferences (env fallback
+ * canonicalized at wiring, pushed on every PUT — see
+ * initDeniedRootsRuntime in user-preferences-store).
  *
  * FAIL-CLOSED BY CONSTRUCTION: when the provider is unset / not yet wired /
  * returns null, DENIED_ROOTS() falls back to platform defaults + the legacy

@@ -18,8 +18,12 @@
  *     are canonicalized at save time (longest-existing-ancestor realpath, so
  *     not-yet-created directories still canonicalize), and GET returns the
  *     canonical values so the UI states exactly what is being blocked.
- * The .env tier remains a read-only fallback, migrated into the JSON store on
- * first read; PATCH /api/config/env must reject PROJECT_DENIED_ROOTS.
+ * The .env tier remains a strictly read-only fallback (NO read-time migration —
+ * same contract as log level and data retention): only an intentional PUT
+ * persists, and at wiring the env fallback is canonicalized once into an
+ * in-memory snapshot so env-only '/tmp/...' entries still match realpath'd
+ * candidates without any per-validation disk IO.
+ * PATCH /api/config/env must reject PROJECT_DENIED_ROOTS.
  */
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -123,36 +127,50 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
     }
   });
 
-  it('migrates a legacy env value into the JSON store on first read (canonicalized) and keeps it', async () => {
+  it('env value is a read-only fallback: GET reports the canonical value without persisting it, and an env-only /tmp entry still blocks validation', async () => {
     const savedEnv = process.env.PROJECT_DENIED_ROOTS;
     const { tempRoot, envFilePath } = tempSetup();
+    const legacyPath = '/tmp/f770-denied-roots-legacy';
     delete process.env.PROJECT_DENIED_ROOTS;
     try {
+      process.env.PROJECT_DENIED_ROOTS = legacyPath;
       const app = await buildApp(envFilePath, tempRoot);
       try {
-        const legacyPath = '/tmp/f770-denied-roots-legacy';
-        process.env.PROJECT_DENIED_ROOTS = legacyPath;
-
         const first = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
         assert.equal(first.statusCode, 200);
         const firstBody = first.json();
         assert.deepEqual(firstBody.deniedRoots, [canon(legacyPath)]);
         assert.equal(firstBody.source, 'env-fallback');
-        assert.equal(firstBody.migratedFromEnv, true);
+        assert.equal(firstBody.migratedFromEnv, false);
 
-        // The value landed in the JSON store — durable, not just served from env.
+        // A GET must not write: the JSON store stays untouched — only an
+        // intentional PUT persists (same read-only-fallback contract as log
+        // level and data retention).
         const { readUserPreferences } = await import('../dist/config/user-preferences-store.js');
-        assert.deepEqual(readUserPreferences(tempRoot).deniedRoots, [canon(legacyPath)]);
+        assert.equal(readUserPreferences(tempRoot).deniedRoots, undefined);
 
-        // Second read: JSON wins over the still-present env value.
+        // Second read still comes from env — nothing was persisted on the first.
         const second = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
-        assert.equal(second.json().source, 'preferences');
+        assert.equal(second.json().source, 'env-fallback');
         assert.deepEqual(second.json().deniedRoots, [canon(legacyPath)]);
+
+        // The guard: an env-only user who typed '/tmp/...' must still be
+        // blocked. The env fallback is canonicalized once at wiring into the
+        // in-memory validation snapshot, so it matches the realpath'd candidate.
+        mkdirSync(legacyPath, { recursive: true });
+        const blocked = await validateProjectPathDetailed(legacyPath);
+        assert.equal(
+          blocked.ok,
+          false,
+          `env-only /tmp entry must block its realpath'd candidate: ${JSON.stringify(blocked)}`,
+        );
+        assert.equal(blocked.reason, 'denied_root');
       } finally {
         await app.close();
       }
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(legacyPath, { recursive: true, force: true });
       if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
       else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       setDeniedRootsProvider(null);

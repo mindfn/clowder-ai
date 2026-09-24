@@ -1,4 +1,4 @@
-/** F770: custom project-root denylist persisted to user-preferences.json (migrated from PROJECT_DENIED_ROOTS env). */
+/** F770: custom project-root denylist persisted to user-preferences.json; the legacy PROJECT_DENIED_ROOTS env value is a strictly read-only fallback. */
 
 import { isAbsolute } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';

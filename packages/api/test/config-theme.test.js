@@ -61,7 +61,7 @@ describe('F770 theme config in user-preferences.json', () => {
     assert.equal(reread.json().themeConfig, '{"activeId":"light"}');
   });
 
-  it('migrates a legacy env value into the JSON store on first read and keeps it', async () => {
+  it('env value is a strictly read-only fallback: GET reports it without persisting it', async () => {
     process.env.THEME_CONFIG = '{"activeId":"legacy-custom"}';
 
     const first = await app.inject({ method: 'GET', url: '/api/config/theme' });
@@ -69,15 +69,29 @@ describe('F770 theme config in user-preferences.json', () => {
     const firstBody = first.json();
     assert.equal(firstBody.themeConfig, '{"activeId":"legacy-custom"}');
     assert.equal(firstBody.source, 'env-fallback');
-    assert.equal(firstBody.migratedFromEnv, true);
+    assert.equal(firstBody.migratedFromEnv, false);
 
-    // The value landed in the JSON store — durable, not just served from env.
-    assert.equal(readUserPreferences(tempRoot).themeConfig, '{"activeId":"legacy-custom"}');
+    // A GET must not write: the JSON store stays untouched. Same contract as
+    // log level — a one-off env launch that merely opened the settings page
+    // must not become permanent.
+    assert.equal(readUserPreferences(tempRoot).themeConfig, undefined);
 
-    // Second read: JSON wins over the still-present env value.
+    // Second read still comes from env — nothing was persisted on the first.
     const second = await app.inject({ method: 'GET', url: '/api/config/theme' });
-    assert.equal(second.json().source, 'preferences');
+    assert.equal(second.json().source, 'env-fallback');
     assert.equal(second.json().themeConfig, '{"activeId":"legacy-custom"}');
+
+    // An intentional PUT lands in the JSON store and wins over the env value.
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/config/theme',
+      headers: { 'x-cat-cafe-user': 'owner' },
+      payload: { themeConfig: '{"activeId":"stored"}' },
+    });
+    assert.equal(put.statusCode, 200);
+    const stored = await app.inject({ method: 'GET', url: '/api/config/theme' });
+    assert.equal(stored.json().source, 'preferences');
+    assert.equal(stored.json().themeConfig, '{"activeId":"stored"}');
   });
 
   it('prefers the JSON store over the env fallback', async () => {

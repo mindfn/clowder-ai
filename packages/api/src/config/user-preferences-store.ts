@@ -149,24 +149,26 @@ export interface ThemeConfigResolution {
   themeConfig: string | null;
   /** Where the returned value came from. */
   source: 'preferences' | 'env-fallback' | 'none';
-  /** True when a legacy process.env THEME_CONFIG value was migrated into the JSON store on this read. */
+  /**
+   * Kept for API compatibility, always false for theme config: a GET never
+   * migrates the env value (read-only fallback — only an intentional PUT
+   * lands in the JSON store), same contract as log level.
+   */
   migratedFromEnv: boolean;
 }
 
 /**
  * F770: theme config lives in user-preferences.json (runtime-readable, no
- * restart). The legacy THEME_CONFIG env value is honored as a read-only
- * fallback and migrated into the JSON store on first read so existing users
- * do not lose their theme.
+ * restart). The legacy THEME_CONFIG env value is honored as a strictly
+ * read-only fallback — a read must NOT persist it, otherwise a one-off
+ * env-configured launch that merely opened the settings page would silently
+ * become permanent. Only an intentional PUT lands in the JSON store.
  */
 export function resolveThemeConfig(projectRoot: string): ThemeConfigResolution {
   const stored = sanitizeThemeConfig(readUserPreferences(projectRoot).themeConfig);
   if (stored) return { themeConfig: stored, source: 'preferences', migratedFromEnv: false };
   const envValue = sanitizeThemeConfig(process.env.THEME_CONFIG);
-  if (envValue) {
-    updateUserPreferences(projectRoot, (current) => ({ ...current, themeConfig: envValue }));
-    return { themeConfig: envValue, source: 'env-fallback', migratedFromEnv: true };
-  }
+  if (envValue) return { themeConfig: envValue, source: 'env-fallback', migratedFromEnv: false };
   return { themeConfig: null, source: 'none', migratedFromEnv: false };
 }
 
@@ -179,7 +181,7 @@ export function saveThemeConfig(projectRoot: string, value: string): ThemeConfig
     return next;
   });
   // Return the just-written value directly: re-resolving here would fall back
-  // to the legacy env value (or re-migrate it) right after an intentional clear.
+  // to the legacy env value right after an intentional clear.
   if (sanitized) return { themeConfig: sanitized, source: 'preferences', migratedFromEnv: false };
   return { themeConfig: null, source: 'none', migratedFromEnv: false };
 }
@@ -254,31 +256,72 @@ export interface DeniedRootsResolution {
   deniedRoots: string[];
   /** Where the returned value came from. */
   source: 'preferences' | 'env-fallback' | 'none';
-  /** True when a legacy process.env PROJECT_DENIED_ROOTS value was migrated into the JSON store on this read. */
+  /**
+   * Kept for API compatibility, always false for denied roots: a GET never
+   * migrates the env value (read-only fallback — only an intentional PUT
+   * lands in the JSON store), same contract as log level and retention.
+   */
   migratedFromEnv: boolean;
 }
 
 /**
- * F770: custom denied roots live in user-preferences.json and are read per
- * validation call (hot, same as the legacy env read). The key distinction from
- * theme/log-level: an EMPTY ARRAY is a deliberate stored state — it clears all
- * custom denials and must override the env fallback, otherwise clearing the
- * blacklist would silently revive the env value (security control resurrection).
- * The legacy PROJECT_DENIED_ROOTS env value is migrated into the store on first
- * read when the key is absent entirely.
+ * Split + canonicalize the legacy PROJECT_DENIED_ROOTS env value. Read-only:
+ * no store write, and outside canonicalizeDeniedRoot's stat/realpath no other
+ * disk IO. Canonicalization is load-bearing, not cosmetic: validation
+ * realpaths candidates, so a literal '/tmp/x' would never match
+ * '/private/tmp/x' (silent security-control failure).
+ */
+function resolveEnvDeniedRoots(): string[] {
+  const envValue = process.env.PROJECT_DENIED_ROOTS;
+  if (!envValue?.trim()) return [];
+  return [...new Set(envValue.split(delimiter).filter(Boolean).map(canonicalizeDeniedRoot))];
+}
+
+/**
+ * F770: custom denied roots live in user-preferences.json. The key
+ * distinction from theme/log-level: an EMPTY ARRAY is a deliberate stored
+ * state — it clears all custom denials and must override the env fallback,
+ * otherwise clearing the blacklist would silently revive the env value
+ * (security control resurrection). When the key is absent entirely the legacy
+ * PROJECT_DENIED_ROOTS env value is honored as a strictly read-only fallback
+ * (canonicalized so the UI states exactly what is blocked) — a read must NOT
+ * persist it. Only an intentional PUT lands in the JSON store.
  */
 export function resolveDeniedRoots(projectRoot: string): DeniedRootsResolution {
   const prefs = readUserPreferences(projectRoot);
   if (Array.isArray(prefs.deniedRoots)) {
     return { deniedRoots: sanitizeDeniedRoots(prefs.deniedRoots), source: 'preferences', migratedFromEnv: false };
   }
-  const envValue = process.env.PROJECT_DENIED_ROOTS;
-  if (envValue?.trim()) {
-    const custom = [...new Set(envValue.split(delimiter).filter(Boolean).map(canonicalizeDeniedRoot))];
-    updateUserPreferences(projectRoot, (current) => ({ ...current, deniedRoots: custom }));
-    return { deniedRoots: custom, source: 'env-fallback', migratedFromEnv: true };
-  }
+  const envRoots = resolveEnvDeniedRoots();
+  if (envRoots.length > 0) return { deniedRoots: envRoots, source: 'env-fallback', migratedFromEnv: false };
   return { deniedRoots: [], source: 'none', migratedFromEnv: false };
+}
+
+// ---------------------------------------------------------------------------
+// Runtime snapshot for the hot validation path (provider wiring)
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory snapshot backing setDeniedRootsProvider. Resolved ONCE at
+ * config-route wiring and pushed on every saveDeniedRoots (change-time push,
+ * same pattern as the retention TTL provider): path validation is hot, so it
+ * must never do a per-call store read or env canonicalization (realpath IO).
+ * Stored value wins — including an empty array (deliberate clear overrides
+ * the env fallback); an absent key falls back read-only to the env value,
+ * canonicalized here once so env-only '/tmp/...' entries still match
+ * realpath'd candidates.
+ */
+let runtimeDeniedRootsSnapshot: string[] | null = null;
+
+export function initDeniedRootsRuntime(projectRoot: string): void {
+  const prefs = readUserPreferences(projectRoot);
+  runtimeDeniedRootsSnapshot = Array.isArray(prefs.deniedRoots)
+    ? sanitizeDeniedRoots(prefs.deniedRoots)
+    : resolveEnvDeniedRoots();
+}
+
+export function getRuntimeDeniedRoots(): string[] {
+  return runtimeDeniedRootsSnapshot ?? [];
 }
 
 /**
@@ -311,6 +354,9 @@ function canonicalizeDeniedRoot(entry: string): string {
 export function saveDeniedRoots(projectRoot: string, roots: string[]): DeniedRootsResolution {
   const sanitized = [...new Set(sanitizeDeniedRoots(roots).map(canonicalizeDeniedRoot))];
   updateUserPreferences(projectRoot, (current) => ({ ...current, deniedRoots: sanitized }));
+  // Change-time push into the runtime snapshot so hot validation applies the
+  // new denylist without a restart or a per-call store read.
+  runtimeDeniedRootsSnapshot = sanitized;
   // Return the just-written value directly: re-resolving here would fall back
   // to the legacy env value right after an intentional clear of all denials.
   return { deniedRoots: sanitized, source: 'preferences', migratedFromEnv: false };

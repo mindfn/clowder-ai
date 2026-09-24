@@ -38,9 +38,10 @@ import {
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
 import {
+  getRuntimeDeniedRoots,
+  initDeniedRootsRuntime,
   initRetentionTtlFromPreferences,
   readStoredLogLevel,
-  resolveDeniedRoots,
 } from '../config/user-preferences-store.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -209,10 +210,19 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   if (storedLogLevel && !isDebugMode) setRuntimeLogLevel(storedLogLevel);
 
   // F770: wire the JSON-preferences denylist into project-path validation.
+  // Resolved ONCE here into an in-memory snapshot (initDeniedRootsRuntime) and
+  // pushed on every PUT (saveDeniedRoots): path validation is hot, so it must
+  // never do a per-call store read or env canonicalization (realpath IO).
+  // Stored wins — an empty array is a deliberate clear and overrides the env
+  // fallback (security-control resurrection); an absent key falls back
+  // read-only to the legacy env value, canonicalized in memory so env-only
+  // '/tmp/...' entries still match realpath'd candidates. NO env→JSON
+  // migration (same read-only-fallback contract as log level and retention).
   // Fail-closed: before this line (or if the provider is never wired, e.g.
   // boot-time callers) DENIED_ROOTS() falls back to platform defaults + the
   // legacy env value — exactly the pre-#770 behavior, zero regression.
-  setDeniedRootsProvider(() => resolveDeniedRoots(projectRoot).deniedRoots);
+  initDeniedRootsRuntime(projectRoot);
+  setDeniedRootsProvider(getRuntimeDeniedRoots);
 
   // F770: push persisted retention presets into the in-memory TTL provider so
   // store reads stay zero-IO for the whole process (hot write path constraint —

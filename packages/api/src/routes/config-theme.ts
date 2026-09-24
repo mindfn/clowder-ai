@@ -1,4 +1,4 @@
-/** F770: theme config persisted to user-preferences.json (migrated from THEME_CONFIG env). */
+/** F770: theme config persisted to user-preferences.json; the legacy THEME_CONFIG env value is a strictly read-only fallback. */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
