@@ -796,6 +796,13 @@ export async function* routeSerial(
           if (notice) yield notice;
         }
         if (receipt.target.disposition === 'rejected') {
+          if (index < targetCats.length) {
+            const { automaticRetryAt } = receipt.target;
+            options.onRoutingDispatchRejected?.({
+              catId,
+              ...(automaticRetryAt !== undefined ? { automaticRetryAt } : {}),
+            });
+          }
           yield {
             type: 'error',
             catId,

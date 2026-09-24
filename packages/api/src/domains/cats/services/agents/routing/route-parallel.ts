@@ -205,6 +205,11 @@ export async function* routeParallel(
       const notice = await routingPreflightNotice(deps, options, routingPreflight, targetCatId, threadId, true);
       if (notice) yield notice;
       if (receipt.target.disposition === 'rejected') {
+        const { automaticRetryAt } = receipt.target;
+        options.onRoutingDispatchRejected?.({
+          catId: targetCatId,
+          ...(automaticRetryAt !== undefined ? { automaticRetryAt } : {}),
+        });
         yield {
           type: 'error',
           catId: targetCatId,

@@ -39,11 +39,6 @@ import {
   bindAsrPersonMemoryPresentationRetryFromSchedulerMessage,
   bindAsrPersonMemoryReentryFromSchedulerMessage,
 } from '../../../../memory/people/AsrPersonMemoryReentryCarrier.js';
-import {
-  inferRoutingContextIntent,
-  preflightRoutingDispatch,
-  type RoutingDispatchPreflightPort,
-} from '../../../../routing-context/RoutingDispatchPreflightPort.js';
 import { bindAsrPersonMemoryScenesFromQueueMessage } from '../../../../signal-intake/AsrPersonMemoryQueueCarrier.js';
 import {
   MessageBundlePromptUnavailableError,
@@ -86,6 +81,7 @@ import {
   type PersistenceContext,
   type RouteExecutionOptions,
   type RouteOptions,
+  type RoutingDispatchRejection,
 } from '../routing/route-helpers.js';
 import {
   accumulateTextAggregate,
@@ -240,6 +236,11 @@ interface QueueExecutionResult {
    * be retried at once: each waits for its retry time while the rest of the thread keeps draining.
    */
   primarySettlementIncomplete?: boolean;
+  /**
+   * The targets actual-send routing refused in this attempt, as the route saw them. The Queue row
+   * forgets a targetless entry's resolved target when it goes back, so the retry wait is read here.
+   */
+  routingRejections: RoutingDispatchRejection[];
 }
 
 type ProcessingSlotReservation = PrestartRetirementReservation;
@@ -321,6 +322,11 @@ function readOrdinaryInvocationCreated(
       ? { activeRun: candidate.activeRun }
       : {}),
   };
+}
+
+/** The targets a queued entry asks for, independent of their order. */
+function requestedTargetsKey(entry: QueueEntry): string {
+  return JSON.stringify([...queueEntryTargetCats(entry)].sort());
 }
 
 function sameActionLeaseCarrier(actual: InvocationActionLeaseCarrier, expected: InvocationActionLeaseCarrier): boolean {
@@ -488,11 +494,6 @@ export interface QueueProcessorDeps {
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending' | 'settleOutputFence'>;
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
   actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'preflight' | 'preflightOutput' | 'commitOutcome'>;
-  /**
-   * F117 soak: the actual-send routing verdict. When an attempt fails before its handoff, its entry
-   * waits until routing will next accept an automatic attempt at its targets.
-   */
-  routingDispatchPreflight?: RoutingDispatchPreflightPort;
   /**
    * F254 Phase E (ADR-041 §5): seed the freshness seenCursor when closure adoption
    * injects required bodies — injection must count as seen, or the output gate
@@ -2517,10 +2518,16 @@ export class QueueProcessor {
     options: {
       suppressAutomaticDrain?: boolean;
       attemptedQueueEntryIds?: readonly string[];
+      routingRejections?: readonly RoutingDispatchRejection[];
       suppressAutomaticFollowUp?: boolean;
     } = {},
   ): Promise<void> {
-    const { suppressAutomaticDrain = false, attemptedQueueEntryIds = [], suppressAutomaticFollowUp = false } = options;
+    const {
+      suppressAutomaticDrain = false,
+      attemptedQueueEntryIds = [],
+      routingRejections = [],
+      suppressAutomaticFollowUp = false,
+    } = options;
     const sk = QueueProcessor.slotKey(threadId, catId);
     const isSuperseded = (candidateCatId: string): boolean =>
       invocationId !== undefined && this.hasReplacementExecutionOwner(threadId, candidateCatId, invocationId);
@@ -2535,10 +2542,11 @@ export class QueueProcessor {
       return;
     }
     if (isSuperseded(catId) || suppressAutomaticFollowUp) return;
-    if (suppressAutomaticDrain) {
-      // F117 soak: the attempt failed before its handoff. Its entries wait for their retry time
-      // rather than looping on the same failure, and the rest of the thread keeps draining.
-      await this.deferFailedAttempt(threadId, catId, status, attemptedQueueEntryIds);
+    if (suppressAutomaticDrain || routingRejections.length > 0) {
+      // F117 soak: the attempt failed before its handoff, or routing refused some of its targets at
+      // actual send. What went back to the Queue waits for its retry time rather than looping on the
+      // same failure, and the rest of the thread keeps draining.
+      this.deferFailedAttempt(threadId, catId, status, attemptedQueueEntryIds, routingRejections);
     } else {
       for (const entryId of attemptedQueueEntryIds) this.retryDeferrals.forget(entryId);
     }
@@ -2551,38 +2559,36 @@ export class QueueProcessor {
     }
   }
 
-  /** Each entry of a failed attempt waits for its retry time; the log names when that is. */
-  private async deferFailedAttempt(
+  /**
+   * Each entry the attempt left in the Queue waits for its retry time: the later of its backoff and
+   * the latest retry time routing named for a target it refused in this attempt. The refusal is the
+   * attempt's own, because a targetless entry goes back without the target it resolved to.
+   */
+  private deferFailedAttempt(
     threadId: string,
     catId: string,
     status: string,
     entryIds: readonly string[],
-  ): Promise<void> {
+    routingRejections: readonly RoutingDispatchRejection[],
+  ): void {
+    const retryAts = routingRejections.flatMap((rejection) =>
+      rejection.automaticRetryAt !== undefined ? [rejection.automaticRetryAt] : [],
+    );
+    const targetRetryAt = retryAts.length > 0 ? Math.max(...retryAts) : undefined;
+    const refusedTargets = routingRejections.map((rejection) => rejection.catId);
     for (const entryId of entryIds) {
       const entry = this.deps.queue.getEntrySnapshotAcrossUsers(threadId, entryId);
-      const retryAt = this.retryDeferrals.defer(threadId, entryId, entry ? await this.targetRetryAt(entry) : undefined);
+      if (!entry) {
+        // Every target of the entry was handed off: nothing is left to wait.
+        this.retryDeferrals.forget(entryId);
+        continue;
+      }
+      const retryAt = this.retryDeferrals.defer(threadId, entryId, targetRetryAt);
       this.deps.log.warn(
-        { threadId, catId, status, entryId, retryAt, queued: entry?.status === 'queued' },
-        '[QueueProcessor] attempt failed before handoff; its entry waits for its retry time',
+        { threadId, catId, status, entryId, retryAt, refusedTargets, queued: entry.status === 'queued' },
+        '[QueueProcessor] an attempt left its entry in the Queue; the entry waits for its retry time',
       );
     }
-  }
-
-  /** When routing will next accept an automatic attempt at the entry's targets, if one is refused now. */
-  private async targetRetryAt(entry: QueueEntry): Promise<number | undefined> {
-    const port = this.deps.routingDispatchPreflight;
-    const targetCatIds = queueEntryTargetCats(entry);
-    if (!port || targetCatIds.length === 0) return undefined;
-    const intent = inferRoutingContextIntent(entry.payload.content);
-    const decision = await preflightRoutingDispatch(port, {
-      ownerId: queueEntryOwnerId(entry),
-      targetCatIds,
-      ...(intent ? { intent } : {}),
-    });
-    const retryAts = decision.targets.flatMap((target) =>
-      target.disposition === 'rejected' && target.automaticRetryAt !== undefined ? [target.automaticRetryAt] : [],
-    );
-    return retryAts.length > 0 ? Math.max(...retryAts) : undefined;
   }
 
   /**
@@ -2836,6 +2842,7 @@ export class QueueProcessor {
         void this.onInvocationComplete(entry.threadId, catId, result.status, result.invocationId, [], {
           suppressAutomaticDrain: result.primarySettlementIncomplete,
           attemptedQueueEntryIds: result.attemptedQueueEntryIds,
+          routingRejections: result.routingRejections,
           suppressAutomaticFollowUp,
         }).catch(() => {});
         this.signalDeliveryBatchDone(entry.threadId, result.status);
@@ -2869,6 +2876,7 @@ export class QueueProcessor {
    * deferred) no longer stops the entries behind it; it holds back only the later entries that share
    * one of its targets, so every target still receives its sources in comparator order. A targetless
    * input that waits for an idle thread holds back everything behind it: its target is not known yet.
+   * The scan reads one snapshot and awaits target resolution, so the claim re-checks the order.
    */
   private async tryExecuteNextAcrossUsers(
     threadId: string,
@@ -2880,6 +2888,8 @@ export class QueueProcessor {
       return { started: false };
     }
     const heldTargets = new Set<string>();
+    // The entries this scan passed over, each with the targets it asked for when it was passed over.
+    const passedOver = new Map<string, string>();
     let waitingEntries = 0;
     let firstWaitingTarget: string | undefined;
     for (const [index, candidate] of candidates.entries()) {
@@ -2903,9 +2913,10 @@ export class QueueProcessor {
           (catId) => !heldTargets.has(catId) && this.isSlotAdmissible(threadId, catId, bypassSuppressionEpochByCatId),
         );
       if (canStart) {
-        const attempt = await this.startSelectedEntry(threadId, candidate, admission);
+        const attempt = await this.startSelectedEntry(threadId, candidate, admission, passedOver);
         if (attempt) return attempt;
       }
+      passedOver.set(candidate.id, requestedTargetsKey(candidate));
       for (const catId of [...queueEntryTargetCats(candidate), ...targets]) heldTargets.add(catId);
       waitingEntries += 1;
       firstWaitingTarget ??= targets[0];
@@ -2991,14 +3002,32 @@ export class QueueProcessor {
   }
 
   /**
+   * Whether every entry now ahead of the selected one in comparator order is one the scan passed
+   * over while it still asked for the same targets. Only then does the selection keep each target's
+   * sources in comparator order. An entry no longer queued is left for the claim to refuse.
+   */
+  private onlyPassedOverEntriesAhead(
+    threadId: string,
+    entryId: string,
+    passedOver: ReadonlyMap<string, string>,
+  ): boolean {
+    const queued = this.deps.queue.listQueuedAcrossUsers(threadId);
+    const index = queued.findIndex((entry) => entry.id === entryId);
+    if (index < 0) return true;
+    return queued.slice(0, index).every((entry) => passedOver.get(entry.id) === requestedTargetsKey(entry));
+  }
+
+  /**
    * Claims and starts the entry the drain selected. Returns null when the claim does not hold (the
    * entry changed, or a target became busy after the claim and the entry went back), so the drain
-   * treats the entry as waiting and looks further.
+   * treats the entry as waiting and looks further. When the Queue order changed under the scan, it
+   * claims nothing and reports progress, so the drain scans the current order again.
    */
   private async startSelectedEntry(
     threadId: string,
     candidate: QueueEntry,
     admission: { readonly targets: string[]; readonly conversationBatchResolution?: ConversationBatchResolution },
+    passedOver: ReadonlyMap<string, string>,
   ): Promise<QueueAdmissionAttempt | null> {
     const staleReceiverTarget =
       admission.targets.length > 1
@@ -3006,6 +3035,15 @@ export class QueueProcessor {
         : undefined;
     const selectedTargetCats = staleReceiverTarget ? [staleReceiverTarget] : admission.targets;
 
+    // Checked with no await before the claim: an owner may have moved another entry ahead of this
+    // one while the scan awaited, and that entry may share a target.
+    if (!this.onlyPassedOverEntriesAhead(threadId, candidate.id, passedOver)) {
+      this.deps.log.info(
+        { threadId, entryId: candidate.id },
+        '[QueueProcessor] the Queue order changed during the drain scan; scanning again',
+      );
+      return { started: false, progressed: true };
+    }
     const claimedGroup = await this.deps.queue.markProcessingGroupAcrossUsersDurable(
       threadId,
       { entryId: candidate.id, targetCats: selectedTargetCats },
@@ -3351,6 +3389,8 @@ export class QueueProcessor {
     // The response each target is currently streaming into. Every event a target
     // streams names this message, so clients write by id instead of guessing.
     const lifecycleResponseMessageIdByCat = new Map<string, string>();
+    // F117 soak: the exact targets actual-send routing refused, kept for the retry wait.
+    const routingRejections: RoutingDispatchRejection[] = [];
     let returnedExecutionResult: QueueExecutionResult | undefined;
     const executionResult = (status: InvocationFinalStatus): QueueExecutionResult => {
       // Keep finally cleanup and the caller-visible completion status on one
@@ -3367,6 +3407,7 @@ export class QueueProcessor {
         status,
         ...(invocationId ? { invocationId } : {}),
         attemptedQueueEntryIds: [entry.id, ...batchedEntryIds],
+        routingRejections,
       };
       returnedExecutionResult = result;
       return result;
@@ -4032,6 +4073,9 @@ export class QueueProcessor {
             ? { modeSystemPromptByCat: callerDispatchPromptByCat }
             : {}),
           turnCustodyWakeForCat: (catId: string) => retargetTurnCustodyWake(turnCustodyWake, catId),
+          onRoutingDispatchRejected: (rejection: RoutingDispatchRejection) => {
+            routingRejections.push(rejection);
+          },
           ...(contentBlocks.length > 0 ? { contentBlocks } : {}),
           ...(controller.signal ? { signal: controller.signal } : {}),
           // F-parallel-cancel: per-cat signal so canceling one concurrent cat (e.g. @codex)

@@ -76,7 +76,6 @@ function createHarness({
   draftStore,
   turnExecutionStore,
   actionSuccessorLeaseStore,
-  routingDispatchPreflight,
 } = {}) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
@@ -123,7 +122,6 @@ function createHarness({
     ...(draftStore ? { draftStore } : {}),
     ...(turnExecutionStore ? { turnExecutionStore } : {}),
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
-    ...(routingDispatchPreflight ? { routingDispatchPreflight } : {}),
   };
   return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
 }
@@ -1965,61 +1963,156 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     await waitFor(() => queuedIds(harness).length === 0);
   });
 
+  const deferralLogs = (harness) =>
+    harness.log.warn.mock.calls
+      .filter((call) => String(call.arguments[1]).includes('waits for its retry time'))
+      .map((call) => call.arguments[0]);
+
+  /**
+   * A route whose first attempt has actual-send routing refuse `refusedCatIds` the way the real routes
+   * do: the refusal callback with routing's retry time, then the error, and no response receiver.
+   */
+  const routeRefusingFirstAttempt = (attempts, refusedCatIds, automaticRetryAt) =>
+    async function* (...args) {
+      const [userId, content, threadId, , targetCats, , options] = args;
+      attempts.push({ at: Date.now(), content, targetCats: [...targetCats] });
+      const refused = attempts.length === 1 ? targetCats.filter((catId) => refusedCatIds.includes(catId)) : [];
+      for (const catId of refused) {
+        options.onRoutingDispatchRejected?.({ catId, automaticRetryAt: automaticRetryAt() });
+        yield {
+          type: 'error',
+          catId,
+          errorCode: 'routing_preflight_rejected',
+          error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
+          timestamp: Date.now(),
+        };
+      }
+      const started = targetCats.filter((catId) => !refused.includes(catId));
+      for (const [index, catId] of started.entries()) {
+        await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId,
+          invocationId: `turn-${attempts.length}-${catId}`,
+          parentInvocationId: options.parentInvocationId,
+          startedAt: Date.now(),
+        });
+        yield { type: 'done', catId, isFinal: index === started.length - 1, timestamp: Date.now() };
+      }
+    };
+
   it('retries a member refused at actual send when routing will accept it again', async () => {
     const attempts = [];
     let automaticRetryAt;
-    const routingDispatchPreflight = {
-      preflight: mock.fn(async ({ ownerId, targetCatIds }) => ({
-        v: 1,
-        ownerId,
-        observedAt: Date.now(),
-        resolverState: 'fresh',
-        targets: targetCatIds.map((targetCatId) => ({
-          targetCatId,
-          disposition: 'rejected',
-          automaticRetryAt,
-          reasons: [],
-          alternatives: [],
-        })),
-      })),
-    };
     const harness = createHarness({
-      routingDispatchPreflight,
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
-      routeExecution: async function* (...args) {
-        const [, , , , targetCats] = args;
-        attempts.push(Date.now());
-        if (attempts.length === 1) {
-          // Actual send refused the member: no response receiver, the entry goes back to the Queue.
-          yield {
-            type: 'error',
-            catId: targetCats[0],
-            errorCode: 'routing_preflight_rejected',
-            error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
-            timestamp: Date.now(),
-          };
-          return;
-        }
-        await startLifecycle(args, `turn-${attempts.length}`);
-        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
-      },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => automaticRetryAt),
     });
     automaticRetryAt = Date.now() + 400;
     const refused = await admitMessage(harness, { targetCats: ['opus'] });
 
     await harness.processor.requestDrain('thread-1');
-    await waitFor(() => attempts.length === 1);
-    await waitFor(() =>
-      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('waits for its retry time')),
-    );
-    const deferral = harness.log.warn.mock.calls.find((call) =>
-      String(call.arguments[1]).includes('waits for its retry time'),
-    ).arguments[0];
+    await waitFor(() => deferralLogs(harness).length === 1);
+    const [deferral] = deferralLogs(harness);
     assert.equal(deferral.entryId, refused.entry.id);
     assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
 
     await waitFor(() => attempts.length === 2);
-    assert.ok(attempts[1] >= automaticRetryAt - 5, 'not retried before routing accepts the member again');
+    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'not retried before routing accepts the member again');
     await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('waits for routing’s retry time when the member a targetless source resolved to is refused', async () => {
+    const attempts = [];
+    let automaticRetryAt;
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => automaticRetryAt),
+    });
+    automaticRetryAt = Date.now() + 400;
+    const targetless = await admitMessage(harness, { targetCats: [] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => deferralLogs(harness).length === 1);
+    assert.deepEqual(attempts[0].targetCats, ['opus'], 'admission resolved the targetless source to opus');
+    assert.deepEqual(
+      harness.queue.getEntrySnapshotAcrossUsers('thread-1', targetless.entry.id)?.targets,
+      [],
+      'the row went back to the Queue without the member it resolved to',
+    );
+    const [deferral] = deferralLogs(harness);
+    assert.equal(deferral.entryId, targetless.entry.id);
+    assert.deepEqual(deferral.refusedTargets, ['opus']);
+    assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
+
+    await waitFor(() => attempts.length === 2);
+    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'the first retry does not come before routing’s retry time');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('makes a pair wait for routing’s retry time for the member refused after its sibling was handed off', async () => {
+    const attempts = [];
+    let automaticRetryAt;
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['codex'], () => automaticRetryAt),
+    });
+    automaticRetryAt = Date.now() + 400;
+    const pair = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => deferralLogs(harness).length === 1);
+    assert.deepEqual(attempts[0].targetCats, ['opus', 'codex']);
+    assert.deepEqual(
+      harness.queue.getEntrySnapshotAcrossUsers('thread-1', pair.entry.id)?.targets,
+      ['codex'],
+      'only the refused member is left in the Queue',
+    );
+    assert.equal(deferralLogs(harness)[0].retryAt, automaticRetryAt);
+
+    await waitFor(() => attempts.length === 2);
+    assert.deepEqual(attempts[1].targetCats, ['codex']);
+    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'the refused member is not retried before routing’s retry time');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('scans again when the owner reorders the Queue while the drain resolves the source it selected', async () => {
+    const harness = createHarness();
+    await admitMessage(harness, { content: 'earlier', targetCats: ['codex'] });
+    const later = await admitMessage(harness, { content: 'later', targetCats: ['codex'] });
+    let releaseResolution;
+    const resolutionGate = new Promise((resolve) => {
+      releaseResolution = resolve;
+    });
+    let markResolutionStarted;
+    const resolutionStarted = new Promise((resolve) => {
+      markResolutionStarted = resolve;
+    });
+    let paused = false;
+    harness.router.resolveConversationTargetsAtAdmission = async (targetCats) => {
+      if (!paused) {
+        paused = true;
+        markResolutionStarted();
+        await resolutionGate;
+      }
+      return [...targetCats];
+    };
+
+    const drained = harness.processor.requestDrain('thread-1');
+    await resolutionStarted;
+    assert.equal(
+      await harness.queue.setPositionDurable('thread-1', 'user-1', later.entry.id, 0),
+      true,
+      'the owner moves the later source ahead while the scan awaits',
+    );
+    releaseResolution();
+    await drained;
+    await waitFor(() => harness.routeCalls.length === 2);
+
+    assert.deepEqual(
+      harness.routeCalls.map((args) => args[1]),
+      ['later', 'earlier'],
+      'codex receives its sources in the order the owner set',
+    );
   });
 });
