@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { type BigIntStats, constants } from 'node:fs';
-import { type FileHandle, mkdir, open, readFile, rename } from 'node:fs/promises';
+import { type FileHandle, mkdir, open, readdir, readFile, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { MediaReadResult } from '@clowder-ai/plugin-contract';
 
@@ -87,6 +87,7 @@ async function verifyBytes(handle: FileHandle, size: number, expectedDigest: str
 export class FileMessagingMediaLedger {
   private readonly root: string;
   private readonly verified = new Map<string, { identity: string; ready: Promise<void> }>();
+  private registrationTail: Promise<void> = Promise.resolve();
 
   constructor(
     root: string,
@@ -98,6 +99,50 @@ export class FileMessagingMediaLedger {
   async register(
     source: Uint8Array | { readonly path: string },
     meta: MessagingMediaRegistration = {},
+  ): Promise<string> {
+    const previous = this.registrationTail;
+    let release!: () => void;
+    this.registrationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      if (meta.importKey) {
+        const existing = await this.findByImportKey(meta.importKey, meta.ownerInstanceId);
+        if (existing) return existing;
+      }
+      return await this.registerNew(source, meta);
+    } finally {
+      release();
+    }
+  }
+
+  /** Lookup stays inside the private ledger; callers only receive an opaque HMR identifier. */
+  async findByImportKey(importKey: string, ownerInstanceId?: string): Promise<string | undefined> {
+    let names: string[];
+    try {
+      names = await readdir(join(this.root, 'records'));
+    } catch (error) {
+      if (isMissing(error)) return undefined;
+      throw error;
+    }
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const hmrId = name.slice(0, -5);
+      if (!HMR_ID.test(hmrId)) continue;
+      const record = await this.record(hmrId);
+      if (record?.importKey === importKey && record.ownerInstanceId === ownerInstanceId) {
+        const verified = await this.openVerifiedRecord(record);
+        await verified.handle.close();
+        return hmrId;
+      }
+    }
+    return undefined;
+  }
+
+  private async registerNew(
+    source: Uint8Array | { readonly path: string },
+    meta: MessagingMediaRegistration,
   ): Promise<string> {
     const hmrId = `hmr_${randomBytes(24).toString('base64url')}`;
     const blobsRoot = join(this.root, 'blobs');

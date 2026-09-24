@@ -18,6 +18,7 @@
  * fail-closed against leaking restricted content to subscribers.
  */
 
+import { randomUUID } from 'node:crypto';
 import { type CatId, type ConnectorSource, catRegistry, type MessageContent } from '@cat-cafe/shared';
 import type { CanonicalAudience, MessageDraft, MessageProvenance, SendReceipt } from '@clowder-ai/plugin-contract';
 import {
@@ -401,6 +402,8 @@ export class SendService {
           elementId: element.elementId,
           reference: element.payload.reference,
           sourceId,
+          requestId: randomUUID(),
+          ingressIdentity: identity,
           type: element.payload.type,
           ...(element.payload.fileName === undefined ? {} : { fileName: element.payload.fileName }),
         },

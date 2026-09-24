@@ -66,6 +66,7 @@ import {
   PluginPackageQuarantineManagerAdapter,
 } from './manager/plugin-package-quarantine.js';
 import type { PluginRuntimeConfigurationPort } from './manifest-configuration-projection.js';
+import { HostMediaSourceImporter } from './media-source-importer.js';
 import { type OfficialPluginCatalogEntry, officialPluginPresentationMatches } from './official-catalog.js';
 import type { OfficialPluginCatalogProvider } from './official-catalog-provider.js';
 import { OfficialPluginPackageInstaller } from './official-package-installer.js';
@@ -219,11 +220,30 @@ export function createDormantPluginRuntimeComposition(
     new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), 'media-entitlements.json')),
     { now: options.now ?? Date.now },
   );
+  const moduleLogger = createModuleLogger('plugin/module-runtime');
+  const deliveryTarget: { current?: PluginRuntimeCarrierRouter } = {};
+  const resolveInstalledManifest = async (instanceId: string): Promise<PluginManifest | undefined> => {
+    const snapshot = await inventoryStore.snapshot();
+    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === instanceId);
+    if (!instance || instance.lifecycleState !== 'installed') return undefined;
+    return snapshot.packages.find((item) => item.packageDigest === instance.packageDigest)?.manifest;
+  };
+  const mediaImporter = new HostMediaSourceImporter({
+    ledger: mediaLedger,
+    resolveManifest: resolveInstalledManifest,
+    invoke: (instanceId, method, params) => {
+      if (!deliveryTarget.current) throw new Error('plugin runtime supervisor is unavailable');
+      return deliveryTarget.current.invoke(instanceId, method, params);
+    },
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
   const messagingStores = options.messagingStores ?? createMessagingStores(options.redis);
   const mediaPending = new PendingMediaPublication({
     store: new FileMediaStagingStore(resolve(dirname(paths.inventorySnapshotPath), 'media-staging.json')),
     messageStore: options.messageStore,
     events: messagingStores.events,
+    importer: mediaImporter,
+    onSettleFailure: (fields) => moduleLogger.warn(fields, 'media-source settlement failed'),
     ledger: new MessagingLedger(messagingStores.ledger),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.onMessagePublished === undefined ? {} : { onPublished: options.onMessagePublished }),
@@ -233,10 +253,7 @@ export function createDormantPluginRuntimeComposition(
   });
   const mediaSources = {
     resolve: async (instanceId: string, sourceId: string, ingressIdentity: string): Promise<boolean> => {
-      const snapshot = await inventoryStore.snapshot();
-      const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === instanceId);
-      if (!instance || instance.lifecycleState !== 'installed') return false;
-      const manifest = snapshot.packages.find((item) => item.packageDigest === instance.packageDigest)?.manifest;
+      const manifest = await resolveInstalledManifest(instanceId);
       if (!manifest) return false;
       return mediaSourceMatchesIngress(manifest, sourceId, ingressIdentity);
     },
@@ -292,8 +309,6 @@ export function createDormantPluginRuntimeComposition(
     readConfig: readStoredConfigurationValue,
     readSecret: readStoredConfigurationValue,
   };
-  const moduleLogger = createModuleLogger('plugin/module-runtime');
-  const deliveryTarget: { current?: PluginRuntimeCarrierRouter } = {};
   const subscriptionDelivery = createSubscriptionDelivery({
     messaging,
     entitlements: mediaEntitlements,
@@ -463,9 +478,9 @@ export function createDormantPluginRuntimeComposition(
     ...(options.contract === undefined ? {} : { contract: options.contract }),
     async recoverAfterRestart() {
       await Promise.all([inventoryStore.snapshot(), brokerStore.snapshot()]);
-      await mediaPending.recover();
       const brokerSessions = await supervisor.recoverAfterRestart();
       const inventoryRecovery = await lifecycle.recoverAfterRestart();
+      await mediaPending.recover();
       return {
         brokerSessions,
         inventoryInstances: inventoryRecovery.recoveredInstances,

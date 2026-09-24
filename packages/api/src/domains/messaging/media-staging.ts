@@ -20,12 +20,17 @@ export interface MediaImportInput {
   readonly elementId: string;
   readonly reference: string;
   readonly sourceId: string;
+  /** Stable across retries and restart; callback idempotency belongs to this element, not a send attempt. */
+  readonly requestId?: string;
+  readonly ingressIdentity?: string;
+  readonly deadline?: number;
   readonly type: Extract<MessageElement, { kind: 'media_ref' }>['payload']['type'];
   readonly fileName?: string;
 }
 
 export interface MediaImporter {
   import(input: MediaImportInput): Promise<MediaImportResult>;
+  settle?(input: MediaImportInput, outcome: 'imported' | 'unavailable'): Promise<void>;
 }
 
 export interface MediaSourceResolver {
@@ -59,6 +64,10 @@ export function mediaSourceMatchesIngress(
 export interface StagedMediaElement {
   readonly input: MediaImportInput;
   readonly result?: MediaImportResult;
+  readonly settled?: boolean;
+  /** Host-only callback audit; never projected to a message or a plugin. */
+  readonly settleFailures?: number;
+  readonly lastSettleFailureAt?: number;
 }
 
 export interface StagedMediaSend {

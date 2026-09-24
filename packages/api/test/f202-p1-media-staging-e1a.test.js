@@ -158,6 +158,25 @@ test('a terminal importer failure publishes text with a typed unavailable elemen
   assert.equal((await h.events.readAfter('thread-media', 0, 10)).length, 1);
 });
 
+test('an unavailable source is settled only after the unavailable message is durably published', async () => {
+  const settlements = [];
+  let h;
+  h = await harness({
+    importer: {
+      import: async () => ({ kind: 'unavailable', reason: 'source_expired' }),
+      settle: async (_input, outcome) =>
+        settlements.push({
+          outcome,
+          published: (await h.staging.list())[0].published,
+          messages: h.messageStore.size,
+        }),
+    },
+  });
+  await h.service.send(ctx, h.draft, { source });
+  await until(() => settlements.length === 1);
+  assert.deepEqual(settlements, [{ outcome: 'unavailable', published: true, messages: 1 }]);
+});
+
 test('unknown or mismatched media-source fails before staging', async () => {
   const h = await harness();
   await assert.rejects(

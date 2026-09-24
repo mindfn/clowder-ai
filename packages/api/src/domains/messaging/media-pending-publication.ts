@@ -17,6 +17,8 @@ export interface PendingPublicationDeps {
   readonly messageStore: IMessageStore;
   readonly events: EventLogStore;
   readonly importer?: MediaImporter;
+  /** Only opaque IDs cross the logging boundary; callback errors can carry plugin secrets. */
+  readonly onSettleFailure?: (fields: { messageId: string; elementId: string }) => void;
   readonly ledger: MessagingLedger;
   readonly onPublished?: (threadId: string) => void;
   readonly ingressWake?: MessagingIngressWakeDeps;
@@ -32,6 +34,7 @@ export interface PendingPublicationDeps {
 export class PendingMediaPublication {
   private readonly busy = new Set<string>();
   private readonly importing = new Set<string>();
+  private readonly settling = new Set<string>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly deps: PendingPublicationDeps) {}
@@ -86,7 +89,10 @@ export class PendingMediaPublication {
 
   async recover(): Promise<void> {
     for (const row of await this.deps.store.list()) {
-      if (row.published) continue;
+      if (row.published) {
+        await this.settlePublished(row.key);
+        continue;
+      }
       if (row.deadline <= this.now()) await this.expire(row.key);
       else {
         this.schedule(row);
@@ -112,7 +118,7 @@ export class PendingMediaPublication {
       if (media.result) continue;
       let result: MediaImportResult;
       try {
-        result = await this.deps.importer.import(media.input);
+        result = await this.deps.importer.import({ ...media.input, deadline: row.deadline });
         if (result.kind === 'imported' && !result.hmrId.startsWith('hmr_')) {
           result = { kind: 'unavailable', reason: 'unavailable' };
         }
@@ -148,6 +154,51 @@ export class PendingMediaPublication {
   async uninstall(instanceId: string): Promise<void> {
     for (const row of await this.deps.store.list()) {
       if (row.instanceId === instanceId && !row.published) await this.expire(row.key, 'unavailable');
+    }
+  }
+
+  private async settlePublished(key: string): Promise<void> {
+    if (!this.deps.importer?.settle || this.settling.has(key)) return;
+    this.settling.add(key);
+    try {
+      const row = await this.deps.store.get(key);
+      if (!row?.published) return;
+      for (const media of row.media) {
+        if (!media.result || media.settled) continue;
+        try {
+          await this.deps.importer.settle(media.input, media.result.kind === 'imported' ? 'imported' : 'unavailable');
+          await this.deps.store.update(key, (current) => ({
+            ...current,
+            media: current.media.map((item) =>
+              item.input.elementId === media.input.elementId ? { ...item, settled: true } : item,
+            ),
+          }));
+        } catch {
+          await this.recordSettleFailure(key, row.receipt.messageId, media.input.elementId);
+        }
+      }
+    } finally {
+      this.settling.delete(key);
+    }
+  }
+
+  private async recordSettleFailure(key: string, messageId: string, elementId: string): Promise<void> {
+    try {
+      await this.deps.store.update(key, (current) => ({
+        ...current,
+        media: current.media.map((item) =>
+          item.input.elementId === elementId
+            ? { ...item, settleFailures: (item.settleFailures ?? 0) + 1, lastSettleFailureAt: this.now() }
+            : item,
+        ),
+      }));
+    } catch {
+      // Publication is already durable; an audit-write failure must not rewrite its outcome.
+    }
+    try {
+      this.deps.onSettleFailure?.({ messageId, elementId });
+    } catch {
+      // Host logging is not part of the published-message transaction.
     }
   }
 
@@ -242,6 +293,9 @@ export class PendingMediaPublication {
       const timer = this.timers.get(key);
       if (timer) clearTimeout(timer);
       this.timers.delete(key);
+      await this.settlePublished(key).catch(() => {
+        // The publication boundary is complete; settle can be retried from the staged row on recovery.
+      });
     } finally {
       this.busy.delete(key);
     }
