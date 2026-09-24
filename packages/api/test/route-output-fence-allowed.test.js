@@ -208,7 +208,7 @@ describe('F117 KD-21 a fence-approved output survives a crash before its R commi
 
       try {
         await assert.rejects(drain(route(w.deps, [CAT], 'please act', USER, THREAD, w.options)), /redis unavailable/);
-        assert.equal(intervals.live.size, 0, 'a route that throws stops its draft keepalive');
+        assert.equal(intervals.live.size, 0, 'a route that throws leaves no interval running');
       } finally {
         intervals.restore();
       }

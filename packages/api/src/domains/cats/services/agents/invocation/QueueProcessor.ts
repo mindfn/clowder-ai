@@ -2355,17 +2355,21 @@ export class QueueProcessor {
     }
   }
 
-  /** F117 KD-21: a response R confirmed terminal takes its ended turn out of the response-pending ledger. */
+  /**
+   * F117 KD-21: a response R confirmed terminal takes its ended turn out of the response-pending ledger.
+   * KD-23: its draft goes first. Drafts no longer expire, so if deleting it fails the turn stays in the
+   * ledger, and the next startup settles it again: R is already terminal, so that only deletes the draft.
+   */
   private async releaseSettledResponseTurn(message: StoredMessage | null | undefined, log: LoggerLike): Promise<void> {
     const lifecycle = message?.lifecycle;
-    if (lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return;
+    if (!message || lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return;
     try {
+      await this.deps.draftStore?.delete(message.userId, message.threadId, lifecycle.invocationId);
       await this.deps.turnExecutionStore?.clearResponsePending(lifecycle.invocationId);
     } catch (err) {
-      // The next startup finds R terminal and clears the entry itself.
       log.warn(
         { err, invocationId: lifecycle.invocationId },
-        '[QueueProcessor] failed to clear a settled response from the pending ledger',
+        '[QueueProcessor] failed to release a settled response turn; the next startup settles it',
       );
     }
   }

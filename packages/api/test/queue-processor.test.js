@@ -835,6 +835,63 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     await waitFor(() => pendingTurnIds(turns).length === 0);
   });
 
+  it('F117 KD-23: a committed turn leaves the ledger only after its draft is gone', async () => {
+    const draftStore = new DraftStore();
+    const deleteDraft = draftStore.delete.bind(draftStore);
+    let draftDeleteFailures = 1;
+    draftStore.delete = (...args) => {
+      if (draftDeleteFailures-- > 0) throw new Error('redis unavailable');
+      return deleteDraft(...args);
+    };
+    const turns = new InMemoryTurnExecutionStore();
+    let responseMessageId;
+    const harness = createHarness({
+      draftStore,
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats] = args;
+        responseMessageId = (await startLifecycle(args, 'turn-done')).responseMessageId;
+        draftStore.upsert({
+          userId,
+          threadId,
+          invocationId: 'turn-done',
+          catId: targetCats[0],
+          content: 'answer',
+          updatedAt: Date.now(),
+        });
+        await endChildTurn(turns, args, 'turn-done', { status: 'succeeded' });
+        // The route commits R; its own early draft delete is not relied on.
+        const committed = await harness.messageStore.commitLifecycleResponseTerminal(responseMessageId, {
+          invocationId: 'turn-done',
+          status: 'completed',
+          completedAt: Date.now(),
+          content: 'answer',
+          mentions: [],
+          origin: 'stream',
+        });
+        assert.ok(committed.kind === 'applied' || committed.kind === 'replayed');
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    await admitMessage(harness);
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) =>
+        String(call.arguments[1]).includes('failed to release a settled response turn'),
+      ),
+    );
+    assert.deepEqual(pendingTurnIds(turns), ['turn-done'], 'a draft that could not be deleted keeps its turn');
+    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 1);
+
+    const restart = await nextStartup(turns, harness.messageStore, draftStore);
+
+    assert.equal(restart.settledResponseCount, 1);
+    assert.deepEqual(draftStore.getByThread('user-1', 'thread-1'), [], 'the next startup deletes it');
+    assert.deepEqual(pendingTurnIds(turns), []);
+    assert.equal(harness.messageStore.getById(responseMessageId).content, 'answer', 'R keeps its committed body');
+  });
+
   it('F117 KD-21: a route that throws fails the response it left processing with its draft body', async () => {
     const draftStore = new DraftStore();
     const turns = new InMemoryTurnExecutionStore();

@@ -746,7 +746,6 @@ export async function* routeSerial(
   const pushRecallPresentationsByInvocation = new Map<string, PushRecallPresentation[]>();
   const pendingTurnCustodyShadowCloses: Array<(checkpoint: 'next_turn_boundary' | 'route_settled') => Promise<void>> =
     [];
-  let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
 
   const flushTurnCustodyShadowCloses = async (checkpoint: 'next_turn_boundary' | 'route_settled'): Promise<void> => {
     const closes = pendingTurnCustodyShadowCloses.splice(0);
@@ -1695,9 +1694,8 @@ export async function* routeSerial(
       const FLUSH_CHAR_DELTA = 2000;
       const noop = () => {};
 
-      // Issue #83: Independent keepalive timer — touch draft every 60s during long tool calls.
-      // Stream events alone can't keep draft alive when tools execute silently for >300s.
-      const KEEPALIVE_INTERVAL_MS = 60_000;
+      // F117 KD-23: drafts no longer expire, so nothing renews them on a timer. The ball-custody
+      // heartbeat comes only from real stream activity (the draft flushes below).
       let lastBallCustodyHeartbeatAt: number | null = null;
       const emitThrottledBallInvocationHeartbeat = (draftUpdatedAt: number): void => {
         if (
@@ -1984,16 +1982,6 @@ export async function* routeSerial(
                 if (voiceMode) {
                   voiceChunker = createVoiceChunker(ownInvocationId!);
                 }
-                // Issue #83: Start keepalive timer once we have an invocationId.
-                // This ensures draft TTL is renewed even during long silent tool calls.
-                if (deps.draftStore && !keepaliveTimer) {
-                  const keepInvId = ownInvocationId!;
-                  keepaliveTimer = setInterval(() => {
-                    const now = Date.now();
-                    deps.draftStore!.touch(userId, threadId, keepInvId)?.catch?.(noop);
-                    emitThrottledBallInvocationHeartbeat(now);
-                  }, KEEPALIVE_INTERVAL_MS);
-                }
               }
             } catch {
               /* ignore parse errors */
@@ -2240,7 +2228,6 @@ export async function* routeSerial(
                 lastFlushLen = textContent.length;
                 lastFlushToolLen = collectedToolEvents.length;
               } else {
-                deps.draftStore.touch(userId, threadId, ownInvocationId)?.catch?.(noop);
                 emitThrottledBallInvocationHeartbeat(now);
               }
               lastFlushTime = now;
@@ -2278,12 +2265,6 @@ export async function* routeSerial(
             yield streamEvent;
           }
         }
-      }
-
-      // Issue #83: Stop keepalive timer — streaming loop has exited.
-      if (keepaliveTimer) {
-        clearInterval(keepaliveTimer);
-        keepaliveTimer = undefined;
       }
 
       // F167 Phase S: this is the single route-side visibility barrier. The
@@ -4203,10 +4184,6 @@ export async function* routeSerial(
       index++;
     }
   } finally {
-    // Provider/route failure after system_info must revoke callback ownership
-    // before any adopted projections are closed or the route exits.
-    if (keepaliveTimer) clearInterval(keepaliveTimer);
-
     // Phase T stop gate is a turn-settled verdict: current output persistence,
     // operator handoff writes, and inline child receiver-boundary handoffs must all
     // have had a chance to establish machine evidence before the projection closes.

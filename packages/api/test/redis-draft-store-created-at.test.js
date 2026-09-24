@@ -40,6 +40,7 @@ class FakeRedis {
   constructor() {
     this.hashes = new Map();
     this.sets = new Map();
+    this.expired = [];
   }
 
   multi() {
@@ -78,7 +79,8 @@ class FakeRedis {
     return 1;
   }
 
-  async expire() {
+  async expire(key, seconds) {
+    this.expired.push([key, seconds]);
     return 1;
   }
 }
@@ -87,7 +89,7 @@ describe('RedisDraftStore createdAt migration', () => {
   it('preserves legacy updatedAt as createdAt when upserting a hash without createdAt', async () => {
     const { RedisDraftStore } = await import('../dist/domains/cats/services/stores/redis/RedisDraftStore.js');
     const redis = new FakeRedis();
-    const store = new RedisDraftStore(redis, { ttlSeconds: 300 });
+    const store = new RedisDraftStore(redis);
 
     const detailKey = 'draft:user-1:thread-1:inv-legacy';
     await redis.hset(detailKey, {
@@ -112,30 +114,22 @@ describe('RedisDraftStore createdAt migration', () => {
     assert.equal(await redis.hget(detailKey, 'updatedAt'), '9000');
   });
 
-  it('backfills legacy updatedAt as createdAt when touching a hash without createdAt', async () => {
+  it('sets no expiry on the draft or its index (F117 KD-23)', async () => {
     const { RedisDraftStore } = await import('../dist/domains/cats/services/stores/redis/RedisDraftStore.js');
     const redis = new FakeRedis();
-    const store = new RedisDraftStore(redis, { ttlSeconds: 300 });
+    const store = new RedisDraftStore(redis);
 
-    const detailKey = 'draft:user-1:thread-1:inv-touch-only';
-    await redis.hset(detailKey, {
+    await store.upsert({
       userId: 'user-1',
       threadId: 'thread-1',
-      invocationId: 'inv-touch-only',
+      invocationId: 'inv-silent',
       catId: 'opus',
-      content: '',
-      updatedAt: '1000',
+      content: 'streamed so far',
+      updatedAt: 1000,
     });
 
-    const originalNow = Date.now;
-    Date.now = () => 9000;
-    try {
-      await store.touch('user-1', 'thread-1', 'inv-touch-only');
-    } finally {
-      Date.now = originalNow;
-    }
-
-    assert.equal(await redis.hget(detailKey, 'createdAt'), '1000');
-    assert.equal(await redis.hget(detailKey, 'updatedAt'), '9000');
+    assert.deepEqual(redis.expired, [], 'a draft lives until its R ends, however long the turn is silent');
+    assert.equal(typeof store.touch, 'undefined', 'nothing renews a draft on a timer any more');
+    assert.equal(await redis.hget('draft:user-1:thread-1:inv-silent', 'content'), 'streamed so far');
   });
 });

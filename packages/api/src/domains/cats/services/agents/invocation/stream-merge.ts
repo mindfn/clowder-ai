@@ -196,16 +196,3 @@ export async function* mergeStreams<T>(
     }
   }
 }
-
-/**
- * Yields `source` and runs `onDone` however its consumer's iteration ends: completion, a throw in
- * the consumer's loop body, or the consumer's return. A `for await` loop closes its iterator on
- * each of those, which is what reaches this finally.
- */
-export async function* finallyAfter<T>(source: AsyncIterable<T>, onDone: () => void): AsyncGenerator<T> {
-  try {
-    yield* source;
-  } finally {
-    onDone();
-  }
-}
