@@ -8,14 +8,45 @@
  * See: https://github.com/zts212653/clowder-ai/issues/228
  */
 
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { homedir, platform, tmpdir } from 'node:os';
-import { delimiter, relative, resolve, win32 } from 'node:path';
+import { basename, delimiter, dirname, relative, resolve, win32 } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Denylist: known system directories that should never be project roots
 // ---------------------------------------------------------------------------
+
+/**
+ * Canonicalize one denied root for comparison against realpath'd candidate
+ * paths. validateProjectPathDetailed realpaths the candidate before checking,
+ * and macOS aliases /tmp, /var, /etc behind /private/... symlinks — a stored
+ * literal '/tmp/x' would never match the candidate's '/private/tmp/x', a
+ * silent security-control failure. Resolve the longest EXISTING ancestor so
+ * not-yet-created directories still canonicalize (and saving them never fails
+ * just because the target does not exist yet).
+ *
+ * Lives in the utils layer (not config) because both the preference store
+ * and the legacy env fallback in this module must canonicalize — utils must
+ * never depend on the config layer.
+ */
+export function canonicalizeDeniedRoot(entry: string): string {
+  const abs = resolve(entry);
+  let probe = abs;
+  const tail: string[] = [];
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe) break;
+    tail.unshift(basename(probe));
+    probe = parent;
+  }
+  try {
+    const canonical = realpathSync(probe);
+    return tail.length === 0 ? canonical : resolve(canonical, ...tail);
+  } catch {
+    return abs;
+  }
+}
 
 export function getDefaultDeniedRoots(platformName = platform()): string[] {
   if (platformName === 'win32') {
@@ -47,6 +78,24 @@ export function setDeniedRootsProvider(provider: (() => string[] | null) | null)
   deniedRootsProvider = provider;
 }
 
+/**
+ * Canonicalize the raw PROJECT_DENIED_ROOTS env value, cached per exact env
+ * string: validation is hot, so each distinct value is normalized ONCE (the
+ * stat/realpath walk is disk IO) instead of on every call. Without this the
+ * fallback path silently lost the P1 normalization that wiring-time
+ * canonicalization provides: a literal '/tmp/x' env entry never matches a
+ * candidate realpath'd to '/private/tmp/x'.
+ */
+const envDeniedRootsCache = new Map<string, string[]>();
+
+function normalizedEnvDeniedRoots(envValue: string): string[] {
+  const cached = envDeniedRootsCache.get(envValue);
+  if (cached) return cached;
+  const normalized = [...new Set(envValue.split(delimiter).filter(Boolean).map(canonicalizeDeniedRoot))];
+  envDeniedRootsCache.set(envValue, normalized);
+  return normalized;
+}
+
 function DENIED_ROOTS(): string[] {
   const defaults = getDefaultDeniedRoots();
   const provided = deniedRootsProvider?.();
@@ -55,8 +104,7 @@ function DENIED_ROOTS(): string[] {
   }
   const envDenied = process.env.PROJECT_DENIED_ROOTS;
   if (envDenied?.trim()) {
-    const custom = envDenied.split(delimiter).filter(Boolean);
-    return [...new Set([...defaults, ...custom])];
+    return [...new Set([...defaults, ...normalizedEnvDeniedRoots(envDenied)])];
   }
   return defaults;
 }

@@ -5,8 +5,8 @@
  * setting cannot clobber another. Writes are crash-safe temp+rename and no-TTL.
  */
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, delimiter, dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { delimiter, resolve } from 'node:path';
 import type {
   MessageDispositionPreferenceSnapshot,
   MessageDispositionPreferences,
@@ -17,6 +17,7 @@ import type {
   UserPreferences,
 } from '@cat-cafe/shared';
 import { RETENTION_CATEGORY_VALUES } from '@cat-cafe/shared';
+import { canonicalizeDeniedRoot } from '../utils/project-path.js';
 import { parseEnvTtlSeconds, pushRetentionTtlSecondsAll, RETENTION_ENV_BY_CATEGORY } from './retention-ttl-provider.js';
 
 export const MESSAGE_DISPOSITION_PRODUCT_DEFAULT: MessageWorkDisposition = 'next_work';
@@ -332,33 +333,6 @@ export function getRuntimeDeniedRoots(): string[] | null {
 
 export function resetDeniedRootsRuntimeForTests(): void {
   runtimeDeniedRootsSnapshot = null;
-}
-
-/**
- * Canonicalize one denied root for comparison against realpath'd candidate
- * paths. validateProjectPathDetailed realpaths the candidate before checking,
- * and macOS aliases /tmp, /var, /etc behind /private/... symlinks — a stored
- * literal '/tmp/x' would never match the candidate's '/private/tmp/x', a
- * silent security-control failure. Resolve the longest EXISTING ancestor so
- * not-yet-created directories still canonicalize (and saving them never fails
- * just because the target does not exist yet).
- */
-function canonicalizeDeniedRoot(entry: string): string {
-  const abs = resolve(entry);
-  let probe = abs;
-  const tail: string[] = [];
-  while (!existsSync(probe)) {
-    const parent = dirname(probe);
-    if (parent === probe) break;
-    tail.unshift(basename(probe));
-    probe = parent;
-  }
-  try {
-    const canonical = realpathSync(probe);
-    return tail.length === 0 ? canonical : resolve(canonical, ...tail);
-  } catch {
-    return abs;
-  }
 }
 
 export function saveDeniedRoots(projectRoot: string, roots: string[]): DeniedRootsResolution {

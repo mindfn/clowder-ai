@@ -26,13 +26,18 @@
  * PATCH /api/config/env must reject PROJECT_DENIED_ROOTS.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, resolve } from 'node:path';
+import { delimiter, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
 
-import { isUnderAllowedRoot, setDeniedRootsProvider, validateProjectPathDetailed } from '../dist/utils/project-path.js';
+import {
+  canonicalizeDeniedRoot,
+  isUnderAllowedRoot,
+  setDeniedRootsProvider,
+  validateProjectPathDetailed,
+} from '../dist/utils/project-path.js';
 
 const { getRuntimeDeniedRoots, resetDeniedRootsRuntimeForTests } = await import(
   '../dist/config/user-preferences-store.js'
@@ -55,24 +60,6 @@ function tempSetup() {
   const envFilePath = resolve(tempRoot, '.env');
   writeFileSync(envFilePath, '', 'utf8');
   return { tempRoot, envFilePath };
-}
-
-/** Mirror of the store's canonicalizeDeniedRoot: expectations must not drift from implementation. */
-function canon(entry) {
-  let probe = resolve(entry);
-  const tail = [];
-  while (!existsSync(probe)) {
-    const parent = dirname(probe);
-    if (parent === probe) break;
-    tail.unshift(basename(probe));
-    probe = parent;
-  }
-  try {
-    const canonical = realpathSync(probe);
-    return tail.length === 0 ? canonical : resolve(canonical, ...tail);
-  } catch {
-    return resolve(entry);
-  }
 }
 
 describe('#770 F770: denied roots apply at runtime without restart', () => {
@@ -106,7 +93,7 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         assert.equal(fine.ok, true, 'unrelated paths stay allowed');
 
         const got = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
-        assert.deepEqual(got.json().deniedRoots, [canon(denied)]);
+        assert.deepEqual(got.json().deniedRoots, [canonicalizeDeniedRoot(denied)]);
         assert.equal(got.json().source, 'preferences');
 
         const cleared = await app.inject({
@@ -143,7 +130,7 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         const first = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
         assert.equal(first.statusCode, 200);
         const firstBody = first.json();
-        assert.deepEqual(firstBody.deniedRoots, [canon(legacyPath)]);
+        assert.deepEqual(firstBody.deniedRoots, [canonicalizeDeniedRoot(legacyPath)]);
         assert.equal(firstBody.source, 'env-fallback');
         assert.equal(firstBody.migratedFromEnv, false);
 
@@ -156,7 +143,7 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         // Second read still comes from env — nothing was persisted on the first.
         const second = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
         assert.equal(second.json().source, 'env-fallback');
-        assert.deepEqual(second.json().deniedRoots, [canon(legacyPath)]);
+        assert.deepEqual(second.json().deniedRoots, [canonicalizeDeniedRoot(legacyPath)]);
 
         // The guard: an env-only user who typed '/tmp/...' must still be
         // blocked. The env fallback is canonicalized once at wiring into the
@@ -207,7 +194,7 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
         assert.deepEqual(readUserPreferences(tempRoot).deniedRoots, []);
 
         assert.equal(
-          isUnderAllowedRoot(`${canon(legacyPath)}/sub`),
+          isUnderAllowedRoot(`${canonicalizeDeniedRoot(legacyPath)}/sub`),
           true,
           'a path only denied by the cleared env value must be allowed again',
         );
@@ -238,7 +225,10 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
           },
         });
         assert.equal(cleaned.statusCode, 200, `PUT rejected: ${cleaned.payload}`);
-        assert.deepEqual(cleaned.json().deniedRoots, [canon('/tmp/f770-dedupe'), canon('/tmp/f770-other')]);
+        assert.deepEqual(cleaned.json().deniedRoots, [
+          canonicalizeDeniedRoot('/tmp/f770-dedupe'),
+          canonicalizeDeniedRoot('/tmp/f770-other'),
+        ]);
 
         const relative = await app.inject({
           method: 'PUT',
@@ -251,7 +241,10 @@ describe('#770 F770: denied roots apply at runtime without restart', () => {
 
         // The rejected PUT must not touch the stored value.
         const got = await app.inject({ method: 'GET', url: '/api/config/denied-roots' });
-        assert.deepEqual(got.json().deniedRoots, [canon('/tmp/f770-dedupe'), canon('/tmp/f770-other')]);
+        assert.deepEqual(got.json().deniedRoots, [
+          canonicalizeDeniedRoot('/tmp/f770-dedupe'),
+          canonicalizeDeniedRoot('/tmp/f770-other'),
+        ]);
       } finally {
         await app.close();
       }
@@ -306,7 +299,7 @@ describe('#770 F770: stored roots are canonical (symlink-safe)', () => {
     const { tempRoot, envFilePath } = tempSetup();
     delete process.env.PROJECT_DENIED_ROOTS;
     const literal = '/tmp/f770-symlink-canonical';
-    const canonical = canon(literal);
+    const canonical = canonicalizeDeniedRoot(literal);
     mkdirSync(literal, { recursive: true });
     try {
       const app = await buildApp(envFilePath, tempRoot);
@@ -351,7 +344,7 @@ describe('#770 F770: stored roots are canonical (symlink-safe)', () => {
     const { tempRoot, envFilePath } = tempSetup();
     delete process.env.PROJECT_DENIED_ROOTS;
     const literal = '/tmp/f770-not-yet-existing';
-    const canonical = canon(literal);
+    const canonical = canonicalizeDeniedRoot(literal);
     try {
       const app = await buildApp(envFilePath, tempRoot);
       try {
@@ -427,33 +420,41 @@ describe('#770 F770: fail-closed degradation', () => {
   it('with the JSON provider unwired, platform default denied roots still block (never unrestricted)', async () => {
     const savedEnv = process.env.PROJECT_DENIED_ROOTS;
     const { tempRoot, envFilePath } = tempSetup();
+    const envDenied = mkdtempSync(resolve(tmpdir(), 'f770-env-fallback-'));
+    const unrelated = mkdtempSync(resolve(tmpdir(), 'f770-unrelated-'));
     delete process.env.PROJECT_DENIED_ROOTS;
     try {
       const app = await buildApp(envFilePath, tempRoot);
       try {
         // Simulate boot-time callers that run before config.ts wires the
         // provider: unwind it and confirm validation degrades to platform
-        // defaults, NOT to "allow everything".
+        // defaults, NOT to "allow everything". Blocking claims MUST go
+        // through the real entry validateProjectPathDetailed — the bare
+        // isUnderAllowedRoot helper compares literals and would pass even
+        // when realpath'd candidates slip past the denylist.
         setDeniedRootsProvider(null);
+        const sysBlocked = await validateProjectPathDetailed('/dev');
         assert.equal(
-          isUnderAllowedRoot('/dev/f770-fail-closed'),
+          sysBlocked.ok,
           false,
           'platform default denied roots must block even when the JSON provider is unwired',
         );
-        assert.equal(isUnderAllowedRoot('/tmp/f770-fail-closed'), true, 'unrelated paths stay allowed');
+        assert.equal(sysBlocked.reason, 'denied_root');
+        const sysFine = await validateProjectPathDetailed(unrelated);
+        assert.equal(sysFine.ok, true, 'unrelated paths stay allowed');
 
         // The legacy env fallback also still applies while unwired.
-        process.env.PROJECT_DENIED_ROOTS = '/tmp/f770-env-fallback';
-        assert.equal(
-          isUnderAllowedRoot('/tmp/f770-env-fallback/sub'),
-          false,
-          'legacy env fallback must keep working while the JSON provider is unwired',
-        );
+        process.env.PROJECT_DENIED_ROOTS = envDenied;
+        const envBlocked = await validateProjectPathDetailed(envDenied);
+        assert.equal(envBlocked.ok, false, 'legacy env fallback must keep working while the JSON provider is unwired');
+        assert.equal(envBlocked.reason, 'denied_root');
       } finally {
         await app.close();
       }
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(envDenied, { recursive: true, force: true });
+      rmSync(unrelated, { recursive: true, force: true });
       if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
       else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       setDeniedRootsProvider(null);
@@ -462,36 +463,54 @@ describe('#770 F770: fail-closed degradation', () => {
 
   it('an uninitialized snapshot fails closed: provider wired without init degrades to platform defaults + env, never an empty denylist', async () => {
     const savedEnv = process.env.PROJECT_DENIED_ROOTS;
-    const envRoot = '/tmp/f770-uninit-guard';
     delete process.env.PROJECT_DENIED_ROOTS;
-    mkdirSync(envRoot, { recursive: true });
+    // Own symlink, not macOS /tmp: the env value is the LINK path while the
+    // candidate realpaths to the real dir — on any OS the literal link string
+    // can never match the realpath'd candidate without canonicalization, so
+    // this is red on the un-fixed env branch everywhere (Linux CI included).
+    const realRoot = mkdtempSync(resolve(tmpdir(), 'f770-uninit-real-'));
+    const linkRoot = resolve(tmpdir(), `f770-uninit-link-${process.pid}`);
+    symlinkSync(realRoot, linkRoot, 'dir');
     try {
-      process.env.PROJECT_DENIED_ROOTS = envRoot;
+      process.env.PROJECT_DENIED_ROOTS = linkRoot;
       // Wire the provider WITHOUT initDeniedRootsRuntime — simulates a future
       // wiring reorder. An uninitialized snapshot must read as "no opinion"
-      // (null) so DENIED_ROOTS() falls back to platform defaults + the literal
-      // env value. Returning [] here would mean "owner cleared the blacklist"
+      // (null) so DENIED_ROOTS() falls back to platform defaults + the env
+      // value. Returning [] here would mean "owner cleared the blacklist"
       // and silently drop the env denylist — the wrong direction for a
       // security control.
       resetDeniedRootsRuntimeForTests();
       setDeniedRootsProvider(getRuntimeDeniedRoots);
       try {
+        const sysBlocked = await validateProjectPathDetailed('/dev');
         assert.equal(
-          isUnderAllowedRoot('/dev/f770-uninit-guard'),
+          sysBlocked.ok,
           false,
           'platform default denied roots must still block when the snapshot is uninitialized',
         );
+        assert.equal(sysBlocked.reason, 'denied_root');
+        const viaReal = await validateProjectPathDetailed(realRoot);
         assert.equal(
-          isUnderAllowedRoot(`${envRoot}/sub`),
+          viaReal.ok,
           false,
-          'the env denylist must keep blocking when the snapshot is uninitialized (fail-closed)',
+          'the env denylist must block the real directory when the snapshot is uninitialized (fail-closed)',
         );
-        assert.equal(isUnderAllowedRoot('/tmp/f770-uninit-unrelated'), true, 'unrelated paths stay allowed');
+        assert.equal(viaReal.reason, 'denied_root');
+        const viaLink = await validateProjectPathDetailed(linkRoot);
+        assert.equal(
+          viaLink.ok,
+          false,
+          'the env denylist must also block through the symlink path it was configured with',
+        );
+        assert.equal(viaLink.reason, 'denied_root');
+        const unrelated = await validateProjectPathDetailed(mkdtempSync(resolve(tmpdir(), 'f770-uninit-unrelated-')));
+        assert.equal(unrelated.ok, true, 'unrelated paths stay allowed');
       } finally {
         setDeniedRootsProvider(null);
       }
     } finally {
-      rmSync(envRoot, { recursive: true, force: true });
+      rmSync(realRoot, { recursive: true, force: true });
+      rmSync(linkRoot, { force: true });
       if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
       else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       resetDeniedRootsRuntimeForTests();
