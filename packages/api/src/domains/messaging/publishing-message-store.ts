@@ -15,6 +15,11 @@
  * required handler rather than logged and forgotten. Composition has to decide what to do with
  * it; there is deliberately no silent default.
  *
+ * EVERY WRITE THAT CREATES A MESSAGE PASSES HERE. Besides `append` / `appendIdempotent`, the port
+ * has two frontier writes, and production serial routing commits cat replies through one of them
+ * (the F254 freshness coordinator's `appendAndObservePriorFrontier`). Forwarding those untouched
+ * put the reply in the store and never on the stream (W2-5b).
+ *
  * WHAT IS DELIBERATELY NOT PUBLISHED HERE:
  *  - whispers, fail-closed: being authorised for a thread is not being authorised for a
  *    restricted message inside it;
@@ -29,6 +34,8 @@ import {
   type IdempotentAppendResult,
   type IMessageStore,
   type StoredMessage,
+  type ThreadFrontierAppendResult,
+  type ThreadObservedAppendResult,
 } from '../cats/services/stores/ports/MessageStore.js';
 import { projectEnvelope } from './envelope.js';
 import type { EventLogStore, HostPublicationTracker } from './stores/ports.js';
@@ -104,6 +111,22 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
           withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
             const result = await target.appendIdempotent(msg);
             if (!result.idempotent) await publish(result.message);
+            return result;
+          });
+      }
+      if (property === 'appendAndObservePriorFrontier') {
+        return (msg: AppendMessageInput): Promise<ThreadObservedAppendResult> =>
+          withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
+            const result = await target.appendAndObservePriorFrontier(msg);
+            if (!result.idempotent) await publish(result.message);
+            return result;
+          });
+      }
+      if (property === 'appendIfThreadFrontier') {
+        return (msg: AppendMessageInput, expectedLatestMessageId: string | null): Promise<ThreadFrontierAppendResult> =>
+          withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
+            const result = await target.appendIfThreadFrontier(msg, expectedLatestMessageId);
+            if (result.kind === 'committed') await publish(result.message);
             return result;
           });
       }
