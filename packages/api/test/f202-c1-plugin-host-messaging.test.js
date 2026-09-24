@@ -124,6 +124,20 @@ async function fixture(options = {}) {
 }
 
 describe('F202 C1 — plugin Host messaging.send', () => {
+  test('forwards the complete accepted receipt so packages can observe pendingPublication', async () => {
+    const { host, messaging, threads } = await fixture();
+    const thread = await threads.create(OWNER, 'Pending media');
+    const accepted = {
+      messageId: '0000000000000001-000001-deadbeef',
+      threadId: thread.id,
+      revision: 1,
+      messageHandle: { kind: 'message', token: 'mh_accepted' },
+      pendingPublication: true,
+    };
+    messaging.sendFromHost = async () => accepted;
+    assert.deepEqual(await host.send(draft(thread.id)), accepted);
+  });
+
   test('plugin speech uses the declared identity and preserves content blocks without waking', async () => {
     const { host, messages, threads, wakes, broadcasts } = await fixture();
     const thread = await threads.create(OWNER, 'Target');
@@ -136,7 +150,10 @@ describe('F202 C1 — plugin Host messaging.send', () => {
       }),
     );
 
-    assert.deepEqual(receipt, { messageId: receipt.messageId, threadId: thread.id });
+    assert.equal(receipt.threadId, thread.id);
+    assert.equal(receipt.revision, 1);
+    assert.equal(receipt.messageHandle.kind, 'message');
+    assert.equal(typeof receipt.publishSequence, 'number');
     const stored = await messages.getById(receipt.messageId);
     assert.deepEqual(stored.source, {
       connector: 'fixture-identity',

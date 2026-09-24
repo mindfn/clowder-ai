@@ -1,5 +1,5 @@
 import { type MessageContent, MessageContentsSchema } from '@cat-cafe/shared';
-import type { MessageDraft, PluginManifest } from '@clowder-ai/plugin-contract';
+import type { MessageDraft, PluginManifest, SendReceipt } from '@clowder-ai/plugin-contract';
 import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { MessagingError } from '../../messaging/contract/host-types.js';
@@ -36,7 +36,7 @@ export type PluginMessagingSendInput = Omit<MessageDraft, 'address'> & {
 };
 
 export interface PluginMessagingHost extends PluginMessagingSubscriptionHost {
-  send(input: PluginMessagingSendInput): Promise<{ readonly messageId: string; readonly threadId: string }>;
+  send(input: PluginMessagingSendInput): Promise<SendReceipt>;
 }
 
 export interface PluginMessagingHostDeps {
@@ -197,7 +197,7 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
         ...(sender === undefined ? {} : { sender }),
         ...(wake === undefined ? {} : { wake }),
       });
-      return { messageId: receipt.messageId, threadId: receipt.threadId };
+      return receipt;
     },
   };
 }

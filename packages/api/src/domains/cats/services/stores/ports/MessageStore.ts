@@ -645,6 +645,8 @@ export type AppendMessageInput = Omit<
    * Reusing the same token returns the original stored message.
    */
   idempotencyKey?: string;
+  /** Host-owned deferred publication only. Reserved while the draft is outside the message store. */
+  reservedId?: string;
 };
 
 /**
@@ -1350,15 +1352,21 @@ export class MessageStore {
       }
     }
 
-    const { idempotencyKey, ...payload } = normalizedMessage;
+    const { idempotencyKey, reservedId, ...payload } = normalizedMessage;
     void idempotencyKey;
+    if (reservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(reservedId)) {
+      throw new TypeError('reserved message id has invalid shape');
+    }
+    if (reservedId !== undefined && this.getById(reservedId)) {
+      throw new Error('reserved message id collision');
+    }
     const stored: StoredMessage = {
       ...payload,
       ...(payload.queueCustody ? { queueCustody: cloneQueuedMessageCustody(payload.queueCustody) } : {}),
       ...(payload.queueCustodyAdmission
         ? { queueCustodyAdmission: cloneQueueCustodyAdmissionIntent(payload.queueCustodyAdmission) }
         : {}),
-      id: generateSortableId(normalizedMessage.timestamp),
+      id: reservedId ?? generateSortableId(normalizedMessage.timestamp),
       threadId,
     };
     this.messages.push(stored);

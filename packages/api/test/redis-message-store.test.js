@@ -1358,6 +1358,31 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal(threadMessages[0].id, first.id);
   });
 
+  it('reserves a staged message id without allowing a different send to overwrite it', async () => {
+    const timestamp = Date.now();
+    const reservedId = generateSortableId(timestamp);
+    const input = {
+      userId: 'staged-owner',
+      catId: null,
+      threadId: 'staged-thread',
+      content: 'final media message',
+      mentions: [],
+      timestamp,
+      reservedId,
+      idempotencyKey: 'staged-send-key',
+    };
+    const first = await store.appendIdempotent(input);
+    assert.equal(first.message.id, reservedId);
+    const retry = await store.appendIdempotent({ ...input, content: 'must not replace' });
+    assert.equal(retry.message.id, reservedId);
+    assert.equal(retry.message.content, 'final media message');
+    await assert.rejects(
+      store.appendIdempotent({ ...input, idempotencyKey: 'different-send-key', content: 'collision' }),
+      /MESSAGE_ID_COLLISION/,
+    );
+    assert.equal((await store.getById(reservedId)).content, 'final media message');
+  });
+
   it('concurrent idempotent append creates exactly one thread member', async () => {
     const threadId = 'thread-concurrent-idem';
     const timestamp = Date.now();

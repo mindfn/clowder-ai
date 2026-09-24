@@ -17,7 +17,9 @@ import { HandleService, type IssueConnectorBindingHandleInput, type IssueThreadH
 import type { MessagingIngressWakeDeps } from './ingress-wake.js';
 import { MessagingLedger } from './ledger.js';
 import type { MediaEntitlementLedger } from './media-entitlements.js';
+import type { PendingMediaPublication } from './media-pending-publication.js';
 import type { MediaReferenceAuthority } from './media-reference-authority.js';
+import type { MediaSourceResolver } from './media-staging.js';
 import { type HostSendOptions, SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
 import type { MessagingStores } from './stores/ports.js';
@@ -38,6 +40,8 @@ export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
   readonly retentionCount?: number;
   readonly mediaReferences?: MediaReferenceAuthority;
   readonly mediaEntitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
+  readonly mediaPending?: PendingMediaPublication;
+  readonly mediaSources?: MediaSourceResolver;
   readonly snapshotClock?: { now(): number };
   readonly snapshotAckTokenTtlMs?: number;
 }
@@ -46,7 +50,7 @@ export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
  * F202 C1 gaps A/B: the wake collaborators are offered flat at this K-2 assembly point, and are
  * only honoured as a complete set. A partial set would silently derive a target it cannot deliver.
  */
-function ingressWakeDeps(deps: MessagingDomainDeps): MessagingIngressWakeDeps | undefined {
+export function ingressWakeDeps(deps: MessagingDomainDeps): MessagingIngressWakeDeps | undefined {
   if (!deps.invokeTrigger || !deps.getDefaultCatId || !deps.getMentionPatterns) return undefined;
   return {
     invokeTrigger: deps.invokeTrigger,
@@ -70,7 +74,7 @@ export class MessagingService {
     this.stores = stores;
     this.mediaEntitlements = deps.mediaEntitlements;
     const ledger = new MessagingLedger(stores.ledger);
-    this.handles = new HandleService(stores.handles, stores.cursors);
+    this.handles = new HandleService(stores.handles, stores.cursors, deps.mediaPending);
     const ingressWake = ingressWakeDeps(deps);
     this.sendService = new SendService({
       messageStore: deps.messageStore,
@@ -78,6 +82,8 @@ export class MessagingService {
       ledger,
       events: stores.events,
       ...(deps.mediaReferences === undefined ? {} : { mediaReferences: deps.mediaReferences }),
+      ...(deps.mediaPending === undefined ? {} : { mediaPending: deps.mediaPending }),
+      ...(deps.mediaSources === undefined ? {} : { mediaSources: deps.mediaSources }),
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
       ...(ingressWake === undefined ? {} : { ingressWake }),
       ...(deps.onPublished === undefined ? {} : { onPublished: deps.onPublished }),

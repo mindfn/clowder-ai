@@ -38,7 +38,11 @@ export class HandleService {
   private readonly handles: HandleStore;
   private readonly cursors: CursorStore;
 
-  constructor(handles: HandleStore, cursors: CursorStore) {
+  constructor(
+    handles: HandleStore,
+    cursors: CursorStore,
+    private readonly pending?: { isUnpublished(messageId: string): Promise<boolean> },
+  ) {
     this.handles = handles;
     this.cursors = cursors;
   }
@@ -219,6 +223,9 @@ export class HandleService {
     const record = await this.resolveLive(pluginInstanceId, handle.token);
     if (record.kind !== 'message_handle') {
       throw new MessagingError('VALIDATION', 'handle token is not a message handle');
+    }
+    if (await this.pending?.isUnpublished(record.messageId)) {
+      throw new MessagingError('MESSAGE_NOT_PUBLISHED', 'message has not been published');
     }
     const parent = await this.resolveLive(pluginInstanceId, record.parentHandleId);
     if (parent.kind === 'message_handle' || parent.threadId !== record.threadId) {

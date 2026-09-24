@@ -37,6 +37,7 @@ import { validateAppendInput } from './contract/validate.js';
 import { type AppendOpRecord, type PluginMessageExtra, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
 import type { MessagingLedger } from './ledger.js';
+import { replaceLegacyMediaReferences } from './legacy-media.js';
 import type { MediaReferenceAuthority } from './media-reference-authority.js';
 import type { AppendLease, AppendLock, EventLogStore } from './stores/ports.js';
 
@@ -66,7 +67,11 @@ export class AppendService {
   }
 
   async appendElements(ctx: PluginCallContext, input: unknown): Promise<AppendReceipt> {
-    const parsed = validateAppendInput(input);
+    const validated = validateAppendInput(input);
+    const parsed: AppendElementsRequest = {
+      ...validated,
+      elements: replaceLegacyMediaReferences(validated.elements),
+    };
     const target = await this.deps.handles.resolveForAppend(ctx.pluginInstanceId, parsed.handle);
     const messageId = target.messageId;
     const claim = await this.deps.ledger.claimAppend(ctx.pluginInstanceId, messageId, parsed.operationId);

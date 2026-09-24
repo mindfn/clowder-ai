@@ -20,7 +20,11 @@
 
 import { type CatId, type ConnectorSource, catRegistry, type MessageContent } from '@cat-cafe/shared';
 import type { CanonicalAudience, MessageDraft, MessageProvenance, SendReceipt } from '@clowder-ai/plugin-contract';
-import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import {
+  type AppendMessageInput,
+  generateSortableId,
+  type IMessageStore,
+} from '../cats/services/stores/ports/MessageStore.js';
 import { resolveVisibleReplyParent } from '../cats/services/stores/visibility.js';
 import type { PluginCallContext } from './contract/host-types.js';
 import { MessagingError } from './contract/host-types.js';
@@ -36,7 +40,10 @@ import {
 } from './ingress-wake.js';
 
 import type { MessagingLedger } from './ledger.js';
+import { replaceLegacyMediaReferences } from './legacy-media.js';
+import type { PendingMediaPublication } from './media-pending-publication.js';
 import type { MediaReferenceAuthority } from './media-reference-authority.js';
+import { type MediaSourceResolver, mediaStageKey, type StagedMediaSend } from './media-staging.js';
 import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
 
 import { clampRetention } from './stores/ports.js';
@@ -47,6 +54,8 @@ export interface SendServiceDeps {
   readonly ledger: MessagingLedger;
   readonly events: EventLogStore;
   readonly mediaReferences?: Pick<MediaReferenceAuthority, 'assertCanReference'>;
+  readonly mediaPending?: PendingMediaPublication;
+  readonly mediaSources?: MediaSourceResolver;
   readonly retentionCount?: number;
   /** Defaults to the runtime CatRegistry; injectable so unit tests do not mutate the global registry. */
   readonly isKnownCatId?: (catId: string) => boolean;
@@ -137,7 +146,11 @@ export class SendService {
   }
 
   async send(ctx: PluginCallContext, input: unknown, hostOptions?: HostSendOptions): Promise<SendReceipt> {
-    const draft = validateDraft(input);
+    const validated = validateDraft(input);
+    const draft: MessageDraft = {
+      ...validated,
+      payload: { ...validated.payload, elements: replaceLegacyMediaReferences(validated.payload.elements) },
+    };
 
     // Claim FIRST: settled work must return its receipt regardless of later
     // handle revocation / parent expiry (INV-1 across state changes).
@@ -148,6 +161,14 @@ export class SendService {
     }
 
     try {
+      // A staged send has already accepted the request. Replays keep its exact receipt
+      // even if the address handle was revoked before the ledger claim settled.
+      if (draft.sourceEventId && this.deps.mediaPending) {
+        const staged = await this.deps.mediaPending.get(
+          mediaStageKey(ctx.pluginInstanceId, draft.sourceEventId, draft.idempotencyKey),
+        );
+        if (staged) return await this.settleReceipt(ctx, draft, claim.claimToken, staged.receipt);
+      }
       const handle = await this.deps.handles.resolveForSend(ctx.pluginInstanceId, draft.address);
       const provenance = stampProvenance(ctx, draft, handle);
       const audience = deriveAudience(draft, handle, this.isKnownCatId);
@@ -211,7 +232,7 @@ export class SendService {
         await this.deps.mediaReferences.assertCanReference(ctx.pluginInstanceId, draft.payload.elements);
       }
       const timestamp = Date.now();
-      const stored = await this.deps.messageStore.append({
+      const appendInput: AppendMessageInput = {
         threadId: handle.threadId,
         userId: handle.userId,
         catId: null,
@@ -243,7 +264,12 @@ export class SendService {
             appendOps: [],
           },
         },
-      });
+      };
+
+      const accepted = await this.acceptPendingMedia({ ctx, draft, handle, appendInput, hostOptions, timestamp });
+      if (accepted) return await this.settleReceipt(ctx, draft, claim.claimToken, accepted);
+
+      const stored = await this.deps.messageStore.append(appendInput);
 
       const msgHandle = await this.deps.handles.ensureMessageHandle(handle, stored.id);
 
@@ -318,21 +344,97 @@ export class SendService {
         messageHandle: { kind: 'message' as const, token: msgHandle.handleId },
         ...(publishSequence !== undefined ? { publishSequence } : {}),
       };
-      const result = await this.deps.ledger.settleSend(
-        ctx.pluginInstanceId,
-        draft.idempotencyKey,
-        claim.claimToken,
-        receipt,
-      );
-      if (result.status === 'freshly_settled') return receipt;
-      if (result.status === 'already_settled') return result.receipt as SendReceipt;
-      // rejected — re-claim to get the canonical receipt.
-      const canonical = await this.deps.ledger.claimSend(ctx.pluginInstanceId, draft.idempotencyKey);
-      if (canonical.status === 'settled') return canonical.receipt;
-      throw new MessagingError('RETRYABLE_INFLIGHT', 'send settlement was superseded — retry');
+      return await this.settleReceipt(ctx, draft, claim.claimToken, receipt);
     } catch (err) {
       await this.deps.ledger.releaseSend(ctx.pluginInstanceId, draft.idempotencyKey, claim.claimToken);
       throw err;
     }
+  }
+
+  private async acceptPendingMedia(input: {
+    ctx: PluginCallContext;
+    draft: MessageDraft;
+    handle: AddressHandleRecord;
+    appendInput: AppendMessageInput;
+    hostOptions?: HostSendOptions;
+    timestamp: number;
+  }): Promise<SendReceipt | null> {
+    const { ctx, draft, handle, appendInput, hostOptions, timestamp } = input;
+    const pendingMedia = draft.payload.elements.filter(
+      (element): element is Extract<(typeof draft.payload.elements)[number], { kind: 'media_ref' }> =>
+        element.kind === 'media_ref' && element.payload.reference.startsWith('pmr_'),
+    );
+    if (pendingMedia.length === 0) return null;
+    const sourceEventId = draft.sourceEventId;
+    if (!sourceEventId || !this.deps.mediaPending || !this.deps.mediaSources) {
+      throw new MessagingError('VALIDATION', 'media-source is unavailable');
+    }
+    const key = mediaStageKey(ctx.pluginInstanceId, sourceEventId, draft.idempotencyKey);
+    const existing = await this.deps.mediaPending.get(key);
+    if (existing) return existing.receipt;
+    const identity = hostOptions?.source.connector ?? handle.connectorBinding?.connectorId;
+    if (!identity) throw new MessagingError('VALIDATION', 'media-source requires an ingress identity');
+    for (const media of pendingMedia) {
+      if (
+        !media.payload.sourceId ||
+        !(await this.deps.mediaSources.resolve(ctx.pluginInstanceId, media.payload.sourceId, identity))
+      ) {
+        throw new MessagingError('VALIDATION', 'media-source is not bound to this ingress identity');
+      }
+    }
+    const messageId = generateSortableId(timestamp);
+    const msgHandle = await this.deps.handles.ensureMessageHandle(handle, messageId);
+    const receipt: SendReceipt = {
+      messageId,
+      threadId: handle.threadId,
+      revision: 1,
+      messageHandle: { kind: 'message', token: msgHandle.handleId },
+      pendingPublication: true,
+    };
+    const media: StagedMediaSend['media'] = pendingMedia.map((element) => {
+      const sourceId = element.payload.sourceId;
+      if (!sourceId) throw new MessagingError('VALIDATION', 'media-source id is missing');
+      return {
+        input: {
+          instanceId: ctx.pluginInstanceId,
+          sourceEventId,
+          elementId: element.elementId,
+          reference: element.payload.reference,
+          sourceId,
+          type: element.payload.type,
+          ...(element.payload.fileName === undefined ? {} : { fileName: element.payload.fileName }),
+        },
+      };
+    });
+    const row: StagedMediaSend = {
+      key,
+      instanceId: ctx.pluginInstanceId,
+      sourceEventId,
+      idempotencyKey: draft.idempotencyKey,
+      receipt,
+      draft,
+      appendInput,
+      ...(hostOptions?.sender === undefined ? {} : { sender: hostOptions.sender }),
+      media,
+      createdAt: this.deps.mediaPending.now(),
+      deadline: this.deps.mediaPending.deadline(),
+      published: false,
+    };
+    return this.deps.mediaPending.accept(row);
+  }
+
+  private async settleReceipt(
+    ctx: PluginCallContext,
+    draft: MessageDraft,
+    claimToken: string,
+    receipt: SendReceipt,
+  ): Promise<SendReceipt> {
+    const result = await this.deps.ledger.settleSend(ctx.pluginInstanceId, draft.idempotencyKey, claimToken, receipt);
+    if (result.status === 'freshly_settled') return receipt;
+    if (result.status === 'already_settled') return result.receipt as SendReceipt;
+    // rejected — re-claim to get the canonical receipt.
+    const canonical = await this.deps.ledger.claimSend(ctx.pluginInstanceId, draft.idempotencyKey);
+    if (canonical.status === 'settled') return canonical.receipt;
+    throw new MessagingError('RETRYABLE_INFLIGHT', 'send settlement was superseded — retry');
   }
 }

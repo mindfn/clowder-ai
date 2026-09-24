@@ -9,14 +9,19 @@ import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.j
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
+import { MessagingLedger } from '../messaging/ledger.js';
 import { FileMediaEntitlementPort, MediaEntitlementLedger } from '../messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../messaging/media-ledger.js';
+import { PendingMediaPublication } from '../messaging/media-pending-publication.js';
 import { MediaReferenceAuthority } from '../messaging/media-reference-authority.js';
+import { FileMediaStagingStore, mediaSourceMatchesIngress } from '../messaging/media-staging.js';
 import {
   createMessagingDomain,
+  ingressWakeDeps,
   type MessagingDomainDeps,
   type MessagingService,
 } from '../messaging/messaging-service.js';
+import { createMessagingStores } from '../messaging/stores/factory.js';
 import type { MessagingStores } from '../messaging/stores/ports.js';
 import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
@@ -158,6 +163,7 @@ export interface DormantPluginRuntimeComposition {
   readonly messaging: MessagingService;
   readonly mediaLedger: FileMessagingMediaLedger;
   readonly mediaEntitlements: MediaEntitlementLedger;
+  readonly mediaPending: PendingMediaPublication;
   /**
    * Drives thread activity out to whichever subscribers declared they want it. Exposed so the
    * Host can drain a thread after it produces a message; it knows nothing about connectors.
@@ -213,12 +219,36 @@ export function createDormantPluginRuntimeComposition(
     new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), 'media-entitlements.json')),
     { now: options.now ?? Date.now },
   );
+  const messagingStores = options.messagingStores ?? createMessagingStores(options.redis);
+  const mediaPending = new PendingMediaPublication({
+    store: new FileMediaStagingStore(resolve(dirname(paths.inventorySnapshotPath), 'media-staging.json')),
+    messageStore: options.messageStore,
+    events: messagingStores.events,
+    ledger: new MessagingLedger(messagingStores.ledger),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.onMessagePublished === undefined ? {} : { onPublished: options.onMessagePublished }),
+    ...(ingressWakeDeps(options as MessagingDomainDeps) === undefined
+      ? {}
+      : { ingressWake: ingressWakeDeps(options as MessagingDomainDeps) }),
+  });
+  const mediaSources = {
+    resolve: async (instanceId: string, sourceId: string, ingressIdentity: string): Promise<boolean> => {
+      const snapshot = await inventoryStore.snapshot();
+      const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === instanceId);
+      if (!instance || instance.lifecycleState !== 'installed') return false;
+      const manifest = snapshot.packages.find((item) => item.packageDigest === instance.packageDigest)?.manifest;
+      if (!manifest) return false;
+      return mediaSourceMatchesIngress(manifest, sourceId, ingressIdentity);
+    },
+  };
   const messaging = createMessagingDomain({
     messageStore: options.messageStore,
     mediaReferences: new MediaReferenceAuthority({ ledger: mediaLedger, entitlements: mediaEntitlements }),
     mediaEntitlements,
+    mediaPending,
+    mediaSources,
     ...(options.now === undefined ? {} : { snapshotClock: { now: options.now } }),
-    ...(options.messagingStores === undefined ? {} : { stores: options.messagingStores }),
+    stores: messagingStores,
     ...(options.onMessagePublished === undefined ? {} : { onPublished: options.onMessagePublished }),
     ...(options.redis === undefined ? {} : { redis: options.redis }),
     ...(options.invokeTrigger === undefined ? {} : { invokeTrigger: options.invokeTrigger }),
@@ -378,11 +408,13 @@ export function createDormantPluginRuntimeComposition(
       ...(options.taskRunner === undefined ? {} : { taskRunner: options.taskRunner }),
       ...(options.redis === undefined ? {} : { redis: options.redis }),
     },
-    (instanceId, reason) =>
-      subscriptionDelivery.cancelInstance(
+    async (instanceId, reason) => {
+      if (reason === PLUGIN_OWNER_UNINSTALLED_REASON) await mediaPending.uninstall(instanceId);
+      await subscriptionDelivery.cancelInstance(
         instanceId,
         reason === PLUGIN_OWNER_UNINSTALLED_REASON ? 'instance_uninstalled' : 'instance_stopped',
-      ),
+      );
+    },
   );
   deliveryTarget.current = supervisor;
   supervisor.register(
@@ -423,6 +455,7 @@ export function createDormantPluginRuntimeComposition(
     messaging,
     mediaLedger,
     mediaEntitlements,
+    mediaPending,
     subscriptionDelivery,
     lifecycle,
     packages,
@@ -430,6 +463,7 @@ export function createDormantPluginRuntimeComposition(
     ...(options.contract === undefined ? {} : { contract: options.contract }),
     async recoverAfterRestart() {
       await Promise.all([inventoryStore.snapshot(), brokerStore.snapshot()]);
+      await mediaPending.recover();
       const brokerSessions = await supervisor.recoverAfterRestart();
       const inventoryRecovery = await lifecycle.recoverAfterRestart();
       return {
