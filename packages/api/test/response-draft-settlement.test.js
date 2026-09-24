@@ -49,20 +49,36 @@ function upsertDraft(drafts, invocationId, overrides = {}) {
   });
 }
 
-function settle(store, drafts, emitted, input, ledger) {
+/**
+ * Settles with a turn store. Without an explicit one, the turn is an ordinary unfenced child, whose
+ * draft may be published; pass `null` to settle with no turn store at all.
+ */
+async function settle(store, drafts, emitted, input, turns) {
+  const turnStore = turns === undefined ? await unfencedTurn(input.invocationId) : turns;
   return settleResponseFromDraft(
     {
       messageStore: store,
       draftStore: drafts,
-      ...(ledger ? { responseLedger: ledger } : {}),
+      ...(turnStore ? { turnStore } : {}),
       emit: (userId, message) => emitted.push({ userId, message }),
     },
     { userId: USER, threadId: THREAD, status: 'failed', reason: 'execution_owner_lost', endedAt: 300, ...input },
   );
 }
 
+async function unfencedTurn(invocationId) {
+  const turns = new InMemoryTurnExecutionStore();
+  await endedTurn(turns, invocationId);
+  return turns;
+}
+
 /** A child turn that has ended, so its terminal transition entered it in the response-pending ledger. */
-async function endedTurn(turns, invocationId, terminal = { status: 'failed', endedAt: 200, terminalReason: 'x' }) {
+async function endedTurn(
+  turns,
+  invocationId,
+  terminal = { status: 'failed', endedAt: 200, terminalReason: 'x' },
+  { outputFence } = {},
+) {
   await turns.createRunning({
     invocationId,
     parentInvocationId: 'parent-1',
@@ -71,6 +87,7 @@ async function endedTurn(turns, invocationId, terminal = { status: 'failed', end
     catId: 'opus',
     executionKind: 'ordinary',
     startedAt: 100,
+    ...(outputFence ? { outputFence } : {}),
   });
   await turns.transitionTerminal(invocationId, terminal);
 }
@@ -226,35 +243,103 @@ describe('F117 KD-21 settleResponseFromDraft', () => {
     assert.deepEqual(pendingIds(turns), []);
   });
 
-  test('a discarded draft body never reaches R, not even through a retry after a rejected commit', async () => {
+  /** A fenced child whose draft holds output the fence may not have allowed. */
+  async function fencedTurn(verdict) {
     const store = new MessageStore();
     const drafts = new DraftStore();
     const turns = new InMemoryTurnExecutionStore();
-    const rejectedOutput = { status: 'interrupted', reason: 'output_commit_rejected', discardDraftBody: true };
+    await endedTurn(turns, 'turn-fenced', undefined, { outputFence: 'gated' });
+    if (verdict) await turns.settleOutputFence('turn-fenced', verdict);
+    const response = await appendProcessingResponse(store, 'turn-fenced');
+    const toolEvent = { id: 'tool-1', type: 'tool_use', label: 'Read', timestamp: 120 };
+    await upsertDraft(drafts, 'turn-fenced', {
+      content: 'HIDDEN_ACTION_OUTPUT',
+      thinking: 'hidden reasoning',
+      toolEvents: [toolEvent],
+    });
+    return { store, drafts, turns, response, toolEvent };
+  }
 
-    await endedTurn(turns, 'turn-kept');
-    const response = await appendProcessingResponse(store, 'turn-kept');
-    await upsertDraft(drafts, 'turn-kept', { content: 'output the fence rejected', thinking: 'hidden' });
-    const settlement = await settle(store, drafts, [], { invocationId: 'turn-kept', ...rejectedOutput }, turns);
+  test('a rejected output ends R empty as output_commit_rejected, whatever the caller asked for', async () => {
+    const { store, drafts, turns, response } = await fencedTurn('rejected');
+
+    const settlement = await settle(
+      store,
+      drafts,
+      [],
+      { invocationId: 'turn-fenced', status: 'failed', reason: 'execution_error', explanation: '执行出错' },
+      turns,
+    );
+
     assert.equal(settlement.kind, 'committed');
-    const terminal = await store.getById(response.id);
-    assert.equal(terminal.content, '');
-    assert.equal(terminal.thinking, undefined);
-    assert.equal(terminal.lifecycle.status, 'interrupted');
-    assert.equal(terminal.lifecycle.reason, 'output_commit_rejected');
+    const stored = await store.getById(response.id);
+    assert.equal(stored.lifecycle.status, 'interrupted');
+    assert.equal(stored.lifecycle.reason, 'output_commit_rejected');
+    assert.equal(stored.content, '');
+    assert.equal(stored.thinking, undefined);
+    assert.equal(stored.toolEvents, undefined);
     assert.equal((await drafts.getByThread(USER, THREAD)).length, 0);
     assert.deepEqual(pendingIds(turns), []);
+  });
 
-    // The draft goes before the commit, so a commit that fails leaves nothing a retry could publish.
-    await endedTurn(turns, 'turn-retry');
-    await appendProcessingResponse(store, 'turn-retry', { lifecycleInvocationId: 'turn-other' });
-    await upsertDraft(drafts, 'turn-retry', { content: 'output the fence rejected' });
-    await assert.rejects(
-      settle(store, drafts, [], { invocationId: 'turn-retry', ...rejectedOutput }, turns),
-      /invocation_mismatch/,
-    );
+  test('a rejected output stays unpublished when its commit fails and the draft is still there', async () => {
+    const { store, drafts, turns, response } = await fencedTurn('rejected');
+    const commit = store.commitLifecycleResponseTerminal.bind(store);
+    store.commitLifecycleResponseTerminal = async () => {
+      throw new Error('redis unavailable');
+    };
+
+    await assert.rejects(settle(store, drafts, [], { invocationId: 'turn-fenced' }, turns), /redis unavailable/);
+    assert.equal((await store.getById(response.id)).lifecycle.status, 'processing');
+    assert.equal((await drafts.getByThread(USER, THREAD))[0].content, 'HIDDEN_ACTION_OUTPUT');
+    assert.deepEqual(pendingIds(turns), ['turn-fenced']);
+
+    store.commitLifecycleResponseTerminal = commit;
+    await settle(store, drafts, [], { invocationId: 'turn-fenced' }, turns);
+
+    const stored = await store.getById(response.id);
+    assert.equal(stored.lifecycle.reason, 'output_commit_rejected');
+    assert.equal(stored.content, '');
     assert.equal((await drafts.getByThread(USER, THREAD)).length, 0);
-    assert.deepEqual(pendingIds(turns), ['turn-retry']);
+  });
+
+  test('a gated turn whose fence never decided keeps its draft unpublished', async () => {
+    const { store, drafts, turns, response } = await fencedTurn();
+
+    await settle(store, drafts, [], { invocationId: 'turn-fenced', explanation: '执行进程归属已丢失' }, turns);
+
+    const stored = await store.getById(response.id);
+    assert.equal(stored.lifecycle.status, 'failed');
+    assert.equal(stored.lifecycle.reason, 'execution_owner_lost');
+    assert.equal(stored.content, '执行进程归属已丢失');
+    assert.equal(stored.thinking, undefined);
+    assert.equal(stored.toolEvents, undefined);
+    assert.equal((await drafts.getByThread(USER, THREAD)).length, 0);
+  });
+
+  test('an output the fence allowed is published like an unfenced one', async () => {
+    const { store, drafts, turns, response, toolEvent } = await fencedTurn('allowed');
+
+    await settle(store, drafts, [], { invocationId: 'turn-fenced' }, turns);
+
+    const stored = await store.getById(response.id);
+    assert.equal(stored.lifecycle.status, 'failed');
+    assert.equal(stored.content, 'HIDDEN_ACTION_OUTPUT');
+    assert.equal(stored.thinking, 'hidden reasoning');
+    assert.deepEqual(stored.toolEvents, [toolEvent]);
+  });
+
+  test('a draft whose fence cannot be read is withheld: no turn store, or no turn record', async () => {
+    for (const turns of [null, new InMemoryTurnExecutionStore()]) {
+      const store = new MessageStore();
+      const drafts = new DraftStore();
+      const response = await appendProcessingResponse(store, 'turn-unknown');
+      await upsertDraft(drafts, 'turn-unknown', { content: 'output nobody vouched for' });
+
+      await settle(store, drafts, [], { invocationId: 'turn-unknown' }, turns);
+
+      assert.equal((await store.getById(response.id)).content, '');
+    }
   });
 
   test('a later settlement pass ends R with the terminal truth of its ended turn', () => {

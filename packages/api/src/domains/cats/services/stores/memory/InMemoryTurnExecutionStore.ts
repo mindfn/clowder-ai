@@ -1,5 +1,7 @@
 import {
+  advanceTurnOutputFence,
   assertCoveredMessageIds,
+  assertCreatableOutputFence,
   assertCreateTurnExecutionInput,
   assertTurnExecutionTerminalInput,
   type BindCoveredMessageIdsResult,
@@ -12,6 +14,7 @@ import {
   type TransitionTurnExecutionResult,
   type TurnExecutionRecord,
   type TurnExecutionTerminalInput,
+  type TurnOutputFenceVerdict,
 } from '../ports/TurnExecutionStore.js';
 
 function sortRecords(records: TurnExecutionRecord[]): TurnExecutionRecord[] {
@@ -28,6 +31,7 @@ export class InMemoryTurnExecutionStore implements ITurnExecutionStore {
 
   createRunning(input: CreateTurnExecutionInput): CreateTurnExecutionResult {
     assertCreateTurnExecutionInput(input);
+    assertCreatableOutputFence(input);
     const existing = this.records.get(input.invocationId);
     if (existing) {
       return {
@@ -112,6 +116,15 @@ export class InMemoryTurnExecutionStore implements ITurnExecutionStore {
 
   clearResponsePending(invocationId: string): void {
     this.responsePending.delete(invocationId);
+  }
+
+  settleOutputFence(invocationId: string, verdict: TurnOutputFenceVerdict): TurnExecutionRecord | null {
+    if (verdict !== 'allowed' && verdict !== 'rejected') throw new Error(`invalid output fence verdict: ${verdict}`);
+    const record = this.records.get(invocationId);
+    if (!record) return null;
+    const next = advanceTurnOutputFence(record.outputFence, verdict);
+    if (next !== undefined) record.outputFence = next;
+    return cloneTurnExecutionRecord(record);
   }
 
   interruptRunningBefore(cutoffStartedAt: number, input: InterruptRunningTurnExecutionsInput): TurnExecutionRecord[] {

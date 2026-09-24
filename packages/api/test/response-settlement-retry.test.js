@@ -32,7 +32,7 @@ function world() {
   return { messages, drafts, turns };
 }
 
-async function streamingTurn({ messages, drafts, turns }, invocationId, startedAt, body) {
+async function streamingTurn({ messages, drafts, turns }, invocationId, startedAt, body, { outputFence } = {}) {
   await turns.createRunning({
     invocationId,
     parentInvocationId: PARENT,
@@ -41,6 +41,7 @@ async function streamingTurn({ messages, drafts, turns }, invocationId, startedA
     catId: 'opus',
     executionKind: 'ordinary',
     startedAt,
+    ...(outputFence ? { outputFence } : {}),
   });
   const response = await messages.append({
     from: { kind: 'agent', catId: 'opus' },
@@ -97,7 +98,7 @@ function startup({ drafts, turns }, messageStore) {
     store: turns,
     settleEndedTurnResponse: (turn) =>
       settleResponseFromDraft(
-        { messageStore, draftStore: drafts, responseLedger: turns },
+        { messageStore, draftStore: drafts, turnStore: turns },
         {
           userId: turn.userId,
           threadId: turn.threadId,
@@ -194,7 +195,7 @@ describe('F117 KD-21 response settlement retry exit', () => {
         listChildTurns: (executionId) => w.turns.listByParent(executionId),
         settle: (turn) =>
           settleResponseFromDraft(
-            { messageStore: failingCommits(w.messages, 1), draftStore: w.drafts, responseLedger: w.turns },
+            { messageStore: failingCommits(w.messages, 1), draftStore: w.drafts, turnStore: w.turns },
             {
               userId: turn.userId,
               threadId: turn.threadId,
@@ -235,5 +236,78 @@ describe('F117 KD-21 response settlement retry exit', () => {
       w.turns.listResponsePending().map((turn) => turn.invocationId),
       ['turn-live'],
     );
+  });
+});
+
+describe('F117 KD-21 fenced output across settlement retries', () => {
+  test('a rejection recorded just before a crash keeps the draft unpublished at the next startup', async () => {
+    const w = world();
+    const responseId = await streamingTurn(w, 'turn-f1', 10, 'HIDDEN_ACTION_OUTPUT', { outputFence: 'gated' });
+    await w.turns.transitionTerminal('turn-f1', {
+      status: 'failed',
+      endedAt: 40,
+      terminalReason: 'provider_execution_failed',
+    });
+    // The fence rejected the output and the process died before anything else: no delete, no R commit.
+    await w.turns.settleOutputFence('turn-f1', 'rejected');
+
+    const result = await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    assert.equal(result.settledResponseCount, 1);
+    await assertSettledFromDraft(w, responseId, {
+      status: 'interrupted',
+      reason: 'output_commit_rejected',
+      content: '',
+    });
+  });
+
+  test('a rejected output whose startup commit fails is still empty after the next startup', async () => {
+    const w = world();
+    const responseId = await streamingTurn(w, 'turn-f2', 10, 'HIDDEN_ACTION_OUTPUT', { outputFence: 'gated' });
+    await w.turns.transitionTerminal('turn-f2', { status: 'succeeded', endedAt: 40 });
+    await w.turns.settleOutputFence('turn-f2', 'rejected');
+
+    const first = await startup(w, failingCommits(w.messages, 1)).reconcile({ processStartedAt: 100 });
+    assert.equal(first.responseSettlementFailures.length, 1);
+    assert.equal((await w.drafts.getByThread(USER, THREAD))[0].content, 'HIDDEN_ACTION_OUTPUT');
+
+    await startup(w, w.messages).reconcile({ processStartedAt: 500 });
+
+    await assertSettledFromDraft(w, responseId, {
+      status: 'interrupted',
+      reason: 'output_commit_rejected',
+      content: '',
+    });
+  });
+
+  test('a fenced turn that crashed before its fence decided keeps its draft unpublished', async () => {
+    const w = world();
+    const responseId = await streamingTurn(w, 'turn-f3', 10, 'output nobody vouched for', { outputFence: 'gated' });
+    // The turn ended; the route died before it asked the fence whether the output may commit.
+    await w.turns.transitionTerminal('turn-f3', { status: 'succeeded', endedAt: 40 });
+
+    await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    await assertSettledFromDraft(w, responseId, { status: 'interrupted', reason: 'process_restart', content: '' });
+  });
+
+  test('an exposed fenced failure keeps its streamed body through the retry', async () => {
+    const w = world();
+    const responseId = await streamingTurn(w, 'turn-f4', 10, 'partial output', { outputFence: 'gated' });
+    await w.turns.transitionTerminal('turn-f4', {
+      status: 'failed',
+      endedAt: 40,
+      terminalReason: 'provider_execution_failed',
+    });
+    // The fence accepted the failure, so its output may be shown; the catch path's settlement then failed.
+    await w.turns.settleOutputFence('turn-f4', 'allowed');
+
+    await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    await assertSettledFromDraft(w, responseId, {
+      status: 'failed',
+      reason: 'provider_execution_failed',
+      content: 'partial output',
+    });
   });
 });

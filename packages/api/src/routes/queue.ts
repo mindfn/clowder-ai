@@ -94,7 +94,10 @@ export interface QueueRoutesOptions {
   invocationRecordStore?: IInvocationRecordStore;
   draftStore?: IDraftStore;
   /** Durable per-child lifecycle truth used to bridge tracker/draft handoff gaps. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'listByParent' | 'transitionTerminal' | 'clearResponsePending'>;
+  turnExecutionStore?: Pick<
+    ITurnExecutionStore,
+    'get' | 'listByParent' | 'transitionTerminal' | 'clearResponsePending'
+  >;
   /** F194 Phase Z (KD-22): InvocationRegistry — provides namespace bridge between
    *  parent recordStore invocation and per-cat-turn child registry invocation.
    *  When wired, helper uses parentInvocationId / latestId to detect parent+child
@@ -516,7 +519,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         {
           messageStore,
           ...(opts.draftStore ? { draftStore: opts.draftStore } : {}),
-          ...(opts.turnExecutionStore ? { responseLedger: opts.turnExecutionStore } : {}),
+          ...(opts.turnExecutionStore ? { turnStore: opts.turnExecutionStore } : {}),
           emit: (userId, message) => emitLifecycleMessageUpdated(socketManager, userId, message),
         },
         {

@@ -15,6 +15,12 @@ const { InMemoryTurnExecutionStore } = await import(
 const { MessageStore, settleLifecycleResponseInputs } = await import(
   '../dist/domains/cats/services/stores/ports/MessageStore.js'
 );
+const { responseOutcomeForEndedTurn, settleResponseFromDraft } = await import(
+  '../dist/domains/cats/services/agents/invocation/response-draft-settlement.js'
+);
+const { TurnExecutionStartupReconciler } = await import(
+  '../dist/domains/cats/services/agents/invocation/TurnExecutionStartupReconciler.js'
+);
 
 let sourceSequence = 0;
 
@@ -130,8 +136,27 @@ async function endChildTurn(turns, args, invocationId, terminal, catId = args[4]
     catId,
     executionKind: 'ordinary',
     startedAt: Date.now() - 1,
+    // As the real route does: a child of an action-fenced dispatch is created gated.
+    ...(options.beforeOutputCommit ? { outputFence: 'gated' } : {}),
   });
   await turns.transitionTerminal(invocationId, { endedAt: Date.now(), ...terminal });
+}
+
+/** Production startup wiring: the next process settles every ended turn left in the ledger. */
+function nextStartup(turns, messageStore, draftStore) {
+  return new TurnExecutionStartupReconciler({
+    store: turns,
+    settleEndedTurnResponse: (turn) =>
+      settleResponseFromDraft(
+        { messageStore, draftStore, turnStore: turns },
+        {
+          userId: turn.userId,
+          threadId: turn.threadId,
+          invocationId: turn.invocationId,
+          ...responseOutcomeForEndedTurn(turn),
+        },
+      ),
+  }).reconcile({ processStartedAt: Date.now() + 1_000 });
 }
 
 function pendingTurnIds(turns) {
@@ -648,28 +673,28 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     );
   });
 
-  it('F117 KD-21: a fenced action whose failure stays hidden ends R as a rejected output, draft discarded', async () => {
-    const draftStore = new DraftStore();
-    const turns = new InMemoryTurnExecutionStore();
+  /** A fenced action whose lease has moved on: its failure stays hidden and its output is rejected. */
+  function fencedHiddenFailure(draftStore, turns) {
     const actionSuccessorLeaseStore = {
       preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
       preflightOutput: mock.fn(async () => ({ ok: true, reason: 'active' })),
       commitOutcome: mock.fn(async () => ({ outcome: 'stale_generation' })),
     };
-    let responseMessageId;
+    const route = { responseMessageId: undefined };
     const harness = createHarness({
       draftStore,
       turnExecutionStore: turns,
       actionSuccessorLeaseStore,
       routeExecution: async function* (...args) {
         const [userId, , threadId, , targetCats] = args;
-        responseMessageId = (await startLifecycle(args, 'turn-fenced')).responseMessageId;
+        route.responseMessageId = (await startLifecycle(args, 'turn-fenced')).responseMessageId;
         draftStore.upsert({
           userId,
           threadId,
           invocationId: 'turn-fenced',
           catId: targetCats[0],
-          content: 'output the lease no longer accepts',
+          content: 'HIDDEN_ACTION_OUTPUT',
+          thinking: 'hidden reasoning',
           updatedAt: Date.now(),
         });
         await endChildTurn(turns, args, 'turn-fenced', {
@@ -680,23 +705,99 @@ describe('QueueProcessor over the source-row pending Queue', () => {
         throw new Error('route exploded after the lease moved on');
       },
     });
-    await admitMessage(harness, {
-      actionSuccessorFence: {
-        leaseId: 'lease-1',
-        generation: 1,
-        dispatchId: 'multi-mention:req-1',
-        terminalPredicateDigest: 'predicate-digest-1',
-      },
-    });
+    const admit = () =>
+      admitMessage(harness, {
+        actionSuccessorFence: {
+          leaseId: 'lease-1',
+          generation: 1,
+          dispatchId: 'multi-mention:req-1',
+          terminalPredicateDigest: 'predicate-digest-1',
+        },
+      });
+    return { harness, actionSuccessorLeaseStore, route, admit };
+  }
 
-    await harness.processor.requestDrain('thread-1');
-    await waitFor(() => harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'interrupted');
-
+  function assertRejectedOutput(harness, responseMessageId) {
     const response = harness.messageStore.getById(responseMessageId);
+    assert.equal(response.lifecycle.status, 'interrupted');
     assert.equal(response.lifecycle.reason, 'output_commit_rejected');
     assert.equal(response.content, '');
+    assert.equal(response.thinking, undefined);
+  }
+
+  it('F117 KD-21: a fenced action whose failure stays hidden ends R as a rejected output, recorded on the turn', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const { harness, actionSuccessorLeaseStore, route, admit } = fencedHiddenFailure(draftStore, turns);
+    await admit();
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.messageStore.getById(route.responseMessageId)?.lifecycle.status === 'interrupted');
+
+    assertRejectedOutput(harness, route.responseMessageId);
     assert.equal(actionSuccessorLeaseStore.commitOutcome.mock.calls.length, 1);
+    assert.equal(turns.get('turn-fenced').outputFence, 'rejected');
     assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 0);
+    assert.deepEqual(pendingTurnIds(turns), []);
+  });
+
+  it('F117 KD-21: a hidden failure whose R commit fails publishes nothing at the next startup', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const { harness, route, admit } = fencedHiddenFailure(draftStore, turns);
+    const commit = harness.messageStore.commitLifecycleResponseTerminal.bind(harness.messageStore);
+    let failures = 1;
+    harness.messageStore.commitLifecycleResponseTerminal = async (id, patch) => {
+      if (patch.invocationId === 'turn-fenced' && failures > 0) {
+        failures -= 1;
+        throw new Error('redis unavailable');
+      }
+      return commit(id, patch);
+    };
+    await admit();
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('failed to settle a response')),
+    );
+    assert.equal(harness.messageStore.getById(route.responseMessageId).lifecycle.status, 'processing');
+    assert.equal(turns.get('turn-fenced').outputFence, 'rejected');
+    assert.deepEqual(pendingTurnIds(turns), ['turn-fenced']);
+    // The draft is still there: keeping it secret no longer depends on deleting it first.
+    assert.equal(draftStore.getByThread('user-1', 'thread-1')[0].content, 'HIDDEN_ACTION_OUTPUT');
+
+    const restart = await nextStartup(turns, harness.messageStore, draftStore);
+
+    assert.equal(restart.settledResponseCount, 1);
+    assertRejectedOutput(harness, route.responseMessageId);
+    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 0);
+    assert.deepEqual(pendingTurnIds(turns), []);
+  });
+
+  it('F117 KD-21: a hidden failure whose draft cannot be deleted still never publishes it', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const { harness, route, admit } = fencedHiddenFailure(draftStore, turns);
+    const deleteDraft = draftStore.delete.bind(draftStore);
+    let failures = 1;
+    draftStore.delete = async (userId, threadId, invocationId) => {
+      if (invocationId === 'turn-fenced' && failures > 0) {
+        failures -= 1;
+        throw new Error('redis unavailable');
+      }
+      return deleteDraft(userId, threadId, invocationId);
+    };
+    await admit();
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('failed to settle a response')),
+    );
+    assertRejectedOutput(harness, route.responseMessageId);
+
+    await nextStartup(turns, harness.messageStore, draftStore);
+
+    assertRejectedOutput(harness, route.responseMessageId);
     assert.deepEqual(pendingTurnIds(turns), []);
   });
 
@@ -735,9 +836,11 @@ describe('QueueProcessor over the source-row pending Queue', () => {
 
   it('F117 KD-21: a route that throws fails the response it left processing with its draft body', async () => {
     const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
     let responseMessageId;
     const harness = createHarness({
       draftStore,
+      turnExecutionStore: turns,
       routeExecution: async function* (...args) {
         const [userId, , threadId, , targetCats] = args;
         const admission = await startLifecycle(args, 'turn-thrown');
@@ -749,6 +852,11 @@ describe('QueueProcessor over the source-row pending Queue', () => {
           catId: targetCats[0],
           content: '已经写到一半',
           updatedAt: Date.now(),
+        });
+        // An unfenced child, as invoke-single-cat creates it: its draft may be published.
+        await endChildTurn(turns, args, 'turn-thrown', {
+          status: 'failed',
+          terminalReason: 'provider_execution_failed',
         });
         yield { type: 'text', catId: targetCats[0], content: '已经写到一半', timestamp: Date.now() };
         throw new Error('route exploded mid-stream');
@@ -763,6 +871,8 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.equal(failed.lifecycle.reason, 'execution_error');
     assert.equal(failed.content, '已经写到一半');
     assert.deepEqual(draftStore.getByThread('user-1', 'thread-1'), []);
+    assert.equal(turns.get('turn-thrown').outputFence, undefined, 'an unfenced child records no verdict');
+    assert.deepEqual(pendingTurnIds(turns), []);
   });
 
   it('keeps an exact target set queued when one sibling is busy', async () => {

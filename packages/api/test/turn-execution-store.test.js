@@ -248,4 +248,29 @@ describe('InMemoryTurnExecutionStore', () => {
       ['interrupted'],
     );
   });
+
+  test('F117 KD-21: a gated output fence only moves forward; an unfenced child stays unfenced', async () => {
+    const store = new InMemoryTurnExecutionStore();
+    await store.createRunning(runningInput({ invocationId: 'fenced', outputFence: 'gated' }));
+    await store.createRunning(runningInput({ invocationId: 'open' }));
+    assert.equal((await store.get('fenced')).outputFence, 'gated');
+    assert.equal((await store.get('open')).outputFence, undefined);
+
+    assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'allowed');
+    assert.equal((await store.settleOutputFence('fenced', 'rejected')).outputFence, 'rejected');
+    assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'rejected', 'a rejection is final');
+    assert.equal((await store.settleOutputFence('open', 'rejected')).outputFence, undefined);
+    assert.equal(await store.settleOutputFence('missing', 'rejected'), null);
+
+    await store.transitionTerminal('fenced', { status: 'succeeded', endedAt: 150 });
+    assert.equal((await store.listResponsePending())[0].outputFence, 'rejected');
+    const replay = await store.createRunning(runningInput({ invocationId: 'fenced', outputFence: 'gated' }));
+    assert.equal(replay.outcome, 'replayed', 'the fence is late-bound state, not part of the identity');
+    assert.equal(replay.record.outputFence, 'rejected');
+    assert.throws(
+      () => store.createRunning(runningInput({ invocationId: 'born-allowed', outputFence: 'allowed' })),
+      /can only be created gated/,
+    );
+    assert.throws(() => store.settleOutputFence('fenced', 'gated'), /invalid output fence verdict/);
+  });
 });

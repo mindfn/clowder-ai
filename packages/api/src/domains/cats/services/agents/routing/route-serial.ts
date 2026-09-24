@@ -184,6 +184,7 @@ import {
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
+import { recordTurnOutputVerdict } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { AgentServiceUnavailableError } from '../registry/AgentServiceUnavailableError.js';
@@ -1871,6 +1872,7 @@ export async function* routeSerial(
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
         executionKind: initialExecutionKind,
+        ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {
           ...((options.cloudDispatchProvenance?.sourceMessageId ??
           streamReplyTo ??
@@ -2633,6 +2635,7 @@ export async function* routeSerial(
           invocationSpanRef,
           ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
           executionKind: 'routing_guard',
+          ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
           executionCausal: {
             ...((streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId)
               ? { triggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId }
@@ -2948,6 +2951,11 @@ export async function* routeSerial(
         }
         a2aMentions = [];
         if (lifecycleResponseMessageId && ownInvocationId) {
+          // F117 KD-21: the rejection is the turn's durable truth before R commits, so no later
+          // settlement can publish this draft even if the commit below fails.
+          await recordTurnOutputVerdict(deps.invocationDeps.turnExecutionStore, ownInvocationId, 'rejected', (err) =>
+            log.warn({ err, catId, invocationId: ownInvocationId }, 'rejected output fence verdict not recorded'),
+          );
           await commitLifecycleResponseFromAppendInput(
             deps.messageStore,
             lifecycleResponseMessageId,

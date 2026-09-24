@@ -7,6 +7,7 @@ import type {
   TransitionTurnExecutionResult,
   TurnExecutionRecord,
   TurnExecutionTerminalInput,
+  TurnOutputFenceVerdict,
 } from '../../stores/ports/TurnExecutionStore.js';
 import {
   authTerminalFromTurnExecution,
@@ -85,6 +86,13 @@ export class CallbackAuthTurnExecutionLifecycle implements ITurnExecutionStore {
 
   clearResponsePending(invocationId: string): void | Promise<void> {
     return this.store.clearResponsePending(invocationId);
+  }
+
+  settleOutputFence(
+    invocationId: string,
+    verdict: TurnOutputFenceVerdict,
+  ): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null> {
+    return this.store.settleOutputFence(invocationId, verdict);
   }
 
   async failRegistration(invocationId: string, endedAt: number, reason: string): Promise<AuthTerminalCommitResult> {

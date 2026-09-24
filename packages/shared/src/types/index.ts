@@ -1680,6 +1680,8 @@ export type {
   TurnExecutionStatus,
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
+  TurnOutputFence,
+  TurnOutputFenceVerdict,
 } from './turn-execution.js';
 // User preferences types (F166 猫猫排序自定义)
 export type {

@@ -1290,6 +1290,11 @@ export interface InvocationParams {
   readonly executionKind?: TurnExecutionKind;
   /** Typed causal provenance used by history, relevance, and UI projections. */
   readonly executionCausal?: TurnExecutionCausalRefs;
+  /**
+   * F117 KD-21: this child belongs to an action-fenced dispatch, so it is created with a gated
+   * output fence and no settlement path may publish its draft before the fence allows it.
+   */
+  readonly outputFenced?: boolean;
   /** Exact persisted message bodies exposed to this child invocation's prompt. */
   readonly promptMessageIds?: readonly string[];
   /** Persists per-target body exposure after child identity exists and before provider start. */
@@ -2012,6 +2017,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           executionKind,
           startedAt: executionStartedAt,
           ...(Object.keys(executionCausal).length > 0 ? { causal: executionCausal } : {}),
+          ...(params.outputFenced ? { outputFence: 'gated' as const } : {}),
         });
       } catch (error) {
         // Auth was minted first so the exact child id could be shared with the

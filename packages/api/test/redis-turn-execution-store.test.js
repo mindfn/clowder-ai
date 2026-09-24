@@ -473,4 +473,37 @@ describe('RedisTurnExecutionStore', { skip: redisIsolationSkipReason(REDIS_URL) 
     await redis.sadd('turnexec:response-pending', 'corrupt');
     await assert.rejects(store.listResponsePending(), /corrupt: non-empty hash failed to hydrate/);
   });
+
+  test('F117 KD-21: a gated output fence persists, only moves forward, and stays outside the identity', async () => {
+    await store.createRunning(runningInput({ invocationId: 'fenced', outputFence: 'gated' }));
+    await store.createRunning(runningInput({ invocationId: 'open' }));
+    assert.equal((await store.get('fenced')).outputFence, 'gated');
+    assert.equal((await store.get('open')).outputFence, undefined);
+
+    assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'allowed');
+    assert.equal((await store.settleOutputFence('fenced', 'rejected')).outputFence, 'rejected');
+    assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'rejected', 'a rejection is final');
+    assert.equal((await store.settleOutputFence('open', 'rejected')).outputFence, undefined);
+    assert.equal(await store.settleOutputFence('missing', 'rejected'), null);
+
+    await store.transitionTerminal('fenced', { status: 'succeeded', endedAt: 150 });
+    const restarted = new RedisTurnExecutionStore(redis);
+    assert.equal((await restarted.get('fenced')).outputFence, 'rejected');
+    assert.deepEqual(
+      (await restarted.listResponsePending()).map((record) => [record.invocationId, record.outputFence]),
+      [['fenced', 'rejected']],
+    );
+    const replay = await restarted.createRunning(runningInput({ invocationId: 'fenced', outputFence: 'gated' }));
+    assert.equal(replay.outcome, 'replayed');
+    assert.equal(replay.record.outputFence, 'rejected');
+    await assert.rejects(
+      store.createRunning(runningInput({ invocationId: 'born-allowed', outputFence: 'allowed' })),
+      /can only be created gated/,
+    );
+
+    await redis.hset('turnexec:record:fenced', 'outputFence', 'bogus');
+    // An unreadable fence fails loudly rather than reading as ungated.
+    await assert.rejects(store.get('fenced'), /corrupt turn execution record: fenced/);
+    await assert.rejects(store.settleOutputFence('fenced', 'rejected'), /corrupt output fence/);
+  });
 });

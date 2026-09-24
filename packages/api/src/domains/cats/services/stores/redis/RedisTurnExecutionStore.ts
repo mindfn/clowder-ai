@@ -1,6 +1,7 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import {
   assertCoveredMessageIds,
+  assertCreatableOutputFence,
   assertCreateTurnExecutionInput,
   assertTurnExecutionTerminalInput,
   type BindCoveredMessageIdsResult,
@@ -13,6 +14,7 @@ import {
   type TransitionTurnExecutionResult,
   type TurnExecutionRecord,
   type TurnExecutionTerminalInput,
+  type TurnOutputFenceVerdict,
 } from '../ports/TurnExecutionStore.js';
 import { TurnExecutionKeys } from '../redis-keys/turn-execution-keys.js';
 import { readAuthoritativeHash } from './redis-pipeline-reply.js';
@@ -20,6 +22,7 @@ import { hydrateTurnExecution, type RedisTurnExecutionHash, sortTurnExecutions }
 import {
   BIND_TURN_EXECUTION_COVERAGE_LUA,
   CREATE_TURN_EXECUTION_LUA,
+  SETTLE_TURN_OUTPUT_FENCE_LUA,
   TERMINALIZE_TURN_EXECUTION_LUA,
 } from './turn-execution-redis-scripts.js';
 
@@ -28,6 +31,7 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
 
   async createRunning(input: CreateTurnExecutionInput): Promise<CreateTurnExecutionResult> {
     assertCreateTurnExecutionInput(input);
+    assertCreatableOutputFence(input);
     const result = Number(
       await this.redis.eval(
         CREATE_TURN_EXECUTION_LUA,
@@ -44,6 +48,7 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
         input.executionKind,
         String(input.startedAt),
         JSON.stringify(input.causal ?? {}),
+        input.outputFence ?? '',
       ),
     );
     if (result === -1) {
@@ -206,6 +211,18 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
 
   async clearResponsePending(invocationId: string): Promise<void> {
     await this.redis.srem(TurnExecutionKeys.responsePending, invocationId);
+  }
+
+  async settleOutputFence(invocationId: string, verdict: TurnOutputFenceVerdict): Promise<TurnExecutionRecord | null> {
+    if (verdict !== 'allowed' && verdict !== 'rejected') throw new Error(`invalid output fence verdict: ${verdict}`);
+    const result = Number(
+      await this.redis.eval(SETTLE_TURN_OUTPUT_FENCE_LUA, 1, TurnExecutionKeys.record(invocationId), verdict),
+    );
+    if (result === -1) throw new Error(`turn execution ${invocationId}: corrupt output fence`);
+    if (result === 0) return null;
+    const record = await this.get(invocationId);
+    if (!record) throw new Error(`turn execution ${invocationId}: non-empty hash failed to hydrate`);
+    return record;
   }
 
   async interruptRunningBefore(

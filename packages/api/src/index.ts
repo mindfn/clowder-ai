@@ -2870,7 +2870,7 @@ async function main(): Promise<void> {
       {
         messageStore,
         draftStore,
-        responseLedger: turnExecutionStore,
+        turnStore: turnExecutionStore,
         ...(lifecycleSocket
           ? {
               emit: (userId: string, message: StoredMessage) =>

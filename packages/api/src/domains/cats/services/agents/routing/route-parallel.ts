@@ -90,6 +90,7 @@ import {
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
+import { recordTurnOutputVerdict } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
 import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
@@ -1024,6 +1025,7 @@ export async function* routeParallel(
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
         executionKind: turnExecutionKind,
+        ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {
           ...(bridgeTriggerMessageId ? { triggerMessageId: bridgeTriggerMessageId } : {}),
         },
@@ -1703,6 +1705,11 @@ export async function* routeParallel(
         );
         if (options.persistenceContext) options.persistenceContext.actionOutputCommitRejected = true;
         if (lifecycleResponse && ownInvId) {
+          // F117 KD-21: the rejection is the turn's durable truth before R commits, so no later
+          // settlement can publish this draft even if the commit below fails.
+          await recordTurnOutputVerdict(deps.invocationDeps.turnExecutionStore, ownInvId, 'rejected', (err) =>
+            log.warn({ err, catId: msg.catId, invocationId: ownInvId }, 'rejected output fence verdict not recorded'),
+          );
           await commitLifecycleResponseFromAppendInput(
             deps.messageStore,
             lifecycleResponse.messageId,

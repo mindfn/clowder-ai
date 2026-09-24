@@ -11,6 +11,16 @@ export interface TurnExecutionCausalRefs {
   coveredMessageIds?: string[];
 }
 
+/**
+ * F117 KD-21: whether anyone but the child's own route commit may publish its streamed output.
+ * A child of an action-fenced dispatch is created `gated`: settlement (stop, restart, zombie
+ * reclaim, a thrown execution) keeps its draft unpublished until the fence has `allowed` it, and a
+ * `rejected` output is never published. The verdict only moves forward: gated → allowed → rejected.
+ * A child without this field is not fenced.
+ */
+export type TurnOutputFence = 'gated' | 'allowed' | 'rejected';
+export type TurnOutputFenceVerdict = Exclude<TurnOutputFence, 'gated'>;
+
 export interface CreateTurnExecutionInput {
   invocationId: string;
   parentInvocationId: string;
@@ -20,6 +30,8 @@ export interface CreateTurnExecutionInput {
   executionKind: TurnExecutionKind;
   startedAt: number;
   causal?: TurnExecutionCausalRefs;
+  /** Late-bound state outside the immutable identity; a child is only ever created `gated`. */
+  outputFence?: TurnOutputFence;
 }
 
 export interface TurnExecutionRecord extends CreateTurnExecutionInput {

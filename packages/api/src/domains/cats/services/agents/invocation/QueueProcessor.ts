@@ -139,7 +139,11 @@ import {
   terminalizePreparedPrestartRetirements,
 } from './queue-prestart-group-retirement.js';
 import { requireInvocationRecordUpdate } from './require-invocation-record-update.js';
-import { lifecycleResponseIdempotencyKey, settleResponseFromDraft } from './response-draft-settlement.js';
+import {
+  lifecycleResponseIdempotencyKey,
+  recordTurnOutputVerdict,
+  settleResponseFromDraft,
+} from './response-draft-settlement.js';
 import {
   type CommitInvocationInput,
   type ConsumedContinuationToken,
@@ -472,7 +476,7 @@ export interface QueueProcessorDeps {
   freshnessEventLog?: FreshnessAttentionEventLog;
   /** F254 Phase E: typed successor preflight/adoption and crash closure. */
   /** Durable child lifecycle and causal coverage; auth registry is not historical truth. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending'>;
+  turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending' | 'settleOutputFence'>;
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
   actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'preflight' | 'preflightOutput' | 'commitOutcome'>;
   /**
@@ -2276,8 +2280,10 @@ export class QueueProcessor {
   /**
    * F117 KD-21: settle the responses a thrown execution left processing. An exposed failure fails
    * each R with its draft body; a fenced action whose failure stays hidden ends R the way a route
-   * ends a rejected output, with its draft discarded. A settlement that throws leaves the ended
-   * turn in the response-pending ledger, and the next startup settles it.
+   * ends a rejected output. The fence's verdict is written to the turn first, so this pass and any
+   * later one read it from there: a hidden failure's draft is never published, even when its R
+   * commit fails. A settlement that throws leaves the ended turn in the response-pending ledger,
+   * and the next startup settles it.
    */
   private async settleAbandonedResponses(
     userId: string,
@@ -2289,21 +2295,32 @@ export class QueueProcessor {
       try {
         const response = await this.deps.messageStore.getById(responseId);
         if (response?.lifecycle?.kind !== 'response' || response.lifecycle.status !== 'processing') continue;
+        const { invocationId } = response.lifecycle;
+        await recordTurnOutputVerdict(
+          this.deps.turnExecutionStore,
+          invocationId,
+          outcome === 'failed' ? 'allowed' : 'rejected',
+          (err) =>
+            this.deps.log.warn(
+              { err, threadId, invocationId },
+              '[QueueProcessor] failed to record the output fence verdict; the turn stays gated',
+            ),
+        );
         await settleResponseFromDraft(
           {
             messageStore: this.deps.messageStore,
             ...(this.deps.draftStore ? { draftStore: this.deps.draftStore } : {}),
-            ...(this.deps.turnExecutionStore ? { responseLedger: this.deps.turnExecutionStore } : {}),
+            ...(this.deps.turnExecutionStore ? { turnStore: this.deps.turnExecutionStore } : {}),
             emit: (recipient, message) => this.emitLifecycleMessageUpdated(recipient, message),
           },
           {
             userId,
             threadId,
-            invocationId: response.lifecycle.invocationId,
+            invocationId,
             endedAt: Date.now(),
             ...(outcome === 'failed'
               ? { status: 'failed', reason: 'execution_error' }
-              : { status: 'interrupted', reason: 'output_commit_rejected', discardDraftBody: true }),
+              : { status: 'interrupted', reason: 'output_commit_rejected' }),
           },
         );
       } catch (err) {

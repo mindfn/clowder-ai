@@ -10,6 +10,8 @@ import type {
   TurnExecutionStatus,
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
+  TurnOutputFence,
+  TurnOutputFenceVerdict,
 } from '@cat-cafe/shared';
 
 export type {
@@ -24,6 +26,8 @@ export type {
   TurnExecutionStatus,
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
+  TurnOutputFence,
+  TurnOutputFenceVerdict,
 } from '@cat-cafe/shared';
 
 export function projectTurnExecutionMessage(record: TurnExecutionRecord): TurnExecutionMessageProjection {
@@ -66,6 +70,16 @@ export interface ITurnExecutionStore {
   listResponsePending(): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
   /** Leaves the ledger once the turn's response R is confirmed terminal (or the turn has none). */
   clearResponsePending(invocationId: string): void | Promise<void>;
+  /**
+   * F117 KD-21: records the action fence's verdict on a gated child's output, so every later
+   * settlement reads it instead of a process-local decision. The fence only moves forward
+   * (gated → allowed → rejected); an ungated child is left as it is. Returns the record after the
+   * write, or null when the child is unknown.
+   */
+  settleOutputFence(
+    invocationId: string,
+    verdict: TurnOutputFenceVerdict,
+  ): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null>;
 }
 
 export type BindCoveredMessageIdsResult =
@@ -85,6 +99,27 @@ export function assertCoveredMessageIds(messageIds: readonly string[]): void {
 }
 
 const EXECUTION_KINDS = new Set<TurnExecutionKind>(['ordinary', 'routing_guard']);
+const OUTPUT_FENCE_RANK: Record<TurnOutputFence, number> = { gated: 0, allowed: 1, rejected: 2 };
+
+export function isTurnOutputFence(value: unknown): value is TurnOutputFence {
+  return typeof value === 'string' && Object.hasOwn(OUTPUT_FENCE_RANK, value);
+}
+
+/** The fence after a verdict: it only moves forward, and an ungated child stays ungated. */
+export function advanceTurnOutputFence(
+  current: TurnOutputFence | undefined,
+  verdict: TurnOutputFenceVerdict,
+): TurnOutputFence | undefined {
+  if (current === undefined) return undefined;
+  return OUTPUT_FENCE_RANK[verdict] > OUTPUT_FENCE_RANK[current] ? verdict : current;
+}
+
+/** A child is only ever created gated; the verdicts arrive later through settleOutputFence. */
+export function assertCreatableOutputFence(input: CreateTurnExecutionInput): void {
+  if (input.outputFence !== undefined && input.outputFence !== 'gated') {
+    throw new Error(`a turn execution can only be created gated, not ${String(input.outputFence)}`);
+  }
+}
 const TERMINAL_STATUSES = new Set<TurnExecutionTerminalStatus>(['succeeded', 'failed', 'canceled', 'interrupted']);
 
 function assertNonEmpty(value: string, field: string): void {
@@ -105,6 +140,9 @@ export function assertCreateTurnExecutionInput(input: CreateTurnExecutionInput):
     throw new Error(`invalid executionKind: ${String(input.executionKind)}`);
   }
   assertTimestamp(input.startedAt, 'startedAt');
+  if (input.outputFence !== undefined && !isTurnOutputFence(input.outputFence)) {
+    throw new Error(`invalid outputFence: ${String(input.outputFence)}`);
+  }
   if (input.causal?.triggerMessageId !== undefined) assertNonEmpty(input.causal.triggerMessageId, 'triggerMessageId');
   if (input.causal?.routingGuardReason !== undefined && input.causal.routingGuardReason !== 'missing_routing_exit') {
     throw new Error(`invalid routingGuardReason: ${String(input.causal.routingGuardReason)}`);
@@ -153,6 +191,7 @@ export function cloneTurnExecutionRecord(record: TurnExecutionRecord): TurnExecu
     status: record.status,
     ...(record.endedAt !== undefined ? { endedAt: record.endedAt } : {}),
     ...(record.terminalReason !== undefined ? { terminalReason: record.terminalReason } : {}),
+    ...(record.outputFence !== undefined ? { outputFence: record.outputFence } : {}),
   };
 }
 

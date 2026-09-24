@@ -7,18 +7,26 @@ import {
   type StoredToolEvent,
   settleLifecycleResponseInputs,
 } from '../../stores/ports/MessageStore.js';
-import type { ITurnExecutionStore, TurnExecutionRecord } from '../../stores/ports/TurnExecutionStore.js';
+import type {
+  ITurnExecutionStore,
+  TurnExecutionRecord,
+  TurnOutputFenceVerdict,
+} from '../../stores/ports/TurnExecutionStore.js';
 import { extractRichFromText } from '../routing/rich-block-extract.js';
 import { sanitizeInjectedContent } from '../routing/route-helpers.js';
 
 /**
  * F117 KD-21: a streaming draft is the in-flight body of its response R and lives exactly as long as
  * R is processing. A path that ends a turn outside the route's own commit (stop, restart, zombie
- * reclaim) settles R here: a processing R takes the draft's streamed body with its terminal state,
- * and an R that is already terminal keeps its own. Either way the inputs settle, the terminal R is
- * published, and only then is the draft deleted and the turn cleared from the response-pending
- * ledger. A rejected commit throws before any of that, so the draft and the ledger entry survive for
- * the next settlement pass.
+ * reclaim, a thrown execution) settles R here: a processing R takes the draft's streamed body with
+ * its terminal state, and an R that is already terminal keeps its own. Either way the inputs settle,
+ * the terminal R is published, and only then is the draft deleted and the turn cleared from the
+ * response-pending ledger. A rejected commit throws before any of that, so the draft and the ledger
+ * entry survive for the next settlement pass.
+ *
+ * Whether the draft may be published at all is the turn's durable output fence, read on every pass:
+ * an action-fenced turn's draft stays unpublished until its fence is allowed, and a rejected output
+ * ends R empty as output_commit_rejected. No pass relies on the draft having been deleted.
  */
 
 /** The admission key of the response R a child turn owns; its draft is keyed by the same id. */
@@ -29,8 +37,12 @@ export function lifecycleResponseIdempotencyKey(invocationId: string): string {
 export interface ResponseDraftSettlementDeps {
   messageStore: IMessageStore;
   draftStore?: Pick<IDraftStore, 'getByThread' | 'delete'>;
-  /** Clears the turn from the response-pending ledger once R is confirmed terminal. */
-  responseLedger?: Pick<ITurnExecutionStore, 'clearResponsePending'>;
+  /**
+   * The turn's durable truth: its output fence decides whether the draft may be published, and its
+   * response-pending ledger entry clears once R is confirmed terminal. Without it the fence cannot
+   * be read, so no draft is published.
+   */
+  turnStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending'>;
   /** Publishes the terminal R to its user's live timeline. */
   emit?: (userId: string, message: StoredMessage) => void;
 }
@@ -45,11 +57,6 @@ export interface ResponseDraftSettlementInput {
   endedAt: number;
   /** Why the turn ended, appended once after the streamed body. */
   explanation?: string;
-  /**
-   * The turn's output was rejected. Its draft is deleted before R commits, so neither this commit
-   * nor a later retry can publish it; R keeps its own empty body.
-   */
-  discardDraftBody?: boolean;
 }
 
 /**
@@ -80,7 +87,7 @@ export async function settleResponseFromDraft(
     lifecycleResponseIdempotencyKey(input.invocationId),
   );
   if (response?.lifecycle?.kind !== 'response') {
-    await deps.responseLedger?.clearResponsePending(input.invocationId);
+    await deps.turnStore?.clearResponsePending(input.invocationId);
     return { kind: 'no_response' };
   }
 
@@ -91,8 +98,35 @@ export async function settleResponseFromDraft(
   await settleLifecycleResponseInputs(deps.messageStore, settled.message, settled.message.id);
   deps.emit?.(input.userId, settled.message);
   await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
-  await deps.responseLedger?.clearResponsePending(input.invocationId);
+  await deps.turnStore?.clearResponsePending(input.invocationId);
   return settled;
+}
+
+/**
+ * F117 KD-21: records the action fence's verdict on a child's output before anything commits its R,
+ * so every later settlement reads the verdict rather than this process's memory. A write that fails
+ * leaves the child gated, which still keeps its draft unpublished.
+ */
+export async function recordTurnOutputVerdict(
+  turnStore: Pick<ITurnExecutionStore, 'settleOutputFence'> | undefined,
+  invocationId: string,
+  verdict: TurnOutputFenceVerdict,
+  onError: (err: unknown) => void,
+): Promise<void> {
+  try {
+    await turnStore?.settleOutputFence(invocationId, verdict);
+  } catch (err) {
+    onError(err);
+  }
+}
+
+type DraftDisposition = 'publish' | 'withhold' | 'reject';
+
+/** Only an unfenced or allowed turn may publish its draft; anything unreadable is withheld. */
+async function draftDisposition(deps: ResponseDraftSettlementDeps, invocationId: string): Promise<DraftDisposition> {
+  const turn = deps.turnStore ? await deps.turnStore.get(invocationId) : null;
+  if (!turn || turn.outputFence === 'gated') return 'withhold';
+  return turn.outputFence === 'rejected' ? 'reject' : 'publish';
 }
 
 /** Commits a processing R with its draft's body. A writer that ended R first keeps its own body. */
@@ -101,12 +135,12 @@ async function commitFromDraft(
   response: StoredMessage,
   input: ResponseDraftSettlementInput,
 ): Promise<{ kind: 'committed' | 'already_terminal'; message: StoredMessage }> {
-  if (input.discardDraftBody) await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
-  const draft = input.discardDraftBody ? undefined : await readDraft(deps, input);
-  const result = await deps.messageStore.commitLifecycleResponseTerminal(
-    response.id,
-    terminalPatchFromDraft(response, draft, input),
-  );
+  const disposition = await draftDisposition(deps, input.invocationId);
+  const patch =
+    disposition === 'reject'
+      ? rejectedOutputPatch(response, input)
+      : terminalPatchFromDraft(response, disposition === 'publish' ? await readDraft(deps, input) : undefined, input);
+  const result = await deps.messageStore.commitLifecycleResponseTerminal(response.id, patch);
   if (result.kind === 'applied' || result.kind === 'replayed') return { kind: 'committed', message: result.message };
   const endedByAnotherWriter =
     result.kind === 'conflict' &&
@@ -147,6 +181,22 @@ function terminalPatchFromDraft(
     ...(toolEvents?.length ? { toolEvents } : {}),
     ...(extra ? { extra } : {}),
     ...(thinking ? { thinking } : {}),
+  };
+}
+
+/** A rejected output ends R exactly as the route's own rejection does: empty, whatever its draft held. */
+function rejectedOutputPatch(
+  response: StoredMessage,
+  input: ResponseDraftSettlementInput,
+): LifecycleResponseTerminalPatch {
+  const startedAt = response.lifecycle?.kind === 'response' ? response.lifecycle.startedAt : input.endedAt;
+  return {
+    invocationId: input.invocationId,
+    status: 'interrupted',
+    completedAt: Math.max(input.endedAt, startedAt),
+    reason: 'output_commit_rejected',
+    content: '',
+    ...retainedResponseFields(response),
   };
 }
 

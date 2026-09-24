@@ -20,6 +20,7 @@ redis.call('HSET', KEYS[1],
   'status', 'running',
   'endedAt', '',
   'terminalReason', '')
+if ARGV[10] ~= '' then redis.call('HSET', KEYS[1], 'outputFence', ARGV[10]) end
 redis.call('SADD', KEYS[2], ARGV[2])
 redis.call('SADD', KEYS[3], ARGV[2])
 return 1
@@ -54,4 +55,21 @@ redis.call('HSET', KEYS[1],
   'coveredMessageIds', ARGV[1],
   'coveredMessageIdsIdentity', ARGV[2])
 return 1
+`;
+
+/**
+ * F117 KD-21: the fence verdict only moves forward (gated → allowed → rejected). An ungated child
+ * has no outputFence field and stays ungated.
+ */
+export const SETTLE_TURN_OUTPUT_FENCE_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+local current = redis.call('HGET', KEYS[1], 'outputFence')
+if not current then return 2 end
+local rank = { gated = 0, allowed = 1, rejected = 2 }
+if rank[current] == nil or rank[ARGV[1]] == nil then return -1 end
+if rank[ARGV[1]] > rank[current] then
+  redis.call('HSET', KEYS[1], 'outputFence', ARGV[1])
+  return 1
+end
+return 2
 `;
