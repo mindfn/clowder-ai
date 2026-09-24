@@ -123,6 +123,28 @@ export function renewIssueWaitBaseline(
 }
 
 /**
+ * #1392 (review 5310717691): a push nobody asked to hear about must not strand the wait.
+ *
+ * A baseline only advances when a predicate matches, and CI, conflict and review results are judged
+ * against the HEAD it was installed on. A wait that arms `pr_head_changed` gets onto a new HEAD by
+ * matching the push. One that does not — the author's own default, or an explicit `when[]` that
+ * watches CI without watching HEAD — stayed on the old HEAD, so nothing about the new one could
+ * ever match. Such a wait now follows the HEAD silently, rebuilt by the same renewal rule a matched
+ * push uses: the new HEAD's CI and mergeability start unobserved, so what this poll saw on it is
+ * reported on the next poll instead of being absorbed. Null when there is nothing to follow.
+ */
+export function followPushedHead(
+  active: AwaitStateV1,
+  collector: AutomationState,
+  facts: GitHubWaitFacts,
+  at: number,
+): GitHubPrWaitBaseline | null {
+  const baseline = active.baseline;
+  if (!('headSha' in baseline) || !facts.headSha || facts.headSha === baseline.headSha) return null;
+  return renewPrWaitBaseline(baseline, collector as PrAutomationState, facts, at);
+}
+
+/**
  * #1392 AC-1: the instruction for the generation after a match, built from THIS observation. It
  * carries the registered continuation, because the lifecycle may override `then` for a single
  * delivery and N+1 must not inherit that. If the baseline cannot be built, the event is still
