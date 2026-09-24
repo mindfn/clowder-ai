@@ -377,7 +377,13 @@ export class SubscriptionDelivery {
   lifecycleTargetsForThread(threadId: string): readonly { subscriberId: string; method: string; wire: boolean }[] {
     return (this.byThread.get(threadId) ?? []).flatMap((entry) =>
       entry.lifecycleMethod
-        ? [{ subscriberId: entry.subscriberId, method: entry.lifecycleMethod, wire: entry.method === undefined }]
+        ? [
+            {
+              subscriberId: entry.subscriberId,
+              method: entry.method === undefined ? 'host.messaging.lifecycle' : entry.lifecycleMethod,
+              wire: entry.method === undefined,
+            },
+          ]
         : [],
     );
   }

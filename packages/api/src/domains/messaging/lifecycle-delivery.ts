@@ -35,6 +35,7 @@ export interface LifecycleDeliveryDeps {
   readonly enqueueThread: (threadId: string, operation: () => Promise<void>) => Promise<void>;
   readonly drain: (threadId: string) => Promise<void>;
   readonly presentation: (threadId: string, catId: string) => Promise<DeliveryPresentationContext>;
+  readonly now?: () => number;
   readonly actionTimeoutMs?: number;
   readonly onError?: (fields: { subscriberId: string; lifecycleId: string; state: string; errorKind: string }) => void;
 }
@@ -48,7 +49,10 @@ interface InvocationState {
   blocked: boolean;
   ended: boolean;
   settled: boolean;
+  lastTouchedAt: number;
 }
+
+const LIFECYCLE_IDLE_TTL_MS = 60 * 60_000;
 
 type LifecycleEventWithoutDeliveryId = HostMessagingLifecycleInput extends infer Event
   ? Event extends HostMessagingLifecycleInput
@@ -90,8 +94,38 @@ export class LifecycleDelivery {
   private readonly invocations = new Map<string, InvocationState>();
   private readonly starts = new Map<string, Promise<void>>();
   private readonly settledOrder: string[] = [];
+  private nextIdleSweepAt = Number.POSITIVE_INFINITY;
 
   constructor(private readonly deps: LifecycleDeliveryDeps) {}
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+
+  private touch(invocationId: string): void {
+    const state = this.invocations.get(invocationId);
+    if (state) {
+      state.lastTouchedAt = this.now();
+      this.nextIdleSweepAt = Math.min(this.nextIdleSweepAt, state.lastTouchedAt + LIFECYCLE_IDLE_TTL_MS + 1);
+    }
+  }
+
+  private pruneIdle(exceptInvocationId?: string): void {
+    const now = this.now();
+    if (now < this.nextIdleSweepAt) return;
+    const cutoff = now - LIFECYCLE_IDLE_TTL_MS;
+    let nextIdleSweepAt = Number.POSITIVE_INFINITY;
+    for (const [invocationId, state] of this.invocations) {
+      if (state.settled || this.starts.has(invocationId)) continue;
+      if (invocationId !== exceptInvocationId && state.lastTouchedAt < cutoff) {
+        // No terminal evidence exists; eviction must not synthesize settled.
+        this.invocations.delete(invocationId);
+      } else {
+        nextIdleSweepAt = Math.min(nextIdleSweepAt, state.lastTouchedAt + LIFECYCLE_IDLE_TTL_MS + 1);
+      }
+    }
+    this.nextIdleSweepAt = nextIdleSweepAt;
+  }
 
   private async deliverToSubscriber(
     subscriberId: string,
@@ -147,9 +181,11 @@ export class LifecycleDelivery {
   }
 
   private async start(threadId: string, catId: string, invocationId: string): Promise<InvocationState> {
+    this.pruneIdle(invocationId);
     const existing = this.invocations.get(invocationId);
     if (existing) {
       if (existing.threadId !== threadId) throw new Error('lifecycle invocation changed thread');
+      this.touch(invocationId);
       await this.starts.get(invocationId);
       return existing;
     }
@@ -161,8 +197,10 @@ export class LifecycleDelivery {
       blocked: false,
       ended: false,
       settled: false,
+      lastTouchedAt: this.now(),
     };
     this.invocations.set(invocationId, state);
+    this.nextIdleSweepAt = Math.min(this.nextIdleSweepAt, state.lastTouchedAt + LIFECYCLE_IDLE_TTL_MS + 1);
     // Reserve the shared thread tail before an asynchronous presentation lookup can let a
     // final message overtake started. Queue consumption awaits the presentation in that slot.
     const started = this.emit(
@@ -180,6 +218,7 @@ export class LifecycleDelivery {
       throw error;
     } finally {
       this.starts.delete(invocationId);
+      this.touch(invocationId);
     }
     return state;
   }
@@ -188,7 +227,10 @@ export class LifecycleDelivery {
     await this.start(threadId, catId, invocationId);
   }
 
-  async onStreamChunk(_threadId: string, _text: string, _invocationId: string): Promise<void> {}
+  async onStreamChunk(threadId: string, _text: string, invocationId: string): Promise<void> {
+    if (this.invocations.get(invocationId)?.threadId === threadId) this.touch(invocationId);
+    this.pruneIdle(invocationId);
+  }
 
   async onClosureCatchingUp(threadId: string, catId: string, invocationId: string): Promise<void> {
     const state = await this.start(threadId, catId, invocationId);
@@ -215,15 +257,20 @@ export class LifecycleDelivery {
   }
 
   async onStreamEnd(threadId: string, _text: string, invocationId: string): Promise<void> {
+    this.pruneIdle(invocationId);
     const state = this.invocations.get(invocationId);
     if (!state || state.ended) return;
     if (state.threadId !== threadId) throw new Error('lifecycle invocation changed thread');
+    this.touch(invocationId);
     // Drain is itself enqueued on the same thread tail. It cannot be called from inside emit.
     await this.deps.drain(threadId);
     state.ended = true;
+    this.touch(invocationId);
   }
 
-  async cleanupPlaceholders(_threadId: string, _invocationId: string): Promise<void> {}
+  async cleanupPlaceholders(_threadId: string, _invocationId: string): Promise<void> {
+    this.pruneIdle();
+  }
 
   async notifyDeliveryBatchDone(
     threadId: string,
@@ -231,9 +278,11 @@ export class LifecycleDelivery {
     status?: string,
     invocationId?: string,
   ): Promise<void> {
+    this.pruneIdle(invocationId);
     if (!invocationId) return;
     const state = this.invocations.get(invocationId);
     if (!state || state.settled || state.threadId !== threadId) return;
+    this.touch(invocationId);
     state.settled = true;
     if (!state.ended) {
       // A subscriber failure must not suppress the invocation's terminal signal; the cursor

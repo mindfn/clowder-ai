@@ -170,6 +170,42 @@ test('a stalled lifecycle action is bounded and audited once', async () => {
   );
 });
 
+test('an idle un-settled lifecycle is evicted on the next hook without inventing settled', async () => {
+  let now = 0;
+  const events = [];
+  const delivery = createLifecycleDelivery({
+    now: () => now,
+    subscribers: () => [{ subscriberId: 'subscriber', method: 'fixture.lifecycle', wire: false }],
+    supportsAction: () => true,
+    invoke: async (_subscriber, _method, input) => {
+      events.push(input);
+      return { deliveryId: input.deliveryId };
+    },
+    enqueueThread: async (_threadId, operation) => operation(),
+    drain: async () => undefined,
+    presentation: async () => ({ actor: { displayName: 'Cat', emoji: '🐱' }, thread: { shortId: 'thread-1' } }),
+  });
+  await delivery.onStreamStart('thread-1', 'cat-1', 'stale');
+  now = 30 * 60_000;
+  await delivery.onStreamStart('thread-1', 'cat-1', 'active');
+  now = 60 * 60_000 - 1;
+  await delivery.onStreamChunk('thread-1', 'still active', 'active');
+  now = 60 * 60_000 + 1;
+  await delivery.cleanupPlaceholders('thread-1', 'active');
+  assert.equal(delivery.invocations.has('stale'), false);
+  assert.equal(delivery.invocations.has('active'), true);
+  assert.deepEqual(
+    events.map(({ state }) => state),
+    ['started', 'started'],
+  );
+  await delivery.notifyDeliveryBatchDone('thread-1', true, 'succeeded', 'stale');
+  await delivery.notifyDeliveryBatchDone('thread-1', true, 'succeeded', 'active');
+  assert.deepEqual(
+    events.map(({ state }) => state),
+    ['started', 'started', 'settled'],
+  );
+});
+
 test('concurrent start and blocked keep started before blocked', async () => {
   const calls = [];
   const delivery = createLifecycleDelivery({
@@ -418,4 +454,36 @@ test('the frozen host.messaging.deliver row also receives the final message life
     actor: { displayName: '砚砚', emoji: '🐱' },
     thread: { shortId: 'thread-1' },
   });
+});
+
+test('wire lifecycle registration invokes the frozen Host method even when manifest declares a custom action', async () => {
+  const calls = [];
+  const subscription = createSubscriptionDelivery({
+    presentation: async () => ({ actor: { displayName: 'Cat', emoji: '🐱' }, thread: { shortId: 'thread-1' } }),
+    messaging: {
+      subscribe: async () => ({ subscriptionId: 'sub-wire' }),
+      read: async () => ({ events: [], ackToken: null, stale: false }),
+      ack: async () => undefined,
+    },
+    delivery: { deliver: async () => ({ deliveryId: 'unused' }) },
+  });
+  await subscription.register({
+    subscriberId: 'wire-subscriber',
+    threadId: 'thread-1',
+    handleId: 'handle-wire',
+    lifecycleMethod: 'connector.customLifecycle',
+  });
+  const lifecycle = createLifecycleDelivery({
+    subscribers: (threadId) => subscription.lifecycleTargetsForThread(threadId),
+    supportsAction: () => false,
+    invoke: async (_subscriber, method, input) => {
+      calls.push(method);
+      return { deliveryId: input.deliveryId };
+    },
+    enqueueThread: (threadId, operation) => subscription.enqueueThread(threadId, operation),
+    drain: async () => undefined,
+    presentation: async () => ({ actor: { displayName: 'Cat', emoji: '🐱' }, thread: { shortId: 'thread-1' } }),
+  });
+  await lifecycle.onStreamStart('thread-1', 'cat-1', 'invocation-wire');
+  assert.deepEqual(calls, ['host.messaging.lifecycle']);
 });
