@@ -517,7 +517,7 @@ F233 projector 可选读取此流做聚合报告（通过 `FreshnessAttentionEve
 
 **(b) Per-Invocation Operational State**（hot path / 决策）：
 
-Redis-backed per-invocation counters（TTL = invocation timeout，如 30min，自动清理）：
+Redis-backed per-invocation counters（TTL 30min，自动清理；与 `CLI_TIMEOUT_MS` 无关，后者默认 0 即不超时）：
 
 ```typescript
 // key: `freshness:state:{invocationId}`
