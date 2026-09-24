@@ -1082,7 +1082,10 @@ api_uses_no_watch() {
 api_launch_command() {
     local env_prefix="NODE_ENV=$(api_node_env) "
     if [ "$DEBUG_MODE" = true ]; then
-        env_prefix="${env_prefix}LOG_LEVEL=debug "
+        # CAT_CAFE_DEBUG=1 carries the debug intent: pnpm run dev does not
+        # forward a --debug argv flag, so LOG_LEVEL alone cannot stop
+        # configRoutes from re-applying a stored level at startup (#770/#1062).
+        env_prefix="${env_prefix}LOG_LEVEL=debug CAT_CAFE_DEBUG=1 "
     fi
     if api_uses_no_watch; then
         printf '%s' "cd packages/api && exec env ${env_prefix}pnpm run start"

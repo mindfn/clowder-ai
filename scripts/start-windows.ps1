@@ -598,6 +598,9 @@ try {
         }
         if ($debugFlag) {
             $env:LOG_LEVEL = "debug"
+            # Same debug-intent signal as start-dev.sh — the argv flag already
+            # covers this launcher, the env var keeps both paths identical.
+            $env:CAT_CAFE_DEBUG = "1"
             & node $apiEntry --debug 2>&1
         } else {
             & node $apiEntry 2>&1

@@ -16,12 +16,18 @@ import pino from 'pino';
 import { resolveLogDir } from '../config/data-dirs.js';
 
 /**
- * --debug CLI flag: `node dist/index.js --debug` sets log level to 'debug'.
- * Precedence: --debug flag > stored user preference (applied at startup by
- * configRoutes, skipped when --debug is set) > LOG_LEVEL env var > default
- * 'info'. A level PUT at runtime applies per the operator's new intent.
+ * Debug intent at startup: either a real `--debug` CLI flag
+ * (`node dist/index.js --debug`) or CAT_CAFE_DEBUG=1 in the environment —
+ * start-dev.sh --debug injects only the env pair (LOG_LEVEL=debug +
+ * CAT_CAFE_DEBUG=1), it does not pass the argv flag, so argv alone cannot
+ * carry the intent for that launcher.
+ * Precedence: debug intent > stored user preference (applied at startup by
+ * configRoutes, skipped when the debug intent is set) > LOG_LEVEL env var
+ * (legacy fallback) > default 'info'. A level PUT at runtime applies per the
+ * operator's new intent.
  */
-export const isDebugMode = process.argv.includes('--debug');
+export const isDebugMode =
+  process.argv.includes('--debug') || process.env.CAT_CAFE_DEBUG === '1' || process.env.CAT_CAFE_DEBUG === 'true';
 const LOG_LEVEL = (isDebugMode ? 'debug' : (process.env.LOG_LEVEL ?? 'info')) as pino.Level;
 const LOG_DIR = resolveLogDir();
 const RETENTION_FILES = 14;
