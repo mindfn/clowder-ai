@@ -304,10 +304,21 @@ export interface AppendLock {
   release(messageId: string, lease: AppendLease): Promise<void>;
 }
 
+/**
+ * In-flight Host publication spans per thread (W2-5b-0). Process-local, not a durable store: it
+ * lives in this bundle because the bundle is the one object shared by the publishing seam that
+ * writes the stream and the domain whose snapshot reads it. See `host-publication-gate.ts`.
+ */
+export interface HostPublicationTracker {
+  begin(threadId: string): () => void;
+  isBusy(threadId: string): boolean;
+}
+
 export interface MessagingStores {
   readonly ledger: LedgerStore;
   readonly handles: HandleStore;
   readonly events: EventLogStore;
   readonly cursors: CursorStore;
   readonly appendLock: AppendLock;
+  readonly publications: HostPublicationTracker;
 }

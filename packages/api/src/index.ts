@@ -842,6 +842,7 @@ async function main(): Promise<void> {
   });
   const messageStore = createPublishingMessageStore(rawMessageStore, {
     events: messagingStores.events,
+    publications: messagingStores.publications,
     onPublished: subscriptionDrainScheduler.schedule,
     onPublishFailure: (error, stored) => {
       app.log.error(

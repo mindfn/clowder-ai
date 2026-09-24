@@ -103,6 +103,7 @@ export class MessagingService {
       cursors: stores.cursors,
       handles: this.handles,
       messageStore: deps.messageStore,
+      publications: stores.publications,
       ...(deps.mediaEntitlements === undefined ? {} : { mediaEntitlements: deps.mediaEntitlements }),
       ...(deps.snapshotClock === undefined ? {} : { snapshotClock: deps.snapshotClock }),
       ...(deps.snapshotAckTokenTtlMs === undefined ? {} : { snapshotAckTokenTtlMs: deps.snapshotAckTokenTtlMs }),

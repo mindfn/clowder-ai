@@ -23,14 +23,15 @@
  *  - anything that does not project — deleted and tombstoned messages have no envelope.
  */
 
-import type {
-  AppendMessageInput,
-  IdempotentAppendResult,
-  IMessageStore,
-  StoredMessage,
+import {
+  type AppendMessageInput,
+  DEFAULT_THREAD_ID,
+  type IdempotentAppendResult,
+  type IMessageStore,
+  type StoredMessage,
 } from '../cats/services/stores/ports/MessageStore.js';
 import { projectEnvelope } from './envelope.js';
-import type { EventLogStore } from './stores/ports.js';
+import type { EventLogStore, HostPublicationTracker } from './stores/ports.js';
 import { clampRetention } from './stores/ports.js';
 
 export interface PublishingMessageStoreDeps {
@@ -39,6 +40,11 @@ export interface PublishingMessageStoreDeps {
   readonly onPublished?: (threadId: string) => void;
   /** Event-log retention per thread; the same bound the send path uses. */
   readonly retentionCount?: number;
+  /**
+   * Marks the store-write → publish span so a catch-up snapshot never carries a message whose
+   * event is still to come (W2-5b-0). Must be the tracker shared with the messaging domain.
+   */
+  readonly publications?: Pick<HostPublicationTracker, 'begin'>;
   /**
    * Required on purpose. A publish that is dropped silently is a message nobody will receive,
    * so there is no default that quietly discards it.
@@ -70,23 +76,36 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
     }
   }
 
+  // The span opens before the store write, so no instant exists in which the message is stored,
+  // its event is still to come, and a snapshot could not tell.
+  async function withinPublicationSpan<R>(threadId: string, work: () => Promise<R>): Promise<R> {
+    const end = deps.publications?.begin(threadId);
+    try {
+      return await work();
+    } finally {
+      end?.();
+    }
+  }
+
   // Proxied rather than hand-forwarded: `IMessageStore` is a wide port, and a written-out
   // forwarding list would silently stop covering whatever method is added to it next.
   return new Proxy(inner, {
     get(target, property, receiver) {
       if (property === 'append') {
-        return async (msg: AppendMessageInput): Promise<StoredMessage> => {
-          const stored = await target.append(msg);
-          await publish(stored);
-          return stored;
-        };
+        return (msg: AppendMessageInput): Promise<StoredMessage> =>
+          withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
+            const stored = await target.append(msg);
+            await publish(stored);
+            return stored;
+          });
       }
       if (property === 'appendIdempotent') {
-        return async (msg: AppendMessageInput): Promise<IdempotentAppendResult> => {
-          const result = await target.appendIdempotent(msg);
-          if (!result.idempotent) await publish(result.message);
-          return result;
-        };
+        return (msg: AppendMessageInput): Promise<IdempotentAppendResult> =>
+          withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
+            const result = await target.appendIdempotent(msg);
+            if (!result.idempotent) await publish(result.message);
+            return result;
+          });
       }
       const value = Reflect.get(target, property, receiver) as unknown;
       return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;

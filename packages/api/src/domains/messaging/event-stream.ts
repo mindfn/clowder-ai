@@ -42,6 +42,7 @@ import { decodeSnapshotPageToken, encodeSnapshotAckToken, encodeSnapshotPageToke
 import type {
   CursorStore,
   EventLogStore,
+  HostPublicationTracker,
   SnapshotPageLease,
   SnapshotViewRecord,
   SubscriptionRecord,
@@ -56,6 +57,8 @@ export interface EventStreamDeps {
   readonly cursors: CursorStore;
   readonly handles: HandleService;
   readonly messageStore: IMessageStore;
+  /** Host store-write → publish spans shared with the publishing seam (W2-5b-0). */
+  readonly publications?: Pick<HostPublicationTracker, 'isBusy'>;
   readonly mediaEntitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
   readonly snapshotClock?: { now(): number };
   readonly snapshotAckTokenTtlMs?: number;
