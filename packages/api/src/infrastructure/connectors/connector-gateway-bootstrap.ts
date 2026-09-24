@@ -28,7 +28,10 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
 import { isCatAvailable } from '../../config/cat-config-loader.js';
 import type { IssueCommentClassification } from '../../domains/community/issue-analysis/issue-comment-classifier.js';
-import { createHostMediaPathResolver, hostMediaPathRootsFromEnv } from '../../domains/messaging/host-media-paths.js';
+import {
+  createHostMediaPathResolver,
+  hostMediaPathRootsFromEnv,
+} from '../../domains/messaging/outbound-media/host-media-paths.js';
 import type { ConnectorWebhookHandler } from '../../routes/connector-webhooks.js';
 import { resolveActiveProjectRoot } from '../../utils/active-project-root.js';
 import { encodeDefault } from '../config-field-parser.js';
