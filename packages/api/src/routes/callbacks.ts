@@ -3246,17 +3246,22 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId. When first-in-chain
     // (invocationId === effectiveInvId), still stamp explicitly so frontend bubble
     // identity never falls back to parent (which would collapse multi-turn same-cat).
+    const causalTriggerMessageId =
+      record.originTriggerMessageId ?? record.a2aTriggerMessageId ?? turnExecution?.causal?.triggerMessageId;
+    const causalTriggerMessage = causalTriggerMessageId ? await messageStore.getById(causalTriggerMessageId) : null;
+    const causalTriggerThreadId = causalTriggerMessage?.threadId === effectiveThreadId ? effectiveThreadId : undefined;
     const persistedExtra = {
       ...(extra ?? {}),
       stream: {
         invocationId: effectiveInvId,
         turnInvocationId: invocationId ?? effectiveInvId,
       },
-      ...(turnExecution?.causal?.triggerMessageId
+      ...(causalTriggerMessageId
         ? {
             causal: {
               kind: 'invocation_reply' as const,
-              triggerMessageId: turnExecution.causal.triggerMessageId,
+              triggerMessageId: causalTriggerMessageId,
+              ...(causalTriggerThreadId ? { triggerThreadId: causalTriggerThreadId } : {}),
             },
           }
         : {}),

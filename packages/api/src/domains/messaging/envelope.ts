@@ -511,6 +511,9 @@ export function projectEnvelope(msg: StoredMessage): MessageEnvelope | null {
 
   return {
     ...base,
+    ...(msg.replyTo === undefined && msg.catId !== null && msg.extra?.causal?.triggerThreadId === msg.threadId
+      ? { replyTo: msg.extra.causal.triggerMessageId }
+      : {}),
     revision: 1,
     actor: msg.catId === null ? { kind: 'user', id: msg.userId } : { kind: 'cat', id: msg.catId },
     payload: {

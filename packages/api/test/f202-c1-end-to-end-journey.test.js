@@ -83,6 +83,10 @@ beforeEach(async () => {
   });
   delivery = subscriptionDelivery.createSubscriptionDelivery({
     messaging,
+    presentation: async (threadId, actor) => ({
+      actor: { displayName: actor.id, emoji: '🐱' },
+      thread: { shortId: threadId },
+    }),
     delivery: {
       deliver: (targetId, input) => invocation.invoke(targetId, 'host.messaging.deliver', input),
     },

@@ -4906,6 +4906,32 @@ async function main(): Promise<void> {
     './domains/plugin/builtin-runtime/collective-standing-grant.js'
   );
   const { buildDeliveryPresentation } = await import('./domains/messaging/lifecycle-delivery.js');
+  const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
+  const deliveryThreadMeta = async (threadId: string) => {
+    const thread = await threadStore.get(threadId);
+    if (!thread) return undefined;
+    return {
+      threadShortId: threadId.slice(0, 15),
+      ...(thread.title == null ? {} : { threadTitle: thread.title }),
+      deepLinkUrl: buildThreadDeepLink(frontendBaseUrl, threadId),
+    };
+  };
+  const deliveryPresentation = async (
+    threadId: string,
+    actor: { kind: 'cat' | 'user' | 'plugin' | 'device' | 'system'; id: string },
+  ) =>
+    buildDeliveryPresentation(
+      threadId,
+      {
+        ...actor,
+        ...(actor.kind === 'cat'
+          ? { displayName: catRegistry.tryGet(actor.id as CatId)?.config.displayName ?? actor.id }
+          : actor.kind === 'user'
+            ? { displayName: getCoCreatorConfig().name }
+            : {}),
+      },
+      await deliveryThreadMeta(threadId),
+    );
   const collectiveWorkAuthority = new CollectiveWorkAuthority({
     messageStore,
     taskStore,
@@ -4926,18 +4952,12 @@ async function main(): Promise<void> {
       registerPostStart: (task) => taskRunnerV2.registerPostStart(task),
       unregister: (taskId) => taskRunnerV2.unregister(taskId),
     },
-    editorParentOrigin: new URL(resolveFrontendBaseUrl(process.env, app.log)).origin,
+    editorParentOrigin: new URL(frontendBaseUrl).origin,
     routes: signalRouteStore,
     intakes: meetingIntakeStore,
     messageStore,
-    lifecyclePresentation: async (threadId, catId) => {
-      const thread = await threadStore.get(threadId);
-      return buildDeliveryPresentation(threadId, catRegistry.tryGet(catId as CatId)?.config.displayName ?? catId, {
-        threadShortId: threadId.slice(0, 15),
-        ...(thread?.title == null ? {} : { threadTitle: thread.title }),
-        deepLinkUrl: buildThreadDeepLink(resolveFrontendBaseUrl(process.env, app.log), threadId),
-      });
-    },
+    lifecyclePresentation: (threadId, catId) => deliveryPresentation(threadId, { kind: 'cat', id: catId }),
+    deliveryPresentation,
     messagingStores,
     onMessagePublished: subscriptionDrainScheduler.schedule,
     taskStore,
@@ -6883,7 +6903,6 @@ async function main(): Promise<void> {
   }
 
   // F140 Phase 3b: connector invoke trigger (auto-invoke cat after review feedback delivery via polling)
-  const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
   const invokeTrigger = new ConnectorInvokeTrigger({
     router,
     socketManager,
@@ -6894,15 +6913,7 @@ async function main(): Promise<void> {
     queueCustodyCoordinator,
     messageStore,
     actionSuccessorLeaseStore,
-    threadMetaLookup: async (threadId) => {
-      const thread = await threadStore.get(threadId);
-      if (!thread) return undefined;
-      return {
-        threadShortId: threadId.slice(0, 15),
-        threadTitle: thread.title ?? undefined,
-        deepLinkUrl: buildThreadDeepLink(frontendBaseUrl, threadId),
-      };
-    },
+    threadMetaLookup: deliveryThreadMeta,
     log: app.log,
   });
 

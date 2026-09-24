@@ -283,7 +283,7 @@ export interface StoredMessage {
       speechContent?: string;
     };
     /** Typed causal origin for cat output; freshness must never infer this from prose or timing. */
-    causal?: { kind: 'invocation_reply'; triggerMessageId: string };
+    causal?: { kind: 'invocation_reply'; triggerMessageId: string; triggerThreadId?: string };
     /** #1371: immutable prompt boundary written with initial formal output; generic patches cannot replace it. */
     deliveryBoundary?: MessageDeliveryBoundary;
     /** F272: one canonical home message projected from a durable proactive visit. */

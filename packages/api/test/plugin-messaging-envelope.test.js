@@ -101,6 +101,31 @@ describe('projectEnvelope — plugin messages (D-1)', () => {
 });
 
 describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
+  test('cat causal trigger becomes plugin replyTo without changing the Hub replyTo field', () => {
+    const base = {
+      id: 'cat-reply',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      catId: 'cat-1',
+      content: 'answer',
+      mentions: [],
+      timestamp: 1_800_000_000_000,
+      extra: { causal: { kind: 'invocation_reply', triggerMessageId: 'trigger-1', triggerThreadId: 'thread-1' } },
+    };
+    assert.equal(base.replyTo, undefined);
+    assert.equal(envelope.projectEnvelope(base).replyTo, 'trigger-1');
+    assert.equal(envelope.projectEnvelope({ ...base, replyTo: 'explicit-a2a' }).replyTo, 'explicit-a2a');
+    assert.equal(envelope.projectEnvelope({ ...base, catId: null }).replyTo, undefined);
+    assert.equal(
+      envelope.projectEnvelope({
+        ...base,
+        extra: { causal: { ...base.extra.causal, triggerThreadId: 'other-thread' } },
+      }).replyTo,
+      undefined,
+    );
+    assert.equal(envelope.projectEnvelope({ ...base, extra: {} }).replyTo, undefined);
+  });
+
   test('invalid historical rich-block shapes use the shared invalid_shape degradation exit', () => {
     const blocks = [
       { id: '', kind: 'card', v: 1, title: 'Missing id' },

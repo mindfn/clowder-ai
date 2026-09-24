@@ -21,6 +21,10 @@ function fixture({ selfEcho = false, fails = false, failGrant = false, hangs = f
   let receiptSawGrant = false;
   const errors = [];
   const delivery = createSubscriptionDelivery({
+    presentation: async (threadId, actor) => ({
+      actor: { displayName: actor.id, emoji: '🐱' },
+      thread: { shortId: threadId },
+    }),
     entitlements,
     onError: (fields) => errors.push(fields),
     ...(actionTimeoutMs === undefined ? {} : { actionTimeoutMs }),
