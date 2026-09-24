@@ -68,7 +68,7 @@ describe('K-2A contract-native inventory', () => {
     const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.20.tgz', import.meta.url));
     assert.equal(
       createHash('sha256').update(archive).digest('hex'),
-      '5ce083a94714483924a628b6b52960e661b604f50a25bb0e34033e904b0acaf7',
+      '3437987af5f166890304662647b1451a6f62c1bacc69b135e0c4e43f5297696d',
     );
     assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.20');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');

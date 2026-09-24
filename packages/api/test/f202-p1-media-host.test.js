@@ -277,6 +277,15 @@ test('admitted external Broker invokes media.read and gates the capability befor
 
 test('contract permission matrix includes the media.read L1 row without a Host-owned copy', async () => {
   const { contractPermissionEntries } = await import('./plugin-m0d-host-control-adapter.js');
+  const schema = JSON.parse(
+    await readFile(
+      new URL('../node_modules/@clowder-ai/plugin-contract/src/schemas/behavior-fixture.schema.json', import.meta.url),
+      'utf8',
+    ),
+  );
+  assert.equal(contractPermissionEntries().length, 21);
+  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.minItems, 21);
+  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.maxItems, 21);
   assert.deepEqual(
     contractPermissionEntries().find((entry) => entry.capability === 'media.read'),
     {
