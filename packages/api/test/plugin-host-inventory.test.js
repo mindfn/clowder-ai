@@ -60,19 +60,19 @@ function harness() {
 }
 
 describe('K-2A contract-native inventory', () => {
-  it('pins the API and runtime boundary to the canonical plugin-contract beta.20 archive', () => {
+  it('pins the API and runtime boundary to the canonical plugin-contract beta.21 archive', () => {
     assert.equal(
       packageJson.dependencies['@clowder-ai/plugin-contract'],
-      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.20.tgz',
+      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.21.tgz',
     );
-    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.20.tgz', import.meta.url));
+    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.21.tgz', import.meta.url));
     assert.equal(
       createHash('sha256').update(archive).digest('hex'),
-      '3437987af5f166890304662647b1451a6f62c1bacc69b135e0c4e43f5297696d',
+      '62c6efb8c84a40b1d8cec4a69c9fe112e8b1a0a5235ccd7a0eebf5550220fb4b',
     );
-    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.20');
+    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.21');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
-    assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, ['0.1.0', '0.1.0-beta.13', '0.1.0-beta.20']);
+    assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, ['0.1.0', '0.1.0-beta.13', '0.1.0-beta.20', '0.1.0-beta.21']);
   });
 
   it('rejects a traversal entrypoint before admitting any package, instance, or grant', async () => {
@@ -115,14 +115,16 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(snapshot.grants[0].grantRevision, 1);
   });
 
-  it('admits the exact consumed prerelease contract alongside the stable manifest line', async () => {
-    const { store, controlPlane } = harness();
-    const packageManifest = manifest({ contractVersion: PLUGIN_CONTRACT_PACKAGE_VERSION });
+  it('admits both the installed beta.20 line and the consumed beta.21 line', async () => {
+    for (const contractVersion of ['0.1.0-beta.20', PLUGIN_CONTRACT_PACKAGE_VERSION]) {
+      const { store, controlPlane } = harness();
+      const packageManifest = manifest({ contractVersion });
 
-    await controlPlane.installPackage(candidate({ manifest: packageManifest }));
+      await controlPlane.installPackage(candidate({ manifest: packageManifest }));
 
-    const snapshot = await store.snapshot();
-    assert.equal(snapshot.packages[0].contractVersion, PLUGIN_CONTRACT_PACKAGE_VERSION);
+      const snapshot = await store.snapshot();
+      assert.equal(snapshot.packages[0].contractVersion, contractVersion);
+    }
   });
 
   it('can bind admission to an exact newer contract runtime without bypassing Host policy', async () => {
