@@ -22,6 +22,7 @@
  */
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
+import { validateMessagingRowInput } from '@clowder-ai/plugin-contract';
 
 let createMessagingDomain;
 let createSubscriptionDelivery;
@@ -114,6 +115,7 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     assert.equal(calls[0].input.envelope.threadId, THREAD_ID);
     assert.equal(calls[0].input.envelope.payload.elements[0].payload.text, 'hello');
     assert.deepEqual(Object.keys(calls[0].input).sort(), ['deliveryId', 'envelope', 'presentation', 'threadHandle']);
+    assert.equal(validateMessagingRowInput('host.messaging.deliver', calls[0].input).valid, true);
   });
 
   test('case 2: a failing plugin does not lose the message — it is redelivered', async () => {
