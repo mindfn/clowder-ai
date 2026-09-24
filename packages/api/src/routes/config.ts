@@ -198,11 +198,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   // F770: the JSON store is the runtime tier for log level — apply a persisted
   // level at startup so it wins over the import-time LOG_LEVEL env fallback in
   // logger.ts. Read-only here (no env migration at boot): an env-only level is
-  // already effective via the logger's module-load constant, and env→JSON
-  // migration happens on the first GET of /api/config/log-level.
-  // The --debug flag outranks the stored preference: it is the packaged
-  // build's only way to raise logging, and silently dropping it here made the
-  // debug switch a no-op for anyone who had ever stored a level (#1062).
+  // already effective via the logger's module-load constant, and it stays a
+  // read-only fallback — only an intentional PUT persists a level.
+  // The debug intent (--debug flag or CAT_CAFE_DEBUG=1, see logger.ts)
+  // outranks the stored preference: it is the packaged build's only way to
+  // raise logging, and silently dropping it here made the debug switch a
+  // no-op for anyone who had ever stored a level (#1062).
   // A level PUT at runtime still applies per the operator's new intent.
   const storedLogLevel = readStoredLogLevel(projectRoot);
   if (storedLogLevel && !isDebugMode) setRuntimeLogLevel(storedLogLevel);

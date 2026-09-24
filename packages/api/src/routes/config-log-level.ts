@@ -1,4 +1,4 @@
-/** F770: runtime log level persisted to user-preferences.json (migrated from LOG_LEVEL env). */
+/** F770: runtime log level persisted to user-preferences.json (LOG_LEVEL env stays a read-only legacy fallback). */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';

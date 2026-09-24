@@ -197,15 +197,20 @@ export interface LogLevelResolution {
   logLevel: string | null;
   /** Where the returned value came from. */
   source: 'preferences' | 'env-fallback' | 'none';
-  /** True when a legacy process.env LOG_LEVEL value was migrated into the JSON store on this read. */
+  /**
+   * Kept for API compatibility, always false for log level: a GET never
+   * migrates the env value (read-only fallback — only an intentional PUT
+   * lands in the JSON store).
+   */
   migratedFromEnv: boolean;
 }
 
 /**
  * F770: log level lives in user-preferences.json and is applied at runtime via
  * setRuntimeLogLevel (no restart). The legacy LOG_LEVEL env value is honored as
- * a read-only startup fallback (logger.ts reads it at module load) and migrated
- * into the JSON store on first read so existing users do not lose their level.
+ * a read-only startup fallback (logger.ts reads it at module load) — a read
+ * must NOT persist it, otherwise a one-off `LOG_LEVEL=debug` launch that
+ * merely opened the settings page would silently become permanent.
  */
 export function readStoredLogLevel(projectRoot: string): string | null {
   return sanitizeLogLevel(readUserPreferences(projectRoot).logLevel) ?? null;
@@ -215,10 +220,7 @@ export function resolveLogLevel(projectRoot: string): LogLevelResolution {
   const stored = readStoredLogLevel(projectRoot);
   if (stored) return { logLevel: stored, source: 'preferences', migratedFromEnv: false };
   const envValue = sanitizeLogLevel(process.env.LOG_LEVEL);
-  if (envValue) {
-    updateUserPreferences(projectRoot, (current) => ({ ...current, logLevel: envValue }));
-    return { logLevel: envValue, source: 'env-fallback', migratedFromEnv: true };
-  }
+  if (envValue) return { logLevel: envValue, source: 'env-fallback', migratedFromEnv: false };
   return { logLevel: null, source: 'none', migratedFromEnv: false };
 }
 
@@ -231,7 +233,7 @@ export function saveLogLevel(projectRoot: string, value: string): LogLevelResolu
     return next;
   });
   // Return the just-written value directly: re-resolving here would fall back
-  // to the legacy env value (or re-migrate it) right after an intentional clear.
+  // to the legacy env value right after an intentional clear.
   if (sanitized) return { logLevel: sanitized, source: 'preferences', migratedFromEnv: false };
   return { logLevel: null, source: 'none', migratedFromEnv: false };
 }
