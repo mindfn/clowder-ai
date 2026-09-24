@@ -79,6 +79,14 @@ export class CallbackAuthTurnExecutionLifecycle implements ITurnExecutionStore {
     return interrupted;
   }
 
+  listResponsePending(): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]> {
+    return this.store.listResponsePending();
+  }
+
+  clearResponsePending(invocationId: string): void | Promise<void> {
+    return this.store.clearResponsePending(invocationId);
+  }
+
   async failRegistration(invocationId: string, endedAt: number, reason: string): Promise<AuthTerminalCommitResult> {
     return this.registry.commitTerminal({
       invocationId,

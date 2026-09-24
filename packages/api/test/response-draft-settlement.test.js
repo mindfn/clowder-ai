@@ -3,7 +3,10 @@ import { describe, test } from 'node:test';
 
 const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/DraftStore.js');
-const { lifecycleResponseIdempotencyKey, settleResponseFromDraft } = await import(
+const { InMemoryTurnExecutionStore } = await import(
+  '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
+);
+const { lifecycleResponseIdempotencyKey, responseOutcomeForEndedTurn, settleResponseFromDraft } = await import(
   '../dist/domains/cats/services/agents/invocation/response-draft-settlement.js'
 );
 
@@ -46,11 +49,34 @@ function upsertDraft(drafts, invocationId, overrides = {}) {
   });
 }
 
-function settle(store, drafts, emitted, input) {
+function settle(store, drafts, emitted, input, ledger) {
   return settleResponseFromDraft(
-    { messageStore: store, draftStore: drafts, emit: (userId, message) => emitted.push({ userId, message }) },
+    {
+      messageStore: store,
+      draftStore: drafts,
+      ...(ledger ? { responseLedger: ledger } : {}),
+      emit: (userId, message) => emitted.push({ userId, message }),
+    },
     { userId: USER, threadId: THREAD, status: 'failed', reason: 'execution_owner_lost', endedAt: 300, ...input },
   );
+}
+
+/** A child turn that has ended, so its terminal transition entered it in the response-pending ledger. */
+async function endedTurn(turns, invocationId, terminal = { status: 'failed', endedAt: 200, terminalReason: 'x' }) {
+  await turns.createRunning({
+    invocationId,
+    parentInvocationId: 'parent-1',
+    threadId: THREAD,
+    userId: USER,
+    catId: 'opus',
+    executionKind: 'ordinary',
+    startedAt: 100,
+  });
+  await turns.transitionTerminal(invocationId, terminal);
+}
+
+function pendingIds(turns) {
+  return turns.listResponsePending().map((turn) => turn.invocationId);
 }
 
 describe('F117 KD-21 settleResponseFromDraft', () => {
@@ -160,5 +186,100 @@ describe('F117 KD-21 settleResponseFromDraft', () => {
     assert.equal((await store.getById(response.id)).lifecycle.status, 'processing');
     assert.equal((await drafts.getByThread(USER, THREAD)).length, 1);
     assert.equal(emitted.length, 0);
+  });
+  test('a settled R takes its ended turn out of the response-pending ledger', async () => {
+    const store = new MessageStore();
+    const drafts = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    await endedTurn(turns, 'turn-1');
+    await appendProcessingResponse(store, 'turn-1');
+    await upsertDraft(drafts, 'turn-1');
+    assert.deepEqual(pendingIds(turns), ['turn-1']);
+
+    const settlement = await settle(store, drafts, [], { invocationId: 'turn-1' }, turns);
+
+    assert.equal(settlement.kind, 'committed');
+    assert.deepEqual(pendingIds(turns), []);
+  });
+
+  test('a rejected commit keeps the ended turn in the ledger for the next settlement pass', async () => {
+    const store = new MessageStore();
+    const drafts = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    await endedTurn(turns, 'turn-1');
+    await appendProcessingResponse(store, 'turn-1', { lifecycleInvocationId: 'turn-other' });
+    await upsertDraft(drafts, 'turn-1');
+
+    await assert.rejects(settle(store, drafts, [], { invocationId: 'turn-1' }, turns), /invocation_mismatch/);
+
+    assert.deepEqual(pendingIds(turns), ['turn-1']);
+    assert.equal((await drafts.getByThread(USER, THREAD)).length, 1);
+  });
+
+  test('a turn that never opened a response R leaves the ledger', async () => {
+    const store = new MessageStore();
+    const drafts = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    await endedTurn(turns, 'turn-guard');
+
+    assert.deepEqual(await settle(store, drafts, [], { invocationId: 'turn-guard' }, turns), { kind: 'no_response' });
+    assert.deepEqual(pendingIds(turns), []);
+  });
+
+  test('a discarded draft body never reaches R, not even through a retry after a rejected commit', async () => {
+    const store = new MessageStore();
+    const drafts = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const rejectedOutput = { status: 'interrupted', reason: 'output_commit_rejected', discardDraftBody: true };
+
+    await endedTurn(turns, 'turn-kept');
+    const response = await appendProcessingResponse(store, 'turn-kept');
+    await upsertDraft(drafts, 'turn-kept', { content: 'output the fence rejected', thinking: 'hidden' });
+    const settlement = await settle(store, drafts, [], { invocationId: 'turn-kept', ...rejectedOutput }, turns);
+    assert.equal(settlement.kind, 'committed');
+    const terminal = await store.getById(response.id);
+    assert.equal(terminal.content, '');
+    assert.equal(terminal.thinking, undefined);
+    assert.equal(terminal.lifecycle.status, 'interrupted');
+    assert.equal(terminal.lifecycle.reason, 'output_commit_rejected');
+    assert.equal((await drafts.getByThread(USER, THREAD)).length, 0);
+    assert.deepEqual(pendingIds(turns), []);
+
+    // The draft goes before the commit, so a commit that fails leaves nothing a retry could publish.
+    await endedTurn(turns, 'turn-retry');
+    await appendProcessingResponse(store, 'turn-retry', { lifecycleInvocationId: 'turn-other' });
+    await upsertDraft(drafts, 'turn-retry', { content: 'output the fence rejected' });
+    await assert.rejects(
+      settle(store, drafts, [], { invocationId: 'turn-retry', ...rejectedOutput }, turns),
+      /invocation_mismatch/,
+    );
+    assert.equal((await drafts.getByThread(USER, THREAD)).length, 0);
+    assert.deepEqual(pendingIds(turns), ['turn-retry']);
+  });
+
+  test('a later settlement pass ends R with the terminal truth of its ended turn', () => {
+    const turn = { invocationId: 't', startedAt: 100, endedAt: 250 };
+    assert.deepEqual(responseOutcomeForEndedTurn({ ...turn, status: 'failed', terminalReason: 'user_cancel' }), {
+      status: 'failed',
+      reason: 'user_cancel',
+      endedAt: 250,
+    });
+    assert.deepEqual(responseOutcomeForEndedTurn({ ...turn, status: 'canceled', terminalReason: 'user_cancel' }), {
+      status: 'canceled',
+      reason: 'user_cancel',
+      endedAt: 250,
+    });
+    assert.deepEqual(responseOutcomeForEndedTurn({ ...turn, status: 'interrupted' }), {
+      status: 'interrupted',
+      reason: 'process_restart',
+      endedAt: 250,
+    });
+    // It succeeded, but its R never committed: the restart cut off the delivery.
+    assert.deepEqual(responseOutcomeForEndedTurn({ ...turn, status: 'succeeded' }), {
+      status: 'interrupted',
+      reason: 'process_restart',
+      endedAt: 250,
+    });
+    assert.equal(responseOutcomeForEndedTurn({ invocationId: 't', startedAt: 100, status: 'succeeded' }).endedAt, 100);
   });
 });

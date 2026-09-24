@@ -94,7 +94,7 @@ export interface QueueRoutesOptions {
   invocationRecordStore?: IInvocationRecordStore;
   draftStore?: IDraftStore;
   /** Durable per-child lifecycle truth used to bridge tracker/draft handoff gaps. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'listByParent' | 'transitionTerminal'>;
+  turnExecutionStore?: Pick<ITurnExecutionStore, 'listByParent' | 'transitionTerminal' | 'clearResponsePending'>;
   /** F194 Phase Z (KD-22): InvocationRegistry — provides namespace bridge between
    *  parent recordStore invocation and per-cat-turn child registry invocation.
    *  When wired, helper uses parentInvocationId / latestId to detect parent+child
@@ -500,6 +500,15 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         ...childExecutions.map((child) => child.invocationId),
       ]),
     ];
+    // KD-21: the turn ends first, which enters it in the response-pending ledger atomically; its R
+    // settles next, so a settlement that fails here is retried by the next startup.
+    for (const invocationId of childInvocationIds) {
+      await opts.turnExecutionStore?.transitionTerminal(invocationId, {
+        status: 'failed',
+        endedAt: failedAt,
+        terminalReason: failureReason,
+      });
+    }
     let responseTerminalized = false;
     for (const invocationId of childInvocationIds) {
       // KD-21: the failed R carries what the turn had streamed, then the draft goes.
@@ -507,6 +516,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         {
           messageStore,
           ...(opts.draftStore ? { draftStore: opts.draftStore } : {}),
+          ...(opts.turnExecutionStore ? { responseLedger: opts.turnExecutionStore } : {}),
           emit: (userId, message) => emitLifecycleMessageUpdated(socketManager, userId, message),
         },
         {
@@ -534,13 +544,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       if (outcome !== 'retired') throw new Error(`pre-start failure terminalization ${outcome}`);
     }
 
-    for (const invocationId of childInvocationIds) {
-      await opts.turnExecutionStore?.transitionTerminal(invocationId, {
-        status: 'failed',
-        endedAt: failedAt,
-        terminalReason: failureReason,
-      });
-    }
     const record = await opts.invocationRecordStore.get(input.executionId);
     const siblingCatIds = (record?.targetCats ?? []).filter((catId) => catId !== input.catId);
     const ownerSnapshot = await processOwnerSnapshotForRequest(input.request, opts.cliExecutionOwnerService);

@@ -24,6 +24,7 @@ export class InMemoryTurnExecutionStore implements ITurnExecutionStore {
   private readonly records = new Map<string, TurnExecutionRecord>();
   private readonly immutableIdentities = new Map<string, string>();
   private readonly parentIndex = new Map<string, Set<string>>();
+  private readonly responsePending = new Set<string>();
 
   createRunning(input: CreateTurnExecutionInput): CreateTurnExecutionResult {
     assertCreateTurnExecutionInput(input);
@@ -96,7 +97,21 @@ export class InMemoryTurnExecutionStore implements ITurnExecutionStore {
     record.status = input.status;
     record.endedAt = input.endedAt;
     if (input.terminalReason !== undefined) record.terminalReason = input.terminalReason;
+    this.responsePending.add(invocationId);
     return { outcome: 'transitioned', record: cloneTurnExecutionRecord(record) };
+  }
+
+  listResponsePending(): TurnExecutionRecord[] {
+    return sortRecords(
+      [...this.responsePending]
+        .map((invocationId) => this.records.get(invocationId))
+        .filter((record): record is TurnExecutionRecord => record !== undefined)
+        .map(cloneTurnExecutionRecord),
+    );
+  }
+
+  clearResponsePending(invocationId: string): void {
+    this.responsePending.delete(invocationId);
   }
 
   interruptRunningBefore(cutoffStartedAt: number, input: InterruptRunningTurnExecutionsInput): TurnExecutionRecord[] {

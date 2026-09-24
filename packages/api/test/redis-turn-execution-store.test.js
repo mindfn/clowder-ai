@@ -432,4 +432,45 @@ describe('RedisTurnExecutionStore', { skip: redisIsolationSkipReason(REDIS_URL) 
       redis.pipeline = originalPipeline;
     }
   });
+  test('F117 KD-21: the response-pending ledger is entered atomically by every terminal write and persists', async () => {
+    await store.createRunning(runningInput({ invocationId: 'ended', startedAt: 100 }));
+    await store.createRunning(runningInput({ invocationId: 'interrupted', startedAt: 50 }));
+    await store.createRunning(runningInput({ invocationId: 'running', startedAt: 300 }));
+    assert.deepEqual(await store.listResponsePending(), [], 'a running turn has no response to settle yet');
+
+    await store.transitionTerminal('ended', { status: 'succeeded', endedAt: 150 });
+    await store.interruptRunningBefore(200, { endedAt: 250, terminalReason: 'process_restart' });
+
+    const restarted = new RedisTurnExecutionStore(redis);
+    assert.deepEqual(
+      (await restarted.listResponsePending()).map((record) => [record.invocationId, record.status]),
+      [
+        ['interrupted', 'interrupted'],
+        ['ended', 'succeeded'],
+      ],
+    );
+    assert.equal(await redis.ttl('turnexec:response-pending'), -1, 'the ledger is TTL=0 persistent truth');
+
+    await restarted.clearResponsePending('ended');
+    await restarted.clearResponsePending('never-pending');
+    const replay = await restarted.transitionTerminal('ended', {
+      status: 'failed',
+      endedAt: 160,
+      terminalReason: 'late',
+    });
+    assert.equal(replay.outcome, 'already_terminal');
+    assert.deepEqual(
+      (await restarted.listResponsePending()).map((record) => record.invocationId),
+      ['interrupted'],
+    );
+  });
+
+  test('F117 KD-21: a ledger member whose record is gone is skipped, a corrupt one fails loudly', async () => {
+    await redis.sadd('turnexec:response-pending', 'gone');
+    assert.deepEqual(await store.listResponsePending(), []);
+
+    await redis.hset('turnexec:record:corrupt', 'status', 'failed');
+    await redis.sadd('turnexec:response-pending', 'corrupt');
+    await assert.rejects(store.listResponsePending(), /corrupt: non-empty hash failed to hydrate/);
+  });
 });

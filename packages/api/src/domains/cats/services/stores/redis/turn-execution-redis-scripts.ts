@@ -35,6 +35,7 @@ redis.call('HSET', KEYS[1],
   'endedAt', ARGV[2],
   'terminalReason', ARGV[3])
 redis.call('SREM', KEYS[2], ARGV[4])
+redis.call('SADD', KEYS[3], ARGV[4])
 return 1
 `;
 

@@ -14,7 +14,11 @@ interface FailedQueueRecovery {
   }>;
 }
 
-/** F117 KD-21: each child turn's response R ends with the body its draft streamed. */
+/**
+ * F117 KD-21: each child turn's response R ends with the body its draft streamed. A settlement that
+ * throws is retried at the next startup: an ended turn waits in the response-pending ledger, and a
+ * turn still recorded running is interrupted into it first.
+ */
 interface ChildResponseSettlement {
   listChildTurns(executionId: string): readonly TurnExecutionRecord[] | Promise<readonly TurnExecutionRecord[]>;
   settle(turn: TurnExecutionRecord): Promise<unknown>;
@@ -68,7 +72,7 @@ async function settleChildResponses(
     } catch (err) {
       log.warn(
         { invocationId: turn.invocationId, parentInvocationId: event.invocationId, threadId: event.threadId, err },
-        '[F117] zombie reclaim could not settle a child response; its draft is kept',
+        '[F117] zombie reclaim could not settle a child response; its draft is kept and the next startup settles it',
       );
     }
   }

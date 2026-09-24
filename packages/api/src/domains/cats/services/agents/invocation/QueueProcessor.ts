@@ -472,7 +472,7 @@ export interface QueueProcessorDeps {
   freshnessEventLog?: FreshnessAttentionEventLog;
   /** F254 Phase E: typed successor preflight/adoption and crash closure. */
   /** Durable child lifecycle and causal coverage; auth registry is not historical truth. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
+  turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending'>;
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
   actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'preflight' | 'preflightOutput' | 'commitOutcome'>;
   /**
@@ -2273,11 +2273,17 @@ export class QueueProcessor {
     emitLifecycleMessageUpdated(this.deps.socketManager, userId, message);
   }
 
-  /** F117 KD-21: fail the responses a thrown execution left processing, with their draft bodies. */
+  /**
+   * F117 KD-21: settle the responses a thrown execution left processing. An exposed failure fails
+   * each R with its draft body; a fenced action whose failure stays hidden ends R the way a route
+   * ends a rejected output, with its draft discarded. A settlement that throws leaves the ended
+   * turn in the response-pending ledger, and the next startup settles it.
+   */
   private async settleAbandonedResponses(
     userId: string,
     threadId: string,
     responseIds: ReadonlySet<string>,
+    outcome: 'failed' | 'output_rejected',
   ): Promise<void> {
     for (const responseId of responseIds) {
       try {
@@ -2287,15 +2293,17 @@ export class QueueProcessor {
           {
             messageStore: this.deps.messageStore,
             ...(this.deps.draftStore ? { draftStore: this.deps.draftStore } : {}),
+            ...(this.deps.turnExecutionStore ? { responseLedger: this.deps.turnExecutionStore } : {}),
             emit: (recipient, message) => this.emitLifecycleMessageUpdated(recipient, message),
           },
           {
             userId,
             threadId,
             invocationId: response.lifecycle.invocationId,
-            status: 'failed',
-            reason: 'execution_error',
             endedAt: Date.now(),
+            ...(outcome === 'failed'
+              ? { status: 'failed', reason: 'execution_error' }
+              : { status: 'interrupted', reason: 'output_commit_rejected', discardDraftBody: true }),
           },
         );
       } catch (err) {
@@ -2304,6 +2312,21 @@ export class QueueProcessor {
           '[QueueProcessor] failed to settle a response its failed execution left processing',
         );
       }
+    }
+  }
+
+  /** F117 KD-21: a response R confirmed terminal takes its ended turn out of the response-pending ledger. */
+  private async releaseSettledResponseTurn(message: StoredMessage | null | undefined, log: LoggerLike): Promise<void> {
+    const lifecycle = message?.lifecycle;
+    if (lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return;
+    try {
+      await this.deps.turnExecutionStore?.clearResponsePending(lifecycle.invocationId);
+    } catch (err) {
+      // The next startup finds R terminal and clears the entry itself.
+      log.warn(
+        { err, invocationId: lifecycle.invocationId },
+        '[QueueProcessor] failed to clear a settled response from the pending ledger',
+      );
     }
   }
 
@@ -4700,10 +4723,15 @@ export class QueueProcessor {
           '[QueueProcessor] Failed to update invocation record to failed; terminal backstop will retry',
         );
       }
-      // F117 KD-21: the route threw before committing its responses. Each R it left processing fails
-      // now with the body its draft streamed rather than waiting for the next restart; a fenced
-      // action whose failure stays hidden keeps its output uncommitted.
-      if (exposeFailure) await this.settleAbandonedResponses(userId, threadId, lifecycleResponseMessageIds);
+      // F117 KD-21: the route threw before committing its responses. Each R it left processing ends
+      // now rather than waiting for the next restart; a fenced action whose failure stays hidden
+      // keeps its output uncommitted.
+      await this.settleAbandonedResponses(
+        userId,
+        threadId,
+        lifecycleResponseMessageIds,
+        exposeFailure ? 'failed' : 'output_rejected',
+      );
 
       // R4 fix (#873): correct failure cleanup sequence per messages.ts
       // cleanupStreamingOnFailure — onStreamEnd moves sessions from active →
@@ -4759,6 +4787,7 @@ export class QueueProcessor {
         try {
           const lifecycleMessage = await messageStore.getById(lifecycleMessageId);
           if (lifecycleMessage?.lifecycle) this.emitLifecycleMessageUpdated(userId, lifecycleMessage);
+          await this.releaseSettledResponseTurn(lifecycleMessage, log);
         } catch (err) {
           log.warn(
             { err, threadId, lifecycleMessageId },

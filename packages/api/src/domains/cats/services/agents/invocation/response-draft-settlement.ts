@@ -7,6 +7,7 @@ import {
   type StoredToolEvent,
   settleLifecycleResponseInputs,
 } from '../../stores/ports/MessageStore.js';
+import type { ITurnExecutionStore, TurnExecutionRecord } from '../../stores/ports/TurnExecutionStore.js';
 import { extractRichFromText } from '../routing/rich-block-extract.js';
 import { sanitizeInjectedContent } from '../routing/route-helpers.js';
 
@@ -15,8 +16,9 @@ import { sanitizeInjectedContent } from '../routing/route-helpers.js';
  * R is processing. A path that ends a turn outside the route's own commit (stop, restart, zombie
  * reclaim) settles R here: a processing R takes the draft's streamed body with its terminal state,
  * and an R that is already terminal keeps its own. Either way the inputs settle, the terminal R is
- * published, and only then is the draft deleted. A rejected commit throws before any of that, so
- * the draft survives for whoever settles R next.
+ * published, and only then is the draft deleted and the turn cleared from the response-pending
+ * ledger. A rejected commit throws before any of that, so the draft and the ledger entry survive for
+ * the next settlement pass.
  */
 
 /** The admission key of the response R a child turn owns; its draft is keyed by the same id. */
@@ -27,6 +29,8 @@ export function lifecycleResponseIdempotencyKey(invocationId: string): string {
 export interface ResponseDraftSettlementDeps {
   messageStore: IMessageStore;
   draftStore?: Pick<IDraftStore, 'getByThread' | 'delete'>;
+  /** Clears the turn from the response-pending ledger once R is confirmed terminal. */
+  responseLedger?: Pick<ITurnExecutionStore, 'clearResponsePending'>;
   /** Publishes the terminal R to its user's live timeline. */
   emit?: (userId: string, message: StoredMessage) => void;
 }
@@ -41,6 +45,25 @@ export interface ResponseDraftSettlementInput {
   endedAt: number;
   /** Why the turn ended, appended once after the streamed body. */
   explanation?: string;
+  /**
+   * The turn's output was rejected. Its draft is deleted before R commits, so neither this commit
+   * nor a later retry can publish it; R keeps its own empty body.
+   */
+  discardDraftBody?: boolean;
+}
+
+/**
+ * How a later settlement pass ends R: with the ended turn's own terminal truth. A turn that
+ * succeeded but whose R never committed lost its delivery to the process restart.
+ */
+export function responseOutcomeForEndedTurn(
+  turn: TurnExecutionRecord,
+): Pick<ResponseDraftSettlementInput, 'status' | 'reason' | 'endedAt'> {
+  const endedAt = turn.endedAt ?? turn.startedAt;
+  if (turn.status === 'failed' || turn.status === 'canceled' || turn.status === 'interrupted') {
+    return { status: turn.status, reason: turn.terminalReason ?? 'process_restart', endedAt };
+  }
+  return { status: 'interrupted', reason: 'process_restart', endedAt };
 }
 
 export type ResponseDraftSettlement =
@@ -56,41 +79,52 @@ export async function settleResponseFromDraft(
     input.threadId,
     lifecycleResponseIdempotencyKey(input.invocationId),
   );
-  if (response?.lifecycle?.kind !== 'response') return { kind: 'no_response' };
-
-  let kind: 'committed' | 'already_terminal' = 'already_terminal';
-  let terminal = response;
-  if (response.lifecycle.status === 'processing') {
-    const draft = deps.draftStore
-      ? (await deps.draftStore.getByThread(input.userId, input.threadId)).find(
-          (candidate) => candidate.invocationId === input.invocationId,
-        )
-      : undefined;
-    const result = await deps.messageStore.commitLifecycleResponseTerminal(
-      response.id,
-      terminalPatchFromDraft(response, draft, input),
-    );
-    if (result.kind === 'applied' || result.kind === 'replayed') {
-      kind = 'committed';
-      terminal = result.message;
-    } else if (
-      // Another writer ended R first; its terminal body stands.
-      result.kind !== 'conflict' ||
-      result.message.lifecycle?.kind !== 'response' ||
-      result.message.lifecycle.status === 'processing'
-    ) {
-      throw new Error(
-        `response draft settlement rejected: ${result.kind}${result.kind === 'conflict' ? `:${result.reason}` : ''}`,
-      );
-    } else {
-      terminal = result.message;
-    }
+  if (response?.lifecycle?.kind !== 'response') {
+    await deps.responseLedger?.clearResponsePending(input.invocationId);
+    return { kind: 'no_response' };
   }
 
-  await settleLifecycleResponseInputs(deps.messageStore, terminal, terminal.id);
-  deps.emit?.(input.userId, terminal);
+  const settled =
+    response.lifecycle.status === 'processing'
+      ? await commitFromDraft(deps, response, input)
+      : { kind: 'already_terminal' as const, message: response };
+  await settleLifecycleResponseInputs(deps.messageStore, settled.message, settled.message.id);
+  deps.emit?.(input.userId, settled.message);
   await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
-  return { kind, message: terminal };
+  await deps.responseLedger?.clearResponsePending(input.invocationId);
+  return settled;
+}
+
+/** Commits a processing R with its draft's body. A writer that ended R first keeps its own body. */
+async function commitFromDraft(
+  deps: ResponseDraftSettlementDeps,
+  response: StoredMessage,
+  input: ResponseDraftSettlementInput,
+): Promise<{ kind: 'committed' | 'already_terminal'; message: StoredMessage }> {
+  if (input.discardDraftBody) await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
+  const draft = input.discardDraftBody ? undefined : await readDraft(deps, input);
+  const result = await deps.messageStore.commitLifecycleResponseTerminal(
+    response.id,
+    terminalPatchFromDraft(response, draft, input),
+  );
+  if (result.kind === 'applied' || result.kind === 'replayed') return { kind: 'committed', message: result.message };
+  const endedByAnotherWriter =
+    result.kind === 'conflict' &&
+    result.message.lifecycle?.kind === 'response' &&
+    result.message.lifecycle.status !== 'processing';
+  if (endedByAnotherWriter) return { kind: 'already_terminal', message: result.message };
+  throw new Error(
+    `response draft settlement rejected: ${result.kind}${result.kind === 'conflict' ? `:${result.reason}` : ''}`,
+  );
+}
+
+async function readDraft(
+  deps: ResponseDraftSettlementDeps,
+  input: ResponseDraftSettlementInput,
+): Promise<DraftRecord | undefined> {
+  if (!deps.draftStore) return undefined;
+  const drafts = await deps.draftStore.getByThread(input.userId, input.threadId);
+  return drafts.find((candidate) => candidate.invocationId === input.invocationId);
 }
 
 function terminalPatchFromDraft(

@@ -221,4 +221,31 @@ describe('InMemoryTurnExecutionStore', () => {
       'the enumerator must not depend on parent-side reachability',
     );
   });
+  test('F117 KD-21: every terminal transition enters the response-pending ledger until cleared', async () => {
+    const store = new InMemoryTurnExecutionStore();
+    await store.createRunning(runningInput({ invocationId: 'ended', startedAt: 100 }));
+    await store.createRunning(runningInput({ invocationId: 'interrupted', startedAt: 50 }));
+    await store.createRunning(runningInput({ invocationId: 'running', startedAt: 300 }));
+    assert.deepEqual(await store.listResponsePending(), [], 'a running turn has no response to settle yet');
+
+    await store.transitionTerminal('ended', { status: 'succeeded', endedAt: 150 });
+    await store.interruptRunningBefore(200, { endedAt: 250, terminalReason: 'process_restart' });
+    assert.deepEqual(
+      (await store.listResponsePending()).map((record) => [record.invocationId, record.status]),
+      [
+        ['interrupted', 'interrupted'],
+        ['ended', 'succeeded'],
+      ],
+    );
+
+    await store.clearResponsePending('ended');
+    await store.clearResponsePending('never-pending');
+    // A replayed terminal transition must not re-enter a turn whose R was already confirmed.
+    const replay = await store.transitionTerminal('ended', { status: 'failed', endedAt: 160, terminalReason: 'late' });
+    assert.equal(replay.outcome, 'already_terminal');
+    assert.deepEqual(
+      (await store.listResponsePending()).map((record) => record.invocationId),
+      ['interrupted'],
+    );
+  });
 });

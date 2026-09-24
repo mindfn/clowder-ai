@@ -99,7 +99,10 @@ import { QueueProcessor } from './domains/cats/services/agents/invocation/QueueP
 import { InMemoryQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { RedisQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { reconcileZombies } from './domains/cats/services/agents/invocation/reconcileZombies.js';
-import { settleResponseFromDraft } from './domains/cats/services/agents/invocation/response-draft-settlement.js';
+import {
+  responseOutcomeForEndedTurn,
+  settleResponseFromDraft,
+} from './domains/cats/services/agents/invocation/response-draft-settlement.js';
 import { SessionContinuationCoordinator } from './domains/cats/services/agents/invocation/SessionContinuationCoordinator.js';
 import { SessionMutex } from './domains/cats/services/agents/invocation/SessionMutex.js';
 import {
@@ -2856,13 +2859,18 @@ async function main(): Promise<void> {
     });
   }
   // F117 KD-21: a turn ended by restart or zombie reclaim never reached its route's commit, so its
-  // response R ends interrupted with the body its draft streamed.
+  // response R ends with the body its draft streamed. Settlement clears the turn from the
+  // response-pending ledger; a turn whose settlement fails stays there for the next startup.
   const lifecycleSocket = socketManager;
-  const settleInterruptedTurnResponse = (turn: TurnExecutionRecord, reason: string) =>
+  const settleTurnResponse = (
+    turn: TurnExecutionRecord,
+    outcome: Pick<Parameters<typeof settleResponseFromDraft>[1], 'status' | 'reason' | 'endedAt'>,
+  ) =>
     settleResponseFromDraft(
       {
         messageStore,
         draftStore,
+        responseLedger: turnExecutionStore,
         ...(lifecycleSocket
           ? {
               emit: (userId: string, message: StoredMessage) =>
@@ -2870,21 +2878,19 @@ async function main(): Promise<void> {
             }
           : {}),
       },
-      {
-        userId: turn.userId,
-        threadId: turn.threadId,
-        invocationId: turn.invocationId,
-        status: 'interrupted',
-        reason,
-        endedAt: turn.endedAt ?? Date.now(),
-      },
+      { userId: turn.userId, threadId: turn.threadId, invocationId: turn.invocationId, ...outcome },
     );
   const onReconciledZombie = createZombieTerminalRecovery({
     queueProcessor,
     log: app.log,
     childResponses: {
       listChildTurns: (executionId) => turnExecutionStore.listByParent(executionId),
-      settle: (turn) => settleInterruptedTurnResponse(turn, 'zombie_record_detected'),
+      settle: (turn) =>
+        settleTurnResponse(turn, {
+          status: 'interrupted',
+          reason: 'zombie_record_detected',
+          endedAt: turn.endedAt ?? Date.now(),
+        }),
     },
   });
   const invocationOwnerSocketManager = socketManager;
@@ -6665,17 +6671,20 @@ async function main(): Promise<void> {
         if (!redis) return;
         const authRecovery = await turnExecutionStore.reconcileStartup({ processStartedAt: PROCESS_START_AT });
         const liveExecutionOwners = await cliExecutionOwnerService.listLive();
+        const childReconciler = new TurnExecutionStartupReconciler({
+          store: turnExecutionStore,
+          settleEndedTurnResponse: (turn) => settleTurnResponse(turn, responseOutcomeForEndedTurn(turn)),
+        });
         const childRecovery = liveExecutionOwners.complete
-          ? await new TurnExecutionStartupReconciler({
-              store: turnExecutionStore,
-              settleInterruptedResponse: (turn) => settleInterruptedTurnResponse(turn, 'process_restart'),
-            }).reconcile({
+          ? await childReconciler.reconcile({
               processStartedAt: PROCESS_START_AT,
               protectedInvocationIds: liveExecutionOwners.owners.map((owner) => owner.invocationId),
             })
           : {
               interruptedCount: 0,
               invocationIds: [],
+              // Ended turns have no owner left to wait for; running ones keep their unknown owners.
+              ...(await childReconciler.settleEndedTurnResponses({ processStartedAt: PROCESS_START_AT })),
               reconciledAt: Date.now(),
               skippedReason: 'cli_execution_owner_snapshot_incomplete',
             };

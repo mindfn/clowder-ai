@@ -9,6 +9,9 @@ const { CallerDispatchObservationRegistry } = await import(
 );
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
 const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/DraftStore.js');
+const { InMemoryTurnExecutionStore } = await import(
+  '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
+);
 const { MessageStore, settleLifecycleResponseInputs } = await import(
   '../dist/domains/cats/services/stores/ports/MessageStore.js'
 );
@@ -64,6 +67,8 @@ function createHarness({
   callerDispatchObservationRegistry = new CallerDispatchObservationRegistry(),
   processorOptions,
   draftStore,
+  turnExecutionStore,
+  actionSuccessorLeaseStore,
 } = {}) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
@@ -108,8 +113,29 @@ function createHarness({
     callerDispatchObservationRegistry,
     log: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
     ...(draftStore ? { draftStore } : {}),
+    ...(turnExecutionStore ? { turnExecutionStore } : {}),
+    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
   };
   return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
+}
+
+/** Records and ends the child turn the way invoke-single-cat does, entering the response-pending ledger. */
+async function endChildTurn(turns, args, invocationId, terminal, catId = args[4][0]) {
+  const [userId, , threadId, , , , options] = args;
+  await turns.createRunning({
+    invocationId,
+    parentInvocationId: options.parentInvocationId,
+    threadId,
+    userId,
+    catId,
+    executionKind: 'ordinary',
+    startedAt: Date.now() - 1,
+  });
+  await turns.transitionTerminal(invocationId, { endedAt: Date.now(), ...terminal });
+}
+
+function pendingTurnIds(turns) {
+  return turns.listResponsePending().map((turn) => turn.invocationId);
 }
 
 async function startLifecycle(args, invocationId) {
@@ -556,6 +582,155 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     } finally {
       releaseSibling();
     }
+  });
+
+  it('F117 KD-21: a thrown route settles its R out of the ledger; a settlement that fails stays in it', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const responseIds = new Map();
+    const harness = createHarness({
+      draftStore,
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        for (const [catId, invocationId] of [
+          [targetCats[0], 'turn-settles'],
+          [targetCats[1], 'turn-stuck'],
+        ]) {
+          const admission = await options.onLifecycleInvocationStarted({
+            threadId,
+            userId,
+            catId,
+            invocationId,
+            parentInvocationId: options.parentInvocationId,
+            startedAt: Date.now(),
+          });
+          responseIds.set(invocationId, admission.responseMessageId);
+          draftStore.upsert({
+            userId,
+            threadId,
+            invocationId,
+            catId,
+            content: `${invocationId} streamed`,
+            updatedAt: Date.now(),
+          });
+          await endChildTurn(
+            turns,
+            args,
+            invocationId,
+            { status: 'failed', terminalReason: 'provider_execution_failed' },
+            catId,
+          );
+          yield { type: 'text', catId, content: 'partial', timestamp: Date.now() };
+        }
+        throw new Error('route exploded mid-stream');
+      },
+    });
+    const commit = harness.messageStore.commitLifecycleResponseTerminal.bind(harness.messageStore);
+    harness.messageStore.commitLifecycleResponseTerminal = async (id, patch) => {
+      if (patch.invocationId === 'turn-stuck') throw new Error('redis unavailable');
+      return commit(id, patch);
+    };
+    await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    // Settled in order: turn-settles commits first, then turn-stuck's commit fails and is logged.
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('failed to settle a response')),
+    );
+
+    assert.equal(harness.messageStore.getById(responseIds.get('turn-settles')).content, 'turn-settles streamed');
+    assert.equal(harness.messageStore.getById(responseIds.get('turn-stuck')).lifecycle.status, 'processing');
+    assert.deepEqual(pendingTurnIds(turns), ['turn-stuck'], 'the next startup settles the one that failed');
+    assert.deepEqual(
+      draftStore.getByThread('user-1', 'thread-1').map((draft) => draft.invocationId),
+      ['turn-stuck'],
+    );
+  });
+
+  it('F117 KD-21: a fenced action whose failure stays hidden ends R as a rejected output, draft discarded', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const actionSuccessorLeaseStore = {
+      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
+      preflightOutput: mock.fn(async () => ({ ok: true, reason: 'active' })),
+      commitOutcome: mock.fn(async () => ({ outcome: 'stale_generation' })),
+    };
+    let responseMessageId;
+    const harness = createHarness({
+      draftStore,
+      turnExecutionStore: turns,
+      actionSuccessorLeaseStore,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats] = args;
+        responseMessageId = (await startLifecycle(args, 'turn-fenced')).responseMessageId;
+        draftStore.upsert({
+          userId,
+          threadId,
+          invocationId: 'turn-fenced',
+          catId: targetCats[0],
+          content: 'output the lease no longer accepts',
+          updatedAt: Date.now(),
+        });
+        await endChildTurn(turns, args, 'turn-fenced', {
+          status: 'failed',
+          terminalReason: 'provider_execution_failed',
+        });
+        yield { type: 'text', catId: targetCats[0], content: 'partial', timestamp: Date.now() };
+        throw new Error('route exploded after the lease moved on');
+      },
+    });
+    await admitMessage(harness, {
+      actionSuccessorFence: {
+        leaseId: 'lease-1',
+        generation: 1,
+        dispatchId: 'multi-mention:req-1',
+        terminalPredicateDigest: 'predicate-digest-1',
+      },
+    });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'interrupted');
+
+    const response = harness.messageStore.getById(responseMessageId);
+    assert.equal(response.lifecycle.reason, 'output_commit_rejected');
+    assert.equal(response.content, '');
+    assert.equal(actionSuccessorLeaseStore.commitOutcome.mock.calls.length, 1);
+    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 0);
+    assert.deepEqual(pendingTurnIds(turns), []);
+  });
+
+  it('F117 KD-21: a response the route committed takes its ended turn out of the ledger', async () => {
+    const turns = new InMemoryTurnExecutionStore();
+    let responseMessageId;
+    const harness = createHarness({
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        const [, , , , targetCats] = args;
+        responseMessageId = (await startLifecycle(args, 'turn-done')).responseMessageId;
+        // invoke-single-cat ends the turn before the route commits its R.
+        await endChildTurn(turns, args, 'turn-done', { status: 'succeeded' });
+        assert.deepEqual(pendingTurnIds(turns), ['turn-done']);
+        const committed = await harness.messageStore.commitLifecycleResponseTerminal(responseMessageId, {
+          invocationId: 'turn-done',
+          status: 'completed',
+          completedAt: Date.now(),
+          content: 'answer',
+          mentions: [],
+          origin: 'stream',
+        });
+        assert.ok(committed.kind === 'applied' || committed.kind === 'replayed');
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    await admitMessage(harness);
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(
+      () => responseMessageId && harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'completed',
+    );
+    // The processor's completion pass confirms the committed R after the route returns.
+    await waitFor(() => pendingTurnIds(turns).length === 0);
   });
 
   it('F117 KD-21: a route that throws fails the response it left processing with its draft body', async () => {

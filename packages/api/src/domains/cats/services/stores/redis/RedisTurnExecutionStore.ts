@@ -134,9 +134,10 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
     const result = Number(
       await this.redis.eval(
         TERMINALIZE_TURN_EXECUTION_LUA,
-        2,
+        3,
         TurnExecutionKeys.record(invocationId),
         TurnExecutionKeys.running,
+        TurnExecutionKeys.responsePending,
         input.status,
         String(input.endedAt),
         input.terminalReason ?? '',
@@ -182,6 +183,29 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
       records.push(cloneTurnExecutionRecord(record));
     }
     return sortTurnExecutions(records);
+  }
+
+  async listResponsePending(): Promise<TurnExecutionRecord[]> {
+    const childIds = await this.redis.smembers(TurnExecutionKeys.responsePending);
+    if (childIds.length === 0) return [];
+    const pipeline = this.redis.pipeline();
+    for (const invocationId of childIds) pipeline.hgetall(TurnExecutionKeys.record(invocationId));
+    const results = await pipeline.exec();
+    const records: TurnExecutionRecord[] = [];
+    for (let index = 0; index < childIds.length; index += 1) {
+      const invocationId = childIds[index];
+      const hash = readAuthoritativeHash(results?.[index], `turn execution ${invocationId}`);
+      // No record means no turn whose response could still settle.
+      if (hash === null) continue;
+      const record = hydrateTurnExecution(hash as RedisTurnExecutionHash);
+      if (!record) throw new Error(`turn execution ${invocationId}: non-empty hash failed to hydrate`);
+      records.push(cloneTurnExecutionRecord(record));
+    }
+    return sortTurnExecutions(records);
+  }
+
+  async clearResponsePending(invocationId: string): Promise<void> {
+    await this.redis.srem(TurnExecutionKeys.responsePending, invocationId);
   }
 
   async interruptRunningBefore(

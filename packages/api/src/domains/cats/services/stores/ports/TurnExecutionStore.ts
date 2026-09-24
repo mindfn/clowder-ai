@@ -58,6 +58,14 @@ export interface ITurnExecutionStore {
     cutoffStartedAt: number,
     input: InterruptRunningTurnExecutionsInput,
   ): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
+  /**
+   * F117 KD-21: ended child turns whose response R is not yet confirmed terminal. Every terminal
+   * transition enters this ledger atomically with the transition, so neither a failed R commit nor
+   * a crash between the two writes can hide the turn from the next settlement pass.
+   */
+  listResponsePending(): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
+  /** Leaves the ledger once the turn's response R is confirmed terminal (or the turn has none). */
+  clearResponsePending(invocationId: string): void | Promise<void>;
 }
 
 export type BindCoveredMessageIdsResult =
