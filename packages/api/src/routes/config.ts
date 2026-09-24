@@ -48,7 +48,7 @@ import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadS
 // so env-summary returns the path the active pino destination is actually writing to.
 // Reading process.env.LOG_DIR here would diverge from logger after a runtime
 // `PATCH /api/config/env` LOG_DIR edit — env-summary would lie about effective path.
-import { LOG_DIR_PATH, logger, setRuntimeLogLevel } from '../infrastructure/logger.js';
+import { isDebugMode, LOG_DIR_PATH, logger, setRuntimeLogLevel } from '../infrastructure/logger.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { isDirectLoopbackRequest, isTrustedLocalApiRequest } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
@@ -200,8 +200,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   // logger.ts. Read-only here (no env migration at boot): an env-only level is
   // already effective via the logger's module-load constant, and env→JSON
   // migration happens on the first GET of /api/config/log-level.
+  // The --debug flag outranks the stored preference: it is the packaged
+  // build's only way to raise logging, and silently dropping it here made the
+  // debug switch a no-op for anyone who had ever stored a level (#1062).
+  // A level PUT at runtime still applies per the operator's new intent.
   const storedLogLevel = readStoredLogLevel(projectRoot);
-  if (storedLogLevel) setRuntimeLogLevel(storedLogLevel);
+  if (storedLogLevel && !isDebugMode) setRuntimeLogLevel(storedLogLevel);
 
   // F770: wire the JSON-preferences denylist into project-path validation.
   // Fail-closed: before this line (or if the provider is never wired, e.g.

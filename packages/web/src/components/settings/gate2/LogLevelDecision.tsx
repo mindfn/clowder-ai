@@ -48,7 +48,7 @@ export function LogLevelDecision() {
       <div className="space-y-2">
         <select
           aria-label="日志详细程度"
-          value={logLevel?.stored ?? logLevel?.effective ?? 'info'}
+          value={logLevel?.effective ?? logLevel?.stored ?? 'info'}
           onChange={(event) => void saveLogLevel(event.target.value)}
           className={selectClass}
         >

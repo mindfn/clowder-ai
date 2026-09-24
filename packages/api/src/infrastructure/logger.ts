@@ -17,7 +17,9 @@ import { resolveLogDir } from '../config/data-dirs.js';
 
 /**
  * --debug CLI flag: `node dist/index.js --debug` sets log level to 'debug'.
- * Precedence: --debug flag > LOG_LEVEL env var > default 'info'.
+ * Precedence: --debug flag > stored user preference (applied at startup by
+ * configRoutes, skipped when --debug is set) > LOG_LEVEL env var > default
+ * 'info'. A level PUT at runtime applies per the operator's new intent.
  */
 export const isDebugMode = process.argv.includes('--debug');
 const LOG_LEVEL = (isDebugMode ? 'debug' : (process.env.LOG_LEVEL ?? 'info')) as pino.Level;

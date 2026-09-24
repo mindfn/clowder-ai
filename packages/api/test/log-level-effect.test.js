@@ -6,6 +6,7 @@
  * the double source is eliminated.
  */
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -139,6 +140,37 @@ describe('#770 F770: log level applies at runtime without restart', () => {
       if (savedEnv === undefined) delete process.env.LOG_LEVEL;
       else process.env.LOG_LEVEL = savedEnv;
       setRuntimeLogLevel(originalLevel);
+    }
+  });
+
+  it('red: --debug flag wins over a stored JSON level at startup (real subprocess)', async () => {
+    // isDebugMode is an import-time constant read from process.argv, so this
+    // MUST run in a child process whose argv really contains --debug — no
+    // in-process mock can cover the true startup path.
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-log-level-'));
+    try {
+      const fixture = resolve(import.meta.dirname, 'fixtures/debug-log-level-startup.mjs');
+      const setup = resolve(import.meta.dirname, 'helpers/setup-cat-registry.js');
+      await new Promise((resolvePromise, rejectPromise) => {
+        execFile(
+          process.execPath,
+          ['--import', setup, fixture, '--debug'],
+          {
+            env: { ...process.env, TEST_TEMP_ROOT: tempRoot, NODE_ENV: 'test' },
+            timeout: 60_000,
+          },
+          (error, stdout, stderr) => {
+            if (error) {
+              rejectPromise(new Error(`--debug startup fixture failed: ${stderr || stdout}`));
+              return;
+            }
+            assert.match(stdout, /DEBUG_STARTUP_OK/);
+            resolvePromise();
+          },
+        );
+      });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });
