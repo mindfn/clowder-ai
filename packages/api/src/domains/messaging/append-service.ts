@@ -37,6 +37,7 @@ import { validateAppendInput } from './contract/validate.js';
 import { type AppendOpRecord, type PluginMessageExtra, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
 import type { MessagingLedger } from './ledger.js';
+import type { MediaReferenceAuthority } from './media-reference-authority.js';
 import type { AppendLease, AppendLock, EventLogStore } from './stores/ports.js';
 
 export const APPEND_LOCK_TTL_MS = 5_000;
@@ -47,6 +48,7 @@ export interface AppendServiceDeps {
   readonly handles: HandleService;
   readonly events: EventLogStore;
   readonly appendLock: AppendLock;
+  readonly mediaReferences?: Pick<MediaReferenceAuthority, 'assertCanReference'>;
   readonly retentionCount?: number;
 }
 
@@ -168,6 +170,12 @@ export class AppendService {
         },
       ],
     };
+    if (
+      parsed.elements.some((element) => element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_'))
+    ) {
+      if (!this.deps.mediaReferences) throw new MessagingError('MEDIA_ACCESS_DENIED', 'Media access denied');
+      await this.deps.mediaReferences.assertCanReference(ctx.pluginInstanceId, parsed.elements);
+    }
     const written = await this.deps.messageStore.updatePluginMessage(
       currentMessage.id,
       updated as unknown as NonNullable<NonNullable<StoredMessage['extra']>['pluginMessage']>,

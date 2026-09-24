@@ -156,6 +156,12 @@ export class FileMessagingMediaLedger {
     }
   }
 
+  /** Ownership only; never expose the private locator or turn the hmr identifier into a bearer. */
+  async isImportOwner(hmrId: string, instanceId: string): Promise<boolean> {
+    const record = await this.record(hmrId);
+    return record?.ownerInstanceId === instanceId;
+  }
+
   private async openVerifiedRecord(record: StoredMediaRecord): Promise<{ handle: FileHandle; identity: string }> {
     const handle = await open(record.locator, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {

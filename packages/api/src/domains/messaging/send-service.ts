@@ -36,6 +36,7 @@ import {
 } from './ingress-wake.js';
 
 import type { MessagingLedger } from './ledger.js';
+import type { MediaReferenceAuthority } from './media-reference-authority.js';
 import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
 
 import { clampRetention } from './stores/ports.js';
@@ -45,6 +46,7 @@ export interface SendServiceDeps {
   readonly handles: HandleService;
   readonly ledger: MessagingLedger;
   readonly events: EventLogStore;
+  readonly mediaReferences?: Pick<MediaReferenceAuthority, 'assertCanReference'>;
   readonly retentionCount?: number;
   /** Defaults to the runtime CatRegistry; injectable so unit tests do not mutate the global registry. */
   readonly isKnownCatId?: (catId: string) => boolean;
@@ -199,6 +201,15 @@ export class SendService {
         }
       }
 
+      // Check immediately before persistence, after potentially slow handle/parent resolution.
+      if (
+        draft.payload.elements.some(
+          (element) => element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_'),
+        )
+      ) {
+        if (!this.deps.mediaReferences) throw new MessagingError('MEDIA_ACCESS_DENIED', 'Media access denied');
+        await this.deps.mediaReferences.assertCanReference(ctx.pluginInstanceId, draft.payload.elements);
+      }
       const timestamp = Date.now();
       const stored = await this.deps.messageStore.append({
         threadId: handle.threadId,

@@ -193,6 +193,167 @@ test('snapshot grants expire, while an independent delivery grant remains readab
   assert.equal(snapshot.scope.kind, 'snapshot');
 });
 
+test('delivery retry reuses its live grant and instance stop revokes every scope', async () => {
+  const port = new MemoryMediaEntitlementPort();
+  const entitlements = new MediaEntitlementLedger(port);
+  const input = { instanceId: 'pi_a', scope: deliveryScope, elementId: 'media-1', hmrId: 'hmr_abc' };
+  const first = await entitlements.grant(input);
+  const retried = await entitlements.grant(input);
+  assert.equal(retried.grantId, first.grantId);
+  await entitlements.grant({
+    ...input,
+    scope: { kind: 'snapshot', sessionId: 'session-1' },
+  });
+  assert.equal((await port.load()).audit.length, 2);
+  await entitlements.revoke({ instanceId: 'pi_a' }, 'instance_stopped');
+  assert.equal(await entitlements.isEntitled('pi_a', 'hmr_abc'), false);
+  assert.deepEqual(
+    (await port.load()).audit.filter((entry) => entry.kind === 'revoke').map((entry) => entry.revokeReason),
+    ['instance_stopped', 'instance_stopped'],
+  );
+});
+
+test('one delivery grants all media in one durable audit transaction', async () => {
+  const memory = new MemoryMediaEntitlementPort();
+  let saves = 0;
+  const port = {
+    load: () => memory.load(),
+    async save(state) {
+      saves += 1;
+      await memory.save(state);
+    },
+  };
+  const entitlements = new MediaEntitlementLedger(port);
+  const inputs = Array.from({ length: 32 }, (_, i) => ({
+    instanceId: 'pi_a',
+    scope: deliveryScope,
+    elementId: `media-${i}`,
+    hmrId: `hmr_${i}`,
+  }));
+  await entitlements.grantMany(inputs);
+  assert.equal(saves, 1);
+  assert.equal((await memory.load()).audit.length, 32);
+  await entitlements.grantMany(inputs);
+  assert.equal(saves, 1, 'retry is idempotent without rewriting the audit');
+});
+
+test('re-reference authority allows only import owner or current entitlement', async () => {
+  const { ledger, entitlements } = await fixture();
+  const { MediaReferenceAuthority } = await import('../dist/domains/messaging/media-reference-authority.js');
+  const authority = new MediaReferenceAuthority({ ledger, entitlements });
+  const reference = await ledger.register(Buffer.from('bytes'), { ownerInstanceId: 'pi_a' });
+  const elements = [{ elementId: 'media-1', kind: 'media_ref', payload: { type: 'file', reference } }];
+  await authority.assertCanReference('pi_a', elements);
+  await rejectsCode(authority.assertCanReference('pi_b', elements), 'MEDIA_ACCESS_DENIED');
+  const grant = await entitlements.grant({
+    instanceId: 'pi_b',
+    scope: deliveryScope,
+    elementId: 'media-1',
+    hmrId: reference,
+  });
+  await authority.assertCanReference('pi_b', elements);
+  await entitlements.revoke({ grantId: grant.grantId }, 'action_returned');
+  await rejectsCode(authority.assertCanReference('pi_b', elements), 'MEDIA_ACCESS_DENIED');
+  await rejectsCode(
+    authority.assertCanReference('pi_b', [
+      { ...elements[0], payload: { type: 'file', reference: `hmr_${'z'.repeat(32)}` } },
+    ]),
+    'MEDIA_ACCESS_DENIED',
+  );
+});
+
+test('messaging.send enforces hmr ownership but settled retry keeps its receipt after revoke', async () => {
+  const { ledger, entitlements } = await fixture();
+  const { MediaReferenceAuthority } = await import('../dist/domains/messaging/media-reference-authority.js');
+  const { createMessagingDomain } = await import('../dist/domains/messaging/messaging-service.js');
+  const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+  const messaging = createMessagingDomain({
+    messageStore: new MessageStore(),
+    mediaReferences: new MediaReferenceAuthority({ ledger, entitlements }),
+  });
+  const ctx = { pluginInstanceId: 'pi_b' };
+  const reference = await ledger.register(Buffer.from('bytes'), { ownerInstanceId: 'pi_a' });
+  const { handleId } = await messaging.issueThreadHandle({
+    pluginInstanceId: 'pi_b',
+    threadId: 'thread-1',
+    userId: 'user-1',
+    scope: { canSend: true, canSubscribe: false },
+  });
+  const draft = {
+    address: { kind: 'thread_handle', handle: handleId },
+    idempotencyKey: 'media-send-1',
+    payload: {
+      provenance: { epistemicStatus: 'user_intent' },
+      elements: [{ elementId: 'media-1', kind: 'media_ref', payload: { type: 'file', reference } }],
+    },
+  };
+  await rejectsCode(messaging.send(ctx, draft), 'MEDIA_ACCESS_DENIED');
+  const grant = await entitlements.grant({
+    instanceId: 'pi_b',
+    scope: deliveryScope,
+    elementId: 'media-1',
+    hmrId: reference,
+  });
+  const receipt = await messaging.send(ctx, draft);
+  await entitlements.revoke({ grantId: grant.grantId }, 'action_returned');
+  assert.deepEqual(await messaging.send(ctx, draft), receipt);
+  await rejectsCode(messaging.send(ctx, { ...draft, idempotencyKey: 'media-send-2' }), 'MEDIA_ACCESS_DENIED');
+});
+
+test('messaging.appendElements enforces the same current hmr authority', async () => {
+  const { ledger, entitlements } = await fixture();
+  const { MediaReferenceAuthority } = await import('../dist/domains/messaging/media-reference-authority.js');
+  const { createMessagingDomain } = await import('../dist/domains/messaging/messaging-service.js');
+  const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+  const messaging = createMessagingDomain({
+    messageStore: new MessageStore(),
+    mediaReferences: new MediaReferenceAuthority({ ledger, entitlements }),
+  });
+  const ctx = { pluginInstanceId: 'pi_b' };
+  const reference = await ledger.register(Buffer.from('bytes'), { ownerInstanceId: 'pi_a' });
+  const { handleId } = await messaging.issueThreadHandle({
+    pluginInstanceId: 'pi_b',
+    threadId: 'thread-1',
+    userId: 'user-1',
+    scope: { canSend: true, canSubscribe: true },
+  });
+  const receipt = await messaging.send(ctx, {
+    address: { kind: 'thread_handle', handle: handleId },
+    idempotencyKey: 'append-base',
+    payload: {
+      provenance: { epistemicStatus: 'inference' },
+      elements: [{ elementId: 'base', kind: 'text', payload: { text: 'base' } }],
+    },
+  });
+  const append = {
+    handle: receipt.messageHandle,
+    operationId: 'append-1',
+    baseRevision: 1,
+    elements: [
+      { elementId: 'media-1', kind: 'media_ref', payload: { type: 'file', reference }, derivedFromElementId: 'base' },
+    ],
+  };
+  await rejectsCode(messaging.appendElements(ctx, append), 'MEDIA_ACCESS_DENIED');
+  const grant = await entitlements.grant({
+    instanceId: 'pi_b',
+    scope: deliveryScope,
+    elementId: 'media-1',
+    hmrId: reference,
+  });
+  const applied = await messaging.appendElements(ctx, append);
+  await entitlements.revoke({ grantId: grant.grantId }, 'action_returned');
+  assert.deepEqual(await messaging.appendElements(ctx, append), applied);
+  await rejectsCode(
+    messaging.appendElements(ctx, {
+      ...append,
+      operationId: 'append-2',
+      baseRevision: 2,
+      elements: [{ ...append.elements[0], elementId: 'media-2' }],
+    }),
+    'MEDIA_ACCESS_DENIED',
+  );
+});
+
 test('a corrupt entitlement audit snapshot fails closed without leaking store details', async () => {
   const { root, ledger, media } = await fixture();
   const reference = await ledger.register(Buffer.from('secret'), { ownerInstanceId: 'pi_a' });

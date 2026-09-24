@@ -11,6 +11,7 @@ import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js'
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import { FileMediaEntitlementPort, MediaEntitlementLedger } from '../messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../messaging/media-ledger.js';
+import { MediaReferenceAuthority } from '../messaging/media-reference-authority.js';
 import {
   createMessagingDomain,
   type MessagingDomainDeps,
@@ -32,6 +33,7 @@ import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js'
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
 import type { DeclaredScheduleTaskRunner } from './declared/declared-runtime-contributions.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
+import { PLUGIN_OWNER_UNINSTALLED_REASON } from './external-plugin-lifecycle-types.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeSupervisor } from './external-runtime/supervisor.js';
 import type { ExternalPluginProcessAdapter, VerifiedPluginPackageLocator } from './external-runtime/types.js';
@@ -206,8 +208,16 @@ export function createDormantPluginRuntimeComposition(
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
   });
+  const mediaLedger = new FileMessagingMediaLedger(resolve(dirname(paths.inventorySnapshotPath), 'media'));
+  const mediaEntitlements = new MediaEntitlementLedger(
+    new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), 'media-entitlements.json')),
+    { now: options.now ?? Date.now },
+  );
   const messaging = createMessagingDomain({
     messageStore: options.messageStore,
+    mediaReferences: new MediaReferenceAuthority({ ledger: mediaLedger, entitlements: mediaEntitlements }),
+    mediaEntitlements,
+    ...(options.now === undefined ? {} : { snapshotClock: { now: options.now } }),
     ...(options.messagingStores === undefined ? {} : { stores: options.messagingStores }),
     ...(options.onMessagePublished === undefined ? {} : { onPublished: options.onMessagePublished }),
     ...(options.redis === undefined ? {} : { redis: options.redis }),
@@ -217,11 +227,6 @@ export function createDormantPluginRuntimeComposition(
     ...(options.getDefaultCatId === undefined ? {} : { getDefaultCatId: options.getDefaultCatId }),
     ...(options.getMentionPatterns === undefined ? {} : { getMentionPatterns: options.getMentionPatterns }),
   });
-  const mediaLedger = new FileMessagingMediaLedger(resolve(dirname(paths.inventorySnapshotPath), 'media'));
-  const mediaEntitlements = new MediaEntitlementLedger(
-    new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), 'media-entitlements.json')),
-    { now: options.now ?? Date.now },
-  );
   const mediaRead = new PluginMediaReadService({
     ledger: mediaLedger,
     entitlements: mediaEntitlements,
@@ -257,9 +262,12 @@ export function createDormantPluginRuntimeComposition(
     readConfig: readStoredConfigurationValue,
     readSecret: readStoredConfigurationValue,
   };
+  const moduleLogger = createModuleLogger('plugin/module-runtime');
   const deliveryTarget: { current?: PluginRuntimeCarrierRouter } = {};
   const subscriptionDelivery = createSubscriptionDelivery({
     messaging,
+    entitlements: mediaEntitlements,
+    onError: (fields) => moduleLogger.error(fields, 'subscription delivery failed'),
     delivery: {
       deliver: (pluginInstanceId, input) => {
         if (!deliveryTarget.current) throw new Error('plugin runtime supervisor is unavailable');
@@ -307,7 +315,6 @@ export function createDormantPluginRuntimeComposition(
     contentMaterializers = new ContentMaterializerPluginRuntime({ editors: contentEditors, packages });
   // Every admitted instance takes this one path; the carrier is selected from the
   // package's own manifest, most specific claim first (F202 C1 clauses 1/2/6).
-  const moduleLogger = createModuleLogger('plugin/module-runtime');
   const mcpConfigIO = options.mcpConfigIO ?? fileBasedMcpIO(options.projectRoot);
   const builtinPackages =
     options.builtinPackages ??
@@ -371,6 +378,11 @@ export function createDormantPluginRuntimeComposition(
       ...(options.taskRunner === undefined ? {} : { taskRunner: options.taskRunner }),
       ...(options.redis === undefined ? {} : { redis: options.redis }),
     },
+    (instanceId, reason) =>
+      subscriptionDelivery.cancelInstance(
+        instanceId,
+        reason === PLUGIN_OWNER_UNINSTALLED_REASON ? 'instance_uninstalled' : 'instance_stopped',
+      ),
   );
   deliveryTarget.current = supervisor;
   supervisor.register(

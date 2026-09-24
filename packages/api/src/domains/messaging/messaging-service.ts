@@ -16,6 +16,8 @@ import { EventStreamService } from './event-stream.js';
 import { HandleService, type IssueConnectorBindingHandleInput, type IssueThreadHandleInput } from './handles.js';
 import type { MessagingIngressWakeDeps } from './ingress-wake.js';
 import { MessagingLedger } from './ledger.js';
+import type { MediaEntitlementLedger } from './media-entitlements.js';
+import type { MediaReferenceAuthority } from './media-reference-authority.js';
 import { type HostSendOptions, SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
 import type { MessagingStores } from './stores/ports.js';
@@ -34,6 +36,10 @@ export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
   readonly isKnownCatId?: (catId: string) => boolean;
   /** Event log retention per thread (events beyond this are trimmed; stale+snapshot covers the gap). */
   readonly retentionCount?: number;
+  readonly mediaReferences?: MediaReferenceAuthority;
+  readonly mediaEntitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
+  readonly snapshotClock?: { now(): number };
+  readonly snapshotAckTokenTtlMs?: number;
 }
 
 /**
@@ -52,6 +58,8 @@ function ingressWakeDeps(deps: MessagingDomainDeps): MessagingIngressWakeDeps | 
 }
 
 export class MessagingService {
+  private readonly stores: MessagingStores;
+  private readonly mediaEntitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
   private readonly handles: HandleService;
   private readonly sendService: SendService;
   private readonly appendService: AppendService;
@@ -59,6 +67,8 @@ export class MessagingService {
 
   constructor(deps: MessagingDomainDeps) {
     const stores = deps.stores ?? createMessagingStores(deps.redis);
+    this.stores = stores;
+    this.mediaEntitlements = deps.mediaEntitlements;
     const ledger = new MessagingLedger(stores.ledger);
     this.handles = new HandleService(stores.handles, stores.cursors);
     const ingressWake = ingressWakeDeps(deps);
@@ -67,6 +77,7 @@ export class MessagingService {
       handles: this.handles,
       ledger,
       events: stores.events,
+      ...(deps.mediaReferences === undefined ? {} : { mediaReferences: deps.mediaReferences }),
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
       ...(ingressWake === undefined ? {} : { ingressWake }),
       ...(deps.onPublished === undefined ? {} : { onPublished: deps.onPublished }),
@@ -78,6 +89,7 @@ export class MessagingService {
       handles: this.handles,
       events: stores.events,
       appendLock: stores.appendLock,
+      ...(deps.mediaReferences === undefined ? {} : { mediaReferences: deps.mediaReferences }),
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
     });
     this.stream = new EventStreamService({
@@ -85,6 +97,9 @@ export class MessagingService {
       cursors: stores.cursors,
       handles: this.handles,
       messageStore: deps.messageStore,
+      ...(deps.mediaEntitlements === undefined ? {} : { mediaEntitlements: deps.mediaEntitlements }),
+      ...(deps.snapshotClock === undefined ? {} : { snapshotClock: deps.snapshotClock }),
+      ...(deps.snapshotAckTokenTtlMs === undefined ? {} : { snapshotAckTokenTtlMs: deps.snapshotAckTokenTtlMs }),
     });
   }
 
@@ -106,8 +121,17 @@ export class MessagingService {
     return this.handles.ensureConnectorBindingHandle(input);
   }
 
-  revokeHandle(handleId: string): Promise<void> {
-    return this.handles.revoke(handleId);
+  async revokeHandle(handleId: string): Promise<void> {
+    const handle = await this.stores.handles.get(handleId);
+    const sub = handle ? await this.stores.cursors.findByHandle(handle.pluginInstanceId, handleId) : null;
+    const lease = sub?.snapshotView?.activePageLease;
+    if (lease) {
+      await this.mediaEntitlements?.revoke(
+        { scope: { kind: 'snapshot', sessionId: lease.sessionId } },
+        'snapshot_revoked',
+      );
+    }
+    await this.handles.revoke(handleId);
   }
 
   // ── messaging.* call surface ──

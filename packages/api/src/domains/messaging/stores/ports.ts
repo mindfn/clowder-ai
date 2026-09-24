@@ -170,6 +170,14 @@ export interface SnapshotViewRecord {
   readonly lastPageOffset?: number;
   /** Final ack is invalid until every frozen page has been consumed. */
   readonly traversalComplete: boolean;
+  /** One durable, bounded entitlement lease for the last returned page. */
+  readonly activePageLease?: SnapshotPageLease;
+}
+
+export interface SnapshotPageLease {
+  readonly sessionId: string;
+  readonly pageOffset: number;
+  readonly expiresAt: number;
 }
 
 /** Unpublished capture lease. Partial rows are never visible to readers. */
@@ -247,7 +255,20 @@ export interface CursorStore {
     subscriptionId: string,
     snapshotId: string,
     expected: { readonly offset: number; readonly tokenId?: string },
-    next: { readonly offset: number; readonly tokenId?: string; readonly traversalComplete: boolean },
+    next: {
+      readonly offset: number;
+      readonly tokenId?: string;
+      readonly traversalComplete: boolean;
+      readonly lease: SnapshotPageLease;
+    },
+  ): Promise<boolean>;
+  /** CAS rotation for replay of exactly the last frozen page. */
+  rotateSnapshotPageLease(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    expectedSessionId: string,
+    next: { readonly lease: SnapshotPageLease; readonly nextPageTokenId?: string },
   ): Promise<boolean>;
   /**
    * Consume the final snapshot entitlement atomically: validate the exact
@@ -258,6 +279,8 @@ export interface CursorStore {
     subscriptionId: string,
     snapshotId: string,
     headSequence: number,
+    sessionId?: string,
+    now?: number,
   ): Promise<'applied' | 'replayed' | 'rejected'>;
   /**
    * Atomically create a subscription and its (instance, handle) index, or

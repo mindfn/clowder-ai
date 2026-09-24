@@ -29,6 +29,7 @@ import { createHash } from 'node:crypto';
 
 import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
 import type { HostMessagingDeliveryPort, HostPluginInvocationPort } from '../plugin/carrier/host-invocation.js';
+import type { MediaEntitlementLedger } from './media-entitlements.js';
 
 /**
  * The messaging domain identifies a subscriber by `pluginInstanceId`; that field is its name for
@@ -56,6 +57,10 @@ export interface SubscriptionDeliveryDeps {
   readonly messaging: SubscriptionDeliveryMessaging;
   /** The already-published `host.messaging.deliver` direction. */
   readonly delivery: HostMessagingDeliveryPort & Partial<Pick<HostPluginInvocationPort, 'invoke'>>;
+  readonly entitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
+  readonly actionTimeoutMs?: number;
+  /** A grant or action failure is operationally visible without logging envelope contents. */
+  readonly onError?: (fields: { subscriberId: string; threadId: string; errorKind: string }) => void;
   /** Events per read page. */
   readonly readLimit?: number;
   /**
@@ -117,6 +122,15 @@ export class SubscriptionDeliveryStaleError extends Error {
   }
 }
 
+export class SubscriptionDeliveryTimeoutError extends Error {
+  readonly code = 'TIMEOUT';
+  readonly status = 504;
+  constructor() {
+    super('delivery timed out');
+    this.name = 'SubscriptionDeliveryTimeoutError';
+  }
+}
+
 const DEFAULT_MAX_PAGES = 32;
 
 /**
@@ -130,6 +144,30 @@ function isUnwantedEcho(event: MessageOutputEvent, registration: Registration): 
   return actor?.kind === 'plugin' && actor.id === registration.subscriberId;
 }
 
+function isOwnEcho(event: MessageOutputEvent, registration: Registration): boolean {
+  const actor = event.type === 'message.publish' ? event.envelope.actor : undefined;
+  return actor?.kind === 'plugin' && actor.id === registration.subscriberId;
+}
+
+function deliveryMedia(event: Extract<MessageOutputEvent, { type: 'message.publish' }>): readonly {
+  elementId: string;
+  hmrId: string;
+}[] {
+  return event.envelope.payload.elements.flatMap((element) =>
+    element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_')
+      ? [{ elementId: element.elementId, hmrId: element.payload.reference }]
+      : [],
+  );
+}
+
+function failureReason(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    if (error.code === 'TIMEOUT' || error.code === '504') return 'action_timeout';
+    if (error.code === 'CANCELLED' || error.code === 'ABORT_ERR') return 'action_cancelled';
+  }
+  return 'action_failed';
+}
+
 function deliveryIdFor(registration: Registration, event: MessageOutputEvent): string {
   const digest = createHash('sha256')
     .update(registration.subscriberId)
@@ -141,17 +179,12 @@ function deliveryIdFor(registration: Registration, event: MessageOutputEvent): s
   return `delivery_${digest}`;
 }
 
-async function deliverPublishedEvent(
+async function invokeDelivery(
   delivery: SubscriptionDeliveryDeps['delivery'],
   registration: Registration,
-  event: MessageOutputEvent,
+  event: Extract<MessageOutputEvent, { type: 'message.publish' }>,
+  deliveryId: string,
 ): Promise<void> {
-  if (isUnwantedEcho(event, registration)) return;
-  // The frozen callback row carries a complete envelope. Append events remain available
-  // through explicit stream reads and must not be disguised as a different wire shape.
-  if (event.type !== 'message.publish') return;
-
-  const deliveryId = deliveryIdFor(registration, event);
   if (registration.method !== undefined) {
     if (!delivery.invoke) throw new Error('subscription delivery invocation port is unavailable');
     await delivery.invoke(registration.subscriberId, registration.method, {
@@ -172,10 +205,72 @@ async function deliverPublishedEvent(
   }
 }
 
+async function waitForDeliveryAction(action: Promise<void>, signal: AbortSignal, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    await Promise.race([
+      action,
+      new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(Object.assign(new Error('delivery cancelled'), { code: 'CANCELLED' }));
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+        timer = setTimeout(() => reject(new SubscriptionDeliveryTimeoutError()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function deliverPublishedEvent(
+  delivery: SubscriptionDeliveryDeps['delivery'],
+  entitlements: SubscriptionDeliveryDeps['entitlements'],
+  registration: Registration,
+  event: MessageOutputEvent,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<void> {
+  if (isUnwantedEcho(event, registration)) return;
+  // The frozen callback row carries a complete envelope. Append events remain available
+  // through explicit stream reads and must not be disguised as a different wire shape.
+  if (event.type !== 'message.publish') return;
+
+  const deliveryId = deliveryIdFor(registration, event);
+  const media = isOwnEcho(event, registration) ? [] : deliveryMedia(event);
+  if (media.length > 0 && !entitlements) throw new Error('media entitlement service is unavailable');
+  let reason = 'action_returned';
+  try {
+    if (signal.aborted) throw Object.assign(new Error('delivery cancelled'), { code: 'CANCELLED' });
+    if (media.length > 0) {
+      // One durable audit transaction precedes invocation; failure never exposes an unreadable hmr.
+      await entitlements?.grantMany(
+        media.map((element) => ({
+          instanceId: registration.subscriberId,
+          scope: { kind: 'delivery', deliveryId },
+          elementId: element.elementId,
+          hmrId: element.hmrId,
+        })),
+      );
+      if (signal.aborted) throw Object.assign(new Error('delivery cancelled'), { code: 'CANCELLED' });
+    }
+    await waitForDeliveryAction(invokeDelivery(delivery, registration, event, deliveryId), signal, timeoutMs);
+  } catch (error) {
+    reason = signal.aborted && typeof signal.reason === 'string' ? signal.reason : failureReason(error);
+    throw error;
+  } finally {
+    // This must settle before the receipt/error is made observable to the caller.
+    if (media.length > 0) await entitlements?.revoke({ scope: { kind: 'delivery', deliveryId } }, reason);
+  }
+}
+
 export class SubscriptionDelivery {
   private readonly deps: SubscriptionDeliveryDeps;
   private readonly byThread = new Map<string, Registration[]>();
   private readonly drainTails = new Map<string, Promise<void>>();
+  private readonly active = new Map<string, Set<{ controller: AbortController; done: Promise<void> }>>();
+  private readonly stopped = new Set<string>();
 
   constructor(deps: SubscriptionDeliveryDeps) {
     this.deps = deps;
@@ -183,6 +278,7 @@ export class SubscriptionDelivery {
 
   /** Idempotent: re-declaring the same handle reuses its subscription rather than doubling it. */
   async register(declaration: SubscriptionDeclaration): Promise<void> {
+    this.stopped.delete(declaration.subscriberId);
     const ctx = { pluginInstanceId: declaration.subscriberId };
     const { subscriptionId } = await this.deps.messaging.subscribe(ctx, declaration.handleId);
 
@@ -204,6 +300,23 @@ export class SubscriptionDelivery {
     const remaining = (this.byThread.get(threadId) ?? []).filter((entry) => entry.subscriberId !== subscriberId);
     if (remaining.length === 0) this.byThread.delete(threadId);
     else this.byThread.set(threadId, remaining);
+  }
+
+  /** Fence in-flight delivery before a carrier stop or uninstall becomes visible. */
+  async cancelInstance(
+    subscriberId: string,
+    reason: 'instance_stopped' | 'instance_uninstalled' = 'instance_stopped',
+  ): Promise<void> {
+    this.stopped.add(subscriberId);
+    for (const [threadId, registrations] of this.byThread) {
+      const remaining = registrations.filter((registration) => registration.subscriberId !== subscriberId);
+      if (remaining.length === 0) this.byThread.delete(threadId);
+      else this.byThread.set(threadId, remaining);
+    }
+    const active = [...(this.active.get(subscriberId) ?? [])];
+    for (const entry of active) entry.controller.abort(reason);
+    await Promise.allSettled(active.map((entry) => entry.done));
+    await this.deps.entitlements?.revoke({ instanceId: subscriberId }, reason);
   }
 
   /**
@@ -229,6 +342,11 @@ export class SubscriptionDelivery {
       try {
         await this.drainOne(registration);
       } catch (err) {
+        this.deps.onError?.({
+          subscriberId: registration.subscriberId,
+          threadId,
+          errorKind: err instanceof Error ? err.name : 'unknown',
+        });
         if (failure === undefined) failure = err;
       }
     }
@@ -236,6 +354,7 @@ export class SubscriptionDelivery {
   }
 
   private async drainOne(registration: Registration): Promise<void> {
+    if (this.stopped.has(registration.subscriberId)) return;
     const ctx = { pluginInstanceId: registration.subscriberId };
     const maxPages = this.deps.maxPagesPerDrain ?? DEFAULT_MAX_PAGES;
 
@@ -251,9 +370,32 @@ export class SubscriptionDelivery {
       // event is still covered by that ack: skipping is a decision about this subscriber, not a
       // failure, and leaving it unacked would replay it forever.
       for (const event of result.events) {
-        await deliverPublishedEvent(this.deps.delivery, registration, event);
+        if (this.stopped.has(registration.subscriberId)) return;
+        await this.deliverOne(registration, event);
       }
       await this.deps.messaging.ack(ctx, registration.subscriptionId, result.ackToken);
+    }
+  }
+
+  private async deliverOne(registration: Registration, event: MessageOutputEvent): Promise<void> {
+    const controller = new AbortController();
+    const done = deliverPublishedEvent(
+      this.deps.delivery,
+      this.deps.entitlements,
+      registration,
+      event,
+      controller.signal,
+      this.deps.actionTimeoutMs ?? 30_000,
+    );
+    const entry = { controller, done };
+    const active = this.active.get(registration.subscriberId) ?? new Set<typeof entry>();
+    active.add(entry);
+    this.active.set(registration.subscriberId, active);
+    try {
+      await done;
+    } finally {
+      active.delete(entry);
+      if (active.size === 0) this.active.delete(registration.subscriberId);
     }
   }
 }

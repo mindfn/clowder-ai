@@ -129,6 +129,57 @@ function checkedState(value: MediaEntitlementState): MediaEntitlementState {
   return value;
 }
 
+function sameGrantSlot(grant: MediaEntitlement, input: MediaGrantInput, now: number): boolean {
+  if (
+    grant.pluginInstanceId !== input.instanceId ||
+    grant.scope.kind !== input.scope.kind ||
+    grant.elementId !== input.elementId ||
+    grant.revokedAt !== undefined ||
+    (grant.expiresAt !== undefined && grant.expiresAt <= now)
+  )
+    return false;
+  return grant.scope.kind === 'delivery'
+    ? grant.scope.deliveryId === (input.scope as Extract<MediaGrantScope, { kind: 'delivery' }>).deliveryId
+    : grant.scope.sessionId === (input.scope as Extract<MediaGrantScope, { kind: 'snapshot' }>).sessionId;
+}
+
+function addOrReuseGrant(
+  grants: MediaEntitlement[],
+  audit: MediaAuditEvent[],
+  input: MediaGrantInput,
+  grantedAt: number,
+): MediaEntitlement {
+  const existing = grants.find((grant) => sameGrantSlot(grant, input, grantedAt));
+  if (existing) {
+    if (existing.hmrId !== input.hmrId || existing.expiresAt !== input.expiresAt) {
+      throw new Error('media entitlement scope conflicts with an active grant');
+    }
+    return existing;
+  }
+  const grant: MediaEntitlement = {
+    grantId: `mg_${randomBytes(16).toString('base64url')}`,
+    pluginInstanceId: input.instanceId,
+    scope: structuredClone(input.scope),
+    elementId: input.elementId,
+    hmrId: input.hmrId,
+    grantedAt,
+    ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+  };
+  grants.push(grant);
+  audit.push({
+    kind: 'grant',
+    grantId: grant.grantId,
+    pluginInstanceId: grant.pluginInstanceId,
+    ...(grant.scope.kind === 'delivery'
+      ? { deliveryId: grant.scope.deliveryId }
+      : { snapshotSessionId: grant.scope.sessionId }),
+    elementId: grant.elementId,
+    hmrId: grant.hmrId,
+    grantedAt,
+  });
+  return grant;
+}
+
 export class MemoryMediaEntitlementPort implements MediaEntitlementPort {
   private state = emptyState();
   failNextSave = false;
@@ -209,42 +260,36 @@ export class MediaEntitlementLedger {
   }
 
   async grant(input: MediaGrantInput): Promise<MediaEntitlement> {
+    const [grant] = await this.grantMany([input]);
+    if (!grant) throw new Error('media entitlement grant was not persisted');
+    return grant;
+  }
+
+  /** One durable audit transaction for a bounded delivery/page, avoiding N snapshot rewrites. */
+  async grantMany(inputs: readonly MediaGrantInput[]): Promise<readonly MediaEntitlement[]> {
     return this.serialize(async () => {
       if (this.writeFailure) throw new Error('media entitlement persistence is unavailable');
       const state = await this.port.load();
       const grantedAt = this.clock.now();
-      const grant: MediaEntitlement = {
-        grantId: `mg_${randomBytes(16).toString('base64url')}`,
-        pluginInstanceId: input.instanceId,
-        scope: structuredClone(input.scope),
-        elementId: input.elementId,
-        hmrId: input.hmrId,
-        grantedAt,
-        ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
-      };
-      const audit: MediaAuditEvent = {
-        kind: 'grant',
-        grantId: grant.grantId,
-        pluginInstanceId: grant.pluginInstanceId,
-        ...(grant.scope.kind === 'delivery'
-          ? { deliveryId: grant.scope.deliveryId }
-          : { snapshotSessionId: grant.scope.sessionId }),
-        elementId: grant.elementId,
-        hmrId: grant.hmrId,
-        grantedAt,
-      };
+      const grants = [...state.grants];
+      const audit = [...state.audit];
+      const result: MediaEntitlement[] = [];
+      for (const input of inputs) {
+        result.push(addOrReuseGrant(grants, audit, input, grantedAt));
+      }
+      if (audit.length === state.audit.length) return result;
       try {
-        await this.port.save({ schemaVersion: 1, grants: [...state.grants, grant], audit: [...state.audit, audit] });
+        await this.port.save({ schemaVersion: 1, grants, audit });
       } catch (error) {
         this.writeFailure = true;
         throw error;
       }
-      return grant;
+      return result;
     });
   }
 
   async revoke(
-    target: { readonly grantId: string } | { readonly scope: MediaGrantScope },
+    target: { readonly grantId: string } | { readonly scope: MediaGrantScope } | { readonly instanceId: string },
     reason: string,
   ): Promise<void> {
     await this.serialize(async () => {
@@ -253,10 +298,12 @@ export class MediaEntitlementLedger {
       const matches = (grant: MediaEntitlement) =>
         'grantId' in target
           ? grant.grantId === target.grantId
-          : grant.scope.kind === target.scope.kind &&
-            (grant.scope.kind === 'delivery'
-              ? grant.scope.deliveryId === (target.scope as { readonly deliveryId: string }).deliveryId
-              : grant.scope.sessionId === (target.scope as { readonly sessionId: string }).sessionId);
+          : 'instanceId' in target
+            ? grant.pluginInstanceId === target.instanceId
+            : grant.scope.kind === target.scope.kind &&
+              (grant.scope.kind === 'delivery'
+                ? grant.scope.deliveryId === (target.scope as { readonly deliveryId: string }).deliveryId
+                : grant.scope.sessionId === (target.scope as { readonly sessionId: string }).sessionId);
       const affected = state.grants.filter((grant) => grant.revokedAt === undefined && matches(grant));
       if (affected.length === 0) return;
       const grants = state.grants.map((grant) =>

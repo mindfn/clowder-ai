@@ -117,6 +117,27 @@ test('routes every instance through one selection point, resolved from its own m
   ]);
 });
 
+test('media revocation hook settles before carrier stop and fences a failed stop', async () => {
+  const calls = [];
+  const inventory = inventoryOf(manifest({ pluginId: 'dev.clowder.bundled' }));
+  let failRevoke = false;
+  const router = new PluginRuntimeCarrierRouter(inventory, undefined, undefined, async (instanceId) => {
+    calls.push(`revoke:${instanceId}`);
+    if (failRevoke) throw new Error('audit unavailable');
+  });
+  router.register(recordingCarrier('bundled', () => true, calls));
+  await router.stop('instance-0', 'host_stop');
+  assert.ok(calls.indexOf('revoke:instance-0') < calls.indexOf('bundled:stop:instance-0:host_stop'));
+  calls.length = 0;
+  failRevoke = true;
+  await assert.rejects(router.stop('instance-0', 'host_stop'), /audit unavailable/);
+  assert.equal(
+    calls.some((call) => call.includes(':stop:')),
+    false,
+    'stop cannot finish before revoke is durable',
+  );
+});
+
 test('declared skills activate independently of the selected runtime carrier', async (t) => {
   const projectRoot = await mkdtemp(join(tmpdir(), 'f202-c1-carrier-skill-project-'));
   const packageRoot = await mkdtemp(join(tmpdir(), 'f202-c1-carrier-skill-package-'));

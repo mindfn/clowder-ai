@@ -56,6 +56,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     private readonly inventory: Pick<PluginInventoryStore, 'snapshot'>,
     private readonly resources?: DeclaredStaticResourceHost,
     runtimeContributions?: DeclaredRuntimeContributionHost,
+    private readonly beforeStop?: (instanceId: string, reason: string) => Promise<void>,
   ) {
     this.#runtimeContributions = new DeclaredRuntimeContributions(
       runtimeContributions ?? {
@@ -93,6 +94,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
+    await this.beforeStop?.(pluginInstanceId, reason);
     this.#runtimeContributions.deactivate(pluginInstanceId);
     await carrier.stop(pluginInstanceId, reason);
     if (removesPluginOwnedResources(reason)) {
@@ -101,6 +103,10 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {
+    if (this.beforeStop) {
+      const inventory = await this.inventory.snapshot();
+      await Promise.all(inventory.instances.map((instance) => this.beforeStop?.(instance.pluginInstanceId, reason)));
+    }
     this.#runtimeContributions.deactivateAll();
     const carrierResults = await Promise.allSettled(this.#carriers.map((carrier) => carrier.stopAll(reason)));
     const carrierFailure = carrierResults.find(
