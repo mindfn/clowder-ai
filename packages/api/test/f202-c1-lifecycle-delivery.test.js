@@ -2,14 +2,60 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateMessagingRowInput } from '@clowder-ai/plugin-contract';
 
-import { createLifecycleDelivery, lifecycleIdFor } from '../dist/domains/messaging/lifecycle-delivery.js';
+import {
+  buildDeliveryPresentation,
+  createLifecycleDelivery,
+  lifecycleIdFor,
+} from '../dist/domains/messaging/lifecycle-delivery.js';
 import { createSubscriptionDelivery } from '../dist/domains/messaging/subscription-delivery.js';
+
+test('one presentation builder preserves legacy identity and omits absent metadata', () => {
+  assert.deepEqual(
+    buildDeliveryPresentation(
+      'thread-1234567890',
+      { kind: 'cat', id: 'cat-1', displayName: '砚砚' },
+      {
+        threadTitle: 'The thread',
+        deepLinkUrl: 'https://example.test/thread/thread-1234567890',
+      },
+    ),
+    {
+      actor: { displayName: '砚砚', emoji: '🐱' },
+      thread: { shortId: 'thread-12345678', title: 'The thread' },
+      deepLinkUrl: 'https://example.test/thread/thread-1234567890',
+    },
+  );
+  assert.deepEqual(buildDeliveryPresentation('thread-1', { kind: 'user', id: 'owner-1', displayName: 'lang' }), {
+    actor: { displayName: 'lang', emoji: '👤' },
+    thread: { shortId: 'thread-1' },
+  });
+  assert.deepEqual(buildDeliveryPresentation('thread-1', { kind: 'plugin', id: 'plugin-1' }), {
+    actor: { displayName: 'plugin-1', emoji: '🔌' },
+    thread: { shortId: 'thread-1' },
+  });
+  for (const actor of [
+    { kind: 'user', id: 'owner-1', displayName: 'lang' },
+    { kind: 'plugin', id: 'plugin-1' },
+  ]) {
+    assert.equal(
+      validateMessagingRowInput('host.messaging.lifecycle', {
+        lifecycleId: 'lifecycle_test',
+        deliveryId: 'delivery_test',
+        threadId: 'thread-1',
+        state: 'started',
+        presentation: buildDeliveryPresentation('thread-1', actor),
+      }).valid,
+      true,
+      `${actor.kind} presentation must pass the contract`,
+    );
+  }
+});
 
 test('lifecycle events share the thread delivery queue and retain stable ids', async () => {
   const calls = [];
   let tail = Promise.resolve();
   const delivery = createLifecycleDelivery({
-    subscribers: () => ['subscriber-1'],
+    subscribers: () => [{ subscriberId: 'subscriber-1', method: 'fixture.lifecycle', wire: false }],
     supportsAction: () => true,
     invoke: async (_subscriber, _method, input) => {
       calls.push(input);
@@ -52,7 +98,7 @@ test('lifecycle events share the thread delivery queue and retain stable ids', a
 test('blocked carries the presentation deep link and settles failed even when invocation status succeeded', async () => {
   const events = [];
   const delivery = createLifecycleDelivery({
-    subscribers: () => ['subscriber'],
+    subscribers: () => [{ subscriberId: 'subscriber', method: 'fixture.lifecycle', wire: false }],
     supportsAction: () => true,
     invoke: async (_subscriber, _method, input) => {
       events.push(input);
@@ -76,7 +122,10 @@ test('unsupported subscribers are skipped; R1 rejection is audited once without 
   const attempts = [];
   const errors = [];
   const delivery = createLifecycleDelivery({
-    subscribers: () => ['unsupported', 'supported'],
+    subscribers: () => [
+      { subscriberId: 'unsupported', method: 'fixture.lifecycle', wire: false },
+      { subscriberId: 'supported', method: 'fixture.lifecycle', wire: false },
+    ],
     supportsAction: (subscriber) => subscriber === 'supported',
     invoke: async (subscriber, _method, input) => {
       attempts.push({ subscriber, input });
@@ -105,7 +154,7 @@ test('unsupported subscribers are skipped; R1 rejection is audited once without 
 test('a stalled lifecycle action is bounded and audited once', async () => {
   const errors = [];
   const delivery = createLifecycleDelivery({
-    subscribers: () => ['stalled'],
+    subscribers: () => [{ subscriberId: 'stalled', method: 'fixture.lifecycle', wire: false }],
     supportsAction: () => true,
     invoke: async () => new Promise(() => undefined),
     actionTimeoutMs: 5,
@@ -124,7 +173,7 @@ test('a stalled lifecycle action is bounded and audited once', async () => {
 test('concurrent start and blocked keep started before blocked', async () => {
   const calls = [];
   const delivery = createLifecycleDelivery({
-    subscribers: () => ['subscriber'],
+    subscribers: () => [{ subscriberId: 'subscriber', method: 'fixture.lifecycle', wire: false }],
     supportsAction: () => true,
     invoke: async (_subscriber, _method, input) => {
       calls.push(input.state);
@@ -155,7 +204,7 @@ test('started reserves the thread tail before asynchronous presentation lookup',
     return current;
   };
   const lifecycle = createLifecycleDelivery({
-    subscribers: () => ['subscriber'],
+    subscribers: () => [{ subscriberId: 'subscriber', method: 'fixture.lifecycle', wire: false }],
     supportsAction: () => true,
     invoke: async (_subscriber, _method, input) => {
       calls.push(input.state);
@@ -181,7 +230,7 @@ test('started reserves the thread tail before asynchronous presentation lookup',
 test('canceled_by_user maps to cancelled rather than completed', async () => {
   const events = [];
   const delivery = createLifecycleDelivery({
-    subscribers: () => ['subscriber'],
+    subscribers: () => [{ subscriberId: 'subscriber', method: 'fixture.lifecycle', wire: false }],
     supportsAction: () => true,
     invoke: async (_subscriber, _method, input) => {
       events.push(input);
@@ -211,6 +260,7 @@ test('a published final envelope is delivered between lifecycle started and sett
     },
   };
   const delivery = createSubscriptionDelivery({
+    presentation: async (threadId, actor) => buildDeliveryPresentation(threadId, { ...actor, displayName: '砚砚' }),
     messaging: {
       subscribe: async () => ({ subscriptionId: 'sub-1' }),
       read: async () =>
@@ -235,9 +285,11 @@ test('a published final envelope is delivered between lifecycle started and sett
     threadId: 'thread-1',
     handleId: 'handle-1',
     method: 'bridge.deliver',
+    lifecycleMethod: 'bridge.lifecycle',
+    presentationV1: true,
   });
   const lifecycle = createLifecycleDelivery({
-    subscribers: (threadId) => delivery.subscribersForThread(threadId),
+    subscribers: (threadId) => delivery.lifecycleTargetsForThread(threadId),
     supportsAction: () => true,
     invoke: async (subscriber, method, input) => {
       calls.push({ subscriber, method, input });
@@ -245,26 +297,81 @@ test('a published final envelope is delivered between lifecycle started and sett
     },
     enqueueThread: (threadId, operation) => delivery.enqueueThread(threadId, operation),
     drain: (threadId) => delivery.drain(threadId),
-    presentation: async () => ({ actor: { displayName: 'Cat', emoji: '🐱' }, thread: { shortId: 'thread-1' } }),
+    presentation: async (threadId, catId) =>
+      buildDeliveryPresentation(threadId, { kind: 'cat', id: catId, displayName: '砚砚' }),
   });
   await lifecycle.onStreamStart('thread-1', 'cat-1', 'invocation-final');
   await lifecycle.onStreamEnd('thread-1', '', 'invocation-final');
   await lifecycle.notifyDeliveryBatchDone('thread-1', true, 'succeeded', 'invocation-final');
   assert.deepEqual(
     calls.map(({ method }) => method),
-    ['host.messaging.lifecycle', 'bridge.deliver', 'host.messaging.lifecycle'],
+    ['bridge.lifecycle', 'bridge.deliver', 'bridge.lifecycle'],
   );
   assert.deepEqual(
     calls.map(({ input }) => input.state ?? 'message'),
     ['started', 'message', 'settled'],
   );
   assert.equal(calls[1].input.lifecycleId, lifecycleIdFor('invocation-final'));
+  assert.deepEqual(calls[1].input.presentation, calls[0].input.presentation);
+});
+
+test('legacy method subscribers receive exactly their frozen three-key input', async () => {
+  const calls = [];
+  let acked = false;
+  const delivery = createSubscriptionDelivery({
+    presentation: async (threadId, actor) => buildDeliveryPresentation(threadId, actor),
+    messaging: {
+      subscribe: async () => ({ subscriptionId: 'sub-legacy-method' }),
+      read: async () =>
+        acked
+          ? { events: [], ackToken: null, stale: false }
+          : {
+              events: [
+                {
+                  type: 'message.publish',
+                  eventId: 'event-legacy-method',
+                  envelope: {
+                    messageId: 'message-legacy-method',
+                    threadId: 'thread-1',
+                    actor: { kind: 'cat', id: 'cat-1' },
+                    payload: { elements: [] },
+                  },
+                },
+              ],
+              ackToken: 'ack-legacy-method',
+              stale: false,
+            },
+      ack: async () => {
+        acked = true;
+      },
+    },
+    resolveInvocationId: async () => 'invocation-legacy-method',
+    delivery: {
+      deliver: async () => {
+        throw new Error('unexpected frozen delivery');
+      },
+      invoke: async (_subscriber, _method, input) => {
+        assert.deepEqual(Object.keys(input).sort(), ['deliveryId', 'envelope', 'threadId']);
+        calls.push(input);
+        return { deliveryId: input.deliveryId };
+      },
+    },
+  });
+  await delivery.register({
+    subscriberId: 'legacy-package',
+    threadId: 'thread-1',
+    handleId: 'handle-legacy-method',
+    method: 'legacy.outbound',
+  });
+  await delivery.drain('thread-1');
+  assert.equal(calls.length, 1);
 });
 
 test('the frozen host.messaging.deliver row also receives the final message lifecycleId', async () => {
   const delivered = [];
   let acked = false;
   const delivery = createSubscriptionDelivery({
+    presentation: async (threadId, actor) => buildDeliveryPresentation(threadId, { ...actor, displayName: '砚砚' }),
     messaging: {
       subscribe: async () => ({ subscriptionId: 'sub-legacy' }),
       read: async () =>
@@ -298,7 +405,17 @@ test('the frozen host.messaging.deliver row also receives the final message life
       },
     },
   });
-  await delivery.register({ subscriberId: 'external', threadId: 'thread-1', handleId: 'handle-legacy' });
+  await delivery.register({
+    subscriberId: 'external',
+    threadId: 'thread-1',
+    handleId: 'handle-legacy',
+    lifecycleMethod: 'host.messaging.lifecycle',
+    presentationV1: true,
+  });
   await delivery.drain('thread-1');
   assert.equal(delivered[0].lifecycleId, lifecycleIdFor('invocation-legacy'));
+  assert.deepEqual(delivered[0].presentation, {
+    actor: { displayName: '砚砚', emoji: '🐱' },
+    thread: { shortId: 'thread-1' },
+  });
 });

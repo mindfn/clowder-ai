@@ -47,12 +47,26 @@ test('production composition delivers concurrent cat replies exactly once to an 
     version: '1.0.0',
     contractVersion: '0.1.0',
     name: 'Production subscription fixture',
+    contributions: [
+      { type: 'identity', id: 'fixture-identity', displayName: 'Fixture', icon: 'fixture' },
+      {
+        type: 'message-subscription',
+        id: 'fixture-subscription',
+        binding: 'fixture-identity',
+        action: { method: 'fixture.outbound' },
+        lifecycleAction: { method: 'fixture.lifecycle' },
+        presentation: 'v1',
+      },
+    ],
     features: [
       {
         id: 'main',
         name: 'Main',
         resources: [],
-        contributions: [],
+        contributions: [
+          { type: 'identity', id: 'fixture-identity' },
+          { type: 'message-subscription', id: 'fixture-subscription' },
+        ],
         capabilities: ['message.event.subscribe', 'thread.write'],
       },
     ],
@@ -71,7 +85,7 @@ test('production composition delivers concurrent cat replies exactly once to an 
       "    await host.messaging.subscribe({ threadId: thread.id, method: 'fixture.outbound' });",
       '    return {',
       "      actions: { 'fixture.outbound': async (input) => { state.calls.push(input); state.sequence.push('message'); },",
-      "        'host.messaging.lifecycle': async (input) => { state.lifecycleCalls.push(input); state.sequence.push(input.state); return { deliveryId: input.deliveryId }; } },",
+      "        'fixture.lifecycle': async (input) => { state.lifecycleCalls.push(input); state.sequence.push(input.state); return { deliveryId: input.deliveryId }; } },",
       '      stop() {},',
       '    };',
       '  },',

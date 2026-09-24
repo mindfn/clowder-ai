@@ -52,6 +52,10 @@ beforeEach(async () => {
 
   delivery = createSubscriptionDelivery({
     messaging,
+    presentation: async (threadId, actor) => ({
+      actor: { displayName: actor.id, emoji: actor.kind === 'cat' ? '🐱' : '🔌' },
+      thread: { shortId: threadId },
+    }),
     delivery: {
       async deliver(subscriberId, input) {
         attempts.push({ subscriberId, input });
@@ -98,6 +102,7 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
       subscriberId: SUBSCRIBER_A,
       threadId: THREAD_ID,
       handleId,
+      presentationV1: true,
     });
     await produce('hello', 'k1');
     await delivery.drain(THREAD_ID);
@@ -108,7 +113,7 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     assert.deepEqual(calls[0].input.threadHandle, { kind: 'thread_handle', handle: handleId });
     assert.equal(calls[0].input.envelope.threadId, THREAD_ID);
     assert.equal(calls[0].input.envelope.payload.elements[0].payload.text, 'hello');
-    assert.deepEqual(Object.keys(calls[0].input).sort(), ['deliveryId', 'envelope', 'threadHandle']);
+    assert.deepEqual(Object.keys(calls[0].input).sort(), ['deliveryId', 'envelope', 'presentation', 'threadHandle']);
   });
 
   test('case 2: a failing plugin does not lose the message — it is redelivered', async () => {
@@ -189,6 +194,10 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     const rejected = [];
     delivery = createSubscriptionDelivery({
       messaging,
+      presentation: async (threadId, actor) => ({
+        actor: { displayName: actor.id, emoji: '🐱' },
+        thread: { shortId: threadId },
+      }),
       delivery: {
         async deliver(subscriberId, input) {
           rejected.push({ subscriberId, input });
@@ -220,6 +229,10 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
     });
     delivery = createSubscriptionDelivery({
       messaging,
+      presentation: async (threadId, actor) => ({
+        actor: { displayName: actor.id, emoji: '🐱' },
+        thread: { shortId: threadId },
+      }),
       delivery: {
         async deliver(subscriberId, input) {
           attempts.push({ subscriberId, input });

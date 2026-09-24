@@ -39,6 +39,11 @@ function createFixture() {
     messaging = createMessagingDomain({ messageStore: messages, stores });
     delivery = createSubscriptionDelivery({
       messaging,
+      resolveInvocationId: async () => 'fixture-invocation',
+      presentation: async (threadId, actor) => ({
+        actor: { displayName: actor.id, emoji: '🐱' },
+        thread: { shortId: threadId },
+      }),
       delivery: {
         async deliver() {
           throw new Error('module subscriptions must use their declared action, not the frozen delivery row');
@@ -50,7 +55,7 @@ function createFixture() {
     });
   };
   restart();
-  const createSession = (effectiveGrants = ['message.event.subscribe']) =>
+  const createSession = (effectiveGrants = ['message.event.subscribe'], manifest) =>
     createPluginMessagingSubscriptionSession({
       pluginId: PLUGIN_ID,
       pluginInstanceId: INSTANCE_ID,
@@ -60,6 +65,7 @@ function createFixture() {
       bindingStore: bindings,
       messaging,
       delivery,
+      ...(manifest ? { manifest } : {}),
     });
   return {
     calls,
@@ -97,6 +103,68 @@ async function publish(messaging, threadId, text, producer = 'producer-1') {
 }
 
 describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
+  test('manifest lifecycle and presentation declarations independently gate method input', async () => {
+    for (const variant of [
+      { name: 'both', lifecycle: true, presentation: true },
+      { name: 'lifecycle', lifecycle: true, presentation: false },
+      { name: 'presentation', lifecycle: false, presentation: true },
+      { name: 'legacy', lifecycle: false, presentation: false },
+    ]) {
+      const h = createFixture();
+      const thread = await h.threads.create(OWNER, variant.name);
+      const manifest = {
+        contributions: [
+          {
+            type: 'message-subscription',
+            id: 'fixture',
+            binding: 'identity',
+            action: { method: 'fixture.outbound' },
+            ...(variant.lifecycle ? { lifecycleAction: { method: 'fixture.lifecycle' } } : {}),
+            ...(variant.presentation ? { presentation: 'v1' } : {}),
+          },
+        ],
+      };
+      await h.createSession(['message.event.subscribe'], manifest).host.subscribe({
+        threadId: thread.id,
+        method: 'fixture.outbound',
+      });
+      const targets = h.delivery.lifecycleTargetsForThread(thread.id);
+      assert.deepEqual(
+        targets,
+        variant.lifecycle ? [{ subscriberId: INSTANCE_ID, method: 'fixture.lifecycle', wire: false }] : [],
+      );
+      const { createLifecycleDelivery } = await import('../dist/domains/messaging/lifecycle-delivery.js');
+      const lifecycleCalls = [];
+      const lifecycle = createLifecycleDelivery({
+        subscribers: (threadId) => h.delivery.lifecycleTargetsForThread(threadId),
+        supportsAction: (_subscriberId, method) => method === 'fixture.lifecycle',
+        invoke: async (_subscriberId, method, input) => {
+          lifecycleCalls.push({ method, input });
+          return { deliveryId: input.deliveryId };
+        },
+        enqueueThread: (threadId, operation) => h.delivery.enqueueThread(threadId, operation),
+        drain: async () => undefined,
+        presentation: async () => ({ actor: { displayName: 'Cat', emoji: '🐱' }, thread: { shortId: thread.id } }),
+      });
+      await lifecycle.onStreamStart(thread.id, 'cat-1', `invocation-${variant.name}`);
+      assert.equal(lifecycleCalls.length, variant.lifecycle ? 1 : 0);
+      if (variant.lifecycle) assert.equal(lifecycleCalls[0].method, 'fixture.lifecycle');
+      await publish(h.messaging, thread.id, variant.name);
+      await h.delivery.drain(thread.id);
+      assert.equal(h.calls.length, 1);
+      assert.deepEqual(
+        Object.keys(h.calls[0].params).sort(),
+        [
+          'deliveryId',
+          'envelope',
+          'threadId',
+          ...(variant.lifecycle ? ['lifecycleId'] : []),
+          ...(variant.presentation ? ['presentation'] : []),
+        ].sort(),
+      );
+    }
+  });
+
   test('delivers through the package-declared action without exposing a handle', async () => {
     const h = createFixture();
     const thread = await h.threads.create(OWNER, 'Subscribed');

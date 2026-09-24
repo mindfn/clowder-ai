@@ -12,11 +12,13 @@ export function lifecycleIdFor(invocationId: string): string {
 
 export function buildDeliveryPresentation(
   threadId: string,
-  displayName: string,
+  actor: { kind: 'cat' | 'user' | 'plugin' | 'device' | 'system'; id: string; displayName?: string },
   threadMeta?: { threadShortId?: string; threadTitle?: string; featId?: string; deepLinkUrl?: string },
 ): DeliveryPresentationContext {
+  const displayName = actor.kind === 'plugin' || actor.kind === 'system' ? actor.id : actor.displayName || actor.id;
+  const emoji = actor.kind === 'cat' ? '🐱' : actor.kind === 'user' ? '👤' : '🔌';
   return {
-    actor: { displayName: displayName || 'Cat', emoji: '🐱' },
+    actor: { displayName, emoji },
     thread: {
       shortId: threadMeta?.threadShortId ?? threadId.slice(0, 15),
       ...(threadMeta?.threadTitle === undefined ? {} : { title: threadMeta.threadTitle }),
@@ -27,13 +29,9 @@ export function buildDeliveryPresentation(
 }
 
 export interface LifecycleDeliveryDeps {
-  readonly subscribers: (threadId: string) => readonly string[];
-  readonly supportsAction: (subscriberId: string) => boolean;
-  readonly invoke: (
-    subscriberId: string,
-    method: 'host.messaging.lifecycle',
-    input: HostMessagingLifecycleInput,
-  ) => Promise<unknown>;
+  readonly subscribers: (threadId: string) => readonly { subscriberId: string; method: string; wire: boolean }[];
+  readonly supportsAction: (subscriberId: string, method: string) => boolean;
+  readonly invoke: (subscriberId: string, method: string, input: HostMessagingLifecycleInput) => Promise<unknown>;
   readonly enqueueThread: (threadId: string, operation: () => Promise<void>) => Promise<void>;
   readonly drain: (threadId: string) => Promise<void>;
   readonly presentation: (threadId: string, catId: string) => Promise<DeliveryPresentationContext>;
@@ -97,6 +95,7 @@ export class LifecycleDelivery {
 
   private async deliverToSubscriber(
     subscriberId: string,
+    method: string,
     state: InvocationState,
     event: LifecycleEventWithoutDeliveryId,
     sequence: number,
@@ -108,7 +107,7 @@ export class LifecycleDelivery {
         throw new Error('invalid lifecycle input');
       }
       const receipt = await awaitLifecycleReceipt(
-        this.deps.invoke(subscriberId, 'host.messaging.lifecycle', input),
+        this.deps.invoke(subscriberId, method, input),
         this.deps.actionTimeoutMs ?? 30_000,
       );
       const validated = validateMessagingRowResult('host.messaging.lifecycle', receipt);
@@ -139,9 +138,9 @@ export class LifecycleDelivery {
   ): Promise<void> {
     await this.deps.enqueueThread(state.threadId, async () => {
       const resolvedEvent = await event;
-      for (const subscriberId of this.deps.subscribers(state.threadId)) {
-        if (this.deps.supportsAction(subscriberId)) {
-          await this.deliverToSubscriber(subscriberId, state, resolvedEvent, sequence);
+      for (const target of this.deps.subscribers(state.threadId)) {
+        if (target.wire || this.deps.supportsAction(target.subscriberId, target.method)) {
+          await this.deliverToSubscriber(target.subscriberId, target.method, state, resolvedEvent, sequence);
         }
       }
     });

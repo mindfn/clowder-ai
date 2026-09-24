@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import type { CapabilitiesConfig, PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import type { DeliveryPresentationContext } from '@clowder-ai/plugin-contract';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
@@ -108,6 +109,10 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly intakes: MeetingIntakeStore;
   readonly messageStore: IMessageStore;
   readonly lifecyclePresentation?: LifecycleDeliveryDeps['presentation'];
+  readonly deliveryPresentation?: (
+    threadId: string,
+    actor: { kind: 'cat' | 'user' | 'plugin' | 'device' | 'system'; id: string },
+  ) => Promise<DeliveryPresentationContext>;
   readonly taskStore?: ITaskStore;
   readonly redis?: RedisClient;
   /** The Host-wide messaging stores shared with the one publishing MessageStore wrapper. */
@@ -327,6 +332,9 @@ export function createDormantPluginRuntimeComposition(
   };
   const subscriptionDelivery = createSubscriptionDelivery({
     messaging,
+    presentation:
+      options.deliveryPresentation ??
+      ((threadId, actor) => Promise.resolve(buildDeliveryPresentation(threadId, actor))),
     resolveInvocationId: async (messageId) =>
       (await options.messageStore.getById(messageId))?.extra?.stream?.invocationId,
     entitlements: mediaEntitlements,
@@ -425,9 +433,8 @@ export function createDormantPluginRuntimeComposition(
     },
   });
   const lifecycleDelivery = createLifecycleDelivery({
-    subscribers: (threadId) => subscriptionDelivery.subscribersForThread(threadId),
-    supportsAction: (subscriberId) =>
-      typeof moduleRuntime.actions(subscriberId)?.['host.messaging.lifecycle'] === 'function',
+    subscribers: (threadId) => subscriptionDelivery.lifecycleTargetsForThread(threadId),
+    supportsAction: (subscriberId, method) => typeof moduleRuntime.actions(subscriberId)?.[method] === 'function',
     invoke: (subscriberId, method, input) => {
       if (!deliveryTarget.current) throw new Error('plugin runtime supervisor is unavailable');
       return deliveryTarget.current.invoke(subscriberId, method, input);
@@ -435,7 +442,8 @@ export function createDormantPluginRuntimeComposition(
     enqueueThread: (threadId, operation) => subscriptionDelivery.enqueueThread(threadId, operation),
     drain: (threadId) => subscriptionDelivery.drain(threadId),
     presentation:
-      options.lifecyclePresentation ?? ((threadId) => Promise.resolve(buildDeliveryPresentation(threadId, 'Cat'))),
+      options.lifecyclePresentation ??
+      ((threadId, catId) => Promise.resolve(buildDeliveryPresentation(threadId, { kind: 'cat', id: catId }))),
     onError: (fields) => moduleLogger.error(fields, 'lifecycle delivery failed'),
   });
   const supervisor = new PluginRuntimeCarrierRouter(

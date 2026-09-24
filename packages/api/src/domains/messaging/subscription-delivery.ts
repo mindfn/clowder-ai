@@ -27,7 +27,7 @@
 
 import { createHash } from 'node:crypto';
 
-import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
+import type { DeliveryPresentationContext, MessageOutputEvent } from '@clowder-ai/plugin-contract';
 import type { HostMessagingDeliveryPort, HostPluginInvocationPort } from '../plugin/carrier/host-invocation.js';
 import { lifecycleIdFor } from './lifecycle-delivery.js';
 import type { MediaEntitlementLedger } from './media-entitlements.js';
@@ -56,6 +56,10 @@ export interface SubscriptionDeliveryMessaging {
 
 export interface SubscriptionDeliveryDeps {
   readonly messaging: SubscriptionDeliveryMessaging;
+  readonly presentation: (
+    threadId: string,
+    actor: { kind: 'cat' | 'user' | 'plugin' | 'device' | 'system'; id: string },
+  ) => Promise<DeliveryPresentationContext>;
   /** The already-published `host.messaging.deliver` direction. */
   readonly delivery: HostMessagingDeliveryPort & Partial<Pick<HostPluginInvocationPort, 'invoke'>>;
   readonly entitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
@@ -103,6 +107,8 @@ export interface SubscriptionDeclaration {
   readonly handleId: string;
   /** In-process packages expose their own action name; external runtimes keep the frozen row. */
   readonly method?: string;
+  readonly lifecycleMethod?: string;
+  readonly presentationV1?: boolean;
   readonly filter?: SubscriptionFilter;
 }
 
@@ -111,6 +117,8 @@ interface Registration {
   readonly subscriptionId: string;
   readonly handleId: string;
   readonly method?: string;
+  readonly lifecycleMethod?: string;
+  readonly presentationV1?: boolean;
   readonly filter?: SubscriptionFilter;
 }
 
@@ -186,13 +194,15 @@ async function invokeDelivery(
   registration: Registration,
   event: Extract<MessageOutputEvent, { type: 'message.publish' }>,
   deliveryId: string,
-  lifecycleId?: string,
+  lifecycleId: string | undefined,
+  presentation: DeliveryPresentationContext | undefined,
 ): Promise<void> {
   if (registration.method !== undefined) {
     if (!delivery.invoke) throw new Error('subscription delivery invocation port is unavailable');
     await delivery.invoke(registration.subscriberId, registration.method, {
       deliveryId,
       ...(lifecycleId === undefined ? {} : { lifecycleId }),
+      ...(presentation === undefined ? {} : { presentation }),
       threadId: event.envelope.threadId,
       envelope: event.envelope,
     });
@@ -201,6 +211,7 @@ async function invokeDelivery(
   const input = {
     deliveryId,
     ...(lifecycleId === undefined ? {} : { lifecycleId }),
+    ...(presentation === undefined ? {} : { presentation }),
     threadHandle: { kind: 'thread_handle' as const, handle: registration.handleId },
     envelope: event.envelope,
   };
@@ -236,6 +247,7 @@ async function deliverPublishedEvent(
   event: MessageOutputEvent,
   signal: AbortSignal,
   timeoutMs: number,
+  presentation: SubscriptionDeliveryDeps['presentation'],
   resolveInvocationId?: SubscriptionDeliveryDeps['resolveInvocationId'],
 ): Promise<void> {
   if (isUnwantedEcho(event, registration)) return;
@@ -245,7 +257,11 @@ async function deliverPublishedEvent(
 
   const deliveryId = deliveryIdFor(registration, event);
   const invocationId = await resolveInvocationId?.(event.envelope.messageId);
-  const lifecycleId = invocationId === undefined ? undefined : lifecycleIdFor(invocationId);
+  const lifecycleId =
+    invocationId === undefined || !registration.lifecycleMethod ? undefined : lifecycleIdFor(invocationId);
+  const deliveryPresentation = registration.presentationV1
+    ? await presentation(event.envelope.threadId, event.envelope.actor)
+    : undefined;
   const media = isOwnEcho(event, registration) ? [] : deliveryMedia(event);
   if (media.length > 0 && !entitlements) throw new Error('media entitlement service is unavailable');
   let reason = 'action_returned';
@@ -264,7 +280,7 @@ async function deliverPublishedEvent(
       if (signal.aborted) throw Object.assign(new Error('delivery cancelled'), { code: 'CANCELLED' });
     }
     await waitForDeliveryAction(
-      invokeDelivery(delivery, registration, event, deliveryId, lifecycleId),
+      invokeDelivery(delivery, registration, event, deliveryId, lifecycleId, deliveryPresentation),
       signal,
       timeoutMs,
     );
@@ -300,6 +316,8 @@ export class SubscriptionDelivery {
       subscriptionId,
       handleId: declaration.handleId,
       ...(declaration.method === undefined ? {} : { method: declaration.method }),
+      ...(declaration.lifecycleMethod === undefined ? {} : { lifecycleMethod: declaration.lifecycleMethod }),
+      ...(declaration.presentationV1 === undefined ? {} : { presentationV1: declaration.presentationV1 }),
       ...(declaration.filter === undefined ? {} : { filter: declaration.filter }),
     };
     const index = existing.findIndex((entry) => entry.subscriberId === declaration.subscriberId);
@@ -356,6 +374,14 @@ export class SubscriptionDelivery {
     return (this.byThread.get(threadId) ?? []).map((entry) => entry.subscriberId);
   }
 
+  lifecycleTargetsForThread(threadId: string): readonly { subscriberId: string; method: string; wire: boolean }[] {
+    return (this.byThread.get(threadId) ?? []).flatMap((entry) =>
+      entry.lifecycleMethod
+        ? [{ subscriberId: entry.subscriberId, method: entry.lifecycleMethod, wire: entry.method === undefined }]
+        : [],
+    );
+  }
+
   private async drainSerial(threadId: string): Promise<void> {
     const registrations = this.byThread.get(threadId) ?? [];
     let failure: unknown;
@@ -407,6 +433,7 @@ export class SubscriptionDelivery {
       event,
       controller.signal,
       this.deps.actionTimeoutMs ?? 30_000,
+      this.deps.presentation,
       this.deps.resolveInvocationId,
     );
     const entry = { controller, done };

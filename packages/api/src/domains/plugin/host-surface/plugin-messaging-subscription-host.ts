@@ -1,3 +1,4 @@
+import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { MessagingError } from '../../messaging/contract/host-types.js';
@@ -32,6 +33,7 @@ export interface PluginMessagingSubscriptionSessionDeps {
   readonly bindingStore: IConnectorThreadBindingStore;
   readonly messaging: MessagingService;
   readonly delivery: Pick<SubscriptionDelivery, 'register' | 'unregister'>;
+  readonly manifest?: PluginManifest;
 }
 
 function boundedString(value: unknown, field: string, maximum: number): string {
@@ -123,6 +125,17 @@ export function createPluginMessagingSubscriptionSession(
           threadId: input.threadId,
           handleId,
           method: input.method,
+          ...(() => {
+            const declared = deps.manifest?.contributions?.find(
+              (entry) => entry.type === 'message-subscription' && entry.action.method === input.method,
+            );
+            return declared?.type === 'message-subscription'
+              ? {
+                  ...(declared.lifecycleAction ? { lifecycleMethod: declared.lifecycleAction.method } : {}),
+                  ...(declared.presentation === 'v1' ? { presentationV1: true } : {}),
+                }
+              : {};
+          })(),
           ...(input.includeOwnMessages === undefined
             ? {}
             : { filter: { includeOwnMessages: input.includeOwnMessages } }),

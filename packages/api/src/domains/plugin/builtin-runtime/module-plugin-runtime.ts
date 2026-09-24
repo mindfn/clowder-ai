@@ -232,6 +232,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
             bindingStore: this.options.messaging.bindingStore,
             messaging: this.options.messaging.service,
             delivery: this.options.messaging.delivery,
+            manifest: packageRecord.manifest,
           })
         : createUnavailablePluginMessagingSubscriptionHost();
       const messaging = this.options.messaging
