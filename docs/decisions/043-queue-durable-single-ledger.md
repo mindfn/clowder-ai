@@ -119,10 +119,20 @@ transaction 中原子判定；不能先做一次易失 read，再凭旧快照 en
 source，再将该 source 与同一 `targets[]` entry 原子 admission；callback response 只是 parent lineage，不能
 让它的 id 指向另一段只存在于 Queue 的 synthetic 正文。
 
-一次 try-drain 只领取 comparator head 这一条 source；不满足 admission 条件就无副作用返回。该 source 的共享 claim
-在所有 targets 已退役，或失败 target 已恢复 pending 时关闭并发出下一次普通 drain 信号，因此后一 source 不必等待健康
-target 的 provider terminal；
-若下一条当时仍被 Active Run 等条件阻塞，这次尝试自然跳过，既有执行终局事件会再次触发 drain。
+一次 try-drain 最多启动一条 source：按 comparator 顺序找第一条「完整 pending target set 此刻都可 admission」的
+source。等待中的 source（目标被 Active Run 占用、被取消 fence 压住，或重试尚在等待）不满足条件，原样留在原位，
+但不再挡住它后面的 source：只挡住后面与它有共同目标的 source，所以每个目标仍按 comparator 顺序收到 source；等待
+空闲 thread 的 targetless 输入挡住其后全部 source，因为它的目标还未知。只有 comparator head 在解析不出目标时原位
+失败，后面的 source 解析不出目标时等待，并占住其请求的目标。领取不再要求被选 source 是 comparator head；Lua 领取
+本就只校验 row 仍 queued 与 target 匹配。该 source 的共享 claim 在所有 targets 已退役，或失败 target 已恢复
+pending 时关闭并发出下一次普通 drain 信号，因此后一 source 不必等待健康 target 的 provider terminal；等待中的
+source 由既有执行终局事件再次触发 drain。
+
+交接前失败的尝试（actual-send preflight 拒绝目标、admission 失败）会把 source 恢复为 pending。为了不在同一失败上
+空转，该 source 等到它的重试时间：取 routing 的 `automaticRetryAt` 与逐次翻倍的退避（10 秒起，最长 60 分钟）两者
+中较晚的时刻，到点由定时器触发 drain；等待期间其余 source 照常 drain。这个等待是进程内状态，重启后直接在启动 drain
+里重试。修订于 2026-09-24：原文「只领取 comparator head」与「交接前失败就拒绝 drain」在 fork soak 中导致忙目标
+挡住空闲目标、单次失败让整个 thread 停摆（F117 KD-25）。
 同一 source 的 target set 是一次 fan-out，不以“第一个 target 完成 handoff 后再次 drain sibling”拼成并发。一个 target
 进入 provider 后失败，不回滚已经被 sibling 接受的投递；每个 response bubble 独立终局。
 

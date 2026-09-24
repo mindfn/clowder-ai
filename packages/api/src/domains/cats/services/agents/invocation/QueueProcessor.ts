@@ -39,6 +39,11 @@ import {
   bindAsrPersonMemoryPresentationRetryFromSchedulerMessage,
   bindAsrPersonMemoryReentryFromSchedulerMessage,
 } from '../../../../memory/people/AsrPersonMemoryReentryCarrier.js';
+import {
+  inferRoutingContextIntent,
+  preflightRoutingDispatch,
+  type RoutingDispatchPreflightPort,
+} from '../../../../routing-context/RoutingDispatchPreflightPort.js';
 import { bindAsrPersonMemoryScenesFromQueueMessage } from '../../../../signal-intake/AsrPersonMemoryQueueCarrier.js';
 import {
   MessageBundlePromptUnavailableError,
@@ -138,6 +143,7 @@ import {
   preparePrestartRetirements,
   terminalizePreparedPrestartRetirements,
 } from './queue-prestart-group-retirement.js';
+import { type QueueRetryDeferralOptions, QueueRetryDeferrals } from './queue-retry-deferrals.js';
 import { requireInvocationRecordUpdate } from './require-invocation-record-update.js';
 import {
   lifecycleResponseIdempotencyKey,
@@ -229,7 +235,10 @@ interface QueueExecutionResult {
   invocationId?: string;
   /** Queue rows actually reserved into this attempt, including F175 batch siblings. */
   attemptedQueueEntryIds: string[];
-  /** Exact primary settlement failed, so automatic draining must stop for recovery. */
+  /**
+   * The attempt failed before its handoff (or its Queue settlement failed), so its entries must not
+   * be retried at once: each waits for its retry time while the rest of the thread keeps draining.
+   */
   primarySettlementIncomplete?: boolean;
 }
 
@@ -480,6 +489,11 @@ export interface QueueProcessorDeps {
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
   actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'preflight' | 'preflightOutput' | 'commitOutcome'>;
   /**
+   * F117 soak: the actual-send routing verdict. When an attempt fails before its handoff, its entry
+   * waits until routing will next accept an automatic attempt at its targets.
+   */
+  routingDispatchPreflight?: RoutingDispatchPreflightPort;
+  /**
    * F254 Phase E (ADR-041 §5): seed the freshness seenCursor when closure adoption
    * injects required bodies — injection must count as seen, or the output gate
    * re-reads a frozen cursor and supersedes every replacement forever.
@@ -587,15 +601,23 @@ export class QueueProcessor {
   private readonly callerDispatchProcessStart?: {
     processGenerationId: string;
   };
+  /** F117 soak: entries whose attempt failed before handoff, each waiting for its retry time. */
+  private readonly retryDeferrals: QueueRetryDeferrals;
 
   constructor(
     deps: QueueProcessorDeps,
     opts?: {
       processingSlotTtlMs?: number;
       callerDispatchProcessStart?: { processGenerationId: string };
+      retryDeferral?: QueueRetryDeferralOptions;
     },
   ) {
     this.deps = deps;
+    this.retryDeferrals = new QueueRetryDeferrals((threadId) => {
+      this.requestDrain(threadId).catch((err) =>
+        deps.log.error({ err, threadId }, '[QueueProcessor] drain after a retry wait failed'),
+      );
+    }, opts?.retryDeferral);
     this.processingSlotTtlMs = opts?.processingSlotTtlMs ?? DEFAULT_PRESTART_RESERVATION_TTL_MS;
     this.sessionContinuationCoordinator =
       deps.sessionContinuationCoordinator ?? QueueProcessor.createSessionContinuationCoordinator(deps.threadStore);
@@ -2514,11 +2536,11 @@ export class QueueProcessor {
     }
     if (isSuperseded(catId) || suppressAutomaticFollowUp) return;
     if (suppressAutomaticDrain) {
-      this.deps.log.error(
-        { threadId, catId, status, invocationId, attemptedQueueEntryIds },
-        '[QueueProcessor] Queue settlement needs recovery; refusing blind same-attempt drain',
-      );
-      return;
+      // F117 soak: the attempt failed before its handoff. Its entries wait for their retry time
+      // rather than looping on the same failure, and the rest of the thread keeps draining.
+      await this.deferFailedAttempt(threadId, catId, status, attemptedQueueEntryIds);
+    } else {
+      for (const entryId of attemptedQueueEntryIds) this.retryDeferrals.forget(entryId);
     }
     if (this.hasDispatchableQueuedForThread(threadId)) {
       const bypassSuppressionEpoch = this.autoResumeSuppressionEpochForDifferentExecution(sk, invocationId);
@@ -2527,6 +2549,40 @@ export class QueueProcessor {
         bypassSuppressionEpoch === undefined ? undefined : { bypassSuppressionForCatId: catId, bypassSuppressionEpoch },
       );
     }
+  }
+
+  /** Each entry of a failed attempt waits for its retry time; the log names when that is. */
+  private async deferFailedAttempt(
+    threadId: string,
+    catId: string,
+    status: string,
+    entryIds: readonly string[],
+  ): Promise<void> {
+    for (const entryId of entryIds) {
+      const entry = this.deps.queue.getEntrySnapshotAcrossUsers(threadId, entryId);
+      const retryAt = this.retryDeferrals.defer(threadId, entryId, entry ? await this.targetRetryAt(entry) : undefined);
+      this.deps.log.warn(
+        { threadId, catId, status, entryId, retryAt, queued: entry?.status === 'queued' },
+        '[QueueProcessor] attempt failed before handoff; its entry waits for its retry time',
+      );
+    }
+  }
+
+  /** When routing will next accept an automatic attempt at the entry's targets, if one is refused now. */
+  private async targetRetryAt(entry: QueueEntry): Promise<number | undefined> {
+    const port = this.deps.routingDispatchPreflight;
+    const targetCatIds = queueEntryTargetCats(entry);
+    if (!port || targetCatIds.length === 0) return undefined;
+    const intent = inferRoutingContextIntent(entry.payload.content);
+    const decision = await preflightRoutingDispatch(port, {
+      ownerId: queueEntryOwnerId(entry),
+      targetCatIds,
+      ...(intent ? { intent } : {}),
+    });
+    const retryAts = decision.targets.flatMap((target) =>
+      target.disposition === 'rejected' && target.automaticRetryAt !== undefined ? [target.automaticRetryAt] : [],
+    );
+    return retryAts.length > 0 ? Math.max(...retryAts) : undefined;
   }
 
   /**
@@ -2807,91 +2863,156 @@ export class QueueProcessor {
     return true;
   }
 
+  /**
+   * F117 soak: one drain starts at most one source entry, the first in comparator order whose whole
+   * pending target set can start now. An entry that waits (a target busy or suppressed, or its retry
+   * deferred) no longer stops the entries behind it; it holds back only the later entries that share
+   * one of its targets, so every target still receives its sources in comparator order. A targetless
+   * input that waits for an idle thread holds back everything behind it: its target is not known yet.
+   */
   private async tryExecuteNextAcrossUsers(
     threadId: string,
     bypassSuppressionEpochByCatId: ReadonlyMap<string, number> = new Map(),
   ): Promise<QueueAdmissionAttempt> {
-    const comparatorHead = this.deps.queue.peekOldestAcrossUsers(threadId);
-    if (!comparatorHead) {
+    const candidates = this.deps.queue.listQueuedAcrossUsers(threadId);
+    if (candidates.length === 0) {
       this.emitContinuationDiagnostic(threadId, 'unknown', classifyContinuationOutcome(0), 0);
       return { started: false };
     }
-
-    let resolvedTargetCats = queueEntryTargetCats(comparatorHead).filter((targetCatId) =>
-      isOrdinaryQueueTargetEligible(comparatorHead, targetCatId),
-    );
-    let conversationBatchResolution: ConversationBatchResolution | undefined;
-    if (comparatorHead.kind === 'conversation_input') {
-      const routingClass = queueEntryTargetCats(comparatorHead).length === 0 ? 'targetless' : 'explicit';
-      if (routingClass === 'targetless' && this.deps.invocationTracker.has(threadId)) {
-        this.emitContinuationDiagnostic(threadId, 'targetless', 'all_candidate_slots_busy', 1, comparatorHead.id);
+    const heldTargets = new Set<string>();
+    let waitingEntries = 0;
+    let firstWaitingTarget: string | undefined;
+    for (const [index, candidate] of candidates.entries()) {
+      const admission = await this.resolveAdmissionTargets(threadId, candidate, index === 0);
+      if (admission.kind === 'settled') return admission.attempt;
+      if (admission.kind === 'barrier') {
+        this.emitContinuationDiagnostic(
+          threadId,
+          'targetless',
+          'all_candidate_slots_busy',
+          waitingEntries + 1,
+          candidate.id,
+        );
         return { started: false };
       }
-      resolvedTargetCats = await this.deps.router.resolveConversationTargetsAtAdmission(
-        queueEntryTargetCats(comparatorHead),
-        threadId,
-      );
-      if (resolvedTargetCats.length === 0) {
-        const terminalized = await this.terminalizeUnavailableConversationHead(comparatorHead, routingClass);
-        return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
+      const targets = admission.kind === 'resolved' ? admission.targets : queueEntryTargetCats(candidate);
+      const canStart =
+        admission.kind === 'resolved' &&
+        !this.retryDeferrals.isDeferred(candidate.id) &&
+        targets.every(
+          (catId) => !heldTargets.has(catId) && this.isSlotAdmissible(threadId, catId, bypassSuppressionEpochByCatId),
+        );
+      if (canStart) {
+        const attempt = await this.startSelectedEntry(threadId, candidate, admission);
+        if (attempt) return attempt;
       }
-      conversationBatchResolution = {
-        routingClass,
-        requestedTargets: [...queueEntryTargetCats(comparatorHead)],
-        resolvedTargets: [...resolvedTargetCats],
-      };
-    } else {
-      resolvedTargetCats = await this.deps.router.resolveExplicitTargets(
-        queueEntryTargetCats(comparatorHead),
-        threadId,
-      );
-      if (resolvedTargetCats.length === 0) {
-        const terminalized =
-          comparatorHead.kind === 'private_input'
-            ? await this.terminalizeUnavailablePrivateHead(comparatorHead)
-            : await this.terminalizeUnavailableConversationHead(comparatorHead, 'explicit');
-        return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
-      }
+      for (const catId of [...queueEntryTargetCats(candidate), ...targets]) heldTargets.add(catId);
+      waitingEntries += 1;
+      firstWaitingTarget ??= targets[0];
     }
+    this.emitContinuationDiagnostic(
+      threadId,
+      firstWaitingTarget ?? 'unknown',
+      'all_candidate_slots_busy',
+      waitingEntries,
+      candidates[0]?.id,
+    );
+    return { started: false };
+  }
 
-    const idleTargetCats = resolvedTargetCats.filter((targetCatId) => {
-      const slotKey = QueueProcessor.slotKey(threadId, targetCatId);
-      const remainingMs = this.autoResumeSuppressionRemainingMs(slotKey);
-      const suppression = remainingMs > 0 ? this.suppressedAutoResume.get(slotKey) : undefined;
-      const bypassEpoch = bypassSuppressionEpochByCatId.get(targetCatId);
-      const bypassesExactSuppression = bypassEpoch !== undefined && suppression?.epoch === bypassEpoch;
-      return (
-        (bypassesExactSuppression || remainingMs === 0) &&
-        !this.processingSlots.has(slotKey) &&
-        !this.deps.invocationTracker.has(threadId, targetCatId)
-      );
-    });
-    if (idleTargetCats.length !== resolvedTargetCats.length) {
-      this.emitContinuationDiagnostic(
-        threadId,
-        resolvedTargetCats[0] ?? 'unknown',
-        'all_candidate_slots_busy',
-        resolvedTargetCats.length,
-        comparatorHead.id,
-      );
-      return { started: false };
+  /**
+   * The targets a queued entry would start with now. Only the comparator head settles an entry that
+   * resolves no target (it fails in place); a later one waits, holding its requested targets.
+   */
+  private async resolveAdmissionTargets(
+    threadId: string,
+    entry: QueueEntry,
+    isHead: boolean,
+  ): Promise<
+    | {
+        readonly kind: 'resolved';
+        readonly targets: string[];
+        readonly conversationBatchResolution?: ConversationBatchResolution;
+      }
+    | { readonly kind: 'unresolved' }
+    | { readonly kind: 'barrier' }
+    | { readonly kind: 'settled'; readonly attempt: QueueAdmissionAttempt }
+  > {
+    const requestedTargets = queueEntryTargetCats(entry);
+    if (entry.kind === 'conversation_input') {
+      const routingClass = requestedTargets.length === 0 ? 'targetless' : 'explicit';
+      if (routingClass === 'targetless' && this.deps.invocationTracker.has(threadId)) return { kind: 'barrier' };
+      const targets = await this.deps.router.resolveConversationTargetsAtAdmission(requestedTargets, threadId);
+      if (targets.length > 0) {
+        return {
+          kind: 'resolved',
+          targets,
+          conversationBatchResolution: {
+            routingClass,
+            requestedTargets: [...requestedTargets],
+            resolvedTargets: [...targets],
+          },
+        };
+      }
+      if (!isHead) return { kind: 'unresolved' };
+      const terminalized = await this.terminalizeUnavailableConversationHead(entry, routingClass);
+      return { kind: 'settled', attempt: QueueProcessor.terminalizedHeadAttempt(terminalized) };
     }
+    const targets = await this.deps.router.resolveExplicitTargets(requestedTargets, threadId);
+    if (targets.length > 0) return { kind: 'resolved', targets };
+    if (!isHead) return { kind: 'unresolved' };
+    const terminalized =
+      entry.kind === 'private_input'
+        ? await this.terminalizeUnavailablePrivateHead(entry)
+        : await this.terminalizeUnavailableConversationHead(entry, 'explicit');
+    return { kind: 'settled', attempt: QueueProcessor.terminalizedHeadAttempt(terminalized) };
+  }
+
+  private static terminalizedHeadAttempt(terminalized: QueueEntry | null): QueueAdmissionAttempt {
+    return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
+  }
+
+  /** A slot may take new work: no execution holds it and no cancel fence suppresses it. */
+  private isSlotAdmissible(
+    threadId: string,
+    catId: string,
+    bypassSuppressionEpochByCatId: ReadonlyMap<string, number>,
+  ): boolean {
+    const slotKey = QueueProcessor.slotKey(threadId, catId);
+    const remainingMs = this.autoResumeSuppressionRemainingMs(slotKey);
+    const suppression = remainingMs > 0 ? this.suppressedAutoResume.get(slotKey) : undefined;
+    const bypassEpoch = bypassSuppressionEpochByCatId.get(catId);
+    const bypassesExactSuppression = bypassEpoch !== undefined && suppression?.epoch === bypassEpoch;
+    return (
+      (bypassesExactSuppression || remainingMs === 0) &&
+      !this.processingSlots.has(slotKey) &&
+      !this.deps.invocationTracker.has(threadId, catId)
+    );
+  }
+
+  /**
+   * Claims and starts the entry the drain selected. Returns null when the claim does not hold (the
+   * entry changed, or a target became busy after the claim and the entry went back), so the drain
+   * treats the entry as waiting and looks further.
+   */
+  private async startSelectedEntry(
+    threadId: string,
+    candidate: QueueEntry,
+    admission: { readonly targets: string[]; readonly conversationBatchResolution?: ConversationBatchResolution },
+  ): Promise<QueueAdmissionAttempt | null> {
     const staleReceiverTarget =
-      idleTargetCats.length > 1
-        ? await this.firstTargetWithExistingReceiver([comparatorHead], idleTargetCats)
+      admission.targets.length > 1
+        ? await this.firstTargetWithExistingReceiver([candidate], admission.targets)
         : undefined;
-    const selectedTargetCats = staleReceiverTarget ? [staleReceiverTarget] : idleTargetCats;
+    const selectedTargetCats = staleReceiverTarget ? [staleReceiverTarget] : admission.targets;
 
     const claimedGroup = await this.deps.queue.markProcessingGroupAcrossUsersDurable(
       threadId,
-      { entryId: comparatorHead.id, targetCats: selectedTargetCats },
-      [comparatorHead.id],
+      { entryId: candidate.id, targetCats: selectedTargetCats },
+      [candidate.id],
     );
     const entry = claimedGroup?.entry;
-    if (!entry) {
-      this.emitContinuationDiagnostic(threadId, resolvedTargetCats[0] ?? 'unknown', classifyContinuationOutcome(0), 0);
-      return { started: false };
-    }
+    if (!entry) return null;
 
     for (const targetCatId of selectedTargetCats) {
       if (await this.reconcileClaimedGroupWithExistingReceiver([entry, ...claimedGroup.members], targetCatId)) {
@@ -2904,8 +3025,7 @@ export class QueueProcessor {
 
     if (this.processingSlots.has(entrySk) || this.deps.invocationTracker.has(threadId, entryCat)) {
       await this.deps.queue.rollbackProcessingDurable(threadId, entry.id);
-      this.emitContinuationDiagnostic(threadId, entryCat, 'all_candidate_slots_busy', 1, entry.id);
-      return { started: false };
+      return null;
     }
 
     if (
@@ -2915,7 +3035,7 @@ export class QueueProcessor {
         entryCat,
         selectedTargetCats,
         false,
-        conversationBatchResolution,
+        admission.conversationBatchResolution,
         [],
       ))
     ) {

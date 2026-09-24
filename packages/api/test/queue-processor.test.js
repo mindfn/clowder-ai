@@ -71,10 +71,12 @@ function createHarness({
   routeExecution,
   tracker = new InvocationTracker(),
   callerDispatchObservationRegistry = new CallerDispatchObservationRegistry(),
-  processorOptions,
+  // A failed attempt's retry wait is long by default so no retry fires behind a later test.
+  processorOptions = { retryDeferral: { baseDelayMs: 60_000 } },
   draftStore,
   turnExecutionStore,
   actionSuccessorLeaseStore,
+  routingDispatchPreflight,
 } = {}) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
@@ -121,6 +123,7 @@ function createHarness({
     ...(draftStore ? { draftStore } : {}),
     ...(turnExecutionStore ? { turnExecutionStore } : {}),
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
+    ...(routingDispatchPreflight ? { routingDispatchPreflight } : {}),
   };
   return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
 }
@@ -1878,5 +1881,145 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.doesNotMatch(observedPrompts[2], new RegExp(`${source.id} → worker: executing`));
     assert.equal(harness.messageStore.getByThreadBefore.mock.calls.length, 0);
     assert.equal(registry.list({ ownerId: 'user-1', threadId: 'thread-1', callerCatId: 'caller' }).length, 1);
+  });
+});
+
+describe('F117 soak: a waiting entry does not stop its thread’s queue', () => {
+  const routedTargets = (harness) => harness.routeCalls.map((args) => [...args[4]]);
+  const queuedIds = (harness) =>
+    harness.queue.list('thread-1', 'user-1').flatMap((entry) => (entry.status === 'queued' ? [entry.id] : []));
+
+  it('starts a source for an idle member while the head waits for a busy one', async () => {
+    const harness = createHarness();
+    bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });
+    const waiting = await admitMessage(harness, { targetCats: ['opus'] });
+    await admitMessage(harness, { targetCats: ['codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.routeCalls.length === 1);
+
+    assert.deepEqual(routedTargets(harness), [['codex']]);
+    assert.deepEqual(queuedIds(harness), [waiting.entry.id]);
+  });
+
+  it('keeps a later source for the busy member behind the earlier one', async () => {
+    const harness = createHarness();
+    bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });
+    const first = await admitMessage(harness, { targetCats: ['opus'] });
+    const second = await admitMessage(harness, { targetCats: ['opus'] });
+    await admitMessage(harness, { targetCats: ['codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.routeCalls.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assert.deepEqual(routedTargets(harness), [['codex']]);
+    assert.deepEqual(queuedIds(harness), [first.entry.id, second.entry.id]);
+  });
+
+  it('holds back a later source for the idle member of a source that waits on its busy member', async () => {
+    const harness = createHarness();
+    bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });
+    const pair = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    const codexOnly = await admitMessage(harness, { targetCats: ['codex'] });
+    await admitMessage(harness, { targetCats: ['gemini'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.routeCalls.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assert.deepEqual(routedTargets(harness), [['gemini']], 'codex keeps its order behind the waiting pair');
+    assert.deepEqual(queuedIds(harness), [pair.entry.id, codexOnly.entry.id]);
+  });
+
+  it('keeps draining past an attempt that failed before handoff, and retries it after its wait', async () => {
+    const attempts = [];
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 150 } },
+      routeExecution: async function* (...args) {
+        const [, content, , , targetCats] = args;
+        attempts.push({ content, at: Date.now() });
+        if (content === 'fails before handoff' && attempts.length === 1) {
+          throw new Error('injected before lifecycle receiver');
+        }
+        await startLifecycle(args, `turn-${attempts.length}`);
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    const failing = await admitMessage(harness, { content: 'fails before handoff', targetCats: ['opus'] });
+    await admitMessage(harness, { content: 'behind it', targetCats: ['codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => attempts.length === 2);
+
+    assert.deepEqual(
+      attempts.map((attempt) => attempt.content),
+      ['fails before handoff', 'behind it'],
+      'the thread drains past the failed entry without a new message',
+    );
+    assert.deepEqual(queuedIds(harness), [failing.entry.id], 'the failed entry waits in its place');
+
+    await waitFor(() => attempts.length === 3);
+    assert.equal(attempts[2].content, 'fails before handoff');
+    assert.ok(attempts[2].at - attempts[0].at >= 140, 'retried only after its wait');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('retries a member refused at actual send when routing will accept it again', async () => {
+    const attempts = [];
+    let automaticRetryAt;
+    const routingDispatchPreflight = {
+      preflight: mock.fn(async ({ ownerId, targetCatIds }) => ({
+        v: 1,
+        ownerId,
+        observedAt: Date.now(),
+        resolverState: 'fresh',
+        targets: targetCatIds.map((targetCatId) => ({
+          targetCatId,
+          disposition: 'rejected',
+          automaticRetryAt,
+          reasons: [],
+          alternatives: [],
+        })),
+      })),
+    };
+    const harness = createHarness({
+      routingDispatchPreflight,
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: async function* (...args) {
+        const [, , , , targetCats] = args;
+        attempts.push(Date.now());
+        if (attempts.length === 1) {
+          // Actual send refused the member: no response receiver, the entry goes back to the Queue.
+          yield {
+            type: 'error',
+            catId: targetCats[0],
+            errorCode: 'routing_preflight_rejected',
+            error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
+            timestamp: Date.now(),
+          };
+          return;
+        }
+        await startLifecycle(args, `turn-${attempts.length}`);
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    automaticRetryAt = Date.now() + 400;
+    const refused = await admitMessage(harness, { targetCats: ['opus'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => attempts.length === 1);
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('waits for its retry time')),
+    );
+    const deferral = harness.log.warn.mock.calls.find((call) =>
+      String(call.arguments[1]).includes('waits for its retry time'),
+    ).arguments[0];
+    assert.equal(deferral.entryId, refused.entry.id);
+    assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
+
+    await waitFor(() => attempts.length === 2);
+    assert.ok(attempts[1] >= automaticRetryAt - 5, 'not retried before routing accepts the member again');
+    await waitFor(() => queuedIds(harness).length === 0);
   });
 });

@@ -2573,6 +2573,7 @@ async function main(): Promise<void> {
       sessionContinuationCoordinator,
       freshnessEventLog,
       ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
+      ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
       deliveryCursorStore,
     },
     {
