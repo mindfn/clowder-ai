@@ -874,6 +874,96 @@ managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`�
   装配错误必须在编译期或装配期暴露，不能推迟到投递时。
 - **INV-I4** 信封自述事实（priority、timestamp、provenance）；admission 不得从载荷推断。
 
+### Phase J（第二批：KD-22～24 实现设计，2026-09-24）— 设计待复审
+
+基点 `69a60d7af`（KD-21 与 KD-25 已过跨族复审）。代码地图（锚点 @`72c6df162`）整理自两份只读普查，
+下文只写设计选择与理由。按下列顺序提交，分两轮交审：J1+J2+J3 为一轮，J4 为一轮。
+
+#### J1 · KD-24：只改说明
+
+`.env.example:66-68`、`docs/configuration/environment.md:63`、`environment.zh-CN.md:63` 里写的「默认 30 分钟」
+改为「默认 0，即不超时」；同步修正 `invoke-single-cat.ts` 里「30-min kill deadline」的注释、F254 文档与
+`FreshnessInvocationStateStore.ts` 头注释。代码默认值不变。
+
+#### J2 · KD-23 第一半：草稿活到它的 R 终局
+
+现状：Memory store 在读取时丢弃超过 300 秒的草稿；Redis store 在每次 upsert/touch 时设 300 秒过期。
+两条 route 的 60 秒定时器存在的唯一理由就是续这个过期。settlement 只按 id 读草稿，所以只删定时器、不删
+过期，任何静默超过 300 秒的一轮都会丢掉已输出的正文。二者必须同一个 commit 落地。
+
+- `IDraftStore` 删除 `touch` 与全部过期逻辑（Memory 的读时回收、Redis 的 `EXPIRE`、`DRAFT_TTL_SECONDS`）。
+  草稿只在 R 终局后被删除。
+- **草稿删除是一轮离开 response-pending 账本的前提**：
+  - `settleResponseFromDraft` 的 `no_response` 分支也要删草稿，再清账本；
+  - QueueProcessor 在 R 已终局、清账本前（`releaseSettledResponseTurn`），先删这一轮的草稿；
+  - route 自己的 fire-and-forget 删除保留，只作为提前清理。
+
+  这样删草稿失败、或进程在 R 提交与删草稿之间崩溃，这一轮都还在账本里，下次启动会再结算一次，所以不需要
+  额外的草稿扫描。升级前写入的草稿保留原有 Redis 过期时间，自然消失。
+- 删除 route-serial / route-parallel 的 60 秒定时器，以及工具阶段 flush 时的 `touch`。ball-custody 的
+  `invocation.heartbeat` 只保留由 flush 触发的那一份：静默阶段不再发心跳，J3 同时去掉按心跳判定「死球」的读法。
+
+#### J3 · KD-23 第二半：「正在处理」只看 R 与持有者
+
+- `getThreadLiveInvocations` 不再读草稿、不再有宽限窗口，也不再输出 `zombies[]`。一轮算「正在处理」，
+  当且仅当它的 R 处于 processing，并且当前进程持有它：InvocationTracker 的槽位（其 `activeRun` 带 child
+  invocationId 与 responseMessageId），或 QueueProcessor 的 processing 预留。口径与
+  `thread-execution-situation` 使用的 `hasExactLifecycleProcessingDispatch`（R processing + 本进程
+  active run）一致；那个原语按 source message 取数，classifier 按调用记录取数，所以共用判断规则，不共用入口。
+- 消费方（GET /queue 的 `activeInvocations`、active-execution 路由、侧栏 presence）的返回形状不变，
+  只是不会再因为「草稿久未更新」把正在跑的一轮藏掉。
+- 删除 `record_zombie_detected` / `liveness_pending` 事件，以及 duty briefing 里把运行中的调用列为死球
+  的分支（F233 的简报已于 08-17 sunset，球权事件账本保留）。
+- **保留**真正收尾的路径：`InvocationOwnerReaper` + `reconcileZombies`（持久化的 reason
+  `zombie_record_detected` 保持原名，兼容历史数据），KD-21 的启动结算，GET /queue 的 read-repair。
+  API 进程每个 namespace 只有一个，所以死掉的持有者只可能是上一个进程，启动结算覆盖它；本进程内的遗漏
+  由 reaper 与 read-repair 兜住。三者都不读草稿。
+- F194 文档写一条 post-close 更正（F194 已于 05-12 完成，本实例没有 owner thread）。
+
+#### J4 · KD-22：每个成员只有一个超时，触发后走 Stop
+
+现状有三层，各自收尾，结果互相矛盾：
+- **CLI 层**（cli-spawn 的无输出定时器，CPU 忙时有上限地顺延）：R 为 failed，reason 是 `PROVIDER_EXECUTION_FAILED`；
+- **外层 2× 定时器**（invoke-single-cat）：R 为 failed/`provider_error`；在等 session custody 时，R 甚至记为 completed；
+- **carrier 自带的定时器**（Codex app-server 空闲中断、tmux 空闲、AGY `--print-timeout`）：只发 status，R 记为 completed。
+
+TurnExecution 又是 `invocation_timeout`；重启后的 settlement 再把它抄进 R。
+
+- **唯一的定时器放在 invoke-single-cat**：它对每个成员、每种 carrier 都只跑一次。只有实际输出
+  （text、tool、thinking）才重置；provider_signal、liveness 与 status 类事件不重置。
+- **CPU 顺延**：触发时若成员进程正占用 CPU，则顺延，但距上一次实际输出总共不超过 2×`CLI_TIMEOUT_MS`。
+  上限按「距上次输出」计，而不是现在的「距 spawn」：否则一个跑了很久、一直有输出的成员，后面就再也拿
+  不到顺延。进程状态从 cli-spawn 的 liveness probe 按 invocation 读；没有进程号的常驻 carrier 不顺延。
+- **触发 = Stop**：调用与「停止」同一个成员级取消（`InvocationTracker.cancel(threadId, catId, 'timeout')`），
+  经 QueueProcessor 注入的成员 stop hook 进入 route。abort reason `timeout` 被映射为：
+  - R failed / `timeout`；
+  - TurnExecution failed / `timeout`；
+  - Queue 结果为 failed，不再被当成 `canceled_by_user`；
+  - routing 信号计为 `provider_timeout`。
+
+  超时诊断在 abort 之前由定时器留存，R 提交时附上，因为 abort 之后到达的事件会被 route 丢弃。
+- **删除**：外层 2× 定时器与 `invocation_timeout` 路径；cli-spawn 为 invocation 设的无输出定时器与
+  `__cliTimeout` 产出（liveness probe 保留，供顺延判断）；Codex app-server、tmux、AGY 由
+  `CLI_TIMEOUT_MS` 驱动的定时器。与 `CLI_TIMEOUT_MS` 无关的定时器（ACP 预算、A2A 120 秒、后台 carrier
+  30 分钟、tmux 首事件 30 秒）不在本条范围。
+
+#### J.不变量
+
+- **INV-J1** 草稿存在 ⇔ 它的 R 处于 processing，或这一轮仍在 response-pending 账本里。
+- **INV-J2** 「正在处理」只由 R 的状态与当前进程的持有关系决定，不读任何时间戳。
+- **INV-J3** 每个成员至多一个超时定时器；超时只能以 Stop 的方式结束成员，并且只结束这一个成员。
+
+#### J.请复审者重点判断
+
+1. **#774 自愈重试是否随 J4 删除**：它在 resume 旧 session、没有实质输出就超时时，吞掉超时并重跑一次。
+   J4 之后超时是可重发的普通失败（KD-22 的理由），我倾向删除。
+2. **J3 的宽限期缩短**：今天有记录、没有槽位的运行中调用有 600 秒宽限；J3 之后它不算「正在处理」，
+   由 read-repair 在 30 秒后收尾。pre-start 窗口由 processing 预留覆盖。
+3. **J2 的草稿不设任何兜底过期**：删除失败完全依赖账本重试，这是 KD-21「草稿不设过期时间」的字面落实。
+4. **KD-25 的已知边界（砚砚 P3，`…1122`）**：领取前的同步复核与 Redis Lua `claimPrefix` 之间隔一次存储往返。
+   这期间先提交的重排不被 Lua 校验，所以还不能宣称严格线性化保序；旧的队头检查也有同样窗口。若要求严格，
+   需在 claim 的原子边界校验队列 revision 或前驱。本批不改，只记录。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in
@@ -892,3 +982,5 @@ evidence that main composition roots survived.
 - Phase I: 登记表（I.2）必须先于实现更新；跨族 reviewer 核验 INV-I1..I4 与 I.3 三项剩余收口，
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase H: 「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」实现与跨族复审已完成；co-creator 的完整 worktree UAT 仍覆盖初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart
+- Phase J: 设计（J1–J4 与 INV-J1..J3）先过跨族复审再实现；J1+J2+J3 一轮、J4 一轮，各自 exact-HEAD 复审。
+  co-creator worktree 体验验收与 fork soak 仍是上游前硬门
