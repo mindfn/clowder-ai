@@ -467,7 +467,11 @@ describe('Callback Routes', () => {
     assert.deepEqual(stored?.extra?.causal, {
       kind: 'invocation_reply',
       triggerMessageId: trigger.id,
+      triggerThreadId: threadId,
     });
+    assert.equal(stored?.replyTo, undefined, 'Hub direct reply relation remains unchanged');
+    const { projectEnvelope } = await import('../dist/domains/messaging/envelope.js');
+    assert.equal(projectEnvelope(stored)?.replyTo, trigger.id, 'plugin projection carries the verified trigger');
     assert.deepEqual(stored?.extra?.turnExecution, {
       invocationId,
       parentInvocationId,
