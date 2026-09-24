@@ -154,7 +154,8 @@ describe('ChatMessage render isolation', () => {
     expect(metadata?.compareDocumentPosition(receipts!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(receipts?.textContent).toContain('补充消息');
     expect(receipts?.textContent).toContain('@狸花猫 测试下追加消息的');
-    expect(receipts?.textContent).toContain('查看原文');
+    expect(receipts?.textContent).toContain('跳到原文');
+    expect(receipts?.textContent).not.toContain('查看原文');
     expect(receipts?.textContent).not.toContain('09/01 22:14:08');
     expect(appendedRow?.getAttribute('title')).toContain('09/01 22:14:08');
     expect(appendedRow?.getAttribute('title')).toContain('@狸花猫 测试下追加消息的');

@@ -90,8 +90,9 @@ import {
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
+import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
-import { mergeStreams } from '../invocation/stream-merge.js';
+import { finallyAfter, mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { AgentServiceUnavailableError } from '../registry/AgentServiceUnavailableError.js';
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
@@ -129,6 +130,7 @@ import {
 import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
 import { routingPreflightNotice } from './routing-preflight-notice.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
+import { withTimeoutDiagnostics } from './timeout-diagnostics-metadata.js';
 import { buildVoteTally, checkVoteCompletion, extractVoteFromText, VOTE_RESULT_SOURCE } from './vote-intercept.js';
 
 const log = createModuleLogger('route-parallel');
@@ -203,6 +205,11 @@ export async function* routeParallel(
       const notice = await routingPreflightNotice(deps, options, routingPreflight, targetCatId, threadId, true);
       if (notice) yield notice;
       if (receipt.target.disposition === 'rejected') {
+        const { automaticRetryAt } = receipt.target;
+        options.onRoutingDispatchRejected?.({
+          catId: targetCatId,
+          ...(automaticRetryAt !== undefined ? { automaticRetryAt } : {}),
+        });
         yield {
           type: 'error',
           catId: targetCatId,
@@ -1023,6 +1030,7 @@ export async function* routeParallel(
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
         executionKind: turnExecutionKind,
+        ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {
           ...(bridgeTriggerMessageId ? { triggerMessageId: bridgeTriggerMessageId } : {}),
         },
@@ -1155,7 +1163,13 @@ export async function* routeParallel(
       }),
     },
   );
-  for await (const msg of mergedStreams) {
+  // Issue #83: the keepalive stops however this loop ends. Stopping it only after a normal finish
+  // leaked the timer whenever the loop body threw or the consumer returned early.
+  const stopKeepalive = () => {
+    if (keepaliveTimer) clearInterval(keepaliveTimer);
+    keepaliveTimer = undefined;
+  };
+  for await (const msg of finallyAfter(mergedStreams, stopKeepalive)) {
     const effectiveMsgs: AgentMessage[] = [];
     if (msg.type === 'text' && msg.content && msg.catId) {
       effectiveMsgs.push({ ...msg, content: getPayloadStripper(msg.catId).push(msg.content) });
@@ -1261,6 +1275,9 @@ export async function* routeParallel(
           if (parsed.type === 'invocation_usage' && parsed.usage) {
             routeTotalTokens += (parsed.usage.inputTokens ?? 0) + (parsed.usage.outputTokens ?? 0);
           }
+          // F118 AC-C3 / F117: timeout diagnostics persist with the response they explain.
+          const catMetadata = withTimeoutDiagnostics(catMeta.get(effectiveMsg.catId), parsed);
+          if (catMetadata) catMeta.set(effectiveMsg.catId, catMetadata);
         } catch {
           /* ignore parse errors */
         }
@@ -1621,6 +1638,14 @@ export async function* routeParallel(
       const actionOutputCommitAllowed = options.beforeOutputCommit
         ? await options.beforeOutputCommit(msg.catId as CatId)
         : true;
+      // F117 KD-21: the allowed verdict becomes the turn's durable truth before anything visible, so
+      // a settlement after a crash in between publishes the approved draft. A write that fails throws:
+      // the output stays uncommitted and the execution's failure path settles R. Without a turn store
+      // no child was recorded, so there is no fence to write and no settlement that could read one.
+      const fencedTurnStore = deps.invocationDeps.turnExecutionStore;
+      if (options.beforeOutputCommit && actionOutputCommitAllowed && ownInvId && fencedTurnStore) {
+        await requireTurnOutputAllowed(fencedTurnStore, ownInvId);
+      }
       const lifecycleAdmission = catLifecycleResponse.get(msg.catId);
       const completedSignal = signalForCat?.(msg.catId as CatId) ?? signal;
       const abortReason = completedSignal?.reason;
@@ -1699,6 +1724,11 @@ export async function* routeParallel(
         );
         if (options.persistenceContext) options.persistenceContext.actionOutputCommitRejected = true;
         if (lifecycleResponse && ownInvId) {
+          // F117 KD-21: the rejection is the turn's durable truth before R commits, so no later
+          // settlement can publish this draft even if the commit below fails.
+          await recordTurnOutputVerdict(deps.invocationDeps.turnExecutionStore, ownInvId, 'rejected', (err) =>
+            log.warn({ err, catId: msg.catId, invocationId: ownInvId }, 'rejected output fence verdict not recorded'),
+          );
           await commitLifecycleResponseFromAppendInput(
             deps.messageStore,
             lifecycleResponse.messageId,
@@ -1714,6 +1744,8 @@ export async function* routeParallel(
               threadId,
             },
           );
+          // F117 KD-21: R is terminal and its output was rejected, so its draft has no reader left.
+          deps.draftStore?.delete(userId, threadId, ownInvId)?.catch?.(noop);
         }
       } else if (text) {
         catProducedOutput = true;
@@ -2500,11 +2532,5 @@ export async function* routeParallel(
       isFinal: true,
       timestamp: Date.now(),
     } as AgentMessage;
-  }
-
-  // Issue #83: Stop keepalive timer — streaming loop has exited.
-  if (keepaliveTimer) {
-    clearInterval(keepaliveTimer);
-    keepaliveTimer = undefined;
   }
 }

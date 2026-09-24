@@ -111,6 +111,37 @@ describe('F212 Phase B — cold hydration restores cliDiagnostics (云端 codex 
     expect(messages[0].extra?.cliDiagnostics).toEqual(STORED_DIAGNOSTICS);
   });
 
+  it('F117: restores the timeout diagnostics a failed response persisted into its panel carrier', async () => {
+    const timeoutDiagnostics = { silenceDurationMs: 1_800_000, processAlive: true, invocationId: 'turn-1' };
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        messages: [
+          {
+            id: 'response-timeout',
+            type: 'assistant',
+            catId: 'opus',
+            content: '缅因猫 CLI 响应超时 (1800s)',
+            metadata: { provider: 'openai', model: 'gpt', timeoutDiagnostics },
+            timestamp: 1700000000000,
+          },
+        ],
+        tasks: [],
+        hasMore: false,
+      }),
+    } as Response);
+
+    await act(async () => {
+      root.render(React.createElement(HookHost, { threadId: 'thread-cli-diag' }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useChatStore.getState().messages[0]?.extra?.timeoutDiagnostics).toEqual(timeoutDiagnostics);
+  });
+
   it('F293 restores the exact durable routing receipt and retry source on cold history hydration', async () => {
     const systemInfo = {
       v: 1,

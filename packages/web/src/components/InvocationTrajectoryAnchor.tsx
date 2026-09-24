@@ -1,7 +1,6 @@
 'use client';
 
 import type { InvocationTrajectoryStatus } from '@cat-cafe/shared';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { captureMessageScrollAnchorForMessage } from '@/utils/scrollToMessage';
@@ -36,11 +35,17 @@ function responseLifecycleTrajectoryStatus(message: ChatMessage): InvocationTraj
   }
 }
 
+/** The turn a streamed message came from; a post_message stands alone and names no trajectory. */
+function streamInvocationId(message: ChatMessage): string | undefined {
+  if (message.extra?.isExplicitPost) return undefined;
+  return message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId;
+}
+
 export function describeMessageInvocationTrajectory(
   message: ChatMessage,
 ): MessageInvocationTrajectoryDescriptor | undefined {
   const invocationId =
-    getBubbleInvocationId(message) ??
+    streamInvocationId(message) ??
     message.extra?.timeoutDiagnostics?.invocationId ??
     message.extra?.cliDiagnostics?.debugRef.invocationId;
   if (!invocationId || !message.catId) return undefined;

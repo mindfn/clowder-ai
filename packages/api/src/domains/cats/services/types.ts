@@ -143,6 +143,21 @@ export interface MessageMetadata {
    *  Populated by providers when isCliError/isCliTimeout fires, consumed by Phase B folded panel.
    *  Carries `__cliError.cliDiagnostics` / `__cliTimeout.cliDiagnostics` from cli-spawn. */
   cliDiagnostics?: CliDiagnostics;
+  /** F118 AC-C3 / F117: what the provider observed when it gave up on a silent CLI. It explains
+   *  the failure of the turn's response, so it persists with that response's terminal state. */
+  timeoutDiagnostics?: TimeoutDiagnostics;
+}
+
+/** F118 AC-C3: the `timeout_diagnostics` system_info payload, reduced to its rendered fields. */
+export interface TimeoutDiagnostics {
+  silenceDurationMs: number;
+  processAlive: boolean;
+  lastEventType?: string;
+  firstEventAt?: number;
+  lastEventAt?: number;
+  cliSessionId?: string;
+  invocationId?: string;
+  rawArchivePath?: string;
 }
 
 /**

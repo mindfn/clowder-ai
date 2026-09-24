@@ -24,7 +24,6 @@ type IndexEventHandler = NonNullable<SocketCallbacks['onIndexEvent']>;
 
 export interface ThreadChatRuntimeRegistration {
   socketConnected: boolean | null;
-  resetAgentMessageRefs: () => void;
   registerIndexEventHandler: (handler: IndexEventHandler) => () => void;
 }
 
@@ -59,7 +58,7 @@ export function ThreadChatRuntimeProvider({ children, routeThreadId }: ThreadCha
   const indexEventHandlersRef = useRef(new Map<symbol, IndexEventHandler>());
   const storeThreadId = useChatStore((state) => state.currentThreadId);
   const activeThreadId = routeThreadId || storeThreadId;
-  const { handleAgentMessage, resetRefs, resetTimeout, clearDoneTimeout } = useAgentMessages();
+  const { handleAgentMessage, resetTimeout, clearDoneTimeout } = useAgentMessages();
 
   useLayoutEffect(() => {
     runtimeMountedRef.current = true;
@@ -117,12 +116,11 @@ export function ThreadChatRuntimeProvider({ children, routeThreadId }: ThreadCha
   const contextValue = useMemo<ThreadChatRuntimeContextValue>(
     () => ({
       socketConnected,
-      resetAgentMessageRefs: resetRefs,
       registerIndexEventHandler,
       replaceConsumerRegistration,
       removeConsumerRegistration,
     }),
-    [socketConnected, resetRefs, registerIndexEventHandler, replaceConsumerRegistration, removeConsumerRegistration],
+    [socketConnected, registerIndexEventHandler, replaceConsumerRegistration, removeConsumerRegistration],
   );
 
   return (
@@ -144,13 +142,8 @@ export function useThreadChatRuntime(threadIds: readonly string[]): ThreadChatRu
 
   const consumerId = useId();
   const registrationKey = JSON.stringify(normalizeThreadIds(threadIds));
-  const {
-    socketConnected,
-    resetAgentMessageRefs,
-    registerIndexEventHandler,
-    replaceConsumerRegistration,
-    removeConsumerRegistration,
-  } = runtime;
+  const { socketConnected, registerIndexEventHandler, replaceConsumerRegistration, removeConsumerRegistration } =
+    runtime;
 
   useLayoutEffect(() => {
     replaceConsumerRegistration(consumerId, JSON.parse(registrationKey) as string[]);
@@ -165,7 +158,6 @@ export function useThreadChatRuntime(threadIds: readonly string[]): ThreadChatRu
 
   return {
     socketConnected,
-    resetAgentMessageRefs,
     registerIndexEventHandler,
   };
 }

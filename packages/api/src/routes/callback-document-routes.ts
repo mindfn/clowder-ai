@@ -13,6 +13,7 @@ import type { RichBlock } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
+import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { PandocService } from '../infrastructure/document/PandocService.js';
@@ -36,6 +37,7 @@ export function registerCallbackDocumentRoutes(
     registry: InvocationRegistry;
     socketManager: SocketManager;
     threadStore?: Pick<IThreadStore, 'get'>;
+    invocationTracker?: Pick<InvocationTracker, 'getLifecycleResponseMessageId'>;
   },
 ): void {
   const pandocService = new PandocService(app.log);
@@ -98,7 +100,12 @@ export function registerCallbackDocumentRoutes(
 
     const isNew = getRichBlockBuffer().add(record.threadId, record.catId as string, fileBlock, invocationId);
 
-    // #454: include invocationId so frontend can exact-match callback to stream bubble
+    // The file block lands in this turn's response, so the live event names that message.
+    const responseMessageId = deps.invocationTracker?.getLifecycleResponseMessageId(
+      record.threadId,
+      record.catId as string,
+      invocationId,
+    );
     if (isNew) {
       deps.socketManager.broadcastAgentMessage(
         {
@@ -106,6 +113,7 @@ export function registerCallbackDocumentRoutes(
           catId: record.catId,
           content: JSON.stringify({ type: 'rich_block', block: fileBlock }),
           invocationId,
+          ...(responseMessageId ? { messageId: responseMessageId } : {}),
           timestamp: Date.now(),
         },
         record.threadId,

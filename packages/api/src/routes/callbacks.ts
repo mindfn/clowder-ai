@@ -1106,7 +1106,6 @@ export interface CallbackRoutesOptions {
 
 const postMessageSchema = z.object({
   content: z.string().min(1).max(50000),
-  streamDisposition: z.enum(['independent', 'replace_final']).optional().default('independent'),
   threadId: z.string().min(1).optional(),
   replyTo: z.string().optional(),
   cloudReturnBinding: z
@@ -1498,13 +1497,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       if (!parsed.success) {
         reply.status(400);
         return { error: 'Invalid request body', details: parsed.error.issues };
-      }
-      if (parsed.data.streamDisposition === 'replace_final') {
-        reply.status(400);
-        return {
-          kind: 'replace_final_agent_key_unsupported',
-          message: 'streamDisposition="replace_final" requires invocation-token provenance.',
-        };
       }
       if (parsed.data.localReviewVerdict && !parsed.data.clientMessageId) {
         reply.status(400);
@@ -2224,10 +2216,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       acceptedRevision,
       action,
       proposedAction,
-      streamDisposition,
     } = parsed.data;
-    const isStandaloneExplicitPost = streamDisposition === 'independent';
-    const standaloneExplicitPostExtra = isStandaloneExplicitPost ? { isExplicitPost: true as const } : {};
+    // #814: a post_message is always its own message, never a replacement for a final.
+    const standaloneExplicitPostExtra = { isExplicitPost: true as const };
     const { invocationId } = actor;
     // #573: identity for cross-handler dedup. stream + callback for same logical
     // response must broadcast/persist with the same id; QueueProcessor + route-serial
@@ -3207,9 +3198,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const richExtra = richBlocks.length > 0 ? { rich: { v: 1 as const, blocks: richBlocks } } : {};
     const targetCatsExtra =
       !suppressTerminalRouting && validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
-    // #814: independent post_message callbacks remain standalone. #1332:
-    // replace_final deliberately omits this marker so the existing frontend
-    // callback replacement path converges the live stream with durable history.
     const extraParts = {
       ...standaloneExplicitPostExtra,
       ...richExtra,
@@ -3308,7 +3296,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             mentions,
             ...(mentionsUser ? { mentionsUser } : {}),
             ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-            isExplicitPost: isStandaloneExplicitPost,
+            isExplicitPost: true,
             localReviewVerdict: localReviewFactInput.verdict,
             reviewedHeadSha: localReviewFactInput.reviewedHeadSha,
             reviewSubjectRef: localReviewFactInput.reviewSubjectRef,
@@ -3337,7 +3325,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             mentions,
             ...(mentionsUser ? { mentionsUser } : {}),
             ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-            isExplicitPost: isStandaloneExplicitPost,
+            isExplicitPost: true,
             ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
             ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
             now,
@@ -3481,7 +3469,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           mentions,
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-          isExplicitPost: isStandaloneExplicitPost,
+          isExplicitPost: true,
           ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
           ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
@@ -3646,8 +3634,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
         ...stampVisibleTurn(effectiveInvId, invocationId),
         // F52+F098-C1: Include crossPost + targetCats in real-time broadcast.
-        // #1332: replace_final omits the standalone marker so live UI replaces
-        // the provider stream bubble and suppresses later stream chunks.
         extra: {
           ...standaloneExplicitPostExtra,
           ...(isCrossThread
@@ -6238,10 +6224,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Buffer the block — consumed at append time in route-serial/route-parallel
     const isNew = getRichBlockBuffer().add(record.threadId, record.catId as string, resolvedBlock, invocationId);
 
-    // Only broadcast new blocks (dedup retries at server to prevent frontend duplicates)
-    // #454/573: include effectiveInvId (parent/outer) so frontend can exact-match
-    // callback to stream bubble.
-    // F194 Phase Z3 (砚砚 R2 P1-4): rich_block broadcast 带 turnInvocationId
+    // Only broadcast new blocks (dedup retries at server to prevent frontend duplicates).
+    // The block lands in this turn's response, so the live event names that message.
+    const responseMessageId = invocationTracker?.getLifecycleResponseMessageId(
+      record.threadId,
+      record.catId as string,
+      invocationId,
+    );
     if (isNew) {
       socketManager.broadcastAgentMessage(
         {
@@ -6249,6 +6238,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           catId: record.catId,
           content: JSON.stringify({ type: 'rich_block', block: resolvedBlock }),
           ...stampVisibleTurn(effectiveInvId, invocationId),
+          ...(responseMessageId ? { messageId: responseMessageId } : {}),
           timestamp: Date.now(),
         },
         record.threadId,
@@ -6660,7 +6650,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   }
 
   // F088 Phase J2: Document generation callback routes
-  registerCallbackDocumentRoutes(app, { registry, socketManager, threadStore });
+  registerCallbackDocumentRoutes(app, {
+    registry,
+    socketManager,
+    threadStore,
+    ...(invocationTracker ? { invocationTracker } : {}),
+  });
 
   // F162: WeChat Work enterprise action callback routes
   registerCallbackWeComActionRoutes(app, { registry });

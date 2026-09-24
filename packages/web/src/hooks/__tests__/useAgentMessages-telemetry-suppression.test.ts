@@ -186,6 +186,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('suppresses resume_failure_stats — no system bubble', () => {
@@ -202,6 +203,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   // F230 P2 turn_duration: PTY carrier emits turn_duration as system_info terminal event.
@@ -221,6 +223,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -259,6 +262,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('fails closed when a recognized internal projector throws', () => {
@@ -287,6 +291,7 @@ describe('useAgentMessages telemetry suppression', () => {
     }
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('keeps plain-text system notices visible', () => {

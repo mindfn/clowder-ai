@@ -556,6 +556,12 @@ export class InvocationTracker {
     return inv.activeRunDispatcher;
   }
 
+  /** The durable response an exact turn streams into, while that turn still owns the slot. */
+  getLifecycleResponseMessageId(threadId: string, catId: string, invocationId: string): string | undefined {
+    const run = this.active.get(this.slotKey(threadId, catId))?.activeRun;
+    return run?.invocationId === invocationId ? run.responseMessageId : undefined;
+  }
+
   /** Mirror a durably admitted Append onto the non-durable Active Run projection. */
   appendLifecycleActiveRunInputs(
     threadId: string,

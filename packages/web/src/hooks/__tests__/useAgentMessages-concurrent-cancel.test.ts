@@ -11,6 +11,18 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentMessages } from '@/hooks/useAgentMessages';
 
+interface TestMessage {
+  id: string;
+  type: string;
+  catId?: string;
+  content: string;
+  variant?: string;
+  origin?: string;
+  isStreaming?: boolean;
+  timestamp: number;
+  lifecycle?: Record<string, unknown>;
+}
+
 const mockAddMessage = vi.fn();
 const mockAppendToMessage = vi.fn();
 const mockAppendToolEvent = vi.fn();
@@ -26,30 +38,32 @@ const mockSetMessageUsage = vi.fn();
 const mockRequestStreamCatchUp = vi.fn();
 const mockRemoveActiveInvocation = vi.fn();
 
-const mockAddMessageToThread = vi.fn();
+// Thread-scoped writes are stateful for the open thread, mirroring the real store
+// (the open thread's messages ARE the root `messages`).
+function currentMessages(): TestMessage[] {
+  return storeState.messages as TestMessage[];
+}
+
+function patchCurrentMessage(threadId: string, messageId: string, patch: Partial<TestMessage>) {
+  if (threadId !== storeState.currentThreadId) return;
+  storeState.messages = currentMessages().map((m) => (m.id === messageId ? { ...m, ...patch } : m));
+}
+
+const mockAddMessageToThread = vi.fn((threadId: string, message: TestMessage) => {
+  if (threadId !== storeState.currentThreadId || currentMessages().some((m) => m.id === message.id)) return;
+  storeState.messages = [...currentMessages(), message];
+});
 const mockClearThreadActiveInvocation = vi.fn();
 const mockResetThreadInvocationState = vi.fn();
-const mockSetThreadMessageStreaming = vi.fn();
-const mockGetThreadState = vi.fn(() => ({
-  messages: [] as Array<{
-    id: string;
-    type: string;
-    catId?: string;
-    content: string;
-    isStreaming?: boolean;
-    timestamp: number;
-  }>,
+const mockSetThreadMessageStreaming = vi.fn((threadId: string, messageId: string, streaming: boolean) =>
+  patchCurrentMessage(threadId, messageId, { isStreaming: streaming }),
+);
+const mockGetThreadState = vi.fn((threadId: string) => ({
+  messages: threadId === storeState.currentThreadId ? currentMessages() : [],
 }));
 
 const storeState: Record<string, unknown> = {
-  messages: [] as Array<{
-    id: string;
-    type: string;
-    catId?: string;
-    content: string;
-    isStreaming?: boolean;
-    timestamp: number;
-  }>,
+  messages: [] as TestMessage[],
   addMessage: mockAddMessage,
   appendToMessage: mockAppendToMessage,
   appendToolEvent: mockAppendToolEvent,
@@ -64,12 +78,6 @@ const storeState: Record<string, unknown> = {
   setMessageUsage: mockSetMessageUsage,
   requestStreamCatchUp: mockRequestStreamCatchUp,
   removeActiveInvocation: mockRemoveActiveInvocation,
-  // F183 Phase B1.5 — active error wire-up routes through reducer's replaceMessages.
-  // mutation impl 让 storeState.messages 始终反映 reducer 写入，便于 end-state 断言。
-  replaceMessages: vi.fn((msgs: unknown[]) => {
-    storeState.messages = msgs as typeof storeState.messages;
-  }),
-  hasMore: true,
 
   addMessageToThread: mockAddMessageToThread,
   clearThreadActiveInvocation: mockClearThreadActiveInvocation,
@@ -77,6 +85,15 @@ const storeState: Record<string, unknown> = {
   setThreadMessageStreaming: mockSetThreadMessageStreaming,
   getThreadState: mockGetThreadState,
   currentThreadId: 'thread-1',
+  // Named-message writes (hooks/named-message-writer.ts) — thread-scoped
+  appendToThreadMessage: vi.fn(),
+  patchThreadMessage: vi.fn(patchCurrentMessage),
+  appendToolEventToThread: vi.fn(),
+  setThreadMessageThinking: vi.fn(),
+  appendRichBlockToThread: vi.fn(),
+  setThreadMessageMetadata: vi.fn(),
+  setThreadMessageUsage: vi.fn(),
+  incrementUnread: vi.fn(),
 
   // F108: Two cats actively running
   activeInvocations: {
@@ -85,6 +102,36 @@ const storeState: Record<string, unknown> = {
   },
   catInvocations: {},
 };
+
+/** The turn's response as the server stores it at dispatch: empty, processing, real id. */
+function seedResponse(id: string, catId: string, invocationId: string) {
+  const response: TestMessage = {
+    id,
+    type: 'assistant',
+    catId,
+    content: '',
+    origin: 'stream',
+    isStreaming: true,
+    timestamp: 1000,
+    lifecycle: {
+      kind: 'response',
+      orderKey: `1000:${invocationId}`,
+      invocationId,
+      targetId: catId,
+      inputEntryIds: [],
+      inputMessageIds: [],
+      status: 'processing',
+      startedAt: 1000,
+    },
+  };
+  storeState.messages = [...currentMessages(), response];
+}
+
+/** System rows added through either the flat or the thread-scoped path. */
+function systemRows(): TestMessage[] {
+  const flat = mockAddMessage.mock.calls.map((call) => call[0] as TestMessage);
+  return [...flat, ...currentMessages()].filter((m) => m.type === 'system');
+}
 
 let captured: ReturnType<typeof useAgentMessages> | undefined;
 
@@ -155,7 +202,6 @@ describe('F108 P1: concurrent cancel isolation', () => {
     ]) {
       fn.mockClear();
     }
-    mockGetThreadState.mockImplementation(() => ({ messages: [] }));
   });
 
   afterEach(() => {
@@ -171,6 +217,7 @@ describe('F108 P1: concurrent cancel isolation', () => {
       captured?.handleAgentMessage({
         type: 'done',
         catId: 'codex',
+        messageId: 'resp-codex',
         isFinal: true,
       });
     });
@@ -194,6 +241,7 @@ describe('F108 P1: concurrent cancel isolation', () => {
       captured?.handleAgentMessage({
         type: 'done',
         catId: 'codex',
+        messageId: 'resp-codex',
         isFinal: true,
       });
     });
@@ -211,6 +259,7 @@ describe('F108 P1: concurrent cancel isolation', () => {
       captured?.handleAgentMessage({
         type: 'error',
         catId: 'codex',
+        messageId: 'resp-codex',
         error: 'something broke',
         isFinal: true,
       });
@@ -226,6 +275,7 @@ describe('F108 P1: concurrent cancel isolation', () => {
     storeState.activeInvocations = {
       'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
     };
+    seedResponse('resp-codex', 'codex', 'inv-codex');
 
     act(() => root.render(React.createElement(Harness)));
 
@@ -233,6 +283,7 @@ describe('F108 P1: concurrent cancel isolation', () => {
       captured?.handleAgentMessage({
         type: 'error',
         catId: 'codex',
+        messageId: 'resp-codex',
         error: 'something broke',
         isFinal: true,
       });
@@ -242,12 +293,17 @@ describe('F108 P1: concurrent cancel isolation', () => {
     expect(mockSetIntentMode).toHaveBeenCalledWith(null);
     expect(mockClearCatStatuses).toHaveBeenCalled();
     expect(mockSetLoading).toHaveBeenCalledWith(false);
+    // The error names the turn's response: R carries the failure itself (no error row)
+    // and stops streaming.
+    expect(systemRows()).toEqual([]);
+    expect(currentMessages().find((m) => m.id === 'resp-codex')).toMatchObject({ isStreaming: false });
   });
 
-  it('recoverable non-final error keeps the invocation cancelable while showing the error', () => {
+  it('recoverable non-final error keeps the invocation cancelable and its response streaming', () => {
     storeState.activeInvocations = {
       'inv-antig': { catId: 'antig-opus', mode: 'execute', startedAt: Date.now() },
     };
+    seedResponse('resp-antig', 'antig-opus', 'inv-antig');
 
     act(() => root.render(React.createElement(Harness)));
 
@@ -256,23 +312,18 @@ describe('F108 P1: concurrent cancel isolation', () => {
         type: 'error',
         catId: 'antig-opus',
         invocationId: 'inv-antig',
+        messageId: 'resp-antig',
         error: 'The model produced an invalid tool call.',
         errorCode: 'upstream_error',
         isFinal: false,
       });
     });
 
-    // F183 Phase B1.5: active error 通过 reducer 落到 storeState.messages（不再
-    // 直接调 mockAddMessage）。end-state 等价：error system bubble 必须存在。
-    const msgs = storeState.messages as Array<{ type: string; variant?: string; content: string }>;
-    const errorBubble = msgs.find((m) => m.type === 'system' && m.variant === 'error');
-    expect(errorBubble).toMatchObject({
-      type: 'system',
-      variant: 'error',
-      content: 'Error: The model produced an invalid tool call.',
-    });
+    // The error names the turn's response, so no error row; being recoverable and
+    // in flight, it must not stop R streaming or tear the invocation down.
+    expect(systemRows()).toEqual([]);
+    expect(currentMessages().find((m) => m.id === 'resp-antig')).toMatchObject({ isStreaming: true });
     expect(mockSetCatStatus).not.toHaveBeenCalledWith('antig-opus', 'error');
-    expect(mockSetStreaming).not.toHaveBeenCalledWith(expect.any(String), false);
     expect(mockRemoveActiveInvocation).not.toHaveBeenCalled();
     expect(storeState.activeInvocations).toEqual({
       'inv-antig': { catId: 'antig-opus', mode: 'execute', startedAt: expect.any(Number) },
@@ -348,7 +399,6 @@ describe('clearDoneTimeout safety net during concurrent execution', () => {
     ]) {
       fn.mockClear();
     }
-    mockGetThreadState.mockImplementation(() => ({ messages: [] }));
   });
 
   afterEach(() => {
@@ -365,6 +415,7 @@ describe('clearDoneTimeout safety net during concurrent execution', () => {
       captured?.handleAgentMessage({
         type: 'done',
         catId: 'codex',
+        messageId: 'resp-codex',
         isFinal: true,
       });
     });
@@ -387,6 +438,7 @@ describe('clearDoneTimeout safety net during concurrent execution', () => {
       captured?.handleAgentMessage({
         type: 'error',
         catId: 'codex',
+        messageId: 'resp-codex',
         error: 'something broke',
         isFinal: true,
       });
@@ -414,6 +466,7 @@ describe('clearDoneTimeout safety net during concurrent execution', () => {
       captured?.handleAgentMessage({
         type: 'done',
         catId: 'codex',
+        messageId: 'resp-codex',
         isFinal: true,
       });
     });
