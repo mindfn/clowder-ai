@@ -244,6 +244,7 @@ test('broker exposes the frozen media.read row with contract validation', async 
   const result = await handler.dispatch(allowed, input);
   assert.equal(handler.validateResult(result), true);
   assert.equal(result.nextOffset, 2);
+  assert.equal(handler.validateResult({ offset: 0, dataBase64: '', nextOffset: 0, done: false }), false);
 });
 
 test('admitted external Broker invokes media.read and gates the capability before bytes', async () => {
