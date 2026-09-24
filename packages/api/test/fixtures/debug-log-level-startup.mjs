@@ -10,7 +10,9 @@
  *   CAT_CAFE_DEBUG=1    set directly in this process env (style 'env')
  *   TEST_DEBUG_STYLE    'argv' | 'env' | 'none'
  *                       'argv': this process was launched with a real --debug
- *                               flag (start-windows.ps1 / packaged entry path)
+ *                               flag (start-windows.ps1 — the packaged desktop
+ *                               build never passes --debug to the API, so this
+ *                               style is source-launch only)
  *                       'env':  CAT_CAFE_DEBUG=1 is set in the environment and
  *                               argv has NO --debug (start-dev.sh --debug path)
  * Asserts, at every step:
