@@ -4,6 +4,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import { WhisperSttProvider } from '../../infrastructure/connectors/media/WhisperSttProvider.js';
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
@@ -13,6 +14,7 @@ import { MessagingLedger } from '../messaging/ledger.js';
 import { FileMediaEntitlementPort, MediaEntitlementLedger } from '../messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../messaging/media-ledger.js';
 import { PendingMediaPublication } from '../messaging/media-pending-publication.js';
+import { createHostMediaPostProcessor } from '../messaging/media-post-processing.js';
 import { MediaReferenceAuthority } from '../messaging/media-reference-authority.js';
 import { FileMediaStagingStore, mediaSourceMatchesIngress } from '../messaging/media-staging.js';
 import {
@@ -243,6 +245,12 @@ export function createDormantPluginRuntimeComposition(
     messageStore: options.messageStore,
     events: messagingStores.events,
     importer: mediaImporter,
+    postProcess: createHostMediaPostProcessor({
+      ledger: mediaLedger,
+      privateDir: resolve(dirname(paths.inventorySnapshotPath), 'media-post-processing'),
+      sttProvider: new WhisperSttProvider(),
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
     onSettleFailure: (fields) => moduleLogger.warn(fields, 'media-source settlement failed'),
     ledger: new MessagingLedger(messagingStores.ledger),
     ...(options.now === undefined ? {} : { now: options.now }),

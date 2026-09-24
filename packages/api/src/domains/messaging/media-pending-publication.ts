@@ -1,3 +1,4 @@
+import type { MessageContent } from '@cat-cafe/shared';
 import type { MessageElement, SendReceipt } from '@clowder-ai/plugin-contract';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { projectEnvelope, readPluginMessageExtra, renderElementsText } from './envelope.js';
@@ -11,6 +12,13 @@ import {
   type StagedMediaSend,
 } from './media-staging.js';
 import { clampRetention, type EventLogStore } from './stores/ports.js';
+
+function placeholderFileName(fileName: string | undefined): string {
+  return (fileName ?? 'unnamed')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\b(?:hmr|pmr)_[A-Za-z0-9_-]+\b/g, '[redacted]')
+    .slice(0, 256);
+}
 
 export interface PendingPublicationDeps {
   readonly store: MediaStagingStore;
@@ -27,8 +35,13 @@ export interface PendingPublicationDeps {
   readonly deadlineMs?: number;
   /** e2 replaces this no-op with Host media post-processing. */
   readonly postProcess?: (
-    imported: readonly { elementId: string; hmrId: string }[],
-  ) => Promise<readonly MessageElement[]>;
+    imported: readonly { elementId: string; hmrId: string; type: string; fileName?: string }[],
+    deadline: number,
+  ) => Promise<{
+    readonly warnings: readonly MessageElement[];
+    readonly contentBlocks?: readonly MessageContent[];
+    readonly transcript?: string;
+  }>;
 }
 
 export class PendingMediaPublication {
@@ -202,7 +215,12 @@ export class PendingMediaPublication {
     }
   }
 
-  private async finalElements(row: StagedMediaSend): Promise<readonly MessageElement[]> {
+  private async finalElements(row: StagedMediaSend): Promise<{
+    elements: readonly MessageElement[];
+    contentBlocks?: readonly MessageContent[];
+    transcript?: string;
+    content: string;
+  }> {
     const outcomes = new Map(row.media.map((item) => [item.input.elementId, item.result]));
     const elements = row.draft.payload.elements.map((element): MessageElement => {
       if (element.kind !== 'media_ref' || !element.payload.reference.startsWith('pmr_')) return element;
@@ -222,14 +240,41 @@ export class PendingMediaPublication {
       };
     });
     const imported = row.media.flatMap((item) =>
-      item.result?.kind === 'imported' ? [{ elementId: item.input.elementId, hmrId: item.result.hmrId }] : [],
+      item.result?.kind === 'imported'
+        ? [
+            {
+              elementId: item.input.elementId,
+              hmrId: item.result.hmrId,
+              type: item.input.type,
+              ...(item.input.fileName === undefined ? {} : { fileName: item.input.fileName }),
+            },
+          ]
+        : [],
     );
-    const warnings = (await this.deps.postProcess?.(imported)) ?? [];
-    return [
+    const processed = await this.deps.postProcess?.(imported, row.deadline);
+    const finalElements = [
       ...elements.filter((element) => element.kind === 'text'),
       ...elements.filter((element) => element.kind !== 'text'),
-      ...warnings,
+      ...(processed?.warnings ?? []),
     ];
+    const importedIds = new Set(imported.map((media) => media.elementId));
+    return {
+      elements: finalElements,
+      ...(processed?.contentBlocks === undefined ? {} : { contentBlocks: processed.contentBlocks }),
+      ...(processed?.transcript === undefined ? {} : { transcript: processed.transcript }),
+      content: finalElements
+        .map((element) => {
+          if (
+            importedIds.has(element.elementId) &&
+            element.kind === 'media_ref' &&
+            (element.payload.type === 'file' || element.payload.type === 'video')
+          ) {
+            return `[${element.payload.type}: ${placeholderFileName(element.payload.fileName)}]`;
+          }
+          return renderElementsText([element]);
+        })
+        .join('\n'),
+    };
   }
 
   private async wakeIngress(row: StagedMediaSend, stored: StoredMessage): Promise<void> {
@@ -241,7 +286,7 @@ export class PendingMediaPublication {
       userId: stored.userId,
       messageId: stored.id,
       content: stored.content,
-      ...(row.appendInput.contentBlocks === undefined ? {} : { contentBlocks: row.appendInput.contentBlocks }),
+      ...(stored.contentBlocks === undefined ? {} : { contentBlocks: stored.contentBlocks }),
       ...(row.sender === undefined ? {} : { sender: row.sender }),
       timestamp: stored.timestamp,
       ingress: {
@@ -258,13 +303,17 @@ export class PendingMediaPublication {
     try {
       const row = await this.deps.store.get(key);
       if (!row || row.published || row.media.some((item) => !item.result)) return;
-      const elements = await this.finalElements(row);
+      const processed = await this.finalElements(row);
+      const elements = processed.elements;
       const pluginExtra = row.appendInput.extra?.pluginMessage;
       if (!pluginExtra) throw new Error('staged message lost plugin payload');
       const stored = await this.deps.messageStore.append({
         ...row.appendInput,
         reservedId: row.receipt.messageId,
-        content: renderElementsText(elements),
+        content: [processed.content, processed.transcript].filter(Boolean).join('\n'),
+        ...(processed.contentBlocks === undefined
+          ? {}
+          : { contentBlocks: [...(row.appendInput.contentBlocks ?? []), ...processed.contentBlocks] }),
         extra: { ...row.appendInput.extra, pluginMessage: { ...pluginExtra, elements } },
       });
       if (stored.id !== row.receipt.messageId) throw new Error('staged publication message id mismatch');

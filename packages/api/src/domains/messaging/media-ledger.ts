@@ -240,6 +240,15 @@ export class FileMessagingMediaLedger {
     }
   }
 
+  /** Host cat-runtime only. Never project this private path into a plugin, event, receipt, or log. */
+  async resolveTrustedBlobPath(hmrId: string): Promise<string | undefined> {
+    const record = await this.record(hmrId);
+    if (!record) return undefined;
+    const { handle } = await this.openVerifiedRecord(record);
+    await handle.close();
+    return record.locator;
+  }
+
   async readChunk(hmrId: string, offset: number, limit: number): Promise<MediaReadResult | undefined> {
     const record = await this.record(hmrId);
     if (!record) return undefined;

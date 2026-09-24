@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +8,8 @@ const { MessageStore } = await import('../dist/domains/cats/services/stores/port
 const { HandleService } = await import('../dist/domains/messaging/handles.js');
 const { MessagingLedger } = await import('../dist/domains/messaging/ledger.js');
 const { PendingMediaPublication } = await import('../dist/domains/messaging/media-pending-publication.js');
+const { FileMessagingMediaLedger } = await import('../dist/domains/messaging/media-ledger.js');
+const { createHostMediaPostProcessor } = await import('../dist/domains/messaging/media-post-processing.js');
 const { MemoryMediaStagingStore, FileMediaStagingStore, mediaSourceMatchesIngress } = await import(
   '../dist/domains/messaging/media-staging.js'
 );
@@ -27,6 +29,7 @@ function deferred() {
 
 async function harness({
   importer,
+  postProcess,
   staging = new MemoryMediaStagingStore(),
   clock = () => Date.now(),
   deadlineMs = 120_000,
@@ -47,6 +50,7 @@ async function harness({
     ledger,
     events,
     importer,
+    postProcess,
     now: clock,
     deadlineMs,
     onPublished: (threadId) => published.push(threadId),
@@ -156,6 +160,115 @@ test('a terminal importer failure publishes text with a typed unavailable elemen
   assert.equal(stored.extra.pluginMessage.elements[1].payload.reason, 'source_expired');
   assert.equal(stored.content.startsWith('caption'), true);
   assert.equal((await h.events.readAfter('thread-media', 0, 10)).length, 1);
+});
+
+test('post-processing enriches the one durable publication before wake without losing the HMR', async () => {
+  const processed = [];
+  const hmrId = `hmr_${'a'.repeat(32)}`;
+  const h = await harness({
+    importer: { import: async () => ({ kind: 'imported', hmrId }) },
+    postProcess: async (imported) => {
+      processed.push(imported);
+      return {
+        warnings: [
+          {
+            elementId: 'warning-photo',
+            kind: 'media_warning',
+            payload: { mediaElementId: 'photo', stage: 'preview', reason: 'processing_failed' },
+          },
+        ],
+        contentBlocks: [{ type: 'image', url: `hmr:${hmrId}` }],
+        transcript: 'recognized speech',
+      };
+    },
+  });
+  const receipt = await h.service.send(ctx, h.draft, { source });
+  await until(() => h.messageStore.size === 1 && h.published.length === 1);
+  const stored = h.messageStore.getById(receipt.messageId);
+  assert.deepEqual(processed, [[{ elementId: 'photo', hmrId, type: 'image', fileName: 'photo.png' }]]);
+  assert.equal(stored.extra.pluginMessage.elements[1].payload.reference, hmrId);
+  assert.deepEqual(stored.extra.pluginMessage.elements.at(-1), {
+    elementId: 'warning-photo',
+    kind: 'media_warning',
+    payload: { mediaElementId: 'photo', stage: 'preview', reason: 'processing_failed' },
+  });
+  assert.deepEqual(stored.contentBlocks, [{ type: 'image', url: `hmr:${hmrId}` }]);
+  assert.equal(stored.content.endsWith('\nrecognized speech'), true);
+  assert.equal((await h.events.readAfter('thread-media', 0, 10)).length, 1);
+});
+
+test('file and video publish filename/type placeholders without exposing either reference', async () => {
+  const h = await harness({ importer: { import: async () => ({ kind: 'imported', hmrId: `hmr_${'f'.repeat(32)}` }) } });
+  const draft = {
+    ...h.draft,
+    payload: {
+      ...h.draft.payload,
+      elements: [
+        h.draft.payload.elements[0],
+        {
+          elementId: 'file-1',
+          kind: 'media_ref',
+          payload: { type: 'file', fileName: 'notes.pdf', reference: 'pmr_file', sourceId: 'source-1' },
+        },
+        {
+          elementId: 'video-1',
+          kind: 'media_ref',
+          payload: { type: 'video', fileName: 'demo.mp4\npmr_secret', reference: 'pmr_video', sourceId: 'source-1' },
+        },
+      ],
+    },
+  };
+  const receipt = await h.service.send(ctx, draft, { source });
+  await until(() => h.messageStore.size === 1 && h.published.length === 1);
+  const stored = h.messageStore.getById(receipt.messageId);
+  assert.match(stored.content, /\[file: notes\.pdf\]/);
+  assert.match(stored.content, /\[video: demo\.mp4 \[redacted\]\]/);
+  assert.equal(stored.content.includes('[media_ref:file-1]'), false);
+  assert.equal(stored.content.includes('[media_ref:video-1]'), false);
+  assert.equal(stored.content.includes('pmr_'), false);
+  assert.equal(stored.content.includes('hmr_'), false);
+  assert.equal((await h.events.readAfter('thread-media', 0, 10)).length, 1);
+});
+
+test('post-processing timeout retains HMR with warning and publishes only once', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'f202-e2-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const media = new FileMessagingMediaLedger(join(root, 'media'));
+  const hmrId = await media.register(Buffer.from('audio bytes'));
+  const h = await harness({
+    importer: { import: async () => ({ kind: 'imported', hmrId }) },
+    postProcess: createHostMediaPostProcessor({
+      ledger: media,
+      privateDir: join(root, 'private'),
+      stageTimeoutMs: 10,
+      sttProvider: { transcribe: async () => new Promise(() => {}) },
+    }),
+  });
+  const draft = {
+    ...h.draft,
+    payload: {
+      ...h.draft.payload,
+      elements: [
+        h.draft.payload.elements[0],
+        {
+          elementId: 'voice',
+          kind: 'media_ref',
+          payload: { type: 'audio', reference: 'pmr_voice', sourceId: 'source-1' },
+        },
+      ],
+    },
+  };
+  const receipt = await h.service.send(ctx, draft, { source });
+  await until(() => h.messageStore.size === 1 && h.published.length === 1);
+  const stored = h.messageStore.getById(receipt.messageId);
+  assert.equal(stored.extra.pluginMessage.elements[1].payload.reference, hmrId);
+  assert.deepEqual(stored.extra.pluginMessage.elements[2].payload, {
+    mediaElementId: 'voice',
+    stage: 'transcription',
+    reason: 'timeout',
+  });
+  assert.equal((await h.events.readAfter('thread-media', 0, 10)).length, 1);
+  assert.deepEqual(await readdir(join(root, 'private')), []);
 });
 
 test('an unavailable source is settled only after the unavailable message is durably published', async () => {

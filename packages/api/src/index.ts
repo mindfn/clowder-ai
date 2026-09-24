@@ -2507,7 +2507,9 @@ async function main(): Promise<void> {
   let collectiveContext:
     | import('./domains/plugin/builtin-runtime/collective-current-context.js').CollectiveCurrentContext
     | undefined;
+  let trustedImagePathResolver: (hmrId: string) => Promise<string | undefined> = async () => undefined;
   router = new AgentRouter({
+    resolveTrustedImagePath: async (hmrId) => trustedImagePathResolver(hmrId),
     collectiveContext: () => collectiveContext,
     agentRegistry,
     registry,
@@ -4966,6 +4968,7 @@ async function main(): Promise<void> {
         }),
     },
   });
+  trustedImagePathResolver = (hmrId) => pluginRuntime.mediaLedger.resolveTrustedBlobPath(hmrId);
   subscriptionDrainScheduler.attach(pluginRuntime.subscriptionDelivery);
   const { CollectiveCurrentContext } = await import('./domains/plugin/builtin-runtime/collective-current-context.js');
   collectiveContext = new CollectiveCurrentContext({
