@@ -485,6 +485,7 @@ import {
 } from './routes/index.js';
 import { knowledgeFeedRoutes } from './routes/knowledge-feed.js';
 import { marketplaceRoutes } from './routes/marketplace.js';
+import { mediaRoutes } from './routes/media-routes.js';
 import { registerPersonMemoryDecisionRoutes } from './routes/person-memory-decision-routes.js';
 import { previewRoutes } from './routes/preview.js';
 import { resolveActiveInvocations } from './routes/queue.js';
@@ -4594,6 +4595,14 @@ async function main(): Promise<void> {
     auditLog: getEventAuditLog(),
   });
   const callbackOpts = {
+    resolveTrustedImagePath: async (hmrId: string) => {
+      try {
+        return await trustedImagePathResolver(hmrId);
+      } catch {
+        // A damaged private blob cannot become a path hint or fail the whole context read.
+        return undefined;
+      }
+    },
     registry,
     agentKeyRegistry,
     cloudReturnBindingSigner,
@@ -4969,6 +4978,7 @@ async function main(): Promise<void> {
     },
   });
   trustedImagePathResolver = (hmrId) => pluginRuntime.mediaLedger.resolveTrustedBlobPath(hmrId);
+  await app.register(mediaRoutes, { ledger: pluginRuntime.mediaLedger, ownerUserId: privateUserId });
   subscriptionDrainScheduler.attach(pluginRuntime.subscriptionDelivery);
   const { CollectiveCurrentContext } = await import('./domains/plugin/builtin-runtime/collective-current-context.js');
   collectiveContext = new CollectiveCurrentContext({

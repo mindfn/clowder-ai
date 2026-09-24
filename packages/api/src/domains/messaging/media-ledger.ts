@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { type BigIntStats, constants } from 'node:fs';
+import { type BigIntStats, constants, type ReadStream } from 'node:fs';
 import { type FileHandle, mkdir, open, readdir, readFile, rename } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { MediaReadResult } from '@clowder-ai/plugin-contract';
@@ -247,6 +247,25 @@ export class FileMessagingMediaLedger {
     const { handle } = await this.openVerifiedRecord(record);
     await handle.close();
     return record.locator;
+  }
+
+  /** Owner HTTP route only. The verified descriptor stays inside this ledger; no locator escapes. */
+  async openVerifiedStream(
+    hmrId: string,
+  ): Promise<{ stream: ReadStream; byteLength: number; mimeType?: string } | undefined> {
+    const record = await this.record(hmrId);
+    if (!record) return undefined;
+    const { handle } = await this.openVerifiedRecord(record);
+    try {
+      return {
+        stream: handle.createReadStream({ autoClose: true }),
+        byteLength: record.byteLength,
+        mimeType: record.mimeType,
+      };
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
   }
 
   async readChunk(hmrId: string, offset: number, limit: number): Promise<MediaReadResult | undefined> {
