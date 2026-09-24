@@ -63,14 +63,15 @@ test('production composition delivers concurrent cat replies exactly once to an 
   await writeFile(
     join(packageRoot, 'dist/plugin.js'),
     [
-      `const state = (globalThis[${JSON.stringify(marker)}] ??= { calls: [] });`,
+      `const state = (globalThis[${JSON.stringify(marker)}] ??= { calls: [], lifecycleCalls: [], sequence: [] });`,
       'export default { create() { return {',
       '  async start(host) {',
       '    const thread = await host.threads.ensureSystemThread();',
       '    state.threadId = thread.id;',
       "    await host.messaging.subscribe({ threadId: thread.id, method: 'fixture.outbound' });",
       '    return {',
-      "      actions: { 'fixture.outbound': async (input) => state.calls.push(input) },",
+      "      actions: { 'fixture.outbound': async (input) => { state.calls.push(input); state.sequence.push('message'); },",
+      "        'host.messaging.lifecycle': async (input) => { state.lifecycleCalls.push(input); state.sequence.push(input.state); return { deliveryId: input.deliveryId }; } },",
       '      stop() {},',
       '    };',
       '  },',
@@ -94,6 +95,10 @@ test('production composition delivers concurrent cat replies exactly once to an 
     routes: new MemorySignalRouteStore(),
     intakes: new MemoryMeetingIntakeStore(),
     messageStore,
+    lifecyclePresentation: async () => ({
+      actor: { displayName: 'Fixture Cat', emoji: '🐱' },
+      thread: { shortId: 'fixture-thread' },
+    }),
     messagingStores: stores,
     onMessagePublished: scheduler.schedule,
     threadStore,
@@ -173,6 +178,26 @@ test('production composition delivers concurrent cat replies exactly once to an 
     [card, checklist],
   );
 
+  const invocationId = 'invocation-production-lifecycle-1';
+  await runtime.lifecycleDelivery.onStreamStart(state.threadId, 'opus', invocationId);
+  await runtime.lifecycleDelivery.onClosureCatchingUp(state.threadId, 'opus', invocationId);
+  await messageStore.append({
+    threadId: state.threadId,
+    userId: 'owner-1',
+    catId: 'opus',
+    content: 'lifecycle reply',
+    timestamp: 4,
+    extra: { stream: { invocationId } },
+  });
+  await runtime.lifecycleDelivery.onStreamEnd(state.threadId, '', invocationId);
+  await runtime.lifecycleDelivery.notifyDeliveryBatchDone(state.threadId, true, 'succeeded', invocationId);
+  assert.deepEqual(state.sequence.slice(-4), ['started', 'catching_up', 'message', 'settled']);
+  assert.equal(state.lifecycleCalls[0].threadId, state.threadId);
+  assert.equal(state.lifecycleCalls[0].presentation.actor.displayName, 'Fixture Cat');
+  assert.equal(state.calls[3].lifecycleId, state.lifecycleCalls[0].lifecycleId);
+  assert.equal(state.lifecycleCalls[1].lifecycleId, state.lifecycleCalls[0].lifecycleId);
+  assert.equal(state.lifecycleCalls[2].lifecycleId, state.lifecycleCalls[0].lifecycleId);
+
   const beforeDisable = (await manager.get(pluginId)).plugin;
   await manager.setEnabled(pluginId, { enabled: false, expectedRevision: beforeDisable.lifecycleRevision });
   await messageStore.append({
@@ -183,6 +208,6 @@ test('production composition delivers concurrent cat replies exactly once to an 
     timestamp: 3,
   });
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(state.calls.length, 3, 'disabled packages must be absent from the live delivery set');
+  assert.equal(state.calls.length, 4, 'disabled packages must be absent from the live delivery set');
   delete globalThis[marker];
 });

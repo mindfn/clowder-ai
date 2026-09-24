@@ -29,6 +29,7 @@ import { createHash } from 'node:crypto';
 
 import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
 import type { HostMessagingDeliveryPort, HostPluginInvocationPort } from '../plugin/carrier/host-invocation.js';
+import { lifecycleIdFor } from './lifecycle-delivery.js';
 import type { MediaEntitlementLedger } from './media-entitlements.js';
 
 /**
@@ -59,6 +60,7 @@ export interface SubscriptionDeliveryDeps {
   readonly delivery: HostMessagingDeliveryPort & Partial<Pick<HostPluginInvocationPort, 'invoke'>>;
   readonly entitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
   readonly actionTimeoutMs?: number;
+  readonly resolveInvocationId?: (messageId: string) => Promise<string | undefined>;
   /** A grant or action failure is operationally visible without logging envelope contents. */
   readonly onError?: (fields: { subscriberId: string; threadId: string; errorKind: string }) => void;
   /** Events per read page. */
@@ -184,11 +186,13 @@ async function invokeDelivery(
   registration: Registration,
   event: Extract<MessageOutputEvent, { type: 'message.publish' }>,
   deliveryId: string,
+  lifecycleId?: string,
 ): Promise<void> {
   if (registration.method !== undefined) {
     if (!delivery.invoke) throw new Error('subscription delivery invocation port is unavailable');
     await delivery.invoke(registration.subscriberId, registration.method, {
       deliveryId,
+      ...(lifecycleId === undefined ? {} : { lifecycleId }),
       threadId: event.envelope.threadId,
       envelope: event.envelope,
     });
@@ -196,6 +200,7 @@ async function invokeDelivery(
   }
   const input = {
     deliveryId,
+    ...(lifecycleId === undefined ? {} : { lifecycleId }),
     threadHandle: { kind: 'thread_handle' as const, handle: registration.handleId },
     envelope: event.envelope,
   };
@@ -231,6 +236,7 @@ async function deliverPublishedEvent(
   event: MessageOutputEvent,
   signal: AbortSignal,
   timeoutMs: number,
+  resolveInvocationId?: SubscriptionDeliveryDeps['resolveInvocationId'],
 ): Promise<void> {
   if (isUnwantedEcho(event, registration)) return;
   // The frozen callback row carries a complete envelope. Append events remain available
@@ -238,6 +244,8 @@ async function deliverPublishedEvent(
   if (event.type !== 'message.publish') return;
 
   const deliveryId = deliveryIdFor(registration, event);
+  const invocationId = await resolveInvocationId?.(event.envelope.messageId);
+  const lifecycleId = invocationId === undefined ? undefined : lifecycleIdFor(invocationId);
   const media = isOwnEcho(event, registration) ? [] : deliveryMedia(event);
   if (media.length > 0 && !entitlements) throw new Error('media entitlement service is unavailable');
   let reason = 'action_returned';
@@ -255,7 +263,11 @@ async function deliverPublishedEvent(
       );
       if (signal.aborted) throw Object.assign(new Error('delivery cancelled'), { code: 'CANCELLED' });
     }
-    await waitForDeliveryAction(invokeDelivery(delivery, registration, event, deliveryId), signal, timeoutMs);
+    await waitForDeliveryAction(
+      invokeDelivery(delivery, registration, event, deliveryId, lifecycleId),
+      signal,
+      timeoutMs,
+    );
   } catch (error) {
     reason = signal.aborted && typeof signal.reason === 'string' ? signal.reason : failureReason(error);
     throw error;
@@ -325,14 +337,23 @@ export class SubscriptionDelivery {
    * after all of them have had their turn.
    */
   async drain(threadId: string): Promise<void> {
+    await this.enqueueThread(threadId, () => this.drainSerial(threadId));
+  }
+
+  /** Lifecycle events and message delivery use one ordered tail per thread. */
+  async enqueueThread(threadId: string, operation: () => Promise<void>): Promise<void> {
     const previous = this.drainTails.get(threadId) ?? Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => this.drainSerial(threadId));
+    const current = previous.catch(() => undefined).then(operation);
     this.drainTails.set(threadId, current);
     try {
       await current;
     } finally {
       if (this.drainTails.get(threadId) === current) this.drainTails.delete(threadId);
     }
+  }
+
+  subscribersForThread(threadId: string): readonly string[] {
+    return (this.byThread.get(threadId) ?? []).map((entry) => entry.subscriberId);
   }
 
   private async drainSerial(threadId: string): Promise<void> {
@@ -386,6 +407,7 @@ export class SubscriptionDelivery {
       event,
       controller.signal,
       this.deps.actionTimeoutMs ?? 30_000,
+      this.deps.resolveInvocationId,
     );
     const entry = { controller, done };
     const active = this.active.get(registration.subscriberId) ?? new Set<typeof entry>();

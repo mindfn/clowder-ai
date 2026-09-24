@@ -11,6 +11,12 @@ import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import { MessagingLedger } from '../messaging/ledger.js';
+import {
+  buildDeliveryPresentation,
+  createLifecycleDelivery,
+  type LifecycleDelivery,
+  type LifecycleDeliveryDeps,
+} from '../messaging/lifecycle-delivery.js';
 import { FileMediaEntitlementPort, MediaEntitlementLedger } from '../messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../messaging/media-ledger.js';
 import { PendingMediaPublication } from '../messaging/media-pending-publication.js';
@@ -101,6 +107,7 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly routes: SignalRouteStore;
   readonly intakes: MeetingIntakeStore;
   readonly messageStore: IMessageStore;
+  readonly lifecyclePresentation?: LifecycleDeliveryDeps['presentation'];
   readonly taskStore?: ITaskStore;
   readonly redis?: RedisClient;
   /** The Host-wide messaging stores shared with the one publishing MessageStore wrapper. */
@@ -172,6 +179,7 @@ export interface DormantPluginRuntimeComposition {
    * Host can drain a thread after it produces a message; it knows nothing about connectors.
    */
   readonly subscriptionDelivery: SubscriptionDelivery;
+  readonly lifecycleDelivery: LifecycleDelivery;
   readonly lifecycle: ExternalPluginLifecycleService;
   readonly packages: VerifiedPluginPackageLocator;
   readonly mcpConfigIO: McpConfigIO;
@@ -319,6 +327,8 @@ export function createDormantPluginRuntimeComposition(
   };
   const subscriptionDelivery = createSubscriptionDelivery({
     messaging,
+    resolveInvocationId: async (messageId) =>
+      (await options.messageStore.getById(messageId))?.extra?.stream?.invocationId,
     entitlements: mediaEntitlements,
     onError: (fields) => moduleLogger.error(fields, 'subscription delivery failed'),
     delivery: {
@@ -414,6 +424,20 @@ export function createDormantPluginRuntimeComposition(
       else moduleLogger[level](fields, message);
     },
   });
+  const lifecycleDelivery = createLifecycleDelivery({
+    subscribers: (threadId) => subscriptionDelivery.subscribersForThread(threadId),
+    supportsAction: (subscriberId) =>
+      typeof moduleRuntime.actions(subscriberId)?.['host.messaging.lifecycle'] === 'function',
+    invoke: (subscriberId, method, input) => {
+      if (!deliveryTarget.current) throw new Error('plugin runtime supervisor is unavailable');
+      return deliveryTarget.current.invoke(subscriberId, method, input);
+    },
+    enqueueThread: (threadId, operation) => subscriptionDelivery.enqueueThread(threadId, operation),
+    drain: (threadId) => subscriptionDelivery.drain(threadId),
+    presentation:
+      options.lifecyclePresentation ?? ((threadId) => Promise.resolve(buildDeliveryPresentation(threadId, 'Cat'))),
+    onError: (fields) => moduleLogger.error(fields, 'lifecycle delivery failed'),
+  });
   const supervisor = new PluginRuntimeCarrierRouter(
     inventoryStore,
     {
@@ -480,6 +504,7 @@ export function createDormantPluginRuntimeComposition(
     mediaEntitlements,
     mediaPending,
     subscriptionDelivery,
+    lifecycleDelivery,
     lifecycle,
     packages,
     mcpConfigIO,

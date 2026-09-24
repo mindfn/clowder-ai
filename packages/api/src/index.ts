@@ -4905,6 +4905,7 @@ async function main(): Promise<void> {
   const { resolveCollectiveStandingGrant } = await import(
     './domains/plugin/builtin-runtime/collective-standing-grant.js'
   );
+  const { buildDeliveryPresentation } = await import('./domains/messaging/lifecycle-delivery.js');
   const collectiveWorkAuthority = new CollectiveWorkAuthority({
     messageStore,
     taskStore,
@@ -4929,6 +4930,14 @@ async function main(): Promise<void> {
     routes: signalRouteStore,
     intakes: meetingIntakeStore,
     messageStore,
+    lifecyclePresentation: async (threadId, catId) => {
+      const thread = await threadStore.get(threadId);
+      return buildDeliveryPresentation(threadId, catRegistry.tryGet(catId as CatId)?.config.displayName ?? catId, {
+        threadShortId: threadId.slice(0, 15),
+        ...(thread?.title == null ? {} : { threadTitle: thread.title }),
+        deepLinkUrl: buildThreadDeepLink(resolveFrontendBaseUrl(process.env, app.log), threadId),
+      });
+    },
     messagingStores,
     onMessagePublished: subscriptionDrainScheduler.schedule,
     taskStore,
@@ -6897,6 +6906,62 @@ async function main(): Promise<void> {
     log: app.log,
   });
 
+  type StreamingHookPort = Parameters<typeof queueProcessor.setStreamingHook>[0];
+  const composeStreamingHook = (
+    legacy?: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>['streamingHook'],
+  ): StreamingHookPort => {
+    const lifecycle = pluginRuntime.lifecycleDelivery;
+    const project = async (operation: string, call: () => Promise<void>): Promise<void> => {
+      try {
+        await call();
+      } catch (err) {
+        app.log.warn({ err, operation }, '[messaging] streaming projection failed');
+      }
+    };
+    return {
+      async onStreamStart(threadId, catId, invocationId, senderHint) {
+        if (catId && invocationId)
+          await project('lifecycle.started', () => lifecycle.onStreamStart(threadId, catId, invocationId));
+        if (legacy)
+          await project('legacy.started', () =>
+            legacy.onStreamStart(threadId, catId as CatId, invocationId, senderHint),
+          );
+      },
+      async onStreamChunk(threadId, text, invocationId) {
+        if (legacy) await project('legacy.chunk', () => legacy.onStreamChunk(threadId, text, invocationId));
+      },
+      async onStreamEnd(threadId, text, invocationId) {
+        if (legacy) await project('legacy.ended', () => legacy.onStreamEnd(threadId, text, invocationId));
+        if (invocationId) await project('lifecycle.ended', () => lifecycle.onStreamEnd(threadId, text, invocationId));
+      },
+      async onClosureCatchingUp(threadId, catId, invocationId) {
+        if (invocationId)
+          await project('lifecycle.catching_up', () => lifecycle.onClosureCatchingUp(threadId, catId, invocationId));
+        if (legacy)
+          await project('legacy.catching_up', () => legacy.onClosureCatchingUp(threadId, catId, invocationId));
+      },
+      async onClosureBlocked(threadId, catId, reason, invocationId) {
+        if (invocationId)
+          await project('lifecycle.blocked', () => lifecycle.onClosureBlocked(threadId, catId, reason, invocationId));
+        if (legacy)
+          await project('legacy.blocked', () => legacy.onClosureBlocked(threadId, catId, reason, invocationId));
+      },
+      async cleanupPlaceholders(threadId, invocationId) {
+        if (legacy) await project('legacy.cleanup', () => legacy.cleanupPlaceholders(threadId, invocationId));
+      },
+      async notifyDeliveryBatchDone(threadId, chainDone, status, invocationId) {
+        if (legacy) await project('legacy.settled', () => legacy.notifyDeliveryBatchDone(threadId, chainDone));
+        await project('lifecycle.settled', () =>
+          lifecycle.notifyDeliveryBatchDone(threadId, chainDone, status, invocationId),
+        );
+      },
+    };
+  };
+  const pluginLifecycleHook = composeStreamingHook();
+  invokeTrigger.setStreamingHook(pluginLifecycleHook);
+  queueProcessor.setStreamingHook(pluginLifecycleHook);
+  (messagesOpts as { streamingHook?: StreamingHookPort }).streamingHook = pluginLifecycleHook;
+
   const { LimbTranscriptCatDelivery } = await import('./domains/limb/LimbTranscriptCatDelivery.js');
   limbTranscriptDelivery = new LimbTranscriptCatDelivery({
     isKnownCat: (catId) => catRegistry.tryGet(catId) !== undefined,
@@ -8004,12 +8069,13 @@ async function main(): Promise<void> {
   function wireGatewayHooks(handle: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>): void {
     handle.outboundHook.setLimbDelivery(limbOutboundDelivery);
     invokeTrigger.setOutboundHook(handle.outboundHook);
-    invokeTrigger.setStreamingHook(handle.streamingHook);
+    const streamingHook = composeStreamingHook(handle.streamingHook);
+    invokeTrigger.setStreamingHook(streamingHook);
     queueProcessor.setOutboundHook(handle.outboundHook as Parameters<typeof queueProcessor.setOutboundHook>[0]);
-    queueProcessor.setStreamingHook(handle.streamingHook as Parameters<typeof queueProcessor.setStreamingHook>[0]);
+    queueProcessor.setStreamingHook(streamingHook);
     (callbackOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;
     (messagesOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;
-    (messagesOpts as { streamingHook?: typeof handle.streamingHook }).streamingHook = handle.streamingHook;
+    (messagesOpts as { streamingHook?: StreamingHookPort }).streamingHook = streamingHook;
     syncConnectorWebhookHandlers(handle);
     (connectorHubOpts as { weixinAdapter?: unknown }).weixinAdapter = handle.weixinAdapter;
     (connectorHubOpts as { startWeixinPolling?: () => void }).startWeixinPolling = handle.startWeixinPolling;
