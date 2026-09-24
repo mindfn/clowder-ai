@@ -98,3 +98,10 @@ env var 的生效方式天然异构——每次调用读 / 模块加载读一次
 4. **Gate 2 Design**：可点击设计稿（轻量设置行、原生目录对话框、待重启状态、数据持久化状态），co-creator 以 A/B 截图签字后再实现。
 5. **Gate 3/4**：实现 + 效果测试 + 渲染证据 + 兄弟页抽样。
 6. **不纳入 #770、另立 feature**：模型接入配置的可理解性（外部用户痛点第一）；兄弟设置页迁移到新原语；文档漂移清理。
+
+## 8. 上游前检查清单（2026-09-24 跨线程协调补充）
+
+- **#1062 列为 LOG_LEVEL 的验收 issue**。维护者在 #1503 intake（2026-09-20）定下的契约："live pino reconfiguration plus persistence into the next app process"，并明确支持 #770 的存储分层方向。`838644556` commit message 中"Desktop restart-loss lane stays out of scope (#1062)"一句已被 `483054358` 取代——PR 描述里须注明，不能留作过期真相源。
+- **打包版 fresh-process 证据**（DMG + Windows 各一份）：设 debug → 退出 → 重开 → API 子进程仍为 debug。代码层面落点已核：桌面版 API 以 `cwd=<userData>/project` 启动（`desktop/service-manager.js:464,488`），`user-preferences.json` 落在 userData 下，每用户可写、不随升级覆盖；**但从未在打包版上实测**，上游前必须补。
+- **`--debug` 被存储值覆盖（已实测复现）**：`isDebugMode=true` 时注册路由前 `logger.level=debug`，注册后被存储的 `info` 覆盖。修复与红测见本线后续提交；修复前不得上游。
+- 其余 Hub 可编辑的 `.env` 键在打包版重启后仍会回退——维护者划为单独的 durable-preference 决策，**不计入** #1062 验收。
