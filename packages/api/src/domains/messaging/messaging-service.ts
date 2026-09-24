@@ -20,6 +20,7 @@ import type { MediaEntitlementLedger } from './media-entitlements.js';
 import type { PendingMediaPublication } from './media-pending-publication.js';
 import type { MediaReferenceAuthority } from './media-reference-authority.js';
 import type { MediaSourceResolver } from './media-staging.js';
+import type { OutboundMediaStore } from './outbound-media-store.js';
 import { type HostSendOptions, SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
 import type { MessagingStores } from './stores/ports.js';
@@ -44,6 +45,8 @@ export interface MessagingDomainDeps extends Partial<MessagingIngressWakeDeps> {
   readonly mediaSources?: MediaSourceResolver;
   readonly snapshotClock?: { now(): number };
   readonly snapshotAckTokenTtlMs?: number;
+  /** Deferred Host media messages (W2-5b); the snapshot projects them only once published. */
+  readonly outboundMedia?: Pick<OutboundMediaStore, 'get'>;
 }
 
 /**
@@ -104,6 +107,7 @@ export class MessagingService {
       handles: this.handles,
       messageStore: deps.messageStore,
       publications: stores.publications,
+      ...(deps.outboundMedia === undefined ? {} : { outboundMedia: deps.outboundMedia }),
       ...(deps.mediaEntitlements === undefined ? {} : { mediaEntitlements: deps.mediaEntitlements }),
       ...(deps.snapshotClock === undefined ? {} : { snapshotClock: deps.snapshotClock }),
       ...(deps.snapshotAckTokenTtlMs === undefined ? {} : { snapshotAckTokenTtlMs: deps.snapshotAckTokenTtlMs }),

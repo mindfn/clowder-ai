@@ -5,20 +5,21 @@ import { createSubscriptionDelivery } from '../dist/domains/messaging/subscripti
 
 const HMR = `hmr_${'a'.repeat(32)}`;
 
-function fixture({ selfEcho = false, fails = false, failGrant = false, hangs = false, actionTimeoutMs } = {}) {
+function fixture({ selfEcho = false, fails = false, failGrant = false, hangs = false, actionTimeoutMs, actor } = {}) {
   const port = new MemoryMediaEntitlementPort();
   port.failNextSave = failGrant;
   const entitlements = new MediaEntitlementLedger(port, { now: () => 1000 });
   const envelope = {
     messageId: 'msg-1',
     threadId: 'thread-1',
-    actor: { kind: 'plugin', id: selfEcho ? 'subscriber' : 'producer' },
+    actor: actor ?? { kind: 'plugin', id: selfEcho ? 'subscriber' : 'producer' },
     payload: { elements: [{ elementId: 'media-1', kind: 'media_ref', payload: { type: 'file', reference: HMR } }] },
   };
   const event = { type: 'message.publish', eventId: 'event-1', sequence: 1, envelope };
   let cursor = 0;
   let called = 0;
   let receiptSawGrant = false;
+  let otherSawGrant = false;
   const errors = [];
   const delivery = createSubscriptionDelivery({
     presentation: async (threadId, actor) => ({
@@ -45,6 +46,7 @@ function fixture({ selfEcho = false, fails = false, failGrant = false, hangs = f
       async deliver(_instanceId, input) {
         called += 1;
         receiptSawGrant = await entitlements.isEntitled('subscriber', HMR);
+        otherSawGrant = await entitlements.isEntitled('other-instance', HMR);
         if (hangs) return new Promise(() => {});
         if (fails) throw new Error('action failed');
         return { deliveryId: input.deliveryId };
@@ -70,6 +72,9 @@ function fixture({ selfEcho = false, fails = false, failGrant = false, hangs = f
     get receiptSawGrant() {
       return receiptSawGrant;
     },
+    get otherSawGrant() {
+      return otherSawGrant;
+    },
   };
 }
 
@@ -81,6 +86,18 @@ test('published hmr is readable only during delivery and revoke is durable befor
   assert.equal(x.receiptSawGrant, true);
   assert.equal(await x.entitlements.isEntitled('subscriber', HMR), false);
   assert.equal((await x.port.load()).audit.at(-1).revokeReason, 'action_returned');
+});
+
+// W2-5b (6): Host-produced media is registered without an owner instance, so a cat reply's hmr is
+// readable only through the grant a subscriber holds while its action runs.
+test('Host-produced media in a cat reply is readable only through the delivery grant', async () => {
+  const x = fixture({ actor: { kind: 'cat', id: 'opus' } });
+  await x.register();
+  await x.delivery.drain('thread-1');
+  assert.equal(x.called, 1);
+  assert.equal(x.receiptSawGrant, true, 'granted to the subscriber for the action');
+  assert.equal(x.otherSawGrant, false, 'never granted to another instance');
+  assert.equal(await x.entitlements.isEntitled('subscriber', HMR), false, 'revoked when the action returns');
 });
 
 test('failure revokes grant before surfacing error and cursor stays retryable', async () => {

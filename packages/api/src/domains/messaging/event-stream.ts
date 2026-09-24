@@ -36,6 +36,7 @@ import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } f
 import { MessagingError, SnapshotUnavailableHostError } from './contract/host-types.js';
 import type { HandleService } from './handles.js';
 import type { MediaEntitlementLedger } from './media-entitlements.js';
+import type { OutboundMediaStore } from './outbound-media-store.js';
 import { SnapshotCaptureCoordinator } from './snapshot-capture.js';
 import { assembleSnapshotPage, resultFits } from './snapshot-page-assembly.js';
 import { decodeSnapshotPageToken, encodeSnapshotAckToken, encodeSnapshotPageToken } from './snapshot-tokens.js';
@@ -59,6 +60,8 @@ export interface EventStreamDeps {
   readonly messageStore: IMessageStore;
   /** Host store-write → publish spans shared with the publishing seam (W2-5b-0). */
   readonly publications?: Pick<HostPublicationTracker, 'isBusy'>;
+  /** Deferred Host media messages (W2-5b), read by the catch-up snapshot. */
+  readonly outboundMedia?: Pick<OutboundMediaStore, 'get'>;
   readonly mediaEntitlements?: Pick<MediaEntitlementLedger, 'grantMany' | 'revoke'>;
   readonly snapshotClock?: { now(): number };
   readonly snapshotAckTokenTtlMs?: number;

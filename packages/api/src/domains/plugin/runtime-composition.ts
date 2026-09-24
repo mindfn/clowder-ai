@@ -30,6 +30,7 @@ import {
   type MessagingDomainDeps,
   type MessagingService,
 } from '../messaging/messaging-service.js';
+import { FileOutboundMediaStore } from '../messaging/outbound-media-store.js';
 import { createMessagingStores } from '../messaging/stores/factory.js';
 import type { MessagingStores } from '../messaging/stores/ports.js';
 import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';
@@ -179,6 +180,8 @@ export interface DormantPluginRuntimeComposition {
   readonly mediaLedger: FileMessagingMediaLedger;
   readonly mediaEntitlements: MediaEntitlementLedger;
   readonly mediaPending: PendingMediaPublication;
+  /** Deferred Host media messages (W2-5b); the outbound media job and the snapshot share it. */
+  readonly outboundMedia: FileOutboundMediaStore;
   /**
    * Drives thread activity out to whichever subscribers declared they want it. Exposed so the
    * Host can drain a thread after it produces a message; it knows nothing about connectors.
@@ -253,6 +256,9 @@ export function createDormantPluginRuntimeComposition(
     ...(options.now === undefined ? {} : { now: options.now }),
   });
   const messagingStores = options.messagingStores ?? createMessagingStores(options.redis);
+  const outboundMedia = new FileOutboundMediaStore(
+    resolve(dirname(paths.inventorySnapshotPath), 'outbound-media.json'),
+  );
   const mediaPending = new PendingMediaPublication({
     store: new FileMediaStagingStore(resolve(dirname(paths.inventorySnapshotPath), 'media-staging.json')),
     messageStore: options.messageStore,
@@ -285,6 +291,7 @@ export function createDormantPluginRuntimeComposition(
     mediaEntitlements,
     mediaPending,
     mediaSources,
+    outboundMedia,
     ...(options.now === undefined ? {} : { snapshotClock: { now: options.now } }),
     stores: messagingStores,
     ...(options.onMessagePublished === undefined ? {} : { onPublished: options.onMessagePublished }),
@@ -511,6 +518,7 @@ export function createDormantPluginRuntimeComposition(
     mediaLedger,
     mediaEntitlements,
     mediaPending,
+    outboundMedia,
     subscriptionDelivery,
     lifecycleDelivery,
     lifecycle,

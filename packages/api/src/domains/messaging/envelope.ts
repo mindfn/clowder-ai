@@ -425,11 +425,27 @@ function isMediaRichBlock(block: unknown): boolean {
   return isRecord(block) && MEDIA_RICH_BLOCK_KINDS.has(block.kind as RichBlock['kind']);
 }
 
+/** Audio / file / gallery blocks become Host media references before publication (W2-5b). */
+export function hasMediaRichBlocks(blocks: readonly unknown[] | undefined): boolean {
+  return blocks?.some(isMediaRichBlock) ?? false;
+}
+
+/** The elements the outbound media job produced for block `index` (itself, or its gallery items). */
+function mediaElementsForBlock(
+  messageId: string,
+  index: number,
+  hostMedia: readonly MessageElement[] | undefined,
+): MessageElement[] {
+  if (!hostMedia) return [];
+  const id = `el_${messageId}_${index + 1}`;
+  return hostMedia.filter((element) => element.elementId === id || element.elementId.startsWith(`${id}_`));
+}
+
 function hostRichBlockKind(block: unknown): string {
   return isRecord(block) && typeof block.kind === 'string' ? block.kind : 'unknown';
 }
 
-function projectHostElements(msg: StoredMessage): MessageElement[] {
+function projectHostElements(msg: StoredMessage, hostMedia?: readonly MessageElement[]): MessageElement[] {
   const elements: MessageElement[] = [{ elementId: `el_${msg.id}_0`, kind: 'text', payload: { text: msg.content } }];
   const blocks = msg.extra?.rich?.blocks;
   if (!blocks?.length) return elements;
@@ -437,9 +453,25 @@ function projectHostElements(msg: StoredMessage): MessageElement[] {
   const status = hostRelayedEpistemic(msg);
   let totalBytes = Buffer.byteLength(JSON.stringify({ text: msg.content }), 'utf8');
   const overflowKinds: string[] = [];
-  const nonMedia = blocks.flatMap((block, index) => (isMediaRichBlock(block) ? [] : [{ block, index }])); // W2-5b owns media references and TTS.
-  for (const [position, { block, index }] of nonMedia.entries()) {
-    const reserveOverflow = position < nonMedia.length - 1 || overflowKinds.length > 0;
+  // Block order is kept. A media block contributes only what the outbound media job produced for
+  // it (W2-5b); without that result — a message published before W2-5b — it contributes nothing.
+  const candidates: { block: RichBlock; index: number; element?: MessageElement }[] = blocks.flatMap((block, index) =>
+    isMediaRichBlock(block)
+      ? mediaElementsForBlock(msg.id, index, hostMedia).map((element) => ({ block, index, element }))
+      : [{ block, index }],
+  );
+  for (const [position, { block, index, element }] of candidates.entries()) {
+    const reserveOverflow = position < candidates.length - 1 || overflowKinds.length > 0;
+    if (element) {
+      const mediaBytes = boundedHostElementBytes(elements, totalBytes, element.payload, reserveOverflow);
+      if (mediaBytes === null) {
+        overflowKinds.push(hostRichBlockKind(block));
+        continue;
+      }
+      elements.push({ ...element, epistemicStatus: status });
+      totalBytes += mediaBytes;
+      continue;
+    }
     const validShape = isFrozenRichBlock(block);
     const richBytes = validShape ? boundedHostElementBytes(elements, totalBytes, block, reserveOverflow) : null;
     if (validShape && richBytes !== null) {
@@ -475,7 +507,12 @@ function projectHostElements(msg: StoredMessage): MessageElement[] {
  * Project a stored message to its canonical envelope.
  * Returns null for deleted/tombstoned messages and for malformed plugin extras.
  */
-export function projectEnvelope(msg: StoredMessage): MessageEnvelope | null {
+export interface ProjectEnvelopeOptions {
+  /** Final media elements of a deferred Host message, from the outbound media store (W2-5b). */
+  readonly hostMedia?: readonly MessageElement[];
+}
+
+export function projectEnvelope(msg: StoredMessage, options: ProjectEnvelopeOptions = {}): MessageEnvelope | null {
   if (msg.deletedAt !== undefined || msg._tombstone) return null;
 
   let occurredAt: string;
@@ -518,7 +555,7 @@ export function projectEnvelope(msg: StoredMessage): MessageEnvelope | null {
     actor: msg.catId === null ? { kind: 'user', id: msg.userId } : { kind: 'cat', id: msg.catId },
     payload: {
       provenance: { origin: { kind: 'host' }, epistemicStatus: hostRelayedEpistemic(msg) },
-      elements: projectHostElements(msg),
+      elements: projectHostElements(msg, options.hostMedia),
     },
   };
 }

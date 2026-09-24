@@ -1,12 +1,14 @@
 /** Bounded, restart-safe frozen snapshot capture under the plugin event fence. */
 
 import { randomUUID } from 'node:crypto';
+import type { MessageElement } from '@clowder-ai/plugin-contract';
 import { validateMessagingRowResult } from '@clowder-ai/plugin-contract';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.js';
 import type { PluginCallContext, SnapshotResult } from './contract/host-types.js';
 import { MessagingError, SnapshotUnavailableHostError } from './contract/host-types.js';
 import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
+import type { OutboundMediaStore } from './outbound-media-store.js';
 import type {
   CursorStore,
   EventLogStore,
@@ -30,6 +32,8 @@ interface SnapshotCaptureDeps {
   readonly messageStore: IMessageStore;
   /** Host store-write → publish spans; a thread inside one cannot be snapshotted consistently. */
   readonly publications?: Pick<HostPublicationTracker, 'isBusy'>;
+  /** Deferred Host media messages (W2-5b): their state and final media elements. */
+  readonly outboundMedia?: Pick<OutboundMediaStore, 'get'>;
 }
 
 type SnapshotEnvelope = SnapshotResult['envelopes'][number];
@@ -66,8 +70,11 @@ function isContractSnapshotEnvelope(envelope: SnapshotEnvelope): boolean {
  * a Host projection bug; it is left out and reported rather than failing every subscriber's
  * catch-up, which is what throwing here would do.
  */
-function projectHostSnapshotEnvelope(msg: StoredMessage): SnapshotEnvelope | null {
-  const envelope = projectEnvelope(msg);
+function projectHostSnapshotEnvelope(
+  msg: StoredMessage,
+  hostMedia: readonly MessageElement[] | undefined,
+): SnapshotEnvelope | null {
+  const envelope = projectEnvelope(msg, hostMedia === undefined ? {} : { hostMedia });
   if (!envelope) return null;
   if (isContractSnapshotEnvelope(envelope)) return envelope;
   console.warn('[F202 W2-5b-0] host message left out of snapshot: envelope violates contract', {
@@ -79,6 +86,21 @@ function projectHostSnapshotEnvelope(msg: StoredMessage): SnapshotEnvelope | nul
 
 export class SnapshotCaptureCoordinator {
   constructor(private readonly deps: SnapshotCaptureDeps) {}
+
+  /**
+   * A deferred Host media message (W2-5b) is in the snapshot only once published, with the media
+   * elements its event carried. Pending: its event is still to come, so it is left for the stream.
+   * Publishing: its event may already be past the head — a race, retried like one.
+   */
+  private async deferredHostMedia(
+    msg: StoredMessage,
+  ): Promise<readonly MessageElement[] | undefined | 'pending' | 'race'> {
+    if (msg.extra?.mediaPublication !== 'deferred') return undefined;
+    const row = await this.deps.outboundMedia?.get(msg.id);
+    if (!row || row.state === 'pending') return 'pending';
+    if (row.state === 'publishing') return 'race';
+    return row.elements ?? [];
+  }
 
   /** A Host message may be stored with its event still to come; that is a race, as for events. */
   private insidePublicationSpan(threadId: string): boolean {
@@ -204,7 +226,10 @@ export class SnapshotCaptureCoordinator {
             throw new MessagingError('VALIDATION', 'persisted plugin envelope violates beta.11');
           }
         } else {
-          envelope = projectHostSnapshotEnvelope(msg);
+          const hostMedia = await this.deferredHostMedia(msg);
+          if (hostMedia === 'race') return null;
+          if (hostMedia === 'pending') continue;
+          envelope = projectHostSnapshotEnvelope(msg, hostMedia);
           if (!envelope) continue;
         }
         const itemBytes = Buffer.byteLength(JSON.stringify(envelope), 'utf8');

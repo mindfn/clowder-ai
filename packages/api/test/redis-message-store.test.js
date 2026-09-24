@@ -795,6 +795,38 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal(listenerCalls, 0);
   });
 
+  // F202 W2-5b: the extra parser is a whitelist, so a marker it does not know is dropped on read.
+  // Cat replies reach Redis through the frontier writes, so all three entrypoints must keep it.
+  it('all Redis append entrypoints round-trip the deferred media publication marker', async () => {
+    const appenders = [
+      ['append', async (target, message) => target.append(message)],
+      [
+        'appendIfThreadFrontier',
+        async (target, message) => (await target.appendIfThreadFrontier(message, null)).message,
+      ],
+      [
+        'appendAndObservePriorFrontier',
+        async (target, message) => (await target.appendAndObservePriorFrontier(message)).message,
+      ],
+    ];
+    const markerStore = new RedisMessageStore(redis, { ttlSeconds: 0 });
+    for (const [name, append] of appenders) {
+      const stored = await append(markerStore, {
+        userId: 'user1',
+        catId: 'opus',
+        content: `${name} voice reply`,
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: `thread-w2-5b-${name}`,
+        extra: {
+          rich: { v: 1, blocks: [{ id: 'voice', kind: 'audio', v: 1, url: '', text: 'hello' }] },
+          mediaPublication: 'deferred',
+        },
+      });
+      const reread = await markerStore.getById(stored.id);
+      assert.equal(reread?.extra?.mediaPublication, 'deferred', `${name} must keep the marker`);
+    }
+  });
   it('append admits and rehydrates the sortable-ID-safe Date boundaries', async () => {
     const roundTripStore = new RedisMessageStore(redis, { ttlSeconds: 0 });
     for (const timestamp of [0, 1, 8_640_000_000_000_000]) {

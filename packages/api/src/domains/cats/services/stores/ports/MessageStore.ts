@@ -267,6 +267,12 @@ export interface StoredMessage {
       invocationId: string;
     };
     rich?: RichMessageExtra;
+    /**
+     * F202 W2-5b: written once with the message, never updated. `deferred` means the plugin-stream
+     * publication of this message is owned by the outbound media job (its audio / file / gallery
+     * blocks must first become Host media references); the append seam does not publish it.
+     */
+    mediaPublication?: 'deferred';
     /** #814/F224: explicit post_message callback bubble; history hydration must not merge it into stream output. */
     isExplicitPost?: boolean;
     /** F081 + F194 Phase Z3 dual id:

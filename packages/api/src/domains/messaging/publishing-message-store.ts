@@ -37,7 +37,8 @@ import {
   type ThreadFrontierAppendResult,
   type ThreadObservedAppendResult,
 } from '../cats/services/stores/ports/MessageStore.js';
-import { projectEnvelope } from './envelope.js';
+import { hasMediaRichBlocks, projectEnvelope } from './envelope.js';
+import type { OutboundMediaPublication } from './outbound-media-publication.js';
 import type { EventLogStore, HostPublicationTracker } from './stores/ports.js';
 import { clampRetention } from './stores/ports.js';
 
@@ -53,6 +54,13 @@ export interface PublishingMessageStoreDeps {
    */
   readonly publications?: Pick<HostPublicationTracker, 'begin'>;
   /**
+   * The outbound media job (W2-5b), late-bound because it needs the media ledger. When bound, a
+   * Host message carrying audio / file / gallery blocks is written with
+   * `mediaPublication: 'deferred'` and handed to the job instead of being published here; when
+   * not bound, such a message publishes at once with its media blocks left out, as before.
+   */
+  readonly outboundMedia?: () => Pick<OutboundMediaPublication, 'register' | 'schedule'> | undefined;
+  /**
    * Required on purpose. A publish that is dropped silently is a message nobody will receive,
    * so there is no default that quietly discards it.
    */
@@ -62,9 +70,27 @@ export interface PublishingMessageStoreDeps {
 export function createPublishingMessageStore<T extends IMessageStore>(inner: T, deps: PublishingMessageStoreDeps): T {
   const retention = clampRetention(deps.retentionCount);
 
+  function prepare<M extends AppendMessageInput>(msg: M): M {
+    if (msg.visibility === 'whisper' || msg.extra?.pluginMessage !== undefined) return msg;
+    if (!hasMediaRichBlocks(msg.extra?.rich?.blocks) || !deps.outboundMedia?.()) return msg;
+    return { ...msg, extra: { ...msg.extra, mediaPublication: 'deferred' } };
+  }
+
+  async function deferToMediaJob(stored: StoredMessage): Promise<void> {
+    const job = deps.outboundMedia?.();
+    try {
+      if (!job) throw new Error('deferred media publication has no outbound media job');
+      await job.register(stored);
+      void job.schedule(stored.id);
+    } catch (error) {
+      deps.onPublishFailure(error, stored);
+    }
+  }
+
   async function publish(stored: StoredMessage): Promise<void> {
     if (stored.extra?.pluginMessage !== undefined) return;
     if (stored.visibility === 'whisper') return;
+    if (stored.extra?.mediaPublication === 'deferred') return deferToMediaJob(stored);
     const envelope = projectEnvelope(stored);
     if (!envelope) return;
 
@@ -101,7 +127,7 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
       if (property === 'append') {
         return (msg: AppendMessageInput): Promise<StoredMessage> =>
           withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
-            const stored = await target.append(msg);
+            const stored = await target.append(prepare(msg));
             await publish(stored);
             return stored;
           });
@@ -109,7 +135,7 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
       if (property === 'appendIdempotent') {
         return (msg: AppendMessageInput): Promise<IdempotentAppendResult> =>
           withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
-            const result = await target.appendIdempotent(msg);
+            const result = await target.appendIdempotent(prepare(msg));
             if (!result.idempotent) await publish(result.message);
             return result;
           });
@@ -117,7 +143,7 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
       if (property === 'appendAndObservePriorFrontier') {
         return (msg: AppendMessageInput): Promise<ThreadObservedAppendResult> =>
           withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
-            const result = await target.appendAndObservePriorFrontier(msg);
+            const result = await target.appendAndObservePriorFrontier(prepare(msg));
             if (!result.idempotent) await publish(result.message);
             return result;
           });
@@ -125,7 +151,7 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
       if (property === 'appendIfThreadFrontier') {
         return (msg: AppendMessageInput, expectedLatestMessageId: string | null): Promise<ThreadFrontierAppendResult> =>
           withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
-            const result = await target.appendIfThreadFrontier(msg, expectedLatestMessageId);
+            const result = await target.appendIfThreadFrontier(prepare(msg), expectedLatestMessageId);
             if (result.kind === 'committed') await publish(result.message);
             return result;
           });

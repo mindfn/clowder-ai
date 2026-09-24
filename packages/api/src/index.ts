@@ -226,6 +226,9 @@ import { RedisWriteOpportunityTerminalLedger } from './domains/memory/people/Red
 import { EvidenceStoreWorkspacePersonResolver } from './domains/memory/people/WorkspacePersonResolver.js';
 import { refreshCanonicalProfileIndex } from './domains/memory/private-collection-bindings.js';
 import { RedisDeferredPersonMemoryReceiptStore } from './domains/memory/RedisDeferredPersonMemoryReceiptStore.js';
+import { createHostMediaPathResolver, hostMediaPathRootsFromEnv } from './domains/messaging/host-media-paths.js';
+import { OutboundMediaPublication } from './domains/messaging/outbound-media-publication.js';
+import { createListenAssetSpeech } from './domains/messaging/outbound-media-speech.js';
 import { createPublishingMessageStore } from './domains/messaging/publishing-message-store.js';
 import { createMessagingStores } from './domains/messaging/stores/factory.js';
 import { SubscriptionDrainScheduler } from './domains/messaging/subscription-drain-scheduler.js';
@@ -840,9 +843,12 @@ async function main(): Promise<void> {
   const subscriptionDrainScheduler = new SubscriptionDrainScheduler((error, threadId) => {
     app.log.error({ error, threadId }, '[messaging] subscriber delivery drain failed');
   });
+  // W2-5b: bound once the media ledger and TTS exist (below); until then media blocks publish as before.
+  let outboundMediaPublication: OutboundMediaPublication | undefined;
   const messageStore = createPublishingMessageStore(rawMessageStore, {
     events: messagingStores.events,
     publications: messagingStores.publications,
+    outboundMedia: () => outboundMediaPublication,
     onPublished: subscriptionDrainScheduler.schedule,
     onPublishFailure: (error, stored) => {
       app.log.error(
@@ -6509,6 +6515,27 @@ async function main(): Promise<void> {
   await documentListenRepository.initialize();
   await app.register(ttsRoutes, { ttsRegistry, cacheDir: ttsCacheDir, documentListenRepository });
   initVoiceBlockSynthesizer(ttsRegistry, ttsCacheDir);
+  // F202 W2-5b: Host messages carrying audio / file / gallery blocks reach the plugin stream as Host
+  // media references, published once after materialization (text-only audio via outbound speech).
+  const outboundSpeech = createListenAssetSpeech(ttsRegistry, ttsCacheDir);
+  app.addHook('onClose', async () => outboundSpeech.close());
+  outboundMediaPublication = new OutboundMediaPublication({
+    store: pluginRuntime.outboundMedia,
+    messages: rawMessageStore,
+    events: messagingStores.events,
+    ledger: pluginRuntime.mediaLedger,
+    resolvePath: createHostMediaPathResolver(
+      hostMediaPathRootsFromEnv(process.env, process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media'),
+    ),
+    speech: outboundSpeech,
+    onPublished: subscriptionDrainScheduler.schedule,
+    onPublishFailure: (error, messageId) => {
+      app.log.error({ error, messageId }, '[messaging] outbound media publication failed; recovered at next start');
+    },
+  });
+  void outboundMediaPublication
+    .recover()
+    .catch((error: unknown) => app.log.error({ error }, '[messaging] outbound media recovery failed'));
   initStreamingTtsRegistry(ttsRegistry);
   startTtsCacheCleaner(ttsCacheDir, documentListenRepository);
   app.addHook('onClose', async () => documentListenRepository.close());
