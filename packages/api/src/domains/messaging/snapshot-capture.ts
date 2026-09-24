@@ -8,7 +8,7 @@ import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.
 import type { PluginCallContext, SnapshotResult } from './contract/host-types.js';
 import { MessagingError, SnapshotUnavailableHostError } from './contract/host-types.js';
 import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
-import type { OutboundMediaStore } from './outbound-media-store.js';
+import type { OutboundMediaStore } from './outbound-media/store.js';
 import type {
   CursorStore,
   EventLogStore,

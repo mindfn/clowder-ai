@@ -36,7 +36,7 @@ import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } f
 import { MessagingError, SnapshotUnavailableHostError } from './contract/host-types.js';
 import type { HandleService } from './handles.js';
 import type { MediaEntitlementLedger } from './media-entitlements.js';
-import type { OutboundMediaStore } from './outbound-media-store.js';
+import type { OutboundMediaStore } from './outbound-media/store.js';
 import { SnapshotCaptureCoordinator } from './snapshot-capture.js';
 import { assembleSnapshotPage, resultFits } from './snapshot-page-assembly.js';
 import { decodeSnapshotPageToken, encodeSnapshotAckToken, encodeSnapshotPageToken } from './snapshot-tokens.js';

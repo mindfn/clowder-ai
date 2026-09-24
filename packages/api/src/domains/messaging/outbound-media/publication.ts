@@ -18,19 +18,19 @@
  * `published` re-appends into the dedupe; elements are never recomputed after `publishing`.
  */
 import type { MessageElement } from '@clowder-ai/plugin-contract';
-import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
-import { projectEnvelope } from './envelope.js';
+import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
+import { projectEnvelope } from '../envelope.js';
+import type { EventLogStore } from '../stores/ports.js';
+import { clampRetention } from '../stores/ports.js';
 import type { HostMediaPathResolver } from './host-media-paths.js';
-import type { OutboundMediaStore } from './outbound-media-store.js';
+import type { OutboundMediaStore } from './store.js';
 import {
   extensionForMimeType,
   mimeTypeForName,
   type OutboundMediaTarget,
   planOutboundMedia,
   usableFileName,
-} from './outbound-media-targets.js';
-import type { EventLogStore } from './stores/ports.js';
-import { clampRetention } from './stores/ports.js';
+} from './targets.js';
 
 /** Total speech time per message — the legacy outbound delivery bound (`routes/messages.ts` 10 s). */
 export const OUTBOUND_SPEECH_BUDGET_MS = 10_000;

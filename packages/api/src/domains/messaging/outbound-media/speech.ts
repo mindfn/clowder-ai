@@ -7,9 +7,9 @@
  * the caller owns the time budget (the service's plain-synthesis path cannot be aborted).
  */
 import { join } from 'node:path';
-import { ListenAssetService } from '../cats/services/tts/ListenAssetService.js';
-import type { TtsRegistry } from '../cats/services/tts/TtsRegistry.js';
-import type { OutboundSpeechSynthesizer } from './outbound-media-publication.js';
+import { ListenAssetService } from '../../cats/services/tts/ListenAssetService.js';
+import type { TtsRegistry } from '../../cats/services/tts/TtsRegistry.js';
+import type { OutboundSpeechSynthesizer } from './publication.js';
 
 export function createListenAssetSpeech(
   registry: TtsRegistry,

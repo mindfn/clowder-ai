@@ -9,7 +9,7 @@
  * the source path and the prompt, and the whole block is never copied anywhere.
  */
 import { basename, extname } from 'node:path';
-import type { StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
+import type { StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 
 export type HostMediaType = 'audio' | 'file' | 'image';
 

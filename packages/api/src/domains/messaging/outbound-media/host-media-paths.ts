@@ -12,8 +12,8 @@
  */
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { getDefaultUploadDir } from '../../utils/upload-paths.js';
-import { resolveTtsCacheDir } from '../cats/services/tts/document-listen-paths.js';
+import { getDefaultUploadDir } from '../../../utils/upload-paths.js';
+import { resolveTtsCacheDir } from '../../cats/services/tts/document-listen-paths.js';
 
 export interface HostMediaPathRoots {
   readonly uploadDir: string;

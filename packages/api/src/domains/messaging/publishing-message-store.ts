@@ -38,7 +38,7 @@ import {
   type ThreadObservedAppendResult,
 } from '../cats/services/stores/ports/MessageStore.js';
 import { hasMediaRichBlocks, projectEnvelope } from './envelope.js';
-import type { OutboundMediaPublication } from './outbound-media-publication.js';
+import type { OutboundMediaPublication } from './outbound-media/publication.js';
 import type { EventLogStore, HostPublicationTracker } from './stores/ports.js';
 import { clampRetention } from './stores/ports.js';
 

@@ -98,9 +98,9 @@ beforeEach(async () => {
   ({ createMessagingDomain } = await import('../dist/domains/messaging/messaging-service.js'));
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
   ({ FileMessagingMediaLedger } = await import('../dist/domains/messaging/media-ledger.js'));
-  ({ MemoryOutboundMediaStore } = await import('../dist/domains/messaging/outbound-media-store.js'));
-  ({ OutboundMediaPublication } = await import('../dist/domains/messaging/outbound-media-publication.js'));
-  ({ createHostMediaPathResolver } = await import('../dist/domains/messaging/host-media-paths.js'));
+  ({ MemoryOutboundMediaStore } = await import('../dist/domains/messaging/outbound-media/store.js'));
+  ({ OutboundMediaPublication } = await import('../dist/domains/messaging/outbound-media/publication.js'));
+  ({ createHostMediaPathResolver } = await import('../dist/domains/messaging/outbound-media/host-media-paths.js'));
 
   root = await mkdtemp(join(tmpdir(), 'f202-w2-5b-'));
   for (const dir of ['uploads', 'tts', 'connector-media', 'web']) await mkdir(join(root, dir));

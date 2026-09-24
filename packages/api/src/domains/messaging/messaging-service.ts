@@ -20,7 +20,7 @@ import type { MediaEntitlementLedger } from './media-entitlements.js';
 import type { PendingMediaPublication } from './media-pending-publication.js';
 import type { MediaReferenceAuthority } from './media-reference-authority.js';
 import type { MediaSourceResolver } from './media-staging.js';
-import type { OutboundMediaStore } from './outbound-media-store.js';
+import type { OutboundMediaStore } from './outbound-media/store.js';
 import { type HostSendOptions, SendService } from './send-service.js';
 import { createMessagingStores } from './stores/factory.js';
 import type { MessagingStores } from './stores/ports.js';

@@ -5,7 +5,7 @@
  */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { HostPublicationGate } from '../host-publication-gate.js';
+import { HostPublicationGate } from './host-publication-gate.js';
 import {
   MemoryAppendLock,
   MemoryCursorStore,

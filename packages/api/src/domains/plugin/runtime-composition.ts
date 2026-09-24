@@ -30,7 +30,7 @@ import {
   type MessagingDomainDeps,
   type MessagingService,
 } from '../messaging/messaging-service.js';
-import { FileOutboundMediaStore } from '../messaging/outbound-media-store.js';
+import { FileOutboundMediaStore } from '../messaging/outbound-media/store.js';
 import { createMessagingStores } from '../messaging/stores/factory.js';
 import type { MessagingStores } from '../messaging/stores/ports.js';
 import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';

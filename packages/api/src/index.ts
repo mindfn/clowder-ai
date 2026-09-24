@@ -226,9 +226,12 @@ import { RedisWriteOpportunityTerminalLedger } from './domains/memory/people/Red
 import { EvidenceStoreWorkspacePersonResolver } from './domains/memory/people/WorkspacePersonResolver.js';
 import { refreshCanonicalProfileIndex } from './domains/memory/private-collection-bindings.js';
 import { RedisDeferredPersonMemoryReceiptStore } from './domains/memory/RedisDeferredPersonMemoryReceiptStore.js';
-import { createHostMediaPathResolver, hostMediaPathRootsFromEnv } from './domains/messaging/host-media-paths.js';
-import { OutboundMediaPublication } from './domains/messaging/outbound-media-publication.js';
-import { createListenAssetSpeech } from './domains/messaging/outbound-media-speech.js';
+import {
+  createHostMediaPathResolver,
+  hostMediaPathRootsFromEnv,
+} from './domains/messaging/outbound-media/host-media-paths.js';
+import { OutboundMediaPublication } from './domains/messaging/outbound-media/publication.js';
+import { createListenAssetSpeech } from './domains/messaging/outbound-media/speech.js';
 import { createPublishingMessageStore } from './domains/messaging/publishing-message-store.js';
 import { createMessagingStores } from './domains/messaging/stores/factory.js';
 import { SubscriptionDrainScheduler } from './domains/messaging/subscription-drain-scheduler.js';
