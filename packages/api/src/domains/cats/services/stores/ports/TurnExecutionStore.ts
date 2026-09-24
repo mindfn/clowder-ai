@@ -73,8 +73,8 @@ export interface ITurnExecutionStore {
   /**
    * F117 KD-21: records the action fence's verdict on a gated child's output, so every later
    * settlement reads it instead of a process-local decision. The fence only moves forward
-   * (gated → allowed → rejected); an ungated child is left as it is. Returns the record after the
-   * write, or null when the child is unknown.
+   * (gated → allowed → rejected); an open child, or one recorded before the fence existed, is left
+   * as it is. Returns the record after the write, or null when the child is unknown.
    */
   settleOutputFence(
     invocationId: string,
@@ -99,27 +99,37 @@ export function assertCoveredMessageIds(messageIds: readonly string[]): void {
 }
 
 const EXECUTION_KINDS = new Set<TurnExecutionKind>(['ordinary', 'routing_guard']);
-const OUTPUT_FENCE_RANK: Record<TurnOutputFence, number> = { gated: 0, allowed: 1, rejected: 2 };
+const OUTPUT_FENCES = new Set<string>(['open', 'gated', 'allowed', 'rejected']);
+const GATED_FENCE_RANK: Record<Exclude<TurnOutputFence, 'open'>, number> = { gated: 0, allowed: 1, rejected: 2 };
 
 export function isTurnOutputFence(value: unknown): value is TurnOutputFence {
-  return typeof value === 'string' && Object.hasOwn(OUTPUT_FENCE_RANK, value);
+  return typeof value === 'string' && OUTPUT_FENCES.has(value);
 }
 
-/** The fence after a verdict: it only moves forward, and an ungated child stays ungated. */
+/**
+ * The fence after a verdict: a gated fence only moves forward. An open fence, and a record written
+ * before the fence existed, stay as they are.
+ */
 export function advanceTurnOutputFence(
   current: TurnOutputFence | undefined,
   verdict: TurnOutputFenceVerdict,
 ): TurnOutputFence | undefined {
-  if (current === undefined) return undefined;
-  return OUTPUT_FENCE_RANK[verdict] > OUTPUT_FENCE_RANK[current] ? verdict : current;
+  if (current === undefined || current === 'open') return current;
+  return GATED_FENCE_RANK[verdict] > GATED_FENCE_RANK[current] ? verdict : current;
 }
 
-/** A child is only ever created gated; the verdicts arrive later through settleOutputFence. */
+/** A child is created open or gated; the verdicts arrive later through settleOutputFence. */
 export function assertCreatableOutputFence(input: CreateTurnExecutionInput): void {
-  if (input.outputFence !== undefined && input.outputFence !== 'gated') {
-    throw new Error(`a turn execution can only be created gated, not ${String(input.outputFence)}`);
+  if (input.outputFence !== undefined && input.outputFence !== 'open' && input.outputFence !== 'gated') {
+    throw new Error(`a turn execution can only be created open or gated, not ${String(input.outputFence)}`);
   }
 }
+
+/** The fence a store records for a new child: every child has one, and an omitted fence is open. */
+export function createdOutputFence(input: CreateTurnExecutionInput): 'open' | 'gated' {
+  return input.outputFence === 'gated' ? 'gated' : 'open';
+}
+
 const TERMINAL_STATUSES = new Set<TurnExecutionTerminalStatus>(['succeeded', 'failed', 'canceled', 'interrupted']);
 
 function assertNonEmpty(value: string, field: string): void {

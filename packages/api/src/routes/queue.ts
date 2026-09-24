@@ -520,6 +520,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           messageStore,
           ...(opts.draftStore ? { draftStore: opts.draftStore } : {}),
           ...(opts.turnExecutionStore ? { turnStore: opts.turnExecutionStore } : {}),
+          ...(opts.invocationRecordStore ? { invocationRecords: opts.invocationRecordStore } : {}),
           emit: (userId, message) => emitLifecycleMessageUpdated(socketManager, userId, message),
         },
         {

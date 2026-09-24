@@ -175,6 +175,7 @@ describe('TurnExecutionStartupReconciler', () => {
     assert.equal((await store.get('ordinary-old')).status, 'succeeded');
     assert.deepEqual(await store.get('guard-boundary'), {
       ...runningInput('guard-boundary', 100),
+      outputFence: 'open',
       status: 'interrupted',
       endedAt: 200,
       terminalReason: 'process_restart',

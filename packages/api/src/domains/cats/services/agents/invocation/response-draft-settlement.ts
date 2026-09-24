@@ -1,5 +1,6 @@
 import type { RichBlock } from '@cat-cafe/shared';
 import type { DraftRecord, IDraftStore } from '../../stores/ports/DraftStore.js';
+import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
 import {
   type IMessageStore,
   type LifecycleResponseTerminalPatch,
@@ -10,6 +11,7 @@ import {
 import type {
   ITurnExecutionStore,
   TurnExecutionRecord,
+  TurnOutputFence,
   TurnOutputFenceVerdict,
 } from '../../stores/ports/TurnExecutionStore.js';
 import { extractRichFromText } from '../routing/rich-block-extract.js';
@@ -26,7 +28,9 @@ import { sanitizeInjectedContent } from '../routing/route-helpers.js';
  *
  * Whether the draft may be published at all is the turn's durable output fence, read on every pass:
  * an action-fenced turn's draft stays unpublished until its fence is allowed, and a rejected output
- * ends R empty as output_commit_rejected. No pass relies on the draft having been deleted.
+ * ends R empty as output_commit_rejected. No pass relies on the draft having been deleted. A turn
+ * recorded before the fence existed takes the fence its parent invocation's action lease carrier
+ * implies, and stays gated when that carrier cannot be read.
  */
 
 /** The admission key of the response R a child turn owns; its draft is keyed by the same id. */
@@ -43,6 +47,11 @@ export interface ResponseDraftSettlementDeps {
    * be read, so no draft is published.
    */
   turnStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending'>;
+  /**
+   * Resolves the fence of a turn recorded before the fence existed: its parent invocation records
+   * whether the dispatch carried action custody. Without it such a turn's draft is withheld.
+   */
+  invocationRecords?: Pick<IInvocationRecordStore, 'get'>;
   /** Publishes the terminal R to its user's live timeline. */
   emit?: (userId: string, message: StoredMessage) => void;
 }
@@ -105,7 +114,7 @@ export async function settleResponseFromDraft(
 /**
  * F117 KD-21: records the action fence's verdict on a child's output before anything commits its R,
  * so every later settlement reads the verdict rather than this process's memory. A write that fails
- * leaves the child gated, which still keeps its draft unpublished.
+ * leaves the child gated, which still keeps its draft unpublished, and so does not stop the caller.
  */
 export async function recordTurnOutputVerdict(
   turnStore: Pick<ITurnExecutionStore, 'settleOutputFence'> | undefined,
@@ -120,13 +129,46 @@ export async function recordTurnOutputVerdict(
   }
 }
 
+/**
+ * F117 KD-21: records that the fence allowed a gated child's output, before the route commits its R,
+ * so a settlement after a crash in between publishes the approved draft. Unlike a rejection, a write
+ * that fails stops the commit: R carries a fenced body only once the turn says it may.
+ */
+export async function requireTurnOutputAllowed(
+  turnStore: Pick<ITurnExecutionStore, 'settleOutputFence'> | undefined,
+  invocationId: string,
+): Promise<void> {
+  if (!turnStore) return;
+  const turn = await turnStore.settleOutputFence(invocationId, 'allowed');
+  if (turn?.outputFence === 'allowed' || turn?.outputFence === 'open') return;
+  throw new Error(
+    `turn execution ${invocationId}: output fence is ${turn ? turn.outputFence : 'missing'}, not allowed`,
+  );
+}
+
 type DraftDisposition = 'publish' | 'withhold' | 'reject';
 
-/** Only an unfenced or allowed turn may publish its draft; anything unreadable is withheld. */
+/** Only an open or allowed turn may publish its draft; anything unreadable is withheld. */
 async function draftDisposition(deps: ResponseDraftSettlementDeps, invocationId: string): Promise<DraftDisposition> {
   const turn = deps.turnStore ? await deps.turnStore.get(invocationId) : null;
-  if (!turn || turn.outputFence === 'gated') return 'withhold';
-  return turn.outputFence === 'rejected' ? 'reject' : 'publish';
+  if (!turn) return 'withhold';
+  const fence = turn.outputFence ?? (await legacyOutputFence(deps, turn));
+  if (fence === 'rejected') return 'reject';
+  return fence === 'open' || fence === 'allowed' ? 'publish' : 'withhold';
+}
+
+/**
+ * A turn recorded before the fence existed was fenced exactly when its dispatch carried action
+ * custody, which its parent invocation records. A turn that is its own parent had no dispatch to
+ * fence it. When the parent cannot be read, the turn stays gated.
+ */
+async function legacyOutputFence(
+  deps: ResponseDraftSettlementDeps,
+  turn: TurnExecutionRecord,
+): Promise<TurnOutputFence> {
+  if (turn.parentInvocationId === turn.invocationId) return 'open';
+  const parent = deps.invocationRecords ? await deps.invocationRecords.get(turn.parentInvocationId) : null;
+  return parent?.actionLeaseCarrier?.kind === 'none' ? 'open' : 'gated';
 }
 
 /** Commits a processing R with its draft's body. A writer that ended R first keeps its own body. */

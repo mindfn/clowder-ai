@@ -6,6 +6,7 @@ const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/
 const { InMemoryTurnExecutionStore } = await import(
   '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
 );
+const { InvocationRecordStore } = await import('../dist/domains/cats/services/stores/ports/InvocationRecordStore.js');
 const { lifecycleResponseIdempotencyKey, responseOutcomeForEndedTurn, settleResponseFromDraft } = await import(
   '../dist/domains/cats/services/agents/invocation/response-draft-settlement.js'
 );
@@ -29,13 +30,20 @@ function world() {
   const messages = new MessageStore();
   const drafts = new DraftStore();
   const turns = new InMemoryTurnExecutionStore();
-  return { messages, drafts, turns };
+  const records = new InvocationRecordStore();
+  return { messages, drafts, turns, records };
 }
 
-async function streamingTurn({ messages, drafts, turns }, invocationId, startedAt, body, { outputFence } = {}) {
+async function streamingTurn(
+  { messages, drafts, turns },
+  invocationId,
+  startedAt,
+  body,
+  { outputFence, parentInvocationId = PARENT } = {},
+) {
   await turns.createRunning({
     invocationId,
-    parentInvocationId: PARENT,
+    parentInvocationId,
     threadId: THREAD,
     userId: USER,
     catId: 'opus',
@@ -93,12 +101,12 @@ function failingCommits(store, times) {
 }
 
 /** Production wiring: a later pass ends R with the ended turn's own terminal truth. */
-function startup({ drafts, turns }, messageStore) {
+function startup({ drafts, turns, records }, messageStore) {
   return new TurnExecutionStartupReconciler({
     store: turns,
     settleEndedTurnResponse: (turn) =>
       settleResponseFromDraft(
-        { messageStore, draftStore: drafts, turnStore: turns },
+        { messageStore, draftStore: drafts, turnStore: turns, invocationRecords: records },
         {
           userId: turn.userId,
           threadId: turn.threadId,
@@ -309,5 +317,100 @@ describe('F117 KD-21 fenced output across settlement retries', () => {
       reason: 'provider_execution_failed',
       content: 'partial output',
     });
+  });
+});
+
+describe('F117 KD-21 turns recorded before the output fence existed', () => {
+  /** The previous release persisted the same record without the fence field. */
+  function asLegacyRecord(turns, invocationId) {
+    delete turns.records.get(invocationId).outputFence;
+    assert.equal('outputFence' in turns.get(invocationId), false);
+  }
+
+  /** The invocation the queue created for a dispatch, recording whether it carried action custody. */
+  function queueInvocation(records, actionLeaseCarrier) {
+    return records.create({
+      threadId: THREAD,
+      userId: USER,
+      targetCats: ['opus'],
+      intent: 'execute',
+      idempotencyKey: `queue-entry-${actionLeaseCarrier.kind}`,
+      actionLeaseCarrier,
+    }).invocationId;
+  }
+
+  test('a legacy turn of an action-fenced dispatch keeps its draft unpublished through the upgrade restart', async () => {
+    const w = world();
+    const parent = queueInvocation(w.records, { kind: 'action_successor', leaseId: 'lease-1', generation: 1 });
+    const responseId = await streamingTurn(w, 'turn-old-fenced', 10, 'HIDDEN_ACTION_OUTPUT', {
+      parentInvocationId: parent,
+    });
+    // The old process died mid-turn, before its fence had judged the output.
+    asLegacyRecord(w.turns, 'turn-old-fenced');
+
+    const result = await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    assert.equal(result.interruptedCount, 1);
+    assert.equal(result.settledResponseCount, 1);
+    await assertSettledFromDraft(w, responseId, { status: 'interrupted', reason: 'process_restart', content: '' });
+  });
+
+  test('a legacy turn of an ordinary dispatch keeps its streamed body through the upgrade restart', async () => {
+    const w = world();
+    const parent = queueInvocation(w.records, { kind: 'none' });
+    const responseId = await streamingTurn(w, 'turn-old-open', 10, 'the ordinary answer', {
+      parentInvocationId: parent,
+    });
+    asLegacyRecord(w.turns, 'turn-old-open');
+
+    const result = await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    assert.equal(result.settledResponseCount, 1);
+    await assertSettledFromDraft(w, responseId, {
+      status: 'interrupted',
+      reason: 'process_restart',
+      content: 'the ordinary answer',
+    });
+  });
+
+  test('a legacy turn that is its own parent had no dispatch to fence it', async () => {
+    const w = world();
+    const responseId = await streamingTurn(w, 'turn-old-direct', 10, 'a direct answer', {
+      parentInvocationId: 'turn-old-direct',
+    });
+    asLegacyRecord(w.turns, 'turn-old-direct');
+
+    await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    await assertSettledFromDraft(w, responseId, {
+      status: 'interrupted',
+      reason: 'process_restart',
+      content: 'a direct answer',
+    });
+  });
+
+  test('a legacy turn whose parent invocation cannot be read stays gated', async () => {
+    const w = world();
+    const responseId = await streamingTurn(w, 'turn-old-orphan', 10, 'output nobody can vouch for', {
+      parentInvocationId: 'parent-record-gone',
+    });
+    asLegacyRecord(w.turns, 'turn-old-orphan');
+
+    await startup(w, w.messages).reconcile({ processStartedAt: 100 });
+
+    await assertSettledFromDraft(w, responseId, { status: 'interrupted', reason: 'process_restart', content: '' });
+  });
+
+  test('a settlement without the invocation records withholds a legacy draft', async () => {
+    const w = world();
+    const parent = queueInvocation(w.records, { kind: 'none' });
+    const responseId = await streamingTurn(w, 'turn-old-unwired', 10, 'the ordinary answer', {
+      parentInvocationId: parent,
+    });
+    asLegacyRecord(w.turns, 'turn-old-unwired');
+
+    await startup({ ...w, records: undefined }, w.messages).reconcile({ processStartedAt: 100 });
+
+    await assertSettledFromDraft(w, responseId, { status: 'interrupted', reason: 'process_restart', content: '' });
   });
 });

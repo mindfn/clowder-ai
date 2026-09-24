@@ -2871,6 +2871,7 @@ async function main(): Promise<void> {
         messageStore,
         draftStore,
         turnStore: turnExecutionStore,
+        invocationRecords: invocationRecordStore,
         ...(lifecycleSocket
           ? {
               emit: (userId: string, message: StoredMessage) =>

@@ -184,7 +184,7 @@ import {
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
-import { recordTurnOutputVerdict } from '../invocation/response-draft-settlement.js';
+import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { AgentServiceUnavailableError } from '../registry/AgentServiceUnavailableError.js';
@@ -2284,6 +2284,12 @@ export async function* routeSerial(
       // may enqueue, persist, mutate thread state, synthesize visible output, or
       // broadcast until it succeeds.
       const actionOutputCommitAllowed = options.beforeOutputCommit ? await options.beforeOutputCommit(catId) : true;
+      // F117 KD-21: the allowed verdict becomes the turn's durable truth before anything visible, so
+      // a settlement after a crash in between publishes the approved draft. A write that fails throws:
+      // the output stays uncommitted and the execution's failure path settles R.
+      if (options.beforeOutputCommit && actionOutputCommitAllowed && ownInvocationId) {
+        await requireTurnOutputAllowed(deps.invocationDeps.turnExecutionStore, ownInvocationId);
+      }
 
       if (voiceChunker) {
         // F111 Phase B: Flush remaining buffered text and send voice_stream_end.

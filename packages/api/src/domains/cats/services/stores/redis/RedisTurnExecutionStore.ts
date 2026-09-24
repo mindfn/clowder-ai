@@ -8,6 +8,7 @@ import {
   type CreateTurnExecutionInput,
   type CreateTurnExecutionResult,
   cloneTurnExecutionRecord,
+  createdOutputFence,
   type InterruptRunningTurnExecutionsInput,
   type ITurnExecutionStore,
   serializeTurnExecutionIdentity,
@@ -48,7 +49,7 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
         input.executionKind,
         String(input.startedAt),
         JSON.stringify(input.causal ?? {}),
-        input.outputFence ?? '',
+        createdOutputFence(input),
       ),
     );
     if (result === -1) {

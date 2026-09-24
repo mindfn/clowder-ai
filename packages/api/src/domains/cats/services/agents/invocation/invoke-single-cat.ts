@@ -1292,7 +1292,8 @@ export interface InvocationParams {
   readonly executionCausal?: TurnExecutionCausalRefs;
   /**
    * F117 KD-21: this child belongs to an action-fenced dispatch, so it is created with a gated
-   * output fence and no settlement path may publish its draft before the fence allows it.
+   * output fence and no settlement path may publish its draft before the fence allows it. Any
+   * other child is created open.
    */
   readonly outputFenced?: boolean;
   /** Exact persisted message bodies exposed to this child invocation's prompt. */
@@ -2017,7 +2018,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           executionKind,
           startedAt: executionStartedAt,
           ...(Object.keys(executionCausal).length > 0 ? { causal: executionCausal } : {}),
-          ...(params.outputFenced ? { outputFence: 'gated' as const } : {}),
+          outputFence: params.outputFenced ? 'gated' : 'open',
         });
       } catch (error) {
         // Auth was minted first so the exact child id could be shared with the

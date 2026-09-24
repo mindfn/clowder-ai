@@ -79,7 +79,10 @@ function hasValidLifecycle(record: TurnExecutionRecord): boolean {
   return true;
 }
 
-/** F117 KD-21: a fence that cannot be read hides the record rather than letting a reader treat it as ungated. */
+/**
+ * F117 KD-21: a record written before the fence existed hydrates without one, for settlement to
+ * resolve. A fence that cannot be read hides the record rather than letting a reader treat it as open.
+ */
 function withOutputFence(record: TurnExecutionRecord, raw: string | undefined): TurnExecutionRecord | null {
   if (raw === undefined) return record;
   return isTurnOutputFence(raw) ? { ...record, outputFence: raw } : null;

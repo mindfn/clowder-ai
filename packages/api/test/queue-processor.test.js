@@ -871,7 +871,7 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.equal(failed.lifecycle.reason, 'execution_error');
     assert.equal(failed.content, '已经写到一半');
     assert.deepEqual(draftStore.getByThread('user-1', 'thread-1'), []);
-    assert.equal(turns.get('turn-thrown').outputFence, undefined, 'an unfenced child records no verdict');
+    assert.equal(turns.get('turn-thrown').outputFence, 'open', 'an unfenced child records no verdict');
     assert.deepEqual(pendingTurnIds(turns), []);
   });
 

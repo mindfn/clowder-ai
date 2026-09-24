@@ -13,13 +13,16 @@ export interface TurnExecutionCausalRefs {
 
 /**
  * F117 KD-21: whether anyone but the child's own route commit may publish its streamed output.
- * A child of an action-fenced dispatch is created `gated`: settlement (stop, restart, zombie
- * reclaim, a thrown execution) keeps its draft unpublished until the fence has `allowed` it, and a
- * `rejected` output is never published. The verdict only moves forward: gated → allowed → rejected.
- * A child without this field is not fenced.
+ * Every child records its fence at creation: `open` when its dispatch carries no action fence, `gated`
+ * when it does. Settlement (stop, restart, zombie reclaim, a thrown execution) keeps a gated draft
+ * unpublished until the fence has `allowed` it, and never publishes a `rejected` output. A gated
+ * fence only moves forward (gated → allowed → rejected); an open fence stays open.
+ *
+ * A record without the field was written before the fence existed. Settlement resolves its fence
+ * from the parent invocation's action lease carrier, and withholds the draft when it cannot.
  */
-export type TurnOutputFence = 'gated' | 'allowed' | 'rejected';
-export type TurnOutputFenceVerdict = Exclude<TurnOutputFence, 'gated'>;
+export type TurnOutputFence = 'open' | 'gated' | 'allowed' | 'rejected';
+export type TurnOutputFenceVerdict = Exclude<TurnOutputFence, 'open' | 'gated'>;
 
 export interface CreateTurnExecutionInput {
   invocationId: string;
@@ -30,7 +33,10 @@ export interface CreateTurnExecutionInput {
   executionKind: TurnExecutionKind;
   startedAt: number;
   causal?: TurnExecutionCausalRefs;
-  /** Late-bound state outside the immutable identity; a child is only ever created `gated`. */
+  /**
+   * Late-bound state outside the immutable identity. A child is created `open` or `gated`; the
+   * store records an omitted fence as `open`.
+   */
   outputFence?: TurnOutputFence;
 }
 

@@ -30,6 +30,7 @@ describe('InMemoryTurnExecutionStore', () => {
 
     assert.deepEqual(await store.get('child-1'), {
       ...earlier,
+      outputFence: 'open',
       status: 'running',
     });
     assert.deepEqual(
@@ -51,7 +52,7 @@ describe('InMemoryTurnExecutionStore', () => {
     assert.equal(first.outcome, 'created');
     assert.equal(replay.outcome, 'replayed');
     assert.equal(conflict.outcome, 'conflict');
-    assert.deepEqual(await store.get(input.invocationId), { ...input, status: 'running' });
+    assert.deepEqual(await store.get(input.invocationId), { ...input, outputFence: 'open', status: 'running' });
   });
 
   test('causal field insertion order does not turn an idempotent create into an identity conflict', async () => {
@@ -249,17 +250,19 @@ describe('InMemoryTurnExecutionStore', () => {
     );
   });
 
-  test('F117 KD-21: a gated output fence only moves forward; an unfenced child stays unfenced', async () => {
+  test('F117 KD-21: every child records its fence; a gated fence only moves forward and an open one stays open', async () => {
     const store = new InMemoryTurnExecutionStore();
     await store.createRunning(runningInput({ invocationId: 'fenced', outputFence: 'gated' }));
     await store.createRunning(runningInput({ invocationId: 'open' }));
+    await store.createRunning(runningInput({ invocationId: 'explicit-open', outputFence: 'open' }));
     assert.equal((await store.get('fenced')).outputFence, 'gated');
-    assert.equal((await store.get('open')).outputFence, undefined);
+    assert.equal((await store.get('open')).outputFence, 'open', 'an omitted fence is recorded open');
+    assert.equal((await store.get('explicit-open')).outputFence, 'open');
 
     assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'allowed');
     assert.equal((await store.settleOutputFence('fenced', 'rejected')).outputFence, 'rejected');
     assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'rejected', 'a rejection is final');
-    assert.equal((await store.settleOutputFence('open', 'rejected')).outputFence, undefined);
+    assert.equal((await store.settleOutputFence('open', 'rejected')).outputFence, 'open');
     assert.equal(await store.settleOutputFence('missing', 'rejected'), null);
 
     await store.transitionTerminal('fenced', { status: 'succeeded', endedAt: 150 });
@@ -269,7 +272,7 @@ describe('InMemoryTurnExecutionStore', () => {
     assert.equal(replay.record.outputFence, 'rejected');
     assert.throws(
       () => store.createRunning(runningInput({ invocationId: 'born-allowed', outputFence: 'allowed' })),
-      /can only be created gated/,
+      /can only be created open or gated/,
     );
     assert.throws(() => store.settleOutputFence('fenced', 'gated'), /invalid output fence verdict/);
   });

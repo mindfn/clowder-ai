@@ -8,6 +8,7 @@ import {
   type CreateTurnExecutionInput,
   type CreateTurnExecutionResult,
   cloneTurnExecutionRecord,
+  createdOutputFence,
   type InterruptRunningTurnExecutionsInput,
   type ITurnExecutionStore,
   serializeTurnExecutionIdentity,
@@ -43,7 +44,7 @@ export class InMemoryTurnExecutionStore implements ITurnExecutionStore {
       };
     }
 
-    const record = cloneTurnExecutionRecord({ ...input, status: 'running' });
+    const record = cloneTurnExecutionRecord({ ...input, outputFence: createdOutputFence(input), status: 'running' });
     this.records.set(input.invocationId, record);
     this.immutableIdentities.set(input.invocationId, serializeTurnExecutionIdentity(input));
     const childIds = this.parentIndex.get(input.parentInvocationId) ?? new Set<string>();

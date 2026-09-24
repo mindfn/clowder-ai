@@ -474,16 +474,17 @@ describe('RedisTurnExecutionStore', { skip: redisIsolationSkipReason(REDIS_URL) 
     await assert.rejects(store.listResponsePending(), /corrupt: non-empty hash failed to hydrate/);
   });
 
-  test('F117 KD-21: a gated output fence persists, only moves forward, and stays outside the identity', async () => {
+  test('F117 KD-21: every child persists its fence; a gated fence only moves forward outside the identity', async () => {
     await store.createRunning(runningInput({ invocationId: 'fenced', outputFence: 'gated' }));
     await store.createRunning(runningInput({ invocationId: 'open' }));
     assert.equal((await store.get('fenced')).outputFence, 'gated');
-    assert.equal((await store.get('open')).outputFence, undefined);
+    assert.equal((await store.get('open')).outputFence, 'open', 'an omitted fence is recorded open');
+    assert.equal(await redis.hget('turnexec:record:open', 'outputFence'), 'open');
 
     assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'allowed');
     assert.equal((await store.settleOutputFence('fenced', 'rejected')).outputFence, 'rejected');
     assert.equal((await store.settleOutputFence('fenced', 'allowed')).outputFence, 'rejected', 'a rejection is final');
-    assert.equal((await store.settleOutputFence('open', 'rejected')).outputFence, undefined);
+    assert.equal((await store.settleOutputFence('open', 'rejected')).outputFence, 'open');
     assert.equal(await store.settleOutputFence('missing', 'rejected'), null);
 
     await store.transitionTerminal('fenced', { status: 'succeeded', endedAt: 150 });
@@ -498,12 +499,25 @@ describe('RedisTurnExecutionStore', { skip: redisIsolationSkipReason(REDIS_URL) 
     assert.equal(replay.record.outputFence, 'rejected');
     await assert.rejects(
       store.createRunning(runningInput({ invocationId: 'born-allowed', outputFence: 'allowed' })),
-      /can only be created gated/,
+      /can only be created open or gated/,
     );
 
     await redis.hset('turnexec:record:fenced', 'outputFence', 'bogus');
-    // An unreadable fence fails loudly rather than reading as ungated.
+    // An unreadable fence fails loudly rather than reading as open.
     await assert.rejects(store.get('fenced'), /corrupt turn execution record: fenced/);
     await assert.rejects(store.settleOutputFence('fenced', 'rejected'), /corrupt output fence/);
+  });
+
+  test('F117 KD-21: a record written before the fence existed hydrates without one and keeps it that way', async () => {
+    await store.createRunning(runningInput({ invocationId: 'legacy' }));
+    // The previous release wrote the same hash without the field.
+    await redis.hdel('turnexec:record:legacy', 'outputFence');
+
+    const restarted = new RedisTurnExecutionStore(redis);
+    const legacy = await restarted.get('legacy');
+    assert.equal(legacy.status, 'running');
+    assert.equal('outputFence' in legacy, false, 'no fence is invented for a legacy record');
+    assert.equal('outputFence' in (await restarted.settleOutputFence('legacy', 'allowed')), false);
+    assert.equal(await redis.hexists('turnexec:record:legacy', 'outputFence'), 0);
   });
 });

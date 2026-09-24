@@ -90,9 +90,9 @@ import {
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
-import { recordTurnOutputVerdict } from '../invocation/response-draft-settlement.js';
+import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
-import { mergeStreams } from '../invocation/stream-merge.js';
+import { finallyAfter, mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { AgentServiceUnavailableError } from '../registry/AgentServiceUnavailableError.js';
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
@@ -1158,7 +1158,13 @@ export async function* routeParallel(
       }),
     },
   );
-  for await (const msg of mergedStreams) {
+  // Issue #83: the keepalive stops however this loop ends. Stopping it only after a normal finish
+  // leaked the timer whenever the loop body threw or the consumer returned early.
+  const stopKeepalive = () => {
+    if (keepaliveTimer) clearInterval(keepaliveTimer);
+    keepaliveTimer = undefined;
+  };
+  for await (const msg of finallyAfter(mergedStreams, stopKeepalive)) {
     const effectiveMsgs: AgentMessage[] = [];
     if (msg.type === 'text' && msg.content && msg.catId) {
       effectiveMsgs.push({ ...msg, content: getPayloadStripper(msg.catId).push(msg.content) });
@@ -1627,6 +1633,12 @@ export async function* routeParallel(
       const actionOutputCommitAllowed = options.beforeOutputCommit
         ? await options.beforeOutputCommit(msg.catId as CatId)
         : true;
+      // F117 KD-21: the allowed verdict becomes the turn's durable truth before anything visible, so
+      // a settlement after a crash in between publishes the approved draft. A write that fails throws:
+      // the output stays uncommitted and the execution's failure path settles R.
+      if (options.beforeOutputCommit && actionOutputCommitAllowed && ownInvId) {
+        await requireTurnOutputAllowed(deps.invocationDeps.turnExecutionStore, ownInvId);
+      }
       const lifecycleAdmission = catLifecycleResponse.get(msg.catId);
       const completedSignal = signalForCat?.(msg.catId as CatId) ?? signal;
       const abortReason = completedSignal?.reason;
@@ -2513,11 +2525,5 @@ export async function* routeParallel(
       isFinal: true,
       timestamp: Date.now(),
     } as AgentMessage;
-  }
-
-  // Issue #83: Stop keepalive timer — streaming loop has exited.
-  if (keepaliveTimer) {
-    clearInterval(keepaliveTimer);
-    keepaliveTimer = undefined;
   }
 }
