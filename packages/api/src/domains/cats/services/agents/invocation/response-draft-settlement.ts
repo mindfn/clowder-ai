@@ -132,13 +132,13 @@ export async function recordTurnOutputVerdict(
 /**
  * F117 KD-21: records that the fence allowed a gated child's output, before the route commits its R,
  * so a settlement after a crash in between publishes the approved draft. Unlike a rejection, a write
- * that fails stops the commit: R carries a fenced body only once the turn says it may.
+ * that fails stops the commit: R carries a fenced body only once the turn says it may. The store is
+ * required: a caller without one records no child at all and must say so where it skips this.
  */
 export async function requireTurnOutputAllowed(
-  turnStore: Pick<ITurnExecutionStore, 'settleOutputFence'> | undefined,
+  turnStore: Pick<ITurnExecutionStore, 'settleOutputFence'>,
   invocationId: string,
 ): Promise<void> {
-  if (!turnStore) return;
   const turn = await turnStore.settleOutputFence(invocationId, 'allowed');
   if (turn?.outputFence === 'allowed' || turn?.outputFence === 'open') return;
   throw new Error(

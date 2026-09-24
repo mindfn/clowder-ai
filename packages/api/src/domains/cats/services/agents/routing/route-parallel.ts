@@ -1635,9 +1635,11 @@ export async function* routeParallel(
         : true;
       // F117 KD-21: the allowed verdict becomes the turn's durable truth before anything visible, so
       // a settlement after a crash in between publishes the approved draft. A write that fails throws:
-      // the output stays uncommitted and the execution's failure path settles R.
-      if (options.beforeOutputCommit && actionOutputCommitAllowed && ownInvId) {
-        await requireTurnOutputAllowed(deps.invocationDeps.turnExecutionStore, ownInvId);
+      // the output stays uncommitted and the execution's failure path settles R. Without a turn store
+      // no child was recorded, so there is no fence to write and no settlement that could read one.
+      const fencedTurnStore = deps.invocationDeps.turnExecutionStore;
+      if (options.beforeOutputCommit && actionOutputCommitAllowed && ownInvId && fencedTurnStore) {
+        await requireTurnOutputAllowed(fencedTurnStore, ownInvId);
       }
       const lifecycleAdmission = catLifecycleResponse.get(msg.catId);
       const completedSignal = signalForCat?.(msg.catId as CatId) ?? signal;
