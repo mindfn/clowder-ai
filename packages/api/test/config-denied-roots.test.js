@@ -34,6 +34,10 @@ import Fastify from 'fastify';
 
 import { isUnderAllowedRoot, setDeniedRootsProvider, validateProjectPathDetailed } from '../dist/utils/project-path.js';
 
+const { getRuntimeDeniedRoots, resetDeniedRootsRuntimeForTests } = await import(
+  '../dist/config/user-preferences-store.js'
+);
+
 async function buildApp(envFilePath, tempRoot) {
   const { configRoutes } = await import('../dist/routes/config.js');
   const app = Fastify({ logger: false });
@@ -453,6 +457,44 @@ describe('#770 F770: fail-closed degradation', () => {
       if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
       else process.env.PROJECT_DENIED_ROOTS = savedEnv;
       setDeniedRootsProvider(null);
+    }
+  });
+
+  it('an uninitialized snapshot fails closed: provider wired without init degrades to platform defaults + env, never an empty denylist', async () => {
+    const savedEnv = process.env.PROJECT_DENIED_ROOTS;
+    const envRoot = '/tmp/f770-uninit-guard';
+    delete process.env.PROJECT_DENIED_ROOTS;
+    mkdirSync(envRoot, { recursive: true });
+    try {
+      process.env.PROJECT_DENIED_ROOTS = envRoot;
+      // Wire the provider WITHOUT initDeniedRootsRuntime — simulates a future
+      // wiring reorder. An uninitialized snapshot must read as "no opinion"
+      // (null) so DENIED_ROOTS() falls back to platform defaults + the literal
+      // env value. Returning [] here would mean "owner cleared the blacklist"
+      // and silently drop the env denylist — the wrong direction for a
+      // security control.
+      resetDeniedRootsRuntimeForTests();
+      setDeniedRootsProvider(getRuntimeDeniedRoots);
+      try {
+        assert.equal(
+          isUnderAllowedRoot('/dev/f770-uninit-guard'),
+          false,
+          'platform default denied roots must still block when the snapshot is uninitialized',
+        );
+        assert.equal(
+          isUnderAllowedRoot(`${envRoot}/sub`),
+          false,
+          'the env denylist must keep blocking when the snapshot is uninitialized (fail-closed)',
+        );
+        assert.equal(isUnderAllowedRoot('/tmp/f770-uninit-unrelated'), true, 'unrelated paths stay allowed');
+      } finally {
+        setDeniedRootsProvider(null);
+      }
+    } finally {
+      rmSync(envRoot, { recursive: true, force: true });
+      if (savedEnv === undefined) delete process.env.PROJECT_DENIED_ROOTS;
+      else process.env.PROJECT_DENIED_ROOTS = savedEnv;
+      resetDeniedRootsRuntimeForTests();
     }
   });
 });

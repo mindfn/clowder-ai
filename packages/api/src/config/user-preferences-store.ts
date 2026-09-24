@@ -320,8 +320,18 @@ export function initDeniedRootsRuntime(projectRoot: string): void {
     : resolveEnvDeniedRoots();
 }
 
-export function getRuntimeDeniedRoots(): string[] {
-  return runtimeDeniedRootsSnapshot ?? [];
+/**
+ * The provider's view of the snapshot. Null means UNINITIALIZED (wiring has
+ * not run) — NOT "owner cleared the blacklist". DENIED_ROOTS() treats null as
+ * "no opinion" and fails closed to platform defaults + the literal env value;
+ * returning [] here would silently drop the env denylist.
+ */
+export function getRuntimeDeniedRoots(): string[] | null {
+  return runtimeDeniedRootsSnapshot;
+}
+
+export function resetDeniedRootsRuntimeForTests(): void {
+  runtimeDeniedRootsSnapshot = null;
 }
 
 /**
