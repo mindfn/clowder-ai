@@ -1,9 +1,11 @@
 /**
  * #770 F770 log-level storage slice: LOG_LEVEL lives in user-preferences.json
  * and applies at runtime through PUT /api/config/log-level (no restart).
- * The .env tier remains a read-only startup fallback (migrated into the JSON
- * store on first read); PATCH /api/config/env must now reject LOG_LEVEL —
- * the double source is eliminated.
+ * The .env tier remains a read-only startup fallback (never migrated by a
+ * GET — only an intentional PUT lands in the JSON store); PATCH
+ * /api/config/env must now reject LOG_LEVEL — the double source is
+ * eliminated. Startup precedence: debug intent (--debug flag or
+ * CAT_CAFE_DEBUG=1) > stored preference > LOG_LEVEL env > default 'info'.
  */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -76,7 +78,7 @@ describe('#770 F770: log level applies at runtime without restart', () => {
     }
   });
 
-  it('migrates a legacy env value into the JSON store on first read and keeps it', async () => {
+  it('treats the env value as a read-only fallback: GET reports it without persisting it', async () => {
     const savedEnv = process.env.LOG_LEVEL;
     const originalLevel = logger.level;
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-log-level-'));
@@ -93,16 +95,40 @@ describe('#770 F770: log level applies at runtime without restart', () => {
         const firstBody = first.json();
         assert.equal(firstBody.logLevel, 'warn');
         assert.equal(firstBody.source, 'env-fallback');
-        assert.equal(firstBody.migratedFromEnv, true);
+        assert.equal(firstBody.migratedFromEnv, false, 'a GET must never migrate the env value');
 
-        // The value landed in the JSON store — durable, not just served from env.
-        const { readUserPreferences } = await import('../dist/config/user-preferences-store.js');
-        assert.equal(readUserPreferences(tempRoot).logLevel, 'warn');
+        // Nothing may land in the JSON store from a read — the env fallback is
+        // ephemeral. Opening the settings page must not change future behavior.
+        const { readUserPreferences, updateUserPreferences } = await import('../dist/config/user-preferences-store.js');
+        assert.equal(readUserPreferences(tempRoot).logLevel, undefined);
 
-        // Second read: JSON wins over the still-present env value.
+        // The fallback keeps working on subsequent reads while the env is set.
         const second = await app.inject({ method: 'GET', url: '/api/config/log-level' });
-        assert.equal(second.json().source, 'preferences');
+        assert.equal(second.json().source, 'env-fallback');
         assert.equal(second.json().logLevel, 'warn');
+
+        // An intentional PUT is the only write path: once stored, the stored
+        // value wins over the still-present env value.
+        const put = await app.inject({
+          method: 'PUT',
+          url: '/api/config/log-level',
+          headers: { 'x-cat-cafe-user': 'codex' },
+          payload: { logLevel: 'debug' },
+        });
+        assert.equal(put.statusCode, 200);
+        const third = await app.inject({ method: 'GET', url: '/api/config/log-level' });
+        assert.equal(third.json().source, 'preferences');
+        assert.equal(third.json().logLevel, 'debug');
+
+        // Clearing the stored value returns to the env fallback (or 'none').
+        updateUserPreferences(tempRoot, (current) => {
+          const next = { ...current };
+          delete next.logLevel;
+          return next;
+        });
+        const fourth = await app.inject({ method: 'GET', url: '/api/config/log-level' });
+        assert.equal(fourth.json().source, 'env-fallback');
+        assert.equal(fourth.json().logLevel, 'warn');
       } finally {
         await app.close();
       }
@@ -143,36 +169,81 @@ describe('#770 F770: log level applies at runtime without restart', () => {
     }
   });
 
-  it('red: --debug flag wins over a stored JSON level at startup (real subprocess)', async () => {
-    // isDebugMode is an import-time constant read from process.argv, so this
-    // MUST run in a child process whose argv really contains --debug — no
-    // in-process mock can cover the true startup path.
-    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-log-level-'));
-    try {
-      const fixture = resolve(import.meta.dirname, 'fixtures/debug-log-level-startup.mjs');
-      const setup = resolve(import.meta.dirname, 'helpers/setup-cat-registry.js');
-      await new Promise((resolvePromise, rejectPromise) => {
-        execFile(
-          process.execPath,
-          ['--import', setup, fixture, '--debug'],
-          {
-            env: { ...process.env, TEST_TEMP_ROOT: tempRoot, NODE_ENV: 'test' },
-            timeout: 60_000,
-          },
-          (error, stdout, stderr) => {
-            if (error) {
-              rejectPromise(new Error(`--debug startup fixture failed: ${stderr || stdout}`));
-              return;
-            }
-            assert.match(stdout, /DEBUG_STARTUP_OK/);
-            resolvePromise();
-          },
-        );
-      });
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
-  });
+  // The full precedence matrix on the REAL startup path, one child process per
+  // case (isDebugMode is an import-time constant; in-process mocks cannot
+  // cover it). 'argv' exercises the --debug flag path (start-windows.ps1,
+  // packaged entry); 'env' exercises CAT_CAFE_DEBUG=1 with NO --debug flag —
+  // that is what start-dev.sh --debug actually produces.
+  const startupCases = [
+    {
+      name: 'argv --debug beats stored info + env warn',
+      stored: 'info',
+      envLevel: 'warn',
+      debugStyle: 'argv',
+      expect: 'debug',
+    },
+    {
+      name: 'CAT_CAFE_DEBUG=1 (start-dev.sh --debug) beats stored info + env warn',
+      stored: 'info',
+      envLevel: 'warn',
+      debugStyle: 'env',
+      expect: 'debug',
+    },
+    {
+      name: 'stored info beats env warn without debug intent',
+      stored: 'info',
+      envLevel: 'warn',
+      debugStyle: 'none',
+      expect: 'info',
+    },
+    {
+      name: 'env warn is the fallback when nothing is stored (GET must not persist it)',
+      stored: null,
+      envLevel: 'warn',
+      debugStyle: 'none',
+      expect: 'warn',
+    },
+    {
+      name: "default 'info' when nothing is set anywhere",
+      stored: null,
+      envLevel: null,
+      debugStyle: 'none',
+      expect: 'info',
+    },
+  ];
+  for (const startupCase of startupCases) {
+    it(`startup precedence: ${startupCase.name}`, async () => {
+      const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-log-level-'));
+      try {
+        const fixture = resolve(import.meta.dirname, 'fixtures/debug-log-level-startup.mjs');
+        const setup = resolve(import.meta.dirname, 'helpers/setup-cat-registry.js');
+        const childEnv = { ...process.env, TEST_TEMP_ROOT: tempRoot, NODE_ENV: 'test' };
+        delete childEnv.LOG_LEVEL;
+        delete childEnv.CAT_CAFE_DEBUG;
+        if (startupCase.envLevel) childEnv.LOG_LEVEL = startupCase.envLevel;
+        if (startupCase.stored) childEnv.TEST_STORED_LEVEL = startupCase.stored;
+        childEnv.TEST_DEBUG_STYLE = startupCase.debugStyle;
+        if (startupCase.debugStyle === 'env') childEnv.CAT_CAFE_DEBUG = '1';
+        await new Promise((resolvePromise, rejectPromise) => {
+          execFile(
+            process.execPath,
+            ['--import', setup, fixture, ...(startupCase.debugStyle === 'argv' ? ['--debug'] : [])],
+            { env: childEnv, timeout: 60_000 },
+            (error, stdout, stderr) => {
+              if (error) {
+                rejectPromise(new Error(`startup precedence fixture failed: ${stderr || stdout}`));
+                return;
+              }
+              assert.match(`${stdout}\n${stderr}`, /DEBUG_STARTUP_OK/);
+              resolvePromise();
+            },
+          );
+        });
+      } finally {
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+  }
 });
 
 describe('#770 F770: the env double source is eliminated', () => {
