@@ -7,7 +7,7 @@ created: 2026-02-26
 
 # Clowder AI Feature Roadmap
 
-> 维护者：三猫 | 最后更新：2026-09-20（F117 exact candidate 已通过本地跨族代码复审与基础旅程 1–5 验收；完整 UAT、fork soak 与上游 gates 仍待完成）
+> 维护者：三猫 | 最后更新：2026-09-24（F117 改按 phase 推进，一个 phase 一个 PR 合进 develop_base，见 [推进路线](plans/2026-09-24-f117-1398-phase-roadmap.md)）
 >
 > **规则**：只放活跃 Feature（idea/spec/in-progress/review），done 后移除。
 > 详细信息见 `docs/features/Fxxx-*.md`。
@@ -36,7 +36,7 @@ created: 2026-02-26
 | F107 | 脑门贴词 — 坏猫战术推理游戏 #1 | spec | Ragdoll | internal | [F107](features/F107-headband-guess-game.md) |
 | F109 | Message Actions 修复与增强 — 软删除/Branch/编辑/通知 | in-progress | Ragdoll | internal | [F109](features/F109-message-actions-overhaul.md) |
 | F110 | 训练营愿景引导增强 — operator 需求挖掘 + SOP 显式加载 | spec | Ragdoll | internal | [F110](features/F110-bootcamp-vision-elicitation.md) |
-| F117 | Message Delivery Lifecycle — 单 source Queue + History actual-dispatch lifecycle | implementing | Ragdoll + Maine Coon | community [#20](https://github.com/zts212653/clowder-ai/issues/20) | [F117](features/F117-message-delivery-lifecycle.md) |
+| F117 | Message Delivery Lifecycle — 单 source Queue + History actual-dispatch lifecycle | implementing | Ragdoll + Maine Coon | community [#20](https://github.com/zts212653/clowder-ai/issues/20) | [F117](features/F117-message-delivery-lifecycle.md) · [推进路线](plans/2026-09-24-f117-1398-phase-roadmap.md) |
 | F119 | 谁是卧底 — 坏猫战术推理游戏 #2 | spec | Ragdoll | internal | [F119](features/F119-who-is-spy-game.md) |
 | F124 | Apple Ecosystem × Clowder AI 语音交互系统 — iOS/watchOS/AirPods | spec | Ragdoll | internal | [F124](features/F124-apple-ecosystem-voice-interaction.md) |
 | F126 | 四肢控制面 — Clowder AI Limb Control Plane | in-progress | Ragdoll | internal | [F126](features/F126-limb-control-plane.md) |
