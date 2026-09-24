@@ -162,27 +162,6 @@ describe('MCP Callback Tools', () => {
     assert.equal(attempts, 0, 'unsupported action metadata must not reach callback transport');
   });
 
-  test('handlePostMessage forwards replace_final disposition to the callback API', async () => {
-    const { handlePostMessage } = await import('../dist/tools/callback-tools.js');
-
-    let capturedOptions;
-    globalThis.fetch = async (_url, options) => {
-      capturedOptions = options;
-      return {
-        ok: true,
-        json: async () => ({ status: 'ok' }),
-      };
-    };
-
-    const result = await handlePostMessage({
-      content: 'Canonical callback response',
-      streamDisposition: 'replace_final',
-    });
-
-    assert.equal(result.isError, undefined);
-    assert.equal(JSON.parse(capturedOptions.body).streamDisposition, 'replace_final');
-  });
-
   test('handleUpdateEntrustedWork forwards one typed nonterminal Task-owner action', async () => {
     const { handleUpdateEntrustedWork } = await import('../dist/tools/callback-tools.js');
     let capturedUrl;
@@ -291,7 +270,6 @@ describe('MCP Callback Tools', () => {
     assert.equal(attempts, 1);
     assert.deepEqual(JSON.parse(capturedOptions.body), {
       content: '@codex\n\nAPPROVED for the exact reviewed HEAD.',
-      streamDisposition: 'independent',
       threadId: 'thread-review',
       clientMessageId: 'typed-local-review-agent-key',
       targetCats: ['codex'],
@@ -410,29 +388,6 @@ describe('MCP Callback Tools', () => {
     assert.equal(result.isError, undefined);
     const body = JSON.parse(capturedOptions.body);
     assert.equal(body.threadId, 'thread-123');
-  });
-
-  test('handlePostMessage rejects replace_final without an invocation stream', async () => {
-    delete process.env.CAT_CAFE_INVOCATION_ID;
-    delete process.env.CAT_CAFE_CALLBACK_TOKEN;
-    const { handlePostMessage } = await import('../dist/tools/callback-tools.js');
-
-    let attempts = 0;
-    globalThis.fetch = async () => {
-      attempts += 1;
-      return { ok: true, json: async () => ({ status: 'ok' }) };
-    };
-
-    const result = await handlePostMessage({
-      content: 'There is no provider final to replace',
-      threadId: 'thread-123',
-      streamDisposition: 'replace_final',
-      agentKeyCatId: 'antigravity',
-    });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /requires invocation-token credentials/);
-    assert.equal(attempts, 0);
   });
 
   test('agent-key action rejection is not retried or queued to the outbox', async () => {

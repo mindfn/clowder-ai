@@ -26,6 +26,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
 import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
 import { getUserId } from '@/utils/userId';
+import { writeStoredSnapshot } from './named-message-writer';
 import {
   deliverPreviewAutoOpenEvent,
   type PreviewAutoOpenEvent,
@@ -80,6 +81,8 @@ interface AgentMessage {
   /** F108: Invocation ID — distinguishes messages from concurrent invocations */
   invocationId?: string;
   turnInvocationId?: string;
+  /** The stored message this event writes to: the turn's response, or a post's own record. */
+  messageId?: string;
   lifecycleResponseMessageId?: string;
   activeRun?: import('@cat-cafe/shared').LifecycleActiveRun;
   /**
@@ -360,8 +363,6 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
   const pendingGuideStartsRef = useRef<Map<string, { guideId: string; threadId: string; timestamp: number }>>(
     new Map(),
   );
-  // F173 Phase E (KD-1): bg refs (bgStreamRefs / bgFinalizedRefs / bgSeq) moved to
-  // useAgentMessages — single dispatch handler owns them now。
   const userIdRef = useRef(getUserId());
   const cancelClientInstanceIdRef = useRef<string | null>(null);
   if (cancelClientInstanceIdRef.current === null) {
@@ -996,6 +997,13 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           timestamp: number;
           timelineOrderAt?: number;
           contentBlocks?: readonly unknown[];
+          toolEvents?: import('../stores/chat-types').ToolEvent[];
+          thinking?: string;
+          metadata?: import('../stores/chat-types').ChatMessageMetadata & {
+            cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics;
+            timeoutDiagnostics?: import('../stores/chat-types').TimeoutDiagnostics;
+          };
+          mentionsUser?: boolean;
           extra?: Record<string, unknown>;
           origin?: 'stream' | 'callback' | 'briefing';
           replyTo?: string;
@@ -1005,22 +1013,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         if (!isLifecycleStoredMessageMetadata(data.message.lifecycle)) return;
         const lifecycle = data.message.lifecycle;
         const isDeliveryFailure = lifecycle.kind === 'delivery_failure';
-        const store = useChatStore.getState();
-        if (lifecycle.kind === 'response') {
-          const threadState = store.getThreadState(data.threadId);
-          const exactRun = threadState.catInvocations[lifecycle.targetId]?.activeRun;
-          if (exactRun?.responseMessageId === data.message.id && exactRun.invocationId === lifecycle.invocationId) {
-            const liveBubble = threadState.messages.find(
-              (candidate) =>
-                candidate.id !== data.message.id &&
-                candidate.type === 'assistant' &&
-                candidate.catId === lifecycle.targetId &&
-                candidate.extra?.stream?.turnInvocationId === lifecycle.invocationId,
-            );
-            if (liveBubble) store.replaceThreadMessageId(data.threadId, liveBubble.id, data.message.id);
-          }
-        }
-        store.upsertLifecycleMessage(data.threadId, {
+        writeStoredSnapshot(data.threadId, {
           id: data.message.id,
           type: isDeliveryFailure
             ? 'system'
@@ -1040,8 +1033,23 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
                   .contentBlocks as import('../stores/chat-types').ChatMessage['contentBlocks'],
               }
             : {}),
-          ...(data.message.extra
-            ? { extra: data.message.extra as import('../stores/chat-types').ChatMessage['extra'] }
+          ...(data.message.toolEvents ? { toolEvents: data.message.toolEvents } : {}),
+          ...(data.message.thinking ? { thinking: data.message.thinking } : {}),
+          ...(data.message.metadata ? { metadata: data.message.metadata } : {}),
+          ...(data.message.mentionsUser ? { mentionsUser: true } : {}),
+          ...(data.message.extra || data.message.metadata?.cliDiagnostics || data.message.metadata?.timeoutDiagnostics
+            ? {
+                extra: {
+                  ...(data.message.extra as import('../stores/chat-types').ChatMessage['extra']),
+                  // F212 / F118: same folding as history hydration, so a failed response keeps its panel.
+                  ...(data.message.metadata?.cliDiagnostics
+                    ? { cliDiagnostics: data.message.metadata.cliDiagnostics }
+                    : {}),
+                  ...(data.message.metadata?.timeoutDiagnostics
+                    ? { timeoutDiagnostics: data.message.metadata.timeoutDiagnostics }
+                    : {}),
+                },
+              }
             : {}),
           ...(data.message.origin ? { origin: data.message.origin } : {}),
           ...(data.message.replyTo ? { replyTo: data.message.replyTo } : {}),

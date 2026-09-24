@@ -418,6 +418,45 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     );
   });
 
+  it('folds the timeout diagnostics a failed response persisted into its panel carrier', () => {
+    const callbacks: SocketCallbacks = { onMessage: vi.fn() };
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+    const timeoutDiagnostics = { silenceDurationMs: 1_800_000, processAlive: true, invocationId: 'turn-1' };
+
+    act(() => {
+      simulateServerEvent('message_lifecycle_updated', {
+        threadId: 'thread-A',
+        message: {
+          id: 'response-1',
+          from: { kind: 'agent', catId: 'opus' },
+          catId: 'opus',
+          content: '缅因猫 CLI 响应超时 (1800s)',
+          timestamp: 120,
+          metadata: { provider: 'openai', model: 'gpt', timeoutDiagnostics },
+          lifecycle: {
+            kind: 'response',
+            orderKey: '120:turn-1',
+            invocationId: 'turn-1',
+            targetId: 'opus',
+            inputEntryIds: ['entry-1'],
+            inputMessageIds: ['source-1'],
+            status: 'failed',
+            startedAt: 100,
+            completedAt: 120,
+            reason: 'provider_error',
+          },
+        },
+      });
+    });
+
+    expect(mockUpsertLifecycleMessage).toHaveBeenCalledWith(
+      'thread-A',
+      expect.objectContaining({ id: 'response-1', extra: expect.objectContaining({ timeoutDiagnostics }) }),
+    );
+  });
+
   it('receives preview auto-open on the stable chat socket across a thread switch', () => {
     mockStoreCurrentThreadId = 'thread-A';
     const callbacks: SocketCallbacks = { onMessage: vi.fn() };

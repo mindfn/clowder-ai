@@ -157,25 +157,6 @@ const clockAndTieBreakWriters: WriterCase[] = [
     expectedIds: ['moving', 'middle'],
   },
   {
-    name: 'replaceMessageId',
-    arrange: () => reset([message('z', 1_000), message('b', 1_000)]),
-    write: () => useChatStore.getState().replaceMessageId('z', 'a'),
-    expectedIds: ['a', 'b'],
-  },
-  {
-    name: 'replaceThreadMessageId(active)',
-    arrange: () => reset([message('z', 1_000), message('b', 1_000)]),
-    write: () => useChatStore.getState().replaceThreadMessageId(ACTIVE_THREAD, 'z', 'a'),
-    expectedIds: ['a', 'b'],
-  },
-  {
-    name: 'replaceThreadMessageId(background)',
-    threadId: BACKGROUND_THREAD,
-    arrange: () => reset([], [message('z', 1_000), message('b', 1_000)]),
-    write: () => useChatStore.getState().replaceThreadMessageId(BACKGROUND_THREAD, 'z', 'a'),
-    expectedIds: ['a', 'b'],
-  },
-  {
     name: 'batchStreamChunkUpdate(active)',
     arrange: () =>
       reset([

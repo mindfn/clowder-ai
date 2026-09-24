@@ -49,7 +49,7 @@ describe('mergeReplaceHydrationMessages — presentation timeline order', () => 
     // API pagination returns storage order, where the response retains its
     // original delivery score. The browser must project that snapshot through
     // the presentation clock even when there is no pre-existing local state.
-    const result = mergeReplaceHydrationMessages([completedResponse, userSupplement, callbackInput], [], {});
+    const result = mergeReplaceHydrationMessages([completedResponse, userSupplement, callbackInput], []);
 
     expect(getOrderedMessageTimeline(result.messages).map((message) => message.id)).toEqual([
       'user-supplement',

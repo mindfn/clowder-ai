@@ -325,14 +325,6 @@ const postMessageThreadIdSchema = z.string().min(1);
 
 export const postMessageInputSchema = {
   content: z.string().min(1).describe('The message content to post'),
-  streamDisposition: z
-    .enum(['independent', 'replace_final'])
-    .optional()
-    .default('independent')
-    .describe(
-      'How this callback relates to the provider final response. "independent" (DEFAULT) preserves a later final as a separate durable message. ' +
-        'Use "replace_final" only when this callback is the canonical replacement for the same logical final response; route persistence then keeps one bubble and merges stream metadata into it.',
-    ),
   threadId: postMessageThreadIdSchema
     .optional()
     .describe(
@@ -902,7 +894,6 @@ async function _executePostMessage(
     replyTo?: string | undefined;
     clientMessageId?: string | undefined;
     targetCats?: string[] | undefined;
-    streamDisposition?: 'independent' | 'replace_final' | undefined;
     agentKeyCatId?: string | undefined;
     effectClass?: 'fyi' | 'coordinate' | 'investigate' | 'assign_work' | undefined;
     coordination?:
@@ -957,7 +948,6 @@ async function _executePostMessage(
         '/api/callbacks/post-message',
         {
           content: input.content,
-          streamDisposition: input.streamDisposition ?? 'independent',
           ...(input.threadId ? { threadId: input.threadId } : {}),
           ...(input.replyTo ? { replyTo: input.replyTo } : {}),
           clientMessageId: input.clientMessageId ?? randomUUID(),
@@ -1056,7 +1046,6 @@ export async function handlePostMessage(
     replyTo?: string | undefined;
     clientMessageId?: string | undefined;
     targetCats?: string[] | undefined;
-    streamDisposition?: 'independent' | 'replace_final' | undefined;
     coordination?:
       | { phase: 'active' | 'terminal'; id?: string | undefined; subjectRef?: string | undefined }
       | undefined;
@@ -1071,11 +1060,6 @@ export async function handlePostMessage(
   transportOptions?: CallbackTransportOptions,
 ): Promise<ToolResult> {
   const hasInvocationCreds = getInvocationAuthSignal().hasFullCredentials;
-  if (input.streamDisposition === 'replace_final' && !hasInvocationCreds) {
-    return errorResult(
-      'post_message streamDisposition="replace_final" requires invocation-token credentials because there is no provider final stream to replace under agent-key auth.',
-    );
-  }
   if (input.threadId && hasInvocationCreds) {
     return errorResult(
       'post_message rejects threadId from invocation-token callers (F193 KD-1). ' +
@@ -3329,7 +3313,7 @@ export const callbackTools = [
       'Existing standing uses claimOrigin="existing_standing" + groundingEvidenceRef; rejected custody uses returnToPredecessor and targets the persisted predecessor. ' +
       'GOTCHA: structured action metadata currently requires invocation-token auth; agent-key callers fail closed with the non-retryable action_agent_key_unsupported status and never send an unfenced fallback. ' +
       'F247: gpt-pro agent-key returns copy only replyTo=sourceMessageId from the runtime delta; the server admits it only when an exact server-custodied dispatch grant exists. ' +
-      'By default, a later provider final remains a separate durable message. Set streamDisposition="replace_final" only when this callback is the canonical replacement for that same final response. ' +
+      'A post_message is always its own durable message, separate from your final reply. ' +
       'To hand off without structured action identity, write @猫名 on its own line at the START of the line (sentence-internal @mention does NOT route). ' +
       'GOTCHA: This tool uses callback credentials that expire — if it fails with 401, fall back to line-start @mention in your response text. ' +
       'GOTCHA: Do NOT use this for routine replies — only for mid-task proactive messages when you need to share something before your response completes.',

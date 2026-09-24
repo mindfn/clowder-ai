@@ -438,7 +438,7 @@ describe('Callback Routes', () => {
     assert.equal(messageStore.getRecent(10)[0]?.content, content);
   });
 
-  test('POST post-message replace_final converges live and durable callback identity', async () => {
+  test('POST post-message is always its own message, even when an old caller asks to replace the final', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -447,26 +447,18 @@ describe('Callback Routes', () => {
       url: '/api/callbacks/post-message',
       headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        content: 'Canonical callback response',
+        content: 'Standalone callback response',
         streamDisposition: 'replace_final',
       },
     });
 
     assert.equal(response.statusCode, 200);
     const stored = messageStore.getRecent(10)[0];
-    assert.equal(
-      stored.extra?.isExplicitPost,
-      undefined,
-      'replace_final callback must use the frontend replacement path after hydration',
-    );
-
+    assert.equal(stored.extra?.isExplicitPost, true);
     const broadcasted = socketManager.getMessages();
     assert.equal(broadcasted.length, 1);
-    assert.equal(
-      broadcasted[0].extra?.isExplicitPost,
-      undefined,
-      'replace_final callback must replace the live stream bubble instead of rendering standalone',
-    );
+    assert.equal(broadcasted[0].messageId, stored.id, 'the live post names its own stored message');
+    assert.equal(broadcasted[0].extra?.isExplicitPost, true);
   });
 
   test('POST post-message projects durable child identity and suppresses a covered same-wave sibling reply', async () => {
@@ -3972,6 +3964,24 @@ describe('Callback Routes', () => {
     const msgs = socketManager.getMessages();
     assert.ok(msgs.length >= 1, 'should have at least 1 broadcast');
     assert.equal(msgs[0].invocationId, invocationId, 'create-rich-block broadcast must include invocationId');
+  });
+
+  test('create-rich-block names the response its turn is streaming into', async () => {
+    const threadId = 'thread-crb-response';
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
+    const { response, invocationTracker } = await createQueuedReadProcessor({ threadId, invocationId });
+    const app = await createApp({ invocationTracker });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { block: { id: 'card-response', kind: 'card', v: 1, title: 'Test', bodyMarkdown: 'hi' } },
+    });
+
+    const richMsg = socketManager.getMessages().find((m) => m.type === 'system_info');
+    assert.ok(richMsg, 'rich_block broadcast should exist');
+    assert.equal(richMsg.messageId, response.id, 'the block must land in the turn response by id');
   });
 
   test('POST create-rich-block rejects invocation-bound soft-deleted thread without buffering or broadcasting', async () => {

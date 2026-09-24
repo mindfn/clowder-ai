@@ -22,7 +22,8 @@ export interface EmptyResponseLifecycleNotice {
   tone: 'processing' | 'completed' | 'failed' | 'canceled';
 }
 
-function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderContext = {}): boolean {
+/** Whether a message has any streamed body the user can see (text, CLI/tool output, blocks, thinking). */
+export function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderContext = {}): boolean {
   const hasTextContent = message.content.trim().length > 0;
   const hasBlocks = Boolean(message.contentBlocks?.length);
   const isStreamOrigin = message.origin === 'stream';
@@ -43,6 +44,18 @@ function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderC
   return Boolean(hasTextContent || hasCliBlock || hasBlocks || message.extra?.rich?.blocks?.length || message.thinking);
 }
 
+const FAILED_RESPONSE_LABEL = '回复失败。';
+const INTERRUPTED_RESPONSE_LABEL = '回复已中断。';
+
+/** Copy naming how a response ended without success; its failure diagnostics render under it. */
+export function projectFailedResponseLabel(message: ChatMessage): string | null {
+  const lifecycle = message.lifecycle;
+  if (lifecycle?.kind !== 'response') return null;
+  if (lifecycle.status === 'failed') return FAILED_RESPONSE_LABEL;
+  if (lifecycle.status === 'interrupted') return INTERRUPTED_RESPONSE_LABEL;
+  return null;
+}
+
 /** Copy owned by the lifecycle frame while no streamed body exists yet. */
 export function projectEmptyResponseLifecycleNotice(
   message: ChatMessage,
@@ -56,24 +69,29 @@ export function projectEmptyResponseLifecycleNotice(
     case 'completed':
       return { label: '已完成，没有返回可显示内容。', tone: 'completed' };
     case 'failed':
-      return { label: '回复失败。', tone: 'failed' };
+      return { label: FAILED_RESPONSE_LABEL, tone: 'failed' };
     case 'canceled':
       return { label: '已停止回复。', tone: 'canceled' };
     case 'interrupted':
-      return { label: '回复已中断。', tone: 'canceled' };
+      return { label: INTERRUPTED_RESPONSE_LABEL, tone: 'canceled' };
   }
+}
+
+/**
+ * Persisted cross-thread/legacy records can retain type=user even though a trusted catId
+ * establishes assistant authorship. Matches ChatMessage's long-standing author-precedence branch
+ * without admitting system records, which render through a separate surface and never own the
+ * cat avatar slot.
+ */
+export function isAssistantAuthored(message: ChatMessage): boolean {
+  return message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
 }
 
 export function doesAssistantMessageRenderBubble(
   message: ChatMessage,
   context: AssistantMessageRenderContext = {},
 ): boolean {
-  // Persisted cross-thread/legacy records can retain type=user even though a
-  // trusted catId establishes assistant authorship. Match ChatMessage's
-  // long-standing author-precedence branch without admitting system records,
-  // which render through a separate surface and never own the cat avatar slot.
-  const isAssistantAuthored = message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
-  if (!isAssistantAuthored) return false;
+  if (!isAssistantAuthored(message)) return false;
   const hasResponseBody = hasAssistantBody(message, context);
   const hasCrossThreadSource =
     context.hasCrossThreadSource ??

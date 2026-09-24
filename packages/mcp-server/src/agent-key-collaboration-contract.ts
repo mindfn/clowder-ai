@@ -30,17 +30,7 @@ export function projectAgentKeyCollaborationContract(
   if (name === 'cat_cafe_post_message' || name === 'cat_cafe_cross_post_message') {
     const { action: _action, proposedAction: _proposedAction, coordination: _coordination, ...supported } = schema;
     return {
-      inputSchema: {
-        ...supported,
-        ...(name === 'cat_cafe_post_message'
-          ? {
-              streamDisposition: z
-                .literal('independent')
-                .optional()
-                .describe('Agent-key messages are independent durable messages.'),
-            }
-          : {}),
-      },
+      inputSchema: supported,
       description: name === 'cat_cafe_post_message' ? postDescription : crossDescription,
     };
   }

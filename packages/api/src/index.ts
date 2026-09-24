@@ -90,6 +90,7 @@ import {
   selectInvocationBackendKind,
 } from './domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from './domains/cats/services/agents/invocation/InvocationTracker.js';
+import { emitLifecycleMessageUpdated } from './domains/cats/services/agents/invocation/lifecycle-message-update.js';
 import type {
   InvocationRecordStoreLike,
   RouterLike,
@@ -98,6 +99,10 @@ import { QueueProcessor } from './domains/cats/services/agents/invocation/QueueP
 import { InMemoryQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { RedisQueueLedgerStore } from './domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { reconcileZombies } from './domains/cats/services/agents/invocation/reconcileZombies.js';
+import {
+  responseOutcomeForEndedTurn,
+  settleResponseFromDraft,
+} from './domains/cats/services/agents/invocation/response-draft-settlement.js';
 import { SessionContinuationCoordinator } from './domains/cats/services/agents/invocation/SessionContinuationCoordinator.js';
 import { SessionMutex } from './domains/cats/services/agents/invocation/SessionMutex.js';
 import {
@@ -187,7 +192,8 @@ import { createThreadStore } from './domains/cats/services/stores/factories/Thre
 import { createWorkflowSopStore } from './domains/cats/services/stores/factories/WorkflowSopStoreFactory.js';
 import { InMemoryContextEpochStore } from './domains/cats/services/stores/ports/ContextEpochStore.js';
 import { classifyInvocationRecoveryStatus } from './domains/cats/services/stores/ports/invocation-state-machine.js';
-import type { MessageAppendListener } from './domains/cats/services/stores/ports/MessageStore.js';
+import type { MessageAppendListener, StoredMessage } from './domains/cats/services/stores/ports/MessageStore.js';
+import type { TurnExecutionRecord } from './domains/cats/services/stores/ports/TurnExecutionStore.js';
 import { RedisContextEpochStore } from './domains/cats/services/stores/redis/RedisContextEpochStore.js';
 import { RedisInvocationRecordStore } from './domains/cats/services/stores/redis/RedisInvocationRecordStore.js';
 import { RedisMessageStore } from './domains/cats/services/stores/redis/RedisMessageStore.js';
@@ -2558,6 +2564,7 @@ async function main(): Promise<void> {
       router: router as unknown as RouterLike,
       socketManager,
       messageStore,
+      draftStore,
       turnExecutionStore,
       log: app.log,
       getPushService: getPushNotificationService,
@@ -2851,9 +2858,41 @@ async function main(): Promise<void> {
       clearInterval(actionSuccessorRecoveryTimer);
     });
   }
+  // F117 KD-21: a turn ended by restart or zombie reclaim never reached its route's commit, so its
+  // response R ends with the body its draft streamed. Settlement clears the turn from the
+  // response-pending ledger; a turn whose settlement fails stays there for the next startup.
+  const lifecycleSocket = socketManager;
+  const settleTurnResponse = (
+    turn: TurnExecutionRecord,
+    outcome: Pick<Parameters<typeof settleResponseFromDraft>[1], 'status' | 'reason' | 'endedAt'>,
+  ) =>
+    settleResponseFromDraft(
+      {
+        messageStore,
+        draftStore,
+        turnStore: turnExecutionStore,
+        invocationRecords: invocationRecordStore,
+        ...(lifecycleSocket
+          ? {
+              emit: (userId: string, message: StoredMessage) =>
+                emitLifecycleMessageUpdated(lifecycleSocket, userId, message),
+            }
+          : {}),
+      },
+      { userId: turn.userId, threadId: turn.threadId, invocationId: turn.invocationId, ...outcome },
+    );
   const onReconciledZombie = createZombieTerminalRecovery({
     queueProcessor,
     log: app.log,
+    childResponses: {
+      listChildTurns: (executionId) => turnExecutionStore.listByParent(executionId),
+      settle: (turn) =>
+        settleTurnResponse(turn, {
+          status: 'interrupted',
+          reason: 'zombie_record_detected',
+          endedAt: turn.endedAt ?? Date.now(),
+        }),
+    },
   });
   const invocationOwnerSocketManager = socketManager;
   if (!invocationOwnerSocketManager) throw new Error('SocketManager unavailable for invocation owner reaper');
@@ -6633,14 +6672,20 @@ async function main(): Promise<void> {
         if (!redis) return;
         const authRecovery = await turnExecutionStore.reconcileStartup({ processStartedAt: PROCESS_START_AT });
         const liveExecutionOwners = await cliExecutionOwnerService.listLive();
+        const childReconciler = new TurnExecutionStartupReconciler({
+          store: turnExecutionStore,
+          settleEndedTurnResponse: (turn) => settleTurnResponse(turn, responseOutcomeForEndedTurn(turn)),
+        });
         const childRecovery = liveExecutionOwners.complete
-          ? await new TurnExecutionStartupReconciler({ store: turnExecutionStore }).reconcile({
+          ? await childReconciler.reconcile({
               processStartedAt: PROCESS_START_AT,
               protectedInvocationIds: liveExecutionOwners.owners.map((owner) => owner.invocationId),
             })
           : {
               interruptedCount: 0,
               invocationIds: [],
+              // Ended turns have no owner left to wait for; running ones keep their unknown owners.
+              ...(await childReconciler.settleEndedTurnResponses({ processStartedAt: PROCESS_START_AT })),
               reconciledAt: Date.now(),
               skippedReason: 'cli_execution_owner_snapshot_incomplete',
             };

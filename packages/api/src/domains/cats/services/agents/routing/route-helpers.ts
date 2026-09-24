@@ -252,6 +252,13 @@ export function mergePersistedPromptMessages(
   return [...persistedPromptMessages, exactTrigger];
 }
 
+/** Actual-send routing refused one of a route's requested targets. */
+export interface RoutingDispatchRejection {
+  readonly catId: string;
+  /** When routing will next accept an automatic attempt at this target, if routing names a time. */
+  readonly automaticRetryAt?: number;
+}
+
 /** Common options for both strategies */
 export interface RouteOptions {
   /** Execution-owned fan-out policy. Queue dequeue uses parallel fan-out for one source
@@ -365,6 +372,12 @@ export interface RouteOptions {
   persistenceContext?: PersistenceContext;
   /** F167 Phase S: durable outcome CAS run after model completion and before every route-side side effect. */
   beforeOutputCommit?: ((catId: CatId) => Promise<boolean>) | undefined;
+  /**
+   * F117 soak: called once for each requested target that actual-send routing refused (A2A follow-up
+   * targets are not requested targets). A Queue attempt keeps the exact refusal, so its entry waits
+   * for that target's retry time even when the entry named no target.
+   */
+  onRoutingDispatchRejected?: ((rejection: RoutingDispatchRejection) => void) | undefined;
   /** F11: Mode-specific system prompt section (appended after identity prompt) */
   modeSystemPrompt?: string | undefined;
   /** F11: Per-cat mode prompt override (takes precedence over modeSystemPrompt) */

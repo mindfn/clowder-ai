@@ -13,6 +13,7 @@ import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/me
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/DraftStore.js');
 const { InvocationRecordStore } = await import('../dist/domains/cats/services/stores/ports/InvocationRecordStore.js');
 const { InMemoryTurnExecutionStore } = await import(
   '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
@@ -218,6 +219,7 @@ function buildDeps() {
         turnTerminalCalls.push({ invocationId, terminal });
         return { outcome: 'transitioned', record: null };
       }),
+      clearResponsePending: mock.fn(async () => {}),
     },
     _executions: executions,
     _cancelCalls: cancelCalls,
@@ -838,7 +840,7 @@ describe('F295 active execution projection', () => {
       createdAt: Date.now() - 60_000,
       updatedAt: Date.now() - 60_000,
     };
-    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.draftStore = { getByThread: mock.fn(async () => []), delete: mock.fn(async () => {}) };
     deps.invocationRecordStore = {
       listRunningByThread: mock.fn(async () => (record.status === 'running' ? [record] : [])),
       get: mock.fn(async (id) => (id === record.id ? record : null)),
@@ -890,7 +892,7 @@ describe('F295 active execution projection', () => {
       executionId: record.id,
       userId: USER_ID,
     }));
-    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.draftStore = { getByThread: mock.fn(async () => []), delete: mock.fn(async () => {}) };
     deps.invocationRecordStore = {
       listRunningByThread: mock.fn(async () => [record]),
       get: mock.fn(async (id) => (id === record.id ? record : null)),
@@ -951,7 +953,7 @@ describe('F295 active execution projection', () => {
       executionId: 'inv-cancel-current',
       userId: USER_ID,
     }));
-    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.draftStore = { getByThread: mock.fn(async () => []), delete: mock.fn(async () => {}) };
     deps.invocationRecordStore = {
       listRunningByThread: mock.fn(async () => records.filter((record) => record.status === 'running')),
       get: mock.fn(async (id) => records.find((record) => record.id === id) ?? null),
@@ -997,7 +999,7 @@ describe('F295 active execution projection', () => {
       updatedAt: Date.now() - 60_000,
     };
     const update = mock.fn(async () => null);
-    deps.draftStore = { getByThread: mock.fn(async () => []) };
+    deps.draftStore = { getByThread: mock.fn(async () => []), delete: mock.fn(async () => {}) };
     deps.invocationRecordStore = {
       listRunningByThread: mock.fn(async () => [record]),
       get: mock.fn(async (id) => (id === record.id ? record : null)),
@@ -1215,6 +1217,128 @@ describe('F295 active execution projection', () => {
     ]);
     assert.equal(recordStore.get(parent.invocationId).status, 'failed');
     assert.equal(turnStore.get(childInvocationId).status, 'failed');
+  });
+
+  /** F117 KD-21: stops a turn whose R is processing while its streamed body lives only in its draft. */
+  async function stopDraftedTurn({ failCommit = false } = {}) {
+    await app.close();
+    deps._executions.clear();
+    const messageStore = new MessageStore();
+    const recordStore = new InvocationRecordStore();
+    const turnStore = new InMemoryTurnExecutionStore();
+    const draftStore = new DraftStore();
+    const parent = recordStore.create({
+      threadId: 'thread-a',
+      userId: USER_ID,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      idempotencyKey: 'control-plane-failure-draft-parent',
+      actionLeaseCarrier: { kind: 'none' },
+    });
+    recordStore.update(parent.invocationId, { status: 'running' });
+    const childInvocationId = 'turn-control-plane-draft';
+    turnStore.createRunning({
+      invocationId: childInvocationId,
+      parentInvocationId: parent.invocationId,
+      threadId: 'thread-a',
+      userId: USER_ID,
+      catId: 'kimi',
+      executionKind: 'ordinary',
+      startedAt: 110,
+    });
+    // Production shape: R is admitted empty and the streamed body lives only in its draft.
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER_ID,
+        threadId: 'thread-a',
+        catId: 'kimi',
+        content: '',
+        mentions: [],
+        timestamp: 110,
+        idempotencyKey: `message-lifecycle-response:${childInvocationId}`,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '110:response-draft',
+          invocationId: childInvocationId,
+          targetId: 'kimi',
+          inputEntryIds: ['child-entry'],
+          inputMessageIds: [],
+          status: 'processing',
+          startedAt: 110,
+        },
+      }),
+    );
+    const toolEvent = { id: 'tool-1', type: 'tool_use', label: 'Read', timestamp: 120 };
+    draftStore.upsert({
+      userId: USER_ID,
+      threadId: 'thread-a',
+      invocationId: childInvocationId,
+      catId: 'kimi',
+      content: '已经读完三个文件，正在对比。',
+      toolEvents: [toolEvent],
+      thinking: '先看调用方',
+      updatedAt: Date.now(),
+    });
+    if (failCommit) {
+      messageStore.commitLifecycleResponseTerminal = async () => {
+        throw new Error('redis unavailable');
+      };
+    }
+    deps.messageStore = messageStore;
+    deps.invocationRecordStore = recordStore;
+    deps.turnExecutionStore = turnStore;
+    deps.draftStore = draftStore;
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: false }));
+    deps.socketManager.emitToUser.mock.resetCalls();
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const stopped = await app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-a/executions/live/${parent.invocationId}/cancel`,
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'kimi' },
+    });
+
+    return { stopped, response, messageStore, turnStore, draftStore, childInvocationId, toolEvent };
+  }
+
+  it('F117 KD-21: a stopped response keeps what its draft streamed, then the draft goes', async () => {
+    const { stopped, response, messageStore, turnStore, draftStore, childInvocationId, toolEvent } =
+      await stopDraftedTurn();
+
+    assert.equal(stopped.statusCode, 200);
+    const failed = messageStore.getById(response.id);
+    assert.equal(failed.lifecycle.status, 'failed');
+    assert.equal(failed.content, '已经读完三个文件，正在对比。\n\n执行控制面不可用');
+    assert.deepEqual(failed.toolEvents, [toolEvent]);
+    assert.equal(failed.thinking, '先看调用方');
+    assert.deepEqual(draftStore.getByThread(USER_ID, 'thread-a'), []);
+    // The turn ended before its R settled, entering the response-pending ledger, and left it once R committed.
+    assert.equal(turnStore.get(childInvocationId).status, 'failed');
+    assert.deepEqual(turnStore.listResponsePending(), []);
+    const published = deps.socketManager.emitToUser.mock.calls
+      .map((call) => call.arguments)
+      .filter(([, event, payload]) => event === 'message_lifecycle_updated' && payload.message.id === response.id);
+    assert.equal(published.length, 1);
+    assert.deepEqual(published[0][2].message.toolEvents, [toolEvent]);
+    assert.equal(published[0][2].message.thinking, '先看调用方');
+  });
+
+  it('F117 KD-21: a stop whose R cannot commit ends the turn and leaves it for the next startup', async () => {
+    const { stopped, response, messageStore, turnStore, draftStore, childInvocationId } = await stopDraftedTurn({
+      failCommit: true,
+    });
+
+    assert.equal(stopped.statusCode, 503);
+    assert.equal(messageStore.getById(response.id).lifecycle.status, 'processing');
+    assert.equal(turnStore.get(childInvocationId).status, 'failed');
+    assert.deepEqual(
+      turnStore.listResponsePending().map((turn) => turn.invocationId),
+      [childInvocationId],
+    );
+    assert.equal(draftStore.getByThread(USER_ID, 'thread-a').length, 1);
   });
 
   it('fails only the uncontrollable child while a sibling remains live and cancelable', async () => {

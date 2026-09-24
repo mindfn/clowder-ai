@@ -8,20 +8,11 @@ type TestMessage = {
   type: string;
   catId?: string;
   content: string;
-  origin?: 'stream' | 'callback';
   isStreaming?: boolean;
   timestamp: number;
-  toolEvents?: Array<{ id: string; type: string; label: string; timestamp: number }>;
-  extra?: {
-    stream?: { invocationId: string; turnInvocationId?: string };
-    rich?: { v: 1; blocks: Array<{ id: string; kind: string; data: Record<string, unknown> }> };
-  };
 };
 
 const mockAddMessage = vi.fn();
-const mockAppendToMessage = vi.fn();
-const mockAppendToolEvent = vi.fn();
-const mockSetStreaming = vi.fn();
 const mockSetLoading = vi.fn();
 const mockSetHasActiveInvocation = vi.fn();
 const mockRemoveActiveInvocation = vi.fn((invocationId: string) => {
@@ -32,31 +23,18 @@ const mockSetCatStatus = vi.fn();
 const mockClearCatStatuses = vi.fn();
 const mockClearAllActiveInvocations = vi.fn();
 const mockSetCatInvocation = vi.fn();
-const mockSetMessageUsage = vi.fn();
 const mockRequestStreamCatchUp = vi.fn();
-const mockReplaceMessageId = vi.fn((fromId: string, toId: string) => {
-  storeState.messages = storeState.messages.map((message) =>
-    message.id === fromId ? { ...message, id: toId } : message,
-  );
-});
 
 const mockAddMessageToThread = vi.fn();
 const mockClearThreadActiveInvocation = vi.fn();
 const mockResetThreadInvocationState = vi.fn();
 const mockSetThreadMessageStreaming = vi.fn();
 const mockGetThreadState = vi.fn((): { messages: TestMessage[] } => ({ messages: [] }));
-// F183 B1.2.2: active text stream → reducer → replaceMessages
-const mockReplaceMessages = vi.fn((msgs: TestMessage[]) => {
-  storeState.messages = msgs;
-});
 
 const storeState = {
   messages: [] as TestMessage[],
   activeInvocations: {} as Record<string, { catId: string }>,
   addMessage: mockAddMessage,
-  appendToMessage: mockAppendToMessage,
-  appendToolEvent: mockAppendToolEvent,
-  setStreaming: mockSetStreaming,
   setLoading: mockSetLoading,
   setHasActiveInvocation: mockSetHasActiveInvocation,
   removeActiveInvocation: mockRemoveActiveInvocation,
@@ -65,12 +43,9 @@ const storeState = {
   setCatStatus: mockSetCatStatus,
   clearCatStatuses: mockClearCatStatuses,
   setCatInvocation: mockSetCatInvocation,
-  setMessageUsage: mockSetMessageUsage,
   requestStreamCatchUp: mockRequestStreamCatchUp,
-  replaceMessageId: mockReplaceMessageId,
 
   addMessageToThread: mockAddMessageToThread,
-  replaceMessages: mockReplaceMessages,
   clearThreadActiveInvocation: mockClearThreadActiveInvocation,
   resetThreadInvocationState: mockResetThreadInvocationState,
   setThreadMessageStreaming: mockSetThreadMessageStreaming,
@@ -115,9 +90,6 @@ describe('useAgentMessages stream catch-up (Bug C safety net)', () => {
     storeState.activeInvocations = {};
     storeState.currentThreadId = 'thread-1';
     mockAddMessage.mockClear();
-    mockAppendToMessage.mockClear();
-    mockAppendToolEvent.mockClear();
-    mockSetStreaming.mockClear();
     mockSetLoading.mockClear();
     mockSetHasActiveInvocation.mockClear();
     mockRemoveActiveInvocation.mockClear();
@@ -126,9 +98,7 @@ describe('useAgentMessages stream catch-up (Bug C safety net)', () => {
     mockClearCatStatuses.mockClear();
     mockClearAllActiveInvocations.mockClear();
     mockSetCatInvocation.mockClear();
-    mockSetMessageUsage.mockClear();
     mockRequestStreamCatchUp.mockClear();
-    mockReplaceMessageId.mockClear();
 
     mockAddMessageToThread.mockClear();
     mockClearThreadActiveInvocation.mockClear();
@@ -144,329 +114,6 @@ describe('useAgentMessages stream catch-up (Bug C safety net)', () => {
     });
     container.remove();
     vi.useRealTimers();
-  });
-
-  it('passes threadId to requestStreamCatchUp (P1: thread-scoped)', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    // system_info sets sawStreamData for this cat, but doesn't create a bubble
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'system_info',
-        catId: 'gemini',
-        content: JSON.stringify({ type: 'invocation_created', invocationId: 'inv-1' }),
-      });
-    });
-
-    // done(isFinal) for same cat — stream data was seen but no bubble
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'gemini',
-        isFinal: true,
-      });
-    });
-
-    // P1: must pass threadId so consumer can scope the catch-up
-    expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
-  });
-
-  it('does NOT request catch-up when done(isFinal) has an active bubble', () => {
-    storeState.messages = [
-      {
-        id: 'assistant-msg-1',
-        type: 'assistant',
-        catId: 'opus',
-        content: 'Hello world',
-        isStreaming: true,
-        timestamp: Date.now(),
-      },
-    ];
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'text',
-        catId: 'opus',
-        content: ' more text',
-      });
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-        isFinal: true,
-      });
-    });
-
-    expect(mockRequestStreamCatchUp).not.toHaveBeenCalled();
-  });
-
-  it('rekeys a just-finished rich stream bubble to the persisted message ID before export', () => {
-    const invocationId = 'inv-live-export';
-    const liveMessageId = `msg-${invocationId}-codex-sol`;
-    const persistedMessageId = '0001787627568323-000165-cbd75f35';
-    storeState.messages = [
-      {
-        id: liveMessageId,
-        type: 'assistant',
-        catId: 'codex-sol',
-        content: 'response body',
-        origin: 'stream',
-        isStreaming: true,
-        timestamp: Date.now(),
-        extra: {
-          stream: { invocationId },
-          rich: {
-            v: 1,
-            blocks: [{ id: 'widget-1', kind: 'html_widget', data: { title: 'responsive artifact' } }],
-          },
-        },
-      },
-    ];
-    storeState.activeInvocations = { [invocationId]: { catId: 'codex-sol' } };
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'codex-sol',
-        threadId: 'thread-1',
-        invocationId,
-        messageId: persistedMessageId,
-        isFinal: true,
-      });
-    });
-
-    expect(mockReplaceMessageId).toHaveBeenCalledWith(liveMessageId, persistedMessageId);
-    expect(storeState.messages).toEqual([
-      expect.objectContaining({
-        id: persistedMessageId,
-        content: 'response body',
-        extra: expect.objectContaining({
-          rich: expect.objectContaining({
-            blocks: [expect.objectContaining({ id: 'widget-1', kind: 'html_widget' })],
-          }),
-        }),
-      }),
-    ]);
-    expect(mockRequestStreamCatchUp).not.toHaveBeenCalled();
-  });
-
-  it('requests catch-up when done(isFinal) only has an empty CLI/tool bubble', () => {
-    storeState.messages = [
-      {
-        id: 'assistant-tool-only',
-        type: 'assistant',
-        catId: 'opus',
-        content: '',
-        origin: 'stream',
-        isStreaming: true,
-        timestamp: Date.now(),
-        toolEvents: [{ id: 'tool-1', type: 'tool_use', label: 'opus -> Read', timestamp: Date.now() }],
-        extra: { stream: { invocationId: 'inv-tool-only' } },
-      },
-    ];
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-        invocationId: 'inv-tool-only',
-        isFinal: true,
-      });
-    });
-
-    expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
-  });
-
-  it('requests catch-up when final done leaves a still-streaming same-parent local tool-only residue', () => {
-    storeState.messages = [
-      {
-        id: 'msg-turn-main-codex',
-        type: 'assistant',
-        catId: 'codex',
-        content: 'final text bubble that received the assistant speech',
-        origin: 'stream',
-        isStreaming: true,
-        timestamp: Date.now(),
-        toolEvents: [
-          { id: 'tool-main-1', type: 'tool_use', label: 'codex -> command_execution', timestamp: Date.now() },
-        ],
-        extra: { stream: { invocationId: 'parent-inv', turnInvocationId: 'turn-main' } },
-      },
-      {
-        id: 'msg-turn-residue-codex',
-        type: 'assistant',
-        catId: 'codex',
-        content: '',
-        origin: 'stream',
-        isStreaming: true,
-        timestamp: Date.now() + 1,
-        toolEvents: [
-          { id: 'tool-residue-1', type: 'tool_use', label: 'codex -> command_execution', timestamp: Date.now() + 1 },
-        ],
-        extra: { stream: { invocationId: 'parent-inv', turnInvocationId: 'turn-residue' } },
-      },
-    ];
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'codex',
-        invocationId: 'parent-inv',
-        turnInvocationId: 'turn-main',
-        isFinal: true,
-        threadId: 'thread-1',
-      });
-    });
-
-    expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
-    expect(storeState.messages.find((message) => message.id === 'msg-turn-residue-codex')?.isStreaming).toBe(false);
-  });
-
-  it('does NOT request catch-up when non-final done has an empty CLI/tool bubble', () => {
-    storeState.messages = [
-      {
-        id: 'assistant-tool-only',
-        type: 'assistant',
-        catId: 'opus',
-        content: '',
-        origin: 'stream',
-        isStreaming: true,
-        timestamp: Date.now(),
-        toolEvents: [{ id: 'tool-1', type: 'tool_use', label: 'opus -> Read', timestamp: Date.now() }],
-        extra: { stream: { invocationId: 'inv-tool-only' } },
-      },
-    ];
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-        invocationId: 'inv-tool-only',
-        isFinal: false,
-      });
-    });
-
-    expect(mockRequestStreamCatchUp).not.toHaveBeenCalled();
-  });
-
-  it('does NOT request catch-up for non-final done', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-      });
-    });
-
-    expect(mockRequestStreamCatchUp).not.toHaveBeenCalled();
-  });
-
-  it('requests catch-up for callback-only flow when no active bubble (ghost-message)', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    // Simulate a callback text message (real event: type=text, origin=callback)
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'text',
-        catId: 'opus',
-        origin: 'callback',
-        content: 'This is a callback response',
-      });
-    });
-
-    // done(isFinal) arrives — no streaming bubble exists
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-        isFinal: true,
-      });
-    });
-
-    // Ghost-message fix: catch-up fires unconditionally when no active bubble,
-    // regardless of whether stream data was seen (sawStreamDataRef guard removed)
-    expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
-  });
-
-  it('requests catch-up when done(isFinal) arrives with no events at all', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    // Ghost-message scenario: micro-disconnect lost ALL events (stream + callback)
-    // Only done(isFinal) arrives
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-        isFinal: true,
-      });
-    });
-
-    // Must trigger catch-up so user sees the response without F5
-    expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
-  });
-
-  it('requests catch-up when stream data was seen but bubble is lost', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    // Simulate stream text arriving (sets sawStreamData flag)
-    // then done(isFinal) for a different cat that had no bubble created
-    // We need to test the scenario where text arrived but bubble was somehow lost
-    // Simplest: send text for catId X, then done(isFinal) for catId X
-    // but text will create a bubble... unless we clear activeRefs manually
-
-    // Alternative approach: use system_info (stream chunk type) then done
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'system_info',
-        catId: 'opus',
-        content: JSON.stringify({ type: 'invocation_created', invocationId: 'inv-1' }),
-      });
-    });
-
-    // system_info with invocation_created counts as "saw stream data"
-    // Then done(isFinal) with no bubble
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'opus',
-        isFinal: true,
-      });
-    });
-
-    expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
   });
 
   it('requests catch-up when the active thread times out before done(isFinal)', () => {

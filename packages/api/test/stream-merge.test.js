@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-const { mergeStreams } = await import('../dist/domains/cats/services/agents/invocation/stream-merge.js');
+const { finallyAfter, mergeStreams } = await import('../dist/domains/cats/services/agents/invocation/stream-merge.js');
 
 /** Create an async iterable that yields values with optional delays */
 async function* delayed(values, delayMs = 0) {
@@ -211,5 +211,32 @@ describe('mergeStreams', () => {
     const result = await collect(mergeStreams([a, b, c]));
     assert.equal(result.length, 6);
     assert.deepEqual(result.sort(), [1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe('finallyAfter', () => {
+  it('runs its cleanup once however the consuming loop ends', async () => {
+    const endings = [];
+    for await (const _ of finallyAfter(delayed([1, 2]), () => endings.push('completed'))) {
+      // runs to the end
+    }
+    await assert.rejects(async () => {
+      for await (const _ of finallyAfter(delayed([1, 2]), () => endings.push('threw'))) {
+        throw new Error('loop body failed');
+      }
+    }, /loop body failed/);
+    for await (const _ of finallyAfter(delayed([1, 2]), () => endings.push('returned'))) {
+      break;
+    }
+    assert.deepEqual(endings, ['completed', 'threw', 'returned']);
+  });
+
+  it('runs its cleanup when the source itself throws', async () => {
+    let cleaned = 0;
+    await assert.rejects(
+      collect(finallyAfter(failAfter([1], new Error('source failed')), () => cleaned++)),
+      /source failed/,
+    );
+    assert.equal(cleaned, 1);
   });
 });

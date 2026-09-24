@@ -473,6 +473,7 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
       status: 'interrupted',
       endedAt: (await store.get('child-returned')).endedAt,
       terminalReason: 'generator_returned_without_completion',
+      outputFence: 'open',
     });
   });
 

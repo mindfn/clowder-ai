@@ -12,9 +12,6 @@ import { useAgentMessages } from '@/hooks/useAgentMessages';
 const { mockApiFetch } = vi.hoisted(() => ({ mockApiFetch: vi.fn() }));
 
 const mockAddMessage = vi.fn();
-const mockAppendToMessage = vi.fn();
-const mockAppendToolEvent = vi.fn();
-const mockSetStreaming = vi.fn();
 const mockSetLoading = vi.fn();
 const mockSetHasActiveInvocation = vi.fn();
 const mockRemoveActiveInvocation = vi.fn();
@@ -25,7 +22,6 @@ const mockSetIntentMode = vi.fn();
 const mockSetCatStatus = vi.fn();
 const mockClearCatStatuses = vi.fn();
 const mockSetCatInvocation = vi.fn();
-const mockSetMessageUsage = vi.fn();
 const mockRequestStreamCatchUp = vi.fn();
 
 const mockAddMessageToThread = vi.fn();
@@ -73,9 +69,6 @@ const storeState = {
     timestamp: number;
   }>,
   addMessage: mockAddMessage,
-  appendToMessage: mockAppendToMessage,
-  appendToolEvent: mockAppendToolEvent,
-  setStreaming: mockSetStreaming,
   setLoading: mockSetLoading,
   setHasActiveInvocation: mockSetHasActiveInvocation,
   removeActiveInvocation: mockRemoveActiveInvocation,
@@ -84,16 +77,18 @@ const storeState = {
   setCatStatus: mockSetCatStatus,
   clearCatStatuses: mockClearCatStatuses,
   setCatInvocation: mockSetCatInvocation,
-  setMessageUsage: mockSetMessageUsage,
   requestStreamCatchUp: mockRequestStreamCatchUp,
   catInvocations: {} as Record<string, { invocationId?: string; turnInvocationId?: string }>,
 
   addMessageToThread: mockAddMessageToThread,
-  // F183 B1.2.3: active stream new-bubble path → reducer → replaceMessages
-  replaceMessages: vi.fn((msgs: unknown[]) => {
-    storeState.messages = msgs as typeof storeState.messages;
-  }),
-  hasMore: true,
+  // named-message-writer: body events that name their message write through these thread-scoped members.
+  appendToThreadMessage: vi.fn(),
+  appendToolEventToThread: vi.fn(),
+  setThreadMessageThinking: vi.fn(),
+  appendRichBlockToThread: vi.fn(),
+  setThreadMessageMetadata: vi.fn(),
+  setThreadMessageUsage: vi.fn(),
+  incrementUnread: vi.fn(),
   clearThreadActiveInvocation: mockClearThreadActiveInvocation,
   resetThreadInvocationState: mockResetThreadInvocationState,
   setThreadMessageStreaming: mockSetThreadMessageStreaming,
@@ -144,9 +139,6 @@ describe('useAgentMessages loading lifecycle', () => {
     captured = undefined;
     storeState.messages = [];
     mockAddMessage.mockClear();
-    mockAppendToMessage.mockClear();
-    mockAppendToolEvent.mockClear();
-    mockSetStreaming.mockClear();
     mockSetLoading.mockClear();
     mockSetHasActiveInvocation.mockClear();
     mockRemoveActiveInvocation.mockClear();
@@ -155,7 +147,6 @@ describe('useAgentMessages loading lifecycle', () => {
     mockSetCatStatus.mockClear();
     mockClearCatStatuses.mockClear();
     mockSetCatInvocation.mockClear();
-    mockSetMessageUsage.mockClear();
 
     mockAddMessageToThread.mockClear();
     mockClearThreadActiveInvocation.mockClear();
@@ -191,6 +182,7 @@ describe('useAgentMessages loading lifecycle', () => {
       captured?.handleAgentMessage({
         type: 'done',
         catId: 'codex',
+        messageId: 'resp-1',
         isFinal: true,
       });
     });
@@ -206,6 +198,7 @@ describe('useAgentMessages loading lifecycle', () => {
       root.render(React.createElement(Harness));
     });
 
+    // No messageId: a preflight/registration failure keeps its own error row.
     act(() => {
       captured?.handleAgentMessage({
         type: 'error',
@@ -227,32 +220,6 @@ describe('useAgentMessages loading lifecycle', () => {
     );
   });
 
-  it('closes existing streaming bubble on done even when activeRefs are empty', () => {
-    storeState.messages = [
-      {
-        id: 'bg-msg-1',
-        type: 'assistant',
-        catId: 'codex',
-        content: 'partial',
-        isStreaming: true,
-        timestamp: Date.now(),
-      },
-    ];
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'done',
-        catId: 'codex',
-      });
-    });
-
-    expect(mockSetStreaming).toHaveBeenCalledWith('bg-msg-1', false);
-  });
-
   it('keeps handleAgentMessage stable when only messages change', () => {
     act(() => {
       root.render(React.createElement(Harness));
@@ -263,7 +230,7 @@ describe('useAgentMessages loading lifecycle', () => {
 
     storeState.messages = [
       {
-        id: 'msg-new',
+        id: 'resp-1',
         type: 'assistant',
         catId: 'codex',
         content: 'delta',
@@ -326,6 +293,8 @@ describe('useAgentMessages loading lifecycle', () => {
         captured?.handleAgentMessage({
           type: 'text',
           catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
           content: 'partial',
         });
       });
@@ -404,7 +373,13 @@ describe('useAgentMessages loading lifecycle', () => {
         root.render(React.createElement(Harness));
       });
       act(() => {
-        captured?.handleAgentMessage({ type: 'text', catId: 'codex', content: 'partial' });
+        captured?.handleAgentMessage({
+          type: 'text',
+          catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
+          content: 'partial',
+        });
       });
 
       await act(async () => {
@@ -468,7 +443,15 @@ describe('useAgentMessages loading lifecycle', () => {
       );
 
       act(() => root.render(React.createElement(Harness)));
-      act(() => captured?.handleAgentMessage({ type: 'text', catId: 'codex', content: 'partial' }));
+      act(() =>
+        captured?.handleAgentMessage({
+          type: 'text',
+          catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
+          content: 'partial',
+        }),
+      );
       await act(async () => {
         vi.advanceTimersByTime(5 * 60 * 1000);
         await Promise.resolve();
@@ -485,6 +468,7 @@ describe('useAgentMessages loading lifecycle', () => {
         captured?.handleAgentMessage({
           type: 'done',
           catId: 'codex',
+          messageId: 'resp-1',
           invocationId: 'inv-socket-terminal',
           turnInvocationId: 'turn-socket-terminal',
           isFinal: true,
@@ -626,7 +610,15 @@ describe('useAgentMessages loading lifecycle', () => {
       );
 
       act(() => root.render(React.createElement(Harness)));
-      act(() => captured?.handleAgentMessage({ type: 'text', catId: 'codex', content: 'partial' }));
+      act(() =>
+        captured?.handleAgentMessage({
+          type: 'text',
+          catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
+          content: 'partial',
+        }),
+      );
       await act(async () => {
         vi.advanceTimersByTime(5 * 60 * 1000);
         await Promise.resolve();
@@ -738,7 +730,15 @@ describe('useAgentMessages loading lifecycle', () => {
       );
 
       act(() => root.render(React.createElement(Harness)));
-      act(() => captured?.handleAgentMessage({ type: 'text', catId: 'codex', content: 'partial' }));
+      act(() =>
+        captured?.handleAgentMessage({
+          type: 'text',
+          catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
+          content: 'partial',
+        }),
+      );
       await act(async () => {
         vi.advanceTimersByTime(5 * 60 * 1000);
         await Promise.resolve();
@@ -767,150 +767,9 @@ describe('useAgentMessages loading lifecycle', () => {
     }
   });
 
-  it('stopping a background thread does not clear active thread invocation state', () => {
-    const cancelInvocation = vi.fn(() => true);
-    const stopIntent = {
-      sourceControl: 'chat_input_action' as const,
-      gesture: 'pointer' as const,
-      trustedGesture: true,
-    };
-    mockGetThreadState.mockImplementation((tid?: string) => {
-      if (tid === 'thread-2') {
-        return {
-          messages: [
-            {
-              id: 'bg-stream-1',
-              type: 'assistant',
-              catId: 'opus',
-              content: 'running',
-              isStreaming: true,
-              timestamp: Date.now(),
-            },
-          ],
-        };
-      }
-      return { messages: [] };
-    });
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    // Seed activeRefs with an active-thread stream.
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'text',
-        catId: 'codex',
-        content: 'active stream chunk',
-      });
-    });
-
-    act(() => {
-      captured?.handleStop(cancelInvocation, 'thread-2', stopIntent);
-    });
-
-    expect(cancelInvocation).toHaveBeenCalledWith('thread-2', undefined, stopIntent);
-    expect(mockResetThreadInvocationState).toHaveBeenCalledWith('thread-2');
-    expect(mockSetThreadMessageStreaming).toHaveBeenCalledWith('thread-2', 'bg-stream-1', false);
-
-    // Active thread state must remain untouched.
-    expect(mockSetLoading).not.toHaveBeenCalledWith(false);
-    expect(mockSetHasActiveInvocation).not.toHaveBeenCalledWith(false);
-    expect(mockSetIntentMode).not.toHaveBeenCalledWith(null);
-    expect(mockClearCatStatuses).not.toHaveBeenCalled();
-    expect(mockSetStreaming).not.toHaveBeenCalled();
-  });
-
-  it('keeps local invocation state when the cancel packet is not sent', () => {
-    const cancelInvocation = vi.fn(() => false);
-    mockGetThreadState.mockImplementation(() => ({
-      messages: [
-        {
-          id: 'still-streaming',
-          type: 'assistant',
-          catId: 'opus',
-          content: 'still running',
-          isStreaming: true,
-          timestamp: Date.now(),
-        },
-      ],
-    }));
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-    act(() => {
-      captured?.handleStop(cancelInvocation, 'thread-2', {
-        sourceControl: 'chat_input_action',
-        gesture: 'pointer',
-        trustedGesture: false,
-      });
-    });
-
-    expect(cancelInvocation).toHaveBeenCalledOnce();
-    expect(mockResetThreadInvocationState).not.toHaveBeenCalled();
-    expect(mockSetThreadMessageStreaming).not.toHaveBeenCalled();
-  });
-
-  it('composer Stop remains whole-thread even when the target thread has one active cat', () => {
-    const cancelInvocation = vi.fn(() => true);
-    const stopIntent = {
-      sourceControl: 'chat_input_action' as const,
-      gesture: 'pointer' as const,
-      trustedGesture: true,
-    };
-    storeState.activeInvocations = {
-      'inv-active': { catId: 'codex', mode: 'execute' },
-    };
-
-    mockGetThreadState.mockImplementation(((tid?: string) => {
-      if (tid === 'thread-2') {
-        return {
-          messages: [] as Array<{
-            id: string;
-            type: string;
-            catId?: string;
-            content: string;
-            isStreaming?: boolean;
-            timestamp: number;
-          }>,
-          activeInvocations: {
-            'inv-bg': { catId: 'opus', mode: 'execute' },
-          },
-        };
-      }
-      return {
-        messages: [] as Array<{
-          id: string;
-          type: string;
-          catId?: string;
-          content: string;
-          isStreaming?: boolean;
-          timestamp: number;
-        }>,
-        activeInvocations: {
-          'inv-active': { catId: 'codex', mode: 'execute' },
-        },
-      };
-    }) as unknown as typeof mockGetThreadState);
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleStop(cancelInvocation, 'thread-2', stopIntent);
-    });
-
-    expect(cancelInvocation).toHaveBeenCalledWith('thread-2', undefined, stopIntent);
-    expect(mockResetThreadInvocationState).toHaveBeenCalledWith('thread-2');
-  });
-
-  it('stopping a background thread clears its pending timeout guard', () => {
+  it('clearing a background thread timeout guard stops its pending timeout', () => {
     vi.useFakeTimers();
     try {
-      const cancelInvocation = vi.fn(() => true);
-
       act(() => {
         root.render(React.createElement(Harness));
       });
@@ -920,18 +779,16 @@ describe('useAgentMessages loading lifecycle', () => {
         captured?.handleAgentMessage({
           type: 'text',
           catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
           content: 'partial',
         });
       });
 
-      // Switch active thread, then stop the old thread from split-pane context.
+      // Switch active thread, then clear the old thread's guard (split-pane / background stop).
       storeState.currentThreadId = 'thread-2';
       act(() => {
-        captured?.handleStop(cancelInvocation, 'thread-1', {
-          sourceControl: 'chat_input_action',
-          gesture: 'pointer',
-          trustedGesture: true,
-        });
+        captured?.clearDoneTimeout('thread-1');
       });
 
       act(() => {
@@ -949,11 +806,10 @@ describe('useAgentMessages loading lifecycle', () => {
     }
   });
 
-  it('stopping another thread does not clear the current thread timeout guard', () => {
+  it('clearing another thread timeout guard keeps the current thread guard', () => {
     vi.useFakeTimers();
     try {
-      const cancelInvocation = vi.fn(() => true);
-
+      mockRequestStreamCatchUp.mockClear();
       act(() => {
         root.render(React.createElement(Harness));
       });
@@ -963,6 +819,8 @@ describe('useAgentMessages loading lifecycle', () => {
         captured?.handleAgentMessage({
           type: 'text',
           catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
           content: 'thread-1 partial',
         });
       });
@@ -973,17 +831,15 @@ describe('useAgentMessages loading lifecycle', () => {
         captured?.handleAgentMessage({
           type: 'text',
           catId: 'codex',
+          messageId: 'resp-2',
+          origin: 'stream',
           content: 'thread-2 partial',
         });
       });
 
-      // Stop old thread-1 from split-pane context.
+      // Clear old thread-1's guard from split-pane context.
       act(() => {
-        captured?.handleStop(cancelInvocation, 'thread-1', {
-          sourceControl: 'chat_input_action',
-          gesture: 'pointer',
-          trustedGesture: true,
-        });
+        captured?.clearDoneTimeout('thread-1');
       });
 
       act(() => {
@@ -1009,6 +865,8 @@ describe('useAgentMessages loading lifecycle', () => {
         captured?.handleAgentMessage({
           type: 'text',
           catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
           content: 'partial',
         });
       });
@@ -1038,33 +896,6 @@ describe('useAgentMessages loading lifecycle', () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it('closes existing streaming bubble on error even when activeRefs are empty', () => {
-    storeState.messages = [
-      {
-        id: 'bg-msg-err',
-        type: 'assistant',
-        catId: 'opus',
-        content: 'partial',
-        isStreaming: true,
-        timestamp: Date.now(),
-      },
-    ];
-
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'error',
-        catId: 'opus',
-        error: 'failed',
-      });
-    });
-
-    expect(mockSetStreaming).toHaveBeenCalledWith('bg-msg-err', false);
   });
 
   it('system_info context_health without parsed catId falls back to msg.catId', () => {
@@ -1121,6 +952,7 @@ describe('useAgentMessages loading lifecycle', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
     expect(mockSetCatInvocation).toHaveBeenCalledWith(
       'opus',
       expect.objectContaining({
@@ -1149,6 +981,7 @@ describe('useAgentMessages loading lifecycle', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
     expect(mockSetCatInvocation).toHaveBeenCalledWith(
       'opus',
       expect.objectContaining({

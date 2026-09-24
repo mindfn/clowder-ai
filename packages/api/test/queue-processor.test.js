@@ -8,8 +8,18 @@ const { CallerDispatchObservationRegistry } = await import(
   '../dist/domains/cats/services/agents/invocation/CallerDispatchObservationRegistry.js'
 );
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
+const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/DraftStore.js');
+const { InMemoryTurnExecutionStore } = await import(
+  '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
+);
 const { MessageStore, settleLifecycleResponseInputs } = await import(
   '../dist/domains/cats/services/stores/ports/MessageStore.js'
+);
+const { responseOutcomeForEndedTurn, settleResponseFromDraft } = await import(
+  '../dist/domains/cats/services/agents/invocation/response-draft-settlement.js'
+);
+const { TurnExecutionStartupReconciler } = await import(
+  '../dist/domains/cats/services/agents/invocation/TurnExecutionStartupReconciler.js'
 );
 
 let sourceSequence = 0;
@@ -61,7 +71,11 @@ function createHarness({
   routeExecution,
   tracker = new InvocationTracker(),
   callerDispatchObservationRegistry = new CallerDispatchObservationRegistry(),
-  processorOptions,
+  // A failed attempt's retry wait is long by default so no retry fires behind a later test.
+  processorOptions = { retryDeferral: { baseDelayMs: 60_000 } },
+  draftStore,
+  turnExecutionStore,
+  actionSuccessorLeaseStore,
 } = {}) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
@@ -105,8 +119,49 @@ function createHarness({
     messageStore,
     callerDispatchObservationRegistry,
     log: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
+    ...(draftStore ? { draftStore } : {}),
+    ...(turnExecutionStore ? { turnExecutionStore } : {}),
+    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
   };
   return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
+}
+
+/** Records and ends the child turn the way invoke-single-cat does, entering the response-pending ledger. */
+async function endChildTurn(turns, args, invocationId, terminal, catId = args[4][0]) {
+  const [userId, , threadId, , , , options] = args;
+  await turns.createRunning({
+    invocationId,
+    parentInvocationId: options.parentInvocationId,
+    threadId,
+    userId,
+    catId,
+    executionKind: 'ordinary',
+    startedAt: Date.now() - 1,
+    // As the real route does: a child of an action-fenced dispatch is created gated.
+    ...(options.beforeOutputCommit ? { outputFence: 'gated' } : {}),
+  });
+  await turns.transitionTerminal(invocationId, { endedAt: Date.now(), ...terminal });
+}
+
+/** Production startup wiring: the next process settles every ended turn left in the ledger. */
+function nextStartup(turns, messageStore, draftStore) {
+  return new TurnExecutionStartupReconciler({
+    store: turns,
+    settleEndedTurnResponse: (turn) =>
+      settleResponseFromDraft(
+        { messageStore, draftStore, turnStore: turns },
+        {
+          userId: turn.userId,
+          threadId: turn.threadId,
+          invocationId: turn.invocationId,
+          ...responseOutcomeForEndedTurn(turn),
+        },
+      ),
+  }).reconcile({ processStartedAt: Date.now() + 1_000 });
+}
+
+function pendingTurnIds(turns) {
+  return turns.listResponsePending().map((turn) => turn.invocationId);
 }
 
 async function startLifecycle(args, invocationId) {
@@ -422,6 +477,403 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     } finally {
       releaseInvocations();
     }
+  });
+
+  it('names each target response on every event that target streams', async () => {
+    const responseIdByCat = new Map();
+    const harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        for (const catId of targetCats) {
+          const admission = await options.onLifecycleInvocationStarted({
+            threadId,
+            userId,
+            catId,
+            invocationId: `turn-stamp-${catId}`,
+            parentInvocationId: options.parentInvocationId,
+            startedAt: Date.now(),
+          });
+          responseIdByCat.set(catId, admission.responseMessageId);
+        }
+        for (const catId of targetCats) {
+          yield { type: 'text', catId, content: `${catId} speaks`, timestamp: Date.now() };
+          yield { type: 'tool_use', catId, toolName: 'shell', toolInput: { command: 'ls' }, timestamp: Date.now() };
+          yield {
+            type: 'system_info',
+            catId,
+            content: JSON.stringify({ type: 'thinking', text: 'hmm' }),
+            timestamp: Date.now(),
+          };
+        }
+        yield {
+          type: 'system_info',
+          catId: 'opus',
+          messageId: 'stored-system-row',
+          content: JSON.stringify({ type: 'routing_preflight' }),
+          timestamp: Date.now(),
+        };
+        for (const catId of targetCats) {
+          yield { type: 'done', catId, isFinal: catId === 'codex', timestamp: Date.now() };
+        }
+      },
+    });
+    await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.socketManager.broadcastAgentMessage.mock.calls.some(
+        (call) => call.arguments[0].type === 'done' && call.arguments[0].catId === 'codex',
+      ),
+    );
+
+    const broadcasts = harness.socketManager.broadcastAgentMessage.mock.calls.map((call) => call.arguments[0]);
+    for (const catId of ['opus', 'codex']) {
+      const responseId = responseIdByCat.get(catId);
+      assert.ok(responseId, `${catId} must be admitted`);
+      const streamed = broadcasts.filter(
+        (event) => event.catId === catId && event.messageId !== 'stored-system-row' && event.type !== 'error',
+      );
+      assert.deepEqual(
+        streamed.map((event) => event.type),
+        ['text', 'tool_use', 'system_info', 'done'],
+      );
+      assert.deepEqual(
+        streamed.map((event) => event.messageId),
+        streamed.map(() => responseId),
+        `${catId} events must all name its response`,
+      );
+    }
+    assert.notEqual(responseIdByCat.get('opus'), responseIdByCat.get('codex'));
+    assert.ok(
+      broadcasts.some((event) => event.messageId === 'stored-system-row'),
+      'an event that already names its stored message keeps it',
+    );
+  });
+
+  it('publishes a target committed response at its done, before sibling targets settle', async () => {
+    let releaseSibling;
+    const siblingGate = new Promise((resolve) => {
+      releaseSibling = resolve;
+    });
+    const responseIdByCat = new Map();
+    let harness;
+    harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        for (const catId of targetCats) {
+          const invocationId = `turn-committed-${catId}`;
+          const admission = await options.onLifecycleInvocationStarted({
+            threadId,
+            userId,
+            catId,
+            invocationId,
+            parentInvocationId: options.parentInvocationId,
+            startedAt: Date.now(),
+          });
+          responseIdByCat.set(catId, admission.responseMessageId);
+          yield { type: 'text', catId, content: `${catId} answer`, timestamp: Date.now() };
+          const committed = await harness.messageStore.commitLifecycleResponseTerminal(admission.responseMessageId, {
+            invocationId,
+            status: 'completed',
+            completedAt: Date.now(),
+            content: `${catId} answer`,
+            mentions: [],
+            origin: 'stream',
+          });
+          assert.ok(committed.kind === 'applied' || committed.kind === 'replayed');
+          yield { type: 'done', catId, isFinal: catId === targetCats.at(-1), timestamp: Date.now() };
+          if (catId === targetCats[0]) await siblingGate;
+        }
+      },
+    });
+    await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    const committedSnapshots = () =>
+      harness.socketManager.emitToUser.mock.calls
+        .filter((call) => call.arguments[1] === 'message_lifecycle_updated')
+        .map((call) => call.arguments[2].message)
+        .filter((message) => message.lifecycle?.kind === 'response' && message.lifecycle.status === 'completed');
+
+    await harness.processor.requestDrain('thread-1');
+    try {
+      await waitFor(() => committedSnapshots().some((message) => message.id === responseIdByCat.get('opus')));
+      assert.equal(
+        committedSnapshots().some((message) => message.id === responseIdByCat.get('codex')),
+        false,
+        'the sibling has not committed yet',
+      );
+      assert.equal(
+        committedSnapshots().find((message) => message.id === responseIdByCat.get('opus')).content,
+        'opus answer',
+      );
+    } finally {
+      releaseSibling();
+    }
+  });
+
+  it('F117 KD-21: a thrown route settles its R out of the ledger; a settlement that fails stays in it', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const responseIds = new Map();
+    const harness = createHarness({
+      draftStore,
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats, , options] = args;
+        for (const [catId, invocationId] of [
+          [targetCats[0], 'turn-settles'],
+          [targetCats[1], 'turn-stuck'],
+        ]) {
+          const admission = await options.onLifecycleInvocationStarted({
+            threadId,
+            userId,
+            catId,
+            invocationId,
+            parentInvocationId: options.parentInvocationId,
+            startedAt: Date.now(),
+          });
+          responseIds.set(invocationId, admission.responseMessageId);
+          draftStore.upsert({
+            userId,
+            threadId,
+            invocationId,
+            catId,
+            content: `${invocationId} streamed`,
+            updatedAt: Date.now(),
+          });
+          await endChildTurn(
+            turns,
+            args,
+            invocationId,
+            { status: 'failed', terminalReason: 'provider_execution_failed' },
+            catId,
+          );
+          yield { type: 'text', catId, content: 'partial', timestamp: Date.now() };
+        }
+        throw new Error('route exploded mid-stream');
+      },
+    });
+    const commit = harness.messageStore.commitLifecycleResponseTerminal.bind(harness.messageStore);
+    harness.messageStore.commitLifecycleResponseTerminal = async (id, patch) => {
+      if (patch.invocationId === 'turn-stuck') throw new Error('redis unavailable');
+      return commit(id, patch);
+    };
+    await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    // Settled in order: turn-settles commits first, then turn-stuck's commit fails and is logged.
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('failed to settle a response')),
+    );
+
+    assert.equal(harness.messageStore.getById(responseIds.get('turn-settles')).content, 'turn-settles streamed');
+    assert.equal(harness.messageStore.getById(responseIds.get('turn-stuck')).lifecycle.status, 'processing');
+    assert.deepEqual(pendingTurnIds(turns), ['turn-stuck'], 'the next startup settles the one that failed');
+    assert.deepEqual(
+      draftStore.getByThread('user-1', 'thread-1').map((draft) => draft.invocationId),
+      ['turn-stuck'],
+    );
+  });
+
+  /** A fenced action whose lease has moved on: its failure stays hidden and its output is rejected. */
+  function fencedHiddenFailure(draftStore, turns) {
+    const actionSuccessorLeaseStore = {
+      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
+      preflightOutput: mock.fn(async () => ({ ok: true, reason: 'active' })),
+      commitOutcome: mock.fn(async () => ({ outcome: 'stale_generation' })),
+    };
+    const route = { responseMessageId: undefined };
+    const harness = createHarness({
+      draftStore,
+      turnExecutionStore: turns,
+      actionSuccessorLeaseStore,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats] = args;
+        route.responseMessageId = (await startLifecycle(args, 'turn-fenced')).responseMessageId;
+        draftStore.upsert({
+          userId,
+          threadId,
+          invocationId: 'turn-fenced',
+          catId: targetCats[0],
+          content: 'HIDDEN_ACTION_OUTPUT',
+          thinking: 'hidden reasoning',
+          updatedAt: Date.now(),
+        });
+        await endChildTurn(turns, args, 'turn-fenced', {
+          status: 'failed',
+          terminalReason: 'provider_execution_failed',
+        });
+        yield { type: 'text', catId: targetCats[0], content: 'partial', timestamp: Date.now() };
+        throw new Error('route exploded after the lease moved on');
+      },
+    });
+    const admit = () =>
+      admitMessage(harness, {
+        actionSuccessorFence: {
+          leaseId: 'lease-1',
+          generation: 1,
+          dispatchId: 'multi-mention:req-1',
+          terminalPredicateDigest: 'predicate-digest-1',
+        },
+      });
+    return { harness, actionSuccessorLeaseStore, route, admit };
+  }
+
+  function assertRejectedOutput(harness, responseMessageId) {
+    const response = harness.messageStore.getById(responseMessageId);
+    assert.equal(response.lifecycle.status, 'interrupted');
+    assert.equal(response.lifecycle.reason, 'output_commit_rejected');
+    assert.equal(response.content, '');
+    assert.equal(response.thinking, undefined);
+  }
+
+  it('F117 KD-21: a fenced action whose failure stays hidden ends R as a rejected output, recorded on the turn', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const { harness, actionSuccessorLeaseStore, route, admit } = fencedHiddenFailure(draftStore, turns);
+    await admit();
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.messageStore.getById(route.responseMessageId)?.lifecycle.status === 'interrupted');
+
+    assertRejectedOutput(harness, route.responseMessageId);
+    assert.equal(actionSuccessorLeaseStore.commitOutcome.mock.calls.length, 1);
+    assert.equal(turns.get('turn-fenced').outputFence, 'rejected');
+    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 0);
+    assert.deepEqual(pendingTurnIds(turns), []);
+  });
+
+  it('F117 KD-21: a hidden failure whose R commit fails publishes nothing at the next startup', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const { harness, route, admit } = fencedHiddenFailure(draftStore, turns);
+    const commit = harness.messageStore.commitLifecycleResponseTerminal.bind(harness.messageStore);
+    let failures = 1;
+    harness.messageStore.commitLifecycleResponseTerminal = async (id, patch) => {
+      if (patch.invocationId === 'turn-fenced' && failures > 0) {
+        failures -= 1;
+        throw new Error('redis unavailable');
+      }
+      return commit(id, patch);
+    };
+    await admit();
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('failed to settle a response')),
+    );
+    assert.equal(harness.messageStore.getById(route.responseMessageId).lifecycle.status, 'processing');
+    assert.equal(turns.get('turn-fenced').outputFence, 'rejected');
+    assert.deepEqual(pendingTurnIds(turns), ['turn-fenced']);
+    // The draft is still there: keeping it secret no longer depends on deleting it first.
+    assert.equal(draftStore.getByThread('user-1', 'thread-1')[0].content, 'HIDDEN_ACTION_OUTPUT');
+
+    const restart = await nextStartup(turns, harness.messageStore, draftStore);
+
+    assert.equal(restart.settledResponseCount, 1);
+    assertRejectedOutput(harness, route.responseMessageId);
+    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 0);
+    assert.deepEqual(pendingTurnIds(turns), []);
+  });
+
+  it('F117 KD-21: a hidden failure whose draft cannot be deleted still never publishes it', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    const { harness, route, admit } = fencedHiddenFailure(draftStore, turns);
+    const deleteDraft = draftStore.delete.bind(draftStore);
+    let failures = 1;
+    draftStore.delete = async (userId, threadId, invocationId) => {
+      if (invocationId === 'turn-fenced' && failures > 0) {
+        failures -= 1;
+        throw new Error('redis unavailable');
+      }
+      return deleteDraft(userId, threadId, invocationId);
+    };
+    await admit();
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() =>
+      harness.log.warn.mock.calls.some((call) => String(call.arguments[1]).includes('failed to settle a response')),
+    );
+    assertRejectedOutput(harness, route.responseMessageId);
+
+    await nextStartup(turns, harness.messageStore, draftStore);
+
+    assertRejectedOutput(harness, route.responseMessageId);
+    assert.deepEqual(pendingTurnIds(turns), []);
+  });
+
+  it('F117 KD-21: a response the route committed takes its ended turn out of the ledger', async () => {
+    const turns = new InMemoryTurnExecutionStore();
+    let responseMessageId;
+    const harness = createHarness({
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        const [, , , , targetCats] = args;
+        responseMessageId = (await startLifecycle(args, 'turn-done')).responseMessageId;
+        // invoke-single-cat ends the turn before the route commits its R.
+        await endChildTurn(turns, args, 'turn-done', { status: 'succeeded' });
+        assert.deepEqual(pendingTurnIds(turns), ['turn-done']);
+        const committed = await harness.messageStore.commitLifecycleResponseTerminal(responseMessageId, {
+          invocationId: 'turn-done',
+          status: 'completed',
+          completedAt: Date.now(),
+          content: 'answer',
+          mentions: [],
+          origin: 'stream',
+        });
+        assert.ok(committed.kind === 'applied' || committed.kind === 'replayed');
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    await admitMessage(harness);
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(
+      () => responseMessageId && harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'completed',
+    );
+    // The processor's completion pass confirms the committed R after the route returns.
+    await waitFor(() => pendingTurnIds(turns).length === 0);
+  });
+
+  it('F117 KD-21: a route that throws fails the response it left processing with its draft body', async () => {
+    const draftStore = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    let responseMessageId;
+    const harness = createHarness({
+      draftStore,
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targetCats] = args;
+        const admission = await startLifecycle(args, 'turn-thrown');
+        responseMessageId = admission.responseMessageId;
+        draftStore.upsert({
+          userId,
+          threadId,
+          invocationId: 'turn-thrown',
+          catId: targetCats[0],
+          content: '已经写到一半',
+          updatedAt: Date.now(),
+        });
+        // An unfenced child, as invoke-single-cat creates it: its draft may be published.
+        await endChildTurn(turns, args, 'turn-thrown', {
+          status: 'failed',
+          terminalReason: 'provider_execution_failed',
+        });
+        yield { type: 'text', catId: targetCats[0], content: '已经写到一半', timestamp: Date.now() };
+        throw new Error('route exploded mid-stream');
+      },
+    });
+    await admitMessage(harness);
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'failed');
+
+    const failed = harness.messageStore.getById(responseMessageId);
+    assert.equal(failed.lifecycle.reason, 'execution_error');
+    assert.equal(failed.content, '已经写到一半');
+    assert.deepEqual(draftStore.getByThread('user-1', 'thread-1'), []);
+    assert.equal(turns.get('turn-thrown').outputFence, 'open', 'an unfenced child records no verdict');
+    assert.deepEqual(pendingTurnIds(turns), []);
   });
 
   it('keeps an exact target set queued when one sibling is busy', async () => {
@@ -1427,5 +1879,240 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.doesNotMatch(observedPrompts[2], new RegExp(`${source.id} → worker: executing`));
     assert.equal(harness.messageStore.getByThreadBefore.mock.calls.length, 0);
     assert.equal(registry.list({ ownerId: 'user-1', threadId: 'thread-1', callerCatId: 'caller' }).length, 1);
+  });
+});
+
+describe('F117 soak: a waiting entry does not stop its thread’s queue', () => {
+  const routedTargets = (harness) => harness.routeCalls.map((args) => [...args[4]]);
+  const queuedIds = (harness) =>
+    harness.queue.list('thread-1', 'user-1').flatMap((entry) => (entry.status === 'queued' ? [entry.id] : []));
+
+  it('starts a source for an idle member while the head waits for a busy one', async () => {
+    const harness = createHarness();
+    bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });
+    const waiting = await admitMessage(harness, { targetCats: ['opus'] });
+    await admitMessage(harness, { targetCats: ['codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.routeCalls.length === 1);
+
+    assert.deepEqual(routedTargets(harness), [['codex']]);
+    assert.deepEqual(queuedIds(harness), [waiting.entry.id]);
+  });
+
+  it('keeps a later source for the busy member behind the earlier one', async () => {
+    const harness = createHarness();
+    bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });
+    const first = await admitMessage(harness, { targetCats: ['opus'] });
+    const second = await admitMessage(harness, { targetCats: ['opus'] });
+    await admitMessage(harness, { targetCats: ['codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.routeCalls.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assert.deepEqual(routedTargets(harness), [['codex']]);
+    assert.deepEqual(queuedIds(harness), [first.entry.id, second.entry.id]);
+  });
+
+  it('holds back a later source for the idle member of a source that waits on its busy member', async () => {
+    const harness = createHarness();
+    bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });
+    const pair = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    const codexOnly = await admitMessage(harness, { targetCats: ['codex'] });
+    await admitMessage(harness, { targetCats: ['gemini'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => harness.routeCalls.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    assert.deepEqual(routedTargets(harness), [['gemini']], 'codex keeps its order behind the waiting pair');
+    assert.deepEqual(queuedIds(harness), [pair.entry.id, codexOnly.entry.id]);
+  });
+
+  it('keeps draining past an attempt that failed before handoff, and retries it after its wait', async () => {
+    const attempts = [];
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 150 } },
+      routeExecution: async function* (...args) {
+        const [, content, , , targetCats] = args;
+        attempts.push({ content, at: Date.now() });
+        if (content === 'fails before handoff' && attempts.length === 1) {
+          throw new Error('injected before lifecycle receiver');
+        }
+        await startLifecycle(args, `turn-${attempts.length}`);
+        yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    const failing = await admitMessage(harness, { content: 'fails before handoff', targetCats: ['opus'] });
+    await admitMessage(harness, { content: 'behind it', targetCats: ['codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => attempts.length === 2);
+
+    assert.deepEqual(
+      attempts.map((attempt) => attempt.content),
+      ['fails before handoff', 'behind it'],
+      'the thread drains past the failed entry without a new message',
+    );
+    assert.deepEqual(queuedIds(harness), [failing.entry.id], 'the failed entry waits in its place');
+
+    await waitFor(() => attempts.length === 3);
+    assert.equal(attempts[2].content, 'fails before handoff');
+    assert.ok(attempts[2].at - attempts[0].at >= 140, 'retried only after its wait');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  const deferralLogs = (harness) =>
+    harness.log.warn.mock.calls
+      .filter((call) => String(call.arguments[1]).includes('waits for its retry time'))
+      .map((call) => call.arguments[0]);
+
+  /**
+   * A route whose first attempt has actual-send routing refuse `refusedCatIds` the way the real routes
+   * do: the refusal callback with routing's retry time, then the error, and no response receiver.
+   */
+  const routeRefusingFirstAttempt = (attempts, refusedCatIds, automaticRetryAt) =>
+    async function* (...args) {
+      const [userId, content, threadId, , targetCats, , options] = args;
+      attempts.push({ at: Date.now(), content, targetCats: [...targetCats] });
+      const refused = attempts.length === 1 ? targetCats.filter((catId) => refusedCatIds.includes(catId)) : [];
+      for (const catId of refused) {
+        options.onRoutingDispatchRejected?.({ catId, automaticRetryAt: automaticRetryAt() });
+        yield {
+          type: 'error',
+          catId,
+          errorCode: 'routing_preflight_rejected',
+          error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
+          timestamp: Date.now(),
+        };
+      }
+      const started = targetCats.filter((catId) => !refused.includes(catId));
+      for (const [index, catId] of started.entries()) {
+        await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId,
+          invocationId: `turn-${attempts.length}-${catId}`,
+          parentInvocationId: options.parentInvocationId,
+          startedAt: Date.now(),
+        });
+        yield { type: 'done', catId, isFinal: index === started.length - 1, timestamp: Date.now() };
+      }
+    };
+
+  it('retries a member refused at actual send when routing will accept it again', async () => {
+    const attempts = [];
+    let automaticRetryAt;
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => automaticRetryAt),
+    });
+    automaticRetryAt = Date.now() + 400;
+    const refused = await admitMessage(harness, { targetCats: ['opus'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => deferralLogs(harness).length === 1);
+    const [deferral] = deferralLogs(harness);
+    assert.equal(deferral.entryId, refused.entry.id);
+    assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
+
+    await waitFor(() => attempts.length === 2);
+    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'not retried before routing accepts the member again');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('waits for routing’s retry time when the member a targetless source resolved to is refused', async () => {
+    const attempts = [];
+    let automaticRetryAt;
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => automaticRetryAt),
+    });
+    automaticRetryAt = Date.now() + 400;
+    const targetless = await admitMessage(harness, { targetCats: [] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => deferralLogs(harness).length === 1);
+    assert.deepEqual(attempts[0].targetCats, ['opus'], 'admission resolved the targetless source to opus');
+    assert.deepEqual(
+      harness.queue.getEntrySnapshotAcrossUsers('thread-1', targetless.entry.id)?.targets,
+      [],
+      'the row went back to the Queue without the member it resolved to',
+    );
+    const [deferral] = deferralLogs(harness);
+    assert.equal(deferral.entryId, targetless.entry.id);
+    assert.deepEqual(deferral.refusedTargets, ['opus']);
+    assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
+
+    await waitFor(() => attempts.length === 2);
+    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'the first retry does not come before routing’s retry time');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('makes a pair wait for routing’s retry time for the member refused after its sibling was handed off', async () => {
+    const attempts = [];
+    let automaticRetryAt;
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['codex'], () => automaticRetryAt),
+    });
+    automaticRetryAt = Date.now() + 400;
+    const pair = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(() => deferralLogs(harness).length === 1);
+    assert.deepEqual(attempts[0].targetCats, ['opus', 'codex']);
+    assert.deepEqual(
+      harness.queue.getEntrySnapshotAcrossUsers('thread-1', pair.entry.id)?.targets,
+      ['codex'],
+      'only the refused member is left in the Queue',
+    );
+    assert.equal(deferralLogs(harness)[0].retryAt, automaticRetryAt);
+
+    await waitFor(() => attempts.length === 2);
+    assert.deepEqual(attempts[1].targetCats, ['codex']);
+    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'the refused member is not retried before routing’s retry time');
+    await waitFor(() => queuedIds(harness).length === 0);
+  });
+
+  it('scans again when the owner reorders the Queue while the drain resolves the source it selected', async () => {
+    const harness = createHarness();
+    await admitMessage(harness, { content: 'earlier', targetCats: ['codex'] });
+    const later = await admitMessage(harness, { content: 'later', targetCats: ['codex'] });
+    let releaseResolution;
+    const resolutionGate = new Promise((resolve) => {
+      releaseResolution = resolve;
+    });
+    let markResolutionStarted;
+    const resolutionStarted = new Promise((resolve) => {
+      markResolutionStarted = resolve;
+    });
+    let paused = false;
+    harness.router.resolveConversationTargetsAtAdmission = async (targetCats) => {
+      if (!paused) {
+        paused = true;
+        markResolutionStarted();
+        await resolutionGate;
+      }
+      return [...targetCats];
+    };
+
+    const drained = harness.processor.requestDrain('thread-1');
+    await resolutionStarted;
+    assert.equal(
+      await harness.queue.setPositionDurable('thread-1', 'user-1', later.entry.id, 0),
+      true,
+      'the owner moves the later source ahead while the scan awaits',
+    );
+    releaseResolution();
+    await drained;
+    await waitFor(() => harness.routeCalls.length === 2);
+
+    assert.deepEqual(
+      harness.routeCalls.map((args) => args[1]),
+      ['later', 'earlier'],
+      'codex receives its sources in the order the owner set',
+    );
   });
 });

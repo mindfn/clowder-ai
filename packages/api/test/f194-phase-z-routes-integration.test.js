@@ -16,13 +16,15 @@
  * Post-Phase-Z expected:
  *   - helper.active = 1 entry per cat, source='parent+child+tracker', startedAt=child createdAt
  *   - /queue.activeInvocations[].startedAt = child createdAt (NOT parent.updatedAt)
- *   - /messages: child draft surfaces (orphan filter respects child id namespace)
+ *   - /messages: child draft surfaces as the body of the child's processing response
+ *     (F117: matched by lifecycle.invocationId in the child id namespace, never a `draft-*` record)
  *   - Both endpoints agree on namespace identity
  */
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const { DraftStore } = await import('../dist/domains/cats/services/stores/ports/DraftStore.js');
 const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -116,9 +118,8 @@ function makeRecord({
   };
 }
 
-async function buildPairedApp({ recordStore, draftStore, tracker, registry }) {
+async function buildPairedApp({ recordStore, draftStore, tracker, registry, messageStore = new MessageStore() }) {
   const app = Fastify({ logger: false });
-  const messageStore = new MessageStore();
   await app.register(messagesRoutes, {
     registry,
     messageStore,
@@ -210,11 +211,36 @@ describe('F194 Phase Z4 — runtime split symptom reproduction (paired /messages
       latestByCat: { [`${THREAD_ID}:opus`]: childId },
     });
 
+    // F117: the child turn's durable processing response, keyed by the child id.
+    const messageStore = new MessageStore();
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: USER_ID,
+        catId: 'opus',
+        content: '',
+        mentions: [],
+        timestamp: childCreatedAt,
+        threadId: THREAD_ID,
+        origin: 'stream',
+        extra: { stream: { invocationId: parentId, turnInvocationId: childId } },
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${childCreatedAt}:${childId}`,
+          invocationId: childId,
+          targetId: 'opus',
+          inputEntryIds: ['entry-runtime'],
+          inputMessageIds: ['source-runtime'],
+          status: 'processing',
+          startedAt: childCreatedAt,
+        },
+      }),
+    );
+
     const origNow = Date.now;
     Date.now = () => now;
     let app;
     try {
-      app = await buildPairedApp({ recordStore, draftStore, tracker, registry });
+      app = await buildPairedApp({ recordStore, draftStore, tracker, registry, messageStore });
 
       const queue = await injectQueue(app);
       assert.equal(queue.statusCode, 200);
@@ -233,11 +259,16 @@ describe('F194 Phase Z4 — runtime split symptom reproduction (paired /messages
 
       const msgs = await injectMessages(app);
       assert.equal(msgs.statusCode, 200);
-      // Draft for child should surface (not orphan-filtered)
-      const draftItem = (msgs.body.messages ?? msgs.body ?? []).find?.((m) => m.id === `draft-${childId}`);
-      assert.ok(draftItem, 'child draft must surface in /messages (orphan filter respects child id namespace)');
+      // Draft for child surfaces as the body of the child's processing response
+      const draftItem = msgs.body.messages.find((m) => m.id === response.id);
+      assert.ok(draftItem, 'child draft must surface in /messages (folded by child id namespace)');
       assert.equal(draftItem.catId, 'opus');
       assert.equal(draftItem.isDraft, true);
+      assert.equal(draftItem.content, 'streaming current turn...');
+      assert.equal(
+        msgs.body.messages.some((m) => m.id.startsWith('draft-')),
+        false,
+      );
 
       // Cross-endpoint consistency: same cat live on both sides
       const queueLiveCats = new Set(queue.body.activeInvocations.map((s) => s.catId));

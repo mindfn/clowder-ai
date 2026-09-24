@@ -75,6 +75,26 @@ describe('F244 capability tip placement', () => {
     expect(isStreamingTipSuppressed('streaming', lifecycle, now)).toBe(true);
   });
 
+  it('hands the tip over once the response has anything to show, thinking and rich blocks included', () => {
+    const exact = processingResponse('response-exact', 'sol', 'turn-exact');
+    const catInvocations: Record<string, CatInvocationInfo> = { sol: invocationFor(exact) };
+
+    expect(selectLifecycleTipMessageId([exact], {}, catInvocations)).toBe('response-exact');
+    expect(selectLifecycleTipMessageId([{ ...exact, thinking: 'considering' }], {}, catInvocations)).toBeNull();
+    expect(
+      selectLifecycleTipMessageId(
+        [
+          {
+            ...exact,
+            extra: { ...exact.extra, rich: { v: 1, blocks: [{ id: 'b1', kind: 'card', v: 1, title: 't' }] } },
+          },
+        ],
+        {},
+        catInvocations,
+      ),
+    ).toBeNull();
+  });
+
   it('assigns the one tip surface to an exact healthy processing response', () => {
     const stale = processingResponse('response-stale', 'opus', 'turn-stale');
     const exact = processingResponse('response-exact', 'sol', 'turn-exact');
