@@ -1,7 +1,6 @@
 import type { CatId, TurnExecutionRecord } from '@cat-cafe/shared';
 import type { InvocationRecord } from '../../stores/ports/InvocationRecordStore.js';
 import type { CodexAppServerLifecycleSnapshot } from '../providers/CodexAppServerLifecycle.js';
-import type { ZombieRecord } from './getThreadLiveInvocations.js';
 import {
   collectInvocationOwnerCandidates,
   type InvocationOwnerTrackerLike,
@@ -9,7 +8,7 @@ import {
   type StaleProcessingOwnerLease,
 } from './InvocationOwnerLeaseCandidates.js';
 import { DEFAULT_INVOCATION_SLOT_TTL_MS } from './InvocationTracker.js';
-import type { ReconcileZombieResult } from './reconcileZombies.js';
+import type { ReconcileZombieResult, ZombieRecord } from './reconcileZombies.js';
 
 interface InvocationOwnerReaperLog {
   info(obj: unknown, message?: string): void;

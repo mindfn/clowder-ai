@@ -11,7 +11,7 @@
  *
  * | 执行面            | 真相源                        | live classifier 认识吗 |
  * |-------------------|-------------------------------|------------------------|
- * | live invocation   | record + tracker + draft      | 认识                   |
+ * | live invocation   | record + tracker（KD-23 起不读 draft） | 认识          |
  * | managed command   | dynamicTaskStore (F295)       | **不认识**             |
  * | running child     | TurnExecution ledger (F194)   | **只从 running parent 反查** |
  *
@@ -33,13 +33,12 @@ import {
   parseManagedCommandWakeTask,
   parseRetiredManagedCommandWakeTask,
 } from '../../../../ball-custody/managed-command-wake-lifecycle.js';
-import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
 import {
   type ActiveInvocationProjection,
-  type InvocationRegistryPort,
   type InvocationTrackerLike,
+  type ResponseStatusReader,
   resolveActiveInvocations,
   resolveActiveInvocationsStrict,
 } from './live-invocation-projection.js';
@@ -48,12 +47,13 @@ import { classifyManagedCommandActivity } from './managed-command-activity.js';
 export {
   type ActiveInvocationProjection,
   getRequestOwnedTrackerExecutionId,
-  type InvocationRegistryPort,
   type InvocationTrackerLike,
   type LifecycleProjectionCandidate,
   projectActiveInvocations,
+  type ResponseStatusReader,
   resolveActiveInvocations,
   resolveActiveInvocationsStrict,
+  responseStatusFromMessages,
   trackerProjectionCandidates,
 } from './live-invocation-projection.js';
 
@@ -163,9 +163,9 @@ export interface LiveExecutionCandidateSnapshot {
 export interface ActiveExecutionServiceDeps {
   readonly invocationTracker: InvocationTrackerLike;
   readonly recordStore?: IInvocationRecordStore;
-  readonly draftStore?: IDraftStore;
+  /** F117 KD-23: a member whose response R is terminal is not processing. */
+  readonly responseStatus?: ResponseStatusReader;
   readonly turnExecutionStore?: Pick<ITurnExecutionStore, 'listByParent' | 'listRunningByUser'>;
-  readonly invocationRegistry?: InvocationRegistryPort;
   readonly dynamicTaskStore?: Pick<DynamicTaskStore, 'getAll'>;
   readonly log: { info: (obj: unknown, msg?: string) => void; warn: (obj: unknown, msg?: string) => void };
 }
@@ -242,10 +242,8 @@ export function createActiveExecutionService(deps: ActiveExecutionServiceDeps): 
       userId,
       deps.invocationTracker,
       deps.recordStore,
-      deps.draftStore,
+      deps.responseStatus,
       deps.turnExecutionStore,
-      deps.log,
-      deps.invocationRegistry,
     );
 
   const buildCandidateSnapshot = async (userId: string, includeManaged: boolean): Promise<ActiveExecutionSnapshot> => {
@@ -305,10 +303,9 @@ export function createActiveExecutionService(deps: ActiveExecutionServiceDeps): 
         userId,
         deps.invocationTracker,
         deps.recordStore,
-        deps.draftStore,
+        deps.responseStatus,
         deps.turnExecutionStore,
         deps.log,
-        deps.invocationRegistry,
       ),
 
     listManagedCommandExecutions: listManaged,

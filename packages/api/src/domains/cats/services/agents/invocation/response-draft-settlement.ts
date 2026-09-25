@@ -96,6 +96,9 @@ export async function settleResponseFromDraft(
     lifecycleResponseIdempotencyKey(input.invocationId),
   );
   if (response?.lifecycle?.kind !== 'response') {
+    // No R will ever take this draft's body. Drafts no longer expire (F117 KD-23), so it goes before
+    // the turn leaves the ledger, like every other settlement.
+    await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
     await deps.turnStore?.clearResponsePending(input.invocationId);
     return { kind: 'no_response' };
   }

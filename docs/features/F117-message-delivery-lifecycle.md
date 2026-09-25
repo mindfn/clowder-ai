@@ -874,6 +874,209 @@ managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`�
   装配错误必须在编译期或装配期暴露，不能推迟到投递时。
 - **INV-I4** 信封自述事实（priority、timestamp、provenance）；admission 不得从载荷推断。
 
+### Phase J（第二批：KD-22～24 实现设计，2026-09-24）— 设计待复审
+
+基点 `69a60d7af`（KD-21 与 KD-25 已过跨族复审）。代码地图（锚点 @`72c6df162`）整理自两份只读普查，
+下文只写设计选择与理由。按[推进路线](../plans/2026-09-24-f117-1398-phase-roadmap.md)分两个 phase 落地，
+各自一个 fork PR：路线 Phase 2 = J2 + J3（KD-23），路线 Phase 4 = J1 + J4（KD-22、KD-24）。
+
+#### J1 · KD-24：只改说明
+
+`.env.example:66-68`、`docs/configuration/environment.md:63`、`environment.zh-CN.md:63` 里写的「默认 30 分钟」
+改为「默认 0，即不超时」；同步修正 `invoke-single-cat.ts` 里「30-min kill deadline」的注释、F254 文档与
+`FreshnessInvocationStateStore.ts` 头注释。代码默认值不变。
+
+#### J2 · KD-23 第一半：草稿活到它的 R 终局
+
+现状：Memory store 在读取时丢弃超过 300 秒的草稿；Redis store 在每次 upsert/touch 时设 300 秒过期。
+两条 route 的 60 秒定时器存在的唯一理由就是续这个过期。settlement 只按 id 读草稿，所以只删定时器、不删
+过期，任何静默超过 300 秒的一轮都会丢掉已输出的正文。二者必须同一个 commit 落地。
+
+- `IDraftStore` 删除 `touch` 与全部过期逻辑（Memory 的读时回收、Redis 的 `EXPIRE`、`DRAFT_TTL_SECONDS`）。
+  草稿只在 R 终局后被删除。
+- **草稿删除是一轮离开 response-pending 账本的前提**：
+  - `settleResponseFromDraft` 的 `no_response` 分支也要删草稿，再清账本；
+  - QueueProcessor 在 R 已终局、清账本前（`releaseSettledResponseTurn`），先删这一轮的草稿；
+  - route 自己的 fire-and-forget 删除保留，只作为提前清理。
+
+  这样删草稿失败、或进程在 R 提交与删草稿之间崩溃，这一轮都还在账本里，下次启动会再结算一次，所以不需要
+  额外的草稿扫描。升级前写入的草稿保留原有 Redis 过期时间，自然消失。
+- 删除 route-serial / route-parallel 的 60 秒定时器，以及工具阶段 flush 时的 `touch`。ball-custody 的
+  `invocation.heartbeat` 只保留由 flush 触发的那一份：静默阶段不再发心跳，J3 同时去掉按心跳判定「死球」的读法。
+
+#### J3 · KD-23 第二半：「正在处理」只看 R 与可核实的持有者
+
+- `getThreadLiveInvocations` 不再读草稿、不再有宽限窗口，也不再输出 `zombies[]`。一个成员算「正在处理」，
+  当且仅当它的调用记录为 running，并且有一个不依赖时间戳、可以核实的持有者：
+  - 本进程的 InvocationTracker 持有该成员的槽位，且 executionId 与记录一致（来源 `record+tracker`）；或
+  - 调用方取到的 CLI owner 快照里，有这个成员、这次执行的存活 owner，即它的 supervisor 进程仍在
+    （`record+owner`）。快照即使不完整，已列出的 owner 也是核实过的。
+
+  R 若已建立，还必须处于 processing（由 `live-invocation-projection` 过滤）。槽位在、记录还没置为 running 的
+  那几次 await 仍算正在处理（`tracker-only`）；追踪器说不出执行 id 的槽位也照样列出（`tracker-only`，不带
+  executionId，路由把它显示为 `unresolved:…`，停止照常可用，F295 已有这条契约）。删除的来源：`record+draft`、
+  `tracker+draft`、`parent+child-draft`、`record-only` 按时间给的宽限（`liveness_pending`），以及全部 zombie 判定。
+- **持久的 running 子轮本身不是持有证据**（砚砚 `…1174`）。CLI owner 快照不完整时，启动结算整段跳过中断
+  （`index.ts` 的 `cli_execution_owner_snapshot_incomplete` 分支），上一个进程的 running 子轮原样保留；
+  `InvocationOwnerReaper.classifyIndependentOwner` 也把有 running 子轮的执行判为 active。所以：
+  - **快照完整**：没有槽位、也没有存活 owner 的 running 子轮不算正在处理；
+  - **拿不到快照，或快照不完整**：无法核实 owner 在不在，running 子轮保守地代替 owner，成员仍算正在处理，
+    但标为 degraded（来源 `parent+child-execution`，reason `child_running_owner_unverified`）。能活过本进程的
+    owner，一定在本进程启动之前就开始了这一轮，也就建好了子轮，所以子轮是它唯一可用的替身；
+  - **快照不完整**（调用方取了快照，但读不全）：一条 running 记录如果槽位、owner、子轮都没有列出它，就按它的
+    目标成员保守列出（来源 `record-only`，reason `record_running_owner_unverified`，开始时间取记录的
+    `updatedAt`）。这是 AC-E7 已有的契约：真相未知时，控制面（执行条、「正在发生」、GET /queue）不能把 running
+    记录藏起来，要让用户停得了它。记录只要已经有一个成员被列出，就不再补列其他成员：这条执行在控制面上已经
+    看得见、停得了，其他成员不是已经结束，就是还在接力里排队，不该显示为正在处理；
+  - **调用方没取快照**（侧栏 presence、session seal 只问「这里有没有人在跑」）：槽位、owner、子轮都没有的
+    running 记录不算正在处理。
+- **为什么不单列「待对账」**：`…1174` 建议证据不全时显示「待对账」。这和 KD-10（co-creator 09-03：用户只有
+  运行 / 未运行两态，停止是唯一的用户动作）以及 AC-E7（退役「运行状态待确认」横幅）冲突，所以不新增这一态，
+  改为保守地显示为运行中：用户看得到它，也停得了它，停止在快照不完整时有界重试后按 failed
+  （`control_plane_unavailable`）终局（AC-E7）。它也不会无限挂着：下一次拿到完整快照，read-repair 就会收尾
+  （见下）。启动场景本来就不会挂着：`StartupReconciler.sweepRunning` 把上一个进程遗留的 running 调用记录一律
+  标成 failed（`process_restart`），不看快照也不看子轮，而这里要求调用记录为 running。
+- **快照从哪来**：classifier 只有一个入口 `resolveActiveInvocationsStrict`（及其 fail-open 包装）。
+  - GET /queue 和 active-execution 路由（执行条、「正在发生」拉取活跃执行时）在配置了 owner 服务时，把本次
+    请求的快照（`processOwnerSnapshotForRequest`，同一请求只读一次）传进来；同一份快照也用来把 owner 列为可
+    停止的候选，以及做 read-repair。
+  - 侧栏 presence 与 active-execution 服务的定性通道不取快照，按「无法核实」处理：running 子轮仍代替 owner，
+    但不补列没有任何证据的记录（见上）。这些调用方不为每次请求多跑一次进程表扫描。
+- **read-repair**（`resolveAndRepairLiveExecutions`，active-execution 路由读取时触发；本文较早的段落称它为
+  「GET /queue 的 read-repair」）：快照完整时，把「running 超过 30 秒（`DEFAULT_PRESTART_RESERVATION_TTL_MS`）、
+  本进程没有槽位、也没有存活 owner」的记录判为失败（`execution_owner_lost`），经 KD-21 的结算把 R 收成终态、
+  带上草稿正文。快照不完整时它不收尾任何记录。
+- **一只猫只显示一个槽位**：同一只猫可能同时有几条候选（例如旧执行的无法核实子轮，和本进程持有的新槽位），
+  取证据最强的一条：本进程槽位与存活 owner 最强，只持有槽位的预启动窗口次之，无法核实的子轮和记录最弱；
+  同一档取最早开始的一条。
+- **开始时间**：本进程槽位取它已绑定的 activeRun 的开始时间，也就是这一轮自己的开始；还没绑定时取占槽时间。
+  多猫接力时，槽位在接力开始时就被占住，用 activeRun 才不会让后接棒的成员从整条接力开始计时（F194 Phase Z4）。
+- **pre-start 的投影**：QueueProcessor 只在 `invocationTracker.startAll` 成功之后才把记录置为 running
+  （`executeEntry`：`startAll` → 可能停在 session-seal 等待 → `update(status:'running')`）。所以：
+  - **只持有 processing 预留**（记录仍是 queued）：不是 running，不进这个投影（今天也不进），
+    read-repair 只扫 running 记录，同样碰不到它；
+  - **槽位已被持有、R 还没建立**（例如 invoke-single-cat 在等 session custody）：由槽位单独证明，
+    不需要 R，也不受时间影响。
+  read-repair 对 running 记录的持有者检查（tracker 槽位或 CLI owner）因此覆盖所有合法持有者：超过 30 秒、
+  但槽位仍被持有的慢启动不会被误收尾。
+- 口径与 `thread-execution-situation` 使用的 `hasExactLifecycleProcessingDispatch`（R processing + 本进程
+  active run）一致；那个原语按 source message 取数，classifier 按调用记录取数，所以共用判断规则，不共用入口。
+- 消费方（GET /queue 的 `activeInvocations`、active-execution 路由、侧栏 presence）的返回形状不变，
+  只是不会再因为「草稿久未更新」把正在跑的一轮藏掉。
+- 删除 `record_zombie_detected` / `liveness_pending` 事件（连同 classifier 的 onLog 钩子）。值班简报不再把运行中的
+  调用列为死球：只有 failed 记录是死球，running 一律计入 healthy，也不再贡献「心跳年龄」（F233 的简报已于
+  08-17 sunset，球权事件账本保留）。
+- **保留**真正收尾的路径：`InvocationOwnerReaper` + `reconcileZombies`（持久化的 reason
+  `zombie_record_detected` 保持原名，兼容历史数据），KD-21 的启动结算，read-repair。三者都不读草稿。
+- **待砚砚确认、本 phase 暂不实现的缺口**（Phase 1 就存在）：启动时被保留的 running 子轮（快照不完整，或
+  owner 还活着），父记录已被 `sweepRunning` 标成 failed，子轮不进 response-pending 账本，它的 R 会一直停在
+  processing，执行条上也没有它，只能等下次重启、且 owner 已不在时才结算。提议：子轮本身保持 running（保住
+  callback 授权），R 立即按 KD-21 结算（中断，带草稿正文）。理由是 R 的流式正文只由 API 进程里的 route 写入，
+  重启后不会再有新内容进这个 R；CLI 若还活着，它通过 callback 发的是新消息。需先核实没有 carrier 能跨重启
+  接回同一轮的流式输出（Codex app-server 的 host 复用只在单个进程内）。
+- **测试**：classifier（tracker、owner、快照完整与不完整时的子轮、快照不完整时没有任何证据的记录、说不出
+  执行 id 的槽位、预启动窗口、范围隔离、存储失败上抛、开始时间）；GET /queue 与 /messages 配对（只有草稿时 /messages 仍显示处理中的 R、/queue 不列这个成员；两个
+  父执行时本进程槽位胜出，读取不收尾任何一方）；侧栏 presence（只有草稿不算 working；tracker 空但子轮在跑
+  仍算 working）；值班简报（failed 才是死球）。
+- F194 文档写一条 post-close 更正（F194 已于 05-12 完成，本实例没有 owner thread）。
+
+#### J4 · KD-22：每个成员只有一个超时，触发后走 Stop
+
+现状有三层，各自收尾，结果互相矛盾：
+- **CLI 层**（cli-spawn 的无输出定时器，CPU 忙时有上限地顺延）：R 为 failed，reason 是 `PROVIDER_EXECUTION_FAILED`；
+- **外层 2× 定时器**（invoke-single-cat）：R 为 failed/`provider_error`；在等 session custody 时，R 甚至记为 completed；
+- **carrier 自带的定时器**（Codex app-server 空闲中断、tmux 空闲、AGY `--print-timeout`）：只发 status，R 记为 completed。
+
+TurnExecution 又是 `invocation_timeout`；重启后的 settlement 再把它抄进 R。
+
+- **唯一的定时器放在 invoke-single-cat**：它对每个成员、每种 carrier 都只跑一次。只有实际输出才重置，
+  判定按语义，不只看 `AgentMessage.type`：
+  - **算输出**：text、tool_use/tool_result、thinking，以及 `system_info` 里载荷为 thinking 或 rich_block 的事件；
+  - **不算输出**：provider_signal、liveness_signal、status，以及其余 `system_info`（liveness_warning、
+    timeout_diagnostics、invocation_created、routing 回执等）。
+- **CPU 顺延**：触发时若成员进程正占用 CPU，则顺延，但距上一次实际输出总共不超过 2×`CLI_TIMEOUT_MS`。
+  上限按「距上次输出」计，而不是现在的「距 spawn」：否则一个跑了很久、一直有输出的成员，后面就再也拿
+  不到顺延。进程状态从 cli-spawn 的 liveness probe 按 invocation 读；没有进程号的常驻 carrier 不顺延。
+- **触发 = Stop**：与「停止」走同一个成员级取消，abort reason 不同。QueueProcessor 经 route options 给
+  invoke-single-cat 注入成员 stop hook `stopMember(catId, executionId, reason)`。`executionId` 必须是
+  **父执行 ID**，即 invoke-single-cat 的 `executionParentInvocationId`（`params.parentInvocationId`，
+  QueueProcessor 用它 `startAll` 占槽），不是 invoke-single-cat 自己在 `registry.create` 得到的子轮 ID。
+  传子轮 ID 会让下面的比对永远不等，超时静默失效。实现为：
+  1. 同步比对 `invocationTracker.getExecutionId(threadId, catId) === executionId`。不一致（槽位已换成
+     下一次执行）就什么都不做，只记日志；比对与下一步之间没有 await；
+  2. 调用 `invocationTracker.cancel(threadId, catId, ownerUserId, 'timeout')`。签名是
+     `(threadId, catId, requestUserId?, abortReason?)`；`ownerUserId` 是这次执行的 owner，所以 tracker
+     的 owner 校验成立。只 tombstone 这一个成员的 controller。
+
+  abort 之后由这次执行自己收尾：invoke-single-cat 的 `abortableNext` 在 provider 不再产出时也会结束；
+  cli-spawn 在 abort 时杀进程；route 提交 R；QueueProcessor 释放槽位。Stop 路由另外做的锁释放、取消广播、
+  槽位释放，是为可能已经卡死的执行准备的；超时发生在仍然存活的执行内部，这些由正常收尾完成，
+  不重复广播「已取消」。测试走真实派发（父执行 ID 与子轮 ID 不同），必须断言：这个成员真的被取消，
+  tombstone 的 reason 为 `timeout`，同一轮的其他成员照常跑完；旧一轮遗留的定时器触发时，不能取消后来
+  占到同一槽位的新一轮。
+  abort reason `timeout` 被映射为：
+  - R failed / `timeout`；
+  - TurnExecution failed / `timeout`；
+  - Queue 结果为 failed，不再被当成 `canceled_by_user`；
+  - routing 信号计为 `provider_timeout`。
+
+  超时诊断在 abort 之前由定时器留存，R 提交时附上，因为 abort 之后到达的事件会被 route 丢弃。
+- **删除**：外层 2× 定时器与 `invocation_timeout` 路径；cli-spawn 为 invocation 设的无输出定时器与
+  `__cliTimeout` 的超时产出（liveness probe 保留，供顺延判断）；Codex app-server 空闲中断、tmux 空闲、
+  AGY `--print-timeout` 这些由 `CLI_TIMEOUT_MS` 驱动的定时器；#774 对超时的自愈重试。统一超时走 Stop，
+  #774 本来也看不到它；tmux 首事件看门狗在 resume 旧 session 时的重试另算，见下表。
+
+**与 `CLI_TIMEOUT_MS` 无关、也能结束成员的计时器**（普查 @`69a60d7af`）：
+
+| 计时器 | 量的是什么 | 默认；`CLI_TIMEOUT_MS=0` 时 | 触发后 R | 类别 |
+|---|---|---|---|---|
+| A2A 请求（`A2AAgentService`） | 整个 `tasks/send` 往返；不流式，等于整轮 | 120 s，生产不可配；照常生效 | failed / `provider_error`；远端任务不取消 | 整轮预算 |
+| Claude bg carrier | 从开工到终态的墙钟 | 30 min；照常生效 | failed / `provider_error` | 整轮预算 |
+| ACP idle stall（及其 +60 s 兜底） | 两次 session 更新的间隔 | 池 idleTtl，默认 30 min；照常生效 | failed / `PROVIDER_EXECUTION_FAILED`（`stream_idle_stall`） | 重复的无输出超时 |
+| Antigravity stall | 没有新步骤 | 60 s，最多再轮询 2 次；照常生效 | failed / `PROVIDER_EXECUTION_FAILED` | 重复的无输出超时 |
+| Claude interactive-PTY 静默 | 两次 hook 事件（只有 Stop / PostToolUse）的间隔 | 5 min；照常生效 | **completed**：静默被当成完成 | 重复的无输出超时，且被报成成功 |
+| tmux 首事件 | 建 pane 到第一条可解析的 JSON | 30 s；照常生效 | failed / `PROVIDER_EXECUTION_FAILED`；resume 时 #774 换新 session 重试一次 | 启动看门狗 |
+| 其他启动期调用 | ACP setup 60 s、Codex app-server socket 10 s / 握手 3 s、tmux 命令 5 s | 照常生效 | 启动失败 | 启动看门狗 |
+
+启动看门狗管的是「成员根本没起来」，不是「起来以后没有输出」，不属于 KD-22 的超时，本批保留。另外三类（整轮预算、
+重复的无输出超时）与 KD-22「每个成员只有一个超时」直接冲突。把它们并进来，会让 #1398 再扩到 A2A、bg、ACP、
+Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这些 carrier 卡住以后只能手动停。
+是否本批并入，交 co-creator 决定。决定之前，J4 只统一上面三层由 `CLI_TIMEOUT_MS` 驱动的超时，本表各项保持现状。
+
+#### J.不变量
+
+- **INV-J1** 草稿存在 ⇒ 它的 R 处于 processing，或这一轮仍在 response-pending 账本里。反过来不成立：
+  processing 的 R 可以还没有草稿，也可能已被 route 的提前清理删掉。一轮离开账本之前，必须已确认 R 终局
+  （或确认没有 R），并且草稿删除成功。
+- **INV-J2** 「正在处理」只由 R 的状态与可核实的持有者（本进程槽位，或 owner 快照里的存活 CLI owner）决定，
+  不读任何时间戳、也不读草稿；无法核实 owner 时，running 子轮代替它，成员仍显示为运行中（KD-10 只有两态）。
+- **INV-J3** 由 `CLI_TIMEOUT_MS` 驱动的无输出超时，每个成员至多一个（0 = 不超时）；它只能以 Stop 的方式
+  结束成员，并且只结束这一个成员。co-creator 决定之前，本不变量只约束 `CLI_TIMEOUT_MS` 驱动的超时：ACP、
+  Antigravity、PTY 仍各有自己的无输出计时器（J4 表），不能宣称每个成员事实上只有一个无输出超时。若决定保留
+  它们，KD-22 也改用这个限定口径。
+
+#### J.设计复审结论（砚砚 `…1156`，据此修订）
+
+1. **#774 对超时的自愈重试随 J4 删除**：它在 resume 旧 session、没有实质输出就超时时，吞掉超时并重跑一次。
+   统一超时之后，超时是可以重发的普通失败，不应被静默吞掉。tmux 首事件看门狗在 resume 时的重试不在此列：
+   它恢复的是根本没起来的成员（见 J4 表），本批保留，请复审确认。
+2. **J3 的 600 秒宽限可以去掉**，前提是上文的 pre-start 论证与那两条测试成立：running 记录必然已持有槽位；
+   只持有预留的是 queued 记录。
+3. **J2 不设兜底过期**：删稿失败必须留在持久账本里，`no_response` 同样先删后清，并有重启重试的测试。
+   这些已在 J2 实现。
+4. **分两轮交审**：J1+J2+J3 一轮，J4 一轮。
+5. **KD-25 的已知边界（砚砚 P3，`…1122`）**：领取前的同步复核与 Redis Lua `claimPrefix` 之间隔一次存储往返。
+   这期间先提交的重排不被 Lua 校验，所以还不能宣称严格线性化保序；旧的队头检查也有同样窗口。若要求严格，
+   需在 claim 的原子边界校验队列 revision 或前驱。本批不改，只记录。
+
+#### J.设计复审结论（砚砚 `…1174`，据此修订）
+
+1. **J4 的 stop hook 传父执行 ID**：见 J4「触发 = Stop」；测试用父子 ID 不同的真实派发，并测旧一轮的定时器
+   不能取消新一轮。
+2. **持久 running 子轮不能单独证明有人持有**：J3 改为只认本进程槽位或 owner 快照里的存活 owner；快照完整而两者
+   都没有时不算正在处理。快照不完整时，没有任何证据的 running 记录也保守列出，保持 AC-E7 的契约。复审建议的「待对账」与 KD-10 / AC-E7 冲突，没有采用：无法核实时保守地显示为运行中，
+   由停止（AC-E7）或下一次完整快照时的 read-repair 收尾（见 J3「为什么不单列『待对账』」）。这一取舍待砚砚复审确认。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in
@@ -892,3 +1095,5 @@ evidence that main composition roots survived.
 - Phase I: 登记表（I.2）必须先于实现更新；跨族 reviewer 核验 INV-I1..I4 与 I.3 三项剩余收口，
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase H: 「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」实现与跨族复审已完成；co-creator 的完整 worktree UAT 仍覆盖初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart
+- Phase J: 设计（J1–J4 与 INV-J1..J3）先过跨族复审再实现；J1+J2+J3 一轮、J4 一轮，各自 exact-HEAD 复审。
+  co-creator worktree 体验验收与 fork soak 仍是上游前硬门
