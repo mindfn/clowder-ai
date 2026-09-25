@@ -1164,9 +1164,9 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
   再试」。GitHub wait 的 outcome 因此大约每 30 秒重投一次、只打 warn，没有终态（#1487 实测失败 1,374 次）。
 - **规则**：
   - `deliverConnectorMessage` 在没收下时带上 `rejection: 'conflict' | 'unavailable'`（新增字段，原有调用方不受影响）。
-  - GitHub wait 遇到 `conflict`：outcome 转成新的终态 `delivery: 'queue_conflict'`，打 error 级告警（带 taskId、
-    outcomeId、key），并写入生命周期事件；这次观察随后照常继续，后续观察可以产生新的 outcome。`unavailable`
-    仍按 L1 等下一次重试。
+  - GitHub wait 遇到 `conflict`：outcome 转成新的终态 `delivery: 'queue_conflict'`，打一次 error 级告警（带 taskId
+    和 outcomeId；outcomeId 就是投递键），终态本身持久化在任务状态上；这次观察随后照常继续，后续观察可以产生新的
+    outcome。`unavailable` 仍按 L1 等下一次重试。
   - 为什么终态不会丢信息：#1528（投递键带上任务 id）之后，同一个 key 冲突只可能是同一个 outcome 在升级前后渲染
     不同，owner 已经收到过较早的那一份；#1528 之前跨任务撞键的那一类由 #1528 消除。
 - **同类审计**：会「保留游标、下次再试」的调用方只有 GitHub wait 和 IssueCommentRouter。IssueCommentRouter 在
