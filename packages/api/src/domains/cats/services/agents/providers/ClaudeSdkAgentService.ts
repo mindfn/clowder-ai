@@ -300,7 +300,9 @@ export class ClaudeSdkAgentService implements AgentService {
           // result on the clean path; a crash may reverse those two, and the
           // identity join remains correct in either order. queued_turn_count
           // provides a provider-authored backstop when a result lacks an input
-          // identity (including an interrupted-turn compatibility edge).
+          // identity (including an interrupted-turn compatibility edge). A turn
+          // the provider started itself, such as a killed task's notification,
+          // settles none of our inputs.
           turnInputs.settleResult(raw);
           metadata.usage = extractClaudeUsage(raw);
           if (streamState.lastTurnInputTokens != null && metadata.usage) {
