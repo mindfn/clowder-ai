@@ -70,7 +70,7 @@ test('collectZombies (F117 KD-23): failed records are dead balls; a running reco
 });
 
 test('collectZombies: scanAll 不可用（in-memory store）→ degraded=true，空结果但不伪装完整数据面', async () => {
-  const { zombies, runningCount, degraded } = await collectZombies({}, { getByThread: async () => [] }, 'u', NOW);
+  const { zombies, runningCount, degraded } = await collectZombies({}, 'u');
   assert.deepEqual(zombies, []);
   assert.equal(runningCount, 0);
   assert.equal(degraded, true);

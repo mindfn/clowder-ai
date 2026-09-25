@@ -6,7 +6,8 @@
  *   drafts:idx:{userId}:{threadId}            → Set (invocationId members)
  *
  * 不设过期（F117 KD-21/KD-23）：草稿活到它的 response R 终局；删除失败由 response-pending 账本在下次
- * settlement 时重试。升级前写入的 key 仍带旧的 EXPIRE，upsert 用 HSET 不会清除它，按原时间自然过期。
+ * settlement 时重试。升级前写入的 key 带着旧的 EXPIRE，HSET / SADD 不会清除它；索引 key 按 thread 共用，
+ * 旧 EXPIRE 到期会连带删掉升级后新写入的草稿引用，所以 upsert 顺手 PERSIST 两个 key。
  */
 
 import type { CatId } from '@cat-cafe/shared';
@@ -45,6 +46,8 @@ export class RedisDraftStore implements IDraftStore {
     pipeline.hsetnx(detailKey, 'createdAt', createdAtForMissing);
     pipeline.hset(detailKey, fields);
     pipeline.sadd(indexKey, draft.invocationId);
+    pipeline.persist(detailKey);
+    pipeline.persist(indexKey);
     await pipeline.exec();
   }
 

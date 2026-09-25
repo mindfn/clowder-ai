@@ -27,6 +27,11 @@ class FakePipeline {
     return this;
   }
 
+  persist(key) {
+    this.ops.push(() => this.redis.persist(key));
+    return this;
+  }
+
   async exec() {
     const results = [];
     for (const op of this.ops) {
@@ -41,6 +46,7 @@ class FakeRedis {
     this.hashes = new Map();
     this.sets = new Map();
     this.expired = [];
+    this.ttls = new Map();
   }
 
   multi() {
@@ -81,7 +87,12 @@ class FakeRedis {
 
   async expire(key, seconds) {
     this.expired.push([key, seconds]);
+    this.ttls.set(key, seconds);
     return 1;
+  }
+
+  async persist(key) {
+    return this.ttls.delete(key) ? 1 : 0;
   }
 }
 
@@ -131,5 +142,27 @@ describe('RedisDraftStore createdAt migration', () => {
     assert.deepEqual(redis.expired, [], 'a draft lives until its R ends, however long the turn is silent');
     assert.equal(typeof store.touch, 'undefined', 'nothing renews a draft on a timer any more');
     assert.equal(await redis.hget('draft:user-1:thread-1:inv-silent', 'content'), 'streamed so far');
+  });
+
+  it('clears the expiry a pre-KD-23 write left on the thread index and the draft', async () => {
+    const { RedisDraftStore } = await import('../dist/domains/cats/services/stores/redis/RedisDraftStore.js');
+    const redis = new FakeRedis();
+    const store = new RedisDraftStore(redis);
+    // The old store gave the per-thread index a 300 s expiry; a turn after the upgrade shares that index.
+    await redis.sadd('drafts:idx:user-1:thread-1', 'inv-before-upgrade');
+    await redis.expire('drafts:idx:user-1:thread-1', 300);
+    await redis.expire('draft:user-1:thread-1:inv-after-upgrade', 300);
+
+    await store.upsert({
+      userId: 'user-1',
+      threadId: 'thread-1',
+      invocationId: 'inv-after-upgrade',
+      catId: 'opus',
+      content: 'a turn after the upgrade',
+      updatedAt: 2000,
+    });
+
+    assert.equal(redis.ttls.has('drafts:idx:user-1:thread-1'), false, 'the old expiry would drop the new draft');
+    assert.equal(redis.ttls.has('draft:user-1:thread-1:inv-after-upgrade'), false);
   });
 });

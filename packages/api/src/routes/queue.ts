@@ -825,7 +825,9 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     request: FastifyRequest,
   ): Promise<LiveExecutionCandidate[]> => {
     const candidates = await resolveLiveExecutionCandidates(threadId, userId, request, opts);
-    if (!opts.invocationRecordStore) return candidates;
+    // Without an owner service nobody can tell whether a process owns a running record: the
+    // classifier then lists it as unverified, and repairing it here would erase that.
+    if (!opts.invocationRecordStore || !opts.cliExecutionOwnerService) return candidates;
     const processSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
     if (!processSnapshot.complete) return candidates;
     const ownerExecutionTargets = new Set(
