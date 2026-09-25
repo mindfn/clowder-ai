@@ -329,3 +329,67 @@ describe('PersonalChromeAssistantReturnPoller', () => {
     ]);
   });
 });
+
+describe('PersonalChromeAssistantReturnPoller when the Host Adapter is unavailable', () => {
+  function unavailable() {
+    return Object.assign(new Error('personal Chrome Host Adapter is not installed'), { code: 'HOST_UNAVAILABLE' });
+  }
+
+  function harness(options: { failures: number }) {
+    let clock = 0;
+    let remainingFailures = options.failures;
+    const calls: number[] = [];
+    const logs: string[] = [];
+    const poller = new PersonalChromeAssistantReturnPoller({
+      adapter: {
+        list_assistant_returns: async () => {
+          calls.push(clock);
+          if (remainingFailures > 0) {
+            remainingFailures -= 1;
+            throw unavailable();
+          }
+          return [];
+        },
+        ack_assistant_return: async () => {},
+      },
+      ingestService: { ingest: async () => ({ status: 'duplicate', messageId: 'unused' }) },
+      logger: {
+        debug: (_context, message) => logs.push(message),
+        warn: (_context, message) => logs.push(message),
+      },
+      grantPersistence: 'durable',
+      now: () => clock,
+    });
+    return {
+      calls,
+      logs,
+      async tickUntil(untilMs: number) {
+        for (; clock <= untilMs; clock += 1_000) await poller.drainOnce();
+        clock -= 1_000;
+      },
+    };
+  }
+
+  it('backs off to one check a minute and logs the state change once, not every second', async () => {
+    const h = harness({ failures: Number.POSITIVE_INFINITY });
+
+    await h.tickUntil(180_000);
+
+    // 2s, 4s, 8s, 16s, 32s, then capped at 60s: a handful of checks, not one per second.
+    assert.deepEqual(h.calls, [0, 2_000, 6_000, 14_000, 30_000, 62_000, 122_000]);
+    assert.equal(h.logs.length, 1, `one line when polling backs off, got ${JSON.stringify(h.logs)}`);
+    assert.match(h.logs[0], /unavailable/);
+  });
+
+  it('resumes the normal cadence as soon as the adapter answers, with one line', async () => {
+    const h = harness({ failures: 3 });
+
+    await h.tickUntil(20_000);
+
+    // Fails at 0, 2s, 6s; answers at 14s, then polls every second again.
+    assert.deepEqual(h.calls.slice(0, 5), [0, 2_000, 6_000, 14_000, 15_000]);
+    assert.equal(h.calls.at(-1), 20_000);
+    assert.equal(h.logs.length, 2, `one line to back off, one to resume, got ${JSON.stringify(h.logs)}`);
+    assert.match(h.logs[1], /resumed/);
+  });
+});
