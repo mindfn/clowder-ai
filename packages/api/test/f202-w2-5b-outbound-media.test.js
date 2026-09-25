@@ -290,6 +290,30 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
     assert.ok(wire.includes('remote.pdf: https://example.com/r.pdf'));
   });
 
+  // Re-review P1 (…5828779117): the successful media_ref still used the platform basename, so on a
+  // POSIX Host a Windows path in fileName (`C:\\…\\report.pdf`) went out verbatim.
+  test('(7c) POSIX and Windows path-shaped fileNames stay off the wire, on success and on failure', async () => {
+    await appendAndSettle(
+      catReply([
+        { id: 'ok-posix', kind: 'file', v: 1, url: '/uploads/report.pdf', fileName: '/private/secrets/report.pdf' },
+        { id: 'ok-win', kind: 'file', v: 1, url: '/uploads/report.pdf', fileName: 'C:\\private\\secrets\\report.pdf' },
+        { id: 'gone-posix', kind: 'file', v: 1, url: '/uploads/missing.pdf', fileName: '/private/secrets/gone.pdf' },
+        { id: 'gone-win', kind: 'file', v: 1, url: '/uploads/missing.pdf', fileName: 'C:\\private\\secrets\\gone.pdf' },
+      ]),
+    );
+
+    const envelope = (await published())[0].envelope;
+    const wire = JSON.stringify(envelope);
+    for (const leak of ['private', 'secrets', 'C:', '\\\\']) {
+      assert.equal(wire.includes(leak), false, `${leak} must not reach the wire`);
+    }
+    const [, okPosix, okWin, gonePosix, goneWin] = envelope.payload.elements;
+    assert.equal(okPosix.payload.fileName, 'report.pdf');
+    assert.equal(okWin.payload.fileName, 'report.pdf');
+    assert.equal(gonePosix.payload.text, '[file: gone.pdf]');
+    assert.equal(goneWin.payload.text, '[file: gone.pdf]');
+  });
+
   test('(8) an external https file becomes an explicit text link; nothing is fetched', async () => {
     const stored = await appendAndSettle(
       catReply([{ id: 'doc', kind: 'file', v: 1, url: 'https://example.com/report.pdf', fileName: 'report.pdf' }]),

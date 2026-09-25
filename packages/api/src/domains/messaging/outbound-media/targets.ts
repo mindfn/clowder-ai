@@ -57,20 +57,26 @@ export function extensionForMimeType(mimeType: string | undefined): string | und
   return mimeType ? EXTENSION_BY_MIME[mimeType] : undefined;
 }
 
+/**
+ * The base name of a file name or path, whatever separator style it uses. The callback schema
+ * accepts any non-empty `fileName`, and a Windows path has no `/` for the POSIX `basename` to cut
+ * at — so both separators are normalized first (review P1s, comments 5828208840 / 5828779117).
+ */
+function baseNameOf(name: string): string {
+  return basename(name.replace(/\\/g, '/')).trim();
+}
+
 /** A file name the wire accepts (1..512) and that carries an extension, or nothing. */
 export function usableFileName(name: string | undefined): string | undefined {
   if (!name) return undefined;
-  const trimmed = Array.from(basename(name)).slice(-512).join('');
+  const trimmed = Array.from(baseNameOf(name)).slice(-512).join('');
   return trimmed.length > 0 && extname(trimmed).length > 1 ? trimmed : undefined;
 }
 
-/**
- * The wire label for a file name: its base name only. The callback schema accepts any non-empty
- * `fileName`, so a path there must never reach an envelope through a fallback label (review P1).
- */
+/** The wire label for a file name: its base name only, never a path (fallback and link text). */
 function fileLabel(name: string | undefined): string | undefined {
   if (!name) return undefined;
-  const base = basename(name.replace(/\\/g, '/')).trim();
+  const base = baseNameOf(name);
   return base.length > 0 ? base : undefined;
 }
 
