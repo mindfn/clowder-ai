@@ -424,7 +424,10 @@ export class GitHubWaitLifecycleService {
       userId: task.userId ?? '',
       catId: task.ownerCatId ?? '',
       content,
-      idempotencyKey: outcome.outcomeId,
+      // #1392: the key belongs to the task. outcomeIds restart at g1 when tracking is unregistered and
+      // re-registered, so a bare outcomeId let the store hand the new notification back as a replay
+      // of the old task's message. Every other delivery key in this domain carries its owner's id.
+      idempotencyKey: `github-wait:${task.id}:${outcome.outcomeId}`,
       source: {
         connector: 'github-wait',
         label: 'GitHub Wait',
