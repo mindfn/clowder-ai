@@ -64,6 +64,16 @@ export function usableFileName(name: string | undefined): string | undefined {
   return trimmed.length > 0 && extname(trimmed).length > 1 ? trimmed : undefined;
 }
 
+/**
+ * The wire label for a file name: its base name only. The callback schema accepts any non-empty
+ * `fileName`, so a path there must never reach an envelope through a fallback label (review P1).
+ */
+function fileLabel(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const base = basename(name.replace(/\\/g, '/')).trim();
+  return base.length > 0 ? base : undefined;
+}
+
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
@@ -100,7 +110,7 @@ export function planOutboundMedia(msg: StoredMessage): OutboundMediaTarget[] {
         elementId,
         type: 'file',
         url,
-        label: stringField(block, 'fileName') ?? 'file',
+        label: fileLabel(stringField(block, 'fileName')) ?? 'file',
         ...(fileName ? { fileName } : {}),
         ...(mimeType ? { mimeType } : {}),
       });

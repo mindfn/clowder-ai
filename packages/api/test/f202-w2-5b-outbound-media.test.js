@@ -248,6 +248,22 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
     }
   });
 
+  // Review P1 (…5828208840): a failed block's fallback label came from the raw fileName, and the
+  // callback schema accepts any non-empty fileName — a path there reached the wire.
+  test('(7b) a failed or external block is labelled by base name only, never by a path-shaped fileName', async () => {
+    await appendAndSettle(
+      catReply([
+        { id: 'gone', kind: 'file', v: 1, url: '/uploads/missing.pdf', fileName: '/private/secrets/report.pdf' },
+        { id: 'ext', kind: 'file', v: 1, url: 'https://example.com/r.pdf', fileName: '/private/secrets/remote.pdf' },
+      ]),
+    );
+
+    const wire = JSON.stringify((await published())[0].envelope);
+    assert.equal(wire.includes('/private/secrets'), false, 'no path from fileName may reach the wire');
+    assert.ok(wire.includes('[file: report.pdf]'), 'the reader still learns which file is missing');
+    assert.ok(wire.includes('remote.pdf: https://example.com/r.pdf'));
+  });
+
   test('(8) an external https file becomes an explicit text link; nothing is fetched', async () => {
     const stored = await appendAndSettle(
       catReply([{ id: 'doc', kind: 'file', v: 1, url: 'https://example.com/report.pdf', fileName: 'report.pdf' }]),
