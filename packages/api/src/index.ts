@@ -5042,6 +5042,11 @@ async function main(): Promise<void> {
     intakes: meetingIntakeStore,
     messageStore,
     lifecyclePresentation: (threadId, catId) => deliveryPresentation(threadId, { kind: 'cat', id: catId }),
+    // P1.3: a v2 subscription's started names the message the invocation answers (origin, else A2A).
+    lifecycleTriggerMessageId: async (invocationId) => {
+      const record = await registry.getRecord(invocationId);
+      return record?.originTriggerMessageId ?? record?.a2aTriggerMessageId;
+    },
     deliveryPresentation,
     messagingStores,
     onMessagePublished: subscriptionDrainScheduler.schedule,

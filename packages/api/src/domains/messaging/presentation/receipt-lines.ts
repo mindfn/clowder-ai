@@ -1,6 +1,10 @@
 /**
  * F157: Feishu Receipt Ack — per-cat receipt text word bank.
  *
+ * F202 P1.3: the Host picks the line for a v2 lifecycle subscription's `started.placeholderLine`,
+ * so the word bank lives with the messaging domain; the legacy Feishu hook reads it from here
+ * until W2-4 deletes that hook.
+ *
  * When a user sends a message on Feishu, the bot immediately replies with a
  * short, personality-matched "receipt" text instead of a generic "🤔 思考中..."
  * placeholder. Texts are sourced from the F124 KD-11 voice comfort callout

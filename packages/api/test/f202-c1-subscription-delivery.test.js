@@ -103,7 +103,7 @@ describe('F202 C1 — Host-driven subscription delivery', () => {
       subscriberId: SUBSCRIBER_A,
       threadId: THREAD_ID,
       handleId,
-      presentationV1: true,
+      presentationVersion: 'v1',
     });
     await produce('hello', 'k1');
     await delivery.drain(THREAD_ID);

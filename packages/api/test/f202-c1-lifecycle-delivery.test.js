@@ -322,7 +322,7 @@ test('a published final envelope is delivered between lifecycle started and sett
     handleId: 'handle-1',
     method: 'bridge.deliver',
     lifecycleMethod: 'bridge.lifecycle',
-    presentationV1: true,
+    presentationVersion: 'v1',
   });
   const lifecycle = createLifecycleDelivery({
     subscribers: (threadId) => delivery.lifecycleTargetsForThread(threadId),
@@ -446,7 +446,7 @@ test('the frozen host.messaging.deliver row also receives the final message life
     threadId: 'thread-1',
     handleId: 'handle-legacy',
     lifecycleMethod: 'host.messaging.lifecycle',
-    presentationV1: true,
+    presentationVersion: 'v1',
   });
   await delivery.drain('thread-1');
   assert.equal(delivered[0].lifecycleId, lifecycleIdFor('invocation-legacy'));
@@ -486,4 +486,58 @@ test('wire lifecycle registration invokes the frozen Host method even when manif
   });
   await lifecycle.onStreamStart('thread-1', 'cat-1', 'invocation-wire');
   assert.deepEqual(calls, ['host.messaging.lifecycle']);
+});
+
+// P1.3 (W2-5c-p2): a v2 subscription's started carries the cat's receipt line every time (the old
+// Feishu placeholder never showed a generic "thinking"), and the trigger message id when there is one.
+function v2Fixture(triggerMessageId) {
+  const calls = [];
+  const lifecycle = createLifecycleDelivery({
+    subscribers: () => [
+      { subscriberId: 'feishu', method: 'feishu.lifecycle', wire: false, presentationVersion: 'v2' },
+      { subscriberId: 'dingtalk', method: 'dingtalk.lifecycle', wire: false, presentationVersion: 'v1' },
+    ],
+    supportsAction: () => true,
+    invoke: async (subscriber, _method, input) => {
+      calls.push({ subscriber, input });
+      return { deliveryId: input.deliveryId };
+    },
+    enqueueThread: async (_threadId, operation) => operation(),
+    drain: async () => undefined,
+    presentation: async (threadId, catId) =>
+      buildDeliveryPresentation(threadId, { kind: 'cat', id: catId, displayName: '宪宪' }),
+    triggerMessageId,
+  });
+  return { lifecycle, started: (subscriber) => calls.find((call) => call.subscriber === subscriber)?.input, calls };
+}
+
+const FALLBACK_RECEIPT_LINES = ['收到，马上处理。', '看到了，稍等。', '收到！'];
+
+test('P1.3: a v2 started carries a receipt line and the trigger message id; a v1 started carries neither', async () => {
+  const x = v2Fixture(async (invocationId) => (invocationId === 'invocation-1' ? 'msg-trigger-1' : undefined));
+
+  await x.lifecycle.onStreamStart('thread-1', 'cat-without-own-lines', 'invocation-1');
+
+  const v2 = x.started('feishu');
+  assert.ok(FALLBACK_RECEIPT_LINES.includes(v2.placeholderLine), 'a cat without its own lines gets a fallback line');
+  assert.equal(v2.replyTo, 'msg-trigger-1');
+  const v1 = x.started('dingtalk');
+  assert.equal('placeholderLine' in v1, false);
+  assert.equal('replyTo' in v1, false);
+  for (const { input } of x.calls)
+    assert.equal(validateMessagingRowInput('host.messaging.lifecycle', input).valid, true);
+});
+
+test('P1.3: without a trigger message, or when the lookup fails, a v2 started still goes out without replyTo', async () => {
+  for (const lookup of [async () => undefined, async () => Promise.reject(new Error('registry down'))]) {
+    const x = v2Fixture(lookup);
+
+    await x.lifecycle.onStreamStart('thread-1', 'opus', 'invocation-2');
+
+    const v2 = x.started('feishu');
+    assert.equal(typeof v2.placeholderLine, 'string');
+    assert.ok(v2.placeholderLine.length > 0);
+    assert.equal('replyTo' in v2, false);
+    assert.equal(validateMessagingRowInput('host.messaging.lifecycle', v2).valid, true);
+  }
 });

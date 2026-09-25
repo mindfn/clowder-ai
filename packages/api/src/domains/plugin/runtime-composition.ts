@@ -110,6 +110,8 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly intakes: MeetingIntakeStore;
   readonly messageStore: IMessageStore;
   readonly lifecyclePresentation?: LifecycleDeliveryDeps['presentation'];
+  /** Trigger message id of an invocation, for a v2 subscription's `started.replyTo` (P1.3). */
+  readonly lifecycleTriggerMessageId?: LifecycleDeliveryDeps['triggerMessageId'];
   readonly deliveryPresentation?: (
     threadId: string,
     actor: { kind: 'cat' | 'user' | 'plugin' | 'device' | 'system'; id: string },
@@ -451,6 +453,7 @@ export function createDormantPluginRuntimeComposition(
     presentation:
       options.lifecyclePresentation ??
       ((threadId, catId) => Promise.resolve(buildDeliveryPresentation(threadId, { kind: 'cat', id: catId }))),
+    ...(options.lifecycleTriggerMessageId === undefined ? {} : { triggerMessageId: options.lifecycleTriggerMessageId }),
     onError: (fields) => moduleLogger.error(fields, 'lifecycle delivery failed'),
   });
   const supervisor = new PluginRuntimeCarrierRouter(

@@ -5,6 +5,8 @@ import {
   validateMessagingRowInput,
   validateMessagingRowResult,
 } from '@clowder-ai/plugin-contract';
+import { pickReceiptLine } from './presentation/receipt-lines.js';
+import type { LifecycleTarget } from './subscription-delivery.js';
 
 export function lifecycleIdFor(invocationId: string): string {
   return `lifecycle_${createHash('sha256').update(invocationId).digest('hex').slice(0, 32)}`;
@@ -29,12 +31,16 @@ export function buildDeliveryPresentation(
 }
 
 export interface LifecycleDeliveryDeps {
-  readonly subscribers: (threadId: string) => readonly { subscriberId: string; method: string; wire: boolean }[];
+  readonly subscribers: (threadId: string) => readonly LifecycleTarget[];
   readonly supportsAction: (subscriberId: string, method: string) => boolean;
   readonly invoke: (subscriberId: string, method: string, input: HostMessagingLifecycleInput) => Promise<unknown>;
   readonly enqueueThread: (threadId: string, operation: () => Promise<void>) => Promise<void>;
   readonly drain: (threadId: string) => Promise<void>;
   readonly presentation: (threadId: string, catId: string) => Promise<DeliveryPresentationContext>;
+  /** The invocation's trigger message id — `started.replyTo` for v2 subscriptions (P1.3); none when unknown. */
+  readonly triggerMessageId?: (invocationId: string) => Promise<string | undefined>;
+  /** The cat's receipt line for a v2 placeholder; the F157 word bank (with its fallback lines) by default. */
+  readonly receiptLine?: (catId: string) => string;
   readonly now?: () => number;
   readonly actionTimeoutMs?: number;
   readonly onError?: (fields: { subscriberId: string; lifecycleId: string; state: string; errorKind: string }) => void;
@@ -45,6 +51,8 @@ interface InvocationState {
   readonly lifecycleId: string;
   readonly catId: string;
   presentation?: DeliveryPresentationContext;
+  /** What a v2 subscription's started carries beyond presentation; fixed once per invocation. */
+  v2Started?: { placeholderLine: string; replyTo?: string };
   catchingUpCount: number;
   blocked: boolean;
   ended: boolean;
@@ -174,7 +182,12 @@ export class LifecycleDelivery {
       const resolvedEvent = await event;
       for (const target of this.deps.subscribers(state.threadId)) {
         if (target.wire || this.deps.supportsAction(target.subscriberId, target.method)) {
-          await this.deliverToSubscriber(target.subscriberId, target.method, state, resolvedEvent, sequence);
+          // Declared, then sent: only a v2 subscription gets the receipt line and the trigger id.
+          const targeted =
+            resolvedEvent.state === 'started' && target.presentationVersion === 'v2' && state.v2Started
+              ? { ...resolvedEvent, ...state.v2Started }
+              : resolvedEvent;
+          await this.deliverToSubscriber(target.subscriberId, target.method, state, targeted, sequence);
         }
       }
     });
@@ -205,10 +218,13 @@ export class LifecycleDelivery {
     // final message overtake started. Queue consumption awaits the presentation in that slot.
     const started = this.emit(
       state,
-      this.deps.presentation(threadId, catId).then((presentation) => {
-        state.presentation = presentation;
-        return { lifecycleId: state.lifecycleId, threadId, state: 'started' as const, presentation };
-      }),
+      Promise.all([this.deps.presentation(threadId, catId), this.v2StartedFields(catId, invocationId)]).then(
+        ([presentation, v2Started]) => {
+          state.presentation = presentation;
+          state.v2Started = v2Started;
+          return { lifecycleId: state.lifecycleId, threadId, state: 'started' as const, presentation };
+        },
+      ),
     );
     this.starts.set(invocationId, started);
     try {
@@ -221,6 +237,25 @@ export class LifecycleDelivery {
       this.touch(invocationId);
     }
     return state;
+  }
+
+  /**
+   * P1.3: the old Feishu placeholder always showed a receipt line (the word bank falls back to
+   * generic lines), so a v2 started always carries one; `replyTo` lets the package add `→sender`
+   * from its own message map and is left out when the invocation has no trigger message.
+   */
+  private async v2StartedFields(
+    catId: string,
+    invocationId: string,
+  ): Promise<{ placeholderLine: string; replyTo?: string }> {
+    const placeholderLine = (this.deps.receiptLine ?? pickReceiptLine)(catId);
+    let replyTo: string | undefined;
+    try {
+      replyTo = await this.deps.triggerMessageId?.(invocationId);
+    } catch {
+      replyTo = undefined; // a lookup failure only costs the sender suffix, never the started event
+    }
+    return replyTo ? { placeholderLine, replyTo } : { placeholderLine };
   }
 
   async onStreamStart(threadId: string, catId: string, invocationId: string): Promise<void> {

@@ -108,8 +108,19 @@ export interface SubscriptionDeclaration {
   /** In-process packages expose their own action name; external runtimes keep the frozen row. */
   readonly method?: string;
   readonly lifecycleMethod?: string;
-  readonly presentationV1?: boolean;
+  /** Presentation contract the subscription declared (P1.3): both carry presentation; v2 also receipt line + replyTo. */
+  readonly presentationVersion?: PresentationVersion;
   readonly filter?: SubscriptionFilter;
+}
+
+export type PresentationVersion = 'v1' | 'v2';
+
+/** One lifecycle receiver on a thread, with the presentation contract its subscription declared. */
+export interface LifecycleTarget {
+  readonly subscriberId: string;
+  readonly method: string;
+  readonly wire: boolean;
+  readonly presentationVersion?: PresentationVersion;
 }
 
 interface Registration {
@@ -118,7 +129,7 @@ interface Registration {
   readonly handleId: string;
   readonly method?: string;
   readonly lifecycleMethod?: string;
-  readonly presentationV1?: boolean;
+  readonly presentationVersion?: PresentationVersion;
   readonly filter?: SubscriptionFilter;
 }
 
@@ -259,9 +270,10 @@ async function deliverPublishedEvent(
   const invocationId = await resolveInvocationId?.(event.envelope.messageId);
   const lifecycleId =
     invocationId === undefined || !registration.lifecycleMethod ? undefined : lifecycleIdFor(invocationId);
-  const deliveryPresentation = registration.presentationV1
-    ? await presentation(event.envelope.threadId, event.envelope.actor)
-    : undefined;
+  const deliveryPresentation =
+    registration.presentationVersion === undefined
+      ? undefined
+      : await presentation(event.envelope.threadId, event.envelope.actor);
   const media = isOwnEcho(event, registration) ? [] : deliveryMedia(event);
   if (media.length > 0 && !entitlements) throw new Error('media entitlement service is unavailable');
   let reason = 'action_returned';
@@ -317,7 +329,9 @@ export class SubscriptionDelivery {
       handleId: declaration.handleId,
       ...(declaration.method === undefined ? {} : { method: declaration.method }),
       ...(declaration.lifecycleMethod === undefined ? {} : { lifecycleMethod: declaration.lifecycleMethod }),
-      ...(declaration.presentationV1 === undefined ? {} : { presentationV1: declaration.presentationV1 }),
+      ...(declaration.presentationVersion === undefined
+        ? {}
+        : { presentationVersion: declaration.presentationVersion }),
       ...(declaration.filter === undefined ? {} : { filter: declaration.filter }),
     };
     const index = existing.findIndex((entry) => entry.subscriberId === declaration.subscriberId);
@@ -374,7 +388,7 @@ export class SubscriptionDelivery {
     return (this.byThread.get(threadId) ?? []).map((entry) => entry.subscriberId);
   }
 
-  lifecycleTargetsForThread(threadId: string): readonly { subscriberId: string; method: string; wire: boolean }[] {
+  lifecycleTargetsForThread(threadId: string): readonly LifecycleTarget[] {
     return (this.byThread.get(threadId) ?? []).flatMap((entry) =>
       entry.lifecycleMethod
         ? [
@@ -382,6 +396,7 @@ export class SubscriptionDelivery {
               subscriberId: entry.subscriberId,
               method: entry.method === undefined ? 'host.messaging.lifecycle' : entry.lifecycleMethod,
               wire: entry.method === undefined,
+              ...(entry.presentationVersion === undefined ? {} : { presentationVersion: entry.presentationVersion }),
             },
           ]
         : [],

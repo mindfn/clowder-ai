@@ -132,7 +132,9 @@ export function createPluginMessagingSubscriptionSession(
             return declared?.type === 'message-subscription'
               ? {
                   ...(declared.lifecycleAction ? { lifecycleMethod: declared.lifecycleAction.method } : {}),
-                  ...(declared.presentation === 'v1' ? { presentationV1: true } : {}),
+                  ...(declared.presentation === 'v1' || declared.presentation === 'v2'
+                    ? { presentationVersion: declared.presentation }
+                    : {}),
                 }
               : {};
           })(),

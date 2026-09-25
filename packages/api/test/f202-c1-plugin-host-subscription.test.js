@@ -105,9 +105,11 @@ async function publish(messaging, threadId, text, producer = 'producer-1') {
 describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
   test('manifest lifecycle and presentation declarations independently gate method input', async () => {
     for (const variant of [
-      { name: 'both', lifecycle: true, presentation: true },
+      { name: 'both', lifecycle: true, presentation: 'v1' },
+      { name: 'both-v2', lifecycle: true, presentation: 'v2' },
       { name: 'lifecycle', lifecycle: true, presentation: false },
-      { name: 'presentation', lifecycle: false, presentation: true },
+      { name: 'presentation', lifecycle: false, presentation: 'v1' },
+      { name: 'presentation-v2', lifecycle: false, presentation: 'v2' },
       { name: 'legacy', lifecycle: false, presentation: false },
     ]) {
       const h = createFixture();
@@ -120,7 +122,7 @@ describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
             binding: 'identity',
             action: { method: 'fixture.outbound' },
             ...(variant.lifecycle ? { lifecycleAction: { method: 'fixture.lifecycle' } } : {}),
-            ...(variant.presentation ? { presentation: 'v1' } : {}),
+            ...(variant.presentation ? { presentation: variant.presentation } : {}),
           },
         ],
       };
@@ -131,7 +133,16 @@ describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
       const targets = h.delivery.lifecycleTargetsForThread(thread.id);
       assert.deepEqual(
         targets,
-        variant.lifecycle ? [{ subscriberId: INSTANCE_ID, method: 'fixture.lifecycle', wire: false }] : [],
+        variant.lifecycle
+          ? [
+              {
+                subscriberId: INSTANCE_ID,
+                method: 'fixture.lifecycle',
+                wire: false,
+                ...(variant.presentation ? { presentationVersion: variant.presentation } : {}),
+              },
+            ]
+          : [],
       );
       const { createLifecycleDelivery } = await import('../dist/domains/messaging/lifecycle-delivery.js');
       const lifecycleCalls = [];
@@ -145,10 +156,25 @@ describe('F202 C1 — caller-bound Host messaging subscriptions', () => {
         enqueueThread: (threadId, operation) => h.delivery.enqueueThread(threadId, operation),
         drain: async () => undefined,
         presentation: async () => ({ actor: { displayName: 'Cat', emoji: '🐱' }, thread: { shortId: thread.id } }),
+        triggerMessageId: async () => 'msg-trigger',
       });
       await lifecycle.onStreamStart(thread.id, 'cat-1', `invocation-${variant.name}`);
       assert.equal(lifecycleCalls.length, variant.lifecycle ? 1 : 0);
-      if (variant.lifecycle) assert.equal(lifecycleCalls[0].method, 'fixture.lifecycle');
+      if (variant.lifecycle) {
+        assert.equal(lifecycleCalls[0].method, 'fixture.lifecycle');
+        // P1.3: only a subscription that declared v2 gets the receipt line and the trigger message id.
+        assert.deepEqual(
+          Object.keys(lifecycleCalls[0].input).sort(),
+          [
+            'deliveryId',
+            'lifecycleId',
+            'presentation',
+            'state',
+            'threadId',
+            ...(variant.presentation === 'v2' ? ['placeholderLine', 'replyTo'] : []),
+          ].sort(),
+        );
+      }
       await publish(h.messaging, thread.id, variant.name);
       await h.delivery.drain(thread.id);
       assert.equal(h.calls.length, 1);
