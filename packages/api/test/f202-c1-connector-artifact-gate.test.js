@@ -1,5 +1,5 @@
 /**
- * F202 C1 cross-repository gate: the fourth approved connector batch on the Host's real delivery path.
+ * F202 C1 cross-repository gate: the pinned approved connector batch on the Host's real delivery path.
  *
  * Ledger acceptance covered here (formerly the W2-5p-H adapter smoke, which pinned older artifacts and
  * called the action directly):
