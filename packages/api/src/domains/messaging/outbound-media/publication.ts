@@ -14,8 +14,10 @@
  * the delivery grant it holds while its action runs (b2).
  *
  * EXACTLY ONCE. The row moves pending → publishing (elements fixed) → published. The event key is
- * the same deterministic `publish:<id>:1` the seam uses, so a crash after the append and before
- * `published` re-appends into the dedupe; elements are never recomputed after `publishing`.
+ * the same deterministic `publish:<id>:1` the seam uses, and the append carries a durable fence
+ * that outlives event-log retention, so a crash or a failed settlement write after the append
+ * re-appends into the dedupe even if the event was trimmed meanwhile; elements are never
+ * recomputed after `publishing`.
  */
 import type { MessageElement } from '@clowder-ai/plugin-contract';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
@@ -162,6 +164,10 @@ export class OutboundMediaPublication {
         `publish:${msg.id}:1`,
         { eventId: `ev_pub_${msg.id}_1`, type: 'message.publish', envelope },
         clampRetention(this.deps.retentionCount),
+        undefined,
+        // The row may still say `publishing` after this append succeeded (a failed settlement
+        // write); recovery then re-appends. The fence makes that converge even after a trim.
+        { durableFence: true },
       );
       publishedSequence = result.sequence;
     }

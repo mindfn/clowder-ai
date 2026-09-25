@@ -19,6 +19,7 @@ import type { MessageOutputEventInput } from '../contract/host-types.js';
 import type {
   AddressHandleRecord,
   AppendLease,
+  EventAppendOptions,
   EventLogAppendResult,
   EventLogStore,
   HandleRecord,
@@ -28,6 +29,7 @@ import type {
   MessageHandleRecord,
   SettleResult,
 } from './ports.js';
+import { DURABLE_EVENT_FENCE_TTL_SECONDS } from './ports.js';
 import { MessagingKeys } from './redis-keys.js';
 
 // ── Ledger ──
@@ -254,6 +256,10 @@ if ARGV[4] ~= '' and redis.call('GET', KEYS[4]) ~= ARGV[4] then
 end
 local existing = redis.call('HGET', KEYS[2], ARGV[1])
 if existing then return {existing, 1, 0} end
+if ARGV[5] == '1' then
+  local fenced = redis.call('GET', KEYS[5])
+  if fenced then return {fenced, 1, 0} end
+end
 local seq = redis.call('INCR', KEYS[3])
 redis.call('ZADD', KEYS[1], seq, ARGV[1] .. '|' .. ARGV[2])
 redis.call('HSET', KEYS[2], ARGV[1], seq)
@@ -267,6 +273,7 @@ if count > retention then
     if sep then redis.call('HDEL', KEYS[2], string.sub(member, 1, sep - 1)) end
   end
 end
+if ARGV[5] == '1' then redis.call('SET', KEYS[5], seq, 'EX', tonumber(ARGV[6])) end
 return {tostring(seq), 0, 0}
 `;
 
@@ -283,6 +290,7 @@ export class RedisEventLogStore implements EventLogStore {
     event: MessageOutputEventInput,
     retentionCount: number,
     lease?: AppendLease,
+    options?: EventAppendOptions,
   ): Promise<EventLogAppendResult> {
     const messageId = event.type === 'message.publish' ? event.envelope.messageId : event.messageId;
     if (lease !== undefined && lease.messageId !== messageId) {
@@ -293,15 +301,18 @@ export class RedisEventLogStore implements EventLogStore {
     const encodedKey = encodeURIComponent(eventKey);
     const result = (await this.redis.eval(
       EVENT_APPEND_LUA,
-      4,
+      5,
       MessagingKeys.events(threadId),
       MessagingKeys.eventDedupe(threadId),
       MessagingKeys.eventSeq(threadId),
       MessagingKeys.appendLock(lease?.messageId ?? '__unfenced__'),
+      MessagingKeys.eventFence(threadId, encodedKey),
       encodedKey,
       JSON.stringify(event),
       String(retentionCount),
       lease?.token ?? '',
+      options?.durableFence ? '1' : '',
+      String(DURABLE_EVENT_FENCE_TTL_SECONDS),
     )) as [string, number, number];
     if (result[2] === 1) return { deduped: false, fencedOut: true };
     return { sequence: Number(result[0]), deduped: result[1] === 1, fencedOut: false };

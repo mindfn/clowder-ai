@@ -14,6 +14,7 @@ import type {
   AddressHandleRecord,
   AppendLease,
   AppendLock,
+  EventAppendOptions,
   EventLogAppendResult,
   EventLogStore,
   HandleRecord,
@@ -178,6 +179,8 @@ interface ThreadLog {
 
 export class MemoryEventLogStore implements EventLogStore {
   private readonly threads = new Map<string, ThreadLog>();
+  /** Durable publication fences: thread + key → first sequence; never trimmed (process lifetime). */
+  private readonly fences = new Map<string, number>();
 
   private logFor(threadId: string): ThreadLog {
     let log = this.threads.get(threadId);
@@ -194,6 +197,7 @@ export class MemoryEventLogStore implements EventLogStore {
     event: MessageOutputEventInput,
     retentionCount: number,
     lease?: AppendLease,
+    options?: EventAppendOptions,
   ): Promise<EventLogAppendResult> {
     if (lease !== undefined) {
       const messageId = event.type === 'message.publish' ? event.envelope.messageId : event.messageId;
@@ -204,8 +208,12 @@ export class MemoryEventLogStore implements EventLogStore {
     const log = this.logFor(threadId);
     const existing = log.events.find((entry) => entry.key === eventKey);
     if (existing) return { sequence: existing.event.sequence, deduped: true, fencedOut: false };
+    const fenceKey = `${threadId}\u0000${eventKey}`;
+    const fenced = options?.durableFence ? this.fences.get(fenceKey) : undefined;
+    if (fenced !== undefined) return { sequence: fenced, deduped: true, fencedOut: false };
     log.head += 1;
     log.events.push({ key: eventKey, event: { ...event, sequence: log.head } as MessageOutputEvent });
+    if (options?.durableFence) this.fences.set(fenceKey, log.head);
     if (log.events.length > retentionCount) {
       log.events.splice(0, log.events.length - retentionCount);
     }

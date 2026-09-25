@@ -111,10 +111,24 @@ export interface AppendLease {
   readonly isCurrent?: () => boolean;
 }
 
+/** How long a durable publication fence outlives its event (W2-5b review P1). */
+export const DURABLE_EVENT_FENCE_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export interface EventAppendOptions {
+  /**
+   * Dedupe this key beyond event retention: a later append of the same key returns the first
+   * sequence even after the event (and its retention-window dedupe entry) was trimmed. For a
+   * publisher that may retry after a failed settlement write — without it, recovery after a trim
+   * appends the same message a second time. Bounded by `DURABLE_EVENT_FENCE_TTL_SECONDS`, not by
+   * the retention count.
+   */
+  readonly durableFence?: boolean;
+}
+
 export interface EventLogStore {
   /**
-   * Atomically: dedupe by eventKey within the retained window → assign next
-   * per-thread sequence → append → trim to retentionCount (INV-3 monotonic).
+   * Atomically: dedupe by eventKey within the retained window (and, when asked, by a durable
+   * fence) → assign next per-thread sequence → append → trim to retentionCount (INV-3 monotonic).
    * The submitted event carries no sequence — the store assigns it and the
    * read path returns events with their assigned sequence.
    */
@@ -124,6 +138,7 @@ export interface EventLogStore {
     event: MessageOutputEventInput,
     retentionCount: number,
     lease?: AppendLease,
+    options?: EventAppendOptions,
   ): Promise<EventLogAppendResult>;
   /** Events with sequence > afterSequence, ascending, at most limit. */
   readAfter(threadId: string, afterSequence: number, limit: number): Promise<MessageOutputEvent[]>;

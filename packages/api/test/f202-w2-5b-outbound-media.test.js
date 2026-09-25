@@ -45,7 +45,7 @@ function speechThat(behavior) {
   };
 }
 
-function build({ speechBudgetMs = 1_000, synthesizer } = {}) {
+function build({ speechBudgetMs = 1_000, synthesizer, retentionCount } = {}) {
   speech = synthesizer ?? speechThat(async () => ({ path: join(root, 'tts', 'voice-1.wav') }));
   publication = new OutboundMediaPublication({
     store: outbound,
@@ -60,6 +60,7 @@ function build({ speechBudgetMs = 1_000, synthesizer } = {}) {
     }),
     speech,
     speechBudgetMs,
+    ...(retentionCount === undefined ? {} : { retentionCount }),
     onPublishFailure: (error) => failures.push(error),
   });
   seam = createPublishingMessageStore(inner, {
@@ -225,6 +226,31 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
 
     assert.equal((await published()).length, 1);
     assert.equal((await outbound.get(stored.id)).state, 'published');
+  });
+
+  // Review P1 (…5828208840): the event log dedupes a key only while the event is retained. A
+  // publish that landed, a settlement write that failed, and a trim in between let recovery append
+  // the same `publish:<id>:1` again. The job's publish must carry a fence that outlives retention.
+  test('(5iii) a failed settlement followed by an event-log trim still converges on one publish', async () => {
+    build({ retentionCount: 1 });
+    const stored = await appendAndSettle(
+      catReply([{ id: 'doc', kind: 'file', v: 1, url: '/uploads/report.pdf', fileName: 'report.pdf' }]),
+    );
+    const [first] = await published();
+    await stores.events.append(
+      THREAD,
+      'publish:later:1',
+      { eventId: 'ev_pub_later_1', type: 'message.publish', envelope: { ...first.envelope, messageId: 'later' } },
+      1,
+    );
+    await outbound.update(stored.id, (row) => ({ ...row, state: 'publishing', publishedSequence: undefined }));
+
+    await publication.recover();
+
+    const again = (await stores.events.readAfter(THREAD, 0, 50)).filter((e) => e.envelope?.messageId === stored.id);
+    assert.deepEqual(again, [], 'the trimmed publish must not be appended a second time');
+    assert.equal((await outbound.get(stored.id)).state, 'published');
+    assert.equal((await outbound.get(stored.id)).publishedSequence, first.sequence);
   });
 
   test('(7) the envelope carries no route, path, data URL or generation provenance', async () => {
