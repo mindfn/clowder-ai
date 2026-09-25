@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearDebugEvents, configureDebug, dumpBubbleTimeline } from '@/debug/invocationEventDebug';
+import { clearDebugEvents, configureDebug } from '@/debug/invocationEventDebug';
 import { selectThreadMessages } from '@/hooks/useThreadScopedSelectors';
 import type { ChatMessage } from '../chat-types';
 import { DEFAULT_THREAD_STATE, useChatStore } from '../chatStore';
