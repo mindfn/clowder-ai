@@ -120,6 +120,39 @@ describe('F117 KD-23 getThreadLiveInvocations — who counts as processing', () 
     assert.equal(result.active[0].startedAt, 2_500);
   });
 
+  it("before a run is bound, names the turn and its start from the member's running child", async () => {
+    const result = await getThreadLiveInvocations(
+      THREAD_ID,
+      USER_ID,
+      makeDeps({
+        records: [makeRecord()],
+        slots: [slot('opus', 'inv-1', { startedAt: 2_000 })],
+        children: { 'inv-1': [makeChild({ invocationId: 'child-bound-soon', startedAt: 2_200 })] },
+      }),
+    );
+    // The slot is the evidence; the child only names the turn while the tracker binds its run.
+    assert.deepEqual(
+      summary(result).map(({ invocationId, source }) => ({ invocationId, source })),
+      [{ invocationId: 'child-bound-soon', source: 'record+tracker' }],
+    );
+    assert.equal(result.active[0].startedAt, 2_200);
+  });
+
+  it('a bound run outranks the durable child for the turn identity', async () => {
+    const activeRun = { invocationId: 'child-run', responseMessageId: 'response-run', startedAt: 2_300 };
+    const result = await getThreadLiveInvocations(
+      THREAD_ID,
+      USER_ID,
+      makeDeps({
+        records: [makeRecord()],
+        slots: [slot('opus', 'inv-1', { startedAt: 2_000, activeRun })],
+        children: { 'inv-1': [makeChild({ invocationId: 'child-older', startedAt: 2_100 })] },
+      }),
+    );
+    assert.equal(result.active[0].invocationId, 'child-run');
+    assert.equal(result.active[0].startedAt, 2_300);
+  });
+
   it('falls back to when the tracker took the slot before a run is bound', async () => {
     const result = await getThreadLiveInvocations(
       THREAD_ID,
@@ -149,6 +182,28 @@ describe('F117 KD-23 getThreadLiveInvocations — who counts as processing', () 
         catId: 'opus',
         executionId: 'inv-9',
         invocationId: 'inv-9',
+        source: 'tracker-only',
+        degraded: true,
+        reason: 'tracker_active_missing_record',
+      },
+    ]);
+  });
+
+  it('a slot whose execution the tracker cannot name is processing, degraded, and names no execution', async () => {
+    const result = await getThreadLiveInvocations(
+      THREAD_ID,
+      USER_ID,
+      makeDeps({
+        records: [makeRecord()],
+        slots: [slot('opus', undefined)],
+        ownerSnapshot: { complete: true, owners: [] },
+      }),
+    );
+    assert.deepEqual(summary(result), [
+      {
+        catId: 'opus',
+        executionId: undefined,
+        invocationId: undefined,
         source: 'tracker-only',
         degraded: true,
         reason: 'tracker_active_missing_record',
@@ -255,6 +310,64 @@ describe('F117 KD-23 getThreadLiveInvocations — a running child is not an owne
     assert.deepEqual(
       summary(result).map(({ source, degraded }) => ({ source, degraded })),
       [{ source: 'record+owner', degraded: false }],
+    );
+  });
+
+  it('with an incomplete snapshot, a running record nothing else lists stays listed through its members', async () => {
+    const result = await getThreadLiveInvocations(
+      THREAD_ID,
+      USER_ID,
+      makeDeps({
+        records: [makeRecord({ targetCats: ['opus', 'codex'], updatedAt: 1_200 })],
+        ownerSnapshot: { complete: false, owners: [] },
+      }),
+    );
+    assert.deepEqual(
+      result.active.map(({ catId, executionId, invocationId, startedAt, source, degraded, reason }) => ({
+        catId,
+        executionId,
+        invocationId,
+        startedAt,
+        source,
+        degraded,
+        reason,
+      })),
+      ['opus', 'codex'].map((catId) => ({
+        catId,
+        executionId: 'inv-1',
+        invocationId: 'inv-1',
+        startedAt: 1_200,
+        source: 'record-only',
+        degraded: true,
+        reason: 'record_running_owner_unverified',
+      })),
+    );
+  });
+
+  it('without a snapshot, or with a complete one, a running record with no slot, owner or child is not processing', async () => {
+    for (const ownerSnapshot of [undefined, { complete: true, owners: [] }]) {
+      const result = await getThreadLiveInvocations(
+        THREAD_ID,
+        USER_ID,
+        makeDeps({ records: [makeRecord()], ownerSnapshot }),
+      );
+      assert.deepEqual(result.active, [], JSON.stringify(ownerSnapshot));
+    }
+  });
+
+  it('with an incomplete snapshot, a record something already lists does not add its other members', async () => {
+    const result = await getThreadLiveInvocations(
+      THREAD_ID,
+      USER_ID,
+      makeDeps({
+        records: [makeRecord({ targetCats: ['opus', 'codex'] })],
+        slots: [slot('opus', 'inv-1')],
+        ownerSnapshot: { complete: false, owners: [] },
+      }),
+    );
+    assert.deepEqual(
+      summary(result).map(({ catId, source }) => ({ catId, source })),
+      [{ catId: 'opus', source: 'record+tracker' }],
     );
   });
 

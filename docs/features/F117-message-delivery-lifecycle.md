@@ -913,14 +913,23 @@ managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`�
     （`record+owner`）。快照即使不完整，已列出的 owner 也是核实过的。
 
   R 若已建立，还必须处于 processing（由 `live-invocation-projection` 过滤）。槽位在、记录还没置为 running 的
-  那几次 await 仍算正在处理（`tracker-only`）。删除的来源：`record+draft`、`tracker+draft`、`parent+child-draft`、
-  `record-only` 的宽限，以及全部 zombie 判定。
+  那几次 await 仍算正在处理（`tracker-only`）；追踪器说不出执行 id 的槽位也照样列出（`tracker-only`，不带
+  executionId，路由把它显示为 `unresolved:…`，停止照常可用，F295 已有这条契约）。删除的来源：`record+draft`、
+  `tracker+draft`、`parent+child-draft`、`record-only` 按时间给的宽限（`liveness_pending`），以及全部 zombie 判定。
 - **持久的 running 子轮本身不是持有证据**（砚砚 `…1174`）。CLI owner 快照不完整时，启动结算整段跳过中断
   （`index.ts` 的 `cli_execution_owner_snapshot_incomplete` 分支），上一个进程的 running 子轮原样保留；
   `InvocationOwnerReaper.classifyIndependentOwner` 也把有 running 子轮的执行判为 active。所以：
   - **快照完整**：没有槽位、也没有存活 owner 的 running 子轮不算正在处理；
   - **拿不到快照，或快照不完整**：无法核实 owner 在不在，running 子轮保守地代替 owner，成员仍算正在处理，
-    但标为 degraded（来源 `parent+child-execution`，reason `child_running_owner_unverified`）。
+    但标为 degraded（来源 `parent+child-execution`，reason `child_running_owner_unverified`）。能活过本进程的
+    owner，一定在本进程启动之前就开始了这一轮，也就建好了子轮，所以子轮是它唯一可用的替身；
+  - **快照不完整**（调用方取了快照，但读不全）：一条 running 记录如果槽位、owner、子轮都没有列出它，就按它的
+    目标成员保守列出（来源 `record-only`，reason `record_running_owner_unverified`，开始时间取记录的
+    `updatedAt`）。这是 AC-E7 已有的契约：真相未知时，控制面（执行条、「正在发生」、GET /queue）不能把 running
+    记录藏起来，要让用户停得了它。记录只要已经有一个成员被列出，就不再补列其他成员：这条执行在控制面上已经
+    看得见、停得了，其他成员不是已经结束，就是还在接力里排队，不该显示为正在处理；
+  - **调用方没取快照**（侧栏 presence、session seal 只问「这里有没有人在跑」）：槽位、owner、子轮都没有的
+    running 记录不算正在处理。
 - **为什么不单列「待对账」**：`…1174` 建议证据不全时显示「待对账」。这和 KD-10（co-creator 09-03：用户只有
   运行 / 未运行两态，停止是唯一的用户动作）以及 AC-E7（退役「运行状态待确认」横幅）冲突，所以不新增这一态，
   改为保守地显示为运行中：用户看得到它，也停得了它，停止在快照不完整时有界重试后按 failed
@@ -931,14 +940,15 @@ managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`�
   - GET /queue 和 active-execution 路由（执行条、「正在发生」拉取活跃执行时）在配置了 owner 服务时，把本次
     请求的快照（`processOwnerSnapshotForRequest`，同一请求只读一次）传进来；同一份快照也用来把 owner 列为可
     停止的候选，以及做 read-repair。
-  - 侧栏 presence 与 active-execution 服务的定性通道不取快照，按「无法核实」处理：running 子轮仍代替 owner。
+  - 侧栏 presence 与 active-execution 服务的定性通道不取快照，按「无法核实」处理：running 子轮仍代替 owner，
+    但不补列没有任何证据的记录（见上）。这些调用方不为每次请求多跑一次进程表扫描。
 - **read-repair**（`resolveAndRepairLiveExecutions`，active-execution 路由读取时触发；本文较早的段落称它为
   「GET /queue 的 read-repair」）：快照完整时，把「running 超过 30 秒（`DEFAULT_PRESTART_RESERVATION_TTL_MS`）、
   本进程没有槽位、也没有存活 owner」的记录判为失败（`execution_owner_lost`），经 KD-21 的结算把 R 收成终态、
   带上草稿正文。快照不完整时它不收尾任何记录。
 - **一只猫只显示一个槽位**：同一只猫可能同时有几条候选（例如旧执行的无法核实子轮，和本进程持有的新槽位），
-  取证据最强的一条：本进程槽位与存活 owner 最强，只持有槽位的预启动窗口次之，无法核实的子轮最弱；同一档
-  取最早开始的一条。
+  取证据最强的一条：本进程槽位与存活 owner 最强，只持有槽位的预启动窗口次之，无法核实的子轮和记录最弱；
+  同一档取最早开始的一条。
 - **开始时间**：本进程槽位取它已绑定的 activeRun 的开始时间，也就是这一轮自己的开始；还没绑定时取占槽时间。
   多猫接力时，槽位在接力开始时就被占住，用 activeRun 才不会让后接棒的成员从整条接力开始计时（F194 Phase Z4）。
 - **pre-start 的投影**：QueueProcessor 只在 `invocationTracker.startAll` 成功之后才把记录置为 running
@@ -964,8 +974,8 @@ managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`�
   callback 授权），R 立即按 KD-21 结算（中断，带草稿正文）。理由是 R 的流式正文只由 API 进程里的 route 写入，
   重启后不会再有新内容进这个 R；CLI 若还活着，它通过 callback 发的是新消息。需先核实没有 carrier 能跨重启
   接回同一轮的流式输出（Codex app-server 的 host 复用只在单个进程内）。
-- **测试**：classifier（tracker、owner、快照完整与不完整时的子轮、预启动窗口、范围隔离、存储失败上抛、
-  开始时间）；GET /queue 与 /messages 配对（只有草稿时 /messages 仍显示处理中的 R、/queue 不列这个成员；两个
+- **测试**：classifier（tracker、owner、快照完整与不完整时的子轮、快照不完整时没有任何证据的记录、说不出
+  执行 id 的槽位、预启动窗口、范围隔离、存储失败上抛、开始时间）；GET /queue 与 /messages 配对（只有草稿时 /messages 仍显示处理中的 R、/queue 不列这个成员；两个
   父执行时本进程槽位胜出，读取不收尾任何一方）；侧栏 presence（只有草稿不算 working；tracker 空但子轮在跑
   仍算 working）；值班简报（failed 才是死球）。
 - F194 文档写一条 post-close 更正（F194 已于 05-12 完成，本实例没有 owner thread）。
@@ -1064,7 +1074,7 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
 1. **J4 的 stop hook 传父执行 ID**：见 J4「触发 = Stop」；测试用父子 ID 不同的真实派发，并测旧一轮的定时器
    不能取消新一轮。
 2. **持久 running 子轮不能单独证明有人持有**：J3 改为只认本进程槽位或 owner 快照里的存活 owner；快照完整而两者
-   都没有时不算正在处理。复审建议的「待对账」与 KD-10 / AC-E7 冲突，没有采用：无法核实时保守地显示为运行中，
+   都没有时不算正在处理。快照不完整时，没有任何证据的 running 记录也保守列出，保持 AC-E7 的契约。复审建议的「待对账」与 KD-10 / AC-E7 冲突，没有采用：无法核实时保守地显示为运行中，
    由停止（AC-E7）或下一次完整快照时的 read-repair 收尾（见 J3「为什么不单列『待对账』」）。这一取舍待砚砚复审确认。
 
 ## Review Gate

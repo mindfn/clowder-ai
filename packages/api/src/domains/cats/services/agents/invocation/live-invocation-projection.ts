@@ -35,6 +35,7 @@ const EVIDENCE_RANK: Record<LivenessSource, number> = {
   'record+owner': 2,
   'tracker-only': 1,
   'parent+child-execution': 0,
+  'record-only': 0,
 };
 
 /** The candidate a cat's single slot shows: the strongest evidence, then the earliest start. */
@@ -125,12 +126,13 @@ function resolveLifecycleOwnerId(
   threadId: string,
   userId: string,
   catId: string,
-  canonicalExecutionId: string,
+  canonicalExecutionId: string | undefined,
   invocationTracker: InvocationTrackerLike,
-): string {
+): string | undefined {
   // The tracker is the current control-plane owner during replacement windows. When it has
   // no same-user bound execution yet, the canonical read model still carries the exact parent
-  // owner. Never borrow a tracker owner from another user on a shared/default thread.
+  // owner. Never borrow a tracker owner from another user on a shared/default thread. When
+  // neither names one, the slot stays owner-less and routes show it unresolved.
   return getRequestOwnedTrackerExecutionId(threadId, userId, catId, invocationTracker) ?? canonicalExecutionId;
 }
 
@@ -190,6 +192,36 @@ async function withoutTerminalResponses(
 }
 
 /**
+ * The lifecycle candidate a cat's slot shows. The control-plane owner is the tracker's execution,
+ * else the canonical one; the child turn is named only while that owner is the canonical execution.
+ */
+function lifecycleCandidate(
+  threadId: string,
+  userId: string,
+  live: LiveInvocation,
+  invocationTracker: InvocationTrackerLike,
+  trackerActiveRunByCatId: ReadonlyMap<string, LifecycleActiveRun>,
+): LifecycleProjectionCandidate {
+  const lifecycleOwnerId = resolveLifecycleOwnerId(threadId, userId, live.catId, live.executionId, invocationTracker);
+  const turnInvocationId =
+    live.executionId !== undefined && live.invocationId !== live.executionId && lifecycleOwnerId === live.executionId
+      ? live.invocationId
+      : undefined;
+  const activeRun = trackerActiveRunByCatId.get(live.catId);
+  const exactActiveRun =
+    activeRun && (activeRun.invocationId === live.invocationId || activeRun.invocationId === turnInvocationId)
+      ? activeRun
+      : undefined;
+  return {
+    catId: live.catId,
+    startedAt: live.startedAt,
+    ...(lifecycleOwnerId ? { lifecycleOwnerId } : {}),
+    ...(turnInvocationId ? { turnInvocationId } : {}),
+    ...(exactActiveRun ? { activeRun: exactActiveRun } : {}),
+  };
+}
+
+/**
  * F194 Phase B / F117 KD-23: produce canonical activeInvocations using the getThreadLiveInvocations
  * helper (running record + this process's tracker slot or a durable running child). Falls back to
  * tracker-only when the record store isn't wired (legacy unit tests, embedded modes), preserving the
@@ -206,7 +238,7 @@ export async function resolveActiveInvocationsStrict(
   recordStore: IInvocationRecordStore | undefined,
   responseStatus: ResponseStatusReader | undefined,
   turnExecutionStore: Pick<ITurnExecutionStore, 'listByParent'> | undefined,
-  /** F117 KD-23: the caller's CLI owner snapshot; without one a running child stands in for its owner. */
+  /** F117 KD-23: the caller's CLI owner snapshot; without a complete one, running members stay listed unverified. */
   ownerSnapshot?: OwnerSnapshot,
 ): Promise<ActiveInvocationProjection[]> {
   if (!recordStore) {
@@ -244,25 +276,10 @@ export async function resolveActiveInvocationsStrict(
     const existing = chosen.get(s.catId);
     if (!existing || outranks(s, existing)) chosen.set(s.catId, s);
   }
-  const byCatId = new Map<string, LifecycleProjectionCandidate>();
-  for (const s of chosen.values()) {
-    const lifecycleOwnerId = resolveLifecycleOwnerId(threadId, userId, s.catId, s.executionId, invocationTracker);
-    const turnInvocationId =
-      s.invocationId !== s.executionId && lifecycleOwnerId === s.executionId ? s.invocationId : undefined;
-    const activeRun = trackerActiveRunByCatId.get(s.catId);
-    const exactActiveRun =
-      activeRun && (activeRun.invocationId === s.invocationId || activeRun.invocationId === turnInvocationId)
-        ? activeRun
-        : undefined;
-    byCatId.set(s.catId, {
-      catId: s.catId,
-      startedAt: s.startedAt,
-      lifecycleOwnerId,
-      ...(turnInvocationId ? { turnInvocationId } : {}),
-      ...(exactActiveRun ? { activeRun: exactActiveRun } : {}),
-    });
-  }
-  return projectActiveInvocations(threadId, Array.from(byCatId.values()));
+  const candidates = Array.from(chosen.values(), (live) =>
+    lifecycleCandidate(threadId, userId, live, invocationTracker, trackerActiveRunByCatId),
+  );
+  return projectActiveInvocations(threadId, candidates);
 }
 
 /**

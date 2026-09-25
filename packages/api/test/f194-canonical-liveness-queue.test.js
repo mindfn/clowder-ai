@@ -572,13 +572,13 @@ describe('F194 Phase B — /queue canonical liveness regression', () => {
       assert.equal(opusSlots[0].startedAt, now - 60_000, 'kept slot must have earliest startedAt');
 
       // This process holds the later record's slot: verified evidence outranks the older child.
-      deps.invocationTracker.getActiveSlots = mock.fn(() => [{ catId: 'opus', startedAt: now - 20_000 }]);
+      deps.invocationTracker.getActiveSlots = mock.fn(() => [{ catId: 'opus', startedAt: now - 35_000 }]);
       deps.invocationTracker.getUserId = mock.fn(() => USER_ID);
       deps.invocationTracker.getExecutionId = mock.fn(() => 'inv-opus-b');
       opusSlots = (await getQueue(app)).body.activeInvocations.filter((s) => s.catId === 'opus');
       assert.equal(opusSlots.length, 1);
       assert.equal(opusSlots[0].executionId, 'inv-opus-b', 'the slot this process holds is the one shown');
-      assert.equal(opusSlots[0].startedAt, now - 20_000);
+      assert.equal(opusSlots[0].startedAt, now - 30_000, 'before a run is bound, the running child names the start');
     } finally {
       Date.now = origNow;
     }

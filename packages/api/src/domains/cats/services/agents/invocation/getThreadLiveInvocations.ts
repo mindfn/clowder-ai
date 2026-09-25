@@ -8,19 +8,25 @@
  * - the CLI owner snapshot lists a live owner (its supervisor process still exists) for the
  *   record's execution and the member.
  *
- * A running TurnExecution child alone proves nothing: when the owner snapshot is incomplete the
- * startup settlement keeps the previous process's running children, and a child whose owner died
- * stays running until something settles it. So a running child only stands in for its owner when
- * the snapshot cannot tell, because the caller has none or it is incomplete. The member is then
- * listed as processing, degraded: the user still sees it and can stop it (F117 KD-10: running and
- * not running are the only states, and Stop settles an execution it cannot verify, AC-E7). Once a
- * complete snapshot shows no owner the child no longer counts, and the active-execution read-repair
- * ends the record.
+ * A running record or TurnExecution child alone proves nothing: when the owner snapshot is
+ * incomplete the startup settlement keeps the previous process's running children, and a turn
+ * whose owner died stays running until something settles it. With a complete snapshot that lists no
+ * owner, such a member is not processing, and the active-execution read-repair ends the record.
+ *
+ * Without a complete snapshot nobody can tell whether an owner outside this process lives, so the
+ * evidence that remains is listed, degraded: the user still sees it and can stop it (F117 KD-10:
+ * running and not running are the only states; Stop settles an execution it cannot verify, AC-E7).
+ * - A running child stands in for its owner: an owner that outlives this process started its turn,
+ *   and so its child, before this process started.
+ * - When the caller took a snapshot and it is incomplete, a running record that nothing else lists is
+ *   listed through its members, named by the record: a control surface must keep an execution it
+ *   cannot verify stoppable. A caller that takes no snapshot (sidebar presence) asks only whether
+ *   anyone runs the thread, and a record with no slot, owner or child answers no.
  *
  * QueueProcessor turns a record running only after the tracker takes its slots, so a turn that only
  * holds a processing reservation is still queued and is not listed here. A slot whose execution has
  * no running record yet (the few awaits between the tracker taking the slot and the record turning
- * running) is listed as processing.
+ * running), or whose execution the tracker cannot name, is this process's and is listed, degraded.
  *
  * The response R is checked by the caller (live-invocation-projection): a member whose R is already
  * terminal is not processing. Nothing here classifies zombies: the F118 owner reaper, the KD-21
@@ -38,21 +44,27 @@ export type LivenessSource =
   | 'record+owner'
   /** The record is running, the member has a running child, and no complete snapshot can tell whether its owner lives. */
   | 'parent+child-execution'
-  /** The tracker holds the slot and the record has not turned running yet. */
+  /** The record is running, nothing else lists it, and the caller's snapshot is incomplete. */
+  | 'record-only'
+  /** The tracker holds the slot and its record is not running yet, or the tracker cannot name its execution. */
   | 'tracker-only';
 
 export type LivenessReason =
   | 'tracker_present'
   | 'cli_owner_alive'
   | 'child_running_owner_unverified'
+  | 'record_running_owner_unverified'
   | 'tracker_active_missing_record';
 
 export interface LiveInvocation {
   catId: CatId;
-  /** Parent execution owner used for lifecycle/control-plane correlation (the InvocationRecord id). */
-  executionId: string;
+  /**
+   * Parent execution owner used for lifecycle/control-plane correlation (the InvocationRecord id).
+   * Absent only for a slot whose execution the tracker cannot name; routes show it unresolved.
+   */
+  executionId?: string;
   /** The member's child turn when known (tracker activeRun, owner or durable child), else the execution. */
-  invocationId: string;
+  invocationId?: string;
   /**
    * When the member's turn started: the tracker's bound activeRun, else when the tracker took the slot;
    * for an owner or a durable child, when it started. A multi-cat chain takes each slot at its start, so
@@ -62,7 +74,7 @@ export interface LiveInvocation {
   /** The exact response R the tracker's activeRun names, when the member already has one. */
   responseMessageId?: string;
   source: LivenessSource;
-  /** Evidence that does not verify an owner: a tracker slot without its running record, or a running child the snapshot cannot vouch for. */
+  /** Evidence that does not verify an owner: a slot without its running record, or a running record or child the snapshot cannot vouch for. */
   degraded: boolean;
   reason: LivenessReason;
 }
@@ -102,7 +114,8 @@ export interface LivenessReadDeps {
   /**
    * The CLI owner snapshot the caller already took. A listed owner proves its member processing.
    * When the snapshot is complete, a running child without a slot or an owner proves nothing; when
-   * it is absent or incomplete, a running child stands in for the owner it cannot verify.
+   * it is absent or incomplete, a running child stands in for the owner it cannot verify, and when
+   * it is incomplete, so does a running record that nothing else lists.
    */
   ownerSnapshot?: OwnerSnapshot;
 }
@@ -131,16 +144,26 @@ function isScopedRunningChild(
 
 interface HeldSlot {
   readonly slot: ActiveSlotInfo;
-  readonly executionId: string;
+  /** Undefined when the tracker cannot name the slot's execution. */
+  readonly executionId: string | undefined;
 }
 
-function liveFromSlot(held: HeldSlot, source: 'record+tracker' | 'tracker-only'): LiveInvocation {
+/**
+ * A slot this process holds. Its turn is the run the tracker has bound; until a run is bound (the
+ * child admission window) the member's newest running durable child names the turn, so the identity
+ * does not tear while the run is being bound. Neither the child nor the run is the evidence: the slot is.
+ */
+function liveFromSlot(
+  held: HeldSlot,
+  source: 'record+tracker' | 'tracker-only',
+  child?: RunningChildExecution,
+): LiveInvocation {
   const { slot, executionId } = held;
   return {
     catId: slot.catId as CatId,
     executionId,
-    invocationId: slot.activeRun?.invocationId ?? executionId,
-    startedAt: slot.activeRun?.startedAt ?? slot.startedAt,
+    invocationId: slot.activeRun?.invocationId ?? child?.invocationId ?? executionId,
+    startedAt: slot.activeRun?.startedAt ?? child?.startedAt ?? slot.startedAt,
     ...(slot.activeRun ? { responseMessageId: slot.activeRun.responseMessageId } : {}),
     source,
     degraded: source === 'tracker-only',
@@ -174,29 +197,81 @@ function liveFromOwners(
   }));
 }
 
-/** The newest running child per member that neither a tracker slot nor a live owner already proves. */
-async function liveFromUnverifiedChildren(
+/** The newest running durable child of this record per member. */
+async function newestRunningChildren(
   record: InvocationRecord,
-  provenCats: ReadonlySet<string>,
   threadId: string,
   userId: string,
   listTurnExecutionsByParent: NonNullable<LivenessReadDeps['listTurnExecutionsByParent']>,
-): Promise<LiveInvocation[]> {
+): Promise<Map<string, RunningChildExecution>> {
   const newestByCat = new Map<string, RunningChildExecution>();
   for (const child of await Promise.resolve(listTurnExecutionsByParent(record.id))) {
-    if (!isScopedRunningChild(child, record, threadId, userId) || provenCats.has(child.catId)) continue;
+    if (!isScopedRunningChild(child, record, threadId, userId)) continue;
     const existing = newestByCat.get(child.catId);
     if (!existing || child.startedAt > existing.startedAt) newestByCat.set(child.catId, child);
   }
-  return Array.from(newestByCat.values(), (child) => ({
+  return newestByCat;
+}
+
+/** A running child standing in for an owner no complete snapshot can verify. */
+function liveFromUnverifiedChild(record: InvocationRecord, child: RunningChildExecution): LiveInvocation {
+  return {
     catId: child.catId as CatId,
     executionId: record.id,
     invocationId: child.invocationId,
     startedAt: child.startedAt,
-    source: 'parent+child-execution' as const,
+    source: 'parent+child-execution',
     degraded: true,
-    reason: 'child_running_owner_unverified' as const,
-  }));
+    reason: 'child_running_owner_unverified',
+  };
+}
+
+/** A member of a running record that nothing else lists, while the caller's snapshot is incomplete. */
+function liveFromUnverifiedRecord(record: InvocationRecord, catId: string): LiveInvocation {
+  return {
+    catId: catId as CatId,
+    executionId: record.id,
+    invocationId: record.id,
+    startedAt: record.updatedAt,
+    source: 'record-only',
+    degraded: true,
+    reason: 'record_running_owner_unverified',
+  };
+}
+
+/** What the caller knows about who runs this thread's turns, shared by every running record. */
+interface OwnerEvidence {
+  readonly threadId: string;
+  readonly userId: string;
+  readonly heldSlots: readonly HeldSlot[];
+  readonly owners: readonly LiveOwnerRef[];
+  /** The caller has no complete snapshot. */
+  readonly ownerUnverifiable: boolean;
+  /** The caller took a snapshot and it is incomplete. */
+  readonly snapshotIncomplete: boolean;
+}
+
+/** The members of one running record that count as processing. */
+function liveForRecord(
+  record: InvocationRecord,
+  children: ReadonlyMap<string, RunningChildExecution>,
+  evidence: OwnerEvidence,
+): LiveInvocation[] {
+  const held = evidence.heldSlots.filter((entry) => entry.executionId === record.id);
+  const listed = held.map((entry) => liveFromSlot(entry, 'record+tracker', children.get(entry.slot.catId)));
+  const proven = new Set<string>(held.map((entry) => entry.slot.catId));
+  const byOwner = liveFromOwners(record, proven, evidence.threadId, evidence.userId, evidence.owners);
+  listed.push(...byOwner);
+  if (!evidence.ownerUnverifiable) return listed;
+
+  for (const live of byOwner) proven.add(live.catId);
+  for (const [catId, child] of children) {
+    if (!proven.has(catId)) listed.push(liveFromUnverifiedChild(record, child));
+  }
+  if (listed.length === 0 && evidence.snapshotIncomplete) {
+    for (const catId of new Set(record.targetCats as string[])) listed.push(liveFromUnverifiedRecord(record, catId));
+  }
+  return listed;
 }
 
 export async function getThreadLiveInvocations(
@@ -207,31 +282,34 @@ export async function getThreadLiveInvocations(
   const records = (await Promise.resolve(deps.listRunningRecords(threadId, userId))).filter(
     (record) => record.status === 'running' && record.threadId === threadId && record.userId === userId,
   );
-  const heldSlots: HeldSlot[] = deps.getActiveSlots(threadId).flatMap((slot) => {
-    if (deps.getTrackerUserId(threadId, slot.catId) !== userId) return [];
-    const executionId = deps.getTrackerExecutionId(threadId, slot.catId);
-    return executionId ? [{ slot, executionId }] : [];
-  });
-  const owners = deps.ownerSnapshot?.owners ?? [];
-  const ownerUnverifiable = deps.ownerSnapshot?.complete !== true;
+  const heldSlots: HeldSlot[] = deps
+    .getActiveSlots(threadId)
+    .flatMap((slot) =>
+      deps.getTrackerUserId(threadId, slot.catId) === userId
+        ? [{ slot, executionId: deps.getTrackerExecutionId(threadId, slot.catId) }]
+        : [],
+    );
+  const evidence: OwnerEvidence = {
+    threadId,
+    userId,
+    heldSlots,
+    owners: deps.ownerSnapshot?.owners ?? [],
+    ownerUnverifiable: deps.ownerSnapshot?.complete !== true,
+    snapshotIncomplete: deps.ownerSnapshot?.complete === false,
+  };
 
   const active: LiveInvocation[] = [];
-  const runningRecordIds = new Set(records.map((record) => record.id));
   for (const record of records) {
-    const held = heldSlots.filter((entry) => entry.executionId === record.id);
-    active.push(...held.map((entry) => liveFromSlot(entry, 'record+tracker')));
-    const proven = new Set<string>(held.map((entry) => entry.slot.catId));
-    const byOwner = liveFromOwners(record, proven, threadId, userId, owners);
-    active.push(...byOwner);
-    if (ownerUnverifiable && deps.listTurnExecutionsByParent) {
-      for (const live of byOwner) proven.add(live.catId);
-      active.push(
-        ...(await liveFromUnverifiedChildren(record, proven, threadId, userId, deps.listTurnExecutionsByParent)),
-      );
-    }
+    const children = deps.listTurnExecutionsByParent
+      ? await newestRunningChildren(record, threadId, userId, deps.listTurnExecutionsByParent)
+      : new Map<string, RunningChildExecution>();
+    active.push(...liveForRecord(record, children, evidence));
   }
+  const runningRecordIds = new Set(records.map((record) => record.id));
   for (const entry of heldSlots) {
-    if (!runningRecordIds.has(entry.executionId)) active.push(liveFromSlot(entry, 'tracker-only'));
+    if (entry.executionId === undefined || !runningRecordIds.has(entry.executionId)) {
+      active.push(liveFromSlot(entry, 'tracker-only'));
+    }
   }
   return { active };
 }
