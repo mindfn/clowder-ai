@@ -73,7 +73,10 @@ import { WaitTerminationService } from './domains/ball-custody/WaitTerminationSe
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
 // F297 Phase B: Sidebar C10 production source — domain-owned composition shared by
 // queue / active-execution / Sidebar 三个 consumer（PR #3748 R3 P2-1）。
-import { createActiveExecutionService } from './domains/cats/services/agents/invocation/active-execution-service.js';
+import {
+  createActiveExecutionService,
+  responseStatusFromMessages,
+} from './domains/cats/services/agents/invocation/active-execution-service.js';
 import { CallbackAuthTurnExecutionLifecycle } from './domains/cats/services/agents/invocation/CallbackAuthTurnExecutionLifecycle.js';
 import type { CollaborationContinuityCapsuleV1 } from './domains/cats/services/agents/invocation/CollaborationContinuityCapsule.js';
 import { createTaskProgressStore } from './domains/cats/services/agents/invocation/createTaskProgressStore.js';
@@ -1799,7 +1802,6 @@ async function main(): Promise<void> {
   const dutyBriefingCollectDeps = {
     taskStore,
     invocationRecordStore,
-    draftStore,
     dynamicTaskStore,
     threadStore,
     messageStore,
@@ -3071,9 +3073,8 @@ async function main(): Promise<void> {
   const activeExecutionService = createActiveExecutionService({
     invocationTracker,
     recordStore: invocationRecordStore,
-    draftStore,
+    responseStatus: responseStatusFromMessages(messageStore), // F117 KD-23: a terminal R is not processing
     turnExecutionStore,
-    invocationRegistry: registry,
     dynamicTaskStore,
     log: app.log,
   });
@@ -3089,9 +3090,8 @@ async function main(): Promise<void> {
     socketManager,
     messageStore, // F117: for marking queued messages as canceled on withdraw/clear
     invocationRecordStore, // F194 Phase B: canonical liveness read source
-    draftStore, // F194 Phase B: canonical liveness read source
-    turnExecutionStore, // F194/F254: durable running child closes tracker/draft handoff gaps
-    invocationRegistry: registry, // F194 Phase Z (KD-22): namespace bridge for parent↔child invocation
+    draftStore, // F117 KD-21: the streamed body a stopped response R settles with
+    turnExecutionStore, // F194 + F117 KD-21: durable child turns and their response-pending ledger
     getManagedCommandWakeRecovery: () => managedCommandWakeRecovery,
     dynamicTaskStore, // F295: canonical managed-command execution read projection
     activeExecutionService, // F297 AC-D3: shared composition; project scan uses its live-candidate view

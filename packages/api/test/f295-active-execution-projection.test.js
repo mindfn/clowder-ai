@@ -871,6 +871,116 @@ describe('F295 active execution projection', () => {
     );
   });
 
+  it('F117 KD-23: a slot this process still holds keeps a slow-starting running record from read-repair', async () => {
+    await app.close();
+    // kimi's slot is held for inv-a (buildDeps), but the record turned running a minute ago and no
+    // response exists yet, e.g. invoke-single-cat still waits for session custody.
+    const record = {
+      id: 'inv-a',
+      threadId: 'thread-a',
+      userId: USER_ID,
+      userMessageId: null,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      status: 'running',
+      idempotencyKey: 'slow-prestart',
+      actionLeaseCarrier: { kind: 'none' },
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 60_000,
+    };
+    const updates = [];
+    deps.draftStore = { getByThread: mock.fn(async () => []), delete: mock.fn(async () => {}) };
+    deps.invocationRecordStore = {
+      listRunningByThread: mock.fn(async () => [record]),
+      get: mock.fn(async (id) => (id === record.id ? record : null)),
+      update: mock.fn(async (id, update) => {
+        updates.push({ id, update });
+        return null;
+      }),
+    };
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: true }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const projection = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+
+    assert.equal(projection.statusCode, 200, projection.body);
+    assert.deepEqual(updates, [], 'a record whose slot is still held is never failed by read-repair');
+    assert.ok(
+      projection.json().executions.some((execution) => execution.executionId === 'inv-a' && execution.catId === 'kimi'),
+      'the held execution stays listed as running',
+    );
+  });
+
+  it('F117 KD-23: a running child whose owner a complete snapshot lacks neither lists the record nor blocks read-repair', async () => {
+    await app.close();
+    deps._executions.clear();
+    const record = {
+      id: 'inv-orphan-child',
+      threadId: 'thread-a',
+      userId: USER_ID,
+      userMessageId: null,
+      targetCats: ['kimi'],
+      intent: 'execute',
+      status: 'running',
+      idempotencyKey: 'orphan-child',
+      actionLeaseCarrier: { kind: 'none' },
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 60_000,
+    };
+    deps.draftStore = { getByThread: mock.fn(async () => []), delete: mock.fn(async () => {}) };
+    deps.invocationRecordStore = {
+      listRunningByThread: mock.fn(async () => (record.status === 'running' ? [record] : [])),
+      get: mock.fn(async (id) => (id === record.id ? record : null)),
+      update: mock.fn(async (id, update) => {
+        if (id !== record.id || (update.expectedStatus && update.expectedStatus !== record.status)) return null;
+        Object.assign(record, update, { updatedAt: Date.now() });
+        return record;
+      }),
+    };
+    // The previous owner died: its durable child is still running, and the complete snapshot has no owner.
+    deps.turnExecutionStore.listByParent.mock.mockImplementation(async (parentId) =>
+      parentId === record.id
+        ? [
+            {
+              invocationId: 'child-orphan',
+              parentInvocationId: record.id,
+              threadId: 'thread-a',
+              userId: USER_ID,
+              catId: 'kimi',
+              executionKind: 'ordinary',
+              startedAt: Date.now() - 55_000,
+              status: 'running',
+            },
+          ]
+        : [],
+    );
+    deps.cliExecutionOwnerService.listLive.mock.mockImplementation(async () => ({ owners: [], complete: true }));
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    await app.ready();
+
+    const projection = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+
+    assert.equal(projection.statusCode, 200, projection.body);
+    assert.equal(record.status, 'failed', 'read-repair still ends the record');
+    assert.equal(record.error, 'execution_owner_lost');
+    assert.equal(
+      projection.json().executions.some((execution) => execution.executionId === record.id),
+      false,
+      'a running child without an owner does not keep the record listed',
+    );
+  });
+
   it('does not rewrite a just-canceled tracker tombstone as execution_owner_lost', async () => {
     await app.close();
     deps._executions.clear();

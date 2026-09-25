@@ -24,9 +24,9 @@ import {
 } from '../domains/cats/services/agents/invocation/AgentSessionMutex.js';
 import {
   type ActiveInvocationProjection,
-  type InvocationRegistryPort,
   type InvocationTrackerLike,
   resolveActiveInvocations,
+  responseStatusFromMessages,
 } from '../domains/cats/services/agents/invocation/active-execution-service.js';
 import {
   type InvocationQueue,
@@ -88,22 +88,16 @@ export interface QueueRoutesOptions {
   socketManager: SocketManager;
   /** MessageStore supplies History preview/lifecycle truth; Queue withdrawal never deletes author history. */
   messageStore?: IMessageStore;
-  /** F194 Phase B: canonical liveness read sources (record + draft). When omitted,
-   *  GET /queue's activeInvocations falls back to legacy tracker-only enumeration
-   *  for backward compat in tests. */
+  /** F194 Phase B: canonical liveness read source. When omitted, GET /queue's activeInvocations
+   *  falls back to legacy tracker-only enumeration for backward compat in tests. */
   invocationRecordStore?: IInvocationRecordStore;
+  /** F117 KD-21: the streamed body a response R settles with when a stop ends it outside its route. */
   draftStore?: IDraftStore;
-  /** Durable per-child lifecycle truth used to bridge tracker/draft handoff gaps. */
+  /** Durable child turns: the KD-21 ledger, and a running child standing in for an owner no snapshot can verify. */
   turnExecutionStore?: Pick<
     ITurnExecutionStore,
     'get' | 'listByParent' | 'transitionTerminal' | 'clearResponsePending'
   >;
-  /** F194 Phase Z (KD-22): InvocationRegistry — provides namespace bridge between
-   *  parent recordStore invocation and per-cat-turn child registry invocation.
-   *  When wired, helper uses parentInvocationId / latestId to detect parent+child
-   *  chain liveness and cat-slot reuse zombies. Optional for backward compat;
-   *  fall-back to single-namespace classification when absent. */
-  invocationRegistry?: InvocationRegistryPort;
   /** Existing managed-wake receipt owner; late-bound after delivery composition. */
   getManagedCommandWakeRecovery?: () => ManagedCommandWakeRecoveryLike | undefined;
   /** F295: existing durable task truth used only to project active managed commands. */
@@ -210,22 +204,24 @@ async function resolveLiveExecutionCandidates(
   request: FastifyRequest,
   opts: QueueRoutesOptions,
 ): Promise<LiveExecutionCandidate[]> {
+  // F117 KD-23: one owner snapshot per request. The classifier weighs running children against it,
+  // and the same owners become process-owned candidates below.
+  const processOwnerSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
   const canonical = await resolveActiveInvocations(
     threadId,
     userId,
     opts.invocationTracker,
     opts.invocationRecordStore,
-    opts.draftStore,
+    opts.messageStore ? responseStatusFromMessages(opts.messageStore) : undefined,
     opts.turnExecutionStore,
     request.log,
-    opts.invocationRegistry,
+    opts.cliExecutionOwnerService ? processOwnerSnapshot : undefined,
   );
   const byExecution = new Map<string, LiveExecutionCandidate>();
   for (const candidate of canonical) {
     const projected = projectCanonicalLiveCandidate(threadId, userId, candidate, opts.invocationTracker);
     byExecution.set(liveExecutionCandidateKey(projected), projected);
   }
-  const processOwnerSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
   for (const owner of processOwnerSnapshot.owners) {
     if (owner.threadId !== threadId) continue;
     const candidate: LiveExecutionCandidate = {
@@ -955,16 +951,19 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
     if (!guard) return;
 
+    const ownerSnapshot = opts.cliExecutionOwnerService
+      ? await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService)
+      : undefined;
     const activeInvocations = (
       await resolveActiveInvocations(
         threadId,
         guard.userId,
         invocationTracker,
         opts.invocationRecordStore,
-        opts.draftStore,
+        opts.messageStore ? responseStatusFromMessages(opts.messageStore) : undefined,
         opts.turnExecutionStore,
         request.log,
-        opts.invocationRegistry,
+        ownerSnapshot,
       )
     ).map((invocation) => ({
       ...invocation,
@@ -2031,9 +2030,4 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
  * Re-export：`resolveActiveInvocations` 的实现已迁到 domain
  * (`active-execution-service.ts`，R3 P2-1)，此处仅为既有 import 路径保持兼容。
  */
-export {
-  type ActiveInvocationProjection,
-  type InvocationRegistryPort,
-  type InvocationTrackerLike,
-  resolveActiveInvocations,
-};
+export { type ActiveInvocationProjection, type InvocationTrackerLike, resolveActiveInvocations };
