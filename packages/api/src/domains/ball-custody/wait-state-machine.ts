@@ -262,6 +262,19 @@ export function markWaitOutcomeDelivered(current: WaitRuntimeState, outcomeId: s
   };
 }
 
+/**
+ * F117 L2: settle an outcome the Queue refused for good. The Queue already holds a different envelope
+ * under this outcome's key (the same outcome rendered differently across an upgrade), so the owner has
+ * already been told once; retrying can never admit it.
+ */
+export function markWaitOutcomeQueueConflict(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {
+  if (current.waitOutcome?.outcomeId !== outcomeId || current.waitOutcome.delivery !== 'pending') {
+    return current;
+  }
+  const { publishClaimedAt: _settled, ...conflicted } = current.waitOutcome;
+  return { ...current, waitOutcome: { ...conflicted, delivery: 'queue_conflict' } };
+}
+
 export function markWaitOutcomeLegacyUnfenced(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {
   if (
     current.waitOutcome?.outcomeId !== outcomeId ||

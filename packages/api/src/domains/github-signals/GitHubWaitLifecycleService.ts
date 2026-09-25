@@ -19,6 +19,7 @@ import {
   isAwaitExpired,
   markWaitOutcomeDelivered,
   markWaitOutcomeLegacyUnfenced,
+  markWaitOutcomeQueueConflict,
   markWaitOutcomeSuppressed,
   transitionWaitState,
   type WaitRuntimeState,
@@ -226,6 +227,10 @@ export class GitHubWaitLifecycleService {
       if (!isGitHubWaitTask(task)) return { kind: 'not_tracked', reason: `No GitHub wait task ${input.taskId}` };
 
       const drained = await this.drainOutbox(task, input, outbox);
+      // F117 L1: an outcome the Queue did not admit is still owed. Evaluating now would replace it in
+      // the single outcome slot, and the owner would never hear of it; stop here and leave the
+      // collector patch unwritten, so the source re-observes after the outbox is delivered.
+      if (drained === 'refused') return { kind: 'unrecorded', reason: 'queue_admission_unavailable' };
       if (drained !== 'empty') {
         if (drained === 'raced') lostRaces += 1;
         continue;
@@ -252,14 +257,14 @@ export class GitHubWaitLifecycleService {
     task: TaskItem,
     input: GitHubWaitObservation,
     outbox: OutboxLog,
-  ): Promise<'empty' | 'drained' | 'raced'> {
+  ): Promise<'empty' | 'drained' | 'raced' | 'refused'> {
     const pending = pendingOutcome(task);
     if (!pending || outbox.ids.has(pending.outcomeId)) return 'empty';
     const raced = outbox.ids.size > 0;
     outbox.ids.add(pending.outcomeId);
-    await this.wakeForFlushedOutcome(
-      await this.publishPending(task, pending, input.deliveryExtra, input.deliveryPriority),
-    );
+    const published = await this.publishPending(task, pending, input.deliveryExtra, input.deliveryPriority);
+    if (published.kind === 'unrecorded' && published.reason === 'queue_admission_unavailable') return 'refused';
+    await this.wakeForFlushedOutcome(published);
     return raced ? 'raced' : 'drained';
   }
 
@@ -560,6 +565,18 @@ export class GitHubWaitLifecycleService {
     // RFC §5.2: "Queue commit 自身就是外部输入的持久边界." The outbox may only be settled once the
     // envelope is durably in the Queue. Settling on a bare append would strand the wake: the source
     // would be neither a History member nor queued work, while no poll would ever re-deliver it.
+    if (result.rejection === 'conflict') {
+      // F117 L2: permanent. The Queue already holds a different envelope under this outcome's key, so
+      // every retry would be refused again; end the outcome and say so loudly, once.
+      await this.transitionOutbox(task, outcome.outcomeId, (state) =>
+        markWaitOutcomeQueueConflict(state, outcome.outcomeId),
+      );
+      this.opts.log.error(
+        { taskId: task.id, outcomeId: outcome.outcomeId },
+        '[F280] wait outcome ends undelivered: the Queue holds a different envelope under its key',
+      );
+      return { kind: 'state_only', reason: 'queue_conflict' };
+    }
     if (!result.admitted) {
       // The claim stays on the outcome. `publishing` is still drained by `pendingOutcome`, so the
       // next observation retries this exact identity instead of leaving it stranded.
