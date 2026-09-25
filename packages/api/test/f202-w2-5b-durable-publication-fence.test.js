@@ -6,7 +6,8 @@
  * with the event. The outbound media job may append `publish:<id>:1`, fail to record `published`,
  * and retry at recovery after a trim — without a fence that outlives retention, the retry appends
  * the same message a second time. An append that asks for the fence gets the first sequence back
- * instead; one that does not ask keeps the old retention-window behavior.
+ * instead; one that does not ask keeps the old retention-window behavior. The fence has no expiry:
+ * the publisher releases it once the publication is recorded (re-review P1, comment 5828779117).
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
@@ -42,6 +43,17 @@ async function fenceSurvivesTrim(log, threadId) {
   );
 }
 
+async function releaseEndsTheFence(log, threadId) {
+  const first = await log.append(threadId, 'publish:r1:1', publishEvent('r1'), 1, undefined, { durableFence: true });
+  await log.append(threadId, 'publish:r2:1', publishEvent('r2'), 1);
+
+  await log.releaseFence(threadId, 'publish:r1:1');
+  const after = await log.append(threadId, 'publish:r1:1', publishEvent('r1'), 1, undefined, { durableFence: true });
+
+  assert.equal(after.deduped, false, 'a released fence no longer dedupes');
+  assert.ok(after.sequence > first.sequence);
+}
+
 async function unfencedKeepsWindowBehavior(log, threadId) {
   await log.append(threadId, 'publish:m3:1', publishEvent('m3'), 1);
   await log.append(threadId, 'publish:m4:1', publishEvent('m4'), 1);
@@ -61,6 +73,11 @@ describe('F202 W2-5b — durable publication fence (memory)', () => {
     const { MemoryEventLogStore } = await import('../dist/domains/messaging/stores/memory.js');
     await unfencedKeepsWindowBehavior(new MemoryEventLogStore(), 'thread-memory-unfenced');
   });
+
+  test('releasing a fence ends it', async () => {
+    const { MemoryEventLogStore } = await import('../dist/domains/messaging/stores/memory.js');
+    await releaseEndsTheFence(new MemoryEventLogStore(), 'thread-memory-release');
+  });
 });
 
 describe('F202 W2-5b — durable publication fence (Redis)', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
@@ -68,13 +85,11 @@ describe('F202 W2-5b — durable publication fence (Redis)', { skip: redisIsolat
   let connected = false;
   let RedisEventLogStore;
   let MessagingKeys;
-  let DURABLE_EVENT_FENCE_TTL_SECONDS;
 
   before(async () => {
     assertRedisIsolationOrThrow(REDIS_URL, 'F202W25bDurableFence');
     ({ RedisEventLogStore } = await import('../dist/domains/messaging/stores/redis.js'));
     ({ MessagingKeys } = await import('../dist/domains/messaging/stores/redis-keys.js'));
-    ({ DURABLE_EVENT_FENCE_TTL_SECONDS } = await import('../dist/domains/messaging/stores/ports.js'));
     const { createRedisClient } = await import('@cat-cafe/shared/utils');
     redis = createRedisClient({ url: REDIS_URL, keyPrefix: TEST_KEY_PREFIX });
     await redis.ping();
@@ -85,14 +100,22 @@ describe('F202 W2-5b — durable publication fence (Redis)', { skip: redisIsolat
     if (connected) await redis.quit();
   });
 
-  test('a fenced key is deduped after its event is trimmed, and the fence carries a TTL', async () => {
+  // Re-review P1 (…5828779117): a TTL let the fence expire while a `publishing` row could still be
+  // retried. The fence has no expiry; the publisher releases it once `published` is recorded.
+  test('a fenced key is deduped after its event is trimmed, and the fence never expires by itself', async () => {
     const threadId = `thread-${Date.now()}`;
     const log = new RedisEventLogStore(redis);
 
     await fenceSurvivesTrim(log, threadId);
 
-    const ttl = await redis.ttl(MessagingKeys.eventFence(threadId, encodeURIComponent('publish:m1:1')));
-    assert.ok(ttl > 0 && ttl <= DURABLE_EVENT_FENCE_TTL_SECONDS, `fence ttl ${ttl}`);
+    const fenceKey = MessagingKeys.eventFence(threadId, encodeURIComponent('publish:m1:1'));
+    assert.equal(await redis.ttl(fenceKey), -1, 'no TTL: the fence lasts until it is released');
+    await log.releaseFence(threadId, 'publish:m1:1');
+    assert.equal(await redis.exists(fenceKey), 0);
+  });
+
+  test('releasing a fence ends it', async () => {
+    await releaseEndsTheFence(new RedisEventLogStore(redis), `thread-release-${Date.now()}`);
   });
 
   test('an unfenced key keeps the retention-window dedupe', async () => {

@@ -93,6 +93,23 @@ async function appendAndSettle(input) {
   return stored;
 }
 
+/**
+ * The settlement write (`publishing` → `published`) fails once — a crash or a disk error right
+ * after the publish event landed. The row stays `publishing`; nothing past that write runs.
+ */
+function failSettlementOnce() {
+  const update = outbound.update.bind(outbound);
+  let failed = false;
+  outbound.update = async (messageId, next) => {
+    const current = await outbound.get(messageId);
+    if (!failed && current && next(current).state === 'published') {
+      failed = true;
+      throw new Error('settlement write failed');
+    }
+    return update(messageId, next);
+  };
+}
+
 beforeEach(async () => {
   ({ createPublishingMessageStore } = await import('../dist/domains/messaging/publishing-message-store.js'));
   ({ createMessagingStores } = await import('../dist/domains/messaging/stores/factory.js'));
@@ -217,15 +234,17 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
   });
 
   test('(5ii) a crash after the event but before `published` converges on the same one event', async () => {
+    failSettlementOnce();
     const stored = await appendAndSettle(
       catReply([{ id: 'doc', kind: 'file', v: 1, url: '/uploads/report.pdf', fileName: 'report.pdf' }]),
     );
-    await outbound.update(stored.id, (row) => ({ ...row, state: 'publishing', publishedSequence: undefined }));
+    assert.equal((await outbound.get(stored.id)).state, 'publishing');
 
     await publication.recover();
 
     assert.equal((await published()).length, 1);
     assert.equal((await outbound.get(stored.id)).state, 'published');
+    assert.equal(failures.length, 1, 'only the injected settlement failure');
   });
 
   // Review P1 (…5828208840): the event log dedupes a key only while the event is retained. A
@@ -233,6 +252,7 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
   // the same `publish:<id>:1` again. The job's publish must carry a fence that outlives retention.
   test('(5iii) a failed settlement followed by an event-log trim still converges on one publish', async () => {
     build({ retentionCount: 1 });
+    failSettlementOnce();
     const stored = await appendAndSettle(
       catReply([{ id: 'doc', kind: 'file', v: 1, url: '/uploads/report.pdf', fileName: 'report.pdf' }]),
     );
@@ -243,7 +263,7 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
       { eventId: 'ev_pub_later_1', type: 'message.publish', envelope: { ...first.envelope, messageId: 'later' } },
       1,
     );
-    await outbound.update(stored.id, (row) => ({ ...row, state: 'publishing', publishedSequence: undefined }));
+    assert.equal((await outbound.get(stored.id)).state, 'publishing');
 
     await publication.recover();
 
@@ -312,6 +332,44 @@ describe('F202 W2-5b — outbound media for Host messages', () => {
     assert.equal(okWin.payload.fileName, 'report.pdf');
     assert.equal(gonePosix.payload.text, '[file: gone.pdf]');
     assert.equal(goneWin.payload.text, '[file: gone.pdf]');
+  });
+
+  // Re-review P1 (…5828779117): the fence must last as long as a `publishing` row can be retried,
+  // and it is released once the publication is recorded — it is not left to a clock.
+  test('(5iv) the publication fence is released only after `published` is recorded', async () => {
+    const released = [];
+    const events = {
+      append: (...args) => stores.events.append(...args),
+      releaseFence: async (threadId, key) => {
+        released.push({ threadId, key, state: (await outbound.list())[0]?.state });
+        return stores.events.releaseFence(threadId, key);
+      },
+    };
+    publication = new OutboundMediaPublication({
+      store: outbound,
+      messages: inner,
+      events,
+      ledger,
+      resolvePath: createHostMediaPathResolver({
+        uploadDir: join(root, 'uploads'),
+        ttsCacheDir: join(root, 'tts'),
+        connectorMediaDir: join(root, 'connector-media'),
+        webPublicDir: join(root, 'web'),
+      }),
+      onPublishFailure: (error) => failures.push(error),
+    });
+    seam = createPublishingMessageStore(inner, {
+      events: stores.events,
+      publications: stores.publications,
+      outboundMedia: () => publication,
+      onPublishFailure: (error) => failures.push(error),
+    });
+
+    const stored = await appendAndSettle(
+      catReply([{ id: 'doc', kind: 'file', v: 1, url: '/uploads/report.pdf', fileName: 'report.pdf' }]),
+    );
+
+    assert.deepEqual(released, [{ threadId: THREAD, key: `publish:${stored.id}:1`, state: 'published' }]);
   });
 
   test('(8) an external https file becomes an explicit text link; nothing is fetched', async () => {

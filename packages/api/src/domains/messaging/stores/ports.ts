@@ -111,16 +111,14 @@ export interface AppendLease {
   readonly isCurrent?: () => boolean;
 }
 
-/** How long a durable publication fence outlives its event (W2-5b review P1). */
-export const DURABLE_EVENT_FENCE_TTL_SECONDS = 30 * 24 * 60 * 60;
-
 export interface EventAppendOptions {
   /**
    * Dedupe this key beyond event retention: a later append of the same key returns the first
    * sequence even after the event (and its retention-window dedupe entry) was trimmed. For a
    * publisher that may retry after a failed settlement write — without it, recovery after a trim
-   * appends the same message a second time. Bounded by `DURABLE_EVENT_FENCE_TTL_SECONDS`, not by
-   * the retention count.
+   * appends the same message a second time. The fence has no expiry: it lasts exactly as long as
+   * the publisher may still retry, and the publisher ends it with `releaseFence` once the
+   * publication is recorded (W2-5b review P1s, PR #1487 comments 5828208840 / 5828779117).
    */
   readonly durableFence?: boolean;
 }
@@ -140,6 +138,8 @@ export interface EventLogStore {
     lease?: AppendLease,
     options?: EventAppendOptions,
   ): Promise<EventLogAppendResult>;
+  /** Ends a durable fence once its publisher has recorded the publication; idempotent. */
+  releaseFence(threadId: string, eventKey: string): Promise<void>;
   /** Events with sequence > afterSequence, ascending, at most limit. */
   readAfter(threadId: string, afterSequence: number, limit: number): Promise<MessageOutputEvent[]>;
   /** Smallest retained sequence (retention floor projection); null when log is empty. */

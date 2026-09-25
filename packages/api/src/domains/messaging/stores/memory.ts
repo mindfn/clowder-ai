@@ -179,8 +179,12 @@ interface ThreadLog {
 
 export class MemoryEventLogStore implements EventLogStore {
   private readonly threads = new Map<string, ThreadLog>();
-  /** Durable publication fences: thread + key → first sequence; never trimmed (process lifetime). */
+  /** Durable publication fences: thread + key → first sequence; never trimmed, only released. */
   private readonly fences = new Map<string, number>();
+
+  async releaseFence(threadId: string, eventKey: string): Promise<void> {
+    this.fences.delete(`${threadId}\u0000${eventKey}`);
+  }
 
   private logFor(threadId: string): ThreadLog {
     let log = this.threads.get(threadId);

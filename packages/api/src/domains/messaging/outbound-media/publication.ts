@@ -15,9 +15,10 @@
  *
  * EXACTLY ONCE. The row moves pending → publishing (elements fixed) → published. The event key is
  * the same deterministic `publish:<id>:1` the seam uses, and the append carries a durable fence
- * that outlives event-log retention, so a crash or a failed settlement write after the append
- * re-appends into the dedupe even if the event was trimmed meanwhile; elements are never
- * recomputed after `publishing`.
+ * with no expiry, so a crash or a failed settlement write after the append re-appends into the
+ * dedupe however late recovery runs and even if the event was trimmed meanwhile. The fence is
+ * released only after `published` is recorded — the one point after which no retry can happen.
+ * Elements are never recomputed after `publishing`.
  */
 import type { MessageElement } from '@clowder-ai/plugin-contract';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
@@ -58,7 +59,7 @@ export interface OutboundSpeechSynthesizer {
 export interface OutboundMediaPublicationDeps {
   readonly store: OutboundMediaStore;
   readonly messages: Pick<IMessageStore, 'getById' | 'getRecent'>;
-  readonly events: Pick<EventLogStore, 'append'>;
+  readonly events: Pick<EventLogStore, 'append' | 'releaseFence'>;
   readonly ledger: OutboundMediaLedger;
   readonly resolvePath: HostMediaPathResolver;
   readonly speech?: OutboundSpeechSynthesizer;
@@ -177,7 +178,20 @@ export class OutboundMediaPublication {
       state: 'published',
       ...(publishedSequence === undefined ? {} : { publishedSequence }),
     }));
-    if (msg && envelope) this.deps.onPublished?.(msg.threadId);
+    if (msg && envelope) {
+      // Only now can no retry happen (a `published` row is never run, recovered or adopted
+      // again), so only now may the fence go. A release that fails leaves one inert key behind;
+      // it never allows a second publish.
+      try {
+        await this.deps.events.releaseFence(msg.threadId, `publish:${msg.id}:1`);
+      } catch (error) {
+        console.warn('[F202 W2-5b] publication fence not released', {
+          messageId: msg.id,
+          reason: error instanceof Error ? error.name : 'unknown',
+        });
+      }
+      this.deps.onPublished?.(msg.threadId);
+    }
   }
 
   private async materialize(msg: StoredMessage): Promise<Element[]> {

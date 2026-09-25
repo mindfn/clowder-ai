@@ -29,7 +29,6 @@ import type {
   MessageHandleRecord,
   SettleResult,
 } from './ports.js';
-import { DURABLE_EVENT_FENCE_TTL_SECONDS } from './ports.js';
 import { MessagingKeys } from './redis-keys.js';
 
 // ── Ledger ──
@@ -273,7 +272,7 @@ if count > retention then
     if sep then redis.call('HDEL', KEYS[2], string.sub(member, 1, sep - 1)) end
   end
 end
-if ARGV[5] == '1' then redis.call('SET', KEYS[5], seq, 'EX', tonumber(ARGV[6])) end
+if ARGV[5] == '1' then redis.call('SET', KEYS[5], seq) end
 return {tostring(seq), 0, 0}
 `;
 
@@ -312,10 +311,13 @@ export class RedisEventLogStore implements EventLogStore {
       String(retentionCount),
       lease?.token ?? '',
       options?.durableFence ? '1' : '',
-      String(DURABLE_EVENT_FENCE_TTL_SECONDS),
     )) as [string, number, number];
     if (result[2] === 1) return { deduped: false, fencedOut: true };
     return { sequence: Number(result[0]), deduped: result[1] === 1, fencedOut: false };
+  }
+
+  async releaseFence(threadId: string, eventKey: string): Promise<void> {
+    await this.redis.del(MessagingKeys.eventFence(threadId, encodeURIComponent(eventKey)));
   }
 
   private static parseMember(member: string, score: string): MessageOutputEvent {
