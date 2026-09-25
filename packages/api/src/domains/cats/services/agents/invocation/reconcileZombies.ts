@@ -20,9 +20,21 @@ import type { CatId } from '@cat-cafe/shared';
 import type { IBallCustodyIngest } from '../../../../ball-custody/BallCustodyIngest.js';
 import { buildInvocationDiedEvent } from '../../../../ball-custody/ball-custody-events.js';
 import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
-import type { ZombieRecord } from './getThreadLiveInvocations.js';
 import type { QueueEntry } from './InvocationQueue.js';
 import type { TaskProgressStore } from './TaskProgressStore.js';
+
+/**
+ * A running record the F118 owner reaper proved dead: its lease is stale and no independent provider
+ * or TurnExecution owner is alive. The reaper is the only producer (F117 KD-23 removed the liveness
+ * read model's draft-age zombies).
+ */
+export interface ZombieRecord {
+  invocationId: string;
+  catId: CatId | null;
+  recordStatus: 'running';
+  recordUpdatedAt: number;
+  reason: 'owner_lease_stale_provider_absent';
+}
 
 interface ZombieQueueConverger {
   list(threadId: string, userId: string): QueueEntry[];

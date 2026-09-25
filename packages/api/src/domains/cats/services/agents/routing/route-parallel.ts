@@ -92,7 +92,7 @@ import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/M
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
-import { finallyAfter, mergeStreams } from '../invocation/stream-merge.js';
+import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { AgentServiceUnavailableError } from '../registry/AgentServiceUnavailableError.js';
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
@@ -1117,12 +1117,6 @@ export async function* routeParallel(
   const FLUSH_CHAR_DELTA = 2000;
   const noop = () => {};
 
-  // Issue #83: Independent keepalive timer — touch draft every 60s during long tool calls.
-  const KEEPALIVE_INTERVAL_MS = 60_000;
-  let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
-  // Track which cats have had their keepalive started
-  let keepaliveStarted = false;
-
   function getPayloadStripper(catId: string) {
     let stripper = catPayloadStrippers.get(catId);
     if (!stripper) {
@@ -1163,13 +1157,7 @@ export async function* routeParallel(
       }),
     },
   );
-  // Issue #83: the keepalive stops however this loop ends. Stopping it only after a normal finish
-  // leaked the timer whenever the loop body threw or the consumer returned early.
-  const stopKeepalive = () => {
-    if (keepaliveTimer) clearInterval(keepaliveTimer);
-    keepaliveTimer = undefined;
-  };
-  for await (const msg of finallyAfter(mergedStreams, stopKeepalive)) {
+  for await (const msg of mergedStreams) {
     const effectiveMsgs: AgentMessage[] = [];
     if (msg.type === 'text' && msg.content && msg.catId) {
       effectiveMsgs.push({ ...msg, content: getPayloadStripper(msg.catId).push(msg.content) });
@@ -1227,15 +1215,6 @@ export async function* routeParallel(
             }
             // #80 fix: seed flush baseline so interval triggers after FLUSH_INTERVAL_MS
             catFlushTime.set(effectiveMsg.catId, Date.now());
-            // Issue #83: Start a single keepalive timer that touches all active drafts.
-            if (deps.draftStore && !keepaliveStarted) {
-              keepaliveStarted = true;
-              keepaliveTimer = setInterval(() => {
-                for (const [, invId] of catInvocationId) {
-                  deps.draftStore!.touch(userId, threadId, invId)?.catch?.(noop);
-                }
-              }, KEEPALIVE_INTERVAL_MS);
-            }
           }
         } catch {
           /* ignore parse errors */
@@ -1554,8 +1533,6 @@ export async function* routeParallel(
               ?.catch?.(noop);
             catFlushLen.set(effectiveMsg.catId, curText.length);
             catFlushToolLen.set(effectiveMsg.catId, curToolLen);
-          } else {
-            deps.draftStore.touch(userId, threadId, invId)?.catch?.(noop);
           }
           catFlushTime.set(effectiveMsg.catId, now);
         }
@@ -1609,9 +1586,8 @@ export async function* routeParallel(
       const ownInvId = catInvocationId.get(msg.catId);
       let turnStoredMessageId: string | undefined;
       if (ownInvId) completedCatInvocationIds.push([msg.catId, ownInvId]);
-      // Issue #83 P2 fix: Remove completed cat from keepalive set.
-      // Without this, the shared keepalive timer would touch() a deleted draft,
-      // recreating an orphan Redis hash key via HSET.
+      // Forget the completed cat's turn: a late event for it must not upsert its draft again after R's
+      // commit deleted it. Drafts no longer expire (F117 KD-23), so a recreated one would leak.
       catInvocationId.delete(msg.catId);
       const bufferedBlocks = getRichBlockBuffer().consume(threadId, msg.catId, ownInvId);
       // #573 parallel variant: socket broadcasts in messages.ts use the OUTER

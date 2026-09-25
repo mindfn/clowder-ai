@@ -49,7 +49,6 @@ describe('live invocation projection', () => {
         },
       ],
     };
-    const draftStore = { getByThread: async () => [] };
     const turnExecutionStore = {
       listByParent: async () => [
         {
@@ -65,16 +64,13 @@ describe('live invocation projection', () => {
         },
       ],
     };
-    const log = { info: () => {}, warn: () => {} };
-
     const projected = await resolveActiveInvocationsStrict(
       'thread-1',
       'user-1',
       invocationTracker,
       recordStore,
-      draftStore,
+      undefined, // no response status reader: R terminality is not under test here
       turnExecutionStore,
-      log,
     );
 
     assert.equal(activeSlotReads, 2);

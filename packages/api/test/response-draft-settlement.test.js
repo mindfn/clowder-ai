@@ -177,18 +177,51 @@ describe('F117 KD-21 settleResponseFromDraft', () => {
     assert.equal(emitted.length, 1);
   });
 
-  test('a turn without a response R leaves its draft alone', async () => {
+  test('a turn without a response R deletes its draft before it leaves the ledger (F117 KD-23)', async () => {
     const store = new MessageStore();
     const drafts = new DraftStore();
+    const turns = new InMemoryTurnExecutionStore();
+    await endedTurn(turns, 'turn-orphan');
     await upsertDraft(drafts, 'turn-orphan');
     const emitted = [];
 
-    const settlement = await settle(store, drafts, emitted, { invocationId: 'turn-orphan' });
+    const settlement = await settle(store, drafts, emitted, { invocationId: 'turn-orphan' }, turns);
 
     assert.deepEqual(settlement, { kind: 'no_response' });
-    assert.equal((await drafts.getByThread(USER, THREAD)).length, 1);
+    assert.deepEqual(await drafts.getByThread(USER, THREAD), [], 'no R will take it, and drafts no longer expire');
+    assert.deepEqual(pendingIds(turns), []);
     assert.equal(emitted.length, 0);
   });
+
+  for (const [label, withResponse, firstKind] of [
+    ['a committed R', true, 'committed'],
+    ['a turn without a response R', false, 'no_response'],
+  ]) {
+    test(`${label}: a draft that cannot be deleted keeps the turn in the ledger for the next settlement (F117 KD-23)`, async () => {
+      const store = new MessageStore();
+      const drafts = new DraftStore();
+      const turns = new InMemoryTurnExecutionStore();
+      await endedTurn(turns, 'turn-1');
+      if (withResponse) await appendProcessingResponse(store, 'turn-1');
+      await upsertDraft(drafts, 'turn-1');
+      const deleteDraft = drafts.delete.bind(drafts);
+      let failures = 1;
+      drafts.delete = (...args) => {
+        if (failures-- > 0) throw new Error('redis unavailable');
+        return deleteDraft(...args);
+      };
+
+      await assert.rejects(settle(store, drafts, [], { invocationId: 'turn-1' }, turns), /redis unavailable/);
+      assert.deepEqual(pendingIds(turns), ['turn-1'], 'the turn stays for the next settlement');
+      assert.equal((await drafts.getByThread(USER, THREAD)).length, 1);
+
+      const retried = await settle(store, drafts, [], { invocationId: 'turn-1' }, turns);
+
+      assert.equal(retried.kind, withResponse ? 'already_terminal' : firstKind);
+      assert.deepEqual(await drafts.getByThread(USER, THREAD), []);
+      assert.deepEqual(pendingIds(turns), []);
+    });
+  }
 
   test('a rejected commit throws and keeps the draft for whoever settles R next', async () => {
     const store = new MessageStore();
