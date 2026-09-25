@@ -1119,9 +1119,14 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
   账本按 `scopeKey × contextEpoch` 分代，冷启动本身就意味着 epoch+1。这属于 F296 的契约变更，留给 sol
   （09-28 恢复额度）和上游决定；A′ 落地后，SDK 接入不会再走到那个分支。print 接入在本工作目录同样会报
   `hook_carrier_unavailable`，这是上游既有的行为，负责人是 sol。
-- **未决**：压缩后的上下文注入。print 接入靠 `f24-post-compact-bootstrap.sh`（SessionStart:compact 钩子）完成，
-  SDK 接入的候选做法是进程内 `SessionStart`（source 为 `compact`）回调返回 additionalContext。先在动态证明里确认
-  这个钩子可用，再决定放进 K2 还是另列。
+- **压缩后的上下文注入**：print 接入靠 `f24-post-compact-bootstrap.sh`（SessionStart:compact 钩子）完成。SDK 接入
+  改为进程内 `SessionStart` 回调：source 为 `compact` 时，返回与 latest-digest 路由相同的冷启动投影，作为
+  additionalContext。放进 K2。
+- **已观测到的事实**（SDK 0.3.280，`f117-notes/phase2b-sdk-precompact`，手动 `/compact`）：进程内 PreCompact 回调
+  带着 `session_id` 和 `trigger` 被调用，引擎**等回调返回之后**才开始压缩；压缩完成后，进程内 SessionStart
+  回调以 source `compact` 触发，它返回的 additionalContext 确实进入了模型上下文；两个回调都完成之后，流上才
+  出现 `compact_boundary`。所以回调写下的 seal 观测，一定早于运行时处理 `compact_boundary`。自动压缩还没观测到
+  （第一次尝试没能把上下文撑起来），实现时补上。
 - **另记**（Fable）：opus 的会话在 80% 的 seal 阈值之前就被自动压缩了。seal 只在回合之间测量，一个很大的工具
   结果可以一步越过阈值。如果这是常态，F211 的 seal 策略需要按单个工具结果设护栏；这是另一条线，先记着。
 
