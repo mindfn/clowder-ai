@@ -1077,6 +1077,63 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
    都没有时不算正在处理。快照不完整时，没有任何证据的 running 记录也保守列出，保持 AC-E7 的契约。复审建议的「待对账」与 KD-10 / AC-E7 冲突，没有采用：无法核实时保守地显示为运行中，
    由停止（AC-E7）或下一次完整快照时的 read-repair 收尾（见 J3「为什么不单列『待对账』」）。这一取舍待砚砚复审确认。
 
+
+### Phase K（路线 Phase 2b：Claude Agent SDK 接入，2026-09-25）
+
+来源：Landy `…000158` 问，为什么 SDK 接入的布偶猫也经常显示「已完成，没有返回可显示内容」。SDK 接入
+（`ClaudeSdkAgentService`）是 #1398 新增的（`f426fb790`）：每轮调用一次 `query()`，带 `resume` 恢复会话，
+收到最后一个结果就关闭 query，引擎进程随之退出，所以一轮里开的后台任务活不过这一轮。
+
+#### K1 · 服务方自己起的一轮，不核销用户的输入（`cfd2f0225`）
+
+- **证据**：09-25 06:35、07:05 两轮在任何模型调用之前就结束了。用 SDK 0.3.280 在隔离目录复现
+  （`f117-notes/phase2b-sdk-task-notification`）：上一次 query 退出时杀掉的后台任务，会在恢复会话时先以一个
+  零轮次的 result 交付通知（`origin.kind: 'task-notification'`，没有输入身份，`queued_turn_count: 0`），之后才
+  跑用户的输入。`ClaudeSdkTurnInputState` 对「没有输入身份的结果」有一个兼容兜底，把它当成了用户输入的结果：
+  输入被关闭，`ClaudeSdkAgentService` 随即退出，用户的输入从未到达模型。
+- **规则**：结果的 `origin` 指向非 human 来源（任务通知、channel、peer）时，除非回写了我们输入的身份，否则
+  不核销任何输入；没有 `origin` 的结果保留原来的兼容兜底。这个结果的 `queued_turn_count` 是 0，按计数区分
+  不了，只能看 origin。
+- **测试**：按录下的事件流回放（task_notification → 零轮次 result → 回答 → 回答的 result）。修复前回答不出现，
+  修复后出现。
+
+#### K2 · SDK 接入的压缩要能被权威证明（A′，Fable `…000225`）
+
+- **现状**：F296（上游 `bc9ff2d39`，08-23）规定，无法权威证明的压缩让整轮失败（B4b、AC-B8）。能证明的只有
+  `print_sdk` 加三段钩子证明：callback registry 就绪、工作目录里有 project 的 PreCompact 钩子、本轮有 seal
+  观测。SDK 接入的 `compact_boundary` 已经是 typed 信号（复用 `transformClaudeEvent`），被判
+  `typed_event_unroutable` 只是因为 `resolveAuthoritativeCompactionSupport` 只认 `print_sdk`。09-25 07:24 opus
+  的一轮因此失败（`…000141`）。
+- **做法**：SDK 接入在 `query()` 的 `hooks` 选项里，进程内注册 PreCompact 回调。回调在 API 进程里执行，自带
+  `session_id`，调用与 `POST /api/sessions/seal` 相同的逻辑（抽成共享函数：按 cliSessionId 找到会话，按策略
+  记下本轮的压缩观测，经钩子路径推进 epoch，按 hybrid 策略判断要不要 seal），然后放行，不阻止压缩，与
+  `f24-pre-compact.sh` 一样尽力而为。这样三段证明都由载体自己给出：认证由构造保证（进程内调用，不走 HTTP
+  回调）；载体就绪是载体本身的事实，而不是工作目录里的文件；本轮观测就是这个回调写下的。动态证明通过之后，
+  再把 `agent_sdk` 加进 `resolveAuthoritativeCompactionSupport` 的 Claude 分支。
+- **动态证明**（KD-16，不能省）：在隔离目录里让一个真实的 SDK 会话压缩，手动 `/compact` 和自动压缩各一次，
+  确认四件事按顺序到达：进程内 PreCompact 回调 → seal 观测入账 → 流上的 `compact_boundary` →
+  `observeCompaction` 推进 epoch、下一代冷启动。同时验证 AC-B7：hook 和 stream 报告同一次压缩时保持冷，
+  不重复推进。
+- **不做**：B（证明不了时降级、不让整轮失败）和 C（给仓库加上 `.claude/settings.json`）。B 如果将来要做，只能
+  是「证明不了的 typed 事件规范化为 `unknown` → epoch+1」，而不是「不推进 epoch、只标记冷启动」：presentation
+  账本按 `scopeKey × contextEpoch` 分代，冷启动本身就意味着 epoch+1。这属于 F296 的契约变更，留给 sol
+  （09-28 恢复额度）和上游决定；A′ 落地后，SDK 接入不会再走到那个分支。print 接入在本工作目录同样会报
+  `hook_carrier_unavailable`，这是上游既有的行为，负责人是 sol。
+- **压缩后的上下文注入**：print 接入靠 `f24-post-compact-bootstrap.sh`（SessionStart:compact 钩子）完成。SDK 接入
+  改为进程内 `SessionStart` 回调：source 为 `compact` 时，返回与 latest-digest 路由相同的冷启动投影，作为
+  additionalContext。放进 K2。
+- **已观测到的事实**（SDK 0.3.280，`f117-notes/phase2b-sdk-precompact`，手动 `/compact`）：进程内 PreCompact 回调
+  带着 `session_id` 和 `trigger` 被调用，引擎**等回调返回之后**才开始压缩；压缩完成后，进程内 SessionStart
+  回调以 source `compact` 触发，它返回的 additionalContext 确实进入了模型上下文；两个回调都完成之后，流上才
+  出现 `compact_boundary`。所以回调写下的 seal 观测，一定早于运行时处理 `compact_boundary`。
+- **动态证明**（`2e775bc56`，`f117-notes/phase2b-sdk-precompact` 里的 `live-chain*.mjs`）：真实 SDK 引擎，加上真实的
+  seal、会话链存储、压缩 surface、epoch owner，边界按 invoke-single-cat 的判定函数判断。手动 `/compact` 和自动
+  压缩（连续 5 轮 `cat` 约 24KB 的文件，压缩发生在第 6 轮中途，这一轮照常结束）结果一致：PreCompact 回调经
+  seal 记下本轮观测，epoch 经钩子路径推进一次（epoch 1，cold，`context_compacted`）；`compact_boundary` 判定为
+  supported；流路径再观测时是 `context_compaction_replay`、`replayed: true`，不重复推进（AC-B7）。
+- **另记**（Fable）：opus 的会话在 80% 的 seal 阈值之前就被自动压缩了。seal 只在回合之间测量，一个很大的工具
+  结果可以一步越过阈值。如果这是常态，F211 的 seal 策略需要按单个工具结果设护栏；这是另一条线，先记着。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in

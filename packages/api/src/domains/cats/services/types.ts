@@ -904,6 +904,26 @@ export interface AgentRouteIntent {
 /**
  * Options for invoking an agent
  */
+/**
+ * F117 K2: the Claude compaction hooks the Agent SDK carrier registers in-process. The carrier then
+ * proves its own compaction to F296 (authoritative-compaction), instead of a project hook in the
+ * workspace: the seal observation is written before the provider compacts, by this invocation.
+ */
+export interface ClaudeCompactionHooks {
+  /** Before the provider compacts: record this invocation's compression observation and apply the session policy. */
+  preCompact(input: { readonly cliSessionId: string; readonly trigger: 'manual' | 'auto' }): Promise<void>;
+  /** After the provider compacted: the cold context packet to inject, when the epoch owner projected one. */
+  postCompactContext(input: { readonly cliSessionId: string }): Promise<string | undefined>;
+}
+
+/** Builds one invocation's in-process compaction hooks; the identity names whose observation they record. */
+export type ClaudeCompactionHooksFactory = (identity: {
+  readonly invocationId: string;
+  readonly userId: string;
+  readonly catId: string;
+  readonly threadId: string;
+}) => ClaudeCompactionHooks;
+
 export interface AgentServiceOptions {
   /** Provider-neutral interaction port bound to this invocation. */
   runtimeInteractionPort?: import('../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
@@ -960,6 +980,8 @@ export interface AgentServiceOptions {
   activeInvocationFreshness?: import('./freshness/FreshnessNoticeBroker.js').ActiveInvocationFreshnessController;
   /** #1354: expose an exact provider-native active-turn dispatcher after turn acceptance. */
   activeRunDispatch?: AgentClientActiveRunDispatchRegistration;
+  /** F117 K2: Claude compaction hooks for a carrier that runs them in-process (the Agent SDK carrier). */
+  claudeCompactionHooks?: ClaudeCompactionHooks;
   /** F210-H1b: Override AGY --log-file path (test seam for the trajectory progress observer). */
   agyLogPathOverride?: string;
   /** F118: Invocation ID for diagnostic enrichment of __cliTimeout */
