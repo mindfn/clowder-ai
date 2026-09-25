@@ -5,7 +5,7 @@ topics: [plugin-framework, plugin-manager, host-inventory, capability-registry, 
 doc_kind: spec
 created: 2026-05-15
 architecture-cell: plugin
-tips_exempt: "The historical Phase 1 and K-2 acceptance records are retained below. The terminal direction supersedes their product ordering: Train B completes the Manager and one real package loop; Train C1 migrates existing plugins and removes compatibility paths; Train C2 opens bounded public hook/UI seams with real consumers."
+tips_exempt: "Renewed 2026-09-25 for Train C1 (clowder-ai#1487): the delta records where the C1 plan and status truth live and the C1 timeline; C1 moves existing plugins onto installed packages and deletes the Host copies, so users keep the same entry points and there is no new user-invokable capability to tip. The historical Phase 1 and K-2 acceptance records are retained below. The terminal direction supersedes their product ordering: Train B completes the Manager and one real package loop; Train C1 migrates existing plugins and removes compatibility paths; Train C2 opens bounded public hook/UI seams with real consumers."
 ---
 
 # F202: Terminal Plugin Manager and Host-governed Plugin Framework
