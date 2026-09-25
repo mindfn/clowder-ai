@@ -682,6 +682,8 @@ export {
   type GitHubPrWaitPredicate,
   type GitHubReviewerGround,
   type GitHubReviewThreadBaseline,
+  type GitHubReviewVerdictState,
+  type GitHubReviewVerdicts,
   type GitHubTrackingIdentityGap,
   type GitHubTrackingIdentityV1,
   type GitHubWaitBaseline,
