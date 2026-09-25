@@ -14,7 +14,7 @@ import { describe, it } from 'node:test';
  * Real lifecycle and real in-memory stores; only the observations are hand-built.
  */
 const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
-const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+const { connectorDeliveryHarness } = await import('./helpers/connector-delivery-harness.js');
 const { GitHubWaitLifecycleService } = await import('../dist/domains/github-signals/GitHubWaitLifecycleService.js');
 
 const SUBJECT = 'pr:owner/repo#7';
@@ -68,8 +68,8 @@ const ciPass = (lifecycle, taskId) =>
 describe('#1392 — a re-registered task’s notifications are not swallowed by the old task’s', () => {
   it('the same PR re-tracked in the same thread gets its own first notification delivered', async () => {
     const taskStore = new TaskStore();
-    const messageStore = new MessageStore();
-    const lifecycle = new GitHubWaitLifecycleService({ taskStore, deliveryDeps: { messageStore }, log });
+    const harness = connectorDeliveryHarness();
+    const lifecycle = new GitHubWaitLifecycleService({ taskStore, deliveryDeps: harness.deliveryDeps, log });
 
     const first = await registerTask(taskStore);
     const firstResult = await ciPass(lifecycle, first.id);
@@ -87,18 +87,18 @@ describe('#1392 — a re-registered task’s notifications are not swallowed by 
       firstResult.messageId,
       'the new task’s notification must be a new message, not the old one handed back as a replay',
     );
-    assert.equal(messageStore.getByThread(THREAD).length, 2, 'both notifications are in the thread');
+    assert.equal(harness.admitted(THREAD).length, 2, 'both notifications are admitted');
   });
 
   it('a retry of the same task’s outcome is still deduplicated', async () => {
     const taskStore = new TaskStore();
-    const messageStore = new MessageStore();
-    const lifecycle = new GitHubWaitLifecycleService({ taskStore, deliveryDeps: { messageStore }, log });
+    const harness = connectorDeliveryHarness();
+    const lifecycle = new GitHubWaitLifecycleService({ taskStore, deliveryDeps: harness.deliveryDeps, log });
 
     const task = await registerTask(taskStore);
     await ciPass(lifecycle, task.id);
     await ciPass(lifecycle, task.id);
 
-    assert.equal(messageStore.getByThread(THREAD).length, 1, 'idempotency within one task is kept');
+    assert.equal(harness.admitted(THREAD).length, 1, 'idempotency within one task is kept');
   });
 });
