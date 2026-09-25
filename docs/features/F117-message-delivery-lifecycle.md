@@ -1125,8 +1125,12 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
 - **已观测到的事实**（SDK 0.3.280，`f117-notes/phase2b-sdk-precompact`，手动 `/compact`）：进程内 PreCompact 回调
   带着 `session_id` 和 `trigger` 被调用，引擎**等回调返回之后**才开始压缩；压缩完成后，进程内 SessionStart
   回调以 source `compact` 触发，它返回的 additionalContext 确实进入了模型上下文；两个回调都完成之后，流上才
-  出现 `compact_boundary`。所以回调写下的 seal 观测，一定早于运行时处理 `compact_boundary`。自动压缩还没观测到
-  （第一次尝试没能把上下文撑起来），实现时补上。
+  出现 `compact_boundary`。所以回调写下的 seal 观测，一定早于运行时处理 `compact_boundary`。
+- **动态证明**（`2e775bc56`，`f117-notes/phase2b-sdk-precompact` 里的 `live-chain*.mjs`）：真实 SDK 引擎，加上真实的
+  seal、会话链存储、压缩 surface、epoch owner，边界按 invoke-single-cat 的判定函数判断。手动 `/compact` 和自动
+  压缩（连续 5 轮 `cat` 约 24KB 的文件，压缩发生在第 6 轮中途，这一轮照常结束）结果一致：PreCompact 回调经
+  seal 记下本轮观测，epoch 经钩子路径推进一次（epoch 1，cold，`context_compacted`）；`compact_boundary` 判定为
+  supported；流路径再观测时是 `context_compaction_replay`、`replayed: true`，不重复推进（AC-B7）。
 - **另记**（Fable）：opus 的会话在 80% 的 seal 阈值之前就被自动压缩了。seal 只在回合之间测量，一个很大的工具
   结果可以一步越过阈值。如果这是常态，F211 的 seal 策略需要按单个工具结果设护栏；这是另一条线，先记着。
 
