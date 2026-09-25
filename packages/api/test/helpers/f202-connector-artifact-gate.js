@@ -39,6 +39,9 @@ import {
   packageDirectoryName,
 } from '../../dist/domains/plugin/index.js';
 import { MemoryConnectorThreadBindingStore } from '../../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';
+import { archiveFileName } from './f202-connector-artifact-pins.js';
+
+export { RELEASES } from './f202-connector-artifact-pins.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -47,30 +50,8 @@ export const OWNER = 'owner-1';
 /** What the Host's cat registry would resolve `opus` to; the packages must show this, not the id. */
 export const DISPLAY_NAME = '布偶猫宪宪';
 
-/**
- * Fourth connector batch after ④ — plugins PR #54 exact HEAD `e83c23e0e6d9`, ledger entry
- * 「④ 后第四批 connector 制品」. `media: false` = the package declares no media delivery.
- */
-export const RELEASES = [
-  ['dingtalk', '5cff63fa82b254ddedb2bc580299f37b37130d943a0d7c1e7c33bf5a9be65afe', 'createDingTalkPluginModule', true],
-  ['feishu', 'ae47aac4a22df8da060aa76f8b7f9e239e90d5090a2aecdfb66ad3fdfc041da4', 'createFeishuPluginModule', true],
-  ['telegram', 'b1333e4dd214d94ddf990d204c0aa6b169db430a1805e1bec672415fcfbbf17b', 'createTelegramPluginModule', true],
-  [
-    'wecom-agent',
-    '252de353fd985f6624f658b27a9fc4978d528d604d2e387737c4405905b4509c',
-    'createWeComAgentPluginModule',
-    true,
-  ],
-  ['wecom-bot', 'e9ede6c5db178486624b8be40e36f5d8ecb88943ff2bb1ca315cd2eaea7fd12b', 'createWeComBotPluginModule', true],
-  ['weixin', 'c313802f29c6ee9622d726915f2dd2910fc299dc314f18da163a4ee67920b358', 'createWeixinPluginModule', true],
-  ['xiaoyi', 'cfb9fbe3534f2dc1478c8f3d5ab370f12a3fa03ed0e036da280754df9eb0ac8d', 'createXiaoyiPluginModule', false],
-].map(([name, sha, factory, media]) => ({ name, sha, factory, media }));
-
 function archivePath(release) {
-  return join(
-    archiveDirectory,
-    `clowder-ai-connector-${release.name}-0.1.0-alpha.0-darwin-arm64-${release.sha.slice(0, 12)}.tgz`,
-  );
+  return join(archiveDirectory, archiveFileName(release));
 }
 
 /** Why this release cannot run here, or nothing when its pinned archive is present. */

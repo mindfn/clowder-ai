@@ -11,8 +11,10 @@
  *   and complete bytes (multi-chunk); once the action returns the delivery grant is gone and the same
  *   hmr cannot be read; xiaoyi, which declares no media delivery, tells the reader instead.
  *
- * Runs only with F202_W25PH_ARCHIVE_DIR pointing at the self-contained archives; each archive must
- * match its pinned SHA-256 or the test fails — a missing one skips, nothing stands in for it.
+ * Runs with F202_W25PH_ARCHIVE_DIR pointing at the self-contained archives (release assets named in
+ * `helpers/f202-connector-artifact-pins.js`); each archive must match its pinned SHA-256 or the test
+ * fails. Scope: the admitted packages run in-process against a Host object composed from Host services
+ * — a service-level cross-repo exercise, not a production carrier / process smoke.
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -36,9 +38,17 @@ const checklist = { id: 'checklist-1', kind: 'checklist', v: 1, title: 'Steps', 
 /** Two full 512 KiB SDK chunks and a tail: the adapter must receive every byte in order. */
 const reportBytes = randomBytes(2 * 512 * 1024 + 4099);
 
+/**
+ * The ordinary lane skips when the archives are not present. The mandatory lane
+ * (`scripts/f202-connector-artifact-gate.mjs`) sets F202_ARTIFACT_GATE_REQUIRED=1: there a missing
+ * archive fails, so a run can never pass by executing nothing (review P1, PR #1487 5830747045).
+ */
+const REQUIRED = process.env.F202_ARTIFACT_GATE_REQUIRED === '1';
+
 async function withGate(release, context, run) {
   const reason = await unavailable(release);
   if (reason) {
+    if (REQUIRED) assert.fail(`mandatory artifact gate: ${reason}`);
     context.skip(reason);
     return;
   }
