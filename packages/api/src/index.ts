@@ -212,7 +212,7 @@ import { initStreamingTtsRegistry } from './domains/cats/services/tts/StreamingT
 import { TtsRegistry } from './domains/cats/services/tts/TtsRegistry.js';
 import { startTtsCacheCleaner } from './domains/cats/services/tts/tts-cache-cleaner.js';
 import { initVoiceBlockSynthesizer } from './domains/cats/services/tts/VoiceBlockSynthesizer.js';
-import type { AgentService } from './domains/cats/services/types.js';
+import type { AgentService, ClaudeCompactionHooksFactory } from './domains/cats/services/types.js';
 import { EntrustedWorkOwnerReadService } from './domains/growing/EntrustedWorkOwnerReadService.js';
 import { F232PreparedArtifactReader } from './domains/growing/F232PreparedArtifactReader.js';
 import {
@@ -502,6 +502,8 @@ import { marketplaceRoutes } from './routes/marketplace.js';
 import { registerPersonMemoryDecisionRoutes } from './routes/person-memory-decision-routes.js';
 import { previewRoutes } from './routes/preview.js';
 import { resolveActiveInvocations } from './routes/queue.js';
+import { createSessionCompactionSurface } from './routes/session-compaction-surface.js';
+import { createSealOnPreCompact } from './routes/session-seal-handler.js';
 import { registerTasteProposalDecisionRoutes } from './routes/taste-proposal-decision-routes.js';
 import { terminalRoutes } from './routes/terminal.js';
 import { threadExportRoutes } from './routes/thread-export.js';
@@ -2465,6 +2467,31 @@ async function main(): Promise<void> {
   let collectiveContext:
     | import('./domains/plugin/builtin-runtime/collective-current-context.js').CollectiveCurrentContext
     | undefined;
+  // F117 K2: the Claude Agent SDK carrier runs PreCompact and SessionStart(compact) in-process. They
+  // reuse the session hooks route's seal and post-compact projection; an in-process hook is
+  // authenticated by construction, so it needs no callback registry.
+  const inProcessCompactionSurface = createSessionCompactionSurface({
+    sessionChainStore,
+    transcriptReader,
+    ...(contextEpochOwner ? { contextEpochOwner } : {}),
+    resolveContextCapability: (catId) => router.contextCapability(catId),
+    postCompactContextProjector: (input) => createPostCompactContextProjector(router.getStrategyDeps())(input),
+    hookAuthenticationReady: true,
+  });
+  const inProcessSealOnPreCompact = createSealOnPreCompact({
+    sessionChainStore,
+    sessionSealer,
+    compactionSurface: inProcessCompactionSurface,
+  });
+  const claudeCompactionHooks: ClaudeCompactionHooksFactory = ({ invocationId }) => ({
+    preCompact: async ({ cliSessionId, trigger }) => {
+      const outcome = await inProcessSealOnPreCompact(invocationId, cliSessionId, `claude-code-compact-${trigger}`);
+      if (outcome.status !== 200) {
+        app.log.warn({ invocationId, cliSessionId, outcome }, 'F117 K2: in-process PreCompact recorded no observation');
+      }
+    },
+    postCompactContext: ({ cliSessionId }) => inProcessCompactionSurface.postCompactContextFor(cliSessionId),
+  });
   router = new AgentRouter({
     collectiveContext: () => collectiveContext,
     agentRegistry,
@@ -2479,6 +2506,7 @@ async function main(): Promise<void> {
     contextEpochOwner,
     hookAuthenticationReady: sessionHookAuthenticationReady,
     claudeProjectHookCarrierReady: isClaudeProjectHookCarrierReady,
+    claudeCompactionHooks,
     presentationLedger,
     ...(routingContextRuntime ? { routingContextPromptProjection: routingContextRuntime.promptProjection } : {}),
     ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),

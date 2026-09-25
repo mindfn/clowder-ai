@@ -303,6 +303,84 @@ describe('live member carriers', () => {
     assert.equal(registration.released, true);
   });
 
+  it('Claude SDK runs the compaction hooks it is handed in-process, and none otherwise (F117 K2)', async () => {
+    const sdkOptions = [];
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ options }) => {
+        sdkOptions.push(options);
+        const events = new AsyncInbox();
+        events.push({ type: 'result', subtype: 'success', session_id: 'sdk-hooks', usage: {} });
+        events.close();
+        return { interrupt: async () => {}, [Symbol.asyncIterator]: () => events[Symbol.asyncIterator]() };
+      },
+    });
+    const calls = [];
+    let failPreCompact = false;
+    const claudeCompactionHooks = {
+      async preCompact(input) {
+        calls.push(['preCompact', input]);
+        if (failPreCompact) throw new Error('seal store down');
+      },
+      async postCompactContext(input) {
+        calls.push(['postCompactContext', input]);
+        return 'COLD PACKET';
+      },
+    };
+    const drain = async (options) => {
+      for await (const _ of service.invoke('body', options)) {
+        // drain
+      }
+    };
+    await drain({ claudeCompactionHooks, toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } });
+    await drain({ toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } });
+
+    assert.equal(sdkOptions[1].hooks, undefined, 'no hooks unless the invocation hands them over');
+    const { PreCompact, SessionStart } = sdkOptions[0].hooks;
+    const signal = new AbortController().signal;
+    const base = { session_id: 'claude-session-1', transcript_path: '/tmp/t.jsonl', cwd: '/tmp' };
+    const preCompact = PreCompact[0].hooks[0];
+    const sessionStart = SessionStart[0].hooks[0];
+
+    assert.deepEqual(
+      await preCompact(
+        { ...base, hook_event_name: 'PreCompact', trigger: 'auto', custom_instructions: null },
+        undefined,
+        {
+          signal,
+        },
+      ),
+      {},
+    );
+    assert.deepEqual(
+      await sessionStart({ ...base, hook_event_name: 'SessionStart', source: 'compact' }, undefined, { signal }),
+      { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'COLD PACKET' } },
+    );
+    assert.deepEqual(
+      await sessionStart({ ...base, hook_event_name: 'SessionStart', source: 'startup' }, undefined, { signal }),
+      {},
+    );
+    failPreCompact = true;
+    assert.deepEqual(
+      await preCompact(
+        { ...base, hook_event_name: 'PreCompact', trigger: 'manual', custom_instructions: null },
+        undefined,
+        {
+          signal,
+        },
+      ),
+      {},
+      'a failed seal never blocks the compaction',
+    );
+    assert.deepEqual(calls, [
+      ['preCompact', { cliSessionId: 'claude-session-1', trigger: 'auto' }],
+      ['postCompactContext', { cliSessionId: 'claude-session-1' }],
+      ['preCompact', { cliSessionId: 'claude-session-1', trigger: 'manual' }],
+    ]);
+  });
+
   it('Claude SDK consumes the response for an Append accepted before the current result terminal', async () => {
     const events = new AsyncInbox();
     const registration = activeRunRegistration();

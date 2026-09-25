@@ -582,6 +582,7 @@ import type {
   AgentRouteIntent,
   AgentService,
   AgentServiceOptions,
+  ClaudeCompactionHooksFactory,
   ContextContinuityHandshake,
   InvocationOrigin,
   ProviderCompactionObservation,
@@ -1096,6 +1097,11 @@ export interface InvocationDeps {
   readonly hookAuthenticationReady?: boolean | (() => boolean);
   /** Active-workspace PreCompact carrier readiness; independent from callback registry recovery. */
   readonly claudeProjectHookCarrierReady?: boolean | ((projectRoot: string) => boolean);
+  /**
+   * F117 K2: Claude compaction hooks for a carrier that runs them in-process (the Agent SDK carrier).
+   * Once wired they are that carrier's own proof: authenticated by construction, registered by it.
+   */
+  readonly claudeCompactionHooks?: ClaudeCompactionHooksFactory;
   /** F296 B3b-2: shared admission/delivery state machine for dynamic prompt projections. */
   readonly presentationLedger?: Pick<PresentationLedger, 'reserve' | 'commit' | 'release'>;
   /** F276 Wave 2 bridge: cross-invocation terminal truth consulted at opportunity admission. */
@@ -3266,6 +3272,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             reason: 'context capability undeclared; F296 fail-closed projection',
           }
         : undefined);
+    const claudeCompactionHooks =
+      contextCapability?.provider === 'anthropic' && contextCapability.carrier === 'agent_sdk'
+        ? deps.claudeCompactionHooks?.({ invocationId, userId, catId, threadId })
+        : undefined;
     // F296 B4a: the adapter must expose the seam AND the carrier must be one we
     // dynamically proved has it. Either half missing keeps the carrier cold.
     const providerPreflightAvailable = typeof service.invokeWithContinuityPreflight === 'function';
@@ -3786,6 +3796,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               }),
           }
         : {}),
+      ...(claudeCompactionHooks ? { claudeCompactionHooks } : {}),
       ...(params.onAgentClientActiveRunReady
         ? {
             activeRunDispatch: {
@@ -5325,14 +5336,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         if (msg.type !== 'provider_signal' && msg.type !== 'liveness_signal' && msg.type !== 'status')
           resetInvocationTimeout();
         if (msg.contextCompaction) {
+          // F117 K2: in-process hooks are authenticated by construction and registered by the
+          // carrier itself; only a project hook depends on callback auth and the workspace files.
           const hookAuthenticationReady =
-            typeof deps.hookAuthenticationReady === 'function'
+            claudeCompactionHooks !== undefined ||
+            (typeof deps.hookAuthenticationReady === 'function'
               ? deps.hookAuthenticationReady()
-              : (deps.hookAuthenticationReady ?? false);
+              : (deps.hookAuthenticationReady ?? false));
           const hookCarrierReady =
-            typeof deps.claudeProjectHookCarrierReady === 'function'
+            claudeCompactionHooks !== undefined ||
+            (typeof deps.claudeProjectHookCarrierReady === 'function'
               ? deps.claudeProjectHookCarrierReady(workingProjectRoot ?? hostProjectRoot)
-              : (deps.claudeProjectHookCarrierReady ?? false);
+              : (deps.claudeProjectHookCarrierReady ?? false));
           // Ask the state machine with no attestation first. Only its specific
           // "attestation unavailable" edge authorizes the session read below;
           // auth/carrier/capability failures stop before sequence state.
