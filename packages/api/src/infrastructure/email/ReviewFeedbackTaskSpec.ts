@@ -626,6 +626,8 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             // Default: all fresh items are eligible for delivery (no eventLog configured).
             let safeDeliveryComments: typeof freshNewComments = freshNewComments;
             let safeDeliveryReviews: typeof freshNewReviews = freshNewReviews;
+            // False when an item of this poll failed event-log processing and is held back for retry.
+            let collectionComplete = true;
             if (opts.eventLog && trackingTask.subjectKey) {
               const subjectKey = trackingTask.subjectKey;
               // A task may replay comment history either while migrating its legacy
@@ -750,6 +752,18 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
                   maxSafeReviewCursor = Math.max(maxSafeReviewCursor, r.id);
                 }
               }
+              collectionComplete = blockedCommentSources.size === 0 && reviewBreakBeforeId === Infinity;
+            }
+
+            // #1392 AC-2: a terminal outcome marks the task done, and a done task is never polled
+            // again. While this poll holds an item back for retry, ending the task would drop that
+            // item for good. Hold the terminal poll before anything else is recorded: no cursor is
+            // committed, so the next poll collects the same items again and ends tracking with them.
+            if (terminalState && !collectionComplete) {
+              opts.log.warn(
+                `[review-feedback] PR ${prKey} ${terminalState}, but an item failed collection — ending tracking on the next poll`,
+              );
+              continue;
             }
 
             // F280: actor type and prose no longer decide owner visibility. Keep the
