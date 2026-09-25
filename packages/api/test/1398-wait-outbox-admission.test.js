@@ -64,13 +64,16 @@ async function tracked() {
     now: () => 500,
     log: { info() {}, warn() {}, error: (obj, msg) => errors.push({ obj, msg }) },
   });
-  // Refuse deliveries on demand, per idempotency key, the way the persisted Queue answers.
+  // Refuse deliveries on demand, per outcome, the way the persisted Queue answers. Which outcome is
+  // offered is read from its carrier: the idempotency key's format belongs to the lifecycle (upstream
+  // #1528 scopes it to the task), so the test does not depend on it.
   const refusals = new Map();
   const realDeliver = harness.delivery.deliver.bind(harness.delivery);
   const attempts = [];
   harness.delivery.deliver = async (input) => {
-    attempts.push(input.idempotencyKey);
-    const refusal = refusals.get(input.idempotencyKey) ?? refusals.get('*');
+    const offered = input.source?.meta?.waitContinuationCarrier?.outcomeId ?? input.idempotencyKey;
+    attempts.push(offered);
+    const refusal = refusals.get(offered) ?? refusals.get('*');
     if (refusal) return { state: refusal, reason: `test ${refusal}` };
     return realDeliver(input);
   };
@@ -137,13 +140,10 @@ describe('F117 L2: a Queue conflict ends the outcome instead of being retried fo
     assert.equal(after.waitOutcome.delivery, 'delivered');
     assert.equal(t.contents().length, 1, 'only the new outcome reached the thread');
 
-    const retries = t.attempts.filter((key) => key === stranded.outcomeId).length;
+    const offersOfStranded = () => t.attempts.filter((offered) => offered === stranded.outcomeId).length;
+    const retries = offersOfStranded();
     await t.lifecycle.observe({ taskId: t.task.id, facts: { headSha: HEAD, conflict: { mergeState: 'CONFLICTING' } } });
-    assert.equal(
-      t.attempts.filter((key) => key === stranded.outcomeId).length,
-      retries,
-      'a conflicted outcome is never offered to the Queue again',
-    );
+    assert.equal(offersOfStranded(), retries, 'a conflicted outcome is never offered to the Queue again');
   });
 
   it('keeps an unavailable Queue a retry, not a terminal', async () => {
