@@ -49,7 +49,7 @@ import type { IThreadStore, ThreadRoutingPolicyV1 } from '../../stores/ports/Thr
 import { DEFAULT_THREAD_ID } from '../../stores/ports/ThreadStore.js';
 import type { IWorkflowSopStore } from '../../stores/ports/WorkflowSopStore.js';
 import { getTimelineOrderTime } from '../../stores/visibility.js';
-import type { AgentMessage, AgentRouteIntent, AgentService } from '../../types.js';
+import type { AgentMessage, AgentRouteIntent, AgentService, ClaudeCompactionHooksFactory } from '../../types.js';
 import type { InvocationRegistry } from '../invocation/InvocationRegistry.js';
 import {
   type InvocationCapacitySnapshot,
@@ -507,6 +507,8 @@ export interface AgentRouterOptions {
   hookAuthenticationReady?: boolean | (() => boolean);
   /** F296: project-local PreCompact carrier readiness for the invocation workspace. */
   claudeProjectHookCarrierReady?: boolean | ((projectRoot: string) => boolean);
+  /** F117 K2: in-process compaction hooks for the Claude Agent SDK carrier. */
+  claudeCompactionHooks?: ClaudeCompactionHooksFactory;
   /** F296 B3b-2: shared provider-presentation delivery ledger. */
   presentationLedger?: PresentationLedger;
   /** F293: owner-scoped sparse routing projection consumed by provider generation. */
@@ -631,6 +633,7 @@ export class AgentRouter {
   private contextEpochOwner: ContextEpochOwner | undefined;
   private hookAuthenticationReady: boolean | (() => boolean);
   private claudeProjectHookCarrierReady: boolean | ((projectRoot: string) => boolean);
+  private claudeCompactionHooks: ClaudeCompactionHooksFactory | undefined;
   private presentationLedger: PresentationLedger | undefined;
   private routingContextPromptProjection?: import('../../../../routing-context/RoutingContextPromptProjector.js').RoutingContextPromptProjectionPort;
   private routingDispatchPreflight?: import('../../../../routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
@@ -799,6 +802,7 @@ export class AgentRouter {
     this.contextEpochOwner = options.contextEpochOwner;
     this.hookAuthenticationReady = options.hookAuthenticationReady ?? false;
     this.claudeProjectHookCarrierReady = options.claudeProjectHookCarrierReady ?? false;
+    this.claudeCompactionHooks = options.claudeCompactionHooks;
     this.presentationLedger = options.presentationLedger;
     this.routingContextPromptProjection = options.routingContextPromptProjection;
     this.routingDispatchPreflight = options.routingDispatchPreflight;
@@ -1527,6 +1531,7 @@ export class AgentRouter {
         ...(this.contextEpochOwner ? { contextEpochOwner: this.contextEpochOwner } : {}),
         hookAuthenticationReady: this.hookAuthenticationReady,
         claudeProjectHookCarrierReady: this.claudeProjectHookCarrierReady,
+        ...(this.claudeCompactionHooks ? { claudeCompactionHooks: this.claudeCompactionHooks } : {}),
         ...(this.presentationLedger ? { presentationLedger: this.presentationLedger } : {}),
         ...(this.routingContextPromptProjection
           ? { routingContextPromptProjection: this.routingContextPromptProjection }

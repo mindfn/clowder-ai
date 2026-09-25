@@ -32,6 +32,7 @@ import {
 } from './ClaudeAgentService.js';
 import { resolveClaudeMcpConfig } from './claude-mcp-config.js';
 import { extractClaudeUsage, transformClaudeEvent } from './claude-ndjson-parser.js';
+import { sdkCompactionHooks } from './claude-sdk-compaction-hooks.js';
 import { ClaudeSdkTurnInputState, createSdkUserMessage } from './claude-sdk-turn-input-state.js';
 import { appendLocalImagePathHints, collectImageAccessDirectories } from './image-cli-bridge.js';
 import { extractImagePaths } from './image-paths.js';
@@ -219,6 +220,7 @@ export class ClaudeSdkAgentService implements AgentService {
           ? ['project', 'local']
           : ['user', 'project', 'local'],
       ...(options?.sessionId ? { resume: options.sessionId } : {}),
+      ...(options?.claudeCompactionHooks ? { hooks: sdkCompactionHooks(options.claudeCompactionHooks, log) } : {}),
       ...(readOnly ? { mcpServers: {}, strictMcpConfig: true } : {}),
       ...(!readOnly && mcpResolution
         ? { mcpServers: mcpResolution.servers as Record<string, McpServerConfig>, strictMcpConfig: true }
@@ -300,7 +302,9 @@ export class ClaudeSdkAgentService implements AgentService {
           // result on the clean path; a crash may reverse those two, and the
           // identity join remains correct in either order. queued_turn_count
           // provides a provider-authored backstop when a result lacks an input
-          // identity (including an interrupted-turn compatibility edge).
+          // identity (including an interrupted-turn compatibility edge). A turn
+          // the provider started itself, such as a killed task's notification,
+          // settles none of our inputs.
           turnInputs.settleResult(raw);
           metadata.usage = extractClaudeUsage(raw);
           if (streamState.lastTurnInputTokens != null && metadata.usage) {

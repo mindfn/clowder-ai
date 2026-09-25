@@ -217,6 +217,170 @@ describe('live member carriers', () => {
     assert.equal(registration.released, true);
   });
 
+  it('Claude SDK does not let a provider-internal turn result settle the user input (task notification)', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    let sdkInput;
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ prompt }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        return {
+          interrupt: async () => {},
+          [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+        };
+      },
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    const sent = (await sdkInput.next()).value;
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-task-notification' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    // Recorded from SDK 0.3.280 (f117-notes/phase2b-sdk-task-notification): when the previous query's
+    // exit killed a background task, the resumed session first delivers the task's notification as a
+    // zero-turn result of its own, with no input identity, and only then runs the user's input.
+    events.push({
+      type: 'system',
+      subtype: 'task_notification',
+      status: 'stopped',
+      task_id: 'task-killed-at-exit',
+      session_id: 'sdk-task-notification',
+    });
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      origin: { kind: 'task-notification' },
+      queued_turn_count: 0,
+      num_turns: 0,
+      is_error: false,
+      result: '',
+      session_id: 'sdk-task-notification',
+      usage: { input_tokens: 0, output_tokens: 0 },
+    });
+    events.push({
+      type: 'assistant',
+      session_id: 'sdk-task-notification',
+      user_message_uuids: [sent.uuid],
+      message: { id: 'answer', content: [{ type: 'text', text: 'PONG' }] },
+    });
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-task-notification',
+      user_message_uuid: sent.uuid,
+      user_message_uuids: [sent.uuid],
+      queued_turn_count: 0,
+      num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+
+    const rest = [];
+    for (;;) {
+      const next = await Promise.race([
+        output.next(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('invocation did not finish')), 1000)),
+      ]);
+      if (next.done) break;
+      rest.push(next.value);
+    }
+    assert.deepEqual(
+      rest.filter((message) => message.type === 'text').map((message) => message.content),
+      ['PONG'],
+      'the user input is answered, not swallowed by the notification turn',
+    );
+    assert.equal(rest.at(-1).type, 'done');
+    assert.equal(registration.released, true);
+  });
+
+  it('Claude SDK runs the compaction hooks it is handed in-process, and none otherwise (F117 K2)', async () => {
+    const sdkOptions = [];
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ options }) => {
+        sdkOptions.push(options);
+        const events = new AsyncInbox();
+        events.push({ type: 'result', subtype: 'success', session_id: 'sdk-hooks', usage: {} });
+        events.close();
+        return { interrupt: async () => {}, [Symbol.asyncIterator]: () => events[Symbol.asyncIterator]() };
+      },
+    });
+    const calls = [];
+    let failPreCompact = false;
+    const claudeCompactionHooks = {
+      async preCompact(input) {
+        calls.push(['preCompact', input]);
+        if (failPreCompact) throw new Error('seal store down');
+      },
+      async postCompactContext(input) {
+        calls.push(['postCompactContext', input]);
+        return 'COLD PACKET';
+      },
+    };
+    const drain = async (options) => {
+      for await (const _ of service.invoke('body', options)) {
+        // drain
+      }
+    };
+    await drain({ claudeCompactionHooks, toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } });
+    await drain({ toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } });
+
+    assert.equal(sdkOptions[1].hooks, undefined, 'no hooks unless the invocation hands them over');
+    const { PreCompact, SessionStart } = sdkOptions[0].hooks;
+    const signal = new AbortController().signal;
+    const base = { session_id: 'claude-session-1', transcript_path: '/tmp/t.jsonl', cwd: '/tmp' };
+    const preCompact = PreCompact[0].hooks[0];
+    const sessionStart = SessionStart[0].hooks[0];
+
+    assert.deepEqual(
+      await preCompact(
+        { ...base, hook_event_name: 'PreCompact', trigger: 'auto', custom_instructions: null },
+        undefined,
+        {
+          signal,
+        },
+      ),
+      {},
+    );
+    assert.deepEqual(
+      await sessionStart({ ...base, hook_event_name: 'SessionStart', source: 'compact' }, undefined, { signal }),
+      { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'COLD PACKET' } },
+    );
+    assert.deepEqual(
+      await sessionStart({ ...base, hook_event_name: 'SessionStart', source: 'startup' }, undefined, { signal }),
+      {},
+    );
+    failPreCompact = true;
+    assert.deepEqual(
+      await preCompact(
+        { ...base, hook_event_name: 'PreCompact', trigger: 'manual', custom_instructions: null },
+        undefined,
+        {
+          signal,
+        },
+      ),
+      {},
+      'a failed seal never blocks the compaction',
+    );
+    assert.deepEqual(calls, [
+      ['preCompact', { cliSessionId: 'claude-session-1', trigger: 'auto' }],
+      ['postCompactContext', { cliSessionId: 'claude-session-1' }],
+      ['preCompact', { cliSessionId: 'claude-session-1', trigger: 'manual' }],
+    ]);
+  });
+
   it('Claude SDK consumes the response for an Append accepted before the current result terminal', async () => {
     const events = new AsyncInbox();
     const registration = activeRunRegistration();
