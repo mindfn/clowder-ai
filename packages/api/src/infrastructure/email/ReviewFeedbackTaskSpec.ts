@@ -8,7 +8,13 @@
  * Gate: list pr_tracking tasks → fetch comments + reviews → filter by cursor → workItems.
  * Execute: ReviewFeedbackRouter → commitCursor (only once the observation is recorded) → ConnectorInvokeTrigger.
  */
-import type { CatId, CommunityEvent, GitHubReviewThreadBaseline, TaskItem } from '@cat-cafe/shared';
+import type {
+  CatId,
+  CommunityEvent,
+  GitHubReviewThreadBaseline,
+  GitHubReviewVerdicts,
+  TaskItem,
+} from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import {
@@ -27,6 +33,7 @@ import {
   type ExternalCloudReviewClassification,
   type ExternalCloudReviewWaitResult,
 } from '../../domains/community/external-review/external-cloud-review-classifier.js';
+import { reviewVerdictsOf } from '../../domains/github-signals/GitHubReviewVerdicts.js';
 import {
   classifyGitHubReviewLoopBrake,
   type GitHubReviewLoopBrake,
@@ -53,6 +60,8 @@ export interface ReviewFeedbackSignal {
   inlineCommentCursor: number;
   conversationCommentCursor: number;
   decisionCursor: number;
+  /** #1392: every verdict on the PR as of this poll, old review ids included. */
+  reviewVerdicts: GitHubReviewVerdicts;
   reviewThreads?: readonly GitHubReviewThreadBaseline[];
   resultTriggerCommentId?: number;
   resultSourceRef?: string;
@@ -90,8 +99,11 @@ export interface ReviewFeedbackTaskSpecOptions {
     prNumber: number,
     cursors: PrFeedbackCommentCursors,
   ) => Promise<PrFeedbackComment[]>;
-  /** @param sinceId — when provided, only fetch items with id > sinceId (enables per-page early termination). */
-  readonly fetchReviews: (repoFullName: string, prNumber: number, sinceId?: number) => Promise<PrReviewDecision[]>;
+  /**
+   * Every review on the PR. #1392: never cursor-filtered — GitHub dismisses a verdict in place, under
+   * its original id, so a fetch of ids above a cursor can never see the dismissal.
+   */
+  readonly fetchReviews: (repoFullName: string, prNumber: number) => Promise<PrReviewDecision[]>;
   readonly fetchReviewThreads?: (
     repoFullName: string,
     prNumber: number,
@@ -535,14 +547,17 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             );
             const reviewCursor = resolveCursor(reviewCursors.get(prKey), reviewState?.lastDecisionCursor);
 
-            // #798: Pass cursor to fetch for per-page client-side filtering (eliminates maxBuffer crash)
+            // #798: comments pass their cursors for per-page client-side filtering (eliminates the
+            // maxBuffer crash). Reviews are fetched whole: a dismissal changes an old review in place,
+            // and the per-page fetch walks every page either way, so this costs no extra request.
             const [comments, reviews] = await Promise.all([
               opts.fetchComments(repoFullName, prNumber, {
                 inline: inlineCommentCursor,
                 conversation: conversationCommentCursor,
               }),
-              opts.fetchReviews(repoFullName, prNumber, reviewCursor),
+              opts.fetchReviews(repoFullName, prNumber),
             ]);
+            const reviewVerdicts = reviewVerdictsOf(reviews);
 
             // The two endpoints have independent cursor spaces, but their feedback still
             // belongs to one user-visible timeline. Keep cursor checks source-specific and
@@ -861,6 +876,7 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
                 inlineCommentCursor: maxInlineCommentId,
                 conversationCommentCursor: maxConversationCommentId,
                 decisionCursor: maxReviewId,
+                reviewVerdicts,
                 ...(reviewThreads ? { reviewThreads } : {}),
                 ...(waitResult
                   ? {
@@ -943,6 +959,7 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             inlineCommentCursor: signal.inlineCommentCursor,
             conversationCommentCursor: signal.conversationCommentCursor,
             decisionCursor: signal.decisionCursor,
+            reviewVerdicts: signal.reviewVerdicts,
             ...(signal.reviewThreads ? { reviewThreads: signal.reviewThreads } : {}),
             ...(signal.resultTriggerCommentId ? { resultTriggerCommentId: signal.resultTriggerCommentId } : {}),
             ...(signal.resultSourceRef ? { resultSourceRef: signal.resultSourceRef } : {}),

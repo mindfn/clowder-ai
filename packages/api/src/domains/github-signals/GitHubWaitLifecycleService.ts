@@ -24,7 +24,7 @@ import {
 import { automationGeneration } from '../cats/services/stores/ports/TaskAutomationState.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import { type GitHubWaitFacts, matchGitHubWaitPredicates } from './GitHubWaitPredicateCatalog.js';
-import { followPushedHead, planWaitRenewal } from './GitHubWaitRenewalBaseline.js';
+import { planWaitRenewal, quietBaselineUpdate } from './GitHubWaitRenewalBaseline.js';
 import {
   type GitHubReviewLoopBrake,
   REVIEW_LOOP_BRAKE_NEXT_STEP,
@@ -277,17 +277,18 @@ export class GitHubWaitLifecycleService {
     } else {
       const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
       if (matched.length === 0 && !isAwaitExpired(active, at)) {
-        const followed = followPushedHead(active, collectorState, input.facts, at);
-        if (followed) {
-          // Same generation and no outcome: the wait moves with the HEAD, nobody is woken.
+        const moved = quietBaselineUpdate(active, collectorState, input.facts, at);
+        if (moved) {
+          // Same generation and no outcome: the wait moves with the HEAD, or a wait registered before
+          // verdicts were recorded adopts the ones it sees now. Nobody is woken.
           const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
             expectedGeneration: active.generation,
             expectedUpdatedAt: task.updatedAt,
-            automationState: { ...collectorState, await: { ...active, baseline: followed } } as AutomationState,
+            automationState: { ...collectorState, await: { ...active, baseline: moved.baseline } } as AutomationState,
             status: 'doing',
           });
           if (!installed) return LOST_RACE;
-          return { kind: 'state_only', reason: 'head_followed' };
+          return { kind: 'state_only', reason: moved.reason };
         }
         if (input.collectorPatch) {
           await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
