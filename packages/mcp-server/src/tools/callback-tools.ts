@@ -12,7 +12,6 @@ import { defineMcpCanonicalFactory, defineMcpMigrationFactory } from '../tool-go
  */
 
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import type {
   ActionSuccessorRequestMetadata,
   CallbackAuthFailureReason,
@@ -40,6 +39,8 @@ import {
   entrustedWorkV1Schema,
   executableActionSuccessorMetadataSchema,
   extractFeatureIds,
+  GITHUB_ISSUE_WAIT_PREDICATE_LIMIT,
+  GITHUB_PR_WAIT_PREDICATE_LIMIT,
   isCallbackAuthFailureReason,
   isValidAcceptedSource,
   isValidReviewSubjectRef,
@@ -50,6 +51,7 @@ import {
   SOP_DEFINITION_IDS,
   taskFeatureIdSchema,
 } from '@cat-cafe/shared';
+import { hasUsableAgentKeyCredentials, resolveAgentKeySecretFromEnv } from '@cat-cafe/shared/utils';
 import { z } from 'zod';
 import { sendCallbackRequest } from './callback-outbox.js';
 import { extractReasonTag } from './callback-retry.js';
@@ -146,51 +148,14 @@ function requiresInlineAudioSynthesis(block: unknown): boolean {
   return record.kind === 'audio' && text.length > 0 && url.length === 0;
 }
 
-function readAgentKeyFile(path: string | undefined): string | undefined {
-  if (!path) return undefined;
-  try {
-    return readFileSync(path, 'utf-8').trim();
-  } catch {
-    // sidecar missing = no agent-key (not an error)
-    return undefined;
-  }
-}
-
-function parseAgentKeyFileMap(raw: string | undefined): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const files: Record<string, string> = {};
-    for (const [catId, filePath] of Object.entries(parsed)) {
-      if (typeof filePath === 'string' && filePath.trim()) {
-        files[catId] = filePath.trim();
-      }
-    }
-    return files;
-  } catch {
-    return {};
-  }
-}
+// readAgentKeyFile / parseAgentKeyFileMap moved to @cat-cafe/shared/utils
+// (agent-key-credentials), and the resolver core itself now lives there as
+// resolveAgentKeySecretFromEnv — availability decisions and actual callback
+// auth share one implementation, including the bound-identity restriction,
+// precedence, and literal single-FILE path normalization (#1494 round 2).
 
 function resolveAgentKeySecret(options?: AgentKeyOptions): string | undefined {
-  const requestedCatId = options?.agentKeyCatId?.trim();
-  const boundCatId = process.env.CAT_CAFE_AGENT_KEY_BOUND_CAT_ID?.trim();
-  const variantMapRaw = process.env.CAT_CAFE_AGENT_KEY_FILES?.trim();
-  if (requestedCatId && boundCatId && requestedCatId !== boundCatId) return undefined;
-
-  const effectiveCatId = requestedCatId || boundCatId;
-  if (effectiveCatId) {
-    const variantFiles = parseAgentKeyFileMap(variantMapRaw);
-    return readAgentKeyFile(variantFiles[effectiveCatId]);
-  }
-
-  if (variantMapRaw) return undefined;
-
-  const agentKeySecret = process.env.CAT_CAFE_AGENT_KEY_SECRET;
-  if (agentKeySecret) return agentKeySecret;
-
-  return readAgentKeyFile(process.env.CAT_CAFE_AGENT_KEY_FILE);
+  return resolveAgentKeySecretFromEnv(process.env, options);
 }
 
 export function getCallbackConfig(options?: AgentKeyOptions): CallbackConfig | null {
@@ -1842,11 +1807,7 @@ export async function handleCreateRichBlock(input: {
   }
   const block = parsed;
   const hasInvocationCreds = getInvocationAuthSignal().hasFullCredentials;
-  const hasAgentKeyCreds = !!(
-    process.env.CAT_CAFE_AGENT_KEY_SECRET ||
-    process.env.CAT_CAFE_AGENT_KEY_FILE ||
-    process.env.CAT_CAFE_AGENT_KEY_FILES
-  );
+  const hasAgentKeyCreds = hasUsableAgentKeyCredentials(process.env);
 
   const ccRichText = `\`\`\`cc_rich\n${JSON.stringify({ v: 1, blocks: [block] })}\n\`\`\``;
   // Inline TTS is a long-running, non-idempotent server operation. The voice
@@ -1953,6 +1914,18 @@ export async function handleGenerateDocument(input: {
   return result;
 }
 
+/**
+ * #1392 AC-3: a positive audience — the GitHub logins whose comments may wake the owner, compared
+ * case-insensitively. Required on PR comment predicates, optional on `issue_comment_added`; never
+ * empty, because an empty list matches nobody and the wait would never fire. A blank login names
+ * nobody either, so logins are trimmed before that check, exactly as the server does.
+ */
+const githubWaitAuthorLoginsSchema = z
+  .array(z.string().trim().min(1))
+  .min(1)
+  .max(20)
+  .describe('GitHub logins whose comments may wake you, compared case-insensitively. Never empty.');
+
 const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pr_head_changed') }).strict(),
   z
@@ -1970,6 +1943,8 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
     .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
   z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
+  z.object({ kind: z.literal('pr_conversation_comment_added'), authorLogins: githubWaitAuthorLoginsSchema }).strict(),
+  z.object({ kind: z.literal('pr_inline_comment_added'), authorLogins: githubWaitAuthorLoginsSchema }).strict(),
 ]);
 
 // F280: server-bound typed wait registration — baseline and owner are never caller input.
@@ -1979,33 +1954,67 @@ export const registerPrTrackingInputSchema = {
   when: z
     .array(githubWaitPredicateInputSchema)
     .min(1)
-    .max(4)
-    .describe('One to four typed conditions, evaluated as flat any-of against a server-frozen live baseline.'),
+    .max(GITHUB_PR_WAIT_PREDICATE_LIMIT)
+    .optional()
+    .describe(
+      `ADVANCED, and usually omit it. One to ${GITHUB_PR_WAIT_PREDICATE_LIMIT} typed conditions for a precise wait. Omitting this is the normal path: the server then arms every condition the PR raises about itself — review decision, CI terminal and conflict, plus a new HEAD unless you are the PR author (as the author, that push is your own) — AND both comment surfaces, with an audience it derives from your role on that PR. As its author you hear every reply that is not your own, bots included; as a reviewer you hear the PR author's replies, with bots and pure summon commands filtered. Supply this only when you need something narrower or need a condition with its own anchor, such as pr_review_thread_changed; a comment predicate you write here still requires its own explicit \`authorLogins\`. Duplicate kinds, unknown kinds and conditions missing their required parameters are rejected. At most one of \`when\` or \`goal\`.`,
+    ),
+  goal: z
+    .object({
+      kind: z.literal('await_reply_from'),
+      authorLogins: z.array(z.string().trim().min(1)).min(1).max(20),
+    })
+    .strict()
+    .optional()
+    .describe(
+      'OPTIONAL narrowing, not a precondition. Comments already wake you by default; add this only to hear from specific people and nobody else. It narrows the audience the server derives from your role on both comment surfaces rather than replacing it: both rules apply, so a comment wakes you only when the derived rule admits it AND you named its author. Naming someone that rule already excludes therefore matches nobody instead of adding them — as the PR author, naming yourself; as a reviewer, naming anyone but the PR author. An empty one is refused rather than widened to everyone. What was actually armed, and what will be filtered, comes back to you in `await.continuation.when` and `notification`. At most one of `when` or `goal`.',
+    ),
   nextStep: z
     .string()
     .min(1)
     .max(500)
-    .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
+    .optional()
+    .describe(
+      'Optional note to yourself, shown with the wake. Omit it and the server writes a deterministic one. Display-only either way: the matcher never reads it, and it decides nothing.',
+    ),
   expiresAt: z
     .number()
     .int()
     .positive()
-    .describe('Unix timestamp in milliseconds when responsibility expires without deleting history.'),
+    .optional()
+    .describe(
+      'Optional absolute deadline, Unix ms. Omit it and tracking has no time-based termination. ' +
+        'If supplied it must be in the future, it is returned in the registration response, and reaching it ' +
+        'ends tracking with an explicit terminal outcome. History is never deleted.',
+    ),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'Default true: after a match, tracking re-arms automatically with a fresh baseline, so you do not ' +
+        'register again. Set false for a single-fire wait that ends after its first match.',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
   repoFullName: string;
   prNumber: number;
-  when: Array<
-    | { kind: 'pr_head_changed' }
-    | { kind: 'pr_review_result_available'; triggerCommentId?: number }
-    | { kind: 'pr_review_decision_changed' }
-    | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
-    | { kind: 'pr_ci_terminal' }
-    | { kind: 'pr_became_conflicting' }
-  >;
-  nextStep: string;
-  expiresAt: number;
+  when:
+    | Array<
+        | { kind: 'pr_head_changed' }
+        | { kind: 'pr_review_result_available'; triggerCommentId?: number }
+        | { kind: 'pr_review_decision_changed' }
+        | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
+        | { kind: 'pr_ci_terminal' }
+        | { kind: 'pr_became_conflicting' }
+        | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
+        | { kind: 'pr_inline_comment_added'; authorLogins: string[] }
+      >
+    | undefined;
+  goal?: { kind: 'await_reply_from'; authorLogins: string[] } | undefined;
+  nextStep?: string | undefined;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -2018,9 +2027,13 @@ export async function handleRegisterPrTracking(input: {
         {
           repoFullName: input.repoFullName,
           prNumber: input.prNumber,
-          when: input.when,
-          nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          // #1392 AC-7: forward whichever the caller supplied and let the route enforce "exactly one".
+          // Serializing an absent `when` as null would turn a goal-only call into a contradiction.
+          ...(input.when !== undefined ? { when: input.when } : {}),
+          ...(input.goal !== undefined ? { goal: input.goal } : {}),
+          ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -2035,27 +2048,47 @@ export const registerIssueTrackingInputSchema = {
   when: z
     .array(
       z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('issue_comment_added') }).strict(),
+        z
+          .object({ kind: z.literal('issue_comment_added'), authorLogins: githubWaitAuthorLoginsSchema.optional() })
+          .strict(),
         z.object({ kind: z.literal('issue_author_commented') }).strict(),
       ]),
     )
     .min(1)
-    .max(4)
-    .describe('One to four typed issue conditions, evaluated as flat any-of against a server-frozen baseline.'),
+    .max(GITHUB_ISSUE_WAIT_PREDICATE_LIMIT)
+    .optional()
+    .describe(
+      `ADVANCED, and usually omit it. One to ${GITHUB_ISSUE_WAIT_PREDICATE_LIMIT} typed issue conditions, evaluated as flat any-of against a server-frozen baseline. Omitting this is the normal path: the server arms every comment on the issue that is not your own.`,
+    ),
   nextStep: z
     .string()
     .min(1)
     .max(500)
-    .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
-  expiresAt: z.number().int().positive().describe('Unix timestamp in milliseconds when responsibility expires.'),
+    .optional()
+    .describe(
+      'Optional note to yourself, shown with the wake. Omit it and the server writes a deterministic one. Display-only either way: the matcher never reads it, and it decides nothing.',
+    ),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Optional absolute deadline, Unix ms. Omit it and tracking has no time-based termination.'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe('Default true: tracking re-arms after each match. Set false for a single-fire wait.'),
 };
 
 export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
-  when: Array<{ kind: 'issue_comment_added' } | { kind: 'issue_author_commented' }>;
-  nextStep: string;
-  expiresAt: number;
+  when?:
+    | Array<{ kind: 'issue_comment_added'; authorLogins?: string[] } | { kind: 'issue_author_commented' }>
+    | undefined;
+  nextStep?: string | undefined;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -2066,9 +2099,12 @@ export async function handleRegisterIssueTracking(input: {
         {
           repoFullName: input.repoFullName,
           issueNumber: input.issueNumber,
-          when: input.when,
-          nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          // #1392 AC-7: forward `when` only when the caller wrote one. Serializing an absent list as
+          // null would turn "arm the normal default" into a schema violation at the route.
+          ...(input.when !== undefined ? { when: input.when } : {}),
+          ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -3830,12 +3866,12 @@ export const callbackTools = [
   defineCanonicalTool({
     name: 'cat_cafe_register_pr_tracking',
     description:
-      'Register one explicit, bounded PR wait for the current task owner. ' +
-      'Use when: you can name the exact typed GitHub condition that changes your next action, such as a new HEAD, review result, terminal executable CI, anchored review thread change, or new conflict. ' +
-      'NOT for: generic PR activity, bare @codex review chatter, arbitrary comments, another cat’s responsibility, or a different PR subject. ' +
-      'Output: validates subject/owner, freezes a live GitHub baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
+      'Register continuous tracking of one PR for the current task owner. ' +
+      'Use when: you want to hear about what happens on a PR — its review decision, CI, conflicts, a new HEAD unless you are the PR author, and the replies people leave on it. Naming the subject is the whole call. ' +
+      'NOT for: another cat’s responsibility, or a different PR subject. ' +
+      'Output: validates subject/owner, freezes a live GitHub baseline, atomically installs the next generation, and answers with what was armed and which audience was applied (`notification`). Registration history is baseline, never a wake. ' +
       'GOTCHA: For exact-HEAD external PR review, run the Review Entry Mode Classifier before registration: formal instructions containing a no-comment / do-not-comment-on-GitHub directive fail closed; only explicit advisory_read_only may stay private, and advisory must never claim review-complete. ' +
-      'GOTCHA: `when` is 1–4 flat any-of typed predicates. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
+      `GOTCHA: \`repoFullName\` + \`prNumber\` is the whole normal call — omit \`when\`, \`goal\` and \`nextStep\`. The server then arms every condition the PR raises about itself, plus a new HEAD unless you are the PR author (as the author, that push is your own), AND both comment surfaces, with the audience your role gives you: as the PR author, every reply that is not your own, bots included; as a reviewer with checkable grounds, the PR author's replies with bots and pure summon commands filtered. If it cannot establish identity it delivers every comment flagged rather than filtering on a rule it could not verify — read \`notification.perspective\`. \`goal\` optionally narrows the comment audience to people you name. \`when\` is the advanced path: up to ${GITHUB_PR_WAIT_PREDICATE_LIMIT} flat any-of typed predicates, one per distinct condition in the catalog, where \`pr_conversation_comment_added\` and \`pr_inline_comment_added\` still require a non-empty \`authorLogins\`; there is no omitted-means-anyone form on that path. \`nextStep\` is display-only and never parsed. \`expiresAt\` is optional: omit it for no time-based termination; supply it for a visible deadline. It never deletes task history.`,
     inputSchema: registerPrTrackingInputSchema,
     handler: handleRegisterPrTracking,
     governance: {
@@ -3850,11 +3886,11 @@ export const callbackTools = [
   defineCanonicalTool({
     name: 'cat_cafe_register_issue_tracking',
     description:
-      'Register one explicit, bounded GitHub issue wait for the current task owner. ' +
-      'Use when: you can name the exact typed issue condition that changes your next action: any new comment, or a comment by the exact issue author. ' +
-      'NOT for: generic issue activity, actor-type guessing, source prose, another cat’s responsibility, or a different issue subject. ' +
-      'Output: validates subject/owner, freezes a live issue baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
-      'GOTCHA: `when` is a bounded typed predicate set. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
+      'Register continuous tracking of one GitHub issue for the current task owner. ' +
+      'Use when: you want to hear about new comments on an issue. Naming the subject is the whole call. ' +
+      'NOT for: actor-type guessing, source prose, another cat’s responsibility, or a different issue subject. ' +
+      'Output: validates subject/owner, freezes a live issue baseline, atomically installs the next generation, and answers with what was armed and which audience was applied (`notification`). Registration history is baseline, never a wake. ' +
+      'GOTCHA: `repoFullName` + `issueNumber` is the whole normal call — omit `when` and `nextStep`. The server then wakes you on every comment that is not your own. `when` is the advanced path: a bounded typed predicate set for a narrower wait. `nextStep` is display-only and never parsed. `expiresAt` is optional: omit it for no time-based termination; supply it for a visible deadline. It never deletes task history.',
     inputSchema: registerIssueTrackingInputSchema,
     handler: handleRegisterIssueTracking,
     governance: {
