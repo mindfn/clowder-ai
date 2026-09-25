@@ -1134,6 +1134,52 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
 - **另记**（Fable）：opus 的会话在 80% 的 seal 阈值之前就被自动压缩了。seal 只在回合之间测量，一个很大的工具
   结果可以一步越过阈值。如果这是常态，F211 的 seal 策略需要按单个工具结果设护栏；这是另一条线，先记着。
 
+
+### Phase L（路线 Phase 2c：投递失败不能丢信息，也不能永远重试，2026-09-26）
+
+来源：tracking 线程（`thread_mt1ds98ez28ocq81`）的 opus 交来的两个缺陷（本线 `…000289`；锚点已在 develop_base
+上核实，`…000293`）。两者都是 F117 把「投递失败就中止」改成不抛错的 `admitted: false` / `unrecorded` 之后才可达的；
+上游一直靠「投递失败就中止整次观察」这条隐含不变量兜底。
+
+#### L1 · 没送达的 wait outcome 不能被同一次观察顶掉
+
+- **链路**：`observe` 先 `drainOutbox`，把 pending 的 outcome 交给 `publishPending`。队列没收下时，`publishPending`
+  返回 `{kind:'unrecorded', reason:'queue_admission_unavailable'}`，不抛错，outcome 仍是 `pending`；`drainOutbox`
+  照样返回 `'drained'`。下一轮因为 `outbox.ids` 里已经有这个 id，`drainOutbox` 返回 `'empty'`，流程进入
+  `evaluate`。新的匹配经 `transitionWaitState` 写进 `automationState.waitOutcome` 这个单槽，把没送达的旧 outcome
+  覆盖掉（实证：F202 #1487 的 g5 被 07:46:30Z 的 g6 顶掉，两条审阅评论的提醒丢了）。存储层唯一针对 pending
+  outcome 的判断（`TaskWaitReplacement`）只拦「有 pending 投递时换 owner」，不拦这里的替换。
+- **规则**：`drainOutbox` 发布的 outcome 没被收下时，这次 `observe` 直接返回这个 `unrecorded`，不进 `evaluate`，
+  也不写入这次观察的 `collectorPatch`。outcome 保持 pending，下一次观察先重新投递它。
+- **调用方的游标**（审计结论）：四个调用方都靠 `collectorPatch` 或 `recorded:false` 保住游标，拿到 `unrecorded`
+  时不会跳过这次观察。ReviewFeedbackTaskSpec 只在 `recorded !== false` 时 `commitCursor`（`routeResultOf` 把
+  `unrecorded` 映射成 `recorded:false`）；IssueCommentTaskSpec 的 waitLifecycle 分支只经 `collectorPatch` 推进
+  `lastCommentCursor` / `lastDeliveredCursor`，双游标模式每次从投递游标往后抓取；ConflictRouter、CiCdRouter 的
+  游标也只在 `collectorPatch` 里。
+
+#### L2 · 永久冲突给终态和告警，不再无限重试
+
+- **现状**：`deliverConnectorMessage` 把 `conflict`（同一个 key 已经持久化了另一份 envelope，content 或
+  `source.meta` 不同，`PersistedQueueDelivery.matchesPersistedEnvelope`）和 `unavailable` 一并当成「没收下，下次
+  再试」。GitHub wait 的 outcome 因此大约每 30 秒重投一次、只打 warn，没有终态（#1487 实测失败 1,374 次）。
+- **规则**：
+  - `deliverConnectorMessage` 在没收下时带上 `rejection: 'conflict' | 'unavailable'`（新增字段，原有调用方不受影响）。
+  - GitHub wait 遇到 `conflict`：outcome 转成新的终态 `delivery: 'queue_conflict'`，打一次 error 级告警（带 taskId
+    和 outcomeId；outcomeId 就是投递键），终态本身持久化在任务状态上；这次观察随后照常继续，后续观察可以产生新的
+    outcome。`unavailable` 仍按 L1 等下一次重试。
+  - 为什么终态不会丢信息：#1528（投递键带上任务 id）之后，同一个 key 冲突只可能是同一个 outcome 在升级前后渲染
+    不同，owner 已经收到过较早的那一份；#1528 之前跨任务撞键的那一类由 #1528 消除。
+- **同类审计**：会「保留游标、下次再试」的调用方只有 GitHub wait 和 IssueCommentRouter。IssueCommentRouter 在
+  生产上走不到：issue tracking 的工厂要求必须接 waitLifecycle，否则直接抛错（`github-schedule-factories.ts`），
+  而 waitLifecycle 分支在调用 IssueCommentRouter 之前就返回了。ConnectorRouter 没收下时会结束这次任务
+  （`onDeliveryBatchDone`），不会循环。这两处本 phase 不改。
+- **回退兼容**：`queue_conflict` 是 `WaitOutcomeDelivery` 的新值。所有读取方都只判断 `delivery === 'pending'`（另有
+  一处按 `'suppressed'` 选原因文案），没有穷举，也没有 schema 约束，web 端不读这个字段；旧版本读到它会当作非
+  pending，既不重试也不投递，等同终态。L1 不改持久格式。
+- **测试**：队列拒收时，同一次观察不顶掉 pending outcome、不写 `collectorPatch`，队列恢复后先送出旧的 outcome；
+  `conflict` 转终态且只投递一次、打 error 告警，之后的观察可以产生新 outcome；`unavailable` 仍保持 pending；
+  `deliverConnectorMessage` 对两种拒收给出正确的 `rejection`。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in

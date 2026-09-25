@@ -531,7 +531,18 @@ export interface GitHubWaitMatchedDelta {
  *
  * The publish CLAIM is deliberately NOT a value in this union — see `publishClaimedAt`.
  */
-export type WaitOutcomeDelivery = 'pending' | 'delivered' | 'suppressed' | 'not_applicable' | 'legacy_unfenced';
+/**
+ * `queue_conflict` (F117 L2): the Queue already holds a different envelope under this outcome's key, so
+ * no retry can ever admit it. Readers only ever ask `delivery === 'pending'`, so an older binary reads it
+ * as settled: it neither retries nor delivers it.
+ */
+export type WaitOutcomeDelivery =
+  | 'pending'
+  | 'delivered'
+  | 'suppressed'
+  | 'not_applicable'
+  | 'legacy_unfenced'
+  | 'queue_conflict';
 
 export interface WaitOutcomeV1 {
   readonly v: 1;

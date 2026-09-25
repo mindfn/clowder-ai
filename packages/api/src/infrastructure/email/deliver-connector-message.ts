@@ -35,6 +35,11 @@ export interface ConnectorDeliveryResult {
   readonly content: string;
   /** True once the input is durably in the Queue — the only fact a caller may settle an outbox on. */
   readonly admitted: boolean;
+  /**
+   * F117 L2: why the Queue refused, when it did. `conflict` is permanent: the Queue already holds a
+   * different envelope under this key, so a retry can never be admitted. `unavailable` may pass later.
+   */
+  readonly rejection?: 'conflict' | 'unavailable';
 }
 
 export async function deliverConnectorMessage(
@@ -69,7 +74,12 @@ export async function deliverConnectorMessage(
 
   // `conflict` and `unavailable` mean the envelope never reached the Queue. Every other state is a
   // durable admission — including an idempotent replay of work already claimed or finished.
-  const admitted = result.state !== 'conflict' && result.state !== 'unavailable';
+  const rejection = result.state === 'conflict' || result.state === 'unavailable' ? result.state : undefined;
 
-  return { messageId: result.message?.id ?? '', content: input.content, admitted };
+  return {
+    messageId: result.message?.id ?? '',
+    content: input.content,
+    admitted: rejection === undefined,
+    ...(rejection ? { rejection } : {}),
+  };
 }
