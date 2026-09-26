@@ -50,4 +50,14 @@ unset API_SERVER_HOST
 # inherited makes routing tests depend on which cat launched the test command.
 unset DEFAULT_CAT_ID
 
+# The running instance's own Redis must never become a test target. A shell a
+# cat launches from a running Clowder AI inherits that instance's REDIS_URL, and
+# on 09-25 five public suites wrote their test keys into it. Only a caller that
+# set up an isolated test Redis passes its address through, and it says so with
+# the flag every Redis suite already requires (test:redis sets its own address
+# after this script, so it is unaffected).
+if [[ "${CAT_CAFE_REDIS_TEST_ISOLATED:-}" != "1" ]]; then
+  unset REDIS_URL REDIS_PORT REDIS_DATA_DIR REDIS_BACKUP_DIR REDIS_KEY_PREFIX
+fi
+
 exec "$@"

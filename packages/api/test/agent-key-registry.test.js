@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 class FakeRedis {
   constructor() {
@@ -232,12 +233,14 @@ describe('AgentKeyRegistry', () => {
 
 describe('RedisAgentKeyBackend', () => {
   const REDIS_URL = process.env.REDIS_URL;
+  const skipReason = redisIsolationSkipReason(REDIS_URL);
 
-  if (!REDIS_URL || REDIS_URL.includes(':6399')) {
-    test('skipped: REDIS_URL not set or points at 圣域 6399', () => {
+  if (skipReason) {
+    test(`skipped: ${skipReason}`, () => {
       assert.ok(true);
     });
   } else {
+    assertRedisIsolationOrThrow(REDIS_URL, 'RedisAgentKeyBackend');
     test('a sidecar key issued by one registry verifies from another registry instance', async () => {
       const { createRedisClient } = await import('@cat-cafe/shared/utils');
       const { AgentKeyRegistry } = await import('../dist/domains/cats/services/agents/agent-key/AgentKeyRegistry.js');

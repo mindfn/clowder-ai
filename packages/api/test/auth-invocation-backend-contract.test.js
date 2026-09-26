@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 const backends = [
   [
@@ -20,12 +21,12 @@ const backends = [
   ],
 ];
 
-// Redis backend variant — only included when REDIS_URL is set to ANY port
-// EXCEPT 6399 (圣域 LL-015). The test:redis harness assigns a random port in
-// 6300..6999 range, so a strict :6398 check would skip the Redis variant
-// during full suite — defeating the contract.
+// Redis backend variant — only against an isolated test Redis (test:redis sets
+// its address and CAT_CAFE_REDIS_TEST_ISOLATED). An inherited address, such as
+// the running instance's own Redis, never qualifies.
 const _redisUrl = process.env.REDIS_URL;
-if (_redisUrl && !_redisUrl.includes(':6399')) {
+if (!redisIsolationSkipReason(_redisUrl)) {
+  assertRedisIsolationOrThrow(_redisUrl, 'AuthInvocationBackend contract (redis)');
   backends.push([
     'redis',
     async () => {
