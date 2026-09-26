@@ -48,7 +48,7 @@ describe('test entry Redis isolation', () => {
   });
 });
 
-/** Files that read REDIS_URL without the isolation gate, and why that is safe. */
+/** Files that read REDIS_URL or open a Redis client without the isolation gate, and why that is safe. */
 const EXCEPTIONS = {
   'plugin-external-runtime-package.test.js': 'sets a fake REDIS_URL to prove it does not leak; never connects',
   'auth-invocation-restart.test.js': 'connects only when REDIS_URL names the dedicated :6398 dev Redis',
@@ -65,9 +65,11 @@ function testFiles(dir) {
 }
 
 describe('Redis-backed test files', () => {
+  // A file is in scope when it reads REDIS_URL or opens a Redis client at all: a hard-coded address
+  // reaches live data just as surely as an inherited one.
   const readers = testFiles(TEST_DIR)
     .map((path) => ({ file: relative(TEST_DIR, path), source: readFileSync(path, 'utf8') }))
-    .filter(({ source }) => /process\.env\.REDIS_URL/.test(source));
+    .filter(({ source }) => /process\.env\.REDIS_URL|new Redis\(|createRedisClient\(/.test(source));
 
   it('never fall back to a fixed Redis address', () => {
     const fallbacks = readers
