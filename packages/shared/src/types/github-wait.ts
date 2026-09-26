@@ -207,13 +207,28 @@ export type GitHubPrTrackingGoalExpansion =
   | { readonly ok: true; readonly when: readonly GitHubPrWaitPredicate[] }
   | { readonly ok: false; readonly error: string };
 
-/** Conditions a PR raises about itself. None of them needs an audience, so all are always armed. */
+/**
+ * Conditions a PR raises about itself: a review verdict, a CI result, a conflict. None of them is
+ * anyone's own action, so all are always armed.
+ */
 const GITHUB_PR_SUBJECT_STATE_PREDICATES: readonly GitHubPrWaitPredicate[] = [
   { kind: 'pr_review_decision_changed' },
   { kind: 'pr_ci_terminal' },
   { kind: 'pr_became_conflicting' },
-  { kind: 'pr_head_changed' },
 ];
+
+/**
+ * #1392: a new HEAD is somebody's push, not something the PR does by itself. From the author's seat
+ * that somebody is almost always the author, so arming it wakes them on their own action — the
+ * mistake `everyone_but_self` already prevents for comments. A reviewer is waiting for exactly that
+ * push, so it stays armed for them. With an unresolved identity the push cannot be proved ours, so it
+ * stays armed too: a surplus wake can be discarded, a missed one cannot be recovered.
+ */
+function subjectPredicatesFor(perspective: GitHubNotificationPerspective): readonly GitHubPrWaitPredicate[] {
+  return perspective.role === 'subject_author'
+    ? GITHUB_PR_SUBJECT_STATE_PREDICATES
+    : [...GITHUB_PR_SUBJECT_STATE_PREDICATES, { kind: 'pr_head_changed' }];
+}
 
 /**
  * The normal PR entry. Both comment surfaces are always armed — that is the whole point — and the
@@ -235,7 +250,7 @@ export function expandGitHubPrTrackingGoal(
     return {
       ok: true,
       when: [
-        ...GITHUB_PR_SUBJECT_STATE_PREDICATES,
+        ...subjectPredicatesFor(perspective),
         { kind: 'pr_conversation_comment_added', audience },
         { kind: 'pr_inline_comment_added', audience },
       ],
@@ -255,7 +270,7 @@ export function expandGitHubPrTrackingGoal(
   return {
     ok: true,
     when: [
-      ...GITHUB_PR_SUBJECT_STATE_PREDICATES,
+      ...subjectPredicatesFor(perspective),
       { kind: 'pr_conversation_comment_added', audience, authorLogins },
       { kind: 'pr_inline_comment_added', audience, authorLogins },
     ],
@@ -409,6 +424,18 @@ export interface GitHubReviewThreadBaseline {
   readonly resolved: boolean;
 }
 
+/**
+ * #1392: the state of a formal review that holds, or held, a verdict. GitHub dismisses a verdict in
+ * place: the review keeps its id and author and its state becomes DISMISSED. A dismissed review is
+ * never revived; a new verdict is a new review.
+ */
+export type GitHubReviewVerdictState = 'APPROVED' | 'CHANGES_REQUESTED' | 'DISMISSED';
+
+/** Keyed by review id. */
+export type GitHubReviewVerdicts = Readonly<
+  Record<string, { readonly state: GitHubReviewVerdictState; readonly author?: string }>
+>;
+
 export interface GitHubPrWaitBaseline {
   readonly capturedAt: number;
   readonly headSha: string;
@@ -420,6 +447,12 @@ export interface GitHubPrWaitBaseline {
     readonly resultTriggerCommentId?: number;
     readonly resultTriggerHeadSha?: string;
     readonly threads?: readonly GitHubReviewThreadBaseline[];
+    /**
+     * #1392: the verdicts this wait has seen. A dismissal keeps the review id, so it never moves
+     * `decisionCursor`; it is found by comparing states. Absent on waits registered before this field
+     * existed: those adopt the verdicts of their first review observation.
+     */
+    readonly verdicts?: GitHubReviewVerdicts;
   };
   readonly ci?: {
     readonly bucket: GitHubCiBaselineBucket;

@@ -360,8 +360,17 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 : [];
 
               if (issueState === 'closed') {
-                // Issue closed: deliver final pending batch (if any), then mark done
-                if (pendingDelivery.length > 0 || waitFactComments.length > 0) {
+                if (processedComments.length < allPending.length) {
+                  // Cloud R6 P1-2 / #1392 AC-2: collection failed midway — processedComments is shorter
+                  // than allPending because the loop broke on an append/projector error. Do NOT end
+                  // tracking, not even with the part that was collected: a done task is never polled
+                  // again, so the failed comment would be dropped for good. The delivery cursor is
+                  // still before this batch, so the next poll collects it again and closes with it.
+                  opts.log.info(
+                    `[issue-comment] Issue ${issueKey} closed but collection incomplete (${processedComments.length}/${allPending.length}) — will retry`,
+                  );
+                } else if (pendingDelivery.length > 0 || waitFactComments.length > 0) {
+                  // Issue closed: deliver the final batch, then mark done
                   workItems.push({
                     signal: {
                       task,
@@ -375,14 +384,6 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                     },
                     subjectKey: task.subjectKey!,
                   });
-                } else if (processedComments.length < allPending.length) {
-                  // Cloud R6 P1-2: Collection failed midway — processedComments is shorter than
-                  // allPending because the loop broke on an append/projector error. Do NOT mark
-                  // done: the cursor is still before the failed comment so the next poll can retry.
-                  // Marking done here would permanently stop retries on a transient failure.
-                  opts.log.info(
-                    `[issue-comment] Issue ${issueKey} closed but collection incomplete (${processedComments.length}/${allPending.length}) — will retry`,
-                  );
                 } else {
                   // No pending delivery AND all fetched comments were successfully collected
                   // (or no new comments at all) → safe to close the tracking task.
