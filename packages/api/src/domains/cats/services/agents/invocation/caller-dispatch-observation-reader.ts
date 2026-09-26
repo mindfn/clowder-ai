@@ -154,10 +154,12 @@ export async function readCallerDispatchObservationLine(
   const ref = refs[0];
   if (!ref) return unknownLine(pointer, 'exact dispatchRef 缺失');
   if (ref.phase === 'dispatched') {
+    // F117 Phase M: a handed Append is not being executed on until the target's model has read it.
+    const awaiting = ref.readState === 'awaiting';
     return {
-      line: `- ${pointer.sourceMessageId} → ${pointer.targetId}: executing`,
+      line: `- ${pointer.sourceMessageId} → ${pointer.targetId}: ${awaiting ? 'awaiting_read' : 'executing'}`,
       terminal: false,
-      fingerprint: `dispatch:${ref.phase}:${ref.statusMessageId}`,
+      fingerprint: `dispatch:${ref.phase}:${ref.statusMessageId}${awaiting ? ':awaiting' : ''}`,
     };
   }
 
@@ -167,5 +169,25 @@ export async function readCallerDispatchObservationLine(
   if (!response || !isReadableObservationResponse(response, pointer)) {
     return unknownLine(pointer, 'terminal response 不可验证');
   }
+  if (ref.readState === 'unread') return unreadObservationLine(response, pointer);
   return terminalObservationLine(response, pointer) ?? unknownLine(pointer, 'response lifecycle 不匹配');
+}
+
+/** F117 Phase M: the target's run ended before its model read this Append. */
+function unreadObservationLine(response: StoredMessage, pointer: CallerDispatchObservationPointer): ObservationLine {
+  const lifecycle = response.lifecycle;
+  if (
+    lifecycle?.kind !== 'response' ||
+    response.userId !== pointer.ownerId ||
+    lifecycle.targetId !== pointer.targetId ||
+    lifecycle.status === 'processing' ||
+    lifecycle.handedInputMessageIds?.includes(pointer.sourceMessageId) !== true
+  ) {
+    return unknownLine(pointer, 'unread ref 与 response 不一致');
+  }
+  return {
+    line: `- ${pointer.sourceMessageId} → ${pointer.targetId}: unread(${lifecycle.status}); response=${response.id}`,
+    terminal: true,
+    fingerprint: `unread:${response.id}:${lifecycle.status}`,
+  };
 }

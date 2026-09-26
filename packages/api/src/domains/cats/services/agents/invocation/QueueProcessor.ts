@@ -89,6 +89,7 @@ import {
   flattenTextParts,
   flattenTurnTextParts,
 } from '../text-aggregation.js';
+import { type AppendReadCutoverDeps, followAppendConsumption } from './append-read-cutover.js';
 import {
   type CallerDispatchObservationProjection,
   CallerDispatchObservationRegistry,
@@ -717,6 +718,48 @@ export class QueueProcessor {
     this.entryCompleteHooks.delete(entryId);
   }
 
+  private isExactActiveRun(
+    threadId: string,
+    run: { targetId: string; invocationId: string; responseMessageId: string },
+  ) {
+    const current = this.deps.invocationTracker
+      .getActiveSlots?.(threadId)
+      .find((slot) => slot.catId === run.targetId)?.activeRun;
+    return current?.invocationId === run.invocationId && current.responseMessageId === run.responseMessageId;
+  }
+
+  /** F117 Phase M: how a handed Append becomes read, or is published unread, once its carrier reports. */
+  private appendReadCutoverDeps(): AppendReadCutoverDeps {
+    const { invocationTracker, messageStore, queue, socketManager } = this.deps;
+    return {
+      messageStore,
+      mirrorIntoActiveRun: (handed) =>
+        invocationTracker.appendLifecycleActiveRunInputs?.(
+          handed.threadId,
+          handed.run.targetId,
+          handed.run,
+          handed.entryId,
+          handed.inputMessageIds,
+        ) ?? false,
+      publish: (handed, deliveredAt) =>
+        this.markDeliveredAndEmit(handed.userId, handed.threadId, [...handed.inputMessageIds], deliveredAt, new Set()),
+      emitMessage: (userId, message) => this.emitLifecycleMessageUpdated(userId, message),
+      registerCallerSources: (sources, targetIds) => {
+        for (const source of sources) this.callerDispatchObservations.registerPersistedSource(source, targetIds);
+      },
+      emitQueue: (handed, reason) =>
+        emitQueueUpdated(
+          socketManager,
+          handed.userId,
+          handed.threadId,
+          queue.list(handed.threadId, handed.userId),
+          messageStore,
+          reason,
+        ),
+      log: this.deps.log,
+    };
+  }
+
   private async compensateLifecycleAppendTargets(input: {
     entry: QueueEntry;
     inputMessageIds: readonly string[];
@@ -724,6 +767,11 @@ export class QueueProcessor {
     runs: readonly { targetId: string; invocationId: string; responseMessageId: string }[];
     failedTargetIds: readonly string[];
     failedAtLowerBound: number;
+    /**
+     * F117 Phase M: the input was handed, never read and never mirrored into the live run, and it is
+     * still out of the timeline; publish it with its failure instead of detaching it.
+     */
+    handed?: boolean;
   }): Promise<void> {
     const { invocationTracker, messageStore } = this.deps;
     for (const targetId of input.failedTargetIds) {
@@ -767,6 +815,7 @@ export class QueueProcessor {
         );
       }
       if (
+        !input.handed &&
         !invocationTracker.detachLifecycleActiveRunInputs?.(
           input.entry.threadId,
           targetId,
@@ -782,6 +831,18 @@ export class QueueProcessor {
       }
       for (const message of [...compensation.messages, ...failureMessages]) {
         this.emitLifecycleMessageUpdated(queueEntryOwnerId(input.entry), message);
+      }
+    }
+    if (input.handed) {
+      const delivery = await this.markDeliveredAndEmit(
+        queueEntryOwnerId(input.entry),
+        input.entry.threadId,
+        [...input.inputMessageIds],
+        Math.max(Date.now(), input.failedAtLowerBound),
+        new Set(),
+      );
+      if (delivery.failedIds.length > 0) {
+        throw new Error(`rejected Append could not be published: ${delivery.failedIds.join(',')}`);
       }
     }
   }
@@ -949,7 +1010,6 @@ export class QueueProcessor {
     let removed: QueueEntry | null = null;
     let lifecycleAdmissionCommitted = false;
     let providerDispatchStarted = false;
-    const mirroredRuns: (typeof input.expectedRuns)[number][] = [];
     let sourceMessages: StoredMessage[] = [];
     try {
       const sourceMessagesBeforeAdmission = (
@@ -960,25 +1020,20 @@ export class QueueProcessor {
       }
       sourceMessages = sourceMessagesBeforeAdmission;
       const imagePaths = sourceMessagesBeforeAdmission.flatMap((message) => extractImagePaths(message.contentBlocks));
+      // F117 Phase M: fence the exact run, but do not mirror the input into it — the run has not read
+      // it. History records the hand-over (a waiting ref + the response's handed index) and the Queue
+      // row retires; the carrier's consumption report makes it read later.
       for (const run of input.expectedRuns) {
-        if (
-          !invocationTracker.appendLifecycleActiveRunInputs?.(
-            input.threadId,
-            run.targetId,
-            run,
-            input.entryId,
-            inputMessageIds,
-          )
-        ) {
+        if (!this.isExactActiveRun(input.threadId, run)) {
           throw new Error(`Active Run changed during Append admission: ${run.targetId}/${run.invocationId}`);
         }
-        mirroredRuns.push(run);
       }
 
       const admission = await messageStore.commitLifecycleAppendAdmission({
         threadId: input.threadId,
         entryId: input.entryId,
         inputMessageIds,
+        handed: true,
         runs: input.expectedRuns.map((run) => ({ ...run, dispatchedAt: seenAt })),
       });
       if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
@@ -994,16 +1049,6 @@ export class QueueProcessor {
           input.expectedRuns.map((run) => run.targetId),
         );
       }
-      const delivery = await this.markDeliveredAndEmit(
-        input.userId,
-        input.threadId,
-        inputMessageIds,
-        seenAt,
-        new Set(),
-      );
-      if (delivery.failedIds.length > 0) {
-        throw new Error(`lifecycle Append delivery transition failed: ${delivery.failedIds.join(',')}`);
-      }
       if (!(await queue.commitClaimedProcessing(input.threadId, [input.entryId], seenAt))) {
         throw new Error(`claimed Append Queue target retirement did not commit: ${input.entryId}`);
       }
@@ -1011,7 +1056,10 @@ export class QueueProcessor {
       if (!removed) throw new Error(`claimed Append Queue entry vanished: ${input.entryId}`);
 
       try {
-        for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
+        // Only the responses change in public; the handed input stays out of the timeline until read.
+        for (const message of admission.messages.slice(inputMessageIds.length)) {
+          this.emitLifecycleMessageUpdated(input.userId, message);
+        }
         await emitQueueUpdated(
           socketManager,
           input.userId,
@@ -1046,6 +1094,15 @@ export class QueueProcessor {
       const rejectedTargetIds = results.flatMap((result, index) =>
         result.accepted ? [] : [input.expectedRuns[index]!.targetId],
       );
+      results.forEach((result, index) => {
+        if (!result.accepted) return;
+        const run = input.expectedRuns[index]!;
+        void followAppendConsumption(
+          this.appendReadCutoverDeps(),
+          { threadId: input.threadId, userId: input.userId, entryId: input.entryId, inputMessageIds, run },
+          result.consumption,
+        );
+      });
       if (rejectedTargetIds.length > 0) {
         await this.compensateLifecycleAppendTargets({
           entry: claimed,
@@ -1054,6 +1111,7 @@ export class QueueProcessor {
           runs: input.expectedRuns,
           failedTargetIds: rejectedTargetIds,
           failedAtLowerBound: seenAt + 1,
+          handed: true,
         });
         return { outcome: 'rejected', reason: 'provider_rejected', rejectedTargetIds };
       }
@@ -1072,6 +1130,7 @@ export class QueueProcessor {
             runs: input.expectedRuns,
             failedTargetIds: input.expectedRuns.map((run) => run.targetId),
             failedAtLowerBound: seenAt + 1,
+            handed: true,
           });
           await emitQueueUpdated(
             socketManager,
@@ -1088,15 +1147,6 @@ export class QueueProcessor {
           );
         }
       } else if (!providerDispatchStarted) {
-        for (const run of mirroredRuns) {
-          invocationTracker.detachLifecycleActiveRunInputs?.(
-            input.threadId,
-            run.targetId,
-            run,
-            input.entryId,
-            inputMessageIds,
-          );
-        }
         const restored = await queue.restoreClaimedEntries(input.threadId, [input.entryId]);
         if (restored) {
           try {
