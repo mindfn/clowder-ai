@@ -1180,6 +1180,59 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
   `conflict` 转终态且只投递一次、打 error 告警，之后的观察可以产生新 outcome；`unavailable` 仍保持 pending；
   `deliverConnectorMessage` 对两种拒收给出正确的 `rejection`。
 
+
+### Phase M（路线 Phase 3：追加的消息读到了才算已读，2026-09-26）
+
+**依据**。Landy 的原话在 `…1294` 第三条引用评论里（引用评论，正文在 contentBlocks）：「我发的那条消息你要等下个turn才会真的
+进入到你的上下文吧？所以如果一条消息没有真实进入你的上下文是不是应该放在queue？这是现在开源社区的行为……不然我会认为你在我发送的
+那一秒就收到了」。当场的对齐见 `…1295`：进入模型上下文之前，消息留在队列里，显示「等待读取」；carrier 确认进入模型输入之后，
+再挂到这次回复下面，并标上读取时间。KD-18 把「能否引导」和「何时读取」分开声明。路线 Phase 3（astra 修订）另外规定：
+被接受但消费未确认的消息，不能再当作可派发的工作重新发送。调研见 `f117-notes/phase3-read-semantics/findings.md`。
+取舍经 Fable 商定（`…000134`）。
+
+**现状**。「（已读）」的判断条件是「R.inputMessageIds 含这条输入」（web `readTargetIdsFromHistory`）。追加路径
+（`QueueProcessor` 约 L940–1100）照抄了普通投递的顺序：先 `commitLifecycleAppendAdmission`，也就是写 R 成员、写
+dispatchRef、让队列行退役，然后才交给 provider。普通投递这样排是对的，因为 prompt 本身就是消费。追加路径照抄就错了：
+provider 接受不等于模型消费，于是 carrier 还没接受，界面就已经显示「已读」。
+
+#### M1 · cutover 的触发条件改为消费证据
+
+不变量是「cutover 原子」，不是「cutover 发生在投递之前」。cutover 仍然是一步持久写，内容为：R 成员 +
+`dispatchRef{phase:'dispatched', readAt}` + 队列行退役 + 时间线归位。只是触发时机，按 carrier 的消费证据来定：
+- **普通投递**：provider 启动。prompt 就是消费，现状不变。
+- **Claude SDK（`queued_internal_turn`）**：消费这条输入的那一轮回写它的 SDK uuid 时触发。依据是首个非 ping 的流事件，
+  或 assistant 消息上的 `user_message_uuid(s)`，或 result 里的 `user_message_uuids`。这个 uuid 是 carrier 自己生成的
+  （`createSdkUserMessage`），K1 已经按它核销输入。carrier 对外发出一个 typed 信号，运行时据此把 uuid 映射回队列行。
+- **Codex app-server（`exact_active_turn`）**：`turn/steer` 被接受只是承诺，不是事实。Fable 09-23 实测，一条追加 02:56:41
+  被接受，03:03:28 才进入 Codex 线程，中间正在压缩。app-server 会发出 `userMessage` thread item（事件映射里记作
+  `user_message`），就用它出现的时刻作 `readAt`；观察不到时，接受时刻只算下限，界面继续老实地显示「等待读取」。
+
+#### M2 · 触发之前：队列行保持 claimed，并记下持久 owner
+
+不新增状态。carrier 接受之后，队列行保持 `claimed`：drain 只领 `queued` 的行，所以 claimed 本来就不会被派发。
+同时在行上持久记下 owner，也就是 invocationId 和 R。界面在队列里显示「等待读取 → 猫」（Landy 的原词）。
+
+#### M3 · 执行到终局时挂成「未读取」，不还回队列
+
+执行到终局（正常结束、Stop、abort、重启收尾），如果还有 claimed 行没触发 cutover，就随终局一起触发：输入挂到这条回复下面，
+`dispatchRef` 标为 `settled` 且不带 `readAt`，队列行退役。界面在回复下显示「未读取」，由用户决定要不要重发（重发是新的
+source、新的 admission）。这样消息不会丢（留在 History 里），也不会被重派（遵守规则），而且看得见。系统从不自动重投，
+所以不存在重复执行的风险。K1 能证明未消费时，「未读取」更有把握；证明不了，也用同一个标签。
+
+#### 动手前要钉住的四处
+
+1. **启动收敛**：owner 已经不在的 claimed 行，要按 M3 挂成「未读取」，不能走今天恢复成 `queued` 的路径
+   （`InvocationQueue` 的 claim 收敛）。
+2. **`inputMessageIds` 的 9 个 API 消费方**：caller-dispatch-observation-reader、thread-execution-situation、
+   InvocationTracker、route-serial、managed-command-wake-lifecycle、callback-typed-wait-source、QueueProcessor，
+   以及两个 store。它们默认「输入在投递前就属于 R」，要逐个确认在「已交给、还没读」这段时间里该看到什么。F296 的
+   presentation / freshness 要把这段时间当作「未呈现」。
+3. **K1 的 `closeAfterTerminalIfIdle`**：运行在消费之前就结束时，必须产出 M3 的终局挂载，不能为了等回写一直不关。
+4. **Codex 注入是否可观察**：确认 steer 之后 `userMessage` item 的时序，以及怎样把它和那条输入对上（按顺序，还是按内容）。
+
+**界面**只有三种说法：队列行「等待读取 → 猫」，回复下「未读取」（终局且没有 readAt），「（已读）」（有 readAt）。
+Steer 弹窗里的精度文案沿用 KD-18，不改。**一个 phase 做完**，交 kimi 审。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in
