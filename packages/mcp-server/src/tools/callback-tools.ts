@@ -1996,6 +1996,29 @@ export const registerPrTrackingInputSchema = {
     ),
 };
 
+// Registering tracking reads a live GitHub baseline (several paginated reads) and installs the next
+// wait generation, so it is not idempotent. A replay after a timeout registers again: it installs
+// another generation, and its later baseline absorbs whatever arrived in between, so a review or a
+// comment that came during the retries never wakes anyone. As with publish_verdict, the original
+// POST gets the time a slow GitHub needs and is never replayed.
+const TRACKING_REGISTRATION_TRANSPORT: CallbackTransportOptions = {
+  retryDelaysMs: [],
+  fetchTimeoutMs: 120_000,
+};
+
+/**
+ * A request that failed in transport may still have registered on the server. Say so, rather than
+ * let the caller read it as "nothing happened" and register again.
+ */
+function withUnknownRegistrationOutcome(result: ToolResult): ToolResult {
+  const block = result.content[0];
+  if (!result.isError || block?.type !== 'text' || !block.text.startsWith('Callback request failed:')) return result;
+  const note =
+    'The registration may still have been applied. Check cat_cafe_list_tasks for this subject ' +
+    '(its await generation and baseline capture time) before registering again.';
+  return { ...result, content: [{ type: 'text', text: `${block.text}\n\n${note}` }] };
+}
+
 export async function handleRegisterPrTracking(input: {
   repoFullName: string;
   prNumber: number;
@@ -2019,7 +2042,7 @@ export async function handleRegisterPrTracking(input: {
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
   // registration, no useful local fallback. Surface `[degrade]` hint.
-  return withDegradation({
+  const result = await withDegradation({
     toolName: 'register_pr_tracking',
     primary: () =>
       callbackPost(
@@ -2035,10 +2058,11 @@ export async function handleRegisterPrTracking(input: {
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
-        agentKeyOptions(input),
+        { ...agentKeyOptions(input), ...TRACKING_REGISTRATION_TRANSPORT },
       ),
     policy: { kind: 'none' },
   });
+  return withUnknownRegistrationOutcome(result);
 }
 
 // F202 Phase 2D (AC-D3): Register issue tracking
@@ -2091,7 +2115,7 @@ export async function handleRegisterIssueTracking(input: {
   autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
-  return withDegradation({
+  const result = await withDegradation({
     toolName: 'register_issue_tracking',
     primary: () =>
       callbackPost(
@@ -2106,10 +2130,11 @@ export async function handleRegisterIssueTracking(input: {
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
-        agentKeyOptions(input),
+        { ...agentKeyOptions(input), ...TRACKING_REGISTRATION_TRANSPORT },
       ),
     policy: { kind: 'none' },
   });
+  return withUnknownRegistrationOutcome(result);
 }
 
 // F202 Phase 2C (AC-C3): Unregister tracking task by subjectKey
