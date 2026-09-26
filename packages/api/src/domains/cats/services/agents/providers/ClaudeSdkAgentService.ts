@@ -3,7 +3,6 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   type Options as ClaudeSdkOptions,
   query as claudeQuery,
-  type EffortLevel,
   type McpServerConfig,
   type Query,
   type SDKMessage,
@@ -33,6 +32,12 @@ import {
 import { resolveClaudeMcpConfig } from './claude-mcp-config.js';
 import { extractClaudeUsage, transformClaudeEvent } from './claude-ndjson-parser.js';
 import { sdkCompactionHooks } from './claude-sdk-compaction-hooks.js';
+import { ClaudeSdkInputConsumption } from './claude-sdk-input-consumption.js';
+import {
+  toClaudeSdkEffortLevel,
+  toSdkEnvironment,
+  withActiveRunControlDeadline,
+} from './claude-sdk-runtime-helpers.js';
 import { ClaudeSdkTurnInputState, createSdkUserMessage } from './claude-sdk-turn-input-state.js';
 import { appendLocalImagePathHints, collectImageAccessDirectories } from './image-cli-bridge.js';
 import { extractImagePaths } from './image-paths.js';
@@ -54,35 +59,6 @@ interface ClaudeSdkAgentServiceOptions {
 
 const DEFAULT_ACTIVE_RUN_CONTROL_TIMEOUT_MS = 15_000;
 const MAX_SDK_STDERR_CHARS = 4_000;
-
-function toClaudeSdkEffortLevel(effort: string): EffortLevel {
-  if (effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max') {
-    return effort;
-  }
-  throw new Error(`claude_sdk_effort_unsupported:${effort}`);
-}
-
-async function withActiveRunControlDeadline<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('claude_sdk_active_run_control_timeout')), timeoutMs);
-    timer.unref();
-  });
-  try {
-    return await Promise.race([operation, deadline]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function toSdkEnvironment(overrides: Record<string, string | null>): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(overrides)) {
-    if (value === null) delete env[key];
-    else env[key] = value;
-  }
-  return env;
-}
 
 /**
  * Claude's official Agent SDK carrier. Unlike `claude -p`, the SDK exposes a
@@ -200,6 +176,7 @@ export class ClaudeSdkAgentService implements AgentService {
     if (options?.signal?.aborted) abort();
 
     const turnInputs = new ClaudeSdkTurnInputState();
+    const inputConsumption = new ClaudeSdkInputConsumption();
     let stderrBuffer = '';
     let activeSessionId = options?.sessionId ?? '';
     const initialMessageId = randomUUID();
@@ -270,8 +247,13 @@ export class ClaudeSdkAgentService implements AgentService {
             if (dispatchOptions.force) {
               await withActiveRunControlDeadline(query.interrupt(), this.activeRunControlTimeoutMs);
             }
-            const accepted = turnInputs.push(createSdkUserMessage(text, activeSessionId));
-            return accepted ? { accepted: true, handle } : { accepted: false, reason: 'active_run_closed' };
+            const message = createSdkUserMessage(text, activeSessionId);
+            const consumption = inputConsumption.expect(message.uuid);
+            if (!turnInputs.push(message)) {
+              inputConsumption.withdraw(message.uuid);
+              return { accepted: false, reason: 'active_run_closed' };
+            }
+            return { accepted: true, handle, consumption };
           } catch (err) {
             log.warn({ err, invocationId }, 'Claude SDK active-run dispatch rejected');
             return { accepted: false, reason: 'provider_rejected' };
@@ -289,6 +271,7 @@ export class ClaudeSdkAgentService implements AgentService {
       for await (const event of query as AsyncIterable<SDKMessage>) {
         const raw = event as unknown as Record<string, unknown>;
         const isResultTerminal = raw.type === 'result';
+        inputConsumption.observe(raw);
         if (typeof raw.session_id === 'string' && raw.session_id) {
           activeSessionId = raw.session_id;
           metadata.sessionId = raw.session_id;
@@ -336,6 +319,7 @@ export class ClaudeSdkAgentService implements AgentService {
       }
     } finally {
       turnInputs.close();
+      inputConsumption.close();
       releaseDispatch?.();
       options?.signal?.removeEventListener('abort', abort);
     }
