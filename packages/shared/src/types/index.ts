@@ -1014,6 +1014,7 @@ export type {
   LifecycleAppendExpectedRun,
   LifecycleDeliveryFailureReason,
   LifecycleDeliveryFailureResult,
+  LifecycleDispatchReadState,
   LifecycleDispatchRef,
   LifecycleInlinePayload,
   LifecycleInputCapabilities,
