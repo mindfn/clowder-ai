@@ -726,7 +726,7 @@ CLI output 来自已经运行的 Agent Client：stream 更新既有 response bub
   → admission 时复用 sourceRecordId 为 messageId、分配 orderKey，并以 actualTargets 的 dispatchRefs=dispatched 写入 Chat History
 ```
 
-Queue Panel 是 public conversation input 在排队阶段的唯一用户可见位置，聊天面板只展示已经发生至少一次 actual dispatch 的消息。entry 仍只有 pending targets 时，输入既不属于 Chat History，也不进入任何 Agent 普通上下文；第一次 actual target set 被领取时，admission 复用 `sourceRecordId` materialize 一条公开 History message，并为 set 中每个 target 创建独立 response bubble 与 `dispatched` ref。普通 drain 领取本轮完整 exact target set；Steer/未读接管可以只领取 singleton。尚未领取的 siblings 继续留在**同一条** Queue Entry；每次 cutover 只从 `targets[]` 删除其 exact set，并向同一 History message 追加对应 refs。`targets[]` 为空时 entry 删除。`private_input` 是同一 durable Queue 中的私有 entry，但不在用户 Queue Panel 或聊天面板展示，只在被投递目标的 exact input 中可见，因此也没有公开头像锚点。
+Queue Panel 是 public conversation input 在被模型读到之前的唯一用户可见位置：它投影 pending targets，以及已交给某个运行中的 carrier、尚未有消费证据的 handed 输入（从输入的 `dispatchRef{readState:'awaiting'}` 与 R 的 handed 索引投影，显示「等待读取」，F117 Phase M）。聊天面板只展示已经被读到、或随 R 终局以「未读取」发布的消息。普通 drain 的 prompt 本身就是消费，所以普通投递仍在第一次 actual dispatch 时进入 History。entry 仍只有 pending targets 时，输入既不属于 Chat History，也不进入任何 Agent 普通上下文；第一次 actual target set 被领取时，admission 复用 `sourceRecordId` materialize 一条公开 History message，并为 set 中每个 target 创建独立 response bubble 与 `dispatched` ref。普通 drain 领取本轮完整 exact target set；Steer/未读接管可以只领取 singleton。尚未领取的 siblings 继续留在**同一条** Queue Entry；每次 cutover 只从 `targets[]` 删除其 exact set，并向同一 History message 追加对应 refs。`targets[]` 为空时 entry 删除。`private_input` 是同一 durable Queue 中的私有 entry，但不在用户 Queue Panel 或聊天面板展示，只在被投递目标的 exact input 中可见，因此也没有公开头像锚点。
 
 Queue commit 自身就是外部输入的持久边界。排队阶段的 source record 只提供稳定 identity 与 Queue/custody 恢复，不拥有 History membership/orderKey；admission 复用同一 identity，不为 Queue 回显制造第二条 message。
 
