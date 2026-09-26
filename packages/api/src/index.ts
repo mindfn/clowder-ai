@@ -7629,6 +7629,10 @@ async function main(): Promise<void> {
   );
   // N-day factory is in its own module (split from eval-domain-daily for file-size limit)
   const { createEvalDomainNDaySpec } = await import('./infrastructure/harness-eval/domain/eval-domain-nday.js');
+  // F192 evidence-source prerequisite gate (fork-only; see docs/fork-only-patches.md).
+  const { createTelemetryEvidencePrereqProbe } = await import(
+    './infrastructure/harness-eval/domain/eval-domain-evidence-gate.js'
+  );
   const { getOwnerUserId } = await import('./config/cat-config-loader.js');
   // cloud R6 P2 (PR-2) + memory wire-up: mirror the same wired set the
   // eval-hub.ts route computes (Object.keys(verdictGenerators)). Bootstrap-time
@@ -7696,6 +7700,17 @@ async function main(): Promise<void> {
     publishPrereqCache.set(domainId, ok);
     return ok;
   };
+  // F192 evidence-source prerequisite gate. OTel init state is fixed for the
+  // process lifetime (salt is read at boot), so a boolean thunk is a complete input.
+  // No co-location check: f167-runtime-eval evidence is a snapshot+attribution pair
+  // on disk under harnessFeedbackRoot (below), written by THIS process's OTel
+  // pipeline. The producer is this process by construction, so the local handle is
+  // authoritative. See eval-domain-evidence-gate.ts for why the earlier
+  // EVAL_BASE_URL-derived assertion was removed rather than repaired.
+  const evidencePrereqProbe = createTelemetryEvidencePrereqProbe({
+    otelEnabled: () => telemetryHandle.getMetricsText !== null,
+  });
+
   const evalScheduleOpts = {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
     threadStore,
@@ -7704,6 +7719,7 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    evidencePrereqProbe,
     triggerStore: redisClient
       ? new (
           await import('./infrastructure/harness-eval/domain/eval-domain-trigger-store.js')

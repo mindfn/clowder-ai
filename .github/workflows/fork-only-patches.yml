@@ -1,0 +1,74 @@
+# Fork-only patch guard.
+#
+# Every other workflow in this repo triggers on `main`. But fork-only patches
+# are lost on `develop_base` - that is the branch rebuilt onto upstream main,
+# and the branch every fork PR targets. Without this workflow the guard would
+# only ever run when a human remembered to run `pnpm check`, which is the same
+# failure mode it was built to remove.
+#
+# Deliberately NOT gated by paths-ignore: a rebuild can drop a patch regardless
+# of which paths its own diff appears to touch.
+#
+# This file is itself a registered fork-only patch (see
+# scripts/fork-only-patches.json), so a rebuild that drops the guard's CI
+# trigger is caught by the local `pnpm check` run.
+name: Fork-only patches
+
+on:
+  push:
+    branches: [develop_base]
+  pull_request:
+    branches: [develop_base]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-only-patches-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Fork-only patch guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # The baseline must be the IMMUTABLE PRE-push commit. Fetching
+      # `origin/develop_base` here would name the tree we are validating - a
+      # witness that is the accused - and the old code did exactly that.
+      # GitHub supplies the previous tip out of band, which the pushed tree
+      # cannot forge: github.event.before for a push (survives force-push),
+      # pull_request.base.sha for a PR.
+      - id: baseline
+        run: |
+          case "${{ github.event_name }}" in
+            push) sha='${{ github.event.before }}' ;;
+            pull_request) sha='${{ github.event.pull_request.base.sha }}' ;;
+            *) sha='' ;;
+          esac
+          # All-zeros means the branch did not exist before: no prior claim.
+          if [ -z "$sha" ] || [ "$sha" = "0000000000000000000000000000000000000000" ]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+          else
+            # A force-pushed rebuild leaves the old tip unreachable from any ref.
+            git fetch --no-tags origin "$sha" 2>/dev/null || true
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No dependency install: the guard uses node builtins only, so it stays
+      # runnable even when the tree is mid-rebuild and deps are inconsistent.
+      - run: node --test scripts/check-fork-only-patches.test.mjs
+      - name: Fork-only patch guard
+        run: |
+          # No `||` fallback on purpose: if the baseline was supposed to exist
+          # and cannot be resolved, the guard must go red, not quietly retry
+          # with a weaker check.
+          if [ -n "${{ steps.baseline.outputs.sha }}" ]; then
+            node scripts/check-fork-only-patches.mjs --baseline-ref "${{ steps.baseline.outputs.sha }}"
+          else
+            node scripts/check-fork-only-patches.mjs --no-baseline
+          fi
