@@ -97,6 +97,61 @@ async function finish(run) {
   }
 }
 
+describe('F117 Phase M: a Stop never waits for an Append the model has not read (K1)', () => {
+  it('closes the query on abort and reports the pending Append as not read', async () => {
+    const events = new AsyncInbox();
+    const controller = new AbortController();
+    const registration = {
+      invocationId: 'inv-sdk-abort',
+      dispatcher: undefined,
+      register(dispatcher) {
+        this.dispatcher = dispatcher;
+        return () => {};
+      },
+    };
+    let sdkInput;
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ prompt, options }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        // The real query ends when its abort controller fires; so does this one.
+        options.abortController.signal.addEventListener('abort', () => events.close(), { once: true });
+        return { interrupt: async () => {}, [Symbol.asyncIterator]: () => events[Symbol.asyncIterator]() };
+      },
+    });
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        signal: controller.signal,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    await sdkInput.next();
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-abort' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    const appended = await registration.dispatcher.dispatch(
+      { text: 'append before Stop', messageIds: ['msg-stop'] },
+      { expectedInvocationId: registration.invocationId, force: false },
+    );
+    assert.equal(appended.accepted, true);
+    const drain = output.next();
+    controller.abort('user_stop');
+
+    const terminal = await Promise.race([
+      drain,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('the query waited instead of closing')), 1_000)),
+    ]);
+    assert.equal(terminal.value.type, 'done');
+    assert.deepEqual(await appended.consumption, { consumed: false });
+  });
+});
+
 describe('F117 Phase M: Claude SDK reports when the model read an appended input', () => {
   it('is read at the first model frame after the engine started it, not at acceptance or start', async () => {
     const run = await startRun('sdk-read-started');

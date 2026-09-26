@@ -232,6 +232,74 @@ describe('F117 Phase M lifecycle read on Redis', { skip: redisIsolationSkipReaso
   phaseMScenarios('redis', () => store);
 });
 
+describe('F117 Phase M: a restart settles a waiting Append unread and publishes it', () => {
+  test('goes through the same settlement as every other terminal (settleResponseFromDraft)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { lifecycleResponseIdempotencyKey, settleResponseFromDraft } = await import(
+      '../dist/domains/cats/services/agents/invocation/response-draft-settlement.js'
+    );
+    const store = new MessageStore();
+    const input = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: THREAD,
+        catId: null,
+        content: 'handed before the restart',
+        mentions: ['opus'],
+        timestamp: 90,
+        deliveryStatus: 'queued',
+      }),
+    );
+    const response = store.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'owner-1',
+      threadId: THREAD,
+      content: 'partial',
+      mentions: [],
+      origin: 'stream',
+      timestamp: 100,
+      idempotencyKey: lifecycleResponseIdempotencyKey('turn-restart'),
+      lifecycle: {
+        kind: 'response',
+        orderKey: '100:turn-restart',
+        invocationId: 'turn-restart',
+        targetId: 'opus',
+        inputEntryIds: [],
+        inputMessageIds: [],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    assert.equal(
+      store.commitLifecycleAppendAdmission({
+        threadId: THREAD,
+        entryId: 'entry-restart',
+        inputMessageIds: [input.id],
+        handed: true,
+        runs: [{ targetId: 'opus', invocationId: 'turn-restart', responseMessageId: response.id, dispatchedAt: 110 }],
+      }).kind,
+      'applied',
+    );
+
+    const settled = await settleResponseFromDraft(
+      { messageStore: store },
+      {
+        userId: 'owner-1',
+        threadId: THREAD,
+        invocationId: 'turn-restart',
+        status: 'interrupted',
+        reason: 'process_restart',
+        endedAt: 300,
+      },
+    );
+    assert.equal(settled.kind, 'committed');
+    assert.equal(store.getById(response.id).lifecycle.status, 'interrupted');
+    const unread = store.getById(input.id);
+    assert.equal(unread.lifecycle.dispatchRefs[0].readState, 'unread');
+    assert.equal(unread.deliveryStatus, 'delivered', 'published, not left queued without a Queue row');
+  });
+});
+
 describe('F117 Phase M lifecycle read markers are fail-closed', () => {
   const input = (ref) => ({ kind: 'input', orderKey: '1:m', dispatchRefs: [ref] });
   const base = { targetId: 'opus', statusMessageId: 'r-1', dispatchedAt: 1 };
