@@ -862,8 +862,24 @@ export interface AgentClientDispatchOptions {
   readonly expectedInvocationId: string;
 }
 
+/**
+ * F117 Phase M: whether the model read one accepted input. `consumed` rests only on provider-authored
+ * evidence; a run that closes without such evidence reports `consumed: false`.
+ */
+export type AgentClientInputConsumption =
+  | { readonly consumed: true; readonly at: number }
+  | { readonly consumed: false };
+
 export type AgentClientDispatchResult =
-  | { readonly accepted: true; readonly handle: AgentClientActiveRunHandle }
+  | {
+      readonly accepted: true;
+      readonly handle: AgentClientActiveRunHandle;
+      /**
+       * Settles exactly once and never rejects. Absent when the carrier cannot observe consumption,
+       * in which case acceptance is only a lower bound for the read time.
+       */
+      readonly consumption?: Promise<AgentClientInputConsumption>;
+    }
   | {
       readonly accepted: false;
       readonly reason: 'active_run_mismatch' | 'active_run_closed' | 'invalid_input' | 'provider_rejected';

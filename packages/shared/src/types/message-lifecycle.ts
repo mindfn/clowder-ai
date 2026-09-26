@@ -70,6 +70,15 @@ export interface ReorderVisibleLifecycleEntriesCommand {
   readonly orderedVisibleEntryIds: readonly string[];
 }
 
+/**
+ * F117 Phase M: whether the target's model read this input. A ref without `readState` is read — an
+ * ordinary dispatch reads at its prompt, and older refs never carried the field — so unread is never
+ * inferred from a missing `readAt`. An Append is `awaiting` from the moment its carrier accepted it
+ * until consumption evidence adds `readAt`; a response that settles while it still waits leaves it
+ * `unread`.
+ */
+export type LifecycleDispatchReadState = 'awaiting' | 'unread';
+
 export type LifecycleDispatchRef =
   | {
       readonly targetId: string;
@@ -77,6 +86,9 @@ export type LifecycleDispatchRef =
       readonly statusMessageId: string;
       /** Missing only on hydrated pre-v2 refs; new writers always persist it. */
       readonly dispatchedAt?: number;
+      readonly readState?: 'awaiting';
+      /** When consumption evidence proved the model read an Append. */
+      readonly readAt?: number;
     }
   | {
       readonly targetId: string;
@@ -84,7 +96,23 @@ export type LifecycleDispatchRef =
       readonly statusMessageId: string;
       /** Missing only on hydrated pre-v2 refs; new writers always persist it. */
       readonly dispatchedAt?: number;
+      readonly readState?: 'unread';
+      readonly readAt?: number;
     };
+
+/**
+ * F117 Phase M: an input handed to a running carrier whose model has not read it yet. The Queue Panel
+ * shows it as "等待读取 → cat" beside the pending rows; it has no Queue row and no Queue actions.
+ */
+export interface QueueAwaitingReadInput {
+  readonly messageId: string;
+  readonly targetId: string;
+  readonly responseMessageId: string;
+  readonly handedAt: number;
+  readonly from: MessageFrom;
+  readonly content: string;
+  readonly contentBlocks?: readonly MessageContent[];
+}
 
 export interface LifecycleMessageMetadata {
   readonly orderKey: string;
@@ -117,6 +145,13 @@ export type LifecycleStoredMessageMetadata =
       readonly targetId: string;
       readonly inputEntryIds: readonly string[];
       readonly inputMessageIds: readonly string[];
+      /**
+       * F117 Phase M index of Appends handed to this run's carrier and not read (yet). The input's
+       * `dispatchRef.readState` is canonical; both are written in one commit. Once the response is
+       * terminal, whatever is still here was never read.
+       */
+      readonly handedInputEntryIds?: readonly string[];
+      readonly handedInputMessageIds?: readonly string[];
       readonly status: 'processing' | 'completed' | 'failed' | 'canceled' | 'interrupted';
       readonly startedAt: number;
       /** Presentation floor for the latest input admitted to this response. */
@@ -215,6 +250,12 @@ export function timelineMessageKind(from: MessageFrom | undefined, hasSource: bo
   return null;
 }
 
+function isDispatchReadMarker(candidate: Record<string, unknown>): boolean {
+  if (candidate.readAt !== undefined) return candidate.readState === undefined && isFiniteTimestamp(candidate.readAt);
+  if (candidate.readState === undefined) return true;
+  return candidate.readState === (candidate.phase === 'dispatched' ? 'awaiting' : 'unread');
+}
+
 function isDispatchRef(value: unknown): value is LifecycleDispatchRef {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
@@ -222,8 +263,13 @@ function isDispatchRef(value: unknown): value is LifecycleDispatchRef {
   return (
     (candidate.phase === 'dispatched' || candidate.phase === 'settled') &&
     isNonEmptyString(candidate.statusMessageId) &&
-    (candidate.dispatchedAt === undefined || isFiniteTimestamp(candidate.dispatchedAt))
+    (candidate.dispatchedAt === undefined || isFiniteTimestamp(candidate.dispatchedAt)) &&
+    isDispatchReadMarker(candidate)
   );
+}
+
+function isOptionalIdList(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(isNonEmptyString));
 }
 
 /** Fail-closed parser guard for the independent Redis lifecycle field. */
@@ -270,6 +316,8 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
     !candidate.inputEntryIds.every(isNonEmptyString) ||
     !Array.isArray(candidate.inputMessageIds) ||
     !candidate.inputMessageIds.every(isNonEmptyString) ||
+    !isOptionalIdList(candidate.handedInputEntryIds) ||
+    !isOptionalIdList(candidate.handedInputMessageIds) ||
     !isOneOf(candidate.status, ['processing', 'completed', 'failed', 'canceled', 'interrupted'] as const) ||
     !isFiniteTimestamp(candidate.startedAt) ||
     (candidate.latestInputTimelineOrderAt !== undefined && !isFiniteTimestamp(candidate.latestInputTimelineOrderAt))

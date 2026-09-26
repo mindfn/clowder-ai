@@ -411,21 +411,19 @@ describe('live member carriers', () => {
     events.push({ type: 'system', subtype: 'init', session_id: 'sdk-append-result-race' });
     assert.equal((await initialized).value.type, 'session_init');
 
-    assert.deepEqual(
-      await registration.dispatcher.dispatch(
-        { text: 'accepted follow-up' },
-        { expectedInvocationId: registration.invocationId, force: false },
-      ),
-      {
-        accepted: true,
-        handle: {
-          provider: 'anthropic',
-          carrier: 'claude_agent_sdk',
-          threadId: 'sdk-append-result-race',
-          turnId: registration.dispatcher.handle.turnId,
-        },
-      },
+    const { consumption, ...accepted } = await registration.dispatcher.dispatch(
+      { text: 'accepted follow-up' },
+      { expectedInvocationId: registration.invocationId, force: false },
     );
+    assert.deepEqual(accepted, {
+      accepted: true,
+      handle: {
+        provider: 'anthropic',
+        carrier: 'claude_agent_sdk',
+        threadId: 'sdk-append-result-race',
+        turnId: registration.dispatcher.handle.turnId,
+      },
+    });
     const appendedInput = (await sdkInput.next()).value;
 
     const secondTurnOutput = output.next();
@@ -455,6 +453,7 @@ describe('live member carriers', () => {
     });
     assert.equal((await terminal).value.type, 'done');
     assert.equal(registration.released, true);
+    assert.equal((await consumption).consumed, true, 'the result that answers the Append proves it was read');
   });
 
   it('Claude SDK does not apply an older result queue snapshot to a locally buffered Append', async () => {

@@ -32,12 +32,14 @@ import {
 } from '../../agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { cursorFor, parseCursor } from '../cursor.js';
 import { messageFrom } from '../message-from.js';
+import { prepareLifecycleAppendRead } from '../ports/lifecycle-append-read.js';
 import type {
   AdvanceLifecycleInputDispatchResult,
   AppendMessageInput,
   BoundedThreadMessagePage,
   ClearOwnerComposerDraftResult,
   CommitLifecycleAppendAdmissionResult,
+  CommitLifecycleAppendReadResult,
   CommitLifecycleAppendRejectionResult,
   CommitLifecyclePreAdmissionFailureResult,
   CommitLifecycleResponseTerminalResult,
@@ -46,6 +48,7 @@ import type {
   HostMessageExtra,
   IdempotentAppendResult,
   LifecycleAppendAdmissionInput,
+  LifecycleAppendReadInput,
   LifecycleAppendRejectionInput,
   LifecycleInputDispatchPatch,
   LifecyclePreAdmissionFailureInput,
@@ -3529,6 +3532,36 @@ export class RedisMessageStore {
       const applied = await Promise.all(ids.map((id) => this.getById(id)));
       if (applied.some((message) => !message)) {
         throw new Error('lifecycle Append admission committed but a message vanished');
+      }
+      return { kind: 'applied', messages: applied as StoredMessage[] };
+    }
+    return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
+  }
+
+  async commitLifecycleAppendRead(input: LifecycleAppendReadInput): Promise<CommitLifecycleAppendReadResult> {
+    const ids = [...input.inputMessageIds, input.run.responseMessageId];
+    const keys = ids.map((id) => MessageKeys.detail(id));
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const [messages, rawLifecycles] = await Promise.all([
+        Promise.all(ids.map((id) => this.getById(id))),
+        Promise.all(keys.map((key) => this.redis.hget(key, 'lifecycle'))),
+      ]);
+      if (messages.some((message) => !message)) return { kind: 'not_found' };
+      const prepared = prepareLifecycleAppendRead(messages as StoredMessage[], input);
+      if (prepared.kind !== 'prepared') return prepared;
+      if (prepared.replayed) return { kind: 'replayed', messages: messages as StoredMessage[] };
+      const argv = prepared.lifecycles.flatMap((lifecycle, index) => [
+        rawLifecycles[index] ?? '',
+        JSON.stringify(lifecycle),
+      ]);
+      const outcome = Number(await this.redis.eval(CAS_LIFECYCLE_APPEND_ADMISSION_LUA, keys.length, ...keys, ...argv));
+      if (outcome === 0) continue;
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict', reason: 'scope_mismatch' };
+      if (outcome !== 1) throw new Error(`unexpected lifecycle Append read outcome: ${outcome}`);
+      const applied = await Promise.all(ids.map((id) => this.getById(id)));
+      if (applied.some((message) => !message)) {
+        throw new Error('lifecycle Append read committed but a message vanished');
       }
       return { kind: 'applied', messages: applied as StoredMessage[] };
     }

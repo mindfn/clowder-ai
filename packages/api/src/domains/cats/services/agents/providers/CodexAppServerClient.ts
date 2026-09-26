@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ProviderNativeFreshnessMissReason } from '../../freshness/FreshnessAttentionEventLog.js';
 import type {
   ActiveInvocationFreshnessController,
@@ -51,6 +52,7 @@ import {
   type CodexAppServerApprovalsReviewer,
   closeCodexAppServerTransport,
 } from './codex-app-server-client-helpers.js';
+import { CodexAppServerInputConsumption } from './codex-app-server-input-consumption.js';
 import { CodexAppServerRpcError } from './codex-app-server-rpc-error.js';
 
 export type {
@@ -226,6 +228,7 @@ export class CodexAppServerClient {
     let activeTurnId: string | null = null;
     let activeRunDispatchOpen = false;
     let releaseActiveRunDispatch: (() => void) | undefined;
+    let inputConsumption: CodexAppServerInputConsumption | undefined;
     let transportDisposition: 'release' | 'evict' = 'release';
     const timeoutMs = Math.max(0, input.timeoutMs ?? 0);
     const interruptGraceMs = Math.max(0, input.interruptGraceMs ?? DEFAULT_INTERRUPT_GRACE_MS);
@@ -374,6 +377,8 @@ export class CodexAppServerClient {
           turnId: activeTurnId,
         };
         activeRunDispatchOpen = true;
+        const consumptions = new CodexAppServerInputConsumption(threadId);
+        inputConsumption = consumptions;
         const release = input.activeRunDispatch.register({
           invocationId,
           capabilities: { append: true, steer: true },
@@ -388,21 +393,25 @@ export class CodexAppServerClient {
             const text = dispatchInput.text.trim();
             const imagePaths = dispatchInput.imagePaths?.filter((path) => path.length > 0) ?? [];
             if (!text && imagePaths.length === 0) return { accepted: false, reason: 'invalid_input' };
+            const clientUserMessageId = randomUUID();
+            const consumption = consumptions.expect(clientUserMessageId);
             try {
               const result = asCodexAppServerRecord(
                 await this.request('turn/steer', {
                   threadId,
                   expectedTurnId: handle.turnId,
+                  clientUserMessageId,
                   input: [
                     ...(text ? [{ type: 'text', text: dispatchInput.text }] : []),
                     ...imagePaths.map((path) => ({ type: 'localImage', path })),
                   ],
                 }),
               );
-              return result?.turnId === handle.turnId
-                ? { accepted: true, handle }
-                : { accepted: false, reason: 'active_run_mismatch' };
+              if (result?.turnId === handle.turnId) return { accepted: true, handle, consumption };
+              consumptions.withdraw(clientUserMessageId);
+              return { accepted: false, reason: 'active_run_mismatch' };
             } catch {
+              consumptions.withdraw(clientUserMessageId);
               return { accepted: false, reason: 'provider_rejected' };
             }
           },
@@ -417,6 +426,7 @@ export class CodexAppServerClient {
         const next = await this.notifications.next();
         if (next.done) throw new Error('Codex app-server stream ended before turn completion');
         const envelope = next.value;
+        inputConsumption?.observe(envelope);
         const record = asCodexAppServerRecord(envelope);
         const params = asCodexAppServerRecord(record?.params);
         const subexecution = await subexecutionTracker.observe(envelope);
@@ -542,6 +552,7 @@ export class CodexAppServerClient {
       throw failure;
     } finally {
       activeRunDispatchOpen = false;
+      inputConsumption?.close();
       releaseActiveRunDispatch?.();
       runtimeInteraction?.close('provider_cancelled');
       const { closing, closed } = await closeCodexAppServerTransport(

@@ -28,6 +28,7 @@ import {
   resolveActiveInvocations,
   responseStatusFromMessages,
 } from '../domains/cats/services/agents/invocation/active-execution-service.js';
+import { projectAwaitingReadInputs } from '../domains/cats/services/agents/invocation/awaiting-read-projection.js';
 import {
   type InvocationQueue,
   isSystemPinnedQueueEntry,
@@ -979,7 +980,12 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const queueEntries = invocationQueue.list(threadId, guard.userId);
     const queueRevision = invocationQueue.snapshotRevision(threadId, guard.userId);
     const enrichedQueue = await enrichQueueEntries(queueEntries, messageStore);
+    // F117 Phase M: inputs handed to a running carrier and not read yet sit beside the pending rows.
+    const awaitingRead = messageStore
+      ? await projectAwaitingReadInputs({ threadId, userId: guard.userId, invocationTracker, messageStore })
+      : [];
     return {
+      awaitingRead,
       queue: enrichedQueue.map((entry) => {
         const internal = queueEntries.find((candidate) => candidate.id === entry.id);
         if (!internal) return entry;

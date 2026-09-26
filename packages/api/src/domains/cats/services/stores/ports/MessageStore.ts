@@ -55,6 +55,13 @@ import {
   resolveDeliveryTimelineScore,
   resolveThreadMessageVisibility,
 } from '../visibility.js';
+import {
+  type CommitLifecycleAppendReadResult,
+  handLifecycleResponseInputsMetadata,
+  type LifecycleAppendReadInput,
+  prepareLifecycleAppendRead,
+  removeLifecycleResponseInputs,
+} from './lifecycle-append-read.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
 import { DEFAULT_THREAD_ID } from './ThreadStore.js';
 import type { TurnExecutionMessageProjection } from './TurnExecutionStore.js';
@@ -74,6 +81,7 @@ export function isDelivered(msg: StoredMessage): boolean {
  * Queued user/system/briefing work remains private until delivery.
  */
 export { isTimelinePublished } from '../visibility.js';
+export type { CommitLifecycleAppendReadResult, LifecycleAppendReadInput } from './lifecycle-append-read.js';
 
 export type UnresolvedCursorPolicy = 'rescan' | 'empty';
 
@@ -797,7 +805,7 @@ export type LifecycleInputDispatchPatch = {
   producerInvocationId?: string;
   targetId: string;
   statusMessageId: string;
-} & ({ phase: 'dispatched'; dispatchedAt: number } | { phase: 'settled' });
+} & ({ phase: 'dispatched'; dispatchedAt: number; readState?: 'awaiting' } | { phase: 'settled' });
 
 export type AdvanceLifecycleInputDispatchResult =
   | { kind: 'applied' | 'replayed'; message: StoredMessage }
@@ -812,6 +820,11 @@ export interface LifecycleAppendAdmissionInput {
   threadId: string;
   entryId: string;
   inputMessageIds: readonly string[];
+  /**
+   * F117 Phase M: the carrier is about to be handed this input and nothing has read it yet. The ref
+   * waits (`readState: 'awaiting'`) and the response only indexes it as handed; read comes later.
+   */
+  handed?: boolean;
   runs: readonly {
     targetId: string;
     invocationId: string;
@@ -1010,6 +1023,7 @@ export function advanceLifecycleInputDispatchMetadata(
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
             dispatchedAt: patch.dispatchedAt,
+            ...(patch.readState ? { readState: patch.readState } : {}),
           },
         ],
       },
@@ -1038,6 +1052,7 @@ export function advanceLifecycleInputDispatchMetadata(
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
             dispatchedAt: patch.dispatchedAt,
+            ...(patch.readState ? { readState: patch.readState } : {}),
           },
         ],
       },
@@ -1065,11 +1080,14 @@ export function advanceLifecycleInputDispatchMetadata(
   } else if (existing.phase === 'settled' || patch.phase !== 'settled') {
     return { kind: 'conflict', reason: 'invalid_transition' };
   }
+  // Settling keeps what was read; an Append still waiting when its response settles was never read.
   const nextRef: LifecycleDispatchRef = {
     targetId: patch.targetId,
     phase: patch.phase,
     statusMessageId: patch.statusMessageId,
     ...(existing.dispatchedAt !== undefined ? { dispatchedAt: existing.dispatchedAt } : {}),
+    ...(existing.readAt !== undefined ? { readAt: existing.readAt } : {}),
+    ...(existing.readState === 'awaiting' ? { readState: 'unread' as const } : {}),
   };
   return {
     kind: 'applied',
@@ -1155,6 +1173,7 @@ export function prepareLifecycleAppendAdmission(
         phase: 'dispatched',
         statusMessageId: run.responseMessageId,
         dispatchedAt: run.dispatchedAt,
+        ...(input.handed ? { readState: 'awaiting' as const } : {}),
       });
       if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
       if (transition.kind === 'applied') {
@@ -1168,16 +1187,23 @@ export function prepareLifecycleAppendAdmission(
   for (let index = 0; index < input.runs.length; index += 1) {
     const run = input.runs[index]!;
     const message = messages[input.inputMessageIds.length + index]!;
-    const transition = appendLifecycleResponseInputsMetadata(message.lifecycle, {
-      entryId: input.entryId,
-      inputMessageIds: input.inputMessageIds,
-      targetId: run.targetId,
-      invocationId: run.invocationId,
-      latestInputTimelineOrderAt: Math.max(
-        run.dispatchedAt,
-        ...messages.slice(0, input.inputMessageIds.length).map(getTimelineOrderTime),
-      ),
-    });
+    const transition = input.handed
+      ? handLifecycleResponseInputsMetadata(message.lifecycle, {
+          entryId: input.entryId,
+          inputMessageIds: input.inputMessageIds,
+          targetId: run.targetId,
+          invocationId: run.invocationId,
+        })
+      : appendLifecycleResponseInputsMetadata(message.lifecycle, {
+          entryId: input.entryId,
+          inputMessageIds: input.inputMessageIds,
+          targetId: run.targetId,
+          invocationId: run.invocationId,
+          latestInputTimelineOrderAt: Math.max(
+            run.dispatchedAt,
+            ...messages.slice(0, input.inputMessageIds.length).map(getTimelineOrderTime),
+          ),
+        });
     if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
     if (transition.kind === 'applied') replayed = false;
     lifecycles.push(transition.kind === 'applied' ? transition.lifecycle : message.lifecycle!);
@@ -1253,22 +1279,13 @@ export function prepareLifecycleAppendRejection(
   ) {
     return { kind: 'conflict', reason: 'lifecycle_conflict' };
   }
-  const hasEntry = responseLifecycle.inputEntryIds.includes(input.entryId);
-  const presentMessageIds = input.inputMessageIds.filter((messageId) =>
-    responseLifecycle.inputMessageIds.includes(messageId),
-  );
-  if (!hasEntry && presentMessageIds.length === 0) {
+  const removal = removeLifecycleResponseInputs(responseLifecycle, input.entryId, input.inputMessageIds);
+  if (removal.kind === 'conflict') return { kind: 'conflict', reason: 'lifecycle_conflict' };
+  if (removal.kind === 'replayed') {
     lifecycles.push(responseLifecycle);
-  } else if (!hasEntry || presentMessageIds.length !== input.inputMessageIds.length) {
-    return { kind: 'conflict', reason: 'lifecycle_conflict' };
   } else {
     replayed = false;
-    const rejectedIds = new Set(input.inputMessageIds);
-    lifecycles.push({
-      ...responseLifecycle,
-      inputEntryIds: responseLifecycle.inputEntryIds.filter((entryId) => entryId !== input.entryId),
-      inputMessageIds: responseLifecycle.inputMessageIds.filter((messageId) => !rejectedIds.has(messageId)),
-    });
+    lifecycles.push(removal.lifecycle);
   }
   return { kind: 'prepared', lifecycles, replayed };
 }
@@ -1324,7 +1341,11 @@ export async function settleLifecycleResponseInputs(
 ): Promise<void> {
   const lifecycle = response.lifecycle;
   if (lifecycle?.kind === 'response') {
-    for (const inputMessageId of lifecycle.inputMessageIds) {
+    // F117 Phase M: an Append handed to this run and never read settles `unread` (the transition
+    // converts a waiting ref). Handed and read Appends left the Queue at acceptance, so settling must
+    // also publish them: otherwise one stays queued with no ledger row, visible to no one.
+    const handed = new Set(lifecycle.handedInputMessageIds ?? []);
+    for (const inputMessageId of [...lifecycle.inputMessageIds, ...handed]) {
       const inputMessage = await store.getById(inputMessageId);
       if (!inputMessage || !isLifecycleDispatchableSource(inputMessage.lifecycle)) continue;
       const targetRef = inputMessage.lifecycle.dispatchRefs?.find((ref) => ref.targetId === lifecycle.targetId);
@@ -1342,6 +1363,10 @@ export async function settleLifecycleResponseInputs(
         throw new Error(
           `lifecycle input settlement conflict: ${inputMessageId}:${settled.kind}:${'reason' in settled ? settled.reason : 'missing'}`,
         );
+      }
+      const handedAppend = handed.has(inputMessageId) || targetRef.readAt !== undefined;
+      if (handedAppend && inputMessage.deliveryStatus === 'queued') {
+        await store.markDelivered(inputMessageId, targetRef.readAt ?? lifecycle.completedAt ?? Date.now());
       }
     }
   }
@@ -1888,6 +1913,10 @@ export interface IMessageStore {
   commitLifecycleAppendRejection(
     input: LifecycleAppendRejectionInput,
   ): CommitLifecycleAppendRejectionResult | Promise<CommitLifecycleAppendRejectionResult>;
+  /** F117 Phase M: consumption evidence turns one handed Append into a read input of its response. */
+  commitLifecycleAppendRead(
+    input: LifecycleAppendReadInput,
+  ): CommitLifecycleAppendReadResult | Promise<CommitLifecycleAppendReadResult>;
   /**
    * F098-D: CAS transition queued → delivered at an admitted timestamp.
    * `deliveryTransitioned` is true only when this call won; false on a state no-op.
@@ -3324,6 +3353,21 @@ export class MessageStore {
     const messages = ids.map((id) => this.messages.find((message) => message.id === id));
     if (messages.some((message) => !message)) return { kind: 'not_found' };
     const prepared = prepareLifecycleAppendAdmission(messages as StoredMessage[], input);
+    if (prepared.kind !== 'prepared') return prepared;
+    if (prepared.replayed) {
+      return { kind: 'replayed', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
+    }
+    for (let index = 0; index < messages.length; index += 1) {
+      messages[index]!.lifecycle = structuredClone(prepared.lifecycles[index]!);
+    }
+    return { kind: 'applied', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
+  }
+
+  commitLifecycleAppendRead(input: LifecycleAppendReadInput): CommitLifecycleAppendReadResult {
+    const ids = [...input.inputMessageIds, input.run.responseMessageId];
+    const messages = ids.map((id) => this.messages.find((message) => message.id === id));
+    if (messages.some((message) => !message)) return { kind: 'not_found' };
+    const prepared = prepareLifecycleAppendRead(messages as StoredMessage[], input);
     if (prepared.kind !== 'prepared') return prepared;
     if (prepared.replayed) {
       return { kind: 'replayed', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };

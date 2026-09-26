@@ -214,14 +214,18 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
     },
     { force: false, expectedInvocationId: 'turn-invocation-1' },
   );
-  assert.deepEqual(accepted, {
+  const { consumption, ...acceptance } = accepted;
+  assert.deepEqual(acceptance, {
     accepted: true,
     handle: dispatcher.handle,
   });
+  assert.ok(consumption instanceof Promise);
   const steer = wire.writes.find(
     (message) => message.method === 'turn/steer' && message.params.input?.[0]?.text === 'follow-up while still working',
   );
-  assert.deepEqual(steer.params, {
+  const { clientUserMessageId, ...steerParams } = steer.params;
+  assert.match(clientUserMessageId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(steerParams, {
     threadId: 'thread-1',
     expectedTurnId: 'turn-1',
     input: [
@@ -247,6 +251,119 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
     { force: false, expectedInvocationId: 'turn-invocation-1' },
   );
   assert.deepEqual(terminal, { accepted: false, reason: 'active_run_closed' });
+  assert.deepEqual(await consumption, { consumed: false }, 'the turn ended before the steer was injected');
+});
+
+test('F117 Phase M: a steer is read when its userMessage item enters the thread, not when accepted', async () => {
+  const wire = new ProtocolWire();
+  let dispatcher;
+  const client = new CodexAppServerClient({ wire });
+  const outputPromise = collect(
+    client.run({
+      prompt: frozenPrompt('initial work'),
+      thread: { kind: 'start' },
+      activeRunDispatch: {
+        invocationId: 'turn-invocation-read',
+        register: (candidate) => {
+          dispatcher = candidate;
+          return () => {};
+        },
+      },
+    }),
+  );
+  await waitFor(() => dispatcher !== undefined);
+  const steered = await dispatcher.dispatch(
+    { text: 'read me at the next boundary', messageIds: ['message-read'] },
+    { force: false, expectedInvocationId: 'turn-invocation-read' },
+  );
+  const other = await dispatcher.dispatch(
+    { text: 'still waiting', messageIds: ['message-wait'] },
+    { force: false, expectedInvocationId: 'turn-invocation-read' },
+  );
+  assert.equal(steered.accepted, true);
+  assert.equal(other.accepted, true);
+  const steerIds = wire.writes
+    .filter((message) => message.method === 'turn/steer')
+    .map((message) => message.params.clientUserMessageId);
+  assert.equal(new Set(steerIds).size, 2, 'every steer carries its own client id');
+  let settled = false;
+  void steered.consumption.then(() => {
+    settled = true;
+  });
+  await delay(5);
+  assert.equal(settled, false, 'acceptance is not consumption');
+
+  // The turn's own prompt, an item for another thread, and a completed command are no proof.
+  wire.inbox.push({
+    method: 'item/started',
+    params: { threadId: 'thread-1', turnId: 'turn-1', item: { id: 'user-own', type: 'userMessage', content: [] } },
+  });
+  wire.inbox.push({
+    method: 'item/started',
+    params: {
+      threadId: 'thread-other',
+      turnId: 'turn-9',
+      item: { id: 'user-foreign', type: 'userMessage', clientId: steerIds[0], content: [] },
+    },
+  });
+  await delay(5);
+  assert.equal(settled, false);
+
+  const before = Date.now();
+  wire.inbox.push({
+    method: 'item/started',
+    params: {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      item: { id: 'user-steer', type: 'userMessage', clientId: steerIds[0], content: [] },
+    },
+  });
+  const consumption = await steered.consumption;
+  assert.equal(consumption.consumed, true);
+  assert.ok(consumption.at >= before);
+
+  wire.inbox.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  });
+  await outputPromise;
+  assert.deepEqual(await other.consumption, { consumed: false }, 'a steer never injected was not read');
+});
+
+test('F117 Phase M: a rejected steer reports no consumption to wait for', async () => {
+  const wire = new ProtocolWire();
+  const originalWrite = wire.write.bind(wire);
+  wire.write = async (message) => {
+    if (message.method !== 'turn/steer') return originalWrite(message);
+    wire.writes.push(message);
+    wire.inbox.push({ id: message.id, result: { turnId: 'turn-stale' } });
+  };
+  let dispatcher;
+  const client = new CodexAppServerClient({ wire });
+  const outputPromise = collect(
+    client.run({
+      prompt: frozenPrompt('initial work'),
+      thread: { kind: 'start' },
+      activeRunDispatch: {
+        invocationId: 'turn-invocation-rejected',
+        register: (candidate) => {
+          dispatcher = candidate;
+          return () => {};
+        },
+      },
+    }),
+  );
+  await waitFor(() => dispatcher !== undefined);
+  const rejected = await dispatcher.dispatch(
+    { text: 'lands on another turn', messageIds: ['message-stale'] },
+    { force: false, expectedInvocationId: 'turn-invocation-rejected' },
+  );
+  assert.deepEqual(rejected, { accepted: false, reason: 'active_run_mismatch' });
+  wire.inbox.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  });
+  await outputPromise;
 });
 
 test('F306 keeps sticky controls single-writer while mapping approved native parameters', async () => {
