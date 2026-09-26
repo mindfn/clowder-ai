@@ -13,6 +13,7 @@ import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadCh
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { selectThreadMessagesRaw } from '@/hooks/useThreadScopedSelectors';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
+import { applyAwaitingReadFromQueueResponse } from '@/stores/awaitingReadStore';
 import type { QueueEntry, TaskProgressItem, TimeoutDiagnostics } from '@/stores/chat-types';
 import {
   type ChatMessage as ChatMessageData,
@@ -1159,6 +1160,7 @@ export function useChatHistory(threadId: string) {
       };
       // Always sync server state — clears stale local data when server queue is empty
       setQueue(fetchForThread, data.queue);
+      applyAwaitingReadFromQueueResponse(fetchForThread, data);
       // Issue #83: Reconcile processing state from server-side InvocationTracker.
       // Uses thread-scoped APIs so it works correctly for both active and background threads,
       // and always overwrites stale snapshots restored by setCurrentThread().

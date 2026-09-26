@@ -29,6 +29,31 @@ export function projectAppendedInputReceipts(
   });
 }
 
+/**
+ * F117 Phase M: Appends handed to this response that its model never read. Only a response that
+ * ended can say so; while it runs they wait in the Queue Panel as "等待读取".
+ */
+export function projectUnreadAppendedInputs(
+  response: ChatMessage,
+  timelineMessages: readonly ChatMessage[],
+): readonly ChatMessage[] {
+  const lifecycle = response.lifecycle;
+  if (lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return [];
+  const byId = new Map(timelineMessages.map((message) => [message.id, message]));
+  return (lifecycle.handedInputMessageIds ?? []).flatMap((messageId) => {
+    const source = byId.get(messageId);
+    return source ? [source] : [];
+  });
+}
+
+/** When this response's model read the appended source; absent on inputs admitted before Phase M. */
+function readTimeFor(source: ChatMessage, response: ChatMessage): number | undefined {
+  if (response.lifecycle?.kind !== 'response') return undefined;
+  const targetId = response.lifecycle.targetId;
+  return source.lifecycle?.dispatchRefs?.find((ref) => ref.targetId === targetId && ref.statusMessageId === response.id)
+    ?.readAt;
+}
+
 function formatReceiptTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
   const part = (value: number) => String(value).padStart(2, '0');
@@ -55,6 +80,8 @@ function sourceLabel(message: ChatMessage, coCreatorName: string, getCatLabel: (
 interface AppendedInputRowProps {
   source: ChatMessage;
   label: string;
+  /** F117 Phase M: read at a known time, read before read times existed, or never read. */
+  readState: { kind: 'read'; readAt?: number } | { kind: 'unread' };
   expanded: boolean;
   onToggle: () => void;
 }
@@ -63,7 +90,7 @@ interface AppendedInputRowProps {
  * One appended input: a single line that expands in place when it is actually truncated (the F269
  * overflow rule shared with ExpandableProse), and a separate jump back to the original message.
  */
-function AppendedInputRow({ source, label, expanded, onToggle }: AppendedInputRowProps) {
+function AppendedInputRow({ source, label, readState, expanded, onToggle }: AppendedInputRowProps) {
   const contentId = useId();
   const { ref, overflowing } = useMeasuredOverflow<HTMLSpanElement>({ axis: 'inline', active: !expanded });
   const content = source.content.trim() || '（无文字内容）';
@@ -75,6 +102,15 @@ function AppendedInputRow({ source, label, expanded, onToggle }: AppendedInputRo
       className={expanded ? 'flex min-w-0 items-start gap-1.5 py-1' : 'flex h-7 min-w-0 items-center gap-1.5'}
     >
       <span className="shrink-0 font-medium">{label}:</span>
+      {readState.kind === 'unread' ? (
+        <span data-appended-input-read="unread" className="shrink-0 text-cafe-muted">
+          未读取
+        </span>
+      ) : readState.readAt !== undefined ? (
+        <span data-appended-input-read="read" className="shrink-0 text-cafe-muted">
+          读取于 {formatReceiptTimestamp(readState.readAt)}
+        </span>
+      ) : null}
       <span
         id={contentId}
         ref={ref}
@@ -121,8 +157,10 @@ export function AppendedInputReceipts({
   const [listExpanded, setListExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<ReadonlySet<string>>(() => new Set());
   const appendedInputs = projectAppendedInputReceipts(response, timelineMessages);
-  if (appendedInputs.length === 0) return null;
-  const renderedInputs = [...appendedInputs].reverse();
+  const unreadInputs = projectUnreadAppendedInputs(response, timelineMessages);
+  if (appendedInputs.length === 0 && unreadInputs.length === 0) return null;
+  const unreadIds = new Set(unreadInputs.map((source) => source.id));
+  const renderedInputs = [...appendedInputs, ...unreadInputs].reverse();
   const canExpand = renderedInputs.length > COLLAPSED_FULL_ROWS;
   const remainingCount = renderedInputs.length - COLLAPSED_FULL_ROWS;
   // An expanded row no longer fits the fixed 3.5-row clamp, so expanding one shows the whole list.
@@ -170,6 +208,9 @@ export function AppendedInputReceipts({
             key={source.id}
             source={source}
             label={sourceLabel(source, coCreatorName, getCatLabel)}
+            readState={
+              unreadIds.has(source.id) ? { kind: 'unread' } : { kind: 'read', readAt: readTimeFor(source, response) }
+            }
             expanded={expandedRowIds.has(source.id)}
             onToggle={() => toggleRow(source.id)}
           />

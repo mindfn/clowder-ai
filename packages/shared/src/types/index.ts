@@ -1027,6 +1027,7 @@ export type {
   LifecycleResponseBubble,
   LifecycleStoredMessageMetadata,
   MessageFrom,
+  QueueAwaitingReadInput,
   ReorderVisibleLifecycleEntriesCommand,
   StructuredOwnerAdmissionBinding,
   TimelineMessageKind,

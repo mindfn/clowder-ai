@@ -8,6 +8,7 @@ Queue actions consume per-target eligibility joined onto the authoritative sourc
 import { useCallback, useState } from 'react';
 import type { QueueActiveInvocationSlot } from '@/hooks/queue-active-invocation-hydration';
 import { reconcileQueueActiveInvocationProjection } from '@/hooks/queue-active-invocation-reconciliation';
+import { applyAwaitingReadFromQueueResponse } from '@/stores/awaitingReadStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
@@ -30,6 +31,7 @@ export function useQueueActionConvergence(threadId: string) {
     const data = await response.json().catch(() => ({}));
     if (!Array.isArray(data?.queue)) return false;
     setQueue(threadId, data.queue);
+    applyAwaitingReadFromQueueResponse(threadId, data);
     reconcileQueueActiveInvocationProjection({
       threadId,
       slots: data.activeInvocations as QueueActiveInvocationSlot[] | undefined,

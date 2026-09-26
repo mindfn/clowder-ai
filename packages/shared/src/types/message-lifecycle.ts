@@ -100,6 +100,20 @@ export type LifecycleDispatchRef =
       readonly readAt?: number;
     };
 
+/**
+ * F117 Phase M: an input handed to a running carrier whose model has not read it yet. The Queue Panel
+ * shows it as "等待读取 → cat" beside the pending rows; it has no Queue row and no Queue actions.
+ */
+export interface QueueAwaitingReadInput {
+  readonly messageId: string;
+  readonly targetId: string;
+  readonly responseMessageId: string;
+  readonly handedAt: number;
+  readonly from: MessageFrom;
+  readonly content: string;
+  readonly contentBlocks?: readonly MessageContent[];
+}
+
 export interface LifecycleMessageMetadata {
   readonly orderKey: string;
   readonly dispatchRefs?: readonly LifecycleDispatchRef[];

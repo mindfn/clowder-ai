@@ -1113,6 +1113,19 @@ export class QueueProcessor {
           failedAtLowerBound: seenAt + 1,
           handed: true,
         });
+        await emitQueueUpdated(
+          socketManager,
+          input.userId,
+          input.threadId,
+          queue.list(input.threadId, input.userId),
+          messageStore,
+          'append_rejected',
+        ).catch((projectionErr: unknown) =>
+          this.deps.log.warn(
+            { projectionErr, threadId: input.threadId, entryId: input.entryId },
+            '[QueueProcessor] rejected Append compensated but its Queue projection emit failed',
+          ),
+        );
         return { outcome: 'rejected', reason: 'provider_rejected', rejectedTargetIds };
       }
       return { outcome: 'appended', entry: removed, acceptedTargetIds: input.expectedRuns.map((run) => run.targetId) };

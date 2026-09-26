@@ -12,7 +12,8 @@ import { CatAvatar } from './CatAvatar';
 
 export interface MessageDispatchAvatarProjection {
   targetId: string;
-  phase: 'delivered' | 'processing' | 'settled';
+  /** `awaiting`/`unread` (F117 Phase M): handed to the target's run, not read yet / never read. */
+  phase: 'delivered' | 'processing' | 'settled' | 'awaiting' | 'unread';
   dispatchedAt?: number;
   statusMessageId?: string;
   evidenceKey: string;
@@ -36,7 +37,7 @@ function deliveredProjection(ref: LifecycleDispatchRef): MessageDispatchAvatarPr
 
 function linkedProjection(
   ref: LifecycleDispatchRef,
-  phase: 'processing' | 'settled',
+  phase: 'processing' | 'settled' | 'awaiting' | 'unread',
   linkedAt: number,
 ): MessageDispatchAvatarProjection {
   return {
@@ -61,6 +62,19 @@ function projectDispatchRef(
       statusLifecycle.inputMessageId === sourceMessageId &&
       statusLifecycle.requestedTargets.includes(ref.targetId);
     return exactFailure ? linkedProjection(ref, 'settled', statusLifecycle.createdAt) : null;
+  }
+  if (
+    statusLifecycle.kind === 'response' &&
+    statusLifecycle.targetId === ref.targetId &&
+    statusLifecycle.handedInputMessageIds?.includes(sourceMessageId)
+  ) {
+    // F117 Phase M: handed to this run and not read. The response's own status says whether the run
+    // can still read it; the source's ref may lag behind the response's settlement.
+    return linkedProjection(
+      ref,
+      statusLifecycle.status === 'processing' ? 'awaiting' : 'unread',
+      statusLifecycle.startedAt,
+    );
   }
   if (
     statusLifecycle.kind !== 'response' ||
@@ -164,15 +178,19 @@ export function MessageDispatchAvatars({
       {projections.map((projection) => {
         const label = getCatLabel(projection.targetId);
         const processing = projection.phase === 'processing';
+        const at = projection.dispatchedAt === undefined ? '' : ` · ${formatDispatchTime(projection.dispatchedAt)}`;
         const title =
-          projection.dispatchedAt === undefined
-            ? `${label} 已投递`
-            : `${label} 已投递 · ${formatDispatchTime(projection.dispatchedAt)}`;
+          projection.phase === 'awaiting'
+            ? `${label} 等待读取（已交给${at}）`
+            : projection.phase === 'unread'
+              ? `${label} 未读取`
+              : `${label} 已投递${at}`;
         return (
           <li
             key={`${projection.targetId}:${projection.evidenceKey}`}
             data-dispatch-target={projection.targetId}
             data-dispatch-phase={projection.phase}
+            className={projection.phase === 'awaiting' || projection.phase === 'unread' ? 'opacity-50' : undefined}
             title={title}
           >
             {projection.statusMessageId ? (

@@ -12,6 +12,9 @@ const { InvocationTracker } = await import('../dist/domains/cats/services/agents
 const { MessageStore, settleLifecycleResponseInputs } = await import(
   '../dist/domains/cats/services/stores/ports/MessageStore.js'
 );
+const { projectAwaitingReadInputs } = await import(
+  '../dist/domains/cats/services/agents/invocation/awaiting-read-projection.js'
+);
 
 let sequence = 0;
 
@@ -126,15 +129,14 @@ function bindRun(harness, dispatch) {
     ),
     true,
   );
-  assert.ok(
-    harness.invocationTracker.bindAgentClientActiveRunDispatcher('thread-1', 'opus', {
-      invocationId,
-      capabilities: { append: true, steer: true },
-      handle: { provider: 'anthropic', carrier: 'claude_agent_sdk', threadId: 's', turnId: 't' },
-      dispatch,
-    }),
-  );
-  return { invocationId, response };
+  const releaseCarrier = harness.invocationTracker.bindAgentClientActiveRunDispatcher('thread-1', 'opus', {
+    invocationId,
+    capabilities: { append: true, steer: true },
+    handle: { provider: 'anthropic', carrier: 'claude_agent_sdk', threadId: 's', turnId: 't' },
+    dispatch,
+  });
+  assert.equal(typeof releaseCarrier, 'function');
+  return { invocationId, response, releaseCarrier };
 }
 
 async function append(harness, admitted, run) {
@@ -242,6 +244,64 @@ describe('F117 Phase M: an appended input is read when its carrier reports consu
       false,
       'a handed Append was never mirrored into the live run, so there is nothing to detach',
     );
+  });
+
+  it('shows a waiting Append in the Queue Panel projection only while its carrier is open', async () => {
+    const harness = createHarness();
+    const admitted = await admit(harness);
+    const consumption = deferred();
+    const run = bindRun(harness, async () => ({ accepted: true, handle: {}, consumption: consumption.promise }));
+    assert.equal((await append(harness, admitted, run)).outcome, 'appended');
+    const awaiting = () =>
+      projectAwaitingReadInputs({
+        threadId: 'thread-1',
+        userId: 'user-1',
+        invocationTracker: harness.invocationTracker,
+        messageStore: harness.messageStore,
+      });
+
+    const rows = await awaiting();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].messageId, admitted.message.id);
+    assert.equal(rows[0].targetId, 'opus');
+    assert.equal(rows[0].responseMessageId, run.response.id);
+    assert.equal(rows[0].content, admitted.message.content);
+    assert.deepEqual(
+      await projectAwaitingReadInputs({
+        threadId: 'thread-1',
+        userId: 'someone-else',
+        invocationTracker: harness.invocationTracker,
+        messageStore: harness.messageStore,
+      }),
+      [],
+      'another owner never sees it',
+    );
+
+    run.releaseCarrier();
+    assert.deepEqual(await awaiting(), [], 'no row once the carrier that holds it is gone');
+  });
+
+  it('drops the Queue Panel row once the input is read', async () => {
+    const harness = createHarness();
+    const admitted = await admit(harness);
+    const consumption = deferred();
+    const run = bindRun(harness, async () => ({ accepted: true, handle: {}, consumption: consumption.promise }));
+    assert.equal((await append(harness, admitted, run)).outcome, 'appended');
+    consumption.resolve({ consumed: true, at: Date.now() });
+    await waitFor(() => deliveredEmits(harness).includes(admitted.message.id));
+    assert.deepEqual(
+      await projectAwaitingReadInputs({
+        threadId: 'thread-1',
+        userId: 'user-1',
+        invocationTracker: harness.invocationTracker,
+        messageStore: harness.messageStore,
+      }),
+      [],
+    );
+    const queueUpdates = harness.socketManager.emitToUser.mock.calls
+      .filter((call) => call.arguments[1] === 'queue_updated')
+      .map((call) => call.arguments[2].action);
+    assert.deepEqual(queueUpdates.slice(-1), ['append_read'], 'clients refetch the Queue when it is read');
   });
 
   it('keeps an Append waiting when its carrier cannot report consumption', async () => {

@@ -17,6 +17,7 @@ import {
 } from '@/debug/invocationEventDebug';
 import { previewVisiblePageAdmissionController } from '@/lib/preview-visible-page-admission-controller';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
+import { applyAwaitingReadFromQueueResponse } from '@/stores/awaitingReadStore';
 import { useBrakeStore } from '@/stores/brakeStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useGuideStore } from '@/stores/guideStore';
@@ -239,6 +240,7 @@ export async function reconcileThreadWithServer(
   if (queue) {
     store.setQueue(threadId, queue);
   }
+  applyAwaitingReadFromQueueResponse(threadId, data);
   if (!data) return;
 
   try {
