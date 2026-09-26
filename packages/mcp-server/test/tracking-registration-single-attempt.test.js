@@ -83,6 +83,43 @@ describe('tracking registration is one attempt that waits for a slow GitHub', ()
       assert.match(text, /cat_cafe_list_tasks/, 'and where to check before registering again');
     });
 
+    it(`${tool}: an auth rejection keeps its F174 degrade hint and gets no note`, async () => {
+      const fetchMock = mock.method(
+        globalThis,
+        'fetch',
+        async () =>
+          new Response(JSON.stringify({ error: 'callback_auth_failed', reason: 'unknown_invocation' }), {
+            status: 401,
+          }),
+      );
+      const tools = await import('../dist/tools/callback-tools.js');
+
+      const result = await tools[handler](input);
+
+      assert.equal(fetchMock.mock.calls.length, 1);
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, new RegExp(`\\[degrade\\] tool=${tool} reason=unknown_invocation`));
+      assert.doesNotMatch(result.content[0].text, /may still have been applied/);
+    });
+
+    it(`${tool}: an agent-key registration is sent once as well`, async () => {
+      delete process.env.CAT_CAFE_INVOCATION_ID;
+      delete process.env.CAT_CAFE_CALLBACK_TOKEN;
+      delete process.env.CAT_CAFE_CREDENTIAL_FILE;
+      delete process.env.CAT_CAFE_AGENT_KEY_FILE;
+      delete process.env.CAT_CAFE_AGENT_KEY_FILES;
+      delete process.env.CAT_CAFE_AGENT_KEY_BOUND_CAT_ID;
+      process.env.CAT_CAFE_AGENT_KEY_SECRET = 'agent-key-only';
+      const fetchMock = slowServer(60);
+      const tools = await import('../dist/tools/callback-tools.js');
+
+      const result = await tools[handler](input);
+
+      assert.equal(fetchMock.mock.calls.length, 1, 'a registration is never replayed');
+      assert.ok(!result.isError, `the server's answer is returned: ${result.content[0].text}`);
+      assert.equal(fetchMock.mock.calls[0].arguments[1].headers['x-agent-key-secret'], 'agent-key-only');
+    });
+
     it(`${tool}: a definitive rejection carries no such note`, async () => {
       mock.method(
         globalThis,

@@ -2000,11 +2000,12 @@ export const registerPrTrackingInputSchema = {
 // wait generation, so it is not idempotent. A replay reruns all of it against the same slow GitHub:
 // it either loses the generation race or registers again with a later baseline, which absorbs
 // whatever arrived in between. Either way the caller hears "timed out" although a registration
-// landed. As with publish_verdict, the original POST gets the time a slow GitHub needs and is
-// never replayed.
+// landed. So, as with publish_verdict, the original POST is never replayed. Its one attempt stays
+// under the shortest host deadline for a tool call (Antigravity's McpToolExecutor defaults to 60 s),
+// so the caller always gets this handler's answer, note included, and never the host's timeout.
 const TRACKING_REGISTRATION_TRANSPORT: CallbackTransportOptions = {
   retryDelaysMs: [],
-  fetchTimeoutMs: 120_000,
+  fetchTimeoutMs: 50_000,
 };
 
 /**
