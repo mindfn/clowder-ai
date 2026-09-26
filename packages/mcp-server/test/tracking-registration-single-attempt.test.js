@@ -83,6 +83,34 @@ describe('tracking registration is one attempt that waits for a slow GitHub', ()
       assert.match(text, /cat_cafe_list_tasks/, 'and where to check before registering again');
     });
 
+    for (const status of [500, 502, 504]) {
+      it(`${tool}: an HTTP ${status} is sent once and says the registration may still have been applied`, async () => {
+        // A 5xx proves nothing about the write: the route may have thrown after its CAS, and a
+        // gateway in front of CAT_CAFE_API_URL may answer 502/504 after the upstream committed.
+        const fetchMock = mock.method(globalThis, 'fetch', async () => new Response('upstream error', { status }));
+        const tools = await import('../dist/tools/callback-tools.js');
+
+        const result = await tools[handler](input);
+
+        assert.equal(fetchMock.mock.calls.length, 1, 'a registration is never replayed');
+        assert.equal(result.isError, true);
+        assert.match(result.content[0].text, new RegExp(`^Callback failed \\(${status}\\)`));
+        assert.match(result.content[0].text, /may still have been applied/);
+      });
+    }
+
+    it(`${tool}: an HTTP 408 is a request the server never received, so it carries no note`, async () => {
+      // RFC 9110 §15.5.9: the server did not receive a complete request within its timeout.
+      mock.method(globalThis, 'fetch', async () => new Response('request timeout', { status: 408 }));
+      const tools = await import('../dist/tools/callback-tools.js');
+
+      const result = await tools[handler](input);
+
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, /^Callback failed \(408\)/);
+      assert.doesNotMatch(result.content[0].text, /may still have been applied/);
+    });
+
     it(`${tool}: an auth rejection keeps its F174 degrade hint and gets no note`, async () => {
       const fetchMock = mock.method(
         globalThis,

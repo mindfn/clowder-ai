@@ -2009,12 +2009,21 @@ const TRACKING_REGISTRATION_TRANSPORT: CallbackTransportOptions = {
 };
 
 /**
- * A request that failed in transport may still have registered on the server. Say so, rather than
- * let the caller read it as "nothing happened" and register again.
+ * Failures that leave the registration's outcome unknown. A request that failed in transport may
+ * have been processed anyway, and an HTTP 5xx proves nothing about the write: the route may have
+ * failed after its CAS, or a gateway in front of CAT_CAFE_API_URL may have answered after the
+ * upstream committed. A 4xx refuses before the write (a 408 is a request the server never fully
+ * received), so it keeps its plain text and any F174 hint.
+ */
+const UNKNOWN_REGISTRATION_OUTCOME = /^(?:Callback request failed:|Callback failed \(5\d\d\))/;
+
+/**
+ * Say that such a failure may still have registered, rather than let the caller read it as
+ * "nothing happened" and register again.
  */
 function withUnknownRegistrationOutcome(result: ToolResult): ToolResult {
   const block = result.content[0];
-  if (!result.isError || block?.type !== 'text' || !block.text.startsWith('Callback request failed:')) return result;
+  if (!result.isError || block?.type !== 'text' || !UNKNOWN_REGISTRATION_OUTCOME.test(block.text)) return result;
   const note =
     'The registration may still have been applied. Check cat_cafe_list_tasks for this subject ' +
     '(its await generation and baseline capture time) before registering again.';
