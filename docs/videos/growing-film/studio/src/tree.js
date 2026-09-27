@@ -319,8 +319,8 @@ export function evaluate(tree, F, girth = 1) {
 
 /**
  * Emit triangles for every visible chain into writer `w`.
- * Vertex layout (9 floats): x, y, z, u(across -1..1), v(path distance), radius,
- * order, nodeRand, glowParam.
+ * Vertex layout (11 floats): x, y, z, u(across -1..1), v(path distance), radius,
+ * order, nodeRand, glowParam, strip normal x, y.
  */
 export function emitBranches(tree, w, { z = 0, ox = 0, oy = 0, scale = 1, pxWorld = 0.01, glow = null, sway = null } = {}) {
   const { X, Y, rad, vis, chains, D, P, order, rand } = tree;
@@ -376,8 +376,8 @@ export function emitBranches(tree, w, { z = 0, ox = 0, oy = 0, scale = 1, pxWorl
       const nx = -ty;
       const ny = tx;
       const g = glow ? glow(p) : 0;
-      const L = [p[0] + nx * rw, p[1] + ny * rw, z, -1, p[3], p[2], p[4], p[5], g];
-      const R = [p[0] - nx * rw, p[1] - ny * rw, z, 1, p[3], p[2], p[4], p[5], g];
+      const L = [p[0] + nx * rw, p[1] + ny * rw, z, -1, p[3], p[2], p[4], p[5], g, nx, ny];
+      const R = [p[0] - nx * rw, p[1] - ny * rw, z, 1, p[3], p[2], p[4], p[5], g, nx, ny];
       if (prevL) {
         w.push(...prevL, ...prevR, ...L);
         w.push(...L, ...prevR, ...R);

@@ -24,8 +24,9 @@ float starLayer(vec2 p, float cell, float pxw, float seed) {
     vec2 c = id + vec2(float(i), float(j));
     vec2 h = hash22(c + seed);
     vec2 sp = (c + h) * cell;
-    float b = pow(hash12(c * 1.37 + seed), 14.0) * 5.0 + 0.12 * hash12(c + 3.1);
-    float sz = (0.55 + 1.6 * sqrt(b)) * pxw;
+    float hb = hash12(c * 1.37 + seed);
+    float b = pow(hb, 38.0) * 6.0 + 0.05 * pow(hash12(c + 3.1), 4.0) * step(0.55, hash12(c * 0.71 + 9.0));
+    float sz = (0.5 + 1.3 * sqrt(b)) * pxw;
     float d = length(p - sp);
     float tw = 0.65 + 0.35 * sin(uTime * (1.3 + 3.0 * h.x) + 6.28 * h.y);
     acc += b * tw * exp(-d * d / (sz * sz));
@@ -58,7 +59,7 @@ void main() {
   }
   // stars
   if (uStars > 0.0) {
-    float s = starLayer(p, 36.0 * pxw / 1.8, pxw, 0.0) + 0.6 * starLayer(p, 15.0 * pxw / 1.8, pxw * 0.8, 7.0);
+    float s = starLayer(p, 26.0 * pxw, pxw, 0.0) + 0.45 * starLayer(p, 11.0 * pxw, pxw * 0.8, 7.0);
     col += vec3(0.85, 0.9, 1.0) * s * uStars * above;
   }
   // aurora curtains
@@ -109,25 +110,43 @@ void main() {
 }`;
 
 export const RIDGE_FS = `${HEADER}${CAMERA}${NOISE}
-uniform float uZ, uBase, uAmp, uFreq, uSeed, uTreeAmp, uTreeFreq, uAlpha, uRim;
-uniform vec3 uColTop, uColBot, uRimCol;
+uniform float uZ, uBase, uAmp, uFreq, uSeed, uTreeAmp, uTreeFreq, uAlpha, uRim, uBlur;
+uniform vec3 uColTop, uColBot, uRimCol, uMist;
 uniform vec3 uLightCol; uniform float uLights; // sparse glowing windows/trees on the ridge
 out vec4 o;
+float crowns(float x) {
+  // a row of rounded tree crowns of varying size (each cell holds one crown)
+  float c = floor(x);
+  float best = 0.0;
+  for (int i = -1; i <= 1; i++) {
+    float ci = c + float(i);
+    float hs = hash11(ci * 1.37 + uSeed);
+    float cx = ci + 0.5 + (hash11(ci * 7.1 + uSeed) - 0.5) * 0.4;
+    float w = 0.55 + 0.6 * hs;
+    float u = (x - cx) / w;
+    float q = max(0.0, 1.0 - u * u);
+    float dome = (0.55 * sqrt(q) + 0.45 * q) * w * (0.45 + 0.55 * hash11(ci * 3.3 + uSeed)) * step(0.25, hs);
+    best = max(best, dome);
+  }
+  return best;
+}
+float ridgeBase(float x) { return uBase + uAmp * (fbm(vec2(x * uFreq + uSeed, uSeed * 1.7)) - 0.5) * 2.2; }
 float ridgeH(float x) {
-  float h = uBase + uAmp * (fbm(vec2(x * uFreq + uSeed, uSeed * 1.7)) - 0.5) * 2.2;
-  float t = vnoise(vec2(x * uTreeFreq, uSeed * 3.0));
-  h += uTreeAmp * (pow(t, 1.6) + 0.45 * vnoise(vec2(x * uTreeFreq * 3.3, uSeed)));
-  return h;
+  float dens = smoothstep(0.35, 0.65, vnoise(vec2(x * uTreeFreq * 0.15, uSeed * 2.0)));
+  return ridgeBase(x) + uTreeAmp * crowns(x * uTreeFreq) / uTreeFreq * dens;
 }
 void main() {
   vec2 p = unproject(gl_FragCoord.xy, uZ);
   float px = pxAt(uZ);
   float h = ridgeH(p.x);
-  float a = smoothstep(h + px, h - px, p.y);
+  float bw = px + uBlur;
+  float a = smoothstep(h + bw, h - bw, p.y);
   if (a <= 0.001) discard;
-  float depth = clamp((h - p.y) / (abs(uAmp) * 3.0 + 30.0), 0.0, 1.0);
-  vec3 col = mix(uColTop, uColBot, sqrt(depth));
-  col += uRimCol * uRim * exp(-(h - p.y) / (px * 2.5 + 0.4));
+  float depth = clamp((ridgeBase(p.x) - p.y) / (abs(uAmp) * 1.6 + 6.0), 0.0, 1.0);
+  vec3 col = mix(uColTop, uColBot, smoothstep(0.0, 1.0, depth));
+  // mist pooling in the valley below each ridge
+  col = mix(col, uMist, smoothstep(0.25, 1.0, depth) * 0.85);
+  col += uRimCol * uRim * exp(-(h - p.y) / (px * 2.0 + 0.12 + uBlur));
   if (uLights > 0.0) {
     vec2 cell = vec2(22.0, 9.0);
     vec2 id = floor(p / cell);
@@ -149,8 +168,12 @@ uniform vec4 uGlow1; uniform vec3 uGlow1Col;
 uniform vec4 uGlow2; uniform vec3 uGlow2Col;
 uniform sampler2D uLightTex; uniform float uLightAmt;
 uniform float uRipple; uniform vec2 uRippleC; uniform float uRippleR; uniform vec3 uRippleCol;
-uniform float uCut;   // brightness of the cutaway face (0 = plain dark ground)
+uniform float uCut;   // brightness of the cutaway face
 out vec4 o;
+vec3 pointLight(vec2 p, vec4 g, vec3 c) {
+  float d = length(p - g.xy) / max(g.z, 1e-3);
+  return c * g.w * (exp(-d * d) + 0.12 * exp(-d * 1.2));
+}
 void main() {
   vec2 p = unproject(gl_FragCoord.xy, 0.0);
   float px = pxAt(0.0);
@@ -158,34 +181,34 @@ void main() {
   float a = smoothstep(s + px, s - px, p.y);
   if (a <= 0.001) discard;
   float dd = s - p.y;
-  vec3 col = mix(uSoilTop, uSoilDeep, smoothstep(0.0, 14.0, dd));
-  float warp = fbm(p * 0.07) * 7.0;
-  float strata = 0.5 + 0.5 * sin((p.y + warp) * 1.15);
-  col *= 1.0 + uStrata * (strata - 0.5) * 0.35;
-  float grain = fbm(p * 1.6);
-  col *= 0.78 + 0.45 * grain;
-  vec2 vor = voronoi(p * 1.25 + 7.0);
-  float peb = (1.0 - smoothstep(0.18, 0.32, vor.x)) * step(0.82, hash12(floor(p * 1.25 + 7.0)));
-  col = mix(col, col * 1.9 + 0.012, peb * 0.5 * smoothstep(0.3, 2.5, dd));
-  col *= uCut;
-  // lip of the cut catching the sky
-  col += uEdge * exp(-dd / (px * 2.0 + 0.04)) + uEdge * 0.25 * exp(-dd / 0.6);
-  // point lights (seed, fruit, lantern)
-  vec3 albedo = mix(vec3(0.35, 0.26, 0.2), vec3(0.2, 0.16, 0.16), smoothstep(0.0, 10.0, dd));
-  vec3 lit = vec3(0.0);
-  float d0 = length(p - uGlow0.xy) / max(uGlow0.z, 1e-3);
-  lit += uGlow0Col * uGlow0.w * exp(-d0 * d0);
-  float d1 = length(p - uGlow1.xy) / max(uGlow1.z, 1e-3);
-  lit += uGlow1Col * uGlow1.w * exp(-d1 * d1);
-  float d2 = length(p - uGlow2.xy) / max(uGlow2.z, 1e-3);
-  lit += uGlow2Col * uGlow2.w * exp(-d2 * d2);
+  // strata: warped layers of varying thickness and tint
+  float warp = fbm(p * vec2(0.05, 0.12)) * 6.0 + fbm(p * 0.4) * 0.8;
+  float sy = p.y + warp;
+  float band = fbm(vec2(sy * 0.9, 3.0));
+  float lines = smoothstep(0.9, 1.0, sin(sy * 2.2));
+  float fine = 1.0 - smoothstep(0.012, 0.05, px);
+  float g1 = fbm3(p * 2.5);
+  float g2 = vnoise(rot2(p, 0.52) * 18.0);
+  float g3 = vnoise(rot2(p, 1.1) * 47.0 + 3.7);
+  vec2 v = voronoi(p * 2.2 + 7.0);
+  float cellH = hash12(floor(p * 2.2 + 7.0));
+  float peb = (1.0 - smoothstep(0.2, 0.33, v.x)) * step(0.86, cellH) * smoothstep(0.25, 1.4, dd);
+  float fib = smoothstep(0.9, 1.0, vnoise(vec2(p.x * 7.0, p.y * 1.3))) * (1.0 - smoothstep(0.0, 1.2, dd)) * fine;
+  float T = (0.7 + 0.6 * band * uStrata) * (1.0 - lines * 0.3) * (0.75 + 0.45 * g1) * (1.0 + (0.45 * (g2 - 0.5) + 0.2 * (g3 - 0.5)) * fine) * (1.0 - fib * 0.5);
+  T = mix(T, T * 2.4, peb * 0.55);
+  vec3 col = mix(uSoilTop, uSoilDeep, smoothstep(0.0, 12.0, dd)) * T * uCut;
+  // the lip of the cut, catching the sky
+  col += uEdge * (exp(-dd / (px * 1.5 + 0.02)) * 1.1 + 0.25 * exp(-dd / 0.3));
+  vec3 albedo = vec3(0.26, 0.19, 0.15) * T;
+  vec3 lit = pointLight(p, uGlow0, uGlow0Col) + pointLight(p, uGlow1, uGlow1Col) + pointLight(p, uGlow2, uGlow2Col);
   if (uLightAmt > 0.0) lit += texture(uLightTex, gl_FragCoord.xy / uRes).rgb * uLightAmt;
-  col += albedo * lit * (0.6 + 0.8 * grain);
-  // ripple of light through the soil
+  col += albedo * lit;
+  // a ring of light travelling out through the strata
   if (uRipple > 0.0) {
-    float rd = length((p - uRippleC) * vec2(1.0, 1.6));
-    float ring = exp(-pow((rd - uRippleR) / (0.35 + 0.08 * uRippleR), 2.0));
-    col += uRippleCol * ring * uRipple * (0.4 + 0.6 * strata) * exp(-uRippleR * 0.08);
+    float rd = length((p - uRippleC) * vec2(0.8, 1.8));
+    float ring = exp(-pow((rd - uRippleR) / (0.12 + 0.03 * uRippleR), 2.0));
+    float along = 0.15 + 0.85 * lines + 0.2 * band;
+    col += uRippleCol * ring * along * uRipple * exp(-uRippleR * 0.12);
   }
   col += uAmbient * albedo;
   o = vec4(col * a, a);

@@ -17,7 +17,7 @@ in vec2 vW; in float vU; in float vV; in float vR; in float vOrder; in float vRa
 uniform vec3 uBark, uBarkDark, uBarkLit, uKeyCol, uAmbient, uRimCol;
 uniform vec2 uKeyDir;
 uniform vec3 uGlowA, uGlowB, uGlowC;
-uniform float uBraid, uFlow, uPx, uKind, uEmis, uVeins, uFade;
+uniform float uBraid, uFlow, uPx, uKind, uEmis, uVeins, uFade, uYoung;
 uniform vec4 uPt0; uniform vec3 uPt0Col;
 uniform vec4 uPt1; uniform vec3 uPt1Col;
 out vec4 o;
@@ -40,6 +40,7 @@ void main() {
   float ridge = smoothstep(0.38, 0.72, fiss);
   vec3 albedo = mix(uBarkDark, uBark, ridge);
   albedo = mix(albedo, uBarkLit, smoothstep(0.62, 0.9, fiss) * 0.45);
+  albedo = mix(mix(vec3(0.05, 0.16, 0.03), vec3(0.16, 0.34, 0.07), 0.5 + 0.5 * u), albedo, mix(1.0, smoothstep(0.012, 0.07, r), uYoung));
   albedo *= mix(1.0, 0.72, smoothstep(0.55, 1.0, abs(u)));   // edges fall off
 
   vec3 col = albedo * (uAmbient + uKeyCol * diff);
