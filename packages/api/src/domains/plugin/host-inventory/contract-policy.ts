@@ -6,16 +6,22 @@ import {
 } from '@clowder-ai/plugin-contract';
 
 /** Exact npm package consumed by this Host build. */
-export const PLUGIN_CONTRACT_PACKAGE_VERSION = '0.1.0-beta.24' as const;
+export const PLUGIN_CONTRACT_PACKAGE_VERSION = '0.1.0-beta.25' as const;
 /** Manifest compatibility line declared by admitted plugins. */
 export const PLUGIN_CONTRACT_VERSION = '0.1.0' as const;
 /** Published Train B packages still declare this beta manifest line. */
 export const PUBLISHED_PLUGIN_MANIFEST_CONTRACT_VERSION = '0.1.0-beta.13' as const;
 /**
  * Train C1 packages already admitted under earlier beta lines remain installed (beta.20, beta.21,
- * beta.22). The Host never consumed beta.23 (a version-only sync), so no manifest declares it here.
+ * beta.22, beta.24). The Host never consumed beta.23 (a version-only sync), so no manifest declares
+ * it here.
  */
-export const PREVIOUS_PLUGIN_MANIFEST_CONTRACT_VERSIONS = ['0.1.0-beta.20', '0.1.0-beta.21', '0.1.0-beta.22'] as const;
+export const PREVIOUS_PLUGIN_MANIFEST_CONTRACT_VERSIONS = [
+  '0.1.0-beta.20',
+  '0.1.0-beta.21',
+  '0.1.0-beta.22',
+  '0.1.0-beta.24',
+] as const;
 /** Exact manifest contract versions admitted during the beta-to-stable migration. */
 export const PLUGIN_MANIFEST_CONTRACT_VERSIONS = [
   PLUGIN_CONTRACT_VERSION,
