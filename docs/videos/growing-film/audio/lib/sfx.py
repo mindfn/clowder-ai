@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .dsp import SR, RNG, t_axis, lowpass, highpass, bandpass, resonator, white, pink, brown, sweep_filter, mono_to_stereo, samples
+from .dsp import SR, RNG, t_axis, lowpass, highpass, bandpass, resonator, white, pink, brown, sweep_filter, mono_to_stereo, samples, fade, tail_fade
 from . import synth
 
 
@@ -23,7 +23,7 @@ def wind(dur: float, strength: float = 0.5, gusty: float = 0.5, seed: int = 0) -
         y += 0.35 * lowpass(brown(n), 180, 2)
         amp = 0.55 + 0.45 * slow * gusty
         out[:, ch] = y * amp
-    return (out * strength * 0.12).astype(np.float32)
+    return fade(out * strength * 0.12, min(1.5, dur / 4), min(2.0, dur / 4)).astype(np.float32)
 
 
 def crickets(dur: float, density: float = 1.0, seed: int = 1) -> np.ndarray:
@@ -117,6 +117,7 @@ def sparkles(dur: float, count: int, f_lo: float = 2500, f_hi: float = 9000, vel
         tt = np.arange(L) / SR
         p = np.sin(2 * np.pi * f * tt + rng.uniform(0, 6.28)) * np.exp(-tt / rng.uniform(0.05, 0.25))
         p *= np.clip(tt / 0.002, 0, 1)
+        p = tail_fade(p, 0.3)
         i = samples(t)
         j = min(n, i + L)
         out[i:j] += mono_to_stereo(p * rng.uniform(0.3, 1.0), rng.uniform(-pan_spread, pan_spread))[: j - i]
@@ -271,7 +272,7 @@ def thud(vel: float = 0.6, f: float = 120, dur: float = 0.5) -> np.ndarray:
     t = np.arange(n) / SR
     y = np.sin(2 * np.pi * f * t * (1 + 0.6 * np.exp(-t / 0.02))) * np.exp(-t / 0.08)
     y += lowpass(white(n), 700, 2) * np.exp(-t / 0.015) * 0.6
-    return y * vel * 0.7
+    return tail_fade(y * vel * 0.7, 0.3)
 
 
 def clock_tick(high: bool = True, vel: float = 0.5) -> np.ndarray:
@@ -289,7 +290,7 @@ def lantern_catch(vel: float = 0.6, seed: int = 10) -> np.ndarray:
     puff = lowpass(white(n), 1400, 2) * np.exp(-t / 0.06) * 0.7
     bloom = np.sin(2 * np.pi * 110 * t) * 0.4 + np.sin(2 * np.pi * 220 * t) * 0.2 + np.sin(2 * np.pi * 330 * t) * 0.08
     bloom *= np.clip(t / 0.15, 0, 1) * np.exp(-t / 0.7)
-    return (puff + bloom) * vel * 0.6
+    return tail_fade((puff + bloom) * vel * 0.6, 0.3)
 
 
 def dim_down(vel: float = 0.6, f0: float = 420, f1: float = 110, dur: float = 0.9) -> np.ndarray:
@@ -299,7 +300,7 @@ def dim_down(vel: float = 0.6, f0: float = 420, f1: float = 110, dur: float = 0.
     ph = 2 * np.pi * np.cumsum(f) / SR
     y = (np.sin(ph) + 0.35 * np.sin(2 * ph) + 0.15 * np.sin(3 * ph)) * np.exp(-t / (dur / 2.5)) * np.clip(t / 0.01, 0, 1)
     y = lowpass(y, 1200, 2)
-    return y * vel * 0.4
+    return tail_fade(y * vel * 0.4, 0.3)
 
 
 def warning_hum(dur: float, vel: float = 0.5) -> np.ndarray:
@@ -322,7 +323,7 @@ def zing(vel: float = 0.6) -> np.ndarray:
     for f in [1760, 1777, 2637, 2661]:
         y += np.sin(2 * np.pi * f * t) * np.exp(-t / 0.45)
     y += highpass(white(n), 3000, 2) * np.exp(-t / 0.02) * 0.6
-    return y * vel * 0.2
+    return tail_fade(y * vel * 0.2, 0.3)
 
 
 def root_pulse(vel: float = 0.6) -> np.ndarray:
@@ -330,7 +331,7 @@ def root_pulse(vel: float = 0.6) -> np.ndarray:
     t = np.arange(n) / SR
     y = np.sin(2 * np.pi * 46 * t * (1 + 0.3 * np.exp(-t / 0.05))) * np.exp(-t / 0.35) * np.clip(t / 0.01, 0, 1)
     y += 0.3 * np.sin(2 * np.pi * 92 * t) * np.exp(-t / 0.2)
-    return np.tanh(y * 1.4) * vel * 0.7
+    return tail_fade(np.tanh(y * 1.4) * vel * 0.7, 0.3)
 
 
 def wood_creak(dur: float = 1.2, vel: float = 0.4, seed: int = 11) -> np.ndarray:

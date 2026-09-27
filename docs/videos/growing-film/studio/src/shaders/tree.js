@@ -251,10 +251,13 @@ void main() {
     float hsh = hash12(cell * 1.7 + 3.0);
     vec2 cp = (cell + 0.25 + 0.5 * hash22(cell)) / (uLeafScale * 0.7);
     float on = step(1.0 - bl * 0.22 * (0.5 + 0.8 * edge + 0.5 * max(h, 0.0)), hsh);
-    float sz = 0.06 + uPx * 1.1;
+    float sz0 = 0.06;
+    float sz = sz0 + uPx * 1.1;
     float d0 = exp(-dot(vW - cp, vW - cp) / (sz * sz));
+    // keep each blossom's light constant as it shrinks with distance
+    float energy = mix(1.0, (sz0 * sz0) / (sz * sz), 0.8);
     float tw = 0.65 + 0.35 * sin(uTime * (1.5 + 3.0 * hsh) + hsh * 40.0);
-    col += mix(uBlossomCol, uBlossomCol2, fract(hsh * 7.3)) * d0 * on * tw * 1.6;
+    col += mix(uBlossomCol, uBlossomCol2, fract(hsh * 7.3)) * d0 * on * tw * 1.6 * energy;
     col += uBlossomCol * bl * 0.012;
   }
   float al = a * vB.w * uFade;

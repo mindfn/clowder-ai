@@ -7,7 +7,7 @@ import { act4 } from './act4.js';
 import { act5, smallFruitLayout } from './act5.js';
 import { act6, buildForest, logoPoints } from './act6.js';
 import { endCard } from './endcard.js';
-import { ringTextCanvas, titleCanvas, captionCanvas } from '../scene/text.js';
+import { ringTextCanvas, titleCanvas, captionCanvas, endLineCanvas, haloCanvas } from '../scene/text.js';
 import { canopyClumps } from '../scene/world.js';
 import { evaluate } from '../tree.js';
 
@@ -51,8 +51,9 @@ export async function setupStaging(ctx) {
   mg.fillStyle = '#ffffff';
   mg.fillRect(0, 0, 1024, 1024);
   ctx.markTex = R.texture('mark', mc);
+  ctx.haloTex = R.texture('halo', haloCanvas(mark));
   ctx.titleTex = R.texture('title', titleCanvas('Growing', { size: 150, spacing: '0.12em', w: 1400, h: 240 }));
-  ctx.taglineTex = R.texture('tagline', captionCanvas('会记得，会接力，也会和你一起长大。', 'Run your own cat café.'));
+  ctx.taglineTex = R.texture('tagline', endLineCanvas('会记得，会接力，也会和你一起长大。', 'Run your own cat café.'));
   ctx.acts = [act2, act3, act4, act5, act6];
   ctx.overlayFx = [endCard];
   ctx.ringsTex = R.texture('rings', ringTextCanvas(RING_LINES));

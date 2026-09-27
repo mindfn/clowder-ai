@@ -20,6 +20,20 @@ def samples(t: float) -> int:
     return int(round(t * SR))
 
 
+def tail_fade(y: np.ndarray, frac: float = 0.3, min_s: float = 0.01) -> np.ndarray:
+    """Fade the last part of a clip to exact silence (raised cosine), so a
+    note that is still ringing at the end of its buffer never clicks."""
+    n = len(y)
+    k = max(int(min_s * SR), int(n * frac))
+    k = min(k, n)
+    if k <= 1:
+        return y
+    w = 0.5 + 0.5 * np.cos(np.linspace(0, np.pi, k))
+    y = y.copy()
+    y[n - k :] *= w if y.ndim == 1 else w[:, None]
+    return y
+
+
 class Track:
     """A stereo bus you can add clips into at arbitrary times."""
 
@@ -34,6 +48,14 @@ class Track:
             clip = mono_to_stereo(clip, pan)
         elif pan:
             clip = clip * pan_gains(pan)[None, :]
+        # guard: 1 ms in, 6 ms out, so no clip can start or stop on a discontinuity
+        clip = clip.copy()
+        a = min(len(clip), int(0.001 * SR))
+        b = min(len(clip), int(0.006 * SR))
+        if a > 1:
+            clip[:a] *= np.linspace(0, 1, a)[:, None]
+        if b > 1:
+            clip[-b:] *= np.linspace(1, 0, b)[:, None]
         i0 = samples(t)
         if i0 < 0:
             clip = clip[-i0:]

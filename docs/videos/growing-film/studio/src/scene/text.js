@@ -78,3 +78,38 @@ export function ringTextCanvas(lines, rowH = 64, width = 4096) {
   }
   return c;
 }
+
+/** End-card line: Chinese above, the English invitation below, both legible. */
+export function endLineCanvas(zh, en) {
+  const W = 1800;
+  const H = 190;
+  const c = canvas(W, H);
+  const g = c.getContext('2d');
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  g.shadowColor = 'rgba(0,0,0,0.5)';
+  g.shadowBlur = 20;
+  g.fillStyle = '#fff8ee';
+  g.font = `300 46px ${ZH}`;
+  g.letterSpacing = '0.14em';
+  g.fillText(zh, W / 2 + 3, 62);
+  g.font = `italic 400 38px ${EN}`;
+  g.letterSpacing = '0.06em';
+  g.fillStyle = 'rgba(255,238,214,0.92)';
+  g.fillText(en, W / 2, 142);
+  return c;
+}
+
+/** Soft round glow of a silhouette with generous transparent margins. */
+export function haloCanvas(img, size = 1024, blur = 46) {
+  const c = canvas(size, size);
+  const g = c.getContext('2d');
+  g.filter = `blur(${blur}px)`;
+  const inner = size * 0.56;
+  g.drawImage(img, (size - inner) / 2, (size - inner) / 2, inner, inner);
+  g.filter = 'none';
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, size, size);
+  return c;
+}

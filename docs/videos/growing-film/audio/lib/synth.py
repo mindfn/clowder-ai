@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import signal
 
-from .dsp import SR, RNG, t_axis, lowpass, highpass, bandpass, resonator, white, pink, midi_hz, mono_to_stereo, expdecay
+from .dsp import SR, RNG, t_axis, lowpass, highpass, bandpass, resonator, white, pink, midi_hz, mono_to_stereo, expdecay, tail_fade
 
 
 def _modal(f0: float, modes, dur: float, vel: float = 0.8, click: float = 0.0, click_lp: float = 4000,
@@ -30,7 +30,7 @@ def _modal(f0: float, modes, dur: float, vel: float = 0.8, click: float = 0.0, c
         n = min(len(t), int(0.012 * SR))
         c = lowpass(white(n), click_lp, 2) * np.exp(-np.arange(n) / (0.002 * SR))
         y[:n] += c * click * vel
-    return y * vel
+    return tail_fade(y * vel, 0.35)
 
 
 def celesta(m: float, dur: float = 2.8, vel: float = 0.7) -> np.ndarray:
@@ -99,7 +99,7 @@ def _ks(f: float, dur: float, decay: float = 3.0, bright: float = 0.6, pick_pos:
     m = int(len(y) * ratio)
     y = np.interp(np.arange(m) / ratio, np.arange(len(y)), y)
     y = y[::2][: int(dur * SR)]
-    return y / (np.max(np.abs(y)) + 1e-9)
+    return tail_fade(y / (np.max(np.abs(y)) + 1e-9), 0.3)
 
 
 def harp(m: float, dur: float = 3.0, vel: float = 0.7) -> np.ndarray:
@@ -201,7 +201,7 @@ def timpani(m: float, dur: float = 3.0, vel: float = 0.7) -> np.ndarray:
          + 0.3 * np.sin(1.98 * ph) * np.exp(-t / 0.6) + 0.18 * np.sin(2.44 * ph) * np.exp(-t / 0.4))
     n = int(0.03 * SR)
     y[:n] += lowpass(white(n), 1200, 2) * np.exp(-np.arange(n) / (0.006 * SR)) * 0.6
-    return y * vel * 0.5
+    return tail_fade(y * vel * 0.5, 0.3)
 
 
 def timpani_roll(m: float, dur: float, v0: float = 0.2, v1: float = 0.9, rate: float = 16.0) -> np.ndarray:
@@ -224,14 +224,14 @@ def taiko(dur: float = 2.0, vel: float = 0.9, f: float = 52.0) -> np.ndarray:
     body = np.sin(ph) * np.exp(-t / 0.55)
     skin = lowpass(white(len(t)), 900, 2) * np.exp(-t / 0.08) * 0.5
     y = body + skin
-    return np.tanh(y * 1.8) * vel * 0.8
+    return tail_fade(np.tanh(y * 1.8) * vel * 0.8, 0.3)
 
 
 def sub_drop(dur: float = 2.5, f0: float = 70, f1: float = 30, vel: float = 0.9) -> np.ndarray:
     t = t_axis(dur)
     f = f1 + (f0 - f1) * np.exp(-t / 0.35)
     y = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 1.0) * np.clip(t / 0.005, 0, 1)
-    return np.tanh(y * 1.5) * vel * 0.9
+    return tail_fade(np.tanh(y * 1.5) * vel * 0.9, 0.35)
 
 
 def heartbeat(vel: float = 0.8) -> np.ndarray:
@@ -260,7 +260,7 @@ def cymbal(dur: float = 4.0, vel: float = 0.7, swell: bool = False, bright: floa
         env *= np.clip((dur - t) / 0.03, 0, 1)
     else:
         env = np.exp(-t / (dur / 3.5)) * np.clip(t / 0.002, 0, 1)
-    return y * env * vel * 0.25
+    return tail_fade(y * env * vel * 0.25, 0.25 if not swell else 0.0, 0.004)
 
 
 def riser(dur: float, f0: float = 300, f1: float = 9000, vel: float = 0.6, tonal: float = 0.3) -> np.ndarray:

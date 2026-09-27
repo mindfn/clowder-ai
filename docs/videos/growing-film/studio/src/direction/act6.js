@@ -149,7 +149,7 @@ export function act6(S, t, ctx) {
       const wy = cam.y + (sy - 540) * unit;
       const fade = 1 - ramp(t, 112.2, 114.0);
       const tw = 0.6 + 0.4 * Math.sin(t * 6 + i);
-      P.push(wx, wy, 0, unit * lerp(2.2, 1.6, k), 1.8, 1.25, 0.75, (0.35 + 0.65 * k) * fade * tw, 0, K.glow);
+      P.push(wx, wy, 0, unit * lerp(3.0, 1.8, k), 2.2, 1.5, 0.9, (0.55 + 0.45 * k) * fade * tw, 0, K.glow);
     }
   }
 }
