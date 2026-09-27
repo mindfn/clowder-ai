@@ -35,6 +35,13 @@ export async function cleanup() {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 }
 
+/** A temporary directory removed by `cleanup()`. */
+export async function tempRoot(prefix) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
 export function hostManifest({ pluginId = 'dev.clowder.h3b-host', runtime } = {}) {
   return {
     pluginId,
@@ -114,8 +121,9 @@ const digestOf = (seed) => `sha512-${createHash('sha512').update(seed).digest('b
  * @param packages `{ manifest, grants?, exposes? }` each; by default one package with the grant,
  *   exposing all three methods.
  * @param withRegistry false composes the Host without a registry, as production does until h3c.
+ * @param registryOptions passed to the registry (its listener error hook).
  */
-export async function conversationHostHarness({ packages, withRegistry = true } = {}) {
+export async function conversationHostHarness({ packages, withRegistry = true, registryOptions } = {}) {
   const fixture = {
     calls: [],
     script: {
@@ -135,8 +143,7 @@ export async function conversationHostHarness({ packages, withRegistry = true } 
   const located = new Map();
   const instances = [];
   for (const spec of packages ?? [{ manifest: hostManifest() }]) {
-    const rootDir = await mkdtemp(join(tmpdir(), 'f202-h3b-package-'));
-    roots.push(rootDir);
+    const rootDir = await tempRoot('f202-h3b-package-');
     await mkdir(join(rootDir, 'dist'), { recursive: true });
     await writeFile(
       join(rootDir, 'dist/plugin.js'),
@@ -161,7 +168,7 @@ export async function conversationHostHarness({ packages, withRegistry = true } 
     }),
   };
   const configuration = { readConfig: async () => undefined, readSecret: async () => undefined };
-  const registry = new CloudConversationHostRegistry();
+  const registry = new CloudConversationHostRegistry(registryOptions);
   const moduleRuntime = new ModulePluginRuntime({ packages: packageLocator, configuration, log: () => {} });
   const router = new PluginRuntimeCarrierRouter(store, undefined, {
     packages: packageLocator,
