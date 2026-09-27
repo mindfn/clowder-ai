@@ -299,6 +299,19 @@ export interface PluginManagerConfigField {
     next?: string;
     rollback?: string;
     timeout?: number;
+    /** Plain text; when present the owner must confirm before every invocation. */
+    confirm?: string;
+  }>;
+  /**
+   * Actions callable only from one row of this operation's `rows` result, with that row's input
+   * (F202 W2-3 h1). Never rendered as standalone buttons.
+   */
+  rowActions?: Array<{
+    id: string;
+    label: string;
+    /** Plain text; a row's own `confirm` may replace the wording but never skips the step. */
+    confirm?: string;
+    next?: string;
   }>;
   operationState?: {
     currentAction: string;

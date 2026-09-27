@@ -3,7 +3,6 @@ import {
   type PluginManagerConfigField,
   type PluginManagerConfigureRequest,
 } from '@cat-cafe/shared';
-import type { ConfigurationField } from '@clowder-ai/plugin-contract';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import type { OperationState } from '../operations/operation-state-machine.js';
@@ -15,12 +14,14 @@ import {
 } from '../plugin-config-store.js';
 import { type PluginManagerConfigurationPort, PluginManagerServiceError } from '../plugin-manager-service.js';
 import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
+import {
+  type ContractConfigurationField,
+  type ContractOperationField,
+  configFieldProjection,
+  operationFieldProjection,
+} from './plugin-manager-field-projection.js';
 
-const SECRET_MASK = '••••••';
 const CONFIGURATION_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;
-
-type ContractConfigurationField = Exclude<ConfigurationField, { readonly kind: 'operation' }>;
-type ContractOperationField = Extract<ConfigurationField, { readonly kind: 'operation' }>;
 
 export interface HostPluginConfigurationServiceOptions {
   readonly projectRoot: string;
@@ -56,80 +57,6 @@ function currentPackage(
     throw new PluginManagerServiceError('CONFIGURATION_UNAVAILABLE', 'Installed plugin package is unavailable');
   }
   return { instance, packageRecord };
-}
-
-function projection(
-  field: ContractConfigurationField,
-  fields: readonly ContractConfigurationField[],
-  stored: Readonly<Record<string, string>>,
-): PluginManagerConfigField {
-  const value = effectivePluginConfigurationValue(field, stored[field.key]);
-  return {
-    key: field.key,
-    label: field.label,
-    kind: field.kind,
-    required: field.required,
-    ...(field.hidden === undefined ? {} : { hidden: field.hidden }),
-    ...(field.requiredWhen === undefined ? {} : { requiredWhen: { ...field.requiredWhen } }),
-    ...(field.requiredWhen === undefined
-      ? {}
-      : {
-          requiredNow: isPluginConfigurationFieldRequired(field, (key) => {
-            const referenced = fields.find((candidate) => candidate.key === key);
-            return referenced ? effectivePluginConfigurationValue(referenced, stored[key]) : undefined;
-          }),
-        }),
-    ...(field.description === undefined ? {} : { description: field.description }),
-    ...(field.default === undefined ? {} : { default: field.default }),
-    ...(field.options === undefined ? {} : { options: field.options.map((option) => ({ ...option })) }),
-    currentValue: value === undefined ? null : field.kind === 'secret' ? SECRET_MASK : value,
-    sensitive: field.kind === 'secret',
-  };
-}
-
-function operationProjection(
-  field: ContractOperationField,
-  state: OperationState | undefined,
-  fields: readonly ContractConfigurationField[],
-  stored: Readonly<Record<string, string>>,
-): PluginManagerConfigField {
-  const byKey = new Map(fields.map((candidate) => [candidate.key, candidate]));
-  return {
-    key: field.key,
-    label: field.label,
-    kind: 'operation',
-    required: field.required,
-    ...(field.description === undefined ? {} : { description: field.description }),
-    currentValue: null,
-    sensitive: false,
-    ...(field.target === undefined ? {} : { target: [...field.target] }),
-    ...(field.target?.length
-      ? {
-          configured: field.target.every((key) => {
-            const target = byKey.get(key);
-            return target !== undefined && effectivePluginConfigurationValue(target, stored[key]) !== undefined;
-          }),
-        }
-      : {}),
-    // A `row` action is never a standalone button: it is only callable from a row of the same
-    // operation's `rows` result, with that row's input (contract beta.24, F202 W2-3 h1 ①).
-    actions: field.actions.flatMap((action) =>
-      action.render === 'row'
-        ? []
-        : [
-            {
-              id: action.id,
-              label: action.label,
-              render: action.render,
-              ...(action.resultRender === undefined ? {} : { resultRender: action.resultRender }),
-              ...(action.next === undefined ? {} : { next: action.next }),
-              ...(action.rollback === undefined ? {} : { rollback: action.rollback }),
-              ...(action.timeout === undefined ? {} : { timeout: action.timeout }),
-            },
-          ],
-    ),
-    ...(state === undefined ? {} : { operationState: structuredClone(state) }),
-  };
 }
 
 type ValueValidator = (field: ContractConfigurationField, value: string) => void;
@@ -296,13 +223,13 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     const fields = manifestConfiguration(packageRecord);
     return (packageRecord.manifest.configuration ?? []).map((field) =>
       field.kind === 'operation'
-        ? operationProjection(
+        ? operationFieldProjection(
             field,
             readPluginOperationState(this.options.projectRoot, pluginId, field.key),
             fields,
             stored,
           )
-        : projection(field, fields, stored),
+        : configFieldProjection(field, fields, stored),
     );
   }
 

@@ -1,8 +1,9 @@
-import type {
-  ConfigurationField,
-  OperationActionResult,
-  PluginManifest,
-  PluginTestResult,
+import {
+  type ConfigurationField,
+  type OperationActionResult,
+  type PluginManifest,
+  type PluginTestResult,
+  validateOperationRowsResult,
 } from '@clowder-ai/plugin-contract';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from '../../../routes/plugin-access-guards.js';
@@ -89,6 +90,38 @@ function operationResult(value: unknown): OperationActionResult | undefined {
   return structuredClone(value) as OperationActionResult;
 }
 
+/**
+ * F202 W2-3 h1 ③: a `rows` result is validated with the contract's own validator against the
+ * declaring operation. An undeclared or non-row action reference, a duplicate key or any schema
+ * violation invalidates the whole result (fail-closed), so runtime data can never introduce a method.
+ */
+function rowsChecked(
+  declaredOperation: OperationField,
+  result: OperationActionResult | undefined,
+): OperationActionResult | undefined {
+  if (!result || result.render !== 'rows') return result;
+  // The validator takes the rows payload itself (`data`), whatever its doc comment suggests.
+  const rows = validateOperationRowsResult(declaredOperation, result.data);
+  return rows.valid ? { ...result, data: rows.value } : undefined;
+}
+
+/**
+ * Rejects an action input the Host cannot pass on. A row action is invoked from one row of a `rows`
+ * result, so it needs that row's input (F202 W2-3 h1 ④).
+ */
+function actionInputRejection(
+  action: OperationField['actions'][number],
+  body: unknown,
+): InstalledPluginOperationResult | undefined {
+  if (body !== undefined && body !== null && !jsonRecord(body)) {
+    return response(400, { error: 'Operation action input must be a JSON object' });
+  }
+  if (action.render === 'row' && (!jsonRecord(body) || Object.keys(body).length === 0)) {
+    return response(400, { error: `Row action '${action.id}' needs the input of the row it acts on` });
+  }
+  return undefined;
+}
+
 function testResult(value: unknown): PluginTestResult | undefined {
   if (!isPlainRecord(value)) return undefined;
   const allowed = new Set(['ok', 'message', 'details']);
@@ -169,9 +202,8 @@ export class InstalledPluginOperations {
     if (!declaredOperation) return response(404, { error: `Operation '${operationKey}' is not declared` });
     const action = declaredOperation.actions.find((candidate) => candidate.id === actionId);
     if (!action) return response(404, { error: `Action '${actionId}' is not declared` });
-    if (body !== undefined && body !== null && !jsonRecord(body)) {
-      return response(400, { error: 'Operation action input must be a JSON object' });
-    }
+    const rejected = actionInputRejection(action, body);
+    if (rejected) return rejected;
 
     const currentValues = await this.options.configuration.readActionInput(pluginId);
     const input = { ...currentValues, ...((body ?? {}) as Readonly<Record<string, unknown>>) };
@@ -190,7 +222,7 @@ export class InstalledPluginOperations {
       }
       return response(502, { error: `Action failed: ${safeActionErrorMessage(error)}` });
     }
-    const result = operationResult(rawResult);
+    const result = rowsChecked(declaredOperation, operationResult(rawResult));
     if (!result) return response(502, { error: 'Plugin operation returned an invalid response' });
 
     const currentState = await this.options.configuration.readOperationState(pluginId, operationKey);
