@@ -89,7 +89,11 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
-import { type MemberTimeoutEvent, memberTimeoutErrorText } from '../invocation/member-output-timeout.js';
+import {
+  MEMBER_TIMEOUT_REASON,
+  type MemberTimeoutEvent,
+  memberTimeoutErrorText,
+} from '../invocation/member-output-timeout.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
@@ -2449,7 +2453,9 @@ export async function* routeParallel(
       // identity / liveness wrongly attached to parent (instead of own turn).
       const stampedDone = ownInvId && !msg.invocationId ? { ...msg, invocationId: ownInvId } : msg;
       // F117 KD-22: the response is committed; report the timeout before the done, so the Queue
-      // counts this member failed (not cancelled) and releases its slot.
+      // counts this member failed (not cancelled) and releases its slot. The done names the
+      // timeout, as a failed provider turn's done names its failure, so the Queue settles the
+      // entry failed from it rather than throwing and broadcasting a second error.
       if (memberTimeout) {
         yield {
           type: 'error' as const,
@@ -2463,6 +2469,7 @@ export async function* routeParallel(
       yield projectLiveTurnExecution(
         {
           ...stampedDone,
+          ...(memberTimeout && stampedDone.errorCode === undefined ? { errorCode: MEMBER_TIMEOUT_REASON } : {}),
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
           isFinal,

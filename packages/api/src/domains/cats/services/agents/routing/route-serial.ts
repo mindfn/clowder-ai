@@ -2284,7 +2284,9 @@ export async function* routeSerial(
 
       // F117 KD-22: a member stopped by its output timeout failed, like a provider failure. The
       // events it produced after the stop were dropped above, so its failure text and diagnostics
-      // come from what its timer kept before stopping it.
+      // come from what its timer kept before stopping it, and it ends with a done that names the
+      // timeout, as a failed provider turn's done names its failure: the Queue settles the entry
+      // failed from that done rather than throwing and broadcasting a second error.
       if (stoppedByMemberTimeout(catSignal) && memberTimeout) {
         hadError = true;
         hadProviderError = true;
@@ -2293,6 +2295,7 @@ export async function* routeSerial(
           ...(persistedMetadata ?? { provider: '', model: '' }),
           timeoutDiagnostics: memberTimeout.diagnostics,
         };
+        doneMsg ??= { type: 'done', catId, errorCode: MEMBER_TIMEOUT_REASON, timestamp: Date.now() };
       }
 
       // F167 Phase S: this is the single route-side visibility barrier. The

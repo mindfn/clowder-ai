@@ -1101,6 +1101,14 @@ stop hook 从这里注入即覆盖全部。和设计的出入与补充：
   空闲超时，客户端的 `timeoutMs` 选项已无调用方，留待后续清理。
 - **#774**：重试条件收窄为「未收到首帧」的启动超时（`isCliStartupTimeoutError`），保留 tmux 首事件看门狗在 resume
   时的重试；成员开始输出之后的静默不再被吞掉重跑。
+- **alpha 自测补丁（09-27）**：在 alpha（develop_base `900d87835`，`CLI_TIMEOUT_MS=60000`）里让 codex-sol 执行
+  `sleep 150`：它在距最后一次输出 120 秒时被停下，R 为 failed / `timeout`，诊断 `silenceDurationMs=120001`，之后同一只猫
+  照常应答。发现并修了一处：超时成员原本在串行时没有 done、在并行时 done 不带 errorCode，QueueProcessor 只能走抛异常的
+  兜底路径，于是对话底部多出一行「Error: 响应超时…」，还会推送「猫猫出错了」。现在超时成员以一个 errorCode 为 `timeout` 的
+  done 收尾，和 provider 失败的 done 带 `PROVIDER_EXECUTION_FAILED` 一样，由 QueueProcessor 直接记为失败。
+- **CLI 接入实际按 2× 顺延**：同一次自测里，Codex CLI 空等时每 60 秒约有 400ms CPU，超过存活探针 50ms / 60s 的「忙」
+  门槛，所以 CLI 接入的成员实际要静默 2×`CLI_TIMEOUT_MS` 才会停。这是 F118 原有的门槛，旧的 cli-spawn 计时器也按它顺延；
+  这次不改，若要让顺延只给真正在算的进程，另议门槛。
 
 
 ### Phase K（路线 Phase 2b：Claude Agent SDK 接入，2026-09-25）
