@@ -119,6 +119,9 @@ const PROVIDER_FAILURE_CLASSES: Readonly<Record<string, RoutingDispatchFailureCl
 };
 
 const TERMINAL_FAILURE_CLASSES: Readonly<Record<string, RoutingDispatchFailureClass>> = {
+  // F117 KD-22: a member stopped by its output timeout.
+  timeout: 'provider_timeout',
+  // Written by the outer invocation timer before KD-22; still read from existing records.
   invocation_timeout: 'provider_timeout',
 };
 

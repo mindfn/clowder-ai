@@ -79,6 +79,7 @@ import { resolveCliCommand } from '../../../../../utils/cli-resolve.js';
 import { resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
 import { findMonorepoRoot, isSameProject } from '../../../../../utils/monorepo-root.js';
 import { resolvePersistentProjectPathDetailed } from '../../../../../utils/persistent-project-path.js';
+import { readProcessActivity } from '../../../../../utils/process-activity-registry.js';
 import { pathsEqual } from '../../../../../utils/project-path.js';
 import { tcpProbe } from '../../../../../utils/tcp-probe.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
@@ -602,7 +603,7 @@ import type { ResumeFailureKind } from './invoke-helpers.js';
 import {
   classifyResumeFailure,
   extractTaskProgress,
-  isCliTimeoutError,
+  isCliStartupTimeoutError,
   isContextWindowOverflowError,
   isMalformedToolCallError,
   isMissingClaudeSessionError,
@@ -612,6 +613,7 @@ import {
   isTransientCliExitCode1,
   preflightRace,
 } from './invoke-helpers.js';
+import { MEMBER_TIMEOUT_REASON, MemberOutputTimeout, type MemberTimeoutEvent } from './member-output-timeout.js';
 import type { TaskProgressItem, TaskProgressStatus, TaskProgressStore } from './TaskProgressStore.js';
 import { assertToolExecutionPolicySupported } from './tool-execution-policy.js';
 
@@ -1276,6 +1278,11 @@ export interface InvocationParams {
   readonly contentBlocks?: readonly MessageContent[];
   readonly uploadDir?: string;
   readonly signal?: AbortSignal;
+  /**
+   * F117 KD-22 (J4): arms this member's output timeout (`CLI_TIMEOUT_MS`). Called once when it
+   * fires; the route keeps the diagnostics and has the Queue stop the member. Absent → no timeout.
+   */
+  readonly onMemberTimeout?: (timeout: MemberTimeoutEvent) => void;
   readonly isLastCat: boolean;
   /** Static identity prompt — prepended to prompt on new sessions (gated by F-BLOAT logic) */
   readonly systemPrompt?: string;
@@ -1542,31 +1549,23 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   const triggerType = params.a2aTriggerMessageId ? 'mention' : params.parentInvocationId ? 'routing' : 'default';
   catInvocationCount.add(1, { [AGENT_ID]: catId, [TRIGGER]: triggerType });
 
-  // F089: Optional invocation-level timeout — independent of the NDJSON stream timeout.
-  // CLI_TIMEOUT_MS=0 means manual-cancel-only, so no automatic outer timer is armed.
-  const INVOCATION_TIMEOUT_MULTIPLIER = 2;
-  const cliTimeoutMs = resolveCliTimeoutMs(undefined);
-  const invocationTimeoutMs = cliTimeoutMs * INVOCATION_TIMEOUT_MULTIPLIER;
-  const invocationAc = new AbortController();
-  let invocationTimer: ReturnType<typeof setTimeout> | null = null;
-  const resetInvocationTimeout = (): void => {
-    if (invocationTimer) clearTimeout(invocationTimer);
-    if (invocationTimeoutMs <= 0) {
-      invocationTimer = null;
-      return;
-    }
-    invocationTimer = setTimeout(() => {
-      log.error({ invocationId, catId, threadId, timeoutMs: invocationTimeoutMs }, 'Invocation hard timeout fired');
-      invocationAc.abort(new Error('invocation_timeout'));
-    }, invocationTimeoutMs);
-    invocationTimer.unref();
-  };
-  resetInvocationTimeout();
-
-  // Merge caller signal (user cancel) with invocation timeout — neither loses semantics.
-  const signal: AbortSignal | undefined = callerSignal
-    ? AbortSignal.any([callerSignal, invocationAc.signal])
-    : invocationAc.signal;
+  // F117 KD-22 (J4): this member's one timeout — no output for CLI_TIMEOUT_MS (0 = never). When it
+  // fires the member is stopped the way Stop stops it (reason `timeout`), through the caller's
+  // signal, so the run winds down through the same path as a Stop.
+  const onMemberTimeout = params.onMemberTimeout;
+  const memberTimeout = onMemberTimeout
+    ? new MemberOutputTimeout({
+        timeoutMs: resolveCliTimeoutMs(undefined),
+        probeProcess: () => readProcessActivity(invocationId),
+        invocationId,
+        onTimeout: (diagnostics) => {
+          log.warn({ invocationId, catId, threadId, diagnostics }, 'Member output timeout fired; stopping the member');
+          onMemberTimeout({ executionId: executionParentInvocationId, diagnostics });
+        },
+      })
+    : undefined;
+  // A run without a caller signal (no Queue slot) can still be torn down only by its own end.
+  const signal: AbortSignal = callerSignal ?? new AbortController().signal;
 
   log.info({ invocationId, catId, threadId, userId }, 'Created invocation');
 
@@ -2107,9 +2106,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         source: participation,
         service,
         callbackEnv,
-        signal: signal!,
+        signal,
       })) {
-        resetInvocationTimeout();
+        memberTimeout?.observe(message);
         if (message.type === 'error') hadError = true;
         if (message.type === 'done' && !hadError) turnExecutionCompletedSuccessfully = true;
         yield { ...message, turnInvocationId: invocationId, turnExecutionStartedAt: executionStartedAt };
@@ -5330,11 +5329,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           msg = projected;
         }
         if (currentRequestGenerationCommit) await observeCurrentRequestGeneration(msg);
-        // F149: provider_signal / liveness_signal must NOT reset timeout — prevents "续命"
-        // F198 Phase C P2-1: status (daemon detail progress) also must NOT reset timeout —
-        // a daemon sending frequent status updates must not evade the 30-min kill deadline.
-        if (msg.type !== 'provider_signal' && msg.type !== 'liveness_signal' && msg.type !== 'status')
-          resetInvocationTimeout();
+        // F117 KD-22: only member output restarts the timeout; signals, status and diagnostics
+        // never do (F149, F198 Phase C), so a member cannot keep itself alive without working.
+        memberTimeout?.observe(msg);
         if (msg.contextCompaction) {
           // F117 K2: in-process hooks are authenticated by construction and registered by the
           // carrier itself; only a project hook depends on callback auth and the workspace files.
@@ -5452,8 +5449,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           suppressedTransientCliError = msg;
           continue;
         }
-        // #774 self-heal: CLI timeout during session resume with no substantive output
-        // → likely stale/unreachable session. Suppress and retry without session.
+        // #774 self-heal: a resumed session whose CLI never produced its first event (startup
+        // watchdog) → likely stale/unreachable session. Suppress and retry without session.
+        // F117 KD-22: silence after the member started is not retried — its output timeout stops
+        // the member as an ordinary, resendable failure.
         // Uses attemptHasSubstantiveOutput (not attemptHasContentOutput) because
         // timeout_diagnostics (system_info) must NOT block the retry path.
         if (
@@ -5461,7 +5460,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           options.sessionId &&
           !attemptHasSubstantiveOutput &&
           msg.type === 'error' &&
-          isCliTimeoutError(msg.error)
+          isCliStartupTimeoutError(msg.error)
         ) {
           suppressedTimeoutError = msg;
           continue;
@@ -5928,8 +5927,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     didComplete = true; // F118 AC-C5: Normal completion reached
   } catch (err) {
     await closeActiveServiceIterator();
+    // F117 KD-22: a member stopped by its output timeout failed; any other stop cancelled it.
     await terminateCurrentRequestGeneration(
-      signal?.aborted ? 'cancelled' : 'error',
+      signal.aborted && signal.reason !== MEMBER_TIMEOUT_REASON ? 'cancelled' : 'error',
       err instanceof Error ? err.message : String(err),
     );
     // F152: Record error on invocation span + OTel log
@@ -5979,26 +5979,29 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       tracing: { traceId: sc.traceId, spanId: sc.spanId, ...(parentSid ? { parentSpanId: parentSid } : {}) },
     };
   } finally {
+    memberTimeout?.close();
+    // F117 KD-22: a member stopped by its output timeout failed; any other stop cancelled it.
+    const timedOut = callerSignal?.aborted === true && callerSignal.reason === MEMBER_TIMEOUT_REASON;
     await closeActiveServiceIterator();
     await terminateCurrentRequestGeneration(
       turnExecutionCompletedSuccessfully
         ? 'accepted'
-        : callerSignal?.aborted || invocationAc.signal.aborted
+        : callerSignal?.aborted && !timedOut
           ? 'cancelled'
-          : hadError || turnExecutionFailureReason !== undefined
+          : timedOut || hadError || turnExecutionFailureReason !== undefined
             ? 'error'
             : 'unknown',
-      turnExecutionFailureReason ?? turnExecutionInterruptionReason,
+      timedOut ? MEMBER_TIMEOUT_REASON : (turnExecutionFailureReason ?? turnExecutionInterruptionReason),
     );
     await presentationDelivery?.release('invocation_finalized_without_delivery');
     if (deps.turnExecutionStore && ownsTurnExecution) {
       let terminal: TurnExecutionTerminalInput;
       if (turnExecutionCompletedSuccessfully) {
         terminal = { status: 'succeeded', endedAt: Date.now() };
+      } else if (timedOut) {
+        terminal = { status: 'failed', endedAt: Date.now(), terminalReason: MEMBER_TIMEOUT_REASON };
       } else if (callerSignal?.aborted) {
         terminal = { status: 'canceled', endedAt: Date.now(), terminalReason: 'user_cancel' };
-      } else if (invocationAc.signal.aborted) {
-        terminal = { status: 'failed', endedAt: Date.now(), terminalReason: 'invocation_timeout' };
       } else if (turnExecutionFailureReason !== undefined || hadError) {
         terminal = {
           status: 'failed',
@@ -6055,9 +6058,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F153 Phase J AC-J4: drain any open tool spans whose tool_result never arrived
     // (abort / error / timeout). Mirrors PR #732 mention_dispatch abort-safety pattern.
     toolSpanTracker.endAllOrphans('aborted');
-
-    // F089: Clear invocation hard timeout
-    if (invocationTimer) clearTimeout(invocationTimer);
 
     // F118/#1329: Release runtime resume custody before conversation policy
     // custody. Every release is idempotent, including partial acquisition.

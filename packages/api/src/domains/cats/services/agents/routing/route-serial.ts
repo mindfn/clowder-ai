@@ -183,6 +183,11 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
+import {
+  MEMBER_TIMEOUT_REASON,
+  type MemberTimeoutEvent,
+  memberTimeoutErrorText,
+} from '../invocation/member-output-timeout.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
@@ -199,6 +204,7 @@ import { buildBriefingMessage } from './format-briefing.js';
 import { resolveEventBackedRoutingExit } from './guards/event-backed-routing-exit.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
 import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { resolveResponseTerminal, stoppedByMemberTimeout } from './response-terminal.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -1526,6 +1532,14 @@ export async function* routeSerial(
       let hadProviderError = false;
       // Collect error text separately for system-message persistence (F5 reload)
       let collectedErrorText = '';
+      // F117 KD-22: kept when this member's output timeout fires, before it is stopped.
+      let memberTimeout: MemberTimeoutEvent | undefined;
+      const onMemberTimeout = options.stopMember
+        ? (timeout: MemberTimeoutEvent): void => {
+            memberTimeout = timeout;
+            options.stopMember?.(catId as string, timeout.executionId);
+          }
+        : undefined;
       // F212 Phase B (云端 codex P2-8 2026-05-27): persist Phase A's structured
       // cliDiagnostics alongside the error text so cold hydration (F5 reload) can
       // restore the folded panel — without this, only the legacy red-pill survives.
@@ -1867,6 +1881,7 @@ export async function* routeSerial(
         ...(targetContentBlocks ? { contentBlocks: targetContentBlocks } : {}),
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(catSignal ? { signal: catSignal } : {}),
+        ...(onMemberTimeout ? { onMemberTimeout } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
         ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
         continuityCapsule,
@@ -2267,6 +2282,19 @@ export async function* routeSerial(
         }
       }
 
+      // F117 KD-22: a member stopped by its output timeout failed, like a provider failure. The
+      // events it produced after the stop were dropped above, so its failure text and diagnostics
+      // come from what its timer kept before stopping it.
+      if (stoppedByMemberTimeout(catSignal) && memberTimeout) {
+        hadError = true;
+        hadProviderError = true;
+        collectedErrorText += `${collectedErrorText ? '\n' : ''}${memberTimeoutErrorText(memberTimeout.diagnostics)}`;
+        persistedMetadata = {
+          ...(persistedMetadata ?? { provider: '', model: '' }),
+          timeoutDiagnostics: memberTimeout.diagnostics,
+        };
+      }
+
       // F167 Phase S: this is the single route-side visibility barrier. The
       // callback records the holder outcome with the durable CAS; nothing below
       // may enqueue, persist, mutate thread state, synthesize visible output, or
@@ -2623,6 +2651,7 @@ export async function* routeSerial(
           invocationOrigin: resolveInvocationOrigin(options.humanDispositionInvocationOrigin),
           routeTopology: 'serial',
           ...(catSignal ? { signal: catSignal } : {}),
+          ...(onMemberTimeout ? { onMemberTimeout } : {}),
           ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
           ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
           continuityCapsule,
@@ -3426,24 +3455,12 @@ export async function* routeSerial(
               ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
             },
           };
-          const abortReason = catSignal?.reason;
-          const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = catSignal?.aborted
-            ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
-              ? 'canceled'
-              : 'interrupted'
-            : hadProviderError
-              ? 'failed'
-              : 'completed';
-          const lifecycleTerminalReason =
-            lifecycleTerminalStatus === 'completed'
-              ? undefined
-              : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                ? doneMsg.errorCode
-                : typeof abortReason === 'string' && abortReason.length > 0
-                  ? abortReason
-                  : lifecycleTerminalStatus === 'failed'
-                    ? 'provider_error'
-                    : lifecycleTerminalStatus;
+          const { status: lifecycleTerminalStatus, reason: lifecycleTerminalReason } = resolveResponseTerminal({
+            aborted: catSignal?.aborted === true,
+            abortReason: catSignal?.reason,
+            failed: hadProviderError,
+            errorCode: doneMsg?.errorCode,
+          });
           const lifecycleResponse =
             lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
               ? {
@@ -3742,24 +3759,12 @@ export async function* routeSerial(
                 ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
               },
             };
-            const abortReason = catSignal?.reason;
-            const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = catSignal?.aborted
-              ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
-                ? 'canceled'
-                : 'interrupted'
-              : hadProviderError
-                ? 'failed'
-                : 'completed';
-            const lifecycleTerminalReason =
-              lifecycleTerminalStatus === 'completed'
-                ? undefined
-                : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                  ? doneMsg.errorCode
-                  : typeof abortReason === 'string' && abortReason.length > 0
-                    ? abortReason
-                    : lifecycleTerminalStatus === 'failed'
-                      ? 'provider_error'
-                      : lifecycleTerminalStatus;
+            const { status: lifecycleTerminalStatus, reason: lifecycleTerminalReason } = resolveResponseTerminal({
+              aborted: catSignal?.aborted === true,
+              abortReason: catSignal?.reason,
+              failed: hadProviderError,
+              errorCode: doneMsg?.errorCode,
+            });
             const lifecycleResponse =
               lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
                 ? {
@@ -3909,11 +3914,14 @@ export async function* routeSerial(
           };
           let storedErrorTools;
           if (lifecycleResponseMessageId && ownInvocationId) {
+            // F117 KD-22: a member stopped by its output timeout failed; any other stop interrupted it.
+            const timedOut = stoppedByMemberTimeout(catSignal);
             const terminal = {
-              status: catSignal?.aborted ? ('interrupted' as const) : ('failed' as const),
+              status: catSignal?.aborted && !timedOut ? ('interrupted' as const) : ('failed' as const),
               completedAt: Math.max(Date.now(), invocationStartedAt),
-              reason:
-                typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+              reason: timedOut
+                ? MEMBER_TIMEOUT_REASON
+                : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
                   ? doneMsg.errorCode
                   : 'provider_error',
             };
@@ -4033,6 +4041,18 @@ export async function* routeSerial(
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append (error system msg) failed');
         }
+      }
+
+      // F117 KD-22: the response is committed; now report the timeout like a provider failure, so
+      // the Queue counts this member failed (not cancelled) and releases its slot.
+      if (stoppedByMemberTimeout(catSignal) && memberTimeout) {
+        yield {
+          type: 'error' as const,
+          catId,
+          error: memberTimeoutErrorText(memberTimeout.diagnostics),
+          metadata: { provider: '', model: '', timeoutDiagnostics: memberTimeout.diagnostics },
+          timestamp: Date.now(),
+        };
       }
 
       // F222: Frustration auto-issue — detect CLI error + cancel burst signals.

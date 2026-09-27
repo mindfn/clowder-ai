@@ -1077,6 +1077,31 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
    都没有时不算正在处理。快照不完整时，没有任何证据的 running 记录也保守列出，保持 AC-E7 的契约。复审建议的「待对账」与 KD-10 / AC-E7 冲突，没有采用：无法核实时保守地显示为运行中，
    由停止（AC-E7）或下一次完整快照时的 read-repair 收尾（见 J3「为什么不单列『待对账』」）。这一取舍待砚砚复审确认。
 
+#### J4 实现（路线 Phase 4，2026-09-27，基于 develop_base `5bd5e008e`）
+
+按上文 J4 落地，代码锚点对照过：外层 2× 定时器、cli-spawn 的无输出定时器、#774、Codex app-server 空闲中断、
+tmux 空闲、AGY `--print-timeout` 都还在设计写的位置；生产派发只有 QueueProcessor → `routeExecution` 一个入口，
+stop hook 从这里注入即覆盖全部。和设计的出入与补充：
+
+- **定时器**：`MemberOutputTimeout`（`member-output-timeout.ts`）在 invoke-single-cat 启动，只有 route 传入
+  `onMemberTimeout` 时才布防（生产都经 QueueProcessor 的 `stopMember`）。顺延看进程是否仍在占 CPU
+  （`ProcessLivenessProbe.activity()`，按两次采样的 CPU 增长，与最近是否有 stdout 无关），由 cli-spawn 按 invocation
+  登记（`process-activity-registry.ts`）。没有登记进程的接入不顺延，其中包括 **SDK 接入**：它的引擎子进程由 SDK
+  自己拉起，拿不到进程号。以前 SDK 接入只受外层 2× 定时器约束（3001 上是 60 分钟），现在是 `CLI_TIMEOUT_MS`
+  （30 分钟）无输出就停；Claude Code 的 Bash 工具本身 10 分钟封顶，更长的命令本来就该交给托管命令。
+- **触发 = Stop**：定时器触发时先把诊断交给 route（abort 之后的事件会被 route 丢弃），再由 QueueProcessor 的
+  `createMemberTimeoutStop` 同步比对 `getExecutionId === executionId`（父执行 ID）后 `cancel(…, 'timeout')`。
+- **结局**：R 的终态规则收成一处 `resolveResponseTerminal`（原来 route-serial 两份、route-parallel 一份），`timeout`
+  → failed / `timeout`，R 带 `timeoutDiagnostics` 和失败文字。R 提交后 route 补发一条带诊断的 error 事件，
+  QueueProcessor 因此把该成员记为失败：`resolveFinalStatus` 与 disposition 的 `isCanceled` 都不把 timeout 墓碑
+  算作用户取消。TurnExecution failed / `timeout`，路由信号 `timeout` → `provider_timeout`；旧记录里的
+  `invocation_timeout` 仍按 `provider_timeout` 读。
+- **删除范围**：cli-spawn 与 tmux 的超时不再默认读 `CLI_TIMEOUT_MS`，只给显式传 `timeoutMs` 的调用（例如 opencode
+  自动审批探测）；成员派发从不传。AGY 不再传 `--print-timeout`（其默认 0，等整轮结束）。Codex app-server 不再传
+  空闲超时，客户端的 `timeoutMs` 选项已无调用方，留待后续清理。
+- **#774**：重试条件收窄为「未收到首帧」的启动超时（`isCliStartupTimeoutError`），保留 tmux 首事件看门狗在 resume
+  时的重试；成员开始输出之后的静默不再被吞掉重跑。
+
 
 ### Phase K（路线 Phase 2b：Claude Agent SDK 接入，2026-09-25）
 

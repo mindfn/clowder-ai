@@ -63,7 +63,6 @@ import {
   spawnCli,
   withVerdictGhGuardEnv,
 } from '../../../../../utils/cli-spawn.js';
-import { parseCliTimeoutMs, resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
 import type { SpawnFn } from '../../../../../utils/cli-types.js';
 import { findMonorepoRoot } from '../../../../../utils/monorepo-root.js';
 import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
@@ -2185,7 +2184,8 @@ export class CodexAgentService implements AgentService {
                 : {}),
               ...(options?.activeRunDispatch ? { activeRunDispatch: options.activeRunDispatch } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
-              timeoutMs: resolveCliTimeoutMs(parseCliTimeoutMs(codexEnv.CLI_TIMEOUT_MS ?? undefined)),
+              // F117 KD-22: no idle interrupt of its own — the member's one timeout is its
+              // invocation's, and it stops the turn through the signal above.
               interruptGraceMs: KILL_GRACE_MS,
             },
             retryBudget: 1,
