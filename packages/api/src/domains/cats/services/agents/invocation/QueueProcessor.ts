@@ -122,6 +122,7 @@ import {
 } from './InvocationTracker.js';
 import { projectLifecycleAppendAction } from './lifecycle-append-projection.js';
 import { emitLifecycleMessageUpdated } from './lifecycle-message-update.js';
+import { createMemberTimeoutStop } from './member-output-timeout.js';
 import { requireOwnerAuthProvenance } from './owner-auth-provenance.js';
 import {
   isTerminalDispositionEvent,
@@ -180,6 +181,10 @@ interface TrackerLike {
   ): boolean;
   has(threadId: string, catId?: string): boolean;
   cancelInvocation(threadId: string, catIds: string[], userId?: string, reason?: string): unknown;
+  /** F117 KD-22: stop one member the way Stop does (the member timeout passes reason `timeout`). */
+  cancel?(threadId: string, catId: string, requestUserId?: string, abortReason?: string): { cancelled: boolean };
+  /** F117 KD-22: the member was stopped by its output timeout — a failure, not a cancellation. */
+  isTimedOut?(threadId: string, catId: string): boolean;
   getUserId?(threadId: string, catId: string): string | null;
   getExecutionId?(threadId: string, catId: string): string | undefined;
   /** F-parallel-cancel: expose a slot's own controller for per-cat cancel isolation. */
@@ -3425,7 +3430,10 @@ export class QueueProcessor {
     let lifecycleClaimRestorePromise: Promise<boolean> | undefined;
     const terminalDispositions = new PerCatTerminalDispositionCollector({
       targetCatIds: targetCats,
-      isCanceled: (catId) => invocationTracker.getSlotState?.(threadId, catId) === 'canceled',
+      // A member stopped by its output timeout failed (F117 KD-22); its route reports the failure.
+      isCanceled: (catId) =>
+        invocationTracker.getSlotState?.(threadId, catId) === 'canceled' &&
+        !invocationTracker.isTimedOut?.(threadId, catId),
     });
     let responseText = '';
     // F122B B6: completion hooks are registered before drain; keep their
@@ -4155,6 +4163,22 @@ export class QueueProcessor {
           // abort (cancelAll / force / thread-delete), never on single-cat cancel — the sibling
           // keeps streaming. (See InvocationTracker.startAll returning a fresh batchController.)
           signalForCat: (catId: string) => invocationTracker.getController?.(threadId, catId)?.signal,
+          // F117 KD-22 (J4): a member's own invocation owns its output timeout; when it fires, the
+          // Queue stops only that member, and only while its slot still runs this execution.
+          ...(invocationTracker.getExecutionId && invocationTracker.cancel
+            ? {
+                stopMember: createMemberTimeoutStop({
+                  invocationTracker: {
+                    getExecutionId: (tid, catId) => invocationTracker.getExecutionId?.(tid, catId),
+                    cancel: (tid, catId, requestUserId, abortReason) =>
+                      invocationTracker.cancel?.(tid, catId, requestUserId, abortReason) ?? { cancelled: false },
+                  },
+                  threadId,
+                  ownerUserId: userId,
+                  log,
+                }),
+              }
+            : {}),
           getQueuedFreshnessMessagesForCat: (tid: string, uid: string, catId: string, parentInvocationId?: string) =>
             queue.getQueuedFreshnessMessagesForCat(tid, uid, catId, { excludeEntryId: entry.id, parentInvocationId }),
           commitCompletedA2AWake: (input: Parameters<NonNullable<RouteOptions['commitCompletedA2AWake']>>[0]) =>

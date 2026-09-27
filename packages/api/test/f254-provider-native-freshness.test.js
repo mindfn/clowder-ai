@@ -1457,7 +1457,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     assert.equal(messages.at(-1).type, 'done');
   });
 
-  it('honors the global CLI_TIMEOUT_MS opt-in through protocol interruption', async () => {
+  it('arms no app-server idle interrupt from CLI_TIMEOUT_MS; only a stop interrupts the turn (F117 KD-22)', async () => {
     const previousTimeout = process.env.CLI_TIMEOUT_MS;
     process.env.CLI_TIMEOUT_MS = '20';
     const wire = new FakeAppServerWire();
@@ -1502,13 +1502,13 @@ describe('F254 D2 provider-native freshness truth', () => {
       .filter(Boolean);
     assert.equal(
       lifecycle.some((event) => event.interruptReason === 'timeout'),
-      true,
-      'the process-level /config timeout must reach the app-server client',
+      false,
+      "the member's one timeout is its invocation's, not an app-server idle interrupt",
     );
     assert.equal(
       lifecycle.some((event) => event.interruptReason === 'user_cancel'),
-      false,
-      'the failsafe should not be the source of interruption',
+      true,
+      'the turn ran until its signal stopped it',
     );
   });
 

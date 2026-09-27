@@ -288,6 +288,8 @@ export interface RouteOptions {
    *  canceling one concurrent cat does not abort its siblings (并发取消误伤根因修复).
    *  Absent → fall back to the shared `signal` (route-serial / legacy callers). */
   signalForCat?: ((catId: CatId) => AbortSignal | undefined) | undefined;
+  /** F117 KD-22 (J4): Queue-owned stop for one member whose output timeout fired. Absent → no timeout. */
+  stopMember?: import('../invocation/member-output-timeout.js').MemberTimeoutStop | undefined;
   promptTags?: readonly string[] | undefined;
   /** Trusted server-owned Cue seeds supplied by connector/workflow ingress. */
   memoryCueOpportunitySeeds?: readonly MemoryCueOpportunitySeed[] | undefined;

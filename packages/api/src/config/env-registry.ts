@@ -857,7 +857,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'CLI_TIMEOUT_MS',
     defaultValue: DEFAULT_CLI_TIMEOUT_LABEL,
-    description: 'CLI 自动终止超时（0 = 关闭，仅人工取消）',
+    description: '成员无输出超时：到时按停止处理，回复记为超时失败（占用 CPU 时最多 2 倍；0 = 关闭，仅人工停止）',
     category: 'cli',
     sensitive: false,
     runtimeEditable: false,

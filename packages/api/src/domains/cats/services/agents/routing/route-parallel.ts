@@ -89,6 +89,7 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
+import { type MemberTimeoutEvent, memberTimeoutErrorText } from '../invocation/member-output-timeout.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
@@ -101,6 +102,7 @@ import { type ContextEvalInput, extractContextEvalSignals } from './context-eval
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
 import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { resolveResponseTerminal, stoppedByMemberTimeout } from './response-terminal.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -462,6 +464,15 @@ export async function* routeParallel(
   const catToolNames = new Map<string, string[]>();
   const catCoverageMap = new Map<string, ContextEvalInput['coverageMap']>();
   const unavailableCats = new Set<CatId>();
+  // F117 KD-22: kept per cat when its output timeout fires, before the cat is stopped.
+  const catMemberTimeout = new Map<string, MemberTimeoutEvent>();
+  const onMemberTimeoutFor = (catId: CatId) =>
+    options.stopMember
+      ? (timeout: MemberTimeoutEvent): void => {
+          catMemberTimeout.set(catId as string, timeout);
+          options.stopMember?.(catId as string, timeout.executionId);
+        }
+      : undefined;
 
   const streams = await Promise.all(
     targetCats.map(async (catId) => {
@@ -986,6 +997,7 @@ export async function* routeParallel(
       if (catSignal?.aborted) {
         return (async function* skipCancelledCat(): AsyncGenerator<AgentMessage> {})();
       }
+      const onMemberTimeout = onMemberTimeoutFor(catId);
       const invocationStream = invokeSingleCat(deps.invocationDeps, {
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
         ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
@@ -1005,6 +1017,7 @@ export async function* routeParallel(
         ...(targetContentBlocks ? { contentBlocks: targetContentBlocks } : {}),
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(catSignal ? { signal: catSignal } : {}),
+        ...(onMemberTimeout ? { onMemberTimeout } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
         // F194 Phase Z2 (砚砚 catch 2026-05-09)：parallel route 必须传 parentInvocationId，
         // 与 route-serial.ts:725 对齐。否则 child registry record 缺 parentInvocationId →
@@ -1624,28 +1637,28 @@ export async function* routeParallel(
       }
       const lifecycleAdmission = catLifecycleResponse.get(msg.catId);
       const completedSignal = signalForCat?.(msg.catId as CatId) ?? signal;
-      const abortReason = completedSignal?.reason;
-      const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = !actionOutputCommitAllowed
-        ? 'interrupted'
-        : completedSignal?.aborted
-          ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
-            ? 'canceled'
-            : 'interrupted'
-          : catHadProviderError.has(msg.catId) || (typeof msg.errorCode === 'string' && msg.errorCode.length > 0)
-            ? 'failed'
-            : 'completed';
-      const lifecycleTerminalReason =
-        lifecycleTerminalStatus === 'completed'
-          ? undefined
-          : !actionOutputCommitAllowed
-            ? 'output_commit_rejected'
-            : typeof msg.errorCode === 'string' && msg.errorCode.length > 0
-              ? msg.errorCode
-              : typeof abortReason === 'string' && abortReason.length > 0
-                ? abortReason
-                : lifecycleTerminalStatus === 'failed'
-                  ? 'provider_error'
-                  : lifecycleTerminalStatus;
+      // F117 KD-22: a member stopped by its output timeout failed, like a provider failure. Its own
+      // error after the stop was dropped above, so its failure text and diagnostics come from what
+      // its timer kept before stopping it.
+      const memberTimeout = stoppedByMemberTimeout(completedSignal) ? catMemberTimeout.get(msg.catId) : undefined;
+      if (memberTimeout) {
+        catHadError.add(msg.catId);
+        catHadProviderError.add(msg.catId);
+        const priorErrorText = catErrorText.get(msg.catId) ?? '';
+        const timeoutText = memberTimeoutErrorText(memberTimeout.diagnostics);
+        catErrorText.set(msg.catId, `${priorErrorText}${priorErrorText ? '\n' : ''}${timeoutText}`);
+        catMeta.set(msg.catId, {
+          ...(catMeta.get(msg.catId) ?? { provider: '', model: '' }),
+          timeoutDiagnostics: memberTimeout.diagnostics,
+        });
+      }
+      const { status: lifecycleTerminalStatus, reason: lifecycleTerminalReason } = resolveResponseTerminal({
+        aborted: completedSignal?.aborted === true,
+        abortReason: completedSignal?.reason,
+        failed: catHadProviderError.has(msg.catId) || (typeof msg.errorCode === 'string' && msg.errorCode.length > 0),
+        errorCode: msg.errorCode,
+        outputCommitRejected: !actionOutputCommitAllowed,
+      });
       const lifecycleResponse =
         lifecycleAdmission && ownInvId
           ? {
@@ -2435,6 +2448,18 @@ export async function* routeParallel(
       // invocationId → downstream broadcaster falls back to parent → bubble
       // identity / liveness wrongly attached to parent (instead of own turn).
       const stampedDone = ownInvId && !msg.invocationId ? { ...msg, invocationId: ownInvId } : msg;
+      // F117 KD-22: the response is committed; report the timeout before the done, so the Queue
+      // counts this member failed (not cancelled) and releases its slot.
+      if (memberTimeout) {
+        yield {
+          type: 'error' as const,
+          catId: msg.catId,
+          error: memberTimeoutErrorText(memberTimeout.diagnostics),
+          metadata: { provider: '', model: '', timeoutDiagnostics: memberTimeout.diagnostics },
+          ...(ownInvId ? { invocationId: ownInvId } : {}),
+          timestamp: Date.now(),
+        };
+      }
       yield projectLiveTurnExecution(
         {
           ...stampedDone,

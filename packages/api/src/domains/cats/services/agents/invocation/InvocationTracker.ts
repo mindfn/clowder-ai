@@ -13,6 +13,7 @@
 import type { LifecycleActiveRun } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import type { AgentClientActiveRunDispatcher } from '../../types.js';
+import { MEMBER_TIMEOUT_REASON } from './member-output-timeout.js';
 
 const log = createModuleLogger('invocation-tracker');
 export const DEFAULT_INVOCATION_SLOT_TTL_MS = 75 * 60_000;
@@ -687,6 +688,12 @@ export class InvocationTracker {
     return inv.state;
   }
 
+  /** F117 KD-22: a member stopped by its output timeout failed; nobody cancelled it. */
+  isTimedOut(threadId: string, catId: string): boolean {
+    const inv = this.active.get(this.slotKey(threadId, catId));
+    return inv?.state === 'canceled' && inv.cancelReason === MEMBER_TIMEOUT_REASON;
+  }
+
   /** Exact canceled-slot fence for read repair; slot state alone is too broad. */
   getCanceledSlotIdentity(threadId: string, catId: string): { executionId: string; userId: string } | undefined {
     const inv = this.active.get(this.slotKey(threadId, catId));
@@ -700,7 +707,8 @@ export class InvocationTracker {
    *  - whole-invocation abort (batch gate aborted: cancelAll / force / thread-delete / preempt)
    *    → 'canceled_by_user' (user_cancel/cancel_all reason) or 'canceled' (other reasons)
    *  - else if EVERY target cat is a canceled tombstone → 'canceled_by_user' (cancelled cat-by-cat)
-   *  - else → 'succeeded' (at least one cat ran to completion)
+   *  - else → 'succeeded': not cancelled, so each cat's own outcome decides. A cat stopped by its
+   *    output timeout (F117 KD-22) failed — it is not a cancellation, so it never counts here.
    * `controller.signal.aborted` alone now means ONLY whole-invocation abort — a single-cat cancel
    * no longer aborts the batch gate, so callers must use this aggregate rather than raw `.aborted`.
    */
@@ -713,7 +721,9 @@ export class InvocationTracker {
       return batch.reason === 'user_cancel' || batch.reason === 'cancel_all' ? 'canceled_by_user' : 'canceled';
     }
     if (targetCats.length === 0) return 'succeeded';
-    const allCanceled = targetCats.every((c) => this.getSlotState(threadId, c) === 'canceled');
+    const allCanceled = targetCats.every(
+      (c) => this.getSlotState(threadId, c) === 'canceled' && !this.isTimedOut(threadId, c),
+    );
     return allCanceled ? 'canceled_by_user' : 'succeeded';
   }
 
