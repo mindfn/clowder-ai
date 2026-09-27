@@ -26,7 +26,8 @@ const receiptSchema = z
     subjectRef: nonEmpty,
     generation,
     ownerFence: z.object({ kind: z.literal('containing_task'), generation }).strict(),
-    expiresAt: z.number().int().positive(),
+    // #1392: a wait may have no deadline (continuous tracking), and its receipt then has none either.
+    expiresAt: z.number().int().positive().optional(),
     registeredAt: z.number().int().nonnegative(),
     predicateDigest: z.string().regex(/^[a-f0-9]{64}$/),
     proofKind: z.enum(['typed_predicates', 'anchored_review']),
@@ -84,6 +85,9 @@ function proofKind(active: AwaitStateV1): TypedWaitRegistration['proofKind'] | n
         'pr_review_thread_changed',
         'pr_ci_terminal',
         'pr_became_conflicting',
+        // #1392 AC-7: the normal registration arms both comment surfaces.
+        'pr_conversation_comment_added',
+        'pr_inline_comment_added',
       ]
     : active.subjectRef.startsWith('issue:')
       ? ['issue_comment_added', 'issue_author_commented']
@@ -129,7 +133,7 @@ export function createTypedWaitRegistration(input: {
     subjectRef: active.subjectRef,
     generation: active.generation,
     ownerFence: active.ownerFence,
-    expiresAt: active.expiresAt,
+    ...(active.expiresAt !== undefined ? { expiresAt: active.expiresAt } : {}),
     registeredAt: active.createdAt,
     predicateDigest: typedWaitPredicateDigest(active),
     proofKind: kind,
@@ -169,7 +173,7 @@ export function isLiveTypedWaitRegistration(
     receipt.ownerFence.generation === receipt.generation &&
     active.createdAt === receipt.registeredAt &&
     active.expiresAt === receipt.expiresAt &&
-    receipt.expiresAt > now &&
+    (receipt.expiresAt === undefined || receipt.expiresAt > now) &&
     receipt.registeredAt <= now &&
     (!terminal || terminal.generation !== receipt.generation) &&
     receipt.proofKind === proofKind(active) &&

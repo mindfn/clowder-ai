@@ -111,6 +111,26 @@ for (const [name, mutate] of [
     mutate(snapshot);
     assert.equal(isLiveTypedWaitRegistration(snapshot, h.identity, Date.now()), false);
   });
+
+  test(`a registration without a deadline rejects ${name} drift`, async () => {
+    const h = await fixture();
+    const { expiresAt: _deadline, ...active } = h.active;
+    const receipt = createTypedWaitRegistration({
+      task: h.task,
+      active,
+      invocationId: 'child-1',
+      source: h.receipt.source,
+    });
+    await h.taskStore.replaceAutomationStateIfGeneration(h.task.id, {
+      expectedGeneration: 1,
+      automationState: { await: active },
+      waitRegistration: receipt,
+    });
+    const snapshot = await h.taskStore.getWaitRegistration(h.task.id);
+    assert.equal(isLiveTypedWaitRegistration(snapshot, h.identity, Date.now()), true, 'live before the drift');
+    mutate(snapshot);
+    assert.equal(isLiveTypedWaitRegistration(snapshot, h.identity, Date.now()), false);
+  });
 }
 
 test('unknown predicates and unanchored review cannot mint a generic receipt', async () => {
@@ -122,6 +142,46 @@ test('unknown predicates and unanchored review cannot mint a generic receipt', a
       createTypedWaitRegistration({ task: h.task, active, invocationId: 'child-1', source: h.receipt.source }),
       null,
     );
+  }
+});
+
+test('a wait without a deadline mints a receipt that stays live until the wait itself moves', async () => {
+  const h = await fixture();
+  const { expiresAt: _deadline, ...active } = h.active;
+  const receipt = createTypedWaitRegistration({
+    task: h.task,
+    active,
+    invocationId: 'child-1',
+    source: h.receipt.source,
+  });
+  assert.ok(receipt, 'no deadline is the normal registration, not a reason to withhold the proof');
+  assert.equal(receipt.expiresAt, undefined);
+  const task = { ...h.task, automationState: { await: JSON.parse(JSON.stringify(active)) } };
+  assert.equal(isLiveTypedWaitRegistration({ task, receipt }, h.identity, Number.MAX_SAFE_INTEGER), true);
+  const moved = structuredClone(task);
+  moved.automationState.await.generation = 2;
+  assert.equal(isLiveTypedWaitRegistration({ task: moved, receipt }, h.identity, Date.now()), false);
+  const deadlined = structuredClone(task);
+  deadlined.automationState.await.expiresAt = Date.now() + 60000;
+  assert.equal(
+    isLiveTypedWaitRegistration({ task: deadlined, receipt }, h.identity, Date.now()),
+    false,
+    'a deadline the receipt did not see is drift',
+  );
+});
+
+test('comment conditions mint a generic receipt like the other typed PR conditions', async () => {
+  const h = await fixture();
+  for (const kind of ['pr_conversation_comment_added', 'pr_inline_comment_added']) {
+    const active = structuredClone(h.active);
+    active.continuation.when = [{ kind, audience: { mode: 'everyone_but_self', selfLogin: 'opus-bot' } }];
+    const receipt = createTypedWaitRegistration({
+      task: h.task,
+      active,
+      invocationId: 'child-1',
+      source: h.receipt.source,
+    });
+    assert.equal(receipt?.proofKind, 'typed_predicates', kind);
   }
 });
 
