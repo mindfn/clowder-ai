@@ -71,3 +71,4 @@ operator experience：
 |------|------|
 | 改名后旧 worktree 路径残留 | 脚本已有 detached HEAD 自动修复逻辑，扩展到支持旧 main-test 目录迁移 |
 | 提示词改动影响多猫 | Phase B 改动最小化，只加一条短规则 |
+| 从 runtime 启动的 shell 带着 runtime 的 `REDIS_DATA_DIR` / `REDIS_BACKUP_DIR`，start-dev 把继承来的值当显式覆盖，alpha 的 Redis 会打开 runtime 的 `dump.rdb` 和 AOF（2026-09-27 发现） | `apply_alpha_env` 清掉这两个变量，由 start-dev 按 alpha 的 Redis 端口派生（和 `WORKTREE_PORT_OFFSET` 同一做法）；`alpha:test` 覆盖 |
