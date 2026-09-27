@@ -20,7 +20,7 @@ export const boxOf = (cat) => {
 };
 
 // person's route through the glass scene: [t0, t1, x0, x1, mode, target]
-const ROUTE = [
+export const ROUTE = [
   [24.0, 24.6, 2.6, 2.6, 'stand'],
   [24.6, 25.2, 2.6, 2.6, 'throw', 'maine'],
   [25.2, 26.3, 2.6, 2.6, 'lookUp'],
@@ -70,7 +70,7 @@ function personAt(t) {
 }
 
 // paper planes: [start, end, from, to, arc]; endpoints resolved at runtime
-const FLIGHTS = [
+export const FLIGHTS = [
   [24.75, 25.55, 'person', 'maine', 2.2],
   [25.95, 26.65, 'maine', 'person', 1.6],
   [27.3, 27.85, 'person', 'ragdoll', 1.6],

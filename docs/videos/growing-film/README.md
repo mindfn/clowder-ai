@@ -46,8 +46,39 @@ picture and sound.
   (licensed for use in one's own compositions); everything else is synthesised here.
 - Fonts: macOS system fonts (Songti SC, Baskerville).
 
+## Build
+
+```bash
+tools/build.sh            # sprites -> events -> picture (60 fps) -> sound -> mux
+```
+
+- Picture only: `node tools/render.mjs video --from 0 --to 122.5 --fps 60 --out out/picture-60fps.mp4`
+  (real time on an M4 Pro at 30 fps; ~6 min at 60 fps). Stills for review:
+  `node tools/render.mjs stills 9.6,36.4 [--cam x,y,V] [--dbg nobloom|bloomonly|noparts]`.
+- Sound only: `node tools/export-events.mjs && .venv/bin/python audio/mix.py`
+  -> `build/audio/growing-mix.wav` (48 kHz, -16 LUFS, <= -1.3 dBTP) plus stems.
+- Review sound as a picture: `.venv/bin/python tools/spectro.py build/audio/growing-mix.wav out/spec.png 0 61`.
+
+The studio page also runs interactively: serve the folder and open
+`studio/index.html?t=58` (space toggles play).
+
+## Sound
+
+- **Score** (`audio/score.py`): 40 bars, 80 BPM, D major. The four-note "growing"
+  motif (A–D–E–F♯) is struck on celesta as the seed lands, answered by flute at dawn,
+  stated by solo horn over the lit roots, carried by strings through the fruit, swelled
+  by the orchestra over the forest, and left alone on a music box on the mark.
+- **Sound design** (`audio/design.py`): every effect sits on the picture's own events,
+  exported from the direction code (`tools/export-events.mjs` -> `build/events.json`),
+  so paper-plane flights, footsteps, lanterns and fruit land where they are seen.
+- **Mix** (`audio/mix.py`): three synthetic convolution spaces (room / hall / big),
+  dramatic dynamics automation, two ducked silences (the held breath before the glass
+  breaks; the paw that stops) with only a harmonic, a reversed cymbal and a heartbeat
+  routed around the duck; BS.1770 loudness to -16 LUFS and a true-peak limiter.
+
 ## Status
 
 - [x] canon cat sprites (123, canon-scale, foot anchors)
 - [x] tree generator (two-phase colonisation, angle limits, root collar)
-- [ ] renderer passes · [ ] direction per act · [ ] score · [ ] sound design · [ ] mix/master · [ ] final render
+- [x] renderer · [x] six acts directed · [x] score · [x] sound design · [x] mix/master
+- [ ] operator review (fork hard gate: experience check before anything goes upstream)
