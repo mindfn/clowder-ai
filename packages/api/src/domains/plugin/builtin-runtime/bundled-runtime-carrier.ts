@@ -1,4 +1,11 @@
 import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
+import {
+  attemptPluginAction,
+  invocationNotStarted,
+  type PluginInvocationOutcome,
+  reportedPluginInvocation,
+  settlePluginInvocation,
+} from '../carrier/host-invocation.js';
 import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
@@ -28,6 +35,13 @@ export interface BundledPluginRuntime {
   ): Promise<void>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
   invoke?(pluginInstanceId: string, method: string, params: unknown): Promise<unknown>;
+  /**
+   * F202 W2-3 h3b: invoke, also saying whether the package's action was entered when it fails.
+   * A runtime without it cannot tell, so its failures are `unknown`.
+   */
+  attemptInvoke?(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome>;
+  /** F202 W2-3 h3b: whether the active package exposes `method`. */
+  exposesAction?(pluginInstanceId: string, method: string): boolean;
 }
 
 export interface BundledPluginRuntimeCarrierOptions {
@@ -134,18 +148,43 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
   }
 
   async invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
-    const authority = await this.authority(pluginInstanceId);
+    return settlePluginInvocation(await this.attemptInvoke(pluginInstanceId, method, params));
+  }
+
+  /**
+   * F202 W2-3 h3b: the carrier's own refusals come before any package code, so they are
+   * `not_started`; past them, the runtime reports where its call failed.
+   */
+  async attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
+    let authority: RuntimeAuthority;
+    try {
+      authority = await this.authority(pluginInstanceId);
+    } catch (error) {
+      return invocationNotStarted(error);
+    }
     if (
       method === 'host.messaging.deliver' &&
       !authority.effectiveGrants.includes(WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant)
     ) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} lacks Host delivery authority`);
+      return invocationNotStarted(
+        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} lacks Host delivery authority`),
+      );
     }
-    const active = this.#active.get(pluginInstanceId);
-    if (!active?.runtime.invoke) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host invocation surface`);
+    const runtime = this.#active.get(pluginInstanceId)?.runtime;
+    const attempt = runtime?.attemptInvoke?.bind(runtime);
+    if (attempt) return reportedPluginInvocation(() => attempt(pluginInstanceId, method, params));
+    const invoke = runtime?.invoke?.bind(runtime);
+    if (!invoke) {
+      return invocationNotStarted(
+        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host invocation surface`),
+      );
     }
-    return active.runtime.invoke(pluginInstanceId, method, params);
+    return attemptPluginAction(() => invoke(pluginInstanceId, method, params));
+  }
+
+  /** F202 W2-3 h3b: false when no runtime is active for the instance or it cannot tell. */
+  exposesAction(pluginInstanceId: string, method: string): boolean {
+    return this.#active.get(pluginInstanceId)?.runtime.exposesAction?.(pluginInstanceId, method) ?? false;
   }
 
   /** In-process runtimes never survive the restart they are recovering from. */

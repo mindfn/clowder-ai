@@ -19,6 +19,13 @@ import { type PluginRuntimeLifecyclePort, removesPluginOwnedResources } from '..
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
+import {
+  attemptPluginAction,
+  invocationNotStarted,
+  type PluginInvocationOutcome,
+  reportedPluginInvocation,
+  settlePluginInvocation,
+} from './host-invocation.js';
 
 /**
  * F202 Train C1 — the Host's single runtime-carrier boundary.
@@ -46,6 +53,13 @@ export interface PluginRuntimeCarrier {
   recoverAfterRestart?(): Promise<number>;
   /** Only carriers with a Host→package invocation surface implement this. */
   invoke?(pluginInstanceId: string, method: string, params: unknown): Promise<unknown>;
+  /**
+   * F202 W2-3 h3b: invoke, also saying whether the package's action was entered when it fails.
+   * A carrier without it cannot tell, so its failures are `unknown`.
+   */
+  attemptInvoke?(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome>;
+  /** F202 W2-3 h3b: whether the active package exposes `method`; a carrier without it never does. */
+  exposesAction?(pluginInstanceId: string, method: string): boolean;
 }
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
@@ -82,8 +96,13 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const result = await carrier.start(pluginInstanceId);
     try {
       await activateDeclaredStaticResources(admission, this.resources);
-      await this.#runtimeContributions.activate(admission, (instanceId, method, params) =>
-        this.invoke(instanceId, method, params),
+      await this.#runtimeContributions.activate(
+        admission,
+        (instanceId, method, params) => this.invoke(instanceId, method, params),
+        {
+          attempt: (instanceId, method, params) => this.attemptInvoke(instanceId, method, params),
+          exposes: (instanceId, method) => this.exposesAction(instanceId, method),
+        },
       );
       return result;
     } catch (error) {
@@ -144,11 +163,35 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
-    const carrier = await this.#select(pluginInstanceId);
-    if (!carrier.invoke) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host invocation surface`);
+    return settlePluginInvocation(await this.attemptInvoke(pluginInstanceId, method, params));
+  }
+
+  /**
+   * F202 W2-3 h3b: never rejects. A failure comes back with whether the package could have acted
+   * on the call: `not_started` only where the Host refused before any package code ran.
+   */
+  async attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
+    let carrier: PluginRuntimeCarrier;
+    try {
+      carrier = await this.#select(pluginInstanceId);
+    } catch (error) {
+      return invocationNotStarted(error);
     }
-    return carrier.invoke(pluginInstanceId, method, params);
+    const attempt = carrier.attemptInvoke?.bind(carrier);
+    if (attempt) return reportedPluginInvocation(() => attempt(pluginInstanceId, method, params));
+    const invoke = carrier.invoke?.bind(carrier);
+    if (!invoke) {
+      return invocationNotStarted(
+        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} has no Host invocation surface`),
+      );
+    }
+    return attemptPluginAction(() => invoke(pluginInstanceId, method, params));
+  }
+
+  /** F202 W2-3 h3b: whether the instance's active package exposes `method`. */
+  async exposesAction(pluginInstanceId: string, method: string): Promise<boolean> {
+    const carrier = await this.#select(pluginInstanceId);
+    return carrier.exposesAction?.(pluginInstanceId, method) ?? false;
   }
 
   async listPluginTools(pluginId: string): Promise<readonly DeclaredPluginTool[]> {

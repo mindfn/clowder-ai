@@ -6,6 +6,7 @@ import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
 import type { SubscriptionDelivery } from '../../messaging/subscription-delivery.js';
+import type { PluginInvocationOutcome } from '../carrier/host-invocation.js';
 import { verifyPackageEntrypoint } from '../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -47,7 +48,7 @@ import {
   resolveManifestConfiguration,
 } from '../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
-import { createModuleHostInvocation } from './module-host-invocation.js';
+import { createModuleHostInvocation, exposesModuleAction } from './module-host-invocation.js';
 import {
   type ModuleTeardownStep,
   moduleTeardown,
@@ -327,6 +328,15 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
     return createModuleHostInvocation({ runtime: this }).invoke(pluginInstanceId, method, params);
+  }
+
+  /** Invoke, also saying whether the module's action was entered when it fails (F202 W2-3 h3b). */
+  attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
+    return createModuleHostInvocation({ runtime: this }).attempt(pluginInstanceId, method, params);
+  }
+
+  exposesAction(pluginInstanceId: string, method: string): boolean {
+    return exposesModuleAction(this.actions(pluginInstanceId), method);
   }
 
   actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {

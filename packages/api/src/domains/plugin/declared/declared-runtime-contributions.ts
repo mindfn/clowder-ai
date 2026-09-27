@@ -14,7 +14,15 @@ import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
+import type { CloudConversationHostLease, CloudConversationHostRegistry } from './cloud-conversation-host-registry.js';
+import {
+  admitCloudConversationHosts,
+  type DeclaredActionSurface,
+  isCloudConversationHost,
+  registerCloudConversationHosts,
+} from './declared-cloud-conversation-hosts.js';
 import { resolvePackageFile } from './declared-resource-paths.js';
+import { scheduleTask } from './declared-schedule-task.js';
 import { type DeclaredPluginWebhook, validateDeclaredWebhooks } from './declared-webhooks.js';
 
 export type { DeclaredPluginWebhook } from './declared-webhooks.js';
@@ -30,6 +38,8 @@ export interface DeclaredRuntimeContributionHost {
   readonly taskRunner?: DeclaredScheduleTaskRunner;
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly redis?: RedisClient;
+  /** F202 W2-3 h3b: without it, a package declaring `cloud-conversation-host` fails to activate. */
+  readonly cloudConversationHosts?: CloudConversationHostRegistry;
 }
 
 interface ActiveRuntimeContributions {
@@ -39,6 +49,7 @@ interface ActiveRuntimeContributions {
   readonly scheduleTaskIds: readonly string[];
   readonly tools: readonly DirectToolContribution[];
   readonly webhooks: readonly WebhookContribution[];
+  readonly cloudHostLeases: readonly CloudConversationHostLease[];
   readonly invoke: InvokePluginAction;
 }
 
@@ -67,7 +78,11 @@ export class DeclaredRuntimeContributions {
 
   constructor(private readonly host: DeclaredRuntimeContributionHost) {}
 
-  async activate(admission: PluginRuntimeAdmission, invoke: InvokePluginAction): Promise<void> {
+  async activate(
+    admission: PluginRuntimeAdmission,
+    invoke: InvokePluginAction,
+    actions?: DeclaredActionSurface,
+  ): Promise<void> {
     const pluginInstanceId = admission.instance.pluginInstanceId;
     if (this.#active.has(pluginInstanceId)) {
       throw new ExternalPluginRuntimeError(
@@ -80,12 +95,15 @@ export class DeclaredRuntimeContributions {
     const schedules = contributions.filter((value): value is ScheduleContribution => value.type === 'schedule');
     const tools = contributions.filter((value): value is DirectToolContribution => value.type === 'tool');
     const webhooks = contributions.filter((value): value is WebhookContribution => value.type === 'webhook');
-    if (limbs.length === 0 && schedules.length === 0 && tools.length === 0 && webhooks.length === 0) return;
+    const cloudHosts = contributions.filter(isCloudConversationHost);
+    if ([limbs, schedules, tools, webhooks, cloudHosts].every((declared) => declared.length === 0)) return;
     if (limbs.length > 0 && !this.host.limbRegistry) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host limb registry is unavailable');
     }
     const limbNodeIds: string[] = [];
     const scheduleTaskIds: string[] = [];
+    const cloudHostLeases: CloudConversationHostLease[] = [];
+    const cloudHostRegistry = this.host.cloudConversationHosts;
     try {
       if (schedules.length > 0 && !admission.effectiveGrants.includes('schedule.register')) {
         throw new ExternalPluginRuntimeError(
@@ -98,6 +116,7 @@ export class DeclaredRuntimeContributions {
       }
       for (const tool of tools) directToolSchema(tool);
       validateDeclaredWebhooks(webhooks);
+      await admitCloudConversationHosts(admission, cloudHosts, cloudHostRegistry, actions);
       if (limbs.length > 0) {
         await this.#activateLimbs(admission, limbs, limbNodeIds, invoke);
       }
@@ -106,6 +125,7 @@ export class DeclaredRuntimeContributions {
         this.host.taskRunner?.registerPostStart(task);
         scheduleTaskIds.push(task.id);
       }
+      registerCloudConversationHosts(admission, cloudHosts, cloudHostRegistry, actions, cloudHostLeases);
       this.#active.set(pluginInstanceId, {
         pluginId: admission.packageRecord.pluginId,
         pluginInstanceId,
@@ -113,10 +133,11 @@ export class DeclaredRuntimeContributions {
         scheduleTaskIds,
         tools,
         webhooks,
+        cloudHostLeases,
         invoke,
       });
     } catch (error) {
-      this.#remove({ limbNodeIds, scheduleTaskIds });
+      this.#remove({ limbNodeIds, scheduleTaskIds, cloudHostLeases });
       throw error;
     }
   }
@@ -253,7 +274,8 @@ export class DeclaredRuntimeContributions {
     }
   }
 
-  #remove(active: Pick<ActiveRuntimeContributions, 'limbNodeIds' | 'scheduleTaskIds'>): void {
+  #remove(active: Pick<ActiveRuntimeContributions, 'limbNodeIds' | 'scheduleTaskIds' | 'cloudHostLeases'>): void {
+    for (const lease of [...active.cloudHostLeases].reverse()) this.host.cloudConversationHosts?.unregister(lease);
     for (const taskId of [...active.scheduleTaskIds].reverse()) this.host.taskRunner?.unregister(taskId);
     for (const nodeId of [...active.limbNodeIds].reverse()) this.host.limbRegistry?.deregister(nodeId);
   }
@@ -298,37 +320,4 @@ function limbResult(value: unknown, method: string) {
     throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', `Limb action ${method} returned an invalid result`);
   }
   return value as { success: boolean; data?: unknown; error?: string; artifactUri?: string };
-}
-
-function scheduleTask(
-  admission: PluginRuntimeAdmission,
-  contribution: ScheduleContribution,
-  invoke: InvokePluginAction,
-): TaskSpec_P1 {
-  const taskId = `plugin:${admission.packageRecord.pluginId}:schedule:${contribution.id}`;
-  const params = contribution.action.params ?? {};
-  return {
-    id: taskId,
-    profile: 'poller',
-    trigger:
-      contribution.schedule.kind === 'interval'
-        ? { type: 'interval', ms: contribution.schedule.everyMs }
-        : { type: 'cron', expression: contribution.schedule.expression },
-    admission: {
-      gate: async () => ({
-        run: true,
-        workItems: [{ signal: structuredClone(params), subjectKey: contribution.id }],
-      }),
-    },
-    run: {
-      overlap: contribution.policy.overlap,
-      timeoutMs: contribution.policy.timeoutMs,
-      execute: async (signal) => {
-        await invoke(admission.instance.pluginInstanceId, contribution.action.method, signal);
-      },
-    },
-    state: { runLedger: 'sqlite' },
-    outcome: { whenNoSignal: 'drop' },
-    enabled: () => true,
-  };
 }
