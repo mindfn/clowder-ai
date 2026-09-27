@@ -20,6 +20,7 @@ export function PluginManagerOperationField({
     name: field.key,
     label: field.label,
     actions: field.actions,
+    ...(field.rowActions === undefined ? {} : { rowActions: field.rowActions }),
     ...(field.operationState?.currentAction === undefined ? {} : { currentAction: field.operationState.currentAction }),
     ...(field.operationState?.lastResult === undefined ? {} : { lastResult: field.operationState.lastResult }),
     ...(field.operationState?.updatedAt === undefined ? {} : { updatedAt: field.operationState.updatedAt }),

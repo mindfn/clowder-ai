@@ -5,6 +5,7 @@ import { apiFetch } from '@/utils/api-client';
 import type { PlatformActionDef } from '../../HubConfigIcons';
 import type { ActionRendererProps } from './ActionRenderer';
 import { type ActionApiResult, actionRequest } from './ActionRendererState';
+import { useActionConfirmation } from './actionConfirmation';
 
 interface AuthorizationStatus {
   armed: boolean;
@@ -101,8 +102,11 @@ export function LiveStatusActionRenderer({
     };
   }, [status, refresh]);
 
+  const confirmAction = useActionConfirmation();
   const perform = useCallback(
-    async (actionId: string) => {
+    async (action: PlatformActionDef) => {
+      if (!(await confirmAction(action.label, action.confirm))) return;
+      const actionId = action.id;
       setBusy(true);
       setError(null);
       const result = await run(actionId);
@@ -114,7 +118,7 @@ export function LiveStatusActionRenderer({
       }
       setBusy(false);
     },
-    [onStatusChange, refresh, run],
+    [confirmAction, onStatusChange, refresh, run],
   );
 
   const armed = status?.armed && status.expiresAt !== undefined && status.expiresAt > now;
@@ -136,7 +140,7 @@ export function LiveStatusActionRenderer({
       <button
         type="button"
         disabled={busy || status === null}
-        onClick={() => void perform(armed ? revokeAction.id : armAction.id)}
+        onClick={() => void perform(armed ? revokeAction : armAction)}
         data-testid={armed ? `${target.id}-disconnect` : `${target.id}-action-${armAction.id}`}
         className="rounded-lg px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] disabled:opacity-50"
         style={{ backgroundColor: themeColor ?? 'var(--conn-blue-text)' }}

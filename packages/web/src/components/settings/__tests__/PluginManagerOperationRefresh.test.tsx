@@ -2,7 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/components/useConfirm', () => ({ useConfirm: () => vi.fn() }));
+vi.mock('@/components/useConfirm', () => ({ useConfirm: () => vi.fn(), useOptionalConfirm: () => vi.fn() }));
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/utils/api-client';

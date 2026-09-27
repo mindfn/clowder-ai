@@ -17,6 +17,7 @@ import { ActionPanelBody, type ActionPhase, ConnectedBanner, type ResultState } 
 import {
   type ActionApiResult,
   type ActionRendererTarget,
+  actionCallFailure,
   actionRequest,
   classifyPollResult,
   deriveActionState,
@@ -24,7 +25,9 @@ import {
   phaseForAction,
   toResultState,
 } from './ActionRendererState';
+import { useActionConfirmation } from './actionConfirmation';
 import { LiveStatusActionRenderer } from './LiveStatusActionRenderer';
+import { OperationRowsRenderer } from './OperationRowsRenderer';
 
 export interface ActionRendererProps {
   target: ActionRendererTarget;
@@ -44,6 +47,9 @@ export interface ActionRendererProps {
 
 export function ActionRenderer(props: ActionRendererProps) {
   const actions = props.operation.actions;
+  // F202 W2-3 h1: an operation that lists rows is rendered as a row list with per-row actions.
+  const listAction = actions.find((action) => action.resultRender === 'rows');
+  if (listAction) return <OperationRowsRenderer {...props} listAction={listAction} />;
   const firstAction = actions[0];
   const revokeAction = actions.find(
     (action) => action.render === 'button' && action.next === firstAction?.id && firstAction.next === action.id,
@@ -60,14 +66,6 @@ export function ActionRenderer(props: ActionRendererProps) {
     );
   }
   return <SequencedActionRenderer {...props} />;
-}
-
-function buttonActionFailure(result: ActionApiResult): string | null {
-  const data = result.data;
-  const failedStatus = data !== null && typeof data === 'object' && 'status' in data && data.status === 'error';
-  if (result.advance !== false && !failedStatus) return null;
-  const message = data !== null && typeof data === 'object' && 'message' in data ? data.message : undefined;
-  return typeof message === 'string' && message.length > 0 ? message : (result.label ?? 'Action failed');
 }
 
 function SequencedActionRenderer({
@@ -92,6 +90,7 @@ function SequencedActionRenderer({
   const expireRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortedRef = useRef(false);
   const autoStartedRef = useRef(false);
+  const confirmAction = useActionConfirmation();
 
   const stopTimers = useCallback(() => {
     if (pollRef.current) {
@@ -252,19 +251,13 @@ function SequencedActionRenderer({
   const handleAction = useCallback(
     async (actionId: string) => {
       const action = actions.find((a) => a.id === actionId);
-      if (!action) return;
+      if (!action || !(await confirmAction(action.label, action.confirm))) return;
 
       setPhase('loading');
       setErrorMsg(null);
       const result = await executeAction(actionId);
-
-      if (!result || !result.ok) {
-        setPhase('error');
-        setErrorMsg(result?.label ?? 'Network error');
-        return;
-      }
-      const failure = buttonActionFailure(result);
-      if (failure !== null) {
+      const failure = actionCallFailure(result);
+      if (!result || failure !== null) {
         setPhase('error');
         setErrorMsg(failure);
         return;
@@ -283,7 +276,7 @@ function SequencedActionRenderer({
         setPhase('result');
       }
     },
-    [actions, advanceTo, executeAction, startPolling],
+    [actions, advanceTo, confirmAction, executeAction, startPolling],
   );
 
   const handleDisconnect = useCallback(async () => {

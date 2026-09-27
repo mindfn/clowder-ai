@@ -320,6 +320,35 @@ export interface PluginManagerConfigField {
   };
 }
 
+/**
+ * The data of a `rows` operation result, as the Host passes it on after validating it against the
+ * declaring operation (F202 W2-3 h1). Mirrors the contract's OperationRows.
+ */
+export interface PluginOperationRows {
+  /** At most 200; keys are unique within the result. */
+  rows: PluginOperationRow[];
+  /** Plain text shown when there are no rows. */
+  empty?: string;
+}
+
+export interface PluginOperationRow {
+  key: string;
+  label: string;
+  detail?: string;
+  /** At most 4. */
+  actions?: PluginOperationRowAction[];
+}
+
+export interface PluginOperationRowAction {
+  /** The id of one of the operation's `rowActions`. */
+  action: string;
+  label?: string;
+  /** Sent as the action's input when the owner invokes it from this row. */
+  input: Record<string, string | number | boolean>;
+  /** Plain text; replaces the declared confirmation wording, or asks where none is declared. */
+  confirm?: string;
+}
+
 /** Compact list/search projection. All lifecycle axes remain independent. */
 export interface PluginManagerListItem {
   pluginId: string;
