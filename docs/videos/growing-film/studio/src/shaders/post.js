@@ -99,7 +99,7 @@ uniform sampler2D uScene, uBloom, uRays;
 uniform vec2 uRes; uniform float uTime;
 uniform float uExposure, uBloomAmt, uRaysAmt, uVignette, uGrain, uSat, uContrast, uFade, uFlash, uCA;
 uniform vec3 uLift, uGain, uShadowTint, uHighTint;
-uniform float uGamma;
+uniform float uGamma, uDebug;
 out vec4 o;
 vec3 aces(vec3 x) {
   const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
@@ -113,6 +113,7 @@ void main() {
   col.r = texture(uScene, uv - ca).r;
   col.g = texture(uScene, uv).g;
   col.b = texture(uScene, uv + ca).b;
+  if (uDebug > 0.5) { o = vec4(sqrt(texture(uBloom, uv).rgb * 8.0), 1.0); return; }
   col += texture(uBloom, uv).rgb * uBloomAmt;
   col += texture(uRays, uv).rgb * uRaysAmt;
   col *= uExposure;

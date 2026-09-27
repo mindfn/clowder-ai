@@ -34,14 +34,15 @@ float vnoise(vec2 p) {
   float a = hash12(i), b = hash12(i + vec2(1, 0)), c = hash12(i + vec2(0, 1)), d = hash12(i + vec2(1, 1));
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
+const mat2 OCT = mat2(1.6, 1.2, -1.2, 1.6); // rotate + scale each octave: no grid artefacts
 float fbm(vec2 p) {
   float s = 0.0, a = 0.5;
-  for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + vec2(17.1, 9.3); a *= 0.5; }
+  for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = OCT * p + vec2(17.1, 9.3); a *= 0.5; }
   return s;
 }
 float fbm3(vec2 p) {
   float s = 0.0, a = 0.5;
-  for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = p * 2.07 + vec2(11.7, 3.1); a *= 0.5; }
+  for (int i = 0; i < 3; i++) { s += a * vnoise(p); p = OCT * p + vec2(11.7, 3.1); a *= 0.5; }
   return s;
 }
 // cellular: x = distance to nearest, y = distance to edge (second - first)

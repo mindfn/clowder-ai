@@ -632,6 +632,7 @@ export class Renderer {
       uShadowTint: post.shadowTint ?? [0, 0, 0],
       uHighTint: post.highTint ?? [0, 0, 0],
       uGamma: post.gamma ?? 1,
+      uDebug: post.debug ?? 0,
     });
     this.full();
     // captions on top, in display space

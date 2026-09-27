@@ -39,8 +39,12 @@ async function boot() {
   if (q.get('cam')) ctx.camOverride = q.get('cam').split(',').map(Number);
   const director = new Director(ctx);
   const draw = director.draw;
+  const dbg = q.get('dbg') || '';
   const frame = (t) => {
     const S = director.scene(t);
+    if (dbg.includes('nobloom')) S.post.bloom = 0;
+    if (dbg.includes('bloomonly')) S.post.debug = 1;
+    if (dbg.includes('noparts')) for (const k in S.parts) S.parts[k].n = 0;
     R.render(S, draw);
     return S;
   };

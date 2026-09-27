@@ -164,7 +164,7 @@ export function act2(S, t, ctx) {
     ragdoll: [[24, 'work'], [27.85, 'alert'], [28.05, 'carry'], [28.7, 'work'], [32.95, 'alert'], [33.0, 'carry'], [33.8, 'think'], [34.6, 'look-up'], [36.0, 'startle'], [36.9, 'alert'], [37.8, 'look-up']],
     maine: [[24, 'think'], [25.55, 'alert'], [25.75, 'carry'], [26.7, 'work'], [31.85, 'alert'], [32.0, 'carry'], [32.7, 'think'], [34.2, 'yawn'], [36.0, 'startle'], [36.9, 'alert'], [37.8, 'look-up']],
   };
-  names.forEach((cat, i) => {
+  if (t < 40.5) names.forEach((cat, i) => {
     const p = poseAt(seqs[cat], t);
     const b = breathe(t, i * 1.7);
     const q = pop(t, p.since, 0.08);
@@ -178,10 +178,11 @@ export function act2(S, t, ctx) {
   if (t < 36.0) names.forEach((cat, i) => S.glass.push(glassState(cat, t, i)));
 
   // the person
-  const per = personAt(t);
-  const r = rig(per.pose, per.x, hill(per.x), { facing: per.facing, t, scale: 0.86 });
-  S.humans.push({ ...r, body: [0.012, 0.012, 0.016], rimCol: L.rimCol });
-  ctx._hand = r.hand;
+  if (t < 36.0) {
+    const per = personAt(t);
+    const r = rig(per.pose, per.x, hill(per.x), { facing: per.facing, t, scale: 0.86 });
+    S.humans.push({ ...r, body: [0.012, 0.012, 0.016], rimCol: L.rimCol });
+  }
 
   // paper planes
   for (const [t0, t1, from, to, arc] of FLIGHTS) {

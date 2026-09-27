@@ -74,6 +74,7 @@ export function fxAt(S, t, ctx) {
   grass(S.parts.midBack, t, { x0: S.cam.x - S.cam.V * 1.2, x1: S.cam.x + S.cam.V * 1.2, ground: hill, z: -0.05, density: Math.min(40, 90 / Math.max(S.cam.V, 1) * 4), height: 0.32, col: gcol, seed: 4, wind: t > 18 && t < 24 ? 2 : 0.7 });
   if (ctx.moreFx) for (const f of ctx.moreFx) f(S, t, ctx);
   captions(S, t, ctx);
+  if (ctx.overlayFx) for (const f of ctx.overlayFx) f(S, t, ctx);
   // fades
   S.post.fade = Math.max(1 - ramp(t, 0.0, 1.8, E.inOutSine), ramp(t, 120.2, 122.2, E.inOutSine));
   // the break: a white flash, then a breath of exposure

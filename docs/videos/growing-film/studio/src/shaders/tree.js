@@ -242,18 +242,18 @@ void main() {
   float edge = smoothstep(R - 0.12, R, r);
   col += cR * edge * max(h, 0.0) * 0.35 * (1.0 + uBacklit);
   col += (cL * 1.6 + vec3(0.3, 0.28, 0.18)) * front * (0.5 + 0.5 * (1.0 - cellD));
-  // blossoms
+  // blossoms: sparse glowing points in the leaf cells, strongest on the outer edge
   float bl = vB.z * uBlossom;
   if (bl > 0.0) {
-    vec2 cell = floor(vW * uLeafScale * 0.55);
+    vec2 cell = floor(vW * uLeafScale * 0.7);
     float hsh = hash12(cell * 1.7 + 3.0);
-    vec2 cp = (cell + 0.25 + 0.5 * hash22(cell)) / (uLeafScale * 0.55);
-    float on = step(1.0 - bl * 0.5, hsh);
-    float sz = 0.09 + uPx * 1.4;
+    vec2 cp = (cell + 0.25 + 0.5 * hash22(cell)) / (uLeafScale * 0.7);
+    float on = step(1.0 - bl * 0.22 * (0.5 + 0.8 * edge + 0.5 * max(h, 0.0)), hsh);
+    float sz = 0.06 + uPx * 1.1;
     float d0 = exp(-dot(vW - cp, vW - cp) / (sz * sz));
-    float tw = 0.6 + 0.4 * sin(uTime * (1.5 + 3.0 * hsh) + hsh * 40.0);
-    col += mix(uBlossomCol, uBlossomCol2, fract(hsh * 7.3)) * d0 * on * tw * 4.0;
-    col += uBlossomCol * bl * 0.08;
+    float tw = 0.65 + 0.35 * sin(uTime * (1.5 + 3.0 * hsh) + hsh * 40.0);
+    col += mix(uBlossomCol, uBlossomCol2, fract(hsh * 7.3)) * d0 * on * tw * 1.6;
+    col += uBlossomCol * bl * 0.012;
   }
   float al = a * vB.w * uFade;
   o = vec4(col * al, al);

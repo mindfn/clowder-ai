@@ -92,7 +92,7 @@ server.listen(0, '127.0.0.1', () => {
   const port = server.address().port;
   let query;
   if (mode === 'stills') {
-    query = `stills=${args[1]}&port=${port}${opt('cam') ? `&cam=${opt('cam')}` : ''}`;
+    query = `stills=${args[1]}&port=${port}${opt('cam') ? `&cam=${opt('cam')}` : ''}${opt('dbg') ? `&dbg=${opt('dbg')}` : ''}`;
   } else if (mode === 'video') {
     const fps = Number(opt('fps', 60));
     const from = Number(opt('from', 0));

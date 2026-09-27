@@ -73,7 +73,7 @@ export function treeAt(S, t, ctx) {
 
   // ---- roots (always evaluated; lit from the streams onward)
   evaluate(roots, RF, girth);
-  const glowFront = (t - 39.2) * 11;
+  const glowFront = (t - 39.7) * 12;
   S.roots.push({
     tree: roots,
     kind: 'roots',
@@ -92,8 +92,8 @@ export function treeAt(S, t, ctx) {
     glow: (p) => {
       const D = p[3];
       let g = 0;
-      if (t > 39.2) g = Math.max(g, smoothstep(glowFront, glowFront - 3, D) * (0.55 + 0.45 * smoothstep(40, 44, t)));
-      if (t > 58) g *= 0.35 + 0.65 * (1 - smoothstep(58, 64, t)) + 0.25 * smoothstep(96, 100, t);
+      if (t > 39.7) g = Math.max(g, smoothstep(glowFront, glowFront - 3, D) * (0.55 + 0.45 * smoothstep(40.5, 44, t)));
+      if (t > 52) g *= 0.12 + 0.88 * (1 - smoothstep(52, 57, t)) + 0.5 * smoothstep(97, 101, t);
       return g;
     },
     pts: ctx.seedLight ? [ctx.seedLight(t)] : [],

@@ -64,8 +64,8 @@ void main() {
     float spec = pow(clamp(dot(reflect(-normalize(vec3(-0.4, 0.6, 0.7)), n), vec3(0, 0, 1)), 0.0, 1.0), 24.0);
     float inner = exp(-r2 * 1.6) * (0.8 + 0.4 * vC.w);
     float fres = pow(1.0 - n.z, 2.0);
-    vec3 col = vCol.rgb * (0.35 + 0.65 * lam) * 0.9 + vCol.rgb * inner * 2.2 + vec3(1.0) * spec * 1.4 + vCol.rgb * fres * 1.2;
-    float halo = exp(-max(rr - 1.0, 0.0) * 1.7) * (1.0 - body) * 0.9 * (0.6 + 0.4 * vC.w);
+    vec3 col = vCol.rgb * (0.35 + 0.65 * lam) * 0.9 + vCol.rgb * inner * 1.3 + vec3(1.0) * spec * 1.1 + vCol.rgb * fres * 0.8;
+    float halo = exp(-max(rr - 1.0, 0.0) * 1.7) * (1.0 - body) * 0.9 * (0.6 + 0.4 * vC.w) * (1.0 - smoothstep(2.4, 3.1, rr));
     o = vec4(col * body * vCol.a + vCol.rgb * halo * vCol.a, body * vCol.a);
   } else if (k == 6.0) {          // paper lantern; param = light (0 dark .. 1 lit)
     vec2 p = q;
@@ -78,7 +78,8 @@ void main() {
     paper *= 0.82 + 0.18 * ribs;
     vec3 cap = vec3(0.06, 0.04, 0.03);
     vec3 col = mix(paper, cap, caps);
-    float halo = exp(-max(sqrt(r2) - 0.9, 0.0) * 1.3) * (1.0 - a) * lit;
+    float rr6 = sqrt(r2);
+    float halo = exp(-max(rr6 - 0.9, 0.0) * 1.6) * (1.0 - a) * lit * (1.0 - smoothstep(2.4, 3.1, rr6));
     o = vec4(col * a * vCol.a + vCol.rgb * halo * 0.9 * vCol.a, a * vCol.a);
   } else if (k == 7.0) {          // paper plane (top-down dart, nose to +x)
     vec2 p = q;
@@ -181,10 +182,10 @@ void main() {
   // lit rings glow
   float litK = step(k + 1.0, uLit + 0.001);
   float fresh = exp(-max(uLit - (k + 1.0), 0.0) * 1.8) * litK;
-  float line = exp(-pow((f - 0.86) / 0.05, 2.0));
+  float line = exp(-pow((f - 0.86) / 0.06, 2.0)) + 0.35 * exp(-pow((f - 0.86) / 0.18, 2.0));
   vec3 g = mix(uGlow, uGlow2, 0.5 + 0.5 * sin(k * 1.7));
-  col += g * line * litK * (0.8 + 2.2 * fresh);
-  col += g * 0.08 * litK;
+  col += g * line * litK * (0.7 + 2.6 * fresh);
+  col += g * 0.06 * litK;
   // inscription on lit rings
   if (litK > 0.0 && k < uTextRows && k >= 1.0) {
     float band = smoothstep(0.18, 0.26, f) * (1.0 - smoothstep(0.66, 0.74, f));

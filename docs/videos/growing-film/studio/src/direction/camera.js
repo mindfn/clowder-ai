@@ -28,11 +28,32 @@ const PATH = [
   [45.75, [0.0, -0.8, 3.2], E.inOutCubic],
   [50.25, [0.0, -0.8, 3.0], E.linear],
   [51.0, [0.0, -3.0, 13], E.outCubic],
-  [54.0, [2.5, 8.0, 21], E.inOutCubic],
+  [54.0, [5.5, 7.6, 20], E.inOutCubic],
   // act 4: trust
-  [57.0, [4.0, 7.2, 19], E.inOutSine],
-  [60.0, [6.5, 9.0, 19], E.inOutSine],
-  [62.5, [0, 0, 0], null], // placeholder replaced at runtime (limb-relative shots)
+  [57.0, [8.0, 8.0, 20], E.inOutSine],
+  [60.0, [11.2, 11.4, 13.5], E.inOutCubic],
+  [64.5, [12.4, 12.9, 11.2], E.inOutSine],
+  [66.0, [15.8, 13.4, 7.6], E.inOutCubic],
+  [69.0, [15.0, 12.6, 9.6], E.inOutSine],
+  [72.0, [15.8, 13.2, 9.2], E.inOutSine],
+  [73.5, [14.6, 15.0, 11.5], E.inOutSine],
+  [75.0, [6.0, 24.0, 36], E.inOutCubic],
+  // act 5: fruit — Maine Coon, Ragdoll, Siamese, then the whole tree
+  [76.6, [15.4, 18.3, 10.2], E.inOutCubic],
+  [81.5, [15.2, 18.5, 9.4], E.inOutSine],
+  [83.2, [10.6, 18.2, 10.0], E.inOutCubic],
+  [87.5, [10.4, 18.4, 9.2], E.inOutSine],
+  [89.2, [5.4, 17.8, 10.0], E.inOutCubic],
+  [92.6, [5.2, 18.0, 9.2], E.inOutSine],
+  [96.0, [4.0, 25.0, 64], E.inOutCubic],
+  // act 6: fall, sprout, forest, stars
+  [97.3, [14.0, 8.0, 26], E.inOutSine],
+  [98.6, [26.0, 3.2, 12], E.inOutCubic],
+  [100.2, [24.0, 5.0, 17], E.inOutSine],
+  [105.0, [4.0, 26.0, 150], E.inOutCubic],
+  [108.0, [0.0, 90.0, 190], E.inOutSine],
+  [111.0, [0.0, 200.0, 220], E.inOutCubic],
+  [122.5, [0.0, 214.0, 220], E.linear],
 ];
 
 export function cameraAt(S, t, ctx) {
