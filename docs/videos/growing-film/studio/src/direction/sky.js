@@ -179,7 +179,7 @@ export function skyAt(S, t, ctx) {
     const top = mix3(look.ridge.dark, hz, haze);
     const bot = mix3(look.ridge.dark, hz, haze * 0.8);
     const mist = mix3(hz, look.ridge.dark, 0.25 + 0.5 * r.k).map((v, i) => v * (1.05 - 0.35 * r.k));
-    return { ...r, colTop: top, colBot: bot, mist, rim: 1, rimCol: look.ridge.rim.map((v) => v * (0.3 + 0.7 * r.k)), alpha: 1, lights: 0 };
+    return { ...r, colTop: top, colBot: bot, mist, rim: 0.45, rimCol: look.ridge.rim.map((v) => v * (0.3 + 0.7 * r.k)), alpha: 1, lights: 0 };
   });
   S.light = look.light;
   S.ground = {

@@ -195,7 +195,7 @@ void main() {
   float peb = (1.0 - smoothstep(0.2, 0.33, v.x)) * step(0.86, cellH) * smoothstep(0.25, 1.4, dd);
   float fib = smoothstep(0.9, 1.0, vnoise(vec2(p.x * 7.0, p.y * 1.3))) * (1.0 - smoothstep(0.0, 1.2, dd)) * fine;
   float T = (0.7 + 0.6 * band * uStrata) * (1.0 - lines * 0.3) * (0.75 + 0.45 * g1) * (1.0 + (0.45 * (g2 - 0.5) + 0.2 * (g3 - 0.5)) * fine) * (1.0 - fib * 0.5);
-  T = mix(T, T * 2.4, peb * 0.55);
+  T = mix(T, T * 1.7, peb * 0.5);
   vec3 col = mix(uSoilTop, uSoilDeep, smoothstep(0.0, 12.0, dd)) * T * uCut;
   // the lip of the cut, catching the sky
   col += uEdge * (exp(-dd / (px * 1.5 + 0.02)) * 1.1 + 0.25 * exp(-dd / 0.3));

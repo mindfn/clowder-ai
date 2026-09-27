@@ -57,6 +57,32 @@ vec2 voronoi(vec2 p) {
   }
   return vec2(sqrt(d1), sqrt(d2) - sqrt(d1));
 }
+// cellular with the nearest cell's id: x = d1, y = d2 - d1, z = id hash
+vec3 voronoiId(vec2 p) {
+  vec2 n = floor(p), f = fract(p);
+  float d1 = 8.0, d2 = 8.0; vec2 best = vec2(0.0);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j));
+    vec2 o = hash22(n + g);
+    vec2 r = g + o - f;
+    float d = dot(r, r);
+    if (d < d1) { d2 = d1; d1 = d; best = n + g; } else if (d < d2) { d2 = d; }
+  }
+  return vec3(sqrt(d1), sqrt(d2) - sqrt(d1), hash12(best + 0.37));
+}
+// cellular for foliage: xy = offset from pixel to the nearest centre, z = id, w = edge distance
+vec4 voronoiLeaf(vec2 p) {
+  vec2 n = floor(p), f = fract(p);
+  float d1 = 8.0, d2 = 8.0; vec2 best = vec2(0.0), off = vec2(0.0);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j));
+    vec2 o = hash22(n + g);
+    vec2 r = g + o - f;
+    float d = dot(r, r);
+    if (d < d1) { d2 = d1; d1 = d; best = n + g; off = r; } else if (d < d2) { d2 = d; }
+  }
+  return vec4(off, hash12(best + 0.37), sqrt(d2) - sqrt(d1));
+}
 // hill profile shared with JS (scene/ground.js) — keep identical
 float hillRaw(float x) {
   return 1.1 * exp(-x * x / 1800.0) + 0.35 * sin(x * 0.045 + 1.3) + 0.18 * sin(x * 0.11 + 0.4) + 0.06 * sin(x * 0.37 + 2.0) - 0.00009 * x * x;

@@ -5,7 +5,7 @@
 
 import { createGL, Program, Target, fullscreen, Instanced, Mesh, FloatWriter, blend, imageTexture } from './gl.js';
 import { FULL_VS, SKY_FS, RIDGE_FS, GROUND_FS } from './shaders/env.js';
-import { BRANCH_VS, BRANCH_FS, CANOPY_DENSITY_VS, CANOPY_DENSITY_FS, CANOPY_SHADE_FS } from './shaders/tree.js';
+import { BRANCH_VS, BRANCH_FS, CANOPY_DENSITY_VS, CANOPY_DENSITY_FS, CANOPY_SHADE_FS, CLUMP_VS, CLUMP_FS } from './shaders/tree.js';
 import { SPRITE_VS, SPRITE_FS, HUMAN_VS, HUMAN_FS, GLASS_VS, GLASS_FS, SHARD_VS, SHARD_FS } from './shaders/actors.js';
 import { PART_VS, PART_FS, RIBBON_VS, RIBBON_FS, TEXT_VS, TEXT_FS, RINGS_FS } from './shaders/fx.js';
 import { DOWN_FS, UP_FS, COPY_FS, COMPOSITE_FS, BRIGHT_FS, RAYSRC_FS, GODRAYS_FS, FINAL_FS } from './shaders/post.js';
@@ -28,6 +28,7 @@ export class Renderer {
       branch: P(BRANCH_VS, BRANCH_FS, 'branch'),
       cdens: P(CANOPY_DENSITY_VS, CANOPY_DENSITY_FS, 'canopyDensity'),
       cshade: P(FULL_VS, CANOPY_SHADE_FS, 'canopyShade'),
+      clump: P(CLUMP_VS, CLUMP_FS, 'clump'),
       sprite: P(SPRITE_VS, SPRITE_FS, 'sprite'),
       human: P(HUMAN_VS, HUMAN_FS, 'human'),
       glass: P(GLASS_VS, GLASS_FS, 'glass'),
@@ -47,7 +48,7 @@ export class Renderer {
     };
     this.full = fullscreen(gl);
     this.quad1 = new Instanced(gl, 0); // plain quad (per-draw uniforms)
-    this.clumps = new Instanced(gl, 2);
+    this.clumps = new Instanced(gl, 3);
     this.parts = new Instanced(gl, 3);
     this.branchMesh = new Mesh(gl, [3, 4, 4]);
     this.ribbonMesh = new Mesh(gl, [3, 4, 4]);
@@ -258,29 +259,25 @@ export class Renderer {
     this.branchMesh.draw(w.a, w.n);
   }
 
-  /** Metaball canopy: density into `dens`, then shade into the current target. */
-  drawCanopy(S, c, L, target) {
+  /** Painterly canopy: leaf-edged clump stamps in painter's order. */
+  drawCanopy(S, c, L) {
     const gl = this.gl;
     if (!c.clumps || !c.clumps.length) return;
-    this.t.dens.bind([0, 0, 0, 0]);
-    blend.add(gl);
-    const pd = this.p.cdens.use();
-    this.common(pd, S);
     const n = c.clumps.length;
-    const a = new Float32Array(n * 8);
-    for (let i = 0; i < n; i++) {
+    const order = c.clumps.map((k, i) => [k.expo * 10 + k.y * 0.015 + k.hue * 0.3, i]).sort((a, b) => a[0] - b[0]);
+    const a = new Float32Array(n * 12);
+    let j = 0;
+    for (const [, i] of order) {
       const k = c.clumps[i];
-      a.set([k.x, k.y, k.r, c.z ?? 0, k.expo, k.hue, k.blossom ?? 0, k.alpha ?? 1], i * 8);
+      a.set([k.x, k.y, k.r, c.z ?? 0, k.expo, k.hue, k.blossom ?? 0, k.alpha ?? 1, k.hue * 7.13 + i * 0.01, 0, 0, 0], j * 12);
+      j++;
     }
-    this.clumps.draw(a, n);
-    target.bind();
     blend.premul(gl);
-    const ps = this.p.cshade.use();
-    this.common(ps, S);
+    const p = this.p.clump.use();
+    this.common(p, S);
     const pal = c.pal;
     const pal2 = c.pal2 ?? pal;
-    ps.use({
-      uDensity: this.t.dens,
+    p.use({
       uLit: pal.lit,
       uMid: pal.mid,
       uShadow: pal.shadow,
@@ -291,26 +288,19 @@ export class Renderer {
       uRim2: pal2.rim,
       uFlipC: c.flipC ?? [0, 0],
       uFlipR: c.flipR ?? -10,
+      uFlipGlow: c.flipGlow ?? 0,
       uKeyDir: L.keyDir,
       uKeyCol: L.keyCol,
       uAmbient: L.ambient,
-      uThresh: c.thresh ?? 0.42,
-      uBacklit: c.backlit ?? 0,
       uPx: this.pxAt(c.z ?? 0),
       uLeafScale: c.leafScale ?? 2.2,
+      uBacklit: c.backlit ?? 0,
       uBlossom: c.blossom ?? 0,
       uBlossomCol: c.blossomCol ?? [1, 0.8, 0.6],
       uBlossomCol2: c.blossomCol2 ?? [1, 0.6, 0.8],
       uFade: c.alpha ?? 1,
-      uPt0: c.pt ? [c.pt.x, c.pt.y, c.pt.r, c.pt.i] : [0, 0, 1, 0],
-      uPt0Col: c.pt ? c.pt.col : [0, 0, 0],
     });
-    if (c.scissor) {
-      gl.enable(gl.SCISSOR_TEST);
-      gl.scissor(...c.scissor);
-    }
-    this.full();
-    gl.disable(gl.SCISSOR_TEST);
+    this.clumps.draw(a, n);
   }
 
   drawSprite(S, s, L) {

@@ -36,6 +36,7 @@ async function boot() {
   });
   const ctx = { timeline, cues: timeline.cues, cats, world, captions, seedLight, renderer: R };
   await setupStaging(ctx);
+  if (q.get('cam')) ctx.camOverride = q.get('cam').split(',').map(Number);
   const director = new Director(ctx);
   const draw = director.draw;
   const frame = (t) => {

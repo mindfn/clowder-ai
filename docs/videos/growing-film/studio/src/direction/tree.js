@@ -8,13 +8,19 @@ import { K } from '../scene/particles.js';
 import { CAT_GLOW } from '../scene/cats.js';
 
 const E = ease;
-// crown growth front (path distance from the collar)
+// Growth = reveal front along the skeleton (unscaled path distance) + overall
+// scale, so the young tree is a whole small tree rather than a bare whip.
 // prettier-ignore
 const CROWN_F = [
-  [12.0, 0], [13.1, 0.62, E.outBack], [18.0, 1.25, E.inOutSine],
-  [19.5, 5.5, E.inQuad], [21.0, 17, E.linear], [22.5, 30, E.linear], [24.0, 42, E.outQuad],
-  [36.0, 62, E.inOutSine], [45.0, 80, E.inOutSine], [54.0, 92, E.outCubic],
+  [12.0, 0], [13.1, 12, E.outBack], [18.0, 17, E.inOutSine],
+  [19.5, 32, E.inQuad], [21.0, 52, E.linear], [22.5, 70, E.linear], [24.0, 84, E.outQuad], [30.0, 92, E.inOutSine],
 ];
+// prettier-ignore
+const CROWN_S = [
+  [12.0, 0.045], [18.0, 0.072, E.inOutSine], [19.5, 0.13, E.inQuad], [21.0, 0.22, E.linear],
+  [22.5, 0.33, E.linear], [24.0, 0.42, E.outQuad], [36.0, 0.6, E.inOutSine], [45.0, 0.8, E.inOutSine], [54.0, 1.0, E.outCubic],
+];
+export const crownScale = (t) => keys(CROWN_S, t);
 // prettier-ignore
 const ROOT_F = [
   [18.0, 0], [24.0, 12, E.inOutSine],
@@ -38,7 +44,7 @@ function foliageLook(t) {
     if (t >= ft && t < ft + 0.75) {
       pal = LEAF[a];
       pal2 = LEAF[b];
-      flipR = lerp(-4, 75, ramp(t, ft, ft + 0.7, E.inOutSine));
+      flipR = lerp(-4, 34, ramp(t, ft, ft + 0.7, E.inOutSine));
     } else if (t >= ft + 0.75) {
       pal = LEAF[b];
       pal2 = pal;
@@ -59,16 +65,19 @@ export function treeAt(S, t, ctx) {
   const { crown, roots } = ctx.world;
   const F = crownFront(t);
   const RF = rootFront(t);
+  const sc = crownScale(t);
+  const girth = 0.55 + 0.45 * smoothstep(0.1, 1.0, sc);
   const L = S.light;
-  const windK = t > 18 && t < 24.5 ? 1.8 : t > 36 && t < 40 ? 1.2 : 0.7;
+  const windK = (t > 18 && t < 24.5 ? 1.8 : t > 36 && t < 40 ? 1.2 : 0.7) / Math.max(0.3, 1);
   const sway = makeSway(t, crown, windK);
 
   // ---- roots (always evaluated; lit from the streams onward)
-  evaluate(roots, RF, 1);
+  evaluate(roots, RF, girth);
   const glowFront = (t - 39.2) * 11;
   S.roots.push({
     tree: roots,
     kind: 'roots',
+    scale: sc,
     bark: [0.04, 0.028, 0.024],
     barkDark: [0.015, 0.011, 0.01],
     barkLit: [0.08, 0.06, 0.05],
@@ -90,15 +99,16 @@ export function treeAt(S, t, ctx) {
   });
 
   // ---- crown
-  evaluate(crown, F, 1);
-  if (F < 6) {
+  evaluate(crown, F, girth);
+  if (sc < 0.12) {
     // a sprout is a whisker, not a pencil
-    const m = lerp(0.35, 1, smoothstep(1.2, 6, F));
+    const m = lerp(0.3, 1, smoothstep(0.05, 0.12, sc));
     for (let i = 0; i < crown.n; i++) crown.rad[i] *= m;
   }
-  const veins = smoothstep(43.5, 47, t) * 0.9 * (1 - smoothstep(55, 62, t) * 0.6) + smoothstep(74, 78, t) * 0.5 * (1 - smoothstep(104, 110, t));
+  const veins = smoothstep(42, 45, t) * (1 - smoothstep(51, 54, t)) * 0.8 + smoothstep(74, 78, t) * 0.45 * (1 - smoothstep(104, 110, t));
   S.crowns.push({
     tree: crown,
+    scale: sc,
     sway,
     bark: [0.13, 0.085, 0.06],
     barkDark: [0.045, 0.032, 0.026],
@@ -113,28 +123,31 @@ export function treeAt(S, t, ctx) {
 
   // ---- foliage
   const fl = foliageLook(t);
-  if (F > 1.6) {
-    const clumps = canopyClumps(crown, F, { keyDir: L.keyDir, sway, blossom: 1 });
+  if (F > 15.8) {
+    const worldR = 2.6 * Math.pow(sc, 0.62);
+    const clumps = canopyClumps(crown, F, { keyDir: L.keyDir, sway, blossom: 1, scale: sc, size: worldR / sc, maxL: 24 });
     const blossom = smoothstep(75, 79.5, t) * (1 - smoothstep(112, 118, t) * 0.5);
     S.canopies.push({
       clumps,
       pal: fl.pal,
       pal2: fl.pal2,
-      flipC: [0, 18],
+      flipC: [0, 18 * sc],
       flipR: fl.flipR,
       thresh: 0.42,
       backlit: t > 50 && t < 68 ? 0.6 * smoothstep(50, 55, t) : 0.1,
-      leafScale: 2.3,
+      leafScale: 2.4,
       blossom,
       blossomCol: [2.2, 1.6, 0.9],
       blossomCol2: [1.6, 1.1, 2.2],
-      alpha: smoothstep(1.6, 3.5, F),
+      alpha: smoothstep(15.8, 19, F),
+      flipGlow: fl.flipR > -5 ? 1 : 0,
     });
   }
 
   // ---- the sprout's seed leaves
   if (F > 0.05 && t < 20) {
-    const tip = tipOf(crown);
+    const tip0 = tipOf(crown);
+    const tip = [tip0[0] * sc, tip0[1] * sc];
     const open = spring(t, 12.35, 1.2, 4.5);
     const fade = 1 - smoothstep(17.5, 19.5, t);
     const size = 0.1 + 0.14 * smoothstep(12.2, 16, t);
@@ -169,6 +182,7 @@ export function treeAt(S, t, ctx) {
   }
   S.crownF = F;
   S.rootF = RF;
+  S.crownScale = sc;
 }
 
 /** Current tip of the main stem (for the sprout). */

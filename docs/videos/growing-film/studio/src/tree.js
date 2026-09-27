@@ -327,6 +327,7 @@ export function emitBranches(tree, w, { z = 0, ox = 0, oy = 0, scale = 1, pxWorl
   const pts = [];
   for (const chain of chains) {
     pts.length = 0;
+    const chainRand = rand[chain[Math.min(1, chain.length - 1)]]; // one texture phase per branch
     for (let ci = 0; ci < chain.length; ci++) {
       const i = chain[ci];
       if (ci > 0 && vis[i] <= 0) break;
@@ -348,7 +349,7 @@ export function emitBranches(tree, w, { z = 0, ox = 0, oy = 0, scale = 1, pxWorl
         x += s[0];
         y += s[1];
       }
-      pts.push([ox + x * scale, oy + y * scale, rr * scale, D[i], order[i], rand[i]]);
+      pts.push([ox + x * scale, oy + y * scale, rr * scale, D[i] * scale, order[i], chainRand]);
     }
     if (pts.length < 2) continue;
     // chaikin-smooth the polyline once for rounder bends

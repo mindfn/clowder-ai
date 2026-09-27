@@ -54,6 +54,7 @@ export function cameraAt(S, t, ctx) {
   x += noise1(t * 0.31 + 11) * V * 0.0025;
   y += noise1(t * 0.27 + 3) * V * 0.0025;
   const roll = noise1(t * 0.19 + 5) * 0.0025 + (shots?.roll ? shots.roll(t) : 0);
+  if (ctx.camOverride) [x, y, V] = ctx.camOverride;
   S.cam = { x, y, V, fov: 34, roll };
   S.dof = shots?.dof ? shots.dof(t, V) : { inf: clamp(22 / V, 0.5, 7), focusZ: 0, bgxZ: -60, fgZ: 2.5, mid: 0 };
 }

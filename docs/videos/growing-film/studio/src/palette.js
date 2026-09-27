@@ -28,8 +28,8 @@ export function skyMix(a, b, t) {
 }
 
 export const LEAF = {
-  spring: { lit: L('#d8f08a'), mid: L('#7fc25a'), shadow: L('#2e6a45'), rim: L('#f4ffc0') },
-  summer: { lit: L('#9fdc6a'), mid: L('#3f9a52'), shadow: L('#15402f'), rim: L('#e0ffb0') },
+  spring: { lit: L('#c9dc8c'), mid: L('#7a9f58'), shadow: L('#2e4f3c'), rim: L('#eef8c4') },
+  summer: { lit: L('#a9c472'), mid: L('#4f7f4b'), shadow: L('#1a3530'), rim: L('#dcefb4') },
   autumn: { lit: L('#ffd27a'), mid: L('#e0783c'), shadow: L('#6a2626'), rim: L('#fff0b0') },
   dusk: { lit: L('#ffb27a'), mid: L('#7a6a4a'), shadow: L('#1d2a26'), rim: L('#ffd0a0') },
   night: { lit: L('#4a8a9a'), mid: L('#1f4a52'), shadow: L('#0a1a22'), rim: L('#8ff0ff') },

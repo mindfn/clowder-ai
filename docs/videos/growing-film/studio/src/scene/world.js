@@ -106,7 +106,10 @@ export function canopyClumps(tree, F, { ox = 0, oy = 0, scale = 1, keyDir = [0.4
   for (const c of raw) R = Math.max(R, Math.hypot(c.x - cx, c.y - cy));
   const kl = Math.hypot(keyDir[0], keyDir[1]) || 1;
   const out = [];
-  for (const c of raw) {
+  const thin = grownFrac > 0.5 ? 2 : 1; // big crowns: fewer, larger masses
+  for (let ci = 0; ci < raw.length; ci++) {
+    const c = raw[ci];
+    if (thin > 1 && c.i % thin === 1 && c.rand < 0.75) continue;
     let x = c.x;
     let y = c.y;
     if (sway) {
@@ -119,7 +122,8 @@ export function canopyClumps(tree, F, { ox = 0, oy = 0, scale = 1, keyDir = [0.4
     const dl = Math.hypot(dx, dy) || 1;
     const facing = (dx * keyDir[0] + dy * keyDir[1]) / (dl * kl);
     const expo = clamp(0.48 + 0.34 * facing * Math.min(1, dl * 1.3) + 0.22 * dy + 0.2 * (c.rand - 0.5));
-    out.push({ x: ox + x * scale, y: oy + y * scale, r: c.r * scale, expo, hue: c.rand, blossom, alpha });
+    const big = thin > 1 ? 1.25 + 0.5 * (c.rand - 0.5) : 1;
+    out.push({ x: ox + x * scale, y: oy + y * scale, r: c.r * scale * big, expo, hue: c.rand, blossom, alpha });
   }
   return out;
 }
