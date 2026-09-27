@@ -146,6 +146,13 @@ function assertTimedOutMember(result, catId) {
   assert.ok(failure, `${catId}'s route reports the timeout`);
   assert.match(failure.error, /响应超时/);
   assert.ok(failure.metadata.timeoutDiagnostics.silenceDurationMs >= 1000, 'diagnostics kept from before the stop');
+  // Like a provider failure, the member ends with a done that names why, after its failure: the
+  // Queue settles the entry failed from it instead of throwing and broadcasting a second error row.
+  const events = result.events.filter((event) => event.catId === catId);
+  const done = events.findLast((event) => event.type === 'done');
+  assert.ok(done, `${catId}'s route ends it with a done`);
+  assert.equal(done.errorCode, MEMBER_TIMEOUT_REASON, 'the done names the timeout');
+  assert.ok(events.indexOf(failure) < events.indexOf(done), 'the failure is reported before the done');
   const terminal = result.terminalOf(catId);
   assert.equal(terminal.status, 'failed');
   assert.equal(terminal.terminalReason, MEMBER_TIMEOUT_REASON);
