@@ -260,4 +260,61 @@ describe('OperationRowsRenderer (F202 W2-3 h1)', () => {
     expect(sent('reset')).toHaveLength(1);
     expect(byTestId('chatgpt-pro-rows-empty')).not.toBeNull();
   });
+
+  it('never lists by itself when the list action asks for confirmation', async () => {
+    serve([row('a1'), row('b2')]);
+    const guarded: PlatformOperationStatus = {
+      ...operation,
+      actions: [
+        { id: 'list', label: 'Load', render: 'button', resultRender: 'rows', confirm: 'Load the conversation list?' },
+      ],
+    };
+    await render(<ActionRenderer target={target} operation={guarded} />);
+    expect(sent('list')).toEqual([]);
+    expect(byTestId('chatgpt-pro-rows-awaiting-owner')?.textContent).toContain('“Load” asks for your confirmation');
+
+    await click(byTestId('chatgpt-pro-rows-refresh'));
+    expect(container.textContent).toContain('Load the conversation list?');
+    await click(dialogButton('取消'));
+    expect(sent('list')).toEqual([]);
+
+    await click(byTestId('chatgpt-pro-rows-refresh'));
+    await click(dialogButton('确认'));
+    expect(sent('list')).toHaveLength(1);
+    expect(byTestId('chatgpt-pro-row-a1')).not.toBeNull();
+    expect(byTestId('chatgpt-pro-rows-awaiting-owner')).toBeNull();
+
+    await click(revokeButton('a1'));
+    await click(dialogButton('确认'));
+    expect(sent('revoke')).toHaveLength(1);
+    expect(sent('list')).toHaveLength(1);
+    expect(byTestId('chatgpt-pro-rows-awaiting-owner')).not.toBeNull();
+  });
+
+  it('does not list on an owner refresh without a confirmation dialog', async () => {
+    serve([row('a1')]);
+    const guarded: PlatformOperationStatus = {
+      ...operation,
+      actions: [{ id: 'list', label: 'Load', render: 'button', resultRender: 'rows', confirm: 'Load?' }],
+    };
+    await render(<ActionRenderer target={target} operation={guarded} />, { withConfirm: false });
+
+    await click(byTestId('chatgpt-pro-rows-refresh'));
+
+    expect(sent('list')).toEqual([]);
+  });
+
+  it('treats keys named after Object.prototype members as ordinary row keys', async () => {
+    serve([row('toString'), row('__proto__')], { revokeError: 'Conversation not found' });
+    await render(<ActionRenderer target={target} operation={operation} />);
+    expect(byTestId('chatgpt-pro-row-toString')).not.toBeNull();
+    expect(byTestId('chatgpt-pro-row-__proto__')).not.toBeNull();
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
+
+    await click(revokeButton('__proto__'));
+    await click(dialogButton('确认'));
+
+    expect(byTestId('chatgpt-pro-row-__proto__-error')?.textContent).toBe('Conversation not found');
+    expect(byTestId('chatgpt-pro-row-toString-error')).toBeNull();
+  });
 });

@@ -1,8 +1,9 @@
 /**
  * F202 W2-3 h1 — an action whose manifest declares `confirm` is confirmed by the owner in the shared
  * Console dialog before every invocation, whichever renderer shows it: the sequenced renderer's
- * buttons and the live-status renderer's revoke button (the rows renderer is covered alongside
- * its rows). Cancelling sends nothing.
+ * buttons and disconnect, and the live-status renderer's revoke button (the rows renderer is
+ * covered alongside its rows). Cancelling sends nothing, and the Host never runs such an action on
+ * its own: not a polling step, not a live status check.
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -17,6 +18,7 @@ import type { PlatformOperationStatus } from '../../../HubConfigIcons';
 
 const mockApiFetch = vi.mocked(apiFetch);
 const { ActionRenderer } = await import('../ActionRenderer');
+const { LiveStatusActionRenderer } = await import('../LiveStatusActionRenderer');
 const { ConfirmProvider } = await import('../../../useConfirm');
 
 const target = { kind: 'plugin', id: 'reader' } as const;
@@ -60,15 +62,22 @@ describe('declared action confirmation (F202 W2-3 h1)', () => {
     });
   }
 
-  async function render(operation: PlatformOperationStatus) {
+  async function render(operation: PlatformOperationStatus, { configured }: { configured?: boolean } = {}) {
     act(() =>
       root.render(
         <ConfirmProvider>
-          <ActionRenderer target={target} operation={operation} />
+          <ActionRenderer target={target} operation={operation} configured={configured} />
         </ConfirmProvider>,
       ),
     );
     await settle();
+  }
+
+  function answerEverything() {
+    mockApiFetch.mockImplementation(async (url) => {
+      calls.push(String(url));
+      return jsonResponse({ ok: true, render: 'status', data: { status: 'ok' } });
+    });
   }
 
   async function click(element: Element | null | undefined) {
@@ -146,5 +155,93 @@ describe('declared action confirmation (F202 W2-3 h1)', () => {
     await click(dialogButton('确认'));
     expect(sent('disarm')).toHaveLength(1);
     expect(container.textContent).toContain('Not authorized');
+  });
+
+  it('asks before disconnecting from the connected banner', async () => {
+    answerEverything();
+    await render(
+      {
+        name: 'link',
+        label: 'Link',
+        actions: [
+          { id: 'start', label: 'Connect', render: 'button', next: 'disconnect' },
+          {
+            id: 'disconnect',
+            label: 'Disconnect',
+            render: 'button',
+            next: 'start',
+            confirm: 'Disconnect the account?',
+          },
+        ],
+      },
+      { configured: true },
+    );
+
+    await click(byTestId('reader-disconnect'));
+    expect(container.textContent).toContain('Disconnect the account?');
+    await click(dialogButton('取消'));
+    expect(calls).toEqual([]);
+
+    await click(byTestId('reader-disconnect'));
+    await click(dialogButton('确认'));
+    expect(calls).toEqual(['/api/plugins/reader/actions/link/disconnect']);
+  });
+
+  it('never polls a step that asks for confirmation', async () => {
+    answerEverything();
+    await render({
+      name: 'pair',
+      label: 'Pair',
+      currentAction: 'wait',
+      actions: [
+        { id: 'start', label: 'Start', render: 'button', next: 'wait' },
+        { id: 'wait', label: 'Waiting for the phone', render: 'polling', confirm: 'Keep waiting?' },
+      ],
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+
+    expect(calls).toEqual([]);
+    expect(container.textContent).toContain('“Waiting for the phone” asks for your confirmation');
+  });
+
+  const guardedStatus: PlatformOperationStatus = {
+    name: 'authorization',
+    label: 'Authorization',
+    actions: [
+      { id: 'arm', label: 'Authorize', render: 'button', next: 'disarm' },
+      { id: 'status', label: 'Status', render: 'status', confirm: 'Check the authorization?' },
+      { id: 'disarm', label: 'Revoke', render: 'button', next: 'arm' },
+    ],
+  };
+
+  it('keeps a live status that asks for confirmation off the live-status renderer', async () => {
+    answerEverything();
+    await render(guardedStatus);
+
+    expect(calls).toEqual([]);
+    expect((byTestId('reader-action-arm') as HTMLButtonElement | null)?.disabled).toBe(false);
+  });
+
+  it('never checks such a status in the live-status renderer itself', async () => {
+    answerEverything();
+    const [arm, status, disarm] = guardedStatus.actions;
+    act(() =>
+      root.render(
+        <ConfirmProvider>
+          <LiveStatusActionRenderer
+            target={target}
+            operation={guardedStatus}
+            armAction={arm}
+            statusAction={status}
+            revokeAction={disarm}
+          />
+        </ConfirmProvider>,
+      ),
+    );
+    await settle();
+
+    expect(calls).toEqual([]);
   });
 });

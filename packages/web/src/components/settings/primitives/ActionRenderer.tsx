@@ -25,7 +25,7 @@ import {
   phaseForAction,
   toResultState,
 } from './ActionRendererState';
-import { useActionConfirmation } from './actionConfirmation';
+import { awaitingOwnerMessage, invocationAllowed, useActionConfirmation } from './actionConfirmation';
 import { LiveStatusActionRenderer } from './LiveStatusActionRenderer';
 import { OperationRowsRenderer } from './OperationRowsRenderer';
 
@@ -55,7 +55,9 @@ export function ActionRenderer(props: ActionRendererProps) {
     (action) => action.render === 'button' && action.next === firstAction?.id && firstAction.next === action.id,
   );
   const statusAction = actions.find((action) => action.render === 'status' || action.render === 'polling');
-  if (firstAction?.render === 'button' && statusAction && revokeAction) {
+  // The live-status renderer checks its status action by itself, so it cannot take one that asks
+  // for confirmation; such an operation stays on the sequenced renderer, which never runs it alone.
+  if (firstAction?.render === 'button' && statusAction && statusAction.confirm === undefined && revokeAction) {
     return (
       <LiveStatusActionRenderer
         {...props}
@@ -115,8 +117,13 @@ function SequencedActionRenderer({
     setErrorMsg(null);
   }, [actions, configured, disconnectId, firstAction?.id, operation, stopTimers]);
 
+  /** Every request goes through here; `confirmed` is true only right after the owner confirmed. */
   const executeAction = useCallback(
-    async (actionId: string): Promise<ActionApiResult | null> => {
+    async (actionId: string, confirmed = false): Promise<ActionApiResult | null> => {
+      const action = actions.find((a) => a.id === actionId);
+      if (action && !invocationAllowed(action.confirm, confirmed)) {
+        return { ok: false, label: awaitingOwnerMessage(action.label) };
+      }
       try {
         const request = actionRequest(target, operation.name, actionId, pendingConfigValues);
         const res = await apiFetch(request.url, request.init);
@@ -129,7 +136,7 @@ function SequencedActionRenderer({
         return null;
       }
     },
-    [operation.name, pendingConfigValues, target],
+    [actions, operation.name, pendingConfigValues, target],
   );
 
   const resetOperation = useCallback(
@@ -255,7 +262,7 @@ function SequencedActionRenderer({
 
       setPhase('loading');
       setErrorMsg(null);
-      const result = await executeAction(actionId);
+      const result = await executeAction(actionId, true);
       const failure = actionCallFailure(result);
       if (!result || failure !== null) {
         setPhase('error');
@@ -280,11 +287,11 @@ function SequencedActionRenderer({
   );
 
   const handleDisconnect = useCallback(async () => {
-    if (!disconnectAction) return;
+    if (!disconnectAction || !(await confirmAction(disconnectAction.label, disconnectAction.confirm))) return;
     setPhase('disconnecting');
     setErrorMsg(null);
 
-    const result = await executeAction(disconnectAction.id);
+    const result = await executeAction(disconnectAction.id, true);
     if (!result || !result.ok) {
       setPhase('connected');
       return;
@@ -293,7 +300,7 @@ function SequencedActionRenderer({
     setLastResult(undefined);
     setPhase('idle');
     onStatusChange?.();
-  }, [disconnectAction, executeAction, firstAction, onStatusChange]);
+  }, [confirmAction, disconnectAction, executeAction, firstAction, onStatusChange]);
 
   // ── Dispatch to the appropriate sub-view ──
 

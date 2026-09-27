@@ -21,3 +21,17 @@ export function useActionConfirmation() {
     [confirm],
   );
 }
+
+/**
+ * The check every renderer's request function applies before it sends anything. An action that
+ * declares a confirmation is only sent right after the owner confirmed it; the Host never sends
+ * one on its own — not when it mounts, refreshes, polls or follows `next`.
+ */
+export function invocationAllowed(declared: string | undefined, confirmed: boolean): boolean {
+  return declared === undefined || confirmed;
+}
+
+/** Why the Host did not run an action by itself. */
+export function awaitingOwnerMessage(label: string): string {
+  return `“${label}” asks for your confirmation, so the Console does not run it on its own.`;
+}

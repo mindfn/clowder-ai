@@ -5,7 +5,7 @@ import { apiFetch } from '@/utils/api-client';
 import type { PlatformActionDef } from '../../HubConfigIcons';
 import type { ActionRendererProps } from './ActionRenderer';
 import { type ActionApiResult, actionRequest } from './ActionRendererState';
-import { useActionConfirmation } from './actionConfirmation';
+import { invocationAllowed, useActionConfirmation } from './actionConfirmation';
 
 interface AuthorizationStatus {
   armed: boolean;
@@ -52,10 +52,12 @@ export function LiveStatusActionRenderer({
   const requestId = useRef(0);
   const stableTarget = useMemo(() => ({ kind: target.kind, id: target.id }) as typeof target, [target.kind, target.id]);
 
+  /** Every request goes through here; `confirmed` is true only right after the owner confirmed. */
   const run = useCallback(
-    async (actionId: string): Promise<ActionApiResult | null> => {
+    async (action: PlatformActionDef, confirmed: boolean): Promise<ActionApiResult | null> => {
+      if (!invocationAllowed(action.confirm, confirmed)) return null;
       try {
-        const request = actionRequest(stableTarget, operation.name, actionId);
+        const request = actionRequest(stableTarget, operation.name, action.id);
         const response = await apiFetch(request.url, request.init);
         if (!response.ok) return null;
         return (await response.json()) as ActionApiResult;
@@ -68,13 +70,13 @@ export function LiveStatusActionRenderer({
 
   const refresh = useCallback(async () => {
     const id = ++requestId.current;
-    const result = await run(statusAction.id);
+    const result = await run(statusAction, false);
     if (id !== requestId.current) return;
     const next = result && parseAuthorization(result);
     setNow(Date.now());
     setStatus(next);
     setError(next ? null : 'Authorization status is unavailable');
-  }, [run, statusAction.id]);
+  }, [run, statusAction]);
 
   useEffect(() => {
     void refresh();
@@ -106,10 +108,9 @@ export function LiveStatusActionRenderer({
   const perform = useCallback(
     async (action: PlatformActionDef) => {
       if (!(await confirmAction(action.label, action.confirm))) return;
-      const actionId = action.id;
       setBusy(true);
       setError(null);
-      const result = await run(actionId);
+      const result = await run(action, true);
       if (!result?.ok) {
         setError(result?.label ?? 'Action failed');
       } else {
