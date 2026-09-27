@@ -559,10 +559,10 @@ describe('PersonalChromeHostAdapter transport failures (F202 W2-3 h3a, ledger h3
     });
   });
 
-  it('times out as HOST_UNAVAILABLE before the connection, and as HOST_TIMEOUT after the request was sent', async () => {
+  it('times out as HOST_UNAVAILABLE before the connection, and as AMBIGUOUS_EFFECT after the request was sent', async () => {
     for (const [connected, code] of [
       [false, 'HOST_UNAVAILABLE'],
-      [true, 'HOST_TIMEOUT'],
+      [true, 'AMBIGUOUS_EFFECT'],
     ] as const) {
       await withFakeConnection(async (socket, created) => {
         const pending = adapter(20).append_message('conversation-7', 'hello', 'source-message-9');

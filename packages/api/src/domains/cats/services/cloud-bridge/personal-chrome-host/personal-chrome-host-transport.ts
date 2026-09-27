@@ -109,7 +109,10 @@ function exchangeLocalFrame<
     };
     const timer = setTimeout(() => {
       const error = requestSent
-        ? new PersonalChromeHostError('HOST_TIMEOUT', 'personal Chrome host timed out')
+        ? new PersonalChromeHostError(
+            'AMBIGUOUS_EFFECT',
+            'personal Chrome host did not answer after the request was sent',
+          )
         : new PersonalChromeHostError('HOST_UNAVAILABLE', 'personal Chrome host did not accept the connection');
       finish(() => reject(error));
     }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
