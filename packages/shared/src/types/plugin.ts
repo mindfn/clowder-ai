@@ -204,7 +204,8 @@ export type PluginManagerCapabilityKind =
   | 'service'
   | 'ui'
   | 'content-editor-provider'
-  | 'media-source';
+  | 'media-source'
+  | 'cloud-conversation-host';
 
 export interface PluginManagerCapability {
   id: string;

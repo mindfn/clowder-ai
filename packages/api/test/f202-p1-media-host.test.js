@@ -445,15 +445,15 @@ test('contract permission matrix includes the media.read L1 row without a Host-o
       'utf8',
     ),
   );
-  assert.equal(contractPermissionEntries().length, 21);
-  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.minItems, 21);
-  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.maxItems, 21);
-  assert.deepEqual(
-    contractPermissionEntries().find((entry) => entry.capability === 'media.read'),
-    {
-      capability: 'media.read',
-      layer: 'L1',
-      firstPartyPreset: true,
-    },
-  );
+  assert.equal(contractPermissionEntries().length, 23);
+  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.minItems, 23);
+  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.maxItems, 23);
+  for (const [capability, layer, firstPartyPreset] of [
+    ['media.read', 'L1', true],
+    ['data.directory', 'L2', false], // contract beta.24, F202 W2-3 h2
+    ['cloud.conversation.host', 'L2', false], // contract beta.24, F202 W2-3 h3
+  ]) {
+    const entry = contractPermissionEntries().find((candidate) => candidate.capability === capability);
+    assert.deepEqual(entry, { capability, layer, firstPartyPreset });
+  }
 });

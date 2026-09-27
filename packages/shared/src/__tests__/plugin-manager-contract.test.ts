@@ -110,6 +110,7 @@ describe('F202 terminal Plugin Manager contract', () => {
       | 'ui'
       | 'content-editor-provider'
       | 'media-source'
+      | 'cloud-conversation-host'
     >();
     expectTypeOf<PluginManagerDetail['capabilities'][number]['active']>().toEqualTypeOf<boolean>();
   });

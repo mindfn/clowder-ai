@@ -60,17 +60,17 @@ function harness() {
 }
 
 describe('K-2A contract-native inventory', () => {
-  it('pins the API and runtime boundary to the canonical plugin-contract beta.22 archive', () => {
+  it('pins the API and runtime boundary to the canonical plugin-contract beta.24 archive', () => {
     assert.equal(
       packageJson.dependencies['@clowder-ai/plugin-contract'],
-      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.22.tgz',
+      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.24.tgz',
     );
-    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.22.tgz', import.meta.url));
+    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.24.tgz', import.meta.url));
     assert.equal(
       createHash('sha256').update(archive).digest('hex'),
-      'eef5e6f2907b8c079dc9f7f49d83fbcdd339c0848621b3dc0e8f5c62ff3d6931',
+      'd0dda313a6689efdf81dede6983cf2430ff5ae97d5ec529e1fbfcf9a34aaaeff',
     );
-    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.22');
+    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.24');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
     assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, [
       '0.1.0',
@@ -78,6 +78,7 @@ describe('K-2A contract-native inventory', () => {
       '0.1.0-beta.20',
       '0.1.0-beta.21',
       '0.1.0-beta.22',
+      '0.1.0-beta.24',
     ]);
   });
 
@@ -121,8 +122,13 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(snapshot.grants[0].grantRevision, 1);
   });
 
-  it('admits the installed beta.20 and beta.21 lines and the consumed beta.22 line', async () => {
-    for (const contractVersion of ['0.1.0-beta.20', '0.1.0-beta.21', PLUGIN_CONTRACT_PACKAGE_VERSION]) {
+  it('admits the installed beta.20, beta.21 and beta.22 lines and the consumed beta.24 line', async () => {
+    for (const contractVersion of [
+      '0.1.0-beta.20',
+      '0.1.0-beta.21',
+      '0.1.0-beta.22',
+      PLUGIN_CONTRACT_PACKAGE_VERSION,
+    ]) {
       const { store, controlPlane } = harness();
       const packageManifest = manifest({ contractVersion });
 

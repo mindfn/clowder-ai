@@ -111,15 +111,23 @@ function operationProjection(
           }),
         }
       : {}),
-    actions: field.actions.map((action) => ({
-      id: action.id,
-      label: action.label,
-      render: action.render,
-      ...(action.resultRender === undefined ? {} : { resultRender: action.resultRender }),
-      ...(action.next === undefined ? {} : { next: action.next }),
-      ...(action.rollback === undefined ? {} : { rollback: action.rollback }),
-      ...(action.timeout === undefined ? {} : { timeout: action.timeout }),
-    })),
+    // A `row` action is never a standalone button: it is only callable from a row of the same
+    // operation's `rows` result, with that row's input (contract beta.24, F202 W2-3 h1 ①).
+    actions: field.actions.flatMap((action) =>
+      action.render === 'row'
+        ? []
+        : [
+            {
+              id: action.id,
+              label: action.label,
+              render: action.render,
+              ...(action.resultRender === undefined ? {} : { resultRender: action.resultRender }),
+              ...(action.next === undefined ? {} : { next: action.next }),
+              ...(action.rollback === undefined ? {} : { rollback: action.rollback }),
+              ...(action.timeout === undefined ? {} : { timeout: action.timeout }),
+            },
+          ],
+    ),
     ...(state === undefined ? {} : { operationState: structuredClone(state) }),
   };
 }
