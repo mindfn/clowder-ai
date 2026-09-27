@@ -111,6 +111,26 @@ for (const [name, mutate] of [
     mutate(snapshot);
     assert.equal(isLiveTypedWaitRegistration(snapshot, h.identity, Date.now()), false);
   });
+
+  test(`a registration without a deadline rejects ${name} drift`, async () => {
+    const h = await fixture();
+    const { expiresAt: _deadline, ...active } = h.active;
+    const receipt = createTypedWaitRegistration({
+      task: h.task,
+      active,
+      invocationId: 'child-1',
+      source: h.receipt.source,
+    });
+    await h.taskStore.replaceAutomationStateIfGeneration(h.task.id, {
+      expectedGeneration: 1,
+      automationState: { await: active },
+      waitRegistration: receipt,
+    });
+    const snapshot = await h.taskStore.getWaitRegistration(h.task.id);
+    assert.equal(isLiveTypedWaitRegistration(snapshot, h.identity, Date.now()), true, 'live before the drift');
+    mutate(snapshot);
+    assert.equal(isLiveTypedWaitRegistration(snapshot, h.identity, Date.now()), false);
+  });
 }
 
 test('unknown predicates and unanchored review cannot mint a generic receipt', async () => {
