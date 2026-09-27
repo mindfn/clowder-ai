@@ -113,6 +113,25 @@ describe(
       assert.equal(after['event_wait.rejected_stale_total'], before['event_wait.rejected_stale_total'] + 1);
     });
 
+    test('a registration without a deadline commits through the Lua guard', async (t) => {
+      const h = await harness(t);
+      const { expiresAt: _deadline, ...active } = h.active;
+      const receipt = createTypedWaitRegistration({
+        task: h.task,
+        active,
+        invocationId: 'child-1',
+        source: h.receipt.source,
+      });
+      assert.ok(receipt);
+      await h.taskStore.replaceAutomationStateIfGeneration(h.task.id, {
+        expectedGeneration: 1,
+        automationState: { await: active },
+        waitRegistration: receipt,
+      });
+      await h.commit();
+      assert.deepEqual((await h.store.getById(h.message.id)).queueCustody.handledByCatIds, ['opus']);
+    });
+
     test('a collector-only update during Queue CAS leaves the same active registration valid', async (t) => {
       const h = await harness(t);
       const evaluate = h.redis.eval.bind(h.redis);
