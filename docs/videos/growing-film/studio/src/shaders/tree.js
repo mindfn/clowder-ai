@@ -195,7 +195,7 @@ in vec2 vQ; in vec4 vB; in vec4 vC; in vec2 vW; in float vR;
 uniform vec3 uLit, uMid, uShadow, uRim, uLit2, uMid2, uShadow2, uRim2;
 uniform vec2 uFlipC; uniform float uFlipR, uFlipGlow;
 uniform vec2 uKeyDir; uniform vec3 uKeyCol, uAmbient;
-uniform float uPx, uLeafScale, uBacklit, uBlossom, uFade;
+uniform float uPx, uLeafScale, uBacklit, uBlossom, uFade, uEmit;
 uniform vec3 uBlossomCol, uBlossomCol2;
 out vec4 o;
 void main() {
@@ -238,6 +238,8 @@ void main() {
   col = mix(col, cL, smoothstep(0.52, 0.95, lit));
   col *= 0.9 + 0.2 * vB.y;
   col *= uAmbient + uKeyCol * 0.85;
+  // bioluminescence: the crown's own soft light (night bloom)
+  col += mix(cM, cL, 0.35 + 0.4 * dome + 0.25 * lf.z) * uEmit;
   // thin rim on the lit edge; translucency when backlit
   float edge = smoothstep(R - 0.12, R, r);
   col += cR * edge * max(h, 0.0) * 0.35 * (1.0 + uBacklit);

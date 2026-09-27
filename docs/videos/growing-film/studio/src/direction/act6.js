@@ -33,7 +33,8 @@ export function buildForest() {
 
 function fruitPath(t, ctx) {
   const f = FRUITS.find((q) => q.cat === 'siamese');
-  const a = fruitAnchor(f, ctx.canopyBottom);
+  const a0 = fruitAnchor(f);
+  const a = { x: a0.x, y: a0.top - 0.5 };
   const land1 = [8.6, hill(8.6) + 0.35];
   // fall (96.0 → 96.75), bounce (→ 97.2), roll down the slope (→ 97.9)
   if (t < 96.75) {
@@ -60,7 +61,7 @@ export function act6(S, t, ctx) {
   if (t < 98.6) {
     const [x, y, rot] = fruitPath(t, ctx);
     const sink = smoothstep(97.95, 98.5, t);
-    P.push(x, y, 0.04, 0.58 * (1 - 0.5 * sink), col[0] * 0.8, col[1] * 0.8, col[2] * 0.8, 1 - sink * 0.6, rot, K.fruit, 1, 1);
+    P.push(x, y, 0.04, 0.36 * (1 - 0.5 * sink), col[0] * 0.8, col[1] * 0.8, col[2] * 0.8, 1 - sink * 0.6, rot, K.fruit, 1, 1);
     S.ground.glows.push({ x, y, r: 2.4, i: 1.2, col });
     const pts = [];
     for (let k = 0; k <= 12; k++) {

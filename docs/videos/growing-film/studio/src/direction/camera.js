@@ -39,12 +39,12 @@ const PATH = [
   [73.5, [14.6, 15.0, 11.5], E.inOutSine],
   [75.0, [6.0, 24.0, 36], E.inOutCubic],
   // act 5: fruit — Maine Coon, Ragdoll, Siamese, then the whole tree
-  [76.6, [15.4, 18.3, 10.2], E.inOutCubic],
-  [81.5, [15.2, 18.5, 9.4], E.inOutSine],
-  [83.2, [10.6, 18.2, 10.0], E.inOutCubic],
-  [87.5, [10.4, 18.4, 9.2], E.inOutSine],
-  [89.2, [5.4, 17.8, 10.0], E.inOutCubic],
-  [92.6, [5.2, 18.0, 9.2], E.inOutSine],
+  [76.4, [16.0, 15.0, 7.4], E.inOutCubic],
+  [81.5, [15.9, 15.1, 6.6], E.inOutSine],
+  [83.2, [11.0, 14.5, 7.2], E.inOutCubic],
+  [87.5, [10.9, 14.6, 6.5], E.inOutSine],
+  [89.2, [7.2, 14.0, 7.2], E.inOutCubic],
+  [92.6, [7.1, 14.1, 6.6], E.inOutSine],
   [96.0, [4.0, 25.0, 64], E.inOutCubic],
   // act 6: fall, sprout, forest, stars
   [97.3, [14.0, 8.0, 26], E.inOutSine],

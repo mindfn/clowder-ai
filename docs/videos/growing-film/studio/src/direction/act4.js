@@ -49,7 +49,7 @@ const PROP = (() => {
     const u = i / 40;
     pts.push([PROP_X + Math.sin(u * 7 + 1) * 0.3 * Math.sin(u * Math.PI) + u * 0.45, lerp(top[1] - top[2] * 0.6, g - 0.3, u)]);
   }
-  return chain(pts, { seed: 33, pipeK: 0.22, rTip: 0.1 });
+  return chain(pts, { seed: 33, pipeK: 0.35, rTip: 0.2 });
 })();
 
 const VINE_X = 20.2;

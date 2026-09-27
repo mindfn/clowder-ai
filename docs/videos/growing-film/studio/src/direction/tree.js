@@ -86,14 +86,14 @@ export function treeAt(S, t, ctx) {
     glowA: CAT_GLOW.ragdoll,
     glowB: CAT_GLOW.maine,
     glowC: CAT_GLOW.siamese,
-    braid: smoothstep(39.5, 41, t) * (1 - smoothstep(50, 58, t)) * 0.9,
+    braid: smoothstep(39.5, 41, t) * (1 - smoothstep(50.5, 53.5, t)) * 0.9 + 0.5 * smoothstep(97, 101, t),
     flow: 4.5,
     emis: 1,
     glow: (p) => {
       const D = p[3];
       let g = 0;
       if (t > 39.7) g = Math.max(g, smoothstep(glowFront, glowFront - 3, D) * (0.55 + 0.45 * smoothstep(40.5, 44, t)));
-      if (t > 52) g *= 0.12 + 0.88 * (1 - smoothstep(52, 57, t)) + 0.5 * smoothstep(97, 101, t);
+      if (t > 50) g *= 1 - smoothstep(50.5, 53.5, t) + 0.6 * smoothstep(97, 101, t);
       return g;
     },
     pts: ctx.seedLight ? [ctx.seedLight(t)] : [],
@@ -138,6 +138,7 @@ export function treeAt(S, t, ctx) {
       backlit: t > 50 && t < 68 ? 0.6 * smoothstep(50, 55, t) : 0.1,
       leafScale: 3.2,
       blossom,
+      emit: 0.16 * smoothstep(74.5, 78, t),
       blossomCol: [2.2, 1.6, 0.9],
       blossomCol2: [1.6, 1.1, 2.2],
       alpha: smoothstep(15.8, 19, F),

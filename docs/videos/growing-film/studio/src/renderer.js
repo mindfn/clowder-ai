@@ -299,6 +299,7 @@ export class Renderer {
       uBlossomCol: c.blossomCol ?? [1, 0.8, 0.6],
       uBlossomCol2: c.blossomCol2 ?? [1, 0.6, 0.8],
       uFade: c.alpha ?? 1,
+      uEmit: c.emit ?? 0,
     });
     this.clumps.draw(a, n);
   }
