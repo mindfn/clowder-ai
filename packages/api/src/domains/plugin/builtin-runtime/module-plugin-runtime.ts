@@ -13,6 +13,7 @@ import {
   type VerifiedPluginPackageLocator,
 } from '../external-runtime/types.js';
 import type { PluginPackageRecord } from '../host-inventory/types.js';
+import { preparePluginDataDirectory } from '../host-surface/plugin-data-directory.js';
 import {
   createPluginMediaHost,
   createUnavailablePluginMediaHost,
@@ -47,6 +48,12 @@ import {
 } from '../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
 import { createModuleHostInvocation } from './module-host-invocation.js';
+import {
+  type ModuleTeardownStep,
+  moduleTeardown,
+  rollbackModuleStart,
+  runModuleTeardown,
+} from './module-plugin-teardown.js';
 
 /**
  * What the module at `runtime.entrypoint` must export by default.
@@ -70,6 +77,8 @@ export interface ModulePluginHostShape {
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;
+  /** F202 W2-3 h2: absolute path of the package's data directory, present only when granted. */
+  readonly dataDirectory?: string;
   readonly log: (level: ModulePluginLogLevel, message: string, fields?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -108,6 +117,8 @@ export interface ModulePluginRuntimeOptions {
     readonly ownerUserId: string;
   };
   readonly media?: PluginMediaReadService;
+  /** Parent of module data directories (`<projectRoot>/.cat-cafe/plugin-host`); none without it. */
+  readonly dataDirectoryParent?: string;
   readonly log: ModulePluginHostShape['log'];
 }
 
@@ -125,6 +136,8 @@ interface LoadedModule {
  */
 export class ModulePluginRuntime implements BundledPluginRuntime {
   readonly #loaded = new Map<string, LoadedModule>();
+  /** Teardown steps that failed; the next stop retries exactly these (F202 W2-3 h2 ⑥). */
+  readonly #unfinished = new Map<string, readonly ModuleTeardownStep[]>();
 
   constructor(private readonly options: ModulePluginRuntimeOptions) {}
 
@@ -158,10 +171,10 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     packageRecord: PluginPackageRecord,
     effectiveGrants: readonly string[],
   ): Promise<void> {
-    if (this.#loaded.has(pluginInstanceId)) {
+    if (this.#loaded.has(pluginInstanceId) || this.#unfinished.has(pluginInstanceId)) {
       throw new ExternalPluginRuntimeError(
         'RUNTIME_ALREADY_ACTIVE',
-        `${pluginInstanceId} already has a module loaded in this Host`,
+        `${pluginInstanceId} already has a module loaded in this Host, or one that has not finished stopping`,
       );
     }
     const located = await this.#resolvePackage(pluginInstanceId, packageRecord);
@@ -251,6 +264,11 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       const media = this.options.media
         ? createPluginMediaHost(this.options.media, { pluginInstanceId, effectiveGrants })
         : createUnavailablePluginMediaHost(effectiveGrants);
+      const dataDirectory = await preparePluginDataDirectory({
+        parent: this.options.dataDirectoryParent,
+        manifest: packageRecord.manifest,
+        effectiveGrants,
+      });
       const candidate = await plugin.start({
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
@@ -263,6 +281,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         threads,
         messaging,
         media,
+        ...(dataDirectory === undefined ? {} : { dataDirectory }),
         log: (level, message, fields) =>
           this.options.log(level, message, { ...fields, pluginId: packageRecord.pluginId, pluginInstanceId }),
       });
@@ -291,26 +310,19 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   /**
    * The single disposal seam releases the staged package; the next start calls `create()`
-   * again instead of reusing the previous runtime instance.
+   * again instead of reusing the previous runtime instance. The module stops serving at once; a
+   * teardown step that fails is kept, and the next stop retries it (F202 W2-3 h2 ⑥).
    */
   async stop(pluginInstanceId: string, reason: string): Promise<void> {
     const loaded = this.#loaded.get(pluginInstanceId);
-    if (!loaded) return;
+    const steps = loaded ? moduleTeardown(loaded) : this.#unfinished.get(pluginInstanceId);
+    if (!steps) return;
     this.#loaded.delete(pluginInstanceId);
-    const failures: unknown[] = [];
-    for (const operation of [
-      () => loaded.subscriptions.stop(reason),
-      () => loaded.activation.stop(reason),
-      // Package bytes stay present until package cleanup has finished.
-      () => loaded.located.release(),
-    ]) {
-      try {
-        await operation();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    if (failures.length > 0) throw new AggregateError(failures, 'module stop failed');
+    this.#unfinished.delete(pluginInstanceId);
+    const { failed, errors } = await runModuleTeardown(steps, reason);
+    if (failed.length === 0) return;
+    this.#unfinished.set(pluginInstanceId, failed);
+    throw new AggregateError(errors, 'module stop failed');
   }
 
   invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
@@ -320,22 +332,4 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
   actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {
     return this.#loaded.get(pluginInstanceId)?.activation.actions;
   }
-}
-
-async function rollbackModuleStart(
-  startError: unknown,
-  activation: PluginModuleActivationShape | undefined,
-  subscriptions: PluginMessagingSubscriptionSession | undefined,
-  located: VerifiedPluginPackage,
-): Promise<never> {
-  const stopResults = await Promise.allSettled([
-    ...(subscriptions ? [subscriptions.stop('start_failed')] : []),
-    ...(activation ? [activation.stop('start_failed')] : []),
-  ]);
-  const releaseResults = await Promise.allSettled([located.release()]);
-  const failures = [...stopResults, ...releaseResults]
-    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-    .map((result) => result.reason);
-  if (failures.length > 0) throw new AggregateError([startError, ...failures], 'module startup rollback failed');
-  throw startError;
 }

@@ -60,6 +60,7 @@ import { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-verifier.js';
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
+import { pluginDataDirectoryParent } from './host-surface/plugin-data-directory.js';
 import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import {
@@ -409,6 +410,7 @@ export function createDormantPluginRuntimeComposition(
     materializer: builtinPackages,
     configuration,
     media: mediaRead,
+    dataDirectoryParent: pluginDataDirectoryParent(resolve(options.projectRoot)),
     ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
     ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
     ...(options.threadStore === undefined ||

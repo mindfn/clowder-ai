@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Capability } from '@clowder-ai/plugin-contract';
+import { isHostReservedDataDirectoryName, requestedDataDirectoryName } from './data-directory-name.js';
 import {
   type PackageAdmissionContractRuntime,
   type VerifiedPackageAdmission,
@@ -56,7 +57,33 @@ function assertLifecycleRevision(instance: PluginInstanceRecord, expectedLifecyc
   }
 }
 
+/**
+ * F202 W2-3 h2: two installed plugins never share one data directory. Every admission (install,
+ * upgrade, reinstall) writes its package through putVerifiedPackage, so the check sits there.
+ */
+function assertDataDirectoryFree(transaction: PluginInventoryTransaction, verified: VerifiedPackageAdmission): void {
+  const name = requestedDataDirectoryName(verified.package.manifest);
+  if (name === undefined) return;
+  if (isHostReservedDataDirectoryName(name)) {
+    throw new PluginInventoryError(
+      'DATA_DIRECTORY_IN_USE',
+      `data directory ${name} is reserved for the Host's own files`,
+    );
+  }
+  for (const instance of transaction.instances.list()) {
+    if (instance.lifecycleState !== 'installed' || instance.pluginId === verified.package.pluginId) continue;
+    const holder = transaction.packages.get(instance.packageDigest)?.manifest;
+    if (holder !== undefined && requestedDataDirectoryName(holder) === name) {
+      throw new PluginInventoryError(
+        'DATA_DIRECTORY_IN_USE',
+        `data directory ${name} is already used by the installed plugin ${instance.pluginId}`,
+      );
+    }
+  }
+}
+
 function putVerifiedPackage(transaction: PluginInventoryTransaction, verified: VerifiedPackageAdmission): void {
+  assertDataDirectoryFree(transaction, verified);
   const existing = transaction.packages.get(verified.package.packageDigest);
   if (!existing) {
     transaction.packages.put(verified.package);

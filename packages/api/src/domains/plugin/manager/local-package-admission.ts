@@ -70,6 +70,7 @@ export type LocalPluginPackageAdmissionErrorCode =
   | 'UNSUPPORTED_TRANSPORT'
   | 'INVALID_PACKAGE_SCHEMA'
   | 'INVENTORY_REJECTED'
+  | 'DATA_DIRECTORY_IN_USE'
   | 'QUARANTINE_UNAVAILABLE';
 
 export class LocalPluginPackageAdmissionError extends Error {
@@ -376,11 +377,7 @@ export class LocalPluginPackageAdmission {
         });
         return { pluginId: located.manifest.pluginId, ...installed };
       } catch (error) {
-        if (error instanceof PluginInventoryError) {
-          throw new LocalPluginPackageAdmissionError('INVENTORY_REJECTED', 'local plugin inventory admission failed', {
-            cause: error,
-          });
-        }
+        if (error instanceof PluginInventoryError) throw inventoryAdmissionError(error);
         throw error;
       }
     } catch (error) {
@@ -418,4 +415,14 @@ export class LocalPluginPackageAdmission {
       );
     }
   }
+}
+
+function inventoryAdmissionError(error: PluginInventoryError): LocalPluginPackageAdmissionError {
+  // F202 W2-3 h2: another installed plugin (or the Host) holds the data directory; not a package defect.
+  if (error.code === 'DATA_DIRECTORY_IN_USE') {
+    return new LocalPluginPackageAdmissionError('DATA_DIRECTORY_IN_USE', error.message, { cause: error });
+  }
+  return new LocalPluginPackageAdmissionError('INVENTORY_REJECTED', 'local plugin inventory admission failed', {
+    cause: error,
+  });
 }

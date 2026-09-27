@@ -30,7 +30,7 @@ import {
   publishPluginPackageArchive,
   verifyPluginPackageDigest,
 } from './official-package-archive.js';
-import { OfficialPluginInstallError } from './official-package-errors.js';
+import { OfficialPluginInstallError, throwDataDirectoryConflict } from './official-package-errors.js';
 
 export interface OfficialPluginPackageInstallerOptions {
   readonly inventory: HostInventoryControlPlane;
@@ -125,6 +125,7 @@ export class OfficialPluginPackageInstaller {
             const raced = await this.existingExactInstall(entry);
             if (raced) return raced;
           }
+          throwDataDirectoryConflict(error);
           throw new OfficialPluginInstallError('INVENTORY_REJECTED', 'official package inventory admission failed', {
             cause: error,
           });
@@ -209,6 +210,7 @@ export class OfficialPluginPackageInstaller {
               cause: error,
             });
           }
+          throwDataDirectoryConflict(error);
           throw new OfficialPluginInstallError('INVENTORY_REJECTED', 'official package inventory update failed', {
             cause: error,
           });

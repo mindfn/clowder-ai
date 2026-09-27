@@ -19,6 +19,7 @@ export type ExternalPluginRuntimeErrorCode =
   | 'HEARTBEAT_REJECTED'
   | 'DELIVERY_REJECTED'
   | 'CONFIG_UNAVAILABLE'
+  | 'DATA_DIRECTORY_UNAVAILABLE'
   | 'PROTOCOL_VIOLATION';
 
 export class ExternalPluginRuntimeError extends Error {

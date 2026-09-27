@@ -197,7 +197,7 @@ async function appendContributionCallAudit(
 
 function officialInstallStatus(code: OfficialPluginInstallError['code']): number {
   if (code === 'UNKNOWN_CATALOG_ID' || code === 'INSTANCE_NOT_FOUND') return 404;
-  if (code === 'STALE_CATALOG' || code === 'STALE_REVISION') return 409;
+  if (code === 'STALE_CATALOG' || code === 'STALE_REVISION' || code === 'DATA_DIRECTORY_IN_USE') return 409;
   if (code === 'QUARANTINE_UNAVAILABLE') return 503;
   return 422;
 }
@@ -207,7 +207,8 @@ function sendManagerError(reply: FastifyReply, error: unknown) {
     return reply.status(managerServiceStatus(error.code)).send({ error: error.message, code: error.code });
   }
   if (error instanceof LocalPluginPackageAdmissionError) {
-    const status = error.code === 'QUARANTINE_UNAVAILABLE' ? 503 : error.code === 'PACKAGE_DIGEST_MISMATCH' ? 409 : 422;
+    const conflict = error.code === 'PACKAGE_DIGEST_MISMATCH' || error.code === 'DATA_DIRECTORY_IN_USE';
+    const status = error.code === 'QUARANTINE_UNAVAILABLE' ? 503 : conflict ? 409 : 422;
     return reply.status(status).send({ error: error.message, code: error.code });
   }
   if (error instanceof OfficialPluginInstallError) {
