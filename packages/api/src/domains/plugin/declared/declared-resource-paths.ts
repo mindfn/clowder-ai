@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { PLUGIN_HOST_ENTRIES, pluginHostRoot } from '../host-inventory/plugin-host-layout.js';
 
 export function pluginResourceRoot(
   host: { readonly projectRoot: string; readonly resourcesRoot?: string },
   pluginId: string,
 ): string {
-  const root = host.resourcesRoot ?? resolve(host.projectRoot, '.cat-cafe', 'plugin-host', 'resources');
+  const root = host.resourcesRoot ?? resolve(pluginHostRoot(host.projectRoot), PLUGIN_HOST_ENTRIES.resources);
   return resolve(root, createHash('sha256').update(pluginId, 'utf8').digest('hex'));
 }
 

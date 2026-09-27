@@ -58,6 +58,7 @@ import { createMessagingBrokerHandlers } from './host-broker/messaging-handler.j
 import { FileHostBrokerStore } from './host-broker/stores.js';
 import { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-verifier.js';
+import { PLUGIN_HOST_ENTRIES, pluginHostRoot } from './host-inventory/plugin-host-layout.js';
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
 import { pluginDataDirectoryParent } from './host-surface/plugin-data-directory.js';
@@ -206,11 +207,11 @@ export interface DormantPluginRuntimeComposition {
 export const EXTERNAL_PLUGIN_PRE_ACTIVE_TIMEOUT_MS = 4 * 60_000;
 
 export function resolvePluginRuntimePersistencePaths(projectRoot: string): PluginRuntimePersistencePaths {
-  const root = resolve(projectRoot, '.cat-cafe', 'plugin-host');
+  const hostRoot = pluginHostRoot(projectRoot);
   return {
-    inventorySnapshotPath: resolve(root, 'inventory.json'),
-    brokerSnapshotPath: resolve(root, 'broker.json'),
-    packagesRoot: resolve(root, 'packages'),
+    inventorySnapshotPath: resolve(hostRoot, PLUGIN_HOST_ENTRIES.inventory),
+    brokerSnapshotPath: resolve(hostRoot, PLUGIN_HOST_ENTRIES.broker),
+    packagesRoot: resolve(hostRoot, PLUGIN_HOST_ENTRIES.packages),
   };
 }
 
@@ -236,9 +237,11 @@ export function createDormantPluginRuntimeComposition(
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
   });
-  const mediaLedger = new FileMessagingMediaLedger(resolve(dirname(paths.inventorySnapshotPath), 'media'));
+  const mediaLedger = new FileMessagingMediaLedger(
+    resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.media),
+  );
   const mediaEntitlements = new MediaEntitlementLedger(
-    new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), 'media-entitlements.json')),
+    new FileMediaEntitlementPort(resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.mediaEntitlements)),
     { now: options.now ?? Date.now },
   );
   const moduleLogger = createModuleLogger('plugin/module-runtime');
@@ -260,16 +263,16 @@ export function createDormantPluginRuntimeComposition(
   });
   const messagingStores = options.messagingStores ?? createMessagingStores(options.redis);
   const outboundMedia = new FileOutboundMediaStore(
-    resolve(dirname(paths.inventorySnapshotPath), 'outbound-media.json'),
+    resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.outboundMedia),
   );
   const mediaPending = new PendingMediaPublication({
-    store: new FileMediaStagingStore(resolve(dirname(paths.inventorySnapshotPath), 'media-staging.json')),
+    store: new FileMediaStagingStore(resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.mediaStaging)),
     messageStore: options.messageStore,
     events: messagingStores.events,
     importer: mediaImporter,
     postProcess: createHostMediaPostProcessor({
       ledger: mediaLedger,
-      privateDir: resolve(dirname(paths.inventorySnapshotPath), 'media-post-processing'),
+      privateDir: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.mediaPostProcessing),
       sttProvider: new WhisperSttProvider(),
       ...(options.now === undefined ? {} : { now: options.now }),
     }),
@@ -464,7 +467,7 @@ export function createDormantPluginRuntimeComposition(
       projectRoot: options.projectRoot,
       packages,
       mcpPackages: builtinPackages,
-      resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), 'resources'),
+      resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.resources),
       configuration,
       mcpConfigIO,
     },
@@ -896,7 +899,7 @@ export function createPluginManagerRuntimeComposition(
 ): PluginManagerRuntimeComposition {
   const now = options.now ?? Date.now;
   const quarantines = new FilePluginPackageQuarantineStore(
-    resolve(dirname(options.runtime.paths.inventorySnapshotPath), 'quarantines.json'),
+    resolve(dirname(options.runtime.paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.quarantines),
     { now },
   );
   const createOfficialInstaller = (catalogProvider: OfficialPluginCatalogProvider) =>
@@ -923,7 +926,7 @@ export function createPluginManagerRuntimeComposition(
   });
   const gitAdmission = new GitPluginPackageAdmission({
     localAdmission,
-    cloneRoot: resolve(options.runtime.projectRoot, '.cat-cafe', 'plugin-host'),
+    cloneRoot: pluginHostRoot(options.runtime.projectRoot),
     ...(options.gitBin === undefined ? {} : { gitBin: options.gitBin }),
     ...(options.gitCloneTimeoutMs === undefined ? {} : { timeoutMs: options.gitCloneTimeoutMs }),
   });

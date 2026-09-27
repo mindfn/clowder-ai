@@ -5,7 +5,8 @@
  *
  * The name is declared, or derived from the plugin id. Every admission (install, upgrade,
  * reinstall) refuses a name that another installed plugin holds, or that the Host keeps its own
- * files under in `.cat-cafe/plugin-host`; the installers pass that on as DATA_DIRECTORY_IN_USE.
+ * files under in `.cat-cafe/plugin-host` (the layout table is the single truth for those); the
+ * installers pass that on as DATA_DIRECTORY_IN_USE.
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -16,6 +17,7 @@ import {
   isHostReservedDataDirectoryName,
   requestedDataDirectoryName,
 } from '../dist/domains/plugin/host-inventory/data-directory-name.js';
+import { PLUGIN_HOST_ENTRIES } from '../dist/domains/plugin/host-inventory/plugin-host-layout.js';
 import { HostInventoryControlPlane, MemoryPluginInventoryStore } from '../dist/domains/plugin/index.js';
 import {
   catalogEntry,
@@ -141,35 +143,44 @@ test('a name the Host keeps its own files under is never given to a plugin', asy
   assert.equal((await store.snapshot()).instances.length, 0);
 });
 
-test('every entry the Host itself keeps in .cat-cafe/plugin-host is reserved', async () => {
-  const sources = [];
+test('the Host names its plugin-host entries only through the layout table, which is what is reserved', async () => {
+  const sources = new Map();
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else if (entry.name.endsWith('.ts')) sources.push(await readFile(path, 'utf8'));
+      else if (entry.name.endsWith('.ts')) sources.set(path, await readFile(path, 'utf8'));
     }
   };
-  await walk(new URL('../src', import.meta.url).pathname);
-  const names = new Set();
-  const collect = (source, pattern) => {
-    for (const match of source.matchAll(pattern)) names.add(match[1]);
-  };
-  for (const source of sources) {
-    collect(source, /resolve\(dirname\([^)]*inventorySnapshotPath\), '([^']+)'\)/g);
-    collect(source, /'\.cat-cafe', 'plugin-host', '([^']+)'/g);
+  const srcRoot = new URL('../src', import.meta.url).pathname;
+  await walk(srcRoot);
+  // The F247 copy that h3 deletes still builds its own `personal-chrome-host` path (h2 ⑦).
+  const mayNameTheRoot = new Set([
+    join(srcRoot, 'domains/plugin/host-inventory/plugin-host-layout.ts'),
+    join(srcRoot, 'domains/cats/services/cloud-bridge/personal-chrome-host/personal-chrome-host-adapter.ts'),
+  ]);
+  // Where the Host builds a child from a variable, it calls the plugin-host root `hostRoot`.
+  const childOfRoot =
+    /(?:resolve|join)\((?:dirname\([^)]*inventorySnapshotPath\)|pluginHostRoot\([^)]*\)|hostRoot),\s*([^)]+)\)/g;
+  let checked = 0;
+  for (const [path, source] of sources) {
+    if (source.includes("'plugin-host'"))
+      assert.ok(mayNameTheRoot.has(path), `${path} builds the plugin-host root itself`);
+    if (!source.includes('inventorySnapshotPath') && !source.includes('pluginHostRoot(')) continue;
+    for (const [, child] of source.matchAll(childOfRoot)) {
+      if (path.endsWith('personal-chrome-host-adapter.ts')) continue;
+      checked += 1;
+      assert.match(
+        child.trim(),
+        /^PLUGIN_HOST_ENTRIES\.\w+$/,
+        `${path} names a plugin-host entry outside the table: ${child}`,
+      );
+    }
   }
-  // resolvePluginRuntimePersistencePaths names its plugin-host parent `root`.
-  const composition = await readFile(new URL('../src/domains/plugin/runtime-composition.ts', import.meta.url), 'utf8');
-  const persistence = composition.slice(composition.indexOf('export function resolvePluginRuntimePersistencePaths'));
-  collect(persistence.slice(0, persistence.indexOf('\n}\n')), /resolve\(root, '([^']+)'\)/g);
-  for (const known of ['inventory.json', 'broker.json', 'packages', 'resources', 'media', 'quarantines.json']) {
-    assert.ok(names.has(known), `the scan must still find ${known}`);
-  }
-  for (const name of names) {
-    if (name === 'personal-chrome-host') continue; // taken over by the ChatGPT Pro package (h2 ⑦)
-    assert.ok(isHostReservedDataDirectoryName(name), `${name} is a Host entry but not reserved`);
-  }
+  assert.ok(checked >= 11, `the scan must still see the Host's entries (saw ${checked})`);
+  for (const name of Object.values(PLUGIN_HOST_ENTRIES))
+    assert.equal(isHostReservedDataDirectoryName(name), true, name);
+  assert.equal(isHostReservedDataDirectoryName('personal-chrome-host'), false);
 });
 
 test('the catalog installer reports the conflict as DATA_DIRECTORY_IN_USE and quarantines nothing', async () => {

@@ -8,6 +8,7 @@ import {
   isHostReservedDataDirectoryName,
   requestedDataDirectoryName,
 } from '../host-inventory/data-directory-name.js';
+import { pluginHostRoot } from '../host-inventory/plugin-host-layout.js';
 
 /**
  * F202 W2-3 h2: a module plugin's disk data directory (contract beta.24 `runtime.dataDirectory`,
@@ -18,9 +19,9 @@ import {
  * (the inventory refuses the second), and uninstall keeps the directory: it is the owner's data.
  */
 
-/** The parent of every module plugin data directory. */
+/** The parent of every module plugin data directory: the Host's plugin-host root. */
 export function pluginDataDirectoryParent(projectRoot: string): string {
-  return join(projectRoot, '.cat-cafe', 'plugin-host');
+  return pluginHostRoot(projectRoot);
 }
 
 /**

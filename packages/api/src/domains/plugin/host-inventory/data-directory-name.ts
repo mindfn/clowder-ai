@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { PluginManifest } from '@clowder-ai/plugin-contract';
+import { isHostPluginHostEntry } from './plugin-host-layout.js';
 
 /**
  * F202 W2-3 h2: which data directory name a package can be given (contract beta.24
@@ -12,15 +13,12 @@ export const DATA_DIRECTORY_CAPABILITY = 'data.directory';
 export const DATA_DIRECTORY_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /**
- * The Host keeps its own state in the same parent (`.cat-cafe/plugin-host`): JSON state files and
- * the directories below. A plugin can never be given one of these names, declared or derived.
- * `personal-chrome-host` is deliberately not reserved: the ChatGPT Pro package takes over that
- * directory from the Host's F247 copy (ledger h2 ⑦).
+ * The Host keeps its own state in the same parent (`.cat-cafe/plugin-host`), so a plugin can never
+ * be given the name of one of the Host's entries there, declared or derived. The table of those
+ * entries is the single truth (plugin-host-layout.ts).
  */
-const HOST_DIRECTORIES = new Set(['packages', 'resources', 'media', 'media-post-processing']);
-
 export function isHostReservedDataDirectoryName(name: string): boolean {
-  return name.endsWith('.json') || HOST_DIRECTORIES.has(name);
+  return isHostPluginHostEntry(name);
 }
 
 export type DataDirectoryManifest = Pick<PluginManifest, 'pluginId' | 'runtime' | 'features'>;
