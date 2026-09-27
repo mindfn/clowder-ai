@@ -35,7 +35,7 @@ export function buildWorldTree() {
     rs.push([Math.cos(r) * 1.2, -0.4 + Math.sin(r) * 1.2, 1]);
   }
   const roots = buildTree({
-    seed: 5, kind: 'roots', start: rs, rTip: 0.035, pipeK: 0.75, tropism: [0, -0.05],
+    seed: 5, kind: 'roots', start: rs, rTip: 0.03, pipeK: 0.42, tropism: [0, -0.05],
     phases: [
       { puffs: [[0, -7, 34, 7], [-30, -9, 22, 6], [30, -9, 22, 6], [0, -15, 18, 8]], attractors: 70, seg: 1.2, influence: 22, kill: 6, jitter: 0.25, maxLateral: 0.9, maxBend: 0.5 },
       { puffs: [[0, -6, 30, 6], [-30, -8, 22, 6], [30, -8, 22, 6], [0, -14, 18, 7], [-50, -5, 12, 4], [50, -5, 12, 4]], attractors: 1300, seg: 0.8, influence: 9, kill: 1.7, jitter: 0.3, maxLateral: 0.8, maxBend: 0.55, maxKids: 2, canSprout: (x, y, i) => i % 2 === 0 },

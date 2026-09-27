@@ -324,7 +324,7 @@ export class Renderer {
     const kl = Math.hypot(kx, ky) || 1;
     const px = this.pxAt(s.z ?? 0);
     const screenPx = sc / px; // screen px per texel
-    const lod = Math.max(0, Math.log2(1 / Math.max(screenPx, 1e-4)) - 0.25);
+    const lod = -0.25; // bias only: the hardware already picks the mip level
     const pt = (k) => (s.pts && s.pts[k]) || { x: 0, y: 0, r: 1, i: 0, col: [0, 0, 0] };
     p.use({
       uQuad: [left, bottom, w, h],

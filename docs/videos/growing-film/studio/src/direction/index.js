@@ -8,11 +8,14 @@ import { treeAt } from './tree.js';
 import { castAt } from './cast.js';
 import { fxAt } from './fx.js';
 import { PBuf } from '../scene/particles.js';
+import { FloatWriter } from '../gl.js';
 
 export class Director {
   constructor(ctx) {
     this.ctx = ctx; // { timeline, cues, cats, world, forest, textures, ... }
     this.bufs = { bgx: new PBuf(), midBack: new PBuf(), mid: new PBuf(), fg: new PBuf() };
+    this.shardW = new FloatWriter(1 << 14);
+    this.shardWFg = new FloatWriter(1 << 12);
   }
 
   scene(t) {
@@ -38,11 +41,15 @@ export class Director {
       captions: [],
       overlays: [],
     };
+    ctx._shardW = this.shardW.reset();
+    ctx._shardWFg = this.shardWFg.reset();
     cameraAt(S, t, ctx);
     skyAt(S, t, ctx);
     treeAt(S, t, ctx);
     castAt(S, t, ctx);
     fxAt(S, t, ctx);
+    if (this.shardW.n) S.shards = { a: this.shardW.a, n: this.shardW.n };
+    if (this.shardWFg.n) S.shardsFg = { a: this.shardWFg.a, n: this.shardWFg.n };
     return S;
   }
 

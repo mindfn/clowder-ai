@@ -28,7 +28,7 @@ uniform vec4 uPt0; uniform vec3 uPt0Col;
 uniform vec4 uPt1; uniform vec3 uPt1Col;
 out vec4 o;
 void main() {
-  vec4 c = texture(uTex, vUV, uLod);
+  vec4 c = texture(uTex, vUV, uLod);   // uLod is a bias on top of the hardware LOD
   if (c.a < 0.004) discard;
   vec3 lin = pow(c.rgb / c.a, vec3(2.2));
   float ao = texture(uTex, vUV + uKeyDirUV * uRimW * uTexel, uLod).a;
@@ -42,7 +42,7 @@ void main() {
   float f1 = uPt1.w * exp(-d1 * d1);
   col += lin * (uPt0Col * f0 + uPt1Col * f1);
   // a glowing outline for night shots / moments of emphasis
-  float edge = c.a * (1.0 - texture(uTex, vUV, uLod + 2.5).a * 0.9);
+  float edge = c.a * (1.0 - texture(uTex, vUV, uLod + 2.0).a * 0.9);
   col += (uPt0Col * f0 + uRimCol) * edge * uGlowRim;
   col = mix(col, uSilCol + uRimCol * rim * 1.5, uSil);
   o = vec4(col * c.a * uAlpha, c.a * uAlpha);
@@ -145,8 +145,8 @@ void main() {
   float front = uAppear * 1.2 - 0.1;
   float shown = smoothstep(front + 0.04, front - 0.04, yN);
   float frontGlow = exp(-pow((yN - front) / 0.03, 2.0)) * step(0.001, uAppear) * (1.0 - step(0.999, uAppear));
-  float edge = exp(-abs(d) / (px * 1.2 + 0.015)) + 0.35 * exp(-abs(d) / (px * 4.0 + 0.08));
-  float inner = exp(-abs(d + 0.09) / (px * 1.0 + 0.01)) * 0.5;
+  float edge = 0.55 * exp(-abs(d) / (px * 1.2 + 0.012)) + 0.12 * exp(-abs(d) / (px * 4.0 + 0.06));
+  float inner = exp(-abs(d + 0.09) / (px * 1.0 + 0.01)) * 0.22;
   float streak = smoothstep(0.86, 1.0, sin((p.x * 0.8 + p.y * 1.3) * 2.2 + uSeed)) * 0.5 + smoothstep(0.95, 1.0, sin((p.x * 0.8 + p.y * 1.3) * 5.1 + uSeed * 2.0)) * 0.35;
   vec3 col = uTint * 0.05 * inside + uEdgeCol * (edge + inner) + uEdgeCol * streak * inside * 0.35;
   float alpha = inside * 0.10 + (edge + inner) * 0.6 + streak * inside * 0.08;

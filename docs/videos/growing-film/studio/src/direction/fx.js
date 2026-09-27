@@ -76,4 +76,6 @@ export function fxAt(S, t, ctx) {
   captions(S, t, ctx);
   // fades
   S.post.fade = Math.max(1 - ramp(t, 0.0, 1.8, E.inOutSine), ramp(t, 120.2, 122.2, E.inOutSine));
+  // the break: a white flash, then a breath of exposure
+  S.post.flash = Math.max(S.post.flash ?? 0, ramp(t, 35.93, 36.0) * (1 - ramp(t, 36.0, 36.55, E.outCubic)) * 0.85);
 }

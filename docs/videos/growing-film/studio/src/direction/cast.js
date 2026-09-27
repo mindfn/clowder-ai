@@ -49,7 +49,7 @@ function act1(S, t, ctx) {
   if (t > 11.2) pose = blendPose(POSES.kneelPress, POSES.crouchLook, ramp(t, 11.2, 12.2, E.inOutSine));
   if (t > 15.5) pose = blendPose(POSES.crouchLook, POSES.kneel, ramp(t, 15.5, 16.5, E.inOutSine));
   if (t < 8.6) pose = blendPose(POSES.kneel, POSES.kneelUp, ramp(t, 4.5, 6.5, E.inOutSine) * (1 - ramp(t, 7.4, 8.6)));
-  const r = rig(pose, 4.05, hill(4.05), { facing: -1, t, wind: 0.5 });
+  const r = rig(pose, 4.05, hill(4.05), { facing: -1, t, wind: 0.5, scale: 0.86 });
   S.humans.push({ ...r, pt: seedL0, body: [0.004, 0.005, 0.009], rimCol: mix(S.light.rimCol, [0.9, 0.55, 0.3], lit * 0.5), rimW: 0.08 });
 }
 
@@ -58,7 +58,7 @@ function mix(a, b, t) {
 }
 
 export function castAt(S, t, ctx) {
-  if (t < 18.2) act1(S, t, ctx);
+  if (t < 18.0) act1(S, t, ctx);
   if (ctx.acts) for (const a of ctx.acts) a(S, t, ctx);
 }
 
