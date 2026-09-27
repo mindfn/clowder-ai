@@ -42,6 +42,7 @@ test_print_alpha_env_exports() {
   assert_contains "$output" "export LLM_POSTPROCESS_ENABLED=0" "should disable LLM postprocess sidecar"
   assert_contains "$output" "export CONNECTOR_GATEWAY_AUTOSTART=0" "should disable preconfigured IM connector autostart"
   assert_contains "$output" "export CAT_CAFE_F247_CLOUD_AUTOSTART=0" "should disable F247 cloud supporting services autostart"
+  assert_contains "$output" "unset REDIS_DATA_DIR REDIS_BACKUP_DIR" "should drop inherited redis data and backup dirs"
   if [[ "$output" == *"CAT_CAFE_F307_WORKBENCH_GATE_ACTIVATION"* ]]; then
     echo "FAIL: alpha should not need an F307-only activation export"
     return 1
@@ -71,6 +72,24 @@ test_apply_alpha_env_overrides_inherited_runtime_paths() (
     exit 1
   }
   echo "PASS: alpha env replaces inherited runtime paths"
+)
+
+test_apply_alpha_env_drops_inherited_redis_dirs() (
+  # A shell the runtime launched carries the runtime's Redis dirs. start-dev takes an inherited
+  # REDIS_DATA_DIR as an explicit override, so alpha's Redis would open the runtime's dump.rdb and
+  # appendonly files. Without them, start-dev derives both dirs from the alpha Redis port.
+  PROJECT_DIR="/tmp/cat-cafe"
+  ALPHA_DIR="/tmp/cat-cafe-alpha"
+  export REDIS_DATA_DIR="/tmp/cat-cafe-runtime-redis/data"
+  export REDIS_BACKUP_DIR="/tmp/cat-cafe-runtime-redis/backups"
+
+  apply_alpha_env
+
+  if [ -n "${REDIS_DATA_DIR+set}" ] || [ -n "${REDIS_BACKUP_DIR+set}" ]; then
+    echo "FAIL: alpha must not start its Redis in the runtime's data or backup dir"
+    exit 1
+  fi
+  echo "PASS: alpha drops the inherited Redis data and backup dirs"
 )
 
 test_apply_alpha_env_needs_no_f307_client_gate() (
@@ -462,6 +481,7 @@ test_build_alpha_stale_packages_rebuilds_when_head_moved() {
 test_usage_includes_alpha_commands
 test_print_alpha_env_exports
 test_apply_alpha_env_overrides_inherited_runtime_paths
+test_apply_alpha_env_drops_inherited_redis_dirs
 test_apply_alpha_env_needs_no_f307_client_gate
 test_init_and_sync_alpha_worktree_ff_only
 test_ensure_alpha_branch_repairs_detached_worktree

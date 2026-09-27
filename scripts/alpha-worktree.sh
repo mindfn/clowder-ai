@@ -174,6 +174,7 @@ print_alpha_env_exports() {
 export REDIS_PORT=$ALPHA_REDIS_PORT
 export REDIS_URL=redis://localhost:$ALPHA_REDIS_PORT
 export REDIS_PROFILE=$ALPHA_REDIS_PROFILE
+unset REDIS_DATA_DIR REDIS_BACKUP_DIR
 export API_SERVER_PORT=$ALPHA_API_PORT
 export FRONTEND_PORT=$ALPHA_FRONTEND_PORT
 export PREVIEW_GATEWAY_PORT=$ALPHA_PREVIEW_GATEWAY_PORT
@@ -249,6 +250,11 @@ apply_alpha_env() {
   export REDIS_PORT="$ALPHA_REDIS_PORT"
   export REDIS_URL="redis://localhost:$ALPHA_REDIS_PORT"
   export REDIS_PROFILE="$ALPHA_REDIS_PROFILE"
+  # A shell the runtime launched (or its env file) carries the runtime's Redis data and backup
+  # dirs, and start-dev takes an inherited REDIS_DATA_DIR as an explicit override: alpha's Redis
+  # would open the runtime's dump.rdb and appendonly files. Without them, start-dev derives both
+  # from the alpha Redis port, as it does for WORKTREE_PORT_OFFSET.
+  unset REDIS_DATA_DIR REDIS_BACKUP_DIR
   export API_SERVER_PORT="$ALPHA_API_PORT"
   export FRONTEND_PORT="$ALPHA_FRONTEND_PORT"
   export PREVIEW_GATEWAY_PORT="$ALPHA_PREVIEW_GATEWAY_PORT"
