@@ -46,6 +46,20 @@ export interface PluginRuntimeErrorRecord {
   readonly occurredAt: number;
 }
 
+/**
+ * F202 W2-6b — what the Host knows about a failure beyond its `lastRuntimeError` code. It sits
+ * beside that record instead of inside it, so a Host from before it reads the record unchanged and
+ * drops this (its instance parser keeps only the fields it knows). A diagnostic only: no grant
+ * decision reads it.
+ */
+export interface PluginRuntimeErrorDetail {
+  /** The failure was the Host refusing a capability the instance was not granted. */
+  readonly kind: 'capability_not_granted';
+  readonly capability: Capability;
+  /** The `occurredAt` of the `lastRuntimeError` it explains; one that differs is stale. */
+  readonly occurredAt: number;
+}
+
 export interface PluginPackageRecord {
   readonly packageDigest: string;
   readonly pluginId: string;
@@ -76,6 +90,8 @@ export interface PluginInstanceRecord {
   readonly retiredAt?: number;
   /** Sanitized machine-readable failure only. Raw child stderr is never persisted. */
   readonly lastRuntimeError?: PluginRuntimeErrorRecord;
+  /** Written and cleared with `lastRuntimeError`; see {@link PluginRuntimeErrorDetail}. */
+  readonly lastRuntimeErrorDetail?: PluginRuntimeErrorDetail;
 }
 
 export interface PluginGrantRecord {

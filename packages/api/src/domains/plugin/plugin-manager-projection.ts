@@ -13,12 +13,8 @@ import type {
   PluginManagerPackageSource,
 } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
-import type {
-  PluginInstanceRecord,
-  PluginInventorySnapshot,
-  PluginPackageRecord,
-  PluginRuntimeErrorRecord,
-} from './host-inventory/types.js';
+import { pluginRuntimeDiagnostic } from './diagnostics/plugin-runtime-diagnostic.js';
+import type { PluginInstanceRecord, PluginInventorySnapshot, PluginPackageRecord } from './host-inventory/types.js';
 
 /** Catalog-owned metadata required to render an available plugin before installation. */
 export interface PluginManagerCatalogCandidate {
@@ -191,16 +187,6 @@ function intentState(
   return 'disabled';
 }
 
-function diagnostic(error: PluginRuntimeErrorRecord | undefined, revision: number) {
-  if (!error) return undefined;
-  return {
-    code: error.code,
-    message: `Plugin runtime reported ${error.code}.`,
-    occurredAt: error.occurredAt,
-    revision,
-  };
-}
-
 function candidatePackage(
   candidate: PluginManagerCatalogCandidate,
   snapshot: PluginInventorySnapshot,
@@ -291,9 +277,12 @@ function projectCapabilities(
   }));
 }
 
-function runtimeDiagnostic(instance: PluginInstanceRecord | undefined) {
-  if (!instance?.lastRuntimeError) return {};
-  return { diagnostic: diagnostic(instance.lastRuntimeError, instance.lifecycleRevision) };
+function runtimeDiagnostic(
+  instance: PluginInstanceRecord | undefined,
+  grant: Parameters<typeof pluginRuntimeDiagnostic>[1],
+) {
+  const diagnostic = pluginRuntimeDiagnostic(instance, grant);
+  return diagnostic === undefined ? {} : { diagnostic };
 }
 
 export function projectPluginManagerCatalogCandidate(
@@ -338,6 +327,6 @@ export function projectPluginManagerCatalogCandidate(
     lifecycleRevision: instance?.lifecycleRevision ?? null,
     capabilitySummary,
     actions: derivePluginManagerActions({ artifact, config, auth, intent, activationTransition }),
-    ...runtimeDiagnostic(instance),
+    ...runtimeDiagnostic(instance, grant),
   };
 }

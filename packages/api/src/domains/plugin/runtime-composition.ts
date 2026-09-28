@@ -47,6 +47,7 @@ import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
 import type { DeclaredScheduleTaskRunner } from './declared/declared-runtime-contributions.js';
+import type { PluginStartFailureObserver } from './diagnostics/plugin-start-failure.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
 import { PLUGIN_OWNER_UNINSTALLED_REASON } from './external-plugin-lifecycle-types.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
@@ -129,6 +130,8 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly builtinPackages?: BuiltinPluginPackageMaterializer;
   readonly contract?: PackageAdmissionContractRuntime;
   readonly now?: () => number;
+  /** F202 W2-6b: told of each failed runtime start; defaults to the Host's `plugin/lifecycle` error log. */
+  readonly onPluginStartFailure?: PluginStartFailureObserver;
   readonly editorParentOrigin?: string;
   /**
    * F202 C1 gap C: where the stdio runtime reads an instance's stored configuration. Defaults to
@@ -508,6 +511,7 @@ export function createDormantPluginRuntimeComposition(
     store: inventoryStore,
     supervisor,
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.onPluginStartFailure === undefined ? {} : { onStartFailure: options.onPluginStartFailure }),
   });
 
   return {

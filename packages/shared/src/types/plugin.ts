@@ -239,6 +239,8 @@ export interface PluginManagerContributionToolsResponse {
 
 export interface PluginManagerDiagnostic {
   code: string;
+  /** F202 W2-6b: with `CAPABILITY_NOT_GRANTED`, the capability the Host refused. */
+  capability?: string;
   message: string;
   occurredAt: number;
   revision: number | null;

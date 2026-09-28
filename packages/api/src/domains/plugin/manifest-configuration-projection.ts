@@ -38,6 +38,7 @@
 
 import { isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
 import type { ConfigurationField, PluginManifest } from '@clowder-ai/plugin-contract';
+import { hostCapabilityRefusal } from './host-surface/host-capability-refusal.js';
 import { effectivePluginConfigurationValue } from './manager/plugin-configuration-values.js';
 
 /** The environment namespace the Host owns on every spawned child. */
@@ -75,7 +76,7 @@ export class ManifestConfigurationProjectionError extends Error {
   }
 }
 
-function requiredGrant(field: ConfigurationField): string {
+function requiredGrant(field: ConfigurationField): 'secret.read' | 'plugin.config.read' {
   return field.kind === 'secret' ? 'secret.read' : 'plugin.config.read';
 }
 
@@ -112,12 +113,15 @@ async function resolveDeclaredField(
     // Rule 3 outranks rule 2 for a required field: a provider that cannot read its own
     // mandatory authority must refuse, not start without it.
     if (required) {
-      throw new ManifestConfigurationProjectionError({
-        reason: 'grant_unavailable',
-        key: field.key,
-        kind: field.kind,
+      throw hostCapabilityRefusal(
+        new ManifestConfigurationProjectionError({
+          reason: 'grant_unavailable',
+          key: field.key,
+          kind: field.kind,
+          grant,
+        }),
         grant,
-      });
+      );
     }
     return undefined;
   }

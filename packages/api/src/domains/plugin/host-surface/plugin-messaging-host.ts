@@ -5,6 +5,7 @@ import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.
 import { MessagingError } from '../../messaging/contract/host-types.js';
 import { validateDraft } from '../../messaging/contract/validate.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
+import { hostCapabilityRefusal } from './host-capability-refusal.js';
 import { pluginMessageSourceOf } from './plugin-messaging-source.js';
 import {
   createUnavailablePluginMessagingSubscriptionHost,
@@ -96,7 +97,10 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
     ...(input.subscriptions ?? createUnavailablePluginMessagingSubscriptionHost().host),
     async send(value) {
       if (!input.effectiveGrants.includes('messaging.send')) {
-        throw new MessagingError('PERMISSION', `${input.pluginId} lacks messaging.send`);
+        throw hostCapabilityRefusal(
+          new MessagingError('PERMISSION', `${input.pluginId} lacks messaging.send`),
+          'messaging.send',
+        );
       }
       const record = recordOf(value);
       const threadId = boundedString(record.threadId, 'threadId', 500);

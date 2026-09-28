@@ -1,6 +1,7 @@
 import type { CatId, CreateTaskInput, TaskItem, TaskKind, TaskStatus, UpdateTaskInput } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
 const TASK_KINDS = new Set<TaskKind>(['work', 'pr_tracking', 'issue_tracking']);
 const TASK_STATUSES = new Set<TaskStatus>(['todo', 'doing', 'blocked', 'done']);
@@ -99,7 +100,10 @@ function subjectUpsertInput(value: PluginTaskCreateInput): CreateTaskInput {
 export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost {
   const requireGrant = (capability: 'task.read' | 'task.write') => {
     if (!input.effectiveGrants.includes(capability)) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`);
+      throw hostCapabilityRefusal(
+        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`),
+        capability,
+      );
     }
     if (!input.taskStore) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task store is unavailable');

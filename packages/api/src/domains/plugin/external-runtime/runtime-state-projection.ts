@@ -10,6 +10,7 @@
  */
 
 import type { PluginInventoryTransaction } from '../host-inventory/ports.js';
+import { withoutRuntimeFailure } from '../host-inventory/runtime-failure-record.js';
 import type { RuntimeState } from '../host-inventory/types.js';
 import { projectRuntimeCrash } from './runtime-crash-projection.js';
 import type { RuntimeExecution } from './runtime-execution.js';
@@ -42,8 +43,7 @@ export async function setRuntimeState(
       );
     }
     if (runtimeState === 'starting') {
-      const { lastRuntimeError: _lastRuntimeError, ...withoutRuntimeError } = instance;
-      transaction.instances.put({ ...withoutRuntimeError, runtimeState, updatedAt: deps.now() });
+      transaction.instances.put({ ...withoutRuntimeFailure(instance), runtimeState, updatedAt: deps.now() });
     } else {
       transaction.instances.put({ ...instance, runtimeState, updatedAt: deps.now() });
     }

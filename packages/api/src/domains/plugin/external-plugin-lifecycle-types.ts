@@ -1,3 +1,4 @@
+import type { PluginStartFailureObserver } from './diagnostics/plugin-start-failure.js';
 import type { PluginInventoryStore } from './host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginRuntimeErrorCode } from './host-inventory/types.js';
 
@@ -58,4 +59,9 @@ export interface ExternalPluginLifecycleServiceOptions {
   readonly store: PluginInventoryStore;
   readonly supervisor: PluginRuntimeLifecyclePort;
   readonly now?: () => number;
+  /**
+   * F202 W2-6b: told of every failed runtime start, with a safe projection of the error — never the
+   * error itself. Defaults to the Host's `plugin/lifecycle` error log.
+   */
+  readonly onStartFailure?: PluginStartFailureObserver;
 }

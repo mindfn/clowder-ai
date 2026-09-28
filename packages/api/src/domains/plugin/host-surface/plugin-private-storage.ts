@@ -1,5 +1,6 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
 const MAX_STORAGE_KEY_LENGTH = 256;
 const MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
@@ -84,7 +85,10 @@ export function createPluginStorageHost(input: {
 }): PluginStorageHost {
   const requireGrant = (capability: 'plugin.state.get' | 'plugin.state.set') => {
     if (!input.effectiveGrants.includes(capability)) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`);
+      throw hostCapabilityRefusal(
+        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`),
+        capability,
+      );
     }
     if (!input.storage) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host plugin storage is unavailable');

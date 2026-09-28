@@ -8,6 +8,7 @@ import { installMcpCapability, removeMcpCapability } from '../../../config/capab
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.js';
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import { pluginResourceRoot, resolvePackageFile } from './declared-resource-paths.js';
 import type { DeclaredStaticResourceHost } from './declared-static-resources.js';
@@ -251,9 +252,12 @@ async function environmentValue(
 ): Promise<string | undefined> {
   const grant = binding.source === 'secret' ? 'secret.read' : 'plugin.config.read';
   if (!admission.effectiveGrants.includes(grant)) {
-    throw new ExternalPluginRuntimeError(
-      'CONFIG_UNAVAILABLE',
-      `MCP contribution ${contribution.id} lacks Host grant ${grant}`,
+    throw hostCapabilityRefusal(
+      new ExternalPluginRuntimeError(
+        'CONFIG_UNAVAILABLE',
+        `MCP contribution ${contribution.id} lacks Host grant ${grant}`,
+      ),
+      grant,
     );
   }
   const raw =

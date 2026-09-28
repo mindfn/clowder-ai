@@ -12,6 +12,7 @@ import { loadLimbDeclaration } from '../../limb/limb-yaml-loader.js';
 import { type InvokeContext, PluginLimbAdapter } from '../../limb/PluginLimbAdapter.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
+import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.js';
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
 import type { CloudConversationHostLease, CloudConversationHostRegistry } from './cloud-conversation-host-registry.js';
@@ -106,9 +107,12 @@ export class DeclaredRuntimeContributions {
     const cloudHostRegistry = this.host.cloudConversationHosts;
     try {
       if (schedules.length > 0 && !admission.effectiveGrants.includes('schedule.register')) {
-        throw new ExternalPluginRuntimeError(
-          'DELIVERY_REJECTED',
-          `${admission.packageRecord.pluginId} lacks schedule.register`,
+        throw hostCapabilityRefusal(
+          new ExternalPluginRuntimeError(
+            'DELIVERY_REJECTED',
+            `${admission.packageRecord.pluginId} lacks schedule.register`,
+          ),
+          'schedule.register',
         );
       }
       if (schedules.length > 0 && !this.host.taskRunner) {

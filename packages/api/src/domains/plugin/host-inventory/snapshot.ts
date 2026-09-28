@@ -1,6 +1,7 @@
 import type { SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
 import { DEFAULT_PLUGIN_CONTRACT_RUNTIME, requestedCapabilitiesForManifest } from './contract-policy.js';
 import type { PackageAdmissionContractRuntime } from './manifest-verifier.js';
+import { parseRuntimeErrorDetail } from './runtime-failure-record.js';
 import type {
   ActivationState,
   ConfigReadiness,
@@ -213,7 +214,7 @@ function parsePackage(value: unknown, index: number, contract: PackageAdmissionC
   return record;
 }
 
-function parseInstance(value: unknown, index: number): PluginInstanceRecord {
+function parseInstance(value: unknown, index: number, contract: PackageAdmissionContractRuntime): PluginInstanceRecord {
   const raw = object(value, `instances[${index}]`);
   const record: PluginInstanceRecord = {
     pluginInstanceId: string(raw.pluginInstanceId, `instances[${index}].pluginInstanceId`),
@@ -232,11 +233,12 @@ function parseInstance(value: unknown, index: number): PluginInstanceRecord {
       ? {}
       : { lastRuntimeError: runtimeError(raw.lastRuntimeError, `instances[${index}].lastRuntimeError`) }),
   };
+  const detail = parseRuntimeErrorDetail(raw, `instances[${index}]`, record.lastRuntimeError, contract);
   if (!isCanonicalPackageDigest(record.packageDigest)) corrupt(`instances[${index}].packageDigest is not canonical`);
   if (record.lifecycleState === 'retired' && record.retiredAt === undefined) {
     corrupt(`instances[${index}] retired state requires retiredAt`);
   }
-  return record;
+  return detail === undefined ? record : { ...record, lastRuntimeErrorDetail: detail };
 }
 
 function parseGrant(value: unknown, index: number, contract: PackageAdmissionContractRuntime): PluginGrantRecord {
@@ -365,7 +367,7 @@ export function parsePluginInventorySnapshot(
   const raw = object(value, 'inventory');
   requireSupportedCollections(raw);
   const packages = raw.packages.map((entry, index) => parsePackage(entry, index, contract));
-  const instances = raw.instances.map(parseInstance);
+  const instances = raw.instances.map((entry, index) => parseInstance(entry, index, contract));
   const grants = raw.grants.map((entry, index) => parseGrant(entry, index, contract));
   const packageByDigest = indexPackages(packages);
   const instanceById = indexInstances(instances, packageByDigest);

@@ -1,6 +1,7 @@
 import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IThreadStore, Thread } from '../../cats/services/stores/ports/ThreadStore.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
 const MAX_THREAD_KEY_LENGTH = 500;
 const MAX_THREAD_ID_LENGTH = 500;
@@ -103,7 +104,10 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
   const ensureTails = new Map<string, Promise<void>>();
   const requireGrant = (capability: 'thread.listMetadata' | 'thread.readContent' | 'thread.write') => {
     if (!input.effectiveGrants.includes(capability)) {
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`);
+      throw hostCapabilityRefusal(
+        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${input.pluginId} lacks ${capability}`),
+        capability,
+      );
     }
   };
 

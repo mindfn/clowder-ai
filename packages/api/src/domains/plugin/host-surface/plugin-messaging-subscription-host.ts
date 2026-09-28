@@ -5,6 +5,7 @@ import { MessagingError } from '../../messaging/contract/host-types.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
 import type { SubscriptionDelivery } from '../../messaging/subscription-delivery.js';
 import { removesPluginOwnedResources } from '../external-plugin-lifecycle-types.js';
+import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
 const SUBSCRIBE_KEYS = new Set(['threadId', 'method', 'includeOwnMessages']);
 
@@ -45,7 +46,10 @@ function boundedString(value: unknown, field: string, maximum: number): string {
 
 function requireGrant(deps: PluginMessagingSubscriptionSessionDeps): void {
   if (!deps.effectiveGrants.includes('message.event.subscribe')) {
-    throw new MessagingError('PERMISSION', `${deps.pluginId} lacks message.event.subscribe`);
+    throw hostCapabilityRefusal(
+      new MessagingError('PERMISSION', `${deps.pluginId} lacks message.event.subscribe`),
+      'message.event.subscribe',
+    );
   }
 }
 

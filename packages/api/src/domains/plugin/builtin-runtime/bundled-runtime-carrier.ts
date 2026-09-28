@@ -7,14 +7,11 @@ import {
   settlePluginInvocation,
 } from '../carrier/host-invocation.js';
 import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../carrier/runtime-carrier.js';
+import { startFailureRecord } from '../diagnostics/plugin-start-failure.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
-import type {
-  PluginInstanceRecord,
-  PluginPackageRecord,
-  PluginRuntimeErrorRecord,
-  RuntimeState,
-} from '../host-inventory/types.js';
+import { withoutRuntimeFailure, withRuntimeFailure } from '../host-inventory/runtime-failure-record.js';
+import type { PluginInstanceRecord, PluginPackageRecord, RuntimeState } from '../host-inventory/types.js';
 
 /**
  * A runtime that ships inside the Host and implements one admitted package. It declares
@@ -117,9 +114,11 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     } catch (error) {
       if (this.#active.get(pluginInstanceId)?.closed === closed) {
         await runtime.stop(pluginInstanceId, 'start_failed').catch(() => undefined);
-        await this.setBundledRuntimeState(authority, 'stopped', packageFailed ? this.#startFailure() : undefined).catch(
-          () => undefined,
-        );
+        await this.setBundledRuntimeState(
+          authority,
+          'stopped',
+          packageFailed ? this.#startFailure(error) : undefined,
+        ).catch(() => undefined);
         if (this.#active.get(pluginInstanceId)?.closed === closed) this.#active.delete(pluginInstanceId);
       }
       resolveClosed();
@@ -203,10 +202,11 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
    * honestly null. What the owner needs is the same thing the process carrier gives them:
    * a durable record that this start attempt failed, so a plugin that throws while loading
    * is recoverable by disabling or uninstalling it rather than silently not running
-   * (F202 Train C1 terminal contract, clause 6).
+   * (F202 Train C1 terminal contract, clause 6). When the Host refused the package a capability,
+   * the record says which (F202 W2-6b).
    */
-  #startFailure(): PluginRuntimeErrorRecord {
-    return { code: 'UNEXPECTED_RUNTIME_FAILURE', exitCode: null, signal: null, occurredAt: this.#now() };
+  #startFailure(error: unknown): ReturnType<typeof startFailureRecord> {
+    return startFailureRecord(error, this.#now());
   }
 
   #runtimeFor(packageRecord: Pick<PluginPackageRecord, 'manifest'>): BundledPluginRuntime | undefined {
@@ -247,7 +247,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
   private setBundledRuntimeState(
     authority: RuntimeAuthority,
     runtimeState: RuntimeState,
-    failure?: PluginRuntimeErrorRecord,
+    failure?: ReturnType<typeof startFailureRecord>,
   ): Promise<void> {
     return this.options.inventory.transaction((transaction) => {
       const current = transaction.instances.get(authority.instance.pluginInstanceId);
@@ -263,13 +263,12 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
           `${authority.instance.pluginInstanceId} authority changed`,
         );
       }
-      const { lastRuntimeError: _lastRuntimeError, ...withoutError } = current;
-      transaction.instances.put({
-        ...(runtimeState === 'starting' || failure !== undefined ? withoutError : current),
-        ...(failure === undefined ? {} : { lastRuntimeError: failure }),
-        runtimeState,
-        updatedAt: this.#now(),
-      });
+      const base = failure
+        ? withRuntimeFailure(current, failure.record, failure.detail)
+        : runtimeState === 'starting'
+          ? withoutRuntimeFailure(current)
+          : current;
+      transaction.instances.put({ ...base, runtimeState, updatedAt: this.#now() });
     });
   }
 }

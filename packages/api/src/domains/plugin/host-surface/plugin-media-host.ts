@@ -2,6 +2,7 @@ import { type MediaReadInput, type MediaReadResult, validateMessagingRowInput } 
 import { MessagingError } from '../../messaging/contract/host-types.js';
 import type { MediaEntitlementLedger } from '../../messaging/media-entitlements.js';
 import type { FileMessagingMediaLedger } from '../../messaging/media-ledger.js';
+import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
 export interface PluginMediaHost {
   read(input: MediaReadInput): Promise<MediaReadResult>;
@@ -27,7 +28,10 @@ export class PluginMediaReadService {
   async read(context: MediaReadContext, input: MediaReadInput): Promise<MediaReadResult> {
     if (!context.effectiveGrants.includes('media.read')) {
       this.options.onRejected?.('capability');
-      throw new MessagingError('PERMISSION', 'media.read capability is not granted');
+      throw hostCapabilityRefusal(
+        new MessagingError('PERMISSION', 'media.read capability is not granted'),
+        'media.read',
+      );
     }
     const validated = validateMessagingRowInput('media.read', input);
     if (!validated.valid) {
@@ -78,7 +82,7 @@ export function createUnavailablePluginMediaHost(effectiveGrants: readonly strin
     async read() {
       throw effectiveGrants.includes('media.read')
         ? new MessagingError('MEDIA_ACCESS_DENIED', DENIED_MESSAGE)
-        : new MessagingError('PERMISSION', 'media.read capability is not granted');
+        : hostCapabilityRefusal(new MessagingError('PERMISSION', 'media.read capability is not granted'), 'media.read');
     },
   };
 }
