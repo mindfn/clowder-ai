@@ -853,6 +853,69 @@ describe('useAgentMessages loading lifecycle', () => {
     }
   });
 
+  // Replaces the source search in api/test/heartbeat.test.js, which still looked for the isFinal branch in this hook
+  // after F117 moved done handling to agent-messages/active-terminal.ts.
+  it('a final done of the last running cat clears the done watchdog', () => {
+    vi.useFakeTimers();
+    try {
+      mockRequestStreamCatchUp.mockClear();
+      act(() => {
+        root.render(React.createElement(Harness));
+      });
+      act(() => {
+        captured?.handleAgentMessage({
+          type: 'text',
+          catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
+          content: 'x',
+        });
+      });
+      act(() => {
+        captured?.handleAgentMessage({ type: 'done', catId: 'codex', messageId: 'resp-1', isFinal: true });
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(5 * 60 * 1000);
+      });
+
+      expect(mockRequestStreamCatchUp).not.toHaveBeenCalledWith('thread-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a final done keeps the done watchdog while another cat is still running (F108 P1)', () => {
+    vi.useFakeTimers();
+    try {
+      mockRequestStreamCatchUp.mockClear();
+      storeState.activeInvocations = { 'inv-opus': { catId: 'opus', mode: 'execute' } };
+      act(() => {
+        root.render(React.createElement(Harness));
+      });
+      act(() => {
+        captured?.handleAgentMessage({
+          type: 'text',
+          catId: 'codex',
+          messageId: 'resp-1',
+          origin: 'stream',
+          content: 'x',
+        });
+      });
+      act(() => {
+        captured?.handleAgentMessage({ type: 'done', catId: 'codex', messageId: 'resp-1', isFinal: true });
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(5 * 60 * 1000);
+      });
+
+      expect(mockRequestStreamCatchUp).toHaveBeenCalledWith('thread-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cleans timeout guard on unmount to prevent stale timeout side effects', () => {
     vi.useFakeTimers();
     try {
