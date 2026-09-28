@@ -6,10 +6,14 @@ import {
   RedisCloudReturnGrantStore,
 } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 
+/** A Host-minted message id created an hour from now: provably younger than any store's epoch. */
+const hostMessageId = (sequence) =>
+  `${String(Date.now() + 3_600_000).padStart(16, '0')}-${String(sequence).padStart(6, '0')}-abcdef01`;
+
 const claims = {
   threadId: 'thread-f247',
   userId: 'alice',
-  sourceMessageId: 'source-f247',
+  sourceMessageId: hostMessageId(1),
   dispatchInvocationId: 'dispatch-f247',
   targetCatId: 'gpt-pro',
 };

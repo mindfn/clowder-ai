@@ -2286,7 +2286,10 @@ async function main(): Promise<void> {
   const { MemoryCloudReturnGrantStore, RedisCloudReturnGrantStore } = await import(
     './domains/cats/services/cloud-bridge/cloud-return-grant.js'
   );
-  const cloudReturnGrantStore = redis ? new RedisCloudReturnGrantStore(redis) : new MemoryCloudReturnGrantStore();
+  // Without Redis, source bindings live as long as this process: its start is the history boundary.
+  const cloudReturnGrantStore = redis
+    ? new RedisCloudReturnGrantStore(redis)
+    : new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: Date.now() });
   if (cloudReturnGrantStore instanceof RedisCloudReturnGrantStore) {
     // F202 h3c-2: sources of grants persisted before sources were bound get their owner before any
     // dispatch is admitted. A failure here is retried by the store itself, which refuses until done.

@@ -120,12 +120,13 @@ describe('PersonalChromeAssistantReturnPoller', () => {
       sourceMessageId: source.id,
       targetCatId: 'gpt-pro',
     };
-    const grantStoreBeforeRestart = new MemoryCloudReturnGrantStore();
+    const grantStoreBeforeRestart = new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 });
     await grantStoreBeforeRestart.issue({ ...scope, dispatchInvocationId: 'dispatch-before-restart' });
 
     // REDIS_URL is absent: API restart constructs a fresh in-memory store while
     // the Native Host keeps the exact assistant final in its durable inbox.
-    const grantStoreAfterRestart = new MemoryCloudReturnGrantStore();
+    // Restarted between the two sources (1000 → 2000): only the newer one can be proven new.
+    const grantStoreAfterRestart = new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 1_500 });
     await grantStoreAfterRestart.issue({
       threadId: newerSource.threadId,
       userId: newerSource.userId,
@@ -196,13 +197,22 @@ describe('PersonalChromeAssistantReturnPoller', () => {
       1,
     );
 
-    await grantStoreAfterRestart.issue({ ...scope, dispatchInvocationId: 'dispatch-after-restart' });
+    // F202 h3c-2 (review P1-3): without Redis the source bindings did not survive the restart, so the
+    // Host cannot prove which cat the older source was sent to before it. Sending it again is refused —
+    // a new message is needed — and its old answer stays retained, never attributed to anyone.
+    assert.deepEqual(await grantStoreAfterRestart.issue({ ...scope, dispatchInvocationId: 'dispatch-after-restart' }), {
+      ok: false,
+      reason: 'source_history_unknown',
+    });
     await poller.drainOnce();
 
     assert.deepEqual(acknowledgements, [
       [newerPending.conversationId, newerPending.sourceMessageId, newerPending.assistantMessageId],
-      [restartPending.conversationId, restartPending.sourceMessageId, restartPending.assistantMessageId],
     ]);
+    assert.equal(
+      (await messageStore.getByThread(source.threadId)).filter((message) => message.catId === 'gpt-pro').length,
+      1,
+    );
     assert.deepEqual(listCursors, [
       undefined,
       {
@@ -214,7 +224,8 @@ describe('PersonalChromeAssistantReturnPoller', () => {
     ]);
     assert.equal(
       (await messageStore.getByThread(source.threadId)).filter((message) => message.catId === 'gpt-pro').length,
-      2,
+      1,
+      'the restart return is still retained, not recorded',
     );
   });
 

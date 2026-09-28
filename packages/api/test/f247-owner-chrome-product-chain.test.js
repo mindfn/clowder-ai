@@ -48,7 +48,7 @@ describe('F247 normal owner-Chrome product chain', () => {
       timestamp: 1_000,
       extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
     });
-    const grantStore = new MemoryCloudReturnGrantStore();
+    const grantStore = new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 });
     const bridgeCalls = [];
     const dispositionCalls = [];
     const events = await drain(

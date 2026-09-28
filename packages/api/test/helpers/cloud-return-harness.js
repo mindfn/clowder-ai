@@ -85,7 +85,7 @@ export async function cloudReturnHarness() {
   process.env.DEFAULT_OWNER_USER_ID = 'alice';
   const { callbacksRoutes } = await import('../../dist/routes/callbacks.js');
   const messages = pausable(new MessageStore(), 'appendIdempotent');
-  const grants = pausable(new MemoryCloudReturnGrantStore(), 'commit');
+  const grants = pausable(new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 }), 'commit');
   const messageStore = messages.proxy;
   const grantStore = grants.proxy;
   const agentKeyRegistry = new AgentKeyRegistry({ ttlMs: 86_400_000 });

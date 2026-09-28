@@ -23,7 +23,7 @@ function fixture() {
     mentions: ['gpt-pro'],
     timestamp: 1_000,
   });
-  const grantStore = new MemoryCloudReturnGrantStore();
+  const grantStore = new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 });
   const broadcasts = [];
   const service = new CloudAssistantReturnIngestService({
     messageStore: store,

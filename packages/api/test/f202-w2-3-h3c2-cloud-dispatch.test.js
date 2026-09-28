@@ -12,6 +12,9 @@ import { buildFallbackMessageContent } from '../dist/domains/cats/services/cloud
 import { MemoryCloudReturnGrantStore } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { configureCats } from './helpers/cloud-return-harness.js';
 
+/** The dispatched source, as the Host mints message ids. */
+const SOURCE_ID = '0000000000001000-000001-abcdef01';
+
 beforeEach(() => configureCats(['cloud-alt']));
 
 function dispatchHarness({ grantStore } = {}) {
@@ -49,7 +52,7 @@ function dispatchHarness({ grantStore } = {}) {
       threadId: 'thread_t1',
       ownerAuthProvenance: 'strict',
       isLastCat: true,
-      executionCausal: { triggerMessageId: 'source-1' },
+      executionCausal: { triggerMessageId: SOURCE_ID },
       mentionContent: 'raw words',
       mentioningCatId: 'opus',
     })) {
@@ -95,11 +98,11 @@ test('several cats on one cloud provider: refused before any grant or delivery, 
 });
 
 test('P1-3: a message already sent to one cloud cat is not sent again to another', async () => {
-  const grantStore = new MemoryCloudReturnGrantStore();
+  const grantStore = new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 });
   await grantStore.issue({
     threadId: 'thread_t1',
     userId: 'alice',
-    sourceMessageId: 'source-1',
+    sourceMessageId: SOURCE_ID,
     dispatchInvocationId: 'earlier-dispatch',
     targetCatId: 'cloud-alt',
   });

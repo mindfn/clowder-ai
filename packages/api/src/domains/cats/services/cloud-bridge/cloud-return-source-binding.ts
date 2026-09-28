@@ -39,16 +39,37 @@ function refusal(owner: string | null): SourceBinding {
   return { bound: false, owner: owner === UNOWNED_SOURCE ? null : owner };
 }
 
-/** Binds a free source to this cat, or reports whose it already is. Write-once: never overwrites. */
+/** When the Host minted this message id (`<16-digit ms>-<seq>-<8 hex>`); `undefined` for any other id. */
+export function sourceCreatedAt(sourceMessageId: string): number | undefined {
+  const match = /^(\d{16})-\d{6,}-[0-9a-f]{8}$/u.exec(sourceMessageId);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * A source without an owner may take its first one only if the Host can prove it is younger than the
+ * bindings (the epoch): from then on every dispatch writes its binding, so a younger source with none
+ * was never sent anywhere. An older source might have been sent by a Host that kept no binding, and
+ * its grant may have lapsed since while the answer still waits in the native inbox — nobody can say
+ * whose it is, so nobody gets it. The id is the Host's own record of when the message was created.
+ */
+function provablyNew(sourceMessageId: string, epoch: number): boolean {
+  const createdAt = sourceCreatedAt(sourceMessageId);
+  return createdAt !== undefined && createdAt >= epoch;
+}
+
+/** Admits a dispatch: binds a provably new source to this cat, or reports whose it is. Never overwrites. */
 export async function bindSourceInRedis(
   redis: Pick<RedisClient, 'set' | 'get'>,
   source: CloudReturnSource,
+  epoch: number,
 ): Promise<SourceBinding> {
   const key = cloudReturnSourceKey(source);
-  if ((await redis.set(key, source.targetCatId, 'NX')) === 'OK') return { bound: true };
   const owner = await redis.get(key);
-  // A binding is never removed; if it is gone anyway, nobody can be proven to own the source.
-  return owner === source.targetCatId ? { bound: true } : refusal(owner);
+  if (owner !== null) return owner === source.targetCatId ? { bound: true } : refusal(owner);
+  if (!provablyNew(source.sourceMessageId, epoch)) return { bound: false, owner: null };
+  if ((await redis.set(key, source.targetCatId, 'NX')) === 'OK') return { bound: true };
+  const winner = await redis.get(key);
+  return winner === source.targetCatId ? { bound: true } : refusal(winner);
 }
 
 export async function sourceOwnerInRedis(
@@ -58,25 +79,19 @@ export async function sourceOwnerInRedis(
   return redis.get(cloudReturnSourceKey(source));
 }
 
-/** A source two persisted grants disagree about can be proven to belong to neither. */
-export async function markSourceUnownedInRedis(
-  redis: Pick<RedisClient, 'set'>,
-  source: Omit<CloudReturnSource, 'targetCatId'>,
-): Promise<void> {
-  await redis.set(cloudReturnSourceKey(source), UNOWNED_SOURCE);
-}
-
 export class MemorySourceBindings {
   private readonly owners = new Map<string, string>();
+
+  /** `epoch`: memory keeps no bindings across a restart, so a store's history starts when it does. */
+  constructor(private readonly epoch: number) {}
 
   bind(source: CloudReturnSource): SourceBinding {
     const key = cloudReturnSourceKey(source);
     const owner = this.owners.get(key);
-    if (owner === undefined) {
-      this.owners.set(key, source.targetCatId);
-      return { bound: true };
-    }
-    return owner === source.targetCatId ? { bound: true } : refusal(owner);
+    if (owner !== undefined) return owner === source.targetCatId ? { bound: true } : refusal(owner);
+    if (!provablyNew(source.sourceMessageId, this.epoch)) return { bound: false, owner: null };
+    this.owners.set(key, source.targetCatId);
+    return { bound: true };
   }
 
   ownerOf(source: Omit<CloudReturnSource, 'targetCatId'>): string | null {
@@ -84,28 +99,37 @@ export class MemorySourceBindings {
   }
 }
 
+const EPOCH_KEY = `${SOURCE_PREFIX}epoch`;
 const MIGRATED_KEY = `${SOURCE_PREFIX}migrated`;
 
 /**
- * Grants persisted before sources were bound are dispatches all the same: before admitting anything,
- * bind each such grant's source to its cat. A source two of them disagree about belongs to neither.
- * Runs once per Redis database; a marker records that it did.
+ * Opens the bindings of a Redis database and returns its epoch. The first run records the epoch —
+ * durably, once — and then recovers the owner of every grant persisted before bindings existed: those
+ * are dispatches too. A source two of them disagree about belongs to neither. Sources older than the
+ * epoch whose grants had already lapsed stay ownerless, and are refused (see `provablyNew`).
  */
-export async function bindPersistedSourcesInRedis(
+export async function openSourceBindingsInRedis(
   redis: Pick<RedisClient, 'get' | 'set' | 'scan'>,
   grants: { readonly keyPattern: string; readonly read: (raw: string | null) => CloudReturnSource | null },
-): Promise<void> {
-  if ((await redis.get(MIGRATED_KEY)) === 'v1') return;
+  now: () => number = Date.now,
+): Promise<number> {
+  await redis.set(EPOCH_KEY, String(now()), 'NX');
+  const epoch = Number(await redis.get(EPOCH_KEY));
+  if (!Number.isFinite(epoch)) throw new Error('the cloud return source epoch is unreadable');
+  if ((await redis.get(MIGRATED_KEY)) === 'v2') return epoch;
   let cursor = '0';
   do {
     const [next, keys] = await redis.scan(cursor, 'MATCH', grants.keyPattern, 'COUNT', 500);
     cursor = next;
     for (const key of keys) {
       const source = grants.read(await redis.get(key));
-      if (!source) continue;
-      const binding = await bindSourceInRedis(redis, source);
-      if (!binding.bound && binding.owner !== null) await markSourceUnownedInRedis(redis, source);
+      if (!source || (await redis.set(cloudReturnSourceKey(source), source.targetCatId, 'NX')) === 'OK') continue;
+      const owner = await redis.get(cloudReturnSourceKey(source));
+      if (owner !== source.targetCatId && owner !== UNOWNED_SOURCE) {
+        await redis.set(cloudReturnSourceKey(source), UNOWNED_SOURCE);
+      }
     }
   } while (cursor !== '0');
-  await redis.set(MIGRATED_KEY, 'v1');
+  await redis.set(MIGRATED_KEY, 'v2');
+  return epoch;
 }

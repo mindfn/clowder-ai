@@ -2173,9 +2173,13 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           outcome = {
             kind: 'fallback',
             reason: 'source-retargeted',
-            detail: grant.boundTargetCatId
-              ? `This message was already sent to @${grant.boundTargetCatId}; its reply can belong to one cloud cat only`
-              : 'Which cloud cat this message belongs to cannot be established; its reply can belong to one cloud cat only',
+            detail: `This message was already sent to @${grant.boundTargetCatId}; its reply can belong to one cloud cat only`,
+          };
+        } else if (grant && !grant.ok && grant.reason === 'source_history_unknown') {
+          outcome = {
+            kind: 'fallback',
+            reason: 'source-history-unknown',
+            detail: 'Which cloud cat this message was sent to before cannot be established',
           };
         } else if (!grant?.ok) {
           outcome = {

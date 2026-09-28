@@ -16,6 +16,8 @@ const messageByReason: Record<BridgeFallbackReason, (catId: string) => string> =
     `未发送给 @${catId}：有多只猫配置了同一个云端 provider，回复无法确定归属。请在猫配置里只保留一只。`,
   'source-retargeted': (catId) =>
     `未发送给 @${catId}：这条消息之前已经发给另一只云端猫，一条消息的回复只能归一只猫。请发一条新消息。`,
+  'source-history-unknown': (catId) =>
+    `未发送给 @${catId}：无法确认这条较早的消息是否已发给别的云端猫，为免回复记错对象，没有发送。请发一条新消息。`,
 };
 
 export interface CloudBridgeAuditContext {
