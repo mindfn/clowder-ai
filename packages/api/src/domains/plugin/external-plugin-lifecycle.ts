@@ -18,7 +18,7 @@ import type { PluginInventoryTransaction } from './host-inventory/ports.js';
 import { normalizePluginInstanceAfterRestart } from './host-inventory/restart-recovery.js';
 import { withoutRuntimeFailure, withRuntimeFailure } from './host-inventory/runtime-failure-record.js';
 import type { ActivationState, PluginInstanceRecord } from './host-inventory/types.js';
-import { InstanceOperationQueue } from './instance-operation-queue.js';
+import { InstanceOperationQueue } from './lifecycle/instance-operation-queue.js';
 
 export * from './external-plugin-lifecycle-types.js';
 
