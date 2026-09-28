@@ -26,13 +26,19 @@
  *   body and toolbar still render as a defensive fallback if a legacy wake path opens first.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Rnd } from 'react-rnd';
 import { projectBallState, useConciergeStore } from '@/stores/conciergeStore';
 import { ConciergeBall } from './ConciergeBall';
 import { ConciergePanel } from './ConciergePanel';
 import { ConciergeToolbar } from './ConciergeToolbar';
+import {
+  PET_TOOLBAR_CLEARANCE_PX,
+  type PetActionZone,
+  resolvePetPosition,
+  resolveWalkedPetPosition,
+} from './petActionZone';
 import { usePetBehavior } from './usePetBehavior';
 
 /** Default margin from viewport edge — matches original Tailwind `bottom-6 right-6` (1.5rem = 24px) */
@@ -40,10 +46,23 @@ const EDGE_MARGIN = 24;
 /** Extra vertical space needed below the ball for the toolbar (BUG-UX-13 R2).
  *  Toolbar: top-[calc(100%+8px)] → 8px gap; buttons are h-9 (36px) → total 44px.
  *  Used in default position AND clamp to ensure toolbar is never clipped. */
-const TOOLBAR_BELOW_HEIGHT = 44;
 /** Minimum drag distance (px) to distinguish drag from click (INV-P1)
  *  BUG-UX-5: root fix is removing pointerEvents:'none' (below); threshold stays at 5. */
 const DRAG_THRESHOLD = 5;
+const ACTION_ZONE_SELECTOR = '[data-concierge-action-zone]';
+
+function sameZones(left: readonly PetActionZone[], right: readonly PetActionZone[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (zone, index) =>
+        zone.left === right[index]?.left &&
+        zone.top === right[index]?.top &&
+        zone.right === right[index]?.right &&
+        zone.bottom === right[index]?.bottom,
+    )
+  );
+}
 
 export function ConciergeHost() {
   const fetchConfig = useConciergeStore((s) => s.fetchConfig);
@@ -79,6 +98,76 @@ export function ConciergeHost() {
   const setBallPosition = useConciergeStore((s) => s.setBallPosition);
   const setBallSize = useConciergeStore((s) => s.setBallSize);
   const setIsDragging = useConciergeStore((s) => s.setIsDragging);
+  const [actionZones, setActionZones] = useState<PetActionZone[]>([]);
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window === 'undefined' ? 0 : window.innerWidth,
+    height: typeof window === 'undefined' ? 0 : window.innerHeight,
+  }));
+
+  const ballState = projectBallState({
+    enabled,
+    muted,
+    invocationStatus,
+    pendingConfirmationCount,
+    pendingRelayCount,
+    unseenResultCount,
+    surfaceState,
+    inputFocused,
+  });
+  // A muted user can still open the rail entry to reach the visibility control.
+  const effectiveBallState =
+    ballState === 'hidden' && muted && surfaceState !== 'collapsed' ? ('sleeping' as const) : ballState;
+
+  // The chat footer can appear after this root host, grow when the queue opens,
+  // or disappear on navigation. Observe its real geometry instead of assuming
+  // a fixed bottom offset that fails for expanded composers and narrow windows.
+  useEffect(() => {
+    if (effectiveBallState === 'hidden') return;
+    let observed: Element[] = [];
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => measure());
+    const measure = () => {
+      const zones = observed.map((element) => {
+        const { left, top, right, bottom } = element.getBoundingClientRect();
+        return { left, top, right, bottom };
+      });
+      setActionZones((previous) => (sameZones(previous, zones) ? previous : zones));
+    };
+    const attach = () => {
+      const next = Array.from(document.querySelectorAll(ACTION_ZONE_SELECTOR));
+      if (next.length === observed.length && next.every((element, index) => element === observed[index])) return;
+      for (const element of observed) resizeObserver?.unobserve(element);
+      observed = next;
+      for (const element of observed) resizeObserver?.observe(element);
+      measure();
+    };
+    const touchesActionZone = (node: Node) =>
+      node instanceof Element && (node.matches(ACTION_ZONE_SELECTOR) || node.querySelector(ACTION_ZONE_SELECTOR));
+    const mutationObserver = new MutationObserver((records) => {
+      // Streamed text mutates the timeline frequently. Only re-query when a
+      // protected footer itself was mounted or removed; ResizeObserver handles
+      // its changing height while it remains mounted.
+      if (
+        records.some((record) => [...record.addedNodes, ...record.removedNodes].some((node) => touchesActionZone(node)))
+      ) {
+        attach();
+      }
+    });
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    const handleResize = () => {
+      setViewport((previous) => {
+        const next = { width: window.innerWidth, height: window.innerHeight };
+        return previous.width === next.width && previous.height === next.height ? previous : next;
+      });
+      measure();
+    };
+    window.addEventListener('resize', handleResize);
+    attach();
+    return () => {
+      mutationObserver.disconnect();
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [effectiveBallState]);
 
   // INV-P1: drag threshold — track start position to compare with stop position
   const dragStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -86,44 +175,19 @@ export function ConciergeHost() {
   // Default position: bottom-right with margin (replaces CSS `fixed bottom-6 right-6`)
   // E3: depends on ballSize so default position adapts to cat size
   const defaultPosition = useMemo(() => {
-    if (typeof window === 'undefined') return { x: 0, y: 0 };
     return {
-      x: window.innerWidth - ballSize - EDGE_MARGIN,
-      y: window.innerHeight - ballSize - TOOLBAR_BELOW_HEIGHT - EDGE_MARGIN,
+      x: viewport.width - ballSize - EDGE_MARGIN,
+      y: viewport.height - ballSize - PET_TOOLBAR_CLEARANCE_PX - EDGE_MARGIN,
     };
-  }, [ballSize]);
+  }, [ballSize, viewport]);
 
   // INV-P2: clamp position to viewport on render (handles window resize / persisted
   // out-of-bounds values). Pure computation, no side effect.
   // E3: uses ballSize instead of constant
   const clampedPosition = useMemo(() => {
     const raw = ballPosition ?? defaultPosition;
-    if (typeof window === 'undefined') return raw;
-    return {
-      x: Math.max(0, Math.min(raw.x, window.innerWidth - ballSize)),
-      // BUG-UX-13 R2: clamp Y accounts for toolbar below the ball, not just ball size
-      y: Math.max(0, Math.min(raw.y, window.innerHeight - ballSize - TOOLBAR_BELOW_HEIGHT)),
-    };
-  }, [ballPosition, ballSize, defaultPosition]);
-
-  // INV-P2: snap back on viewport resize (position may become out-of-bounds)
-  // E3: uses ballSize from store instead of constant
-  useEffect(() => {
-    const handleResize = () => {
-      const { ballPosition: pos, ballSize: size } = useConciergeStore.getState();
-      if (!pos) return; // default position auto-adapts
-      const clamped = {
-        x: Math.max(0, Math.min(pos.x, window.innerWidth - size)),
-        // BUG-UX-13 R2: resize clamp also accounts for toolbar below
-        y: Math.max(0, Math.min(pos.y, window.innerHeight - size - TOOLBAR_BELOW_HEIGHT)),
-      };
-      if (clamped.x !== pos.x || clamped.y !== pos.y) {
-        void setBallPosition(clamped);
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [setBallPosition]);
+    return resolvePetPosition(raw, ballSize, viewport, actionZones);
+  }, [ballPosition, ballSize, defaultPosition, actionZones, viewport]);
 
   const handleDragStart = useCallback(
     (_e: unknown, d: { x: number; y: number }) => {
@@ -145,7 +209,12 @@ export function ConciergeHost() {
         // mouseup handler. Without it, React 18 batches the Zustand update →
         // Rnd re-renders with old clampedPosition before the new position arrives
         // → ball visibly snaps back to origin then jumps to the correct position.
-        const pos = { x: d.x, y: d.y };
+        const pos = resolvePetPosition(
+          { x: d.x, y: d.y },
+          ballSize,
+          { width: window.innerWidth, height: window.innerHeight },
+          actionZones,
+        );
         flushSync(() => {
           useConciergeStore.setState({ ballPosition: pos });
         });
@@ -156,27 +225,8 @@ export function ConciergeHost() {
         setIsDragging(false);
       }
     },
-    [setBallPosition, setIsDragging],
+    [setBallPosition, setIsDragging, ballSize, actionZones],
   );
-
-  // Derive ball state for all code paths (needed by hook call below)
-  const ballState = projectBallState({
-    enabled,
-    muted,
-    invocationStatus,
-    pendingConfirmationCount,
-    pendingRelayCount,
-    unseenResultCount,
-    surfaceState,
-    inputFocused,
-  });
-
-  // P1-B cloud fix: muted users who explicitly open toolbar/bubble via rail toggle
-  // (surfaceState != collapsed) should see the ball + toolbar so the panel's
-  // visibility control remains reachable. We override hidden → sleeping only in this case.
-  // When surfaceState = collapsed the normal INV-3 "muted → zero DOM" is preserved.
-  const effectiveBallState =
-    ballState === 'hidden' && muted && surfaceState !== 'collapsed' ? ('sleeping' as const) : ballState;
 
   // E4: Autonomous Behavior Engine — visual overlay on top of business state
   // Hook called unconditionally (React rules). INV-3: hidden → zero activity,
@@ -200,17 +250,30 @@ export function ConciergeHost() {
       // Avoid applying the same delta twice (React strict mode / re-renders)
       if (lastAppliedDeltaRef.current?.dx === delta.dx && lastAppliedDeltaRef.current?.dy === delta.dy) return;
       lastAppliedDeltaRef.current = delta;
-      const current = useConciergeStore.getState().ballPosition ?? defaultPosition;
-      const newPos = {
-        x: Math.max(0, Math.min(window.innerWidth - ballSize, current.x + delta.dx)),
-        y: Math.max(0, Math.min(window.innerHeight - ballSize - TOOLBAR_BELOW_HEIGHT, current.y + delta.dy)),
-      };
+      const desired = useConciergeStore.getState().ballPosition ?? defaultPosition;
+      const newPos = resolveWalkedPetPosition(
+        desired,
+        clampedPosition,
+        { x: delta.dx, y: delta.dy },
+        ballSize,
+        { width: window.innerWidth, height: window.innerHeight },
+        actionZones,
+      );
       // Local-only update — no API persist (autonomous walk is transient)
-      useConciergeStore.setState({ ballPosition: newPos });
+      if (newPos) {
+        useConciergeStore.setState({ ballPosition: newPos });
+      }
     } else {
       lastAppliedDeltaRef.current = null;
     }
-  }, [petBehavior.positionDelta, petBehavior.isAutonomousActive, defaultPosition, ballSize]);
+  }, [
+    petBehavior.positionDelta,
+    petBehavior.isAutonomousActive,
+    clampedPosition,
+    defaultPosition,
+    ballSize,
+    actionZones,
+  ]);
 
   // Wait for config before rendering — but if config fetch failed, render with optimistic
   // defaults so ball/panel are still accessible (rail toggle + retry) (P2 R5)

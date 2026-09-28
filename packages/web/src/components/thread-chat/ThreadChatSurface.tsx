@@ -232,7 +232,11 @@ export function ThreadChatSurface({
         {messages.length > 5 && <MessageNavigator messages={messages} scrollContainerRef={scrollContainerRef} />}
       </div>
 
-      <div ref={footerRef} className={compact ? 'border-t border-cafe-divider bg-cafe-surface' : undefined}>
+      <div
+        ref={footerRef}
+        data-concierge-action-zone
+        className={compact ? 'border-t border-cafe-divider bg-cafe-surface' : undefined}
+      >
         <ThreadExecutionBar threadId={threadId} />
         <QueuePanel threadId={threadId} />
         <VoteActiveBar threadId={threadId} onEnd={() => {}} />
