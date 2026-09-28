@@ -4,10 +4,12 @@ import type {
   GitHubCiBaselineBucket,
   GitHubIssueWaitBaseline,
   GitHubPrWaitBaseline,
+  GitHubReviewVerdicts,
   IssueWaitAutomationState,
   PrAutomationState,
 } from '@cat-cafe/shared';
 import type { WaitRenewalInstruction } from '../ball-custody/wait-state-machine.js';
+import { mergeReviewVerdicts } from './GitHubReviewVerdicts.js';
 import type { GitHubWaitFacts } from './GitHubWaitPredicateCatalog.js';
 
 /**
@@ -69,6 +71,7 @@ export function renewPrWaitBaseline(
         ),
         ...(facts.review?.decision ? { decision: facts.review.decision } : {}),
         ...(facts.review?.threads && !headChanged ? { threads: facts.review.threads } : {}),
+        ...renewVerdicts(previous.review.verdicts, facts),
       }
     : undefined;
 
@@ -89,6 +92,15 @@ export function renewPrWaitBaseline(
     ...(ci ? { ci } : {}),
     ...(conflict ? { conflict } : {}),
   };
+}
+
+/** #1392: verdicts are not head-scoped either; a dismissal is reported whichever HEAD it happens on. */
+function renewVerdicts(
+  seen: GitHubReviewVerdicts | undefined,
+  facts: GitHubWaitFacts,
+): { readonly verdicts?: GitHubReviewVerdicts } {
+  const verdicts = mergeReviewVerdicts(seen, facts.review?.verdicts);
+  return verdicts ? { verdicts } : {};
 }
 
 function renewCi(
@@ -142,6 +154,36 @@ export function followPushedHead(
   const baseline = active.baseline;
   if (!('headSha' in baseline) || !facts.headSha || facts.headSha === baseline.headSha) return null;
   return renewPrWaitBaseline(baseline, collector as PrAutomationState, facts, at);
+}
+
+/**
+ * #1392: a wait registered before verdicts were recorded cannot tell a dismissal that happened before
+ * this poll from one that happens now. It adopts what its first review observation sees as already
+ * known — nothing earlier is replayed, and every later dismissal is reported. Same generation, no
+ * outcome, like following a push. Null when there is nothing to adopt.
+ */
+export function adoptReviewVerdicts(active: AwaitStateV1, facts: GitHubWaitFacts): GitHubPrWaitBaseline | null {
+  const baseline = active.baseline;
+  if (!('headSha' in baseline) || !baseline.review || baseline.review.verdicts || !facts.review?.verdicts) {
+    return null;
+  }
+  return { ...baseline, review: { ...baseline.review, verdicts: facts.review.verdicts } };
+}
+
+/**
+ * Where a poll that matched nothing moves the wait's baseline, if anywhere: onto a pushed HEAD, or to
+ * adopted verdicts. Same generation, no outcome — nobody is woken.
+ */
+export function quietBaselineUpdate(
+  active: AwaitStateV1,
+  collector: AutomationState,
+  facts: GitHubWaitFacts,
+  at: number,
+): { readonly baseline: GitHubPrWaitBaseline; readonly reason: 'head_followed' | 'review_verdicts_adopted' } | null {
+  const followed = followPushedHead(active, collector, facts, at);
+  if (followed) return { baseline: followed, reason: 'head_followed' };
+  const adopted = adoptReviewVerdicts(active, facts);
+  return adopted ? { baseline: adopted, reason: 'review_verdicts_adopted' } : null;
 }
 
 /**

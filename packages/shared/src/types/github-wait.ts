@@ -424,6 +424,18 @@ export interface GitHubReviewThreadBaseline {
   readonly resolved: boolean;
 }
 
+/**
+ * #1392: the state of a formal review that holds, or held, a verdict. GitHub dismisses a verdict in
+ * place: the review keeps its id and author and its state becomes DISMISSED. A dismissed review is
+ * never revived; a new verdict is a new review.
+ */
+export type GitHubReviewVerdictState = 'APPROVED' | 'CHANGES_REQUESTED' | 'DISMISSED';
+
+/** Keyed by review id. */
+export type GitHubReviewVerdicts = Readonly<
+  Record<string, { readonly state: GitHubReviewVerdictState; readonly author?: string }>
+>;
+
 export interface GitHubPrWaitBaseline {
   readonly capturedAt: number;
   readonly headSha: string;
@@ -435,6 +447,12 @@ export interface GitHubPrWaitBaseline {
     readonly resultTriggerCommentId?: number;
     readonly resultTriggerHeadSha?: string;
     readonly threads?: readonly GitHubReviewThreadBaseline[];
+    /**
+     * #1392: the verdicts this wait has seen. A dismissal keeps the review id, so it never moves
+     * `decisionCursor`; it is found by comparing states. Absent on waits registered before this field
+     * existed: those adopt the verdicts of their first review observation.
+     */
+    readonly verdicts?: GitHubReviewVerdicts;
   };
   readonly ci?: {
     readonly bucket: GitHubCiBaselineBucket;

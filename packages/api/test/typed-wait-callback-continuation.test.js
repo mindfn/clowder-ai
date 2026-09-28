@@ -122,7 +122,8 @@ async function harness(t, options = {}) {
       assert.equal(await turnCustodyAdoptionRegistry.adopt(auth.invocationId, [wake]), true);
       return wake;
     },
-    async register(when, kind = 'pr') {
+    /** `when` undefined is the normal call: the server arms its default set, comment surfaces included. */
+    async register(when, kind = 'pr', { deadline = true } = {}) {
       const response = await fetch(`${app.listeningOrigin}/api/callbacks/register-${kind}-tracking`, {
         method: 'POST',
         headers: {
@@ -133,9 +134,9 @@ async function harness(t, options = {}) {
         body: JSON.stringify({
           repoFullName: 'owner/repo',
           [`${kind}Number`]: 4513,
-          when,
+          ...(when ? { when } : {}),
           nextStep: 'Continue with the result.',
-          expiresAt: Date.now() + 60000,
+          ...(deadline ? { expiresAt: Date.now() + 60000 } : {}),
         }),
       });
       const body = await response.json();
@@ -154,6 +155,8 @@ const cases = [
   ['review thread', [{ kind: 'pr_review_thread_changed', reviewThreadIds: ['thread-1'] }]],
   ['CI terminal', [{ kind: 'pr_ci_terminal' }]],
   ['conflict', [{ kind: 'pr_became_conflicting' }]],
+  ['conversation comment', [{ kind: 'pr_conversation_comment_added', authorLogins: ['reviewer'] }]],
+  ['inline comment', [{ kind: 'pr_inline_comment_added', authorLogins: ['reviewer'] }]],
   ['anchored review', [{ kind: 'pr_review_result_available', triggerCommentId: 4936000000 }]],
   ['issue comment', [{ kind: 'issue_comment_added' }], 'issue'],
   ['issue author', [{ kind: 'issue_author_commented' }], 'issue'],
@@ -167,6 +170,32 @@ for (const [name, when, kind] of cases) {
     assert.equal((await h.resolve({ invocationId: 'unrelated-invocation' })).kind, 'reject');
   });
 }
+
+// #1392 AC-7 made the normal registration arm both comment surfaces and made the deadline optional.
+// That normal call is what a cat makes after pushing, so it has to be the one the stop gate accepts.
+for (const [kind, commentKind] of [
+  ['pr', 'pr_conversation_comment_added'],
+  ['issue', 'issue_comment_added'],
+]) {
+  test(`the normal ${kind} registration, with no conditions and no deadline, continues only its source`, async (t) => {
+    const h = await harness(t);
+    const body = await h.register(undefined, kind, { deadline: false });
+    assert.equal(body.await.expiresAt, undefined, 'the normal registration has no deadline');
+    assert.ok(
+      body.await.continuation.when.some((predicate) => predicate.kind === commentKind),
+      'and it listens to comments',
+    );
+    assert.equal((await h.resolve()).kind, 'bypass');
+    assert.equal((await h.resolve({ sourceMessageId: 'unrelated-source' })).kind, 'reject');
+    assert.equal((await h.resolve({ invocationId: 'unrelated-invocation' })).kind, 'reject');
+  });
+}
+
+test('a narrow registration without a deadline continues its source too', async (t) => {
+  const h = await harness(t);
+  await h.register([{ kind: 'pr_ci_terminal' }], 'pr', { deadline: false });
+  assert.equal((await h.resolve()).kind, 'bypass');
+});
 
 test('an old same-owner anchored review tracker cannot stand in for this invocation', async (t) => {
   const h = await harness(t);
