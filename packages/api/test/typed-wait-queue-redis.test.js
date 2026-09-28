@@ -113,6 +113,30 @@ describe(
       assert.equal(after['event_wait.rejected_stale_total'], before['event_wait.rejected_stale_total'] + 1);
     });
 
+    /** The same fixture re-registered as the normal wait: no deadline, so its receipt has none. */
+    async function withoutDeadline(h) {
+      const { expiresAt: _deadline, ...active } = h.active;
+      const receipt = createTypedWaitRegistration({
+        task: h.task,
+        active,
+        invocationId: 'child-1',
+        source: h.receipt.source,
+      });
+      assert.ok(receipt);
+      await h.taskStore.replaceAutomationStateIfGeneration(h.task.id, {
+        expectedGeneration: 1,
+        automationState: { await: active },
+        waitRegistration: receipt,
+      });
+      return { ...h, active, receipt };
+    }
+
+    test('a registration without a deadline commits through the Lua guard', async (t) => {
+      const h = await withoutDeadline(await harness(t));
+      await h.commit();
+      assert.deepEqual((await h.store.getById(h.message.id)).queueCustody.handledByCatIds, ['opus']);
+    });
+
     test('a collector-only update during Queue CAS leaves the same active registration valid', async (t) => {
       const h = await harness(t);
       const evaluate = h.redis.eval.bind(h.redis);
@@ -151,43 +175,50 @@ describe(
       assert.equal((await h.store.getById(h.message.id)).deliveryStatus, 'queued');
     });
 
-    for (const race of ['matched', 'expired', 'superseded', 'owner', 'deleted']) {
-      test(`Lua rejects ${race} between proof read and Queue mutation`, async (t) => {
-        const h = await harness(t);
-        const evaluate = h.redis.eval.bind(h.redis);
-        let injected = false;
-        h.redis.eval = async (script, ...args) => {
-          if (!injected && script.includes('local waitGuards =')) {
-            injected = true;
-            if (race === 'deleted') await h.taskStore.delete(h.task.id);
-            else if (race === 'owner') await h.redis.hset(TaskKeys.detail(h.task.id), 'ownerCatId', 'foreign-cat');
-            else {
-              const active = structuredClone(h.active);
-              if (race === 'expired') active.expiresAt = Date.now() - 1;
-              if (race === 'superseded') {
-                active.generation = 2;
-                active.ownerFence.generation = 2;
+    // A missing deadline skips only the time check: every other custody check still holds, and a
+    // deadline that appears mid-race ("expired" below) is drift against the receipt that had none.
+    for (const [registration, prepare] of [
+      ['', (h) => h],
+      [' for a registration without a deadline', withoutDeadline],
+    ]) {
+      for (const race of ['matched', 'expired', 'superseded', 'owner', 'deleted']) {
+        test(`Lua rejects ${race} between proof read and Queue mutation${registration}`, async (t) => {
+          const h = await prepare(await harness(t));
+          const evaluate = h.redis.eval.bind(h.redis);
+          let injected = false;
+          h.redis.eval = async (script, ...args) => {
+            if (!injected && script.includes('local waitGuards =')) {
+              injected = true;
+              if (race === 'deleted') await h.taskStore.delete(h.task.id);
+              else if (race === 'owner') await h.redis.hset(TaskKeys.detail(h.task.id), 'ownerCatId', 'foreign-cat');
+              else {
+                const active = structuredClone(h.active);
+                if (race === 'expired') active.expiresAt = Date.now() - 1;
+                if (race === 'superseded') {
+                  active.generation = 2;
+                  active.ownerFence.generation = 2;
+                }
+                await h.taskStore.replaceAutomationStateIfGeneration(h.task.id, {
+                  expectedGeneration: 1,
+                  automationState:
+                    race === 'matched' ? { waitOutcome: { generation: 1, reason: 'matched' } } : { await: active },
+                });
               }
-              await h.taskStore.replaceAutomationStateIfGeneration(h.task.id, {
-                expectedGeneration: 1,
-                automationState:
-                  race === 'matched' ? { waitOutcome: { generation: 1, reason: 'matched' } } : { await: active },
-              });
             }
-          }
-          return evaluate(script, ...args);
-        };
-        const before = await telemetry.read();
-        await assert.rejects(h.commit, /typed wait/);
-        assert.equal(injected, true);
-        const source = await h.store.getById(h.message.id);
-        assert.equal(source.deliveryStatus, 'queued');
-        assert.deepEqual(source.queueCustody.handledByCatIds, []);
-        const after = await telemetry.read();
-        assert.equal(after.falseBypass, before.falseBypass + 1);
-        assert.equal(after['event_wait.rejected_stale_total'], before['event_wait.rejected_stale_total'] + 1);
-        assert.match(after.text, /routing_event_wait_reason="authority_changed"/);
-      });
+            return evaluate(script, ...args);
+          };
+          const before = await telemetry.read();
+          await assert.rejects(h.commit, /typed wait/);
+          assert.equal(injected, true);
+          const source = await h.store.getById(h.message.id);
+          assert.equal(source.deliveryStatus, 'queued');
+          assert.deepEqual(source.queueCustody.handledByCatIds, []);
+          const after = await telemetry.read();
+          assert.equal(after.falseBypass, before.falseBypass + 1);
+          assert.equal(after['event_wait.rejected_stale_total'], before['event_wait.rejected_stale_total'] + 1);
+          assert.match(after.text, /routing_event_wait_reason="authority_changed"/);
+        });
+      }
     }
   },
 );

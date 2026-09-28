@@ -307,10 +307,16 @@ describe('review scheduler F280 adapter', () => {
         },
         {
           fetchPrMetadata: async () => ({ headSha: 'aaa', prState: 'open', authorLogin: 'pr-author' }),
-          fetchReviews: async (_repo, _pr, sinceId) => {
-            if (sinceId === undefined) throw new Error('history unavailable');
-            return [fresh];
-          },
+          // The poll's own review read succeeds; the brake's separate history read fails. Both read
+          // every review now (#1392: dismissals change old ids), so they differ only in order.
+          fetchReviews: (() => {
+            let reads = 0;
+            return async () => {
+              reads += 1;
+              if (reads > 1) throw new Error('history unavailable');
+              return [fresh];
+            };
+          })(),
           invokeTrigger: { trigger: async (...args) => calls.push(args) },
         },
       ),

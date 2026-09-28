@@ -114,11 +114,11 @@ describe('#1392 AC-7 registration entry — the PR default', () => {
     const expansion = expandGitHubPrTrackingGoal(AUTHOR);
 
     assert.equal(expansion.ok, true);
+    // No `pr_head_changed`: as the author, a new HEAD is your own push (see the self-push block below).
     assert.deepEqual(kinds(expansion), [
       'pr_became_conflicting',
       'pr_ci_terminal',
       'pr_conversation_comment_added',
-      'pr_head_changed',
       'pr_inline_comment_added',
       'pr_review_decision_changed',
     ]);
@@ -293,5 +293,52 @@ describe('#1392 AC-7 — the registration says what it armed', () => {
       assert.equal(coverage.commentFilters.length, 1);
       assert.ok(coverage.commentFilters[0].length > 20);
     }
+  });
+});
+
+/*
+ * A head change is somebody's push, not something the PR does by itself. From the author's seat
+ * that somebody is almost always the author, so arming it by default wakes them on their own action
+ * — the mistake `everyone_but_self` already prevents for comments. Everyone else keeps it: a
+ * reviewer is waiting for exactly that push. With an unresolved identity the push cannot be proved
+ * ours, so it stays armed: a surplus wake can be discarded, a missed one cannot be recovered.
+ */
+describe('#1392 — the author is not woken by their own push', () => {
+  const expand = (perspective, goal) => {
+    const expansion = expandGitHubPrTrackingGoal(perspective, goal);
+    assert.equal(expansion.ok, true, expansion.error);
+    return expansion;
+  };
+  const armsHeadChange = (expansion) => expansion.when.some((predicate) => predicate.kind === 'pr_head_changed');
+
+  it('as the PR author, a plain registration does not arm head changes', () => {
+    assert.equal(armsHeadChange(expand(AUTHOR)), false);
+  });
+
+  it('as the PR author, naming people to wait on does not bring it back', () => {
+    assert.equal(armsHeadChange(expand(AUTHOR, { kind: 'await_reply_from', authorLogins: ['someone-else'] })), false);
+  });
+
+  it('the author keeps every condition that is not their own action', () => {
+    assert.deepEqual(kinds(expand(AUTHOR)), [
+      'pr_became_conflicting',
+      'pr_ci_terminal',
+      'pr_conversation_comment_added',
+      'pr_inline_comment_added',
+      'pr_review_decision_changed',
+    ]);
+  });
+
+  it('a reviewer still hears the author push a new HEAD', () => {
+    assert.equal(armsHeadChange(expand(REVIEWER)), true);
+  });
+
+  it('an unresolved identity keeps head changes armed, because the push cannot be proved ours', () => {
+    assert.equal(armsHeadChange(expand(UNRESOLVED)), true);
+  });
+
+  it('the coverage receipt tells the author the truth about what is armed', () => {
+    const coverage = describeGitHubNotificationCoverage(AUTHOR, expand(AUTHOR).when);
+    assert.equal(coverage.armed.includes('pr_head_changed'), false);
   });
 });

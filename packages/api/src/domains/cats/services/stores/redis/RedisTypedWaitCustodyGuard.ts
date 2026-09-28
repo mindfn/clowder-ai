@@ -17,7 +17,8 @@ export async function readRedisTypedWaitCustodyGuards(
   const keys: string[] = [];
   const witnesses: Array<{
     fields: Record<string, string>;
-    expiresAt: number;
+    /** Absent for a wait with no deadline: continuous tracking never expires by time. */
+    expiresAt?: number;
     identity: TypedWaitCustodyGuard['identity'];
     active: AwaitStateV1;
   }> = [];
@@ -54,7 +55,12 @@ export async function readRedisTypedWaitCustodyGuards(
       fields[field] = raw[field] ?? '';
     }
     keys.push(key);
-    witnesses.push({ fields, expiresAt: receipt.expiresAt, identity: guard.identity, active });
+    witnesses.push({
+      fields,
+      ...(receipt.expiresAt !== undefined ? { expiresAt: receipt.expiresAt } : {}),
+      identity: guard.identity,
+      active,
+    });
   }
   return { keys, witnesses };
 }
@@ -77,7 +83,7 @@ local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
 local currentCustody = cjson.decode(custody)
 local source = cjson.decode(redis.call('HGET', KEYS[1], 'source') or '{}')
 for index, witness in ipairs(waitGuards) do
-  if tonumber(witness.expiresAt) <= now then return {-3, currentRevision} end
+  if witness.expiresAt ~= nil and tonumber(witness.expiresAt) <= now then return {-3, currentRevision} end
   local okState, state = pcall(cjson.decode, redis.call('HGET', KEYS[5 + index], 'automationState') or '{}')
   if not okState or type(state) ~= 'table' or not sameWaitJson(state.await, witness.active)
     or (type(state.waitOutcome) == 'table' and state.waitOutcome.generation == witness.active.generation) then
