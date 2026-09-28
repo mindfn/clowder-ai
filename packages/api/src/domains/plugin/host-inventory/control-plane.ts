@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Capability } from '@clowder-ai/plugin-contract';
+import { canonicalCapabilities } from './contract-policy.js';
 import { isHostReservedDataDirectoryName, requestedDataDirectoryName } from './data-directory-name.js';
 import {
   type PackageAdmissionContractRuntime,
@@ -14,6 +15,7 @@ import type {
   PackageAdmissionCandidate,
   PluginGrantRecord,
   PluginInstanceRecord,
+  ReconcileGrantsInput,
   ReinstallPackageInput,
   RevokeGrantInput,
   UpgradePackageInput,
@@ -256,6 +258,27 @@ export class HostInventoryControlPlane {
       const effectiveGrants = grants.effectiveGrants.filter((capability) => capability !== input.capability);
       const grantRevision = grants.grantRevision + 1;
       transaction.grants.put({ ...grants, effectiveGrants, grantRevision, updatedAt: now });
+      return grantRevision;
+    });
+  }
+
+  /**
+   * F202 W2-6: sets the instance's grants to what its package requests and the Host-owned policy
+   * allows — adding what the policy has since allowed, dropping what it no longer does. Returns the
+   * grant revision, unchanged when the grants already match.
+   */
+  async reconcileGrants(input: ReconcileGrantsInput): Promise<number> {
+    return this.store.transaction((transaction) => {
+      assertCurrentInstance(transaction, input.pluginInstanceId);
+      const grants = transaction.grants.get(input.pluginInstanceId);
+      if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
+      assertGrantRevision(grants, input.expectedGrantRevision);
+      const effectiveGrants = canonicalCapabilities(
+        grants.requestedCapabilities.filter((capability) => input.allowedCapabilities.includes(capability)),
+      );
+      if (isDeepStrictEqual(effectiveGrants, [...grants.effectiveGrants])) return grants.grantRevision;
+      const grantRevision = grants.grantRevision + 1;
+      transaction.grants.put({ ...grants, effectiveGrants, grantRevision, updatedAt: this.now() });
       return grantRevision;
     });
   }

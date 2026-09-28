@@ -121,6 +121,13 @@ export interface RevokeGrantInput {
   readonly expectedGrantRevision: number;
 }
 
+/** F202 W2-6: what a Host-owned policy now allows the instance; its requests still bound the grant. */
+export interface ReconcileGrantsInput {
+  readonly pluginInstanceId: string;
+  readonly allowedCapabilities: readonly string[];
+  readonly expectedGrantRevision: number;
+}
+
 export interface InventoryMutationResult {
   readonly pluginInstanceId: string;
   readonly packageDigest: string;

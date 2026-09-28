@@ -38,6 +38,8 @@ import {
   MemoryPluginInventoryStore,
   packageDirectoryName,
 } from '../../dist/domains/plugin/index.js';
+import { resolveLocalPluginEffectiveGrants } from '../../dist/domains/plugin/manager/machine-catalog-provider.js';
+import { OFFICIAL_PLUGIN_HOST_POLICIES } from '../../dist/domains/plugin/manager/official-plugin-host-policies.js';
 import { MemoryConnectorThreadBindingStore } from '../../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';
 import { archiveFileName } from './f202-connector-artifact-pins.js';
 
@@ -77,7 +79,9 @@ export async function admitAndLoad(release, root) {
     createInstanceId: () => `pi_${release.name}`,
     now: () => 12_000,
   });
-  const grantPolicy = (manifest) => manifest.features.flatMap((feature) => [...feature.capabilities]);
+  // F202 W2-6: the grants production gives this package — the Host policy table — not everything
+  // its manifest asks for; an approved artifact must work with what the Host really grants it.
+  const grantPolicy = (manifest) => resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, manifest);
   const admission = new LocalPluginPackageAdmission({ inventory, packagesRoot, grantPolicy });
   const installed = await admission.install({ kind: 'local-archive', path: archive });
   const row = (await store.snapshot()).packages.find(({ packageDigest }) => packageDigest === installed.packageDigest);

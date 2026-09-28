@@ -233,7 +233,7 @@ test('production handshake policy covers verified external source readiness with
   assert.ok(runtime.messaging, 'composition must expose the single K-1 messaging domain used by Broker routes');
 });
 
-test('production composition constructs and recovers K-2D but exposes no startup activation', () => {
+test('production composition constructs and recovers K-2D but exposes no startup activation', async () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 
   const routeBootstrapIndex = source.indexOf('await ensureOfficialPluginSignalRoutes({');
@@ -274,37 +274,24 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /new MachineOfficialPluginCatalog\(\{/);
   assert.match(source, /validateCatalog: validatePluginCatalog/);
   assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  assert.match(source, /pluginId:\s*'dev\.clowder\.video-generation'/);
-  assert.match(source, /replacesRepositoryPluginId:\s*'video-gen'/);
-  assert.match(source, /pluginId:\s*'official\.weixin-mp'/);
-  assert.match(source, /replacesRepositoryPluginId:\s*'weixin-mp'/);
+  // F202 W2-6: the Host grant table is its own module, and production composes exactly that table.
+  // The per-connector grant sets are pinned in f202-w2-6-official-connector-grants.test.js.
+  assert.match(source, /const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;/);
+  const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import(
+    '../dist/domains/plugin/manager/official-plugin-host-policies.js'
+  );
+  const hostPolicy = (pluginId) => OFFICIAL_PLUGIN_HOST_POLICIES.find((entry) => entry.pluginId === pluginId);
+  assert.equal(hostPolicy('dev.clowder.video-generation')?.replacesRepositoryPluginId, 'video-gen');
+  assert.equal(hostPolicy('official.weixin-mp')?.replacesRepositoryPluginId, 'weixin-mp');
   assert.doesNotMatch(source, /weixinMpHandlers/);
   assert.doesNotMatch(source, /limbAdapterRegistry/);
-  assert.match(
-    source,
-    /pluginId:\s*'official\.wechat-visible-reader',\s*effectiveGrants:\s*\['plugin\.state\.get', 'plugin\.state\.set'\]/,
-  );
-  assert.match(source, /pluginId:\s*'dev\.clowder\.video-analysis'/);
-  assert.doesNotMatch(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
-  assert.match(source, /pluginId:\s*'official\.enterprise-workflow',\s*effectiveGrants:\s*\['plugin\.config\.read'\]/);
-  for (const pluginId of ['official.connector.wecom-agent', 'official.connector.feishu']) {
-    const policy = source.match(
-      new RegExp(`pluginId:\\s*'${pluginId.replaceAll('.', '\\.')}',\\s*effectiveGrants:\\s*\\[([^\\]]+)\\]`),
-    );
-    assert.ok(policy, `${pluginId} must have a production Host grant policy`);
-    assert.deepEqual(
-      [...policy[1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort(),
-      [
-        'plugin.config.read',
-        'message.event.subscribe',
-        'messaging.send',
-        'secret.read',
-        'thread.listMetadata',
-        'thread.write',
-      ].sort(),
-      `${pluginId} must receive exactly its declared capability set`,
-    );
-  }
+  assert.deepEqual(hostPolicy('official.wechat-visible-reader')?.effectiveGrants, [
+    'plugin.state.get',
+    'plugin.state.set',
+  ]);
+  assert.ok(hostPolicy('dev.clowder.video-analysis'));
+  assert.equal(hostPolicy('dev.clowder.video-analysis').replacesRepositoryPluginId, undefined);
+  assert.deepEqual(hostPolicy('official.enterprise-workflow')?.effectiveGrants, ['plugin.config.read']);
   const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(callbackRoutes, /registerCallback(?:WeCom|Lark)ActionRoutes/);
   assert.match(

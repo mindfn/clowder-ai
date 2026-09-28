@@ -5124,52 +5124,10 @@ async function main(): Promise<void> {
     resolveLocalPluginEffectiveGrants,
     resolveRepositoryReplacementPluginIds,
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
-  const pluginManagerHostPolicies = [
-    {
-      pluginId: 'official.connector.wecom-agent',
-      effectiveGrants: [
-        'plugin.config.read',
-        'message.event.subscribe',
-        'messaging.send',
-        'secret.read',
-        'thread.listMetadata',
-        'thread.write',
-      ] as const,
-    },
-    {
-      pluginId: 'official.connector.feishu',
-      effectiveGrants: [
-        'plugin.config.read',
-        'message.event.subscribe',
-        'messaging.send',
-        'secret.read',
-        'thread.listMetadata',
-        'thread.write',
-      ] as const,
-    },
-    {
-      pluginId: 'official.wechat-visible-reader',
-      effectiveGrants: ['plugin.state.get', 'plugin.state.set'] as const,
-    },
-    {
-      pluginId: 'official.enterprise-workflow',
-      effectiveGrants: ['plugin.config.read'] as const,
-    },
-    {
-      pluginId: 'official.weixin-mp',
-      replacesRepositoryPluginId: 'weixin-mp',
-      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
-    },
-    {
-      pluginId: 'dev.clowder.video-generation',
-      replacesRepositoryPluginId: 'video-gen',
-      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
-    },
-    {
-      pluginId: 'dev.clowder.video-analysis',
-      effectiveGrants: ['plugin.config.read', 'secret.read'] as const,
-    },
-  ];
+  // F202 W2-6: the Host-owned grant table lives in its own module so the policy the Host actually
+  // applies is the one the tests and the cross-repo gate exercise.
+  const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import('./domains/plugin/manager/official-plugin-host-policies.js');
+  const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;
   const pluginManagerCatalog = new MachineOfficialPluginCatalog({
     loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
     validateCatalog: validatePluginCatalog,
@@ -5217,6 +5175,20 @@ async function main(): Promise<void> {
   });
   runInstalledPluginTest = (pluginId) => installedPluginOperations.runTest(pluginId);
   await app.register(pluginOperationRoutes, { operations: installedPluginOperations });
+  // F202 W2-6: grants follow the Host policy for instances installed before a policy change too;
+  // done before recovery so every resumed runtime starts with the grants it will run with.
+  const { reconcileOfficialPluginGrants } = await import('./domains/plugin/manager/official-plugin-grants.js');
+  const officialGrantChanges = await reconcileOfficialPluginGrants({
+    store: pluginRuntime.inventoryStore,
+    inventory: pluginRuntime.inventory,
+    hostPolicies: pluginManagerHostPolicies,
+  });
+  if (officialGrantChanges.length > 0) {
+    app.log.info(
+      { changes: officialGrantChanges },
+      '[api] F202 official plugin grants reconciled with the Host policy',
+    );
+  }
   const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
   app.log.info(
     `[api] K-2 plugin runtime recovered ` +
