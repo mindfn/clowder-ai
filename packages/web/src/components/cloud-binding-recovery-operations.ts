@@ -1,14 +1,9 @@
 import { apiFetch } from '@/utils/api-client';
 import { parseChatGptConversationUrl } from '@/utils/chatgpt-chat-url';
+import { type AuthorizedConversationCandidate, fetchAuthorizedConversations } from './authorized-conversations';
 import { projectPersonalChromeRecoveryStatus } from './cloud-binding-recovery-status';
 
-export interface AuthorizedConversationCandidate {
-  conversationId: string;
-  chatUrl: string;
-  displayTitle?: string;
-  authorizedAt: string;
-  updatedAt: string;
-}
+export type { AuthorizedConversationCandidate } from './authorized-conversations';
 
 export type RecoveryLoadState =
   | { kind: 'loading' }
@@ -36,14 +31,6 @@ export interface RecoveryIdentity {
   deliveryStatus?: RecoveryDeliveryStatus;
 }
 
-interface PersonalChromeStateResponse {
-  authorization?: { conversations?: unknown };
-  artifact?: { helper?: string };
-  live?: { status?: string };
-  titleSync?: { status?: string; errorCode?: string; updatedCount?: number; requestedCount?: number };
-  error?: string;
-}
-
 interface CloudBindingsResponse {
   bindings?: Record<string, unknown>;
   error?: string;
@@ -55,28 +42,6 @@ interface RetryAuthorityResponse {
   error?: string;
   code?: string;
   targetState?: string;
-}
-
-function safeDisplayTitle(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 160) return undefined;
-  const invalid = Array.from(value).some((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return (
-      codePoint < 32 ||
-      codePoint === 127 ||
-      (codePoint >= 0x202a && codePoint <= 0x202e) ||
-      (codePoint >= 0x2066 && codePoint <= 0x2069)
-    );
-  });
-  if (invalid) return undefined;
-  const title = value.trim().replace(/\s+/g, ' ');
-  return title && !/^(ChatGPT|New chat|新聊天)$/iu.test(title) ? title : undefined;
-}
-
-function canonicalTimestamp(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value ? value : undefined;
 }
 
 function safeAttemptId(value: unknown): string | undefined {
@@ -106,61 +71,41 @@ function projectRetryState(
   return { retryState: 'unavailable', retryStateError: '暂时无法确认发送状态。连接会话不会重发原消息。' };
 }
 
-function authorizedCandidates(value: unknown): AuthorizedConversationCandidate[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const candidates: AuthorizedConversationCandidate[] = [];
-  for (const raw of value) {
-    if (!raw || typeof raw !== 'object') continue;
-    const conversationId = (raw as { conversationId?: unknown }).conversationId;
-    if (typeof conversationId !== 'string') continue;
-    const parsed = parseChatGptConversationUrl(`https://chatgpt.com/c/${conversationId}`);
-    if (!parsed || parsed.conversationId !== conversationId || seen.has(conversationId)) continue;
-    const authorizedAt = canonicalTimestamp((raw as { authorizedAt?: unknown }).authorizedAt);
-    const updatedAt = canonicalTimestamp((raw as { updatedAt?: unknown }).updatedAt);
-    if (!authorizedAt || !updatedAt || updatedAt < authorizedAt) continue;
-    seen.add(conversationId);
-    const displayTitle = safeDisplayTitle((raw as { displayTitle?: unknown }).displayTitle);
-    candidates.push({ ...parsed, authorizedAt, updatedAt, ...(displayTitle ? { displayTitle } : {}) });
-  }
-  return candidates.sort((left, right) => right.authorizedAt.localeCompare(left.authorizedAt));
-}
-
+/** `afterWrite`: the binding was just written elsewhere, so a read already in flight may predate it. */
 export async function readRecoveryState(
   identity: RecoveryIdentity,
   signal: AbortSignal,
   syncTitles = false,
+  afterWrite = false,
 ): Promise<RecoveryLoadState | null> {
   const retryAuthorityRequest = apiFetch(
     `/api/messages/${encodeURIComponent(identity.sourceMessageId)}/queue-targets/${encodeURIComponent(identity.targetCatId)}/retry-authority`,
     { signal },
   );
-  const [pluginResponse, bindingResponse, retryAuthorityResponse] = await Promise.all([
-    syncTitles
-      ? apiFetch('/api/plugins/personal-chrome/refresh-titles', { method: 'POST', signal })
-      : apiFetch('/api/plugins/personal-chrome', { signal }),
-    apiFetch(`/api/threads/${encodeURIComponent(identity.threadId)}/cloud-bindings`, { signal }),
+  const bindingPath = `/api/threads/${encodeURIComponent(identity.threadId)}/cloud-bindings`;
+  const [authorized, bindingResponse, retryAuthorityResponse] = await Promise.all([
+    fetchAuthorizedConversations(signal, { syncTitles }),
+    afterWrite ? apiFetch(bindingPath, { signal }, { afterCurrentGet: true }) : apiFetch(bindingPath, { signal }),
     retryAuthorityRequest,
   ]);
   if (signal.aborted) return null;
-  if ([pluginResponse, bindingResponse, retryAuthorityResponse].some(deniesOwnerAccess)) {
+  if ([authorized.response, bindingResponse, retryAuthorityResponse].some(deniesOwnerAccess)) {
     return { kind: 'unauthorized' };
   }
 
-  const [pluginBody, bindingBody, retryAuthorityBody] = await Promise.all([
-    pluginResponse.json().catch(() => ({})) as Promise<PersonalChromeStateResponse>,
+  const [bindingBody, retryAuthorityBody] = await Promise.all([
     bindingResponse.json().catch(() => ({})) as Promise<CloudBindingsResponse>,
     retryAuthorityResponse?.json().catch(() => ({})) as Promise<RetryAuthorityResponse | undefined>,
   ]);
   if (signal.aborted) return null;
-  if (!pluginResponse.ok) {
-    return { kind: 'error', message: pluginBody.error ?? `授权会话读取失败 (${pluginResponse.status})` };
+  if (!authorized.response.ok) {
+    return { kind: 'error', message: authorized.body.error ?? `授权会话读取失败 (${authorized.response.status})` };
   }
   if (!bindingResponse.ok) {
     return { kind: 'error', message: bindingBody.error ?? `当前 Thread 绑定读取失败 (${bindingResponse.status})` };
   }
 
-  const candidates = authorizedCandidates(pluginBody.authorization?.conversations);
+  const { candidates } = authorized;
   const rawBinding = bindingBody.bindings?.[identity.targetCatId];
   const binding = rawBinding === undefined ? null : parseChatGptConversationUrl(rawBinding);
   const retryState = projectRetryState(retryAuthorityResponse, retryAuthorityBody);
@@ -172,7 +117,7 @@ export async function readRecoveryState(
         ? binding.conversationId
         : null,
     ...retryState,
-    ...projectPersonalChromeRecoveryStatus(pluginBody),
+    ...projectPersonalChromeRecoveryStatus(authorized.body),
   };
 }
 
@@ -182,14 +127,21 @@ async function persistSelectedRoute(args: {
   routeIsBound: boolean;
   isCurrent: () => boolean;
   onBound: () => void;
+  onWriteSettled: () => void;
 }): Promise<boolean> {
   if (args.routeIsBound) return true;
   const { threadId, targetCatId } = args.identity;
-  const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/cloud-bindings`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ catId: targetCatId, chatUrl: args.selected.chatUrl }),
-  });
+  let response: Response;
+  try {
+    response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/cloud-bindings`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ catId: targetCatId, chatUrl: args.selected.chatUrl }),
+    });
+  } finally {
+    // Whatever the answer, the binding may have changed: whoever else shows it reads it again.
+    args.onWriteSettled();
+  }
   const body = (await response.json().catch(() => ({}))) as CloudBindingsResponse;
   if (!args.isCurrent()) return false;
   const persisted = parseChatGptConversationUrl(body.bindings?.[targetCatId]);
@@ -278,6 +230,7 @@ export async function executeRecoveryOperation(args: {
   isCurrent: () => boolean;
   setPhase: (phase: RecoveryPhase) => void;
   onBound: () => void;
+  onWriteSettled: () => void;
 }): Promise<RecoveryOperationOutcome> {
   let routeIsBound = args.prepared.routeIsBound;
   try {
@@ -288,6 +241,7 @@ export async function executeRecoveryOperation(args: {
       routeIsBound,
       isCurrent: args.isCurrent,
       onBound: args.onBound,
+      onWriteSettled: args.onWriteSettled,
     });
     if (!routeIsBound || !args.isCurrent()) return { kind: 'stale' };
     if (!args.prepared.attemptId) return { kind: 'connected' };

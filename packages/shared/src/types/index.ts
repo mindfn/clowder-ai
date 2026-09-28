@@ -284,6 +284,12 @@ export {
   legacyAccountFamilyForRef,
   protocolForClient,
 } from './client-routing.js';
+// F202 h3c-1: refusals of a thread cloud-binding write that prove nothing was written
+export {
+  CLOUD_BINDING_REFUSALS,
+  type CloudBindingRefusal,
+  isCloudBindingRefusal,
+} from './cloud-binding-refusals.js';
 export type {
   CloudBridgeDomFingerprintV1,
   CloudBridgeFailureDiagnosticV1,
