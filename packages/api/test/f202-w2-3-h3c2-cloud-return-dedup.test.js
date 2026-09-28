@@ -8,12 +8,18 @@
  * (before its append) or right after its append (before the grant commit), then lets the other in.
  */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { beforeEach, test } from 'node:test';
 import {
+  CloudReturnGrantRetentionMs,
   MemoryCloudReturnGrantStore,
   RedisCloudReturnGrantStore,
 } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { buildCloudReturnMessageIdempotencyKey } from '../dist/domains/cats/services/cloud-bridge/cloud-return-message.js';
+import {
+  bindSourceInRedis,
+  cloudReturnSourceKey,
+} from '../dist/domains/cats/services/cloud-bridge/cloud-return-source-binding.js';
 import { cloudReturnHarness, configureCats } from './helpers/cloud-return-harness.js';
 
 beforeEach(() => configureCats(['cloud-alt']));
@@ -205,14 +211,20 @@ test('race: both entries released together, in both start orders, still land one
   }
 });
 
-// ── P1-3 (astra, h3c-2 review): one source, one cloud cat ──
-// A polled return carries no dispatch identity of its own, so a source that was ever granted to one
-// cloud cat is never granted to another: a late answer from before a rename can then only miss.
+// ── P1-3 (astra, h3c-2 review and re-review): one source, one cloud cat, for good ──
+// A polled return carries no dispatch identity of its own, so a source's cat is fixed by its first
+// grant for the source's whole life: grants lapse and are issued again, the owner never changes —
+// not after expiry, not across the upgrade, not under contention.
 
-function stringRedis() {
+/** Redis command semantics in memory (GET, SET with NX/XX/PX, SCAN MATCH, the grant refresh script). */
+function redisDouble() {
   const values = new Map();
+  const calls = { set: [], scan: 0 };
   return {
+    values,
+    calls,
     async set(key, value, ...options) {
+      calls.set.push({ key, options });
       const exists = values.has(key);
       if ((options.includes('NX') && exists) || (options.includes('XX') && !exists)) return null;
       values.set(key, value);
@@ -220,6 +232,11 @@ function stringRedis() {
     },
     async get(key) {
       return values.get(key) ?? null;
+    },
+    async scan(_cursor, _match, pattern) {
+      calls.scan += 1;
+      const prefix = pattern.replace(/\*$/, '');
+      return ['0', [...values.keys()].filter((key) => key.startsWith(prefix))];
     },
     // Only the grant store's refresh of an existing grant runs a script here: same scope → refreshed.
     async eval(_script, _keyCount, key, threadId, userId, sourceMessageId, targetCatId) {
@@ -235,22 +252,31 @@ function stringRedis() {
   };
 }
 
+/** A grant exactly as the version before source bindings persisted it. */
+function persistV1Grant(redis, scope) {
+  const key = `cloud-bridge:return-grant:${createHash('sha256').update(JSON.stringify(scope)).digest('hex')}`;
+  const record = { v: 1, ...scope, dispatchInvocationId: 'old-dispatch', status: 'pending', issuedAt: 1 };
+  redis.values.set(key, JSON.stringify(record));
+}
+
+const scopeOf = (sourceMessageId, targetCatId) => ({ threadId: 't', userId: 'alice', sourceMessageId, targetCatId });
+
 for (const [name, store] of [
   ['memory', () => new MemoryCloudReturnGrantStore()],
-  ['redis', () => new RedisCloudReturnGrantStore(stringRedis())],
+  ['redis', () => new RedisCloudReturnGrantStore(redisDouble())],
 ]) {
   test(`${name}: a source granted to one cloud cat is never granted to another`, async () => {
     const grants = store();
-    const source = { threadId: 't', userId: 'alice', sourceMessageId: 'S', dispatchInvocationId: 'inv-1' };
-    assert.deepEqual(await grants.issue({ ...source, targetCatId: 'cloud-alt' }), { ok: true, status: 'issued' });
+    const source = { ...scopeOf('S', 'cloud-alt'), dispatchInvocationId: 'inv-1' };
+    assert.deepEqual(await grants.issue(source), { ok: true, status: 'issued' });
     assert.deepEqual(await grants.issue({ ...source, dispatchInvocationId: 'inv-2', targetCatId: 'cloud-beta' }), {
       ok: false,
       reason: 'source_retargeted',
       boundTargetCatId: 'cloud-alt',
     });
-    assert.equal((await grants.claim({ ...source, targetCatId: 'cloud-beta' })).ok, false);
+    assert.equal((await grants.claim(scopeOf('S', 'cloud-beta'))).ok, false);
     assert.deepEqual(
-      await grants.issue({ ...source, dispatchInvocationId: 'inv-3', targetCatId: 'cloud-alt' }),
+      await grants.issue({ ...source, dispatchInvocationId: 'inv-3' }),
       { ok: true, status: 'existing' },
       'the same cat again is a retry',
     );
@@ -277,20 +303,94 @@ test('P1-3: after a rename the source cannot move to the new cat, and the old an
   assert.equal((await h.grantStore.claim(h.scope('cloud-alt'))).ok, true, 'the old grant is not consumed either');
 });
 
-test('P1-3: a consumed grant keeps its source bound for as long as the consumed grant is kept', async () => {
+test('P1-3 expiry: the owner outlives every grant — a day later a new cat is still refused', async () => {
   let now = 0;
-  const hour = 3_600_000;
   const grants = new MemoryCloudReturnGrantStore(() => now);
-  const source = { threadId: 't', userId: 'alice', sourceMessageId: 'S' };
-  await grants.issue({ ...source, dispatchInvocationId: 'inv-1', targetCatId: 'cloud-alt' });
-  now = 20 * hour;
-  const claim = await grants.claim({ ...source, targetCatId: 'cloud-alt' });
-  assert.equal(await grants.commit(claim), true);
+  await grants.issue({ ...scopeOf('S', 'cloud-alt'), dispatchInvocationId: 'inv-1' });
 
-  now = 30 * hour;
-  assert.deepEqual(await grants.issue({ ...source, dispatchInvocationId: 'inv-2', targetCatId: 'cloud-beta' }), {
+  now = CloudReturnGrantRetentionMs + 1;
+  assert.equal((await grants.claim(scopeOf('S', 'cloud-alt'))).ok, false, 'the grant itself has lapsed');
+  assert.deepEqual(await grants.issue({ ...scopeOf('S', 'cloud-beta'), dispatchInvocationId: 'inv-2' }), {
     ok: false,
     reason: 'source_retargeted',
     boundTargetCatId: 'cloud-alt',
+  });
+  assert.deepEqual(
+    await grants.issue({ ...scopeOf('S', 'cloud-alt'), dispatchInvocationId: 'inv-3' }),
+    { ok: true, status: 'issued' },
+    'the owner can be granted again',
+  );
+});
+
+test('P1-3 upgrade: a grant persisted before bindings keeps its source for its cat', async () => {
+  const redis = redisDouble();
+  persistV1Grant(redis, scopeOf('S', 'gpt-pro'));
+  const grants = new RedisCloudReturnGrantStore(redis);
+
+  assert.deepEqual(await grants.issue({ ...scopeOf('S', 'cloud-beta'), dispatchInvocationId: 'new' }), {
+    ok: false,
+    reason: 'source_retargeted',
+    boundTargetCatId: 'gpt-pro',
+  });
+  assert.equal((await grants.claim(scopeOf('S', 'cloud-beta'))).ok, false);
+  assert.equal((await grants.claim(scopeOf('S', 'gpt-pro'))).ok, true, 'the old dispatch can still be answered');
+});
+
+test('P1-3 upgrade: a source two persisted grants disagree about belongs to neither', async () => {
+  const redis = redisDouble();
+  persistV1Grant(redis, scopeOf('S', 'gpt-pro'));
+  persistV1Grant(redis, scopeOf('S', 'cloud-beta'));
+  const grants = new RedisCloudReturnGrantStore(redis);
+
+  assert.equal((await grants.claim(scopeOf('S', 'gpt-pro'))).ok, false);
+  assert.equal((await grants.claim(scopeOf('S', 'cloud-beta'))).ok, false);
+  assert.deepEqual(await grants.issue({ ...scopeOf('S', 'cloud-beta'), dispatchInvocationId: 'new' }), {
+    ok: false,
+    reason: 'source_retargeted',
+    boundTargetCatId: null,
+  });
+});
+
+test('P1-3 upgrade: persisted grants are bound once per database, before the first admission', async () => {
+  const redis = redisDouble();
+  persistV1Grant(redis, scopeOf('S', 'gpt-pro'));
+  await new RedisCloudReturnGrantStore(redis).issue({ ...scopeOf('S2', 'gpt-pro'), dispatchInvocationId: 'a' });
+  assert.equal(redis.calls.scan, 1);
+
+  const restarted = new RedisCloudReturnGrantStore(redis);
+  await restarted.issue({ ...scopeOf('S3', 'gpt-pro'), dispatchInvocationId: 'b' });
+  assert.equal(redis.calls.scan, 1, 'the migration marker spares every later start');
+  assert.equal((await restarted.claim(scopeOf('S', 'gpt-pro'))).ok, true);
+});
+
+test('P1-3 contention: of two cats racing for a fresh source exactly one wins, and nothing ever expires or overwrites', async () => {
+  const redis = redisDouble();
+  const [alt, beta] = await Promise.all([
+    bindSourceInRedis(redis, scopeOf('S', 'cloud-alt')),
+    bindSourceInRedis(redis, scopeOf('S', 'cloud-beta')),
+  ]);
+  assert.equal([alt, beta].filter((binding) => binding.bound).length, 1);
+
+  const grants = new RedisCloudReturnGrantStore(redis);
+  await grants.issue({ ...scopeOf('S4', 'cloud-alt'), dispatchInvocationId: 'x' });
+  const sourceWrites = redis.calls.set.filter(({ key }) => key.startsWith('cloud-bridge:return-source:'));
+  assert.ok(sourceWrites.length > 0);
+  for (const { options } of sourceWrites) {
+    assert.ok(!options.includes('XX') && !options.includes('PX'), `a source write never refreshes: ${options}`);
+  }
+});
+
+test('P1-3 contention: a binding that vanished between SET NX and GET names no owner and admits nobody', async () => {
+  const redis = redisDouble();
+  const source = scopeOf('S', 'cloud-alt');
+  await bindSourceInRedis(redis, source);
+  const get = redis.get.bind(redis);
+  redis.get = async (key) => {
+    if (key === cloudReturnSourceKey(source)) redis.values.delete(key);
+    return get(key);
+  };
+  assert.deepEqual(await bindSourceInRedis(redis, { ...source, targetCatId: 'cloud-beta' }), {
+    bound: false,
+    owner: null,
   });
 });

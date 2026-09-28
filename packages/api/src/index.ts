@@ -2287,6 +2287,13 @@ async function main(): Promise<void> {
     './domains/cats/services/cloud-bridge/cloud-return-grant.js'
   );
   const cloudReturnGrantStore = redis ? new RedisCloudReturnGrantStore(redis) : new MemoryCloudReturnGrantStore();
+  if (cloudReturnGrantStore instanceof RedisCloudReturnGrantStore) {
+    // F202 h3c-2: sources of grants persisted before sources were bound get their owner before any
+    // dispatch is admitted. A failure here is retried by the store itself, which refuses until done.
+    await cloudReturnGrantStore.bindPersistedSources().catch((error: unknown) => {
+      app.log.warn(`[api] binding persisted cloud return sources failed; retried on first use: ${String(error)}`);
+    });
+  }
   const { CloudAssistantReturnIngestService } = await import(
     './domains/cats/services/cloud-bridge/cloud-assistant-return-ingest.js'
   );

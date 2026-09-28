@@ -93,6 +93,9 @@ describe('F247 server-custodied exact-source return grant', () => {
       async get(key) {
         return values.get(key) ?? null;
       },
+      async scan() {
+        return ['0', []];
+      },
       async eval() {
         throw new Error('not used by this restart assertion');
       },
