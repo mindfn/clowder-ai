@@ -191,11 +191,22 @@ describe('changing the thread’s conversation in place', () => {
 
 describe('a stored route that cannot be read as a conversation', () => {
   // astra `a7caa34d99` P2-2: a record that does not parse is still a record, and still removable.
-  it.each([
-    ['nothing is authorized', (host: FakeHost) => (host.candidates = [])],
-    ['the authorized list cannot be read', (host: FakeHost) => (host.pluginPlan = ['fail'])],
-    ['conversations are authorized', (_host: FakeHost) => undefined],
-  ])('can be disconnected when %s', async (_case, arrange) => {
+  const arrangements: Array<[string, (host: FakeHost) => void]> = [
+    [
+      'nothing is authorized',
+      (host) => {
+        host.candidates = [];
+      },
+    ],
+    [
+      'the authorized list cannot be read',
+      (host) => {
+        host.pluginPlan = ['fail'];
+      },
+    ],
+    ['conversations are authorized', () => undefined],
+  ];
+  it.each(arrangements)('can be disconnected when %s', async (_case, arrange) => {
     const host = new FakeHost();
     host.bindings = { 'gpt-pro': 'legacy-invalid-binding' };
     arrange(host);
