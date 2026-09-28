@@ -133,13 +133,15 @@ export function registerCallbackAuthHook(
           return;
         }
         // F202 h3c-2: a key of the cloud return boundary whose cat is no longer the configured cloud
-        // cat is honoured on no route — it must not fall back to being an ordinary agent key.
-        if (cloudPrincipalStanding(catRegistry, akResult.record) === 'refused') {
+        // cat is honoured on no route — it must not fall back to being an ordinary agent key. The
+        // standing found here travels with the principal, so a route never re-derives it on its own.
+        const standing = cloudPrincipalStanding(catRegistry, akResult.record);
+        if (standing === 'refused') {
           recordCallbackAuthFailure({ reason: 'cloud_principal_not_configured', tool });
           reply.status(403).send(makeCallbackAuthError('cloud_principal_not_configured'));
           return;
         }
-        request.callbackPrincipal = derivePrincipal(akResult.record);
+        request.callbackPrincipal = derivePrincipal(akResult.record, { cloudBoundary: standing === 'cloud' });
         return;
       }
       return;

@@ -91,8 +91,8 @@ test("a principal stands inside the cloud boundary, outside it, or refused — b
   assert.equal(cloudPrincipalStanding(one, key('cloud-alt', 'cloud-conversation')), 'cloud');
   assert.equal(
     cloudPrincipalStanding(one, key('cloud-alt', 'user-bound')),
-    'cloud',
-    'the cloud cat has no ordinary keys',
+    'refused',
+    'only a cloud-scoped key speaks for the cloud cat; it has no ordinary keys either',
   );
   assert.equal(cloudPrincipalStanding(one, key('codex', 'user-bound')), 'ordinary');
   assert.equal(cloudPrincipalStanding(one, key('codex', 'cloud-conversation')), 'refused', 'moved to another provider');

@@ -14,6 +14,8 @@ const messageByReason: Record<BridgeFallbackReason, (catId: string) => string> =
     `未发送给 @${catId}：投递来源或回程绑定不完整，系统已阻止无法精确审计的云端调用。`,
   'ambiguous-cloud-cat': (catId) =>
     `未发送给 @${catId}：有多只猫配置了同一个云端 provider，回复无法确定归属。请在猫配置里只保留一只。`,
+  'source-retargeted': (catId) =>
+    `未发送给 @${catId}：这条消息之前已经发给另一只云端猫，一条消息的回复只能归一只猫。请发一条新消息。`,
 };
 
 export interface CloudBridgeAuditContext {

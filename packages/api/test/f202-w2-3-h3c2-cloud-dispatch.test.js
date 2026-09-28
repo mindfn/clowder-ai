@@ -9,11 +9,12 @@ import Fastify from 'fastify';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
 import { buildFallbackMessageContent } from '../dist/domains/cats/services/cloud-bridge/cloud-bridge-fallback.js';
+import { MemoryCloudReturnGrantStore } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { configureCats } from './helpers/cloud-return-harness.js';
 
 beforeEach(() => configureCats(['cloud-alt']));
 
-function dispatchHarness() {
+function dispatchHarness({ grantStore } = {}) {
   const bridgeCalls = [];
   const grants = [];
   const deps = {
@@ -25,7 +26,7 @@ function dispatchHarness() {
       updateCloudCatBinding: async () => undefined,
     },
     apiUrl: 'http://localhost:0',
-    cloudReturnGrantStore: {
+    cloudReturnGrantStore: grantStore ?? {
       issue: async (claims) => {
         grants.push(claims);
         return { ok: true, status: 'issued' };
@@ -90,6 +91,26 @@ test('several cats on one cloud provider: refused before any grant or delivery, 
   assert.match(status.detail, /cloud-alt, cloud-beta/);
   assert.equal(status.outboundReceipt.status, 'failed');
   assert.equal(status.outboundReceipt.idempotency.disposition, 'not_attempted');
+  assert.equal(messages.at(-1).type, 'done');
+});
+
+test('P1-3: a message already sent to one cloud cat is not sent again to another', async () => {
+  const grantStore = new MemoryCloudReturnGrantStore();
+  await grantStore.issue({
+    threadId: 'thread_t1',
+    userId: 'alice',
+    sourceMessageId: 'source-1',
+    dispatchInvocationId: 'earlier-dispatch',
+    targetCatId: 'cloud-alt',
+  });
+  configureCats(['cloud-beta']);
+  const h = dispatchHarness({ grantStore });
+  const { status, messages } = await h.dispatch('cloud-beta');
+
+  assert.equal(h.bridgeCalls.length, 0);
+  assert.equal(status.reason, 'source-retargeted');
+  assert.match(status.message, /@cloud-beta/);
+  assert.match(status.detail, /cloud-alt/);
   assert.equal(messages.at(-1).type, 'done');
 });
 

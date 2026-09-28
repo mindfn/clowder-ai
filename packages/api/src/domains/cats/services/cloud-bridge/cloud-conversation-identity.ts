@@ -84,14 +84,15 @@ export function isResolvedCloudConversationCat(source: CloudCatConfigSource, cat
 }
 
 /**
- * Where an agent-key principal stands against the cloud return boundary, by today's configuration:
- * - `cloud`: its cat is the resolved cloud cat of its provider. Every key of that cat is held to the
- *   cloud boundary — including one issued before keys carried a scope;
- * - `refused`: the key belongs to the cloud boundary — it was issued in the `cloud-conversation`
- *   scope, or its cat is configured with a cloud provider — but its cat is not the resolved cloud cat
- *   now: renamed, moved to another provider, or its provider is ambiguous. Such a key is honoured
- *   nowhere; it never turns into an ordinary key (astra `…000188`, negative case 1);
- * - `ordinary`: any other key.
+ * Where an agent-key principal stands against the cloud return boundary, by today's configuration.
+ * Being a cloud credential is a property of the key — its `cloud-conversation` scope — never of the cat
+ * it happens to name (astra `…000188` negative case 1; h3c-2 review P1-2):
+ * - `cloud`: a cloud-scoped key of the resolved cloud cat of its provider;
+ * - `refused`: a cloud-scoped key whose cat is not that cat now (renamed, moved to another provider, or
+ *   its provider is ambiguous), or a user-bound key of a cat configured with a cloud provider — history
+ *   from before scopes, or a key that was never a cloud credential. Honoured nowhere; it never turns
+ *   into an ordinary key;
+ * - `ordinary`: a user-bound key of any other cat.
  */
 export type CloudPrincipalStanding = 'cloud' | 'refused' | 'ordinary';
 
@@ -100,7 +101,6 @@ export function cloudPrincipalStanding(
   principal: { readonly catId: string; readonly scope: AgentKeyScope },
 ): CloudPrincipalStanding {
   const configs = configsOf(source);
-  if (isResolvedIn(configs, principal.catId)) return 'cloud';
-  if (principal.scope === 'cloud-conversation' || providerIn(configs, principal.catId) !== undefined) return 'refused';
-  return 'ordinary';
+  if (principal.scope === 'cloud-conversation') return isResolvedIn(configs, principal.catId) ? 'cloud' : 'refused';
+  return providerIn(configs, principal.catId) === undefined ? 'ordinary' : 'refused';
 }

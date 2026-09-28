@@ -15,6 +15,7 @@ import { after, test } from 'node:test';
 import { AgentKeyRegistry } from '../dist/domains/cats/services/agents/agent-key/AgentKeyRegistry.js';
 import {
   ensureCloudCatAgentKeySidecar,
+  reconcileCloudCatAgentKeys,
   resolveCloudCatAgentKeyFile,
   revokeStaleCloudCatKeys,
 } from '../dist/domains/cats/services/agents/agent-key/cloud-cat-agent-key-sidecar.js';
@@ -121,19 +122,158 @@ test('once a cat stops being the cloud cat, its cloud keys are revoked; nothing 
   const registry = new AgentKeyRegistry();
   const env = { CAT_CAFE_DATA_DIR: root };
   const oldCloud = await registry.issue('gpt-pro', 'owner-1', { scope: 'cloud-conversation' });
+  const oldCloudGrace = await registry.rotate(oldCloud.agentKeyId);
   const current = await registry.issue('cloud-alt', 'owner-1', { scope: 'cloud-conversation' });
   const ordinary = await registry.issue('codex', 'owner-1');
-  const legacyFileKey = await registry.issue('gpt-pro', 'owner-1');
-  await writeFile(join(root, 'agent-keys', 'gpt-pro.secret'), `${legacyFileKey.secret}\n`, { mode: 0o600 });
 
   const revoked = await revokeStaleCloudCatKeys(registry, { cloudCatIds: ['cloud-alt'], env });
 
-  assert.deepEqual(revoked.sort(), [legacyFileKey.agentKeyId, oldCloud.agentKeyId].sort());
-  assert.equal((await registry.verify(oldCloud.secret)).ok, false);
-  assert.equal((await registry.verify(legacyFileKey.secret)).ok, false, 'the pre-scope cloud key file is covered too');
+  assert.deepEqual(revoked.sort(), [oldCloud.agentKeyId, oldCloudGrace.agentKeyId].sort());
+  assert.equal((await registry.verify(oldCloud.secret)).ok, false, 'the rotation predecessor goes with it');
+  assert.equal((await registry.verify(oldCloudGrace.secret)).ok, false);
   assert.equal((await registry.verify(current.secret)).ok, true);
   assert.equal((await registry.verify(ordinary.secret)).ok, true);
   assert.deepEqual(await revokeStaleCloudCatKeys(registry, { cloudCatIds: ['cloud-alt'], env }), [], 'idempotent');
+});
+
+// ── P1-2 (astra, h3c-2 review): the keys the Host issued for the cloud cat before keys carried a scope ──
+// Before h3c-2 every key of `gpt-pro` was a cloud credential. The migration turns them into history:
+// the ones issued up to the migration are revoked — the current one and any rotation grace it left
+// behind — whatever the configuration says, so none of them can ever act as an ordinary key.
+
+const cats = (entries) => ({
+  getAllConfigs: () => Object.fromEntries(entries.map(([id, provider]) => [id, { provider }])),
+});
+const quietLog = { info() {}, warn() {} };
+
+async function legacyChain(registry, root) {
+  const original = await registry.issue('gpt-pro', 'owner-1');
+  const rotated = await registry.rotate(original.agentKeyId);
+  await writeFile(join(root, 'agent-keys', 'gpt-pro.secret'), `${rotated.secret}\n`, { mode: 0o600 });
+  assert.equal((await registry.verify(original.secret)).ok, true, 'the grace key still works before the upgrade');
+  return { original, rotated };
+}
+
+for (const [name, backend] of backends) {
+  test(`${name}: the migration revokes the pre-upgrade cloud key and its rotation grace, then a rename leaves nothing behind`, async () => {
+    const root = await dataDir();
+    const env = { CAT_CAFE_DATA_DIR: root, DEFAULT_OWNER_USER_ID: 'owner-1' };
+    const registry = new AgentKeyRegistry({ backend: backend() });
+    const { original, rotated } = await legacyChain(registry, root);
+
+    await reconcileCloudCatAgentKeys({ registry, cats: cats([['gpt-pro', 'openai-chatgpt-pro']]), env, log: quietLog });
+    assert.equal((await registry.verify(original.secret)).ok, false, 'the grace key of the old chain is revoked');
+    assert.equal((await registry.verify(rotated.secret)).ok, false);
+    const published = (await readFile(join(root, 'agent-keys', 'gpt-pro.secret'), 'utf8')).trim();
+    assert.equal((await registry.verify(published)).record.scope, 'cloud-conversation');
+
+    await reconcileCloudCatAgentKeys({
+      registry,
+      cats: cats([['cloud-beta', 'openai-chatgpt-pro']]),
+      env,
+      log: quietLog,
+    });
+    assert.equal((await registry.verify(published)).ok, false);
+    assert.deepEqual(
+      (await registry.list({ catId: 'gpt-pro' })).map((record) => record.agentKeyId),
+      [],
+      'no key of the former cloud cat is left valid',
+    );
+  });
+
+  test(`${name}: renamed before the upgrade — the old cloud cat's pre-upgrade keys are revoked all the same`, async () => {
+    const root = await dataDir();
+    const env = { CAT_CAFE_DATA_DIR: root, DEFAULT_OWNER_USER_ID: 'owner-1' };
+    const registry = new AgentKeyRegistry({ backend: backend() });
+    const { original, rotated } = await legacyChain(registry, root);
+    const otherUser = await registry.issue('gpt-pro', 'someone-else');
+
+    await reconcileCloudCatAgentKeys({
+      registry,
+      cats: cats([
+        ['cloud-beta', 'openai-chatgpt-pro'],
+        ['gpt-pro', 'openai'],
+      ]),
+      env,
+      log: quietLog,
+    });
+    for (const key of [original, rotated, otherUser]) assert.equal((await registry.verify(key.secret)).ok, false);
+  });
+
+  test(`${name}: keys issued after the migration, and other cats' rotation grace, are left alone`, async () => {
+    const root = await dataDir();
+    const env = { CAT_CAFE_DATA_DIR: root, DEFAULT_OWNER_USER_ID: 'owner-1' };
+    const registry = new AgentKeyRegistry({ backend: backend() });
+    await writeFile(
+      join(root, 'agent-keys', 'cloud-scope-migration.json'),
+      `${JSON.stringify({ v: 1, cutoff: Date.now() - 60_000 })}\n`,
+      { mode: 0o600 },
+    );
+    const laterOrdinary = await registry.issue('gpt-pro', 'owner-1');
+    const codex = await registry.issue('codex', 'owner-1');
+    const codexNext = await registry.rotate(codex.agentKeyId);
+
+    await reconcileCloudCatAgentKeys({
+      registry,
+      cats: cats([
+        ['cloud-beta', 'openai-chatgpt-pro'],
+        ['gpt-pro', 'openai'],
+        ['codex', 'openai'],
+      ]),
+      env,
+      log: quietLog,
+    });
+    assert.equal(
+      (await registry.verify(laterOrdinary.secret)).ok,
+      true,
+      'a key issued after the migration is not history',
+    );
+    assert.equal((await registry.verify(codex.secret)).ok, true, "an ordinary key's rotation grace is untouched");
+    assert.equal((await registry.verify(codexNext.secret)).ok, true);
+  });
+}
+
+test('each entry point retires the pre-scope keys on its own: the sidecar step alone…', async () => {
+  const root = await dataDir();
+  const registry = new AgentKeyRegistry();
+  const { original, rotated } = await legacyChain(registry, root);
+
+  await ensureCloudCatAgentKeySidecar(registry, {
+    catId: 'gpt-pro',
+    userId: 'owner-1',
+    env: { CAT_CAFE_DATA_DIR: root },
+  });
+  assert.equal((await registry.verify(original.secret)).ok, false, 'the rotation grace goes with the migration');
+  assert.equal((await registry.verify(rotated.secret)).ok, false);
+});
+
+test('…and the stale-key step alone, when the old cloud cat is not configured any more', async () => {
+  const root = await dataDir();
+  const registry = new AgentKeyRegistry();
+  const { original, rotated } = await legacyChain(registry, root);
+
+  const revoked = await revokeStaleCloudCatKeys(registry, {
+    cloudCatIds: ['cloud-beta'],
+    env: { CAT_CAFE_DATA_DIR: root },
+  });
+  assert.deepEqual(revoked.sort(), [original.agentKeyId, rotated.agentKeyId].sort());
+});
+
+test('the first migration records its cutoff, so a later run spares keys issued after it', async () => {
+  const root = await dataDir();
+  const env = { CAT_CAFE_DATA_DIR: root, DEFAULT_OWNER_USER_ID: 'owner-1' };
+  const registry = new AgentKeyRegistry();
+  const configured = cats([
+    ['cloud-beta', 'openai-chatgpt-pro'],
+    ['gpt-pro', 'openai'],
+  ]);
+  await reconcileCloudCatAgentKeys({ registry, cats: configured, env, log: quietLog, now: () => Date.now() - 1_000 });
+  const marker = JSON.parse(await readFile(join(root, 'agent-keys', 'cloud-scope-migration.json'), 'utf8'));
+  assert.equal(marker.v, 1);
+
+  const later = await registry.issue('gpt-pro', 'owner-1');
+  await reconcileCloudCatAgentKeys({ registry, cats: configured, env, log: quietLog });
+  assert.equal((await registry.verify(later.secret)).ok, true);
 });
 
 test('reconciliation issues the resolved cloud cat its key, and refuses an ambiguous provider without failing', async () => {

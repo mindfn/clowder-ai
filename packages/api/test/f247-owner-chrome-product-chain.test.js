@@ -150,7 +150,7 @@ describe('F247 normal owner-Chrome product chain', () => {
     assert.deepEqual(durableReceipt.source.meta.cloudBridgeOutboundReceipt, status.outboundReceipt);
 
     const agentKeyRegistry = new AgentKeyRegistry({ ttlMs: 86_400_000 });
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const app = Fastify();
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),

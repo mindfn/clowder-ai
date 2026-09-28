@@ -63,30 +63,64 @@ test('the wrong cat, source or thread, or no grant at all, is refused', async ()
   assert.equal(wrongCat.statusCode, 403, wrongCat.body);
   assert.equal(wrongCat.json().kind, 'cloud_return_grant_not_found', 'a grant for another cat authorizes nothing');
 
-  await h.grant('cloud-alt');
+  // A source answers to one cloud cat: this one is gpt-pro's, so cloud-alt's grant goes on another.
+  const granted = h.append('granted to cloud-alt');
+  await h.grant('cloud-alt', granted.id);
   const noGrant = await h.post(cloud.secret, { content: 'x', replyTo: h.unGranted.id });
   assert.equal(noGrant.statusCode, 403, noGrant.body);
   assert.equal(noGrant.json().kind, 'cloud_return_grant_not_found');
 
-  const wrongThread = await h.post(cloud.secret, { content: 'x', replyTo: h.source.id, threadId: h.otherThread.id });
+  const wrongThread = await h.post(cloud.secret, { content: 'x', replyTo: granted.id, threadId: h.otherThread.id });
   assert.equal(wrongThread.statusCode, 403, wrongThread.body);
   assert.equal(wrongThread.json().kind, 'cloud_return_source_ineligible');
 
   const unknownSource = await h.post(cloud.secret, { content: 'x', replyTo: 'no-such-message' });
   assert.equal(unknownSource.json().kind, 'cloud_return_source_ineligible');
   assert.equal((await h.posted('x')).length, 0);
-  assert.equal((await h.grantStore.claim(h.scope('cloud-alt'))).ok, true, 'the refusals left the grant unused');
+  assert.equal(
+    (await h.grantStore.claim(h.scope('cloud-alt', granted.id))).ok,
+    true,
+    'the refusals left the grant unused',
+  );
   await h.app.close();
 });
 
-test('a key the cloud cat held before keys carried a scope is still bound by the cloud boundary', async () => {
+test('a user-bound key of the configured cloud cat is refused: only a cloud-scoped key speaks for it', async () => {
   const h = await harness();
-  const legacy = await h.agentKeyRegistry.issue('cloud-alt', 'alice');
+  const userBound = await h.agentKeyRegistry.issue('cloud-alt', 'alice');
 
-  assert.deepEqual((await h.probe(legacy.secret)).json(), { ok: true });
-  const unbound = await h.post(legacy.secret, { content: 'x', replyTo: h.unGranted.id });
-  assert.equal(unbound.json().kind, 'cloud_return_grant_not_found', 'not the ordinary reply path');
+  assertRefused(await h.probe(userBound.secret));
+  assertRefused(await h.post(userBound.secret, { content: 'x', replyTo: h.unGranted.id }));
+  assertRefused(await h.post(userBound.secret, { content: 'x' }));
+  assertRefused(await h.readContext(userBound.secret));
   assert.equal((await h.posted('x')).length, 0);
+  await h.app.close();
+});
+
+test('P1-1: a cloud key authenticated before a rename is refused where the route uses it, never posted as ordinary', async () => {
+  const h = await harness();
+  const cloud = await h.agentKeyRegistry.issue('cloud-alt', 'alice', { scope: 'cloud-conversation' });
+
+  for (const payload of [{ content: 'no grant', replyTo: h.unGranted.id }, { content: 'proactive' }]) {
+    configureCats(['cloud-alt']);
+    h.onNextThreadRead(() => configureCats(['cloud-beta']));
+    assertRefused(await h.post(cloud.secret, payload));
+  }
+  assert.equal((await h.posted('no grant')).length + (await h.posted('proactive')).length, 0);
+  await h.app.close();
+});
+
+test('P1-1: an ordinary key whose cat becomes the cloud cat mid-request is refused as well', async () => {
+  const h = await harness();
+  const ordinary = await h.agentKeyRegistry.issue('codex', 'alice');
+
+  h.onNextThreadRead(() => configureCats(['codex']));
+  assertRefused(await h.post(ordinary.secret, { content: 'switched' }));
+  assert.equal((await h.posted('switched')).length, 0);
+
+  configureCats(['cloud-alt']);
+  const unchanged = await h.post(ordinary.secret, { content: 'still ordinary' });
+  assert.equal(unchanged.statusCode, 200, 'without a change the ordinary key posts as before');
   await h.app.close();
 });
 

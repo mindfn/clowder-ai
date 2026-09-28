@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import {
+  bindSourceInRedis,
+  MemorySourceBindings,
+  refreshSourceInRedis,
+  type SourceBinding,
+} from './cloud-return-source-binding.js';
 
 const GRANT_PREFIX = 'cloud-bridge:return-grant:';
 const CLAIM_SUFFIX = ':claim';
@@ -31,7 +37,15 @@ export interface CloudReturnGrantClaim extends CloudReturnGrantClaims {
 
 export type CloudReturnGrantIssueResult =
   | { readonly ok: true; readonly status: 'issued' | 'existing' }
-  | { readonly ok: false; readonly reason: 'scope_collision' };
+  | { readonly ok: false; readonly reason: 'scope_collision' }
+  /** The source already belongs to another cloud cat (see `cloud-return-source-binding.ts`). */
+  | { readonly ok: false; readonly reason: 'source_retargeted'; readonly boundTargetCatId: string };
+
+function refusedBinding(binding: Exclude<SourceBinding, { bound: true }>): CloudReturnGrantIssueResult {
+  return binding.boundTargetCatId === undefined
+    ? { ok: false, reason: 'scope_collision' }
+    : { ok: false, reason: 'source_retargeted', boundTargetCatId: binding.boundTargetCatId };
+}
 
 export type CloudReturnGrantClaimResult =
   | ({ readonly ok: true } & CloudReturnGrantClaim)
@@ -168,6 +182,8 @@ export class RedisCloudReturnGrantStore implements CloudReturnGrantStore {
 
   async issue(input: CloudReturnGrantClaims): Promise<CloudReturnGrantIssueResult> {
     const claims = normalizeClaims(input);
+    const binding = await bindSourceInRedis(this.redis, claims, GRANT_RETENTION_MS);
+    if (!binding.bound) return refusedBinding(binding);
     const key = grantKey(claims);
     const record: StoredCloudReturnGrant = { v: 1, ...claims, status: 'pending', issuedAt: Date.now() };
     const result = await this.redis.set(key, JSON.stringify(record), 'PX', GRANT_RETENTION_MS, 'NX');
@@ -204,7 +220,7 @@ export class RedisCloudReturnGrantStore implements CloudReturnGrantStore {
   }
 
   async commit(claim: CloudReturnGrantClaim): Promise<boolean> {
-    return (
+    const committed =
       (await this.redis.eval(
         COMMIT_LUA,
         2,
@@ -213,8 +229,9 @@ export class RedisCloudReturnGrantStore implements CloudReturnGrantStore {
         claim.leaseId,
         Date.now(),
         GRANT_RETENTION_MS,
-      )) === 1
-    );
+      )) === 1;
+    if (committed) await refreshSourceInRedis(this.redis, claim, GRANT_RETENTION_MS);
+    return committed;
   }
 
   async release(claim: CloudReturnGrantClaim): Promise<boolean> {
@@ -226,8 +243,11 @@ export class MemoryCloudReturnGrantStore implements CloudReturnGrantStore {
   private readonly grants = new Map<string, StoredCloudReturnGrant>();
   private readonly leases = new Map<string, { leaseId: string; expiresAt: number }>();
   private readonly grantExpiresAt = new Map<string, number>();
+  private readonly sources: MemorySourceBindings;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now) {
+    this.sources = new MemorySourceBindings(now, GRANT_RETENTION_MS);
+  }
 
   private pruneExpired(key: string): void {
     const expiresAt = this.grantExpiresAt.get(key);
@@ -239,6 +259,8 @@ export class MemoryCloudReturnGrantStore implements CloudReturnGrantStore {
 
   async issue(input: CloudReturnGrantClaims): Promise<CloudReturnGrantIssueResult> {
     const claims = normalizeClaims(input);
+    const binding = this.sources.bind(claims);
+    if (!binding.bound) return refusedBinding(binding);
     const key = grantKey(claims);
     this.pruneExpired(key);
     const existing = this.grants.get(key);
@@ -274,6 +296,7 @@ export class MemoryCloudReturnGrantStore implements CloudReturnGrantStore {
     this.grants.set(claim.grantKey, { ...record, status: 'consumed', consumedAt: this.now() });
     this.grantExpiresAt.set(claim.grantKey, this.now() + GRANT_RETENTION_MS);
     this.leases.delete(claim.grantKey);
+    this.sources.refresh(claim);
     return true;
   }
 

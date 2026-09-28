@@ -60,7 +60,7 @@ describe('F247 atomic append-winner recovery', () => {
 
     const invocationQueue = new InvocationQueue();
     const broadcasts = [];
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const app = Fastify();
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),

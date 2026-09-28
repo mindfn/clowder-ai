@@ -9,6 +9,10 @@
  */
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
+import {
+  MemoryCloudReturnGrantStore,
+  RedisCloudReturnGrantStore,
+} from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { buildCloudReturnMessageIdempotencyKey } from '../dist/domains/cats/services/cloud-bridge/cloud-return-message.js';
 import { cloudReturnHarness, configureCats } from './helpers/cloud-return-harness.js';
 
@@ -199,4 +203,94 @@ test('race: both entries released together, in both start orders, still land one
     assert.equal(reply.catId, 'cloud-alt');
     assert.deepEqual(await h.ingest(source.id, 'again'), { status: 'duplicate', messageId: reply.id });
   }
+});
+
+// ── P1-3 (astra, h3c-2 review): one source, one cloud cat ──
+// A polled return carries no dispatch identity of its own, so a source that was ever granted to one
+// cloud cat is never granted to another: a late answer from before a rename can then only miss.
+
+function stringRedis() {
+  const values = new Map();
+  return {
+    async set(key, value, ...options) {
+      const exists = values.has(key);
+      if ((options.includes('NX') && exists) || (options.includes('XX') && !exists)) return null;
+      values.set(key, value);
+      return 'OK';
+    },
+    async get(key) {
+      return values.get(key) ?? null;
+    },
+    // Only the grant store's refresh of an existing grant runs a script here: same scope → refreshed.
+    async eval(_script, _keyCount, key, threadId, userId, sourceMessageId, targetCatId) {
+      const stored = JSON.parse(values.get(key) ?? 'null');
+      if (!stored) return 0;
+      const same =
+        stored.threadId === threadId &&
+        stored.userId === userId &&
+        stored.sourceMessageId === sourceMessageId &&
+        stored.targetCatId === targetCatId;
+      return same ? 1 : -1;
+    },
+  };
+}
+
+for (const [name, store] of [
+  ['memory', () => new MemoryCloudReturnGrantStore()],
+  ['redis', () => new RedisCloudReturnGrantStore(stringRedis())],
+]) {
+  test(`${name}: a source granted to one cloud cat is never granted to another`, async () => {
+    const grants = store();
+    const source = { threadId: 't', userId: 'alice', sourceMessageId: 'S', dispatchInvocationId: 'inv-1' };
+    assert.deepEqual(await grants.issue({ ...source, targetCatId: 'cloud-alt' }), { ok: true, status: 'issued' });
+    assert.deepEqual(await grants.issue({ ...source, dispatchInvocationId: 'inv-2', targetCatId: 'cloud-beta' }), {
+      ok: false,
+      reason: 'source_retargeted',
+      boundTargetCatId: 'cloud-alt',
+    });
+    assert.equal((await grants.claim({ ...source, targetCatId: 'cloud-beta' })).ok, false);
+    assert.deepEqual(
+      await grants.issue({ ...source, dispatchInvocationId: 'inv-3', targetCatId: 'cloud-alt' }),
+      { ok: true, status: 'existing' },
+      'the same cat again is a retry',
+    );
+    assert.deepEqual(
+      await grants.issue({ ...source, sourceMessageId: 'S2', targetCatId: 'cloud-beta' }),
+      { ok: true, status: 'issued' },
+      'another source is free',
+    );
+  });
+}
+
+test('P1-3: after a rename the source cannot move to the new cat, and the old answer is refused', async () => {
+  const h = await cloudReturnHarness();
+  await h.grant('cloud-alt');
+
+  configureCats(['cloud-beta']);
+  assert.deepEqual(await h.grant('cloud-beta'), {
+    ok: false,
+    reason: 'source_retargeted',
+    boundTargetCatId: 'cloud-alt',
+  });
+  assert.deepEqual(await h.ingest(h.source.id, 'the old answer'), { status: 'rejected', reason: 'grant_not_found' });
+  assert.equal((await h.posted('the old answer')).length, 0);
+  assert.equal((await h.grantStore.claim(h.scope('cloud-alt'))).ok, true, 'the old grant is not consumed either');
+});
+
+test('P1-3: a consumed grant keeps its source bound for as long as the consumed grant is kept', async () => {
+  let now = 0;
+  const hour = 3_600_000;
+  const grants = new MemoryCloudReturnGrantStore(() => now);
+  const source = { threadId: 't', userId: 'alice', sourceMessageId: 'S' };
+  await grants.issue({ ...source, dispatchInvocationId: 'inv-1', targetCatId: 'cloud-alt' });
+  now = 20 * hour;
+  const claim = await grants.claim({ ...source, targetCatId: 'cloud-alt' });
+  assert.equal(await grants.commit(claim), true);
+
+  now = 30 * hour;
+  assert.deepEqual(await grants.issue({ ...source, dispatchInvocationId: 'inv-2', targetCatId: 'cloud-beta' }), {
+    ok: false,
+    reason: 'source_retargeted',
+    boundTargetCatId: 'cloud-alt',
+  });
 });

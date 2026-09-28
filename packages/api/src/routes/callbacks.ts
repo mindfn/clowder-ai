@@ -201,6 +201,7 @@ import { registerCallbackBootcampRoutes } from './callback-bootcamp-routes.js';
 import { type NamedCatContentHolder, registerCallbackContentEditorRoutes } from './callback-content-editor-routes.js';
 import { registerCallbackDeferPersonMemoryRoutes } from './callback-defer-person-memory-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
+import { makeCallbackAuthError } from './callback-errors.js';
 import { registerCallbackExternalReviewRecoveryRoutes } from './callback-external-review-recovery-route.js';
 import { registerCallbackGameRoutes } from './callback-game-routes.js';
 import { resolveGitHubValidation } from './callback-github-validation.js';
@@ -1387,6 +1388,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (!principal) return;
     if (
       principal.kind !== 'agent_key' ||
+      !principal.cloudBoundary ||
       cloudPrincipalStanding(catRegistry, principal) !== 'cloud' ||
       principal.userId !== getOwnerUserId()
     ) {
@@ -1512,8 +1514,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       // F247 source-bound returns remain exact and fail closed, but the normal
       // path keeps the authorization in server custody. A legacy binding is
       // accepted only for rolling compatibility with already-open conversations.
-      // F202 h3c-2: the cloud cat is whichever cat the configuration resolves, not a literal id.
-      const isCloudCat = cloudPrincipalStanding(catRegistry, principal) === 'cloud';
+      // F202 h3c-2: the cloud cat is whichever cat the configuration resolves, not a literal id. The
+      // standing was fixed when the key was authenticated; if the configuration changed since (the
+      // awaits above), the key is refused — a cloud key never becomes an ordinary post, nor the reverse.
+      if (cloudPrincipalStanding(catRegistry, principal) !== (principal.cloudBoundary ? 'cloud' : 'ordinary')) {
+        recordCallbackAuthFailure({ reason: 'cloud_principal_not_configured', tool: 'post-message' });
+        reply.status(403);
+        return makeCallbackAuthError('cloud_principal_not_configured');
+      }
+      const isCloudCat = principal.cloudBoundary;
       const isCloudReturnAttempt = isCloudCat && Boolean(replyTo || cloudReturnBinding);
       const usesServerGrant = isCloudCat && Boolean(replyTo) && !cloudReturnBinding;
       if (isCloudCat && cloudReturnBinding) {

@@ -98,7 +98,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
       dispatchInvocationId: 'inv-cloud',
       targetCatId: 'gpt-pro',
     });
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const app = Fastify();
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),
@@ -223,7 +223,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
     const conciergeConfigStore = {
       get: async () => ({ dutyCatProfileId }),
     };
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const app = Fastify();
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),
@@ -293,7 +293,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
     await grantStore.issue({ ...scope, dispatchInvocationId: 'inv-retryable-grant' });
     const heldClaim = await grantStore.claim(scope);
     assert.equal(heldClaim.ok, true);
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const app = Fastify();
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),
@@ -372,7 +372,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
       dispatchInvocationId: 'inv-commit-recovery',
       targetCatId: 'gpt-pro',
     });
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const broadcasts = [];
     const app = Fastify();
     await app.register(callbacksRoutes, {
@@ -474,7 +474,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
       },
     };
     const broadcasts = [];
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const app = Fastify();
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),
@@ -569,7 +569,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
       dispatchInvocationId: 'inv-append-rollback',
       targetCatId: 'gpt-pro',
     });
-    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice');
+    const { secret } = await agentKeyRegistry.issue('gpt-pro', 'alice', { scope: 'cloud-conversation' });
     const originalAppend = store.append.bind(store);
     store.append = () => {
       throw new Error('durable append failed');

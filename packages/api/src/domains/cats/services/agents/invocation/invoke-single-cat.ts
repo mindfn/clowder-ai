@@ -2168,7 +2168,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             'F247 cloud return grant persistence failed; suppressing Host dispatch',
           );
         }
-        if (!grant?.ok) {
+        if (grant && !grant.ok && grant.reason === 'source_retargeted') {
+          // F202 h3c-2 review P1-3: a source answers to one cloud cat; its grant already names another.
+          outcome = {
+            kind: 'fallback',
+            reason: 'source-retargeted',
+            detail: `This message was already sent to @${grant.boundTargetCatId}; its reply can belong to one cloud cat only`,
+          };
+        } else if (!grant?.ok) {
           outcome = {
             kind: 'fallback',
             reason: 'incomplete-dispatch-provenance',

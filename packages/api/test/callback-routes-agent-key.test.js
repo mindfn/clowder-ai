@@ -74,7 +74,7 @@ describe('Callback routes: agent-key auth path', () => {
   }
 
   async function issueGptProKey(userId = TEST_USER) {
-    return agentKeyRegistry.issue('gpt-pro', userId);
+    return agentKeyRegistry.issue('gpt-pro', userId, { scope: 'cloud-conversation' });
   }
 
   // ---- GET /api/callbacks/auth-probe ----

@@ -84,8 +84,9 @@ describe('F247 server-custodied grant retention', () => {
 
   it('fails issuance when an existing Redis grant expires before its retention refresh', async () => {
     const redis = {
-      async set() {
-        return null;
+      // The source binding (F202 h3c-2) is granted; the grant itself already exists and then expires.
+      async set(key) {
+        return key.startsWith('cloud-bridge:return-source:') ? 'OK' : null;
       },
       async eval() {
         return 0;

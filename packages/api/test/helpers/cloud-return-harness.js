@@ -17,11 +17,16 @@ import { ThreadStore } from '../../dist/domains/cats/services/stores/ports/Threa
 const TEMPLATE = catRegistry.getAllConfigs();
 const CLOUD_CONFIG = TEMPLATE['gpt-pro'];
 
-/** The template's cats, with the cloud cat's configuration moved to the given ids (or none). */
+/**
+ * The template's cats, with the cloud cat's configuration moved to the given ids (or none); `extra`
+ * adds cats or replaces template ones.
+ */
 export function configureCats(cloudCatIds, extra = {}) {
   catRegistry.reset();
   for (const [catId, config] of Object.entries(TEMPLATE)) {
-    if (catId !== 'gpt-pro') catRegistry.register(catId, config);
+    if (catId !== 'gpt-pro' && !cloudCatIds.includes(catId) && !Object.hasOwn(extra, catId)) {
+      catRegistry.register(catId, config);
+    }
   }
   for (const catId of cloudCatIds) catRegistry.register(catId, { ...CLOUD_CONFIG, id: catId });
   for (const [catId, config] of Object.entries(extra)) catRegistry.register(catId, config);
@@ -84,7 +89,23 @@ export async function cloudReturnHarness() {
   const messageStore = messages.proxy;
   const grantStore = grants.proxy;
   const agentKeyRegistry = new AgentKeyRegistry({ ttlMs: 86_400_000 });
-  const threadStore = new ThreadStore();
+  // `onNextThreadRead(fn)` runs fn when a route next reads a thread — after authentication, before
+  // the route decides anything — so a configuration change can land exactly in that gap.
+  let beforeThreadRead;
+  const threadStore = new Proxy(new ThreadStore(), {
+    get(object, property) {
+      const value = Reflect.get(object, property, object);
+      if (property !== 'get' || typeof value !== 'function') {
+        return typeof value === 'function' ? value.bind(object) : value;
+      }
+      return async (...args) => {
+        const hook = beforeThreadRead;
+        beforeThreadRead = undefined;
+        hook?.();
+        return value.apply(object, args);
+      };
+    },
+  });
   const thread = await threadStore.create('alice', 'h3c-2 cloud return');
   const otherThread = await threadStore.create('alice', 'h3c-2 other thread');
   let clock = 1_000;
@@ -155,5 +176,8 @@ export async function cloudReturnHarness() {
     warnings,
     pauseAppend: messages.pause,
     pauseCommit: grants.pause,
+    onNextThreadRead: (hook) => {
+      beforeThreadRead = hook;
+    },
   };
 }
