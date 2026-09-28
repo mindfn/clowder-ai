@@ -243,6 +243,7 @@ export function CloudConversationLinkView(props: CloudConversationLinkViewProps)
           radioName={props.radioName}
           authorized={props.authorized}
           boundId={binding?.conversationId ?? null}
+          hasRecord={props.route.kind === 'ready' && props.route.binding !== null}
           boundUsable={standing === 'connected'}
           selectedConversationId={props.selectedConversationId}
           busy={settled ? props.busy : 'reconcile'}

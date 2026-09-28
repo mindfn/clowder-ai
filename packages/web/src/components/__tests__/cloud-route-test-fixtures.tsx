@@ -41,9 +41,20 @@ export class FakeHost {
   bindings: Record<string, string> = {};
   cloudCat: unknown = { status: 'resolved', catId: 'gpt-pro' };
   candidates: Candidate[] = [STARS, REVIEW, UNTITLED];
-  /** How the next PATCHes answer, in order; the default applies the write and answers with it. */
+  /**
+   * How the next PATCHes answer, in order; the default applies the write and answers with it. `gate`
+   * holds the request before it reaches the Host; `commitThenHold` applies it at once and holds only
+   * the answer — which then reports the bindings as they were when the write landed.
+   */
   patchPlan: Array<
-    'ok' | 'lost' | 'unapplied-lost' | '500' | { status: number; body: unknown } | { gate: Promise<void> }
+    | 'ok'
+    | 'lost'
+    | 'unapplied-lost'
+    | '500'
+    | { status: number; body: unknown }
+    | { gate: Promise<void>; answer?: { status: number; body: unknown } }
+    | { commitThenHold: Promise<void> }
+    | { commitThenFail: Promise<void> }
   > = [];
   /** How the next binding reads answer, in order; the default answers. */
   readPlan: Array<'ok' | 'fail' | { gate: Promise<void> }> = [];
@@ -71,6 +82,15 @@ export class FakeHost {
       if (this.pluginPlan.shift() === 'fail') return Promise.resolve(jsonResponse({ error: 'down' }, 503));
       return Promise.resolve(jsonResponse({ authorization: { conversations: this.candidates } }));
     }
+    if (path === '/api/plugins/personal-chrome/refresh-titles' && method === 'POST') {
+      this.calls.push({ path, method });
+      return Promise.resolve(
+        jsonResponse({
+          authorization: { conversations: this.candidates },
+          titleSync: { status: 'synced', updatedCount: 0, requestedCount: 0 },
+        }),
+      );
+    }
     if (path !== this.bindingsPath) return undefined;
     if (method === 'GET') {
       this.calls.push({ path, method, options });
@@ -90,17 +110,30 @@ export class FakeHost {
     return jsonResponse(answer);
   };
 
+  private apply(body: { catId: string; chatUrl: string | null }): void {
+    if (body.chatUrl === null) delete this.bindings[body.catId];
+    else this.bindings[body.catId] = body.chatUrl;
+  }
+
   private async patch(body: { catId: string; chatUrl: string | null }): Promise<Response> {
     let step = this.patchPlan.shift() ?? 'ok';
+    if (typeof step === 'object' && 'commitThenFail' in step) {
+      this.apply(body);
+      await step.commitThenFail;
+      throw new TypeError('Failed to fetch');
+    }
+    if (typeof step === 'object' && 'commitThenHold' in step) {
+      this.apply(body);
+      const answer = jsonResponse({ bindings: { ...this.bindings } });
+      await step.commitThenHold;
+      return answer;
+    }
     if (typeof step === 'object' && 'gate' in step) {
       await step.gate;
-      step = 'ok';
+      step = step.answer ?? 'ok';
     }
     if (typeof step === 'object') return jsonResponse(step.body, step.status);
-    if (step !== 'unapplied-lost') {
-      if (body.chatUrl === null) delete this.bindings[body.catId];
-      else this.bindings[body.catId] = body.chatUrl;
-    }
+    if (step !== 'unapplied-lost') this.apply(body);
     if (step === 'lost' || step === 'unapplied-lost') throw new TypeError('Failed to fetch');
     if (step === '500') return jsonResponse({ error: 'Internal Server Error' }, 500);
     return jsonResponse({ bindings: { ...this.bindings } });

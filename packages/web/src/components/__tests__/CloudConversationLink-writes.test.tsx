@@ -188,3 +188,27 @@ describe('changing the thread’s conversation in place', () => {
     expect(status()).toBe('connected');
   });
 });
+
+describe('a stored route that cannot be read as a conversation', () => {
+  // astra `a7caa34d99` P2-2: a record that does not parse is still a record, and still removable.
+  it.each([
+    ['nothing is authorized', (host: FakeHost) => (host.candidates = [])],
+    ['the authorized list cannot be read', (host: FakeHost) => (host.pluginPlan = ['fail'])],
+    ['conversations are authorized', (_host: FakeHost) => undefined],
+  ])('can be disconnected when %s', async (_case, arrange) => {
+    const host = new FakeHost();
+    host.bindings = { 'gpt-pro': 'legacy-invalid-binding' };
+    arrange(host);
+    serve(host);
+    await show(host.threadId);
+
+    expect(status()).toBe('invalid');
+    expect(container.textContent).toContain('连接记录无效');
+    await click(buttonByText(container, '断开连接'));
+
+    expect(host.patches()).toEqual([{ catId: 'gpt-pro', chatUrl: null }]);
+    expect(host.bindings['gpt-pro']).toBeUndefined();
+    expect(status()).toBe('unconnected');
+    expect(buttonByText(container, '断开连接')).toBeUndefined();
+  });
+});

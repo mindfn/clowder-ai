@@ -119,4 +119,52 @@ describe('what reaches the panel from elsewhere', () => {
     expect(host.bindingReads()).toHaveLength(2);
     expect(host.bindingReads()[1]?.options).toEqual({ afterCurrentGet: true });
   });
+
+  it('does not take its own answer at its word when another surface wrote while it was out', async () => {
+    const host = connected(STARS);
+    const answer = gate();
+    host.patchPlan = [{ commitThenHold: answer.promise }];
+    serve(host);
+    await show(host.threadId);
+
+    await changeTo(REVIEW);
+    expect(host.bindings['gpt-pro']).toBe(REVIEW.chatUrl);
+    // Another surface's write lands after this one, before this one's answer comes back.
+    host.bindings['gpt-pro'] = UNTITLED.chatUrl;
+    await act(async () => announceCloudBindingChange(host.threadId, 'recovery-card'));
+    await act(async () => answer.open());
+    await flush();
+
+    expect(host.bindingReads().at(-1)?.options).toEqual({ afterCurrentGet: true });
+    expect(status()).toBe('connected');
+    expect(container.textContent).toContain('没能确认更换成功');
+    expect(
+      container.querySelector(`input[value="${UNTITLED.conversationId}"]`)?.closest('label')?.textContent,
+    ).toContain('已连接当前对话');
+    // Not folded as if its own write had landed: the choice stays open, with its selection.
+    expect(container.querySelector<HTMLInputElement>(`input[value="${REVIEW.conversationId}"]`)?.checked).toBe(true);
+  });
+
+  it('reads the route again after a refusal if another surface wrote while it was out', async () => {
+    const host = connected(STARS);
+    const answer = gate();
+    host.patchPlan = [
+      { gate: answer.promise, answer: { status: 401, body: { error: 'x', code: 'CLOUD_BINDING_AUTH_REQUIRED' } } },
+    ];
+    serve(host);
+    await show(host.threadId);
+
+    await changeTo(REVIEW);
+    host.bindings['gpt-pro'] = UNTITLED.chatUrl;
+    await act(async () => announceCloudBindingChange(host.threadId, 'recovery-card'));
+    await act(async () => answer.open());
+    await flush();
+
+    // "The connection did not change" would no longer be true: the route is read again instead.
+    expect(container.textContent).not.toContain('原来的连接没有变');
+    expect(host.bindingReads().at(-1)?.options).toEqual({ afterCurrentGet: true });
+    expect(
+      container.querySelector(`input[value="${UNTITLED.conversationId}"]`)?.closest('label')?.textContent,
+    ).toContain('已连接当前对话');
+  });
 });

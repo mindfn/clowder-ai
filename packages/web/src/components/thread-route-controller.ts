@@ -36,7 +36,9 @@ const SETTLED_NOTICES: ReadonlySet<RouteOperation['kind']> = new Set(['rejected'
  * One write at a time: a write, or the read that settles it, holds the lock; and a write whose outcome
  * is unknown holds off every other write until a read settles it. Every read and write takes a ticket
  * and only the latest ticket's answer is applied, so a read that began before a write cannot paint over
- * it. A change another surface announces while the lock is held is read once the lock is released.
+ * it. A change another surface announces while the lock is held is read once the lock is released; and
+ * a write answered after such a change is not taken at its word, since the other write may have landed
+ * after it: the route is read back instead.
  */
 export class ThreadRouteController {
   private alive = false;
@@ -140,7 +142,8 @@ export class ThreadRouteController {
     const outcome = await writeThreadCloudRoute(this.port.threadId, current.catId, target?.chatUrl ?? null);
     if (!this.alive || ticket !== this.ticket) return;
     this.port.setBusy(null);
-    if (outcome.kind === 'unknown') {
+    // Unknown — or answered while another surface wrote, so the answer may already be stale: read back.
+    if (outcome.kind === 'unknown' || (outcome.kind === 'written' && this.stale)) {
       await this.settle();
       return;
     }

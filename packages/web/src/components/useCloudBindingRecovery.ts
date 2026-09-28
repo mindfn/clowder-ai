@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { announceCloudBindingChange, useCloudBindingChanges } from './cloud-binding-events';
+import { announceCloudBindingChange } from './cloud-binding-events';
 import {
   executeRecoveryOperation,
   markConversationBound,
@@ -10,7 +10,9 @@ import {
   type RecoveryLoadState,
   type RecoveryPhase,
   readRecoveryState,
+  showBound,
 } from './cloud-binding-recovery-operations';
+import { useRecoveryBindingSync } from './useRecoveryBindingSync';
 
 interface IdentityScopedRecoveryState {
   readKey: string;
@@ -44,8 +46,6 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
   });
   const pollStartedAt = useRef(0);
   const titleSyncRequestedRef = useRef<string | null>(null);
-  // The thread panel writes the same binding; after it announces a write, read the binding afresh.
-  const bindingChangedRef = useRef(false);
   const source = useId();
   const [refreshGeneration, setRefreshGeneration] = useState(0);
   const recoveryReadKey = `${identityKey}\u0000${refreshGeneration}`;
@@ -59,6 +59,19 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
   if (stateIsCurrent && state.loadState.kind === 'ready')
     selectionRef.current = { identityKey, conversationId: state.selectedConversationId };
 
+  // The thread panel writes the same binding: what this card shows as bound follows the latest reading.
+  const { beginRead, settleRead, beginWrite, writeLanded, operationEnded } = useRecoveryBindingSync({
+    threadId,
+    targetCatId,
+    source,
+    show: (conversationId) =>
+      setState((current) =>
+        current.readKey === currentReadKeyRef.current && current.loadState.kind === 'ready'
+          ? { ...current, loadState: showBound(current.loadState, conversationId) }
+          : current,
+      ),
+  });
+
   useEffect(() => {
     const controller = new AbortController();
     const generation = operationGenerationRef.current + 1;
@@ -70,23 +83,18 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
 
     const syncTitles = titleSyncRequestedRef.current === identityKey;
     titleSyncRequestedRef.current = null;
-    const afterWrite = bindingChangedRef.current;
-    bindingChangedRef.current = false;
-    void readRecoveryState(
-      { threadId, sourceMessageId, targetCatId, attemptId },
-      controller.signal,
-      syncTitles,
-      afterWrite,
-    )
-      .then((nextState) => {
+    const ticket = beginRead();
+    void readRecoveryState({ threadId, sourceMessageId, targetCatId, attemptId }, controller.signal, syncTitles)
+      .then((read) => {
         if (
-          !nextState ||
+          !read ||
           controller.signal.aborted ||
           operationGenerationRef.current !== generation ||
           currentReadKeyRef.current !== recoveryReadKey
         ) {
           return;
         }
+        const nextState = read.kind === 'ready' ? showBound(read, settleRead(ticket, read.boundConversationId)) : read;
         const selected =
           nextState.kind === 'ready'
             ? (nextState.boundConversationId ??
@@ -124,15 +132,19 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
       operationGenerationRef.current += 1;
       busyRef.current = false;
     };
-  }, [threadId, sourceMessageId, targetCatId, attemptId, recoveryReadKey, identityKey, identity.deliveryStatus]);
+  }, [
+    threadId,
+    sourceMessageId,
+    targetCatId,
+    attemptId,
+    recoveryReadKey,
+    identityKey,
+    identity.deliveryStatus,
+    beginRead,
+    settleRead,
+  ]);
 
   const refresh = useCallback(() => setRefreshGeneration((current) => current + 1), []);
-  useCloudBindingChanges(threadId, source, () => {
-    // An operation of this card's own settles it; a card waiting on it shows its own outcome.
-    if (busyRef.current || identity.deliveryStatus === 'sent') return;
-    bindingChangedRef.current = true;
-    refresh();
-  });
   const refreshTitles = useCallback(() => {
     if (busyRef.current || projectedState.loadState.kind === 'loading') return;
     busyRef.current = true;
@@ -186,8 +198,11 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
       isCurrent,
       setPhase: (phase) =>
         setState((current) => (current.readKey === recoveryReadKey ? { ...current, phase } : current)),
+      onWriteStart: beginWrite,
       onWriteSettled: () => announceCloudBindingChange(threadId, source),
-      onBound: () =>
+      onBound: () => {
+        // Another surface wrote while this answer was out: the answer may be stale, so it is read again.
+        if (!writeLanded(prepared.selected.conversationId)) return;
         setState((current) =>
           current.readKey === recoveryReadKey
             ? {
@@ -195,8 +210,10 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
                 loadState: markConversationBound(current.loadState, prepared.selected.conversationId),
               }
             : current,
-        ),
+        );
+      },
     });
+    operationEnded();
     if (!isCurrent()) return;
     busyRef.current = false;
     if (outcome.kind === 'queued' || outcome.kind === 'connected') {
@@ -208,7 +225,18 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
         current.readKey === recoveryReadKey ? { ...current, phase: 'idle', operationError: outcome.message } : current,
       );
     }
-  }, [identity, identityKey, recoveryReadKey, state, refresh, threadId, source]);
+  }, [
+    identity,
+    identityKey,
+    recoveryReadKey,
+    state,
+    refresh,
+    threadId,
+    source,
+    beginWrite,
+    writeLanded,
+    operationEnded,
+  ]);
 
   return {
     loadState: projectedState.loadState,

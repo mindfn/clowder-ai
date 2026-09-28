@@ -71,21 +71,18 @@ function projectRetryState(
   return { retryState: 'unavailable', retryStateError: '暂时无法确认发送状态。连接会话不会重发原消息。' };
 }
 
-/** `afterWrite`: the binding was just written elsewhere, so a read already in flight may predate it. */
 export async function readRecoveryState(
   identity: RecoveryIdentity,
   signal: AbortSignal,
   syncTitles = false,
-  afterWrite = false,
 ): Promise<RecoveryLoadState | null> {
   const retryAuthorityRequest = apiFetch(
     `/api/messages/${encodeURIComponent(identity.sourceMessageId)}/queue-targets/${encodeURIComponent(identity.targetCatId)}/retry-authority`,
     { signal },
   );
-  const bindingPath = `/api/threads/${encodeURIComponent(identity.threadId)}/cloud-bindings`;
   const [authorized, bindingResponse, retryAuthorityResponse] = await Promise.all([
     fetchAuthorizedConversations(signal, { syncTitles }),
-    afterWrite ? apiFetch(bindingPath, { signal }, { afterCurrentGet: true }) : apiFetch(bindingPath, { signal }),
+    apiFetch(`/api/threads/${encodeURIComponent(identity.threadId)}/cloud-bindings`, { signal }),
     retryAuthorityRequest,
   ]);
   if (signal.aborted) return null;
@@ -121,16 +118,41 @@ export async function readRecoveryState(
   };
 }
 
+/**
+ * The conversation bound to `targetCatId` in the thread, read after any read already in flight (it may
+ * predate a write): `null` when none is, `undefined` when the binding cannot be read.
+ */
+export async function readBoundConversationId(
+  threadId: string,
+  targetCatId: string,
+): Promise<string | null | undefined> {
+  try {
+    const response = await apiFetch(
+      `/api/threads/${encodeURIComponent(threadId)}/cloud-bindings`,
+      {},
+      { afterCurrentGet: true },
+    );
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as CloudBindingsResponse;
+    const raw = body.bindings?.[targetCatId];
+    return raw === undefined ? null : (parseChatGptConversationUrl(raw)?.conversationId ?? null);
+  } catch {
+    return undefined;
+  }
+}
+
 async function persistSelectedRoute(args: {
   identity: RecoveryIdentity;
   selected: AuthorizedConversationCandidate;
   routeIsBound: boolean;
   isCurrent: () => boolean;
   onBound: () => void;
+  onWriteStart: () => void;
   onWriteSettled: () => void;
 }): Promise<boolean> {
   if (args.routeIsBound) return true;
   const { threadId, targetCatId } = args.identity;
+  args.onWriteStart();
   let response: Response;
   try {
     response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/cloud-bindings`, {
@@ -189,6 +211,15 @@ export function markConversationBound(state: RecoveryLoadState, conversationId: 
   return state.kind === 'ready' ? { ...state, boundConversationId: conversationId } : state;
 }
 
+/** The ready state with `conversationId` as the bound one — if it is an authorized conversation. */
+export function showBound(
+  state: Extract<RecoveryLoadState, { kind: 'ready' }>,
+  conversationId: string | null,
+): Extract<RecoveryLoadState, { kind: 'ready' }> {
+  const authorized = state.candidates.some((candidate) => candidate.conversationId === conversationId);
+  return { ...state, boundConversationId: authorized ? conversationId : null };
+}
+
 function recoveryFailureMessage(routeIsBound: boolean, cause: unknown): string {
   const detail = cause instanceof Error ? cause.message : '绑定没有完成';
   return routeIsBound ? `会话已绑定，但这条消息还没有重新发送。 ${detail}` : detail;
@@ -230,6 +261,7 @@ export async function executeRecoveryOperation(args: {
   isCurrent: () => boolean;
   setPhase: (phase: RecoveryPhase) => void;
   onBound: () => void;
+  onWriteStart: () => void;
   onWriteSettled: () => void;
 }): Promise<RecoveryOperationOutcome> {
   let routeIsBound = args.prepared.routeIsBound;
@@ -241,6 +273,7 @@ export async function executeRecoveryOperation(args: {
       routeIsBound,
       isCurrent: args.isCurrent,
       onBound: args.onBound,
+      onWriteStart: args.onWriteStart,
       onWriteSettled: args.onWriteSettled,
     });
     if (!routeIsBound || !args.isCurrent()) return { kind: 'stale' };

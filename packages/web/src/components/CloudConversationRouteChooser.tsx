@@ -14,6 +14,11 @@ export interface RouteChooserProps {
   authorized: AuthorizedConversationsRead;
   /** The conversation the thread routes to now, if any — revoked or not. */
   boundId: string | null;
+  /**
+   * The thread has a stored route, whether or not it reads as a conversation: disconnecting clears it.
+   * A record that cannot be read has no `boundId`, and must still be removable.
+   */
+  hasRecord: boolean;
   /** Whether that conversation is still authorized, so it can be marked as the current one. */
   boundUsable: boolean;
   selectedConversationId: string | null;
@@ -50,7 +55,7 @@ function NothingAuthorized({ onRetry }: { onRetry: () => void }) {
  */
 function ChooserFooter({ props, primary }: { props: RouteChooserProps; primary?: React.ReactNode }) {
   const { busy } = props;
-  if (!primary && !props.cancellable && !props.boundId) return null;
+  if (!primary && !props.cancellable && !props.hasRecord) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
       {primary}
@@ -59,7 +64,7 @@ function ChooserFooter({ props, primary }: { props: RouteChooserProps; primary?:
           取消
         </button>
       ) : null}
-      {props.boundId ? (
+      {props.hasRecord ? (
         <button
           type="button"
           className={`${routeGhostClass} ml-auto`}
