@@ -233,7 +233,7 @@ function parseInstance(value: unknown, index: number, contract: PackageAdmission
       ? {}
       : { lastRuntimeError: runtimeError(raw.lastRuntimeError, `instances[${index}].lastRuntimeError`) }),
   };
-  const detail = parseRuntimeErrorDetail(raw, `instances[${index}]`, record.lastRuntimeError, contract);
+  const detail = parseRuntimeErrorDetail(raw, `instances[${index}]`, record, contract);
   if (!isCanonicalPackageDigest(record.packageDigest)) corrupt(`instances[${index}].packageDigest is not canonical`);
   if (record.lifecycleState === 'retired' && record.retiredAt === undefined) {
     corrupt(`instances[${index}] retired state requires retiredAt`);

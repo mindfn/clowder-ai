@@ -117,7 +117,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
         await this.setBundledRuntimeState(
           authority,
           'stopped',
-          packageFailed ? this.#startFailure(error) : undefined,
+          packageFailed ? this.#startFailure(error, authority.instance.packageDigest) : undefined,
         ).catch(() => undefined);
         if (this.#active.get(pluginInstanceId)?.closed === closed) this.#active.delete(pluginInstanceId);
       }
@@ -205,8 +205,8 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
    * (F202 Train C1 terminal contract, clause 6). When the Host refused the package a capability,
    * the record says which (F202 W2-6b).
    */
-  #startFailure(error: unknown): ReturnType<typeof startFailureRecord> {
-    return startFailureRecord(error, this.#now());
+  #startFailure(error: unknown, packageDigest: string): ReturnType<typeof startFailureRecord> {
+    return startFailureRecord(error, this.#now(), packageDigest);
   }
 
   #runtimeFor(packageRecord: Pick<PluginPackageRecord, 'manifest'>): BundledPluginRuntime | undefined {

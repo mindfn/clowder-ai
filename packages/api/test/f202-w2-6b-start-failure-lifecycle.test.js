@@ -107,6 +107,7 @@ test('an enable refused a capability: logged safely, recorded beside the legacy 
     kind: 'capability_not_granted',
     capability: 'thread.listMetadata',
     occurredAt: failed.lastRuntimeError.occurredAt,
+    packageDigest: DIGEST,
   });
 
   assert.equal(reports.length, 1);
@@ -122,9 +123,22 @@ test('an enable refused a capability: logged safely, recorded beside the legacy 
       error: undefined,
     },
   );
-  assert.equal(report.error.message, 'bind failed');
-  assert.equal(report.error.cause.code, 'DELIVERY_REJECTED');
-  assert.equal(report.error.cause.message, `${PLUGIN_ID} lacks thread.listMetadata`);
+  assert.deepEqual(
+    { origin: report.error.origin, type: report.error.type, message: report.error.message },
+    { origin: 'unverified', type: 'Error', message: undefined },
+    'what the plugin wrote is not kept',
+  );
+  assert.deepEqual(
+    { ...report.error.cause, at: undefined },
+    {
+      origin: 'host_refusal',
+      type: 'ExternalPluginRuntimeError',
+      code: 'DELIVERY_REJECTED',
+      capability: 'thread.listMetadata',
+      at: undefined,
+    },
+  );
+  assert.ok(report.error.cause.at.length > 0, 'where the Host refused it');
 });
 
 test('any other failure keeps the legacy record and message; the observer gets only the safe projection', async () => {
@@ -144,7 +158,7 @@ test('any other failure keeps the legacy record and message; the observer gets o
   assert.equal(failed.lastRuntimeErrorDetail, undefined);
   assert.deepEqual(reports[0].category, { kind: 'unclassified' });
   assert.doesNotMatch(JSON.stringify(reports), /FAKE_W26B/u);
-  assert.equal(reports[0].error.cause.message, 'request failed https://example.invalid/[REDACTED]');
+  assert.deepEqual(Object.keys(reports[0].error.cause).sort(), ['at', 'origin', 'type']);
 });
 
 test("a Host runtime error is classified by its code; a plugin's lookalike of a refusal is not a refusal", async () => {
@@ -295,9 +309,13 @@ test('by default the failure goes to the Host log as one safe line', async () =>
     });
     const lifecycle = new plugin.ExternalPluginLifecycleService({ store, supervisor: {
       start: async () => {
-        const error = new Error('start failed', { cause: new Error('request failed https://example.invalid/?token=FAKE_W26B_QUERY') });
-        error.secret = 'FAKE_W26B_PROPERTY';
-        throw error;
+        const probe = new Error('start failed', { cause: new Error('request failed https://example.invalid/?token=FAKE_W26B_QUERY') });
+        probe.secret = 'FAKE_W26B_PROPERTY';
+        throw new AggregateError([
+          new Error('Invalid password FAKE_CANARY_PASSWORD'),
+          new Error('authentication failed\\n    at FAKE_CANARY_12345678901234567890'),
+          probe,
+        ], 'module startup rollback failed');
       },
       stop: async () => undefined,
     } });
@@ -308,14 +326,23 @@ test('by default the failure goes to the Host log as one safe line', async () =>
     env: { ...process.env, NODE_ENV: 'test', LOG_DIR: logDir },
   });
 
-  const lines = (await readFile(join(logDir, 'api.log'), 'utf8'))
-    .split('\n')
-    .filter((line) => line.includes('plugin runtime failed to start'));
+  const written = await readFile(join(logDir, 'api.log'), 'utf8');
+  assert.doesNotMatch(written, /FAKE_CANARY|FAKE_W26B/u, 'no canary anywhere on disk');
+  const lines = written.split('\n').filter((line) => line.includes('plugin runtime failed to start'));
   assert.equal(lines.length, 1, 'one line per failed start');
   const entry = JSON.parse(lines[0]);
   assert.equal(entry.module, 'plugin/lifecycle');
   assert.equal(entry.pluginId, 'dev.example.w26b-log');
+  assert.equal(entry.pluginInstanceId, 'pi_w26b_log');
   assert.equal(entry.phase, 'enable');
-  assert.equal(entry.error.cause.message, 'request failed https://example.invalid/[REDACTED]');
-  assert.doesNotMatch(lines[0], /FAKE_W26B/u);
+  assert.deepEqual(entry.category, { kind: 'unclassified' });
+  assert.equal(entry.error.type, 'AggregateError');
+  assert.deepEqual(
+    entry.error.errors.map((error) => error.type),
+    ['Error', 'Error', 'Error'],
+  );
+  assert.ok(
+    entry.error.errors.every((error) => error.at.every((location) => /:\d+:\d+$/u.test(location))),
+    'each error keeps where it was thrown',
+  );
 });

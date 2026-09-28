@@ -16,6 +16,11 @@ export function hostCapabilityRefusal<E extends Error>(error: E, capability: Cap
   return error;
 }
 
+/** The capability this very object refused, when it is a registered Host refusal. */
+export function registeredRefusal(error: object): Capability | undefined {
+  return refusals.get(error);
+}
+
 /** How many errors one lookup inspects at most; a start failure is never deeper than a few layers. */
 const MAX_INSPECTED = 32;
 

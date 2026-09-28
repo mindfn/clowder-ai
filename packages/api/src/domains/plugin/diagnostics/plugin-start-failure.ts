@@ -1,9 +1,15 @@
 import type { Capability } from '@clowder-ai/plugin-contract';
 import { createModuleLogger } from '../../../infrastructure/logger.js';
+import { MessagingError } from '../../messaging/contract/host-types.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import type { PluginRuntimeErrorDetail, PluginRuntimeErrorRecord } from '../host-inventory/types.js';
-import { refusedHostCapability } from '../host-surface/host-capability-refusal.js';
-import { type SafeErrorProjection, safeErrorProjection } from './safe-error-projection.js';
+import {
+  PluginInventoryError,
+  type PluginRuntimeErrorDetail,
+  type PluginRuntimeErrorRecord,
+} from '../host-inventory/types.js';
+import { refusedHostCapability, registeredRefusal } from '../host-surface/host-capability-refusal.js';
+import { ManifestConfigurationProjectionError } from '../manifest-configuration-projection.js';
+import { type HostErrorRecognition, type SafeErrorProjection, safeErrorProjection } from './safe-error-projection.js';
 
 /** F202 W2-6b — where a runtime start was attempted when it failed. */
 export type PluginStartPhase =
@@ -32,11 +38,30 @@ export interface PluginStartFailureReport {
 
 export type PluginStartFailureObserver = (report: PluginStartFailureReport) => void;
 
+const HOST_CODE = /^[A-Za-z][A-Za-z_]{0,47}$/u;
+
+/** The closed-set code of an error the Host's own code raised; the text around it is never kept. */
+function hostErrorCode(error: unknown): string | undefined {
+  try {
+    const code =
+      error instanceof ExternalPluginRuntimeError ||
+      error instanceof MessagingError ||
+      error instanceof PluginInventoryError
+        ? error.code
+        : error instanceof ManifestConfigurationProjectionError
+          ? error.failure.reason
+          : undefined;
+    return typeof code === 'string' && HOST_CODE.test(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const HOST_RECOGNITION: HostErrorRecognition = { refusal: registeredRefusal, hostCode: hostErrorCode };
+
 function hostRuntimeErrorCode(error: unknown): string | undefined {
   try {
-    if (!(error instanceof ExternalPluginRuntimeError)) return undefined;
-    const { code } = error;
-    return typeof code === 'string' && /^[A-Z][A-Z_]{0,47}$/u.test(code) ? code : undefined;
+    return error instanceof ExternalPluginRuntimeError ? hostErrorCode(error) : undefined;
   } catch {
     return undefined;
   }
@@ -62,7 +87,7 @@ export function pluginStartFailureReport(input: {
     phase: input.phase,
     occurredAt: input.occurredAt,
     category: classifyStartFailure(input.error),
-    error: safeErrorProjection(input.error),
+    error: safeErrorProjection(input.error, HOST_RECOGNITION),
   };
 }
 
@@ -74,13 +99,14 @@ export function logPluginStartFailure(report: PluginStartFailureReport): void {
 }
 
 /**
- * The failure a start leaves on the instance. Its code stays `UNEXPECTED_RUNTIME_FAILURE`, which a
- * Host from before W2-6b can read; when the Host refused a capability, the detail beside it says
- * which one.
+ * The failure a start of the package `packageDigest` leaves on the instance. Its code stays
+ * `UNEXPECTED_RUNTIME_FAILURE`, which a Host from before W2-6b can read; when the Host refused a
+ * capability, the detail beside it says which one, and for which package.
  */
 export function startFailureRecord(
   error: unknown,
   occurredAt: number,
+  packageDigest: string,
 ): { readonly record: PluginRuntimeErrorRecord; readonly detail?: PluginRuntimeErrorDetail } {
   const record: PluginRuntimeErrorRecord = {
     code: 'UNEXPECTED_RUNTIME_FAILURE',
@@ -91,7 +117,7 @@ export function startFailureRecord(
   const capability = refusedHostCapability(error);
   return capability === undefined
     ? { record }
-    : { record, detail: { kind: 'capability_not_granted', capability, occurredAt } };
+    : { record, detail: { kind: 'capability_not_granted', capability, occurredAt, packageDigest } };
 }
 
 /** What an owner's enable request is told; the plugin's detail card says what to do about it. */

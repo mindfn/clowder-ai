@@ -136,6 +136,7 @@ test('a plugin refused a capability it requested: the owner is told which, the l
     kind: 'capability_not_granted',
     capability: 'thread.listMetadata',
     occurredAt: instance.lastRuntimeError.occurredAt,
+    packageDigest: instance.packageDigest,
   });
 
   globalThis.__f202W26bStart = undefined;

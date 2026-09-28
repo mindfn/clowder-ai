@@ -223,7 +223,7 @@ export class ExternalPluginLifecycleService {
       } catch (error) {
         const failedAt = this.now();
         this.reportStartFailure(current, 'restart_resume', error, failedAt);
-        await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt));
+        await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt, current.packageDigest));
       }
     });
   }
@@ -326,7 +326,7 @@ export class ExternalPluginLifecycleService {
     } catch (error) {
       const failedAt = this.now();
       this.reportStartFailure(enabled, phase, error, failedAt);
-      const failure = startFailureRecord(error, failedAt);
+      const failure = startFailureRecord(error, failedAt, enabled.packageDigest);
       await this.advance(
         instanceId,
         enabled.lifecycleRevision,

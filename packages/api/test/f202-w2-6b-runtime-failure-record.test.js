@@ -27,9 +27,15 @@ import {
 } from '../dist/domains/plugin/index.js';
 
 const DIGEST = `sha512-${createHash('sha512').update('w26b-record').digest('base64')}`;
+const OTHER_DIGEST = `sha512-${createHash('sha512').update('w26b-record-other-version').digest('base64')}`;
 const CONTRACT = { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest };
 const FAILURE = { code: 'UNEXPECTED_RUNTIME_FAILURE', exitCode: null, signal: null, occurredAt: 5_000 };
-const DETAIL = { kind: 'capability_not_granted', capability: 'thread.listMetadata', occurredAt: 5_000 };
+const DETAIL = {
+  kind: 'capability_not_granted',
+  capability: 'thread.listMetadata',
+  occurredAt: 5_000,
+  packageDigest: DIGEST,
+};
 
 async function inventory() {
   const store = new MemoryPluginInventoryStore();
@@ -104,6 +110,17 @@ test('a stale detail is dropped on read, never a reason to refuse the inventory'
 
   const orphan = await storedWith((instance) => ({ ...instance, lastRuntimeErrorDetail: DETAIL }));
   assert.equal(parsePluginInventorySnapshot(orphan, CONTRACT).instances[0].lastRuntimeErrorDetail, undefined);
+
+  const anotherPackage = await storedWith((instance) => ({
+    ...instance,
+    lastRuntimeError: FAILURE,
+    lastRuntimeErrorDetail: { ...DETAIL, packageDigest: OTHER_DIGEST },
+  }));
+  assert.equal(
+    parsePluginInventorySnapshot(anotherPackage, CONTRACT).instances[0].lastRuntimeErrorDetail,
+    undefined,
+    'a reason about another version of the package never explains this one',
+  );
 });
 
 test('a malformed detail is a corrupt snapshot, like any other malformed field', async () => {
@@ -114,6 +131,8 @@ test('a malformed detail is a corrupt snapshot, like any other malformed field',
     { ...DETAIL, kind: 'permission_denied' },
     { ...DETAIL, capability: 'thread.everything' },
     { ...DETAIL, occurredAt: -1 },
+    { ...DETAIL, packageDigest: 42 },
+    { ...DETAIL, packageDigest: '' },
   ];
   for (const detail of malformed) {
     const raw = await storedWith((instance) => ({
@@ -140,6 +159,9 @@ test('a failure and its detail are written together, replaced together and clear
 
   const mismatched = withRuntimeFailure(base, FAILURE, { ...DETAIL, occurredAt: 4_000 });
   assert.equal('lastRuntimeErrorDetail' in mismatched, false, 'a detail explaining another failure is not attached');
+  const otherPackage = withRuntimeFailure(base, FAILURE, { ...DETAIL, packageDigest: OTHER_DIGEST });
+  assert.equal('lastRuntimeErrorDetail' in otherPackage, false, 'nor one about another version of the package');
+  assert.equal(currentRuntimeErrorDetail({ ...failed, packageDigest: OTHER_DIGEST }), undefined);
 
   const cleared = withoutRuntimeFailure(failed);
   assert.equal('lastRuntimeError' in cleared, false);
@@ -216,6 +238,7 @@ test('the in-Host carrier records the reason with its own failure write, and a n
     kind: 'capability_not_granted',
     capability: 'thread.write',
     occurredAt: 9_000,
+    packageDigest: DIGEST,
   });
 });
 
@@ -223,7 +246,10 @@ test('the owner is told what was refused, without being told to upgrade or to ed
   const [base] = (await (await inventory()).snapshot()).instances;
   const failed = withRuntimeFailure(base, FAILURE, DETAIL);
 
-  const declared = pluginRuntimeDiagnostic(failed, { requestedCapabilities: ['thread.listMetadata'] });
+  const declared = pluginRuntimeDiagnostic(failed, {
+    requestedCapabilities: ['thread.listMetadata'],
+    effectiveGrants: [],
+  });
   assert.equal(declared.code, 'CAPABILITY_NOT_GRANTED');
   assert.equal(declared.capability, 'thread.listMetadata');
   assert.equal(declared.occurredAt, 5_000);
@@ -231,9 +257,21 @@ test('the owner is told what was refused, without being told to upgrade or to ed
   assert.match(declared.message, /compatible with this Host, or contact the plugin maintainer/u);
   assert.doesNotMatch(declared.message, /upgrade|update/iu);
 
-  const undeclared = pluginRuntimeDiagnostic(failed, { requestedCapabilities: [] });
+  const undeclared = pluginRuntimeDiagnostic(failed, { requestedCapabilities: [], effectiveGrants: [] });
   assert.match(undeclared.message, /uses thread\.listMetadata without declaring it, which is a defect in the plugin/u);
+
+  // Granted since the failure — say so, not that the policy refuses it.
+  const grantedNow = pluginRuntimeDiagnostic(failed, {
+    requestedCapabilities: ['thread.listMetadata'],
+    effectiveGrants: ['thread.listMetadata'],
+  });
+  assert.equal(grantedNow.capability, 'thread.listMetadata');
+  assert.match(grantedNow.message, /refused this plugin version thread\.listMetadata when it last started/u);
+  assert.match(grantedNow.message, /granted now, so enable the plugin again/u);
+  assert.doesNotMatch(grantedNow.message, /does not grant/u);
 
   const stale = pluginRuntimeDiagnostic({ ...failed, lastRuntimeErrorDetail: { ...DETAIL, occurredAt: 1 } }, undefined);
   assert.equal(stale.code, 'UNEXPECTED_RUNTIME_FAILURE');
+  const otherVersion = pluginRuntimeDiagnostic({ ...failed, packageDigest: OTHER_DIGEST }, undefined);
+  assert.equal(otherVersion.code, 'UNEXPECTED_RUNTIME_FAILURE', 'never read against another version');
 });

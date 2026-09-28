@@ -51,13 +51,18 @@ export interface PluginRuntimeErrorRecord {
  * beside that record instead of inside it, so a Host from before it reads the record unchanged and
  * drops this (its instance parser keeps only the fields it knows). A diagnostic only: no grant
  * decision reads it.
+ *
+ * It explains one failure of one package, and nothing after it: when the failure is replaced or the
+ * instance's package changes, it is stale — a new version is never judged by what an old one did.
  */
 export interface PluginRuntimeErrorDetail {
   /** The failure was the Host refusing a capability the instance was not granted. */
   readonly kind: 'capability_not_granted';
   readonly capability: Capability;
-  /** The `occurredAt` of the `lastRuntimeError` it explains; one that differs is stale. */
+  /** The `occurredAt` of the `lastRuntimeError` it explains. */
   readonly occurredAt: number;
+  /** The package that was starting when the Host refused it. */
+  readonly packageDigest: string;
 }
 
 export interface PluginPackageRecord {
