@@ -152,6 +152,14 @@ test('production starts an official connector with the grants the Host gives it;
   await unlisted.shutdown();
 });
 
+test('a package asking for less than its entry still installs and starts, with what it asks for', async () => {
+  // An older release (here: the W2-1 feishu request) or a later one that dropped a capability.
+  const older = await installed(manifest('official.connector.feishu', W2_1_GRANTS));
+  assert.deepEqual(sorted(older.grants.effectiveGrants), sorted(W2_1_GRANTS));
+  await older.enable();
+  await older.shutdown();
+});
+
 test('a manifest cannot widen the grant: what it asks beyond the table is not granted, and using it is refused', async () => {
   const host = await installed(manifest('official.connector.wecom-bot', [...CONNECTOR, 'thread.readContent']));
   assert.deepEqual(sorted(host.grants.requestedCapabilities), sorted([...CONNECTOR, 'thread.readContent']));

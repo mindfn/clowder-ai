@@ -40,6 +40,18 @@ export function canonicalCapabilities(values: readonly Capability[]): Capability
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-export function requestedCapabilitiesForManifest(manifest: PluginManifest): Capability[] {
+export function requestedCapabilitiesForManifest(manifest: Pick<PluginManifest, 'features'>): Capability[] {
   return canonicalCapabilities(manifest.features.flatMap((feature) => [...feature.capabilities]));
+}
+
+/**
+ * F202 W2-6: what a package is granted — what it requests, within the Host's upper bound. A package
+ * asking for less than the bound gets less (and still installs); asking for more gets no more.
+ */
+export function grantsWithinRequest(
+  upperBound: readonly Capability[],
+  manifest: Pick<PluginManifest, 'features'>,
+): Capability[] {
+  const allowed = new Set(upperBound);
+  return requestedCapabilitiesForManifest(manifest).filter((capability) => allowed.has(capability));
 }

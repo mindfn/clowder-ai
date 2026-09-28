@@ -5,6 +5,7 @@ import { staticEditorContributions } from './content-editor-runtime/admission.js
 import { snapshotEditorAssets } from './content-editor-runtime/surface-assets.js';
 import { FilesystemVerifiedPluginPackageLocator, type VerifiedPluginPackage } from './external-runtime/index.js';
 import type { PluginManifestValidator } from './external-runtime/package-staging.js';
+import { grantsWithinRequest } from './host-inventory/contract-policy.js';
 import type { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import { type PackageAdmissionCandidate, PluginInventoryError } from './host-inventory/types.js';
 import {
@@ -337,7 +338,7 @@ export class OfficialPluginPackageInstaller {
         computedPackageDigest: entry.packageDigest,
         expectedPackageDigest: entry.packageDigest,
         packagePluginId: entry.pluginId,
-        effectiveGrants: entry.effectiveGrants,
+        effectiveGrants: grantsWithinRequest(entry.effectiveGrants, located.manifest),
         signalSchemas,
         provenance: {
           kind: 'catalog',
@@ -382,7 +383,7 @@ export class OfficialPluginPackageInstaller {
       computedPackageDigest: entry.packageDigest,
       expectedPackageDigest: entry.packageDigest,
       packagePluginId: entry.pluginId,
-      effectiveGrants: entry.effectiveGrants,
+      effectiveGrants: grantsWithinRequest(entry.effectiveGrants, manifest),
       signalSchemas: {},
     });
   }

@@ -1,5 +1,6 @@
 import type { PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
+import { grantsWithinRequest } from '../host-inventory/contract-policy.js';
 import type { OfficialPluginCatalogEntry, OfficialPluginOwnerAuth } from '../official-catalog.js';
 import {
   compareOfficialPluginVersions,
@@ -128,12 +129,16 @@ export interface MachineOfficialPluginCatalogOptions {
   readonly now?: () => number;
 }
 
-/** Applies Host-owned authority equally to catalog and owner-selected local bytes. */
+/**
+ * Applies Host-owned authority equally to catalog and owner-selected local bytes: the package gets
+ * what it requests within its policy entry (F202 W2-6), and nothing without an entry.
+ */
 export function resolveLocalPluginEffectiveGrants(
   hostPolicies: readonly MachineCatalogHostPolicy[],
-  manifest: Pick<PluginManifest, 'pluginId'>,
+  manifest: Pick<PluginManifest, 'pluginId' | 'features'>,
 ): readonly Capability[] {
-  return hostPolicies.find((policy) => policy.pluginId === manifest.pluginId)?.effectiveGrants ?? [];
+  const policy = hostPolicies.find((candidate) => candidate.pluginId === manifest.pluginId);
+  return grantsWithinRequest(policy?.effectiveGrants ?? [], manifest);
 }
 
 /**

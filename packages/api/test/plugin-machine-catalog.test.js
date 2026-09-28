@@ -132,23 +132,27 @@ test('uses the same Host-owned grants for local development archives as catalog 
     },
   ];
 
+  // The package's request bounds the grant too (F202 W2-6): less than the entry gets less, more gets no more.
+  const requesting = (pluginId, ...capabilities) => ({ pluginId, features: [{ capabilities }] });
   assert.deepEqual(
-    resolveLocalPluginEffectiveGrants(policies, {
-      pluginId: 'official.weixin-mp',
-    }),
+    resolveLocalPluginEffectiveGrants(policies, requesting('official.weixin-mp', 'plugin.config.read', 'secret.read')),
     ['plugin.config.read', 'secret.read'],
   );
   assert.deepEqual(
-    resolveLocalPluginEffectiveGrants(policies, {
-      pluginId: 'dev.clowder.video-generation',
-    }),
+    resolveLocalPluginEffectiveGrants(
+      policies,
+      requesting('dev.clowder.video-generation', 'plugin.config.read', 'secret.read', 'messaging.send'),
+    ),
     ['plugin.config.read', 'secret.read'],
   );
-  assert.deepEqual(resolveLocalPluginEffectiveGrants(policies, { pluginId: 'untrusted.local' }), []);
-  assert.deepEqual(resolveLocalPluginEffectiveGrants(policies, { pluginId: 'dev.clowder.video-analysis' }), [
-    'plugin.config.read',
-    'secret.read',
-  ]);
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(policies, requesting('untrusted.local', 'plugin.config.read', 'secret.read')),
+    [],
+  );
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(policies, requesting('dev.clowder.video-analysis', 'secret.read')),
+    ['secret.read'],
+  );
   assert.deepEqual(resolveRepositoryReplacementPluginIds(policies, [], ['dev.clowder.video-generation']), [
     'video-gen',
   ]);
