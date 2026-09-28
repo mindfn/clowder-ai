@@ -93,7 +93,8 @@ export type BridgeFallbackReason =
   | 'dispatch-failed'
   | 'host-append-failed'
   | 'missing-source-message-id'
-  | 'incomplete-dispatch-provenance';
+  | 'incomplete-dispatch-provenance'
+  | 'ambiguous-cloud-cat';
 
 /**
  * The cloud invoke bridge — awaited by `invokeSingleCat` only until a bounded

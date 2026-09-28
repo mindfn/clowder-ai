@@ -5,12 +5,20 @@ import { apiFetch } from '@/utils/api-client';
 import { parseChatGptConversationUrl } from '@/utils/chatgpt-chat-url';
 import { personalChromeSettingsHref } from '@/utils/personal-chrome-settings';
 
+/** The Host's answer to which cat holds the thread's ChatGPT conversation (F202 h3c-2). */
+type CloudCatResolution =
+  | { status: 'resolved'; catId: string }
+  | { status: 'unavailable' }
+  | { status: 'ambiguous'; catIds: string[] };
+
 interface CloudBindingsResponse {
   bindings?: Record<string, string>;
+  cloudCat?: CloudCatResolution;
 }
 
 type BindingState =
   | { kind: 'loading' }
+  | { kind: 'no-cloud-cat' }
   | { kind: 'empty' }
   | { kind: 'bound'; chatUrl: string; conversationId: string }
   | { kind: 'unauthorized' }
@@ -32,7 +40,9 @@ async function readCloudConversationBinding(threadId: string, signal: AbortSigna
 
   const body = (await response.json()) as CloudBindingsResponse;
   if (signal.aborted) return null;
-  const rawBinding = body.bindings?.['gpt-pro'];
+  // Only the cloud cat the Host resolves has a conversation to show; none, or several, show nothing.
+  if (body.cloudCat?.status !== 'resolved') return { kind: 'no-cloud-cat' };
+  const rawBinding = body.bindings?.[body.cloudCat.catId];
   if (rawBinding === undefined) return { kind: 'empty' };
 
   const parsed = parseChatGptConversationUrl(rawBinding);
@@ -119,8 +129,29 @@ export function CloudConversationLink({ threadId }: { threadId: string }) {
     }, 1500);
   }, [binding, threadId]);
 
+  if (binding.kind === 'no-cloud-cat') return null;
+  return (
+    <CloudConversationLinkCard
+      binding={binding}
+      copyState={copyState}
+      onCopy={copyLink}
+      settingsHref={personalChromeSettingsHref(threadId)}
+    />
+  );
+}
+
+function CloudConversationLinkCard({
+  binding,
+  copyState,
+  onCopy,
+  settingsHref,
+}: {
+  binding: BindingState;
+  copyState: 'idle' | 'copied' | 'failed';
+  onCopy: () => Promise<void>;
+  settingsHref: string;
+}) {
   const status = bindingStatus(binding);
-  const settingsHref = personalChromeSettingsHref(threadId);
 
   return (
     <div className="console-list-card mt-2 min-w-0 rounded-xl p-2.5" data-testid="cloud-conversation-link">
@@ -145,7 +176,7 @@ export function CloudConversationLink({ threadId }: { threadId: string }) {
             type="button"
             className="font-medium text-cafe-secondary transition-colors hover:text-cafe"
             aria-label="复制 ChatGPT 会话链接"
-            onClick={() => void copyLink()}
+            onClick={() => void onCopy()}
           >
             {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制链接'}
           </button>

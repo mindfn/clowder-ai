@@ -18,7 +18,10 @@ const conversations = ['conversation-a', 'conversation-b'].map((conversationId) 
   authorizedAt: '2026-09-10T00:00:00.000Z',
   updatedAt: '2026-09-10T00:00:00.000Z',
 }));
-const binding = (conversationId: string) => ({ bindings: { 'gpt-pro': `https://chatgpt.com/c/${conversationId}` } });
+const binding = (conversationId: string) => ({
+  bindings: { 'gpt-pro': `https://chatgpt.com/c/${conversationId}` },
+  cloudCat: { status: 'resolved', catId: 'gpt-pro' },
+});
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 const route = (threadId: string) => `/api/threads/${encodeURIComponent(threadId)}/cloud-bindings`;
 

@@ -131,7 +131,7 @@ test('a round lists one return, lets the Host ingest it, and acks exactly that r
 
   await p.scheduler.fire();
 
-  assert.deepEqual(p.ingested, [{ sourceMessageId: 'source-1', content: 'the answer' }]);
+  assert.deepEqual(p.ingested, [{ provider: 'chatgpt', sourceMessageId: 'source-1', content: 'the answer' }]);
   assert.deepEqual(pkg.calls, [
     { method: METHODS.list, params: {} },
     { method: METHODS.ack, params: CURSOR },

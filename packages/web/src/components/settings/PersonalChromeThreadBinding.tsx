@@ -14,7 +14,24 @@ type BindingLoadState = 'loading' | 'ready' | 'unsupported' | 'forbidden' | 'err
 
 interface CloudBindingsResponse {
   bindings?: Record<string, string>;
+  /** F202 h3c-2: the Host's answer to which cat holds the thread's ChatGPT conversation. */
+  cloudCat?:
+    | { status: 'resolved'; catId: string }
+    | { status: 'unavailable' }
+    | { status: 'ambiguous'; catIds: string[] };
   error?: string;
+}
+
+function unresolvedCloudCatMessage(cloudCat: CloudBindingsResponse['cloudCat']): string {
+  return cloudCat?.status === 'ambiguous'
+    ? `多只猫配置了同一个云端 provider（${cloudCat.catIds.join('、')}），请在猫配置里只保留一只。`
+    : '还没有配置云端猫，暂时没有可路由的 ChatGPT 会话。';
+}
+
+/** The route of the cloud cat the Host resolves; without exactly one cloud cat there is none to offer. */
+function cloudCatRoute(body: CloudBindingsResponse): { catId: string; chatUrl: string | null } {
+  if (body.cloudCat?.status !== 'resolved') throw new Error(unresolvedCloudCatMessage(body.cloudCat));
+  return { catId: body.cloudCat.catId, chatUrl: body.bindings?.[body.cloudCat.catId] ?? null };
 }
 
 interface PersonalChromeThreadBindingProps {
@@ -53,6 +70,7 @@ function ThreadBindingState({
 }) {
   const [loadState, setLoadState] = useState<BindingLoadState>('loading');
   const [bindingUrl, setBindingUrl] = useState<string | null>(null);
+  const [cloudCatId, setCloudCatId] = useState<string | null>(null);
   const [busyConversationId, setBusyConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +78,7 @@ function ThreadBindingState({
     async (signal?: AbortSignal) => {
       setLoadState('loading');
       setError(null);
+      setCloudCatId(null);
       if (!currentThreadId.trim()) throw new Error('未指定有效的 thread，请从原对话重新打开“更换绑定”。');
       const response = await apiFetch(`/api/threads/${encodeURIComponent(currentThreadId)}/cloud-bindings`, {
         signal,
@@ -75,7 +94,9 @@ function ThreadBindingState({
       if (!response.ok) {
         throw new Error(body.error ?? `当前 thread 路由读取失败 (${response.status})`);
       }
-      setBindingUrl(body.bindings?.['gpt-pro'] ?? null);
+      const route = cloudCatRoute(body);
+      setCloudCatId(route.catId);
+      setBindingUrl(route.chatUrl);
       setLoadState('ready');
     },
     [currentThreadId],
@@ -96,15 +117,16 @@ function ThreadBindingState({
       setBusyConversationId(conversationId ?? 'clear');
       setError(null);
       try {
+        if (!cloudCatId) throw new Error(unresolvedCloudCatMessage(undefined));
         const chatUrl = conversationId ? `https://chatgpt.com/c/${conversationId}` : null;
         const response = await apiFetch(`/api/threads/${encodeURIComponent(currentThreadId)}/cloud-bindings`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ catId: 'gpt-pro', chatUrl }),
+          body: JSON.stringify({ catId: cloudCatId, chatUrl }),
         });
         const body = (await response.json().catch(() => ({}))) as CloudBindingsResponse;
         if (!response.ok) throw new Error(body.error ?? `当前 thread 路由更新失败 (${response.status})`);
-        setBindingUrl(body.bindings?.['gpt-pro'] ?? null);
+        setBindingUrl(body.bindings?.[cloudCatId] ?? null);
         setLoadState('ready');
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : '当前 thread 路由更新失败');
@@ -112,7 +134,7 @@ function ThreadBindingState({
         setBusyConversationId(null);
       }
     },
-    [currentThreadId],
+    [cloudCatId, currentThreadId],
   );
 
   const boundConversationId = parseChatGptConversationUrl(bindingUrl)?.conversationId ?? null;

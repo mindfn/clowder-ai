@@ -8,7 +8,7 @@
  */
 
 import type { CatId } from '@cat-cafe/shared';
-import { catIdSchema } from '@cat-cafe/shared';
+import { catIdSchema, catRegistry } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
@@ -20,6 +20,7 @@ import {
   collectAllThreadMessages,
 } from '../domains/cats/services/agents/routing/thread-artifacts-aggregator.js';
 import { resolveBootcampWorkspaceRoot } from '../domains/cats/services/bootcamp/workspace-root.js';
+import { resolveCloudConversationCat } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
 import { recordFreshnessClosureTransition } from '../domains/cats/services/freshness/closure/freshness-closure-telemetry.js';
 import { projectFreshnessClosure } from '../domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { projectFreshnessSupplementForHistory } from '../domains/cats/services/freshness/glass-box/freshness-supplement-history-projection.js';
@@ -1212,7 +1213,10 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       return { error: 'Only the thread owner can read cloud cat bindings' };
     }
     const bindings = await threadStore.getCloudCatBindings(id);
-    return { bindings };
+    // F202 h3c-2: which cat's binding is the thread's ChatGPT conversation is the Host's answer, not
+    // a fixed id — the panel lists the binding of the configured cloud cat, and none when the
+    // provider has no cat or several.
+    return { bindings, cloudCat: resolveCloudConversationCat(catRegistry, 'chatgpt') };
   });
 
   // PATCH /api/threads/:id/cloud-bindings — STRICT user-owned only.

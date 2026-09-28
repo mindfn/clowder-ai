@@ -161,7 +161,7 @@ export async function readRecoveryState(
   }
 
   const candidates = authorizedCandidates(pluginBody.authorization?.conversations);
-  const rawBinding = bindingBody.bindings?.['gpt-pro'];
+  const rawBinding = bindingBody.bindings?.[identity.targetCatId];
   const binding = rawBinding === undefined ? null : parseChatGptConversationUrl(rawBinding);
   const retryState = projectRetryState(retryAuthorityResponse, retryAuthorityBody);
   return {

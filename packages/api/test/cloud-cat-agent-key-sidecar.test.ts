@@ -6,9 +6,9 @@ import { afterEach, describe, it } from 'node:test';
 
 import { AgentKeyRegistry } from '../src/domains/cats/services/agents/agent-key/AgentKeyRegistry.js';
 import {
-  ensureGptProAgentKeySidecar,
-  resolveGptProAgentKeyFile,
-} from '../src/domains/cats/services/agents/agent-key/gpt-pro-agent-key-sidecar.js';
+  ensureCloudCatAgentKeySidecar,
+  resolveCloudCatAgentKeyFile,
+} from '../src/domains/cats/services/agents/agent-key/cloud-cat-agent-key-sidecar.js';
 
 const tempRoots: string[] = [];
 
@@ -17,14 +17,15 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('gpt-pro agent-key sidecar', () => {
+describe('cloud cat agent-key sidecar (gpt-pro as the configured cloud cat)', () => {
   it('resolves its default beneath the canonical data root', () => {
     assert.equal(
-      resolveGptProAgentKeyFile({ CAT_CAFE_DATA_DIR: '/srv/cat-cafe-data' }, '/unused-home'),
+      resolveCloudCatAgentKeyFile('gpt-pro', { CAT_CAFE_DATA_DIR: '/srv/cat-cafe-data' }, '/unused-home'),
       '/srv/cat-cafe-data/agent-keys/gpt-pro.secret',
     );
     assert.equal(
-      resolveGptProAgentKeyFile(
+      resolveCloudCatAgentKeyFile(
+        'gpt-pro',
         {
           CAT_CAFE_DATA_DIR: '/srv/cat-cafe-data',
           CAT_CAFE_GPT_PRO_AGENT_KEY_FILE: '/run/secrets/gpt-pro',
@@ -34,11 +35,11 @@ describe('gpt-pro agent-key sidecar', () => {
       '/run/secrets/gpt-pro',
     );
     assert.equal(
-      resolveGptProAgentKeyFile({ CAT_CAFE_DATA_DIR: '~/.cat-cafe-custom' }, '/home/cat'),
+      resolveCloudCatAgentKeyFile('gpt-pro', { CAT_CAFE_DATA_DIR: '~/.cat-cafe-custom' }, '/home/cat'),
       '/home/cat/.cat-cafe-custom/agent-keys/gpt-pro.secret',
     );
     assert.equal(
-      resolveGptProAgentKeyFile({ CAT_CAFE_GPT_PRO_AGENT_KEY_FILE: '~/secrets/gpt-pro' }, '/home/cat'),
+      resolveCloudCatAgentKeyFile('gpt-pro', { CAT_CAFE_GPT_PRO_AGENT_KEY_FILE: '~/secrets/gpt-pro' }, '/home/cat'),
       '/home/cat/secrets/gpt-pro',
     );
   });
@@ -55,7 +56,7 @@ describe('gpt-pro agent-key sidecar', () => {
       CAT_CAFE_AGENT_KEY_FILES: JSON.stringify({ antigravity: '/tmp/antigravity.secret' }),
     };
 
-    const result = await ensureGptProAgentKeySidecar(registry, { filePath, env });
+    const result = await ensureCloudCatAgentKeySidecar(registry, { catId: 'gpt-pro', filePath, env });
 
     assert.equal(result.kind, 'replaced');
     assert.equal(env.CAT_CAFE_AGENT_KEY_FILES, JSON.stringify({ antigravity: '/tmp/antigravity.secret' }));
@@ -78,7 +79,7 @@ describe('gpt-pro agent-key sidecar', () => {
       CAT_CAFE_USER_ID: 'legacy-cloud-user',
     };
 
-    await ensureGptProAgentKeySidecar(registry, { filePath, env });
+    await ensureCloudCatAgentKeySidecar(registry, { catId: 'gpt-pro', filePath, env });
 
     const verified = await registry.verify((await readFile(filePath, 'utf8')).trim());
     assert.equal(verified.ok, true);

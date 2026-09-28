@@ -88,7 +88,7 @@ export type {
   ManagedCommandCancelTarget,
 } from './active-execution.js';
 // F178 Phase B: agent-key record + verify result
-export type { AgentKeyRecord, AgentKeyVerifyResult } from './agent-key.js';
+export type { AgentKeyRecord, AgentKeyScope, AgentKeyVerifyResult } from './agent-key.js';
 // F178 Phase B: agent-key reason taxonomy
 export {
   AGENT_KEY_FAILURE_REASONS,

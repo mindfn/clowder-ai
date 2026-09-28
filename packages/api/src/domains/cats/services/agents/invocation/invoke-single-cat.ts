@@ -111,6 +111,10 @@ import {
   buildCloudBridgeStatusContent,
   type CloudBridgeAuditContext,
 } from '../../cloud-bridge/cloud-bridge-fallback.js';
+import {
+  cloudConversationProviderOf,
+  resolveCloudConversationCat,
+} from '../../cloud-bridge/cloud-conversation-identity.js';
 import type { BridgeDispatchOutcome, CloudDispatchProvenance } from '../../cloud-bridge/types.js';
 import { createPromptDigest } from '../../context/prompt-digest.js';
 // L0-budget-defense PR-B-impl (ADR-038): staging layer prepend, wired here
@@ -2119,7 +2123,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               }
             : ({ kind: 'user' as const, id: userId } satisfies CloudBridgeAuditContext['sourceSender'])
           : undefined);
-      if (
+      // F202 h3c-2: with several cats on one cloud provider nobody can own the reply — refuse before
+      // any grant or Host delivery, and name the cats so the owner can fix the configuration.
+      const cloudProvider = cloudConversationProviderOf(catRegistry, catId as string);
+      const cloudCat = cloudProvider ? resolveCloudConversationCat(catRegistry, cloudProvider) : undefined;
+      if (cloudCat?.status === 'ambiguous') {
+        const detail = `Cats configured for the ${cloudProvider} provider: ${cloudCat.catIds.join(', ')} — configure exactly one`;
+        outcome = { kind: 'fallback', reason: 'ambiguous-cloud-cat', detail };
+        log.warn(
+          { catId, threadId, provider: cloudProvider, catIds: cloudCat.catIds },
+          `F202 cloud dispatch refused: ${detail}`,
+        );
+      } else if (
         deps.cloudInvokeBridge &&
         deps.cloudReturnGrantStore &&
         cloudIntent &&

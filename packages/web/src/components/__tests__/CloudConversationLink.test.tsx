@@ -13,6 +13,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+const GPT_PRO_RESOLVED = { status: 'resolved', catId: 'gpt-pro' } as const;
+
+/** A bindings read as the Host answers it: the bindings plus which cat is the cloud cat. */
+function bindingsBody(bindings: Record<string, string>, cloudCat: unknown = GPT_PRO_RESOLVED) {
+  return { bindings, cloudCat };
+}
+
 async function flushEffects() {
   await act(async () => {
     await Promise.resolve();
@@ -53,7 +60,7 @@ describe('CloudConversationLink', () => {
     const chatUrl = `https://chatgpt.com/c/${conversationId}`;
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    mockApiFetch.mockResolvedValue(jsonResponse({ bindings: { 'gpt-pro': chatUrl } }));
+    mockApiFetch.mockResolvedValue(jsonResponse(bindingsBody({ 'gpt-pro': chatUrl })));
 
     await act(async () => root.render(<CloudConversationLink threadId="thread-owner" />));
     await flushEffects();
@@ -75,7 +82,7 @@ describe('CloudConversationLink', () => {
   });
 
   it('keeps the thread truth visible when no ChatGPT conversation is bound', async () => {
-    mockApiFetch.mockResolvedValue(jsonResponse({ bindings: {} }));
+    mockApiFetch.mockResolvedValue(jsonResponse(bindingsBody({})));
 
     await act(async () => root.render(<CloudConversationLink threadId="thread-empty" />));
     await flushEffects();
@@ -91,8 +98,8 @@ describe('CloudConversationLink', () => {
   });
 
   it('does not let a delayed prior-thread binding overwrite the current thread', async () => {
-    let resolveOldBinding!: (body: { bindings: { 'gpt-pro': string } }) => void;
-    const oldBindingBody = new Promise<{ bindings: { 'gpt-pro': string } }>((resolve) => {
+    let resolveOldBinding!: (body: ReturnType<typeof bindingsBody>) => void;
+    const oldBindingBody = new Promise<ReturnType<typeof bindingsBody>>((resolve) => {
       resolveOldBinding = resolve;
     });
     mockApiFetch
@@ -101,7 +108,7 @@ describe('CloudConversationLink', () => {
         status: 200,
         json: () => oldBindingBody,
       } as Response)
-      .mockResolvedValueOnce(jsonResponse({ bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-new' } }));
+      .mockResolvedValueOnce(jsonResponse(bindingsBody({ 'gpt-pro': 'https://chatgpt.com/c/conversation-new' })));
 
     await act(async () => root.render(<CloudConversationLink threadId="thread-old" />));
     await flushEffects();
@@ -109,7 +116,7 @@ describe('CloudConversationLink', () => {
     await flushEffects();
     expect(container.textContent).toContain('conversation-new');
 
-    resolveOldBinding({ bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-old' } });
+    resolveOldBinding(bindingsBody({ 'gpt-pro': 'https://chatgpt.com/c/conversation-old' }));
     await flushEffects();
 
     expect(container.textContent).toContain('conversation-new');
@@ -124,8 +131,8 @@ describe('CloudConversationLink', () => {
     const writeText = vi.fn().mockReturnValueOnce(oldCopy);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     mockApiFetch
-      .mockResolvedValueOnce(jsonResponse({ bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-old' } }))
-      .mockResolvedValueOnce(jsonResponse({ bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-new' } }));
+      .mockResolvedValueOnce(jsonResponse(bindingsBody({ 'gpt-pro': 'https://chatgpt.com/c/conversation-old' })))
+      .mockResolvedValueOnce(jsonResponse(bindingsBody({ 'gpt-pro': 'https://chatgpt.com/c/conversation-new' })));
 
     await act(async () => root.render(<CloudConversationLink threadId="thread-old" />));
     await flushEffects();
@@ -157,8 +164,8 @@ describe('CloudConversationLink', () => {
     const writeText = vi.fn().mockReturnValueOnce(oldCopy);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     mockApiFetch
-      .mockResolvedValueOnce(jsonResponse({ bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-old' } }))
-      .mockResolvedValueOnce(jsonResponse({ bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-new' } }));
+      .mockResolvedValueOnce(jsonResponse(bindingsBody({ 'gpt-pro': 'https://chatgpt.com/c/conversation-old' })))
+      .mockResolvedValueOnce(jsonResponse(bindingsBody({ 'gpt-pro': 'https://chatgpt.com/c/conversation-new' })));
 
     await act(async () => root.render(<CloudConversationLink threadId="thread-old" />));
     await flushEffects();
@@ -189,7 +196,7 @@ describe('CloudConversationLink', () => {
   });
 
   it('refuses to turn a non-canonical binding value into a clickable link', async () => {
-    mockApiFetch.mockResolvedValue(jsonResponse({ bindings: { 'gpt-pro': 'https://example.com/not-chatgpt' } }));
+    mockApiFetch.mockResolvedValue(jsonResponse(bindingsBody({ 'gpt-pro': 'https://example.com/not-chatgpt' })));
 
     await act(async () => root.render(<CloudConversationLink threadId="thread-invalid" />));
     await flushEffects();
@@ -199,5 +206,40 @@ describe('CloudConversationLink', () => {
     expect(container.querySelector('a[href^="/settings"]')?.getAttribute('href')).toBe(
       '/settings?s=plugins&threadId=thread-invalid#personal-chatgpt-pro',
     );
+  });
+
+  // F202 h3c-2 — the panel shows the binding of the cat the Host resolves as the cloud cat.
+  it('reads the binding of the configured cloud cat, whatever its id', async () => {
+    mockApiFetch.mockResolvedValue(
+      jsonResponse(
+        bindingsBody(
+          {
+            'cloud-alt': 'https://chatgpt.com/c/conversation-alt',
+            'gpt-pro': 'https://chatgpt.com/c/conversation-stale',
+          },
+          { status: 'resolved', catId: 'cloud-alt' },
+        ),
+      ),
+    );
+
+    await act(async () => root.render(<CloudConversationLink threadId="thread-alt" />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('conversation-alt');
+    expect(container.textContent).not.toContain('conversation-stale');
+  });
+
+  it.each([
+    ['no cloud cat is configured', { status: 'unavailable' }],
+    ['several cats share the cloud provider', { status: 'ambiguous', catIds: ['cloud-alt', 'cloud-beta'] }],
+  ])('shows nothing when %s', async (_case, cloudCat) => {
+    mockApiFetch.mockResolvedValue(
+      jsonResponse(bindingsBody({ 'cloud-alt': 'https://chatgpt.com/c/conversation-alt' }, cloudCat)),
+    );
+
+    await act(async () => root.render(<CloudConversationLink threadId="thread-none" />));
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="cloud-conversation-link"]')).toBeNull();
   });
 });

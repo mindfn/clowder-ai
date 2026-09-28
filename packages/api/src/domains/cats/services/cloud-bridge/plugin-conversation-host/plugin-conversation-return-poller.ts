@@ -156,6 +156,7 @@ export class PluginConversationReturnPoller {
       assistantMessageId: item.assistantMessageId,
     };
     const outcome = await this.deps.ingestService.ingest({
+      provider: this.deps.provider,
       sourceMessageId: item.sourceMessageId,
       content: item.content,
     });

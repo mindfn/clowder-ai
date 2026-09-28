@@ -1555,22 +1555,16 @@ async function main(): Promise<void> {
       })
     : undefined;
 
-  // F247: gpt-pro is a separate credential boundary from the shared local-agent map.
-  // Reconcile it only on the global sidecar owner and only when the runtime catalog
-  // actually has the cloud cat installed. Never export its path into process.env.
-  if (ownsGlobalAgentKeySidecars && catRegistry.has('gpt-pro')) {
-    try {
-      const { ensureGptProAgentKeySidecar, resolveGptProAgentKeyFile } = await import(
-        './domains/cats/services/agents/agent-key/gpt-pro-agent-key-sidecar.js'
-      );
-      const disposition = await ensureGptProAgentKeySidecar(agentKeyRegistry);
-      app.log.info(
-        `[api] gpt-pro agent-key sidecar ${disposition.kind}: ${resolveGptProAgentKeyFile()} (${disposition.agentKeyId})`,
-      );
-    } catch (err) {
-      app.log.warn(`[api] gpt-pro agent-key sidecar reconciliation failed (cloud MCP disabled): ${String(err)}`);
-    }
-  }
+  // F247 / F202 W2-3 h3c-2: the configured cloud cat's key is a separate credential boundary from the
+  // shared local-agent map, issued in the cloud scope. Reconcile it only on the global sidecar owner;
+  // never export its path into process.env; revoke the cloud keys of a cat that is no longer the cloud cat.
+  const reconcileCloudCatKeys = async () => {
+    const { reconcileCloudCatAgentKeys } = await import(
+      './domains/cats/services/agents/agent-key/cloud-cat-agent-key-sidecar.js'
+    );
+    await reconcileCloudCatAgentKeys({ registry: agentKeyRegistry, cats: catRegistry, log: app.log });
+  };
+  if (ownsGlobalAgentKeySidecars) await reconcileCloudCatKeys();
 
   if (ownsGlobalAgentKeySidecars) {
     const { AgentKeySidecarRenewalLoop, reconcileSidecarsIndependently } = await import(
@@ -1589,17 +1583,7 @@ async function main(): Promise<void> {
             },
           },
         ];
-        if (catRegistry.has('gpt-pro')) {
-          reconciliations.push({
-            name: 'gpt-pro',
-            reconcile: async () => {
-              const { ensureGptProAgentKeySidecar } = await import(
-                './domains/cats/services/agents/agent-key/gpt-pro-agent-key-sidecar.js'
-              );
-              await ensureGptProAgentKeySidecar(agentKeyRegistry);
-            },
-          });
-        }
+        reconciliations.push({ name: 'cloud-cat', reconcile: reconcileCloudCatKeys });
         await reconcileSidecarsIndependently(reconciliations);
       },
       onError: (error) => {
@@ -2316,6 +2300,7 @@ async function main(): Promise<void> {
       grantStore: cloudReturnGrantStore,
       socketManager: getSocketManager(),
       logger: bridgeLogger,
+      cats: catRegistry,
     }),
     logger: bridgeLogger,
     grantPersistence: redis ? 'durable' : 'ephemeral',

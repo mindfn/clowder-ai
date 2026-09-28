@@ -44,8 +44,8 @@ describe('PersonalChromeAssistantReturnPoller', () => {
     await poller.drainOnce();
 
     assert.deepEqual(ingested, [
-      { sourceMessageId: pending.sourceMessageId, content: pending.content },
-      { sourceMessageId: pending.sourceMessageId, content: pending.content },
+      { provider: 'chatgpt', sourceMessageId: pending.sourceMessageId, content: pending.content },
+      { provider: 'chatgpt', sourceMessageId: pending.sourceMessageId, content: pending.content },
     ]);
     assert.deepEqual(acknowledgements, [[pending.conversationId, pending.sourceMessageId, pending.assistantMessageId]]);
   });
@@ -169,6 +169,7 @@ describe('PersonalChromeAssistantReturnPoller', () => {
       grantStore: grantStoreAfterRestart,
       socketManager: { broadcastAgentMessage() {} },
       logger: { error() {}, warn() {} },
+      cats: { getAllConfigs: () => ({ 'gpt-pro': { provider: 'openai-chatgpt-pro' } }) },
     });
     const poller = new PersonalChromeAssistantReturnPoller({
       adapter,

@@ -91,6 +91,7 @@ import { analyzeA2AMentions } from '../domains/cats/services/agents/routing/a2a-
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
 import { extractRichFromText } from '../domains/cats/services/agents/routing/rich-block-extract.js';
 import { buildVoteNotification } from '../domains/cats/services/agents/routing/vote-intercept.js';
+import { cloudPrincipalStanding } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
 import { buildCloudReturnMessageIdempotencyKey } from '../domains/cats/services/cloud-bridge/cloud-return-message.js';
 import { getSenderName } from '../domains/cats/services/context/ContextAssembler.js';
 import { checkFreshnessForNotice } from '../domains/cats/services/freshness/checkFreshnessForNotice.js';
@@ -1386,11 +1387,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (!principal) return;
     if (
       principal.kind !== 'agent_key' ||
-      principal.catId !== createCatId('gpt-pro') ||
+      cloudPrincipalStanding(catRegistry, principal) !== 'cloud' ||
       principal.userId !== getOwnerUserId()
     ) {
       reply.status(403);
-      return { ok: false, reason: 'gpt_pro_principal_required' };
+      return { ok: false, reason: 'cloud_principal_required' };
     }
     return { ok: true };
   });
@@ -1511,10 +1512,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       // F247 source-bound returns remain exact and fail closed, but the normal
       // path keeps the authorization in server custody. A legacy binding is
       // accepted only for rolling compatibility with already-open conversations.
-      const isGptPro = principal.catId === createCatId('gpt-pro');
-      const isCloudReturnAttempt = isGptPro && Boolean(replyTo || cloudReturnBinding);
-      const usesServerGrant = isGptPro && Boolean(replyTo) && !cloudReturnBinding;
-      if (isGptPro && cloudReturnBinding) {
+      // F202 h3c-2: the cloud cat is whichever cat the configuration resolves, not a literal id.
+      const isCloudCat = cloudPrincipalStanding(catRegistry, principal) === 'cloud';
+      const isCloudReturnAttempt = isCloudCat && Boolean(replyTo || cloudReturnBinding);
+      const usesServerGrant = isCloudCat && Boolean(replyTo) && !cloudReturnBinding;
+      if (isCloudCat && cloudReturnBinding) {
         if (!replyTo) {
           reply.status(400);
           return {

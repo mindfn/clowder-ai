@@ -73,7 +73,7 @@ describe('PersonalChromeThreadBinding', () => {
   it('completes the current-thread route after Host authorization without exposing an API path', async () => {
     mockApiFetch.mockImplementation(async (url, init) => {
       if (url === '/api/threads/thread-owner-journey/cloud-bindings' && !init?.method) {
-        return jsonResponse({ bindings: {} });
+        return jsonResponse({ bindings: {}, cloudCat: { status: 'resolved', catId: 'gpt-pro' } });
       }
       if (url === '/api/threads/thread-owner-journey/cloud-bindings' && init?.method === 'PATCH') {
         expect(JSON.parse(String(init.body))).toEqual({
@@ -114,6 +114,7 @@ describe('PersonalChromeThreadBinding', () => {
     mockApiFetch.mockResolvedValue(
       jsonResponse({
         bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-revoked' },
+        cloudCat: { status: 'resolved', catId: 'gpt-pro' },
       }),
     );
 
@@ -123,5 +124,49 @@ describe('PersonalChromeThreadBinding', () => {
     expect(container.textContent).toContain('conversation-revoked');
     expect(container.textContent).toContain('已不在 Host 授权集合中');
     expect(findButton(container, '用于当前 thread')).toBeDefined();
+  });
+
+  // F202 h3c-2 — the settings route binds the cat the Host resolves as the cloud cat, whatever its id.
+  it('routes the thread for the configured cloud cat, whatever its id', async () => {
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/threads/thread-owner-journey/cloud-bindings' && !init?.method) {
+        return jsonResponse({
+          bindings: { 'gpt-pro': 'https://chatgpt.com/c/conversation-stale' },
+          cloudCat: { status: 'resolved', catId: 'cloud-alt' },
+        });
+      }
+      if (url === '/api/threads/thread-owner-journey/cloud-bindings' && init?.method === 'PATCH') {
+        const { catId, chatUrl } = JSON.parse(String(init.body));
+        return jsonResponse({ bindings: { [catId]: chatUrl } });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    await act(async () => root.render(<PersonalChromeThreadBinding conversations={conversations} disabled={false} />));
+    await flushEffects();
+    expect(container.textContent).not.toContain('conversation-stale');
+
+    await act(async () => findButton(container, '用于当前 thread')?.click());
+    await flushEffects();
+
+    const patch = mockApiFetch.mock.calls.find(([, init]) => init?.method === 'PATCH');
+    expect(JSON.parse(String(patch?.[1]?.body))).toEqual({
+      catId: 'cloud-alt',
+      chatUrl: 'https://chatgpt.com/c/conversation-owner-a',
+    });
+    expect(container.textContent).toContain('当前 thread 已路由到');
+  });
+
+  it.each([
+    [{ status: 'unavailable' }, '还没有配置云端猫'],
+    [{ status: 'ambiguous', catIds: ['cloud-alt', 'cloud-beta'] }, 'cloud-alt、cloud-beta'],
+  ])('offers no route while the Host has no single cloud cat (%o)', async (cloudCat, message) => {
+    mockApiFetch.mockResolvedValue(jsonResponse({ bindings: {}, cloudCat }));
+
+    await act(async () => root.render(<PersonalChromeThreadBinding conversations={conversations} disabled={false} />));
+    await flushEffects();
+
+    expect(container.textContent).toContain(message);
+    expect(mockApiFetch.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
   });
 });
