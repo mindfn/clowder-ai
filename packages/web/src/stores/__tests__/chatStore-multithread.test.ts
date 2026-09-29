@@ -12,7 +12,7 @@ function responseLifecycle(
   invocationId: string,
   status: 'processing' | 'completed',
   completedAt?: number,
-): NonNullable<ChatMessage['lifecycle']> {
+): Extract<NonNullable<ChatMessage['lifecycle']>, { kind: 'response' }> {
   return {
     kind: 'response',
     orderKey: `1:${invocationId}`,
@@ -271,7 +271,7 @@ describe('chatStore multi-thread state', () => {
       ]);
     });
 
-    it('reorders an active processing response when its presentation clock advances', () => {
+    it('keeps an active response in place during streaming and moves it only after an input is read', () => {
       useChatStore.setState({
         messages: [
           {
@@ -292,6 +292,16 @@ describe('chatStore multi-thread state', () => {
       const state = useChatStore.getState();
       expect(state.messages.map((message) => message.id)).toEqual(['response-live', 'user-later']);
       expect(selectThreadMessages(state, 'thread-a').map((message) => message.id)).toEqual([
+        'response-live',
+        'user-later',
+      ]);
+
+      useChatStore.getState().patchMessage('response-live', {
+        lifecycle: { ...responseLifecycle('inv-live', 'processing'), latestInputTimelineOrderAt: 2_500 },
+      });
+      const readState = useChatStore.getState();
+      expect(readState.messages.map((message) => message.id)).toEqual(['response-live', 'user-later']);
+      expect(selectThreadMessages(readState, 'thread-a').map((message) => message.id)).toEqual([
         'user-later',
         'response-live',
       ]);
