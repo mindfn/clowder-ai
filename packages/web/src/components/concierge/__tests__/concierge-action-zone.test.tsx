@@ -171,4 +171,32 @@ describe('ConciergeHost action-zone wiring', () => {
     expect(ballPosition()).toEqual({ x: 1547, y: 689 });
     expect(useConciergeStore.getState().ballPosition).toEqual(desired);
   });
+
+  it('uses the current viewport after resizing while hidden, then showing', async () => {
+    useConciergeStore.setState({ muted: true, surfaceState: 'collapsed' });
+    await act(async () => root.render(<ConciergeHost />));
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1100 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    footerTop = 570;
+    await act(async () => window.dispatchEvent(new Event('resize')));
+    await act(async () => useConciergeStore.setState({ muted: false }));
+    await flushEffects();
+
+    expect(ballPosition()).toEqual({ x: 1004, y: 446 });
+  });
+
+  it('drops old action zones after hiding and navigating away', async () => {
+    await act(async () => root.render(<ConciergeHost />));
+    await flushEffects();
+    expect(ballPosition()).toEqual({ x: 1547, y: 689 });
+
+    await act(async () => useConciergeStore.setState({ muted: true }));
+    footer.remove();
+    await flushEffects();
+    await act(async () => useConciergeStore.setState({ muted: false }));
+    await flushEffects();
+
+    expect(ballPosition()).toEqual({ x: 1547, y: 857 });
+  });
 });

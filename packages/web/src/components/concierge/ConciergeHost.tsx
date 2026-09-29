@@ -134,7 +134,12 @@ export function ConciergeHost() {
     };
     const attach = () => {
       const next = Array.from(document.querySelectorAll(ACTION_ZONE_SELECTOR));
-      if (next.length === observed.length && next.every((element, index) => element === observed[index])) return;
+      if (next.length === observed.length && next.every((element, index) => element === observed[index])) {
+        // On returning from hidden, both lists can be empty while the previous
+        // action-zone measurement still belongs to the old page.
+        measure();
+        return;
+      }
       for (const element of observed) resizeObserver?.unobserve(element);
       observed = next;
       for (const element of observed) resizeObserver?.observe(element);
@@ -153,14 +158,20 @@ export function ConciergeHost() {
       }
     });
     mutationObserver.observe(document.body, { childList: true, subtree: true });
-    const handleResize = () => {
+    const syncViewport = () => {
       setViewport((previous) => {
         const next = { width: window.innerWidth, height: window.innerHeight };
         return previous.width === next.width && previous.height === next.height ? previous : next;
       });
+    };
+    const handleResize = () => {
+      syncViewport();
       measure();
     };
     window.addEventListener('resize', handleResize);
+    // Hidden deliberately has no listeners. Re-read geometry before showing
+    // instead of replaying the viewport and action zones from before hiding.
+    syncViewport();
     attach();
     return () => {
       mutationObserver.disconnect();
