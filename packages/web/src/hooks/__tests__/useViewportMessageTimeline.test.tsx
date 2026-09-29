@@ -9,6 +9,22 @@ function message(id: string, time: number): ChatMessage {
   return { id, type: 'assistant', catId: 'opus', content: id, timestamp: time, timelineOrderAt: time };
 }
 
+function response(id: string, startedAt: number): ChatMessage {
+  return {
+    ...message(id, startedAt),
+    lifecycle: {
+      kind: 'response',
+      orderKey: id,
+      invocationId: id,
+      targetId: id,
+      inputEntryIds: [],
+      inputMessageIds: [],
+      status: 'processing',
+      startedAt,
+    },
+  };
+}
+
 describe('useViewportMessageTimeline', () => {
   let host: HTMLElement;
   let root: Root;
@@ -26,6 +42,63 @@ describe('useViewportMessageTimeline', () => {
     act(() => root.unmount());
     host.remove();
     vi.useRealTimers();
+  });
+
+  it('updates two live replies without swapping them across sort rounds, then moves only for read input and terminal state', () => {
+    let displayed: ChatMessage[] = [];
+    const Probe = ({ messages }: { messages: ChatMessage[] }) => {
+      displayed = useViewportMessageTimeline('thread-a', messages);
+      return React.createElement('div', null, displayed.map((item) => `${item.id}:${item.content}`).join('|'));
+    };
+    let snapshot = [response('a', 10), response('b', 20)];
+    act(() => root.render(React.createElement(Probe, { messages: snapshot })));
+
+    let activityAt = 30;
+    for (const [index, kind] of [
+      [0, 'text'],
+      [1, 'tool'],
+      [0, 'thinking'],
+      [1, 'text'],
+    ] as const) {
+      const next = [...snapshot];
+      const current = next[index];
+      if (!current) throw new Error('response fixture missing');
+      next[index] = { ...current, content: kind, timestamp: activityAt, timelineOrderAt: activityAt };
+      act(() => root.render(React.createElement(Probe, { messages: next })));
+      act(() => vi.advanceTimersByTime(TIMELINE_ORDER_ROUND_INTERVAL_MS));
+      expect(displayed.map((item) => item.id)).toEqual(['a', 'b']);
+      expect(host.textContent).toContain(`${current.id}:${kind}`);
+      snapshot = next;
+      activityAt += 1;
+    }
+
+    const awaiting = [...snapshot, { ...message('append', 40), type: 'user' as const }];
+    act(() => root.render(React.createElement(Probe, { messages: awaiting })));
+    expect(displayed.map((item) => item.id)).toEqual(['a', 'b', 'append']);
+
+    const read = [...awaiting];
+    const first = read[0];
+    if (!first || first.lifecycle?.kind !== 'response') throw new Error('response fixture missing');
+    read[0] = { ...first, lifecycle: { ...first.lifecycle, latestInputTimelineOrderAt: 40 } };
+    act(() => root.render(React.createElement(Probe, { messages: read })));
+    act(() => vi.advanceTimersByTime(TIMELINE_ORDER_ROUND_INTERVAL_MS));
+    expect(displayed.map((item) => item.id)).toEqual(['b', 'append', 'a']);
+
+    const terminal = [...read];
+    const active = terminal[0];
+    if (!active || active.lifecycle?.kind !== 'response') throw new Error('response fixture missing');
+    terminal[0] = { ...active, lifecycle: { ...active.lifecycle, status: 'completed', completedAt: 50 } };
+    act(() => root.render(React.createElement(Probe, { messages: terminal })));
+    act(() => vi.advanceTimersByTime(TIMELINE_ORDER_ROUND_INTERVAL_MS));
+    expect(displayed.map((item) => item.id)).toEqual(['b', 'append', 'a']);
+
+    const late = [...terminal];
+    const completed = late[0];
+    if (!completed) throw new Error('response fixture missing');
+    late[0] = { ...completed, timestamp: 80, timelineOrderAt: 80, content: 'late chunk' };
+    act(() => root.render(React.createElement(Probe, { messages: late })));
+    act(() => vi.advanceTimersByTime(TIMELINE_ORDER_ROUND_INTERVAL_MS));
+    expect(displayed.map((item) => item.id)).toEqual(['b', 'append', 'a']);
   });
 
   it('updates content immediately but moves existing cards only at the next serial round', () => {

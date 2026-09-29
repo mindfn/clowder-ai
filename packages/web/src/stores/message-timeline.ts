@@ -10,6 +10,7 @@ export interface MessageTimelinePoint {
   lifecycle?: {
     kind?: string;
     status?: string;
+    startedAt?: number;
     completedAt?: number;
     latestInputTimelineOrderAt?: number;
   };
@@ -21,12 +22,17 @@ export function isMessageTimelineActive(message: MessageTimelinePoint): boolean 
   return message.isStreaming === true;
 }
 
-/** Presentation clock: activity/completion time, bounded after every admitted input for response causality. */
+/** Presentation clock: durable response start/completion, bounded after every admitted input for causality. */
 export function getMessageTimelineOrderTime(message: MessageTimelinePoint): number {
   const liveOrDeliveryTime = message.timelineOrderAt ?? message.deliveredAt ?? message.timestamp;
-  const presentationTime = isMessageTimelineActive(message)
-    ? liveOrDeliveryTime
-    : (message.lifecycle?.completedAt ?? liveOrDeliveryTime);
+  let presentationTime = liveOrDeliveryTime;
+  if (message.lifecycle?.kind === 'response' && message.lifecycle.status === 'processing') {
+    // Stream activity updates the storage cursor, not this response's display position.
+    // Legacy records without a start clock retain their previous activity ordering.
+    presentationTime = message.lifecycle.startedAt ?? liveOrDeliveryTime;
+  } else if (!isMessageTimelineActive(message)) {
+    presentationTime = message.lifecycle?.completedAt ?? liveOrDeliveryTime;
+  }
   const latestInputTime =
     message.lifecycle?.kind === 'response' ? message.lifecycle.latestInputTimelineOrderAt : undefined;
   return latestInputTime === undefined ? presentationTime : Math.max(presentationTime, latestInputTime + 1);

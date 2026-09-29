@@ -7,23 +7,23 @@ import {
 } from '../message-timeline';
 
 describe('getMessageTimelineOrderTime', () => {
-  it('keeps a processing response on its latest streaming activity time', () => {
+  it('keeps a processing response at its durable start despite later streaming activity', () => {
     expect(
       getMessageTimelineOrderTime({
         type: 'assistant',
         catId: 'codex-sol',
-        timestamp: 1_000,
+        timestamp: 2_000,
         timelineOrderAt: 1_800,
-        lifecycle: { kind: 'response', status: 'processing' },
+        lifecycle: { kind: 'response', status: 'processing', startedAt: 1_000 },
       }),
-    ).toBe(1_800);
+    ).toBe(1_000);
   });
 
   it('places an active response after the newest admitted input even before its first chunk', () => {
     const response = {
       id: 'response',
       timestamp: 1_000,
-      lifecycle: { kind: 'response', status: 'processing', latestInputTimelineOrderAt: 2_000 },
+      lifecycle: { kind: 'response', status: 'processing', startedAt: 1_000, latestInputTimelineOrderAt: 2_000 },
     };
     const messages = [
       response,
@@ -38,6 +38,18 @@ describe('getMessageTimelineOrderTime', () => {
     ]);
     expect(getMessageTimelineOrderTime(response)).toBe(2_001);
     expect(getMessageTimelineCursorTime(response)).toBe(1_000);
+  });
+
+  it('keeps legacy processing rows without a start clock on their historical activity score', () => {
+    expect(
+      getMessageTimelineOrderTime({
+        type: 'assistant',
+        catId: 'codex-sol',
+        timestamp: 1_000,
+        timelineOrderAt: 1_800,
+        lifecycle: { kind: 'response', status: 'processing' },
+      }),
+    ).toBe(1_800);
   });
 
   it('freezes a terminal response at completion when no later admitted input requires a floor', () => {
@@ -131,6 +143,34 @@ describe('getMessageTimelineOrderTime', () => {
 });
 
 describe('presentation timeline view', () => {
+  it('keeps three active responses and an independent callback in one transitive order', () => {
+    const rows = [
+      {
+        id: 'b',
+        timestamp: 90,
+        timelineOrderAt: 90,
+        lifecycle: { kind: 'response', status: 'processing', startedAt: 20 },
+      },
+      { id: 'callback', timestamp: 25 },
+      {
+        id: 'c',
+        timestamp: 80,
+        timelineOrderAt: 80,
+        lifecycle: { kind: 'response', status: 'processing', startedAt: 15 },
+      },
+      { id: 'input', timestamp: 12 },
+      {
+        id: 'a',
+        timestamp: 70,
+        timelineOrderAt: 70,
+        lifecycle: { kind: 'response', status: 'processing', startedAt: 10 },
+      },
+    ];
+
+    expect(getOrderedMessageTimeline(rows).map((row) => row.id)).toEqual(['a', 'input', 'c', 'b', 'callback']);
+    expect(findEarliestMessageByCursor(rows)?.id).toBe('input');
+  });
+
   it('sorts by the presentation clock with a stable id tie-break and memoizes by input reference', () => {
     const messages = [
       { id: 'response', timestamp: 1_000, lifecycle: { kind: 'response', status: 'completed', completedAt: 4_000 } },

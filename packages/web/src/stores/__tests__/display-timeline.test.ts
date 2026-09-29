@@ -12,6 +12,52 @@ function canonical(messages: readonly ChatMessage[]): string[] {
 }
 
 describe('viewport display-order rounds', () => {
+  it('does not swap concurrent response cards after alternating stream activity, but moves on admitted input and completion', () => {
+    const response = (id: string, startedAt: number): ChatMessage => ({
+      ...message(id, startedAt),
+      lifecycle: {
+        kind: 'response',
+        orderKey: id,
+        invocationId: id,
+        targetId: id,
+        inputEntryIds: [],
+        inputMessageIds: [],
+        status: 'processing',
+        startedAt,
+      },
+    });
+    let snapshot = [response('a', 10), response('b', 20), message('callback', 25)];
+    let ordered = canonical(snapshot);
+    expect(ordered).toEqual(['a', 'b', 'callback']);
+
+    for (let step = 0; step < 6; step++) {
+      const index = step % 2;
+      const next = [...snapshot];
+      const current = next[index];
+      if (!current) throw new Error('response fixture missing');
+      next[index] = { ...current, timestamp: 30 + step, timelineOrderAt: 30 + step, content: `chunk ${step}` };
+      ordered = commitTimelineOrderRound(snapshot, ordered, next);
+      expect(ordered).toEqual(['a', 'b', 'callback']);
+      expect(ordered).toEqual(canonical(next));
+      snapshot = next;
+    }
+
+    const admitted = [...snapshot];
+    const a = admitted[0];
+    if (!a || a.lifecycle?.kind !== 'response') throw new Error('response fixture missing');
+    admitted[0] = { ...a, lifecycle: { ...a.lifecycle, latestInputTimelineOrderAt: 40 } };
+    admitted.push({ ...message('new-input', 40), type: 'user', catId: undefined });
+    ordered = commitTimelineOrderRound(snapshot, ordered, admitted);
+    expect(ordered).toEqual(['b', 'callback', 'new-input', 'a']);
+
+    const terminal = [...admitted];
+    const terminalA = terminal[0];
+    if (!terminalA || terminalA.lifecycle?.kind !== 'response') throw new Error('response fixture missing');
+    terminal[0] = { ...terminalA, lifecycle: { ...terminalA.lifecycle, status: 'completed', completedAt: 50 } };
+    ordered = commitTimelineOrderRound(admitted, ordered, terminal);
+    expect(ordered).toEqual(['b', 'callback', 'new-input', 'a']);
+  });
+
   it('keeps existing cards still during alternating chunks, then matches the round snapshot', () => {
     const first: [ChatMessage, ChatMessage, ChatMessage] = [message('a', 10), message('b', 20), message('c', 30)];
     const initial = canonical(first);

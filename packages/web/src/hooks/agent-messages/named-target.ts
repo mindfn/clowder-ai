@@ -105,8 +105,8 @@ export function callbackPost(msg: AgentEventFields, timestamp: number): ChatMess
 }
 
 /**
- * Live output keeps its message at the conversation edge while it is still processing. Presentation
- * ordering only: the message's identity and lifecycle stay untouched.
+ * Keep the storage activity clock current while a message is processing. Canonical responses
+ * retain their durable presentation position until an input is admitted or the response ends.
  */
 export function touchStreamActivity(
   store: Pick<NamedMessageStore, 'getThreadState' | 'patchThreadMessage'>,
