@@ -15,6 +15,7 @@ import type { ChatMessage } from '@/stores/chat-types';
 type Fiber = { type?: unknown };
 type ReactModule = typeof import('react');
 type Root = import('react-dom/client').Root;
+type ReactInternals = { injectProfilingHooks?: (hooks: Record<string, (...args: never[]) => void>) => void };
 
 const effectUpdates = new Map<string, number>();
 let effectOwner: Fiber | null = null;
@@ -51,14 +52,15 @@ function createSource<T>(initial: T) {
 }
 
 beforeAll(async () => {
-  let internals: { injectProfilingHooks?: (hooks: Record<string, (...args: never[]) => void>) => void } | null = null;
+  // A holder object, not a `let`: TypeScript does not see the assignment inside `inject` and would narrow a local to `null`.
+  const captured: { internals: ReactInternals | null } = { internals: null };
   Object.assign(globalThis, {
     IS_REACT_ACT_ENVIRONMENT: true,
     __REACT_DEVTOOLS_GLOBAL_HOOK__: {
       supportsFiber: true,
       renderers: new Map(),
-      inject(value: typeof internals) {
-        internals = value;
+      inject(value: ReactInternals) {
+        captured.internals = value;
         return 1;
       },
       onScheduleFiberRoot() {},
@@ -69,7 +71,7 @@ beforeAll(async () => {
   });
   React = await import('react');
   ({ createRoot } = await import('react-dom/client'));
-  internals?.injectProfilingHooks?.({
+  captured.internals?.injectProfilingHooks?.({
     markComponentPassiveEffectMountStarted(fiber: Fiber) {
       effectOwner = fiber;
     },
@@ -110,6 +112,19 @@ function streamingTimeline(chunks: number): ChatMessage[] {
 }
 
 describe('F117 B: effects do not schedule an update on every streaming change', () => {
+  it('counts an update scheduled from an effect (so the zero counts below cannot pass by the hooks missing)', () => {
+    function ControlHarness() {
+      const [, setMounted] = React.useState(false);
+      React.useEffect(() => setMounted(true), []);
+      return null;
+    }
+    effectUpdates.clear();
+
+    React.act(() => root.render(React.createElement(ControlHarness)));
+
+    expect(scheduledFromEffects('ControlHarness')).toBe(1);
+  });
+
   it('message selection: with nothing selected, a streaming reply schedules no update from its effect', async () => {
     const { useThreadChatSelection } = await import('@/components/thread-chat/useThreadChatSelection');
     const source = createSource(streamingTimeline(1));
