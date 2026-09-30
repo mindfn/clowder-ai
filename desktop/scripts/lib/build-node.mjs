@@ -61,7 +61,7 @@ export function engineAt(root) {
   return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).engines?.node;
 }
 
-export function probeNode(executable) {
+export function probeNode(executable, timeout = 15000) {
   return JSON.parse(
     execFileSync(
       executable,
@@ -69,14 +69,14 @@ export function probeNode(executable) {
         '-p',
         'JSON.stringify({version:process.version,abi:process.versions.modules,platform:process.platform,arch:process.arch})',
       ],
-      { encoding: 'utf8', timeout: 15000 },
+      { encoding: 'utf8', timeout },
     ),
   );
 }
 
 // Run against deployed/installed files with the bundled executable. In-memory
 // SQLite only; no Redis, user profile, persistent DB or running service access.
-export function smokeNativeModules(executable, apiDir) {
+export function smokeNativeModules(executable, apiDir, timeout = 30000) {
   const script = `
     const fs = require('node:fs');
     const path = require('node:path');
@@ -100,5 +100,5 @@ export function smokeNativeModules(executable, apiDir) {
       .png().toBuffer().then(() => console.log('native-smoke: OK'))
       .catch(error => { console.error(error); process.exitCode = 1; });
   `;
-  return execFileSync(executable, ['-e', script, path.resolve(apiDir)], { encoding: 'utf8', timeout: 30000 });
+  return execFileSync(executable, ['-e', script, path.resolve(apiDir)], { encoding: 'utf8', timeout });
 }

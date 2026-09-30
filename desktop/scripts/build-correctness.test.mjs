@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { nodeInfo, satisfiesEngine, validateNode } from './lib/build-node.mjs';
+import { nodeInfo, probeNode, satisfiesEngine, validateNode } from './lib/build-node.mjs';
 import { evaluateArch, inspectBundle } from './lib/mac-bundle-arch.mjs';
 
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -80,6 +80,17 @@ test('CLI rejects missing/incompatible bundled Node instead of guessing', () => 
       .status,
     0,
   );
+});
+
+test('a bundled executable that never responds fails at the probe budget', { skip: host.platform === 'win32' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hung-node-probe-'));
+  try {
+    const executable = path.join(dir, 'node');
+    fs.writeFileSync(executable, `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`, { mode: 0o755 });
+    assert.throws(() => probeNode(executable, 100), { code: 'ETIMEDOUT' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('native smoke cannot fall back to build-host modules when deploy is incomplete', () => {
