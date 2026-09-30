@@ -1038,10 +1038,33 @@ TurnExecution 又是 `invocation_timeout`；重启后的 settlement 再把它抄
 | tmux 首事件 | 建 pane 到第一条可解析的 JSON | 30 s；照常生效 | failed / `PROVIDER_EXECUTION_FAILED`；resume 时 #774 换新 session 重试一次 | 启动看门狗 |
 | 其他启动期调用 | ACP setup 60 s、Codex app-server socket 10 s / 握手 3 s、tmux 命令 5 s | 照常生效 | 启动失败 | 启动看门狗 |
 
-启动看门狗管的是「成员根本没起来」，不是「起来以后没有输出」，不属于 KD-22 的超时，本批保留。另外三类（整轮预算、
-重复的无输出超时）与 KD-22「每个成员只有一个超时」直接冲突。把它们并进来，会让 #1398 再扩到 A2A、bg、ACP、
-Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这些 carrier 卡住以后只能手动停。
-是否本批并入，交 co-creator 决定。决定之前，J4 只统一上面三层由 `CLI_TIMEOUT_MS` 驱动的超时，本表各项保持现状。
+上表记录 Phase 4 当时的普查基线，不再是「等 co-creator 决定」的待办。09-29 G1 候选实现按 KD-22 继续统一：
+A2A 的整个 `tasks/send` 请求预算、Claude bg 的整轮墙钟预算、ACP prompt 的 idle/budget/request
+计时、Antigravity 的无步骤 stall、interactive-PTY 的 hook 静默成功兜底，不再作为成员运行时的独立截止时间。
+`CLI_TIMEOUT_MS=0` 时，运行中成员没有自动的无输出超时，可以由用户手动停止；这正是 KD-24 的默认值语义。
+启动、连接、控制请求的有限等待与空闲进程池回收仍保留。远端 A2A 的本地 fetch 中止不等于远端任务取消，
+不能由此宣称远端已经停止；缺少已确认的远端取消能力时，错误与交付记录必须如实标出这个边界。
+
+G1 候选实现的输出与取消边界（未审查、未合入；不能替代 alpha 验收）：
+
+| 接入 | 实际输出依据 | 统一超时 / Stop 的传播与停止对象 | 终局证据与未确认边界 |
+|---|---|---|---|
+| A2A | 同步 `tasks/send` 返回的 artifacts；等待期间没有流式输出证据 | 成员的 AbortSignal 中止对应 fetch；不影响其他成员的请求 | 只有 completed 能报成功；submitted/working/input-required 等不补成功 done。本地中止报错误，明确远端任务终止未确认；当前 adapter 没有 `tasks/cancel` 请求/确认路径，不以 HTTP 断开冒充远端停止 |
+| Claude bg | transcript 的文本、工具、thinking；state detail 不算实际输出 | 成员信号结束轮询并发 `claude stop <shortId>` | 原生 done/error 是终态；stop 失败或超时保留 owner manifest 供恢复，不能当作已经停止；不再有整轮 30 分钟预算 |
+| Claude interactive-PTY | hook sidecar 的 PostToolUse 和 Stop 输出 | 成员信号调用对应 driver.cancel，finally dispose 其 pane/session | 只有 Stop hook 能证明正常完成；没有 hook 时继续等，不能因静默产出 completed |
+| ACP stdio / HTTP | session/update 经统一 transformer 产生的文本、工具、thinking | 只给当前 active session 发 session/cancel；本地 pending prompt 结算，未确认 session 封存、非多路复用 carrier 退役 | 显式取消为 SESSION_CANCELLED，不伪报 idle stall；协议取消是通知，没有远端停止确认。进程池 idle TTL 与活跃 prompt 分离 |
+| Antigravity bridge | trajectory step 经 transformer 产生的实际输出 | 成员信号传到对应 cascade 的 polling；不停止另一成员的轮询 | 当前 adapter 只中止本地观察，明确 remote cascade termination 未确认；没有整 cascade 停止确认，不能宣称远端已停。真实 provider error、有限 RPC 连接重试仍保留 |
+
+默认 0 关闭的是生产 dispatch 的唯一成员级无输出计时。ACP 的直接 client 测试/显式调用可保留正值 watchdog，
+生产 `AcpAgentService` 总是为活跃 prompt 传零；Antigravity 的正值 pollTimeoutMs 仅为测试 seam。
+Claude bg 的 `JobEventConsumer.waitForTerminal` 是无生产调用方的独立 helper，未改其显式等待契约。
+本批不新增远端停止协议；A2A、ACP 和 Antigravity 的远端确认缺口必须进入审查与验收记录，不能以统一的本地失败终态掩盖。
+
+G1 复审修订：A2A / Antigravity 在远端发送尝试前同步登记本次 task/cascade 标识；
+取消时由串行/并行路由收尾，将 `metadata.cancellationDiagnostics` 和「本地等待已取消、远端停止未确认」正文
+写进同一 canonical R。不能依赖取消后 provider 再 yield 一个错误：`abortableNext` 可能已经结束迭代。
+超时仍为 failed/timeout，用户 Stop 仍为 canceled/user_cancel；已有正文保留，不另造 Error 气泡。
+发送前取消与正常完成不生成取消诊断。该候选的代码/回读回归不能替代隔离 alpha 的实际页面验收。
 
 #### J.不变量
 
@@ -1050,10 +1073,10 @@ Antigravity、PTY 五个 carrier；而且在默认 `CLI_TIMEOUT_MS=0` 下，这�
   （或确认没有 R），并且草稿删除成功。
 - **INV-J2** 「正在处理」只由 R 的状态与可核实的持有者（本进程槽位，或 owner 快照里的存活 CLI owner）决定，
   不读任何时间戳、也不读草稿；无法核实 owner 时，running 子轮代替它，成员仍显示为运行中（KD-10 只有两态）。
-- **INV-J3** 由 `CLI_TIMEOUT_MS` 驱动的无输出超时，每个成员至多一个（0 = 不超时）；它只能以 Stop 的方式
-  结束成员，并且只结束这一个成员。co-creator 决定之前，本不变量只约束 `CLI_TIMEOUT_MS` 驱动的超时：ACP、
-  Antigravity、PTY 仍各有自己的无输出计时器（J4 表），不能宣称每个成员事实上只有一个无输出超时。若决定保留
-  它们，KD-22 也改用这个限定口径。
+- **INV-J3** 运行中成员的无输出超时由 `CLI_TIMEOUT_MS` 唯一决定（0 = 不自动超时）；它只能以 Stop 的方式
+  结束成员，并且只结束这一个成员。接入层仅保留启动、连接、控制请求的有限等待和空闲池回收，不能再把
+  整轮墙钟或无事件间隔计时作为第二个成功/失败终局。A2A 远端停止的确认另有能力边界，不得把本地请求中止
+  当作远端任务已经结束。
 
 #### J.设计复审结论（砚砚 `…1156`，据此修订）
 

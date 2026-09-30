@@ -204,6 +204,7 @@ import { buildBriefingMessage } from './format-briefing.js';
 import { resolveEventBackedRoutingExit } from './guards/event-backed-routing-exit.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
 import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { appendRemoteCancellationNotice, createRemoteCancellationObserver } from './remote-cancellation.js';
 import { resolveResponseTerminal, stoppedByMemberTimeout } from './response-terminal.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
@@ -1516,6 +1517,7 @@ export async function* routeSerial(
       let persistedDoneContent: string | undefined;
       const thinkingChunks: string[] = [];
       let persistedMetadata: MessageMetadata | undefined;
+      const remoteCancellation = createRemoteCancellationObserver();
       let doneMsg: AgentMessage | undefined;
       let lifecycleResponseMessageId: string | undefined;
       let lifecyclePriorFrontierMessageId: string | null | undefined;
@@ -1863,6 +1865,7 @@ export async function* routeSerial(
           : projectedMsg;
       };
       for await (const msg of invokeSingleCat(deps.invocationDeps, {
+        onRemoteExecutionDispatched: remoteCancellation.onDispatched,
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
         ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
         ...(routingDispatchPreflightDecision ? { routingDispatchPreflightDecision } : {}),
@@ -2557,6 +2560,7 @@ export async function* routeSerial(
         textContent = '';
         thinkingChunks.splice(0, thinkingChunks.length);
         persistedMetadata = undefined;
+        remoteCancellation.reset();
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
@@ -2635,6 +2639,7 @@ export async function* routeSerial(
           remedialPrompt = await rebuildRemedialPromptAfterSessionSeal();
         }
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
+          onRemoteExecutionDispatched: remoteCancellation.onDispatched,
           ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
           ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
           ...(remedialRoutingDispatchPreflightDecision
@@ -2967,7 +2972,21 @@ export async function* routeSerial(
       let outputCommitDecision: OutputCommitDecision | undefined;
       if (!actionOutputCommitAllowed && textContent) await scheduleTurnCustodyStopGate(false);
 
-      const terminalFailureContent = lifecycleResponseMessageId && collectedErrorText ? collectedErrorText : undefined;
+      const cancellationDiagnostics = remoteCancellation.afterAbort(catSignal);
+      if (cancellationDiagnostics) {
+        persistedMetadata = {
+          ...(persistedMetadata ?? { provider: '', model: '' }),
+          cancellationDiagnostics,
+        };
+        // The serial loop breaks on abort before the provider's done arrives.
+        // Publish the committed response through the ordinary per-member done.
+        doneMsg ??= { type: 'done', catId, timestamp: Date.now() };
+      }
+      const terminalFailureContent = cancellationDiagnostics
+        ? appendRemoteCancellationNotice(collectedErrorText)
+        : lifecycleResponseMessageId && collectedErrorText
+          ? collectedErrorText
+          : undefined;
 
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);
@@ -3710,7 +3729,7 @@ export async function* routeSerial(
           catProducedOutput = true;
         }
 
-        if (shouldPersistNoTextMessage || lifecycleResponseMessageId) {
+        if (shouldPersistNoTextMessage || lifecycleResponseMessageId || cancellationDiagnostics) {
           try {
             const visibleTurnInvocationId = visibleContentInvocationIdOverride ?? ownInvocationId;
             let storedNoText = null;
@@ -3733,7 +3752,7 @@ export async function* routeSerial(
             const noTextMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId },
               userId,
-              content: '',
+              content: cancellationDiagnostics ? (terminalFailureContent ?? '') : '',
               mentions: [],
               origin: 'stream',
               timestamp: invocationStartedAt,
@@ -4052,8 +4071,10 @@ export async function* routeSerial(
         yield {
           type: 'error' as const,
           catId,
-          error: memberTimeoutErrorText(memberTimeout.diagnostics),
-          metadata: { provider: '', model: '', timeoutDiagnostics: memberTimeout.diagnostics },
+          error: cancellationDiagnostics
+            ? appendRemoteCancellationNotice(memberTimeoutErrorText(memberTimeout.diagnostics))
+            : memberTimeoutErrorText(memberTimeout.diagnostics),
+          metadata: persistedMetadata,
           timestamp: Date.now(),
         };
       }
@@ -4185,11 +4206,16 @@ export async function* routeSerial(
       }
 
       if (doneMsg) {
+        if (cancellationDiagnostics) {
+          const stored = turnStoredMessageId ? await deps.messageStore.getById(turnStoredMessageId) : undefined;
+          persistedDoneContent = stored?.content ?? appendRemoteCancellationNotice(textContent);
+        }
         const isFinal = index === worklist.length - 1;
         const ownStampedDone =
           ownInvocationId && !doneMsg.invocationId ? { ...doneMsg, invocationId: ownInvocationId } : doneMsg;
         yield projectLiveTurnExecution({
           ...ownStampedDone,
+          ...(cancellationDiagnostics ? { metadata: persistedMetadata } : {}),
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
           ...(mentionsUser ? { mentionsUser } : {}),

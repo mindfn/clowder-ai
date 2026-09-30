@@ -146,6 +146,17 @@ export interface MessageMetadata {
   /** F118 AC-C3 / F117: what the provider observed when it gave up on a silent CLI. It explains
    *  the failure of the turn's response, so it persists with that response's terminal state. */
   timeoutDiagnostics?: TimeoutDiagnostics;
+  /** Local cancellation does not attest termination of a dispatched remote run. */
+  cancellationDiagnostics?: {
+    localWaitCancelled: true;
+    remoteTermination: 'unconfirmed';
+    remoteExecution: RemoteExecutionRef;
+  };
+}
+
+export interface RemoteExecutionRef {
+  kind: 'a2a_task' | 'antigravity_cascade';
+  id: string;
 }
 
 /** F118 AC-C3: the `timeout_diagnostics` system_info payload, reduced to its rendered fields. */
@@ -941,6 +952,8 @@ export type ClaudeCompactionHooksFactory = (identity: {
 }) => ClaudeCompactionHooks;
 
 export interface AgentServiceOptions {
+  /** Synchronous pre-send fact: survives abort racing the provider iterator. */
+  onRemoteExecutionDispatched?: (execution: RemoteExecutionRef) => void;
   /** Provider-neutral interaction port bound to this invocation. */
   runtimeInteractionPort?: import('../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
   /** F310: source-bound Task relation resolved from canonical Task truth for an F306 question. */

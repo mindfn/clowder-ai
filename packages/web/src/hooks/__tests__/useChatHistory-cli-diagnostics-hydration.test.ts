@@ -142,6 +142,56 @@ describe('F212 Phase B — cold hydration restores cliDiagnostics (云端 codex 
     expect(useChatStore.getState().messages[0]?.extra?.timeoutDiagnostics).toEqual(timeoutDiagnostics);
   });
 
+  it.each([
+    'failed',
+    'canceled',
+  ] as const)('G1: cold hydration retains remote cancellation facts on a %s response', async (status) => {
+    const content = 'partial output\n\n本地等待已取消；远端任务是否已停止尚未确认，可能仍在运行。';
+    const cancellationDiagnostics = {
+      localWaitCancelled: true,
+      remoteTermination: 'unconfirmed',
+      remoteExecution: { kind: 'a2a_task', id: 'remote-task-1' },
+    };
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        messages: [
+          {
+            id: 'response-remote',
+            type: 'assistant',
+            catId: 'opus',
+            content,
+            metadata: { provider: 'a2a', model: '', cancellationDiagnostics },
+            timestamp: 1700000000000,
+            lifecycle: {
+              kind: 'response',
+              orderKey: '1700000000000:r',
+              invocationId: 'turn-remote',
+              targetId: 'opus',
+              inputEntryIds: [],
+              inputMessageIds: [],
+              status,
+              startedAt: 1700000000000,
+              completedAt: 1700000001000,
+              reason: status === 'failed' ? 'timeout' : 'user_cancel',
+            },
+          },
+        ],
+        tasks: [],
+        hasMore: false,
+      }),
+    } as Response);
+    await act(async () => root.render(React.createElement(HookHost, { threadId: 'thread-cli-diag' })));
+    const messages = useChatStore.getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: 'response-remote',
+      content,
+      lifecycle: { status },
+      metadata: { cancellationDiagnostics },
+    });
+  });
+
   it('F293 restores the exact durable routing receipt and retry source on cold history hydration', async () => {
     const systemInfo = {
       v: 1,
