@@ -13,6 +13,8 @@ exports.default = async function afterPack(context) {
 
   const productFilename = context.packager.appInfo.productFilename;
   const resourcesDir = path.join(context.appOutDir, `${productFilename}.app`, 'Contents', 'Resources');
+  const node = path.join(resourcesDir, 'node', 'bin', 'node');
+  if (!fs.existsSync(node)) throw new Error(`Packaged Node executable missing: ${node}`);
   const projectRoot = path.resolve(__dirname, '..');
   const deployRoot = path.join(projectRoot, 'bundled', 'deploy');
 
@@ -41,4 +43,20 @@ exports.default = async function afterPack(context) {
     fs.symlinkSync(path.relative(path.dirname(scriptsNM), apiNM), scriptsNM);
     console.log('  afterPack: scripts/node_modules → packages/api/node_modules (symlink)');
   }
+
+  // Verify the consumed .app after node_modules injection, before signing/DMG.
+  // Running against the actual bundled Node also catches ABI and loader errors
+  // that an architecture label or build-host version string cannot establish.
+  const arch = { 1: 'x64', 3: 'arm64' }[context.arch];
+  if (!arch) throw new Error(`Unsupported macOS electron-builder arch: ${context.arch}`);
+  const app = path.join(context.appOutDir, `${productFilename}.app`);
+  const { inspectBundle } = await import('./scripts/lib/mac-bundle-arch.mjs');
+  const { engineAt, nodeInfo, probeNode, smokeNativeModules, validateNode } = await import(
+    './scripts/lib/build-node.mjs'
+  );
+  const engine = engineAt(resourcesDir);
+  validateNode(probeNode(node), { engine, platform: 'darwin', arch, builtWith: nodeInfo() });
+  const count = inspectBundle(app, arch);
+  console.log(`  afterPack: ${count} Mach-O binaries verified for ${arch}`);
+  console.log(smokeNativeModules(node, path.join(resourcesDir, 'packages', 'api')));
 };

@@ -63,6 +63,8 @@ jobs:
           packages/api/test/managed-runner-windows.test.js
       - name: Desktop config behavioral tests (PowerShell)
         run: node --test desktop/generate-desktop-config-behavior.test.js
+      - name: Desktop build Node and executable launch contracts
+        run: node --test scripts/run-preserving-signal-exit.test.mjs desktop/scripts/build-correctness.test.mjs
 
   # #1542 final acceptance: package the artifact (pnpm deploy, the same
   # self-contained layout the desktop installer ships), stage the install
