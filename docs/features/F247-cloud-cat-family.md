@@ -4,7 +4,7 @@ related_features: [F178, F061, F174, F236, F237]
 topics: [cloud-cat, chatgpt-pro, mcp, multi-provider, custom-instructions, github-connector, chrome-extension, native-messaging]
 doc_kind: spec
 description: Productized cloud-cat platform for connecting ChatGPT Pro and future cloud LLM providers into Clowder AI as first-class collaborators.
-tips_exempt: "Renewed 2026-09-05 for readable recovery: the source-bound card teaches title backfill, exact conversation inspection, connection-only versus retry, and verified delivery in place; a separate capability tip would duplicate the in-place recovery surface."
+tips_exempt: "Renewed 2026-09-30 for the legacy PinchTab bridge removal (#1538): it removes a hidden opt-in transport and corrects current-state text, so there is no new capability to teach. The source-bound recovery card still teaches title backfill, exact conversation inspection, connection-only versus retry, and verified delivery in place; a separate capability tip would duplicate that surface."
 description_source: model
 description_author: codex
 description_updated_at: 2026-07-06T11:45:00Z
