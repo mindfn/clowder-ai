@@ -141,7 +141,7 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
   - cat-cafe API hot-add gpt-pro via `POST /api/cats` (0 重启) ✅
   - dry-run `cat_cafe_post_message` 真写入 thread, speaker 显示 "Maine CoonPro(Pro Cloud (ChatGPT))" ✅
 - **2026-08-08 principal lifecycle hardening + live recovery proof**：45-day Redis TTL 到期而 sidecar 残留导致 `agent_key_unknown`；共享 provisioner 已实现 verify/preserve/rotate/replace + daily renewal。授权 runtime reconcile 后，公网 Remote MCP 以 `gpt-pro` 写入 `[thread-id]` 并返回 message ID `private-source-id`，full thread read 精确确认一次。
-- **Host Adapter contract**：`append_message(conversationId, text, idempotencyKey) -> {hostMessageId, idempotentReplay?}` 已落窄接口与 fail-closed tests；Personal Chrome Host 在 owner 授权的 exact conversation 上已有真实 background append 证据，但不外推为任意 provider / conversation，也不冒充 Chrome Web Store 公开发行。Legacy PinchTab 仅 `CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE=1` 显式启用，默认不接管前台 UI。
+- **Host Adapter contract**：`append_message(conversationId, text, idempotencyKey) -> {hostMessageId, idempotentReplay?}` 已落窄接口与 fail-closed tests；Personal Chrome Host 在 owner 授权的 exact conversation 上已有真实 background append 证据，但不外推为任意 provider / conversation，也不冒充 Chrome Web Store 公开发行。Legacy PinchTab bridge 已删除（issue #1538）：Host Adapter 是唯一 transport，拒绝后不再改走第二条通道。
 - **历史个人版双向 E2E 已实锤**（2026-06-30）：旧 PinchTab bridge 将 Clowder AI mention 投进绑定的 ChatGPT conversation；云端 `gpt-pro` 随后通过 Remote MCP 真写回 Clowder AI，消息 `private-source-id` 可精确读取。它证明产品闭环可行，但不把前台浏览器自动化升级为稳定公共契约。
 - **Personal Chrome Host Adapter 隔离 spike（2026-08-12）**：35 项 focused 契约全部通过。真实 Chrome + 临时 profile + unpacked MV3 extension 在拦截的 `chatgpt.com/c/<id>` fixture 上完成后台 tab 投递，前台 tab 未变化；首次返回 DOM message ID `fixture-host-message-1`，同一 idempotency key 重试返回同一 ID 且 send count 保持 1。独立 full-seam integration 另行穿过真实 `PersonalChromeHostAdapter`、Unix socket bridge、Native Messaging framing、service-worker `connectNative`/`dispatchAppend`、tab receipt 与 0600 durable ledger；helper socket 由跨进程原子 owner lease 守住，live/仍在落盘的旧 helper 不会被重叠启动替换，dead helper 遗留的 lease 可安全回收；POSIX install contract 还直接启动 manifest 写入的 executable path 并交换真实 stdio frame，防止进程内 mock 或 DOM-only fixture 绕过 helper/port 后仍误报机制通过。该证据只关闭 fixture/本地协议 gate，不冒充已安装原生宿主或登录态真实 ChatGPT DOM 证据。
 - **Cloud invocation terminal contract（2026-08-12）**：`openai-chatgpt-pro` 不再从 KD-17 guard 提前 `done`。它先创建 durable child、暴露 exact source body，再等待 Host transport 的有界 `sent | fallback | error`；随后发布一条可读 `cloud_bridge_status`，为 A2A source 写精确 `completed` disposition，并用同一 child `done` 收口。Host 缺失是一次显式 unavailable，不再被 F167 判成 disposition missing 后重排队。
@@ -358,15 +358,15 @@ operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用*
 >
 > **operator R1 catch (2026-06-25 23:46 PT)**：bridge 投递到 ChatGPT 端**哪个 chat**？v1 spec 漏了这层架构——每次 mention 新建 chat = sidebar 爆炸 + Maine Coon Pro 失去 conversation continuity；投到 active chat = 打断他当前讨论。**必须做 thread↔chat binding (KD-20)**。
 
-**目标**：本地猫 @ gpt-pro → cat-cafe 通过宿主提供的 background Host Adapter，向 **该 thread 已绑定的 conversation** 追加 mention 通知（带 thread context）→ Maine Coon Pro 看到后 MCP read 拉详情 + 写回复。**全程零人肉粘贴、零前台 UI 接管。** Host 未暴露能力时明确 fallback；只有 operator 显式 opt-in 才允许旧 PinchTab 路径创建/修复 binding。
+**目标**：本地猫 @ gpt-pro → cat-cafe 通过宿主提供的 background Host Adapter，向 **该 thread 已绑定的 conversation** 追加 mention 通知（带 thread context）→ Maine Coon Pro 看到后 MCP read 拉详情 + 写回复。**全程零人肉粘贴、零前台 UI 接管。** Host 未暴露能力时明确 fallback；旧 PinchTab 路径（曾可创建/修复 binding）已删除（issue #1538）。
 
 #### Design 要点
 
-**1. Backend priority = Host Adapter；PinchTab 降级为显式 opt-in legacy**（2026-08-08 supersedes 原“PinchTab 单一”）
+**1. Backend = Host Adapter；PinchTab legacy bridge 已删除**（2026-08-08 supersedes 原“PinchTab 单一”；legacy bridge 已删除，issue #1538）
 - 首选 Host-owned 窄接口：`append_message(conversationId, text, idempotencyKey)`，成功必须返回 non-empty host message ID；conversation ID 来自 owner-only thread binding，idempotency key 来自持久化 source message ID
 - Host Adapter 缺失 / receipt 无效 / append 失败：typed fallback，**不**自动启动 PinchTab / composer / CGEvent；这保证后台服务不会抢用户鼠标和前台画面
 - 当前 OpenAI 公共 Host 能力只证明 Codex Quick Chat 可引用 ChatGPT conversation，不足以证明 server 可向任意 conversation 追加并取回 host message ID；provider 保持 `null`，直到官方能力真实出现
-- PinchTab 旧路径只在 operator 显式设置 `CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE=1` 时启用，用于兼容/诊断，不再是默认行为
+- PinchTab 旧路径（原来只在 `CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE=1` 时启用）已删除（issue #1538），环境变量一并移除；已存回执里的 `transport: 'legacy-pinchtab'` 仍按历史值可读
 
 **历史实现：PinchTab adapter**
 - 跨族（Maine Coon/Siamese/Ragdoll都能用），不像 claude-in-chrome 仅 Anthropic 系
@@ -388,6 +388,9 @@ operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用*
 ```
 
 绑定 lifecycle（lazy + auto-self-heal）：
+
+> 现状（issue #1538）：下面「首次 @ 开新 chat」与「binding stale 自动 re-open」是已删除的 PinchTab bridge 的行为，现已不存在。Host Adapter 只向 thread 已绑定的 conversation 追加，不会自己开新 chat；binding 缺失或损坏时走 needs-binding fallback，什么都不发。
+
 - **Lazy 不预绑**：thread 创建时**不**预先开 chat
 - **首次 @ gpt-pro**：bridge 在 ChatGPT 端开新 chat → URL 包含 `chatgpt.com/c/<conversation-id>` → capture URL → 写 thread metadata
 - **后续 @ 同 thread**：bridge 查 thread metadata → 找到 bound URL → navigate to bound chat → 投通知
@@ -398,7 +401,7 @@ operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用*
 - `invokeSingleCat` 看到 `provider === 'openai-chatgpt-pro'` → 跳过 provider CLI，但仍创建 durable child invocation，并在 prompt exposure 后触发 cloud-invoke-bridge
 - bridge 返回有界 Host transport outcome；本地 invocation **不等待云端猫回复**，但必须等待该 outcome 后发布一条可读状态
 - A2A source 由同一 child 写 exact `completed` disposition，再 `done`；缺 adapter/receipt 也终结该 source，禁止 silent completion → governance error → Queue replay
-- API composition 仅在 socket + pairing secret 同时配置时启用 Personal Chrome Host Adapter；否则 typed unavailable。Legacy PinchTab 仍只允许显式 opt-in
+- API composition 仅在 socket + pairing secret 同时配置时启用 Personal Chrome Host Adapter；否则 typed unavailable。Legacy PinchTab bridge 已删除（issue #1538）
 
 **4. 载荷模板**（thread context-aware）
 

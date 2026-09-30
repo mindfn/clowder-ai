@@ -435,15 +435,6 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
-    name: 'CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE',
-    defaultValue: '0',
-    description:
-      'F247 Cloud Cat — 显式启用会控制前台浏览器的 legacy PinchTab bridge；默认 0，Host Adapter 缺失时 fail closed。',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-  },
-  {
     name: 'CAT_CAFE_REMOTE_TOKEN',
     defaultValue: '(空)',
     description:
@@ -2103,13 +2094,6 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'ANTIGRAVITY_PORT',
     defaultValue: '(未设置 → 自动发现)',
     description: 'Antigravity Language Server ConnectRPC 端口（覆盖自动发现）',
-    category: 'antigravity',
-    sensitive: false,
-  },
-  {
-    name: 'PINCHTAB_CDP_PORT',
-    defaultValue: '9870',
-    description: 'PinchTab Chrome CDP 调试端口（覆盖默认 remote-debugging-port）',
     category: 'antigravity',
     sensitive: false,
   },
