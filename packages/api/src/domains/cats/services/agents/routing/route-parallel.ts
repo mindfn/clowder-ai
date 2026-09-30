@@ -106,6 +106,7 @@ import { type ContextEvalInput, extractContextEvalSignals } from './context-eval
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
 import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { appendRemoteCancellationNotice, createRemoteCancellationObserver } from './remote-cancellation.js';
 import { resolveResponseTerminal, stoppedByMemberTimeout } from './response-terminal.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
@@ -470,6 +471,7 @@ export async function* routeParallel(
   const unavailableCats = new Set<CatId>();
   // F117 KD-22: kept per cat when its output timeout fires, before the cat is stopped.
   const catMemberTimeout = new Map<string, MemberTimeoutEvent>();
+  const catRemoteCancellation = new Map<string, ReturnType<typeof createRemoteCancellationObserver>>();
   const onMemberTimeoutFor = (catId: CatId) =>
     options.stopMember
       ? (timeout: MemberTimeoutEvent): void => {
@@ -1002,6 +1004,8 @@ export async function* routeParallel(
         return (async function* skipCancelledCat(): AsyncGenerator<AgentMessage> {})();
       }
       const onMemberTimeout = onMemberTimeoutFor(catId);
+      const remoteCancellation = createRemoteCancellationObserver();
+      catRemoteCancellation.set(catId, remoteCancellation);
       const invocationStream = invokeSingleCat(deps.invocationDeps, {
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
         ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
@@ -1022,6 +1026,7 @@ export async function* routeParallel(
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(catSignal ? { signal: catSignal } : {}),
         ...(onMemberTimeout ? { onMemberTimeout } : {}),
+        onRemoteExecutionDispatched: remoteCancellation.onDispatched,
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
         // F194 Phase Z2 (砚砚 catch 2026-05-09)：parallel route 必须传 parentInvocationId，
         // 与 route-serial.ts:725 对齐。否则 child registry record 缺 parentInvocationId →
@@ -1656,6 +1661,13 @@ export async function* routeParallel(
           timeoutDiagnostics: memberTimeout.diagnostics,
         });
       }
+      const cancellationDiagnostics = catRemoteCancellation.get(msg.catId)?.afterAbort(completedSignal);
+      if (cancellationDiagnostics) {
+        catMeta.set(msg.catId, {
+          ...(catMeta.get(msg.catId) ?? { provider: '', model: '' }),
+          cancellationDiagnostics,
+        });
+      }
       const { status: lifecycleTerminalStatus, reason: lifecycleTerminalReason } = resolveResponseTerminal({
         aborted: completedSignal?.aborted === true,
         abortReason: completedSignal?.reason,
@@ -1683,7 +1695,11 @@ export async function* routeParallel(
           actionOutputCommitAllowed && !catHadError.has(msg.catId) && !msg.errorCode && !completedSignal?.aborted,
       });
       const providerFailureText = catErrorText.get(msg.catId);
-      const terminalFailureContent = lifecycleResponse && providerFailureText ? providerFailureText : undefined;
+      const terminalFailureContent = cancellationDiagnostics
+        ? appendRemoteCancellationNotice(providerFailureText ?? '')
+        : lifecycleResponse && providerFailureText
+          ? providerFailureText
+          : undefined;
       const failedA2AReportCommit =
         lifecycleResponse?.status === 'failed' &&
         options.a2aTriggerMessageId &&
@@ -2081,12 +2097,12 @@ export async function* routeParallel(
           catProducedOutput = true;
         }
 
-        if (shouldPersistNoTextMessage || lifecycleResponse) {
+        if (shouldPersistNoTextMessage || lifecycleResponse || cancellationDiagnostics) {
           try {
             const noTextMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId: msg.catId as CatId },
               userId,
-              content: '',
+              content: cancellationDiagnostics ? (terminalFailureContent ?? '') : '',
               mentions: [],
               origin: 'stream',
               timestamp: invocationStartedAt,
@@ -2309,8 +2325,7 @@ export async function* routeParallel(
 
       const errorText = catErrorText.get(msg.catId);
       const lifecycleErrorOwnedByResponse =
-        catLifecycleResponse.has(msg.catId) &&
-        catLifecycleResponse.get(msg.catId)?.messageId === catOutputMessageId.get(msg.catId);
+        lifecycleResponse !== undefined && lifecycleResponse.messageId === turnStoredMessageId;
       await persistUserFacingSystemInfoNotices({
         messageStore: deps.messageStore,
         threadId,
@@ -2460,15 +2475,22 @@ export async function* routeParallel(
         yield {
           type: 'error' as const,
           catId: msg.catId,
-          error: memberTimeoutErrorText(memberTimeout.diagnostics),
-          metadata: { provider: '', model: '', timeoutDiagnostics: memberTimeout.diagnostics },
+          error: cancellationDiagnostics
+            ? appendRemoteCancellationNotice(memberTimeoutErrorText(memberTimeout.diagnostics))
+            : memberTimeoutErrorText(memberTimeout.diagnostics),
+          metadata: catMeta.get(msg.catId),
           ...(ownInvId ? { invocationId: ownInvId } : {}),
           timestamp: Date.now(),
         };
       }
+      if (cancellationDiagnostics) {
+        const stored = turnStoredMessageId ? await deps.messageStore.getById(turnStoredMessageId) : undefined;
+        persistedDoneContent = stored?.content ?? appendRemoteCancellationNotice(text ?? '');
+      }
       yield projectLiveTurnExecution(
         {
           ...stampedDone,
+          ...(cancellationDiagnostics ? { metadata: catMeta.get(msg.catId) } : {}),
           ...(memberTimeout && stampedDone.errorCode === undefined ? { errorCode: MEMBER_TIMEOUT_REASON } : {}),
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),

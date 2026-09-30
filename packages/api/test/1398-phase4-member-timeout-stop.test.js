@@ -6,12 +6,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-process.env.CLI_TIMEOUT_MS = '1000';
+// Cold invocation preparation can exceed 1s under concurrent build/test load.
+// Leave startup headroom without changing the production timer contract.
+const MEMBER_TIMEOUT_MS = 2000;
+process.env.CLI_TIMEOUT_MS = String(MEMBER_TIMEOUT_MS);
 
 const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
 const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
 const { A2AAgentService } = await import('../dist/domains/cats/services/agents/providers/A2AAgentService.js');
+const { AntigravityAgentService } = await import(
+  '../dist/domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js'
+);
+const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+const { createMockBridge } = await import('./antigravity-agent-service-test-helpers.js');
 const { createMemberTimeoutStop, MEMBER_TIMEOUT_REASON } = await import(
   '../dist/domains/cats/services/agents/invocation/member-output-timeout.js'
 );
@@ -119,13 +127,57 @@ function routeDeps(services, turnStore) {
 }
 
 /** A Queue execution: one slot per target under the parent execution id, routed with the stop hook. */
-async function dispatch(route, targets, services) {
+async function dispatch(route, targets, services, { canonical = false, onTrackerReady } = {}) {
   const tracker = new InvocationTracker();
   const executionId = 'parent-exec-1';
   tracker.startAll('t1', targets, 'user1', executionId);
   const turnStore = turnExecutionStore();
   const events = [];
-  for await (const event of route(routeDeps(services, turnStore), targets, 'msg', 'user1', 't1', {
+  const deps = routeDeps(services, turnStore);
+  const store = canonical ? new MessageStore() : undefined;
+  if (store) deps.messageStore = store;
+  const responses = new Map();
+  onTrackerReady?.(tracker);
+  for await (const event of route(deps, targets, 'msg', 'user1', 't1', {
+    ...(store
+      ? {
+          onLifecycleInvocationStarted: async ({ invocationId, catId, startedAt }) => {
+            const response = store.append({
+              from: { kind: 'agent', catId },
+              userId: 'user1',
+              threadId: 't1',
+              content: '',
+              mentions: [],
+              timestamp: startedAt,
+              lifecycle: {
+                kind: 'response',
+                orderKey: `${startedAt}:${invocationId}`,
+                invocationId,
+                targetId: catId,
+                inputEntryIds: [],
+                inputMessageIds: [],
+                status: 'processing',
+                startedAt,
+              },
+            });
+            responses.set(catId, response.id);
+            return {
+              responseMessageId: response.id,
+              priorFrontierMessageId: null,
+              activeRun: {
+                threadId: 't1',
+                targetId: catId,
+                invocationId,
+                responseMessageId: response.id,
+                inputEntryIds: [],
+                inputMessageIds: [],
+                privateInputEntryIds: [],
+                startedAt,
+              },
+            };
+          },
+        }
+      : {}),
     signalForCat: (catId) => tracker.getController('t1', catId)?.signal,
     parentInvocationId: executionId,
     stopMember: createMemberTimeoutStop({
@@ -138,7 +190,7 @@ async function dispatch(route, targets, services) {
     events.push(event);
   }
   const terminalOf = (catId) => [...turnStore.records.values()].find((record) => record.catId === catId);
-  return { tracker, events, terminalOf };
+  return { tracker, events, terminalOf, store, responses };
 }
 
 function assertTimedOutMember(result, catId) {
@@ -146,7 +198,10 @@ function assertTimedOutMember(result, catId) {
   const failure = result.events.find((event) => event.type === 'error' && event.catId === catId);
   assert.ok(failure, `${catId}'s route reports the timeout`);
   assert.match(failure.error, /响应超时/);
-  assert.ok(failure.metadata.timeoutDiagnostics.silenceDurationMs >= 1000, 'diagnostics kept from before the stop');
+  assert.ok(
+    failure.metadata.timeoutDiagnostics.silenceDurationMs >= MEMBER_TIMEOUT_MS,
+    'diagnostics kept from before the stop',
+  );
   // Like a provider failure, the member ends with a done that names why, after its failure: the
   // Queue settles the entry failed from it instead of throwing and broadcasting a second error row.
   const events = result.events.filter((event) => event.catId === catId);
@@ -189,17 +244,18 @@ describe('F117 J4: a timed-out member is stopped like Stop, alone', () => {
     });
     const result = await dispatch(routeParallel, ['opus', 'codex'], {
       opus: remoteService,
-      codex: answeringService('codex', 1600),
+      codex: answeringService('codex', MEMBER_TIMEOUT_MS + 600),
     });
     assert.equal(remoteWaitAborted, true);
     assertTimedOutMember(result, 'opus');
     assertFinishedMember(result, 'codex');
+    assert.match(JSON.stringify(result.events), /远端任务是否已停止尚未确认/);
   });
 
   it('parallel: stops the silent member and lets its sibling finish', async () => {
     const result = await dispatch(routeParallel, ['opus', 'codex'], {
       opus: silentService('opus'),
-      codex: answeringService('codex', 1600),
+      codex: answeringService('codex', MEMBER_TIMEOUT_MS + 600),
     });
     assertTimedOutMember(result, 'opus');
     assertFinishedMember(result, 'codex');
@@ -215,6 +271,135 @@ describe('F117 J4: a timed-out member is stopped like Stop, alone', () => {
     assertTimedOutMember(result, 'opus');
     assertFinishedMember(result, 'codex');
   });
+});
+
+describe('G1: remote cancellation survives route settlement and canonical readback', () => {
+  it('normal remote completion carries no cancellation notice or diagnostics', async () => {
+    const service = new A2AAgentService({
+      catId: 'opus',
+      config: { url: 'http://mock.local' },
+      fetchFn: async () => ({
+        ok: true,
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: 'remote',
+          result: {
+            id: 'remote',
+            status: 'completed',
+            artifacts: [{ parts: [{ type: 'text', text: 'remote answer' }] }],
+          },
+        }),
+      }),
+    });
+    const result = await dispatch(
+      routeParallel,
+      ['opus', 'codex'],
+      {
+        opus: service,
+        codex: answeringService('codex', 100),
+      },
+      { canonical: true },
+    );
+    const reply = result.store.getById(result.responses.get('opus'));
+    assert.equal(reply.lifecycle.status, 'completed');
+    assert.equal(reply.content, 'remote answer');
+    assert.equal(reply.metadata?.cancellationDiagnostics, undefined);
+  });
+  for (const [routeName, route] of [
+    ['parallel', routeParallel],
+    ['serial', routeSerial],
+  ]) {
+    for (const kind of ['a2a_task', 'antigravity_cascade']) {
+      for (const reason of ['timeout', 'user_cancel']) {
+        it(`${routeName} ${kind} ${reason}: same response retains uncertainty, no second error bubble`, async () => {
+          let observedSignal;
+          let manualStop;
+          const waitForAbort = (signal) =>
+            new Promise((_resolve, reject) => {
+              observedSignal = signal;
+              if (reason === 'user_cancel') setTimeout(() => manualStop(), 50);
+              if (signal.aborted) reject(new Error('aborted'));
+              else signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+            });
+          let service;
+          if (kind === 'a2a_task') {
+            service = new A2AAgentService({
+              catId: 'opus',
+              config: { url: 'http://mock.local' },
+              fetchFn: (_url, options) => waitForAbort(options.signal),
+            });
+          } else {
+            const bridge = createMockBridge();
+            bridge.pollForSteps = async function* (_cascade, _steps, _timeout, _limit, signal) {
+              yield {
+                steps: [
+                  {
+                    type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE',
+                    status: 'CORTEX_STEP_STATUS_RUNNING',
+                    plannerResponse: { response: 'partial remote output' },
+                  },
+                ],
+                cursor: {
+                  baselineStepCount: 0,
+                  lastDeliveredStepCount: 1,
+                  terminalSeen: false,
+                  lastActivityAt: Date.now(),
+                },
+              };
+              await waitForAbort(signal);
+            };
+            service = new AntigravityAgentService({ catId: 'opus', model: 'gemini-3.1-pro', bridge });
+          }
+          const result = await dispatch(
+            route,
+            ['opus', 'codex'],
+            {
+              opus: service,
+              codex: answeringService('codex', MEMBER_TIMEOUT_MS + 400),
+            },
+            {
+              canonical: true,
+              onTrackerReady: (tracker) => {
+                manualStop = () => tracker.cancel('t1', 'opus', 'user1', 'user_cancel');
+              },
+            },
+          );
+          assert.equal(observedSignal?.aborted, true, 'the exact dispatched remote wait was cancelled');
+          const reply = result.store.getById(result.responses.get('opus'));
+          assert.equal(reply.lifecycle.status, reason === 'timeout' ? 'failed' : 'canceled');
+          assert.equal(reply.lifecycle.reason, reason);
+          assert.match(reply.content, /远端任务是否已停止尚未确认/);
+          if (kind === 'antigravity_cascade') assert.match(reply.content, /partial remote output/);
+          assert.equal(reply.metadata.cancellationDiagnostics.localWaitCancelled, true);
+          assert.equal(reply.metadata.cancellationDiagnostics.remoteTermination, 'unconfirmed');
+          assert.equal(reply.metadata.cancellationDiagnostics.remoteExecution.kind, kind);
+          assert.ok(reply.metadata.cancellationDiagnostics.remoteExecution.id);
+          const done = result.events.findLast((event) => event.type === 'done' && event.catId === 'opus');
+          assert.equal(done.messageId, reply.id);
+          assert.equal(done.content, reply.content, 'live terminal and cold readback use the same body');
+          assert.deepEqual(done.metadata.cancellationDiagnostics, reply.metadata.cancellationDiagnostics);
+          const history = result.store.getByThread('t1');
+          assert.equal(
+            history.filter((message) => message.from.kind === 'system' && message.from.service === 'agent-error')
+              .length,
+            0,
+            JSON.stringify(history.map((message) => ({ from: message.from, content: message.content }))),
+          );
+          assert.equal(
+            history.filter((message) => message.from.kind === 'agent' && message.from.catId === 'opus').length,
+            1,
+          );
+          assert.equal(result.store.getById(result.responses.get('codex')).lifecycle.status, 'completed');
+          assert.equal(
+            result.store.getById(result.responses.get('codex')).metadata?.cancellationDiagnostics,
+            undefined,
+          );
+          if (reason === 'timeout') assertTimedOutMember(result, 'opus');
+          assertFinishedMember(result, 'codex');
+        });
+      }
+    }
+  }
 });
 
 describe('F117 J4: the Queue stop for a member timeout', () => {

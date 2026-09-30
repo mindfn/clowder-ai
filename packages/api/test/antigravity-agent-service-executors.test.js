@@ -4,6 +4,21 @@ import { AntigravityAgentService } from '../dist/domains/cats/services/agents/pr
 import { collect, createMockBridge } from './antigravity-agent-service-test-helpers.js';
 
 describe('AntigravityAgentService (Bridge) — native executors', () => {
+  test('G1: pre-launch cancellation never sends or registers a remote cascade attempt', async () => {
+    const bridge = createMockBridge();
+    const controller = new AbortController();
+    const dispatched = [];
+    const service = new AntigravityAgentService({ catId: 'antigravity', model: 'gemini-3.1-pro', bridge });
+    await collect(
+      service.invoke('work', {
+        signal: controller.signal,
+        beforeProviderLaunch: async () => controller.abort('user_cancel'),
+        onRemoteExecutionDispatched: (execution) => dispatched.push(execution),
+      }),
+    );
+    assert.equal(bridge.sendMessage.mock.callCount(), 0);
+    assert.deepEqual(dispatched, []);
+  });
   test('F117: default bridge polling has no independent no-step deadline', async () => {
     const bridge = createMockBridge();
     const originalPoll = bridge.pollForSteps;

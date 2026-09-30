@@ -1211,6 +1211,7 @@ export interface InvocationDeps {
  * Per-invocation parameters
  */
 export interface InvocationParams {
+  readonly onRemoteExecutionDispatched?: AgentServiceOptions['onRemoteExecutionDispatched'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
   /** F293: deterministic message scope, independent from provider prompt inference. */
@@ -3743,6 +3744,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const entrustedWorkTaskStore = deps.taskStore;
 
     const baseOptions: AgentServiceOptions = {
+      ...(params.onRemoteExecutionDispatched
+        ? { onRemoteExecutionDispatched: params.onRemoteExecutionDispatched }
+        : {}),
       ...(params.routeIntent ? { routeIntent: params.routeIntent } : {}),
       callbackEnv,
       ...(invocationCapacitySnapshot

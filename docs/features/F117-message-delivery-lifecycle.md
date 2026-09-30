@@ -1060,6 +1060,12 @@ G1 候选实现的输出与取消边界（未审查、未合入；不能替代 a
 Claude bg 的 `JobEventConsumer.waitForTerminal` 是无生产调用方的独立 helper，未改其显式等待契约。
 本批不新增远端停止协议；A2A、ACP 和 Antigravity 的远端确认缺口必须进入审查与验收记录，不能以统一的本地失败终态掩盖。
 
+G1 复审修订：A2A / Antigravity 在远端发送尝试前同步登记本次 task/cascade 标识；
+取消时由串行/并行路由收尾，将 `metadata.cancellationDiagnostics` 和「本地等待已取消、远端停止未确认」正文
+写进同一 canonical R。不能依赖取消后 provider 再 yield 一个错误：`abortableNext` 可能已经结束迭代。
+超时仍为 failed/timeout，用户 Stop 仍为 canceled/user_cancel；已有正文保留，不另造 Error 气泡。
+发送前取消与正常完成不生成取消诊断。该候选的代码/回读回归不能替代隔离 alpha 的实际页面验收。
+
 #### J.不变量
 
 - **INV-J1** 草稿存在 ⇒ 它的 R 处于 processing，或这一轮仍在 response-pending 账本里。反过来不成立：

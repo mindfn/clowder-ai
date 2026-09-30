@@ -21,7 +21,7 @@ export interface A2AAgentServiceOptions {
 }
 
 function agentMsg(type: AgentMessage['type'], catId: CatId, content?: string): AgentMessage {
-  return { type, catId, content, timestamp: Date.now() };
+  return { type, catId, content, ...(type === 'error' ? { error: content } : {}), timestamp: Date.now() };
 }
 
 export class A2AAgentService implements AgentService {
@@ -85,9 +85,12 @@ export class A2AAgentService implements AgentService {
     const signal = options?.signal;
 
     yield agentMsg('session_init', this.catId);
-
+    let dispatched = false;
     try {
       await options?.beforeProviderLaunch?.(preparedRequest);
+      if (signal?.aborted) throw signal.reason ?? new Error('aborted before send');
+      dispatched = true;
+      options?.onRemoteExecutionDispatched?.({ kind: 'a2a_task', id: taskId });
       const response = await this.fetchFn(this.config.url, {
         method: 'POST',
         headers,
@@ -133,7 +136,13 @@ export class A2AAgentService implements AgentService {
       // running; without an acknowledged tasks/cancel, never report success.
       const isCallerAbort = options?.signal?.aborted === true;
       if (isCallerAbort) {
-        yield agentMsg('error', this.catId, 'A2A local wait cancelled; remote task termination is unconfirmed');
+        yield agentMsg(
+          'error',
+          this.catId,
+          dispatched
+            ? 'A2A local wait cancelled; remote task termination is unconfirmed'
+            : 'A2A cancelled before remote dispatch',
+        );
       } else {
         const errMsg = err instanceof Error ? err.message : String(err);
         yield agentMsg('error', this.catId, `A2A connection error: ${errMsg}`);

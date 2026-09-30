@@ -68,6 +68,7 @@ describe('A2A event transform', () => {
     const msgs = transformA2ATaskToMessages(task, TEST_CAT_ID);
     assert.equal(msgs.length, 1);
     assert.equal(msgs[0].type, 'error');
+    assert.equal(msgs[0].error, 'A2A task failed');
   });
 
   it('transforms input-required task', () => {
@@ -104,6 +105,26 @@ function mockFetchRpcError(code, message) {
 }
 
 describe('A2AAgentService', () => {
+  it('does not register a remote execution or send after pre-launch cancellation', async () => {
+    const controller = new AbortController();
+    const dispatched = [];
+    const service = new A2AAgentService({
+      catId: TEST_CAT_ID,
+      config: { url: 'http://mock.local' },
+      fetchFn: async () => {
+        assert.fail('cancelled request must not be sent');
+      },
+    });
+    const messages = [];
+    for await (const message of service.invoke('work', {
+      signal: controller.signal,
+      beforeProviderLaunch: async () => controller.abort('user_cancel'),
+      onRemoteExecutionDispatched: (execution) => dispatched.push(execution),
+    }))
+      messages.push(message);
+    assert.deepEqual(dispatched, []);
+    assert.match(messages.find((message) => message.type === 'error').error, /before remote dispatch/);
+  });
   for (const status of ['submitted', 'working', 'canceled', 'input-required', 'TASK_STATE_WORKING']) {
     it(`does not turn remote ${status} into successful completion`, async () => {
       const service = new A2AAgentService({
@@ -118,6 +139,8 @@ describe('A2AAgentService', () => {
       for await (const message of service.invoke('work')) messages.push(message);
       assert.ok(!messages.some((message) => message.type === 'done'));
       assert.ok(messages.some((message) => message.type === 'error'));
+      const error = messages.find((message) => message.type === 'error');
+      assert.equal(error.error, error.content, 'route collectors receive the same diagnostic');
     });
   }
 

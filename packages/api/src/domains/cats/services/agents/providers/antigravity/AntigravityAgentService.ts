@@ -972,6 +972,8 @@ export class AntigravityAgentService implements AgentService {
         });
         await options?.beforeProviderLaunch?.(preparedRequest);
         if (!('body' in preparedRequest.message)) throw new Error('antigravity_bridge_message_not_exact');
+        if (options?.signal?.aborted) throw new Error('Aborted before send');
+        options?.onRemoteExecutionDispatched?.({ kind: 'antigravity_cascade', id: cascadeId });
         const { stepsBefore, wasBusy } = await this.bridge.sendMessage(
           cascadeId,
           preparedRequest.message.body,
