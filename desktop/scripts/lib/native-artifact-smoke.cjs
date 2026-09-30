@@ -52,6 +52,9 @@ async function smoke() {
     // SQLite loads an extension directly, bypassing process.dlopen.
     db.loadExtension(audit.artifactPath(vec.getLoadablePath()));
     console.log('sqlite/vec:', db.prepare('select vec_version() as v').get().v);
+    // Capture the extension's linker dependencies while it is loaded; closing
+    // SQLite may unload them before the final whole-smoke audit.
+    audit.assertComplete();
   } finally {
     db.close();
   }
