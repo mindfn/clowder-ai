@@ -111,6 +111,10 @@ test('architecture verification checks bytes, loader choice, universal and optio
     0,
   );
   assert.equal(
+    evaluateArch([{ path: 'prebuilds/ios-x64-simulator/bare-fs.bare', archs: ['x86_64'] }], 'arm64').length,
+    0,
+  );
+  assert.equal(
     evaluateArch(
       [entry('prebuilds/darwin-arm64/pty.node', ['arm64']), entry('prebuilds/darwin-x64/pty.node', ['arm64'])],
       'x64',

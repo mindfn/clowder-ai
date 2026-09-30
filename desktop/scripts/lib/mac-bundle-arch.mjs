@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const tokens = /(?:^|[-_/])(darwin|mas|linux|win32|freebsd)[-_](arm64|x64|ia32|universal)(?=[-_/.]|$)/;
+const tokens = /(?:^|[-_/])(darwin|mas|linux|win32|freebsd|ios|android)[-_](arm64|x64|ia32|universal)(?=[-_/.]|$)/;
 const magic = new Set(['feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']);
 
 function family(relative) {
