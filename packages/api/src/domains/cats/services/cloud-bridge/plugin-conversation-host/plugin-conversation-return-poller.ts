@@ -8,11 +8,14 @@ import type {
   CloudAssistantReturnIngestInput,
   CloudAssistantReturnIngestOutcome,
 } from '../cloud-assistant-return-ingest.js';
+import { type CloudCatConfigSource, resolveCloudConversationCat } from '../cloud-conversation-identity.js';
 import { readAckResult } from './conversation-host-results.js';
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 /** The #1531 cap: failures back off from twice the interval, doubling up to one round per 60s. */
 const MAX_BACKOFF_MS = 60_000;
+/** The ingest's answers when the provider has no single cloud cat: the return waits, unacked. */
+const NO_SINGLE_CLOUD_CAT: ReadonlySet<string> = new Set(['cloud_cat_unavailable', 'cloud_cat_ambiguous']);
 
 export interface ReturnPollScheduler {
   /** Runs `run` once after `delayMs`; the handle cancels it. */
@@ -56,8 +59,10 @@ class ReturnPollRoundError extends Error {
  * F202 W2-3 h3b — pulls assistant returns from whichever enabled package hosts the provider, and
  * only while one does (frozen h3「回复轮询跟着已启用的包走」).
  *
- * Nothing happens before `start()`. After it, the poller follows the registry: with no lease it
- * keeps no timer and logs nothing. Each lease is a generation with its own backoff and cursor.
+ * Nothing happens before `start()`. After it, the poller follows the registry and the cat
+ * configuration: with no lease, or without exactly one cloud cat for the provider (F202 h3c-3), it
+ * keeps no timer and logs nothing; `reevaluate()` re-reads the configuration even when the lease is
+ * unchanged. Each eligible stretch of a lease is a generation with its own backoff and cursor.
  * Rounds are chained, so a generation never has two in flight, and none is scheduled after its
  * lease ends; a late result from an ended generation touches nothing of the next one.
  *
@@ -76,6 +81,8 @@ export class PluginConversationReturnPoller {
     private readonly deps: {
       readonly registry: Pick<CloudConversationHostRegistry, 'current' | 'isCurrent' | 'subscribe'>;
       readonly provider: CloudConversationProvider;
+      /** The cats configured now; the provider must resolve to exactly one of them to be polled. */
+      readonly cats: CloudCatConfigSource;
       readonly ingestService: AssistantReturnIngestPort;
       readonly logger: ReturnPollerLogger;
       readonly grantPersistence: 'durable' | 'ephemeral';
@@ -102,9 +109,21 @@ export class PluginConversationReturnPoller {
     this.#end();
   }
 
-  #follow(): void {
+  /** Re-reads the cat configuration after the Host reconciled it; the lease may be unchanged. */
+  reevaluate(): void {
+    if (this.#unsubscribe) this.#follow();
+  }
+
+  /** The lease to poll: the provider's package, while exactly one cloud cat can receive its returns. */
+  #eligibleLease(): CloudConversationHostLease | undefined {
     const lease = this.deps.registry.current(this.deps.provider);
-    if (lease === this.#generation?.lease) return;
+    if (!lease) return undefined;
+    return resolveCloudConversationCat(this.deps.cats, this.deps.provider).status === 'resolved' ? lease : undefined;
+  }
+
+  #follow(): void {
+    const lease = this.#eligibleLease();
+    if (lease && lease === this.#generation?.lease) return;
     this.#end();
     if (!lease) return;
     const generation: Generation = { lease, pending: undefined, failures: 0, resumeAfter: undefined, ended: false };
@@ -142,6 +161,7 @@ export class PluginConversationReturnPoller {
     const { lease } = generation;
     const { list, ack } = lease.contribution.assistantReturns;
     const listed = await call(lease, list.method, generation.resumeAfter ? { after: generation.resumeAfter } : {});
+    if (generation.ended) return;
     if (!isCloudConversationListResult(listed)) {
       throw new ReturnPollRoundError(`${lease.pluginId} answered list outside the contract`);
     }
@@ -161,6 +181,12 @@ export class PluginConversationReturnPoller {
       content: item.content,
     });
     if (outcome.status === 'retry') return;
+    if (outcome.status === 'rejected' && NO_SINGLE_CLOUD_CAT.has(outcome.reason)) {
+      // Nobody can receive it now: it stays in the package, unacked, and polling pauses until the
+      // configuration names one cat again.
+      this.#follow();
+      return;
+    }
     if (
       outcome.status === 'rejected' &&
       outcome.reason === 'grant_not_found' &&
@@ -176,7 +202,7 @@ export class PluginConversationReturnPoller {
         '[F202] rejected a cloud conversation return outside the server-authorized source boundary',
       );
     }
-    if (!this.deps.registry.isCurrent(lease)) return;
+    if (generation.ended || !this.deps.registry.isCurrent(lease)) return;
     const acked = readAckResult(await call(lease, ack.method, cursor));
     if (!acked) throw new ReturnPollRoundError(`${lease.pluginId} answered ack outside the contract`);
     if (acked.status === 'failed' && acked.errorCode !== 'ASSISTANT_RETURN_NOT_FOUND') {

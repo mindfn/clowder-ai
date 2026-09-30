@@ -10,95 +10,11 @@
  */
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { PluginConversationReturnPoller } from '../dist/domains/cats/services/cloud-bridge/plugin-conversation-host/plugin-conversation-return-poller.js';
 import { CloudConversationHostRegistry } from '../dist/domains/plugin/declared/cloud-conversation-host-registry.js';
-import { cleanup, conversationHostHarness, hostManifest, METHODS, settle } from './f202-w2-3-h3b.fixture.js';
+import { cleanup, conversationHostHarness, METHODS, settle } from './f202-w2-3-h3b.fixture.js';
+import { CURSOR, fakePackage, methodsOf, pollerFor, RETURN } from './helpers/f202-return-poller-harness.js';
 
 after(cleanup);
-
-const RETURN = {
-  conversationId: 'conversation-1',
-  sourceMessageId: 'source-1',
-  assistantMessageId: 'assistant-1',
-  content: 'the answer',
-};
-const CURSOR = { conversationId: 'conversation-1', sourceMessageId: 'source-1', assistantMessageId: 'assistant-1' };
-
-function manualScheduler() {
-  const entries = [];
-  return {
-    schedule(run, delayMs) {
-      const entry = { run, delayMs, state: 'pending' };
-      entries.push(entry);
-      return {
-        cancel: () => {
-          if (entry.state === 'pending') entry.state = 'cancelled';
-        },
-      };
-    },
-    pending: () => entries.filter((entry) => entry.state === 'pending').map((entry) => entry.delayMs),
-    /** Runs the one pending round and lets it settle; returns the delay it had been scheduled with. */
-    async fire() {
-      const due = entries.filter((entry) => entry.state === 'pending');
-      assert.equal(due.length, 1, 'exactly one round is scheduled');
-      due[0].state = 'fired';
-      due[0].run();
-      await settle();
-      return due[0].delayMs;
-    },
-  };
-}
-
-/** A package the test answers for: `answers[method]` is a value, or a function of the input. */
-function fakePackage(registry, pluginId = 'dev.clowder.fake-host') {
-  const calls = [];
-  const answers = { [METHODS.list]: { returns: [] }, [METHODS.ack]: { status: 'acknowledged' } };
-  return {
-    calls,
-    answers,
-    register: () =>
-      registry.register({
-        provider: 'chatgpt',
-        pluginId,
-        pluginInstanceId: `pi_${pluginId}`,
-        contribution: hostManifest({ pluginId }).contributions[0],
-        attempt: async (method, params) => {
-          calls.push({ method, params });
-          try {
-            const answer = answers[method];
-            return { status: 'returned', value: typeof answer === 'function' ? await answer(params) : answer };
-          } catch (error) {
-            return { status: 'failed', effect: 'unknown', error };
-          }
-        },
-      }),
-  };
-}
-
-function pollerFor(registry, { ingest = async () => ({ status: 'persisted', messageId: 'm-1' }), ephemeral } = {}) {
-  const scheduler = manualScheduler();
-  const lines = [];
-  const ingested = [];
-  const poller = new PluginConversationReturnPoller({
-    registry,
-    provider: 'chatgpt',
-    ingestService: {
-      ingest: async (input) => {
-        ingested.push(input);
-        return ingest(input);
-      },
-    },
-    logger: {
-      info: (context, message) => lines.push({ level: 'info', message, context }),
-      warn: (context, message) => lines.push({ level: 'warn', message, context }),
-    },
-    grantPersistence: ephemeral ? 'ephemeral' : 'durable',
-    scheduler,
-  });
-  return { poller, scheduler, lines, ingested };
-}
-
-const methodsOf = (pkg) => pkg.calls.map((call) => call.method);
 
 test('nothing before start(); no package means no timer and no log; a package is polled at once, and only while held', async () => {
   const registry = new CloudConversationHostRegistry();
