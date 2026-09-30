@@ -393,7 +393,7 @@ export interface AntigravityAgentServiceOptions {
   connection?: Partial<BridgeConnection>;
   /** Inject bridge for testing */
   bridge?: AntigravityBridge;
-  /** Idle stall timeout in ms — resets on each new step (default: 60s) */
+  /** Test seam for bridge stalls. Production has no independent no-step deadline. */
   pollTimeoutMs?: number;
   /** Auto-approve pending Antigravity interactions — YOLO mode (default: true) */
   autoApprove?: boolean;
@@ -443,7 +443,7 @@ export class AntigravityAgentService implements AgentService {
         runtimeSessionStore: options?.runtimeSessionStore,
         legacyJsonSessionStore: options?.legacyJsonSessionStore === true,
       });
-    this.pollTimeoutMs = options?.pollTimeoutMs ?? 60_000;
+    this.pollTimeoutMs = options?.pollTimeoutMs ?? Number.POSITIVE_INFINITY;
     let autoApprove = process.env.ANTIGRAVITY_AUTO_APPROVE !== 'false';
     if (options?.autoApprove !== undefined) autoApprove = options.autoApprove;
     this.autoApprove = autoApprove;
@@ -982,7 +982,13 @@ export class AntigravityAgentService implements AgentService {
 
         // Abort check after send
         if (options?.signal?.aborted) {
-          yield { type: 'error', catId: this.catId, error: 'Aborted after send', metadata, timestamp: Date.now() };
+          yield {
+            type: 'error',
+            catId: this.catId,
+            error: 'Aborted after send; remote cascade termination is unconfirmed',
+            metadata,
+            timestamp: Date.now(),
+          };
           yield emitDone();
           return;
         }
@@ -2510,7 +2516,10 @@ export class AntigravityAgentService implements AgentService {
       yield {
         type: 'error',
         catId: this.catId,
-        error: errorMsg,
+        error:
+          isInterruptionAbort && lastKnownCascadeId
+            ? `${errorMsg}; remote cascade termination is unconfirmed`
+            : errorMsg,
         // F211-REG6: only a genuine error crash-seals; an interruption-abort preserves the cascade
         // (no seal, like a normal turn-end) so the next message reuses it (REG5) instead of the old
         // crash-seal that fired cascade-replacement and lost continuity.

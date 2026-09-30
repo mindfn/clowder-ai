@@ -11,6 +11,7 @@ process.env.CLI_TIMEOUT_MS = '1000';
 const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
 const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
+const { A2AAgentService } = await import('../dist/domains/cats/services/agents/providers/A2AAgentService.js');
 const { createMemberTimeoutStop, MEMBER_TIMEOUT_REASON } = await import(
   '../dist/domains/cats/services/agents/invocation/member-output-timeout.js'
 );
@@ -171,6 +172,30 @@ function assertFinishedMember(result, catId) {
 }
 
 describe('F117 J4: a timed-out member is stopped like Stop, alone', () => {
+  it('G1: the unified timeout aborts only the A2A member fetch, while its producing sibling finishes', async () => {
+    let remoteWaitAborted = false;
+    const remoteService = new A2AAgentService({
+      catId: 'opus',
+      config: { url: 'http://mock.local', timeoutMs: 10 },
+      fetchFn: async (_url, options) =>
+        new Promise((_resolve, reject) => {
+          const onAbort = () => {
+            remoteWaitAborted = true;
+            reject(new Error('local wait aborted'));
+          };
+          if (options.signal.aborted) onAbort();
+          else options.signal.addEventListener('abort', onAbort, { once: true });
+        }),
+    });
+    const result = await dispatch(routeParallel, ['opus', 'codex'], {
+      opus: remoteService,
+      codex: answeringService('codex', 1600),
+    });
+    assert.equal(remoteWaitAborted, true);
+    assertTimedOutMember(result, 'opus');
+    assertFinishedMember(result, 'codex');
+  });
+
   it('parallel: stops the silent member and lets its sibling finish', async () => {
     const result = await dispatch(routeParallel, ['opus', 'codex'], {
       opus: silentService('opus'),

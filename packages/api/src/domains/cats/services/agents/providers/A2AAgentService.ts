@@ -79,13 +79,10 @@ export class A2AAgentService implements AgentService {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
 
-    // Combine caller's abort signal with timeout (P1-2: cancellation support)
-    const timeoutMs = this.config.timeoutMs ?? 120_000;
-    const signals: AbortSignal[] = [AbortSignal.timeout(timeoutMs)];
-    if (options?.signal) {
-      signals.push(options.signal);
-    }
-    const combinedSignal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    // The synchronous tasks/send response is the whole remote turn, not a
+    // connection handshake. A local request deadline would race the member's
+    // sole no-output timer and cannot prove the remote task was cancelled.
+    const signal = options?.signal;
 
     yield agentMsg('session_init', this.catId);
 
@@ -95,7 +92,7 @@ export class A2AAgentService implements AgentService {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: combinedSignal,
+        signal,
       });
 
       if (!response.ok) {
@@ -124,14 +121,19 @@ export class A2AAgentService implements AgentService {
         yield m;
       }
 
-      if (!messages.some((m) => m.type === 'done')) {
-        yield agentMsg('done', this.catId);
+      if (!messages.some((message) => message.type === 'done' || message.type === 'error')) {
+        yield agentMsg(
+          'error',
+          this.catId,
+          `A2A task status ${rpcResponse.result.status} does not confirm successful completion; remote task termination is unconfirmed`,
+        );
       }
     } catch (err) {
-      // Distinguish caller-initiated cancel from timeout
+      // Aborting fetch only ends our local wait. The remote task may still be
+      // running; without an acknowledged tasks/cancel, never report success.
       const isCallerAbort = options?.signal?.aborted === true;
       if (isCallerAbort) {
-        yield agentMsg('done', this.catId); // Graceful cancel = done
+        yield agentMsg('error', this.catId, 'A2A local wait cancelled; remote task termination is unconfirmed');
       } else {
         const errMsg = err instanceof Error ? err.message : String(err);
         yield agentMsg('error', this.catId, `A2A connection error: ${errMsg}`);
