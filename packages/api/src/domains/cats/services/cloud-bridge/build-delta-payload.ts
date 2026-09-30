@@ -113,10 +113,8 @@ function renderAbsoluteFloor(params: CloudInvokeDispatchParams): string {
  *
  * Returns a single string with the JSON-wrapped delta block followed by a
  * blank line, the raw intent text (for the cat to treat as the user message),
- * and the fixed source-bound MCP return contract. Caller should call this
- * BEFORE invoking the PinchTab adapter
- * so the rendered string is then JSON.stringify'd at the eval boundary
- * (defense in depth — AC-B1c-10).
+ * and the fixed source-bound MCP return contract. The caller hands the result to the
+ * conversation Host adapter as data; it is never evaluated as code.
  */
 export function buildDeltaPayload(params: CloudInvokeDispatchParams): string {
   assertExactSourceMessageId(params.sourceMessageId);
@@ -207,18 +205,4 @@ function renderEnvelope(params: CloudInvokeDispatchParams, intent: string): stri
   // JSON.stringify with no spaces — compact, stable, escapes all delimiters.
   const json = JSON.stringify(delta);
   return `<thread-runtime v=1 format=json>\n${json}\n</thread-runtime>\n\n${intent}\n\n${SOURCE_BOUND_MCP_RETURN_CONTRACT}`;
-}
-
-/**
- * **Eval-boundary safety helper (AC-B1c-10)**: returns a JavaScript expression
- * that, when evaluated, produces the literal payload string. Used by the
- * PinchTab adapter when constructing `pinchtab_eval` / CDP `Runtime.evaluate`
- * input — any user-controlled string interpolation goes through this to
- * prevent breaking out of the eval string literal.
- *
- * Equivalent to `JSON.stringify(payload)` but with an explicit contract name
- * for code review grep-ability.
- */
-export function quoteForEval(payload: string): string {
-  return JSON.stringify(payload);
 }

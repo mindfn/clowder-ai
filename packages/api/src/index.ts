@@ -2259,15 +2259,8 @@ async function main(): Promise<void> {
     await import('./domains/concierge/ConciergeInvestigationJobStore.js');
   const conciergeInvestigationJobStore = redis ? new _RIJSEarly(redis) : new _MIJSEarly();
 
-  // F247: Cloud invoke bridge — background Host Adapter first. The legacy
-  // PinchTab transport is foreground UI automation and therefore opt-in only.
-  const legacyPinchTabEnabled = process.env.CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE === '1';
-  const pinchTabAdapter = legacyPinchTabEnabled
-    ? new (await import('./domains/cats/services/cloud-bridge/pinchtab-bridge-adapter.js')).PinchTabBridgeAdapter()
-    : null;
-  if (legacyPinchTabEnabled) {
-    app.log.warn('[api] F247 legacy PinchTab bridge explicitly enabled; it may control foreground browser UI');
-  }
+  // F247: Cloud invoke bridge — the background conversation Host adapter is the only transport
+  // (the legacy PinchTab bridge was removed, issue #1538).
   const { CloudInvokeBridge } = await import('./domains/cats/services/cloud-bridge/cloud-invoke-bridge.js');
   const bridgeLogger = (await import('./infrastructure/logger.js')).createModuleLogger('cloud-bridge');
   const { createRefreshablePersonalChromeHostAdapter } = await import(
@@ -2309,7 +2302,6 @@ async function main(): Promise<void> {
   app.addHook('onClose', async () => personalChromeAssistantReturnPoller.stop());
   const cloudInvokeBridge = new CloudInvokeBridge({
     hostAdapter: personalChromeHostAdapter,
-    pinchTabAdapter,
     emitFallback: async ({ threadId: fbThreadId, catId: fbCatId, reason }) => {
       // invokeSingleCat owns the one user-visible status so route persistence,
       // F167 disposition, and Queue settlement share one child invocation.
