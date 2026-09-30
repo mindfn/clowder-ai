@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+import vm from 'node:vm';
 import { probeNode, smokeNativeModules } from './lib/build-node.mjs';
 
 const root = path.resolve(import.meta.dirname, '../..');
@@ -16,6 +17,65 @@ if (process.env.CLOWDER_REQUIRE_NATIVE_ARTIFACT_TESTS === '1')
 const requireSource = createRequire(path.join(sourceApi, 'package.json'));
 const modules = ['better-sqlite3', 'sqlite-vec', 'node-pty', 'sharp'];
 const guard = path.join(import.meta.dirname, 'lib/native-artifact-guard.cjs');
+
+function windowsPathAudit(api, targets = new Map()) {
+  const probe = {
+    platform: 'win32',
+    env: { CLOWDER_NATIVE_SMOKE_ROOT: api, SystemRoot: 'C:\\Windows' },
+    report: { getReport: () => ({ sharedObjects: [] }) },
+    dlopen() {},
+  };
+  const context = vm.createContext({
+    process: probe,
+    console: { log() {} },
+    require(name) {
+      if (name === 'node:fs') return { realpathSync: (file) => targets.get(file) || file };
+      if (name === 'node:path') return path.win32;
+      if (name === 'node:module') return { registerHooks() {} };
+      if (name === 'node:url')
+        return {
+          fileURLToPath() {
+            throw new Error('Not a URL probe');
+          },
+        };
+      throw new Error(`Unexpected probe dependency: ${name}`);
+    },
+  });
+  vm.runInContext(fs.readFileSync(guard, 'utf8'), context);
+  return context.clowderNativeArtifactAudit;
+}
+
+test('Windows native containment accepts ordinary and namespaced drive/UNC spelling', () => {
+  // Exercise the real guard with Windows path semantics. This is a path
+  // contract test; the real Windows native suite below remains mandatory CI.
+  for (const api of ['C:\\Artifact\\api', '\\\\server\\share\\Artifact\\api']) {
+    const audit = windowsPathAudit(api);
+    const native = path.win32.join(api, 'node_modules', 'pty', 'native.node');
+    assert.equal(audit.artifactPath(path.win32.toNamespacedPath(native)), path.win32.toNamespacedPath(native));
+    audit.assertComplete();
+  }
+});
+
+test('Windows namespace normalization still rejects siblings, other drives and UNC shares', () => {
+  const api = 'C:\\Artifact\\api';
+  for (const external of [
+    'C:\\Artifact\\api\\node_modules-elsewhere\\native.node',
+    'D:\\Artifact\\api\\node_modules\\native.node',
+    '\\\\server\\other-share\\Artifact\\api\\node_modules\\native.node',
+  ]) {
+    const audit = windowsPathAudit(api);
+    assert.throws(() => audit.artifactPath(path.win32.toNamespacedPath(external)), /escapes deployed node_modules/);
+    assert.throws(() => audit.assertComplete(), /escapes deployed node_modules/);
+  }
+});
+
+test('Windows namespaced symlink targets remain subject to realpath containment', () => {
+  const api = 'C:\\Artifact\\api';
+  const alias = path.win32.toNamespacedPath(path.win32.join(api, 'node_modules', 'native.node'));
+  const outside = path.win32.toNamespacedPath('C:\\Host\\native.node');
+  const audit = windowsPathAudit(api, new Map([[alias, outside]]));
+  assert.throws(() => audit.artifactPath(alias), /escapes deployed node_modules/);
+});
 
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-artifact-'));

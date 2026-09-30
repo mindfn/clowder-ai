@@ -11,7 +11,10 @@ const nativeFiles = new Set();
 const before = new Set(process.report.getReport().sharedObjects);
 
 function within(file, directory) {
-  const relative = path.relative(directory, file);
+  // Windows dlopen receives \\?\ paths even when the deployment root uses
+  // ordinary drive/UNC spelling. Compare both in Node's namespace form;
+  // realpath still resolves symlinks before artifact containment is checked.
+  const relative = path.relative(path.toNamespacedPath(directory), path.toNamespacedPath(file));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
