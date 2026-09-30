@@ -61,6 +61,19 @@ export function engineAt(root) {
   return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).engines?.node;
 }
 
+function probeEnv(executable) {
+  // Do not inherit NODE_OPTIONS/NODE_PATH, loader search overrides, compile
+  // caches or host PATH. Keep only OS variables required for child creation.
+  const env = {};
+  for (const key of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR']) {
+    const existing = Object.keys(process.env).find((name) => name.toLowerCase() === key.toLowerCase());
+    if (existing) env[key] = process.env[existing];
+  }
+  const systemPath = process.platform === 'win32' ? path.join(env.SystemRoot, 'System32') : '/usr/bin:/bin';
+  env.PATH = path.dirname(path.resolve(executable)) + path.delimiter + systemPath;
+  return env;
+}
+
 export function probeNode(executable, timeout = 15000) {
   return JSON.parse(
     execFileSync(
@@ -69,7 +82,7 @@ export function probeNode(executable, timeout = 15000) {
         '-p',
         'JSON.stringify({version:process.version,abi:process.versions.modules,platform:process.platform,arch:process.arch})',
       ],
-      { encoding: 'utf8', timeout },
+      { encoding: 'utf8', timeout, env: probeEnv(executable) },
     ),
   );
 }
@@ -77,28 +90,13 @@ export function probeNode(executable, timeout = 15000) {
 // Run against deployed/installed files with the bundled executable. In-memory
 // SQLite only; no Redis, user profile, persistent DB or running service access.
 export function smokeNativeModules(executable, apiDir, timeout = 30000) {
-  const script = `
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const { createRequire } = require('node:module');
-    const api = fs.realpathSync(process.argv[1]);
-    const requireApi = createRequire(path.join(api, 'package.json'));
-    const modules = ['better-sqlite3', 'sqlite-vec', 'node-pty', 'sharp'];
-    for (const name of modules) {
-      const entry = fs.realpathSync(requireApi.resolve(name));
-      if (!entry.startsWith(path.join(api, 'node_modules') + path.sep)) {
-        throw new Error(name + ' resolved outside the deployed API: ' + entry);
-      }
-    }
-    const db = new (requireApi('better-sqlite3'))(':memory:');
-    try {
-      requireApi('sqlite-vec').load(db);
-      console.log('sqlite/vec:', db.prepare('select vec_version() as v').get().v);
-    } finally { db.close(); }
-    requireApi('node-pty');
-    requireApi('sharp')({create:{width:1,height:1,channels:3,background:'white'}})
-      .png().toBuffer().then(() => console.log('native-smoke: OK'))
-      .catch(error => { console.error(error); process.exitCode = 1; });
-  `;
-  return execFileSync(executable, ['-e', script, path.resolve(apiDir)], { encoding: 'utf8', timeout });
+  const api = fs.realpathSync(apiDir);
+  const guard = path.join(import.meta.dirname, 'native-artifact-guard.cjs');
+  const script = fs.readFileSync(path.join(import.meta.dirname, 'native-artifact-smoke.cjs'), 'utf8');
+  return execFileSync(path.resolve(executable), ['--require', guard, '-e', script, api], {
+    encoding: 'utf8',
+    timeout,
+    cwd: api,
+    env: { ...probeEnv(executable), CLOWDER_NATIVE_SMOKE_ROOT: api },
+  });
 }

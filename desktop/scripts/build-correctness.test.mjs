@@ -103,7 +103,7 @@ test('native smoke cannot fall back to build-host modules when deploy is incompl
       { encoding: 'utf8' },
     );
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /better-sqlite3/);
+    assert.match(result.stderr, /better-sqlite3|node_modules/);
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
   }
