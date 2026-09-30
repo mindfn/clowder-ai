@@ -7,6 +7,8 @@ tips_exempt: Correctness guards on the existing desktop build pipeline, without 
 
 # #1452 构建正确性：实现与真实安装产物证据
 
+本页保留 R1 历史证据。astra R1 找到两项坏样本假绿，当前交付与更严格的原生闭包校验见 [R2 修复与复验](review-r2.md)；R1 好样本通过不能替代该修复。
+
 ## 来源与范围
 
 Accepted source：`thread_muobvw9ekjosyqrp#0001790786232368-000584-9be83991`；operator 授权锚 `thread_muoam919d5s6xe4l#0001790785661741-000557-65576650`。参考 [whutzefengxie-ops 的 #1452](https://github.com/zts212653/clowder-ai/pull/1452)，当前 gh 复核 OPEN、非 bot 作者、exact HEAD `a7558e0453070429651206ef773763cd415ad245`；按 [#1459 maintainer 方向](https://github.com/zts212653/clowder-ai/issues/1459#issuecomment-5658770842) 接手窄切片。保留社区贡献来源，不宣称从零发现。
@@ -51,7 +53,7 @@ Redis pin/static manifest 无 last-shipped provenance，未进入实现；Redis 
 
 最终 canonical 命令：`env -u NODE_ENV -u npm_config_production -u NPM_CONFIG_PRODUCTION bash desktop/scripts/build-mac.sh --skip-web --skip-deploy --skip-node --skip-redis --arch arm64`，exit 0：[打包日志](evidence/mac-package-green.txt)。复用的 Web/deploy/Node/Redis 都是在本 worktree 生成，native 与版本缓存重新校验。afterPack 验证 **40 个 Mach-O**，签名通过，包内 Node/native smoke 通过，随后生成 771.85MB DMG。
 
-产物：`dist/ClowderAI-0.10.1-arm64.dmg`；SHA-256 **`942bc1a4305e9f104f8e7bd333ec4fdda629c11b095afefe4b30f414239f7324`**。OS **macOS 26.6.2 arm64**；build commit **`50d2be18146f1c3705444399fff45080794b5880`**；实际包内 Node **v24.15.0 / native ABI 137 / darwin arm64**。
+R1 产物现保留为 `dist/ClowderAI-0.10.1-arm64-r1-942bc1a4.dmg`；SHA-256 **`942bc1a4305e9f104f8e7bd333ec4fdda629c11b095afefe4b30f414239f7324`**。OS **macOS 26.6.2 arm64**；build commit **`50d2be18146f1c3705444399fff45080794b5880`**；实际包内 Node **v24.15.0 / native ABI 137 / darwin arm64**。
 
 安装包再经过 `hdiutil verify`，只读挂载后重新执行 `codesign --verify --deep`、实际40个 Mach-O扫描、包内 Node/SQLite/vec/pty/sharp smoke；全部成功，挂载已正常 detach。挂载镜像的首次 Node 探测实际 **17156ms**，直接证明原15s预算不足。没有启动整套 app、访问运行端口或持久化数据。[只读安装镜像证据](evidence/dmg-readonly-green.txt)、[产物身份](evidence/artifact-identity.json)；复跑 harness 在本 worktree `.acceptance/verify-dmg.mjs`。
 
