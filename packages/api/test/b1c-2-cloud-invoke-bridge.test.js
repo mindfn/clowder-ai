@@ -295,6 +295,46 @@ describe('F247 Host Adapter: background append without foreground UI takeover', 
     assert.equal(fallback.calls[0].reason, 'needs-binding');
   });
 
+  it('reports a Host failure after the request was handed over as unknown, never as not sent', async () => {
+    const existing = 'https://chatgpt.com/c/existing-uuid';
+    const threadStore = makeMockThreadStore({ initialBindings: { 'gpt-pro': existing } });
+    const fallback = makeRecordingFallback();
+    let hostCalls = 0;
+    const ambiguous = Object.assign(new Error('connection failed after the request was sent'), {
+      code: 'AMBIGUOUS_EFFECT',
+    });
+    const bridge = new CloudInvokeBridge({
+      hostAdapter: {
+        append_message: async () => {
+          hostCalls += 1;
+          throw ambiguous;
+        },
+      },
+      emitFallback: fallback.fn,
+      threadStore,
+    });
+
+    const outcome = await bridge.dispatchInternal(baseParams);
+
+    assert.equal(outcome.kind, 'error');
+    assert.equal(outcome.reason, 'host-append-failed');
+    assert.equal(hostCalls, 1, 'one send, and no second transport');
+    const { outboundReceipt } = JSON.parse(
+      buildCloudBridgeStatusContent({
+        catId: 'gpt-pro',
+        outcome,
+        audit: {
+          sourceMessageId: 'source-message-123',
+          sourceSender: { kind: 'user', id: 'alice' },
+          dispatchInvocationId: 'inv-ambiguous',
+        },
+      }),
+    );
+    assert.equal(outboundReceipt.status, 'unknown');
+    assert.equal(outboundReceipt.transport, 'host');
+    assert.equal(outboundReceipt.idempotency.disposition, 'unknown');
+  });
+
   it('treats a refreshable Host with no installation as unavailable rather than a broken delivery', async () => {
     const existing = 'https://chatgpt.com/c/existing-uuid';
     const threadStore = makeMockThreadStore({ initialBindings: { 'gpt-pro': existing } });
