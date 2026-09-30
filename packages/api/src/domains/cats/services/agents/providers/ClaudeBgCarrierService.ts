@@ -659,6 +659,7 @@ export class ClaudeBgCarrierService implements AgentService {
     // (multi-text-block last turns where output.result is the concatenation)
     // get a duplicate text rather than silent loss — acceptable tradeoff.
     let lastAssistantText = '';
+    const textBoundaryState = {};
     const yieldFromTranscript = function* (this: ClaudeBgCarrierService, entries: unknown[]): Generator<AgentMessage> {
       for (const raw of entries) {
         if (typeof raw === 'object' && raw !== null) {
@@ -683,7 +684,7 @@ export class ClaudeBgCarrierService implements AgentService {
           }
         }
       }
-      for (const msg of transcriptEntriesToAgentMessages(entries, { catId: this.catId })) {
+      for (const msg of transcriptEntriesToAgentMessages(entries, { catId: this.catId, textBoundaryState })) {
         yield msg;
       }
     }.bind(this);
