@@ -34,6 +34,10 @@ async function checkPty() {
       });
       terminal.onExit(({ exitCode }) => {
         clearTimeout(timer);
+        // Windows natural exit closes the output socket but leaves node-pty's
+        // conout worker alive. Its public kill() disposes this owned session,
+        // drains/terminates the worker and exercises the cleanup helper.
+        if (process.platform === 'win32') terminal.kill();
         if (exitCode === 0 && output.includes('CLOWDER_PTY_OK')) resolve();
         else reject(new Error(`Native PTY smoke failed: exit=${exitCode}, output=${output}`));
       });
