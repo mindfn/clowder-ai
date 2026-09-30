@@ -373,6 +373,29 @@ describe('MCP Callback Tools', () => {
     assert.deepEqual(JSON.parse(thread.content[0].text), payloads[1]);
   });
 
+  test('G3 oversized queued MCP projection preserves unavailable drill and pending custody', async () => {
+    const { handleGetThreadContext } = await import('../dist/tools/callback-tools.js');
+    const payload = {
+      threadId: 'thread',
+      hasMore: false,
+      messages: [
+        {
+          id: 'persisted-private-work',
+          queueEntryId: 'queue-1',
+          deliveryStatus: 'queued',
+          contentLength: 12000,
+          oversized: true,
+          truncated: true,
+          drillUnavailableReason: 'queued body is not published for get_message; retry after delivery',
+        },
+      ],
+    };
+    globalThis.fetch = async () => ({ ok: true, json: async () => payload });
+    const result = await handleGetThreadContext({ responseMode: 'full' });
+    assert.deepEqual(JSON.parse(result.content[0].text), payload);
+    assert.equal(JSON.parse(result.content[0].text).messages[0].drillDown, undefined);
+  });
+
   test('handleListTasks forwards taskId why-drill param (F236 AC-A4)', async () => {
     const { handleListTasks } = await import('../dist/tools/callback-tools.js');
 

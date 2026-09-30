@@ -179,28 +179,62 @@ describe('G3 callback quote projection (real routes, isolated memory stores)', (
     assert.equal(preview.drillDown.args.mode, 'full');
   });
 
-  test('a quote-heavy queued full body is budgeted before read exposure and is not acknowledged', async () => {
-    const original = append({ contentBlocks: [quote('中'.repeat(12000))], deliveryStatus: 'queued' });
-    const queued = queue.enqueueDurableNow({
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'strict',
-      threadId: thread.id,
-      userId: 'user-1',
-      from: { kind: 'user', userId: 'user-1' },
-      content: '',
-      messageId: original.id,
-      targetCats: ['opus'],
-      authorIntentByCatId: { opus: { requested: 'continue_current', boundParentInvocationId: invocationId } },
-      intent: 'execute',
-      sourceId: 'quote-queue',
+  for (const kind of ['quote', 'plaintext']) {
+    test(`oversized queued ${kind} reports unavailable drill until publication and retains unread custody`, async () => {
+      const original = append({
+        content: kind === 'plaintext' ? '中'.repeat(12000) : '',
+        contentBlocks: kind === 'quote' ? [quote('中'.repeat(12000))] : undefined,
+        deliveryStatus: 'queued',
+      });
+      const queued = queue.enqueueDurableNow({
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'strict',
+        threadId: thread.id,
+        userId: 'user-1',
+        from: { kind: 'user', userId: 'user-1' },
+        content: original.content,
+        messageId: original.id,
+        targetCats: ['opus'],
+        authorIntentByCatId: { opus: { requested: 'continue_current', boundParentInvocationId: invocationId } },
+        intent: 'execute',
+        sourceId: 'quote-queue',
+      });
+      const pending = queue.getEntrySnapshot(thread.id, 'user-1', queued.entry.id);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await read('thread-context?responseMode=full');
+        assert.ok(result.bytes <= 24000);
+        const message = result.body.messages.find((m) => m.id === original.id);
+        assert.equal(message.oversized, true);
+        assert.equal(message.drillDown, undefined, 'unpublished persisted work cannot advertise get_message');
+        assert.match(message.drillUnavailableReason, /not.*published.*retry after delivery/);
+        assert.equal(message.deliveryStatus, 'queued');
+        assert.equal(message.content, undefined);
+        assert.equal(message.contentBlocks, undefined);
+        const snapshot = queue.getEntrySnapshot(thread.id, 'user-1', queued.entry.id);
+        assert.equal(snapshot.status, pending.status);
+        assert.deepEqual(snapshot.delivery, pending.delivery, 'no read exposure or adoption from an anchor');
+        const blocked = await app.inject({
+          method: 'GET',
+          url: `/api/callbacks/get-message?messageId=${original.id}&mode=full`,
+          headers,
+        });
+        assert.equal(blocked.statusCode, 404, 'ordinary get_message publication gate stays closed');
+      }
+      // Once actual delivery publishes the row, follow the advertised pointer rather
+      // than only checking its shape. The complete original payload must be available.
+      store.markDelivered(original.id, Date.now());
+      const published = (await read('thread-context?responseMode=full')).body.messages.find(
+        (m) => m.id === original.id,
+      );
+      assert.equal(published.oversized, true);
+      assert.equal(published.drillUnavailableReason, undefined);
+      assert.equal(published.drillDown.tool, 'cat_cafe_get_message');
+      const drillArgs = new URLSearchParams(published.drillDown.args);
+      const drill = (await read(`get-message?${drillArgs}`)).body.message;
+      assert.equal(drill.content, original.content);
+      assert.deepEqual(drill.contentBlocks, original.contentBlocks);
     });
-    const result = await read('thread-context?responseMode=full');
-    assert.ok(result.bytes <= 24000);
-    const message = result.body.messages.find((m) => m.id === original.id);
-    assert.equal(message.oversized, true);
-    assert.equal(message.drillDown.args.messageId, original.id);
-    assert.equal('bodyExposures' in queue.getEntrySnapshot(thread.id, 'user-1', queued.entry.id).delivery, false);
-  });
+  }
 
   test('quote projection cannot expose other owners, deleted rows or play-mode whispers (including neighbors)', async () => {
     threads.updateThinkingMode(thread.id, 'play');

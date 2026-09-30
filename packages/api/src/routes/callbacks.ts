@@ -4497,6 +4497,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     });
     const queuedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = queuedFullMessages.map(
       (message) => {
+        const sourceMessage = queuedSourceMessages.get(message.id);
+        // Persistence does not grant ordinary get-message access to private queued
+        // work. Only advertise its drill when the scoped source is published and
+        // noninternal; otherwise keep custody pending until actual delivery.
+        const canDrillSource =
+          sourceMessage && isTimelinePublished(sourceMessage) && !isInternalNonQuotableParent(sourceMessage);
         const anchored = anchorThreadMessage(
           {
             id: message.id,
@@ -4521,9 +4527,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             truncated: true,
             deliveryStatus: message.deliveryStatus,
             queueEntryId: message.queueEntryId,
-            ...(message.id.startsWith('queued:')
-              ? { drillUnavailableReason: 'queued body has no persisted message anchor yet; retry after persistence' }
-              : { drillDown: anchored.drillDown }),
+            ...(canDrillSource
+              ? { drillDown: anchored.drillDown }
+              : {
+                  drillUnavailableReason: message.id.startsWith('queued:')
+                    ? 'queued body has no persisted message anchor yet; retry after persistence and delivery'
+                    : 'queued body is not published for get_message; retry after delivery',
+                }),
           },
           originalChars: callbackMessageText(message).length,
           source: 'queued',

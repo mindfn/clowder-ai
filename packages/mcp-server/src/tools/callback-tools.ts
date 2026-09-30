@@ -505,7 +505,7 @@ export const getThreadContextInputSchema = {
     .optional()
     .describe(
       'Response projection mode. "anchor" (DEFAULT — omit for normal browsing): token-lean previews with drillDown pointers to full content. ' +
-        '"full": returns complete message bodies inside a bounded aggregate page; use nextCursor when hasMore=true. A persisted message larger than the page is returned as an honest anchor with a precise drill pointer; a transient queued body without a persisted message anchor remains unseen and says to retry after persistence. ' +
+        '"full": returns complete message bodies inside a bounded aggregate page; use nextCursor when hasMore=true. A published message larger than the page is returned as an honest anchor with a precise drill pointer. An oversized queued body without ordinary get_message publication access remains unseen, has no drill pointer, and says to retry after delivery (and persistence if needed). Persistence alone does not grant get_message access. ' +
         'An oversized workflow SOP is likewise returned as an honest anchor that points to cat_cafe_get_workflow_sop instead of overflowing the aggregate envelope. ' +
         'Use "full" for a complete catch-up of the current unread selection: current-thread reads prefer the unread delta, and only complete bodies advance queued-read evidence. ' +
         'The response contextScope names that selection: contextScope="unread_delta" contains only currently unread relevant messages, so hasMore=false closes that unread selection rather than proving that all thread history was returned. Use anchor browsing or a messageId window to inspect older history. ' +
