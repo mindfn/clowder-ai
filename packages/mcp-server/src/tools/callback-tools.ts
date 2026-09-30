@@ -3368,6 +3368,7 @@ export const callbackTools = [
       'Use when: browsing the current conversation, reading a different known threadId, finding relevant messages inside that thread, opening context around a known messageId, or explicitly catching up. ' +
       'NOT for: finding features, decisions, plans, lessons, or unknown threads across project knowledge; use search_evidence or list_threads first. ' +
       'Output: a bounded aggregate envelope with threadId, ordered messages, contextScope, hasMore, and nextCursor when continuation is required; anchor mode includes drillDown pointers, while responseMode="full" returns complete bodies per ordinary item and includes same-target queued bodies. contextScope="unread_delta" contains only currently unread relevant messages; in that scope hasMore=false closes the unread selection, not all thread history. Use anchor browsing or a messageId window to inspect older history. ' +
+      'Quote/comment text participates in previews and keyword matching. Full items retain raw content plus contentBlocks with quote source/selection metadata; empty content does not mean an empty message when contentBlocks are present. Preview contentLength measures projected text; full contentLength measures raw content. ' +
       'When available, situation reports exact lifecycle-backed active runs (target, source messages, response, invocation); situation.complete=false means runtime evidence could not be fully joined, so do not infer execution from recent speech. ' +
       'GOTCHA: keyword ranking is best-effort over a bounded recent scan; scanCapped=true means older history may contain additional matches. A single item larger than the full-page budget falls back to an honest anchor; drill an oversized workflow SOP with cat_cafe_get_workflow_sop using the returned threadId. Anchor mode does not consume queued bodies; for a complete catch-up of current unread work, use responseMode="full" with no catId/keyword/messageId filters and follow nextCursor until hasMore=false. Pass threadId only to read a different thread; omit it for the current thread.',
     inputSchema: getThreadContextInputSchema,
@@ -3413,7 +3414,7 @@ export const callbackTools = [
       'call this to read the original quoted message and its surrounding context. ' +
       'Returns the message content, sender, timestamp, and optionally N nearby messages for context. ' +
       'PARAM GUIDE: messageId = required exact ID. contextCount = number of messages before/after to include (default 0, max 10). ' +
-      'mode = "preview" (default — bounded excerpt that saves context) or "full" (complete original content; use when you need the whole message — anchor drillDown pointers already request mode=full).',
+      'mode = "preview" (default — bounded excerpt including quote/comment text) or "full" (raw content plus original contentBlocks, including quote source/selection metadata; empty content can have nonempty blocks). Preview contentLength measures projected text; full contentLength measures raw content. Use full when you need the whole message — anchor drillDown pointers already request mode=full.',
     inputSchema: {
       messageId: z.string().min(1).describe('The exact message ID to look up'),
       contextCount: z

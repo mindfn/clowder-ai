@@ -341,6 +341,38 @@ describe('MCP Callback Tools', () => {
     assert.deepEqual(JSON.parse(result.content[0].text), routePayload);
   });
 
+  test('G3 full message and thread MCP readers preserve quote blocks and provenance verbatim', async () => {
+    const { handleGetMessage, handleGetThreadContext } = await import('../dist/tools/callback-tools.js');
+    const message = {
+      id: 'quote-only',
+      content: '',
+      contentLength: 0,
+      truncated: false,
+      contentBlocks: [
+        {
+          type: 'context_attachment',
+          attachment: {
+            v: 1,
+            id: 'q1',
+            kind: 'quote',
+            text: 'quoted text',
+            comment: 'user comment',
+            selectionStart: 2,
+            selectionEnd: 13,
+            source: { kind: 'message', threadId: 'source-thread', messageId: 'source-message' },
+          },
+        },
+      ],
+    };
+    const payloads = [{ message }, { threadId: 'thread', messages: [message], hasMore: false }];
+    let call = 0;
+    globalThis.fetch = async () => ({ ok: true, json: async () => payloads[call++] });
+    const single = await handleGetMessage({ messageId: 'quote-only', mode: 'full' });
+    const thread = await handleGetThreadContext({ responseMode: 'full' });
+    assert.deepEqual(JSON.parse(single.content[0].text), payloads[0]);
+    assert.deepEqual(JSON.parse(thread.content[0].text), payloads[1]);
+  });
+
   test('handleListTasks forwards taskId why-drill param (F236 AC-A4)', async () => {
     const { handleListTasks } = await import('../dist/tools/callback-tools.js');
 
